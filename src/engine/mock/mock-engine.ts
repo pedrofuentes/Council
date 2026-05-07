@@ -114,7 +114,7 @@ export class MockEngine implements CouncilEngine {
   readonly #options: Required<MockEngineOptions>;
   readonly #experts = new Map<string, ExpertSpec>();
   readonly #inFlight = new Set<InFlight>();
-  readonly #sentPrompts: Array<{ readonly expertId: string; readonly prompt: string }> = [];
+  readonly #sentPrompts: { readonly expertId: string; readonly prompt: string }[] = [];
   #stopped = false;
 
   /**
@@ -122,7 +122,7 @@ export class MockEngine implements CouncilEngine {
    * Captured at the synchronous validation boundary so it reflects the
    * caller's intent regardless of stream consumption / cancellation.
    */
-  get sentPrompts(): ReadonlyArray<{ readonly expertId: string; readonly prompt: string }> {
+  get sentPrompts(): readonly { readonly expertId: string; readonly prompt: string }[] {
     return this.#sentPrompts;
   }
 

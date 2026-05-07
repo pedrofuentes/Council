@@ -176,10 +176,10 @@ describe("Structured debate — phase prompts", () => {
 
     // Each expert's cross-exam prompt must mention the OTHER expert's
     // displayName and quote (or summarize) their opening content.
-    expect(ctoCross!.prompt).toContain("PM");
-    expect(ctoCross!.prompt).toContain("PM says wait two weeks.");
-    expect(pmCross!.prompt).toContain("CTO");
-    expect(pmCross!.prompt).toContain("CTO says ship now.");
+    expect(ctoCross?.prompt ?? "").toContain("PM");
+    expect(ctoCross?.prompt ?? "").toContain("PM says wait two weeks.");
+    expect(pmCross?.prompt ?? "").toContain("CTO");
+    expect(pmCross?.prompt ?? "").toContain("CTO says ship now.");
   });
 
   it("rebuttal prompt includes the other experts' opening AND cross-exam content", async () => {
@@ -194,9 +194,9 @@ describe("Structured debate — phase prompts", () => {
     const ctoRebuttal = rebuttal.find((s) => s.expertId === cto.id);
     expect(ctoRebuttal).toBeDefined();
     // Rebuttal must reference the other expert (PM) by name.
-    expect(ctoRebuttal!.prompt).toContain("PM");
+    expect(ctoRebuttal?.prompt ?? "").toContain("PM");
     // And explicitly use the word "rebut" or "rebuttal" to instruct the LLM.
-    expect(ctoRebuttal!.prompt.toLowerCase()).toMatch(/rebut/);
+    expect((ctoRebuttal?.prompt ?? "").toLowerCase()).toMatch(/rebut/);
   });
 
   it("synthesis prompt instructs the expert to deliver a final position", async () => {
@@ -246,9 +246,10 @@ describe("Structured debate — edge cases", () => {
 
     // Sends 3, 4, 5 are the cross-examination phase (one per expert in panel order).
     const crossExam = engine.sentPrompts.slice(3, 6);
-    const ctoCross = crossExam.find((s) => s.expertId === cto.id)!;
-    expect(ctoCross.prompt).toContain("PM");
-    expect(ctoCross.prompt).toContain("Designer");
+    const ctoCross = crossExam.find((s) => s.expertId === cto.id);
+    expect(ctoCross).toBeDefined();
+    expect(ctoCross?.prompt ?? "").toContain("PM");
+    expect(ctoCross?.prompt ?? "").toContain("Designer");
   });
 });
 
