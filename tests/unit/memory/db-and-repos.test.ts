@@ -125,6 +125,10 @@ describe("PanelRepository", () => {
 
   it("findAll() lists all panels in creation order (ULID-sortable)", async () => {
     const a = await repo.create(SAMPLE_PANEL);
+    // Sleep 2ms so ULIDs land in different milliseconds (issue #82) —
+    // ULIDs share their time prefix within a millisecond and the random
+    // suffix orders arbitrarily, which previously caused this test to flake.
+    await new Promise((r) => setTimeout(r, 2));
     const b = await repo.create({ ...SAMPLE_PANEL, name: "code-review" });
     const all = await repo.findAll();
     expect(all.map((p) => p.id)).toEqual([a.id, b.id]);
