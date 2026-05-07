@@ -21,6 +21,13 @@ export interface PanelMemberSnapshot {
 export type DebateEndReason = "completed" | "consensus" | "aborted" | "limit" | "failed";
 
 /**
+ * Phases of a structured debate (ROADMAP §2.2). Only emitted when the
+ * debate runs in `mode: "structured"`. Freeform debates emit
+ * `round.start` events without a `phase` field.
+ */
+export type DebatePhase = "opening" | "cross-examination" | "rebuttal" | "synthesis";
+
+/**
  * Events emitted by `Debate.run()` in temporal order.
  *
  * Within a round, exactly one expert speaks at a time:
@@ -44,6 +51,8 @@ export type DebateEvent =
   | {
       readonly kind: "round.start";
       readonly round: number;
+      /** Present only in structured mode (ROADMAP §2.2). */
+      readonly phase?: DebatePhase;
     }
   | {
       readonly kind: "turn.start";
@@ -66,6 +75,8 @@ export type DebateEvent =
       readonly kind: "round.end";
       readonly round: number;
       readonly summary?: string;
+      /** Present only in structured mode (ROADMAP §2.2). */
+      readonly phase?: DebatePhase;
     }
   | {
       readonly kind: "cost.update";

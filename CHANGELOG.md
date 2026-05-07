@@ -50,6 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `src/cli/commands/doctor.ts` — `council doctor` runs 5 diagnostics: Node version, Council home, libsql in-memory open, Copilot SDK importable, disk-write check
 - `src/bin/council.ts` — Commander program with the 3 new subcommands wired in
 - `src/core/template-loader.ts` — path resolution now probes multiple candidate directories so `panels/` is found whether the code runs from `src/` or `dist/`
+- **Structured debate mode (ROADMAP §2.2)** — `Debate.run()` now branches on `DebateConfig.mode`. With `mode: "structured"`, the orchestrator runs a fixed 4-phase choreography (opening → cross-examination → rebuttal → synthesis) regardless of `maxRounds`. Phase ordering is strict: phase N+1 starts only after phase N completes for every expert. Single-expert panels skip cross-exam (3 phases). Each `round.start`/`round.end` event carries an optional `phase: DebatePhase` field.
+- `src/core/moderator/phase-prompts.ts` — pure phase-prompt builders: `buildOpeningPrompt`, `buildCrossExamPrompt` (returns `null` for single-expert panels), `buildRebuttalPrompt`, `buildSynthesisPrompt`. Cross-exam, rebuttal, and synthesis quote prior-turn content verbatim so deterministic structured debates work offline against MockEngine. LLM-driven moderator question generation lands in §2.3.
+- `DebatePhase = "opening" | "cross-examination" | "rebuttal" | "synthesis"` exported from `src/core/types.ts`
+- `MockEngine.sentPrompts` — test-only accessor capturing every prompt sent via `send()` in temporal order, for prompt-shape assertions
 
 ### Changed
 - ADR-005 supersedes the implicit `better-sqlite3` choice from ADR-002 / ROADMAP §1.7. The persistence backend is now `@libsql/client` (pure WASM) + `@libsql/kysely-libsql`. Rationale: `better-sqlite3` requires native build tools and lacks Node 25.5.0 prebuilds, breaking "simple to run". libsql is pure JS, has an official Kysely dialect, and is API-compatible with Turso (Council Cloud Phase 5).
