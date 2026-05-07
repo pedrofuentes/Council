@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `src/engine/copilot/permissions.ts` — `denyAll` (default for all expert sessions per ADR-004) and `scopedAllow(allowed)` for opt-in per-expert tool access
 - `src/engine/copilot/adapter.ts` — `CopilotEngine` implementing `CouncilEngine` over `@github/copilot-sdk`. ONLY file in the project that imports the SDK (per ESLint rule and ADR-003). Translates SDK events → `EngineEvent` stream, classifies SDK errors → `EngineError` codes, honors cancellation via `AbortSignal`/`stop()`/`removeExpert()`.
 - New runtime dep: `@github/copilot-sdk@~0.3.0`
+- `src/memory/db.ts` — `createDatabase(path)` returns a typed Kysely instance over libsql (pure WASM, no native build per ADR-005). Includes `splitSqlStatements` helper that respects `BEGIN/END` trigger blocks. Idempotent migration runner using a `schema_version` table.
+- `src/memory/migrations/001_init.sql` — schema for panels, experts, debates, turns + FTS5 mirror table + sync triggers.
+- `src/memory/repositories/{panels,experts,turns}.ts` — typed CRUD with camelCase domain objects mapped from snake_case rows. ULID-generated ids. `TurnRepository.search(query)` runs FTS5 search via raw SQL.
+- New runtime deps: `@libsql/client` (^0.8.0, pinned to match `@libsql/kysely-libsql` peer), `@libsql/kysely-libsql`, `kysely`, `ulid`
 
 ### Changed
 - ADR-005 supersedes the implicit `better-sqlite3` choice from ADR-002 / ROADMAP §1.7. The persistence backend is now `@libsql/client` (pure WASM) + `@libsql/kysely-libsql`. Rationale: `better-sqlite3` requires native build tools and lacks Node 25.5.0 prebuilds, breaking "simple to run". libsql is pure JS, has an official Kysely dialect, and is API-compatible with Turso (Council Cloud Phase 5).
