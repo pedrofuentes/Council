@@ -44,6 +44,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `src/cli/renderers/plain.ts` — `PlainRenderer`: human-readable text with optional ANSI color (chalk forced level for predictable test output). Streams `turn.delta` immediately so users see expert responses appear as they're generated.
 - New runtime dep: `chalk`
 - `src/core/cost.ts` — `estimateDebateCost(input, expertCount)` returns total premium-request count + breakdown by phase. `formatCostBreakdown(estimate)` renders multi-line plain text. Used by `council convene --estimate` and the orchestrator's `cost.update` events.
+- `src/cli/commands/writer.ts` — shared `Writer` injection pattern for command output (testable via parameter passing instead of Commander internals)
+- `src/cli/commands/panels.ts` — `council panels [--format json|plain]` lists all panels from the local DB
+- `src/cli/commands/templates.ts` — `council templates` lists built-in panel templates
+- `src/cli/commands/doctor.ts` — `council doctor` runs 5 diagnostics: Node version, Council home, libsql in-memory open, Copilot SDK importable, disk-write check
+- `src/bin/council.ts` — Commander program with the 3 new subcommands wired in
+- `src/core/template-loader.ts` — path resolution now probes multiple candidate directories so `panels/` is found whether the code runs from `src/` or `dist/`
 
 ### Changed
 - ADR-005 supersedes the implicit `better-sqlite3` choice from ADR-002 / ROADMAP §1.7. The persistence backend is now `@libsql/client` (pure WASM) + `@libsql/kysely-libsql`. Rationale: `better-sqlite3` requires native build tools and lacks Node 25.5.0 prebuilds, breaking "simple to run". libsql is pure JS, has an official Kysely dialect, and is API-compatible with Turso (Council Cloud Phase 5).

@@ -39,18 +39,12 @@ describe("buildTemplatesCommand", () => {
     expect(cmd.description()).toMatch(/template/i);
   });
 
-  it("lists built-in templates when invoked with --list (default action)", async () => {
-    const cmd = buildTemplatesCommand();
+  it("lists built-in templates when invoked with default action", async () => {
     let captured = "";
-    cmd.configureOutput({
-      writeOut: (s) => {
-        captured += s;
-      },
-      writeErr: () => undefined,
+    const cmd = buildTemplatesCommand((s) => {
+      captured += s;
     });
-    // Parse with no arguments — defaults to listing
     await cmd.parseAsync(["node", "council-templates"]);
-    // Built-in templates from PR #36
     expect(captured).toMatch(/architecture-review/);
     expect(captured).toMatch(/code-review/);
   });
@@ -64,20 +58,13 @@ describe("buildDoctorCommand", () => {
   });
 
   it("runs basic diagnostics and prints results", async () => {
-    const cmd = buildDoctorCommand();
     let captured = "";
-    cmd.configureOutput({
-      writeOut: (s) => {
-        captured += s;
-      },
-      writeErr: (s) => {
-        captured += s;
-      },
+    const cmd = buildDoctorCommand((s) => {
+      captured += s;
     });
     // Run the doctor; it should not throw even if some checks fail
     await cmd.parseAsync(["node", "council-doctor"]).catch(() => undefined);
     expect(captured.length).toBeGreaterThan(0);
-    // Should mention Node version (one of the always-runnable checks)
     expect(captured.toLowerCase()).toMatch(/node/);
   });
 });

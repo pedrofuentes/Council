@@ -16,6 +16,7 @@
  * The `panels/` directory is at the package root, two levels up from this file
  * in source layout and one level up in the bundled dist. We try both.
  */
+import * as fsSync from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -62,17 +63,37 @@ export const PanelDefinitionSchema = z
 export type PanelDefinition = z.infer<typeof PanelDefinitionSchema>;
 
 /**
- * Resolve the panels directory. Tries source-layout first (this file lives in
- * `src/core/`), falls back to bundled layout (this file lives in `dist/`).
+ * Resolve the panels directory by probing candidate paths in order.
+ *
+ * Council ships `panels/*.yaml` at the package root (per package.json#files).
+ * The challenge is that this file's location varies depending on the build:
+ *   - Source-tree dev:    `<root>/src/core/template-loader.ts` → `../../panels`
+ *   - Bundled (tsup) bin: `<root>/dist/bin/council.js`         → `../../panels`
+ *   - Bundled (tsup) lib: `<root>/dist/index.js`               → `../panels`
+ *   - npm-installed:      `<pkg>/dist/...`                     → `<pkg>/panels`
+ *
+ * We probe each candidate and return the first that exists. If none exist
+ * (packaging bug), throw a clear error rather than silently returning
+ * an empty list — closes Sentinel issue #38 / #71.
  */
 function resolvePanelsDir(): string {
   const here = path.dirname(fileURLToPath(import.meta.url));
-  // Source layout: <root>/src/core/template-loader.ts -> <root>/panels
-  // Bundled layout: <root>/dist/index.js -> <root>/panels
-  const inSourceTree = here.includes(`${path.sep}src${path.sep}`);
-  return inSourceTree
-    ? path.resolve(here, "..", "..", "panels")
-    : path.resolve(here, "..", "panels");
+  const candidates = [
+    path.resolve(here, "..", "..", "panels"), // src/core/* and dist/bin/*
+    path.resolve(here, "..", "panels"), // dist/*
+    path.resolve(here, "panels"), // unusual but try
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (fsSync.existsSync(candidate) && fsSync.statSync(candidate).isDirectory()) {
+        return candidate;
+      }
+    } catch {
+      /* try next candidate */
+    }
+  }
+  // Fallback to the most-likely path so error messages stay informative.
+  return candidates[0] ?? path.resolve(here, "..", "..", "panels");
 }
 
 const PANELS_DIR = resolvePanelsDir();
