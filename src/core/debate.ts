@@ -125,6 +125,7 @@ export class Debate {
           expert,
           openingTurns,
           crossExamTurns,
+          rebuttalTurns,
         );
 
         // Single-expert cross-exam returns null — but we already filter
@@ -162,6 +163,7 @@ export class Debate {
     expert: ExpertSpec,
     openingTurns: readonly PriorTurn[],
     crossExamTurns: readonly PriorTurn[],
+    rebuttalTurns: readonly PriorTurn[],
   ): string | null {
     switch (phase) {
       case "opening":
@@ -171,7 +173,7 @@ export class Debate {
       case "rebuttal":
         return buildRebuttalPrompt(topic, expert, openingTurns, crossExamTurns);
       case "synthesis":
-        return buildSynthesisPrompt(topic, expert, openingTurns, crossExamTurns, []);
+        return buildSynthesisPrompt(topic, expert, openingTurns, crossExamTurns, rebuttalTurns);
     }
   }
 
