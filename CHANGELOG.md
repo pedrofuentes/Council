@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `src/cli/renderers/json.ts` — `JsonRenderer`: NDJSON, one JSON-encoded `DebateEvent` per line. For CI/scripts/pipes.
 - `src/cli/renderers/plain.ts` — `PlainRenderer`: human-readable text with optional ANSI color (chalk forced level for predictable test output). Streams `turn.delta` immediately so users see expert responses appear as they're generated.
 - New runtime dep: `chalk`
+- `src/core/cost.ts` — `estimateDebateCost(input, expertCount)` returns total premium-request count + breakdown by phase. `formatCostBreakdown(estimate)` renders multi-line plain text. Used by `council convene --estimate` and the orchestrator's `cost.update` events.
 
 ### Changed
 - ADR-005 supersedes the implicit `better-sqlite3` choice from ADR-002 / ROADMAP §1.7. The persistence backend is now `@libsql/client` (pure WASM) + `@libsql/kysely-libsql`. Rationale: `better-sqlite3` requires native build tools and lacks Node 25.5.0 prebuilds, breaking "simple to run". libsql is pure JS, has an official Kysely dialect, and is API-compatible with Turso (Council Cloud Phase 5).
