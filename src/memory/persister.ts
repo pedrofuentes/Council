@@ -87,11 +87,20 @@ export class DebatePersister {
    * Wraps `source` — the output of `Debate.run()` — and yields each event
    * unchanged after persisting the appropriate side effects.
    *
-   * #117: on abnormal exit (source throws OR consumer breaks the
-   * for-await loop), the wrapped iterator's `finally` marks the
-   * debate row as `status='aborted'` with `endedAt` set. Without this,
-   * the row would stay at `status='running'` forever, breaking the
+   * #117: on abnormal exit BEFORE any debate.end (source throws OR
+   * consumer breaks the for-await loop), the wrapped iterator's `finally`
+   * marks the debate row as `status='aborted'` with `endedAt` set. Without
+   * this, the row would stay at `status='running'` forever, breaking the
    * resumable/abandoned distinction §3.2 session-resume needs.
+   *
+   * #150: once the terminal `debate.end` update is ATTEMPTED (success or
+   * failure), the `finally` block must NOT touch the row. If the terminal
+   * update succeeded, the row is final ('completed'/'aborted'/etc.). If
+   * it failed, the row stays at its pre-attempt state ('running') and the
+   * thrown error bubbles to the caller — that is the truthful state.
+   * Previously the finally would silently overwrite the row to 'aborted'
+   * AND swallow the second error via .catch(), masking the original
+   * failure as if the debate had been aborted.
    */
   async *persist(source: AsyncIterable<DebateEvent>, prompt: string): AsyncIterable<DebateEvent> {
     const debate = await this.deps.debates.create({
@@ -101,7 +110,7 @@ export class DebatePersister {
     });
     this.#debateId = debate.id;
 
-    let normalEnd = false;
+    let terminalUpdateAttempted = false;
     try {
       for await (const evt of source) {
         switch (evt.kind) {
@@ -115,11 +124,13 @@ export class DebatePersister {
             break;
           }
           case "debate.end": {
+            // #150: mark the attempt BEFORE the await so a thrown
+            // update doesn't trigger the finally's abort-overwrite.
+            terminalUpdateAttempted = true;
             await this.deps.debates.update(debate.id, {
               status: reasonToStatus(evt.reason),
               endedAt: new Date().toISOString(),
             });
-            normalEnd = true;
             break;
           }
           default:
@@ -131,11 +142,11 @@ export class DebatePersister {
         yield evt;
       }
     } finally {
-      if (!normalEnd) {
-        // Source threw OR consumer broke the loop — finalize so
-        // session-resume can distinguish abandoned from running.
-        // Best-effort: we're already in a failure path, so swallow
-        // any DB error here rather than masking the original throw.
+      if (!terminalUpdateAttempted) {
+        // Source threw before debate.end OR consumer broke the loop —
+        // finalize so session-resume can distinguish abandoned from running.
+        // Best-effort: we're already in a failure path, so swallow any
+        // DB error here rather than masking the original throw.
         await this.deps.debates
           .update(debate.id, {
             status: "aborted",

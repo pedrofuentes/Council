@@ -134,6 +134,7 @@ export class MockEngine implements CouncilEngine {
   readonly #experts = new Map<string, ExpertSpec>();
   readonly #inFlight = new Set<InFlight>();
   readonly #sentPrompts: { readonly expertId: string; readonly prompt: string }[] = [];
+  readonly #removeExpertCalls: string[] = [];
   #stopped = false;
   #addExpertCallCount = 0;
   #lastStopErrors: Error[] = [];
@@ -168,6 +169,16 @@ export class MockEngine implements CouncilEngine {
    */
   get sentPrompts(): readonly { readonly expertId: string; readonly prompt: string }[] {
     return this.#sentPrompts;
+  }
+
+  /**
+   * Test-only accessor: every expertId passed to `removeExpert()`, in
+   * temporal order. Used to verify that callers (e.g. convene's
+   * partial-failure rollback) only call removeExpert for the experts
+   * that genuinely registered, not the whole intended-list.
+   */
+  get removeExpertCalls(): readonly string[] {
+    return this.#removeExpertCalls;
   }
 
   constructor(options: MockEngineOptions = {}) {
@@ -231,6 +242,13 @@ export class MockEngine implements CouncilEngine {
   }
 
   async removeExpert(expertId: string): Promise<void> {
+    // Capture for test verification (see `removeExpertCalls` getter).
+    // Per CouncilEngine contract, this method is a no-op for unknown
+    // ids — capturing the call regardless lets tests verify that
+    // callers (e.g. partial-failure rollback) only invoke us for
+    // experts that genuinely registered, and detect over-broad
+    // sweep-the-list patterns that rely on idempotency.
+    this.#removeExpertCalls.push(expertId);
     this.#experts.delete(expertId);
     // Abort any in-flight sends for this expert.
     for (const f of this.#inFlight) {
