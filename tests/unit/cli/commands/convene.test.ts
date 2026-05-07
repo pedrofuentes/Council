@@ -244,27 +244,19 @@ describe("buildConveneCommand", () => {
     ).rejects.toThrow();
   });
 
-  it("--engine copilot fails loudly (not yet wired)", async () => {
-    const cmd = buildConveneCommand({
-      write: () => undefined,
-    });
-    cmd.exitOverride();
-
-    let thrownMessage = "";
-    try {
-      await cmd.parseAsync([
-        "node",
-        "council-convene",
-        "topic",
-        "--template",
-        "code-review",
-        "--engine",
-        "copilot",
-      ]);
-    } catch (err) {
-      thrownMessage = err instanceof Error ? err.message : String(err);
-    }
-    expect(thrownMessage).toMatch(/not yet wired|copilot|adapter/i);
+  it("--engine copilot returns a CopilotEngine instance (helper)", async () => {
+    // The exported helper is the indirection used by the action; tests
+    // verify wiring without actually invoking the engine (which would
+    // require a real Copilot session). End-to-end Copilot exercise lives
+    // in tests/integration/convene-copilot.test.ts (gated by env var).
+    const { makeEngineFromKind } = await import(
+      "../../../../src/cli/commands/convene.js"
+    );
+    const { CopilotEngine } = await import(
+      "../../../../src/engine/copilot/adapter.js"
+    );
+    const engine = makeEngineFromKind("copilot");
+    expect(engine).toBeInstanceOf(CopilotEngine);
   });
 
   it("--engine mock prints a prominent MOCK warning to stderr / output", async () => {
