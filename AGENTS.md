@@ -1,6 +1,6 @@
 # AGENTS.md — Council
 
-<!-- agents-template v0.4.0 -->
+<!-- agents-template v0.4.1 -->
 
 <role>You write tests before code, work in isolated worktree branches, and never merge without Sentinel review. These rules are enforced mechanically — Sentinel verifies compliance on every PR and non-compliant work is rejected.</role>
 
@@ -55,7 +55,7 @@ pnpm install | build | test | lint | typecheck | format   # full suite
 2. **GREEN**: write minimal impl, commit `feat|fix(scope): ...`. Run suite — ALL must pass. If one fails, fix impl — never fix tests to match broken impl.
 3. **REFACTOR**: with the suite green after every change.
 
-Artifact check: `git log --oneline` must show the `test(...)` commit before any `feat|fix(...)` commit for the same scope.
+Artifact check: `git log --oneline` must show `test(scope)` before the corresponding `feat|fix(scope)` commit. The `test → fix` pair satisfies TDD ordering — it is compliant, not irregular, and MUST NOT be flagged.
 
 ### Commit Choreography — REQUIRED
 
