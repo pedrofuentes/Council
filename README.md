@@ -63,26 +63,25 @@ npm install -g @council/cli
 
 ## Quick Start
 
-> 🚧 **Phase 1 in progress.** The CLI binary currently exposes only `council --version` and `council --help`. The commands below describe the target surface (see [ROADMAP.md](./ROADMAP.md) Phase 1.10 for delivery order).
+> 🚧 **Phase 1 in progress.** The CLI implements `convene`, `panels`, `templates`, and `doctor` today. `ask`, `conclude`, and `resume` are next (see [ROADMAP.md](./ROADMAP.md)).
 
 ```bash
-# Verify setup
+# Verify your setup
 council doctor
 
-# Start your first deliberation
-council convene "Should we rewrite our billing system?"
+# Run a panel debate against the real Copilot SDK
+council convene "Should we rewrite our billing system?" \
+  --template code-review --engine copilot --max-rounds 4
 
-# Continue the conversation (experts remember context)
-council ask "What about the migration risk?"
+# Or run offline with the deterministic mock engine (for testing/CI)
+council convene "Test prompt" --template code-review --engine mock
 
-# Talk to one expert directly
-council ask --expert cto "What's the realistic timeline?"
+# Use structured 4-phase choreography (opening → cross-exam → rebuttal → synthesis)
+council convene "Should we ship the MVP?" --template architecture-review \
+  --engine copilot --mode structured
 
-# Get a decision summary
-council conclude
-
-# Export as an Architecture Decision Record
-council export --format adr > decisions/004-billing-rewrite.md
+# Pipe NDJSON output to jq, logs, or scripts
+council convene "..." --template code-review --engine copilot --format json | jq .
 ```
 
 ## Built-in Panels

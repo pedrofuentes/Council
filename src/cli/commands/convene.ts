@@ -4,9 +4,9 @@
  *
  * Engine selection is EXPLICIT. There is no silent default — the user
  * must pass `--engine mock` (offline, deterministic, for testing) or
- * `--engine copilot` (real, once ROADMAP §1.4 wires the adapter). This
- * is deliberate per Sentinel pr125 cycle 1 finding 1: we never silently
- * persist fake mock data as a real "completed" debate.
+ * `--engine copilot` (real Copilot SDK). This is deliberate per Sentinel
+ * pr125 cycle 1 finding 1: we never silently persist fake mock data as
+ * a real "completed" debate.
  *
  * Wiring:
  *   1. Load + validate the panel template (panels/<name>.yaml)
@@ -54,6 +54,7 @@ import type { Sink } from "../renderers/types.js";
 import { defaultWriter, type Writer } from "./writer.js";
 
 import { DEFAULT_MODEL } from "../../config/index.js";
+import { CopilotEngine } from "../../engine/copilot/adapter.js";
 
 const DEFAULT_MAX_ROUNDS = 4;
 const DEFAULT_MAX_WORDS = 250;
@@ -83,20 +84,16 @@ export interface ConveneOptions {
 }
 
 /**
- * Maps an explicit engine kind to a constructor function. The Copilot
- * branch currently throws — wiring lands once the adapter has a session
- * pool. Throwing (rather than silently falling back) is the point.
+ * Maps an explicit engine kind to a constructor function. Exported so
+ * unit tests can verify wiring without invoking the engine (which for
+ * the Copilot kind requires a real session).
  */
-function makeEngineFromKind(kind: ConveneEngineKind): CouncilEngine {
+export function makeEngineFromKind(kind: ConveneEngineKind): CouncilEngine {
   switch (kind) {
     case "mock":
       return new MockEngine();
     case "copilot":
-      throw new Error(
-        "--engine copilot is not yet wired. The Copilot adapter needs a session pool " +
-          "(ROADMAP §1.4 follow-up). Use --engine mock for offline testing, or wait for " +
-          "the next release.",
-      );
+      return new CopilotEngine();
   }
 }
 
@@ -110,7 +107,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
     .requiredOption("--template <name>", "Built-in panel template (e.g. 'code-review')")
     .requiredOption(
       "--engine <kind>",
-      "Engine to use: 'mock' (offline, deterministic) or 'copilot' (real, when wired)",
+      "Engine to use: 'mock' (offline, deterministic) or 'copilot' (real Copilot SDK)",
     )
     .option("--format <kind>", "Output format: json (NDJSON) or plain (human)", "plain")
     .option(
