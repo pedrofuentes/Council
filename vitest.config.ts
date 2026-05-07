@@ -6,6 +6,10 @@ export default defineConfig({
     exclude: ["node_modules", "dist", ".worktrees"],
     environment: "node",
     globals: false,
+    // Per-process test isolation: tests/setup.ts redirects COUNCIL_HOME
+    // to a per-process temp dir so commands that touch the filesystem
+    // cannot pollute the user's real ~/.council/ directory.
+    setupFiles: ["./tests/setup.ts"],
     coverage: {
       provider: "v8",
       reporter: ["text", "html", "lcov"],
