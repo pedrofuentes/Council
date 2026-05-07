@@ -17,7 +17,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { Debate, type DebateConfig } from "../../src/core/debate.js";
 import type { DebateEvent } from "../../src/core/types.js";
-import type { CouncilEngine, ExpertSpec } from "../../src/engine/index.js";
+import type { ExpertSpec } from "../../src/engine/index.js";
 import { MockEngine } from "../../src/engine/mock/mock-engine.js";
 
 import { createDatabase, type CouncilDatabase } from "../../src/memory/db.js";

@@ -86,6 +86,12 @@ export class DebatePersister {
   /**
    * Wraps `source` — the output of `Debate.run()` — and yields each event
    * unchanged after persisting the appropriate side effects.
+   *
+   * #117: on abnormal exit (source throws OR consumer breaks the
+   * for-await loop), the wrapped iterator's `finally` marks the
+   * debate row as `status='aborted'` with `endedAt` set. Without this,
+   * the row would stay at `status='running'` forever, breaking the
+   * resumable/abandoned distinction §3.2 session-resume needs.
    */
   async *persist(source: AsyncIterable<DebateEvent>, prompt: string): AsyncIterable<DebateEvent> {
     const debate = await this.deps.debates.create({
@@ -95,31 +101,48 @@ export class DebatePersister {
     });
     this.#debateId = debate.id;
 
-    for await (const evt of source) {
-      switch (evt.kind) {
-        case "turn.start": {
-          this.#pendingTurnPosition.set(evt.expertSlug, { round: evt.round, seq: evt.seq });
-          break;
+    let normalEnd = false;
+    try {
+      for await (const evt of source) {
+        switch (evt.kind) {
+          case "turn.start": {
+            this.#pendingTurnPosition.set(evt.expertSlug, { round: evt.round, seq: evt.seq });
+            break;
+          }
+          case "turn.end": {
+            await this.#persistTurn(evt.expertSlug, evt.content);
+            this.#pendingTurnPosition.delete(evt.expertSlug);
+            break;
+          }
+          case "debate.end": {
+            await this.deps.debates.update(debate.id, {
+              status: reasonToStatus(evt.reason),
+              endedAt: new Date().toISOString(),
+            });
+            normalEnd = true;
+            break;
+          }
+          default:
+            // panel.assembled, round.start/end, turn.delta, cost.update,
+            // error — passthrough only, no persistence side effect at the
+            // debate/turn level. (Per-event logging lands in §3.6 export.)
+            break;
         }
-        case "turn.end": {
-          await this.#persistTurn(evt.expertSlug, evt.content);
-          this.#pendingTurnPosition.delete(evt.expertSlug);
-          break;
-        }
-        case "debate.end": {
-          await this.deps.debates.update(debate.id, {
-            status: reasonToStatus(evt.reason),
-            endedAt: new Date().toISOString(),
-          });
-          break;
-        }
-        default:
-          // panel.assembled, round.start/end, turn.delta, cost.update,
-          // error — passthrough only, no persistence side effect at the
-          // debate/turn level. (Per-event logging lands in §3.6 export.)
-          break;
+        yield evt;
       }
-      yield evt;
+    } finally {
+      if (!normalEnd) {
+        // Source threw OR consumer broke the loop — finalize so
+        // session-resume can distinguish abandoned from running.
+        // Best-effort: we're already in a failure path, so swallow
+        // any DB error here rather than masking the original throw.
+        await this.deps.debates
+          .update(debate.id, {
+            status: "aborted",
+            endedAt: new Date().toISOString(),
+          })
+          .catch(() => undefined);
+      }
     }
   }
 

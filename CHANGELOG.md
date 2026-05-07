@@ -72,4 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `bin/council.ts` JSDoc updated — engine is no longer "mock by default". Resolves #126.
 - `makeEngineFromKind` JSDoc tagged `@internal` per stability convention. Resolves #135.
 - Removed redundant `if (!INTEGRATION) describe(...)` fallback in `tests/integration/convene-copilot.test.ts`. Resolves #136.
+- **CopilotEngine + MockEngine** now expose a `lastStopErrors: readonly Error[]` getter populated during `stop()`. Per-session disconnect failures (and the final `client.stop()` failure) are aggregated here instead of being silently swallowed. Backwards-compatible: `stop()` still returns `Promise<void>`. Resolves #143.
+- **`convene` parallel addExpert** is now leak-safe via `Promise.allSettled` + rollback. If any `addExpert` rejects, every successfully-created expert is removed via `engine.removeExpert()` before re-throwing, so no `CopilotSession` survives past cleanup. Error message: `could not register all experts (X/Y failed): <first reason>`. Resolves #142.
+- **`DebatePersister.persist()`** now self-finalizes on abnormal exit. If the source stream throws or the consumer breaks the for-await loop, the debate row is marked `status='aborted'` with `endedAt` set in a `finally` block. This unblocks ROADMAP §3.2 session-resume which needs to distinguish abandoned from running debates. Resolves #117.
 ### Removed

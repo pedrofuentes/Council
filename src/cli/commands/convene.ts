@@ -214,12 +214,38 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         // factory so we don't have to mutate process.env to pass mocks.
         engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(opts.engine);
         await engine.start();
-        // Sentinel pr125 #131: parallel addExpert. CopilotEngine creates
-        // one CopilotSession per expert independently — they don't share
-        // mutable state during creation, so Promise.all is safe and cuts
-        // startup latency from O(N × session-create-ms) to O(1).
+
+        // Sentinel #142: leak-safe parallel addExpert.
+        // CopilotEngine creates one CopilotSession per expert independently
+        // (no shared mutable state during creation), so Promise.allSettled
+        // is safe and cuts startup latency from O(N × session-create-ms)
+        // to O(1). We use allSettled instead of all so that one rejection
+        // doesn't strand still-pending sessions: we wait for every call to
+        // settle, then either continue (all fulfilled) or roll back the
+        // successful registrations before re-throwing.
         const startedEngine = engine;
-        await Promise.all(experts.map((e) => startedEngine.addExpert(e)));
+        const settled = await Promise.allSettled(
+          experts.map((e) => startedEngine.addExpert(e)),
+        );
+        const failures = settled
+          .map((r, i) => ({ result: r, expert: experts[i] }))
+          .filter((p): p is { result: PromiseRejectedResult; expert: ExpertSpec } =>
+            p.result.status === "rejected" && p.expert !== undefined,
+          );
+        if (failures.length > 0) {
+          // Roll back every expert that DID register successfully so no
+          // session leaks past cleanup. removeExpert is idempotent for
+          // unknown ids, so it's safe even if some addExpert calls
+          // synchronously rejected before any state was set.
+          await Promise.allSettled(
+            experts.map((e) => startedEngine.removeExpert(e.id)),
+          );
+          const firstErr = failures[0]?.result.reason;
+          const firstMsg = firstErr instanceof Error ? firstErr.message : String(firstErr);
+          throw new Error(
+            `could not register all experts (${failures.length}/${experts.length} failed): ${firstMsg}`,
+          );
+        }
 
         // (5) Build Debate + wrap in persister + hand to renderer.
         const config: DebateConfig = {
