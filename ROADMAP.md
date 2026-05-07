@@ -49,8 +49,7 @@ src/bin/council.ts         (CLI entry: #!/usr/bin/env node)
 **Key dependencies:**
 - `commander` (CLI parsing)
 - `ink` + `ink-spinner` + `react` (terminal UI)
-- `better-sqlite3` (persistence)
-- `kysely` (typed SQL queries)
+- `@libsql/client` + `@kysely/libsql` + `kysely` (persistence — pure WASM, see ADR-005)
 - `zod` (schema validation)
 - `yaml` (config parsing)
 - `ulid` (ID generation)
@@ -64,7 +63,6 @@ src/bin/council.ts         (CLI entry: #!/usr/bin/env node)
 - `vitest`
 - `eslint` + `@typescript-eslint/eslint-plugin` + `@typescript-eslint/parser`
 - `prettier`
-- `@types/better-sqlite3`
 - `@types/react`
 
 **tsconfig.json spec:**
@@ -341,41 +339,66 @@ position and cannot find a material weakness."
 
 ### 1.7 SQLite Schema
 
+> **Backend updated 2026-05-07 (ADR-005):** uses `@libsql/client` (pure WASM) + `@kysely/libsql` instead of `better-sqlite3`. No native build, works on every Node version.
+
 **Files to create:**
 ```
 src/memory/db.ts
 src/memory/migrations/001_init.sql
+src/memory/migrations/runner.ts
 src/memory/repositories/panels.ts
 src/memory/repositories/experts.ts
 src/memory/repositories/turns.ts
 tests/unit/memory/repositories.test.ts
 ```
 
-**`src/memory/db.ts`:**
-- Opens `~/.council/council.db` (or custom path)
-- Sets pragmas: `journal_mode = WAL`, `synchronous = NORMAL`, `temp_store = MEMORY`, `foreign_keys = ON`
-- Runs migrations from `migrations/` directory
-- Uses `schema_version` table for migration tracking
-- Exports typed Kysely instance
+**`src/memory/db.ts` — sketch:**
+```typescript
+import { createClient } from "@libsql/client";
+import { LibsqlDialect } from "@kysely/libsql";
+import { Kysely } from "kysely";
 
-**Schema (see `docs/ARCHITECTURE.md` and `DECISIONS.md` ADR-002):**
-- `panels` table (id TEXT PK ULID, name, topic, created_at, updated_at, copilot_home, config_json)
-- `experts` table (id TEXT PK ULID, panel_id FK, slug, display_name, model, system_message, copilot_session_id, created_at; UNIQUE panel_id+slug)
-- `debates` table (id TEXT PK ULID, panel_id FK, prompt, status, moderator, started_at, ended_at, cost_estimate)
-- `turns` table (id TEXT PK ULID, debate_id FK, round, seq, speaker_kind, expert_id FK nullable, content, tokens_in, tokens_out, latency_ms, created_at; INDEX on debate_id+round+seq)
+export interface Database {
+  panels: PanelTable;
+  experts: ExpertTable;
+  debates: DebateTable;
+  turns: TurnTable;
+  schema_version: { version: number; applied_at: string };
+}
+
+export async function createDatabase(path: string): Promise<Kysely<Database>> {
+  const url = path === ":memory:" ? ":memory:" : `file:${path}`;
+  const client = createClient({ url });
+  const db = new Kysely<Database>({ dialect: new LibsqlDialect({ client }) });
+  await runMigrations(db);
+  return db;
+}
+```
+
+**Schema (libsql/SQLite — see `docs/ARCHITECTURE.md` and DECISIONS ADR-002 + ADR-005):**
+- `panels` (id TEXT PK ULID, name, topic, created_at TEXT ISO, updated_at TEXT ISO, copilot_home TEXT, config_json TEXT)
+- `experts` (id TEXT PK ULID, panel_id FK, slug TEXT, display_name TEXT, model TEXT, system_message TEXT, copilot_session_id TEXT NULL, created_at TEXT ISO; UNIQUE panel_id+slug)
+- `debates` (id TEXT PK ULID, panel_id FK, prompt TEXT, status TEXT, moderator TEXT, started_at TEXT ISO, ended_at TEXT ISO NULL, cost_estimate INTEGER)
+- `turns` (id TEXT PK ULID, debate_id FK, round INTEGER, seq INTEGER, speaker_kind TEXT, expert_id FK NULL, content TEXT, tokens_in INTEGER NULL, tokens_out INTEGER NULL, latency_ms INTEGER NULL, created_at TEXT ISO; INDEX on debate_id+round+seq)
 - `turns_fts` FTS5 virtual table on turns.content
+- `schema_version` (version INTEGER PK, applied_at TEXT ISO)
 
-**Repository pattern:**
+**Schema notes (changed from original spec):**
+- Timestamps stored as ISO 8601 strings (libsql/SQLite default), not epoch ms — clearer to inspect, identical lexicographic ordering
+- WAL mode is N/A for libsql in WASM mode (different journaling); the equivalent durability lives inside libsql
+
+**Repository pattern (Kysely-typed):**
 - `PanelRepository`: create, findById, findAll, update, delete
 - `ExpertRepository`: create, findByPanelId, findById, update, delete
-- `TurnRepository`: create, findByDebateId, search (FTS5)
+- `TurnRepository`: create, findByDebateId, search (FTS5 MATCH)
 
 **Acceptance criteria:**
-- `initDatabase(path)` creates DB file with all tables
+- `createDatabase(":memory:")` resolves to a typed Kysely instance with all tables
+- `createDatabase("/path/to/file.db")` creates the file if missing
 - CRUD operations work for all repositories
-- FTS5 search returns matching turns
-- Migrations run idempotently (running twice = no error)
-- WAL mode is active (verified via pragma query)
+- FTS5 search returns matching turns (libsql ships FTS5)
+- Migrations run idempotently (running twice = no error, schema_version rows do not duplicate)
+- `pnpm install` succeeds with NO native build (verified by repo CI when added)
 
 ---
 

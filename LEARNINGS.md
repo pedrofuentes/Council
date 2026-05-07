@@ -19,6 +19,14 @@
 
 <!-- Add new learnings below this line, most recent first -->
 
+### [2026-05-07] better-sqlite3 has no Node 25.5 prebuild — switched to @libsql/client (pure WASM)
+**Context**: Phase 1.7 (sqlite-schema) was about to start when a fresh `pnpm install` of `better-sqlite3@11.10.0` failed on the dev machine: prebuilds for Node 25.5.0 don't exist yet, and the local Visual Studio Build Tools install lacks the ClangCL toolset that `node-gyp` needs to compile from source. Verified runtime error: `Could not locate the bindings file. Tried [...] compiled\25.5.0\win32\x64\better_sqlite3.node`. This blocked the entire SQLite track of the roadmap.
+**Learning**:
+1. **Never depend on a native module's prebuild availability for a "simple to run" CLI tool.** The window between a Node release and a native package's prebuild being published is exactly when new contributors hit the wall.
+2. **Pure WASM SQLite (libsql) is now production-grade.** `@libsql/client` runs SQLite via WebAssembly with file persistence, an official Kysely dialect (`@kysely/libsql`), and the same SQL surface. Slower than native C++ for high-throughput workloads but invisible for orchestration metadata.
+3. **`node:sqlite` is not yet the answer.** Still Release Candidate in Node 24 LTS as of mid-2026, requires `--experimental-sqlite` flag. Re-evaluate when stable.
+**Impact**: Council uses `@libsql/client` + `@kysely/libsql` from PR onward. Bonus: future Council Cloud (Phase 5) can move from `url: 'file:./db.sqlite'` to `url: 'libsql://...'` with no code change. See ADR-005.
+
 ### [2026-05-06] Native deps deferred from scaffolding PR due to Node 25.5.0 prebuild gap
 **Context**: Phase 1.1 scaffolding (`chore/scaffold` PR #1). Initial `pnpm install` failed because `better-sqlite3@11.10.0` had no prebuilt binary for Node 25.5.0 and the local Visual Studio Build Tools lacked the ClangCL toolset required for `node-gyp` rebuild.
 **Learning**: On Node releases that ship before native-module maintainers cut prebuilds, fresh `pnpm install` will fall back to `node-gyp` and require a working C/C++ toolchain. ROADMAP §1.1 listed `@github/copilot-sdk` (~187MB), `better-sqlite3`, `ink`, `react`, `kysely`, `zod`, `yaml`, `ulid`, `chalk`, `pino` as scaffolding dependencies, but only `commander` is exercised by the scaffolding acceptance criteria.
