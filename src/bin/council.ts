@@ -2,16 +2,15 @@
  * @council/cli — Command-line interface entry point.
  *
  * Subcommands:
- *   - `convene`    run a panel debate on a topic, persist results
+ *   - `convene`    run a panel debate on a topic (engine: mock | copilot)
  *   - `panels`     list panels in the local DB
  *   - `templates`  list built-in panel templates
  *   - `doctor`     diagnose Council setup
  *
  * `ask` is the next command (one-shot single-expert chat) — deferred.
  *
- * NOTE: `convene` currently uses MockEngine by default (see
- * src/cli/commands/convene.ts). The Copilot adapter wiring lands once
- * the engine has a session pool — tracked as a follow-up.
+ * Both engine kinds are wired and ready: `--engine mock` for offline
+ * deterministic runs, `--engine copilot` for real Copilot SDK calls.
  */
 import { Command } from "commander";
 
