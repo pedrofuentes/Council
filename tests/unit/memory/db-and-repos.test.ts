@@ -13,6 +13,9 @@
  *
  * RED at this commit: src/memory/* does not exist yet.
  */
+import * as os from "node:os";
+import * as path from "node:path";
+
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
@@ -73,8 +76,9 @@ describe("createDatabase", () => {
   });
 
   it("running migrations twice (via two createDatabase calls on same file) is idempotent", async () => {
-    // For :memory: each call yields a fresh DB, so use a temp file
-    const tempPath = `/tmp/council-test-${Date.now()}.db`;
+    // Use os.tmpdir() for cross-platform support; libsql cannot create
+    // a file in a non-existent directory.
+    const tempPath = path.join(os.tmpdir(), `council-test-${Date.now()}.db`);
     const db1 = await createDatabase(tempPath);
     const before = await db1.selectFrom("schema_version").selectAll().execute();
     await db1.destroy();
