@@ -58,7 +58,7 @@ describe("JsonRenderer", () => {
     await renderer.render(
       events({ kind: "round.start", round: 0 }),
     );
-    // ANSI escape sequences would start with \u001b
-    expect(sink.text).not.toMatch(/\u001b/);
+    // ANSI escape sequences would start with ESC (0x1b)
+    expect(sink.text.includes("\u001b")).toBe(false);
   });
 });

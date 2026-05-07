@@ -107,8 +107,8 @@ describe("PlainRenderer", () => {
       }),
     );
     expect(sink.errText).toContain("Quota exhausted");
-    // ANSI red is \u001b[31m
-    expect(sink.errText).toMatch(/\u001b\[/);
+    // ANSI red has ESC (0x1b)
+    expect(sink.errText.includes("\u001b")).toBe(true);
   });
 
   it("prints debate.end with the reason", async () => {
