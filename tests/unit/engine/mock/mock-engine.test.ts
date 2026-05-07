@@ -202,8 +202,10 @@ describe("MockEngine — cancellation contract", () => {
 
   it("stop() aborts in-flight sends with ABORTED error", async () => {
     const engine = new MockEngine({
-      responses: { "01HZ-cto": "response that will be cut short" },
-      // ensure deltas don't all arrive synchronously
+      // Multi-sentence response so chunkResponse() emits multiple deltas;
+      // combined with deltaDelayMs this guarantees a window between the
+      // first delta and the natural completion.
+      responses: { "01HZ-cto": "First sentence. Second sentence. Third sentence. Fourth." },
       deltaDelayMs: 50,
     });
     await engine.start();
@@ -211,13 +213,18 @@ describe("MockEngine — cancellation contract", () => {
 
     const events: EngineEvent[] = [];
     const stream = engine.send({ prompt: "x", expertId: "01HZ-cto" });
+    let firstDeltaResolved: (() => void) | undefined;
+    const firstDelta = new Promise<void>((resolve) => {
+      firstDeltaResolved = resolve;
+    });
     const collectPromise = (async () => {
       for await (const event of stream) {
         events.push(event);
+        if (event.kind === "message.delta") firstDeltaResolved?.();
       }
     })();
-    // Stop before the response could complete
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    // Wait for the first delta to arrive so we KNOW the stream is mid-flight.
+    await firstDelta;
     await engine.stop();
     await collectPromise;
 
@@ -230,7 +237,7 @@ describe("MockEngine — cancellation contract", () => {
 
   it("removeExpert() aborts in-flight send for that expert", async () => {
     const engine = new MockEngine({
-      responses: { "01HZ-cto": "some response" },
+      responses: { "01HZ-cto": "First sentence. Second sentence. Third sentence. Fourth." },
       deltaDelayMs: 50,
     });
     await engine.start();
@@ -238,12 +245,17 @@ describe("MockEngine — cancellation contract", () => {
 
     const events: EngineEvent[] = [];
     const stream = engine.send({ prompt: "x", expertId: "01HZ-cto" });
+    let firstDeltaResolved: (() => void) | undefined;
+    const firstDelta = new Promise<void>((resolve) => {
+      firstDeltaResolved = resolve;
+    });
     const collectPromise = (async () => {
       for await (const event of stream) {
         events.push(event);
+        if (event.kind === "message.delta") firstDeltaResolved?.();
       }
     })();
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await firstDelta;
     await engine.removeExpert("01HZ-cto");
     await collectPromise;
 
@@ -270,3 +282,5 @@ describe("isRecoverable() helper", () => {
     expect(isRecoverable("INTERNAL")).toBe(false);
   });
 });
+
+

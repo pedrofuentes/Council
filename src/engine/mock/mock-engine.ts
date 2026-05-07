@@ -3,8 +3,9 @@
  * offline development.
  *
  * Design goals:
- *   1. Deterministic. Same inputs always produce the same outputs (seeded
- *      latency, fixed token counts).
+ *   1. Deterministic event sequence. Same inputs always produce the same
+ *      sequence of events; latency reflects wall-clock and is NOT pinned
+ *      (tests should not assert exact `latencyMs` values, only ranges).
  *   2. Contract-faithful. MockEngine is the reference implementation of
  *      every clause of the CouncilEngine contract — lifecycle idempotency,
  *      cancellation, error semantics — so that tests written against it
@@ -174,11 +175,19 @@ export class MockEngine implements CouncilEngine {
     this.#inFlight.add(inFlight);
 
     // Wire the caller's signal so AbortController sees both sources.
+    // Capture the listener so we can remove it in the stream's `finally`,
+    // preventing memory growth when callers reuse the same AbortSignal
+    // across many sends. (Sentinel pr16 finding #1.)
+    let removeCallerSignalListener: (() => void) | undefined;
     if (options.signal) {
       if (options.signal.aborted) {
         controller.abort();
       } else {
-        options.signal.addEventListener("abort", () => controller.abort(), { once: true });
+        const onAbort = (): void => controller.abort();
+        options.signal.addEventListener("abort", onAbort, { once: true });
+        removeCallerSignalListener = (): void => {
+          options.signal?.removeEventListener("abort", onAbort);
+        };
       }
     }
 
@@ -186,7 +195,7 @@ export class MockEngine implements CouncilEngine {
     const text = this.#options.responses[options.expertId] ?? defaultResponse(options.expertId);
     const deltaDelayMs = this.#options.deltaDelayMs;
 
-    return this.#stream(inFlight, options.expertId, text, deltaDelayMs, failure);
+    return this.#stream(inFlight, options.expertId, text, deltaDelayMs, failure, removeCallerSignalListener);
   }
 
   async *#stream(
@@ -195,6 +204,7 @@ export class MockEngine implements CouncilEngine {
     text: string,
     deltaDelayMs: number,
     failure: Pick<EngineError, "code" | "message"> | undefined,
+    removeCallerSignalListener: (() => void) | undefined,
   ): AsyncGenerator<EngineEvent, void, void> {
     const start = Date.now();
     try {
@@ -256,6 +266,7 @@ export class MockEngine implements CouncilEngine {
       };
     } finally {
       this.#inFlight.delete(inFlight);
+      removeCallerSignalListener?.();
     }
   }
 }
