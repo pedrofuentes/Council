@@ -64,5 +64,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `makeEngineFromKind(kind)` exported from `src/cli/commands/convene.ts` so unit tests can verify wiring without invoking the engine.
 
 ### Fixed
-
+- `convene` MOCK warning now writes to a separate `writeError` channel (stderr), keeping `--format json` output as pure NDJSON on stdout. Resolves #127.
+- `makeEngineFromKind` now has an exhaustive `default` arm that throws on unknown engine kind (previously silently returned `undefined`). Resolves #128 and #134.
+- `convene` `--engine` validation now uses validate-then-assign (no silent ternary fallback). Resolves #129.
+- `convene` cleanup errors (engine.stop / db.destroy) are now surfaced via `writeError` with a `!! ... failed during cleanup:` prefix instead of being silently swallowed. Resolves #130.
+- `convene` registers experts in parallel via `Promise.all` instead of sequentially, cutting startup latency from O(N × session-create-ms) to O(1). Resolves #131.
+- `bin/council.ts` JSDoc updated — engine is no longer "mock by default". Resolves #126.
+- `makeEngineFromKind` JSDoc tagged `@internal` per stability convention. Resolves #135.
+- Removed redundant `if (!INTEGRATION) describe(...)` fallback in `tests/integration/convene-copilot.test.ts`. Resolves #136.
 ### Removed
