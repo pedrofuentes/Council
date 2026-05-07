@@ -23,6 +23,7 @@ import * as path from "node:path";
 import { Command } from "commander";
 
 import { getCouncilHome } from "../../config/index.js";
+import { pingProviderHealth } from "../../engine/copilot/health.js";
 
 import { defaultWriter, type Writer } from "./writer.js";
 
@@ -77,19 +78,14 @@ async function checkSqlite(): Promise<CheckResult> {
 }
 
 async function checkCopilotSdk(): Promise<CheckResult> {
-  try {
-    const sdk = (await import("@github/copilot-sdk")) as Record<string, unknown>;
-    if (typeof sdk["CopilotClient"] === "function") {
-      return { name: "Copilot SDK", status: "pass", detail: "@github/copilot-sdk loaded" };
-    }
-    return { name: "Copilot SDK", status: "warn", detail: "loaded but CopilotClient export missing — version mismatch?" };
-  } catch (err: unknown) {
-    return {
-      name: "Copilot SDK",
-      status: "fail",
-      detail: `cannot import @github/copilot-sdk: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
+  // Probe via the engine seam — keeps SDK imports inside src/engine/copilot/
+  // per AGENTS.md §🚫 NEVER. Does NOT start a client or hit the network.
+  const health = pingProviderHealth();
+  return {
+    name: "Copilot SDK",
+    status: health.ok ? "pass" : "fail",
+    detail: health.detail,
+  };
 }
 
 async function checkDiskSpace(): Promise<CheckResult> {

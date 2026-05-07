@@ -30,6 +30,40 @@ import type {
 import { denyAll } from "./permissions.js";
 
 /**
+ * Provider health probe — verifies the Copilot SDK is loadable and exposes
+ * the symbols Council depends on, WITHOUT starting a client or making any
+ * network call. Exposed here (not in a sibling file) because the ESLint
+ * boundary rule restricts `@github/copilot-sdk` imports to this single file.
+ *
+ * Used by `council doctor` via `src/engine/copilot/health.ts`.
+ */
+export interface ProviderHealth {
+  readonly ok: boolean;
+  readonly detail: string;
+}
+
+export function pingProviderHealth(): ProviderHealth {
+  try {
+    if (typeof CopilotClient !== "function") {
+      return {
+        ok: false,
+        detail:
+          "@github/copilot-sdk is loaded but CopilotClient export is missing — version mismatch?",
+      };
+    }
+    return {
+      ok: true,
+      detail: "@github/copilot-sdk loaded; CopilotClient export present",
+    };
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      detail: `cannot probe @github/copilot-sdk: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+/**
  * Models routable via Copilot. Authoritative list updates as GitHub
  * adds/removes models. Used by `listModels()` and `council doctor`.
  */
