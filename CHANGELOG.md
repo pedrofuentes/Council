@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `src/config/schema.ts` — Zod-based `ConfigSchema`, `CouncilConfig` type, `DEFAULT_MODEL` constant. Conservative defaults (3 experts, 4 rounds, 250-word cap)
 - `src/config/loader.ts` — `loadConfig()` (reads YAML, applies defaults, writes default file when missing) and `getCouncilHome()` (honors `COUNCIL_HOME` env var for tests + ephemeral mode)
 - New runtime deps: `zod`, `yaml`
+- `src/core/expert.ts` — `ExpertDefinitionSchema` (Zod) for static expert profiles; validated by panel YAML loader and ad-hoc CLI definitions alike
+- `src/core/prompt-builder.ts` — `buildSystemPrompt(def, memory, task)` produces the full 8-section prompt (IDENTITY → EXPERTISE PRIOR → EPISTEMIC STANCE → DEBATE PROTOCOL → OUTPUT CONTRACT → FORBIDDEN MOVES → MEMORY → CURRENT TASK). Anti-sycophancy defaults (`DEFAULT_FORBIDDEN_PHRASES`, `DEFAULT_DEBATE_PROTOCOL`, `DEFAULT_OUTPUT_CONTRACT`) are always injected; profiles may supplement but cannot remove them.
+- `ExpertMemory` type — positions, updatedPriors, unresolved questions; injected as terse bulleted log into section [7]
 
 ### Changed
 
