@@ -19,6 +19,21 @@
 
 <!-- Add new learnings below this line, most recent first -->
 
+### [2026-05-06] Native deps deferred from scaffolding PR due to Node 25.5.0 prebuild gap
+**Context**: Phase 1.1 scaffolding (`chore/scaffold` PR #1). Initial `pnpm install` failed because `better-sqlite3@11.10.0` had no prebuilt binary for Node 25.5.0 and the local Visual Studio Build Tools lacked the ClangCL toolset required for `node-gyp` rebuild.
+**Learning**: On Node releases that ship before native-module maintainers cut prebuilds, fresh `pnpm install` will fall back to `node-gyp` and require a working C/C++ toolchain. ROADMAP §1.1 listed `@github/copilot-sdk` (~187MB), `better-sqlite3`, `ink`, `react`, `kysely`, `zod`, `yaml`, `ulid`, `chalk`, `pino` as scaffolding dependencies, but only `commander` is exercised by the scaffolding acceptance criteria.
+**Impact**: Each remaining Phase 1 dep should be added in the PR that first uses it:
+  - `zod`, `yaml` → Phase 1.5 (Configuration system)
+  - `@github/copilot-sdk` → Phase 1.4 (Copilot SDK adapter)
+  - `better-sqlite3`, `kysely`, `ulid` → Phase 1.7 (SQLite schema)
+  - `ink`, `ink-spinner`, `react`, `chalk`, `pino` → Phase 1.9 / 3.4 (renderers / Ink UI)
+  Adding deps incrementally also gives Sentinel a focused diff to review per PR.
+
+### [2026-05-06] tsup applies `banner` globally — use array config to scope per entry
+**Context**: Sentinel REJECTED PR #1 because `dist/index.js` (library entry) shipped with a `#!/usr/bin/env node` shebang inherited from the global `banner` option intended only for the `bin/council.js` entry. The `esbuildOptions` hook does NOT receive per-entry context that would let us strip the banner conditionally.
+**Learning**: `tsup` does not support per-entry `banner` in a single config object. The clean fix is `defineConfig([cfg1, cfg2])` — an array of independent build configurations sharing `outDir`. The second entry must set `clean: false` so it does not wipe the first entry's output.
+**Impact**: Use the array-config pattern any time entries need divergent banner / format / target / external settings.
+
 ### [2026-05-06] Copilot SDK bundles ~187MB unpacked
 **Context**: Architecture analysis during project planning.
 **Learning**: `@github/copilot-sdk` bundles the full `@github/copilot` package (~187MB). This rules out binary distribution (pkg/nexe) and means `npm install -g` is a 200+ MB download.

@@ -1,0 +1,67 @@
+{
+  "name": "@council/cli",
+  "version": "0.1.0",
+  "description": "Persistent AI expert panels that deliberate, disagree, and remember.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Pedro Fuentes",
+  "homepage": "https://github.com/pedrofuentes/Council",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pedrofuentes/Council.git"
+  },
+  "bugs": {
+    "url": "https://github.com/pedrofuentes/Council/issues"
+  },
+  "keywords": [
+    "ai",
+    "cli",
+    "multi-agent",
+    "deliberation",
+    "decision-making",
+    "github-copilot"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "council": "./dist/bin/council.js"
+  },
+  "files": [
+    "dist",
+    "panels",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src tests",
+    "lint:fix": "eslint src tests --fix",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md,yaml,yml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md,yaml,yml}\"",
+    "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.0",
+    "@vitest/coverage-v8": "^2.1.8",
+    "eslint": "^9.17.0",
+    "prettier": "^3.4.2",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.0",
+    "vitest": "^2.1.8"
+  },
+  "packageManager": "pnpm@9.15.0"
+}
