@@ -123,6 +123,24 @@ describe("loadTemplate() / listTemplates()", () => {
     await expect(loadTemplate("does-not-exist")).rejects.toThrow(/does-not-exist/);
   });
 
+  it("loadTemplate() rejects path-traversal attempts (../)", async () => {
+    // Sentinel pr36 finding #1: name MUST be a slug, not a path fragment.
+    await expect(loadTemplate("../etc/passwd")).rejects.toThrow(/Invalid panel template name/i);
+    await expect(loadTemplate("../../sensitive")).rejects.toThrow(/Invalid panel template name/i);
+  });
+
+  it("loadTemplate() rejects names with path separators or absolute roots", async () => {
+    await expect(loadTemplate("foo/bar")).rejects.toThrow(/Invalid panel template name/i);
+    await expect(loadTemplate("foo\\bar")).rejects.toThrow(/Invalid panel template name/i);
+    await expect(loadTemplate("/etc/passwd")).rejects.toThrow(/Invalid panel template name/i);
+  });
+
+  it("loadTemplate() rejects names with uppercase, dots, or whitespace", async () => {
+    await expect(loadTemplate("Foo")).rejects.toThrow(/Invalid panel template name/i);
+    await expect(loadTemplate("foo.bar")).rejects.toThrow(/Invalid panel template name/i);
+    await expect(loadTemplate("foo bar")).rejects.toThrow(/Invalid panel template name/i);
+  });
+
   for (const name of EXPECTED_TEMPLATES) {
     describe(`built-in template: ${name}`, () => {
       it("loads and parses successfully", async () => {

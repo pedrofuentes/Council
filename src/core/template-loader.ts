@@ -96,15 +96,34 @@ export async function listTemplates(): Promise<readonly string[]> {
 
 /**
  * Load a built-in panel template by name.
+ *
+ * `name` MUST match the template-slug regex `^[a-z][a-z0-9-]*$` — this
+ * blocks path-traversal attempts (`../`, absolute paths, separators) so
+ * `loadTemplate(userInput)` is safe to call with values from the CLI or
+ * from a panel YAML's own references.
  */
+export const TEMPLATE_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
+
 export async function loadTemplate(name: string): Promise<PanelDefinition> {
+  if (!TEMPLATE_NAME_PATTERN.test(name)) {
+    throw new Error(
+      `Invalid panel template name "${name}". Names must match ${TEMPLATE_NAME_PATTERN.source} (lowercase, digits, hyphens, must start with a letter).`,
+    );
+  }
   const candidates = [
     path.join(PANELS_DIR, `${name}.yaml`),
     path.join(PANELS_DIR, `${name}.yml`),
   ];
+  // Defense in depth: even though the regex prevents traversal, assert
+  // every candidate is inside PANELS_DIR before reading.
+  const panelsRoot = path.resolve(PANELS_DIR) + path.sep;
   for (const file of candidates) {
+    const resolved = path.resolve(file);
+    if (!resolved.startsWith(panelsRoot)) {
+      throw new Error(`Refusing to read panel outside ${PANELS_DIR}: ${resolved}`);
+    }
     try {
-      return await loadTemplateFromFile(file);
+      return await loadTemplateFromFile(resolved);
     } catch (err: unknown) {
       if (!isENOENT(err)) throw err;
     }
