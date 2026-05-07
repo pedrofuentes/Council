@@ -132,7 +132,8 @@ describe("MockEngine — send (success path)", () => {
       (e): e is Extract<EngineEvent, { kind: "message.complete" }> => e.kind === "message.complete",
     );
     expect(completeEvent).toBeDefined();
-    const response: EngineResponse = completeEvent!.response;
+    if (!completeEvent) return;
+    const response: EngineResponse = completeEvent.response;
     expect(response.latencyMs).toBeGreaterThanOrEqual(0);
     expect(response.tokensIn).toBeGreaterThan(0);
     expect(response.tokensOut).toBeGreaterThan(0);
