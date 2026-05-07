@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `src/engine/mock/mock-engine.ts` — `MockEngine` deterministic in-memory implementation of `CouncilEngine` for unit tests; covers full lifecycle (start/stop idempotency), expert registration, streaming success path, configured failures, and the cancellation contract (AbortSignal, stop(), removeExpert())
 - `isRecoverable(code: EngineErrorCode): boolean` — single source of truth for retry semantics (closes issue #9). RATE_LIMITED and NETWORK are recoverable; all others are not.
 - `pnpm check` script — chains `typecheck && lint && test` for a single pre-merge gate (partial fix for #13)
+- `src/config/schema.ts` — Zod-based `ConfigSchema`, `CouncilConfig` type, `DEFAULT_MODEL` constant. Conservative defaults (3 experts, 4 rounds, 250-word cap)
+- `src/config/loader.ts` — `loadConfig()` (reads YAML, applies defaults, writes default file when missing) and `getCouncilHome()` (honors `COUNCIL_HOME` env var for tests + ephemeral mode)
+- New runtime deps: `zod`, `yaml`
 
 ### Changed
 
