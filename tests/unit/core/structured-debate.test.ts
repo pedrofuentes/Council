@@ -213,6 +213,35 @@ describe("Structured debate — phase prompts", () => {
       expect(sent.prompt.toLowerCase()).toMatch(/synthes|final|conclude/);
     }
   });
+
+  it("synthesis prompt includes the OTHER experts' rebuttal content", async () => {
+    // Distinct, identifiable strings for each phase so we can assert that
+    // rebuttal content survives all the way into the synthesis prompt.
+    const engine = new MockEngine({
+      responses: {
+        "01HZ-cto": "CTO_TOKEN",
+        "01HZ-pm": "PM_REBUTTAL_TOKEN",
+      },
+    });
+    await engine.start();
+    await engine.addExpert(cto);
+    await engine.addExpert(pm);
+
+    await collect(new Debate(engine, [cto, pm], STRUCTURED).run("Topic?"));
+
+    // Sends 6 and 7 are the synthesis phase. CTO's synthesis prompt must
+    // contain PM's rebuttal content (and vice-versa). Without the fix,
+    // synthesis receives `[]` for rebuttalTurns and the prompt has no
+    // Rebuttal: section at all.
+    const synthesis = engine.sentPrompts.slice(6, 8);
+    const ctoSynth = synthesis.find((s) => s.expertId === cto.id);
+    expect(ctoSynth).toBeDefined();
+    // Marker that buildSynthesisPrompt emits per phase line.
+    expect(ctoSynth?.prompt ?? "").toMatch(/Rebuttal/);
+    // PM is the other expert; their rebuttal token must appear in CTO's
+    // synthesis prompt under a `(Rebuttal)` line.
+    expect(ctoSynth?.prompt ?? "").toContain("PM (Rebuttal)");
+  });
 });
 
 describe("Structured debate — edge cases", () => {
