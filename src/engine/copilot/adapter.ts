@@ -104,6 +104,21 @@ export class CopilotEngine implements CouncilEngine {
   #client: CopilotClient | undefined;
   #started = false;
   #stopped = false;
+  #lastStopErrors: Error[] = [];
+
+  /**
+   * Errors collected during the most recent `stop()` invocation.
+   *
+   * Backwards-compatible read-after-stop accessor introduced for #143:
+   * `stop()` still returns `Promise<void>`, but per-session disconnect
+   * failures (and the final `client.stop()` failure) are now collected
+   * here instead of being silently swallowed. Operationally important —
+   * a populated array means a server-side session may be leaking and ops
+   * should investigate. Empty after a clean stop.
+   */
+  get lastStopErrors(): readonly Error[] {
+    return this.#lastStopErrors;
+  }
 
   async start(): Promise<void> {
     if (this.#started && !this.#stopped) return;
@@ -111,29 +126,42 @@ export class CopilotEngine implements CouncilEngine {
     await this.#client.start();
     this.#started = true;
     this.#stopped = false;
+    this.#lastStopErrors = [];
   }
 
   async stop(): Promise<void> {
     if (this.#stopped) return;
+    const errors: Error[] = [];
     // Abort every in-flight send across every expert.
     for (const record of this.#experts.values()) {
       for (const ctrl of record.inFlight) ctrl.abort();
       try {
         await record.session.disconnect();
-      } catch {
-        /* ignore individual session-disconnect failures during teardown */
+      } catch (err: unknown) {
+        // #143: collect rather than swallow. A disconnect failure can
+        // mean the session is leaking server-side; ops needs to see it.
+        errors.push(
+          err instanceof Error
+            ? new Error(`expert ${record.spec.id}: ${err.message}`, { cause: err })
+            : new Error(`expert ${record.spec.id}: ${String(err)}`),
+        );
       }
     }
     this.#experts.clear();
     if (this.#client) {
       try {
         await this.#client.stop();
-      } catch {
-        /* ignore */
+      } catch (err: unknown) {
+        errors.push(
+          err instanceof Error
+            ? new Error(`CopilotClient.stop(): ${err.message}`, { cause: err })
+            : new Error(`CopilotClient.stop(): ${String(err)}`),
+        );
       }
     }
     this.#client = undefined;
     this.#stopped = true;
+    this.#lastStopErrors = errors;
   }
 
   async addExpert(spec: ExpertSpec): Promise<void> {

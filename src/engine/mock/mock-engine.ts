@@ -58,6 +58,18 @@ export interface MockEngineOptions {
   readonly deltaDelayMs?: number;
   /** Override the model identifier returned by listModels(). */
   readonly modelName?: string;
+  /**
+   * Test-only seam: when set, the Nth (1-indexed by call order) `addExpert`
+   * call rejects with a synthetic error. Useful for testing partial-failure
+   * recovery in callers that fan out via `Promise.all` / `Promise.allSettled`.
+   */
+  readonly failOnAddExpert?: { readonly afterN: number };
+  /**
+   * Test-only seam: expert IDs in this set will simulate a disconnect
+   * failure during `stop()`. Used to verify that callers correctly
+   * surface aggregated cleanup errors via `lastStopErrors`.
+   */
+  readonly failOnDisconnect?: ReadonlySet<string>;
 }
 
 const SENTENCE_SPLIT = /([.!?]\s+)/;
@@ -111,11 +123,43 @@ interface InFlight {
 }
 
 export class MockEngine implements CouncilEngine {
-  readonly #options: Required<MockEngineOptions>;
+  readonly #options: {
+    readonly responses: Readonly<Record<string, string>>;
+    readonly failures: Readonly<Record<string, Pick<EngineError, "code" | "message">>>;
+    readonly deltaDelayMs: number;
+    readonly modelName: string;
+    readonly failOnAddExpert: { readonly afterN: number } | null;
+    readonly failOnDisconnect: ReadonlySet<string>;
+  };
   readonly #experts = new Map<string, ExpertSpec>();
   readonly #inFlight = new Set<InFlight>();
   readonly #sentPrompts: { readonly expertId: string; readonly prompt: string }[] = [];
   #stopped = false;
+  #addExpertCallCount = 0;
+  #lastStopErrors: Error[] = [];
+
+  /**
+   * Test-only accessor: number of registered experts. Used by tests
+   * that need to verify cleanup (e.g. partial-failure rollback in
+   * convene removed all created experts before stop()).
+   */
+  get expertCount(): number {
+    return this.#experts.size;
+  }
+
+  /**
+   * Errors collected during the most recent `stop()` invocation.
+   *
+   * Backwards-compatible read-after-stop accessor introduced for #143:
+   * `stop()` still returns `Promise<void>`, but per-session disconnect
+   * failures are now collected here instead of being silently swallowed.
+   * Empty after a clean stop; populated when the test seam
+   * `failOnDisconnect` triggers (or, in `CopilotEngine`, when the SDK
+   * raises a real disconnect error).
+   */
+  get lastStopErrors(): readonly Error[] {
+    return this.#lastStopErrors;
+  }
 
   /**
    * Test-only accessor: every prompt sent via `send()`, in temporal order.
@@ -132,25 +176,54 @@ export class MockEngine implements CouncilEngine {
       failures: options.failures ?? {},
       deltaDelayMs: options.deltaDelayMs ?? 0,
       modelName: options.modelName ?? "mock-model",
+      failOnAddExpert: options.failOnAddExpert ?? null,
+      failOnDisconnect: options.failOnDisconnect ?? new Set<string>(),
     };
   }
 
   async start(): Promise<void> {
     // Idempotent: re-starting after stop is allowed (test fixtures may reset).
     this.#stopped = false;
+    this.#lastStopErrors = [];
   }
 
   async stop(): Promise<void> {
-    if (this.#stopped) return; // idempotent
+    // Reset the diagnostic buffer for this stop() invocation so callers
+    // observing lastStopErrors get a fresh read each time. Idempotent
+    // calls return early without clearing — the previous diagnostics
+    // remain readable until the next start()/stop() cycle.
+    if (this.#stopped) return;
     this.#stopped = true;
+    const errors: Error[] = [];
     // Abort every in-flight send; their iterators will yield ABORTED + done.
     for (const f of this.#inFlight) {
       f.controller.abort();
     }
     this.#inFlight.clear();
+    // Simulate per-session disconnect failures via the failOnDisconnect
+    // test seam (#143). Real adapters (CopilotEngine) collect actual
+    // SDK errors here.
+    for (const expertId of this.#experts.keys()) {
+      if (this.#options.failOnDisconnect.has(expertId)) {
+        errors.push(new Error(`MockEngine: simulated disconnect failure for ${expertId}`));
+      }
+    }
+    this.#lastStopErrors = errors;
   }
 
   async addExpert(spec: ExpertSpec): Promise<void> {
+    this.#addExpertCallCount += 1;
+    // #142 / test seam: simulate a partial-failure scenario where the
+    // Nth call rejects. Tests use this to verify that callers fan-out
+    // via Promise.allSettled and clean up created sessions.
+    if (
+      this.#options.failOnAddExpert &&
+      this.#addExpertCallCount === this.#options.failOnAddExpert.afterN + 1
+    ) {
+      throw new Error(
+        `MockEngine: simulated addExpert failure (failOnAddExpert.afterN=${this.#options.failOnAddExpert.afterN})`,
+      );
+    }
     if (this.#experts.has(spec.id)) {
       throw new Error(`Expert ${spec.id} is already registered`);
     }
