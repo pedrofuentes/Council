@@ -1,18 +1,25 @@
 /**
- * `council convene <topic> --template <name>` — runs a full panel debate
- * end-to-end and persists the result to the local SQLite DB.
+ * `council convene <topic> --template <name> --engine <kind>` — runs a full
+ * panel debate end-to-end and persists the result to the local SQLite DB.
+ *
+ * Engine selection is EXPLICIT. There is no silent default — the user
+ * must pass `--engine mock` (offline, deterministic, for testing) or
+ * `--engine copilot` (real, once ROADMAP §1.4 wires the adapter). This
+ * is deliberate per Sentinel pr125 cycle 1 finding 1: we never silently
+ * persist fake mock data as a real "completed" debate.
  *
  * Wiring:
  *   1. Load + validate the panel template (panels/<name>.yaml)
  *   2. Build the 8-section system prompt for each expert (no memory recall yet)
- *   3. Open the local DB; insert panel + expert rows
- *   4. Construct the engine via the injected factory (default = Copilot adapter)
+ *   3. Open the local DB; insert panel + expert rows (configJson tags engine)
+ *   4. Construct the engine via the explicit kind / injected factory
  *   5. Register experts with the engine
  *   6. Build a Debate, wrap with DebatePersister, hand to selected Renderer
  *   7. Render until debate.end; clean up engine + DB; return
  *
  * The `engineFactory` and `write` options exist purely for testability —
- * production callers omit them and get the Copilot engine + stdout writer.
+ * production callers omit them; the engine is selected from the --engine
+ * flag and constructed by built-in factories.
  *
  * Memory recall (§3.1 second half) is NOT yet wired here; experts are
  * built with `memory: undefined`. Once recall lands the only change is
@@ -46,26 +53,24 @@ import type { Sink } from "../renderers/types.js";
 
 import { defaultWriter, type Writer } from "./writer.js";
 
-const DEFAULT_MODEL = "claude-sonnet-4";
+import { DEFAULT_MODEL } from "../../config/index.js";
+
 const DEFAULT_MAX_ROUNDS = 4;
 const DEFAULT_MAX_WORDS = 250;
 
+/** Supported engine kinds via the `--engine` CLI flag. */
+export const CONVENE_ENGINE_KINDS = ["mock", "copilot"] as const;
+export type ConveneEngineKind = (typeof CONVENE_ENGINE_KINDS)[number];
+
 export interface ConveneCommandDeps {
   /**
-   * Engine factory. Default constructs a fresh MockEngine — production
-   * binaries override this to construct CopilotEngine. Tests inject a
-   * MockEngine with seeded responses.
-   *
-   * Default is MockEngine (not Copilot) because importing the Copilot
-   * adapter at module load would force every CLI consumer to ship the SDK
-   * even for non-convene commands. The bin entry will be updated in a
-   * follow-up to inject the real adapter once it has a session pool.
+   * Test-only override: takes precedence over the --engine flag and
+   * constructs the engine directly. Production callers omit this and
+   * the command uses one of the built-in kind→factory mappings.
    */
   readonly engineFactory?: () => CouncilEngine;
   /** Writer for stdout. Defaults to process.stdout.write. */
   readonly write?: Writer;
-  /** Pass-through to commander.Command#exitOverride for tests. */
-  readonly exitOverride?: boolean;
 }
 
 export interface ConveneOptions {
@@ -74,24 +79,46 @@ export interface ConveneOptions {
   readonly maxRounds: number;
   readonly mode: DebateMode;
   readonly maxWords: number;
+  readonly engine: ConveneEngineKind;
 }
 
-function defaultEngineFactory(): CouncilEngine {
-  // Per docs above — production wiring lives in bin/council.ts.
-  return new MockEngine();
+/**
+ * Maps an explicit engine kind to a constructor function. The Copilot
+ * branch currently throws — wiring lands once the adapter has a session
+ * pool. Throwing (rather than silently falling back) is the point.
+ */
+function makeEngineFromKind(kind: ConveneEngineKind): CouncilEngine {
+  switch (kind) {
+    case "mock":
+      return new MockEngine();
+    case "copilot":
+      throw new Error(
+        "--engine copilot is not yet wired. The Copilot adapter needs a session pool " +
+          "(ROADMAP §1.4 follow-up). Use --engine mock for offline testing, or wait for " +
+          "the next release.",
+      );
+  }
 }
 
 export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
   const write: Writer = deps.write ?? defaultWriter;
-  const engineFactory = deps.engineFactory ?? defaultEngineFactory;
 
   const cmd = new Command("convene");
   cmd
     .description("Run a panel debate on a topic and persist results to the local DB")
     .argument("<topic>", "The topic / question for the panel to debate")
     .requiredOption("--template <name>", "Built-in panel template (e.g. 'code-review')")
+    .requiredOption(
+      "--engine <kind>",
+      "Engine to use: 'mock' (offline, deterministic) or 'copilot' (real, when wired)",
+    )
     .option("--format <kind>", "Output format: json (NDJSON) or plain (human)", "plain")
-    .option("--max-rounds <n>", "Max rounds (freeform mode only)", (v) => Number.parseInt(v, 10), DEFAULT_MAX_ROUNDS)
+    .option(
+      "--max-rounds <n>",
+      "Max rounds (freeform mode only)",
+      (v) => Number.parseInt(v, 10),
+      DEFAULT_MAX_ROUNDS,
+    )
     .option("--mode <kind>", "Debate mode: freeform | structured", "freeform")
     .option(
       "--max-words <n>",
@@ -100,13 +127,33 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       DEFAULT_MAX_WORDS,
     )
     .action(async (topic: string, raw: ConveneOptions) => {
+      const engineKind: ConveneEngineKind =
+        raw.engine === "copilot" ? "copilot" : raw.engine === "mock" ? "mock" : "mock";
+      if (!CONVENE_ENGINE_KINDS.includes(raw.engine)) {
+        throw new Error(
+          `Unknown --engine value: ${raw.engine}. Expected one of: ${CONVENE_ENGINE_KINDS.join(", ")}`,
+        );
+      }
+
       const opts: ConveneOptions = {
         template: raw.template,
         format: raw.format === "json" ? "json" : "plain",
         maxRounds: Number.isFinite(raw.maxRounds) ? raw.maxRounds : DEFAULT_MAX_ROUNDS,
         mode: raw.mode === "structured" ? "structured" : "freeform",
         maxWords: Number.isFinite(raw.maxWords) ? raw.maxWords : DEFAULT_MAX_WORDS,
+        engine: engineKind,
       };
+
+      // Loud, unmissable warning when running with the mock engine — both
+      // before and after, in both --format plain and --format json. The
+      // warning is text, not JSON, so JSON consumers should filter
+      // non-`{`-starting lines (which they always do for streaming pipes).
+      if (opts.engine === "mock") {
+        write(
+          "\n!! [MOCK ENGINE] Running with deterministic offline mock — responses are NOT real.\n" +
+            "   This debate will be persisted to the local DB tagged engine='mock'.\n\n",
+        );
+      }
 
       // (1) Load template — throws if not found / invalid.
       const template = await loadTemplate(opts.template);
@@ -133,6 +180,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             mode: opts.mode,
             maxRounds: opts.maxRounds,
             maxWords: opts.maxWords,
+            engine: opts.engine,
           }),
         });
 
@@ -148,8 +196,9 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           expertSlugToId[e.slug] = row.id;
         }
 
-        // (4) Construct engine + register experts.
-        engine = engineFactory();
+        // (4) Construct engine. Test injection wins over the kind-based
+        // factory so we don't have to mutate process.env to pass mocks.
+        engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(opts.engine);
         await engine.start();
         for (const e of experts) {
           await engine.addExpert(e);
@@ -182,7 +231,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         if (opts.format === "plain") {
           write(`\n# ${template.name}\n`);
           write(`Topic: ${topic}\n`);
-          write(`Mode: ${opts.mode} | Max rounds: ${opts.maxRounds}\n\n`);
+          write(`Mode: ${opts.mode} | Max rounds: ${opts.maxRounds} | Engine: ${opts.engine}\n\n`);
         }
 
         const stream = persister.persist(new Debate(engine, experts, config).run(topic), topic);
@@ -193,7 +242,6 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       }
     });
 
-  if (deps.exitOverride) cmd.exitOverride();
   return cmd;
 }
 
@@ -216,3 +264,4 @@ function buildExpertSpecs(template: PanelDefinition, topic: string): ExpertSpec[
     };
   });
 }
+
