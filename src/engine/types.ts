@@ -40,26 +40,87 @@ export interface ExpertSpec {
 /**
  * Arguments for a single send-to-expert call on the engine.
  *
- * `expertId` MUST match the `id` of an expert that has already been added
- * via {@link CouncilEngine.addExpert}. Engines reject unknown expert IDs.
+ * - `prompt`: the user/orchestrator turn text — engines pass it through
+ *   unmodified. The system prompt is set once via `addExpert(spec.systemMessage)`
+ *   and is NOT re-sent per turn.
+ * - `expertId`: must match the `id` of an expert already registered via
+ *   {@link CouncilEngine.addExpert}. Engines reject unknown IDs.
+ * - `signal`: optional `AbortSignal`; when aborted, the engine MUST stop
+ *   the in-flight send promptly and yield a terminal `error` event with
+ *   `code: "ABORTED"` (see {@link EngineErrorCode}). Adapters MAY also
+ *   honor cooperative cancellation when the consumer calls the
+ *   AsyncIterator's `return()` method (e.g., breaking out of `for await`).
  */
 export interface SendOptions {
   readonly prompt: string;
   readonly expertId: string;
+  readonly signal?: AbortSignal;
 }
 
 /**
  * Aggregate result of a completed send.
  *
- * - `content`: the full assistant message (concatenation of all stream deltas)
- * - `tokensIn` / `tokensOut`: provider-reported token counts when available
- * - `latencyMs`: wall-clock time from `send()` invocation to final `message.complete`
+ * - `tokensIn` / `tokensOut`: provider-reported token counts when available;
+ *   used for cost accounting (`core/cost.ts`)
+ * - `latencyMs`: wall-clock time from `send()` invocation to the terminal event
+ *
+ * Note: full content is NOT included here. Consumers that need the assembled
+ * response should accumulate `message.delta.text` themselves. This keeps
+ * adapters from needing to maintain a parallel buffer and lets transcript
+ * assembly live in `core/debate.ts` (the single source of truth for what
+ * gets persisted).
  */
 export interface EngineResponse {
-  readonly content: string;
   readonly tokensIn?: number;
   readonly tokensOut?: number;
   readonly latencyMs: number;
+}
+
+/**
+ * Stable, provider-agnostic error codes surfaced by every engine adapter.
+ *
+ * Adapters MUST translate provider-native errors into one of these codes
+ * before yielding an `error` event. New codes require an ADR.
+ *
+ * - `ABORTED`: caller's `AbortSignal` fired or iterator was returned early
+ * - `NOT_AUTHENTICATED`: provider credentials are missing or invalid
+ * - `RATE_LIMITED`: provider quota exhausted; consult `retryAfterMs`
+ * - `MODEL_UNAVAILABLE`: requested model is not reachable via this engine
+ * - `CONTEXT_OVERFLOW`: prompt + history exceed the model's context window
+ * - `NETWORK`: transient network failure; usually `recoverable: true`
+ * - `PROVIDER_ERROR`: provider returned an error not mapped to anything more
+ *   specific; adapters SHOULD attach a `cause` for diagnostics
+ * - `INTERNAL`: bug in the engine adapter itself (assertion failure, etc.)
+ */
+export type EngineErrorCode =
+  | "ABORTED"
+  | "NOT_AUTHENTICATED"
+  | "RATE_LIMITED"
+  | "MODEL_UNAVAILABLE"
+  | "CONTEXT_OVERFLOW"
+  | "NETWORK"
+  | "PROVIDER_ERROR"
+  | "INTERNAL";
+
+/**
+ * Structured, serializable error surfaced via the `error` event.
+ *
+ * Unlike a raw `Error`, this is a plain readonly object that:
+ *   - Has a stable `code` field for log-based classification and metric tags
+ *   - Is JSON-serializable end-to-end (renderer → persistence → export)
+ *   - Hides provider-native error subclasses behind the seam
+ *
+ * `cause` carries the original error object for diagnostics (`unknown` so we
+ * never trust its shape; access via instance checks at the boundary).
+ */
+export interface EngineError {
+  readonly code: EngineErrorCode;
+  readonly message: string;
+  readonly cause?: unknown;
+  /** Set by `RATE_LIMITED` (and sometimes `NETWORK`) when known. */
+  readonly retryAfterMs?: number;
+  /** Optional provider tag for diagnostics, e.g. `"copilot"` / `"anthropic"`. */
+  readonly provider?: string;
 }
 
 /**
@@ -67,10 +128,13 @@ export interface EngineResponse {
  *
  * - `message.delta`: incremental token chunk; renderers should append to the
  *   running buffer for the matching `expertId`
- * - `message.complete`: terminal event; the response object aggregates everything
- *   that was streamed and includes telemetry
- * - `error`: recoverable or fatal; downstream orchestration decides how to react
- *   (see `core/debate.ts` retry policy)
+ * - `message.complete`: terminal success event with token/latency telemetry
+ *   (no content — accumulate from deltas; see {@link EngineResponse})
+ * - `error`: terminal failure event; `recoverable` is derived from
+ *   `error.code` (e.g., `ABORTED` is not recoverable, `RATE_LIMITED` is)
+ *
+ * Exactly one terminal event (`message.complete` or `error`) is yielded per
+ * `send()` call. After the terminal event, the iterator is done.
  */
 export type EngineEvent =
   | {
@@ -86,6 +150,6 @@ export type EngineEvent =
   | {
       readonly kind: "error";
       readonly expertId: string;
-      readonly error: Error;
+      readonly error: EngineError;
       readonly recoverable: boolean;
     };

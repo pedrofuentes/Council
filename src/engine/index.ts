@@ -14,6 +14,8 @@
  * See DECISIONS.md ADR-003 for the rationale.
  */
 export type {
+  EngineError,
+  EngineErrorCode,
   EngineEvent,
   EngineResponse,
   ExpertSpec,
@@ -39,14 +41,27 @@ import type { EngineEvent, ExpertSpec, SendOptions } from "./types.js";
  *     unit tests and for offline development
  *   - {@link CopilotEngine} (Phase 1.4) — wraps `@github/copilot-sdk`
  *
- * Implementations MUST be safe to call `stop()` multiple times and MUST treat
- * `removeExpert` of an unknown id as a no-op (idempotent teardown).
+ * Cancellation contract:
+ *   - `stop()` MUST abort all in-flight sends and yield a terminal `error`
+ *     event with `code: "ABORTED"` to each one before resolving.
+ *   - `removeExpert(id)` MUST abort any in-flight send for that expert with
+ *     the same terminal error.
+ *   - When `SendOptions.signal` aborts, the engine MUST yield the same
+ *     terminal `ABORTED` error promptly (within the next iterator step).
+ *
+ * Idempotency:
+ *   - `start()` and `stop()` MUST be safe to call multiple times.
+ *   - `removeExpert(id)` of an unknown id is a no-op.
+ *   - `addExpert(spec)` with an already-registered `spec.id` MUST throw.
  */
 export interface CouncilEngine {
   /** Boot the underlying provider. Must complete before any other method. */
   start(): Promise<void>;
 
-  /** Tear down the provider and release all expert sessions. Idempotent. */
+  /**
+   * Tear down the provider and release all expert sessions. Idempotent.
+   * Aborts every in-flight `send()` (see Cancellation contract above).
+   */
   stop(): Promise<void>;
 
   /**
@@ -57,6 +72,7 @@ export interface CouncilEngine {
 
   /**
    * Drop an expert and release its session. No-op for unknown IDs.
+   * Aborts any in-flight `send()` for the expert.
    */
   removeExpert(expertId: string): Promise<void>;
 
@@ -64,11 +80,15 @@ export interface CouncilEngine {
    * Send a prompt to a registered expert and stream the response.
    *
    * Yields a sequence of events ending in either `message.complete` (success)
-   * or `error` (failure). For partial failures with `recoverable: true`, the
-   * caller (typically the debate orchestrator) decides whether to retry.
+   * or `error` (failure). Exactly one terminal event is yielded per call.
+   * For partial failures with `recoverable: true`, the caller (typically
+   * `core/debate.ts`) decides whether to retry.
    *
    * Throws synchronously (before any event is yielded) if `options.expertId`
    * was never registered via `addExpert`.
+   *
+   * Honors `options.signal` (see {@link SendOptions}) and cooperative
+   * cancellation via `AsyncIterator.return()`.
    */
   send(options: SendOptions): AsyncIterable<EngineEvent>;
 

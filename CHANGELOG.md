@@ -12,8 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - ESLint rule `no-restricted-imports` enforcing `@github/copilot-sdk` may only be imported from `src/engine/copilot/adapter.ts`
 - CLI binary entry (`council --version`, `council --help`) using Commander.js
 - Smoke test verifying Node 20+ runtime
-- `src/engine/types.ts` — domain types (`ExpertSpec`, `SendOptions`, `EngineResponse`, `EngineEvent`, `ReasoningEffort`)
-- `src/engine/index.ts` — `CouncilEngine` interface, the architectural seam between Council's domain logic and AI provider SDKs (per ADR-003)
+- `src/engine/types.ts` — domain types (`ExpertSpec`, `SendOptions` with `AbortSignal`, `EngineResponse` (telemetry only — content is consumer-accumulated), `EngineError`, `EngineErrorCode`, `EngineEvent`, `ReasoningEffort`)
+- `src/engine/index.ts` — `CouncilEngine` interface with documented cancellation contract (`AbortSignal`, iterator-return) and idempotency guarantees, the architectural seam between Council's domain logic and AI provider SDKs (per ADR-003)
 
 ### Changed
 
