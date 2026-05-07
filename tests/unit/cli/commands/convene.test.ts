@@ -97,6 +97,8 @@ describe("buildConveneCommand", () => {
       "1",
       "--format",
       "json",
+      "--engine",
+      "mock",
     ]);
 
     // Inspect the DB to verify side effects.
@@ -127,8 +129,11 @@ describe("buildConveneCommand", () => {
       await db.destroy();
     }
 
-    // --format json: every line of stdout should be valid JSON
-    const lines = captured.split("\n").filter((l) => l.trim().length > 0);
+    // --format json: every line of stdout (excluding the MOCK warning sent
+    // to the writer) should be valid JSON.
+    const lines = captured
+      .split("\n")
+      .filter((l) => l.trim().length > 0 && l.trim().startsWith("{"));
     expect(lines.length).toBeGreaterThan(0);
     for (const line of lines) {
       expect(() => JSON.parse(line)).not.toThrow();
@@ -157,6 +162,8 @@ describe("buildConveneCommand", () => {
       "code-review",
       "--max-rounds",
       "1",
+      "--engine",
+      "mock",
     ]);
 
     expect(captured.length).toBeGreaterThan(0);
@@ -185,9 +192,13 @@ describe("buildConveneCommand", () => {
       "structured",
       "--format",
       "json",
+      "--engine",
+      "mock",
     ]);
 
-    const lines = captured.split("\n").filter((l) => l.trim().length > 0);
+    const lines = captured
+      .split("\n")
+      .filter((l) => l.trim().length > 0 && l.trim().startsWith("{"));
     const phases = lines
       .map((l) => JSON.parse(l) as { kind: string; phase?: string })
       .filter((e) => e.kind === "round.start")
@@ -199,8 +210,6 @@ describe("buildConveneCommand", () => {
     const cmd = buildConveneCommand({
       engineFactory: makeMockEngineFactory(),
       write: () => undefined,
-      // commander.js calls process.exit on validation errors; override.
-      exitOverride: true,
     });
     cmd.exitOverride();
 
@@ -211,8 +220,105 @@ describe("buildConveneCommand", () => {
         "topic",
         "--template",
         "this-template-definitely-does-not-exist",
+        "--engine",
+        "mock",
       ]),
     ).rejects.toThrow();
+  });
+
+  it("requires explicit --engine flag (no silent fallback to mock)", async () => {
+    const cmd = buildConveneCommand({
+      // No engineFactory passed — must require --engine on CLI.
+      write: () => undefined,
+    });
+    cmd.exitOverride();
+
+    await expect(
+      cmd.parseAsync([
+        "node",
+        "council-convene",
+        "topic",
+        "--template",
+        "code-review",
+      ]),
+    ).rejects.toThrow();
+  });
+
+  it("--engine copilot fails loudly (not yet wired)", async () => {
+    const cmd = buildConveneCommand({
+      write: () => undefined,
+    });
+    cmd.exitOverride();
+
+    let thrownMessage = "";
+    try {
+      await cmd.parseAsync([
+        "node",
+        "council-convene",
+        "topic",
+        "--template",
+        "code-review",
+        "--engine",
+        "copilot",
+      ]);
+    } catch (err) {
+      thrownMessage = err instanceof Error ? err.message : String(err);
+    }
+    expect(thrownMessage).toMatch(/not yet wired|copilot|adapter/i);
+  });
+
+  it("--engine mock prints a prominent MOCK warning to stderr / output", async () => {
+    let captured = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (s) => {
+        captured += s;
+      },
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "topic",
+      "--template",
+      "code-review",
+      "--max-rounds",
+      "1",
+      "--engine",
+      "mock",
+    ]);
+
+    // Loud warning so users can never confuse mock output for real LLM.
+    expect(captured.toUpperCase()).toContain("MOCK");
+  });
+
+  it("--engine mock tags the persisted debate config with mock=true", async () => {
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "topic",
+      "--template",
+      "code-review",
+      "--max-rounds",
+      "1",
+      "--engine",
+      "mock",
+    ]);
+
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const panels = await new PanelRepository(db).findAll();
+      expect(panels).toHaveLength(1);
+      const config = JSON.parse(panels[0]?.configJson ?? "{}") as { engine?: string };
+      expect(config.engine).toBe("mock");
+    } finally {
+      await db.destroy();
+    }
   });
 });
 
