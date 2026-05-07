@@ -51,7 +51,7 @@ import { JsonRenderer } from "../renderers/json.js";
 import { PlainRenderer } from "../renderers/plain.js";
 import type { Sink } from "../renderers/types.js";
 
-import { defaultWriter, type Writer } from "./writer.js";
+import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
 import { DEFAULT_MODEL } from "../../config/index.js";
 import { CopilotEngine } from "../../engine/copilot/adapter.js";
@@ -70,8 +70,15 @@ export interface ConveneCommandDeps {
    * the command uses one of the built-in kind→factory mappings.
    */
   readonly engineFactory?: () => CouncilEngine;
-  /** Writer for stdout. Defaults to process.stdout.write. */
+  /** Writer for stdout (event stream / plain output). Defaults to process.stdout.write. */
   readonly write?: Writer;
+  /**
+   * Writer for stderr (warnings, cleanup errors). Defaults to
+   * process.stderr.write. Sentinel pr125 #127: separating these channels
+   * keeps `--format json` output as pure NDJSON on stdout — warnings and
+   * diagnostics never inline-corrupt the machine-readable stream.
+   */
+  readonly writeError?: Writer;
 }
 
 export interface ConveneOptions {
@@ -84,9 +91,11 @@ export interface ConveneOptions {
 }
 
 /**
- * Maps an explicit engine kind to a constructor function. Exported so
- * unit tests can verify wiring without invoking the engine (which for
- * the Copilot kind requires a real session).
+ * Maps an explicit engine kind to a constructor function.
+ *
+ * @internal Exported only so unit tests can verify wiring without
+ *   instantiating sessions. Not part of the public stable API — the
+ *   convene command is the supported integration point.
  */
 export function makeEngineFromKind(kind: ConveneEngineKind): CouncilEngine {
   switch (kind) {
@@ -94,11 +103,20 @@ export function makeEngineFromKind(kind: ConveneEngineKind): CouncilEngine {
       return new MockEngine();
     case "copilot":
       return new CopilotEngine();
+    default: {
+      // Sentinel pr132 #134 + pr125 #128: exhaustiveness check. If a
+      // future ConveneEngineKind value is added without a matching case
+      // here, this throws at runtime and the typed `_exhaustive`
+      // assignment fails at compile time.
+      const _exhaustive: never = kind;
+      throw new Error(`Unknown engine kind: ${String(_exhaustive)}`);
+    }
   }
 }
 
 export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
   const write: Writer = deps.write ?? defaultWriter;
+  const writeError: Writer = deps.writeError ?? defaultErrorWriter;
 
   const cmd = new Command("convene");
   cmd
@@ -124,13 +142,13 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       DEFAULT_MAX_WORDS,
     )
     .action(async (topic: string, raw: ConveneOptions) => {
-      const engineKind: ConveneEngineKind =
-        raw.engine === "copilot" ? "copilot" : raw.engine === "mock" ? "mock" : "mock";
+      // Sentinel pr125 #129: validate-then-assign. No silent fallback.
       if (!CONVENE_ENGINE_KINDS.includes(raw.engine)) {
         throw new Error(
           `Unknown --engine value: ${raw.engine}. Expected one of: ${CONVENE_ENGINE_KINDS.join(", ")}`,
         );
       }
+      const engineKind: ConveneEngineKind = raw.engine;
 
       const opts: ConveneOptions = {
         template: raw.template,
@@ -141,12 +159,11 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         engine: engineKind,
       };
 
-      // Loud, unmissable warning when running with the mock engine — both
-      // before and after, in both --format plain and --format json. The
-      // warning is text, not JSON, so JSON consumers should filter
-      // non-`{`-starting lines (which they always do for streaming pipes).
+      // Sentinel pr125 #127: route the MOCK warning through writeError
+      // so JSON consumers reading stdout get pure NDJSON. Plain users
+      // see both channels combined when both default to the terminal.
       if (opts.engine === "mock") {
-        write(
+        writeError(
           "\n!! [MOCK ENGINE] Running with deterministic offline mock — responses are NOT real.\n" +
             "   This debate will be persisted to the local DB tagged engine='mock'.\n\n",
         );
@@ -197,9 +214,12 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         // factory so we don't have to mutate process.env to pass mocks.
         engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(opts.engine);
         await engine.start();
-        for (const e of experts) {
-          await engine.addExpert(e);
-        }
+        // Sentinel pr125 #131: parallel addExpert. CopilotEngine creates
+        // one CopilotSession per expert independently — they don't share
+        // mutable state during creation, so Promise.all is safe and cuts
+        // startup latency from O(N × session-create-ms) to O(1).
+        const startedEngine = engine;
+        await Promise.all(experts.map((e) => startedEngine.addExpert(e)));
 
         // (5) Build Debate + wrap in persister + hand to renderer.
         const config: DebateConfig = {
@@ -217,7 +237,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
 
         const sink: Sink = {
           write,
-          writeError: write,
+          writeError,
         };
         const renderer =
           opts.format === "json" ? new JsonRenderer(sink) : new PlainRenderer(sink);
@@ -234,8 +254,20 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         const stream = persister.persist(new Debate(engine, experts, config).run(topic), topic);
         await renderer.render(stream);
       } finally {
-        if (engine) await engine.stop().catch(() => undefined);
-        await db.destroy().catch(() => undefined);
+        // Sentinel pr125 #130: log cleanup errors instead of swallowing.
+        // Cleanup happens after the user already saw the main output, so
+        // errors here go to writeError (stderr) — never block the success
+        // path, but never silently lose info ops needs to debug.
+        if (engine) {
+          await engine.stop().catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            writeError(`!! engine.stop() failed during cleanup: ${msg}\n`);
+          });
+        }
+        await db.destroy().catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          writeError(`!! db.destroy() failed during cleanup: ${msg}\n`);
+        });
       }
     });
 

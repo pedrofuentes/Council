@@ -104,9 +104,3 @@ describe.runIf(INTEGRATION)("council convene --engine copilot (integration)", ()
     90_000,
   );
 });
-
-if (!INTEGRATION) {
-  describe("council convene --engine copilot (integration)", () => {
-    it.skip("skipped — set COUNCIL_INTEGRATION=1 to enable", () => undefined);
-  });
-}

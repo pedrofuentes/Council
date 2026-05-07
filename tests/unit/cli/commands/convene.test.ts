@@ -259,12 +259,16 @@ describe("buildConveneCommand", () => {
     expect(engine).toBeInstanceOf(CopilotEngine);
   });
 
-  it("--engine mock prints a prominent MOCK warning to stderr / output", async () => {
-    let captured = "";
+  it("--engine mock prints a prominent MOCK warning to a separate writeError channel (NOT stdout)", async () => {
+    let stdoutCaptured = "";
+    let stderrCaptured = "";
     const cmd = buildConveneCommand({
       engineFactory: makeMockEngineFactory(),
       write: (s) => {
-        captured += s;
+        stdoutCaptured += s;
+      },
+      writeError: (s) => {
+        stderrCaptured += s;
       },
     });
 
@@ -278,10 +282,21 @@ describe("buildConveneCommand", () => {
       "1",
       "--engine",
       "mock",
+      "--format",
+      "json",
     ]);
 
-    // Loud warning so users can never confuse mock output for real LLM.
-    expect(captured.toUpperCase()).toContain("MOCK");
+    // The MOCK warning must NOT pollute the JSON stream on stdout. JSON
+    // consumers parse stdout as NDJSON; an inlined warning breaks that.
+    // Every non-empty line of stdout must start with `{` (NDJSON purity).
+    const stdoutLines = stdoutCaptured.split("\n").filter((l) => l.trim().length > 0);
+    expect(stdoutLines.length).toBeGreaterThan(0);
+    for (const line of stdoutLines) {
+      expect(line.trim().startsWith("{")).toBe(true);
+    }
+
+    // The MOCK warning lives on the error channel.
+    expect(stderrCaptured.toUpperCase()).toContain("MOCK");
   });
 
   it("--engine mock tags the persisted debate config with mock=true", async () => {
@@ -311,6 +326,41 @@ describe("buildConveneCommand", () => {
     } finally {
       await db.destroy();
     }
+  });
+
+  describe("makeEngineFromKind exhaustiveness (Sentinel pr132 #134)", () => {
+    it("throws clearly when called with an unknown kind", async () => {
+      const { makeEngineFromKind } = await import(
+        "../../../../src/cli/commands/convene.js"
+      );
+      // Cast to bypass TS exhaustiveness — simulates a future engine kind
+      // added to ConveneEngineKind without a matching switch case.
+      expect(() =>
+        makeEngineFromKind("anthropic-direct" as unknown as "mock"),
+      ).toThrowError(/unknown.*engine.*kind/i);
+    });
+  });
+
+  describe("--engine validation (Sentinel pr125 #129)", () => {
+    it("rejects an unknown --engine value with a clear error", async () => {
+      const cmd = buildConveneCommand({ write: () => undefined });
+      cmd.exitOverride();
+      let thrown = "";
+      try {
+        await cmd.parseAsync([
+          "node",
+          "council-convene",
+          "topic",
+          "--template",
+          "code-review",
+          "--engine",
+          "anthropic-direct",
+        ]);
+      } catch (err) {
+        thrown = err instanceof Error ? err.message : String(err);
+      }
+      expect(thrown.toLowerCase()).toMatch(/anthropic-direct|engine.*value|engine.*expected/);
+    });
   });
 });
 
