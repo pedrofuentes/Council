@@ -128,7 +128,7 @@ describe("DebatePersister", () => {
 
     // Persister should expose the created debateId after persist starts.
     expect(persister.debateId).toBeDefined();
-    return { events, debateId: persister.debateId! };
+    return { events, debateId: persister.debateId ?? "" };
   }
 
   it("creates a debate row before the first event is yielded", async () => {
@@ -206,7 +206,7 @@ describe("DebatePersister", () => {
       persister.persist(new Debate(engine, [cto, pm], FREEFORM_2R).run("topic"), "topic"),
     );
 
-    const turns = await turnRepo.findByDebateId(persister.debateId!);
+    const turns = await turnRepo.findByDebateId(persister.debateId ?? "");
     // CTO succeeds twice, PM fails twice → 2 turns persisted.
     expect(turns).toHaveLength(2);
     for (const t of turns) {
@@ -227,7 +227,7 @@ describe("DebatePersister", () => {
       debates: debateRepo,
       turns: turnRepo,
       panelId,
-      expertSlugToId: { [cto.slug]: expertSlugToId[cto.slug]! },
+      expertSlugToId: { [cto.slug]: expertSlugToId[cto.slug] ?? "" },
       moderator: "round-robin",
     });
 
@@ -235,7 +235,7 @@ describe("DebatePersister", () => {
       persister.persist(new Debate(engine, [cto, pm], FREEFORM_2R).run("topic"), "topic"),
     );
 
-    const turns = await turnRepo.findByDebateId(persister.debateId!);
+    const turns = await turnRepo.findByDebateId(persister.debateId ?? "");
     expect(turns).toHaveLength(2);
     for (const t of turns) {
       expect(t.expertId).toBe(expertSlugToId[cto.slug]);
