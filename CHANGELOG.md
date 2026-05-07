@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `src/core/expert.ts` — `ExpertDefinitionSchema` (Zod) for static expert profiles; validated by panel YAML loader and ad-hoc CLI definitions alike
 - `src/core/prompt-builder.ts` — `buildSystemPrompt(def, memory, task)` produces the full 8-section prompt (IDENTITY → EXPERTISE PRIOR → EPISTEMIC STANCE → DEBATE PROTOCOL → OUTPUT CONTRACT → FORBIDDEN MOVES → MEMORY → CURRENT TASK). Anti-sycophancy defaults (`DEFAULT_FORBIDDEN_PHRASES`, `DEFAULT_DEBATE_PROTOCOL`, `DEFAULT_OUTPUT_CONTRACT`) are always injected; profiles may supplement but cannot remove them.
 - `ExpertMemory` type — positions, updatedPriors, unresolved questions; injected as terse bulleted log into section [7]
+- `src/core/template-loader.ts` — `PanelDefinitionSchema` (Zod with duplicate-slug check), `loadTemplate(name)`, `loadTemplateFromFile(path)`, `listTemplates()`
+- `panels/architecture-review.yaml` — CTO, Staff Engineer, SRE Lead, Product Manager
+- `panels/startup-validation.yaml` — VC Partner, Target Customer, Existing Competitor, Distribution Expert
+- `panels/code-review.yaml` — Senior Developer, Security Auditor, Performance Engineer, Future Maintainer
+- `panels/incident-postmortem.yaml` — SRE Lead, Engineering Manager, Customer Advocate, Blameless Facilitator
+- `panels/career-coaching.yaml` — IC Mentor, Engineering Manager (was IC), VP Engineering, Career Coach
 
 ### Changed
 
