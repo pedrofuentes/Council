@@ -59,9 +59,12 @@ export interface MockEngineOptions {
   /** Override the model identifier returned by listModels(). */
   readonly modelName?: string;
   /**
-   * Test-only seam: when set, the Nth (1-indexed by call order) `addExpert`
-   * call rejects with a synthetic error. Useful for testing partial-failure
-   * recovery in callers that fan out via `Promise.all` / `Promise.allSettled`.
+   * Test-only seam: when set, every `addExpert` call AFTER the Nth
+   * (1-indexed) rejects with a synthetic error. Calls 1..N still
+   * fulfill normally. Useful for testing partial-failure recovery
+   * in callers that fan out via `Promise.all` / `Promise.allSettled`.
+   * With `afterN: 1` and a 4-expert panel: 1 fulfills, 3 reject —
+   * sharper than failing only the (N+1)th call.
    */
   readonly failOnAddExpert?: { readonly afterN: number };
   /**
@@ -134,6 +137,7 @@ export class MockEngine implements CouncilEngine {
   readonly #experts = new Map<string, ExpertSpec>();
   readonly #inFlight = new Set<InFlight>();
   readonly #sentPrompts: { readonly expertId: string; readonly prompt: string }[] = [];
+  readonly #removeExpertCalls: string[] = [];
   #stopped = false;
   #addExpertCallCount = 0;
   #lastStopErrors: Error[] = [];
@@ -168,6 +172,16 @@ export class MockEngine implements CouncilEngine {
    */
   get sentPrompts(): readonly { readonly expertId: string; readonly prompt: string }[] {
     return this.#sentPrompts;
+  }
+
+  /**
+   * Test-only accessor: every expertId passed to `removeExpert()`, in
+   * temporal order. Used to verify that callers (e.g. convene's
+   * partial-failure rollback) only call removeExpert for the experts
+   * that genuinely registered, not the whole intended-list.
+   */
+  get removeExpertCalls(): readonly string[] {
+    return this.#removeExpertCalls;
   }
 
   constructor(options: MockEngineOptions = {}) {
@@ -213,15 +227,15 @@ export class MockEngine implements CouncilEngine {
 
   async addExpert(spec: ExpertSpec): Promise<void> {
     this.#addExpertCallCount += 1;
-    // #142 / test seam: simulate a partial-failure scenario where the
-    // Nth call rejects. Tests use this to verify that callers fan-out
-    // via Promise.allSettled and clean up created sessions.
+    // #142 / test seam: every call AFTER the Nth rejects. Tests use
+    // this to verify that callers fan-out via Promise.allSettled and
+    // clean up created sessions.
     if (
       this.#options.failOnAddExpert &&
-      this.#addExpertCallCount === this.#options.failOnAddExpert.afterN + 1
+      this.#addExpertCallCount > this.#options.failOnAddExpert.afterN
     ) {
       throw new Error(
-        `MockEngine: simulated addExpert failure (failOnAddExpert.afterN=${this.#options.failOnAddExpert.afterN})`,
+        `MockEngine: simulated addExpert failure (call ${this.#addExpertCallCount} > failOnAddExpert.afterN=${this.#options.failOnAddExpert.afterN})`,
       );
     }
     if (this.#experts.has(spec.id)) {
@@ -231,6 +245,13 @@ export class MockEngine implements CouncilEngine {
   }
 
   async removeExpert(expertId: string): Promise<void> {
+    // Capture for test verification (see `removeExpertCalls` getter).
+    // Per CouncilEngine contract, this method is a no-op for unknown
+    // ids — capturing the call regardless lets tests verify that
+    // callers (e.g. partial-failure rollback) only invoke us for
+    // experts that genuinely registered, and detect over-broad
+    // sweep-the-list patterns that rely on idempotency.
+    this.#removeExpertCalls.push(expertId);
     this.#experts.delete(expertId);
     // Abort any in-flight sends for this expert.
     for (const f of this.#inFlight) {

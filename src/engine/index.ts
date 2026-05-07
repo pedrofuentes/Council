@@ -71,8 +71,15 @@ export interface CouncilEngine {
   addExpert(spec: ExpertSpec): Promise<void>;
 
   /**
-   * Drop an expert and release its session. No-op for unknown IDs.
-   * Aborts any in-flight `send()` for the expert.
+   * Drop an expert and release its session.
+   *
+   * **Idempotent for unknown IDs**: calling `removeExpert(id)` for an
+   * `id` that was never registered (or already removed) MUST resolve
+   * normally — no throw, no rejection. This contract is relied on by
+   * partial-failure cleanup paths (e.g. convene's rollback when one
+   * `addExpert` rejects) and is regression-tested at the engine layer.
+   *
+   * For known IDs, aborts any in-flight `send()` for the expert.
    */
   removeExpert(expertId: string): Promise<void>;
 
