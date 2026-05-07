@@ -105,8 +105,9 @@ describe("buildConveneCommand", () => {
       const panels = await new PanelRepository(db).findAll();
       expect(panels).toHaveLength(1);
       expect(panels[0]?.topic).toBe("Should we ship the MVP?");
+      const panelId = panels[0]?.id ?? "";
 
-      const experts = await new ExpertRepository(db).findByPanelId(panels[0]!.id);
+      const experts = await new ExpertRepository(db).findByPanelId(panelId);
       expect(experts.length).toBeGreaterThanOrEqual(2);
       // System prompt should be the fully-rendered 8-section template.
       for (const e of experts) {
@@ -114,11 +115,12 @@ describe("buildConveneCommand", () => {
         expect(e.systemMessage).toContain("[8] CURRENT TASK");
       }
 
-      const debates = await new DebateRepository(db).findByPanelId(panels[0]!.id);
+      const debates = await new DebateRepository(db).findByPanelId(panelId);
       expect(debates).toHaveLength(1);
       expect(debates[0]?.status).toBe("completed");
+      const debateId = debates[0]?.id ?? "";
 
-      const turns = await new TurnRepository(db).findByDebateId(debates[0]!.id);
+      const turns = await new TurnRepository(db).findByDebateId(debateId);
       // 1 round × N experts.
       expect(turns.length).toBe(experts.length);
     } finally {
