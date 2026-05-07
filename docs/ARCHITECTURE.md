@@ -115,7 +115,7 @@ User input → CLI command → Core (Panel/Debate/Moderator) → Engine (Council
 | `src/core/debate.ts` | Debate orchestrator, AsyncIterable<DebateEvent> |
 | `src/core/moderator/index.ts` | ModeratorStrategy interface |
 | `src/core/expert.ts` | Expert entity, 8-section prompt template |
-| `src/memory/db.ts` | SQLite connection, WAL mode, migrations |
+| `src/memory/db.ts` | libsql client (WASM) + Kysely connection, migrations, schema_version tracking |
 | `panels/*.yaml` | Built-in panel definitions (Zod-validated) |
 
 ## Code Patterns

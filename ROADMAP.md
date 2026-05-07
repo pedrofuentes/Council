@@ -49,7 +49,7 @@ src/bin/council.ts         (CLI entry: #!/usr/bin/env node)
 **Key dependencies:**
 - `commander` (CLI parsing)
 - `ink` + `ink-spinner` + `react` (terminal UI)
-- `@libsql/client` + `@kysely/libsql` + `kysely` (persistence — pure WASM, see ADR-005)
+- `@libsql/client` + `@libsql/kysely-libsql` + `kysely` (persistence — pure WASM, see ADR-005)
 - `zod` (schema validation)
 - `yaml` (config parsing)
 - `ulid` (ID generation)
@@ -339,7 +339,7 @@ position and cannot find a material weakness."
 
 ### 1.7 SQLite Schema
 
-> **Backend updated 2026-05-07 (ADR-005):** uses `@libsql/client` (pure WASM) + `@kysely/libsql` instead of `better-sqlite3`. No native build, works on every Node version.
+> **Backend updated 2026-05-07 (ADR-005):** uses `@libsql/client` (pure WASM) + `@libsql/kysely-libsql` instead of `better-sqlite3`. No native build, works on every Node version.
 
 **Files to create:**
 ```
@@ -355,7 +355,7 @@ tests/unit/memory/repositories.test.ts
 **`src/memory/db.ts` — sketch:**
 ```typescript
 import { createClient } from "@libsql/client";
-import { LibsqlDialect } from "@kysely/libsql";
+import { LibsqlDialect } from "@libsql/kysely-libsql";
 import { Kysely } from "kysely";
 
 export interface Database {
