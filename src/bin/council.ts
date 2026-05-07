@@ -1,18 +1,23 @@
 /**
  * @council/cli — Command-line interface entry point.
  *
- * Subcommands implemented per ROADMAP §1.10:
+ * Subcommands:
+ *   - `convene`    run a panel debate on a topic, persist results
  *   - `panels`     list panels in the local DB
  *   - `templates`  list built-in panel templates
  *   - `doctor`     diagnose Council setup
  *
- * `convene` and `ask` are the next commands and need engine + memory
- * orchestration wiring; deferred to a follow-up PR.
+ * `ask` is the next command (one-shot single-expert chat) — deferred.
+ *
+ * NOTE: `convene` currently uses MockEngine by default (see
+ * src/cli/commands/convene.ts). The Copilot adapter wiring lands once
+ * the engine has a session pool — tracked as a follow-up.
  */
 import { Command } from "commander";
 
 import packageJson from "../../package.json" with { type: "json" };
 
+import { buildConveneCommand } from "../cli/commands/convene.js";
 import { buildDoctorCommand } from "../cli/commands/doctor.js";
 import { buildPanelsCommand } from "../cli/commands/panels.js";
 import { buildTemplatesCommand } from "../cli/commands/templates.js";
@@ -23,6 +28,7 @@ export function buildProgram(): Command {
     .name("council")
     .description("Persistent AI expert panels for deliberation and decision-making")
     .version(packageJson.version);
+  program.addCommand(buildConveneCommand());
   program.addCommand(buildPanelsCommand());
   program.addCommand(buildTemplatesCommand());
   program.addCommand(buildDoctorCommand());
