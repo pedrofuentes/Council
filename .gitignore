@@ -36,3 +36,7 @@ Thumbs.db
 
 # Test artifacts
 .vitest-cache/
+
+# Sentinel runtime artifacts
+.sentinel-*.patch
+.sentinel-*.log
