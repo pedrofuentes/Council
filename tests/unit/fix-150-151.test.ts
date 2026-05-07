@@ -25,7 +25,6 @@ import { MockEngine } from "../../src/engine/mock/mock-engine.js";
 
 import { createDatabase, type CouncilDatabase } from "../../src/memory/db.js";
 import { DebateRepository } from "../../src/memory/repositories/debates.js";
-import { ExpertRepository } from "../../src/memory/repositories/experts.js";
 import { PanelRepository } from "../../src/memory/repositories/panels.js";
 import { TurnRepository } from "../../src/memory/repositories/turns.js";
 import { DebatePersister } from "../../src/memory/persister.js";
@@ -38,13 +37,6 @@ const cto: ExpertSpec = {
   displayName: "CTO",
   model: "claude-sonnet-4",
   systemMessage: "You are a CTO.",
-};
-const pm: ExpertSpec = {
-  id: "01HZ-pm",
-  slug: "pm",
-  displayName: "PM",
-  model: "claude-sonnet-4",
-  systemMessage: "You are a PM.",
 };
 
 // ────────────────────────────────────────────────────────────────────────
@@ -256,7 +248,7 @@ describe("convene #151 — rollback filters to fulfilled-only addExpert results"
     // concurrently). All non-first calls reject because failOnAddExpert
     // tracks call count. So only expert[0] should be in
     // removeExpertCalls.
-    const calls = capturedEngine!.removeExpertCalls;
+    const calls = capturedEngine?.removeExpertCalls ?? [];
     expect(calls).toHaveLength(1);
   });
 });

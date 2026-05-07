@@ -233,12 +233,21 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             p.result.status === "rejected" && p.expert !== undefined,
           );
         if (failures.length > 0) {
-          // Roll back every expert that DID register successfully so no
-          // session leaks past cleanup. removeExpert is idempotent for
-          // unknown ids, so it's safe even if some addExpert calls
-          // synchronously rejected before any state was set.
+          // Sentinel #151: roll back ONLY the experts whose addExpert
+          // genuinely fulfilled. Sweeping the full list and relying on
+          // removeExpert-is-idempotent-for-unknown-ids works today but
+          // depends on an unverified contract; a future engine that
+          // rejects on unknown ids would silently corrupt this rollback
+          // path because Promise.allSettled swallows the errors.
+          const fulfilledIds = settled
+            .map((r, i) => ({ result: r, expert: experts[i] }))
+            .filter(
+              (p): p is { result: PromiseFulfilledResult<void>; expert: ExpertSpec } =>
+                p.result.status === "fulfilled" && p.expert !== undefined,
+            )
+            .map((p) => p.expert.id);
           await Promise.allSettled(
-            experts.map((e) => startedEngine.removeExpert(e.id)),
+            fulfilledIds.map((id) => startedEngine.removeExpert(id)),
           );
           const firstErr = failures[0]?.result.reason;
           const firstMsg = firstErr instanceof Error ? firstErr.message : String(firstErr);

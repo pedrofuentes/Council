@@ -64,6 +64,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `makeEngineFromKind(kind)` exported from `src/cli/commands/convene.ts` so unit tests can verify wiring without invoking the engine.
 
 ### Fixed
+- **`DebatePersister.persist()`** no longer silently mutates the debate row to `status='aborted'` when the terminal `debate.end` update itself throws. Renamed `normalEnd` to `terminalUpdateAttempted` and set it BEFORE the await — so a failed terminal update lets the original error bubble (truthful) and leaves the row at its pre-attempt state (`running`). Resolves #150.
+- **`convene` partial-failure rollback** now filters to only the experts whose `addExpert` actually fulfilled, instead of sweeping the whole experts list and relying on unverified `removeExpert`-idempotency. Adds an explicit JSDoc contract on `CouncilEngine.removeExpert` codifying the no-op-for-unknown-ids guarantee + a regression test against `MockEngine`. Resolves #151.
+- `MockEngine.failOnAddExpert.afterN` semantics changed: now fails ALL calls after the Nth (was: only the (N+1)th). Sharper test signal — `afterN: 1` with 4 experts now means 1 fulfilled + 3 rejected, not 1+1+2.
+- `MockEngine.removeExpertCalls: readonly string[]` — new test-only accessor capturing every `removeExpert(id)` invocation in temporal order.
 - `convene` MOCK warning now writes to a separate `writeError` channel (stderr), keeping `--format json` output as pure NDJSON on stdout. Resolves #127.
 - `makeEngineFromKind` now has an exhaustive `default` arm that throws on unknown engine kind (previously silently returned `undefined`). Resolves #128 and #134.
 - `convene` `--engine` validation now uses validate-then-assign (no silent ternary fallback). Resolves #129.
