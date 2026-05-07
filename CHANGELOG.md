@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `panels/incident-postmortem.yaml` — SRE Lead, Engineering Manager, Customer Advocate, Blameless Facilitator
 - `panels/career-coaching.yaml` — IC Mentor, Engineering Manager (was IC), VP Engineering, Career Coach
 - `src/core/quality-gate.ts` — heuristic anti-sycophancy quality gate. Inspects expert responses against the 3-layer system (forbidden phrases, disagreement budget when prior speakers exist, minimum specificity) and produces a `regenerateHint` for the orchestrator to pass back on the next attempt.
+- `src/engine/copilot/permissions.ts` — `denyAll` (default for all expert sessions per ADR-004) and `scopedAllow(allowed)` for opt-in per-expert tool access
+- `src/engine/copilot/adapter.ts` — `CopilotEngine` implementing `CouncilEngine` over `@github/copilot-sdk`. ONLY file in the project that imports the SDK (per ESLint rule and ADR-003). Translates SDK events → `EngineEvent` stream, classifies SDK errors → `EngineError` codes, honors cancellation via `AbortSignal`/`stop()`/`removeExpert()`.
+- New runtime dep: `@github/copilot-sdk@~0.3.0`
 
 ### Changed
 

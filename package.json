@@ -51,6 +51,7 @@
     "prepublishOnly": "pnpm build"
   },
   "dependencies": {
+    "@github/copilot-sdk": "~0.3.0",
     "commander": "^12.1.0",
     "yaml": "^2.8.4",
     "zod": "^4.4.3"

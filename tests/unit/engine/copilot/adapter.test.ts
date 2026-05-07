@@ -19,7 +19,7 @@ import type {
 interface MockSession {
   readonly id: string;
   readonly model: string;
-  events: Array<Record<string, unknown>>;
+  events: Record<string, unknown>[];
   disconnected: boolean;
 }
 
@@ -28,7 +28,7 @@ interface MockClientState {
   stopped: boolean;
   sessions: MockSession[];
   /** Per-session: queue of events to emit on `send()` */
-  sendQueues: Map<string, Array<{ kind: string; data: Record<string, unknown> }>>;
+  sendQueues: Map<string, { kind: string; data: Record<string, unknown> }[]>;
   /** Per-session: error to throw on `send()` (sync) */
   sendErrors: Map<string, Error>;
 }
@@ -75,7 +75,6 @@ vi.mock("@github/copilot-sdk", () => {
     }
   }
   class MockCopilotClient {
-    constructor(_options?: unknown) {}
     async start(): Promise<void> {
       mockState.started = true;
       mockState.stopped = false;
@@ -236,8 +235,8 @@ describe("CopilotEngine — send() event translation", () => {
     await engine.start();
     await engine.addExpert(expertA);
     mockState.sendQueues.set("session-0", [
-      { kind: "assistant.message_delta", data: { content: "Hello" } },
-      { kind: "assistant.message_delta", data: { content: " world" } },
+      { kind: "assistant.message_delta", data: { deltaContent: "Hello" } },
+      { kind: "assistant.message_delta", data: { deltaContent: " world" } },
     ]);
     const events = await collect(engine.send({ prompt: "hi", expertId: expertA.id }));
     const deltas = events.filter((e): e is Extract<EngineEvent, { kind: "message.delta" }> => e.kind === "message.delta");
@@ -251,14 +250,15 @@ describe("CopilotEngine — send() event translation", () => {
     await engine.start();
     await engine.addExpert(expertA);
     mockState.sendQueues.set("session-0", [
-      { kind: "assistant.message_delta", data: { content: "ok" } },
+      { kind: "assistant.message_delta", data: { deltaContent: "ok" } },
     ]);
     const events = await collect(engine.send({ prompt: "x", expertId: expertA.id }));
     const complete = events.find(
       (e): e is Extract<EngineEvent, { kind: "message.complete" }> => e.kind === "message.complete",
     );
     expect(complete).toBeDefined();
-    expect(complete!.response.latencyMs).toBeGreaterThanOrEqual(0);
+    if (!complete) return;
+    expect(complete.response.latencyMs).toBeGreaterThanOrEqual(0);
   });
 
   it("throws synchronously on send() to unknown expert", async () => {
@@ -298,7 +298,7 @@ describe("CopilotEngine — cancellation", () => {
     await engine.start();
     await engine.addExpert(expertA);
     mockState.sendQueues.set("session-0", [
-      { kind: "assistant.message_delta", data: { content: "would-be-streamed" } },
+      { kind: "assistant.message_delta", data: { deltaContent: "would-be-streamed" } },
     ]);
     const controller = new AbortController();
     controller.abort();
