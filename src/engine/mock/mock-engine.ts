@@ -114,7 +114,17 @@ export class MockEngine implements CouncilEngine {
   readonly #options: Required<MockEngineOptions>;
   readonly #experts = new Map<string, ExpertSpec>();
   readonly #inFlight = new Set<InFlight>();
+  readonly #sentPrompts: Array<{ readonly expertId: string; readonly prompt: string }> = [];
   #stopped = false;
+
+  /**
+   * Test-only accessor: every prompt sent via `send()`, in temporal order.
+   * Captured at the synchronous validation boundary so it reflects the
+   * caller's intent regardless of stream consumption / cancellation.
+   */
+  get sentPrompts(): ReadonlyArray<{ readonly expertId: string; readonly prompt: string }> {
+    return this.#sentPrompts;
+  }
 
   constructor(options: MockEngineOptions = {}) {
     this.#options = {
@@ -166,6 +176,9 @@ export class MockEngine implements CouncilEngine {
     if (!this.#experts.has(options.expertId)) {
       throw new Error(`Expert ${options.expertId} is not registered`);
     }
+    // Capture for test verification (see `sentPrompts` getter). Captured
+    // before any async work so the order matches the caller's intent.
+    this.#sentPrompts.push({ expertId: options.expertId, prompt: options.prompt });
 
     // Bind the in-flight tracker BEFORE returning the iterable so that
     // stop()/removeExpert() called between this line and the consumer's
