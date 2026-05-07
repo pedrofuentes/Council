@@ -122,6 +122,17 @@ describe("buildSystemPrompt() — section structure", () => {
     expect(identity).toContain(baseDefinition.role);
   });
 
+  it("EPISTEMIC STANCE section contains the profile's epistemicStance verbatim", () => {
+    // Sentinel pr33 finding #2: the section-order test above only checks
+    // the heading exists. This test pins that the actual stance text
+    // (Layer 3 of anti-sycophancy: "identity stakes") is rendered into
+    // section [3]. A regression that drops the stance line would otherwise
+    // pass all tests.
+    const prompt = buildSystemPrompt(baseDefinition, undefined, "task");
+    const stance = sectionContent(prompt, "[3] EPISTEMIC STANCE", "[4]");
+    expect(stance).toContain(baseDefinition.epistemicStance);
+  });
+
   it("EXPERTISE PRIOR includes weighted evidence list and reference cases", () => {
     const prompt = buildSystemPrompt(baseDefinition, undefined, "task");
     const expertise = sectionContent(prompt, "[2] EXPERTISE PRIOR", "[3]");
@@ -168,6 +179,22 @@ describe("buildSystemPrompt() — anti-sycophancy defaults", () => {
     const forbidden = sectionContent(prompt, "[6] FORBIDDEN MOVES", "[7]");
     expect(forbidden).toContain(customMove);
     // Defaults are still present:
+    for (const phrase of DEFAULT_FORBIDDEN_PHRASES) {
+      expect(forbidden).toContain(phrase);
+    }
+  });
+
+  it("FORBIDDEN MOVES still includes defaults when profile sets forbiddenMoves: [] (cannot suppress anti-sycophancy)", () => {
+    // Sentinel pr33 finding #1: an empty forbiddenMoves array must NOT be
+    // treated as "I want to opt out of defaults". A regression in the merge
+    // logic (e.g., `def.forbiddenMoves ?? DEFAULT_FORBIDDEN_PHRASES`) would
+    // silently drop every default — this test catches that.
+    const definition: ExpertDefinition = {
+      ...baseDefinition,
+      forbiddenMoves: [],
+    };
+    const prompt = buildSystemPrompt(definition, undefined, "task");
+    const forbidden = sectionContent(prompt, "[6] FORBIDDEN MOVES", "[7]");
     for (const phrase of DEFAULT_FORBIDDEN_PHRASES) {
       expect(forbidden).toContain(phrase);
     }
