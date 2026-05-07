@@ -39,7 +39,7 @@ council/
 │   │   └── mock/
 │   │       └── mock-engine.ts         ← Deterministic responses for testing
 │   ├── memory/
-│   │   ├── db.ts                      ← better-sqlite3 + Kysely + WAL mode
+│   │   ├── db.ts                      ← @libsql/client (WASM) + Kysely (per ADR-005)
 │   │   ├── repositories/
 │   │   │   ├── panels.ts
 │   │   │   ├── experts.ts
@@ -81,7 +81,7 @@ council/
 |----------|--------|-----------|
 | AI engine | `@github/copilot-sdk` behind `CouncilEngine` interface | Zero API key setup, multi-model access, single auth. Interface allows engine swap. |
 | CLI framework | Commander.js + Ink | Commander for parsing, Ink for rich TUI. Pluggable renderers for JSON/Plain output. |
-| Persistence | better-sqlite3 + Kysely | Synchronous, zero-copy, typed SQL. No ORM magic. CLI-optimized. |
+| Persistence | `@libsql/client` (WASM) + Kysely | Pure JS, no native build, future Turso-cloud-ready. Per ADR-005. |
 | Bundler | tsup (esbuild) | Zero config, fast, dual ESM/CJS. |
 | Testing | Vitest + MockEngine | Fast, ESM-native. MockEngine provides deterministic responses. |
 | IDs | ULIDs | Lexicographic sort by creation time. Better than UUIDs for debugging. |
@@ -115,7 +115,7 @@ User input → CLI command → Core (Panel/Debate/Moderator) → Engine (Council
 | `src/core/debate.ts` | Debate orchestrator, AsyncIterable<DebateEvent> |
 | `src/core/moderator/index.ts` | ModeratorStrategy interface |
 | `src/core/expert.ts` | Expert entity, 8-section prompt template |
-| `src/memory/db.ts` | SQLite connection, WAL mode, migrations |
+| `src/memory/db.ts` | libsql client (WASM) + Kysely connection, migrations, schema_version tracking |
 | `panels/*.yaml` | Built-in panel definitions (Zod-validated) |
 
 ## Code Patterns
