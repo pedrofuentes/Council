@@ -60,11 +60,11 @@ export interface MockEngineOptions {
   readonly modelName?: string;
   /**
    * Test-only seam: when set, every `addExpert` call AFTER the Nth
-   * (1-indexed) succeeds rejects with a synthetic error. Calls 1..N
-   * still fulfill normally. Useful for testing partial-failure
-   * recovery in callers that fan out via `Promise.all` /
-   * `Promise.allSettled`. With `afterN: 1` and a 4-expert panel: 1
-   * fulfills, 3 reject — sharper than failing only the (N+1)th call.
+   * (1-indexed) rejects with a synthetic error. Calls 1..N still
+   * fulfill normally. Useful for testing partial-failure recovery
+   * in callers that fan out via `Promise.all` / `Promise.allSettled`.
+   * With `afterN: 1` and a 4-expert panel: 1 fulfills, 3 reject —
+   * sharper than failing only the (N+1)th call.
    */
   readonly failOnAddExpert?: { readonly afterN: number };
   /**
