@@ -11,12 +11,8 @@ export default defineConfig({
       reporter: ["text", "html", "lcov"],
       include: ["src/**/*.ts"],
       exclude: ["src/**/*.test.ts", "src/**/types.ts", "src/bin/**"],
-      thresholds: {
-        lines: 80,
-        functions: 80,
-        branches: 75,
-        statements: 80,
-      },
+      // Thresholds will be enabled in PR #2 once behavior-bearing code lands.
+      // See ROADMAP §1.2 (CouncilEngine interface).
     },
   },
 });

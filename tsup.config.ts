@@ -1,25 +1,40 @@
 import { defineConfig } from "tsup";
 
-export default defineConfig({
-  entry: {
-    index: "src/index.ts",
-    "bin/council": "src/bin/council.ts",
+/**
+ * Two entries with different banner needs:
+ *   - `src/index.ts` (library)  → NO shebang
+ *   - `src/bin/council.ts` (bin) → MUST have shebang
+ *
+ * tsup's top-level `banner` applies to every entry, so we declare two
+ * separate build configs in the array form. tsup runs them sequentially
+ * with the same `outDir`.
+ */
+export default defineConfig([
+  {
+    entry: { index: "src/index.ts" },
+    format: ["esm"],
+    target: "node20",
+    outDir: "dist",
+    dts: true,
+    sourcemap: true,
+    clean: true,
+    splitting: false,
+    shims: false,
+    treeshake: true,
+    platform: "node",
   },
-  format: ["esm"],
-  target: "node20",
-  outDir: "dist",
-  dts: true,
-  sourcemap: true,
-  clean: true,
-  splitting: false,
-  shims: false,
-  treeshake: true,
-  banner: {
-    js: "#!/usr/bin/env node",
+  {
+    entry: { "bin/council": "src/bin/council.ts" },
+    format: ["esm"],
+    target: "node20",
+    outDir: "dist",
+    dts: true,
+    sourcemap: true,
+    clean: false, // do not wipe the library output produced above
+    splitting: false,
+    shims: false,
+    treeshake: true,
+    platform: "node",
+    banner: { js: "#!/usr/bin/env node" },
   },
-  // Only the bin entry needs the shebang; tsup applies banner to all entries.
-  // We strip it from non-bin entries via the `esbuildOptions` hook below.
-  esbuildOptions(options, _context) {
-    options.platform = "node";
-  },
-});
+]);

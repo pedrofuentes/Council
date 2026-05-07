@@ -63,6 +63,8 @@ npm install -g @council/cli
 
 ## Quick Start
 
+> 🚧 **Phase 1 in progress.** The CLI binary currently exposes only `council --version` and `council --help`. The commands below describe the target surface (see [ROADMAP.md](./ROADMAP.md) Phase 1.10 for delivery order).
+
 ```bash
 # Verify setup
 council doctor

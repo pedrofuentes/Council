@@ -1,18 +1,28 @@
 /**
- * Smoke test for the scaffolded project.
+ * Smoke test for the scaffolded CLI entry.
  *
- * Real test suites land with each Phase 1 module (engine, expert, debate, etc.).
- * This single test exists so `pnpm test` succeeds during scaffolding.
+ * Imports `buildProgram` from src/bin/council.ts and asserts the program
+ * is wired up correctly. This test will fail if any of the scaffolding
+ * (tsconfig, package.json#version, or the Commander wiring) is reverted.
  */
 import { describe, expect, it } from "vitest";
 
-describe("scaffold", () => {
-  it("project is configured for Node 20+ ESM", () => {
-    expect(process.version.startsWith("v")).toBe(true);
-    const versionParts = process.version.slice(1).split(".");
-    const majorRaw = versionParts[0];
-    expect(majorRaw).toBeDefined();
-    const major = Number.parseInt(majorRaw ?? "0", 10);
-    expect(major).toBeGreaterThanOrEqual(20);
+import packageJson from "../../package.json" with { type: "json" };
+import { buildProgram } from "../../src/bin/council.js";
+
+describe("buildProgram", () => {
+  it("returns a Commander program named 'council'", () => {
+    const program = buildProgram();
+    expect(program.name()).toBe("council");
+  });
+
+  it("reports the version from package.json", () => {
+    const program = buildProgram();
+    expect(program.version()).toBe(packageJson.version);
+  });
+
+  it("has a description matching the project tagline", () => {
+    const program = buildProgram();
+    expect(program.description()).toMatch(/expert panels/i);
   });
 });

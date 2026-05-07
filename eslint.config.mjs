@@ -57,8 +57,11 @@ export default tseslint.config(
     },
   },
   {
-    // Allow the SDK import only inside the copilot adapter directory.
-    files: ["src/engine/copilot/**/*.ts"],
+    // Allow the SDK import only inside the single adapter file (per AGENTS.md
+    // §Boundaries and DECISIONS.md ADR-003). Sibling files in
+    // src/engine/copilot/ (session-pool, permissions, etc.) must talk to the
+    // adapter, not the SDK directly.
+    files: ["src/engine/copilot/adapter.ts"],
     rules: {
       "no-restricted-imports": "off",
     },
