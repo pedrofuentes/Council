@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - New runtime deps: `@libsql/client` (^0.8.0, pinned to match `@libsql/kysely-libsql` peer), `@libsql/kysely-libsql`, `kysely`, `ulid`
 - `src/core/types.ts` — `DebateEvent` discriminated union (the single event stream that flows from `Debate.run()` to renderers + persistence + cost limiter), plus `DebateEndReason` and `PanelMemberSnapshot`
 - `src/core/debate.ts` — `Debate` orchestrator with freeform mode (sequential turn order within each round), translates `EngineEvent` → `DebateEvent`, emits `panel.assembled` / `round.start` / `turn.start` / `turn.delta*` / `turn.end` / `cost.update` / `round.end` / `debate.end`. Errors are non-terminal at the debate level (next expert continues).
+- `src/cli/renderers/types.ts` — `Renderer` interface + `Sink` abstraction + `StreamSink` (process.stdout/stderr default).
+- `src/cli/renderers/json.ts` — `JsonRenderer`: NDJSON, one JSON-encoded `DebateEvent` per line. For CI/scripts/pipes.
+- `src/cli/renderers/plain.ts` — `PlainRenderer`: human-readable text with optional ANSI color (chalk forced level for predictable test output). Streams `turn.delta` immediately so users see expert responses appear as they're generated.
+- New runtime dep: `chalk`
 
 ### Changed
 - ADR-005 supersedes the implicit `better-sqlite3` choice from ADR-002 / ROADMAP §1.7. The persistence backend is now `@libsql/client` (pure WASM) + `@libsql/kysely-libsql`. Rationale: `better-sqlite3` requires native build tools and lacks Node 25.5.0 prebuilds, breaking "simple to run". libsql is pure JS, has an official Kysely dialect, and is API-compatible with Turso (Council Cloud Phase 5).
