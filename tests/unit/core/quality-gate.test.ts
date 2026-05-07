@@ -21,9 +21,10 @@ import {
 
 describe("applyQualityGate — basic structure", () => {
   it("returns ok=true and empty failures for a clean response", () => {
-    const result: QualityResult = applyQualityGate("This is a specific, falsifiable claim about latency budgets.", {
-      priorSpeakers: [],
-    });
+    const result: QualityResult = applyQualityGate(
+      "This is a specific, falsifiable claim about latency budgets and on-call load thresholds.",
+      { priorSpeakers: [] },
+    );
     expect(result.ok).toBe(true);
     expect(result.failures).toEqual([]);
     expect(result.regenerateHint).toBeUndefined();
@@ -36,7 +37,8 @@ describe("applyQualityGate — basic structure", () => {
     expect(result.ok).toBe(false);
     expect(result.failures.length).toBeGreaterThanOrEqual(1);
     expect(result.regenerateHint).toBeTypeOf("string");
-    expect(result.regenerateHint!.length).toBeGreaterThan(0);
+    if (!result.regenerateHint) throw new Error("expected hint");
+    expect(result.regenerateHint.length).toBeGreaterThan(0);
   });
 });
 
@@ -70,7 +72,10 @@ describe("applyQualityGate — forbidden phrases (Layer 1)", () => {
 
 describe("applyQualityGate — disagreement budget (Layer 2)", () => {
   it("does NOT require disagreement when there are no prior speakers (round 0)", () => {
-    const result = applyQualityGate("My opening position is X.", { priorSpeakers: [] });
+    const result = applyQualityGate(
+      "My opening position is that we should defer the migration until we have observability coverage.",
+      { priorSpeakers: [] },
+    );
     expect(result.ok).toBe(true);
   });
 
@@ -128,7 +133,8 @@ describe("applyQualityGate — regenerateHint", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.regenerateHint).toBeDefined();
-    const hint = result.regenerateHint!.toLowerCase();
+    if (!result.regenerateHint) throw new Error("expected hint");
+    const hint = result.regenerateHint.toLowerCase();
     // Must mention the kinds of failures so the model knows what to fix
     expect(hint).toMatch(/forbidden|phrase/);
   });
@@ -153,3 +159,4 @@ describe("QualityCheck shape", () => {
     }
   });
 });
+

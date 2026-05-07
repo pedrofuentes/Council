@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `panels/code-review.yaml` — Senior Developer, Security Auditor, Performance Engineer, Future Maintainer
 - `panels/incident-postmortem.yaml` — SRE Lead, Engineering Manager, Customer Advocate, Blameless Facilitator
 - `panels/career-coaching.yaml` — IC Mentor, Engineering Manager (was IC), VP Engineering, Career Coach
+- `src/core/quality-gate.ts` — heuristic anti-sycophancy quality gate. Inspects expert responses against the 3-layer system (forbidden phrases, disagreement budget when prior speakers exist, minimum specificity) and produces a `regenerateHint` for the orchestrator to pass back on the next attempt.
 
 ### Changed
 
