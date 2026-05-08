@@ -8,6 +8,10 @@
  * (renderers, cost limiters) downstream of the persister can therefore
  * assume that any event they observe corresponds to a row in the DB.
  *
+ * **Single-use** (#120): each `DebatePersister` instance services exactly
+ * one debate. A second `persist()` call on the same instance throws with
+ * a clear "single-use" message. Construct a fresh persister per debate.
+ *
  * What gets persisted:
  *
  *   - On `persist()` entry (BEFORE the first event is yielded): one
@@ -22,6 +26,13 @@
  *     effect is dropped.
  *   - On `debate.end`: updates the debate row with status='completed'
  *     (or 'aborted'/'failed' depending on the reason) and ended_at.
+ *
+ * **Observability** (#119): a `turn.end` event with no matching prior
+ * `turn.start` indicates an orchestrator protocol violation that should
+ * never happen in normal operation. When `deps.logger` is provided, the
+ * persister calls `logger.warn(...)` with the offending slug so
+ * regressions are detectable. The default behavior (no logger) silently
+ * drops the orphan event — same as before.
  *
  * Failure handling:
  *
@@ -42,6 +53,19 @@ import type { DebateEndReason, DebateEvent } from "../core/types.js";
 import type { DebateRepository, DebateStatus } from "./repositories/debates.js";
 import type { TurnRepository } from "./repositories/turns.js";
 
+/**
+ * Minimal logger surface used by `DebatePersister` for orchestrator
+ * protocol-violation warnings (#119). Production callers can pass a
+ * console-backed implementation; tests pass a Vitest mock.
+ *
+ * Why not pull in a full logging library: the persister has exactly one
+ * logging need today (warn on orphan turn.end), and a 2-line interface
+ * keeps the dependency surface zero.
+ */
+export interface DebatePersisterLogger {
+  warn(message: string): void;
+}
+
 export interface DebatePersisterDeps {
   readonly debates: DebateRepository;
   readonly turns: TurnRepository;
@@ -50,6 +74,11 @@ export interface DebatePersisterDeps {
   readonly expertSlugToId: Readonly<Record<string, string>>;
   /** Moderator strategy name written verbatim to `debates.moderator`. */
   readonly moderator: string;
+  /**
+   * Optional logger for orchestrator protocol-violation warnings (#119).
+   * When omitted, violations are silently swallowed (legacy behavior).
+   */
+  readonly logger?: DebatePersisterLogger;
 }
 
 interface TurnPosition {
@@ -103,6 +132,16 @@ export class DebatePersister {
    * failure as if the debate had been aborted.
    */
   async *persist(source: AsyncIterable<DebateEvent>, prompt: string): AsyncIterable<DebateEvent> {
+    // #120: enforce single-use. A second persist() call on the same
+    // instance would silently overwrite #debateId and let pendingTurn
+    // state from the first debate leak into the second. Construct a
+    // fresh persister per debate; this throws if reuse is attempted.
+    if (this.#debateId !== undefined) {
+      throw new Error(
+        "DebatePersister is single-use: persist() may only be called once per instance. Construct a fresh persister for each debate.",
+      );
+    }
+
     const debate = await this.deps.debates.create({
       panelId: this.deps.panelId,
       prompt,
@@ -161,7 +200,16 @@ export class DebatePersister {
     const expertId = this.deps.expertSlugToId[expertSlug];
     if (!expertId || !this.#debateId) return;
     const pos = this.#pendingTurnPosition.get(expertSlug);
-    if (!pos) return;
+    if (!pos) {
+      // #119: turn.end without a matching turn.start signals an
+      // orchestrator protocol violation. Warn (when a logger is
+      // configured) so regressions are detectable; otherwise drop
+      // silently to preserve backwards-compatible default behavior.
+      this.deps.logger?.warn(
+        `DebatePersister: turn.end for slug='${expertSlug}' has no matching turn.start (orchestrator protocol violation; turn row dropped)`,
+      );
+      return;
+    }
     await this.deps.turns.create({
       debateId: this.#debateId,
       round: pos.round,
