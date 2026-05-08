@@ -230,7 +230,7 @@ describe("DebatePersister #121 — reasonToStatus mapping", () => {
   });
 
   // Test matrix: each DebateEndReason -> expected debates.status.
-  const cases: Array<{ reason: DebateEndReason; status: string }> = [
+  const cases: { reason: DebateEndReason; status: string }[] = [
     { reason: "completed", status: "completed" },
     { reason: "consensus", status: "completed" },
     { reason: "limit", status: "completed" },
