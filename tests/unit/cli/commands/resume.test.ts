@@ -224,6 +224,8 @@ describe("buildResumeCommand", () => {
       seed.panelName,
       "--continue",
       "What about the migration risk?",
+      "--engine",
+      "mock",
       "--format",
       "json",
       "--max-rounds",
@@ -251,5 +253,214 @@ describe("buildResumeCommand", () => {
       .split("\n")
       .filter((l) => l.trim().length > 0 && l.trim().startsWith("{"));
     expect(lines[lines.length - 1]).toMatch(/"debate\.end"/);
+  });
+
+  // ── Sentinel pr165 #1 + #5 — added edge-case coverage ─────────────
+
+  it("--continue without --engine fails loudly (no silent mock default)", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    const cmd = buildResumeCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+    });
+    cmd.exitOverride();
+
+    let thrown = "";
+    try {
+      await cmd.parseAsync([
+        "node",
+        "council-resume",
+        seed.panelName,
+        "--continue",
+        "follow-up prompt",
+      ]);
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    expect(thrown.toLowerCase()).toMatch(/--engine.*required|engine.*required.*continue/);
+  });
+
+  it("--continue --engine garbage rejects with clear error", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    const cmd = buildResumeCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+    });
+    cmd.exitOverride();
+
+    let thrown = "";
+    try {
+      await cmd.parseAsync([
+        "node",
+        "council-resume",
+        seed.panelName,
+        "--continue",
+        "x",
+        "--engine",
+        "anthropic-direct",
+      ]);
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    expect(thrown.toLowerCase()).toMatch(/anthropic-direct|engine.*value|engine.*expected/);
+  });
+
+  it("transcript mode handles a panel with a debate that has zero turns", async () => {
+    // Seed a panel + debate but no turns.
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    let panelName = "";
+    try {
+      const panel = await new PanelRepository(db).create({
+        name: "empty-debate-panel",
+        topic: "still empty",
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: "{}",
+      });
+      panelName = panel.name;
+      const debate = await new DebateRepository(db).create({
+        panelId: panel.id,
+        prompt: "prompt",
+        moderator: "round-robin",
+      });
+      await new DebateRepository(db).update(debate.id, {
+        status: "completed",
+        endedAt: new Date().toISOString(),
+      });
+    } finally {
+      await db.destroy();
+    }
+
+    let captured = "";
+    const cmd = buildResumeCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (s) => {
+        captured += s;
+      },
+    });
+    await cmd.parseAsync(["node", "council-resume", panelName, "--format", "json"]);
+    const lines = captured.split("\n").filter((l) => l.trim().startsWith("{"));
+    const events = lines.map((l) => JSON.parse(l) as { kind: string });
+    // panel.assembled + debate.end only — no turn events, no
+    // round.start/round.end (since lastRound starts at -1 and stays).
+    expect(events.map((e) => e.kind)).toEqual(["panel.assembled", "debate.end"]);
+  });
+
+  it("transcript mode maps debate.status='running' to debate.end.reason='aborted'", async () => {
+    // Seed a panel with an UN-finalized debate (status='running').
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    let panelName = "";
+    try {
+      const panel = await new PanelRepository(db).create({
+        name: "running-panel",
+        topic: "abandoned",
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: "{}",
+      });
+      panelName = panel.name;
+      // Create a debate but DON'T update its status — stays at 'running'.
+      await new DebateRepository(db).create({
+        panelId: panel.id,
+        prompt: "prompt",
+        moderator: "round-robin",
+      });
+    } finally {
+      await db.destroy();
+    }
+
+    let captured = "";
+    const cmd = buildResumeCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (s) => {
+        captured += s;
+      },
+    });
+    await cmd.parseAsync(["node", "council-resume", panelName, "--format", "json"]);
+    const lines = captured.split("\n").filter((l) => l.trim().startsWith("{"));
+    const last = JSON.parse(lines[lines.length - 1] ?? "{}") as {
+      kind: string;
+      reason?: string;
+    };
+    expect(last.kind).toBe("debate.end");
+    expect(last.reason).toBe("aborted");
+  });
+
+  it("findByName resolves to the most-recently-created panel when names collide", async () => {
+    // Seed two panels with the SAME name; resume should pick the newer one.
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    let olderId = "";
+    let newerId = "";
+    try {
+      const repo = new PanelRepository(db);
+      const debateRepo = new DebateRepository(db);
+      const turnRepo = new TurnRepository(db);
+
+      const older = await repo.create({
+        name: "duplicate-name",
+        topic: "older topic",
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: "{}",
+      });
+      olderId = older.id;
+      // Older panel needs a debate so resume doesn't error on no-debates.
+      const olderDebate = await debateRepo.create({
+        panelId: older.id,
+        prompt: "older prompt",
+        moderator: "round-robin",
+      });
+      await turnRepo.create({
+        debateId: olderDebate.id,
+        round: 0,
+        seq: 0,
+        speakerKind: "system",
+        content: "OLDER-DEBATE-MARKER",
+      });
+      await debateRepo.update(olderDebate.id, {
+        status: "completed",
+        endedAt: new Date().toISOString(),
+      });
+
+      // 5ms gap so created_at differs (ULID timestamp resolution).
+      await new Promise((r) => setTimeout(r, 5));
+
+      const newer = await repo.create({
+        name: "duplicate-name",
+        topic: "newer topic",
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: "{}",
+      });
+      newerId = newer.id;
+      const newerDebate = await debateRepo.create({
+        panelId: newer.id,
+        prompt: "newer prompt",
+        moderator: "round-robin",
+      });
+      await turnRepo.create({
+        debateId: newerDebate.id,
+        round: 0,
+        seq: 0,
+        speakerKind: "system",
+        content: "NEWER-DEBATE-MARKER",
+      });
+      await debateRepo.update(newerDebate.id, {
+        status: "completed",
+        endedAt: new Date().toISOString(),
+      });
+    } finally {
+      await db.destroy();
+    }
+
+    let captured = "";
+    const cmd = buildResumeCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (s) => {
+        captured += s;
+      },
+    });
+    await cmd.parseAsync(["node", "council-resume", "duplicate-name"]);
+    expect(captured).toContain("newer topic");
+    expect(captured).toContain("NEWER-DEBATE-MARKER");
+    expect(captured).not.toContain("OLDER-DEBATE-MARKER");
+    // Ensure both panels exist (sanity check on the seed).
+    expect(olderId).not.toBe(newerId);
   });
 });

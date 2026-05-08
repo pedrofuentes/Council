@@ -68,7 +68,8 @@ export interface ResumeCommandDeps {
 export interface ResumeOptions {
   readonly format: "json" | "plain";
   readonly continue?: string;
-  readonly engine: ResumeEngineKind;
+  /** Required only in continue mode. Validated by the action handler. */
+  readonly engine?: ResumeEngineKind;
   readonly maxRounds: number;
   readonly maxWords: number;
 }
@@ -128,8 +129,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
     )
     .option(
       "--engine <kind>",
-      "Engine for --continue mode: 'mock' (offline) or 'copilot' (real)",
-      "mock",
+      "Engine for --continue mode: 'mock' (offline, deterministic) or 'copilot' (real Copilot SDK). Required when --continue is set.",
     )
     .option(
       "--max-rounds <n>",
@@ -144,10 +144,30 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
       DEFAULT_MAX_WORDS,
     )
     .action(async (panelName: string, raw: ResumeOptions) => {
+      // Sentinel pr165 #1: do NOT silently default --engine. Continue
+      // mode requires an explicit kind so users can never confuse mock
+      // output with real LLM responses persisted to the local DB.
+      // Transcript mode (no --continue) doesn't construct an engine,
+      // so --engine is irrelevant there.
+      let engineKind: ResumeEngineKind | undefined;
+      if (raw.continue !== undefined) {
+        if (raw.engine === undefined) {
+          throw new Error(
+            "--engine is required with --continue (one of: mock, copilot). Use --engine mock for offline/deterministic, --engine copilot for real Copilot SDK.",
+          );
+        }
+        if (!RESUME_ENGINE_KINDS.includes(raw.engine)) {
+          throw new Error(
+            `Unknown --engine value: ${raw.engine}. Expected one of: ${RESUME_ENGINE_KINDS.join(", ")}`,
+          );
+        }
+        engineKind = raw.engine;
+      }
+
       const opts: ResumeOptions = {
         format: raw.format === "json" ? "json" : "plain",
         ...(raw.continue !== undefined ? { continue: raw.continue } : {}),
-        engine: RESUME_ENGINE_KINDS.includes(raw.engine) ? raw.engine : "mock",
+        ...(engineKind !== undefined ? { engine: engineKind } : {}),
         maxRounds: Number.isFinite(raw.maxRounds) ? raw.maxRounds : DEFAULT_MAX_ROUNDS,
         maxWords: Number.isFinite(raw.maxWords) ? raw.maxWords : DEFAULT_MAX_WORDS,
       };
@@ -165,7 +185,9 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
         }
 
         // Continue mode — run a new debate against the same panel.
-        if (opts.engine === "mock") {
+        // engine is non-undefined here because the action validated it.
+        const continueEngine = opts.engine ?? "mock";
+        if (continueEngine === "mock") {
           writeError(
             "\n!! [MOCK ENGINE] --continue running with deterministic offline mock — responses are NOT real.\n\n",
           );
@@ -182,7 +204,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
           systemMessage: e.systemMessage,
         }));
 
-        engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(opts.engine);
+        engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(continueEngine);
         await engine.start();
         const startedEngine = engine;
         const settled = await Promise.allSettled(
@@ -210,17 +232,28 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
         const expertSlugToId: Record<string, string> = {};
         for (const e of resolved.experts) expertSlugToId[e.slug] = e.id;
 
+        // Sentinel pr165 #3: honor the panel's persisted mode (freeform
+        // or structured) instead of hardcoding freeform. Falls back to
+        // 'freeform' if the configJson is malformed or missing the field.
+        let panelMode: "freeform" | "structured" = "freeform";
+        try {
+          const cfg = JSON.parse(resolved.panel.configJson) as { mode?: string };
+          if (cfg.mode === "structured") panelMode = "structured";
+        } catch {
+          /* malformed configJson — fall back to freeform */
+        }
+
         const config: DebateConfig = {
           maxRounds: opts.maxRounds,
           maxWordsPerResponse: opts.maxWords,
-          mode: "freeform",
+          mode: panelMode,
         };
         const persister = new DebatePersister({
           debates: debateRepo,
           turns: turnRepo,
           panelId: resolved.panel.id,
           expertSlugToId,
-          moderator: "round-robin",
+          moderator: panelMode === "structured" ? "structured-phases" : "round-robin",
         });
 
         const sink: Sink = { write, writeError };
@@ -230,7 +263,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
         if (opts.format === "plain") {
           write(`\n# Continuing ${resolved.panel.name}\n`);
           write(`Prompt: ${opts.continue}\n`);
-          write(`Engine: ${opts.engine} | Max rounds: ${opts.maxRounds}\n\n`);
+          write(`Engine: ${continueEngine} | Max rounds: ${opts.maxRounds}\n\n`);
         }
 
         const stream = persister.persist(
