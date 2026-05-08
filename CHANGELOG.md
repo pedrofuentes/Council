@@ -10,8 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - **`council resume <panel>`** (ROADMAP §3.2) — reopens an existing panel.
   - **Transcript mode** (default): replays the most recent debate's persisted turns as a synthesized `DebateEvent` stream and renders via JSON or Plain. No engine, no LLM calls — pure DB read.
-  - **Continue mode** (`--continue "<prompt>"`): runs a NEW debate against the same panel/experts using the existing convene wiring (engine + Debate + DebatePersister + Renderer). Reuses the panel's stored expert system prompts verbatim — no memory recall yet (§3.1 second half).
-  - Engine selection mirrors convene: `--engine mock|copilot` (default mock; loud `[MOCK ENGINE]` warning to stderr in continue mode).
+  - **Continue mode** (`--continue "<prompt>"`): runs a NEW debate against the same panel/experts using the existing convene wiring (engine + Debate + DebatePersister + Renderer). Honors the panel's persisted `mode` (freeform or structured) from `configJson`. Reuses the panel's stored expert system prompts verbatim — no memory recall yet (§3.1 second half).
+  - Engine selection mirrors convene: `--engine mock|copilot` is **required** when `--continue` is set (no silent default — production users never get fake debates persisted as real). Loud `[MOCK ENGINE]` warning to stderr fires only when `mock` is explicitly chosen.
   - Other options: `--format json|plain`, `--max-rounds`, `--max-words`.
   - Resolves panel name → most-recently-created match via `PanelRepository.findByName()`.
 - `PanelRepository.findByName(name)` — look up the most-recently-created panel by name. Used by `council resume`. Returns `undefined` if no match.
