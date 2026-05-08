@@ -71,6 +71,23 @@ export class PanelRepository {
     return row ? toDomain(row) : undefined;
   }
 
+  /**
+   * Look up a panel by its `name` column. Names are not constrained to
+   * be unique by the schema today (debate-orchestrator generates
+   * timestamped names); this returns the most-recently-created match.
+   * Used by `council resume <panel>` to map a friendly name to a panel.
+   */
+  async findByName(name: string): Promise<Panel | undefined> {
+    const row = await this.db
+      .selectFrom("panels")
+      .selectAll()
+      .where("name", "=", name)
+      .orderBy("created_at", "desc")
+      .orderBy("id", "desc")
+      .executeTakeFirst();
+    return row ? toDomain(row) : undefined;
+  }
+
   async findAll(): Promise<readonly Panel[]> {
     const rows = await this.db.selectFrom("panels").selectAll().orderBy("id", "asc").execute();
     return rows.map(toDomain);

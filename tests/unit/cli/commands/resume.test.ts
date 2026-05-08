@@ -1,0 +1,466 @@
+/**
+ * Tests for `council resume <panel>` (ROADMAP §3.2).
+ *
+ * Scope (MVP):
+ *   - Resolve panel by name (CLI takes a friendly name, not a ULID)
+ *   - Show a transcript of the most recent debate for that panel
+ *     (panel.assembled summary → all turns in order → debate.end status)
+ *   - With --continue "<prompt>": run a NEW debate against the same
+ *     panel (reuses experts, creates new debate row, persists turns)
+ *   - --format json|plain — matches convene
+ *
+ * Out of scope for this PR:
+ *   - Mid-debate resume (would need Copilot session persistence; SDK
+ *     doesn't expose stable resumeSession yet)
+ *   - Interactive panel picker (deferred to ink-ui §3.4)
+ *   - Memory recall into prompts (deferred to §3.1 second half)
+ *
+ * RED at this commit: src/cli/commands/resume.ts does not exist.
+ */
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { buildResumeCommand } from "../../../../src/cli/commands/resume.js";
+import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
+import type { CouncilEngine } from "../../../../src/engine/index.js";
+import { createDatabase } from "../../../../src/memory/db.js";
+import { DebateRepository } from "../../../../src/memory/repositories/debates.js";
+import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
+import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
+import { TurnRepository } from "../../../../src/memory/repositories/turns.js";
+
+interface SeedResult {
+  panelName: string;
+  panelId: string;
+  expertIds: { cto: string; pm: string };
+  debateId: string;
+}
+
+async function seedPanelWithDebate(testHome: string): Promise<SeedResult> {
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    const panelRepo = new PanelRepository(db);
+    const expertRepo = new ExpertRepository(db);
+    const debateRepo = new DebateRepository(db);
+    const turnRepo = new TurnRepository(db);
+
+    const panelName = "test-panel-2026";
+    const panel = await panelRepo.create({
+      name: panelName,
+      topic: "Should we ship the MVP?",
+      copilotHome: path.join(testHome, "copilot"),
+      configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+    });
+    const cto = await expertRepo.create({
+      panelId: panel.id,
+      slug: "cto",
+      displayName: "CTO",
+      model: "claude-sonnet-4",
+      systemMessage: "[1] IDENTITY...",
+    });
+    const pm = await expertRepo.create({
+      panelId: panel.id,
+      slug: "pm",
+      displayName: "PM",
+      model: "claude-sonnet-4",
+      systemMessage: "[1] IDENTITY...",
+    });
+    const debate = await debateRepo.create({
+      panelId: panel.id,
+      prompt: "Should we ship the MVP?",
+      moderator: "round-robin",
+    });
+    await turnRepo.create({
+      debateId: debate.id,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId: cto.id,
+      content: "CTO opening — ship now.",
+    });
+    await turnRepo.create({
+      debateId: debate.id,
+      round: 0,
+      seq: 1,
+      speakerKind: "expert",
+      expertId: pm.id,
+      content: "PM opening — wait two weeks.",
+    });
+    await debateRepo.update(debate.id, {
+      status: "completed",
+      endedAt: new Date().toISOString(),
+    });
+    return {
+      panelName,
+      panelId: panel.id,
+      expertIds: { cto: cto.id, pm: pm.id },
+      debateId: debate.id,
+    };
+  } finally {
+    await db.destroy();
+  }
+}
+
+describe("buildResumeCommand", () => {
+  let testHome: string;
+  let originalHome: string | undefined;
+
+  beforeEach(async () => {
+    testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-resume-test-"));
+    originalHome = process.env["COUNCIL_HOME"];
+    process.env["COUNCIL_HOME"] = testHome;
+  });
+
+  afterEach(async () => {
+    if (originalHome === undefined) delete process.env["COUNCIL_HOME"];
+    else process.env["COUNCIL_HOME"] = originalHome;
+    try {
+      await fs.rm(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    } catch {
+      /* best effort */
+    }
+  });
+
+  function makeMockEngineFactory(): () => CouncilEngine {
+    return () => new MockEngine({ responses: {} });
+  }
+
+  it("registers a 'resume' command with required panel positional arg", () => {
+    const cmd = buildResumeCommand({ engineFactory: makeMockEngineFactory() });
+    expect(cmd.name()).toBe("resume");
+    expect(cmd.description()).toMatch(/panel|resume|debate/i);
+    // First registered argument must be required (panel name).
+    // commander represents required args via _args; just confirm parseAsync
+    // rejects when missing.
+  });
+
+  it("supports --format and --continue options", () => {
+    const cmd = buildResumeCommand({ engineFactory: makeMockEngineFactory() });
+    const longs = cmd.options.map((o) => o.long);
+    expect(longs).toContain("--format");
+    expect(longs).toContain("--continue");
+  });
+
+  it("rejects when the panel name is unknown", async () => {
+    const cmd = buildResumeCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+    });
+    cmd.exitOverride();
+
+    let thrown = "";
+    try {
+      await cmd.parseAsync(["node", "council-resume", "no-such-panel"]);
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    expect(thrown.toLowerCase()).toMatch(/no.*panel|not.*found|unknown panel/);
+  });
+
+  it("plain transcript: prints panel header, all turns in order, debate status", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    let captured = "";
+    const cmd = buildResumeCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (s) => {
+        captured += s;
+      },
+    });
+
+    await cmd.parseAsync(["node", "council-resume", seed.panelName]);
+
+    // Header should mention the panel name and topic.
+    expect(captured).toContain(seed.panelName);
+    expect(captured).toContain("Should we ship the MVP?");
+    // Both turns should appear in order, attributed to their experts.
+    expect(captured).toContain("CTO");
+    expect(captured).toContain("ship now");
+    expect(captured).toContain("PM");
+    expect(captured).toContain("wait two weeks");
+    // CTO's turn must precede PM's in the output.
+    expect(captured.indexOf("CTO opening")).toBeLessThan(captured.indexOf("PM opening"));
+    // Status line — the debate completed.
+    expect(captured.toLowerCase()).toMatch(/status.*completed|completed/);
+  });
+
+  it("--format json: emits NDJSON with one event per turn", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    let captured = "";
+    const cmd = buildResumeCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (s) => {
+        captured += s;
+      },
+    });
+
+    await cmd.parseAsync(["node", "council-resume", seed.panelName, "--format", "json"]);
+
+    const lines = captured
+      .split("\n")
+      .filter((l) => l.trim().length > 0 && l.trim().startsWith("{"));
+    const events = lines.map((l) => JSON.parse(l) as { kind: string });
+    const kinds = events.map((e) => e.kind);
+    expect(kinds[0]).toBe("panel.assembled");
+    expect(kinds.filter((k) => k === "turn.end")).toHaveLength(2);
+    expect(kinds[kinds.length - 1]).toBe("debate.end");
+  });
+
+  it("--continue '<new prompt>' runs a new debate against the same panel and persists it", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    let captured = "";
+    const cmd = buildResumeCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (s) => {
+        captured += s;
+      },
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-resume",
+      seed.panelName,
+      "--continue",
+      "What about the migration risk?",
+      "--engine",
+      "mock",
+      "--format",
+      "json",
+      "--max-rounds",
+      "1",
+    ]);
+
+    // After resume --continue, the DB must have TWO debates for this panel.
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const debates = await new DebateRepository(db).findByPanelId(seed.panelId);
+      expect(debates).toHaveLength(2);
+      const newDebate = debates.find((d) => d.id !== seed.debateId);
+      expect(newDebate).toBeDefined();
+      expect(newDebate?.prompt).toBe("What about the migration risk?");
+      expect(newDebate?.status).toBe("completed");
+      // Continued debate must have new turns persisted.
+      const newTurns = await new TurnRepository(db).findByDebateId(newDebate?.id ?? "");
+      expect(newTurns.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      await db.destroy();
+    }
+
+    // NDJSON output should end with debate.end for the new debate.
+    const lines = captured
+      .split("\n")
+      .filter((l) => l.trim().length > 0 && l.trim().startsWith("{"));
+    expect(lines[lines.length - 1]).toMatch(/"debate\.end"/);
+  });
+
+  // ── Sentinel pr165 #1 + #5 — added edge-case coverage ─────────────
+
+  it("--continue without --engine fails loudly (no silent mock default)", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    const cmd = buildResumeCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+    });
+    cmd.exitOverride();
+
+    let thrown = "";
+    try {
+      await cmd.parseAsync([
+        "node",
+        "council-resume",
+        seed.panelName,
+        "--continue",
+        "follow-up prompt",
+      ]);
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    expect(thrown.toLowerCase()).toMatch(/--engine.*required|engine.*required.*continue/);
+  });
+
+  it("--continue --engine garbage rejects with clear error", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    const cmd = buildResumeCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+    });
+    cmd.exitOverride();
+
+    let thrown = "";
+    try {
+      await cmd.parseAsync([
+        "node",
+        "council-resume",
+        seed.panelName,
+        "--continue",
+        "x",
+        "--engine",
+        "anthropic-direct",
+      ]);
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    expect(thrown.toLowerCase()).toMatch(/anthropic-direct|engine.*value|engine.*expected/);
+  });
+
+  it("transcript mode handles a panel with a debate that has zero turns", async () => {
+    // Seed a panel + debate but no turns.
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    let panelName = "";
+    try {
+      const panel = await new PanelRepository(db).create({
+        name: "empty-debate-panel",
+        topic: "still empty",
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: "{}",
+      });
+      panelName = panel.name;
+      const debate = await new DebateRepository(db).create({
+        panelId: panel.id,
+        prompt: "prompt",
+        moderator: "round-robin",
+      });
+      await new DebateRepository(db).update(debate.id, {
+        status: "completed",
+        endedAt: new Date().toISOString(),
+      });
+    } finally {
+      await db.destroy();
+    }
+
+    let captured = "";
+    const cmd = buildResumeCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (s) => {
+        captured += s;
+      },
+    });
+    await cmd.parseAsync(["node", "council-resume", panelName, "--format", "json"]);
+    const lines = captured.split("\n").filter((l) => l.trim().startsWith("{"));
+    const events = lines.map((l) => JSON.parse(l) as { kind: string });
+    // panel.assembled + debate.end only — no turn events, no
+    // round.start/round.end (since lastRound starts at -1 and stays).
+    expect(events.map((e) => e.kind)).toEqual(["panel.assembled", "debate.end"]);
+  });
+
+  it("transcript mode maps debate.status='running' to debate.end.reason='aborted'", async () => {
+    // Seed a panel with an UN-finalized debate (status='running').
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    let panelName = "";
+    try {
+      const panel = await new PanelRepository(db).create({
+        name: "running-panel",
+        topic: "abandoned",
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: "{}",
+      });
+      panelName = panel.name;
+      // Create a debate but DON'T update its status — stays at 'running'.
+      await new DebateRepository(db).create({
+        panelId: panel.id,
+        prompt: "prompt",
+        moderator: "round-robin",
+      });
+    } finally {
+      await db.destroy();
+    }
+
+    let captured = "";
+    const cmd = buildResumeCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (s) => {
+        captured += s;
+      },
+    });
+    await cmd.parseAsync(["node", "council-resume", panelName, "--format", "json"]);
+    const lines = captured.split("\n").filter((l) => l.trim().startsWith("{"));
+    const last = JSON.parse(lines[lines.length - 1] ?? "{}") as {
+      kind: string;
+      reason?: string;
+    };
+    expect(last.kind).toBe("debate.end");
+    expect(last.reason).toBe("aborted");
+  });
+
+  it("findByName resolves to the most-recently-created panel when names collide", async () => {
+    // Seed two panels with the SAME name; resume should pick the newer one.
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    let olderId = "";
+    let newerId = "";
+    try {
+      const repo = new PanelRepository(db);
+      const debateRepo = new DebateRepository(db);
+      const turnRepo = new TurnRepository(db);
+
+      const older = await repo.create({
+        name: "duplicate-name",
+        topic: "older topic",
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: "{}",
+      });
+      olderId = older.id;
+      // Older panel needs a debate so resume doesn't error on no-debates.
+      const olderDebate = await debateRepo.create({
+        panelId: older.id,
+        prompt: "older prompt",
+        moderator: "round-robin",
+      });
+      await turnRepo.create({
+        debateId: olderDebate.id,
+        round: 0,
+        seq: 0,
+        speakerKind: "system",
+        content: "OLDER-DEBATE-MARKER",
+      });
+      await debateRepo.update(olderDebate.id, {
+        status: "completed",
+        endedAt: new Date().toISOString(),
+      });
+
+      // 5ms gap so created_at differs (ULID timestamp resolution).
+      await new Promise((r) => setTimeout(r, 5));
+
+      const newer = await repo.create({
+        name: "duplicate-name",
+        topic: "newer topic",
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: "{}",
+      });
+      newerId = newer.id;
+      const newerDebate = await debateRepo.create({
+        panelId: newer.id,
+        prompt: "newer prompt",
+        moderator: "round-robin",
+      });
+      await turnRepo.create({
+        debateId: newerDebate.id,
+        round: 0,
+        seq: 0,
+        speakerKind: "system",
+        content: "NEWER-DEBATE-MARKER",
+      });
+      await debateRepo.update(newerDebate.id, {
+        status: "completed",
+        endedAt: new Date().toISOString(),
+      });
+    } finally {
+      await db.destroy();
+    }
+
+    let captured = "";
+    const cmd = buildResumeCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (s) => {
+        captured += s;
+      },
+    });
+    await cmd.parseAsync(["node", "council-resume", "duplicate-name"]);
+    expect(captured).toContain("newer topic");
+    expect(captured).toContain("NEWER-DEBATE-MARKER");
+    expect(captured).not.toContain("OLDER-DEBATE-MARKER");
+    // Ensure both panels exist (sanity check on the seed).
+    expect(olderId).not.toBe(newerId);
+  });
+});
