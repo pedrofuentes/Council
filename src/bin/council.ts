@@ -3,14 +3,12 @@
  *
  * Subcommands:
  *   - `convene`    run a panel debate on a topic (engine: mock | copilot)
+ *   - `resume`     reopen a panel: show transcript or continue
  *   - `panels`     list panels in the local DB
  *   - `templates`  list built-in panel templates
  *   - `doctor`     diagnose Council setup
  *
  * `ask` is the next command (one-shot single-expert chat) — deferred.
- *
- * Both engine kinds are wired and ready: `--engine mock` for offline
- * deterministic runs, `--engine copilot` for real Copilot SDK calls.
  */
 import { Command } from "commander";
 
@@ -19,6 +17,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import { buildConveneCommand } from "../cli/commands/convene.js";
 import { buildDoctorCommand } from "../cli/commands/doctor.js";
 import { buildPanelsCommand } from "../cli/commands/panels.js";
+import { buildResumeCommand } from "../cli/commands/resume.js";
 import { buildTemplatesCommand } from "../cli/commands/templates.js";
 
 export function buildProgram(): Command {
@@ -28,6 +27,7 @@ export function buildProgram(): Command {
     .description("Persistent AI expert panels for deliberation and decision-making")
     .version(packageJson.version);
   program.addCommand(buildConveneCommand());
+  program.addCommand(buildResumeCommand());
   program.addCommand(buildPanelsCommand());
   program.addCommand(buildTemplatesCommand());
   program.addCommand(buildDoctorCommand());

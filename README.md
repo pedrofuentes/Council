@@ -63,7 +63,7 @@ npm install -g @council/cli
 
 ## Quick Start
 
-> 🚧 **Phase 1 in progress.** The CLI implements `convene`, `panels`, `templates`, and `doctor` today. `ask`, `conclude`, and `resume` are next (see [ROADMAP.md](./ROADMAP.md)).
+> 🚧 **Phase 1 in progress.** The CLI implements `convene`, `resume`, `panels`, `templates`, and `doctor` today. `ask` and `conclude` are next (see [ROADMAP.md](./ROADMAP.md)).
 
 ```bash
 # Verify your setup
@@ -82,6 +82,12 @@ council convene "Should we ship the MVP?" --template architecture-review \
 
 # Pipe NDJSON output to jq, logs, or scripts
 council convene "..." --template code-review --engine copilot --format json | jq .
+
+# Show the transcript of a previous debate
+council resume <panel-name>
+
+# Continue a previous panel with a new prompt
+council resume <panel-name> --continue "What about the migration risk?" --engine copilot
 ```
 
 ## Built-in Panels

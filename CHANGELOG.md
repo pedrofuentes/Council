@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **`council resume <panel>`** (ROADMAP §3.2) — reopens an existing panel.
+  - **Transcript mode** (default): replays the most recent debate's persisted turns as a synthesized `DebateEvent` stream and renders via JSON or Plain. No engine, no LLM calls — pure DB read.
+  - **Continue mode** (`--continue "<prompt>"`): runs a NEW debate against the same panel/experts using the existing convene wiring (engine + Debate + DebatePersister + Renderer). Reuses the panel's stored expert system prompts verbatim — no memory recall yet (§3.1 second half).
+  - Engine selection mirrors convene: `--engine mock|copilot` (default mock; loud `[MOCK ENGINE]` warning to stderr in continue mode).
+  - Other options: `--format json|plain`, `--max-rounds`, `--max-words`.
+  - Resolves panel name → most-recently-created match via `PanelRepository.findByName()`.
+- `PanelRepository.findByName(name)` — look up the most-recently-created panel by name. Used by `council resume`. Returns `undefined` if no match.
 - Project scaffolding: TypeScript ESM (Node 20+), tsup bundler, Vitest test runner, ESLint flat config v9 with typescript-eslint strict, Prettier formatter
 - ESLint rule `no-restricted-imports` enforcing `@github/copilot-sdk` may only be imported from `src/engine/copilot/adapter.ts`
 - CLI binary entry (`council --version`, `council --help`) using Commander.js
