@@ -47,6 +47,7 @@ import { PlainRenderer } from "../renderers/plain.js";
 import type { Sink } from "../renderers/types.js";
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
+import { formatEngineError } from "../error-mapper.js";
 
 const DEFAULT_MAX_ROUNDS = 4;
 const DEFAULT_MAX_WORDS = 250;
@@ -176,7 +177,11 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
         }));
 
         engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(continueEngine);
-        await engine.start();
+        // Sentinel #133: wrap engine init + render in try/catch and route
+        // engine errors through formatEngineError so users see actionable
+        // hints instead of raw stack traces. Re-throw preserves test contracts.
+        try {
+          await engine.start();
         const startedEngine = engine;
         const settled = await Promise.allSettled(
           expertSpecs.map((e) => startedEngine.addExpert(e)),
@@ -242,6 +247,10 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
           opts.continue,
         );
         await renderer.render(stream);
+        } catch (err: unknown) {
+          writeError("\n" + formatEngineError(err as Error) + "\n\n");
+          throw err;
+        }
       } finally {
         if (engine) {
           await engine.stop().catch((err: unknown) => {

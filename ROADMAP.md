@@ -781,11 +781,12 @@ export function estimateDebateCost(config: DebateConfig, expertCount: number): C
 - JSON: NDJSON of all DebateEvents
 - ADR: Decision Record format (problem → options → positions → synthesis)
 
-### 3.7 Error Resilience
-- Retry 2× on single expert failure (exponential backoff: 250ms, 1s)
-- Continue debate without failed expert
-- Persist state as "paused" on client drop (resumable)
-- Model fallback per expert config
+### 3.7 Error Resilience ✅ (mostly shipped in PR — see CHANGELOG)
+- Retry 2× on single expert failure (exponential backoff: 250ms, 1s) ✅
+- Continue debate without failed expert ✅
+- `formatEngineError` CLI helper for actionable error messages (closes #133) ✅
+- Persist state as "paused" on client drop (resumable) — already covered by #117
+- Model fallback per expert config — **deferred** (separate PR — needs ExpertDefinitionSchema changes)
 
 ---
 

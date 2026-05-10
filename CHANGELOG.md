@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Retry on recoverable engine errors** (ROADMAP §3.7) — `Debate.#runTurn()` now automatically retries up to 2× with exponential backoff (`250ms`, `1s`) when `engine.send()` yields an `error` event with `recoverable: true` (RATE_LIMITED, NETWORK). Non-recoverable errors fail fast. Retry exhaustion emits a final error event but does NOT terminate the debate — the orchestrator moves on to the next expert.
+- **`turn.retry` `DebateEvent` variant** — `{ kind: "turn.retry"; expertSlug; attempt; reason }`. Renderers MAY display `[expert retrying…]`; if ignored, downstream behavior is identical to a slightly slower turn. Persistence (`DebatePersister`) does NOT write a row for retries — only the eventual `turn.end` (success) or `error` (exhaustion).
+- **`DebateConfig.retryBackoffMs?: readonly number[]`** — list of backoff delays in ms. Length determines max retries. Default `[250, 1000]`. Tests pass `[1, 2]` for fast suite runs.
+- **`src/cli/error-mapper.ts`** — `formatEngineError(err)` shared helper that maps `EngineErrorCode` to actionable user messages: NOT_AUTHENTICATED → "run `gh auth login`", MODEL_UNAVAILABLE → "model X isn't available; check `council doctor`", NETWORK → "check your connection", RATE_LIMITED → "wait and retry", CONTEXT_OVERFLOW → "smaller `--max-words` or fewer experts", INTERNAL → "file an issue at github.com/pedrofuentes/Council". Closes #133.
+- **Wired into `convene` and `resume`** — engine init + render path now wrapped in try/catch that routes errors through `formatEngineError` to stderr before re-throwing. Users see actionable hints instead of raw stack traces.
+- New `MockEngine.failOnSend?: { expertId, afterN, failures, code, message }` test seam — simulates per-send transient failures for retry testing.
 - **`council memory list/inspect/reset`** (ROADMAP §3.5) — three subcommands for inspecting and curating Council's local SQLite state at the panel/expert/debate/turn level.
   - **`memory list`**: per-panel summary (name, expert/debate/turn counts, last activity timestamp). `--panel <name>` filters to one. `--format json|plain`.
   - **`memory inspect <panel>`**: detailed view (topic, latest debate prompt + status + turn count, expert displayNames + models). `--expert <slug>` focuses on one expert and shows their (truncated, 600 chars) system prompt.

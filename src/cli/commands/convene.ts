@@ -55,6 +55,7 @@ import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
 import { DEFAULT_MODEL } from "../../config/index.js";
 import { CopilotEngine } from "../../engine/copilot/adapter.js";
+import { formatEngineError } from "../error-mapper.js";
 
 const DEFAULT_MAX_ROUNDS = 4;
 const DEFAULT_MAX_WORDS = 250;
@@ -212,8 +213,13 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
 
         // (4) Construct engine. Test injection wins over the kind-based
         // factory so we don't have to mutate process.env to pass mocks.
-        engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(opts.engine);
-        await engine.start();
+        // Sentinel #133: wrap engine init + render in try/catch and route
+        // engine errors through formatEngineError so users see actionable
+        // hints (e.g. NOT_AUTHENTICATED → "run gh auth login") instead of
+        // raw stack traces. Re-throw preserves existing test contracts.
+        try {
+          engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(opts.engine);
+          await engine.start();
 
         // Sentinel #142: leak-safe parallel addExpert.
         // CopilotEngine creates one CopilotSession per expert independently
@@ -288,6 +294,11 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
 
         const stream = persister.persist(new Debate(engine, experts, config).run(topic), topic);
         await renderer.render(stream);
+        } catch (err: unknown) {
+          // Sentinel #133: surface actionable error hint via writeError.
+          writeError("\n" + formatEngineError(err as Error) + "\n\n");
+          throw err;
+        }
       } finally {
         // Sentinel pr125 #130: log cleanup errors instead of swallowing.
         // Cleanup happens after the user already saw the main output, so
