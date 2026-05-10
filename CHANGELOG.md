@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **`council export <panel> --format markdown|json|adr [--output <path>]`** (ROADMAP §3.6) — snapshots the latest debate of a panel into a shareable artifact.
+  - **markdown** (default): readable transcript with H1 header (panel name + topic), status line, panel roster, per-turn sections grouped by round (expert displayName + model + content as block quotes).
+  - **json**: NDJSON identical to `council resume --format json` — same `synthesizeEvents()` helper.
+  - **adr**: Architecture Decision Record markdown with Status / Context / Options Considered / Discussion / Decision sections populated from the panel's debate (heuristic: opening turn per expert = position; last turn per expert = synthesis).
+  - **`--output <path>`**: writes to file instead of stdout (default: stdout). Confirmation message goes to stderr so stdout stays clean.
+- **`src/memory/transcript.ts`** — `loadTranscript(db, panelName)` + `synthesizeEvents(doc)` extracted from `resume`. Pure read path: no engine, no LLM, no persistence side effects. Shared by `resume` and `export` so both commands produce identical event streams from the same DB rows.
+- `TranscriptDocument` type — `{ panel, experts, latestDebate, turns }`.
 - **`council resume <panel>`** (ROADMAP §3.2) — reopens an existing panel.
   - **Transcript mode** (default): replays the most recent debate's persisted turns as a synthesized `DebateEvent` stream and renders via JSON or Plain. No engine, no LLM calls — pure DB read.
   - **Continue mode** (`--continue "<prompt>"`): runs a NEW debate against the same panel/experts using the existing convene wiring (engine + Debate + DebatePersister + Renderer). Honors the panel's persisted `mode` (freeform or structured) from `configJson`. Reuses the panel's stored expert system prompts verbatim — no memory recall yet (§3.1 second half).
