@@ -43,7 +43,21 @@ export interface DebateConfig {
   readonly maxWordsPerResponse: number;
   readonly mode: DebateMode;
   readonly moderatorModel?: string;
+  /**
+   * Backoff delays in ms between retry attempts on recoverable engine
+   * errors (#3.7). Length determines the maximum number of retries
+   * (e.g. `[250, 1000]` = up to 2 retries). Default: `[250, 1000]`
+   * (250ms then 1s exponential). Tests pass `[1, 2]` to keep the
+   * suite fast.
+   *
+   * Only RATE_LIMITED and NETWORK errors trigger a retry; all other
+   * EngineErrorCode values fail fast.
+   */
+  readonly retryBackoffMs?: readonly number[];
 }
+
+/** Default retry backoff per ROADMAP §3.7 — 250ms, then 1s. */
+const DEFAULT_RETRY_BACKOFF_MS: readonly number[] = [250, 1000];
 
 interface RunCounters {
   premiumRequests: number;
@@ -178,10 +192,21 @@ export class Debate {
   }
 
   /**
+  /**
    * Runs one expert's turn end-to-end. Yields all related debate events
    * and returns the accumulated response content (or `null` if the turn
    * failed / errored). Updates `counters.premiumRequests` and emits a
    * `cost.update` after every turn.
+   *
+   * **Retry semantics (#3.7)**: when an attempt yields an `error` event
+   * with `recoverable: true`, the orchestrator emits a `turn.retry`
+   * event, sleeps for the matching backoff delay, and retries the send.
+   * Retries cap at `config.retryBackoffMs.length` attempts (default 2).
+   * Non-recoverable errors fail fast (no retry). Synchronous throws
+   * from `engine.send()` (e.g. unregistered expert) are not retried.
+   *
+   * Each attempt accumulates its own delta content; partial content
+   * from a failed attempt is discarded so retried turns start fresh.
    */
   async *#runTurn(
     expert: ExpertSpec,
@@ -192,40 +217,79 @@ export class Debate {
   ): AsyncGenerator<DebateEvent, string | null> {
     yield { kind: "turn.start", expertSlug: expert.slug, round, seq };
 
+    const backoffMs = this.config.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS;
+    const maxRetries = backoffMs.length;
+
     let content = "";
     let turnFailed = false;
-    try {
-      for await (const evt of this.engine.send({ prompt, expertId: expert.id })) {
-        switch (evt.kind) {
-          case "message.delta": {
-            content += evt.text;
-            yield { kind: "turn.delta", expertSlug: expert.slug, text: evt.text };
-            break;
-          }
-          case "message.complete": {
-            // turn.end is yielded after the loop with accumulated content.
-            break;
-          }
-          case "error": {
-            turnFailed = true;
-            yield {
-              kind: "error",
-              expertSlug: expert.slug,
-              message: evt.error.message,
-              recoverable: evt.recoverable,
-            };
-            break;
+    let lastErrorRecoverable = false;
+    let lastErrorMessage = "";
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      // Reset per-attempt state — partial deltas from a failed attempt
+      // must not bleed into the retry's content.
+      content = "";
+      let attemptFailed = false;
+      lastErrorRecoverable = false;
+      lastErrorMessage = "";
+
+      try {
+        for await (const evt of this.engine.send({ prompt, expertId: expert.id })) {
+          switch (evt.kind) {
+            case "message.delta": {
+              content += evt.text;
+              yield { kind: "turn.delta", expertSlug: expert.slug, text: evt.text };
+              break;
+            }
+            case "message.complete": {
+              // turn.end is yielded after the loop with accumulated content.
+              break;
+            }
+            case "error": {
+              attemptFailed = true;
+              lastErrorRecoverable = evt.recoverable;
+              lastErrorMessage = evt.error.message;
+              break;
+            }
           }
         }
+      } catch (err: unknown) {
+        // Synchronous validation failures (e.g. unregistered expert)
+        // bubble out as thrown Errors. Treat as non-recoverable —
+        // retrying the same registration error would just re-throw.
+        attemptFailed = true;
+        lastErrorRecoverable = false;
+        lastErrorMessage = err instanceof Error ? err.message : String(err);
       }
-    } catch (err: unknown) {
+
+      if (!attemptFailed) {
+        // Success — break the retry loop with content set.
+        turnFailed = false;
+        break;
+      }
+
+      // Decide whether to retry.
+      if (lastErrorRecoverable && attempt < maxRetries) {
+        const delay = backoffMs[attempt] ?? 0;
+        yield {
+          kind: "turn.retry",
+          expertSlug: expert.slug,
+          attempt: attempt + 1,
+          reason: lastErrorMessage,
+        };
+        if (delay > 0) await sleep(delay);
+        continue; // try again
+      }
+
+      // Either non-recoverable, or retries exhausted: emit final error.
       turnFailed = true;
       yield {
         kind: "error",
         expertSlug: expert.slug,
-        message: err instanceof Error ? err.message : String(err),
-        recoverable: false,
+        message: lastErrorMessage,
+        recoverable: lastErrorRecoverable,
       };
+      break;
     }
 
     if (!turnFailed) {
@@ -242,6 +306,10 @@ export class Debate {
 
     return turnFailed ? null : content;
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Re-export for callers consuming both the orchestrator and event types. */

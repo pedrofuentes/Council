@@ -92,4 +92,21 @@ export type DebateEvent =
       readonly expertSlug?: string;
       readonly message: string;
       readonly recoverable: boolean;
+    }
+  | {
+      /**
+       * Emitted when the orchestrator retries a turn after a recoverable
+       * engine error (e.g. RATE_LIMITED, NETWORK). One event per retry
+       * attempt — `attempt` is 1-indexed (the first retry is attempt=1,
+       * which is the 2nd total send for that turn).
+       *
+       * Renderers MAY display "[expert retrying...]"; if ignored,
+       * downstream behavior is identical to a slightly slower turn.
+       * Persistence (DebatePersister) does NOT write a row for retries —
+       * only the eventual `turn.end` (success) or `error` (exhaustion).
+       */
+      readonly kind: "turn.retry";
+      readonly expertSlug: string;
+      readonly attempt: number;
+      readonly reason: string;
     };
