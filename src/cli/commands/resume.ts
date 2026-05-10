@@ -3,62 +3,31 @@
  * that already has at least one persisted debate (ROADMAP §3.2).
  *
  * Two modes:
- *
- *   1. **Transcript mode** (no --continue) — replays the most recent
- *      debate's turns as a synthesized DebateEvent stream and hands
- *      it to the chosen renderer. The events are reconstructed from
- *      DB rows; no engine is constructed, no LLM calls are made.
- *
- *   2. **Continue mode** (with --continue "<prompt>") — runs a NEW
- *      debate against the same panel/experts using the existing
- *      convene wiring (engine + Debate + DebatePersister + Renderer).
- *      Reuses the panel's stored expert system prompts verbatim — no
- *      memory recall yet (§3.1 second half).
- *
- * Out of scope for this PR:
- *   - Mid-debate resume (would need stable Copilot resumeSession)
- *   - Interactive panel picker (deferred to ink-ui §3.4)
- *   - Memory recall into prompts
- *
- * Engine selection mirrors convene: `--engine mock|copilot` required
- * in continue mode (irrelevant in transcript mode — no engine used).
+ *   1. Transcript mode (no --continue) — replays the most recent
+ *      debate's turns. No engine, no LLM.
+ *   2. Continue mode (--continue) — runs a NEW debate against the
+ *      same panel/experts via the shared `runWithEngine()` helper.
  */
 import * as path from "node:path";
 
 import { Command } from "commander";
 
 import { getCouncilHome } from "../../config/index.js";
-import { Debate, type DebateConfig } from "../../core/debate.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
-import { MockEngine } from "../../engine/mock/mock-engine.js";
-import { CopilotEngine } from "../../engine/copilot/adapter.js";
 import { createDatabase } from "../../memory/db.js";
-import { DebateRepository } from "../../memory/repositories/debates.js";
-import { TurnRepository } from "../../memory/repositories/turns.js";
-import { DebatePersister } from "../../memory/persister.js";
 import {
   loadTranscript,
   synthesizeEvents,
   type TranscriptDocument,
 } from "../../memory/transcript.js";
 
-import { JsonRenderer } from "../renderers/json.js";
-import { PlainRenderer } from "../renderers/plain.js";
-import type { Sink } from "../renderers/types.js";
-
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
-import { formatEngineError } from "../error-mapper.js";
+import { ENGINE_KINDS, type EngineKind, runWithEngine } from "../run-with-engine.js";
 
 const DEFAULT_MAX_ROUNDS = 4;
 const DEFAULT_MAX_WORDS = 250;
-const RESUME_ENGINE_KINDS = ["mock", "copilot"] as const;
-type ResumeEngineKind = (typeof RESUME_ENGINE_KINDS)[number];
 
 export interface ResumeCommandDeps {
-  /**
-   * Test-only override: takes precedence over the --engine flag and
-   * constructs the engine directly. Production callers omit this.
-   */
   readonly engineFactory?: () => CouncilEngine;
   readonly write?: Writer;
   readonly writeError?: Writer;
@@ -67,23 +36,9 @@ export interface ResumeCommandDeps {
 export interface ResumeOptions {
   readonly format: "json" | "plain";
   readonly continue?: string;
-  /** Required only in continue mode. Validated by the action handler. */
-  readonly engine?: ResumeEngineKind;
+  readonly engine?: EngineKind;
   readonly maxRounds: number;
   readonly maxWords: number;
-}
-
-function makeEngineFromKind(kind: ResumeEngineKind): CouncilEngine {
-  switch (kind) {
-    case "mock":
-      return new MockEngine();
-    case "copilot":
-      return new CopilotEngine();
-    default: {
-      const _exhaustive: never = kind;
-      throw new Error(`Unknown engine kind: ${String(_exhaustive)}`);
-    }
-  }
 }
 
 export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
@@ -101,7 +56,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
     )
     .option(
       "--engine <kind>",
-      "Engine for --continue mode: 'mock' (offline, deterministic) or 'copilot' (real Copilot SDK). Required when --continue is set.",
+      "Engine for --continue mode: 'mock' (offline) or 'copilot' (real). Required when --continue is set.",
     )
     .option(
       "--max-rounds <n>",
@@ -116,21 +71,16 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
       DEFAULT_MAX_WORDS,
     )
     .action(async (panelName: string, raw: ResumeOptions) => {
-      // Sentinel pr165 #1: do NOT silently default --engine. Continue
-      // mode requires an explicit kind so users can never confuse mock
-      // output with real LLM responses persisted to the local DB.
-      // Transcript mode (no --continue) doesn't construct an engine,
-      // so --engine is irrelevant there.
-      let engineKind: ResumeEngineKind | undefined;
+      let engineKind: EngineKind | undefined;
       if (raw.continue !== undefined) {
         if (raw.engine === undefined) {
           throw new Error(
             "--engine is required with --continue (one of: mock, copilot). Use --engine mock for offline/deterministic, --engine copilot for real Copilot SDK.",
           );
         }
-        if (!RESUME_ENGINE_KINDS.includes(raw.engine)) {
+        if (!ENGINE_KINDS.includes(raw.engine)) {
           throw new Error(
-            `Unknown --engine value: ${raw.engine}. Expected one of: ${RESUME_ENGINE_KINDS.join(", ")}`,
+            `Unknown --engine value: ${raw.engine}. Expected one of: ${ENGINE_KINDS.join(", ")}`,
           );
         }
         engineKind = raw.engine;
@@ -146,27 +96,20 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
 
       const dbPath = path.join(getCouncilHome(), "council.db");
       const db = await createDatabase(dbPath);
-      let engine: CouncilEngine | undefined;
       try {
         const resolved = await loadTranscript(db, panelName);
 
         if (opts.continue === undefined) {
-          // Transcript mode — replay persisted events through the renderer.
           await renderTranscriptInline(resolved, opts.format, write);
           return;
         }
 
-        // Continue mode — run a new debate against the same panel.
-        // engine is non-undefined here because the action validated it.
         const continueEngine = opts.engine ?? "mock";
         if (continueEngine === "mock") {
           writeError(
             "\n!! [MOCK ENGINE] --continue running with deterministic offline mock — responses are NOT real.\n\n",
           );
         }
-
-        const debateRepo = new DebateRepository(db);
-        const turnRepo = new TurnRepository(db);
 
         const expertSpecs = resolved.experts.map<ExpertSpec>((e) => ({
           id: e.id,
@@ -176,41 +119,9 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
           systemMessage: e.systemMessage,
         }));
 
-        engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(continueEngine);
-        // Sentinel #133: wrap engine init + render in try/catch and route
-        // engine errors through formatEngineError so users see actionable
-        // hints instead of raw stack traces. Re-throw preserves test contracts.
-        try {
-          await engine.start();
-        const startedEngine = engine;
-        const settled = await Promise.allSettled(
-          expertSpecs.map((e) => startedEngine.addExpert(e)),
-        );
-        const failures = settled.filter((r) => r.status === "rejected");
-        if (failures.length > 0) {
-          const fulfilledIds = settled
-            .map((r, i) => ({ result: r, expert: expertSpecs[i] }))
-            .filter(
-              (p): p is { result: PromiseFulfilledResult<void>; expert: ExpertSpec } =>
-                p.result.status === "fulfilled" && p.expert !== undefined,
-            )
-            .map((p) => p.expert.id);
-          await Promise.allSettled(
-            fulfilledIds.map((id) => startedEngine.removeExpert(id)),
-          );
-          const firstErr = (failures[0] as PromiseRejectedResult).reason;
-          const firstMsg = firstErr instanceof Error ? firstErr.message : String(firstErr);
-          throw new Error(
-            `could not register all experts (${failures.length}/${expertSpecs.length} failed): ${firstMsg}`,
-          );
-        }
-
         const expertSlugToId: Record<string, string> = {};
         for (const e of resolved.experts) expertSlugToId[e.slug] = e.id;
 
-        // Sentinel pr165 #3: honor the panel's persisted mode (freeform
-        // or structured) instead of hardcoding freeform. Falls back to
-        // 'freeform' if the configJson is malformed or missing the field.
         let panelMode: "freeform" | "structured" = "freeform";
         try {
           const cfg = JSON.parse(resolved.panel.configJson) as { mode?: string };
@@ -219,45 +130,33 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
           /* malformed configJson — fall back to freeform */
         }
 
-        const config: DebateConfig = {
-          maxRounds: opts.maxRounds,
-          maxWordsPerResponse: opts.maxWords,
-          mode: panelMode,
-        };
-        const persister = new DebatePersister({
-          debates: debateRepo,
-          turns: turnRepo,
+        await runWithEngine({
+          engineKind: continueEngine,
+          engineFactory: deps.engineFactory,
+          experts: expertSpecs,
+          debateConfig: {
+            maxRounds: opts.maxRounds,
+            maxWordsPerResponse: opts.maxWords,
+            mode: panelMode,
+          },
+          prompt: opts.continue,
           panelId: resolved.panel.id,
           expertSlugToId,
           moderator: panelMode === "structured" ? "structured-phases" : "round-robin",
+          format: opts.format,
+          write,
+          writeError,
+          db,
+          preamble:
+            opts.format === "plain"
+              ? () => {
+                  write(`\n# Continuing ${resolved.panel.name}\n`);
+                  write(`Prompt: ${opts.continue}\n`);
+                  write(`Engine: ${continueEngine} | Max rounds: ${opts.maxRounds}\n\n`);
+                }
+              : undefined,
         });
-
-        const sink: Sink = { write, writeError };
-        const renderer =
-          opts.format === "json" ? new JsonRenderer(sink) : new PlainRenderer(sink);
-
-        if (opts.format === "plain") {
-          write(`\n# Continuing ${resolved.panel.name}\n`);
-          write(`Prompt: ${opts.continue}\n`);
-          write(`Engine: ${continueEngine} | Max rounds: ${opts.maxRounds}\n\n`);
-        }
-
-        const stream = persister.persist(
-          new Debate(engine, expertSpecs, config).run(opts.continue),
-          opts.continue,
-        );
-        await renderer.render(stream);
-        } catch (err: unknown) {
-          writeError("\n" + formatEngineError(err as Error) + "\n\n");
-          throw err;
-        }
       } finally {
-        if (engine) {
-          await engine.stop().catch((err: unknown) => {
-            const msg = err instanceof Error ? err.message : String(err);
-            writeError(`!! engine.stop() failed during cleanup: ${msg}\n`);
-          });
-        }
         await db.destroy().catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
           writeError(`!! db.destroy() failed during cleanup: ${msg}\n`);
@@ -269,10 +168,8 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
 }
 
 /**
- * Render a TranscriptDocument inline (plain or JSON). Plain mode
- * format is resume-specific (per-turn header + indented content +
- * end-of-transcript footer); JSON mode reuses `synthesizeEvents()`
- * shared with `council export`.
+ * Render a TranscriptDocument inline (plain or JSON). Plain mode is
+ * resume-specific; JSON mode defers to `synthesizeEvents()`.
  */
 async function renderTranscriptInline(
   resolved: TranscriptDocument,
@@ -300,7 +197,6 @@ async function renderTranscriptInline(
     return;
   }
 
-  // JSON mode — defer to the shared synthesizer (also used by export).
   for (const e of synthesizeEvents(resolved)) {
     write(JSON.stringify(e) + "\n");
   }
