@@ -240,6 +240,61 @@ describe("buildMemoryCommand", () => {
       }
       expect(thrown.toLowerCase()).toMatch(/no panel|not found/);
     });
+
+    it("--format json: emits single JSON line with panel structure", async () => {
+      const seed = await seedPanel(testHome);
+      let captured = "";
+      const cmd = buildMemoryCommand({ write: (s) => { captured += s; } });
+      await cmd.parseAsync(["node", "council-memory", "inspect", seed.name, "--format", "json"]);
+
+      const doc = JSON.parse(captured.trim()) as Record<string, unknown>;
+      expect(doc).toHaveProperty("panelName", "memory-test");
+      expect(doc).toHaveProperty("panelId");
+      expect(doc).toHaveProperty("topic", "Should we ship the MVP?");
+      expect(doc).toHaveProperty("debateCount", 1);
+      expect(doc).toHaveProperty("experts");
+      expect(Array.isArray(doc["experts"])).toBe(true);
+      const experts = doc["experts"] as { slug: string }[];
+      expect(experts.map((e) => e.slug).sort()).toEqual(["cto", "pm"]);
+
+      expect(doc).toHaveProperty("latestDebate");
+      const debate = doc["latestDebate"] as Record<string, unknown>;
+      expect(debate).toHaveProperty("status", "completed");
+      expect(debate).toHaveProperty("turnCount", 2);
+    });
+
+    it("--expert <slug> --format json: emits expert detail with systemMessage and turnCount", async () => {
+      const seed = await seedPanel(testHome);
+      let captured = "";
+      const cmd = buildMemoryCommand({ write: (s) => { captured += s; } });
+      await cmd.parseAsync([
+        "node", "council-memory", "inspect", seed.name, "--expert", "cto", "--format", "json",
+      ]);
+
+      const doc = JSON.parse(captured.trim()) as Record<string, unknown>;
+      expect(doc).toHaveProperty("panelName", "memory-test");
+      expect(doc).toHaveProperty("expert");
+      const expert = doc["expert"] as Record<string, unknown>;
+      expect(expert).toHaveProperty("slug", "cto");
+      expect(expert).toHaveProperty("displayName", "CTO");
+      expect(expert).toHaveProperty("model", "claude-sonnet-4");
+      expect(expert).toHaveProperty("systemMessage");
+      expect(typeof expert["systemMessage"]).toBe("string");
+      expect(expert).toHaveProperty("turnCount");
+      expect(typeof expert["turnCount"]).toBe("number");
+    });
+
+    it("--format json: no plain-text headings leak into output", async () => {
+      await seedPanel(testHome);
+      let captured = "";
+      const cmd = buildMemoryCommand({ write: (s) => { captured += s; } });
+      await cmd.parseAsync(["node", "council-memory", "inspect", "memory-test", "--format", "json"]);
+
+      const lines = captured.split("\n").filter((l) => l.trim().length > 0);
+      for (const line of lines) {
+        expect(line.trim()).toMatch(/^\{/);
+      }
+    });
   });
 
   // ── reset ────────────────────────────────────────────────────────

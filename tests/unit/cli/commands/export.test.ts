@@ -217,4 +217,72 @@ describe("buildExportCommand", () => {
     }
     expect(thrown.toLowerCase()).toMatch(/yaml|format.*expected|unknown.*format/);
   });
+
+  it("--format adr: single-round debate shows 'no further discussion' message", async () => {
+    // Seed a panel with exactly 1 turn per expert (single round, no synthesis round)
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    let panelName: string;
+    try {
+      const panel = await new PanelRepository(db).create({
+        name: "single-round",
+        topic: "Quick decision",
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+      });
+      const cto = await new ExpertRepository(db).create({
+        panelId: panel.id,
+        slug: "cto",
+        displayName: "CTO",
+        model: "claude-sonnet-4",
+        systemMessage: "You are a CTO.",
+      });
+      const pm = await new ExpertRepository(db).create({
+        panelId: panel.id,
+        slug: "pm",
+        displayName: "PM",
+        model: "claude-sonnet-4",
+        systemMessage: "You are a PM.",
+      });
+      const debate = await new DebateRepository(db).create({
+        panelId: panel.id,
+        prompt: "Quick decision needed",
+        moderator: "round-robin",
+      });
+      await new TurnRepository(db).create({
+        debateId: debate.id,
+        round: 0,
+        seq: 0,
+        speakerKind: "expert",
+        expertId: cto.id,
+        content: "CTO says: ship it immediately.",
+      });
+      await new TurnRepository(db).create({
+        debateId: debate.id,
+        round: 0,
+        seq: 1,
+        speakerKind: "expert",
+        expertId: pm.id,
+        content: "PM says: agreed, let's go.",
+      });
+      await new DebateRepository(db).update(debate.id, {
+        status: "completed",
+        endedAt: new Date().toISOString(),
+      });
+      panelName = panel.name;
+    } finally {
+      await db.destroy();
+    }
+
+    let captured = "";
+    const cmd = buildExportCommand({ write: (s) => { captured += s; } });
+    await cmd.parseAsync(["node", "council-export", panelName, "--format", "adr"]);
+
+    // Should contain the single-round fallback message
+    expect(captured.toLowerCase()).toContain("single round");
+    expect(captured.toLowerCase()).toContain("no further discussion");
+    // Decision section should still render with expert positions
+    expect(captured.toLowerCase()).toContain("decision");
+    expect(captured).toContain("CTO");
+    expect(captured).toContain("PM");
+  });
 });

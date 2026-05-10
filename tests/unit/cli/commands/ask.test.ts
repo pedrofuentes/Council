@@ -208,4 +208,47 @@ describe("buildAskCommand", () => {
     expect(captured).not.toMatch(/^\{/);
     expect(captured).toContain("CTO"); // default = first expert
   });
+
+  it("--format json: all non-empty output lines are valid NDJSON (no plain-text preamble)", async () => {
+    await seedPanel(testHome);
+    let captured = "";
+    const cmd = buildAskCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (s) => { captured += s; },
+      writeError: () => undefined,
+    });
+
+    await cmd.parseAsync([
+      "node", "council-ask", "ask-test-panel", "Question",
+      "--engine", "mock", "--format", "json",
+    ]);
+
+    const lines = captured.split("\n").filter((l) => l.trim().length > 0);
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) {
+      expect(line.trim()).toMatch(/^\{/);
+      expect(() => JSON.parse(line)).not.toThrow();
+    }
+    // No plain-text headings should appear
+    expect(captured).not.toMatch(/^# Asking/m);
+  });
+
+  it("--engine with invalid value rejects with clear error", async () => {
+    await seedPanel(testHome);
+    const cmd = buildAskCommand({
+      write: () => undefined,
+      writeError: () => undefined,
+    });
+    cmd.exitOverride();
+    let thrown = "";
+    try {
+      await cmd.parseAsync([
+        "node", "council-ask", "ask-test-panel", "Question",
+        "--engine", "nope",
+      ]);
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    expect(thrown.toLowerCase()).toMatch(/unknown.*engine|expected.*mock.*copilot/);
+  });
 });

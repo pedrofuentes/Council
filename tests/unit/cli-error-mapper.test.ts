@@ -90,4 +90,62 @@ describe("formatEngineError", () => {
     expect(out.length).toBeGreaterThan(0);
     expect(out.toLowerCase()).toMatch(/error|fail/);
   });
+
+  it("thrown Error with attached .code routes to the matching hint", () => {
+    const err = new Error("auth is broken") as Error & { code: string };
+    err.code = "NOT_AUTHENTICATED";
+    const out = formatEngineError(err);
+    expect(out.toLowerCase()).toContain("gh auth login");
+    expect(out).toContain("auth is broken");
+  });
+
+  it("thrown Error without .code falls back to generic 'Engine error.'", () => {
+    const out = formatEngineError(new Error("something went wrong"));
+    expect(out).toContain("Engine error.");
+    expect(out).toContain("something went wrong");
+  });
+
+  it("unknown / unmapped code falls back to generic 'Engine error.'", () => {
+    const out = formatEngineError({ code: "BRAND_NEW_CODE" as never, message: "surprise" });
+    expect(out).toContain("Engine error.");
+    expect(out).toContain("surprise");
+  });
+
+  it("MODEL_UNAVAILABLE extracts model identifier from message", () => {
+    const out = formatEngineError({
+      code: "MODEL_UNAVAILABLE",
+      message: "model gpt-5.2 is not available for your tier",
+    });
+    expect(out).toContain("gpt-5.2");
+    expect(out.toLowerCase()).toContain("tier");
+  });
+
+  it("MODEL_UNAVAILABLE with no parseable model shows (unknown)", () => {
+    const out = formatEngineError({
+      code: "MODEL_UNAVAILABLE",
+      message: "no models",
+    });
+    expect(out).toContain("(unknown)");
+  });
+
+  it("RATE_LIMITED includes retryAfterMs as seconds", () => {
+    const out = formatEngineError({
+      code: "RATE_LIMITED",
+      message: "rate limited",
+      retryAfterMs: 30_000,
+    });
+    expect(out).toContain("30s");
+  });
+
+  it("RATE_LIMITED without retryAfterMs omits wait duration", () => {
+    const out = formatEngineError({ code: "RATE_LIMITED", message: "rate limited" });
+    expect(out).not.toMatch(/\d+s/);
+    expect(out.toLowerCase()).toContain("rate");
+  });
+
+  it("PROVIDER_ERROR without provider tag omits provider name", () => {
+    const out = formatEngineError({ code: "PROVIDER_ERROR", message: "504 timeout" });
+    expect(out).not.toContain("(copilot)");
+    expect(out).toContain("504 timeout");
+  });
 });
