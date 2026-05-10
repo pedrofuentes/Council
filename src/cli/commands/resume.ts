@@ -29,20 +29,18 @@ import { Command } from "commander";
 
 import { getCouncilHome } from "../../config/index.js";
 import { Debate, type DebateConfig } from "../../core/debate.js";
-import type {
-  DebateEvent,
-  DebateEndReason,
-  PanelMemberSnapshot,
-} from "../../core/types.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import { MockEngine } from "../../engine/mock/mock-engine.js";
 import { CopilotEngine } from "../../engine/copilot/adapter.js";
-import { createDatabase, type CouncilDatabase } from "../../memory/db.js";
-import { DebateRepository, type DebateStatus } from "../../memory/repositories/debates.js";
-import { ExpertRepository, type Expert } from "../../memory/repositories/experts.js";
-import { PanelRepository, type Panel } from "../../memory/repositories/panels.js";
-import { TurnRepository, type Turn } from "../../memory/repositories/turns.js";
+import { createDatabase } from "../../memory/db.js";
+import { DebateRepository } from "../../memory/repositories/debates.js";
+import { TurnRepository } from "../../memory/repositories/turns.js";
 import { DebatePersister } from "../../memory/persister.js";
+import {
+  loadTranscript,
+  synthesizeEvents,
+  type TranscriptDocument,
+} from "../../memory/transcript.js";
 
 import { JsonRenderer } from "../renderers/json.js";
 import { PlainRenderer } from "../renderers/plain.js";
@@ -74,13 +72,6 @@ export interface ResumeOptions {
   readonly maxWords: number;
 }
 
-interface ResolvedDebate {
-  readonly panel: Panel;
-  readonly experts: readonly Expert[];
-  readonly latestDebate: { id: string; prompt: string; status: DebateStatus };
-  readonly turns: readonly Turn[];
-}
-
 function makeEngineFromKind(kind: ResumeEngineKind): CouncilEngine {
   switch (kind) {
     case "mock":
@@ -90,26 +81,6 @@ function makeEngineFromKind(kind: ResumeEngineKind): CouncilEngine {
     default: {
       const _exhaustive: never = kind;
       throw new Error(`Unknown engine kind: ${String(_exhaustive)}`);
-    }
-  }
-}
-
-function reasonFromStatus(status: DebateStatus): DebateEndReason {
-  switch (status) {
-    case "completed":
-      return "completed";
-    case "aborted":
-      return "aborted";
-    case "failed":
-      return "failed";
-    case "running":
-      // The persisted debate was abandoned mid-stream (no terminal
-      // event ever fired). Surface as "aborted" to the renderer so
-      // the consumer can distinguish from cleanly completed.
-      return "aborted";
-    default: {
-      const _exhaustive: never = status;
-      return _exhaustive;
     }
   }
 }
@@ -176,11 +147,11 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
       const db = await createDatabase(dbPath);
       let engine: CouncilEngine | undefined;
       try {
-        const resolved = await resolvePanel(db, panelName);
+        const resolved = await loadTranscript(db, panelName);
 
         if (opts.continue === undefined) {
           // Transcript mode — replay persisted events through the renderer.
-          await renderTranscript(resolved, opts.format, write);
+          await renderTranscriptInline(resolved, opts.format, write);
           return;
         }
 
@@ -289,55 +260,23 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
 }
 
 /**
- * Look up the panel by name + load its experts + the most recent debate
- * + that debate's turns. Throws a clear error if the panel doesn't exist.
+ * Render a TranscriptDocument inline (plain or JSON). Plain mode
+ * format is resume-specific (per-turn header + indented content +
+ * end-of-transcript footer); JSON mode reuses `synthesizeEvents()`
+ * shared with `council export`.
  */
-async function resolvePanel(db: CouncilDatabase, panelName: string): Promise<ResolvedDebate> {
-  const panelRepo = new PanelRepository(db);
-  const expertRepo = new ExpertRepository(db);
-  const debateRepo = new DebateRepository(db);
-  const turnRepo = new TurnRepository(db);
-
-  const panel = await panelRepo.findByName(panelName);
-  if (!panel) {
-    throw new Error(`No panel found with name '${panelName}'. Run \`council panels\` to list available panels.`);
-  }
-  const experts = await expertRepo.findByPanelId(panel.id);
-  const debates = await debateRepo.findByPanelId(panel.id);
-  if (debates.length === 0) {
-    throw new Error(`Panel '${panelName}' has no debates yet. Run \`council convene\` to start one.`);
-  }
-  // findByPanelId orders by startedAt ASC, ID ASC — most recent is last.
-  const latest = debates[debates.length - 1];
-  if (!latest) {
-    throw new Error(`Panel '${panelName}' has no debates yet. Run \`council convene\` to start one.`);
-  }
-  const turns = await turnRepo.findByDebateId(latest.id);
-  return {
-    panel,
-    experts,
-    latestDebate: { id: latest.id, prompt: latest.prompt, status: latest.status },
-    turns,
-  };
-}
-
-/**
- * Synthesize a DebateEvent stream from persisted DB rows and feed it
- * through the renderer. No engine, no LLM. Useful for read-only review.
- */
-async function renderTranscript(
-  resolved: ResolvedDebate,
+async function renderTranscriptInline(
+  resolved: TranscriptDocument,
   format: "json" | "plain",
   write: Writer,
 ): Promise<void> {
-  const slugById = new Map<string, string>();
-  const nameBySlug = new Map<string, string>();
-  for (const e of resolved.experts) {
-    slugById.set(e.id, e.slug);
-    nameBySlug.set(e.slug, e.displayName);
-  }
-
   if (format === "plain") {
+    const slugById = new Map<string, string>();
+    const nameBySlug = new Map<string, string>();
+    for (const e of resolved.experts) {
+      slugById.set(e.id, e.slug);
+      nameBySlug.set(e.slug, e.displayName);
+    }
     write(`\n# ${resolved.panel.name}\n`);
     if (resolved.panel.topic) write(`Topic: ${resolved.panel.topic}\n`);
     write(`Prompt: ${resolved.latestDebate.prompt}\n`);
@@ -352,42 +291,8 @@ async function renderTranscript(
     return;
   }
 
-  // JSON mode — synthesize and stream events.
-  const members: PanelMemberSnapshot[] = resolved.experts.map((e) => ({
-    slug: e.slug,
-    displayName: e.displayName,
-    model: e.model,
-  }));
-  const events: DebateEvent[] = [];
-  events.push({ kind: "panel.assembled", experts: members });
-  let lastRound = -1;
-  for (const t of resolved.turns) {
-    if (t.round !== lastRound) {
-      if (lastRound !== -1) events.push({ kind: "round.end", round: lastRound });
-      events.push({ kind: "round.start", round: t.round });
-      lastRound = t.round;
-    }
-    const slug = t.expertId ? (slugById.get(t.expertId) ?? "unknown") : t.speakerKind;
-    events.push({
-      kind: "turn.start",
-      expertSlug: slug,
-      round: t.round,
-      seq: t.seq,
-    });
-    events.push({
-      kind: "turn.end",
-      expertSlug: slug,
-      turnId: t.id,
-      content: t.content,
-    });
-  }
-  if (lastRound !== -1) events.push({ kind: "round.end", round: lastRound });
-  events.push({
-    kind: "debate.end",
-    reason: reasonFromStatus(resolved.latestDebate.status),
-  });
-
-  for (const e of events) {
+  // JSON mode — defer to the shared synthesizer (also used by export).
+  for (const e of synthesizeEvents(resolved)) {
     write(JSON.stringify(e) + "\n");
   }
 }

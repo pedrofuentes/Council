@@ -13,16 +13,16 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createDatabase, type CouncilDatabase } from "../../src/memory/db.js";
+import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
 import {
   loadTranscript,
   synthesizeEvents,
   type TranscriptDocument,
-} from "../../src/memory/transcript.js";
-import { DebateRepository } from "../../src/memory/repositories/debates.js";
-import { ExpertRepository } from "../../src/memory/repositories/experts.js";
-import { PanelRepository } from "../../src/memory/repositories/panels.js";
-import { TurnRepository } from "../../src/memory/repositories/turns.js";
+} from "../../../src/memory/transcript.js";
+import { DebateRepository } from "../../../src/memory/repositories/debates.js";
+import { ExpertRepository } from "../../../src/memory/repositories/experts.js";
+import { PanelRepository } from "../../../src/memory/repositories/panels.js";
+import { TurnRepository } from "../../../src/memory/repositories/turns.js";
 
 interface SeedResult {
   panelName: string;
