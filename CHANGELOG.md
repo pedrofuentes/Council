@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **`council ask <panel> "<question>" [--expert <slug>] [--engine <kind>]`** — one-shot single-expert chat. Picks one expert from an existing panel (by slug or default to first), runs a 1-round 1-expert debate through the full pipeline (engine → Debate → DebatePersister → Renderer), and returns. Creates a new debate row per ask visible in `resume`, `export`, `memory`. Uses `formatEngineError` for actionable CLI messages. Closes the last vapor-feature in the README.
 - **Retry on recoverable engine errors** (ROADMAP §3.7) — `Debate.#runTurn()` now automatically retries up to 2× with exponential backoff (`250ms`, `1s`) when `engine.send()` yields an `error` event with `recoverable: true` (RATE_LIMITED, NETWORK). Non-recoverable errors fail fast. Retry exhaustion emits a final error event but does NOT terminate the debate — the orchestrator moves on to the next expert.
 - **`turn.retry` `DebateEvent` variant** — `{ kind: "turn.retry"; expertSlug; attempt; reason }`. Renderers MAY display `[expert retrying…]`; if ignored, downstream behavior is identical to a slightly slower turn. Persistence (`DebatePersister`) does NOT write a row for retries — only the eventual `turn.end` (success) or `error` (exhaustion).
 - **`DebateConfig.retryBackoffMs?: readonly number[]`** — list of backoff delays in ms. Length determines max retries. Default `[250, 1000]`. Tests pass `[1, 2]` for fast suite runs.

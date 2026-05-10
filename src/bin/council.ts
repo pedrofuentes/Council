@@ -3,6 +3,7 @@
  *
  * Subcommands:
  *   - `convene`    run a panel debate on a topic (engine: mock | copilot)
+ *   - `ask`        ask one expert from an existing panel a single question
  *   - `resume`     reopen a panel: show transcript or continue
  *   - `export`     export a panel transcript to markdown, json, or adr
  *   - `panels`     list panels in the local DB
@@ -14,6 +15,7 @@ import { Command } from "commander";
 
 import packageJson from "../../package.json" with { type: "json" };
 
+import { buildAskCommand } from "../cli/commands/ask.js";
 import { buildConveneCommand } from "../cli/commands/convene.js";
 import { buildDoctorCommand } from "../cli/commands/doctor.js";
 import { buildExportCommand } from "../cli/commands/export.js";
@@ -29,6 +31,7 @@ export function buildProgram(): Command {
     .description("Persistent AI expert panels for deliberation and decision-making")
     .version(packageJson.version);
   program.addCommand(buildConveneCommand());
+  program.addCommand(buildAskCommand());
   program.addCommand(buildResumeCommand());
   program.addCommand(buildExportCommand());
   program.addCommand(buildPanelsCommand());
