@@ -73,6 +73,25 @@ export interface MockEngineOptions {
    * surface aggregated cleanup errors via `lastStopErrors`.
    */
   readonly failOnDisconnect?: ReadonlySet<string>;
+  /**
+   * Test-only seam: simulate per-send failures for retry testing
+   * (#3.7). The first `failures` send() calls for the matching
+   * `expertId` (after the `afterN`-th call has gone through normally)
+   * yield a single `error` event with the configured code/message
+   * before terminating. Subsequent calls succeed normally.
+   *
+   * Example with `afterN: 0, failures: 2, code: "RATE_LIMITED"`:
+   * - send #1 → error (failure 1 of 2)
+   * - send #2 → error (failure 2 of 2)
+   * - send #3 → normal stream
+   */
+  readonly failOnSend?: {
+    readonly expertId: string;
+    readonly afterN: number;
+    readonly failures: number;
+    readonly code: EngineErrorCode;
+    readonly message: string;
+  };
 }
 
 const SENTENCE_SPLIT = /([.!?]\s+)/;
@@ -133,11 +152,19 @@ export class MockEngine implements CouncilEngine {
     readonly modelName: string;
     readonly failOnAddExpert: { readonly afterN: number } | null;
     readonly failOnDisconnect: ReadonlySet<string>;
+    readonly failOnSend: {
+      readonly expertId: string;
+      readonly afterN: number;
+      readonly failures: number;
+      readonly code: EngineErrorCode;
+      readonly message: string;
+    } | null;
   };
   readonly #experts = new Map<string, ExpertSpec>();
   readonly #inFlight = new Set<InFlight>();
   readonly #sentPrompts: { readonly expertId: string; readonly prompt: string }[] = [];
   readonly #removeExpertCalls: string[] = [];
+  readonly #sendCallCounts = new Map<string, number>();
   #stopped = false;
   #addExpertCallCount = 0;
   #lastStopErrors: Error[] = [];
@@ -192,6 +219,7 @@ export class MockEngine implements CouncilEngine {
       modelName: options.modelName ?? "mock-model",
       failOnAddExpert: options.failOnAddExpert ?? null,
       failOnDisconnect: options.failOnDisconnect ?? new Set<string>(),
+      failOnSend: options.failOnSend ?? null,
     };
   }
 
@@ -273,6 +301,22 @@ export class MockEngine implements CouncilEngine {
     // Capture for test verification (see `sentPrompts` getter). Captured
     // before any async work so the order matches the caller's intent.
     this.#sentPrompts.push({ expertId: options.expertId, prompt: options.prompt });
+    const sendNum = (this.#sendCallCounts.get(options.expertId) ?? 0) + 1;
+    this.#sendCallCounts.set(options.expertId, sendNum);
+
+    // #3.7 test seam: failOnSend simulates per-send transient failures
+    // for retry-loop testing. `failures` is the count of consecutive
+    // failures starting at send #(afterN+1); subsequent calls succeed.
+    let dynamicFailure: Pick<EngineError, "code" | "message"> | undefined;
+    const fos = this.#options.failOnSend;
+    if (
+      fos &&
+      fos.expertId === options.expertId &&
+      sendNum > fos.afterN &&
+      sendNum <= fos.afterN + fos.failures
+    ) {
+      dynamicFailure = { code: fos.code, message: fos.message };
+    }
 
     // Bind the in-flight tracker BEFORE returning the iterable so that
     // stop()/removeExpert() called between this line and the consumer's
@@ -298,7 +342,7 @@ export class MockEngine implements CouncilEngine {
       }
     }
 
-    const failure = this.#options.failures[options.expertId];
+    const failure = this.#options.failures[options.expertId] ?? dynamicFailure;
     const text = this.#options.responses[options.expertId] ?? defaultResponse(options.expertId);
     const deltaDelayMs = this.#options.deltaDelayMs;
 

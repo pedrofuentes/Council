@@ -35,6 +35,8 @@ const FREEFORM_1R: DebateConfig = {
   maxRounds: 1,
   maxWordsPerResponse: 50,
   mode: "freeform",
+  // Tighten backoff for tests so they run fast (max 2 retries × 2ms ~= 4ms total).
+  retryBackoffMs: [1, 2],
 };
 
 async function collect(stream: AsyncIterable<DebateEvent>): Promise<DebateEvent[]> {
@@ -57,8 +59,6 @@ describe("Debate retry — recoverable errors retry up to 2× with backoff (#3.7
         code: "RATE_LIMITED",
         message: "throttled",
       },
-      // Tighten backoff for tests so they run fast.
-      retryBackoffMs: [1, 2],
     });
     await engine.start();
     await engine.addExpert(cto);
@@ -89,7 +89,6 @@ describe("Debate retry — recoverable errors retry up to 2× with backoff (#3.7
         code: "RATE_LIMITED",
         message: "still throttled",
       },
-      retryBackoffMs: [1, 2],
     });
     await engine.start();
     await engine.addExpert(cto);
@@ -120,7 +119,6 @@ describe("Debate retry — recoverable errors retry up to 2× with backoff (#3.7
         code: "NOT_AUTHENTICATED",
         message: "auth required",
       },
-      retryBackoffMs: [1, 2],
     });
     await engine.start();
     await engine.addExpert(cto);
@@ -146,7 +144,6 @@ describe("Debate retry — recoverable errors retry up to 2× with backoff (#3.7
         code: "NETWORK",
         message: "connection reset",
       },
-      retryBackoffMs: [1, 2],
     });
     await engine.start();
     await engine.addExpert(cto);
