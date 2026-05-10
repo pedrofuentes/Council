@@ -66,7 +66,7 @@ council ask --expert Architect "Draw the boundary map"
 ```
 council convene --template architecture-review --from ./docs/rfc.md
 council panel create "My Security Team" --experts "CISO, PenTester, AppSec Lead"
-council export --format markdown > decision-log.md
+council export <panel> --format markdown > decision-log.md
 ```
 
 ### Phase 5: Workflow Integration (Day 30+)
