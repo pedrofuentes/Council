@@ -776,7 +776,7 @@ export function estimateDebateCost(config: DebateConfig, expertCount: number): C
 - `--ephemeral` flag for sensitive conversations (no persistence)
 
 ### 3.6 Export System
-- `council export --format markdown|json|adr`
+- `council export <panel> --format markdown|json|adr`
 - Markdown: formatted transcript with expert attribution
 - JSON: NDJSON of all DebateEvents
 - ADR: Decision Record format (problem → options → positions → synthesis)

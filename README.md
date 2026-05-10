@@ -160,11 +160,11 @@ council convene --template <name>  # Use a built-in panel
 council ask <question>           # Continue with the full panel
 council ask --expert <slug> <q>  # Talk to one expert directly
 council conclude                 # Get decision matrix + recommendation
-council panels                   # List all panels
-council resume                   # Resume a previous panel
-council export --format <fmt>    # Export (markdown | json | adr)
-council memory list              # Show what experts remember
-council doctor                   # Diagnose setup issues
+council panels                              # List all panels
+council resume <panel>                      # Resume a previous panel
+council export <panel> --format <fmt>       # Export (markdown | json | adr)
+council memory list                         # Show what experts remember
+council doctor                              # Diagnose setup issues
 council config                   # View/set configuration
 ```
 
