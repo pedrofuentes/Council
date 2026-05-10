@@ -26,6 +26,7 @@
 import { ulid } from "ulid";
 
 import type { CouncilEngine, ExpertSpec } from "../engine/index.js";
+import type { HumanInputProvider } from "./human-input.js";
 
 import {
   buildCrossExamPrompt,
@@ -64,12 +65,26 @@ interface RunCounters {
   estimatedTotal: number;
 }
 
+export interface HumanDebateOptions {
+  /** Slugs of participants that are human (not AI). */
+  readonly humanSlugs?: ReadonlySet<string> | undefined;
+  /** Provider for collecting human input. Required when humanSlugs is non-empty. */
+  readonly humanInput?: HumanInputProvider | undefined;
+}
+
 export class Debate {
+  readonly #humanSlugs: ReadonlySet<string>;
+  readonly #humanInput: HumanInputProvider | undefined;
+
   constructor(
     private readonly engine: CouncilEngine,
     private readonly experts: readonly ExpertSpec[],
     private readonly config: DebateConfig,
-  ) {}
+    humanOpts?: HumanDebateOptions,
+  ) {
+    this.#humanSlugs = humanOpts?.humanSlugs ?? new Set();
+    this.#humanInput = humanOpts?.humanInput;
+  }
 
   async *run(prompt: string): AsyncIterable<DebateEvent> {
     yield {
@@ -78,6 +93,7 @@ export class Debate {
         slug: e.slug,
         displayName: e.displayName,
         model: e.model,
+        ...(this.#humanSlugs.has(e.slug) ? { participantKind: "human" as const } : {}),
       })),
     };
 
@@ -208,14 +224,92 @@ export class Debate {
    * Each attempt accumulates its own delta content; partial content
    * from a failed attempt is discarded so retried turns start fresh.
    */
-  async *#runTurn(
+   async *#runTurn(
     expert: ExpertSpec,
     prompt: string,
     round: number,
     seq: number,
     counters: RunCounters,
   ): AsyncGenerator<DebateEvent, string | null> {
-    yield { kind: "turn.start", expertSlug: expert.slug, round, seq };
+    const isHuman = this.#humanSlugs.has(expert.slug);
+    const speakerKind = isHuman ? ("human" as const) : ("expert" as const);
+
+    yield { kind: "turn.start", expertSlug: expert.slug, round, seq, speakerKind };
+
+    if (isHuman) {
+      return yield* this.#runHumanTurn(expert, prompt, round, seq, counters);
+    }
+
+    return yield* this.#runAiTurn(expert, prompt, round, seq, counters);
+  }
+
+  async *#runHumanTurn(
+    expert: ExpertSpec,
+    prompt: string,
+    round: number,
+    seq: number,
+    counters: RunCounters,
+  ): AsyncGenerator<DebateEvent, string | null> {
+    if (!this.#humanInput) {
+      yield {
+        kind: "error",
+        expertSlug: expert.slug,
+        message: "No HumanInputProvider configured for human participant",
+        recoverable: false,
+      };
+      // No premium request for human turns
+      yield {
+        kind: "cost.update",
+        premiumRequests: counters.premiumRequests,
+        estimatedTotal: counters.estimatedTotal,
+      };
+      return null;
+    }
+
+    const result = await this.#humanInput.getInput({
+      expertSlug: expert.slug,
+      displayName: expert.displayName,
+      round,
+      seq,
+      prompt,
+    });
+
+    if (result.kind === "cancelled") {
+      yield {
+        kind: "error",
+        expertSlug: expert.slug,
+        message: `Human input cancelled${result.reason ? `: ${result.reason}` : ""}`,
+        recoverable: false,
+      };
+      yield {
+        kind: "cost.update",
+        premiumRequests: counters.premiumRequests,
+        estimatedTotal: counters.estimatedTotal,
+      };
+      return null;
+    }
+
+    const turnId = ulid();
+    yield { kind: "turn.delta", expertSlug: expert.slug, text: result.content, speakerKind: "human" };
+    yield { kind: "turn.end", expertSlug: expert.slug, turnId, content: result.content, speakerKind: "human" };
+
+    // Human turns do NOT count as premium requests
+    yield {
+      kind: "cost.update",
+      premiumRequests: counters.premiumRequests,
+      estimatedTotal: counters.estimatedTotal,
+    };
+
+    return result.content;
+  }
+
+  async *#runAiTurn(
+    expert: ExpertSpec,
+    prompt: string,
+    _round: number,
+    _seq: number,
+    counters: RunCounters,
+  ): AsyncGenerator<DebateEvent, string | null> {
 
     const backoffMs = this.config.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS;
     const maxRetries = backoffMs.length;
@@ -238,7 +332,7 @@ export class Debate {
           switch (evt.kind) {
             case "message.delta": {
               content += evt.text;
-              yield { kind: "turn.delta", expertSlug: expert.slug, text: evt.text };
+              yield { kind: "turn.delta", expertSlug: expert.slug, text: evt.text, speakerKind: "expert" };
               break;
             }
             case "message.complete": {
@@ -294,7 +388,7 @@ export class Debate {
 
     if (!turnFailed) {
       const turnId = ulid();
-      yield { kind: "turn.end", expertSlug: expert.slug, turnId, content };
+      yield { kind: "turn.end", expertSlug: expert.slug, turnId, content, speakerKind: "expert" };
     }
 
     counters.premiumRequests += 1;

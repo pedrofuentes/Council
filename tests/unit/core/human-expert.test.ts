@@ -41,6 +41,9 @@ describe("Human-as-expert participation", () => {
     const aiExpert = makeExpert("cto");
     const humanExpert = makeExpert("product-lead", { model: "human" });
 
+    await engine.start();
+    await engine.addExpert(aiExpert);
+
     const humanInput: HumanInputProvider = {
       async getInput() {
         return { kind: "submitted", content: "I think we should ship the MVP." };
@@ -82,6 +85,9 @@ describe("Human-as-expert participation", () => {
     const engine = new MockEngine();
     const aiExpert = makeExpert("cto");
     const humanExpert = makeExpert("product-lead", { model: "human" });
+
+    await engine.start();
+    await engine.addExpert(aiExpert);
 
     const humanInput: HumanInputProvider = {
       async getInput() {
@@ -156,6 +162,9 @@ describe("Human-as-expert participation", () => {
     const engine = new MockEngine();
     const aiExpert = makeExpert("cto");
     const humanExpert = makeExpert("lead", { model: "human" });
+
+    await engine.start();
+    await engine.addExpert(aiExpert);
 
     const humanInput: HumanInputProvider = {
       async getInput() {

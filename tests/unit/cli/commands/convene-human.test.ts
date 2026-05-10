@@ -10,7 +10,6 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildConveneCommand } from "../../../../src/cli/commands/convene.js";
-import type { CouncilEngine } from "../../../../src/engine/index.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
@@ -39,10 +38,9 @@ describe("convene --human", () => {
   });
 
   it("--human adds a human participant to the panel with model='human'", async () => {
-    let captured = "";
     const cmd = buildConveneCommand({
       engineFactory: () => new MockEngine({ responses: {} }),
-      write: (s) => { captured += s; },
+      write: () => undefined,
       writeError: () => undefined,
       humanInputFactory: () => ({
         async getInput() {
@@ -64,19 +62,21 @@ describe("convene --human", () => {
     try {
       const panels = await new PanelRepository(db).findAll();
       expect(panels).toHaveLength(1);
-      const experts = await new ExpertRepository(db).findByPanelId(panels[0]!.id);
+      const panelId = panels[0]?.id ?? "";
+      const experts = await new ExpertRepository(db).findByPanelId(panelId);
       const humanExpert = experts.find((e) => e.model === "human");
       expect(humanExpert).toBeDefined();
-      expect(humanExpert!.displayName).toBe("Product Lead");
-      expect(humanExpert!.slug).toBe("product-lead");
+      expect(humanExpert?.displayName).toBe("Product Lead");
+      expect(humanExpert?.slug).toBe("product-lead");
 
       // Verify the human's turn is persisted with speakerKind = "human"
-      const debates = await new DebateRepository(db).findByPanelId(panels[0]!.id);
+      const debates = await new DebateRepository(db).findByPanelId(panelId);
       expect(debates).toHaveLength(1);
-      const turns = await new TurnRepository(db).findByDebateId(debates[0]!.id);
-      const humanTurns = turns.filter((t) => t.expertId === humanExpert!.id);
+      const debateId = debates[0]?.id ?? "";
+      const turns = await new TurnRepository(db).findByDebateId(debateId);
+      const humanTurns = turns.filter((t) => t.expertId === humanExpert?.id);
       expect(humanTurns.length).toBeGreaterThanOrEqual(1);
-      expect(humanTurns[0]!.speakerKind).toBe("human");
+      expect(humanTurns[0]?.speakerKind).toBe("human");
     } finally {
       await db.destroy();
     }
@@ -106,7 +106,8 @@ describe("convene --human", () => {
     const db = await createDatabase(path.join(testHome, "council.db"));
     try {
       const panels = await new PanelRepository(db).findAll();
-      const experts = await new ExpertRepository(db).findByPanelId(panels[0]!.id);
+      const panelId = panels[0]?.id ?? "";
+      const experts = await new ExpertRepository(db).findByPanelId(panelId);
       const humans = experts.filter((e) => e.model === "human");
       expect(humans).toHaveLength(2);
       expect(humans.map((h) => h.displayName).sort()).toEqual(["Alice", "Bob"]);
