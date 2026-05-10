@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **`council memory list/inspect/reset`** (ROADMAP §3.5) — three subcommands for inspecting and curating Council's local SQLite state at the panel/expert/debate/turn level.
+  - **`memory list`**: per-panel summary (name, expert/debate/turn counts, last activity timestamp). `--panel <name>` filters to one. `--format json|plain`.
+  - **`memory inspect <panel>`**: detailed view (topic, latest debate prompt + status + turn count, expert displayNames + models). `--expert <slug>` focuses on one expert and shows their (truncated, 600 chars) system prompt.
+  - **`memory reset <panel> --yes`**: destructive. **Requires `--yes` flag explicitly** (no interactive prompt — flag-only safety gate). Default mode deletes debates + turns, keeps panel + experts. `--hard` deletes the panel entirely (FK CASCADE removes everything). `--expert <slug>` drops one expert from the panel.
+  - Pure DB read + targeted writes: no engine, no LLM. Wired in as the 7th subcommand.
 - **`council export <panel> --format markdown|json|adr [--output <path>]`** (ROADMAP §3.6) — snapshots the latest debate of a panel into a shareable artifact.
   - **markdown** (default): readable transcript with H1 header (panel name + topic), status line, panel roster, per-turn sections grouped by round (expert displayName + model + content as block quotes).
   - **json**: NDJSON identical to `council resume --format json` — same `synthesizeEvents()` helper.

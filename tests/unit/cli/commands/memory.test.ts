@@ -28,7 +28,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildMemoryCommand } from "../../../../src/cli/commands/memory.js";
-import { createDatabase, type CouncilDatabase } from "../../../../src/memory/db.js";
+import { createDatabase } from "../../../../src/memory/db.js";
 import { DebateRepository } from "../../../../src/memory/repositories/debates.js";
 import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
 import { PanelRepository } from "../../../../src/memory/repositories/panels.js";

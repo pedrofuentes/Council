@@ -63,7 +63,7 @@ npm install -g @council/cli
 
 ## Quick Start
 
-> 🚧 **Phase 1 in progress.** The CLI implements `convene`, `resume`, `export`, `panels`, `templates`, and `doctor` today. `ask` and `conclude` are next (see [ROADMAP.md](./ROADMAP.md)).
+> 🚧 **Phase 1 in progress.** The CLI implements `convene`, `resume`, `export`, `panels`, `templates`, `memory`, and `doctor` today. `ask` and `conclude` are next (see [ROADMAP.md](./ROADMAP.md)).
 
 ```bash
 # Verify your setup
@@ -93,6 +93,15 @@ council resume <panel-name> --continue "What about the migration risk?" --engine
 council export <panel-name>                         # markdown (default)
 council export <panel-name> --format adr            # Architecture Decision Record
 council export <panel-name> --format json --output transcript.ndjson
+
+# Inspect what's persisted locally
+council memory list                                 # summary of all panels
+council memory inspect <panel-name>                 # detail view
+council memory inspect <panel-name> --expert cto    # single-expert detail (system prompt + turn count)
+
+# Curate (destructive — requires --yes)
+council memory reset <panel-name> --yes             # clear debates+turns, keep panel+experts
+council memory reset <panel-name> --hard --yes      # delete the panel entirely
 ```
 
 ## Built-in Panels
