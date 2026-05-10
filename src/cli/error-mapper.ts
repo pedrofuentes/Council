@@ -2,10 +2,11 @@
  * Map engine errors (and arbitrary thrown errors from the engine layer)
  * into actionable user-facing CLI messages (closes #133).
  *
- * Used by `convene`, `resume`, `memory` and any other command that
- * surfaces engine errors. Each `EngineErrorCode` maps to a hint that
- * tells the user what to do next ("run `gh auth login`", "check your
- * connection", etc.) rather than the raw provider message.
+ * Used by `convene` and `resume` action handlers. (`memory` doesn't
+ * call the engine, so it doesn't need this mapper.) Each
+ * `EngineErrorCode` maps to a hint that tells the user what to do
+ * next ("run `gh auth login`", "check your connection", etc.) rather
+ * than the raw provider message.
  *
  * The function accepts:
  *   - An `EngineError`-shaped object (`{code, message, ...}`) — preferred
