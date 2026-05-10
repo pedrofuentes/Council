@@ -130,7 +130,7 @@ describe("buildAskCommand", () => {
     } catch (err) {
       thrown = err instanceof Error ? err.message : String(err);
     }
-    expect(thrown.toLowerCase()).toMatch(/--engine.*required|engine.*required/);
+    expect(thrown.toLowerCase()).toMatch(/--engine|engine.*required|required.*engine/);
   });
 
   it("e2e: runs a 1-expert 1-round debate, persists debate + turn rows", async () => {

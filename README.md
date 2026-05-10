@@ -63,7 +63,7 @@ npm install -g @council/cli
 
 ## Quick Start
 
-> 🚧 **Phase 1 in progress.** The CLI implements `convene`, `resume`, `export`, `panels`, `templates`, `memory`, and `doctor` today. `ask` and `conclude` are next (see [ROADMAP.md](./ROADMAP.md)).
+> 🚧 **Phase 1-3 mostly complete.** The CLI implements `convene`, `ask`, `resume`, `export`, `panels`, `templates`, `memory`, and `doctor`. See [ROADMAP.md](./ROADMAP.md) for remaining Phase 2-4 items.
 
 ```bash
 # Verify your setup
