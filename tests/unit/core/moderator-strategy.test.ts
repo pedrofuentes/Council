@@ -6,9 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import type {
-  ModeratorStrategy,
   ModeratorContext,
-  TurnAssignment,
 } from "../../../src/core/moderator/strategy.js";
 import {
   createRoundRobinStrategy,
