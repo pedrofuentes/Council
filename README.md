@@ -63,7 +63,7 @@ npm install -g @council/cli
 
 ## Quick Start
 
-> 🚧 **Phase 1 in progress.** The CLI implements `convene`, `resume`, `panels`, `templates`, and `doctor` today. `ask` and `conclude` are next (see [ROADMAP.md](./ROADMAP.md)).
+> 🚧 **Phase 1 in progress.** The CLI implements `convene`, `resume`, `export`, `panels`, `templates`, and `doctor` today. `ask` and `conclude` are next (see [ROADMAP.md](./ROADMAP.md)).
 
 ```bash
 # Verify your setup
@@ -88,6 +88,11 @@ council resume <panel-name>
 
 # Continue a previous panel with a new prompt
 council resume <panel-name> --continue "What about the migration risk?" --engine copilot
+
+# Export a panel transcript for sharing
+council export <panel-name>                         # markdown (default)
+council export <panel-name> --format adr            # Architecture Decision Record
+council export <panel-name> --format json --output transcript.ndjson
 ```
 
 ## Built-in Panels
@@ -155,11 +160,11 @@ council convene --template <name>  # Use a built-in panel
 council ask <question>           # Continue with the full panel
 council ask --expert <slug> <q>  # Talk to one expert directly
 council conclude                 # Get decision matrix + recommendation
-council panels                   # List all panels
-council resume                   # Resume a previous panel
-council export --format <fmt>    # Export (markdown | json | adr)
-council memory list              # Show what experts remember
-council doctor                   # Diagnose setup issues
+council panels                              # List all panels
+council resume <panel>                      # Resume a previous panel
+council export <panel> --format <fmt>       # Export (markdown | json | adr)
+council memory list                         # Show what experts remember
+council doctor                              # Diagnose setup issues
 council config                   # View/set configuration
 ```
 
