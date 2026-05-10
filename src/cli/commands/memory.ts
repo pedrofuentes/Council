@@ -91,7 +91,13 @@ function buildListCommand(write: Writer, writeError: Writer): Command {
     .option("--panel <name>", "Filter to a single panel")
     .option("--format <kind>", "Output format: plain (default) or json", "plain")
     .action(async (raw: { panel?: string; format?: string }) => {
-      const format = raw.format === "json" ? "json" : "plain";
+      // Sentinel pr178 #2: validate-then-assign rather than silent fallback.
+      if (raw.format !== undefined && raw.format !== "plain" && raw.format !== "json") {
+        throw new Error(
+          `Unknown --format value: ${raw.format}. Expected one of: plain, json`,
+        );
+      }
+      const format: "plain" | "json" = raw.format === "json" ? "json" : "plain";
       const dbPath = path.join(getCouncilHome(), "council.db");
       const db = await createDatabase(dbPath);
       try {
@@ -179,7 +185,13 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
     .option("--expert <slug>", "Focus on a single expert by slug")
     .option("--format <kind>", "Output format: plain (default) or json", "plain")
     .action(async (panelName: string, raw: { expert?: string; format?: string }) => {
-      const format = raw.format === "json" ? "json" : "plain";
+      // Sentinel pr178 #3: validate-then-assign rather than silent fallback.
+      if (raw.format !== undefined && raw.format !== "plain" && raw.format !== "json") {
+        throw new Error(
+          `Unknown --format value: ${raw.format}. Expected one of: plain, json`,
+        );
+      }
+      const format: "plain" | "json" = raw.format === "json" ? "json" : "plain";
       const dbPath = path.join(getCouncilHome(), "council.db");
       const db = await createDatabase(dbPath);
       try {

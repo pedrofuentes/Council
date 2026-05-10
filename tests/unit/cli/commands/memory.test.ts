@@ -245,7 +245,7 @@ describe("buildMemoryCommand", () => {
   // ── reset ────────────────────────────────────────────────────────
 
   describe("memory reset", () => {
-    it("without --yes: refuses with a clear safety error", async () => {
+    it("without --yes: refuses with a clear safety error AND leaves experts/turns untouched", async () => {
       const seed = await seedPanel(testHome);
       const cmd = buildMemoryCommand({ write: () => undefined });
       cmd.exitOverride();
@@ -257,13 +257,18 @@ describe("buildMemoryCommand", () => {
       }
       expect(thrown.toLowerCase()).toMatch(/--yes|destructive|confirm/);
 
-      // The seed must be untouched — verify via DB.
+      // Sentinel pr178 #6: also verify experts and turns are untouched
+      // (not just panels and debates as the original test asserted).
       const db = await createDatabase(path.join(testHome, "council.db"));
       try {
         const panels = await new PanelRepository(db).findAll();
         expect(panels).toHaveLength(1);
+        const experts = await new ExpertRepository(db).findByPanelId(seed.panelId);
+        expect(experts).toHaveLength(2); // CTO + PM untouched
         const debates = await new DebateRepository(db).findByPanelId(seed.panelId);
         expect(debates).toHaveLength(1);
+        const turns = await new TurnRepository(db).findByDebateId(seed.debateId);
+        expect(turns).toHaveLength(2); // turns untouched
       } finally {
         await db.destroy();
       }
@@ -323,7 +328,7 @@ describe("buildMemoryCommand", () => {
     });
 
     it("--yes for unknown panel: errors clearly without modifying DB", async () => {
-      await seedPanel(testHome);
+      const seed = await seedPanel(testHome);
       const cmd = buildMemoryCommand({ write: () => undefined });
       cmd.exitOverride();
       let thrown = "";
@@ -333,6 +338,51 @@ describe("buildMemoryCommand", () => {
         thrown = err instanceof Error ? err.message : String(err);
       }
       expect(thrown.toLowerCase()).toMatch(/no panel|not found/);
+
+      // Sentinel pr178 #7: assert the seed panel and its data are untouched.
+      const db = await createDatabase(path.join(testHome, "council.db"));
+      try {
+        const panels = await new PanelRepository(db).findAll();
+        expect(panels).toHaveLength(1);
+        const experts = await new ExpertRepository(db).findByPanelId(seed.panelId);
+        expect(experts).toHaveLength(2);
+        const debates = await new DebateRepository(db).findByPanelId(seed.panelId);
+        expect(debates).toHaveLength(1);
+      } finally {
+        await db.destroy();
+      }
+    });
+  });
+
+  // ── format validation (Sentinel pr178 #2 + #3) ───────────────────
+
+  describe("--format validation", () => {
+    it("memory list --format yaml: rejects clearly", async () => {
+      await seedPanel(testHome);
+      const cmd = buildMemoryCommand({ write: () => undefined });
+      cmd.exitOverride();
+      let thrown = "";
+      try {
+        await cmd.parseAsync(["node", "council-memory", "list", "--format", "yaml"]);
+      } catch (err) {
+        thrown = err instanceof Error ? err.message : String(err);
+      }
+      expect(thrown.toLowerCase()).toMatch(/yaml|format.*expected|unknown.*format/);
+    });
+
+    it("memory inspect --format yaml: rejects clearly", async () => {
+      const seed = await seedPanel(testHome);
+      const cmd = buildMemoryCommand({ write: () => undefined });
+      cmd.exitOverride();
+      let thrown = "";
+      try {
+        await cmd.parseAsync([
+          "node", "council-memory", "inspect", seed.name, "--format", "yaml",
+        ]);
+      } catch (err) {
+        thrown = err instanceof Error ? err.message : String(err);
+      }
+      expect(thrown.toLowerCase()).toMatch(/yaml|format.*expected|unknown.*format/);
     });
   });
 });

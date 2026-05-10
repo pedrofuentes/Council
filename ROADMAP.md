@@ -769,11 +769,11 @@ export function estimateDebateCost(config: DebateConfig, expertCount: number): C
 - Expert color coding, streaming text, progress spinner
 - Interactive panel picker for `council resume`
 
-### 3.5 Memory Inspection CLI
-- `council memory list` — shows what each expert remembers
-- `council memory inspect <expert>` — detailed memory view
-- `council memory reset <expert>` — clears memory
-- `--ephemeral` flag for sensitive conversations (no persistence)
+### 3.5 Memory Inspection CLI ✅ (shipped in PR #178)
+- `council memory list` — per-panel summary (expert/debate/turn counts, last activity)
+- `council memory inspect <panel>` — detailed panel + expert view (system prompt preview)
+- `council memory reset <panel>` — destructive cleanup (requires `--yes`; supports `--hard` and `--expert <slug>`)
+- `--ephemeral` flag for sensitive conversations (no persistence) — **deferred**, needs orchestrator awareness
 
 ### 3.6 Export System
 - `council export <panel> --format markdown|json|adr`
