@@ -15,6 +15,8 @@ export interface PanelMemberSnapshot {
   readonly slug: string;
   readonly displayName: string;
   readonly model: string;
+  /** Participant kind: "expert" for AI, "human" for human participants. */
+  readonly participantKind?: "expert" | "human";
 }
 
 /** Why a debate ended. */
@@ -59,17 +61,23 @@ export type DebateEvent =
       readonly expertSlug: string;
       readonly round: number;
       readonly seq: number;
+      /** "human" for human participants; defaults to "expert" when absent. */
+      readonly speakerKind?: "expert" | "human";
     }
   | {
       readonly kind: "turn.delta";
       readonly expertSlug: string;
       readonly text: string;
+      /** "human" for human participants; defaults to "expert" when absent. */
+      readonly speakerKind?: "expert" | "human";
     }
   | {
       readonly kind: "turn.end";
       readonly expertSlug: string;
       readonly turnId: string;
       readonly content: string;
+      /** "human" for human participants; defaults to "expert" when absent. */
+      readonly speakerKind?: "expert" | "human";
     }
   | {
       readonly kind: "round.end";

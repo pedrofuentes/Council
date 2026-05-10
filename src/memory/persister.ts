@@ -158,7 +158,7 @@ export class DebatePersister {
             break;
           }
           case "turn.end": {
-            await this.#persistTurn(evt.expertSlug, evt.content);
+            await this.#persistTurn(evt.expertSlug, evt.content, evt.speakerKind ?? "expert");
             this.#pendingTurnPosition.delete(evt.expertSlug);
             break;
           }
@@ -196,7 +196,7 @@ export class DebatePersister {
     }
   }
 
-  async #persistTurn(expertSlug: string, content: string): Promise<void> {
+  async #persistTurn(expertSlug: string, content: string, speakerKind: "expert" | "human" = "expert"): Promise<void> {
     const expertId = this.deps.expertSlugToId[expertSlug];
     if (!expertId || !this.#debateId) return;
     const pos = this.#pendingTurnPosition.get(expertSlug);
@@ -214,7 +214,7 @@ export class DebatePersister {
       debateId: this.#debateId,
       round: pos.round,
       seq: pos.seq,
-      speakerKind: "expert",
+      speakerKind,
       expertId,
       content,
     });

@@ -19,6 +19,7 @@
  * (which itself imports from the engine layer, not the SDK directly).
  */
 import { Debate, type DebateConfig } from "../core/debate.js";
+import type { HumanInputProvider } from "../core/human-input.js";
 import type { CouncilEngine, ExpertSpec } from "../engine/index.js";
 import { MockEngine } from "../engine/mock/mock-engine.js";
 import { CopilotEngine } from "../engine/copilot/adapter.js";
@@ -81,6 +82,10 @@ export interface RunWithEngineOpts {
    * plain-mode headers (e.g. "# panel-name\nTopic: ...\n").
    */
   readonly preamble?: (() => void) | undefined;
+  /** Slugs of human participants — skipped for engine registration. */
+  readonly humanSlugs?: ReadonlySet<string> | undefined;
+  /** Provider for collecting human input during debate. */
+  readonly humanInput?: HumanInputProvider | undefined;
 }
 
 /**
@@ -104,19 +109,22 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
     await engine.start();
 
     // Leak-safe parallel addExpert (Sentinel #142 + #151).
+    // Filter out human participants — they don't register with the engine.
+    const humanSlugs = opts.humanSlugs ?? new Set<string>();
+    const aiExperts = opts.experts.filter((e) => !humanSlugs.has(e.slug));
     const startedEngine = engine;
     const settled = await Promise.allSettled(
-      opts.experts.map((e) => startedEngine.addExpert(e)),
+      aiExperts.map((e) => startedEngine.addExpert(e)),
     );
     const failures = settled
-      .map((r, i) => ({ result: r, expert: opts.experts[i] }))
+      .map((r, i) => ({ result: r, expert: aiExperts[i] }))
       .filter(
         (p): p is { result: PromiseRejectedResult; expert: ExpertSpec } =>
           p.result.status === "rejected" && p.expert !== undefined,
       );
     if (failures.length > 0) {
       const fulfilledIds = settled
-        .map((r, i) => ({ result: r, expert: opts.experts[i] }))
+        .map((r, i) => ({ result: r, expert: aiExperts[i] }))
         .filter(
           (p): p is { result: PromiseFulfilledResult<void>; expert: ExpertSpec } =>
             p.result.status === "fulfilled" && p.expert !== undefined,
@@ -129,7 +137,7 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
       const firstMsg =
         firstErr instanceof Error ? firstErr.message : String(firstErr);
       throw new Error(
-        `could not register all experts (${failures.length}/${opts.experts.length} failed): ${firstMsg}`,
+        `could not register all experts (${failures.length}/${aiExperts.length} failed): ${firstMsg}`,
       );
     }
 
@@ -151,7 +159,10 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
     opts.preamble?.();
 
     const stream = persister.persist(
-      new Debate(engine, opts.experts, opts.debateConfig).run(opts.prompt),
+      new Debate(engine, opts.experts, opts.debateConfig, {
+        humanSlugs: humanSlugs.size > 0 ? humanSlugs : undefined,
+        humanInput: opts.humanInput,
+      }).run(opts.prompt),
       opts.prompt,
     );
     await renderer.render(stream);

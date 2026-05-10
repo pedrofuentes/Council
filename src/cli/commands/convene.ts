@@ -17,6 +17,7 @@ import type { DebateMode } from "../../core/template-loader.js";
 import { loadTemplate, type PanelDefinition } from "../../core/template-loader.js";
 import { buildSystemPrompt } from "../../core/prompt-builder.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
+import type { HumanInputProvider } from "../../core/human-input.js";
 import { createDatabase } from "../../memory/db.js";
 import { ExpertRepository } from "../../memory/repositories/experts.js";
 import { PanelRepository } from "../../memory/repositories/panels.js";
@@ -39,6 +40,8 @@ export interface ConveneCommandDeps {
   readonly engineFactory?: () => CouncilEngine;
   readonly write?: Writer;
   readonly writeError?: Writer;
+  /** Factory to create a HumanInputProvider. Used when --human is specified. */
+  readonly humanInputFactory?: () => HumanInputProvider;
 }
 
 export interface ConveneOptions {
@@ -48,6 +51,7 @@ export interface ConveneOptions {
   readonly mode: DebateMode;
   readonly maxWords: number;
   readonly engine: EngineKind;
+  readonly human?: readonly string[];
 }
 
 /**
@@ -83,12 +87,20 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       (v) => Number.parseInt(v, 10),
       DEFAULT_MAX_WORDS,
     )
+    .option(
+      "--human <name>",
+      "Add a human participant by name (repeatable)",
+      (value: string, previous: string[]) => [...previous, value],
+      [] as string[],
+    )
     .action(async (topic: string, raw: ConveneOptions) => {
       if (!ENGINE_KINDS.includes(raw.engine)) {
         throw new Error(
           `Unknown --engine value: ${raw.engine}. Expected one of: ${ENGINE_KINDS.join(", ")}`,
         );
       }
+
+      const humanNames: readonly string[] = raw.human ?? [];
 
       const opts: ConveneOptions = {
         template: raw.template,
@@ -97,6 +109,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         mode: raw.mode === "structured" ? "structured" : "freeform",
         maxWords: Number.isFinite(raw.maxWords) ? raw.maxWords : DEFAULT_MAX_WORDS,
         engine: raw.engine,
+        human: humanNames,
       };
 
       if (opts.engine === "mock") {
@@ -107,7 +120,19 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       }
 
       const template = await loadTemplate(opts.template);
-      const experts = buildExpertSpecs(template, topic);
+      const aiExperts = buildExpertSpecs(template, topic);
+
+      // Build human expert specs from --human flags
+      const humanExperts: ExpertSpec[] = humanNames.map((name) => ({
+        id: ulid(),
+        slug: slugify(name),
+        displayName: name,
+        model: "human",
+        systemMessage: "(human participant)",
+      }));
+
+      const allExperts = [...aiExperts, ...humanExperts];
+      const humanSlugs = new Set(humanExperts.map((e) => e.slug));
 
       const dbPath = path.join(getCouncilHome(), "council.db");
       const db = await createDatabase(dbPath);
@@ -129,7 +154,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         });
 
         const expertSlugToId: Record<string, string> = {};
-        for (const e of experts) {
+        for (const e of allExperts) {
           const row = await expertRepo.create({
             panelId: panel.id,
             slug: e.slug,
@@ -143,7 +168,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         await runWithEngine({
           engineKind: opts.engine,
           engineFactory: deps.engineFactory,
-          experts,
+          experts: allExperts,
           debateConfig: {
             maxRounds: opts.maxRounds,
             maxWordsPerResponse: opts.maxWords,
@@ -157,12 +182,18 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           write,
           writeError,
           db,
+          humanSlugs: humanSlugs.size > 0 ? humanSlugs : undefined,
+          humanInput: humanSlugs.size > 0 ? deps.humanInputFactory?.() : undefined,
           preamble:
             opts.format === "plain"
               ? () => {
                   write(`\n# ${template.name}\n`);
                   write(`Topic: ${topic}\n`);
-                  write(`Mode: ${opts.mode} | Max rounds: ${opts.maxRounds} | Engine: ${opts.engine}\n\n`);
+                  write(`Mode: ${opts.mode} | Max rounds: ${opts.maxRounds} | Engine: ${opts.engine}\n`);
+                  if (humanNames.length > 0) {
+                    write(`Human participants: ${humanNames.join(", ")}\n`);
+                  }
+                  write("\n");
                 }
               : undefined,
         });
@@ -188,4 +219,12 @@ function buildExpertSpecs(template: PanelDefinition, topic: string): ExpertSpec[
       systemMessage,
     };
   });
+}
+
+/** Convert a display name like "Product Lead" to a slug like "product-lead". */
+function slugify(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
 }

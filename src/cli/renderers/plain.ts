@@ -33,6 +33,8 @@ export class PlainRenderer implements Renderer {
   readonly #chalk: ChalkInstance;
   /** displayName lookup for prettier turn.start headers. */
   readonly #displayNames = new Map<string, string>();
+  /** Track which slugs are human participants. */
+  readonly #humanSlugs = new Set<string>();
 
   constructor(sink: Sink, options: PlainRendererOptions = {}) {
     this.#sink = sink;
@@ -51,7 +53,9 @@ export class PlainRenderer implements Renderer {
           break;
         case "turn.start": {
           const name = this.#displayNames.get(evt.expertSlug) ?? evt.expertSlug;
-          this.write(`\n${this.cyan(`[${name}]`)}\n`);
+          const isHuman = evt.speakerKind === "human" || this.#humanSlugs.has(evt.expertSlug);
+          const label = isHuman ? `[You] ${name}` : name;
+          this.write(`\n${this.cyan(`[${label}]`)}\n`);
           break;
         }
         case "turn.delta":
@@ -87,7 +91,12 @@ export class PlainRenderer implements Renderer {
     this.write(`\n${this.bold("🏛️  Panel assembled:")}\n`);
     for (const expert of experts) {
       this.#displayNames.set(expert.slug, expert.displayName);
-      this.write(`  • ${expert.displayName} ${this.dim(`(${expert.model})`)}\n`);
+      if (expert.participantKind === "human") {
+        this.#humanSlugs.add(expert.slug);
+        this.write(`  • ${expert.displayName} ${this.dim("(human)")}\n`);
+      } else {
+        this.write(`  • ${expert.displayName} ${this.dim(`(${expert.model})`)}\n`);
+      }
     }
   }
 
