@@ -63,7 +63,7 @@ npm install -g @council/cli
 
 ## Quick Start
 
-> 🚧 **Phase 1-3 mostly complete.** The CLI implements `convene`, `ask`, `resume`, `export`, `panels`, `templates`, `memory`, and `doctor`. See [ROADMAP.md](./ROADMAP.md) for remaining Phase 2-4 items.
+> **Phase 1 complete, Phases 2-3 mostly complete.** The CLI implements `convene`, `ask`, `resume`, `export`, `panels`, `templates`, `memory`, and `doctor`. See [ROADMAP.md](./ROADMAP.md) for remaining items.
 
 ```bash
 # Verify your setup
@@ -179,9 +179,9 @@ council config                   # View/set configuration
 
 ## Roadmap
 
-See [ROADMAP.md](./ROADMAP.md) for the detailed implementation plan.
+See [ROADMAP.md](./ROADMAP.md) for the high-level plan and [ROADMAP-Detailed.md](./ROADMAP-Detailed.md) for implementation details.
 
-**Current phase:** Foundation (Phase 1) — building core engine, expert system, and CLI.
+**Current focus:** Deliberation quality (Phase 2) and persistence polish (Phase 3) — auto-composition, context management, expert memory recall, and `council conclude`.
 
 ## Contributing
 
