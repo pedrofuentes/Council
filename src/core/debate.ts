@@ -59,11 +59,13 @@ export type DebateMode = "freeform" | "structured";
 export interface ContextConfig {
   readonly visibility?: VisibilityConfig;
   readonly summarizer?: SummarizerConfig;
-  /** Hard cap on total verbatim prior-turn content (chars). Default 50000. */
+  /**
+   * Hard cap on total verbatim prior-turn content (chars). When
+   * omitted, no truncation is applied — callers must opt in to
+   * truncation by setting an explicit value.
+   */
   readonly maxPromptChars?: number;
 }
-
-const DEFAULT_MAX_PROMPT_CHARS = 50_000;
 
 export interface DebateConfig {
   readonly maxRounds: number;
@@ -158,21 +160,36 @@ export class Debate {
     const priorTurns: PriorTurnRecord[] = [];
     const contextConfig = this.config.contextConfig;
 
-    for (let round = 0; round < this.config.maxRounds; round++) {
-      const scopedTurns = contextConfig?.visibility
+    // Build a ModeratorContext for the current `round`, applying the
+    // configured visibility filter, prompt-char cap, and rolling
+    // summary. When `contextConfig` is undefined the orchestrator
+    // forwards every prior turn verbatim with no filtering, no cap,
+    // and no summary — the documented legacy behaviour.
+    const buildCtx = (round: number): ModeratorContext => {
+      if (contextConfig === undefined) {
+        return {
+          experts: this.experts,
+          round,
+          maxRounds: this.config.maxRounds,
+          topic: prompt,
+          priorTurns,
+        };
+      }
+
+      const scopedTurns = contextConfig.visibility
         ? filterPriorTurns(priorTurns, "", round, contextConfig.visibility)
         : priorTurns;
 
-      const cappedTurns = capByChars(
-        scopedTurns,
-        contextConfig?.maxPromptChars ?? DEFAULT_MAX_PROMPT_CHARS,
-      );
+      const cappedTurns =
+        contextConfig.maxPromptChars !== undefined
+          ? capByChars(scopedTurns, contextConfig.maxPromptChars)
+          : scopedTurns;
 
-      const rollingSummary = contextConfig?.summarizer
+      const rollingSummary = contextConfig.summarizer
         ? buildRollingSummary(priorTurns, round, contextConfig.summarizer)
         : "";
 
-      const ctx: ModeratorContext = {
+      return {
         experts: this.experts,
         round,
         maxRounds: this.config.maxRounds,
@@ -180,18 +197,24 @@ export class Debate {
         priorTurns: cappedTurns,
         ...(rollingSummary !== "" ? { rollingSummary } : {}),
       };
+    };
+
+    for (let round = 0; round < this.config.maxRounds; round++) {
+      // First plan locks the round's turn ordering and serves as the
+      // shouldContinue() / validation context.
+      const initialCtx = buildCtx(round);
 
       // After the first round, allow the strategy to terminate early
       // (e.g. consensus detected). Round 0 always runs.
-      if (round > 0 && !strategy.shouldContinue(ctx)) {
+      if (round > 0 && !strategy.shouldContinue(initialCtx)) {
         yield { kind: "debate.end", reason: "consensus" };
         return;
       }
 
       yield { kind: "round.start", round };
-      const assignments = strategy.planRound(ctx);
+      const initialAssignments = strategy.planRound(initialCtx);
 
-      const validationError = validateAssignments(assignments, this.experts);
+      const validationError = validateAssignments(initialAssignments, this.experts);
       if (validationError !== null) {
         yield {
           kind: "error",
@@ -204,8 +227,13 @@ export class Debate {
       }
 
       let seq = 0;
-      for (const assignment of assignments) {
-        const expert = this.experts.find((e) => e.slug === assignment.expertSlug);
+      for (let i = 0; i < initialAssignments.length; i++) {
+        const initialAssignment = initialAssignments[i];
+        if (initialAssignment === undefined) {
+          seq += 1;
+          continue;
+        }
+        const expert = this.experts.find((e) => e.slug === initialAssignment.expertSlug);
         if (!expert) {
           // Unreachable: validateAssignments() above already rejected
           // unknown slugs. Defensive guard so a future refactor can't
@@ -214,9 +242,21 @@ export class Debate {
           continue;
         }
 
+        // Re-plan per-turn (only when contextConfig is set) so the
+        // visibility/cap/summary policy sees turns that completed
+        // earlier in THIS round. The first turn re-uses the initial
+        // plan since priorTurns hasn't changed yet.
+        let prompt = initialAssignment.prompt;
+        if (contextConfig !== undefined && i > 0) {
+          const perTurnCtx = buildCtx(round);
+          const perTurnPlan = strategy.planRound(perTurnCtx);
+          const refreshed = perTurnPlan.find((a) => a.expertSlug === expert.slug);
+          if (refreshed !== undefined) prompt = refreshed.prompt;
+        }
+
         const captured = yield* this.#runTurn(
           expert,
-          assignment.prompt,
+          prompt,
           round,
           seq,
           counters,
@@ -524,6 +564,11 @@ function sleep(ms: number): Promise<void> {
  * fits within `maxChars`. Always preserves the most recent turn even
  * if it alone exceeds the cap (callers can detect this by comparing
  * the returned array's total length vs `maxChars`).
+ *
+ * Implementation: walks the input once in reverse, accumulating the
+ * newest-first slice that fits, then returns the corresponding tail
+ * of the original array. O(n) time, O(1) extra allocations beyond
+ * the result slice — no quadratic `unshift()`.
  */
 function capByChars(
   turns: readonly PriorTurnRecord[],
@@ -534,17 +579,18 @@ function capByChars(
   for (const t of turns) total += t.content.length;
   if (total <= maxChars) return turns;
 
-  const kept: PriorTurnRecord[] = [];
   let running = 0;
+  let cutIndex = turns.length; // exclusive: items at >= cutIndex are kept
   for (let i = turns.length - 1; i >= 0; i--) {
     const t = turns[i];
     if (t === undefined) continue;
     const next = running + t.content.length;
-    if (kept.length > 0 && next > maxChars) break;
-    kept.unshift(t);
+    // Always keep the newest turn even if it alone exceeds the cap.
+    if (cutIndex < turns.length && next > maxChars) break;
+    cutIndex = i;
     running = next;
   }
-  return kept;
+  return turns.slice(cutIndex);
 }
 
 interface AssignmentValidationError {
