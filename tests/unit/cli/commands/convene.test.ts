@@ -362,6 +362,174 @@ describe("buildConveneCommand", () => {
       expect(thrown.toLowerCase()).toMatch(/anthropic-direct|engine.*value|engine.*expected/);
     });
   });
+
+  // ── Sentinel pr222 cycle 3 — recall regression coverage ───────────
+
+  describe("memory recall (Sentinel pr222 #3)", () => {
+    it("recalls memory from a prior same-template panel into the new expert system prompt", async () => {
+      // Seed a prior panel for `code-review` with one debate + a
+      // distinctive turn for the `senior` expert.
+      const db = await createDatabase(path.join(testHome, "council.db"));
+      try {
+        const panel = await new PanelRepository(db).create({
+          name: "prior-cr-panel",
+          topic: "old topic",
+          copilotHome: path.join(testHome, "copilot"),
+          configJson: JSON.stringify({ template: "code-review", engine: "copilot" }),
+        });
+        const senior = await new ExpertRepository(db).create({
+          panelId: panel.id,
+          slug: "senior",
+          displayName: "Senior",
+          model: "claude-sonnet-4",
+          systemMessage: "(prior system prompt)",
+        });
+        const debate = await new DebateRepository(db).create({
+          panelId: panel.id,
+          prompt: "old topic",
+          moderator: "round-robin",
+        });
+        await new TurnRepository(db).create({
+          debateId: debate.id,
+          round: 1,
+          seq: 1,
+          speakerKind: "expert",
+          expertId: senior.id,
+          content:
+            "DISTINCTIVE_RECALL_MARKER_ALPHA — we should adopt microservices for billing.",
+        });
+        await new DebateRepository(db).update(debate.id, {
+          status: "completed",
+          endedAt: new Date().toISOString(),
+        });
+      } finally {
+        await db.destroy();
+      }
+
+      const cmd = buildConveneCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: () => undefined,
+      });
+      await cmd.parseAsync([
+        "node",
+        "council-convene",
+        "new topic",
+        "--template",
+        "code-review",
+        "--max-rounds",
+        "1",
+        "--engine",
+        "mock",
+      ]);
+
+      // The newly-created panel's `senior` expert should have the
+      // recalled snippet rendered into Section [7] MEMORY.
+      const db2 = await createDatabase(path.join(testHome, "council.db"));
+      try {
+        const panels = await new PanelRepository(db2).findAll();
+        const newPanel = panels.find((p) => p.name !== "prior-cr-panel");
+        expect(newPanel).toBeDefined();
+        const experts = await new ExpertRepository(db2).findByPanelId(newPanel?.id ?? "");
+        const newSenior = experts.find((e) => e.slug === "senior");
+        expect(newSenior).toBeDefined();
+        expect(newSenior?.systemMessage).toContain("[7] MEMORY");
+        expect(newSenior?.systemMessage).toContain("DISTINCTIVE_RECALL_MARKER_ALPHA");
+      } finally {
+        await db2.destroy();
+      }
+    });
+
+    it("does NOT recall memory from prior MOCK-engine panels (mock content cannot contaminate real prompts)", async () => {
+      // Seed BOTH a mock-engine panel (with marker MOCK_ONLY) and a
+      // copilot-engine panel (with marker REAL_ONLY) for the same
+      // template. The recall must pick the copilot panel, not the mock.
+      const db = await createDatabase(path.join(testHome, "council.db"));
+      try {
+        const panelRepo = new PanelRepository(db);
+        const expertRepo = new ExpertRepository(db);
+        const debateRepo = new DebateRepository(db);
+        const turnRepo = new TurnRepository(db);
+
+        async function seedPanel(
+          name: string,
+          engineKind: "mock" | "copilot",
+          marker: string,
+        ): Promise<void> {
+          const p = await panelRepo.create({
+            name,
+            topic: "x",
+            copilotHome: path.join(testHome, "copilot"),
+            configJson: JSON.stringify({ template: "code-review", engine: engineKind }),
+          });
+          const e = await expertRepo.create({
+            panelId: p.id,
+            slug: "senior",
+            displayName: "Senior",
+            model: "claude-sonnet-4",
+            systemMessage: "(prior)",
+          });
+          const d = await debateRepo.create({
+            panelId: p.id,
+            prompt: "x",
+            moderator: "round-robin",
+          });
+          await turnRepo.create({
+            debateId: d.id,
+            round: 1,
+            seq: 1,
+            speakerKind: "expert",
+            expertId: e.id,
+            content: `${marker} stance.`,
+          });
+          await debateRepo.update(d.id, {
+            status: "completed",
+            endedAt: new Date().toISOString(),
+          });
+        }
+
+        await seedPanel("real-prior", "copilot", "REAL_ONLY_MARKER");
+        // Tiny gap so the mock panel is the most-recent by startedAt.
+        await new Promise((r) => setTimeout(r, 5));
+        await seedPanel("mock-prior", "mock", "MOCK_ONLY_MARKER");
+      } finally {
+        await db.destroy();
+      }
+
+      const cmd = buildConveneCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: () => undefined,
+      });
+      await cmd.parseAsync([
+        "node",
+        "council-convene",
+        "new topic",
+        "--template",
+        "code-review",
+        "--max-rounds",
+        "1",
+        "--engine",
+        "mock",
+      ]);
+
+      const db2 = await createDatabase(path.join(testHome, "council.db"));
+      try {
+        const panels = await new PanelRepository(db2).findAll();
+        const newPanel = panels.find(
+          (p) => p.name !== "real-prior" && p.name !== "mock-prior",
+        );
+        expect(newPanel).toBeDefined();
+        const experts = await new ExpertRepository(db2).findByPanelId(newPanel?.id ?? "");
+        const senior = experts.find((e) => e.slug === "senior");
+        expect(senior).toBeDefined();
+        // Mock content must NOT have leaked into the new prompt.
+        expect(senior?.systemMessage).not.toContain("MOCK_ONLY_MARKER");
+        // Real prior content SHOULD have been recalled.
+        expect(senior?.systemMessage).toContain("REAL_ONLY_MARKER");
+      } finally {
+        await db2.destroy();
+      }
+    });
+  });
 });
 
 // Type guard so typescript-eslint is happy with the intentionally-unused import.

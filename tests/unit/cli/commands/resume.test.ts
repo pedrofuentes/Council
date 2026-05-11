@@ -463,4 +463,155 @@ describe("buildResumeCommand", () => {
     // Ensure both panels exist (sanity check on the seed).
     expect(olderId).not.toBe(newerId);
   });
+
+  // ── Sentinel pr222 cycle 3 — recall + malformed-config coverage ───
+
+  it("--continue patches each expert's [7] MEMORY with recalled content from prior turns", async () => {
+    // Seed a panel where the system prompt has a [7] MEMORY / [8] CURRENT
+    // TASK skeleton, and a prior debate with a distinctive recall marker.
+    const seedingDb = await createDatabase(path.join(testHome, "council.db"));
+    let panelName = "";
+    try {
+      const panel = await new PanelRepository(seedingDb).create({
+        name: "recall-resume-panel",
+        topic: "x",
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+      });
+      panelName = panel.name;
+      const expert = await new ExpertRepository(seedingDb).create({
+        panelId: panel.id,
+        slug: "senior",
+        displayName: "Senior",
+        model: "claude-sonnet-4",
+        systemMessage:
+          "[1] IDENTITY\nYou are senior.\n[7] MEMORY\n(no prior memory — placeholder)\n[8] CURRENT TASK\nplaceholder",
+      });
+      const debate = await new DebateRepository(seedingDb).create({
+        panelId: panel.id,
+        prompt: "prior",
+        moderator: "round-robin",
+      });
+      await new TurnRepository(seedingDb).create({
+        debateId: debate.id,
+        round: 1,
+        seq: 1,
+        speakerKind: "expert",
+        expertId: expert.id,
+        content:
+          "RESUME_RECALL_MARKER_BETA — keep the migration window narrow and reversible.",
+      });
+      await new DebateRepository(seedingDb).update(debate.id, {
+        status: "completed",
+        endedAt: new Date().toISOString(),
+      });
+    } finally {
+      await seedingDb.destroy();
+    }
+
+    // Capture the systemMessage handed to addExpert by wrapping the mock.
+    const capturedSystemMessages: string[] = [];
+    const capturingFactory = (): CouncilEngine => {
+      const real = new MockEngine({ responses: {} });
+      const wrapped: CouncilEngine = {
+        start: () => real.start(),
+        stop: () => real.stop(),
+        addExpert: (spec) => {
+          capturedSystemMessages.push(spec.systemMessage);
+          return real.addExpert(spec);
+        },
+        removeExpert: (id) => real.removeExpert(id),
+        send: (opts) => real.send(opts),
+        listModels: () => real.listModels(),
+      };
+      return wrapped;
+    };
+
+    const cmd = buildResumeCommand({
+      engineFactory: capturingFactory,
+      write: () => undefined,
+      writeError: () => undefined,
+    });
+    await cmd.parseAsync([
+      "node",
+      "council-resume",
+      panelName,
+      "--continue",
+      "follow-up",
+      "--engine",
+      "mock",
+      "--max-rounds",
+      "1",
+    ]);
+
+    expect(capturedSystemMessages.length).toBeGreaterThan(0);
+    const combined = capturedSystemMessages.join("\n----\n");
+    expect(combined).toContain("RESUME_RECALL_MARKER_BETA");
+    // Placeholder MUST have been replaced by the patched memory block.
+    expect(combined).not.toContain("(no prior memory — placeholder)");
+  });
+
+  it("--continue warns to stderr when configJson cannot be parsed (no silent fallback)", async () => {
+    // Seed a panel with deliberately-broken configJson.
+    const seedingDb = await createDatabase(path.join(testHome, "council.db"));
+    let panelName = "";
+    try {
+      const panel = await new PanelRepository(seedingDb).create({
+        name: "broken-cfg-panel",
+        topic: "x",
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: "{not-valid-json",
+      });
+      panelName = panel.name;
+      const expert = await new ExpertRepository(seedingDb).create({
+        panelId: panel.id,
+        slug: "senior",
+        displayName: "Senior",
+        model: "claude-sonnet-4",
+        systemMessage: "[7] MEMORY\nx\n[8] CURRENT TASK\nx",
+      });
+      const debate = await new DebateRepository(seedingDb).create({
+        panelId: panel.id,
+        prompt: "prior",
+        moderator: "round-robin",
+      });
+      await new TurnRepository(seedingDb).create({
+        debateId: debate.id,
+        round: 1,
+        seq: 1,
+        speakerKind: "expert",
+        expertId: expert.id,
+        content: "stance.",
+      });
+      await new DebateRepository(seedingDb).update(debate.id, {
+        status: "completed",
+        endedAt: new Date().toISOString(),
+      });
+    } finally {
+      await seedingDb.destroy();
+    }
+
+    let stderr = "";
+    const cmd = buildResumeCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (s) => {
+        stderr += s;
+      },
+    });
+    await cmd.parseAsync([
+      "node",
+      "council-resume",
+      panelName,
+      "--continue",
+      "follow-up",
+      "--engine",
+      "mock",
+      "--max-rounds",
+      "1",
+    ]);
+
+    expect(stderr.toLowerCase()).toMatch(/parse.*panel config|panel config.*parse|could not parse panel config/);
+    expect(stderr.toLowerCase()).toContain("freeform");
+  });
 });

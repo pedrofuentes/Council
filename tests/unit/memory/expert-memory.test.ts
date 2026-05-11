@@ -261,6 +261,43 @@ describe("recallMemory", () => {
     expect(joined).toContain("First debate stance");
     expect(joined).toContain("Second debate stance");
   });
+
+  // Sentinel pr222 #1 (🟡 IMPORTANT) — bound the debate scan so an
+  // unbounded history does not load every turn ever recorded just to
+  // slice at the end. recallMemory must restrict its scan to the most
+  // recent N debates (currently 5).
+  it("limits the scan to at most the most-recent 5 debates", async () => {
+    const debateRepo = new DebateRepository(fx.db);
+    // Create 7 debates with one expert turn each. The first two are
+    // "ancient" — they must NOT contribute to recall.
+    const ancient: string[] = [];
+    const recent: string[] = [];
+    for (let i = 1; i <= 7; i += 1) {
+      const d = await debateRepo.create({
+        panelId: fx.panelId,
+        prompt: `topic ${i}`,
+        moderator: "round-robin",
+      });
+      const marker = `DEBATE_MARKER_${i}`;
+      await fx.turns.create({
+        debateId: d.id,
+        round: 1,
+        seq: 1,
+        speakerKind: "expert",
+        expertId: fx.expertId,
+        content: `${marker} stance.`,
+      });
+      if (i <= 2) ancient.push(marker);
+      else recent.push(marker);
+      // Tiny delay so startedAt differs (ULID timestamp resolution +
+      // ISO-8601 string sort).
+      await new Promise((r) => setTimeout(r, 2));
+    }
+    const memory = await recallMemory(fx.db, fx.panelId, "cto");
+    const joined = (memory?.positions ?? []).join(" ");
+    for (const m of ancient) expect(joined).not.toContain(m);
+    for (const m of recent) expect(joined).toContain(m);
+  });
 });
 
 describe("sanitizeMemorySnippet", () => {
