@@ -295,7 +295,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           humanSlugs: humanSlugs.size > 0 ? humanSlugs : undefined,
           humanInput: humanSlugs.size > 0 ? deps.humanInputFactory?.() : undefined,
           preamble: () => {
-            write(`\n# ${template.name}\n`);
+            write(`\n# ${stripControlChars(template.name)}\n`);
             write(`Topic: ${topic}\n`);
             write(`Mode: ${opts.mode} | Max rounds: ${opts.maxRounds} | Engine: ${opts.engine}\n`);
             if (humanNames.length > 0) {

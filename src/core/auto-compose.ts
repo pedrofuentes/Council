@@ -21,6 +21,7 @@
 import { ulid } from "ulid";
 
 import type { CouncilEngine, ExpertSpec } from "../engine/index.js";
+import { stripControlChars } from "../cli/strip-control-chars.js";
 
 import type { PanelDefinition } from "./template-loader.js";
 import { PanelDefinitionSchema } from "./template-loader.js";
@@ -98,8 +99,8 @@ export async function autoComposePanel(
   } catch (err: unknown) {
     const cause = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `Auto-compose failed: could not parse composer JSON response (${cause}). ` +
-        `First 200 chars: ${cleaned.slice(0, 200)}`,
+      `Auto-compose failed: could not parse composer JSON response (${stripControlChars(cause)}). ` +
+        `First 200 chars: ${stripControlChars(cleaned.slice(0, 200))}`,
     );
   }
 
