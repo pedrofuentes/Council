@@ -173,7 +173,7 @@ describe("DebateApp", () => {
     // even though ink-testing-library's stdout reports as a non-TTY.
     // eslint-disable-next-line no-control-regex
     const matches = [...raw.matchAll(/\u001b\[(\d+)m[^\u001b]*Alice/g)];
-    expect(matches.length).toBeGreaterThanOrEqual(1);
+    expect(matches.length).toBeGreaterThanOrEqual(2);
     const codes = matches.map((m) => m[1]);
     // All Alice instances should share the same color escape code.
     expect(new Set(codes).size).toBe(1);
@@ -198,5 +198,17 @@ describe("InkRenderer", () => {
     const r = new InkRenderer({ stdout: process.stdout, isTTY: false });
     // Should resolve cleanly without throwing.
     await r.render(events);
+  });
+
+  it("render() rejects when the event stream throws", async () => {
+    async function* failing(): AsyncGenerator<DebateEvent> {
+      yield {
+        kind: "panel.assembled",
+        experts: [{ slug: "alice", displayName: "Alice", model: "gpt-5" }],
+      };
+      throw new Error("engine blew up");
+    }
+    const r = new InkRenderer({ stdout: process.stdout, isTTY: false });
+    await expect(r.render(failing())).rejects.toThrow("engine blew up");
   });
 });
