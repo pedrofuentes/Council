@@ -16,6 +16,10 @@ import { getCouncilHome, DEFAULT_MODEL } from "../../config/index.js";
 import type { DebateMode } from "../../core/template-loader.js";
 import { loadTemplate, type PanelDefinition } from "../../core/template-loader.js";
 import { buildSystemPrompt } from "../../core/prompt-builder.js";
+import {
+  resolveStrategy,
+  STRATEGY_NAMES,
+} from "../strategy-resolver.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import type { HumanInputProvider } from "../../core/human-input.js";
 import { createDatabase } from "../../memory/db.js";
@@ -53,6 +57,7 @@ export interface ConveneOptions {
   readonly maxWords: number;
   readonly engine: EngineKind;
   readonly human?: readonly string[];
+  readonly strategy?: string;
 }
 
 /**
@@ -98,6 +103,12 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       (value: string, previous: string[]) => [...previous, value],
       [] as string[],
     )
+    .option(
+      "--strategy <name>",
+      `Moderator strategy for freeform mode (${STRATEGY_NAMES.join(" | ")}). ` +
+        `devils-advocate accepts an optional ":<slug>" suffix to pin the advocate (defaults to first expert).`,
+      "round-robin",
+    )
     .action(async (topic: string, raw: ConveneOptions) => {
       if (!ENGINE_KINDS.includes(raw.engine)) {
         throw new Error(
@@ -115,6 +126,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         maxWords: Number.isFinite(raw.maxWords) ? raw.maxWords : DEFAULT_MAX_WORDS,
         engine: raw.engine,
         human: humanNames,
+        ...(raw.strategy !== undefined ? { strategy: raw.strategy } : {}),
       };
 
       if (opts.engine === "mock") {
@@ -138,6 +150,13 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
 
       const allExperts = [...aiExperts, ...humanExperts];
       const humanSlugs = new Set(humanExperts.map((e) => e.slug));
+
+      // Resolve --strategy only for freeform mode; structured mode
+      // ignores any moderator strategy by design.
+      const strategy =
+        opts.mode === "freeform" && opts.strategy !== undefined
+          ? resolveStrategy({ raw: opts.strategy, experts: allExperts })
+          : undefined;
 
       const dbPath = path.join(getCouncilHome(), "council.db");
       const db = await createDatabase(dbPath);
@@ -178,11 +197,15 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             maxRounds: opts.maxRounds,
             maxWordsPerResponse: opts.maxWords,
             mode: opts.mode,
+            ...(strategy !== undefined ? { strategy } : {}),
           },
           prompt: topic,
           panelId: panel.id,
           expertSlugToId,
-          moderator: opts.mode === "structured" ? "structured-phases" : "round-robin",
+          moderator:
+            opts.mode === "structured"
+              ? "structured-phases"
+              : (strategy?.name ?? "round-robin"),
           format: opts.format,
           write,
           writeError,

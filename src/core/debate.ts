@@ -3,15 +3,19 @@
  *
  * Two modes (`DebateConfig.mode`):
  *
- *   - `"freeform"` (ROADMAP §1.8): N rounds of round-robin chat. Each
- *     round, every expert speaks once on the same prompt. Stops at
- *     `maxRounds`. This is the default for `convene` debates.
+ *   - `"freeform"` (ROADMAP §1.8 + §2.3): N rounds of moderated chat.
+ *     Each round, the configured `ModeratorStrategy` (default
+ *     `round-robin`) decides which experts speak and with what prompt.
+ *     `consensus-check` and similar strategies may terminate the
+ *     debate early via `shouldContinue()` → `debate.end { reason:
+ *     "consensus" }`. Stops at `maxRounds` otherwise.
  *
  *   - `"structured"` (ROADMAP §2.2): fixed 4-phase choreography —
  *     opening → cross-examination → rebuttal → synthesis — regardless
  *     of `maxRounds`. Each phase emits one round.start/round.end pair
  *     with a `phase` field. The cross-examination phase is skipped when
  *     there is only one expert in the panel (3 phases total).
+ *     `DebateConfig.strategy` is ignored in structured mode.
  *
  * The orchestrator translates engine events (`message.delta`,
  * `message.complete`, `error`) into Council domain events
@@ -35,6 +39,12 @@ import {
   buildSynthesisPrompt,
   type PriorTurn,
 } from "./moderator/phase-prompts.js";
+import { createRoundRobinStrategy } from "./moderator/strategies.js";
+import type {
+  ModeratorContext,
+  ModeratorStrategy,
+  PriorTurnRecord,
+} from "./moderator/strategy.js";
 import type { DebateEvent, DebatePhase } from "./types.js";
 
 export type DebateMode = "freeform" | "structured";
@@ -55,6 +65,15 @@ export interface DebateConfig {
    * EngineErrorCode values fail fast.
    */
   readonly retryBackoffMs?: readonly number[];
+  /**
+   * Pluggable moderator strategy controlling per-round turn order and
+   * per-turn prompts in freeform mode (#212). Defaults to round-robin
+   * which preserves the historical structural event sequence.
+   *
+   * Ignored when `mode === "structured"` — that mode uses the fixed
+   * 4-phase choreography in `moderator/phase-prompts.ts`.
+   */
+  readonly strategy?: ModeratorStrategy;
 }
 
 /** Default retry backoff per ROADMAP §3.7 — 250ms, then 1s. */
@@ -104,19 +123,75 @@ export class Debate {
     }
   }
 
-  // -------------- Freeform mode (unchanged from §1.8) --------------
+  // -------------- Freeform mode (§1.8 + #212 strategy wiring) --------------
 
   async *#runFreeform(prompt: string): AsyncGenerator<DebateEvent> {
+    const strategy = this.config.strategy ?? createRoundRobinStrategy();
     const counters: RunCounters = {
       premiumRequests: 0,
       estimatedTotal: this.experts.length * this.config.maxRounds,
     };
 
+    const priorTurns: PriorTurnRecord[] = [];
+
     for (let round = 0; round < this.config.maxRounds; round++) {
+      const ctx: ModeratorContext = {
+        experts: this.experts,
+        round,
+        maxRounds: this.config.maxRounds,
+        topic: prompt,
+        priorTurns,
+      };
+
+      // After the first round, allow the strategy to terminate early
+      // (e.g. consensus detected). Round 0 always runs.
+      if (round > 0 && !strategy.shouldContinue(ctx)) {
+        yield { kind: "debate.end", reason: "consensus" };
+        return;
+      }
+
       yield { kind: "round.start", round };
+      const assignments = strategy.planRound(ctx);
+
+      const validationError = validateAssignments(assignments, this.experts);
+      if (validationError !== null) {
+        yield {
+          kind: "error",
+          expertSlug: validationError.expertSlug,
+          message: `ModeratorStrategy "${strategy.name}" produced an invalid round ${round}: ${validationError.reason}`,
+          recoverable: false,
+        };
+        yield { kind: "round.end", round };
+        continue;
+      }
+
       let seq = 0;
-      for (const expert of this.experts) {
-        yield* this.#runTurn(expert, prompt, round, seq, counters);
+      for (const assignment of assignments) {
+        const expert = this.experts.find((e) => e.slug === assignment.expertSlug);
+        if (!expert) {
+          // Unreachable: validateAssignments() above already rejected
+          // unknown slugs. Defensive guard so a future refactor can't
+          // silently drop turns.
+          seq += 1;
+          continue;
+        }
+
+        const captured = yield* this.#runTurn(
+          expert,
+          assignment.prompt,
+          round,
+          seq,
+          counters,
+        );
+
+        if (captured !== null) {
+          priorTurns.push({
+            expertSlug: expert.slug,
+            displayName: expert.displayName,
+            content: captured,
+            round,
+          });
+        }
         seq += 1;
       }
       yield { kind: "round.end", round };
@@ -404,6 +479,53 @@ export class Debate {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+interface AssignmentValidationError {
+  readonly expertSlug: string;
+  readonly reason: string;
+}
+
+/**
+ * Validates that a strategy's `planRound()` output is well-formed:
+ *
+ *   1. Every assigned slug refers to a real panel expert.
+ *   2. No slug appears more than once in a single round (a strategy
+ *      cannot make the same expert speak twice in the same round).
+ *   3. The total number of assignments does not exceed the panel size
+ *      (an upper bound that catches accidental duplicates or padding).
+ *
+ * Returns `null` when the batch is valid, otherwise the first violation.
+ */
+function validateAssignments(
+  assignments: readonly { readonly expertSlug: string }[],
+  experts: readonly ExpertSpec[],
+): AssignmentValidationError | null {
+  if (assignments.length > experts.length) {
+    return {
+      expertSlug: assignments[experts.length]?.expertSlug ?? "<unknown>",
+      reason: `returned ${assignments.length} assignments for a panel of ${experts.length} expert${experts.length === 1 ? "" : "s"}`,
+    };
+  }
+
+  const knownSlugs = new Set(experts.map((e) => e.slug));
+  const seen = new Set<string>();
+  for (const a of assignments) {
+    if (!knownSlugs.has(a.expertSlug)) {
+      return {
+        expertSlug: a.expertSlug,
+        reason: `returned an assignment for unknown expert slug "${a.expertSlug}"`,
+      };
+    }
+    if (seen.has(a.expertSlug)) {
+      return {
+        expertSlug: a.expertSlug,
+        reason: `returned a duplicate assignment for expert slug "${a.expertSlug}"`,
+      };
+    }
+    seen.add(a.expertSlug);
+  }
+  return null;
 }
 
 /** Re-export for callers consuming both the orchestrator and event types. */

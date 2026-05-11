@@ -80,6 +80,12 @@ council convene "Test prompt" --template code-review --engine mock
 council convene "Should we ship the MVP?" --template architecture-review \
   --engine copilot --mode structured
 
+# Choose a moderator strategy for freeform debates (default: round-robin)
+council convene "Ship now or wait?" --template code-review --engine copilot \
+  --strategy consensus-check
+council convene "Ship now or wait?" --template code-review --engine copilot \
+  --strategy devils-advocate:senior   # pin "senior" as the contrarian
+
 # Pipe NDJSON output to jq, logs, or scripts
 council convene "..." --template code-review --engine copilot --format json | jq .
 
