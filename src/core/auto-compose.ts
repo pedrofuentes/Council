@@ -28,11 +28,18 @@ import { PanelDefinitionSchema } from "./template-loader.js";
 const DEFAULT_MIN_EXPERTS = 3;
 const DEFAULT_MAX_EXPERTS = 5;
 const DEFAULT_COMPOSER_MODEL = "claude-sonnet-4-20250514";
+const DEFAULT_TIMEOUT_MS = 30_000;
 
 export interface AutoComposeOptions {
   readonly minExperts?: number;
   readonly maxExperts?: number;
   readonly defaultModel?: string;
+  /**
+   * Hard wall-clock cap on the composer send. If the engine has not produced
+   * a terminal event by this point, the call is aborted and an error is
+   * thrown. Defaults to 30 seconds.
+   */
+  readonly timeoutMs?: number;
 }
 
 export async function autoComposePanel(
@@ -43,6 +50,7 @@ export async function autoComposePanel(
   const minExperts = options?.minExperts ?? DEFAULT_MIN_EXPERTS;
   const maxExperts = options?.maxExperts ?? DEFAULT_MAX_EXPERTS;
   const model = options?.defaultModel ?? DEFAULT_COMPOSER_MODEL;
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   const composer: ExpertSpec = {
     id: ulid(),
@@ -54,15 +62,22 @@ export async function autoComposePanel(
 
   await engine.addExpert(composer);
   let raw = "";
+  const signal = AbortSignal.timeout(timeoutMs);
   try {
     const stream = engine.send({
       expertId: composer.id,
       prompt: `Design an expert panel to debate: "${topic}"`,
+      signal,
     });
     for await (const event of stream) {
       if (event.kind === "message.delta") {
         raw += event.text;
       } else if (event.kind === "error") {
+        if (event.error.code === "ABORTED" && signal.aborted) {
+          throw new Error(
+            `Auto-compose timed out after ${timeoutMs}ms — the engine did not respond in time.`,
+          );
+        }
         throw new Error(
           `Auto-compose engine error (${event.error.code}): ${event.error.message}`,
         );
@@ -99,7 +114,36 @@ export async function autoComposePanel(
     );
   }
 
-  return result.data;
+  return sanitizeComposedPanel(result.data, model);
+}
+
+/**
+ * Strip policy-bearing fields the LLM may have injected and force every
+ * expert's `model` to the trusted default. The composer is untrusted —
+ * it must not be able to override the debate protocol, output contract,
+ * forbidden moves, or routing model from the JSON it returns.
+ *
+ * Safe fields kept: slug, displayName, role, expertise, epistemicStance,
+ *                   personality. Plus panel-level name + description.
+ */
+function sanitizeComposedPanel(
+  panel: PanelDefinition,
+  defaultModel: string,
+): PanelDefinition {
+  return {
+    name: panel.name,
+    description: panel.description,
+    ...(panel.defaults ? { defaults: panel.defaults } : {}),
+    experts: panel.experts.map((e) => ({
+      slug: e.slug,
+      displayName: e.displayName,
+      role: e.role,
+      model: defaultModel,
+      expertise: e.expertise,
+      epistemicStance: e.epistemicStance,
+      ...(e.personality !== undefined ? { personality: e.personality } : {}),
+    })),
+  };
 }
 
 function buildComposerSystemPrompt(minExperts: number, maxExperts: number): string {

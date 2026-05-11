@@ -30,6 +30,7 @@ import { recallMemory } from "../../memory/expert-memory.js";
 import { ExpertRepository } from "../../memory/repositories/experts.js";
 import { PanelRepository, type Panel } from "../../memory/repositories/panels.js";
 
+import { stripControlChars } from "../strip-control-chars.js";
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 import {
   ENGINE_KINDS,
@@ -187,9 +188,11 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             writeError(`!! engine.stop() failed during auto-compose cleanup: ${msg}\n`);
           });
         }
-        writeError(`\n🏛️  Auto-composed panel: ${template.name}\n`);
+        writeError(`\n🏛️  Auto-composed panel: ${stripControlChars(template.name)}\n`);
         for (const expert of template.experts) {
-          writeError(`  • ${expert.displayName} — ${expert.role}\n`);
+          writeError(
+            `  • ${stripControlChars(expert.displayName)} — ${stripControlChars(expert.role)}\n`,
+          );
         }
         writeError("\n");
       }
