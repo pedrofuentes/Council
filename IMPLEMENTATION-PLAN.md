@@ -1,4 +1,4 @@
-# Detailed Roadmap — Council
+# Implementation Plan — Council
 
 > Implementation-level detail for each roadmap item. For the high-level overview, see [ROADMAP.md](./ROADMAP.md).
 
