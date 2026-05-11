@@ -32,6 +32,8 @@ import { ulid } from "ulid";
 import type { CouncilEngine, ExpertSpec } from "../engine/index.js";
 import type { HumanInputProvider } from "./human-input.js";
 
+import { buildRollingSummary, type SummarizerConfig } from "./context/summarizer.js";
+import { filterPriorTurns, type VisibilityConfig } from "./context/visibility.js";
 import {
   buildCrossExamPrompt,
   buildOpeningPrompt,
@@ -48,6 +50,20 @@ import type {
 import type { DebateEvent, DebatePhase } from "./types.js";
 
 export type DebateMode = "freeform" | "structured";
+
+/**
+ * Context window management config (ROADMAP §2.6). All fields are
+ * optional — omit `contextConfig` entirely for the legacy behaviour
+ * of forwarding every prior turn verbatim to the strategy.
+ */
+export interface ContextConfig {
+  readonly visibility?: VisibilityConfig;
+  readonly summarizer?: SummarizerConfig;
+  /** Hard cap on total verbatim prior-turn content (chars). Default 50000. */
+  readonly maxPromptChars?: number;
+}
+
+const DEFAULT_MAX_PROMPT_CHARS = 50_000;
 
 export interface DebateConfig {
   readonly maxRounds: number;
@@ -74,6 +90,13 @@ export interface DebateConfig {
    * 4-phase choreography in `moderator/phase-prompts.ts`.
    */
   readonly strategy?: ModeratorStrategy;
+
+  /**
+   * Context window management (ROADMAP §2.6). When omitted, the
+   * orchestrator forwards every prior turn verbatim to the strategy
+   * with no summary or truncation — the historical behaviour.
+   */
+  readonly contextConfig?: ContextConfig;
 }
 
 /** Default retry backoff per ROADMAP §3.7 — 250ms, then 1s. */
@@ -133,14 +156,29 @@ export class Debate {
     };
 
     const priorTurns: PriorTurnRecord[] = [];
+    const contextConfig = this.config.contextConfig;
 
     for (let round = 0; round < this.config.maxRounds; round++) {
+      const scopedTurns = contextConfig?.visibility
+        ? filterPriorTurns(priorTurns, "", round, contextConfig.visibility)
+        : priorTurns;
+
+      const cappedTurns = capByChars(
+        scopedTurns,
+        contextConfig?.maxPromptChars ?? DEFAULT_MAX_PROMPT_CHARS,
+      );
+
+      const rollingSummary = contextConfig?.summarizer
+        ? buildRollingSummary(priorTurns, round, contextConfig.summarizer)
+        : "";
+
       const ctx: ModeratorContext = {
         experts: this.experts,
         round,
         maxRounds: this.config.maxRounds,
         topic: prompt,
-        priorTurns,
+        priorTurns: cappedTurns,
+        ...(rollingSummary !== "" ? { rollingSummary } : {}),
       };
 
       // After the first round, allow the strategy to terminate early
@@ -479,6 +517,34 @@ export class Debate {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Truncate the oldest entries from `turns` until total content length
+ * fits within `maxChars`. Always preserves the most recent turn even
+ * if it alone exceeds the cap (callers can detect this by comparing
+ * the returned array's total length vs `maxChars`).
+ */
+function capByChars(
+  turns: readonly PriorTurnRecord[],
+  maxChars: number,
+): readonly PriorTurnRecord[] {
+  if (turns.length === 0) return turns;
+  let total = 0;
+  for (const t of turns) total += t.content.length;
+  if (total <= maxChars) return turns;
+
+  const kept: PriorTurnRecord[] = [];
+  let running = 0;
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const t = turns[i];
+    if (t === undefined) continue;
+    const next = running + t.content.length;
+    if (kept.length > 0 && next > maxChars) break;
+    kept.unshift(t);
+    running = next;
+  }
+  return kept;
 }
 
 interface AssignmentValidationError {

@@ -21,11 +21,12 @@ export function createRoundRobinStrategy(): ModeratorStrategy {
 
     planRound(ctx: ModeratorContext): readonly TurnAssignment[] {
       const prior = formatPriorTurns(ctx.priorTurns);
+      const summaryBlock = ctx.rollingSummary ? `${ctx.rollingSummary}\n\n` : "";
       return ctx.experts.map((e) => ({
         expertSlug: e.slug,
         prompt: ctx.round === 0
           ? `${ctx.topic}\n\nDeliver your position. Be specific and stake a clear claim.`
-          : `${ctx.topic}\n\nPrior discussion:\n${prior}\n\nBuild on the discussion so far. Respond to specific points raised by others. Refine your position.`,
+          : `${ctx.topic}\n\n${summaryBlock}Prior discussion:\n${prior}\n\nBuild on the discussion so far. Respond to specific points raised by others. Refine your position.`,
       }));
     },
 
@@ -45,20 +46,21 @@ export function createDevilsAdvocateStrategy(advocateSlug: string): ModeratorStr
 
     planRound(ctx: ModeratorContext): readonly TurnAssignment[] {
       const prior = formatPriorTurns(ctx.priorTurns);
+      const summaryBlock = ctx.rollingSummary ? `${ctx.rollingSummary}\n\n` : "";
       return ctx.experts.map((e) => {
         if (e.slug === advocateSlug) {
           return {
             expertSlug: e.slug,
             prompt: ctx.round === 0
               ? `${ctx.topic}\n\nYou are the devil's advocate on this panel. Your role is to challenge and oppose the emerging consensus. Find the strongest contrarian position and argue it forcefully. Identify risks, blind spots, and unexamined assumptions.`
-              : `${ctx.topic}\n\nPrior discussion:\n${prior}\n\nAs the devil's advocate, challenge the positions taken so far. Find weaknesses in the arguments. Push back on assumptions. Your role is to stress-test the group's thinking — be contrarian and provocative.`,
+              : `${ctx.topic}\n\n${summaryBlock}Prior discussion:\n${prior}\n\nAs the devil's advocate, challenge the positions taken so far. Find weaknesses in the arguments. Push back on assumptions. Your role is to stress-test the group's thinking — be contrarian and provocative.`,
           };
         }
         return {
           expertSlug: e.slug,
           prompt: ctx.round === 0
             ? `${ctx.topic}\n\nDeliver your position. Be specific and stake a clear claim.`
-            : `${ctx.topic}\n\nPrior discussion:\n${prior}\n\nBuild on the discussion so far. Respond to specific points raised by others.`,
+            : `${ctx.topic}\n\n${summaryBlock}Prior discussion:\n${prior}\n\nBuild on the discussion so far. Respond to specific points raised by others.`,
         };
       });
     },
@@ -87,9 +89,10 @@ export function createConsensusCheckStrategy(): ModeratorStrategy {
       }
 
       const prior = formatPriorTurns(ctx.priorTurns);
+      const summaryBlock = ctx.rollingSummary ? `${ctx.rollingSummary}\n\n` : "";
       return ctx.experts.map((e) => ({
         expertSlug: e.slug,
-        prompt: `${ctx.topic}\n\nPrior positions:\n${prior}\n\nConsensus check: Review the positions above. For each other expert's position, explicitly state whether you agree or disagree, and why. Have any of the arguments changed your own position? State your updated recommendation clearly.`,
+        prompt: `${ctx.topic}\n\n${summaryBlock}Prior positions:\n${prior}\n\nConsensus check: Review the positions above. For each other expert's position, explicitly state whether you agree or disagree, and why. Have any of the arguments changed your own position? State your updated recommendation clearly.`,
       }));
     },
 
