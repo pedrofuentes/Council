@@ -362,4 +362,32 @@ describe("autoComposePanel", () => {
     const composerId = engine.addedSpecs[0]?.id ?? "";
     expect(engine.removedExperts).toContain(composerId);
   });
+
+  it("strips terminal control sequences from parse-error messages", async () => {
+    // Untrusted LLM output is interpolated into the thrown error message. If
+    // the model emits ANSI escape sequences (CSI, OSC) or other C0 controls,
+    // they must be stripped before being surfaced to the user's terminal —
+    // otherwise a malicious composer could clear the screen, set the
+    // terminal title, or spoof previous output via the error path.
+    const ansiGarbage = "\x1B[31mFAKE-ERROR\x1B[0m\x1B]0;evil-title\x07{ not json";
+    const engine = new StubEngine({ response: ansiGarbage });
+    await engine.start();
+    let thrown: unknown;
+    try {
+      await autoComposePanel("topic", engine);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    const message = (thrown as Error).message;
+    // The cause/preview must NOT contain raw ESC, CSI, or OSC sequences.
+    expect(message).not.toMatch(/\x1B\[/);
+    // eslint-disable-next-line no-control-regex
+    expect(message).not.toMatch(/\x1B\]/);
+    expect(message).not.toContain("\x1B");
+    expect(message).not.toContain("\x07");
+    // Printable token from the garbage should still appear so the user can
+    // diagnose what came back.
+    expect(message).toContain("FAKE-ERROR");
+  });
 });

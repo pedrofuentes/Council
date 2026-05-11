@@ -205,4 +205,59 @@ describe("buildConveneCommand — auto-compose path", () => {
       "mock",
     ]);
   });
+
+  it("strips terminal control sequences from the auto-composed panel name in the preamble", async () => {
+    // An auto-composed panel name is LLM-generated and therefore untrusted.
+    // The plain-format preamble must sanitize it before writing to stdout,
+    // otherwise a malicious composer could emit ANSI/OSC sequences that
+    // spoof prior output, set the terminal title, or emit BEL.
+    const maliciousPanel = JSON.stringify({
+      name: "evil\x1B[31mFAKE\x1B[0m\x1B]0;owned\x07-panel",
+      description: "auto",
+      experts: [
+        {
+          slug: "alpha",
+          displayName: "Alpha",
+          role: "Skeptic",
+          expertise: { weightedEvidence: ["x"], referenceCases: [], notExpertIn: [] },
+          epistemicStance: "Alpha rejects unfalsifiable claims.",
+        },
+        {
+          slug: "beta",
+          displayName: "Beta",
+          role: "Builder",
+          expertise: { weightedEvidence: ["y"], referenceCases: [], notExpertIn: [] },
+          epistemicStance: "Beta trusts what ships.",
+        },
+      ],
+    });
+    let stdout = "";
+    const cmd = buildConveneCommand({
+      engineFactory: () => new ScriptedEngine([maliciousPanel]),
+      write: (s) => {
+        stdout += s;
+      },
+      writeError: () => undefined,
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "topic",
+      "--max-rounds",
+      "1",
+      "--format",
+      "plain",
+      "--engine",
+      "mock",
+    ]);
+
+    // The preamble line begins with "# <template.name>". The control bytes
+    // must be stripped; the printable tokens of the malicious name must
+    // remain (so the user still sees the name) but no ESC or BEL byte may
+    // survive.
+    expect(stdout).not.toContain("\x1B");
+    expect(stdout).not.toContain("\x07");
+    expect(stdout).toMatch(/#\s+evilFAKE/);
+  });
 });
