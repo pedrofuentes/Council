@@ -19,42 +19,34 @@ import { PlainRenderer } from "../../../../../src/cli/renderers/plain.js";
 import { InkRenderer } from "../../../../../src/cli/renderers/ink/InkRenderer.js";
 import type { Sink } from "../../../../../src/cli/renderers/types.js";
 
-const sink: Sink = { write: () => {} };
+const sink: Sink = {
+  write: () => {
+    /* discard */
+  },
+};
 
 describe("selectRenderer", () => {
   it("format=json returns JsonRenderer on TTY", () => {
-    expect(selectRenderer({ format: "json", isTTY: true, sink })).toBeInstanceOf(
-      JsonRenderer,
-    );
+    expect(selectRenderer({ format: "json", isTTY: true, sink })).toBeInstanceOf(JsonRenderer);
   });
 
   it("format=json returns JsonRenderer off TTY", () => {
-    expect(
-      selectRenderer({ format: "json", isTTY: false, sink }),
-    ).toBeInstanceOf(JsonRenderer);
+    expect(selectRenderer({ format: "json", isTTY: false, sink })).toBeInstanceOf(JsonRenderer);
   });
 
   it("format=plain returns PlainRenderer on TTY (override)", () => {
-    expect(
-      selectRenderer({ format: "plain", isTTY: true, sink }),
-    ).toBeInstanceOf(PlainRenderer);
+    expect(selectRenderer({ format: "plain", isTTY: true, sink })).toBeInstanceOf(PlainRenderer);
   });
 
   it("format=plain returns PlainRenderer off TTY", () => {
-    expect(
-      selectRenderer({ format: "plain", isTTY: false, sink }),
-    ).toBeInstanceOf(PlainRenderer);
+    expect(selectRenderer({ format: "plain", isTTY: false, sink })).toBeInstanceOf(PlainRenderer);
   });
 
   it("format=auto on TTY returns InkRenderer", () => {
-    expect(
-      selectRenderer({ format: "auto", isTTY: true, sink }),
-    ).toBeInstanceOf(InkRenderer);
+    expect(selectRenderer({ format: "auto", isTTY: true, sink })).toBeInstanceOf(InkRenderer);
   });
 
   it("format=auto off TTY returns PlainRenderer (graceful degrade)", () => {
-    expect(
-      selectRenderer({ format: "auto", isTTY: false, sink }),
-    ).toBeInstanceOf(PlainRenderer);
+    expect(selectRenderer({ format: "auto", isTTY: false, sink })).toBeInstanceOf(PlainRenderer);
   });
 });

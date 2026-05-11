@@ -7,6 +7,10 @@
  * user's real `~/.council/` directory.
  *
  * The temp directory is unique per process and deleted on exit.
+ *
+ * Also forces chalk's color level to 3 so renderer tests (Ink, Plain)
+ * can assert against the SGR escape sequences that real terminals
+ * produce. Test fixtures strip ANSI when they care about plain text.
  */
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -14,6 +18,10 @@ import * as path from "node:path";
 
 const TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "council-test-home-"));
 process.env["COUNCIL_HOME"] = TEST_HOME;
+
+if (process.env["FORCE_COLOR"] === undefined) {
+  process.env["FORCE_COLOR"] = "3";
+}
 
 process.on("exit", () => {
   try {

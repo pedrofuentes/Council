@@ -10,10 +10,7 @@ import React from "react";
 import { describe, expect, it } from "vitest";
 import { render } from "ink-testing-library";
 
-import {
-  DebateApp,
-  InkRenderer,
-} from "../../../../../src/cli/renderers/ink/InkRenderer.js";
+import { DebateApp, InkRenderer } from "../../../../../src/cli/renderers/ink/InkRenderer.js";
 import type { DebateEvent } from "../../../../../src/core/types.js";
 
 async function* stream(...evts: DebateEvent[]): AsyncIterable<DebateEvent> {
@@ -171,7 +168,10 @@ describe("DebateApp", () => {
     const ui = render(<DebateApp events={events} />);
     await flush();
     const raw = ui.lastFrame() ?? "";
-    // Find ANSI-coded "Alice" occurrences and verify they share the same prefix.
+    // Find ANSI-coded "Alice" occurrences and verify they share the same color.
+    // tests/setup.ts forces chalk to color-mode 3 so ink emits SGR escapes
+    // even though ink-testing-library's stdout reports as a non-TTY.
+    // eslint-disable-next-line no-control-regex
     const matches = [...raw.matchAll(/\u001b\[(\d+)m[^\u001b]*Alice/g)];
     expect(matches.length).toBeGreaterThanOrEqual(1);
     const codes = matches.map((m) => m[1]);

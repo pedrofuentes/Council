@@ -24,18 +24,12 @@ describe("assignExpertColor", () => {
   });
 
   it("cycles through the palette modulo its length", () => {
-    expect(assignExpertColor(EXPERT_COLOR_PALETTE.length)).toBe(
-      assignExpertColor(0),
-    );
-    expect(assignExpertColor(EXPERT_COLOR_PALETTE.length + 3)).toBe(
-      assignExpertColor(3),
-    );
+    expect(assignExpertColor(EXPERT_COLOR_PALETTE.length)).toBe(assignExpertColor(0));
+    expect(assignExpertColor(EXPERT_COLOR_PALETTE.length + 3)).toBe(assignExpertColor(3));
   });
 
   it("the first six indices yield distinct colors", () => {
-    const colors = new Set(
-      [0, 1, 2, 3, 4, 5].map((i) => assignExpertColor(i)),
-    );
+    const colors = new Set([0, 1, 2, 3, 4, 5].map((i) => assignExpertColor(i)));
     expect(colors.size).toBe(6);
   });
 

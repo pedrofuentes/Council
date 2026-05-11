@@ -23,6 +23,7 @@ import {
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 import { ENGINE_KINDS, type EngineKind, runWithEngine } from "../run-with-engine.js";
+import { RENDERER_FORMATS, type RendererFormat } from "../renderers/select.js";
 
 const DEFAULT_MAX_ROUNDS = 4;
 const DEFAULT_MAX_WORDS = 250;
@@ -34,7 +35,7 @@ export interface ResumeCommandDeps {
 }
 
 export interface ResumeOptions {
-  readonly format: "json" | "plain";
+  readonly format: RendererFormat;
   readonly continue?: string;
   readonly engine?: EngineKind;
   readonly maxRounds: number;
@@ -49,11 +50,12 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
   cmd
     .description("Reopen a panel: show transcript, or continue with a new prompt")
     .argument("<panel>", "Panel name to resume (as shown by `council panels`)")
-    .option("--format <kind>", "Output format: json (NDJSON) or plain (human)", "plain")
     .option(
-      "--continue <prompt>",
-      "Run a new debate against the same panel with this prompt",
+      "--format <kind>",
+      `Output format: ${RENDERER_FORMATS.join(" | ")} (auto picks Ink TUI on TTY, plain text otherwise)`,
+      "auto",
     )
+    .option("--continue <prompt>", "Run a new debate against the same panel with this prompt")
     .option(
       "--engine <kind>",
       "Engine for --continue mode: 'mock' (offline) or 'copilot' (real). Required when --continue is set.",
@@ -87,7 +89,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
       }
 
       const opts: ResumeOptions = {
-        format: raw.format === "json" ? "json" : "plain",
+        format: parseFormat(raw.format),
         ...(raw.continue !== undefined ? { continue: raw.continue } : {}),
         ...(engineKind !== undefined ? { engine: engineKind } : {}),
         maxRounds: Number.isFinite(raw.maxRounds) ? raw.maxRounds : DEFAULT_MAX_ROUNDS,
@@ -100,7 +102,10 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
         const resolved = await loadTranscript(db, panelName);
 
         if (opts.continue === undefined) {
-          await renderTranscriptInline(resolved, opts.format, write);
+          // Transcript replay: "auto" degrades to plain (Ink would just
+          // render a static dump — no streaming benefit).
+          const transcriptFormat: "json" | "plain" = opts.format === "json" ? "json" : "plain";
+          await renderTranscriptInline(resolved, transcriptFormat, write);
           return;
         }
 
@@ -147,14 +152,11 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
           write,
           writeError,
           db,
-          preamble:
-            opts.format === "plain"
-              ? () => {
-                  write(`\n# Continuing ${resolved.panel.name}\n`);
-                  write(`Prompt: ${opts.continue}\n`);
-                  write(`Engine: ${continueEngine} | Max rounds: ${opts.maxRounds}\n\n`);
-                }
-              : undefined,
+          preamble: () => {
+            write(`\n# Continuing ${resolved.panel.name}\n`);
+            write(`Prompt: ${opts.continue}\n`);
+            write(`Engine: ${continueEngine} | Max rounds: ${opts.maxRounds}\n\n`);
+          },
         });
       } finally {
         await db.destroy().catch((err: unknown) => {
@@ -165,6 +167,16 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
     });
 
   return cmd;
+}
+
+function parseFormat(raw: string | undefined): RendererFormat {
+  if (raw === undefined) return "auto";
+  if ((RENDERER_FORMATS as readonly string[]).includes(raw)) {
+    return raw as RendererFormat;
+  }
+  throw new Error(
+    `Unknown --format value: ${raw}. Expected one of: ${RENDERER_FORMATS.join(", ")}`,
+  );
 }
 
 /**
