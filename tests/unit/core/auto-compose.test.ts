@@ -21,6 +21,17 @@ import type {
 
 interface StubEngineOptions {
   readonly response: string;
+  readonly errorEvent?: {
+    readonly code:
+      | "NOT_AUTHENTICATED"
+      | "MODEL_UNAVAILABLE"
+      | "NETWORK"
+      | "RATE_LIMITED"
+      | "CONTEXT_OVERFLOW"
+      | "ABORTED"
+      | "INTERNAL";
+    readonly message: string;
+  };
 }
 
 class StubEngine implements CouncilEngine {
@@ -30,9 +41,11 @@ class StubEngine implements CouncilEngine {
   startCalls = 0;
   stopCalls = 0;
   readonly #response: string;
+  readonly #errorEvent: StubEngineOptions["errorEvent"];
 
   constructor(opts: StubEngineOptions) {
     this.#response = opts.response;
+    this.#errorEvent = opts.errorEvent;
   }
 
   async start(): Promise<void> {
@@ -66,6 +79,15 @@ class StubEngine implements CouncilEngine {
   }
 
   async *#stream(expertId: string, text: string): AsyncGenerator<EngineEvent, void, void> {
+    if (this.#errorEvent !== undefined) {
+      yield {
+        kind: "error",
+        expertId,
+        error: { code: this.#errorEvent.code, message: this.#errorEvent.message },
+        recoverable: false,
+      };
+      return;
+    }
     yield { kind: "message.delta", expertId, text };
     yield {
       kind: "message.complete",
@@ -169,6 +191,53 @@ describe("autoComposePanel", () => {
     await engine.start();
     await autoComposePanel("topic", engine, { defaultModel: "gpt-test-model" });
     expect(engine.addedSpecs[0]?.model).toBe("gpt-test-model");
+  });
+
+  it("throws a descriptive error when the engine emits an error event mid-stream", async () => {
+    const engine = new StubEngine({
+      response: "",
+      errorEvent: { code: "INTERNAL", message: "engine broke" },
+    });
+    await engine.start();
+    await expect(autoComposePanel("topic", engine)).rejects.toThrow(
+      /Auto-compose engine error \(INTERNAL\): engine broke/,
+    );
+  });
+
+  it("cleans up the composer expert even when the engine errors", async () => {
+    const engine = new StubEngine({
+      response: "",
+      errorEvent: { code: "NETWORK", message: "boom" },
+    });
+    await engine.start();
+    await expect(autoComposePanel("topic", engine)).rejects.toThrow();
+    // The composer must have been removed even though send() failed.
+    const composerId = engine.addedSpecs[0]?.id ?? "";
+    await expect(
+      engine.addExpert({
+        id: composerId,
+        slug: "x",
+        displayName: "x",
+        model: "m",
+        systemMessage: "m",
+      }),
+    ).resolves.not.toThrow();
+  });
+
+  it("throws a descriptive error when the composer returns an empty response", async () => {
+    const engine = new StubEngine({ response: "" });
+    await engine.start();
+    await expect(autoComposePanel("topic", engine)).rejects.toThrow(
+      "Auto-compose failed: composer returned an empty response.",
+    );
+  });
+
+  it("throws a descriptive error when the composer returns whitespace-only", async () => {
+    const engine = new StubEngine({ response: "   \n  \t  " });
+    await engine.start();
+    await expect(autoComposePanel("topic", engine)).rejects.toThrow(
+      "Auto-compose failed: composer returned an empty response.",
+    );
   });
 
   it("removes the composer expert after composition completes (cleanup)", async () => {
