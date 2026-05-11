@@ -147,8 +147,8 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
           writeError(
-            `!! Warning: panel "${resolved.panel.name}" has malformed configJson (${msg}); ` +
-              `falling back to freeform mode.\n`,
+            `!! Warning: could not parse panel config for "${resolved.panel.name}" — ` +
+              `malformed configJson (${msg}); falling back to freeform mode.\n`,
           );
         }
 
