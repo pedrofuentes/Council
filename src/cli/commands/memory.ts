@@ -11,7 +11,10 @@
  *   - **inspect <panel>**: detailed view of one panel: topic, latest
  *     debate prompt + status + turn count, expert displayNames + per-
  *     expert turn counts. With `--expert <slug>`: focuses on one
- *     expert showing their (truncated) system prompt + turn count.
+ *     expert showing their (truncated) system prompt, per-expert turn
+ *     count, and the heuristic memory recalled from prior turns
+ *     (positions / updated priors / unresolved questions — see
+ *     `recallMemory()` in `src/memory/expert-memory.ts`).
  *
  *   - **reset <panel>**: destructive. Requires `--yes` flag (no
  *     interactive prompt — flag-only safety gate so accidental scripted

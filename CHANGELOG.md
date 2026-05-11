@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - New `MockEngine.failOnSend?: { expertId, afterN, failures, code, message }` test seam — simulates per-send transient failures for retry testing.
 - **`council memory list/inspect/reset`** (ROADMAP §3.5) — three subcommands for inspecting and curating Council's local SQLite state at the panel/expert/debate/turn level.
   - **`memory list`**: per-panel summary (name, expert/debate/turn counts, last activity timestamp). `--panel <name>` filters to one. `--format json|plain`.
-  - **`memory inspect <panel>`**: detailed view (topic, latest debate prompt + status + turn count, expert displayNames + models). `--expert <slug>` focuses on one expert and shows their (truncated, 600 chars) system prompt.
+  - **`memory inspect <panel>`**: detailed view (topic, latest debate prompt + status + turn count, expert displayNames + models). `--expert <slug>` focuses on one expert and shows their (truncated, 600 chars) system prompt, per-expert turn count, and recalled memory (positions / updated priors / unresolved questions extracted from prior turns).
   - **`memory reset <panel> --yes`**: destructive. **Requires `--yes` flag explicitly** (no interactive prompt — flag-only safety gate). Default mode deletes debates + turns, keeps panel + experts. `--hard` deletes the panel entirely (FK CASCADE removes everything). `--expert <slug>` drops one expert from the panel.
   - Pure DB read + targeted writes: no engine, no LLM. Wired in as the 7th subcommand.
 - **`council export <panel> --format markdown|json|adr [--output <path>]`** (ROADMAP §3.6) — snapshots the latest debate of a panel into a shareable artifact.
