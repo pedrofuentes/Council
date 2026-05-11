@@ -18,6 +18,8 @@ import * as path from "node:path";
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 
+import { sql } from "kysely";
+
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
 import {
   PanelRepository,
@@ -86,6 +88,21 @@ describe("createDatabase", () => {
     const after = await db2.selectFrom("schema_version").selectAll().execute();
     await db2.destroy();
     expect(after.length).toBe(before.length); // no duplicate version rows
+  });
+
+  it("applies migrations 001 and 002, creating the expected indexes", async () => {
+    const versions = (
+      await db.selectFrom("schema_version").select("version").orderBy("version").execute()
+    ).map((r) => r.version);
+    expect(versions).toEqual([1, 2]);
+
+    const indexes = (
+      await sql<{
+        name: string;
+      }>`SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name`.execute(db)
+    ).rows.map((r) => r.name);
+    expect(indexes).toContain("idx_panels_name");
+    expect(indexes).toContain("idx_debates_panel_id");
   });
 });
 

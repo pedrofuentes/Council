@@ -98,12 +98,16 @@ interface Migration {
 function loadMigrations(): readonly Migration[] {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const migrationsDir = path.join(here, "migrations");
-  // For now we have a single migration; future ones should be appended here.
   return [
     {
       version: 1,
       name: "001_init",
       sql: readFileSync(path.join(migrationsDir, "001_init.sql"), "utf-8"),
+    },
+    {
+      version: 2,
+      name: "002_add_indexes",
+      sql: readFileSync(path.join(migrationsDir, "002_add_indexes.sql"), "utf-8"),
     },
   ];
 }
@@ -145,27 +149,30 @@ export function splitSqlStatements(sqlText: string): readonly string[] {
 }
 
 async function applyMigrations(client: Client, db: CouncilDatabase): Promise<void> {
+  // Ensure schema_version exists so we can gate migrations before re-running them.
+  // (The 001 migration also creates it via CREATE TABLE IF NOT EXISTS, so this is safe.)
+  await client.executeMultiple(
+    "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);",
+  );
   const migrations = loadMigrations();
   for (const migration of migrations) {
-    // Use the underlying libsql client's executeMultiple — it handles
-    // multi-statement scripts including CREATE TRIGGER BEGIN/END blocks
-    // that Kysely's sql.raw cannot.
-    await client.executeMultiple(migration.sql);
-    // Record the migration version (idempotent — schema_version.version is PK).
     const existing = await db
       .selectFrom("schema_version")
       .select("version")
       .where("version", "=", migration.version)
       .executeTakeFirst();
-    if (!existing) {
-      await db
-        .insertInto("schema_version")
-        .values({
-          version: migration.version,
-          applied_at: new Date().toISOString(),
-        })
-        .execute();
-    }
+    if (existing) continue;
+    // Use the underlying libsql client's executeMultiple — it handles
+    // multi-statement scripts including CREATE TRIGGER BEGIN/END blocks
+    // that Kysely's sql.raw cannot.
+    await client.executeMultiple(migration.sql);
+    await db
+      .insertInto("schema_version")
+      .values({
+        version: migration.version,
+        applied_at: new Date().toISOString(),
+      })
+      .execute();
   }
 }
 
