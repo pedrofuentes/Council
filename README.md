@@ -114,7 +114,7 @@ council export <panel-name> --format json --output transcript.ndjson
 # Inspect what's persisted locally
 council memory list                                 # summary of all panels
 council memory inspect <panel-name>                 # detail view
-council memory inspect <panel-name> --expert cto    # single-expert detail (system prompt + turn count)
+council memory inspect <panel-name> --expert cto    # single-expert detail (system prompt + recalled memory + turn count)
 
 # Curate (destructive — requires --yes)
 council memory reset <panel-name> --yes             # clear debates+turns, keep panel+experts

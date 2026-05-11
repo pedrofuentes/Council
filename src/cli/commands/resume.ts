@@ -15,6 +15,7 @@ import { Command } from "commander";
 import { getCouncilHome } from "../../config/index.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import { createDatabase } from "../../memory/db.js";
+import { applyRecalledMemory, recallMemory } from "../../memory/expert-memory.js";
 import {
   loadTranscript,
   synthesizeEvents,
@@ -125,12 +126,15 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
           );
         }
 
-        const expertSpecs = resolved.experts.map<ExpertSpec>((e) => ({
+        const recalls = await Promise.all(
+          resolved.experts.map((e) => recallMemory(db, resolved.panel.id, e.slug)),
+        );
+        const expertSpecs: ExpertSpec[] = resolved.experts.map((e, i) => ({
           id: e.id,
           slug: e.slug,
           displayName: e.displayName,
           model: e.model,
-          systemMessage: e.systemMessage,
+          systemMessage: applyRecalledMemory(e.systemMessage, recalls[i]),
         }));
 
         const expertSlugToId: Record<string, string> = {};
@@ -143,8 +147,8 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
           writeError(
-            `!! Warning: panel "${resolved.panel.name}" has malformed configJson (${msg}); ` +
-              `falling back to freeform mode.\n`,
+            `!! Warning: could not parse panel config for "${resolved.panel.name}" — ` +
+              `malformed configJson (${msg}); falling back to freeform mode.\n`,
           );
         }
 
