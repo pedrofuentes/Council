@@ -114,9 +114,9 @@ Zod-based `ConfigSchema` with conservative defaults (3 experts, 4 rounds, 250-wo
 
 `ModeratorStrategy` interface with `planRound()` and `shouldContinue()` methods. Strategies are pure (no I/O) — testable and MockEngine-compatible. Built-in strategies: `round-robin` (default), `sequential-with-visibility`, `devils-advocate`, `socratic`, `consensus-check`.
 
-**Key files**: `src/core/moderator/strategy.ts`, `src/core/moderator/strategies.ts`
+**Key files**: `src/core/moderator/strategy.ts`, `src/core/moderator/strategies.ts`, `src/cli/strategy-resolver.ts`
 
-**Note**: Strategies are not yet wired into `Debate.run()` — see issue #212. Currently the orchestrator uses its own internal turn logic.
+Strategies are wired into `Debate.#runFreeform()` via `DebateConfig.strategy` (default: `createRoundRobinStrategy()`). The CLI exposes `--strategy <name>` on `council convene` and `council resume --continue`; structured mode ignores the flag by design. The resolved strategy name is persisted to `debates.moderator`.
 
 ### 2.4 Anti-sycophancy Enforcement ✅
 

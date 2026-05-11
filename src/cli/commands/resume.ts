@@ -24,6 +24,7 @@ import {
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 import { ENGINE_KINDS, type EngineKind, runWithEngine } from "../run-with-engine.js";
 import { RENDERER_FORMATS, type RendererFormat } from "../renderers/select.js";
+import { resolveStrategy, STRATEGY_NAMES } from "../strategy-resolver.js";
 
 const DEFAULT_MAX_ROUNDS = 4;
 const DEFAULT_MAX_WORDS = 250;
@@ -40,6 +41,7 @@ export interface ResumeOptions {
   readonly engine?: EngineKind;
   readonly maxRounds: number;
   readonly maxWords: number;
+  readonly strategy?: string;
 }
 
 export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
@@ -72,6 +74,12 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
       (v) => Number.parseInt(v, 10),
       DEFAULT_MAX_WORDS,
     )
+    .option(
+      "--strategy <name>",
+      `Moderator strategy for --continue freeform mode (${STRATEGY_NAMES.join(" | ")}). ` +
+        `devils-advocate accepts an optional ":<slug>" suffix.`,
+      "round-robin",
+    )
     .action(async (panelName: string, raw: ResumeOptions) => {
       let engineKind: EngineKind | undefined;
       if (raw.continue !== undefined) {
@@ -94,6 +102,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
         ...(engineKind !== undefined ? { engine: engineKind } : {}),
         maxRounds: Number.isFinite(raw.maxRounds) ? raw.maxRounds : DEFAULT_MAX_ROUNDS,
         maxWords: Number.isFinite(raw.maxWords) ? raw.maxWords : DEFAULT_MAX_WORDS,
+        ...(raw.strategy !== undefined ? { strategy: raw.strategy } : {}),
       };
 
       const dbPath = path.join(getCouncilHome(), "council.db");
@@ -131,9 +140,18 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
         try {
           const cfg = JSON.parse(resolved.panel.configJson) as { mode?: string };
           if (cfg.mode === "structured") panelMode = "structured";
-        } catch {
-          /* malformed configJson — fall back to freeform */
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          writeError(
+            `!! Warning: panel "${resolved.panel.name}" has malformed configJson (${msg}); ` +
+              `falling back to freeform mode.\n`,
+          );
         }
+
+        const strategy =
+          panelMode === "freeform" && opts.strategy !== undefined
+            ? resolveStrategy({ raw: opts.strategy, experts: expertSpecs })
+            : undefined;
 
         await runWithEngine({
           engineKind: continueEngine,
@@ -143,11 +161,15 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
             maxRounds: opts.maxRounds,
             maxWordsPerResponse: opts.maxWords,
             mode: panelMode,
+            ...(strategy !== undefined ? { strategy } : {}),
           },
           prompt: opts.continue,
           panelId: resolved.panel.id,
           expertSlugToId,
-          moderator: panelMode === "structured" ? "structured-phases" : "round-robin",
+          moderator:
+            panelMode === "structured"
+              ? "structured-phases"
+              : (strategy?.name ?? "round-robin"),
           format: opts.format,
           write,
           writeError,
