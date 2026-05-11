@@ -141,7 +141,7 @@ describe("Debate — context window management (§2.6)", () => {
       mode: "freeform",
       strategy,
       contextConfig: {
-        summarizer: { summarizeAfterRound: 2, maxSummaryLength: 500 },
+        summarizer: { summarizeAfterRound: 2, maxSummaryLength: 500, mode: "heuristic" },
       },
     };
 

@@ -84,7 +84,19 @@ export interface ConveneOptions {
   readonly strategy?: string;
   readonly contextScope?: string;
   readonly summarizeAfter?: number;
+  readonly heuristicSummaries?: boolean;
   readonly yes?: boolean;
+}
+
+/**
+ * Narrow shape consumed by {@link buildContextConfig} — exported so unit
+ * tests can probe summarizer-mode wiring without instantiating the full
+ * Commander pipeline.
+ */
+export interface SummarizerOptions {
+  readonly contextScope?: string;
+  readonly summarizeAfter?: number;
+  readonly heuristicSummaries?: boolean;
 }
 
 /**
@@ -150,6 +162,10 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       (v) => Number.parseInt(v, 10),
     )
     .option(
+      "--heuristic-summaries",
+      "Use the cheap heuristic summarizer instead of the default LLM-backed one (§2.6)",
+    )
+    .option(
       "--yes",
       "Skip the auto-compose confirmation prompt (non-interactive runs)",
     )
@@ -171,6 +187,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         engine: raw.engine,
         human: humanNames,
         yes: raw.yes === true,
+        heuristicSummaries: raw.heuristicSummaries === true,
         ...(raw.strategy !== undefined ? { strategy: raw.strategy } : {}),
         ...(raw.contextScope !== undefined ? { contextScope: raw.contextScope } : {}),
         ...(raw.summarizeAfter !== undefined && Number.isFinite(raw.summarizeAfter)
@@ -423,14 +440,29 @@ function slugify(name: string): string {
 
 const VALID_CONTEXT_SCOPES = ["all", "same-round", "recent"] as const;
 
-function buildContextConfig(opts: ConveneOptions): ContextConfig | undefined {
+/**
+ * Translate parsed CLI options into a {@link ContextConfig}. Exported
+ * so unit tests can probe the summarizer-mode wiring without running
+ * the full Commander pipeline.
+ *
+ * Defaults — when `--summarize-after` is set:
+ *   - mode: "llm" (engine-backed, higher quality)
+ *   - mode: "heuristic" if `--heuristic-summaries` is also passed.
+ */
+export function buildContextConfig(opts: SummarizerOptions): ContextConfig | undefined {
   const visibility =
     opts.contextScope !== undefined && opts.contextScope !== "all"
       ? parseContextScope(opts.contextScope)
       : undefined;
   const summarizer =
     opts.summarizeAfter !== undefined
-      ? { summarizeAfterRound: opts.summarizeAfter, maxSummaryLength: 500 }
+      ? {
+          summarizeAfterRound: opts.summarizeAfter,
+          maxSummaryLength: 500,
+          mode: (opts.heuristicSummaries === true ? "heuristic" : "llm") as
+            | "heuristic"
+            | "llm",
+        }
       : undefined;
   if (visibility === undefined && summarizer === undefined) return undefined;
   return {

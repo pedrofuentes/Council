@@ -32,7 +32,7 @@ import { ulid } from "ulid";
 import type { CouncilEngine, ExpertSpec } from "../engine/index.js";
 import type { HumanInputProvider } from "./human-input.js";
 
-import { buildRollingSummary, type SummarizerConfig } from "./context/summarizer.js";
+import { buildHeuristicSummary, buildLLMSummary, type SummarizerConfig } from "./context/summarizer.js";
 import { filterPriorTurns, type VisibilityConfig } from "./context/visibility.js";
 import {
   buildCrossExamPrompt,
@@ -160,6 +160,16 @@ export class Debate {
     const priorTurns: PriorTurnRecord[] = [];
     const contextConfig = this.config.contextConfig;
 
+    // Per-round cached summary. Computed once at the top of each round
+    // (so the LLM mode incurs at most one extra send per round, not per
+    // turn) and reused by every buildCtx() call within that round.
+    let cachedRoundSummary = "";
+    // Pick the summarizer mode: explicit `mode` from config wins; when
+    // omitted, default to "llm" because the orchestrator always has an
+    // engine handle. CLI users opt out with --heuristic-summaries.
+    const summarizerMode: "llm" | "heuristic" =
+      contextConfig?.summarizer?.mode ?? "llm";
+
     // Build a ModeratorContext for the current `round`, applying the
     // configured visibility filter, prompt-char cap, and rolling
     // summary. When `contextConfig` is undefined the orchestrator
@@ -186,7 +196,9 @@ export class Debate {
           : scopedTurns;
 
       const rollingSummary = contextConfig.summarizer
-        ? buildRollingSummary(priorTurns, round, contextConfig.summarizer)
+        ? summarizerMode === "llm"
+          ? cachedRoundSummary
+          : buildHeuristicSummary(priorTurns, round, contextConfig.summarizer)
         : "";
 
       return {
@@ -200,6 +212,30 @@ export class Debate {
     };
 
     for (let round = 0; round < this.config.maxRounds; round++) {
+      // Refresh the per-round LLM summary cache before any planning
+      // happens so buildCtx() returns a stable summary for this round.
+      // Heuristic mode keeps its sync per-turn behaviour via buildCtx().
+      if (
+        summarizerMode === "llm" &&
+        contextConfig?.summarizer !== undefined
+      ) {
+        const moderatorModel =
+          this.config.moderatorModel ?? this.experts[0]?.model ?? "default";
+        try {
+          cachedRoundSummary = await buildLLMSummary(
+            priorTurns,
+            round,
+            contextConfig.summarizer,
+            this.engine,
+            moderatorModel,
+          );
+        } catch {
+          // Defense-in-depth: buildLLMSummary already swallows engine
+          // errors, but never let an optional summary abort the debate.
+          cachedRoundSummary = "";
+        }
+      }
+
       // First plan locks the round's turn ordering and serves as the
       // shouldContinue() / validation context.
       const initialCtx = buildCtx(round);
