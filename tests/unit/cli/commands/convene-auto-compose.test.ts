@@ -141,6 +141,7 @@ describe("buildConveneCommand — auto-compose path", () => {
       "1",
       "--engine",
       "mock",
+      "--yes",
     ]);
 
     // Auto-composed banner should be in stderr
@@ -250,6 +251,7 @@ describe("buildConveneCommand — auto-compose path", () => {
       "plain",
       "--engine",
       "mock",
+      "--yes",
     ]);
 
     // The preamble line is "# <template.name>" written before the debate
