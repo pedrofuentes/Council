@@ -327,7 +327,7 @@ function CompletionMessage({ state }: { readonly state: DebateState }): ReactEle
 
 export interface DebateAppProps {
   readonly events: AsyncIterable<DebateEvent>;
-  readonly onComplete?: () => void;
+  readonly onComplete?: (err?: unknown) => void;
 }
 
 export function DebateApp({ events, onComplete }: DebateAppProps): ReactElement {
@@ -336,19 +336,21 @@ export function DebateApp({ events, onComplete }: DebateAppProps): ReactElement 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
+      let streamError: unknown;
       try {
         for await (const ev of events) {
           if (cancelled) break;
           setState((prev) => reduce(prev, ev));
         }
       } catch (err) {
+        streamError = err;
         const message = err instanceof Error ? err.message : String(err);
         setState((prev) => ({
           ...prev,
           errors: [...prev.errors, { message, recoverable: false }],
         }));
       } finally {
-        if (!cancelled) onComplete?.();
+        if (!cancelled) onComplete?.(streamError);
       }
     })();
     return () => {
@@ -403,12 +405,15 @@ export class InkRenderer implements Renderer {
         if (err) reject(err instanceof Error ? err : new Error(String(err)));
         else resolve();
       };
-      const instance = inkRender(<DebateApp events={events} onComplete={() => finish()} />, {
-        stdout: this.#stdout,
-        stderr: this.#stderr,
-        exitOnCtrlC: false,
-        patchConsole: false,
-      });
+      const instance = inkRender(
+        <DebateApp events={events} onComplete={(err) => finish(err)} />,
+        {
+          stdout: this.#stdout,
+          stderr: this.#stderr,
+          exitOnCtrlC: false,
+          patchConsole: false,
+        },
+      );
       instance.waitUntilExit().then(
         () => finish(),
         (err: unknown) => finish(err),
