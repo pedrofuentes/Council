@@ -381,6 +381,7 @@ describe("autoComposePanel", () => {
     expect(thrown).toBeInstanceOf(Error);
     const message = (thrown as Error).message;
     // The cause/preview must NOT contain raw ESC, CSI, or OSC sequences.
+    // eslint-disable-next-line no-control-regex
     expect(message).not.toMatch(/\x1B\[/);
     // eslint-disable-next-line no-control-regex
     expect(message).not.toMatch(/\x1B\]/);
