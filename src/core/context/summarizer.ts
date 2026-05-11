@@ -180,7 +180,12 @@ export async function buildLLMSummary(
 }
 
 function sanitizeFenceField(s: string): string {
-  return s.replace(/<\/transcript>/gi, "</ transcript>");
+  // Defense-in-depth: escape every '<' in interpolated transcript
+  // fields so NO XML-like tag — including whitespace-padded variants
+  // like '</ transcript >' — can appear inside the fenced region.
+  // Using the HTML lt entity is intelligible to the model as text and
+  // cannot be re-interpreted as a tag opener.
+  return s.replace(/</g, "&lt;");
 }
 
 function formatTurnsForLLM(turns: readonly PriorTurnRecord[]): string {
