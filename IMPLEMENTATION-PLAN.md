@@ -128,7 +128,7 @@ Heuristic quality gate inspecting expert responses against the 3-layer system: f
 
 > Meta-prompt that analyzes a topic and suggests an expert panel (roles, models, expected disagreements).
 
-`council convene "<topic>"` without `--template` auto-generates a relevant panel via an LLM meta-prompt. The generated panel is validated against `PanelDefinitionSchema`; on failure or refusal (trivial/factual questions) it falls back to a default panel. `--template` takes precedence.
+`council convene "<topic>"` without `--template` auto-generates a relevant panel via an LLM meta-prompt. The generated panel is validated against `PanelDefinitionSchema`; on validation failure or model refusal the command throws a user-facing error directing the user to specify `--template` manually. `--template` takes precedence when provided.
 
 **Key files**: `src/core/auto-compose.ts`, `src/cli/commands/convene.ts`
 
@@ -138,7 +138,7 @@ Heuristic quality gate inspecting expert responses against the 3-layer system: f
 
 Visibility scoping (`all` / `same-round` / `recent`), heuristic rolling summaries, and an opt-in `maxPromptChars` cap with newest-first eviction. CLI flags: `--context-scope`, `--summarize-after`.
 
-**Key files**: `src/core/context/visibility.ts`, `src/core/context/summarizer.ts`, `src/core/context/budget.ts`
+**Key files**: `src/core/context/visibility.ts`, `src/core/context/summarizer.ts`, `src/core/debate.ts` (`capByChars` eviction)
 
 ### 2.7 `council conclude` Command ✅
 
