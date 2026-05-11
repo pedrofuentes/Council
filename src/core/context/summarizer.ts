@@ -136,13 +136,19 @@ export async function buildLLMSummary(
   if (currentRound < config.summarizeAfterRound) return "";
 
   const expertId = ulid();
-  await engine.addExpert({
-    id: expertId,
-    slug: `__summarizer-${expertId}`,
-    displayName: "Summarizer",
-    model,
-    systemMessage: SUMMARIZER_SYSTEM_PROMPT,
-  });
+  try {
+    await engine.addExpert({
+      id: expertId,
+      slug: `__summarizer-${expertId}`,
+      displayName: "Summarizer",
+      model,
+      systemMessage: SUMMARIZER_SYSTEM_PROMPT,
+    });
+  } catch {
+    // Registration failed — summarizer is best-effort. Return empty so
+    // the parent debate continues with no rolling summary this round.
+    return "";
+  }
 
   let collected = "";
   try {
@@ -157,6 +163,8 @@ export async function buildLLMSummary(
         break;
       }
     }
+  } catch {
+    // Same contract as the error event: never propagate.
   } finally {
     await engine.removeExpert(expertId).catch(() => {
       /* best-effort cleanup; surfacing this would mask the real summary */

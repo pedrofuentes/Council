@@ -221,13 +221,19 @@ export class Debate {
       ) {
         const moderatorModel =
           this.config.moderatorModel ?? this.experts[0]?.model ?? "default";
-        cachedRoundSummary = await buildLLMSummary(
-          priorTurns,
-          round,
-          contextConfig.summarizer,
-          this.engine,
-          moderatorModel,
-        );
+        try {
+          cachedRoundSummary = await buildLLMSummary(
+            priorTurns,
+            round,
+            contextConfig.summarizer,
+            this.engine,
+            moderatorModel,
+          );
+        } catch {
+          // Defense-in-depth: buildLLMSummary already swallows engine
+          // errors, but never let an optional summary abort the debate.
+          cachedRoundSummary = "";
+        }
       }
 
       // First plan locks the round's turn ordering and serves as the
