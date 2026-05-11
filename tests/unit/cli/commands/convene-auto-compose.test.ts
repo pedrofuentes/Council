@@ -1,0 +1,187 @@
+/**
+ * Tests for `council convene <topic>` WITHOUT `--template` — exercises
+ * the auto-composition path where the engine generates a panel from the
+ * topic via the meta-prompt.
+ *
+ * RED at this commit: convene currently makes --template a requiredOption().
+ */
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { buildConveneCommand } from "../../../../src/cli/commands/convene.js";
+import type {
+  CouncilEngine,
+  EngineEvent,
+  ExpertSpec,
+  SendOptions,
+} from "../../../../src/engine/index.js";
+
+const validPanelJson = JSON.stringify({
+  name: "auto-panel",
+  description: "Auto-composed panel for the topic",
+  experts: [
+    {
+      slug: "alpha",
+      displayName: "Alpha (Skeptic)",
+      role: "Skeptic",
+      expertise: { weightedEvidence: ["counter-examples"], referenceCases: [], notExpertIn: [] },
+      epistemicStance: "Alpha rejects claims without falsification tests.",
+    },
+    {
+      slug: "beta",
+      displayName: "Beta (Builder)",
+      role: "Builder",
+      expertise: { weightedEvidence: ["empirical wins"], referenceCases: [], notExpertIn: [] },
+      epistemicStance: "Beta trusts what ships and runs in production.",
+    },
+    {
+      slug: "gamma",
+      displayName: "Gamma (User Voice)",
+      role: "User advocate",
+      expertise: { weightedEvidence: ["user studies"], referenceCases: [], notExpertIn: [] },
+      epistemicStance: "Gamma weights observed user behavior over speculation.",
+    },
+  ],
+});
+
+/** Stub engine: first send returns the panel JSON; later sends return generic text. */
+class ScriptedEngine implements CouncilEngine {
+  readonly #experts = new Map<string, ExpertSpec>();
+  readonly responses: string[];
+  callIndex = 0;
+
+  constructor(responses: string[]) {
+    this.responses = responses;
+  }
+
+  async start(): Promise<void> {
+    /* no-op */
+  }
+  async stop(): Promise<void> {
+    /* no-op */
+  }
+  async addExpert(spec: ExpertSpec): Promise<void> {
+    this.#experts.set(spec.id, spec);
+  }
+  async removeExpert(expertId: string): Promise<void> {
+    this.#experts.delete(expertId);
+  }
+  async listModels(): Promise<readonly string[]> {
+    return ["stub"];
+  }
+
+  send(options: SendOptions): AsyncIterable<EngineEvent> {
+    if (!this.#experts.has(options.expertId)) {
+      throw new Error(`Expert ${options.expertId} is not registered`);
+    }
+    const text = this.responses[this.callIndex] ?? "[default reply]";
+    this.callIndex += 1;
+    const expertId = options.expertId;
+    return (async function* (): AsyncGenerator<EngineEvent, void, void> {
+      yield { kind: "message.delta", expertId, text };
+      yield {
+        kind: "message.complete",
+        expertId,
+        response: { latencyMs: 1, tokensIn: 1, tokensOut: 1 },
+      };
+    })();
+  }
+}
+
+describe("buildConveneCommand — auto-compose path", () => {
+  let testHome: string;
+  let originalHome: string | undefined;
+
+  beforeEach(async () => {
+    testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-autocompose-test-"));
+    originalHome = process.env["COUNCIL_HOME"];
+    process.env["COUNCIL_HOME"] = testHome;
+  });
+
+  afterEach(async () => {
+    if (originalHome === undefined) delete process.env["COUNCIL_HOME"];
+    else process.env["COUNCIL_HOME"] = originalHome;
+    try {
+      await fs.rm(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    } catch {
+      /* best effort */
+    }
+  });
+
+  it("declares --template as optional (not required)", () => {
+    const cmd = buildConveneCommand({ engineFactory: () => new ScriptedEngine([]) });
+    const templateOpt = cmd.options.find((o) => o.long === "--template");
+    expect(templateOpt).toBeDefined();
+    expect(templateOpt?.mandatory).toBe(false);
+  });
+
+  it("auto-composes a panel when --template is omitted", async () => {
+    let stderr = "";
+    const cmd = buildConveneCommand({
+      engineFactory: () => new ScriptedEngine([validPanelJson]),
+      write: () => undefined,
+      writeError: (s) => {
+        stderr += s;
+      },
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "Should we adopt event sourcing?",
+      "--max-rounds",
+      "1",
+      "--engine",
+      "mock",
+    ]);
+
+    // Auto-composed banner should be in stderr
+    expect(stderr).toMatch(/auto-composed/i);
+    expect(stderr).toContain("auto-panel");
+    expect(stderr).toContain("Alpha (Skeptic)");
+  });
+
+  it("reports a clear error when the engine returns garbage", async () => {
+    const cmd = buildConveneCommand({
+      engineFactory: () => new ScriptedEngine(["not json"]),
+      write: () => undefined,
+      writeError: () => undefined,
+    });
+    cmd.exitOverride();
+
+    await expect(
+      cmd.parseAsync([
+        "node",
+        "council-convene",
+        "topic",
+        "--engine",
+        "mock",
+      ]),
+    ).rejects.toThrow(/auto-compose|panel|template/i);
+  });
+
+  it("still uses the template path when --template IS provided", async () => {
+    const cmd = buildConveneCommand({
+      // No JSON needed: template path doesn't call the meta-prompt.
+      engineFactory: () => new ScriptedEngine([]),
+      write: () => undefined,
+      writeError: () => undefined,
+    });
+
+    // Built-in template "code-review" must exist; this path should not throw.
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "topic",
+      "--template",
+      "code-review",
+      "--max-rounds",
+      "1",
+      "--engine",
+      "mock",
+    ]);
+  });
+});
