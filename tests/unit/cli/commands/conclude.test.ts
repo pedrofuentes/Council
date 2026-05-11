@@ -1,8 +1,6 @@
 /**
  * Tests for `council conclude [panel] --engine <kind> [--format json|plain]`.
  *
- * RED at this commit: src/cli/commands/conclude.ts does not exist.
- *
  * Conclude reads the latest debate transcript for a panel, sends a
  * structured synthesis prompt through the engine using a temporary
  * "synthesizer" expert, parses the JSON response into a
@@ -18,6 +16,7 @@ import {
   buildConcludeCommand,
   type ConcludeOutput,
 } from "../../../../src/cli/commands/conclude.js";
+import { buildProgram } from "../../../../src/bin/council.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import { DebateRepository } from "../../../../src/memory/repositories/debates.js";
@@ -139,6 +138,45 @@ async function seedEmptyDebatePanel(
       status: "completed",
       endedAt: new Date().toISOString(),
     });
+    return { panelName: panel.name };
+  } finally {
+    await db.destroy();
+  }
+}
+
+async function seedPanelWithRunningDebate(
+  testHome: string,
+  name = "conclude-running",
+): Promise<SeedResult> {
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    const panel = await new PanelRepository(db).create({
+      name,
+      topic: "Running debate topic",
+      copilotHome: path.join(testHome, "copilot"),
+      configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+    });
+    const cto = await new ExpertRepository(db).create({
+      panelId: panel.id,
+      slug: "cto",
+      displayName: "CTO",
+      model: "claude-sonnet-4",
+      systemMessage: "You are a CTO.",
+    });
+    const debate = await new DebateRepository(db).create({
+      panelId: panel.id,
+      prompt: "Running debate topic",
+      moderator: "round-robin",
+    });
+    await new TurnRepository(db).create({
+      debateId: debate.id,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId: cto.id,
+      content: "CTO: a thought captured before the debate finished.",
+    });
+    // Intentionally do NOT mark the debate completed — leaves status "running".
     return { panelName: panel.name };
   } finally {
     await db.destroy();
@@ -396,8 +434,10 @@ describe("buildConcludeCommand", () => {
 
   it("defaults to the most recent panel when no name is given", async () => {
     await seedPanelWithDebate(testHome, "panel-old");
-    // Wait so the second panel's ULID sorts strictly after the first.
-    await new Promise((r) => setTimeout(r, 5));
+    // Panel ids are ULIDs (ms precision). Wait long enough to guarantee the
+    // second panel's millisecond timestamp is strictly greater than the
+    // first, so lexicographic ULID ordering is deterministic.
+    await new Promise((r) => setTimeout(r, 30));
     const newer = await seedPanelWithDebate(testHome, "panel-newer");
 
     let captured = "";
@@ -420,5 +460,176 @@ describe("buildConcludeCommand", () => {
 
     const parsed = JSON.parse(captured.trim()) as ConcludeOutput;
     expect(parsed.panelName).toBe(newer.panelName);
+  });
+
+  it("rejects unknown --format value", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    const cmd = buildConcludeCommand({
+      write: () => undefined,
+      writeError: () => undefined,
+      engineFactory: () => makeMockEngine(JSON.stringify(SAMPLE_OUTPUT)),
+      synthesizerId: SYNTH_ID,
+    });
+    cmd.exitOverride();
+    let thrown = "";
+    try {
+      await cmd.parseAsync([
+        "node",
+        "council-conclude",
+        seed.panelName,
+        "--engine",
+        "mock",
+        "--format",
+        "yaml",
+      ]);
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    expect(thrown.toLowerCase()).toMatch(/format|expected|unknown/);
+  });
+
+  it("emits a warning when the latest debate is not completed", async () => {
+    const seed = await seedPanelWithRunningDebate(testHome);
+    let captured = "";
+    let stderr = "";
+    const cmd = buildConcludeCommand({
+      write: (s) => {
+        captured += s;
+      },
+      writeError: (s) => {
+        stderr += s;
+      },
+      engineFactory: () => makeMockEngine(JSON.stringify(SAMPLE_OUTPUT)),
+      synthesizerId: SYNTH_ID,
+    });
+    await cmd.parseAsync([
+      "node",
+      "council-conclude",
+      seed.panelName,
+      "--engine",
+      "mock",
+      "--format",
+      "json",
+    ]);
+    const parsed = JSON.parse(captured.trim()) as ConcludeOutput;
+    expect(parsed.warnings).toBeDefined();
+    expect((parsed.warnings ?? []).join(" ")).toMatch(/running|partial|not 'completed'/i);
+    // Stderr should still mention the mock-engine banner (unrelated, sanity check).
+    expect(stderr).toContain("MOCK ENGINE");
+  });
+
+  it("plain format surfaces the partial-debate warning in stdout", async () => {
+    const seed = await seedPanelWithRunningDebate(testHome);
+    let captured = "";
+    const cmd = buildConcludeCommand({
+      write: (s) => {
+        captured += s;
+      },
+      writeError: () => undefined,
+      engineFactory: () => makeMockEngine(JSON.stringify(SAMPLE_OUTPUT)),
+      synthesizerId: SYNTH_ID,
+    });
+    await cmd.parseAsync([
+      "node",
+      "council-conclude",
+      seed.panelName,
+      "--engine",
+      "mock",
+    ]);
+    expect(captured.toLowerCase()).toContain("warning");
+  });
+
+  it("delimits the transcript in <transcript> tags to mitigate prompt injection", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    const engine = makeMockEngine(JSON.stringify(SAMPLE_OUTPUT));
+    const cmd = buildConcludeCommand({
+      write: () => undefined,
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      synthesizerId: SYNTH_ID,
+    });
+    await cmd.parseAsync([
+      "node",
+      "council-conclude",
+      seed.panelName,
+      "--engine",
+      "mock",
+    ]);
+    const prompt = engine.sentPrompts[0]?.prompt ?? "";
+    expect(prompt).toContain("<transcript>");
+    expect(prompt).toContain("</transcript>");
+    // The expert turn content is inside the tags.
+    const startIdx = prompt.indexOf("<transcript>");
+    const endIdx = prompt.indexOf("</transcript>");
+    expect(startIdx).toBeGreaterThanOrEqual(0);
+    expect(endIdx).toBeGreaterThan(startIdx);
+    const body = prompt.slice(startIdx, endIdx);
+    expect(body).toContain("monolith's coupling");
+  });
+
+  it("tolerates JSON wrapped in unfenced prose", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    const proseWrapped =
+      "Sure! Here is the synthesis you asked for:\n\n" +
+      JSON.stringify(SAMPLE_OUTPUT) +
+      "\n\nLet me know if you need anything else.";
+    let captured = "";
+    const cmd = buildConcludeCommand({
+      write: (s) => {
+        captured += s;
+      },
+      writeError: () => undefined,
+      engineFactory: () => makeMockEngine(proseWrapped),
+      synthesizerId: SYNTH_ID,
+    });
+    await cmd.parseAsync([
+      "node",
+      "council-conclude",
+      seed.panelName,
+      "--engine",
+      "mock",
+      "--format",
+      "json",
+    ]);
+    const parsed = JSON.parse(captured.trim()) as ConcludeOutput;
+    expect(parsed.recommendation).toBe(SAMPLE_OUTPUT.recommendation);
+  });
+
+  it("rejects engine response whose JSON fails Zod schema validation", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    // Valid JSON but schema-invalid: confidence is not in the enum.
+    const badShape = JSON.stringify({
+      consensus: [],
+      tensions: [],
+      decisionMatrix: [],
+      recommendation: "ok",
+      confidence: "uncertain",
+    });
+    const cmd = buildConcludeCommand({
+      write: () => undefined,
+      writeError: () => undefined,
+      engineFactory: () => makeMockEngine(badShape),
+      synthesizerId: SYNTH_ID,
+    });
+    cmd.exitOverride();
+    let thrown = "";
+    try {
+      await cmd.parseAsync([
+        "node",
+        "council-conclude",
+        seed.panelName,
+        "--engine",
+        "mock",
+      ]);
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    expect(thrown.toLowerCase()).toMatch(/schema|invalid|confidence|expected/);
+  });
+
+  it("buildProgram() registers the conclude command", () => {
+    const program = buildProgram();
+    const names = program.commands.map((c) => c.name());
+    expect(names).toContain("conclude");
   });
 });
