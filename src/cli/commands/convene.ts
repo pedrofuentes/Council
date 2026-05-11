@@ -1,6 +1,9 @@
 /**
- * `council convene <topic> --template <name> --engine <kind>` — runs a full
+ * `council convene <topic> [--template <name>] --engine <kind>` — runs a full
  * panel debate end-to-end and persists the result to the local SQLite DB.
+ *
+ * `--template` is optional: when omitted, convene auto-composes a panel from
+ * the topic via the LLM meta-prompt (see `src/core/auto-compose.ts`).
  *
  * Convene-specific logic: template loading, expert-spec building via
  * prompt-builder, panel + expert row insertion. The engine lifecycle
