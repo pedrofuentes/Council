@@ -112,7 +112,7 @@ Zod-based `ConfigSchema` with conservative defaults (3 experts, 4 rounds, 250-wo
 
 ### 2.3 Pluggable Moderator Strategies ✅
 
-`ModeratorStrategy` interface with `planRound()` and `shouldContinue()` methods. Strategies are pure (no I/O) — testable and MockEngine-compatible. Built-in strategies: `round-robin` (default), `sequential-with-visibility`, `devils-advocate`, `socratic`, `consensus-check`.
+`ModeratorStrategy` interface with `planRound()` and `shouldContinue()` methods. Strategies are pure (no I/O) — testable and MockEngine-compatible. Built-in strategies: `round-robin` (default), `devils-advocate`, `consensus-check`.
 
 **Key files**: `src/core/moderator/strategy.ts`, `src/core/moderator/strategies.ts`, `src/cli/strategy-resolver.ts`
 
@@ -144,7 +144,7 @@ Visibility scoping (`all` / `same-round` / `recent`), heuristic rolling summarie
 
 > The signature interaction: produces a decision matrix from the debate.
 
-`council conclude [--panel <name>]` synthesizes debate positions into an actionable decision framework: consensus points, unresolved tensions, decision matrix (option × dimension), and recommendation with confidence level. Works on completed or in-progress debates. JSON output is machine-parseable.
+`council conclude [panel] --engine <kind>` synthesizes debate positions into an actionable decision framework: consensus points, unresolved tensions, decision matrix (option × dimension), and recommendation with confidence level. Works on completed or in-progress debates. JSON output is machine-parseable.
 
 **Key files**: `src/cli/commands/conclude.ts`
 
@@ -180,7 +180,7 @@ Visibility scoping (`all` / `same-round` / `recent`), heuristic rolling summarie
 
 > React + Ink components for a polished interactive TUI.
 
-When stdout is a TTY, Council renders a rich Ink UI with color-coded experts, streaming text, and a panel picker for `council resume`. Non-TTY environments fall back to `PlainRenderer`. `--format json` and `--format plain` override even on TTY.
+When stdout is a TTY, Council renders a rich Ink UI with color-coded experts and streaming text. Non-TTY environments fall back to `PlainRenderer`. `--format json` and `--format plain` override even on TTY. (An interactive panel picker for `council resume` remains deferred.)
 
 **Key files**: `src/cli/renderers/ink/`
 

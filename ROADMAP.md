@@ -32,7 +32,7 @@
 
 - ✅ **2.1 Individual Expert Chat** — `council ask` for one-shot single-expert queries
 - ✅ **2.2 Structured Debate Engine** — 4-phase choreography (opening → cross-exam → rebuttal → synthesis)
-- ✅ **2.3 Pluggable Moderator Strategies** — `ModeratorStrategy` interface with 5 built-in strategies, wired into `Debate.#runFreeform()` and exposed via `--strategy` CLI flag
+- ✅ **2.3 Pluggable Moderator Strategies** — `ModeratorStrategy` interface with built-in strategies (`round-robin`, `devils-advocate`, `consensus-check`), wired into `Debate.#runFreeform()` and exposed via `--strategy` CLI flag
 - ✅ **2.4 Anti-sycophancy Enforcement** — 3-layer quality gate (forbidden phrases, disagreement budget, specificity)
 - ✅ **2.5 Panel Auto-composition** — LLM meta-prompt generates expert panels from topic analysis
 - ✅ **2.6 Context Window Management** — Visibility scoping (`all` / `same-round` / `recent`), heuristic rolling summaries, and an opt-in `maxPromptChars` cap with newest-first eviction. CLI flags: `--context-scope`, `--summarize-after`.
