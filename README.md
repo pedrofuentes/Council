@@ -63,7 +63,7 @@ npm install -g @council/cli
 
 ## Quick Start
 
-> **Phase 1 complete, Phases 2-3 mostly complete.** The CLI implements `convene`, `ask`, `resume`, `conclude`, `export`, `panels`, `templates`, `memory`, and `doctor`. See [ROADMAP.md](./ROADMAP.md) for remaining items.
+> **Phases 1–3 complete.** The CLI implements `convene`, `ask`, `resume`, `conclude`, `export`, `panels`, `templates`, `memory`, and `doctor`. See [ROADMAP.md](./ROADMAP.md) for Phase 4 (Growth & Ecosystem) plans.
 
 ```bash
 # Verify your setup
@@ -202,7 +202,7 @@ council config                   # View/set configuration
 
 See [ROADMAP.md](./ROADMAP.md) for the high-level plan and [IMPLEMENTATION-PLAN.md](./IMPLEMENTATION-PLAN.md) for implementation details.
 
-**Current focus:** Deliberation quality (Phase 2) and persistence polish (Phase 3) — context management, expert memory recall, and `council conclude`.
+**Current focus:** Phase 4 — Growth & Ecosystem (`gh` extension, GitHub Action, direct provider APIs, npm publish).
 
 ## Contributing
 

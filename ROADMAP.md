@@ -26,25 +26,25 @@
 
 ---
 
-## Phase 2: Deliberation Quality 🚧
+## Phase 2: Deliberation Quality ✅
 
 > Deeper, more useful debates through structured modes, smarter moderation, and context management.
 
 - ✅ **2.1 Individual Expert Chat** — `council ask` for one-shot single-expert queries
 - ✅ **2.2 Structured Debate Engine** — 4-phase choreography (opening → cross-exam → rebuttal → synthesis)
-- ✅ **2.3 Pluggable Moderator Strategies** — `ModeratorStrategy` interface with 5 built-in strategies (not yet wired into orchestrator — see [#212](https://github.com/pedrofuentes/Council/issues/212))
+- ✅ **2.3 Pluggable Moderator Strategies** — `ModeratorStrategy` interface with built-in strategies (`round-robin`, `devils-advocate`, `consensus-check`), wired into `Debate.#runFreeform()` and exposed via `--strategy` CLI flag
 - ✅ **2.4 Anti-sycophancy Enforcement** — 3-layer quality gate (forbidden phrases, disagreement budget, specificity)
 - ✅ **2.5 Panel Auto-composition** — LLM meta-prompt generates expert panels from topic analysis
 - ✅ **2.6 Context Window Management** — Visibility scoping (`all` / `same-round` / `recent`), heuristic rolling summaries, and an opt-in `maxPromptChars` cap with newest-first eviction. CLI flags: `--context-scope`, `--summarize-after`.
-- ⬜ **2.7 `council conclude` Command** — Decision matrix with consensus, tensions, and recommendation
+- ✅ **2.7 `council conclude` Command** — Decision matrix with consensus, tensions, and recommendation
 
 ---
 
-## Phase 3: Persistence & Polish 🚧
+## Phase 3: Persistence & Polish ✅
 
 > Experts remember, sessions persist, and the UX is polished.
 
-- 🚧 **3.1 Persistent Expert Memory** — Foundation shipped (DB + prompt placeholder); recall logic remaining
+- ✅ **3.1 Persistent Expert Memory** — Experts remember across sessions with sanitized prompt injection protection
 - ✅ **3.2 Session Resume** — `council resume` for transcript replay and `--continue` for new debates
 - ✅ **3.3 Human-as-expert** — `council convene --human` adds interactive human participants
 - ✅ **3.4 Rich Ink Terminal UI** — React + Ink components with color-coded experts and streaming text
@@ -76,7 +76,7 @@
 | Session resume + export + memory CLI                   | ✅ Done               |
 | Human-as-expert participation                          | ✅ Done               |
 | Panel auto-composition (no `--template` required)      | ✅ Done               |
-| Experts remember across sessions                       | 🚧 Foundation shipped |
-| `council conclude` with decision matrix                | ⬜ Planned            |
+| Experts remember across sessions                       | ✅ Done               |
+| `council conclude` with decision matrix                | ✅ Done               |
 | Rich Ink terminal UI                                   | ✅ Shipped            |
 | Published to npm as `@council/cli`                     | ⬜ Planned            |

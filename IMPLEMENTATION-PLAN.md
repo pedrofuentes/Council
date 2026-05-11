@@ -92,11 +92,11 @@ Zod-based `ConfigSchema` with conservative defaults (3 experts, 4 rounds, 250-wo
 
 ---
 
-## Phase 2: Deliberation Quality 🚧
+## Phase 2: Deliberation Quality ✅
 
 > **Goal**: Deeper, more useful debates through structured modes, smarter moderation, and better context management.
 >
-> **Status**: 4 of 7 items complete. Remaining: auto-composition, context management, `conclude`.
+> **Status**: Complete. All 7 items shipped.
 
 ### 2.1 Individual Expert Chat ✅
 
@@ -112,7 +112,7 @@ Zod-based `ConfigSchema` with conservative defaults (3 experts, 4 rounds, 250-wo
 
 ### 2.3 Pluggable Moderator Strategies ✅
 
-`ModeratorStrategy` interface with `planRound()` and `shouldContinue()` methods. Strategies are pure (no I/O) — testable and MockEngine-compatible. Built-in strategies: `round-robin` (default), `sequential-with-visibility`, `devils-advocate`, `socratic`, `consensus-check`.
+`ModeratorStrategy` interface with `planRound()` and `shouldContinue()` methods. Strategies are pure (no I/O) — testable and MockEngine-compatible. Built-in strategies: `round-robin` (default), `devils-advocate`, `consensus-check`.
 
 **Key files**: `src/core/moderator/strategy.ts`, `src/core/moderator/strategies.ts`, `src/cli/strategy-resolver.ts`
 
@@ -124,89 +124,45 @@ Heuristic quality gate inspecting expert responses against the 3-layer system: f
 
 **Key files**: `src/core/quality-gate.ts`
 
-### 2.5 Panel Auto-composition ⬜
+### 2.5 Panel Auto-composition ✅
 
 > Meta-prompt that analyzes a topic and suggests an expert panel (roles, models, expected disagreements).
 
-**Goal**: `council convene "Should we go public?"` without `--template` auto-generates a relevant panel via an LLM meta-prompt.
+`council convene "<topic>"` without `--template` auto-generates a relevant panel via an LLM meta-prompt. The generated panel is validated against `PanelDefinitionSchema`; on validation failure or model refusal the command throws a user-facing error directing the user to specify `--template` manually. `--template` takes precedence when provided.
 
-**Proposed implementation**:
-- `src/core/auto-compose.ts` — `autoComposePanel(topic, engine, config): Promise<PanelDefinition>`
-- Meta-prompt asks the engine to suggest 3–5 experts with distinct epistemic stances and expected disagreements
-- Output is a JSON panel spec validated against `PanelDefinitionSchema`
-- User can accept, modify, or override before debate starts
-- Can refuse for trivial/factual questions (suggests `council ask` instead)
+**Key files**: `src/core/auto-compose.ts`, `src/cli/commands/convene.ts`
 
-**Acceptance criteria**:
-- Generated panel passes Zod validation
-- Experts have non-overlapping expertise priors
-- Fallback to default panel on meta-prompt failure
-- `--template` flag takes precedence (auto-compose only when no template specified)
-
-### 2.6 Context Window Management ⬜
+### 2.6 Context Window Management ✅
 
 > Smart context scoping so experts see only what's relevant and long debates don't overflow.
 
-**Goal**: Enable debates of arbitrary length without context overflow or degraded quality.
+Visibility scoping (`all` / `same-round` / `recent`), heuristic rolling summaries, and an opt-in `maxPromptChars` cap with newest-first eviction. CLI flags: `--context-scope`, `--summarize-after`.
 
-**Proposed implementation**:
-- **Visibility scoping**: `src/core/context/visibility.ts` — each expert sees only relevant prior turns (configurable: all, same-round, addressed-to-me)
-- **Rolling summaries**: `src/core/context/summarizer.ts` — moderator produces 3–5 sentence round summary for injection into subsequent rounds. Uses a low-cost model call. Summary replaces verbatim prior turns after N rounds.
-- **Token budgets**: configurable cap per expert per turn in `DebateConfig`. Emit warning event when approaching limit.
-- **Integration with `infiniteSessions`**: leverage Copilot SDK's built-in session compaction for long-running expert sessions
+**Key files**: `src/core/context/visibility.ts`, `src/core/context/summarizer.ts`, `src/core/debate.ts` (`capByChars` eviction)
 
-**Dependencies**: Moderator strategies (§2.3) wired into Debate (issue #212)
-
-**Acceptance criteria**:
-- 10-round debate with 4 experts completes without context overflow
-- Summaries are injected after configurable threshold (default: round 3)
-- Per-expert token budget is enforced with graceful truncation
-- Unit tests using MockEngine verify visibility scoping rules
-
-### 2.7 `council conclude` Command ⬜
+### 2.7 `council conclude` Command ✅
 
 > The signature interaction: produces a decision matrix from the debate.
 
-**Goal**: `council conclude [--panel <name>]` synthesizes debate positions into an actionable decision framework.
+`council conclude [panel] --engine <kind>` synthesizes debate positions into an actionable decision framework: consensus points, unresolved tensions, decision matrix (option × dimension), and recommendation with confidence level. Works on completed or in-progress debates. JSON output is machine-parseable.
 
-**Proposed implementation**:
-- `src/cli/commands/conclude.ts` — reads latest debate transcript, runs a synthesis prompt through the engine
-- **Output structure**: consensus points, unresolved tensions, decision matrix (option × dimension), recommendation with confidence level
-- **Formats**: plain text (default), markdown, JSON
-- Can be called mid-debate or at end
-- Uses its own LLM call (not an expert turn) — the moderator synthesizes
-
-**Acceptance criteria**:
-- Produces structured output with consensus/tensions/recommendation sections
-- Decision matrix includes at least the dimensions each expert weighted
-- Works on completed and in-progress debates
-- JSON output is machine-parseable for downstream tooling
+**Key files**: `src/cli/commands/conclude.ts`
 
 ---
 
-## Phase 3: Persistence & Polish 🚧
+## Phase 3: Persistence & Polish ✅
 
 > **Goal**: Experts remember, sessions persist, and the UX is polished.
 >
-> **Status**: 5 of 7 items complete. Remaining: expert memory recall, Ink TUI.
+> **Status**: Complete. All 7 items shipped.
 
-### 3.1 Persistent Expert Memory 🚧
+### 3.1 Persistent Expert Memory ✅
 
 > Experts remember positions, updated priors, and unresolved questions across sessions.
 
-**Shipped**: Foundation — `DebatePersister` writes debate/turn rows to SQLite (PR #116). Section [7] MEMORY placeholder exists in prompt builder.
+`DebatePersister` writes debate/turn rows to SQLite; `src/memory/expert-memory.ts` extracts positions, updated priors, and unresolved questions from prior debate turns for a given expert. The prompt builder reads memory and populates section [7] MEMORY with a terse bulleted log, sanitized against prompt-injection. `council memory inspect <panel> --expert <slug>` displays the injected memory content.
 
-**Remaining**:
-- **Memory recall**: `src/memory/expert-memory.ts` — extract positions, updated priors, and unresolved questions from prior debate turns for a given expert
-- **Memory injection**: prompt builder reads memory from SQLite and populates section [7] with terse bulleted log
-- **Memory format**: `ExpertMemory` type — `{ positions: string[], updatedPriors: string[], unresolvedQuestions: string[] }`
-- **Summarization**: optionally run a low-cost LLM call to compress raw turn content into structured memory (vs. heuristic extraction)
-
-**Acceptance criteria**:
-- Expert's second debate references positions from first debate
-- Memory is injected as section [7] in system prompt
-- Stale memory (>N debates old) is deprioritized or summarized
-- `council memory inspect <panel> --expert <slug>` shows injected memory content
+**Key files**: `src/memory/expert-memory.ts`, `src/memory/persister.ts`, `src/core/prompt-builder.ts`, `src/cli/commands/memory.ts`
 
 ### 3.2 Session Resume ✅
 
@@ -220,26 +176,13 @@ Heuristic quality gate inspecting expert responses against the 3-layer system: f
 
 **Key files**: `src/core/human-input.ts`, `src/cli/commands/convene.ts`
 
-### 3.4 Rich Ink Terminal UI ⬜
+### 3.4 Rich Ink Terminal UI ✅
 
 > React + Ink components for a polished interactive TUI.
 
-**Goal**: When stdout is a TTY, render a rich interactive UI instead of plain text.
+When stdout is a TTY, Council renders a rich Ink UI with color-coded experts and streaming text. Non-TTY environments fall back to `PlainRenderer`. `--format json` and `--format plain` override even on TTY. (An interactive panel picker for `council resume` remains deferred.)
 
-**Proposed implementation**:
-- `src/cli/renderers/ink/` — React components using Ink framework
-- **Components**: ExpertCard (color-coded), StreamingText (typewriter effect), RoundSeparator, CostBar, PanelPicker (for `council resume`)
-- **Features**: expert color coding, streaming text with spinner, progress indicator, interactive panel picker
-- **Activation**: auto-selected when `process.stdout.isTTY` (already stubbed in renderer selection logic)
-
-**Dependencies**: `ink`, `ink-spinner`, `react` (already in package.json as planned deps)
-
-**Acceptance criteria**:
-- TTY detection auto-selects Ink renderer
-- Non-TTY environments fall back to PlainRenderer (existing behavior preserved)
-- Expert responses stream with visual feedback
-- Colors are consistent per-expert across rounds
-- `--format json` and `--format plain` override Ink even on TTY
+**Key files**: `src/cli/renderers/ink/`
 
 ### 3.5 Memory Inspection CLI ✅
 
@@ -354,11 +297,11 @@ Automatic retry (2× with exponential backoff: 250ms, 1s) on recoverable engine 
 | Session resume + export + memory CLI | 3.2/3.5/3.6 | ✅ Done |
 | Error resilience with retry | 3.7 | ✅ Done |
 | Human-as-expert | 3.3 | ✅ Done |
-| Experts remember across sessions | 3.1 | 🚧 Foundation shipped |
-| `council conclude` with decision matrix | 2.7 | ⬜ Planned |
-| Context window management | 2.6 | ⬜ Planned |
-| Panel auto-composition | 2.5 | ⬜ Planned |
-| Rich Ink terminal UI | 3.4 | ⬜ Planned |
+| Experts remember across sessions | 3.1 | ✅ Done |
+| `council conclude` with decision matrix | 2.7 | ✅ Done |
+| Context window management | 2.6 | ✅ Done |
+| Panel auto-composition | 2.5 | ✅ Done |
+| Rich Ink terminal UI | 3.4 | ✅ Done |
 | `gh` CLI extension | 4.1 | ⬜ Planned |
 | GitHub Action | 4.2 | ⬜ Planned |
 | Direct provider APIs | 4.4 | ⬜ Planned |
