@@ -179,7 +179,7 @@ council config                   # View/set configuration
 
 ## Roadmap
 
-See [ROADMAP.md](./ROADMAP.md) for the high-level plan and [ROADMAP-Detailed.md](./ROADMAP-Detailed.md) for implementation details.
+See [ROADMAP.md](./ROADMAP.md) for the high-level plan and [IMPLEMENTATION-PLAN.md](./IMPLEMENTATION-PLAN.md) for implementation details.
 
 **Current focus:** Deliberation quality (Phase 2) and persistence polish (Phase 3) — auto-composition, context management, expert memory recall, and `council conclude`.
 

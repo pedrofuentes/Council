@@ -1,6 +1,6 @@
 # Roadmap — Council
 
-> High-level project roadmap. For implementation details, file references, and acceptance criteria, see [ROADMAP-Detailed.md](./ROADMAP-Detailed.md).
+> High-level project roadmap. For implementation details, file references, and acceptance criteria, see [IMPLEMENTATION-PLAN.md](./IMPLEMENTATION-PLAN.md).
 
 **Legend**: ✅ Done · 🚧 In Progress · ⬜ Planned
 
