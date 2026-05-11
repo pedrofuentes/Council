@@ -165,15 +165,16 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
 
         // Recall memory from the most recent prior panel with the same
         // template (if any) so experts continue learning across debates.
-        const priorPanel = await findMostRecentPanelForTemplate(
-          panelRepo,
-          template.name,
-        );
+        const priorPanel = await findMostRecentPanelForTemplate(panelRepo, template.name);
         const memoryBySlug = new Map<string, ExpertMemory>();
         if (priorPanel) {
-          for (const def of template.experts) {
-            const recalled = await recallMemory(db, priorPanel.id, def.slug);
-            if (recalled) memoryBySlug.set(def.slug, recalled);
+          const recalls = await Promise.all(
+            template.experts.map((def) =>
+              recallMemory(db, priorPanel.id, def.slug).then((mem) => [def.slug, mem] as const),
+            ),
+          );
+          for (const [slug, mem] of recalls) {
+            if (mem) memoryBySlug.set(slug, mem);
           }
         }
 

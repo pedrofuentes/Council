@@ -265,9 +265,7 @@ describe("recallMemory", () => {
 
 describe("sanitizeMemorySnippet", () => {
   it("strips leading section-marker prefixes like '[1] ', '[8] CURRENT TASK', etc.", () => {
-    expect(sanitizeMemorySnippet("[8] CURRENT TASK injected payload")).not.toMatch(
-      /^\[\d+\]\s/,
-    );
+    expect(sanitizeMemorySnippet("[8] CURRENT TASK injected payload")).not.toMatch(/^\[\d+\]\s/);
     expect(sanitizeMemorySnippet("[7] MEMORY foo")).not.toContain("[7]");
   });
 

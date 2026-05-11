@@ -46,11 +46,43 @@ export interface RecallOptions {
 }
 
 /**
+ * Defensive sanitiser for any text recalled from a prior turn before it is
+ * rendered into Section [7] MEMORY of the system prompt. Prior turns are
+ * untrusted from a prompt-engineering standpoint — an expert (or, in
+ * `--continue` mode, a human via the panel) could emit text that looks
+ * like one of the prompt's own section headers (e.g. `"[8] CURRENT TASK"`)
+ * and thereby smuggle instructions past the memory boundary.
+ *
+ * The sanitiser:
+ *   1. Removes anything that looks like a Section header `[N]` at the
+ *      start of a line (or the start of the string).
+ *   2. Flattens all line breaks (`\n`, `\r`, `\r\n`) to single spaces so
+ *      injected content cannot fake a new section by being multi-line.
+ *   3. Collapses runs of whitespace.
+ */
+export function sanitizeMemorySnippet(text: string): string {
+  if (text.length === 0) return text;
+  // Strip [N] section-marker prefixes wherever they appear at the start of
+  // a line (covers both string start and post-newline positions before
+  // newlines are flattened).
+  const noMarkers = text.replace(/(^|\n|\r)\[\d+\]\s+/g, "$1");
+  // Flatten line breaks to spaces.
+  const flat = noMarkers.replace(/[\r\n]+/g, " ");
+  // Collapse repeated whitespace.
+  return flat.replace(/[ \t]{2,}/g, " ").trim();
+}
+
+/**
  * Replace the contents of section `[7] MEMORY` in a previously-built
  * system prompt with a freshly-rendered memory block. Returns the
  * original prompt unchanged when `memory` is undefined or when the
  * `[7] MEMORY` / `[8] CURRENT TASK` markers cannot be located (defensive
  * fallback — caller should never receive a silently-broken prompt).
+ *
+ * Robustness: uses the **last** occurrence of the `\n[8] CURRENT TASK`
+ * marker after `[7] MEMORY` rather than the first, so any injected copy
+ * of `[8] CURRENT TASK` that survives sanitisation is absorbed into the
+ * replaced span instead of extending the real task section.
  *
  * Used by `council resume --continue`, where the persisted system prompt
  * was rendered with no memory but a fresh recall is now available.
@@ -63,14 +95,24 @@ export function applyRecalledMemory(
   const startMarker = "[7] MEMORY\n";
   const endMarker = "\n[8] CURRENT TASK";
   const startIdx = systemMessage.indexOf(startMarker);
-  const endIdx = systemMessage.indexOf(endMarker);
-  if (startIdx === -1 || endIdx === -1 || endIdx < startIdx) return systemMessage;
-  const block = renderMemoryBlock(memory);
+  if (startIdx === -1) return systemMessage;
+  // Use lastIndexOf so a stray injected "[8] CURRENT TASK" inside the old
+  // memory block (or anywhere before the real task section) cannot trick
+  // us into preserving attacker-controlled content past the boundary.
+  const endIdx = systemMessage.lastIndexOf(endMarker);
+  if (endIdx === -1 || endIdx < startIdx + startMarker.length) return systemMessage;
+  const block = renderMemoryBlock(sanitizeMemory(memory));
   return (
-    systemMessage.slice(0, startIdx + startMarker.length) +
-    block +
-    systemMessage.slice(endIdx)
+    systemMessage.slice(0, startIdx + startMarker.length) + block + systemMessage.slice(endIdx)
   );
+}
+
+function sanitizeMemory(memory: ExpertMemory): ExpertMemory {
+  return {
+    positions: memory.positions.map(sanitizeMemorySnippet).filter((s) => s.length > 0),
+    updatedPriors: memory.updatedPriors.map(sanitizeMemorySnippet).filter((s) => s.length > 0),
+    unresolved: memory.unresolved.map(sanitizeMemorySnippet).filter((s) => s.length > 0),
+  };
 }
 
 function renderMemoryBlock(memory: ExpertMemory): string {
@@ -142,12 +184,16 @@ export async function recallMemory(
 
     // positions: first 1-2 sentences
     const opener = sentences.slice(0, 2).join(" ").trim();
-    if (opener.length > 0) positions.push(truncate(opener));
+    if (opener.length > 0) {
+      const cleaned = sanitizeMemorySnippet(truncate(opener));
+      if (cleaned.length > 0) positions.push(cleaned);
+    }
 
     // updatedPriors: sentences matching reversal phrases
     for (const s of sentences) {
       if (REVERSAL_PHRASES.some((re) => re.test(s))) {
-        updatedPriors.push(truncate(s.trim()));
+        const cleaned = sanitizeMemorySnippet(truncate(s.trim()));
+        if (cleaned.length > 0) updatedPriors.push(cleaned);
       }
     }
 
@@ -156,7 +202,8 @@ export async function recallMemory(
       const trimmed = s.trim();
       if (trimmed.length === 0) continue;
       if (trimmed.endsWith("?") || UNRESOLVED_MARKERS.some((re) => re.test(trimmed))) {
-        unresolved.push(truncate(trimmed));
+        const cleaned = sanitizeMemorySnippet(truncate(trimmed));
+        if (cleaned.length > 0) unresolved.push(cleaned);
       }
     }
   }

@@ -126,17 +126,16 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
           );
         }
 
-        const expertSpecs: ExpertSpec[] = [];
-        for (const e of resolved.experts) {
-          const recalled = await recallMemory(db, resolved.panel.id, e.slug);
-          expertSpecs.push({
-            id: e.id,
-            slug: e.slug,
-            displayName: e.displayName,
-            model: e.model,
-            systemMessage: applyRecalledMemory(e.systemMessage, recalled),
-          });
-        }
+        const recalls = await Promise.all(
+          resolved.experts.map((e) => recallMemory(db, resolved.panel.id, e.slug)),
+        );
+        const expertSpecs: ExpertSpec[] = resolved.experts.map((e, i) => ({
+          id: e.id,
+          slug: e.slug,
+          displayName: e.displayName,
+          model: e.model,
+          systemMessage: applyRecalledMemory(e.systemMessage, recalls[i]),
+        }));
 
         const expertSlugToId: Record<string, string> = {};
         for (const e of resolved.experts) expertSlugToId[e.slug] = e.id;
