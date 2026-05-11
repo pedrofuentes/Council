@@ -60,13 +60,16 @@ describe("buildConveneCommand", () => {
       });
   }
 
-  it("registers a 'convene' command with topic positional arg and required --template", () => {
+  it("registers a 'convene' command with topic positional arg and optional --template", () => {
     const cmd = buildConveneCommand({ engineFactory: makeMockEngineFactory() });
     expect(cmd.name()).toBe("convene");
     expect(cmd.description()).toMatch(/panel|debate/i);
     const templateOpt = cmd.options.find((o) => o.long === "--template");
     expect(templateOpt).toBeDefined();
-    expect(templateOpt?.required).toBe(true);
+    // Commander's `mandatory` flag is what `requiredOption()` flips;
+    // `required` only refers to whether the option's argument value is
+    // required (which it is, for `<name>`).
+    expect(templateOpt?.mandatory).toBe(false);
   });
 
   it("supports --format json|plain, --max-rounds, --mode, --max-words options", () => {

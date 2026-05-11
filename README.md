@@ -69,7 +69,11 @@ npm install -g @council/cli
 # Verify your setup
 council doctor
 
-# Run a panel debate against the real Copilot SDK
+# Auto-compose a panel from the topic (no --template needed — Council
+# designs an expert panel for you using a meta-prompt)
+council convene "Should we go public?" --engine copilot
+
+# Run a panel debate against the real Copilot SDK (with an explicit template)
 council convene "Should we rewrite our billing system?" \
   --template code-review --engine copilot --max-rounds 4
 
@@ -198,7 +202,7 @@ council config                   # View/set configuration
 
 See [ROADMAP.md](./ROADMAP.md) for the high-level plan and [IMPLEMENTATION-PLAN.md](./IMPLEMENTATION-PLAN.md) for implementation details.
 
-**Current focus:** Deliberation quality (Phase 2) and persistence polish (Phase 3) — auto-composition, context management, expert memory recall, and `council conclude`.
+**Current focus:** Deliberation quality (Phase 2) and persistence polish (Phase 3) — context management, expert memory recall, and `council conclude`.
 
 ## Contributing
 
