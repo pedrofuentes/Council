@@ -252,12 +252,14 @@ describe("buildConveneCommand — auto-compose path", () => {
       "mock",
     ]);
 
-    // The preamble line begins with "# <template.name>". The control bytes
-    // must be stripped; the printable tokens of the malicious name must
-    // remain (so the user still sees the name) but no ESC or BEL byte may
-    // survive.
-    expect(stdout).not.toContain("\x1B");
-    expect(stdout).not.toContain("\x07");
-    expect(stdout).toMatch(/#\s+evilFAKE/);
+    // The preamble line is "# <template.name>" written before the debate
+    // begins. Restrict assertions to that prefix — the debate body itself
+    // legitimately echoes the malicious composer reply via Alpha's response.
+    const preambleEnd = stdout.indexOf("Topic: topic");
+    expect(preambleEnd).toBeGreaterThan(0);
+    const preamble = stdout.slice(0, preambleEnd);
+    expect(preamble).not.toContain("\x1B");
+    expect(preamble).not.toContain("\x07");
+    expect(preamble).toMatch(/#\s+evilFAKE/);
   });
 });
