@@ -47,7 +47,7 @@
 - 🚧 **3.1 Persistent Expert Memory** — Foundation shipped (DB + prompt placeholder); recall logic remaining
 - ✅ **3.2 Session Resume** — `council resume` for transcript replay and `--continue` for new debates
 - ✅ **3.3 Human-as-expert** — `council convene --human` adds interactive human participants
-- ⬜ **3.4 Rich Ink Terminal UI** — React + Ink components with color-coded experts and streaming text
+- ✅ **3.4 Rich Ink Terminal UI** — React + Ink components with color-coded experts and streaming text
 - ✅ **3.5 Memory Inspection CLI** — `council memory list/inspect/reset` for panel/expert curation
 - ✅ **3.6 Export System** — `council export` in markdown, JSON (NDJSON), and ADR formats
 - ✅ **3.7 Error Resilience** — Retry with backoff, actionable error messages, graceful degradation
@@ -67,15 +67,15 @@
 
 ## Key Milestones
 
-| Milestone | Status |
-|-----------|--------|
-| `pnpm build && pnpm test` pass | ✅ Done |
-| `council convene "topic"` produces multi-expert debate | ✅ Done |
-| Structured 4-phase choreography | ✅ Done |
-| Individual expert chat | ✅ Done |
-| Session resume + export + memory CLI | ✅ Done |
-| Human-as-expert participation | ✅ Done |
-| Experts remember across sessions | 🚧 Foundation shipped |
-| `council conclude` with decision matrix | ⬜ Planned |
-| Rich Ink terminal UI | ⬜ Planned |
-| Published to npm as `@council/cli` | ⬜ Planned |
+| Milestone                                              | Status                |
+| ------------------------------------------------------ | --------------------- |
+| `pnpm build && pnpm test` pass                         | ✅ Done               |
+| `council convene "topic"` produces multi-expert debate | ✅ Done               |
+| Structured 4-phase choreography                        | ✅ Done               |
+| Individual expert chat                                 | ✅ Done               |
+| Session resume + export + memory CLI                   | ✅ Done               |
+| Human-as-expert participation                          | ✅ Done               |
+| Experts remember across sessions                       | 🚧 Foundation shipped |
+| `council conclude` with decision matrix                | ⬜ Planned            |
+| Rich Ink terminal UI                                   | ✅ Shipped            |
+| Published to npm as `@council/cli`                     | ⬜ Planned            |

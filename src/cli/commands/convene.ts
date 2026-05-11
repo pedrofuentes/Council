@@ -29,6 +29,7 @@ import {
   makeEngineFromKind,
   runWithEngine,
 } from "../run-with-engine.js";
+import { RENDERER_FORMATS, type RendererFormat } from "../renderers/select.js";
 
 const DEFAULT_MAX_ROUNDS = 4;
 const DEFAULT_MAX_WORDS = 250;
@@ -46,7 +47,7 @@ export interface ConveneCommandDeps {
 
 export interface ConveneOptions {
   readonly template: string;
-  readonly format: "json" | "plain";
+  readonly format: RendererFormat;
   readonly maxRounds: number;
   readonly mode: DebateMode;
   readonly maxWords: number;
@@ -73,7 +74,11 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       "--engine <kind>",
       "Engine to use: 'mock' (offline, deterministic) or 'copilot' (real Copilot SDK)",
     )
-    .option("--format <kind>", "Output format: json (NDJSON) or plain (human)", "plain")
+    .option(
+      "--format <kind>",
+      `Output format: ${RENDERER_FORMATS.join(" | ")} (auto picks Ink TUI on TTY, plain text otherwise)`,
+      "auto",
+    )
     .option(
       "--max-rounds <n>",
       "Max rounds (freeform mode only)",
@@ -104,7 +109,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
 
       const opts: ConveneOptions = {
         template: raw.template,
-        format: raw.format === "json" ? "json" : "plain",
+        format: parseFormat(raw.format),
         maxRounds: Number.isFinite(raw.maxRounds) ? raw.maxRounds : DEFAULT_MAX_ROUNDS,
         mode: raw.mode === "structured" ? "structured" : "freeform",
         maxWords: Number.isFinite(raw.maxWords) ? raw.maxWords : DEFAULT_MAX_WORDS,
@@ -184,18 +189,15 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           db,
           humanSlugs: humanSlugs.size > 0 ? humanSlugs : undefined,
           humanInput: humanSlugs.size > 0 ? deps.humanInputFactory?.() : undefined,
-          preamble:
-            opts.format === "plain"
-              ? () => {
-                  write(`\n# ${template.name}\n`);
-                  write(`Topic: ${topic}\n`);
-                  write(`Mode: ${opts.mode} | Max rounds: ${opts.maxRounds} | Engine: ${opts.engine}\n`);
-                  if (humanNames.length > 0) {
-                    write(`Human participants: ${humanNames.join(", ")}\n`);
-                  }
-                  write("\n");
-                }
-              : undefined,
+          preamble: () => {
+            write(`\n# ${template.name}\n`);
+            write(`Topic: ${topic}\n`);
+            write(`Mode: ${opts.mode} | Max rounds: ${opts.maxRounds} | Engine: ${opts.engine}\n`);
+            if (humanNames.length > 0) {
+              write(`Human participants: ${humanNames.join(", ")}\n`);
+            }
+            write("\n");
+          },
         });
       } finally {
         await db.destroy().catch((err: unknown) => {
@@ -206,6 +208,16 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
     });
 
   return cmd;
+}
+
+function parseFormat(raw: string | undefined): RendererFormat {
+  if (raw === undefined) return "auto";
+  if ((RENDERER_FORMATS as readonly string[]).includes(raw)) {
+    return raw as RendererFormat;
+  }
+  throw new Error(
+    `Unknown --format value: ${raw}. Expected one of: ${RENDERER_FORMATS.join(", ")}`,
+  );
 }
 
 function buildExpertSpecs(template: PanelDefinition, topic: string): ExpertSpec[] {

@@ -28,8 +28,8 @@ import { DebateRepository } from "../memory/repositories/debates.js";
 import { TurnRepository } from "../memory/repositories/turns.js";
 import { DebatePersister } from "../memory/persister.js";
 
-import { JsonRenderer } from "./renderers/json.js";
 import { PlainRenderer } from "./renderers/plain.js";
+import { selectRenderer, type RendererFormat } from "./renderers/select.js";
 import type { Sink } from "./renderers/types.js";
 
 import { formatEngineError } from "./error-mapper.js";
@@ -68,18 +68,28 @@ export interface RunWithEngineOpts {
   readonly expertSlugToId: Readonly<Record<string, string>>;
   /** Moderator label written to the debate row. */
   readonly moderator: string;
-  /** Output format for the renderer. */
-  readonly format: "json" | "plain";
+  /**
+   * Output format for the renderer:
+   *   - "json"  → NDJSON (always, regardless of TTY)
+   *   - "plain" → plain text (always, regardless of TTY)
+   *   - "auto"  → Ink TUI on TTY, plain text otherwise
+   */
+  readonly format: RendererFormat;
   /** stdout writer. */
   readonly write: Writer;
   /** stderr writer. */
   readonly writeError: Writer;
+  /**
+   * Test override for TTY detection. Defaults to `process.stdout.isTTY`.
+   * Only consulted when `format === "auto"`.
+   */
+  readonly isTTY?: boolean;
   /** Open database handle — caller manages creation; this function does NOT destroy it. */
   readonly db: CouncilDatabase;
   /**
-   * Optional preamble to write before the debate stream starts. Called
-   * after engine init succeeds but before the first event. Useful for
-   * plain-mode headers (e.g. "# panel-name\nTopic: ...\n").
+   * Optional preamble to write before the debate stream starts. Only
+   * called when the chosen renderer is the plain-text renderer (Ink
+   * and JSON manage their own framing).
    */
   readonly preamble?: (() => void) | undefined;
   /** Slugs of human participants — skipped for engine registration. */
@@ -101,9 +111,7 @@ export interface RunWithEngineOpts {
  * already succeeded or failed).
  */
 export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
-  const engine = opts.engineFactory
-    ? opts.engineFactory()
-    : makeEngineFromKind(opts.engineKind);
+  const engine = opts.engineFactory ? opts.engineFactory() : makeEngineFromKind(opts.engineKind);
 
   try {
     await engine.start();
@@ -113,9 +121,7 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
     const humanSlugs = opts.humanSlugs ?? new Set<string>();
     const aiExperts = opts.experts.filter((e) => !humanSlugs.has(e.slug));
     const startedEngine = engine;
-    const settled = await Promise.allSettled(
-      aiExperts.map((e) => startedEngine.addExpert(e)),
-    );
+    const settled = await Promise.allSettled(aiExperts.map((e) => startedEngine.addExpert(e)));
     const failures = settled
       .map((r, i) => ({ result: r, expert: aiExperts[i] }))
       .filter(
@@ -130,12 +136,9 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
             p.result.status === "fulfilled" && p.expert !== undefined,
         )
         .map((p) => p.expert.id);
-      await Promise.allSettled(
-        fulfilledIds.map((id) => startedEngine.removeExpert(id)),
-      );
+      await Promise.allSettled(fulfilledIds.map((id) => startedEngine.removeExpert(id)));
       const firstErr = failures[0]?.result.reason;
-      const firstMsg =
-        firstErr instanceof Error ? firstErr.message : String(firstErr);
+      const firstMsg = firstErr instanceof Error ? firstErr.message : String(firstErr);
       throw new Error(
         `could not register all experts (${failures.length}/${aiExperts.length} failed): ${firstMsg}`,
       );
@@ -151,12 +154,15 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
     });
 
     const sink: Sink = { write: opts.write, writeError: opts.writeError };
-    const renderer =
-      opts.format === "json"
-        ? new JsonRenderer(sink)
-        : new PlainRenderer(sink);
+    const isTTY = opts.isTTY ?? Boolean(process.stdout.isTTY);
+    const renderer = selectRenderer({ format: opts.format, isTTY, sink });
 
-    opts.preamble?.();
+    // Preambles are plain-text headers; only emit them when the chosen
+    // renderer is the plain renderer (Ink owns its own framing; JSON
+    // streams must stay machine-parseable).
+    if (renderer instanceof PlainRenderer) {
+      opts.preamble?.();
+    }
 
     const stream = persister.persist(
       new Debate(engine, opts.experts, opts.debateConfig, {
