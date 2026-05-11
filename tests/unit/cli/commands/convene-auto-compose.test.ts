@@ -18,6 +18,8 @@ import type {
   ExpertSpec,
   SendOptions,
 } from "../../../../src/engine/index.js";
+import { createDatabase } from "../../../../src/memory/db.js";
+import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
 
 const validPanelJson = JSON.stringify({
   name: "auto-panel",
@@ -120,9 +122,12 @@ describe("buildConveneCommand — auto-compose path", () => {
 
   it("auto-composes a panel when --template is omitted", async () => {
     let stderr = "";
+    let stdout = "";
     const cmd = buildConveneCommand({
       engineFactory: () => new ScriptedEngine([validPanelJson]),
-      write: () => undefined,
+      write: (s) => {
+        stdout += s;
+      },
       writeError: (s) => {
         stderr += s;
       },
@@ -142,6 +147,22 @@ describe("buildConveneCommand — auto-compose path", () => {
     expect(stderr).toMatch(/auto-composed/i);
     expect(stderr).toContain("auto-panel");
     expect(stderr).toContain("Alpha (Skeptic)");
+
+    // The debate must have actually run — stdout should contain output.
+    expect(stdout.length).toBeGreaterThan(0);
+
+    // The auto-composed panel must have been persisted to the SQLite DB.
+    const dbPath = path.join(testHome, "council.db");
+    const db = await createDatabase(dbPath);
+    try {
+      const panels = await new PanelRepository(db).findAll();
+      expect(panels.length).toBeGreaterThan(0);
+      // Panel name is template name + ISO timestamp suffix.
+      expect(panels.some((p) => p.name.startsWith("auto-panel-"))).toBe(true);
+      expect(panels.some((p) => p.topic === "Should we adopt event sourcing?")).toBe(true);
+    } finally {
+      await db.destroy();
+    }
   });
 
   it("reports a clear error when the engine returns garbage", async () => {
