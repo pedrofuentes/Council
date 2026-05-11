@@ -73,9 +73,9 @@ export function sanitizeMemorySnippet(text: string): string {
   // Strip [N] section-marker prefixes wherever they appear at the start of
   // a line (covers both string start and post-newline positions before
   // newlines are flattened).
-  const noMarkers = text.replace(/(^|\n|\r)\[\d+\]\s+/g, "$1");
-  // Flatten line breaks to spaces.
-  const flat = noMarkers.replace(/[\r\n]+/g, " ");
+  const noMarkers = text.replace(/(^|\n|\r|\u2028|\u2029)\[\d+\]\s+/g, "$1");
+  // Flatten line breaks (including Unicode line/paragraph separators) to spaces.
+  const flat = noMarkers.replace(/[\r\n\u2028\u2029]+/g, " ");
   // Collapse repeated whitespace.
   return flat.replace(/[ \t]{2,}/g, " ").trim();
 }
