@@ -49,12 +49,28 @@ const DEFAULT_MAX_WORDS = 250;
 export { ENGINE_KINDS as CONVENE_ENGINE_KINDS };
 export type ConveneEngineKind = EngineKind;
 
+/**
+ * Prompts the user to confirm an action and resolves with their choice.
+ * Used to gate the auto-composed panel behind explicit confirmation so
+ * that an unexpected meta-prompt result cannot silently start a real
+ * (premium-request-consuming) debate.
+ */
+export interface ConfirmProvider {
+  confirm(message: string): Promise<boolean>;
+}
+
 export interface ConveneCommandDeps {
   readonly engineFactory?: () => CouncilEngine;
   readonly write?: Writer;
   readonly writeError?: Writer;
   /** Factory to create a HumanInputProvider. Used when --human is specified. */
   readonly humanInputFactory?: () => HumanInputProvider;
+  /**
+   * Factory to create a ConfirmProvider for the auto-compose
+   * confirmation prompt. When omitted, a readline-backed default is
+   * used that reads from stdin/stdout.
+   */
+  readonly confirmProvider?: () => ConfirmProvider;
 }
 
 export interface ConveneOptions {
@@ -68,6 +84,7 @@ export interface ConveneOptions {
   readonly strategy?: string;
   readonly contextScope?: string;
   readonly summarizeAfter?: number;
+  readonly yes?: boolean;
 }
 
 /**
@@ -132,6 +149,10 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       "Start rolling-summary after N rounds (§2.6). Omit to disable.",
       (v) => Number.parseInt(v, 10),
     )
+    .option(
+      "--yes",
+      "Skip the auto-compose confirmation prompt (non-interactive runs)",
+    )
     .action(async (topic: string, raw: ConveneOptions) => {
       if (!ENGINE_KINDS.includes(raw.engine)) {
         throw new Error(
@@ -149,6 +170,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         maxWords: Number.isFinite(raw.maxWords) ? raw.maxWords : DEFAULT_MAX_WORDS,
         engine: raw.engine,
         human: humanNames,
+        yes: raw.yes === true,
         ...(raw.strategy !== undefined ? { strategy: raw.strategy } : {}),
         ...(raw.contextScope !== undefined ? { contextScope: raw.contextScope } : {}),
         ...(raw.summarizeAfter !== undefined && Number.isFinite(raw.summarizeAfter)
@@ -198,6 +220,20 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           );
         }
         writeError("\n");
+
+        // Confirmation gate — auto-composed panels are LLM-generated and may
+        // not match user intent. Block the debate behind explicit consent
+        // unless --yes was passed for non-interactive runs.
+        if (opts.yes !== true) {
+          const provider = deps.confirmProvider
+            ? deps.confirmProvider()
+            : createReadlineConfirmProvider();
+          const ok = await provider.confirm("Proceed with this panel? [y/N] ");
+          if (!ok) {
+            writeError("Aborted. Use --template to specify a panel manually.\n");
+            throw new Error("Aborted: auto-composed panel was not confirmed.");
+          }
+        }
       }
 
       const dbPath = path.join(getCouncilHome(), "council.db");
@@ -410,4 +446,32 @@ function parseContextScope(raw: string): VisibilityConfig {
     );
   }
   return { scope: raw as (typeof VALID_CONTEXT_SCOPES)[number] };
+}
+
+/**
+ * Default {@link ConfirmProvider} backed by Node's `readline`. Reads
+ * a single line from stdin and resolves true only when the user typed
+ * `y` or `yes` (case-insensitive). Anything else — including an empty
+ * line or EOF — resolves false (the safer default for a prompt the user
+ * may have missed entirely).
+ */
+function createReadlineConfirmProvider(): ConfirmProvider {
+  return {
+    async confirm(message: string): Promise<boolean> {
+      const readline = await import("node:readline");
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stderr,
+      });
+      try {
+        const answer = await new Promise<string>((resolve) => {
+          rl.question(message, (a) => resolve(a));
+        });
+        const normalized = answer.trim().toLowerCase();
+        return normalized === "y" || normalized === "yes";
+      } finally {
+        rl.close();
+      }
+    },
+  };
 }
