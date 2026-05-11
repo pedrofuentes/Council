@@ -113,16 +113,19 @@ describe("buildLLMSummary — engine-backed summarization", () => {
 
     // A summarizer expert was registered exactly once.
     expect(engine.registered.length).toBe(1);
-    const summarizer = engine.registered[0]!;
+    const summarizer = engine.registered[0];
+    if (!summarizer) throw new Error("expected summarizer to be registered");
     expect(summarizer.model).toBe("gpt-test");
     expect(summarizer.systemMessage.toLowerCase()).toContain("summar");
 
     // Exactly one send happened, against the registered summarizer.
     expect(engine.sends.length).toBe(1);
-    expect(engine.sends[0]!.expertId).toBe(summarizer.id);
+    const firstSend = engine.sends[0];
+    if (!firstSend) throw new Error("expected one send call");
+    expect(firstSend.expertId).toBe(summarizer.id);
 
     // The prompt embeds each prior turn's content so the LLM can summarize.
-    const prompt = engine.sends[0]!.prompt;
+    const prompt = firstSend.prompt;
     expect(prompt).toContain("Alpha");
     expect(prompt).toContain("validate falsifiability");
     expect(prompt).toContain("Beta");
