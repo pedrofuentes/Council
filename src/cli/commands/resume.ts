@@ -15,6 +15,7 @@ import { Command } from "commander";
 import { getCouncilHome } from "../../config/index.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import { createDatabase } from "../../memory/db.js";
+import { applyRecalledMemory, recallMemory } from "../../memory/expert-memory.js";
 import {
   loadTranscript,
   synthesizeEvents,
@@ -125,13 +126,17 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
           );
         }
 
-        const expertSpecs = resolved.experts.map<ExpertSpec>((e) => ({
-          id: e.id,
-          slug: e.slug,
-          displayName: e.displayName,
-          model: e.model,
-          systemMessage: e.systemMessage,
-        }));
+        const expertSpecs: ExpertSpec[] = [];
+        for (const e of resolved.experts) {
+          const recalled = await recallMemory(db, resolved.panel.id, e.slug);
+          expertSpecs.push({
+            id: e.id,
+            slug: e.slug,
+            displayName: e.displayName,
+            model: e.model,
+            systemMessage: applyRecalledMemory(e.systemMessage, recalled),
+          });
+        }
 
         const expertSlugToId: Record<string, string> = {};
         for (const e of resolved.experts) expertSlugToId[e.slug] = e.id;

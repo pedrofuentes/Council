@@ -39,6 +39,7 @@ import { Command } from "commander";
 
 import { getCouncilHome } from "../../config/index.js";
 import { createDatabase, type CouncilDatabase } from "../../memory/db.js";
+import { recallMemory } from "../../memory/expert-memory.js";
 import { DebateRepository } from "../../memory/repositories/debates.js";
 import { ExpertRepository, type Expert } from "../../memory/repositories/experts.js";
 import {
@@ -289,6 +290,8 @@ async function renderExpertDetail(
     expertTurnCount += turns.filter((t) => t.expertId === expert.id).length;
   }
 
+  const recalled = await recallMemory(db, panel.id, expert.slug);
+
   if (format === "json") {
     write(
       JSON.stringify({
@@ -299,6 +302,7 @@ async function renderExpertDetail(
           model: expert.model,
           systemMessage: expert.systemMessage,
           turnCount: expertTurnCount,
+          memory: recalled ?? null,
         },
       }) + "\n",
     );
@@ -316,6 +320,31 @@ async function renderExpertDetail(
       : expert.systemMessage;
   write(preview + "\n");
   write(`---\n`);
+
+  if (recalled) {
+    write(`\nRecalled memory:\n`);
+    if (recalled.positions.length > 0) {
+      write(`  Positions (${recalled.positions.length}):\n`);
+      for (const p of recalled.positions) write(`    - ${p}\n`);
+    }
+    if (recalled.updatedPriors.length > 0) {
+      write(`  Updated priors (${recalled.updatedPriors.length}):\n`);
+      for (const u of recalled.updatedPriors) write(`    - ${u}\n`);
+    }
+    if (recalled.unresolved.length > 0) {
+      write(`  Unresolved (${recalled.unresolved.length}):\n`);
+      for (const q of recalled.unresolved) write(`    - ${q}\n`);
+    }
+    if (
+      recalled.positions.length === 0 &&
+      recalled.updatedPriors.length === 0 &&
+      recalled.unresolved.length === 0
+    ) {
+      write(`  (none extracted from prior turns)\n`);
+    }
+  } else {
+    write(`\nRecalled memory: (none — no prior turns by this expert)\n`);
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────────

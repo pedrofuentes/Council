@@ -17,7 +17,7 @@ import type { ContextConfig } from "../../core/debate.js";
 import type { VisibilityConfig } from "../../core/context/visibility.js";
 import type { DebateMode } from "../../core/template-loader.js";
 import { loadTemplate, type PanelDefinition } from "../../core/template-loader.js";
-import { buildSystemPrompt } from "../../core/prompt-builder.js";
+import { buildSystemPrompt, type ExpertMemory } from "../../core/prompt-builder.js";
 import {
   resolveStrategy,
   STRATEGY_NAMES,
@@ -25,8 +25,9 @@ import {
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import type { HumanInputProvider } from "../../core/human-input.js";
 import { createDatabase } from "../../memory/db.js";
+import { recallMemory } from "../../memory/expert-memory.js";
 import { ExpertRepository } from "../../memory/repositories/experts.js";
-import { PanelRepository } from "../../memory/repositories/panels.js";
+import { PanelRepository, type Panel } from "../../memory/repositories/panels.js";
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 import {
@@ -155,34 +156,50 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       }
 
       const template = await loadTemplate(opts.template);
-      const aiExperts = buildExpertSpecs(template, topic);
-
-      // Build human expert specs from --human flags
-      const humanExperts: ExpertSpec[] = humanNames.map((name) => ({
-        id: ulid(),
-        slug: slugify(name),
-        displayName: name,
-        model: "human",
-        systemMessage: "(human participant)",
-      }));
-
-      const allExperts = [...aiExperts, ...humanExperts];
-      const humanSlugs = new Set(humanExperts.map((e) => e.slug));
-
-      // Resolve --strategy only for freeform mode; structured mode
-      // ignores any moderator strategy by design.
-      const strategy =
-        opts.mode === "freeform" && opts.strategy !== undefined
-          ? resolveStrategy({ raw: opts.strategy, experts: allExperts })
-          : undefined;
-
-      const contextConfig = buildContextConfig(opts);
 
       const dbPath = path.join(getCouncilHome(), "council.db");
       const db = await createDatabase(dbPath);
       try {
         const panelRepo = new PanelRepository(db);
         const expertRepo = new ExpertRepository(db);
+
+        // Recall memory from the most recent prior panel with the same
+        // template (if any) so experts continue learning across debates.
+        const priorPanel = await findMostRecentPanelForTemplate(
+          panelRepo,
+          template.name,
+        );
+        const memoryBySlug = new Map<string, ExpertMemory>();
+        if (priorPanel) {
+          for (const def of template.experts) {
+            const recalled = await recallMemory(db, priorPanel.id, def.slug);
+            if (recalled) memoryBySlug.set(def.slug, recalled);
+          }
+        }
+
+        const aiExperts = buildExpertSpecs(template, topic, memoryBySlug);
+
+        // Build human expert specs from --human flags
+        const humanExperts: ExpertSpec[] = humanNames.map((name) => ({
+          id: ulid(),
+          slug: slugify(name),
+          displayName: name,
+          model: "human",
+          systemMessage: "(human participant)",
+        }));
+
+        const allExperts = [...aiExperts, ...humanExperts];
+        const humanSlugs = new Set(humanExperts.map((e) => e.slug));
+
+        // Resolve --strategy only for freeform mode; structured mode
+        // ignores any moderator strategy by design.
+        const strategy =
+          opts.mode === "freeform" && opts.strategy !== undefined
+            ? resolveStrategy({ raw: opts.strategy, experts: allExperts })
+            : undefined;
+
+        const contextConfig = buildContextConfig(opts);
+
 
         const panel = await panelRepo.create({
           name: `${template.name}-${new Date().toISOString().slice(0, 19)}`,
@@ -264,9 +281,13 @@ function parseFormat(raw: string | undefined): RendererFormat {
   );
 }
 
-function buildExpertSpecs(template: PanelDefinition, topic: string): ExpertSpec[] {
+function buildExpertSpecs(
+  template: PanelDefinition,
+  topic: string,
+  memoryBySlug: ReadonlyMap<string, ExpertMemory>,
+): ExpertSpec[] {
   return template.experts.map((def) => {
-    const systemMessage = buildSystemPrompt(def, undefined, topic);
+    const systemMessage = buildSystemPrompt(def, memoryBySlug.get(def.slug), topic);
     return {
       id: ulid(),
       slug: def.slug,
@@ -275,6 +296,34 @@ function buildExpertSpecs(template: PanelDefinition, topic: string): ExpertSpec[
       systemMessage,
     };
   });
+}
+
+/**
+ * Find the most recently-created panel whose stored config has the same
+ * `template` name. Used to bridge per-debate memory: each `convene` run
+ * creates a new panel, but experts of the same template should remember
+ * what was said before.
+ *
+ * Returns undefined when no prior panel is found or when configJson is
+ * malformed for every candidate.
+ */
+async function findMostRecentPanelForTemplate(
+  panelRepo: PanelRepository,
+  templateName: string,
+): Promise<Panel | undefined> {
+  const all = await panelRepo.findAll();
+  const matches = all.filter((p) => {
+    try {
+      const cfg = JSON.parse(p.configJson) as { template?: unknown };
+      return cfg.template === templateName;
+    } catch {
+      return false;
+    }
+  });
+  if (matches.length === 0) return undefined;
+  // Most-recent by createdAt (ISO-8601 — lexically sortable).
+  matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
+  return matches[0];
 }
 
 /** Convert a display name like "Product Lead" to a slug like "product-lead". */
