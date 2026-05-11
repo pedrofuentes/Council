@@ -165,4 +165,18 @@ describe("buildLLMSummary — engine-backed summarization", () => {
     // Expert must still have been torn down.
     expect(engine.removed.length).toBe(1);
   });
+
+  it("returns the empty string and does NOT throw if addExpert rejects", async () => {
+    class FailingRegisterEngine extends RecordingEngine {
+      override async addExpert(_spec: ExpertSpec): Promise<void> {
+        throw new Error("registration unavailable");
+      }
+    }
+    const engine = new FailingRegisterEngine(["unused"]);
+    // MUST NOT throw — the parent debate must keep running with no summary.
+    const out = await buildLLMSummary(baseTurns, 2, cfg, engine, "gpt-test");
+    expect(out).toBe("");
+    // No send was attempted because registration failed.
+    expect(engine.sends.length).toBe(0);
+  });
 });
