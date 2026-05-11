@@ -25,6 +25,7 @@ import { ExpertRepository } from "./repositories/experts.js";
 import { TurnRepository, type Turn } from "./repositories/turns.js";
 
 const DEFAULT_MAX_TURNS = 20;
+const DEFAULT_MAX_DEBATES = 5;
 const ENTRY_MAX_CHARS = 200;
 
 const REVERSAL_PHRASES: readonly RegExp[] = [
@@ -43,6 +44,13 @@ const UNRESOLVED_MARKERS: readonly RegExp[] = [
 export interface RecallOptions {
   /** Max number of the most-recent turns to scan. Default 20. */
   readonly maxTurns?: number;
+  /**
+   * Max number of the most-recent debates to scan. Default 5. Bounding
+   * the debate fan-out keeps recall cheap and prevents an unbounded
+   * history scan as a panel accumulates debates over time
+   * (Sentinel pr222 cycle 3 #1 🟡).
+   */
+  readonly maxDebates?: number;
 }
 
 /**
@@ -149,13 +157,20 @@ export async function recallMemory(
   options?: RecallOptions,
 ): Promise<ExpertMemory | undefined> {
   const maxTurns = options?.maxTurns ?? DEFAULT_MAX_TURNS;
+  const maxDebates = options?.maxDebates ?? DEFAULT_MAX_DEBATES;
 
   const experts = await new ExpertRepository(db).findByPanelId(panelId);
   const expert = experts.find((e) => e.slug === expertSlug);
   if (!expert) return undefined;
 
-  const debates = await new DebateRepository(db).findByPanelId(panelId);
-  if (debates.length === 0) return undefined;
+  const allDebates = await new DebateRepository(db).findByPanelId(panelId);
+  if (allDebates.length === 0) return undefined;
+
+  // Sentinel pr222 cycle 3 #1 🟡: bound the debate scan to the most
+  // recent N. `findByPanelId` is ordered by startedAt ascending — take
+  // the tail to get the newest debates without loading everything.
+  const debates =
+    allDebates.length > maxDebates ? allDebates.slice(-maxDebates) : allDebates;
 
   const turnRepo = new TurnRepository(db);
   const collected: Turn[] = [];

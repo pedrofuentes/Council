@@ -313,10 +313,17 @@ async function findMostRecentPanelForTemplate(
   templateName: string,
 ): Promise<Panel | undefined> {
   const all = await panelRepo.findAll();
+  // Filter to same template AND non-mock engine. Mock-engine panels are
+  // explicitly excluded (Sentinel pr222 cycle 3 #1 🔴) — their turns are
+  // deterministic offline placeholders that would contaminate later real
+  // (--engine copilot) debates with fabricated "memory" if they were
+  // recalled. A panel without an engine field is treated as non-mock for
+  // backward compatibility with rows written before the engine field
+  // existed.
   const matches = all.filter((p) => {
     try {
-      const cfg = JSON.parse(p.configJson) as { template?: unknown };
-      return cfg.template === templateName;
+      const cfg = JSON.parse(p.configJson) as { template?: unknown; engine?: unknown };
+      return cfg.template === templateName && cfg.engine !== "mock";
     } catch {
       return false;
     }
