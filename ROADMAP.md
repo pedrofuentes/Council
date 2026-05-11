@@ -35,7 +35,7 @@
 - ✅ **2.3 Pluggable Moderator Strategies** — `ModeratorStrategy` interface with 5 built-in strategies (not yet wired into orchestrator — see [#212](https://github.com/pedrofuentes/Council/issues/212))
 - ✅ **2.4 Anti-sycophancy Enforcement** — 3-layer quality gate (forbidden phrases, disagreement budget, specificity)
 - ⬜ **2.5 Panel Auto-composition** — LLM meta-prompt generates expert panels from topic analysis
-- ⬜ **2.6 Context Window Management** — Visibility scoping, rolling summaries, per-expert token budgets
+- ✅ **2.6 Context Window Management** — Visibility scoping (`all` / `same-round` / `recent`), heuristic rolling summaries, and an opt-in `maxPromptChars` cap with newest-first eviction. CLI flags: `--context-scope`, `--summarize-after`.
 - ⬜ **2.7 `council conclude` Command** — Decision matrix with consensus, tensions, and recommendation
 
 ---

@@ -86,6 +86,17 @@ council convene "Ship now or wait?" --template code-review --engine copilot \
 council convene "Ship now or wait?" --template code-review --engine copilot \
   --strategy devils-advocate:senior   # pin "senior" as the contrarian
 
+# Tame long debates with context-window management (§2.6)
+council convene "Long architectural debate" --template architecture-review \
+  --engine copilot --max-rounds 10 \
+  --context-scope recent          # only the most-recent turns are passed forward
+council convene "Long debate" --template architecture-review \
+  --engine copilot --max-rounds 10 \
+  --context-scope same-round      # each expert only sees its round-mates
+council convene "Long debate" --template architecture-review \
+  --engine copilot --max-rounds 10 \
+  --summarize-after 3             # prepend a rolling summary after round 3
+
 # Pipe NDJSON output to jq, logs, or scripts
 council convene "..." --template code-review --engine copilot --format json | jq .
 

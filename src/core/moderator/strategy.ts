@@ -27,6 +27,14 @@ export interface ModeratorContext {
   readonly maxRounds: number;
   readonly topic: string;
   readonly priorTurns: readonly PriorTurnRecord[];
+  /**
+   * Optional rolling summary of earlier rounds (ROADMAP §2.6). Present
+   * only when the Debate orchestrator's `contextConfig.summarizer` is
+   * configured and the current round is past the threshold. Strategies
+   * SHOULD include this in their prompt when present so the model has
+   * a compact view of debate history without every verbatim turn.
+   */
+  readonly rollingSummary?: string;
 }
 
 /** An assignment: which expert speaks and what prompt they receive. */

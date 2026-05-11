@@ -13,6 +13,8 @@ import { ulid } from "ulid";
 import { Command } from "commander";
 
 import { getCouncilHome, DEFAULT_MODEL } from "../../config/index.js";
+import type { ContextConfig } from "../../core/debate.js";
+import type { VisibilityConfig } from "../../core/context/visibility.js";
 import type { DebateMode } from "../../core/template-loader.js";
 import { loadTemplate, type PanelDefinition } from "../../core/template-loader.js";
 import { buildSystemPrompt } from "../../core/prompt-builder.js";
@@ -58,6 +60,8 @@ export interface ConveneOptions {
   readonly engine: EngineKind;
   readonly human?: readonly string[];
   readonly strategy?: string;
+  readonly contextScope?: string;
+  readonly summarizeAfter?: number;
 }
 
 /**
@@ -109,6 +113,16 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         `devils-advocate accepts an optional ":<slug>" suffix to pin the advocate (defaults to first expert).`,
       "round-robin",
     )
+    .option(
+      "--context-scope <scope>",
+      "Visibility scope for prior turns: all | same-round | recent (§2.6)",
+      "all",
+    )
+    .option(
+      "--summarize-after <n>",
+      "Start rolling-summary after N rounds (§2.6). Omit to disable.",
+      (v) => Number.parseInt(v, 10),
+    )
     .action(async (topic: string, raw: ConveneOptions) => {
       if (!ENGINE_KINDS.includes(raw.engine)) {
         throw new Error(
@@ -127,6 +141,10 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         engine: raw.engine,
         human: humanNames,
         ...(raw.strategy !== undefined ? { strategy: raw.strategy } : {}),
+        ...(raw.contextScope !== undefined ? { contextScope: raw.contextScope } : {}),
+        ...(raw.summarizeAfter !== undefined && Number.isFinite(raw.summarizeAfter)
+          ? { summarizeAfter: raw.summarizeAfter }
+          : {}),
       };
 
       if (opts.engine === "mock") {
@@ -157,6 +175,8 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         opts.mode === "freeform" && opts.strategy !== undefined
           ? resolveStrategy({ raw: opts.strategy, experts: allExperts })
           : undefined;
+
+      const contextConfig = buildContextConfig(opts);
 
       const dbPath = path.join(getCouncilHome(), "council.db");
       const db = await createDatabase(dbPath);
@@ -198,6 +218,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             maxWordsPerResponse: opts.maxWords,
             mode: opts.mode,
             ...(strategy !== undefined ? { strategy } : {}),
+            ...(contextConfig !== undefined ? { contextConfig } : {}),
           },
           prompt: topic,
           panelId: panel.id,
@@ -262,4 +283,31 @@ function slugify(name: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+const VALID_CONTEXT_SCOPES = ["all", "same-round", "recent"] as const;
+
+function buildContextConfig(opts: ConveneOptions): ContextConfig | undefined {
+  const visibility =
+    opts.contextScope !== undefined && opts.contextScope !== "all"
+      ? parseContextScope(opts.contextScope)
+      : undefined;
+  const summarizer =
+    opts.summarizeAfter !== undefined
+      ? { summarizeAfterRound: opts.summarizeAfter, maxSummaryLength: 500 }
+      : undefined;
+  if (visibility === undefined && summarizer === undefined) return undefined;
+  return {
+    ...(visibility !== undefined ? { visibility } : {}),
+    ...(summarizer !== undefined ? { summarizer } : {}),
+  };
+}
+
+function parseContextScope(raw: string): VisibilityConfig {
+  if (!(VALID_CONTEXT_SCOPES as readonly string[]).includes(raw)) {
+    throw new Error(
+      `Unknown --context-scope value: ${raw}. Expected one of: ${VALID_CONTEXT_SCOPES.join(", ")}`,
+    );
+  }
+  return { scope: raw as (typeof VALID_CONTEXT_SCOPES)[number] };
 }
