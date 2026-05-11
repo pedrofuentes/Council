@@ -12,6 +12,7 @@ import { ulid } from "ulid";
 
 import { Command } from "commander";
 
+import { autoComposePanel } from "../../core/auto-compose.js";
 import { getCouncilHome, DEFAULT_MODEL } from "../../config/index.js";
 import type { ContextConfig } from "../../core/debate.js";
 import type { VisibilityConfig } from "../../core/context/visibility.js";
@@ -53,7 +54,7 @@ export interface ConveneCommandDeps {
 }
 
 export interface ConveneOptions {
-  readonly template: string;
+  readonly template?: string | undefined;
   readonly format: RendererFormat;
   readonly maxRounds: number;
   readonly mode: DebateMode;
@@ -79,7 +80,10 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
   cmd
     .description("Run a panel debate on a topic and persist results to the local DB")
     .argument("<topic>", "The topic / question for the panel to debate")
-    .requiredOption("--template <name>", "Built-in panel template (e.g. 'code-review')")
+    .option(
+      "--template <name>",
+      "Built-in panel template (e.g. 'code-review'). If omitted, the panel is auto-composed from the topic.",
+    )
     .requiredOption(
       "--engine <kind>",
       "Engine to use: 'mock' (offline, deterministic) or 'copilot' (real Copilot SDK)",
@@ -155,7 +159,40 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         );
       }
 
-      const template = await loadTemplate(opts.template);
+      let template: PanelDefinition;
+      if (opts.template) {
+        template = await loadTemplate(opts.template);
+      } else {
+        // §2.5 auto-compose: spin up a temporary engine session, ask the
+        // composer to design the panel, then tear it down. The real debate
+        // gets its own engine instance via runWithEngine() below.
+        const composeEngine = deps.engineFactory
+          ? deps.engineFactory()
+          : makeEngineFromKind(opts.engine);
+        try {
+          await composeEngine.start();
+          try {
+            template = await autoComposePanel(topic, composeEngine, {
+              defaultModel: DEFAULT_MODEL,
+            });
+          } catch (err: unknown) {
+            const cause = err instanceof Error ? err.message : String(err);
+            throw new Error(
+              `Could not auto-compose a panel for this topic. Use --template to specify one manually. (cause: ${cause})`,
+            );
+          }
+        } finally {
+          await composeEngine.stop().catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            writeError(`!! engine.stop() failed during auto-compose cleanup: ${msg}\n`);
+          });
+        }
+        writeError(`\n🏛️  Auto-composed panel: ${template.name}\n`);
+        for (const expert of template.experts) {
+          writeError(`  • ${expert.displayName} — ${expert.role}\n`);
+        }
+        writeError("\n");
+      }
 
       const dbPath = path.join(getCouncilHome(), "council.db");
       const db = await createDatabase(dbPath);
