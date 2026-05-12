@@ -1611,4 +1611,41 @@ describe("panel chat — @convene structured debate", () => {
       expect(expertTurns[1]?.content).toContain("phase-resp-2");
     });
   });
+
+  it("@convene with a synchronously-throwing engine.send leaves no orphan user turn", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "deb4", ["panel-a", "panel-b"]);
+
+    // Engine that throws synchronously from send() — propagates through
+    // Debate.run() and bubbles into runInlineDebate's catch. The user
+    // row for the @convene line must NOT be left dangling without any
+    // expert response (Sentinel SR-PR-mention-1).
+    const engine: CouncilEngine = {
+      async start(): Promise<void> { /* ok */ },
+      async stop(): Promise<void> { /* ok */ },
+      async addExpert(): Promise<void> { /* ok */ },
+      async removeExpert(): Promise<void> { /* ok */ },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock"];
+      },
+      send(): never {
+        throw new Error("send-blew-up");
+      },
+    };
+
+    const cmd = buildChatCommand({
+      write: () => undefined,
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () => scriptedInput(["@convene topic", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "deb4", "--engine", "mock"]);
+
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "deb4");
+      const turns = await repo.getTurns(session?.id ?? "");
+      // No expert turns produced AND no orphan user row.
+      expect(turns.length).toBe(0);
+    });
+  });
 });
