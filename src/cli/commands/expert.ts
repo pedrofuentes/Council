@@ -649,14 +649,15 @@ function buildTrainCommand(
         // re-processing (replace-by-path semantics), so the FTS5 entries
         // stay consistent without us touching them directly.
         //
-        // Per-row failures are isolated and surfaced so a single bad row
-        // doesn't abort the whole retrain with the profile already gone.
-        // DB markRemoved runs FIRST: a subsequent indexer.remove() failure
-        // is recoverable on the next process() call (replace-by-path),
-        // whereas the inverse order would leave a stale FTS5 entry the
-        // processor can't reach.
+        // Ordering is deliberate: clear tracked docs FIRST and only delete
+        // the persisted profile AFTER every clear succeeded. If any
+        // markRemoved fails, the prior profile is preserved so the user
+        // is never left with an empty profile + partially-cleared tracking
+        // (rows that were successfully cleared earlier in the loop will be
+        // reprocessed naturally on the next training run). DB markRemoved
+        // runs before indexer.remove for each row so a failed FTS5
+        // deletion self-heals on the next process() call.
         if (opts.retrain === true) {
-          await profileRepo.delete(slug);
           const tracked = await documentRepo.findByExpert(slug);
           let cleared = 0;
           let clearFailed = 0;
@@ -674,9 +675,17 @@ function buildTrainCommand(
               );
             }
           }
+          if (clearFailed > 0) {
+            const msg =
+              `Retrain aborted for "${slug}": ${clearFailed} of ${cleared + clearFailed} ` +
+              `tracked document(s) failed to clear. Existing profile preserved. ` +
+              `Re-run "council expert train ${slug} --retrain" after addressing the warnings above.`;
+            writeError(msg + "\n");
+            throw new Error(msg);
+          }
+          await profileRepo.delete(slug);
           write(
-            `↻ Retrain: cleared profile and tracking for "${slug}" ` +
-              `(${cleared} cleared, ${clearFailed} failed).\n`,
+            `↻ Retrain: cleared profile and tracking for "${slug}" (${cleared} cleared).\n`,
           );
         }
 
