@@ -192,7 +192,10 @@ function renderPersonaProfile(profile: PersonaProfile): string {
 function sanitizeProfileField(raw: string): string {
   // eslint-disable-next-line no-control-regex
   const stripped = raw.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
-  const collapsed = stripped.replace(/[\r\n]+/g, " ");
+  // Collapse every Unicode line-break code point (CR/LF, NEL, LS, PS) to
+  // a single space so injected directives cannot appear at column 0 of
+  // the system prompt.
+  const collapsed = stripped.replace(/[\r\n\u0085\u2028\u2029]+/g, " ");
   const defanged = collapsed.replace(/\[(\d+)\]/g, "(sec-$1)");
   const MAX = 2000;
   return defanged.length > MAX ? `${defanged.slice(0, MAX)}…` : defanged;

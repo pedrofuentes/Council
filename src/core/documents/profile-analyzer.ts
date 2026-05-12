@@ -89,7 +89,13 @@ function sanitizeFenceField(s: string): string {
 function sanitizeExistingProfileField(raw: string): string {
   // eslint-disable-next-line no-control-regex
   const noControls = raw.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
-  const oneLine = noControls.replace(/[\r\n\t]+/g, " ");
+  // Collapse every Unicode line-break code point (NOT just \r\n) plus
+  // tabs so each existingProfile field serializes as a single line.
+  // U+0085 NEL, U+2028 LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR all
+  // render as line breaks in most prompt-rendering pipelines and would
+  // otherwise let an attacker-controlled field emit a fresh pre-fence
+  // line.
+  const oneLine = noControls.replace(/[\r\n\t\u0085\u2028\u2029]+/g, " ");
   return sanitizeFenceField(oneLine);
 }
 
@@ -210,7 +216,7 @@ async function collectResponse(
       break;
     }
   }
-  if (errored && collected.length === 0) {
+  if (errored) {
     throw new Error("Profile analyzer engine call failed");
   }
   return collected;
