@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS panel_library (
 
 -- Panel-expert membership (which experts are in which panels)
 CREATE TABLE IF NOT EXISTS panel_members (
-  panel_name   TEXT NOT NULL,
+  panel_name   TEXT NOT NULL REFERENCES panel_library(name) ON DELETE CASCADE,
   expert_slug  TEXT NOT NULL REFERENCES expert_library(slug) ON DELETE CASCADE,
   position     INTEGER NOT NULL DEFAULT 0,        -- ordering within panel
   created_at   TEXT NOT NULL,

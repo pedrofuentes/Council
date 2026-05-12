@@ -158,6 +158,17 @@ describe("Migration 004 — expert library tables", () => {
   it("panel_members enforces FK to expert_library and cascades on delete", async () => {
     const now = new Date().toISOString();
     await db
+      .insertInto("panel_library")
+      .values({
+        name: "arch",
+        description: null,
+        yaml_path: "/tmp/arch.yaml",
+        yaml_checksum: "p1",
+        created_at: now,
+        updated_at: now,
+      })
+      .execute();
+    await db
       .insertInto("expert_library")
       .values({
         slug: "cto",
@@ -169,8 +180,6 @@ describe("Migration 004 — expert library tables", () => {
         updated_at: now,
       })
       .execute();
-    // Foreign keys must be enabled on libsql/sqlite
-    await sql`PRAGMA foreign_keys = ON`.execute(db);
     await db
       .insertInto("panel_members")
       .values({
@@ -188,15 +197,92 @@ describe("Migration 004 — expert library tables", () => {
     expect(after.length).toBe(0);
   });
 
-  it("panel_members FK rejects insertion referencing nonexistent expert", async () => {
-    await sql`PRAGMA foreign_keys = ON`.execute(db);
+  it("panel_members cascades when the referenced panel is deleted", async () => {
     const now = new Date().toISOString();
+    await db
+      .insertInto("panel_library")
+      .values({
+        name: "arch",
+        description: null,
+        yaml_path: "/tmp/arch.yaml",
+        yaml_checksum: "p1",
+        created_at: now,
+        updated_at: now,
+      })
+      .execute();
+    await db
+      .insertInto("expert_library")
+      .values({
+        slug: "cto",
+        kind: "generic",
+        display_name: "CTO",
+        yaml_path: "/tmp/cto.yaml",
+        yaml_checksum: "h1",
+        created_at: now,
+        updated_at: now,
+      })
+      .execute();
+    await db
+      .insertInto("panel_members")
+      .values({
+        panel_name: "arch",
+        expert_slug: "cto",
+        position: 0,
+        created_at: now,
+      })
+      .execute();
+
+    await db.deleteFrom("panel_library").where("name", "=", "arch").execute();
+    const after = await db.selectFrom("panel_members").selectAll().execute();
+    expect(after.length).toBe(0);
+  });
+
+  it("panel_members FK rejects insertion referencing nonexistent expert", async () => {
+    const now = new Date().toISOString();
+    await db
+      .insertInto("panel_library")
+      .values({
+        name: "arch",
+        description: null,
+        yaml_path: "/tmp/arch.yaml",
+        yaml_checksum: "p1",
+        created_at: now,
+        updated_at: now,
+      })
+      .execute();
     await expect(
       db
         .insertInto("panel_members")
         .values({
           panel_name: "arch",
           expert_slug: "nonexistent",
+          position: 0,
+          created_at: now,
+        })
+        .execute(),
+    ).rejects.toThrow();
+  });
+
+  it("panel_members FK rejects insertion referencing nonexistent panel", async () => {
+    const now = new Date().toISOString();
+    await db
+      .insertInto("expert_library")
+      .values({
+        slug: "cto",
+        kind: "generic",
+        display_name: "CTO",
+        yaml_path: "/tmp/cto.yaml",
+        yaml_checksum: "h1",
+        created_at: now,
+        updated_at: now,
+      })
+      .execute();
+    await expect(
+      db
+        .insertInto("panel_members")
+        .values({
+          panel_name: "ghost-panel",
+          expert_slug: "cto",
           position: 0,
           created_at: now,
         })
