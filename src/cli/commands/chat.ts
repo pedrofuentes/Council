@@ -100,8 +100,8 @@ export function buildChatCommand(deps: ChatCommandDeps = {}): Command {
 
   const cmd = new Command("chat");
   cmd
-    .description("Persistent conversation with an expert from the library")
-    .argument("[target]", "Expert slug to chat with")
+    .description("Persistent conversation with an expert or panel from the library")
+    .argument("[target]", "Expert slug or panel name to chat with")
     .option(
       "--engine <kind>",
       `Engine: ${ENGINE_KINDS.join(" | ")} (required for interactive chat)`,
@@ -116,13 +116,13 @@ export function buildChatCommand(deps: ChatCommandDeps = {}): Command {
       }
       if (raw.history) {
         if (!target) {
-          throw new Error("--history requires a target (expert slug)");
+          throw new Error("--history requires a target (expert slug or panel name)");
         }
-        await runHistory(target, write);
+        await runHistory(target, write, writeError);
         return;
       }
       if (!target) {
-        throw new Error("Missing required argument: <target> (expert slug)");
+        throw new Error("Missing required argument: <target> (expert slug or panel name)");
       }
       if (!raw.engine || !ENGINE_KINDS.includes(raw.engine)) {
         throw new Error(
@@ -233,9 +233,47 @@ async function runList(write: Writer): Promise<void> {
 // --history
 // ──────────────────────────────────────────────────────────────────────
 
-async function runHistory(target: string, write: Writer): Promise<void> {
+async function runHistory(target: string, write: Writer, writeError: Writer): Promise<void> {
+  // Resolve the target's type so we don't leak archived sessions from
+  // the "other namespace" when an expert slug and a panel name collide.
+  // Resolution precedence matches `runChat`: expert first, panel second.
+  const config = await loadConfig();
+  const dataHome = getCouncilDataHome(config);
+  await ensureDataDirectories(dataHome);
+  const dbPath = path.join(getCouncilHome(), "council.db");
+  const db = await createDatabase(dbPath);
+  let resolvedType: "expert" | "panel";
+  try {
+    const library = new FileExpertLibrary(dataHome, db);
+    const expert = await library.get(target);
+    if (expert) {
+      resolvedType = "expert";
+    } else {
+      try {
+        await loadPanel(target, dataHome);
+        resolvedType = "panel";
+      } catch (err: unknown) {
+        if (err instanceof PanelNotFoundError) {
+          const available = (await library.list()).map((e) => e.slug);
+          const list =
+            available.length > 0
+              ? available.join(", ")
+              : "(none — create one with `council expert create`)";
+          writeError(
+            `"${target}" not found as expert or panel. Available experts: ${list}\n`,
+          );
+          throw new Error(`"${target}" not found`);
+        }
+        throw err;
+      }
+    }
+  } finally {
+    await db.destroy();
+  }
+
   await withChatRepository(async (repo) => {
-    const archived = await repo.listSessions({ targetSlug: target, status: "archived" });
+    const all = await repo.listSessions({ targetSlug: target, status: "archived" });
+    const archived = all.filter((s) => s.targetType === resolvedType);
     if (archived.length === 0) {
       write(`No archived conversations for "${target}".\n`);
       return;
@@ -727,13 +765,16 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
     const emptyExperts: string[] = [];
     let succeeded = 0;
 
-    for (const { expert, spec } of members) {
-      const prompt = buildPanelTurnPrompt({
-        history,
-        userMessage: trimmed,
-        expertNames,
-      });
+    // The per-turn prompt is identical for every panelist (they all see
+    // the same shared history + same just-asked user message), so build
+    // it once per turn rather than once per expert.
+    const prompt = buildPanelTurnPrompt({
+      history,
+      userMessage: trimmed,
+      expertNames,
+    });
 
+    for (const { expert, spec } of members) {
       let assembled = "";
       let failed = false;
       let recoverable = false;
@@ -802,10 +843,26 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
 
     const total = members.length;
     if (succeeded === 0) {
-      renderer.showSystem(
-        "No experts could respond. Check your connection and try again.",
-        "warn",
-      );
+      // Be honest about *why* nobody responded so the user can act on
+      // the right signal (retry vs. inspect the expert config vs. wait).
+      if (errorExperts.length > 0 && emptyExperts.length === 0) {
+        renderer.showSystem(
+          "No experts could respond. Check your connection and try again.",
+          "warn",
+        );
+      } else if (errorExperts.length === 0 && emptyExperts.length > 0) {
+        renderer.showSystem(
+          `All ${total} experts returned empty responses.`,
+          "warn",
+        );
+      } else {
+        renderer.showSystem(
+          `${errorExperts.join(", ")} could not respond (engine error); ` +
+            `${emptyExperts.join(", ")} returned an empty response. ` +
+            `0 of ${total} experts responded.`,
+          "warn",
+        );
+      }
     } else if (errorExperts.length > 0 || emptyExperts.length > 0) {
       const parts: string[] = [];
       if (errorExperts.length > 0) {
