@@ -219,6 +219,56 @@ describe("ChatRepository", () => {
     expect(await repo.getLatestSeq(session.id)).toBe(2);
   });
 
+  it("rejects duplicate (chat_id, seq) inserts via UNIQUE constraint", async () => {
+    const session = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+    const now = new Date().toISOString();
+    await db
+      .insertInto("chat_turns")
+      .values({
+        id: "01J0000000000000000000010",
+        chat_id: session.id,
+        seq: 1,
+        role: "user",
+        expert_slug: null,
+        content: "first",
+        is_mention: 0,
+        tokens_in: null,
+        tokens_out: null,
+        created_at: now,
+      })
+      .execute();
+    await expect(
+      db
+        .insertInto("chat_turns")
+        .values({
+          id: "01J0000000000000000000011",
+          chat_id: session.id,
+          seq: 1,
+          role: "user",
+          expert_slug: null,
+          content: "duplicate",
+          is_mention: 0,
+          tokens_in: null,
+          tokens_out: null,
+          created_at: now,
+        })
+        .execute(),
+    ).rejects.toThrow(/UNIQUE|constraint/i);
+  });
+
+  it("addTurn() allocates seq atomically against concurrent inserts", async () => {
+    const session = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+    const results = await Promise.all(
+      Array.from({ length: 10 }, (_, i) =>
+        repo.addTurn({ chatId: session.id, role: "user", content: `m${i}` }),
+      ),
+    );
+    const seqs = results.map((t) => t.seq).sort((a, b) => a - b);
+    expect(seqs).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    const count = await repo.getTurnCount(session.id);
+    expect(count).toBe(10);
+  });
+
   it("deleting a session cascades to its turns", async () => {
     const session = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
     await repo.addTurn({ chatId: session.id, role: "user", content: "doomed" });
