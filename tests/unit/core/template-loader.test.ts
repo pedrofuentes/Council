@@ -21,6 +21,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import type { ExpertLibrary } from "../../../src/core/expert-library.js";
 import type { ExpertDefinition } from "../../../src/core/expert.js";
 import {
+  assertAllInline,
   listTemplates,
   listUserPanels,
   loadPanel,
@@ -29,6 +30,7 @@ import {
   loadUserPanel,
   PanelDefinitionSchema,
   PanelExpertEntrySchema,
+  PanelNotFoundError,
   resolveExperts,
   type PanelDefinition,
 } from "../../../src/core/template-loader.js";
@@ -456,5 +458,84 @@ experts:
 
   it("loadPanel() throws when neither user nor built-in panel exists", async () => {
     await expect(loadPanel("does-not-exist", dataHome)).rejects.toThrow(/does-not-exist/);
+  });
+
+  it("loadPanel() surfaces YAML parse errors verbatim (does not fall back)", async () => {
+    // A user panel that fails schema validation should NOT silently fall back
+    // to a built-in. The user clearly intended their panel and deserves to see
+    // the real validation error.
+    await writePanel(
+      "architecture-review",
+      `name: architecture-review
+description: bad — wrong type
+experts: 12345
+`,
+    );
+    await expect(loadPanel("architecture-review", dataHome)).rejects.toThrow(
+      /Invalid panel template/i,
+    );
+  });
+});
+
+describe("PanelNotFoundError", () => {
+  it("is the error type thrown by loadUserPanel when a panel is absent", async () => {
+    const dataHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-pnf-"));
+    try {
+      await fs.mkdir(path.join(dataHome, "panels"), { recursive: true });
+      await expect(loadUserPanel("ghost", dataHome)).rejects.toBeInstanceOf(PanelNotFoundError);
+    } finally {
+      await fs.rm(dataHome, { recursive: true, force: true });
+    }
+  });
+
+  it("is the error type thrown by loadTemplate when a panel is absent", async () => {
+    await expect(loadTemplate("definitely-not-a-real-template")).rejects.toBeInstanceOf(
+      PanelNotFoundError,
+    );
+  });
+});
+
+describe("assertAllInline()", () => {
+  it("returns a resolved panel when every entry is inline", () => {
+    const panel: PanelDefinition = PanelDefinitionSchema.parse({
+      name: "p",
+      experts: [makeInlineExpert("a"), makeInlineExpert("b")],
+    });
+    const resolved = assertAllInline(panel, "test");
+    expect(resolved.experts).toHaveLength(2);
+    expect(resolved.experts[0]?.slug).toBe("a");
+  });
+
+  it("rejects a panel that contains any slug-reference entries", () => {
+    const panel: PanelDefinition = PanelDefinitionSchema.parse({
+      name: "p",
+      experts: ["cto", makeInlineExpert("skeptic")],
+    });
+    expect(() => assertAllInline(panel, "test")).toThrow(/slug references|cto/i);
+  });
+});
+
+describe("loadTemplate() rejects built-in panels with slug references", () => {
+  // assertAllInline is the guard built into loadTemplate. Test via the same
+  // codepath by writing a temp YAML and loading it through loadTemplateFromFile +
+  // assertAllInline, mirroring exactly what loadTemplate does for built-ins.
+  it("rejects panels parsed from disk that contain slug-reference entries", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "council-builtin-"));
+    try {
+      const file = path.join(dir, "bad-builtin.yaml");
+      await fs.writeFile(
+        file,
+        `name: bad-builtin
+description: built-ins must be inline
+experts:
+  - some-slug
+`,
+        "utf-8",
+      );
+      const panel = await loadTemplateFromFile(file);
+      expect(() => assertAllInline(panel, file)).toThrow(/slug references|some-slug/i);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 });
