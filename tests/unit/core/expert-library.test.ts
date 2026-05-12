@@ -279,6 +279,25 @@ describe("FileExpertLibrary", () => {
       expect(row).toBeUndefined();
     });
 
+    it("surfaces AggregateError when both YAML write and DB rollback fail on create()", async () => {
+      const yamlPath = path.join(dataHome, "experts", "cto.yaml");
+      await fs.mkdir(yamlPath, { recursive: true }); // makes writeFile fail
+
+      // Force the rollback delete to also fail.
+      const spy = vi.spyOn(db, "deleteFrom").mockImplementationOnce(() => {
+        throw new Error("rollback delete failed");
+      });
+
+      const err = await lib.create(makeDef()).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(AggregateError);
+      expect((err as AggregateError).message).toMatch(/storage may be inconsistent/i);
+      expect((err as AggregateError).errors.length).toBeGreaterThanOrEqual(2);
+      spy.mockRestore();
+    });
+
     it("restores prior YAML when DB update fails on update()", async () => {
       await lib.create(makeDef());
       const yamlPath = path.join(dataHome, "experts", "cto.yaml");
@@ -291,6 +310,30 @@ describe("FileExpertLibrary", () => {
       const after = await fs.readFile(yamlPath, "utf-8");
       expect(after).toBe(before);
       spy.mockRestore();
+    });
+
+    it("surfaces AggregateError when both DB update and YAML restore fail on update()", async () => {
+      await lib.create(makeDef());
+      const yamlPath = path.join(dataHome, "experts", "cto.yaml");
+      const fsSync = await import("node:fs");
+
+      // When the DB update fires, swap the YAML file for a directory so the
+      // subsequent restore writeFile fails (EISDIR / EPERM). Use sync fs so
+      // the swap completes before the spy throws.
+      const dbSpy = vi.spyOn(db, "updateTable").mockImplementationOnce(() => {
+        fsSync.rmSync(yamlPath, { force: true });
+        fsSync.mkdirSync(yamlPath);
+        throw new Error("db unavailable");
+      });
+
+      const err = await lib.update("cto", { displayName: "x" }).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(AggregateError);
+      expect((err as AggregateError).message).toMatch(/storage may be inconsistent/i);
+      expect((err as AggregateError).errors.length).toBeGreaterThanOrEqual(2);
+      dbSpy.mockRestore();
     });
 
     it("preserves expert + panel memberships when fs.unlink fails on delete()", async () => {
