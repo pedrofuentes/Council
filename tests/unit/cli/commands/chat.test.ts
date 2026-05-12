@@ -176,20 +176,35 @@ describe("buildChatCommand", () => {
       expect(out.toLowerCase()).toMatch(/no (chat )?conversations/);
     });
 
-    it("lists active and archived sessions in a table", async () => {
+    it("lists active and archived sessions in a table with their statuses", async () => {
       await seedExpert(env);
+      let activeId = "";
+      let archivedId = "";
       await withRepo(env, async (repo) => {
         const a = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        activeId = a.id;
         await repo.addTurn({ chatId: a.id, role: "user", content: "hi" });
         const b = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        archivedId = b.id;
         await repo.archiveSession(b.id);
       });
       let out = "";
       const cmd = buildChatCommand({ write: (s) => (out += s) });
       await cmd.parseAsync(["node", "council-chat", "--list"]);
+      // Both target slug and BOTH status values (as standalone column values,
+      // not just substrings of the "last active" header) must appear.
       expect(out).toContain("dahlia-cto");
-      expect(out).toContain("active");
-      expect(out).toContain("archived");
+      // Count "active" occurrences: the header text "last active" contributes
+      // one, the active-session status column contributes another. Without
+      // the active session, we'd get exactly 1 (header only).
+      const activeCount = (out.match(/active/g) ?? []).length;
+      expect(activeCount).toBeGreaterThanOrEqual(2);
+      expect(out).toMatch(/\barchived\b/);
+      // Two rows for the same target must be present.
+      const slugCount = (out.match(/dahlia-cto/g) ?? []).length;
+      expect(slugCount).toBe(2);
+      void activeId;
+      void archivedId;
     });
   });
 
@@ -212,21 +227,36 @@ describe("buildChatCommand", () => {
       ).rejects.toThrow(/target|expert/i);
     });
 
-    it("lists archived sessions only for the target", async () => {
+    it("lists archived sessions only for the target, excluding active and foreign-target rows", async () => {
       await seedExpert(env);
+      await seedExpert(env, {
+        ...SAMPLE,
+        slug: "other-expert",
+        displayName: "Other Expert",
+      });
+      let archivedId = "";
+      let activeId = "";
+      let foreignArchivedId = "";
       await withRepo(env, async (repo) => {
         const a = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        archivedId = a.id;
         await repo.archiveSession(a.id);
         const b = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        activeId = b.id;
         await repo.addTurn({ chatId: b.id, role: "user", content: "active" });
-        // active session should not appear under --history
+        const c = await repo.createSession({ targetType: "expert", targetSlug: "other-expert" });
+        foreignArchivedId = c.id;
+        await repo.archiveSession(c.id);
       });
       let out = "";
       const cmd = buildChatCommand({ write: (s) => (out += s) });
       await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--history"]);
-      // Both sessions belong to dahlia-cto; only the archived one shown.
-      const archivedCount = (out.match(/archived/g) ?? []).length;
-      expect(archivedCount).toBeGreaterThanOrEqual(1);
+      // Target archived session present.
+      expect(out).toContain(archivedId);
+      // Active session for target absent.
+      expect(out).not.toContain(activeId);
+      // Foreign-target archived session absent.
+      expect(out).not.toContain(foreignArchivedId);
     });
   });
 
@@ -427,9 +457,7 @@ describe("buildChatCommand", () => {
       await seedExpert(env);
 
       // Custom engine: succeeds add/start/stop but every send() yields
-      // a non-recoverable error event. Lets us assert the failure path
-      // without depending on MockEngine's expertId-keyed failure seams
-      // (chat.ts assigns a fresh ULID per spec).
+      // a non-recoverable error event.
       const failingEngine: CouncilEngine = {
         async start(): Promise<void> {
           /* ok */
@@ -483,6 +511,87 @@ describe("buildChatCommand", () => {
       expect(out).toMatch(/Conversation saved/i);
       // A user-facing warning was emitted somewhere.
       expect(out + err).toMatch(/Failed to get response/i);
+    });
+
+    it("on recoverable engine error: retries once and persists a single clean expert turn", async () => {
+      await seedExpert(env);
+      let out = "";
+
+      // Engine fails recoverably on the first send() and succeeds on the
+      // second. Counts send calls; the first attempt yields a partial
+      // delta then a recoverable error, the retry yields a complete
+      // response. The chat command must (a) call send() exactly twice,
+      // (b) persist exactly one expert turn with the retry's content
+      // only — NOT the concatenation of partial + retry.
+      let sendCalls = 0;
+      const retryingEngine: CouncilEngine = {
+        async start(): Promise<void> {
+          /* ok */
+        },
+        async stop(): Promise<void> {
+          /* ok */
+        },
+        async addExpert(): Promise<void> {
+          /* ok */
+        },
+        async removeExpert(): Promise<void> {
+          /* ok */
+        },
+        async listModels(): Promise<readonly string[]> {
+          return ["mock"];
+        },
+        send(opts) {
+          const expertId = opts.expertId;
+          sendCalls += 1;
+          const isFirst = sendCalls === 1;
+          return {
+            async *[Symbol.asyncIterator]() {
+              if (isFirst) {
+                yield { kind: "message.delta" as const, expertId, text: "PARTIAL-" };
+                yield {
+                  kind: "error" as const,
+                  expertId,
+                  error: { code: "NETWORK" as const, message: "transient" },
+                  recoverable: true,
+                };
+              } else {
+                yield { kind: "message.delta" as const, expertId, text: "FINAL-OK" };
+                yield {
+                  kind: "message.complete" as const,
+                  expertId,
+                  response: { latencyMs: 1 },
+                };
+              }
+            },
+          };
+        },
+      };
+
+      const cmd = buildChatCommand({
+        write: (s) => (out += s),
+        writeError: () => undefined,
+        engineFactory: () => retryingEngine,
+        inputProvider: () => scriptedInput(["question?", "exit"]),
+      });
+      await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+
+      expect(sendCalls).toBe(2);
+      // The partial first-attempt delta must NOT be rendered to stdout —
+      // doing so would double-render the response on retry.
+      expect(out).not.toContain("PARTIAL-");
+      expect(out).toContain("FINAL-OK");
+      const finalCount = (out.match(/FINAL-OK/g) ?? []).length;
+      expect(finalCount).toBe(1);
+      await withRepo(env, async (repo) => {
+        const session = await repo.findActiveSession("expert", "dahlia-cto");
+        const turns = await repo.getTurns(session?.id ?? "");
+        const expertTurns = turns.filter((t) => t.role === "expert");
+        expect(expertTurns.length).toBe(1);
+        // The persisted expert turn must contain ONLY the retry's
+        // content — the partial first attempt must not leak into it.
+        expect(expertTurns[0]?.content).toBe("FINAL-OK");
+        expect(expertTurns[0]?.content).not.toContain("PARTIAL");
+      });
     });
   });
 });
