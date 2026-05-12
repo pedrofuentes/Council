@@ -91,6 +91,19 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
     else sink.write(text);
   };
 
+  /**
+   * Sanitize externally-sourced text for terminal display.
+   *
+   * Builds on the shared `stripControlChars` helper (which removes ANSI/OSC
+   * escapes and most C0 controls) but additionally strips `\r`. The shared
+   * helper preserves `\r` for transcript fidelity; in a live TTY, however, a
+   * carriage return rewinds the cursor to column 0 and lets a malicious
+   * chunk overwrite the current line (e.g. spoof a `You > ` prompt). Newlines
+   * (`\n`) and tabs (`\t`) are still allowed — they're legitimate output for
+   * multi-paragraph responses.
+   */
+  const sanitize = (text: string): string => stripControlChars(text).replace(/\r/g, "");
+
   const colorFor = (slug: string): ChalkInstance => {
     const existing = colorBySlug.get(slug);
     if (existing) return existing;
@@ -103,7 +116,7 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
 
   return {
     showSessionStatus(message: string): void {
-      write(`${stripControlChars(message)}\n`);
+      write(`${sanitize(message)}\n`);
     },
 
     showPrompt(): void {
@@ -111,18 +124,18 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
     },
 
     showUserMessage(content: string): void {
-      write(`${chalk.bold.white(PROMPT_PREFIX)}${stripControlChars(content)}\n`);
+      write(`${chalk.bold.white(PROMPT_PREFIX)}${sanitize(content)}\n`);
     },
 
     startExpertResponse(expertSlug: string): void {
       const rawName = experts.get(expertSlug) ?? expertSlug;
-      const displayName = stripControlChars(rawName);
+      const displayName = sanitize(rawName);
       const color = colorFor(expertSlug);
       write(`${color(`${displayName} > `)}`);
     },
 
     streamChunk(text: string): void {
-      write(stripControlChars(text));
+      write(sanitize(text));
     },
 
     endExpertResponse(): void {
@@ -130,7 +143,7 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
     },
 
     showSystem(message: string, level: "info" | "warn" | "error" = "info"): void {
-      const safe = stripControlChars(message);
+      const safe = sanitize(message);
       switch (level) {
         case "info":
           write(`${chalk.blue("ℹ")} ${safe}\n`);
