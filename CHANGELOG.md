@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Cross-panel awareness in 1:1 chat** (Roadmap 7.2 + 7.3) — when you `council chat <persona-slug>`, the expert's system prompt now includes a `[PANEL MEMBERSHIPS]` section listing the other panels they belong to (with co-members and panel descriptions), so 1:1 conversations are informed by the shared context across panels. Memberships are ordered most-recently-active first (by `panel_library.updated_at`) and capped at 5 entries to bound prompt size. All externally-sourced fields (panel names, descriptions, co-member display names) are run through the same sanitiser used for persona profile fields — C0 controls stripped, line breaks collapsed, `[N]` section markers defanged to `(sec-N)`, length capped at 2000 chars — so a panel YAML cannot forge section headers in the privileged system prompt. The query is best-effort: a DB failure surfaces a one-line warning (not silent) and chat continues without the section. Panel chat is unchanged. Implementation: `getExpertPanelMemberships()` in `src/core/panel-membership-query.ts`, `renderPanelMemberships()` and `PanelMembership` in `src/core/prompt-builder.ts`.
+
 - **Panel document folder** (Roadmap 6.7) — panels now have a shared reference-document corpus indexed into FTS5 alongside expert documents. Three new CLI subcommands:
   - `council panel docs <name>` — list managed and externally-linked folders for a panel and their document counts.
   - `council panel docs link <name> --path <folder>` — link an external folder so its documents are scanned and indexed at chat start.

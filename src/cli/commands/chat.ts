@@ -38,7 +38,8 @@ import { parseUserInput, type ParsedInput } from "../../core/chat/mention-parser
 import { Debate } from "../../core/debate.js";
 import type { ExpertDefinition } from "../../core/expert.js";
 import { FileExpertLibrary } from "../../core/expert-library.js";
-import { buildSystemPrompt } from "../../core/prompt-builder.js";
+import { buildSystemPrompt, type PanelMembership } from "../../core/prompt-builder.js";
+import { getExpertPanelMemberships } from "../../core/panel-membership-query.js";
 import {
   PanelNotFoundError,
   loadPanel,
@@ -434,7 +435,28 @@ async function runExpertChat(opts: ExpertChatOptions): Promise<void> {
       renderer,
     });
 
-    const expertSpec = buildExpertSpec(expert, config, CHAT_TASK_DESCRIPTION, personaProfile);
+    // Cross-panel awareness (Roadmap 7.2): surface this expert's other
+    // panel memberships in the system prompt so 1:1 chat is informed by
+    // shared context. Best-effort — a query failure must not block chat,
+    // but surface a warning so silent DB/schema regressions are visible.
+    let panelMemberships: readonly PanelMembership[] = [];
+    try {
+      panelMemberships = await getExpertPanelMemberships(expert.slug, db);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      renderer.showSystem(
+        `Could not load panel memberships for cross-panel context: ${msg}`,
+        "warn",
+      );
+    }
+
+    const expertSpec = buildExpertSpec(
+      expert,
+      config,
+      CHAT_TASK_DESCRIPTION,
+      personaProfile,
+      panelMemberships,
+    );
     await engine.addExpert(expertSpec);
 
     // Engine ready — NOW it's safe to mutate persistent chat state.
@@ -755,8 +777,15 @@ function buildExpertSpec(
   config: CouncilConfig,
   taskDescription: string,
   personaProfile?: PersonaProfile,
+  panelMemberships?: readonly PanelMembership[],
 ): ExpertSpec {
-  const systemMessage = buildSystemPrompt(expert, undefined, taskDescription, personaProfile);
+  const systemMessage = buildSystemPrompt(
+    expert,
+    undefined,
+    taskDescription,
+    personaProfile,
+    panelMemberships,
+  );
   return {
     id: ulid(),
     slug: expert.slug,
