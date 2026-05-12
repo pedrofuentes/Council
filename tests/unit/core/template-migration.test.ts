@@ -93,6 +93,96 @@ describe("template-migration", () => {
       });
       expect(await isMigrationNeeded(dataHome)).toBe(false);
     });
+
+    it("returns true when YAML files exist on disk but expert_library DB table is empty (DB reset)", async () => {
+      // First migration populates both filesystem and DB.
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
+      expect(await isMigrationNeeded(dataHome, db)).toBe(false);
+
+      // Simulate a DB wipe while files remain on disk.
+      await db.deleteFrom("panel_members").execute();
+      await db.deleteFrom("panel_library").execute();
+      await db.deleteFrom("expert_library").execute();
+
+      // Filesystem-only check still reports "migrated" (files present)…
+      expect(await isMigrationNeeded(dataHome)).toBe(false);
+      // …but the DB-aware check correctly demands a re-register pass.
+      expect(await isMigrationNeeded(dataHome, db)).toBe(true);
+    });
+  });
+
+  describe("DB-reset recovery (re-register from preserved YAML)", () => {
+    it("re-registers expert_library rows from on-disk YAML and preserves user edits", async () => {
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
+
+      // User edits the on-disk expert YAML — bumping displayName.
+      const expertsDir = path.join(dataHome, "experts");
+      const yamlFiles = (await fs.readdir(expertsDir)).filter((f) =>
+        f.endsWith(".yaml"),
+      );
+      const editedSlug = yamlFiles[0]!.replace(/\.yaml$/, "");
+      const editedPath = path.join(expertsDir, yamlFiles[0]!);
+      const raw = await fs.readFile(editedPath, "utf-8");
+      const parsed = yaml.parse(raw) as Record<string, unknown>;
+      parsed["displayName"] = "User-Edited Name";
+      await fs.writeFile(editedPath, yaml.stringify(parsed), "utf-8");
+
+      // Wipe the DB to simulate a reset.
+      await db.deleteFrom("panel_members").execute();
+      await db.deleteFrom("panel_library").execute();
+      await db.deleteFrom("expert_library").execute();
+
+      // Re-run migration; it must re-register from disk content.
+      const lib2 = new FileExpertLibrary(dataHome, db);
+      await migrateBuiltInTemplates(dataHome, lib2, db, { quiet: true });
+
+      const row = await db
+        .selectFrom("expert_library")
+        .selectAll()
+        .where("slug", "=", editedSlug)
+        .executeTakeFirstOrThrow();
+      // The DB metadata must reflect the on-disk file (not the bundled template).
+      expect(row.display_name).toBe("User-Edited Name");
+      // The on-disk YAML must NOT have been overwritten.
+      const afterRaw = await fs.readFile(editedPath, "utf-8");
+      const after = yaml.parse(afterRaw) as Record<string, unknown>;
+      expect(after["displayName"]).toBe("User-Edited Name");
+    });
+
+    it("re-registers panel_library rows from on-disk panel YAML when files exist but DB is wiped", async () => {
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
+
+      const panelsDir = path.join(dataHome, "panels");
+      const sample = (await fs.readdir(panelsDir)).filter((f) =>
+        f.endsWith(".yaml"),
+      )[0]!;
+      const sampleName = sample.replace(/\.yaml$/, "");
+      const samplePath = path.join(panelsDir, sample);
+
+      // User edits the panel description.
+      const raw = await fs.readFile(samplePath, "utf-8");
+      const parsed = yaml.parse(raw) as Record<string, unknown>;
+      parsed["description"] = "Customised by the user";
+      await fs.writeFile(samplePath, yaml.stringify(parsed), "utf-8");
+
+      await db.deleteFrom("panel_members").execute();
+      await db.deleteFrom("panel_library").execute();
+      await db.deleteFrom("expert_library").execute();
+
+      const lib2 = new FileExpertLibrary(dataHome, db);
+      await migrateBuiltInTemplates(dataHome, lib2, db, { quiet: true });
+
+      const row = await db
+        .selectFrom("panel_library")
+        .selectAll()
+        .where("name", "=", sampleName)
+        .executeTakeFirstOrThrow();
+      expect(row.description).toBe("Customised by the user");
+      // The on-disk YAML is preserved.
+      const afterRaw = await fs.readFile(samplePath, "utf-8");
+      const after = yaml.parse(afterRaw) as Record<string, unknown>;
+      expect(after["description"]).toBe("Customised by the user");
+    });
   });
 
   describe("migrateBuiltInTemplates()", () => {
