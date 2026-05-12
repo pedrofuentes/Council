@@ -1,0 +1,169 @@
+/**
+ * Tests for createDocumentIndexer — Roadmap 6.3 (Content Indexing / RAG).
+ *
+ * RED at this commit: migration 007, src/core/documents/indexer.ts, and the
+ * document_index FTS5 virtual table do not exist yet.
+ */
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { sql } from "kysely";
+
+import { createDatabase, type CouncilDatabase } from "../../../../src/memory/db.js";
+import { createDocumentIndexer } from "../../../../src/core/documents/indexer.js";
+
+async function countRows(db: CouncilDatabase): Promise<number> {
+  const result = await sql<{ n: number }>`SELECT count(*) AS n FROM document_index`.execute(db);
+  return Number(result.rows[0]?.n ?? 0);
+}
+
+async function rowsForPath(
+  db: CouncilDatabase,
+  filePath: string,
+): Promise<readonly { source_type: string; source_slug: string; content: string }[]> {
+  const result = await sql<{
+    source_type: string;
+    source_slug: string;
+    content: string;
+  }>`SELECT source_type, source_slug, content FROM document_index WHERE file_path = ${filePath}`.execute(
+    db,
+  );
+  return result.rows;
+}
+
+describe("createDocumentIndexer", () => {
+  let db: CouncilDatabase;
+
+  beforeEach(async () => {
+    db = await createDatabase(":memory:");
+  });
+
+  afterEach(async () => {
+    await db.destroy();
+  });
+
+  it("indexes document content into the FTS5 table", async () => {
+    const indexer = createDocumentIndexer(db);
+    await indexer.index({
+      content: "The product roadmap focuses on document intelligence.",
+      sourceType: "expert",
+      sourceSlug: "ceo",
+      filePath: "/docs/experts/ceo/bio.md",
+    });
+
+    const rows = await rowsForPath(db, "/docs/experts/ceo/bio.md");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.source_type).toBe("expert");
+    expect(rows[0]?.source_slug).toBe("ceo");
+    expect(rows[0]?.content).toContain("document intelligence");
+  });
+
+  it("re-indexing the same path replaces existing content", async () => {
+    const indexer = createDocumentIndexer(db);
+    await indexer.index({
+      content: "first version of the document",
+      sourceType: "expert",
+      sourceSlug: "ceo",
+      filePath: "/docs/experts/ceo/bio.md",
+    });
+    await indexer.index({
+      content: "second version of the document",
+      sourceType: "expert",
+      sourceSlug: "ceo",
+      filePath: "/docs/experts/ceo/bio.md",
+    });
+
+    const rows = await rowsForPath(db, "/docs/experts/ceo/bio.md");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.content).toContain("second version");
+    expect(rows[0]?.content).not.toContain("first version");
+  });
+
+  it("remove() deletes the entry for a given file path", async () => {
+    const indexer = createDocumentIndexer(db);
+    await indexer.index({
+      content: "alpha",
+      sourceType: "expert",
+      sourceSlug: "ceo",
+      filePath: "/docs/a.md",
+    });
+    await indexer.index({
+      content: "beta",
+      sourceType: "expert",
+      sourceSlug: "ceo",
+      filePath: "/docs/b.md",
+    });
+
+    await indexer.remove("/docs/a.md");
+
+    expect(await rowsForPath(db, "/docs/a.md")).toHaveLength(0);
+    expect(await rowsForPath(db, "/docs/b.md")).toHaveLength(1);
+  });
+
+  it("remove() on a non-existent path is a no-op", async () => {
+    const indexer = createDocumentIndexer(db);
+    await indexer.index({
+      content: "alpha",
+      sourceType: "expert",
+      sourceSlug: "ceo",
+      filePath: "/docs/a.md",
+    });
+
+    await expect(indexer.remove("/docs/missing.md")).resolves.toBeUndefined();
+    expect(await countRows(db)).toBe(1);
+  });
+
+  it("removeAll() clears every entry for a given source", async () => {
+    const indexer = createDocumentIndexer(db);
+    await indexer.index({
+      content: "a1",
+      sourceType: "expert",
+      sourceSlug: "ceo",
+      filePath: "/docs/ceo/a.md",
+    });
+    await indexer.index({
+      content: "a2",
+      sourceType: "expert",
+      sourceSlug: "ceo",
+      filePath: "/docs/ceo/b.md",
+    });
+    await indexer.index({
+      content: "c1",
+      sourceType: "expert",
+      sourceSlug: "cto",
+      filePath: "/docs/cto/a.md",
+    });
+    await indexer.index({
+      content: "p1",
+      sourceType: "panel",
+      sourceSlug: "exec-team",
+      filePath: "/docs/panels/exec/a.md",
+    });
+
+    await indexer.removeAll("expert", "ceo");
+
+    expect(await countRows(db)).toBe(2);
+    expect(await rowsForPath(db, "/docs/ceo/a.md")).toHaveLength(0);
+    expect(await rowsForPath(db, "/docs/cto/a.md")).toHaveLength(1);
+    expect(await rowsForPath(db, "/docs/panels/exec/a.md")).toHaveLength(1);
+  });
+
+  it("removeAll() only removes the matching source_type", async () => {
+    const indexer = createDocumentIndexer(db);
+    await indexer.index({
+      content: "expert content",
+      sourceType: "expert",
+      sourceSlug: "shared",
+      filePath: "/docs/expert.md",
+    });
+    await indexer.index({
+      content: "panel content",
+      sourceType: "panel",
+      sourceSlug: "shared",
+      filePath: "/docs/panel.md",
+    });
+
+    await indexer.removeAll("panel", "shared");
+
+    expect(await rowsForPath(db, "/docs/expert.md")).toHaveLength(1);
+    expect(await rowsForPath(db, "/docs/panel.md")).toHaveLength(0);
+  });
+});

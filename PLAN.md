@@ -1,3 +1,22 @@
+# Plan — Roadmap 6.3 Content Indexing (RAG) — superseded below
+
+# Plan — Content Indexing (RAG, Roadmap 6.3)
+
+Autopilot mode.
+
+## Increments (single PR)
+1. **RED** `test(documents): add failing tests for FTS5 indexer and retriever`
+   - `tests/unit/core/documents/indexer.test.ts`
+   - `tests/unit/core/documents/retriever.test.ts`
+2. **GREEN** `feat(documents): add FTS5 document indexing and retrieval (Roadmap 6.3)`
+   - `src/memory/migrations/007_document_index.sql`
+   - `src/memory/db.ts` — register migration 007
+   - `src/core/documents/indexer.ts`
+   - `src/core/documents/retriever.ts`
+3. Verify: `pnpm test && pnpm lint && pnpm typecheck && pnpm build`
+4. Invoke Sentinel.
+
+# ── Old plan below (panel composition, superseded) ──
 # Plan — Roadmap 4.2 Panel Composition Model
 
 Goal: Allow panels to reference experts by slug (from the expert library) or define them inline.

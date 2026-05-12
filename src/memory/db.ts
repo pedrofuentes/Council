@@ -199,6 +199,11 @@ function loadMigrations(): readonly Migration[] {
       name: "006_documents",
       sql: readFileSync(path.join(migrationsDir, "006_documents.sql"), "utf-8"),
     },
+    {
+      version: 7,
+      name: "007_document_index",
+      sql: readFileSync(path.join(migrationsDir, "007_document_index.sql"), "utf-8"),
+    },
   ];
 }
 
