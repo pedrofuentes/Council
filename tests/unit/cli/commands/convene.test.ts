@@ -537,3 +537,169 @@ describe("buildConveneCommand", () => {
 
 // Type guard so typescript-eslint is happy with the intentionally-unused import.
 void (null as unknown as ExpertSpec);
+
+/**
+ * Tests for user-panel slug resolution (Roadmap 4.2 / Sentinel #291 cycle 2).
+ *
+ * A user panel YAML in `<dataHome>/panels/<name>.yaml` may reference experts
+ * by slug (looked up in the FileExpertLibrary) or define them inline.
+ * `convene --template <name>` must:
+ *   - prefer user panels over built-in templates
+ *   - resolve slug references against the library before assembling the panel
+ *   - emit a clear error when a referenced slug is not in the library
+ */
+describe("buildConveneCommand — user panels with slug references", () => {
+  let testHome: string;
+  let testDataHome: string;
+  let originalHome: string | undefined;
+  let originalDataHome: string | undefined;
+
+  beforeEach(async () => {
+    testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-convene-slug-test-"));
+    testDataHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-convene-data-"));
+    originalHome = process.env["COUNCIL_HOME"];
+    originalDataHome = process.env["COUNCIL_DATA_HOME"];
+    process.env["COUNCIL_HOME"] = testHome;
+    process.env["COUNCIL_DATA_HOME"] = testDataHome;
+  });
+
+  afterEach(async () => {
+    if (originalHome === undefined) delete process.env["COUNCIL_HOME"];
+    else process.env["COUNCIL_HOME"] = originalHome;
+    if (originalDataHome === undefined) delete process.env["COUNCIL_DATA_HOME"];
+    else process.env["COUNCIL_DATA_HOME"] = originalDataHome;
+    for (const dir of [testHome, testDataHome]) {
+      try {
+        await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      } catch {
+        /* best effort */
+      }
+    }
+  });
+
+  function makeMockEngineFactory(): () => CouncilEngine {
+    return () => new MockEngine({ responses: {} });
+  }
+
+  async function seedLibraryExpert(slug: string, displayName: string): Promise<void> {
+    const { FileExpertLibrary } = await import("../../../../src/core/expert-library.js");
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const library = new FileExpertLibrary(testDataHome, db);
+      await library.create({
+        slug,
+        displayName,
+        role: `${displayName} role`,
+        model: "gpt-4o",
+        expertise: {
+          weightedEvidence: [`${displayName} domain evidence`],
+          referenceCases: [],
+          notExpertIn: [],
+        },
+        epistemicStance: `${displayName} stance grounded in domain reasoning.`,
+        kind: "generic",
+      });
+    } finally {
+      await db.destroy();
+    }
+  }
+
+  async function writeUserPanel(name: string, body: string): Promise<void> {
+    const panelsDir = path.join(testDataHome, "panels");
+    await fs.mkdir(panelsDir, { recursive: true });
+    await fs.writeFile(path.join(panelsDir, `${name}.yaml`), body, "utf-8");
+  }
+
+  it("resolves slug references in a user panel against the expert library", async () => {
+    await seedLibraryExpert("library-alpha", "LibraryAlpha");
+    await seedLibraryExpert("library-beta", "LibraryBeta");
+    await writeUserPanel(
+      "my-team",
+      [
+        "name: my-team",
+        "description: User panel referencing library experts by slug",
+        "experts:",
+        "  - library-alpha",
+        "  - library-beta",
+        "",
+      ].join("\n"),
+    );
+
+    let captured = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (s) => {
+        captured += s;
+      },
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "Slug-resolution topic",
+      "--template",
+      "my-team",
+      "--max-rounds",
+      "1",
+      "--format",
+      "json",
+      "--engine",
+      "mock",
+    ]);
+
+    // The debate must have actually run — the slug-resolution code path
+    // assembles a real panel that the engine drives to completion.
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const panels = await new PanelRepository(db).findAll();
+      expect(panels).toHaveLength(1);
+      const panelId = panels[0]?.id ?? "";
+      const experts = await new ExpertRepository(db).findByPanelId(panelId);
+      // Two slug refs in the user panel → two resolved experts on the debate.
+      expect(experts.map((e) => e.slug).sort()).toEqual(["library-alpha", "library-beta"]);
+    } finally {
+      await db.destroy();
+    }
+
+    // panel.assembled must be the first emitted event — confirms the
+    // command path reached the engine, not just YAML parsing.
+    const firstLine = captured
+      .split("\n")
+      .find((l) => l.trim().startsWith("{"));
+    expect(firstLine).toBeDefined();
+    const firstEvent = JSON.parse(firstLine ?? "{}") as { kind: string };
+    expect(firstEvent.kind).toBe("panel.assembled");
+  });
+
+  it("emits a clear error when a slug reference is not in the library", async () => {
+    await seedLibraryExpert("library-known", "Known");
+    await writeUserPanel(
+      "broken-team",
+      [
+        "name: broken-team",
+        "experts:",
+        "  - library-known",
+        "  - library-missing",
+        "",
+      ].join("\n"),
+    );
+
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+    });
+    cmd.exitOverride();
+
+    await expect(
+      cmd.parseAsync([
+        "node",
+        "council-convene",
+        "topic",
+        "--template",
+        "broken-team",
+        "--engine",
+        "mock",
+      ]),
+    ).rejects.toThrow(/not in the library.*library-missing/);
+  });
+});

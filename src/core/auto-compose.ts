@@ -23,7 +23,7 @@ import { ulid } from "ulid";
 import type { CouncilEngine, ExpertSpec } from "../engine/index.js";
 import { stripControlChars } from "../cli/strip-control-chars.js";
 
-import type { PanelDefinition } from "./template-loader.js";
+import type { PanelDefinition, ResolvedPanelDefinition } from "./template-loader.js";
 import { PanelDefinitionSchema } from "./template-loader.js";
 
 const DEFAULT_MIN_EXPERTS = 3;
@@ -47,7 +47,7 @@ export async function autoComposePanel(
   topic: string,
   engine: CouncilEngine,
   options?: AutoComposeOptions,
-): Promise<PanelDefinition> {
+): Promise<ResolvedPanelDefinition> {
   const minExperts = options?.minExperts ?? DEFAULT_MIN_EXPERTS;
   const maxExperts = options?.maxExperts ?? DEFAULT_MAX_EXPERTS;
   const model = options?.defaultModel ?? DEFAULT_COMPOSER_MODEL;
@@ -123,12 +123,32 @@ export async function autoComposePanel(
  * Safe fields kept: slug, displayName, role, expertise, epistemicStance,
  *                   personality. Plus panel-level name + description.
  */
-function sanitizeComposedPanel(panel: PanelDefinition, defaultModel: string): PanelDefinition {
+function sanitizeComposedPanel(
+  panel: PanelDefinition,
+  defaultModel: string,
+): ResolvedPanelDefinition {
+  // The composer is instructed to return inline definitions only. A slug
+  // reference would indicate either a misbehaving model or an attempt to
+  // bypass policy by pointing at an arbitrary library expert. Reject loudly
+  // rather than silently drop, so the user sees the broken response.
+  const slugRefs = panel.experts.filter((e): e is string => typeof e === "string");
+  if (slugRefs.length > 0) {
+    const safeSlugs = slugRefs.map((s) => stripControlChars(s)).join(", ");
+    throw new Error(
+      `Auto-compose failed: composer returned slug references (${safeSlugs}) ` +
+        `but inline expert definitions are required. The composer must produce a ` +
+        `complete panel — slug references to library experts are not allowed in ` +
+        `auto-composed panels.`,
+    );
+  }
+  const inlineEntries = panel.experts.filter(
+    (e): e is Exclude<typeof e, string> => typeof e !== "string",
+  );
   return {
     name: panel.name,
-    description: panel.description,
+    ...(panel.description !== undefined ? { description: panel.description } : {}),
     ...(panel.defaults ? { defaults: panel.defaults } : {}),
-    experts: panel.experts.map((e) => ({
+    experts: inlineEntries.map((e) => ({
       slug: e.slug,
       displayName: e.displayName,
       role: e.role,

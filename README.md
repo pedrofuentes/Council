@@ -150,31 +150,38 @@ council convene --template architecture-review "Should we adopt GraphQL?"
 
 ## Create Custom Panels
 
+User panels live in `<dataHome>/panels/<name>.yaml` (default `~/Council/panels/`)
+and take precedence over Council's built-in templates of the same name.
+Each `experts` entry is **either** an inline definition **or** a slug
+string referencing an expert in your library (see `council experts ...`).
+
 ```yaml
-# panels/my-team.yaml
+# ~/Council/panels/my-team.yaml
 name: product-strategy
 description: "Evaluate product decisions"
 experts:
-  - slug: pm
-    displayName: "Product Manager"
-    role: "User-value-focused PM who references metrics"
-    expertise:
-      weightedEvidence:
-        - "User research and behavioral data"
-        - "Market positioning and competitive analysis"
-        - "Revenue impact and unit economics"
-      referenceCases:
-        - "Feature factories: shipping features without measuring impact"
-      notExpertIn: ["infrastructure", "security"]
-    epistemicStance: >
-      You've been burned by engineering-led products that nobody used.
-      You trust user data over architectural elegance.
-
+  # Reference a reusable library expert by slug:
+  - pm-veteran
+  # Or define one inline for this panel only:
   - slug: engineer
     displayName: "Staff Engineer"
     role: "Systems thinker focused on long-term maintainability"
-    # ...
+    expertise:
+      weightedEvidence:
+        - "Distributed systems design"
+        - "Production incident postmortems"
+      referenceCases:
+        - "Microservices sprawl: more services than engineers"
+      notExpertIn: ["product-market fit", "pricing"]
+    epistemicStance: >
+      You've debugged enough on-call pages to distrust shiny abstractions.
+      You optimise for the team that maintains this in two years.
 ```
+
+Run with `council convene "<topic>" --template my-team`. Slug references
+are resolved against your expert library; unresolved slugs produce an
+explicit error so you can either add them with `council experts create`
+or inline the definition.
 
 ## How It Works
 

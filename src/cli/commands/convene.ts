@@ -16,16 +16,19 @@ import { ulid } from "ulid";
 import { Command } from "commander";
 
 import { autoComposePanel } from "../../core/auto-compose.js";
-import { getCouncilHome, DEFAULT_MODEL } from "../../config/index.js";
+import { getCouncilDataHome, getCouncilHome, DEFAULT_MODEL } from "../../config/index.js";
 import type { ContextConfig } from "../../core/debate.js";
 import type { VisibilityConfig } from "../../core/context/visibility.js";
+import { FileExpertLibrary } from "../../core/expert-library.js";
 import type { DebateMode } from "../../core/template-loader.js";
-import { loadTemplate, type PanelDefinition } from "../../core/template-loader.js";
-import { buildSystemPrompt, type ExpertMemory } from "../../core/prompt-builder.js";
 import {
-  resolveStrategy,
-  STRATEGY_NAMES,
-} from "../strategy-resolver.js";
+  assertAllInline,
+  loadPanel,
+  resolveExperts,
+  type ResolvedPanelDefinition,
+} from "../../core/template-loader.js";
+import { buildSystemPrompt, type ExpertMemory } from "../../core/prompt-builder.js";
+import { resolveStrategy, STRATEGY_NAMES } from "../strategy-resolver.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import type { HumanInputProvider } from "../../core/human-input.js";
 import { createDatabase } from "../../memory/db.js";
@@ -173,10 +176,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       "Skip the post-debate LLM extraction pass and rely on the heuristic recall scan (§3.1). " +
         "Useful for offline tests and air-gapped environments.",
     )
-    .option(
-      "--yes",
-      "Skip the auto-compose confirmation prompt (non-interactive runs)",
-    )
+    .option("--yes", "Skip the auto-compose confirmation prompt (non-interactive runs)")
     .action(async (topic: string, raw: ConveneOptions) => {
       if (!ENGINE_KINDS.includes(raw.engine)) {
         throw new Error(
@@ -211,9 +211,40 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         );
       }
 
-      let template: PanelDefinition;
+      let template: ResolvedPanelDefinition;
       if (opts.template) {
-        template = await loadTemplate(opts.template);
+        // User panels in <dataHome>/panels/ override built-in templates.
+        // If the chosen panel references library experts by slug, resolve
+        // them via the expert library before handing off to the engine.
+        const dataHome = getCouncilDataHome();
+        const panel = await loadPanel(opts.template, dataHome);
+        const hasSlugRefs = panel.experts.some((e) => typeof e === "string");
+        if (!hasSlugRefs) {
+          template = assertAllInline(panel, opts.template);
+        } else {
+          const libDbPath = path.join(getCouncilHome(), "council.db");
+          const libDb = await createDatabase(libDbPath);
+          try {
+            const library = new FileExpertLibrary(dataHome, libDb);
+            const { resolved, missing } = await resolveExperts(panel.experts, library);
+            if (missing.length > 0) {
+              const safeName = stripControlChars(opts.template);
+              const safeMissing = missing.map((s) => stripControlChars(s)).join(", ");
+              throw new Error(
+                `Panel "${safeName}" references experts not in the library: ${safeMissing}. ` +
+                  `Add them with 'council experts create' or use inline expert definitions.`,
+              );
+            }
+            template = {
+              name: panel.name,
+              ...(panel.description !== undefined ? { description: panel.description } : {}),
+              ...(panel.defaults !== undefined ? { defaults: panel.defaults } : {}),
+              experts: resolved,
+            };
+          } finally {
+            await libDb.destroy();
+          }
+        }
       } else {
         // §2.5 auto-compose: spin up a temporary engine session, ask the
         // composer to design the panel, then tear it down. The real debate
@@ -306,7 +337,6 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
 
         const contextConfig = buildContextConfig(opts);
 
-
         const panel = await panelRepo.create({
           name: `${template.name}-${new Date().toISOString().slice(0, 19)}`,
           topic,
@@ -347,9 +377,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           panelId: panel.id,
           expertSlugToId,
           moderator:
-            opts.mode === "structured"
-              ? "structured-phases"
-              : (strategy?.name ?? "round-robin"),
+            opts.mode === "structured" ? "structured-phases" : (strategy?.name ?? "round-robin"),
           format: opts.format,
           write,
           writeError,
@@ -403,7 +431,7 @@ function parseFormat(raw: string | undefined): RendererFormat {
 }
 
 function buildExpertSpecs(
-  template: PanelDefinition,
+  template: ResolvedPanelDefinition,
   topic: string,
   memoryBySlug: ReadonlyMap<string, ExpertMemory>,
 ): ExpertSpec[] {
@@ -483,9 +511,7 @@ export function buildContextConfig(opts: SummarizerOptions): ContextConfig | und
       ? {
           summarizeAfterRound: opts.summarizeAfter,
           maxSummaryLength: 500,
-          mode: (opts.heuristicSummaries === true ? "heuristic" : "llm") as
-            | "heuristic"
-            | "llm",
+          mode: (opts.heuristicSummaries === true ? "heuristic" : "llm") as "heuristic" | "llm",
         }
       : undefined;
   if (visibility === undefined && summarizer === undefined) return undefined;

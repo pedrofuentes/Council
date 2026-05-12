@@ -24,7 +24,9 @@ import { fileURLToPath } from "node:url";
 import * as yaml from "yaml";
 import { z } from "zod";
 
-import { ExpertDefinitionSchema } from "./expert.js";
+import type { ExpertLibrary } from "./expert-library.js";
+import { ExpertDefinitionSchema, type ExpertDefinition } from "./expert.js";
+import { stripControlChars } from "../cli/strip-control-chars.js";
 
 const NonEmptyString = z.string().min(1);
 
@@ -37,17 +39,28 @@ export const PanelDefaultsSchema = z.object({
   maxRounds: z.number().int().min(1).max(20).optional(),
 });
 
+/**
+ * An entry in a panel's `experts` list — either a slug string referencing a
+ * library expert, or a full inline `ExpertDefinition` for backwards compat.
+ */
+export const PanelExpertEntrySchema = z.union([NonEmptyString, ExpertDefinitionSchema]);
+export type PanelExpertEntry = z.infer<typeof PanelExpertEntrySchema>;
+
+function entrySlug(entry: PanelExpertEntry): string {
+  return typeof entry === "string" ? entry : entry.slug;
+}
+
 export const PanelDefinitionSchema = z
   .object({
     name: NonEmptyString,
-    description: NonEmptyString,
+    description: NonEmptyString.optional(),
     defaults: PanelDefaultsSchema.optional(),
-    experts: z.array(ExpertDefinitionSchema).min(2).max(8),
+    experts: z.array(PanelExpertEntrySchema).min(1).max(8),
   })
   .superRefine((panel, ctx) => {
-    const slugs = panel.experts.map((e) => e.slug);
     const seen = new Set<string>();
-    for (const slug of slugs) {
+    for (const entry of panel.experts) {
+      const slug = entrySlug(entry);
       if (seen.has(slug)) {
         ctx.addIssue({
           code: "custom",
@@ -61,6 +74,32 @@ export const PanelDefinitionSchema = z
   });
 
 export type PanelDefinition = z.infer<typeof PanelDefinitionSchema>;
+
+/**
+ * A panel whose `experts` array contains only fully-resolved inline
+ * definitions. Produced by calling {@link resolveExperts} on a
+ * {@link PanelDefinition} and folding the result back into the panel shape.
+ */
+export interface ResolvedPanelDefinition {
+  readonly name: string;
+  readonly description?: string;
+  readonly defaults?: PanelDefinition["defaults"];
+  readonly experts: readonly ExpertDefinition[];
+}
+
+/**
+ * Typed error: a panel was looked up by name but no matching file exists.
+ *
+ * Distinguishing this from "panel file exists but failed to parse/validate"
+ * lets callers (e.g. {@link loadPanel}) fall back to a different source on
+ * "not found" while still propagating real validation errors verbatim.
+ */
+export class PanelNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PanelNotFoundError";
+  }
+}
 
 /**
  * Resolve the panels directory by probing candidate paths in order.
@@ -125,16 +164,13 @@ export async function listTemplates(): Promise<readonly string[]> {
  */
 export const TEMPLATE_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
 
-export async function loadTemplate(name: string): Promise<PanelDefinition> {
+export async function loadTemplate(name: string): Promise<ResolvedPanelDefinition> {
   if (!TEMPLATE_NAME_PATTERN.test(name)) {
     throw new Error(
       `Invalid panel template name "${name}". Names must match ${TEMPLATE_NAME_PATTERN.source} (lowercase, digits, hyphens, must start with a letter).`,
     );
   }
-  const candidates = [
-    path.join(PANELS_DIR, `${name}.yaml`),
-    path.join(PANELS_DIR, `${name}.yml`),
-  ];
+  const candidates = [path.join(PANELS_DIR, `${name}.yaml`), path.join(PANELS_DIR, `${name}.yml`)];
   // Defense in depth: even though the regex prevents traversal, assert
   // every candidate is inside PANELS_DIR before reading.
   const panelsRoot = path.resolve(PANELS_DIR) + path.sep;
@@ -144,12 +180,43 @@ export async function loadTemplate(name: string): Promise<PanelDefinition> {
       throw new Error(`Refusing to read panel outside ${PANELS_DIR}: ${resolved}`);
     }
     try {
-      return await loadTemplateFromFile(resolved);
+      const panel = await loadTemplateFromFile(resolved);
+      return assertAllInline(panel, resolved);
     } catch (err: unknown) {
       if (!isENOENT(err)) throw err;
     }
   }
-  throw new Error(`Panel template "${name}" not found in ${PANELS_DIR}`);
+  throw new PanelNotFoundError(`Panel template "${name}" not found in ${PANELS_DIR}`);
+}
+
+/**
+ * Narrow a {@link PanelDefinition} to a {@link ResolvedPanelDefinition} by
+ * asserting every entry is an inline {@link ExpertDefinition}. Throws a
+ * descriptive error when any slug-reference is present — used by
+ * {@link loadTemplate} since built-in templates must remain self-contained.
+ *
+ * Exported so callers that already have a `PanelDefinition` in hand can
+ * narrow it without going through {@link loadTemplate}.
+ */
+export function assertAllInline(panel: PanelDefinition, source: string): ResolvedPanelDefinition {
+  const slugRefs = panel.experts.filter((e): e is string => typeof e === "string");
+  if (slugRefs.length > 0) {
+    const safeSource = stripControlChars(source);
+    const safeSlugs = slugRefs.map((s) => stripControlChars(s)).join(", ");
+    throw new Error(
+      `Panel ${safeSource} contains slug references (${safeSlugs}). ` +
+        `Built-in templates must use inline expert definitions. ` +
+        `Use loadPanel() together with resolveExperts() and an ExpertLibrary ` +
+        `to resolve slug references.`,
+    );
+  }
+  const inlineExperts = panel.experts.filter((e): e is ExpertDefinition => typeof e !== "string");
+  return {
+    name: panel.name,
+    ...(panel.description !== undefined ? { description: panel.description } : {}),
+    ...(panel.defaults !== undefined ? { defaults: panel.defaults } : {}),
+    experts: inlineExperts,
+  };
 }
 
 /**
@@ -182,4 +249,108 @@ function isENOENT(err: unknown): boolean {
     "code" in err &&
     (err as { code: unknown }).code === "ENOENT"
   );
+}
+
+/**
+ * Resolve a panel's expert entries into full {@link ExpertDefinition}s.
+ *
+ * - Slug references are looked up via `library.get(slug)`.
+ * - Inline definitions pass through unchanged.
+ * - Slugs the library can't find are collected in `missing` (no throw),
+ *   so callers can present a single useful error covering every gap.
+ */
+export async function resolveExperts(
+  entries: readonly PanelExpertEntry[],
+  library: ExpertLibrary,
+): Promise<{ resolved: readonly ExpertDefinition[]; missing: readonly string[] }> {
+  const resolved: ExpertDefinition[] = [];
+  const missing: string[] = [];
+  for (const entry of entries) {
+    if (typeof entry === "string") {
+      const expert = await library.get(entry);
+      if (expert) {
+        resolved.push(expert);
+      } else {
+        missing.push(entry);
+      }
+    } else {
+      resolved.push(entry);
+    }
+  }
+  return { resolved, missing };
+}
+
+/**
+ * Load a user-authored panel from `<dataHome>/panels/<name>.{yaml,yml}`.
+ *
+ * `name` is validated against {@link TEMPLATE_NAME_PATTERN} to block
+ * path-traversal attempts before any filesystem access.
+ */
+export async function loadUserPanel(name: string, dataHome: string): Promise<PanelDefinition> {
+  if (!TEMPLATE_NAME_PATTERN.test(name)) {
+    throw new Error(
+      `Invalid panel template name "${name}". Names must match ${TEMPLATE_NAME_PATTERN.source} (lowercase, digits, hyphens, must start with a letter).`,
+    );
+  }
+  const userPanelsDir = path.join(dataHome, "panels");
+  const userRoot = path.resolve(userPanelsDir) + path.sep;
+  const candidates = [
+    path.join(userPanelsDir, `${name}.yaml`),
+    path.join(userPanelsDir, `${name}.yml`),
+  ];
+  for (const file of candidates) {
+    const resolved = path.resolve(file);
+    if (!resolved.startsWith(userRoot)) {
+      throw new Error(`Refusing to read panel outside ${userPanelsDir}: ${resolved}`);
+    }
+    try {
+      return await loadTemplateFromFile(resolved);
+    } catch (err: unknown) {
+      if (!isENOENT(err)) throw err;
+    }
+  }
+  throw new PanelNotFoundError(`User panel "${name}" not found in ${userPanelsDir}`);
+}
+
+/**
+ * List user-authored panels in `<dataHome>/panels/`. Returns names without
+ * extension, sorted. An empty array is returned when the directory does
+ * not exist (a fresh install has no user panels yet).
+ */
+export async function listUserPanels(dataHome: string): Promise<readonly string[]> {
+  const userPanelsDir = path.join(dataHome, "panels");
+  let entries: string[];
+  try {
+    entries = await fs.readdir(userPanelsDir);
+  } catch (err: unknown) {
+    if (isENOENT(err)) return [];
+    throw err;
+  }
+  return entries
+    .filter((name) => name.endsWith(".yaml") || name.endsWith(".yml"))
+    .map((name) => name.replace(/\.ya?ml$/, ""))
+    .sort();
+}
+
+/**
+ * Load a panel by name. User panels in `<dataHome>/panels/` take precedence
+ * over the built-in templates that ship with Council, so users can override
+ * a stock panel without touching the package.
+ */
+export async function loadPanel(name: string, dataHome: string): Promise<PanelDefinition> {
+  try {
+    return await loadUserPanel(name, dataHome);
+  } catch (err: unknown) {
+    // Only fall back to built-ins when the user panel is genuinely absent.
+    // YAML parse errors, schema-validation failures, traversal-rejections,
+    // etc. surface verbatim so the user can fix their file.
+    if (!(err instanceof PanelNotFoundError)) throw err;
+  }
+  const resolved = await loadTemplate(name);
+  return {
+    name: resolved.name,
+    ...(resolved.description !== undefined ? { description: resolved.description } : {}),
+    ...(resolved.defaults !== undefined ? { defaults: resolved.defaults } : {}),
+    experts: [...resolved.experts],
+  };
 }

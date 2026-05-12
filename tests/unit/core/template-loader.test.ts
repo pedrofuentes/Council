@@ -12,15 +12,26 @@
  * RED at this commit: src/core/template-loader.ts and panels/*.yaml
  * do not yet exist.
  */
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
 
+import type { ExpertLibrary } from "../../../src/core/expert-library.js";
+import type { ExpertDefinition } from "../../../src/core/expert.js";
 import {
+  assertAllInline,
   listTemplates,
+  listUserPanels,
+  loadPanel,
   loadTemplate,
   loadTemplateFromFile,
+  loadUserPanel,
   PanelDefinitionSchema,
+  PanelExpertEntrySchema,
+  PanelNotFoundError,
+  resolveExperts,
   type PanelDefinition,
 } from "../../../src/core/template-loader.js";
 
@@ -66,14 +77,23 @@ describe("PanelDefinitionSchema", () => {
     expect(() => PanelDefinitionSchema.parse({ ...minimal, name: "" })).toThrow();
   });
 
-  it("rejects empty description", () => {
+  it("rejects empty description but accepts omitted description", () => {
     expect(() => PanelDefinitionSchema.parse({ ...minimal, description: "" })).toThrow();
+    const { description: _unused, ...withoutDesc } = minimal;
+    const parsed = PanelDefinitionSchema.parse(withoutDesc);
+    expect(parsed.description).toBeUndefined();
   });
 
-  it("requires at least 2 experts", () => {
-    expect(() =>
-      PanelDefinitionSchema.parse({ ...minimal, experts: [minimal.experts[0]] }),
-    ).toThrow();
+  it("requires at least 1 expert", () => {
+    expect(() => PanelDefinitionSchema.parse({ ...minimal, experts: [] })).toThrow();
+  });
+
+  it("accepts a single-expert panel (min 1)", () => {
+    const parsed = PanelDefinitionSchema.parse({
+      ...minimal,
+      experts: [minimal.experts[0]],
+    });
+    expect(parsed.experts).toHaveLength(1);
   });
 
   it("rejects more than 8 experts (panel cap)", () => {
@@ -191,5 +211,331 @@ describe("loadTemplateFromFile()", () => {
     await expect(loadTemplateFromFile("/definitely/does/not/exist.yaml")).rejects.toThrow(
       /not.*exist|ENOENT|cannot find/i,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Panel Composition Model (Roadmap 4.2)
+// ---------------------------------------------------------------------------
+
+function makeInlineExpert(slug: string): ExpertDefinition {
+  return {
+    slug,
+    displayName: `Expert ${slug}`,
+    role: `Role for ${slug}`,
+    expertise: { weightedEvidence: [`evidence-${slug}`], referenceCases: [], notExpertIn: [] },
+    epistemicStance: `Stance for ${slug}`,
+  };
+}
+
+describe("PanelExpertEntrySchema", () => {
+  it("accepts a non-empty slug string", () => {
+    expect(PanelExpertEntrySchema.parse("cto")).toBe("cto");
+  });
+
+  it("rejects an empty string", () => {
+    expect(() => PanelExpertEntrySchema.parse("")).toThrow();
+  });
+
+  it("accepts a full inline ExpertDefinition", () => {
+    const def = makeInlineExpert("skeptic");
+    const parsed = PanelExpertEntrySchema.parse(def);
+    expect(typeof parsed === "object" ? parsed.slug : parsed).toBe("skeptic");
+  });
+});
+
+describe("PanelDefinitionSchema — slug references and mixed entries", () => {
+  const base = {
+    name: "p",
+    description: "desc",
+  } as const;
+
+  it("accepts a panel of only slug references", () => {
+    const parsed = PanelDefinitionSchema.parse({
+      ...base,
+      experts: ["alpha", "bravo"],
+    });
+    expect(parsed.experts).toEqual(["alpha", "bravo"]);
+  });
+
+  it("accepts a panel mixing slug references and inline definitions", () => {
+    const parsed = PanelDefinitionSchema.parse({
+      ...base,
+      experts: ["alpha", makeInlineExpert("bravo")],
+    });
+    expect(parsed.experts).toHaveLength(2);
+    expect(typeof parsed.experts[0]).toBe("string");
+    expect(typeof parsed.experts[1]).toBe("object");
+  });
+
+  it("detects duplicate slugs across string and inline entries", () => {
+    expect(() =>
+      PanelDefinitionSchema.parse({
+        ...base,
+        experts: ["alpha", makeInlineExpert("alpha")],
+      }),
+    ).toThrow(/duplicate|unique/i);
+  });
+
+  it("detects duplicate slugs across two string entries", () => {
+    expect(() =>
+      PanelDefinitionSchema.parse({
+        ...base,
+        experts: ["alpha", "alpha"],
+      }),
+    ).toThrow(/duplicate|unique/i);
+  });
+
+  it("rejects more than 8 experts (mixed)", () => {
+    const tooMany = [
+      "a",
+      "b",
+      "c",
+      "d",
+      "e",
+      "f",
+      "g",
+      "h",
+      makeInlineExpert("i"),
+    ];
+    expect(() => PanelDefinitionSchema.parse({ ...base, experts: tooMany })).toThrow();
+  });
+});
+
+class StubLibrary implements Partial<ExpertLibrary> {
+  constructor(private readonly experts: ReadonlyMap<string, ExpertDefinition>) {}
+  async get(slug: string): Promise<ExpertDefinition | null> {
+    return this.experts.get(slug) ?? null;
+  }
+}
+
+function stubLibrary(...defs: readonly ExpertDefinition[]): ExpertLibrary {
+  const map = new Map<string, ExpertDefinition>();
+  for (const d of defs) map.set(d.slug, d);
+  return new StubLibrary(map) as unknown as ExpertLibrary;
+}
+
+describe("resolveExperts()", () => {
+  it("resolves slug references from the library", async () => {
+    const alpha = makeInlineExpert("alpha");
+    const bravo = makeInlineExpert("bravo");
+    const lib = stubLibrary(alpha, bravo);
+    const { resolved, missing } = await resolveExperts(["alpha", "bravo"], lib);
+    expect(missing).toEqual([]);
+    expect(resolved).toEqual([alpha, bravo]);
+  });
+
+  it("passes inline definitions through unchanged", async () => {
+    const inline = makeInlineExpert("inline");
+    const lib = stubLibrary();
+    const { resolved, missing } = await resolveExperts([inline], lib);
+    expect(missing).toEqual([]);
+    expect(resolved).toEqual([inline]);
+  });
+
+  it("reports missing slugs without aborting", async () => {
+    const alpha = makeInlineExpert("alpha");
+    const lib = stubLibrary(alpha);
+    const { resolved, missing } = await resolveExperts(["alpha", "ghost"], lib);
+    expect(missing).toEqual(["ghost"]);
+    expect(resolved).toEqual([alpha]);
+  });
+
+  it("handles a mix of slugs and inline entries", async () => {
+    const alpha = makeInlineExpert("alpha");
+    const inline = makeInlineExpert("inline");
+    const lib = stubLibrary(alpha);
+    const { resolved, missing } = await resolveExperts(["alpha", inline], lib);
+    expect(missing).toEqual([]);
+    expect(resolved).toEqual([alpha, inline]);
+  });
+
+  it("returns empty arrays when given no entries", async () => {
+    const { resolved, missing } = await resolveExperts([], stubLibrary());
+    expect(resolved).toEqual([]);
+    expect(missing).toEqual([]);
+  });
+});
+
+describe("User panel loading (loadUserPanel / listUserPanels / loadPanel)", () => {
+  let dataHome: string;
+  let panelsDir: string;
+
+  beforeEach(async () => {
+    dataHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-panel-"));
+    panelsDir = path.join(dataHome, "panels");
+    await fs.mkdir(panelsDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fs.rm(dataHome, { recursive: true, force: true });
+  });
+
+  async function writePanel(name: string, content: string): Promise<void> {
+    await fs.writeFile(path.join(panelsDir, `${name}.yaml`), content, "utf-8");
+  }
+
+  it("loadUserPanel() reads <dataHome>/panels/<name>.yaml", async () => {
+    await writePanel(
+      "my-panel",
+      `name: my-panel
+description: a user panel
+experts:
+  - alpha
+  - bravo
+`,
+    );
+    const panel = await loadUserPanel("my-panel", dataHome);
+    expect(panel.name).toBe("my-panel");
+    expect(panel.experts).toEqual(["alpha", "bravo"]);
+  });
+
+  it("loadUserPanel() also accepts .yml extension", async () => {
+    await fs.writeFile(
+      path.join(panelsDir, "alt.yml"),
+      `name: alt
+experts:
+  - solo
+`,
+      "utf-8",
+    );
+    const panel = await loadUserPanel("alt", dataHome);
+    expect(panel.name).toBe("alt");
+  });
+
+  it("loadUserPanel() throws for a missing panel", async () => {
+    await expect(loadUserPanel("ghost", dataHome)).rejects.toThrow(/ghost|not found/i);
+  });
+
+  it("loadUserPanel() rejects path-traversal attempts", async () => {
+    await expect(loadUserPanel("../etc/passwd", dataHome)).rejects.toThrow(
+      /Invalid panel template name/i,
+    );
+    await expect(loadUserPanel("foo/bar", dataHome)).rejects.toThrow(
+      /Invalid panel template name/i,
+    );
+  });
+
+  it("listUserPanels() returns names without extension, sorted", async () => {
+    await writePanel("zeta", "name: zeta\nexperts: [solo]\n");
+    await writePanel("alpha", "name: alpha\nexperts: [solo]\n");
+    await fs.writeFile(path.join(panelsDir, "ignored.txt"), "not yaml", "utf-8");
+    const names = await listUserPanels(dataHome);
+    expect(names).toEqual(["alpha", "zeta"]);
+  });
+
+  it("listUserPanels() returns an empty array when the directory is missing", async () => {
+    const empty = await fs.mkdtemp(path.join(os.tmpdir(), "council-empty-"));
+    try {
+      const names = await listUserPanels(empty);
+      expect(names).toEqual([]);
+    } finally {
+      await fs.rm(empty, { recursive: true, force: true });
+    }
+  });
+
+  it("loadPanel() prefers a user panel over a built-in template with the same name", async () => {
+    await writePanel(
+      "architecture-review",
+      `name: architecture-review
+description: overridden by user
+experts:
+  - my-slug
+`,
+    );
+    const panel = await loadPanel("architecture-review", dataHome);
+    expect(panel.description).toBe("overridden by user");
+    expect(panel.experts).toEqual(["my-slug"]);
+  });
+
+  it("loadPanel() falls back to a built-in template when no user panel exists", async () => {
+    const panel = await loadPanel("architecture-review", dataHome);
+    expect(panel.name).toBe("architecture-review");
+    // built-in templates use inline experts
+    const firstExpert = panel.experts[0];
+    expect(typeof firstExpert).toBe("object");
+  });
+
+  it("loadPanel() throws when neither user nor built-in panel exists", async () => {
+    await expect(loadPanel("does-not-exist", dataHome)).rejects.toThrow(/does-not-exist/);
+  });
+
+  it("loadPanel() surfaces YAML parse errors verbatim (does not fall back)", async () => {
+    // A user panel that fails schema validation should NOT silently fall back
+    // to a built-in. The user clearly intended their panel and deserves to see
+    // the real validation error.
+    await writePanel(
+      "architecture-review",
+      `name: architecture-review
+description: bad — wrong type
+experts: 12345
+`,
+    );
+    await expect(loadPanel("architecture-review", dataHome)).rejects.toThrow(
+      /Invalid panel template/i,
+    );
+  });
+});
+
+describe("PanelNotFoundError", () => {
+  it("is the error type thrown by loadUserPanel when a panel is absent", async () => {
+    const dataHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-pnf-"));
+    try {
+      await fs.mkdir(path.join(dataHome, "panels"), { recursive: true });
+      await expect(loadUserPanel("ghost", dataHome)).rejects.toBeInstanceOf(PanelNotFoundError);
+    } finally {
+      await fs.rm(dataHome, { recursive: true, force: true });
+    }
+  });
+
+  it("is the error type thrown by loadTemplate when a panel is absent", async () => {
+    await expect(loadTemplate("definitely-not-a-real-template")).rejects.toBeInstanceOf(
+      PanelNotFoundError,
+    );
+  });
+});
+
+describe("assertAllInline()", () => {
+  it("returns a resolved panel when every entry is inline", () => {
+    const panel: PanelDefinition = PanelDefinitionSchema.parse({
+      name: "p",
+      experts: [makeInlineExpert("a"), makeInlineExpert("b")],
+    });
+    const resolved = assertAllInline(panel, "test");
+    expect(resolved.experts).toHaveLength(2);
+    expect(resolved.experts[0]?.slug).toBe("a");
+  });
+
+  it("rejects a panel that contains any slug-reference entries", () => {
+    const panel: PanelDefinition = PanelDefinitionSchema.parse({
+      name: "p",
+      experts: ["cto", makeInlineExpert("skeptic")],
+    });
+    expect(() => assertAllInline(panel, "test")).toThrow(/slug references|cto/i);
+  });
+});
+
+describe("loadTemplate() rejects built-in panels with slug references", () => {
+  // assertAllInline is the guard built into loadTemplate. Test via the same
+  // codepath by writing a temp YAML and loading it through loadTemplateFromFile +
+  // assertAllInline, mirroring exactly what loadTemplate does for built-ins.
+  it("rejects panels parsed from disk that contain slug-reference entries", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "council-builtin-"));
+    try {
+      const file = path.join(dir, "bad-builtin.yaml");
+      await fs.writeFile(
+        file,
+        `name: bad-builtin
+description: built-ins must be inline
+experts:
+  - some-slug
+`,
+        "utf-8",
+      );
+      const panel = await loadTemplateFromFile(file);
+      expect(() => assertAllInline(panel, file)).toThrow(/slug references|some-slug/i);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 });
