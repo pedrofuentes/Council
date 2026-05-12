@@ -73,6 +73,26 @@ function sanitizeFenceField(s: string): string {
   return s.replace(/</g, "&lt;");
 }
 
+/**
+ * Sanitize a persisted-profile field before interpolating it into the
+ * pre-fence portion of the analyzer prompt. The existing-profile block
+ * is rendered as labeled single-line entries OUTSIDE the `<documents>`
+ * untrusted-data fence, so any embedded newline lets an attacker-
+ * controlled field emit fresh trusted-context lines on a subsequent
+ * extraction run.
+ *
+ * The transformation is conservative:
+ *   - strip C0 control bytes (except tab; line breaks are handled next),
+ *   - collapse `\r?\n` and tabs to a single space,
+ *   - escape `<` so the field cannot prematurely close the upcoming fence.
+ */
+function sanitizeExistingProfileField(raw: string): string {
+  // eslint-disable-next-line no-control-regex
+  const noControls = raw.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
+  const oneLine = noControls.replace(/[\r\n\t]+/g, " ");
+  return sanitizeFenceField(oneLine);
+}
+
 function formatPromptBody(
   documents: readonly DocumentContent[],
   existingProfile: PersonaProfile | null,
@@ -87,13 +107,19 @@ function formatPromptBody(
 
   if (existingProfile) {
     lines.push("Existing profile to update:");
-    lines.push(`- communicationStyle: ${sanitizeFenceField(existingProfile.communicationStyle)}`);
     lines.push(
-      `- decisionPatterns: ${sanitizeFenceField(existingProfile.decisionPatterns.join("; "))}`,
+      `- communicationStyle: ${sanitizeExistingProfileField(existingProfile.communicationStyle)}`,
     );
-    lines.push(`- biases: ${sanitizeFenceField(existingProfile.biases.join("; "))}`);
-    lines.push(`- vocabulary: ${sanitizeFenceField(existingProfile.vocabulary.join(", "))}`);
-    lines.push(`- epistemicStance: ${sanitizeFenceField(existingProfile.epistemicStance)}`);
+    lines.push(
+      `- decisionPatterns: ${sanitizeExistingProfileField(existingProfile.decisionPatterns.join("; "))}`,
+    );
+    lines.push(`- biases: ${sanitizeExistingProfileField(existingProfile.biases.join("; "))}`);
+    lines.push(
+      `- vocabulary: ${sanitizeExistingProfileField(existingProfile.vocabulary.join(", "))}`,
+    );
+    lines.push(
+      `- epistemicStance: ${sanitizeExistingProfileField(existingProfile.epistemicStance)}`,
+    );
     lines.push("");
   }
 
