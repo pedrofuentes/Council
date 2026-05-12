@@ -130,4 +130,25 @@ describe("scanAndIndexPanelDocuments", () => {
     // linkedDir still contributes 1.
     expect(result.indexed).toBe(1);
   });
+
+  it("reports a folder-level failure when a folder scan throws", async () => {
+    // Re-add a linked folder that does not exist on disk to provoke a
+    // scan-time failure (the previous beforeEach folder still has its
+    // files, so without this we cannot distinguish scan-error from no-op).
+    const docsRepo = new PanelDocumentRepository(db);
+    const ghost = path.join(linkedDir, "ghost-subdir");
+    await docsRepo.addLinkedFolder("arch-review", ghost);
+
+    // Pre-create a regular file at the path so detector treats it as
+    // ENOTDIR (real scan error, not silently-empty ENOENT).
+    await fs.writeFile(ghost, "not a directory", "utf-8");
+
+    const result = await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+    expect(result.foldersFailed).toBeGreaterThanOrEqual(1);
+  });
 });

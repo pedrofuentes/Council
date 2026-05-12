@@ -750,5 +750,73 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
         await fs.rm(linkDir, { recursive: true, force: true });
       }
     });
+
+    it("`panel docs unlink` also removes tracked documents under that folder", async () => {
+      await createPanel();
+      const linkDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-unlink-docs-"));
+      try {
+        await fs.writeFile(path.join(linkDir, "a.md"), "# A\nbody", "utf-8");
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { PanelDocumentRepository } = await import(
+          "../../../../src/memory/repositories/panel-document-repo.js"
+        );
+
+        // Link and then manually track a document for that folder (the
+        // chat-startup scanner is what writes panel_documents rows in
+        // real use; here we simulate it).
+        const cmdLink = buildPanelCommand(() => {
+          /* noop */
+        });
+        await cmdLink.parseAsync([
+          "node",
+          "council-panel",
+          "docs",
+          "link",
+          "arch-review",
+          "--path",
+          linkDir,
+        ]);
+
+        const db1 = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          const repo = new PanelDocumentRepository(db1);
+          await repo.trackDocument({
+            panelName: "arch-review",
+            source: "linked",
+            filePath: path.join(linkDir, "a.md"),
+            filename: "a.md",
+            checksum: "h",
+            sizeBytes: 10,
+            wordCount: 2,
+          });
+        } finally {
+          await db1.destroy();
+        }
+
+        const cmdUnlink = buildPanelCommand(() => {
+          /* noop */
+        });
+        await cmdUnlink.parseAsync([
+          "node",
+          "council-panel",
+          "docs",
+          "unlink",
+          "arch-review",
+          "--path",
+          linkDir,
+        ]);
+
+        const db2 = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          const repo = new PanelDocumentRepository(db2);
+          const docs = await repo.listDocuments("arch-review");
+          expect(docs.find((d) => d.filePath.startsWith(linkDir))).toBeUndefined();
+        } finally {
+          await db2.destroy();
+        }
+      } finally {
+        await fs.rm(linkDir, { recursive: true, force: true });
+      }
+    });
   });
 });

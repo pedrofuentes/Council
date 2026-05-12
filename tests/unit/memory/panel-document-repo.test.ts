@@ -153,6 +153,27 @@ describe("PanelDocumentRepository", () => {
       expect(other[0]?.filePath).toBe("/p/b.md");
     });
 
+    it("removeDocumentsUnderFolder() deletes every document whose path is inside the folder", async () => {
+      await repo.trackDocument(sampleDoc({ filePath: "/tmp/linked/a.md" }));
+      await repo.trackDocument(sampleDoc({ filePath: "/tmp/linked/sub/b.md" }));
+      await repo.trackDocument(sampleDoc({ filePath: "/tmp/other/c.md" }));
+
+      await repo.removeDocumentsUnderFolder("arch-review", "/tmp/linked");
+
+      const remaining = await repo.listDocuments("arch-review");
+      expect(remaining.map((d) => d.filePath)).toEqual(["/tmp/other/c.md"]);
+    });
+
+    it("removeDocumentsUnderFolder() does not match sibling paths sharing a prefix", async () => {
+      await repo.trackDocument(sampleDoc({ filePath: "/tmp/linked/a.md" }));
+      await repo.trackDocument(sampleDoc({ filePath: "/tmp/linked-other/b.md" }));
+
+      await repo.removeDocumentsUnderFolder("arch-review", "/tmp/linked");
+
+      const remaining = await repo.listDocuments("arch-review");
+      expect(remaining.map((d) => d.filePath)).toEqual(["/tmp/linked-other/b.md"]);
+    });
+
     it("deleting the parent panel cascades to panel_documents", async () => {
       await repo.trackDocument(sampleDoc());
       const panels = new PanelLibraryRepository(db);
