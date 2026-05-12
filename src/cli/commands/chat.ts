@@ -240,38 +240,27 @@ async function runChat(
 
     const repo = new ChatRepository(db);
 
-    let session: ChatSession;
+    // Resolve which session we'll use, but defer mutations (archive/create
+    // for --new) until AFTER engine startup succeeds so a failed
+    // `engine.start()` / `addExpert()` doesn't leave the user with a
+    // freshly-archived prior session and an empty replacement.
+    const existingActive = await repo.findActiveSession("expert", target);
+    let priorToArchive: ChatSession | undefined;
+    let resumingSession: ChatSession | undefined;
+    let willCreateFresh = false;
     if (raw.new) {
-      const existing = await repo.findActiveSession("expert", target);
-      if (existing) {
-        await repo.archiveSession(existing.id);
-      }
-      session = await repo.createSession({ targetType: "expert", targetSlug: target });
+      priorToArchive = existingActive;
+      willCreateFresh = true;
+    } else if (existingActive) {
+      resumingSession = existingActive;
     } else {
-      const existing = await repo.findActiveSession("expert", target);
-      session = existing ?? (await repo.createSession({ targetType: "expert", targetSlug: target }));
+      willCreateFresh = true;
     }
 
     const renderer = createChatRenderer({
       sink: makeSink(write, writeError),
       experts: new Map([[expert.slug, expert.displayName]]),
     });
-
-    if (raw.new) {
-      renderer.showSystem("Previous conversation archived. Starting fresh...", "info");
-    }
-    if (!raw.new) {
-      const existingCount = await repo.getTurnCount(session.id);
-      if (existingCount > 0) {
-        renderer.showSessionStatus(
-          `Resuming conversation with ${expert.displayName} (${existingCount} messages, last active ${formatDate(session.updatedAt)})...`,
-        );
-      } else {
-        renderer.showSessionStatus(`Starting new conversation with ${expert.displayName}...`);
-      }
-    } else {
-      renderer.showSessionStatus(`Starting new conversation with ${expert.displayName}...`);
-    }
 
     const engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(engineKind);
     const inputProvider = (deps.inputProvider ?? defaultInputProvider)();
@@ -280,6 +269,26 @@ async function runChat(
       await engine.start();
       const expertSpec = buildExpertSpec(expert, config);
       await engine.addExpert(expertSpec);
+
+      // Engine ready — NOW it's safe to mutate persistent chat state.
+      let session: ChatSession;
+      if (raw.new && priorToArchive) {
+        await repo.archiveSession(priorToArchive.id);
+        renderer.showSystem("Previous conversation archived. Starting fresh...", "info");
+      }
+      if (willCreateFresh) {
+        session = await repo.createSession({ targetType: "expert", targetSlug: target });
+        renderer.showSessionStatus(`Starting new conversation with ${expert.displayName}...`);
+      } else if (resumingSession) {
+        session = resumingSession;
+        const existingCount = await repo.getTurnCount(session.id);
+        renderer.showSessionStatus(
+          `Resuming conversation with ${expert.displayName} (${existingCount} messages, last active ${formatDate(session.updatedAt)})...`,
+        );
+      } else {
+        // Defensive — the dispatch above always sets one of the two flags.
+        throw new Error("internal: chat session resolution failed");
+      }
 
       await runInteractiveLoop({
         engine,
@@ -345,8 +354,13 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
 
     await repo.addTurn({ chatId: session.id, role: "user", content: trimmed });
 
-    const allTurns = await repo.getTurns(session.id);
-    const history = allTurns.slice(0, -1).slice(-recentLimit);
+    // Fetch only the recent tail (avoid re-reading the full transcript on
+    // every turn). The just-inserted user turn IS included; we drop it
+    // from `history` since it gets re-rendered in the prompt.
+    const latestSeq = await repo.getLatestSeq(session.id);
+    const after = Math.max(0, latestSeq - recentLimit - 1);
+    const recent = await repo.getTurns(session.id, { afterSeq: after, limit: recentLimit + 1 });
+    const history = recent.slice(0, -1);
     const prompt = buildChatTurnPrompt({
       history,
       userMessage: trimmed,
