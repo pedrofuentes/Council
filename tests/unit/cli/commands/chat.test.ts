@@ -1797,4 +1797,33 @@ describe("persona expert — on-demand document processing", () => {
     expect(out).not.toMatch(/processing persona documents/i);
     expect(out).not.toMatch(/persona profile/i);
   });
+
+  it("does NOT misreport 'no documents' after a successful first run when docs are unchanged", async () => {
+    // Sentinel pr373 follow-up: tracked is a Map; the empty-folder guard
+    // must use .size, not Object.keys(map).length (which is always 0 for
+    // a Map). After a successful first run the unchanged-docs branch
+    // must stay silent on the "No documents found" banner.
+    await seedPersonaWithDocs(env, { "memo.md": "# Memo\n\ncontent" });
+
+    // First run: process the doc.
+    const cmd1 = buildChatCommand({
+      write: () => undefined,
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+    await cmd1.parseAsync(["node", "council-chat", PERSONA_SAMPLE.slug, "--engine", "mock"]);
+
+    // Second run: nothing changed; should not claim there are no docs.
+    let out2 = "";
+    const cmd2 = buildChatCommand({
+      write: (s) => (out2 += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+    await cmd2.parseAsync(["node", "council-chat", PERSONA_SAMPLE.slug, "--engine", "mock"]);
+    expect(out2).not.toMatch(/no documents found/i);
+    expect(out2).not.toMatch(/running .* as a generic expert/i);
+  });
 });
