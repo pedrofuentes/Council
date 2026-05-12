@@ -15,6 +15,63 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildExpertCommand } from "../../../../src/cli/commands/expert.js";
 import type { ExpertDefinition } from "../../../../src/core/expert.js";
+import type {
+  CouncilEngine,
+  EngineEvent,
+  ExpertSpec,
+  SendOptions,
+} from "../../../../src/engine/index.js";
+
+// Stub engine used by `expert train` tests — mirrors the one in
+// tests/unit/core/documents/processor.test.ts. It returns a canned
+// JSON payload that `analyzeDocuments()` can parse into a profile.
+class StubEngine implements CouncilEngine {
+  readonly registered: ExpertSpec[] = [];
+  readonly removed: string[] = [];
+  readonly sends: { expertId: string; prompt: string }[] = [];
+  readonly responses: string[];
+
+  constructor(responses: readonly string[] = []) {
+    this.responses = [...responses];
+  }
+
+  async start(): Promise<void> {
+    /* no-op */
+  }
+  async stop(): Promise<void> {
+    /* no-op */
+  }
+  async addExpert(spec: ExpertSpec): Promise<void> {
+    this.registered.push(spec);
+  }
+  async removeExpert(expertId: string): Promise<void> {
+    this.removed.push(expertId);
+  }
+  async listModels(): Promise<readonly string[]> {
+    return ["stub-model"];
+  }
+  send(opts: SendOptions): AsyncIterable<EngineEvent> {
+    this.sends.push({ expertId: opts.expertId, prompt: opts.prompt });
+    const text = this.responses.shift() ?? "";
+    const expertId = opts.expertId;
+    return (async function* (): AsyncGenerator<EngineEvent, void, void> {
+      yield { kind: "message.delta", expertId, text };
+      yield {
+        kind: "message.complete",
+        expertId,
+        response: { latencyMs: 1, tokensIn: 1, tokensOut: 1 },
+      };
+    })();
+  }
+}
+
+const STUB_PROFILE_JSON = JSON.stringify({
+  communicationStyle: "Terse and direct.",
+  decisionPatterns: ["consult-data", "ship-incrementally"],
+  biases: ["recency"],
+  vocabulary: ["ship", "data"],
+  epistemicStance: "Empirical, updates on evidence.",
+});
 
 interface TestEnv {
   readonly home: string;
@@ -77,7 +134,7 @@ describe("buildExpertCommand", () => {
     const cmd = buildExpertCommand();
     expect(cmd.name()).toBe("expert");
     const subs = cmd.commands.map((c) => c.name()).sort();
-    expect(subs).toEqual(["create", "delete", "edit", "inspect", "list"].sort());
+    expect(subs).toEqual(["create", "delete", "docs", "edit", "inspect", "list", "train"].sort());
   });
 
   describe("expert list", () => {
@@ -539,6 +596,377 @@ fs.writeFileSync(p, body, 'utf-8');`,
         if (originalEditor === undefined) delete process.env["EDITOR"];
         else process.env["EDITOR"] = originalEditor;
       }
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // expert docs (Roadmap 6.6)
+  // ────────────────────────────────────────────────────────────────────
+  describe("expert docs", () => {
+    let env: TestEnv;
+    beforeEach(async () => {
+      env = await makeEnv();
+    });
+    afterEach(async () => {
+      await teardown(env);
+    });
+
+    const PERSONA: ExpertDefinition = {
+      slug: "boss",
+      displayName: "My Boss",
+      role: "VP Eng",
+      expertise: { weightedEvidence: ["calibration"], referenceCases: [], notExpertIn: [] },
+      epistemicStance: "Outcome-driven",
+      kind: "persona",
+      personaDescription: "VP of Engineering",
+    };
+
+    async function seedDocRow(
+      slug: string,
+      filename: string,
+      wordCount: number,
+    ): Promise<void> {
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { DocumentRepository } = await import(
+        "../../../../src/memory/repositories/document-repository.js"
+      );
+      const { createDocumentIndexer } = await import(
+        "../../../../src/core/documents/indexer.js"
+      );
+      const db = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        const docsDir = path.join(env.dataHome, "experts", slug, "docs");
+        await fs.mkdir(docsDir, { recursive: true });
+        const filePath = path.join(docsDir, filename);
+        const repo = new DocumentRepository(db);
+        const created = await repo.create({
+          expertSlug: slug,
+          filePath,
+          filename,
+          checksum: `cs-${filename}`,
+          sizeBytes: 100,
+          wordCount,
+        });
+        await repo.updateStatus(created.id, "processed", new Date().toISOString());
+        const indexer = createDocumentIndexer(db);
+        await indexer.index({
+          content: `content of ${filename}`,
+          sourceType: "expert",
+          sourceSlug: slug,
+          filePath,
+        });
+      } finally {
+        await db.destroy();
+      }
+    }
+
+    it("prints empty-state hint when persona has no indexed documents", async () => {
+      await seedExpert(env, PERSONA);
+      let captured = "";
+      const cmd = buildExpertCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-expert", "docs", "boss"]);
+      expect(captured.toLowerCase()).toMatch(/no documents/);
+      expect(captured).toContain("boss");
+    });
+
+    it("lists indexed documents in a table", async () => {
+      await seedExpert(env, PERSONA);
+      await seedDocRow("boss", "alpha.md", 100);
+      await seedDocRow("boss", "beta.txt", 250);
+      let captured = "";
+      const cmd = buildExpertCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-expert", "docs", "boss"]);
+      expect(captured).toContain("alpha.md");
+      expect(captured).toContain("beta.txt");
+      expect(captured).toContain("100");
+      expect(captured).toContain("250");
+      expect(captured.toLowerCase()).toContain("processed");
+    });
+
+    it("reports not found when slug does not exist", async () => {
+      const cmd = buildExpertCommand(
+        () => {
+          /* noop */
+        },
+        () => {
+          /* noop */
+        },
+      );
+      await expect(cmd.parseAsync(["node", "council-expert", "docs", "ghost"])).rejects.toThrow(
+        /not found/i,
+      );
+    });
+
+    it("rejects non-persona experts", async () => {
+      await seedExpert(env, SAMPLE);
+      const cmd = buildExpertCommand(
+        () => {
+          /* noop */
+        },
+        () => {
+          /* noop */
+        },
+      );
+      await expect(
+        cmd.parseAsync(["node", "council-expert", "docs", "dahlia-cto"]),
+      ).rejects.toThrow(/persona/i);
+    });
+
+    it("--remove un-indexes a document and marks it removed in DB", async () => {
+      await seedExpert(env, PERSONA);
+      await seedDocRow("boss", "alpha.md", 100);
+      let captured = "";
+      const cmd = buildExpertCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync([
+        "node",
+        "council-expert",
+        "docs",
+        "boss",
+        "--remove",
+        "alpha.md",
+      ]);
+      expect(captured).toMatch(/removed/i);
+      expect(captured).toContain("alpha.md");
+
+      // Verify DB row flipped to 'removed' and FTS5 index pruned.
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { DocumentRepository } = await import(
+        "../../../../src/memory/repositories/document-repository.js"
+      );
+      const db = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        const repo = new DocumentRepository(db);
+        const rows = await repo.findByExpert("boss");
+        expect(rows.length).toBe(1);
+        expect(rows[0]?.status).toBe("removed");
+        const checksums = await repo.getChecksumMap("boss");
+        expect(checksums.size).toBe(0);
+        const { sql } = await import("kysely");
+        const fts = (await sql<{
+          c: number;
+        }>`SELECT COUNT(*) AS c FROM document_index WHERE file_path = ${rows[0]?.filePath ?? ""}`.execute(
+          db,
+        )) as { rows: readonly { readonly c: number }[] };
+        expect(fts.rows[0]?.c).toBe(0);
+      } finally {
+        await db.destroy();
+      }
+    });
+
+    it("--remove preserves the file on disk", async () => {
+      await seedExpert(env, PERSONA);
+      await seedDocRow("boss", "alpha.md", 50);
+      const filePath = path.join(env.dataHome, "experts", "boss", "docs", "alpha.md");
+      await fs.writeFile(filePath, "actual content", "utf-8");
+      const cmd = buildExpertCommand(() => {
+        /* noop */
+      });
+      await cmd.parseAsync([
+        "node",
+        "council-expert",
+        "docs",
+        "boss",
+        "--remove",
+        "alpha.md",
+      ]);
+      const stat = await fs.stat(filePath);
+      expect(stat.isFile()).toBe(true);
+    });
+
+    it("--remove errors when file is not in the index", async () => {
+      await seedExpert(env, PERSONA);
+      const cmd = buildExpertCommand(
+        () => {
+          /* noop */
+        },
+        () => {
+          /* noop */
+        },
+      );
+      await expect(
+        cmd.parseAsync([
+          "node",
+          "council-expert",
+          "docs",
+          "boss",
+          "--remove",
+          "missing.md",
+        ]),
+      ).rejects.toThrow(/not found|not indexed|no such/i);
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // expert train (Roadmap 6.6)
+  // ────────────────────────────────────────────────────────────────────
+  describe("expert train", () => {
+    let env: TestEnv;
+    beforeEach(async () => {
+      env = await makeEnv();
+    });
+    afterEach(async () => {
+      await teardown(env);
+    });
+
+    const PERSONA: ExpertDefinition = {
+      slug: "boss",
+      displayName: "My Boss",
+      role: "VP Eng",
+      expertise: { weightedEvidence: ["calibration"], referenceCases: [], notExpertIn: [] },
+      epistemicStance: "Outcome-driven",
+      kind: "persona",
+      personaDescription: "VP of Engineering",
+    };
+
+    async function writeDoc(slug: string, filename: string, body: string): Promise<string> {
+      const docsDir = path.join(env.dataHome, "experts", slug, "docs");
+      await fs.mkdir(docsDir, { recursive: true });
+      const p = path.join(docsDir, filename);
+      await fs.writeFile(p, body, "utf-8");
+      return p;
+    }
+
+    it("reports not found when slug does not exist", async () => {
+      const cmd = buildExpertCommand(
+        () => {
+          /* noop */
+        },
+        () => {
+          /* noop */
+        },
+        { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+      );
+      await expect(cmd.parseAsync(["node", "council-expert", "train", "ghost"])).rejects.toThrow(
+        /not found/i,
+      );
+    });
+
+    it("rejects non-persona experts", async () => {
+      await seedExpert(env, SAMPLE);
+      const cmd = buildExpertCommand(
+        () => {
+          /* noop */
+        },
+        () => {
+          /* noop */
+        },
+        { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+      );
+      await expect(
+        cmd.parseAsync(["node", "council-expert", "train", "dahlia-cto"]),
+      ).rejects.toThrow(/persona/i);
+    });
+
+    it("processes new documents and reports progress", async () => {
+      await seedExpert(env, PERSONA);
+      await writeDoc("boss", "intro.md", "Hello world from the boss.");
+      let captured = "";
+      const cmd = buildExpertCommand(
+        (s) => {
+          captured += s;
+        },
+        () => {
+          /* noop */
+        },
+        { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+      );
+      await cmd.parseAsync(["node", "council-expert", "train", "boss"]);
+      expect(captured).toContain("intro.md");
+      expect(captured.toLowerCase()).toMatch(/processed|trained|complete/);
+
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { DocumentRepository } = await import(
+        "../../../../src/memory/repositories/document-repository.js"
+      );
+      const { ProfileRepository } = await import(
+        "../../../../src/memory/repositories/profile-repository.js"
+      );
+      const db = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        const docs = await new DocumentRepository(db).findByExpert("boss");
+        expect(docs.length).toBe(1);
+        expect(docs[0]?.status).toBe("processed");
+        const profile = await new ProfileRepository(db).findBySlug("boss");
+        expect(profile?.communicationStyle).toMatch(/terse|direct/i);
+      } finally {
+        await db.destroy();
+      }
+    });
+
+    it("--retrain deletes the existing profile and reprocesses all docs", async () => {
+      await seedExpert(env, PERSONA);
+      const docPath = await writeDoc("boss", "intro.md", "First training document.");
+      // First training run.
+      const cmd1 = buildExpertCommand(
+        () => {
+          /* noop */
+        },
+        () => {
+          /* noop */
+        },
+        { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+      );
+      await cmd1.parseAsync(["node", "council-expert", "train", "boss"]);
+
+      // Sanity: profile exists and doc is tracked.
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { DocumentRepository } = await import(
+        "../../../../src/memory/repositories/document-repository.js"
+      );
+      const { ProfileRepository } = await import(
+        "../../../../src/memory/repositories/profile-repository.js"
+      );
+      let db = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        const profile = await new ProfileRepository(db).findBySlug("boss");
+        expect(profile).not.toBeNull();
+      } finally {
+        await db.destroy();
+      }
+
+      // Second run with --retrain: doc unchanged; without retrain a vanilla
+      // train would skip it. Retrain must clear the profile and reprocess.
+      let captured = "";
+      const stub = new StubEngine([
+        JSON.stringify({
+          communicationStyle: "Rewritten from scratch.",
+          decisionPatterns: ["fresh"],
+          biases: ["fresh"],
+          vocabulary: ["fresh"],
+          epistemicStance: "Rebuilt.",
+        }),
+      ]);
+      const cmd2 = buildExpertCommand(
+        (s) => {
+          captured += s;
+        },
+        () => {
+          /* noop */
+        },
+        { engineFactory: () => stub },
+      );
+      await cmd2.parseAsync(["node", "council-expert", "train", "boss", "--retrain"]);
+      expect(captured.toLowerCase()).toMatch(/retrain|rebuild|processed/);
+
+      db = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        const profile = await new ProfileRepository(db).findBySlug("boss");
+        expect(profile?.communicationStyle).toMatch(/rewritten/i);
+        // Document should still be tracked (re-indexed, status processed).
+        const docs = await new DocumentRepository(db).findByExpert("boss");
+        const active = docs.filter((d) => d.status !== "removed");
+        expect(active.some((d) => d.filePath === docPath)).toBe(true);
+      } finally {
+        await db.destroy();
+      }
+      // Stub engine must have been called for the retrain analysis.
+      expect(stub.sends.length).toBeGreaterThan(0);
     });
   });
 });
