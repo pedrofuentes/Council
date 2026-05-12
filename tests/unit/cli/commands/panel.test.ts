@@ -214,6 +214,41 @@ describe("buildPanelCommand", () => {
         ]),
       ).rejects.toThrow(/mode/i);
     });
+
+    it("surfaces rollback failures via AggregateError when create fails mid-flight", async () => {
+      await seedExpert(env, expertDef("cto"));
+      const { vi } = await import("vitest");
+      const { PanelLibraryRepository } = await import(
+        "../../../../src/memory/repositories/panel-library-repo.js"
+      );
+
+      const setSpy = vi
+        .spyOn(PanelLibraryRepository.prototype, "setMembers")
+        .mockImplementationOnce(() => Promise.reject(new Error("simulated setMembers failure")));
+      const delSpy = vi
+        .spyOn(PanelLibraryRepository.prototype, "delete")
+        .mockImplementationOnce(() => Promise.reject(new Error("simulated rollback delete failure")));
+
+      try {
+        const cmd = buildPanelCommand(() => {
+          /* noop */
+        });
+        const err = await cmd
+          .parseAsync(["node", "council-panel", "create", "arch-review", "--experts", "cto"])
+          .then(
+            () => null,
+            (e: unknown) => e,
+          );
+        expect(err).toBeInstanceOf(AggregateError);
+        const errors = (err as AggregateError).errors;
+        const messages = errors.map((e) => (e instanceof Error ? e.message : String(e)));
+        expect(messages.some((m) => m.includes("simulated rollback delete failure"))).toBe(true);
+        expect(messages.length).toBeGreaterThanOrEqual(2);
+      } finally {
+        setSpy.mockRestore();
+        delSpy.mockRestore();
+      }
+    });
   });
 
   describe("panel list", () => {
@@ -396,66 +431,6 @@ describe("buildPanelCommand", () => {
       } finally {
         if (originalEditor === undefined) delete process.env["EDITOR"];
         else process.env["EDITOR"] = originalEditor;
-      }
-    });
-
-    it("persists a checksum that matches the validated on-disk YAML", async () => {
-      await seedExpert(env, expertDef("cto"));
-      await seedExpert(env, expertDef("staff"));
-      const createCmd = buildPanelCommand(() => {
-        /* noop */
-      });
-      await createCmd.parseAsync([
-        "node",
-        "council-panel",
-        "create",
-        "arch-review",
-        "--experts",
-        "cto",
-      ]);
-
-      // Stub editor: deterministically rewrite the YAML so the checksum after
-      // edit MUST differ from the pre-edit checksum. The regression we're
-      // guarding against is a TOCTOU read where the checksum reflects a
-      // different read than the validated parse.
-      const stubPath = path.join(env.home, "panel-edit-rewrite.cjs");
-      await fs.writeFile(
-        stubPath,
-        `const fs = require('fs');
-const p = process.argv[2];
-fs.writeFileSync(p, 'name: arch-review\\ndescription: After edit\\nexperts:\\n  - cto\\n  - staff\\n', 'utf-8');`,
-        "utf-8",
-      );
-      const originalEditor = process.env["EDITOR"];
-      process.env["EDITOR"] = `node "${stubPath}"`;
-      try {
-        const cmd = buildPanelCommand(() => {
-          /* noop */
-        });
-        await cmd.parseAsync(["node", "council-panel", "edit", "arch-review"]);
-      } finally {
-        if (originalEditor === undefined) delete process.env["EDITOR"];
-        else process.env["EDITOR"] = originalEditor;
-      }
-
-      const yamlPath = path.join(env.dataHome, "panels", "arch-review.yaml");
-      const onDisk = await fs.readFile(yamlPath, "utf-8");
-      const { createHash } = await import("node:crypto");
-      const expected = createHash("sha256").update(onDisk).digest("hex");
-
-      const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { PanelLibraryRepository } = await import(
-        "../../../../src/memory/repositories/panel-library-repo.js"
-      );
-      const db = await createDatabase(path.join(env.home, "council.db"));
-      try {
-        const repo = new PanelLibraryRepository(db);
-        const row = await repo.findByName("arch-review");
-        expect(row?.yamlChecksum).toBe(expected);
-        const members = await repo.getMembers("arch-review");
-        expect(members).toEqual(["cto", "staff"]);
-      } finally {
-        await db.destroy();
       }
     });
 

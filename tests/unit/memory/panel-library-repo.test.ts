@@ -157,4 +157,44 @@ describe("PanelLibraryRepository", () => {
     const after = await repo.getMembers("arch-review");
     expect(after).toEqual(["cto", "staff"]);
   });
+
+  it("setMembers() surfaces AggregateError when both insert and restore fail", async () => {
+    const { vi } = await import("vitest");
+    await repo.create(samplePanel("arch-review"));
+    await seedExpert(db, "cto");
+    await repo.setMembers("arch-review", ["cto"]);
+
+    // Now spy on insertInto: let the first panel_members insert proceed
+    // (it will fail naturally on the unknown FK), then force the second
+    // (the snapshot restore) to throw so we exercise the rollback-failure
+    // path.
+    const realInsert = db.insertInto.bind(db);
+    let panelMembersInsertCalls = 0;
+    const spy = vi.spyOn(db, "insertInto").mockImplementation(((table: unknown) => {
+      if (table === "panel_members") {
+        panelMembersInsertCalls += 1;
+        if (panelMembersInsertCalls === 2) {
+          throw new Error("simulated restore failure");
+        }
+      }
+      return realInsert(table as never) as never;
+    }) as never);
+
+    try {
+      const err = await repo.setMembers("arch-review", ["does-not-exist"]).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      // Must be an AggregateError surfacing BOTH the original FK failure
+      // and the restore failure — the silent-swallow pattern (.catch(()=>{}))
+      // would surface only one cause.
+      expect(err).toBeInstanceOf(AggregateError);
+      const errors = (err as AggregateError).errors;
+      const messages = errors.map((e) => (e instanceof Error ? e.message : String(e)));
+      expect(messages.some((m) => m.includes("simulated restore failure"))).toBe(true);
+      expect(messages.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });
