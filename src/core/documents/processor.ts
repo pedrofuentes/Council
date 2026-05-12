@@ -243,12 +243,33 @@ export function createDocumentProcessor(
 
           processed += 1;
           totalWords += extracted.wordCount;
-          successfullyExtracted.push({
-            path: extracted.path,
-            filename: extracted.filename,
-            content: extracted.content,
-            wordCount: extracted.wordCount,
-          });
+          // Carry modified-at so the analyzer can compute recency weights.
+          // Best-effort: a stat failure (e.g. the file was just removed)
+          // simply omits the date and the analyzer treats the doc as
+          // un-weighted.
+          let modifiedAt: string | undefined;
+          try {
+            const st = await fs.stat(extracted.path);
+            modifiedAt = st.mtime.toISOString();
+          } catch {
+            modifiedAt = undefined;
+          }
+          const analyzerDoc: AnalyzerDoc =
+            modifiedAt !== undefined
+              ? {
+                  path: extracted.path,
+                  filename: extracted.filename,
+                  content: extracted.content,
+                  wordCount: extracted.wordCount,
+                  modifiedAt,
+                }
+              : {
+                  path: extracted.path,
+                  filename: extracted.filename,
+                  content: extracted.content,
+                  wordCount: extracted.wordCount,
+                };
+          successfullyExtracted.push(analyzerDoc);
 
           onProgress?.({
             filename: file.filename,
