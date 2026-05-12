@@ -1218,4 +1218,89 @@ describe("panel chat mode", () => {
     // The non-empty expert's response is still rendered + persisted.
     expect(out).toContain("OK-RESPONSE");
   });
+
+  it("reports all-empty panel turns as empty (not as a connection failure)", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "all-empty", ["panel-a", "panel-b"]);
+
+    // Both experts return empty streams (clean completion, no deltas, no
+    // errors). Aggregate must not claim a connection/engine error.
+    const engine: CouncilEngine = {
+      async start(): Promise<void> {
+        /* ok */
+      },
+      async stop(): Promise<void> {
+        /* ok */
+      },
+      async addExpert(): Promise<void> {
+        /* ok */
+      },
+      async removeExpert(): Promise<void> {
+        /* ok */
+      },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock"];
+      },
+      send(opts) {
+        const expertId = opts.expertId;
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              kind: "message.complete" as const,
+              expertId,
+              response: { latencyMs: 1 },
+            };
+          },
+        };
+      },
+    };
+
+    let out = "";
+    let err = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: (s) => (err += s),
+      engineFactory: () => engine,
+      inputProvider: () => scriptedInput(["hi", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "all-empty", "--engine", "mock"]);
+
+    const combined = out + err;
+    // Honest wording: empty responses, not a connection failure.
+    expect(combined).toMatch(/empty response/i);
+    expect(combined).not.toMatch(/check your connection/i);
+    expect(combined).not.toMatch(/engine error/i);
+  });
+
+  it("--history filters archived sessions by resolved target type (expert vs panel collision)", async () => {
+    // An expert and a panel both named "shared". `council chat shared
+    // --history` must NOT mix the archived panel session into the
+    // expert-history view.
+    await seedExpert(env, { ...PANEL_EXPERT_A, slug: "shared", displayName: "Shared Expert" });
+    await writeUserPanel(env, "shared", ["panel-a"]);
+    await seedExpert(env, PANEL_EXPERT_A);
+
+    let expertArchivedId = "";
+    let panelArchivedId = "";
+    await withRepo(env, async (repo) => {
+      const a = await repo.createSession({ targetType: "expert", targetSlug: "shared" });
+      expertArchivedId = a.id;
+      await repo.archiveSession(a.id);
+      const b = await repo.createSession({ targetType: "panel", targetSlug: "shared" });
+      panelArchivedId = b.id;
+      await repo.archiveSession(b.id);
+    });
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+    });
+    await cmd.parseAsync(["node", "council-chat", "shared", "--history"]);
+
+    // library.get() resolves first → expert wins → show only expert
+    // archives. The panel archive must not leak in.
+    expect(out).toContain(expertArchivedId);
+    expect(out).not.toContain(panelArchivedId);
+  });
 });
