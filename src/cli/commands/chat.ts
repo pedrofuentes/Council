@@ -723,7 +723,8 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
     });
     const history = recent.slice(0, -1);
 
-    const failedExperts: string[] = [];
+    const errorExperts: string[] = [];
+    const emptyExperts: string[] = [];
     let succeeded = 0;
 
     for (const { expert, spec } of members) {
@@ -784,13 +785,15 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
 
       if (failed) {
         writeError(formatEngineError({ code: "PROVIDER_ERROR", message: lastError }) + "\n");
-        failedExperts.push(expert.displayName);
+        errorExperts.push(expert.displayName);
         continue;
       }
 
-      // No content, no error — count as an empty/failed response and
-      // surface a per-expert notice so the user isn't confused by silence.
-      failedExperts.push(expert.displayName);
+      // No content, no error — count as an empty (but non-error) response
+      // and surface a per-expert notice so the user isn't confused by
+      // silence. Tracked separately from engine errors so the aggregate
+      // summary stays honest about what actually happened.
+      emptyExperts.push(expert.displayName);
       renderer.showSystem(
         `${expert.displayName} returned an empty response.`,
         "warn",
@@ -803,10 +806,16 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
         "No experts could respond. Check your connection and try again.",
         "warn",
       );
-    } else if (failedExperts.length > 0) {
-      const list = failedExperts.join(", ");
+    } else if (errorExperts.length > 0 || emptyExperts.length > 0) {
+      const parts: string[] = [];
+      if (errorExperts.length > 0) {
+        parts.push(`${errorExperts.join(", ")} could not respond (engine error)`);
+      }
+      if (emptyExperts.length > 0) {
+        parts.push(`${emptyExperts.join(", ")} returned an empty response`);
+      }
       renderer.showSystem(
-        `${list} could not respond (engine error). ${succeeded} of ${total} experts responded.`,
+        `${parts.join("; ")}. ${succeeded} of ${total} experts responded.`,
         "warn",
       );
     }
