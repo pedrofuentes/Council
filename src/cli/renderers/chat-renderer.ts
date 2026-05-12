@@ -92,17 +92,31 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
   };
 
   /**
-   * Sanitize externally-sourced text for terminal display.
+   * Sanitize multi-line text (streamed response bodies) for terminal display.
    *
    * Builds on the shared `stripControlChars` helper (which removes ANSI/OSC
    * escapes and most C0 controls) but additionally strips `\r`. The shared
    * helper preserves `\r` for transcript fidelity; in a live TTY, however, a
    * carriage return rewinds the cursor to column 0 and lets a malicious
    * chunk overwrite the current line (e.g. spoof a `You > ` prompt). Newlines
-   * (`\n`) and tabs (`\t`) are still allowed — they're legitimate output for
-   * multi-paragraph responses.
+   * (`\n`) and tabs (`\t`) are still allowed here — they're legitimate output
+   * for multi-paragraph responses.
    */
-  const sanitize = (text: string): string => stripControlChars(text).replace(/\r/g, "");
+  const sanitizeMultiline = (text: string): string =>
+    stripControlChars(text).replace(/\r/g, "");
+
+  /**
+   * Sanitize single-line text (display names, status/system messages, replayed
+   * user input) for terminal display.
+   *
+   * Same as `sanitizeMultiline`, but additionally collapses `\n` and other
+   * Unicode line-break characters to a single space. Without this, an
+   * attacker-controlled display name or status message could inject extra
+   * terminal lines and spoof chat UI (e.g. `"Mallory\nYou > hacked"`
+   * rendering as a fake prompt on the next row).
+   */
+  const sanitizeSingleLine = (text: string): string =>
+    sanitizeMultiline(text).replace(/[\n\v\f\u0085\u2028\u2029]+/g, " ");
 
   const colorFor = (slug: string): ChalkInstance => {
     const existing = colorBySlug.get(slug);
@@ -116,7 +130,7 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
 
   return {
     showSessionStatus(message: string): void {
-      write(`${sanitize(message)}\n`);
+      write(`${sanitizeSingleLine(message)}\n`);
     },
 
     showPrompt(): void {
@@ -124,18 +138,18 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
     },
 
     showUserMessage(content: string): void {
-      write(`${chalk.bold.white(PROMPT_PREFIX)}${sanitize(content)}\n`);
+      write(`${chalk.bold.white(PROMPT_PREFIX)}${sanitizeSingleLine(content)}\n`);
     },
 
     startExpertResponse(expertSlug: string): void {
       const rawName = experts.get(expertSlug) ?? expertSlug;
-      const displayName = sanitize(rawName);
+      const displayName = sanitizeSingleLine(rawName);
       const color = colorFor(expertSlug);
       write(`${color(`${displayName} > `)}`);
     },
 
     streamChunk(text: string): void {
-      write(sanitize(text));
+      write(sanitizeMultiline(text));
     },
 
     endExpertResponse(): void {
@@ -143,7 +157,7 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
     },
 
     showSystem(message: string, level: "info" | "warn" | "error" = "info"): void {
-      const safe = sanitize(message);
+      const safe = sanitizeSingleLine(message);
       switch (level) {
         case "info":
           write(`${chalk.blue("ℹ")} ${safe}\n`);
