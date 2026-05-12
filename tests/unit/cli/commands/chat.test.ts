@@ -980,4 +980,242 @@ describe("panel chat mode", () => {
     expect(out).toContain("panel-a");
     expect(out).toContain("duo");
   });
+
+  it("--new archives the existing active panel session and starts fresh", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "renew-panel", ["panel-a", "panel-b"]);
+    let priorId = "";
+    await withRepo(env, async (repo) => {
+      const s = await repo.createSession({ targetType: "panel", targetSlug: "renew-panel" });
+      priorId = s.id;
+      await repo.addTurn({ chatId: s.id, role: "user", content: "old" });
+    });
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+    await cmd.parseAsync([
+      "node",
+      "council-chat",
+      "renew-panel",
+      "--engine",
+      "mock",
+      "--new",
+    ]);
+    expect(out).toMatch(/archived/i);
+
+    await withRepo(env, async (repo) => {
+      const prior = await repo.findSessionById(priorId);
+      expect(prior?.status).toBe("archived");
+      const active = await repo.findActiveSession("panel", "renew-panel");
+      expect(active).toBeDefined();
+      expect(active?.id).not.toBe(priorId);
+    });
+  });
+
+  it("--new does NOT archive the prior panel session when engine startup fails", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "atomic-panel", ["panel-a", "panel-b"]);
+    let priorId = "";
+    await withRepo(env, async (repo) => {
+      const s = await repo.createSession({ targetType: "panel", targetSlug: "atomic-panel" });
+      priorId = s.id;
+      await repo.addTurn({ chatId: s.id, role: "user", content: "old" });
+    });
+
+    // Engine that fails on the first addExpert call (i.e. registering the
+    // first panel member) — startup-phase failure.
+    const failing = new MockEngine({ failOnAddExpert: { afterN: 0 } });
+    const cmd = buildChatCommand({
+      write: () => undefined,
+      writeError: () => undefined,
+      engineFactory: () => failing,
+      inputProvider: () => scriptedInput([]),
+    });
+    await expect(
+      cmd.parseAsync([
+        "node",
+        "council-chat",
+        "atomic-panel",
+        "--engine",
+        "mock",
+        "--new",
+      ]),
+    ).rejects.toThrow();
+
+    await withRepo(env, async (repo) => {
+      const prior = await repo.findSessionById(priorId);
+      // Atomicity: prior session must remain active when startup fails.
+      expect(prior?.status).toBe("active");
+    });
+  });
+
+  it("retries a panel expert on a recoverable error and persists only the retry's content", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "retry-panel", ["panel-a", "panel-b"]);
+
+    // First registered expert: send #1 fails recoverably with a partial
+    // delta, send #2 succeeds. Second registered expert: always succeeds.
+    // The chat loop must call send() exactly twice for the flaky expert,
+    // not stream the first attempt's partial delta, and persist only the
+    // retry's content.
+    const failingIds = new Set<string>();
+    let registered = 0;
+    const sendCalls = new Map<string, number>();
+    const engine: CouncilEngine = {
+      async start(): Promise<void> {
+        /* ok */
+      },
+      async stop(): Promise<void> {
+        /* ok */
+      },
+      async addExpert(spec): Promise<void> {
+        if (registered === 0) failingIds.add(spec.id);
+        registered += 1;
+      },
+      async removeExpert(): Promise<void> {
+        /* ok */
+      },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock"];
+      },
+      send(opts) {
+        const expertId = opts.expertId;
+        const n = (sendCalls.get(expertId) ?? 0) + 1;
+        sendCalls.set(expertId, n);
+        const isFlaky = failingIds.has(expertId);
+        const flakyFirstAttempt = isFlaky && n === 1;
+        return {
+          async *[Symbol.asyncIterator]() {
+            if (flakyFirstAttempt) {
+              yield {
+                kind: "message.delta" as const,
+                expertId,
+                text: "PARTIAL-",
+              };
+              yield {
+                kind: "error" as const,
+                expertId,
+                error: { code: "NETWORK" as const, message: "transient" },
+                recoverable: true,
+              };
+              return;
+            }
+            const text = isFlaky ? "RECOVERED-OK" : "STEADY-OK";
+            yield { kind: "message.delta" as const, expertId, text };
+            yield {
+              kind: "message.complete" as const,
+              expertId,
+              response: { latencyMs: 1 },
+            };
+          },
+        };
+      },
+    };
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () => scriptedInput(["question?", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "retry-panel", "--engine", "mock"]);
+
+    // The flaky expert's first attempt's partial delta must not leak.
+    expect(out).not.toContain("PARTIAL-");
+    expect(out).toContain("RECOVERED-OK");
+    expect(out).toContain("STEADY-OK");
+
+    // The flaky expert must have been called exactly twice; the other once.
+    const callCounts = Array.from(sendCalls.values()).sort();
+    expect(callCounts).toEqual([1, 2]);
+
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "retry-panel");
+      const turns = await repo.getTurns(session?.id ?? "");
+      const expertTurns = turns.filter((t) => t.role === "expert");
+      expect(expertTurns.length).toBe(2);
+      const flakyTurn = expertTurns.find((t) => t.content.includes("RECOVERED"));
+      expect(flakyTurn).toBeDefined();
+      // The partial first attempt must not leak into the persisted turn.
+      expect(flakyTurn?.content).toBe("RECOVERED-OK");
+      expect(flakyTurn?.content).not.toContain("PARTIAL");
+    });
+  });
+
+  it("distinguishes empty responses from engine errors in the panel aggregate summary", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "empty-vs-error", ["panel-a", "panel-b"]);
+
+    // First expert returns an empty stream (no deltas, no error event).
+    // Second expert succeeds normally. The aggregate summary must NOT
+    // claim an engine error for the empty case — it should call it
+    // out separately or use neutral wording.
+    let registered = 0;
+    const emptyIds = new Set<string>();
+    const engine: CouncilEngine = {
+      async start(): Promise<void> {
+        /* ok */
+      },
+      async stop(): Promise<void> {
+        /* ok */
+      },
+      async addExpert(spec): Promise<void> {
+        if (registered === 0) emptyIds.add(spec.id);
+        registered += 1;
+      },
+      async removeExpert(): Promise<void> {
+        /* ok */
+      },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock"];
+      },
+      send(opts) {
+        const expertId = opts.expertId;
+        const isEmpty = emptyIds.has(expertId);
+        return {
+          async *[Symbol.asyncIterator]() {
+            if (isEmpty) {
+              // No deltas, no errors — just a clean completion event.
+              yield {
+                kind: "message.complete" as const,
+                expertId,
+                response: { latencyMs: 1 },
+              };
+              return;
+            }
+            yield { kind: "message.delta" as const, expertId, text: "OK-RESPONSE" };
+            yield {
+              kind: "message.complete" as const,
+              expertId,
+              response: { latencyMs: 1 },
+            };
+          },
+        };
+      },
+    };
+
+    let out = "";
+    let err = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: (s) => (err += s),
+      engineFactory: () => engine,
+      inputProvider: () => scriptedInput(["hi", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "empty-vs-error", "--engine", "mock"]);
+
+    const combined = out + err;
+    // Empty case must be surfaced honestly.
+    expect(combined).toMatch(/empty response/i);
+    // No actual engine errors occurred — the aggregate must NOT claim one.
+    expect(combined).not.toMatch(/engine error/i);
+    // The non-empty expert's response is still rendered + persisted.
+    expect(out).toContain("OK-RESPONSE");
+  });
 });
