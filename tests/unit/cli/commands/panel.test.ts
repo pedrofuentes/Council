@@ -78,7 +78,7 @@ describe("buildPanelCommand", () => {
     const cmd = buildPanelCommand();
     expect(cmd.name()).toBe("panel");
     const subs = cmd.commands.map((c) => c.name()).sort();
-    expect(subs).toEqual(["create", "edit", "inspect", "list"].sort());
+    expect(subs).toEqual(["create", "docs", "edit", "inspect", "list"].sort());
   });
 
   describe("panel create (non-interactive)", () => {
@@ -555,6 +555,199 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
       } finally {
         if (originalEditor === undefined) delete process.env["EDITOR"];
         else process.env["EDITOR"] = originalEditor;
+      }
+    });
+  });
+
+  describe("panel create — docs folder bootstrap", () => {
+    let env: TestEnv;
+    beforeEach(async () => {
+      env = await makeEnv();
+    });
+    afterEach(async () => {
+      await teardown(env);
+    });
+
+    it("auto-creates <dataHome>/panels/<name>/docs/ when creating a panel", async () => {
+      await seedExpert(env, expertDef("cto"));
+      const cmd = buildPanelCommand(() => {
+        /* noop */
+      });
+      await cmd.parseAsync([
+        "node",
+        "council-panel",
+        "create",
+        "arch-review",
+        "--experts",
+        "cto",
+      ]);
+      const docsDir = path.join(env.dataHome, "panels", "arch-review", "docs");
+      const stat = await fs.stat(docsDir);
+      expect(stat.isDirectory()).toBe(true);
+    });
+  });
+
+  describe("panel docs", () => {
+    let env: TestEnv;
+    beforeEach(async () => {
+      env = await makeEnv();
+    });
+    afterEach(async () => {
+      await teardown(env);
+    });
+
+    async function createPanel(name = "arch-review"): Promise<void> {
+      await seedExpert(env, expertDef("cto"));
+      const cmd = buildPanelCommand(() => {
+        /* noop */
+      });
+      await cmd.parseAsync(["node", "council-panel", "create", name, "--experts", "cto"]);
+    }
+
+    it("registers a `docs` subcommand on the panel command", () => {
+      const cmd = buildPanelCommand();
+      const subs = cmd.commands.map((c) => c.name()).sort();
+      expect(subs).toEqual(["create", "docs", "edit", "inspect", "list"].sort());
+    });
+
+    it("`panel docs <name>` shows an empty-state hint when no documents exist", async () => {
+      await createPanel();
+      let captured = "";
+      const cmd = buildPanelCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-panel", "docs", "arch-review"]);
+      expect(captured.toLowerCase()).toMatch(/no documents|empty/);
+    });
+
+    it("`panel docs <name>` errors when the panel does not exist", async () => {
+      let errored = "";
+      const cmd = buildPanelCommand(
+        () => {
+          /* noop */
+        },
+        (s) => {
+          errored += s;
+        },
+      );
+      await expect(
+        cmd.parseAsync(["node", "council-panel", "docs", "ghost"]),
+      ).rejects.toThrow(/not found/i);
+      expect(errored).toMatch(/not found/i);
+    });
+
+    it("`panel docs link` records a linked folder and reports document count", async () => {
+      await createPanel();
+      const linkDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-link-"));
+      await fs.writeFile(path.join(linkDir, "a.md"), "# A\nhello world", "utf-8");
+      await fs.writeFile(path.join(linkDir, "b.md"), "# B\nbye world", "utf-8");
+      try {
+        let captured = "";
+        const cmd = buildPanelCommand((s) => {
+          captured += s;
+        });
+        await cmd.parseAsync([
+          "node",
+          "council-panel",
+          "docs",
+          "link",
+          "arch-review",
+          "--path",
+          linkDir,
+        ]);
+        expect(captured).toMatch(/✓|linked/i);
+        expect(captured).toContain(path.basename(linkDir));
+
+        // DB row landed.
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { PanelDocumentRepository } = await import(
+          "../../../../src/memory/repositories/panel-document-repo.js"
+        );
+        const db = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          const repo = new PanelDocumentRepository(db);
+          const folders = await repo.getLinkedFolders("arch-review");
+          expect(folders).toContain(linkDir);
+        } finally {
+          await db.destroy();
+        }
+      } finally {
+        await fs.rm(linkDir, { recursive: true, force: true });
+      }
+    });
+
+    it("`panel docs link` errors when --path does not exist", async () => {
+      await createPanel();
+      let errored = "";
+      const cmd = buildPanelCommand(
+        () => {
+          /* noop */
+        },
+        (s) => {
+          errored += s;
+        },
+      );
+      const missing = path.join(os.tmpdir(), "council-does-not-exist-" + Date.now());
+      await expect(
+        cmd.parseAsync([
+          "node",
+          "council-panel",
+          "docs",
+          "link",
+          "arch-review",
+          "--path",
+          missing,
+        ]),
+      ).rejects.toThrow(/does not exist|not found/i);
+      expect(errored).toMatch(/does not exist|not found/i);
+    });
+
+    it("`panel docs unlink` removes the linked folder", async () => {
+      await createPanel();
+      const linkDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-unlink-"));
+      try {
+        const cmd = buildPanelCommand(() => {
+          /* noop */
+        });
+        await cmd.parseAsync([
+          "node",
+          "council-panel",
+          "docs",
+          "link",
+          "arch-review",
+          "--path",
+          linkDir,
+        ]);
+
+        let captured = "";
+        const cmd2 = buildPanelCommand((s) => {
+          captured += s;
+        });
+        await cmd2.parseAsync([
+          "node",
+          "council-panel",
+          "docs",
+          "unlink",
+          "arch-review",
+          "--path",
+          linkDir,
+        ]);
+        expect(captured).toMatch(/✓|unlinked/i);
+
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { PanelDocumentRepository } = await import(
+          "../../../../src/memory/repositories/panel-document-repo.js"
+        );
+        const db = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          const repo = new PanelDocumentRepository(db);
+          const folders = await repo.getLinkedFolders("arch-review");
+          expect(folders).not.toContain(linkDir);
+        } finally {
+          await db.destroy();
+        }
+      } finally {
+        await fs.rm(linkDir, { recursive: true, force: true });
       }
     });
   });
