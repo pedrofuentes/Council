@@ -49,6 +49,7 @@ import {
   PanelRepository,
   type Panel,
 } from "../../memory/repositories/panels.js";
+import { ProfileRepository } from "../../memory/repositories/profile-repository.js";
 import { TurnRepository } from "../../memory/repositories/turns.js";
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
@@ -357,7 +358,12 @@ async function renderExpertDetail(
 function buildResetCommand(write: Writer, writeError: Writer): Command {
   const cmd = new Command("reset");
   cmd
-    .description("Delete persisted state for a panel (destructive — requires --yes)")
+    .description(
+      "Delete persisted state for a panel (destructive — requires --yes). " +
+        "Clears debate memory (debates, turns, extracted_memory_json) for the " +
+        "panel's experts. Document-derived persona profiles are preserved; use " +
+        "`council expert train --retrain` to reset a persona profile.",
+    )
     .argument("<panel>", "Panel name to reset")
     .option("--yes", "Confirm the destructive operation (REQUIRED — no interactive prompt)")
     .option("--hard", "Delete the entire panel (CASCADE removes experts + debates + turns)")
@@ -406,11 +412,28 @@ function buildResetCommand(write: Writer, writeError: Writer): Command {
             return;
           }
 
-          // Default: delete debates+turns for this panel; keep panel+experts.
-          // Debate deletion CASCADEs to turns via the FK at migration 001.
+          // Default: clear debate memory for this panel.
+          //   1. Delete debates+turns (debates CASCADE to turns via FK at migration 001).
+          //   2. Clear `extracted_memory_json` on each expert (debate-derived heuristic memory).
+          //   3. Per Roadmap 7.4, NEVER touch `persona_profiles` — document-derived
+          //      persona data is separate state, reset via `council expert train --retrain`.
           const debates = await new DebateRepository(db).findByPanelId(panel.id);
           for (const d of debates) {
             await db.deleteFrom("debates").where("id", "=", d.id).execute();
+          }
+
+          const experts = await new ExpertRepository(db).findByPanelId(panel.id);
+          const expertRepo = new ExpertRepository(db);
+          const profileRepo = new ProfileRepository(db);
+          for (const e of experts) {
+            await expertRepo.update(e.id, { extractedMemoryJson: null });
+            write(`✓ Debate memory cleared for "${e.displayName}".\n`);
+            const profile = await profileRepo.findBySlug(e.slug);
+            if (profile !== null) {
+              write(
+                `ℹ Document-derived persona profile preserved. Use \`council expert train --retrain\` to reset the profile.\n`,
+              );
+            }
           }
           write(
             `Reset panel '${panel.name}': deleted ${debates.length} debate${debates.length === 1 ? "" : "s"} and their turns. Panel + experts kept (run \`council convene\` to start fresh).\n`,
