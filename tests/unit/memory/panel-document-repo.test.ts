@@ -174,6 +174,32 @@ describe("PanelDocumentRepository", () => {
       expect(remaining.map((d) => d.filePath)).toEqual(["/tmp/linked-other/b.md"]);
     });
 
+    it("removeDocumentsUnderFolder() handles Windows-style backslash paths", async () => {
+      // Sentinel cycle 2 #7: backslash path coverage.
+      await repo.trackDocument(sampleDoc({ filePath: "C:\\linked\\a.md" }));
+      await repo.trackDocument(sampleDoc({ filePath: "C:\\linked\\sub\\b.md" }));
+      await repo.trackDocument(sampleDoc({ filePath: "C:\\linked-other\\b.md" }));
+
+      await repo.removeDocumentsUnderFolder("arch-review", "C:\\linked");
+
+      const remaining = await repo.listDocuments("arch-review");
+      expect(remaining.map((d) => d.filePath)).toEqual(["C:\\linked-other\\b.md"]);
+    });
+
+    it("removeDocumentsUnderFolder() does not match unrelated paths via SQL LIKE wildcards in folder name", async () => {
+      // Sentinel cycle 2 #2: folder names containing % or _ must not
+      // produce false-positive matches via unescaped LIKE patterns.
+      await repo.trackDocument(sampleDoc({ filePath: "/tmp/my%docs/a.md" }));
+      await repo.trackDocument(sampleDoc({ filePath: "/tmp/myXXXdocs/b.md" }));
+      await repo.trackDocument(sampleDoc({ filePath: "/tmp/myAdocs/c.md" }));
+
+      await repo.removeDocumentsUnderFolder("arch-review", "/tmp/my%docs");
+
+      const remaining = await repo.listDocuments("arch-review");
+      const paths = remaining.map((d) => d.filePath).sort();
+      expect(paths).toEqual(["/tmp/myAdocs/c.md", "/tmp/myXXXdocs/b.md"]);
+    });
+
     it("deleting the parent panel cascades to panel_documents", async () => {
       await repo.trackDocument(sampleDoc());
       const panels = new PanelLibraryRepository(db);

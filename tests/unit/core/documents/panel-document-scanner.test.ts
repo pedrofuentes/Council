@@ -151,4 +151,55 @@ describe("scanAndIndexPanelDocuments", () => {
     });
     expect(result.foldersFailed).toBeGreaterThanOrEqual(1);
   });
+
+  it("refuses to follow symlinks inside a linked folder (path confinement)", async () => {
+    // Sentinel cycle 2 finding #1 (CRITICAL): without confinementRoot
+    // the panel scanner happily indexes whatever a symlink resolves
+    // to, including files outside the linked folder.
+    //
+    // We create a directory junction/symlink at linkedDir/escape →
+    // secretDir/. A file inside secretDir must NOT make it into the
+    // panel's FTS index because the canonical path resolves outside
+    // the confinement root.
+    const secretDir = await makeTempDir("council-secret-");
+    cleanupDirs.push(secretDir);
+    await fs.writeFile(
+      path.join(secretDir, "passwd.md"),
+      "# Secret\ntop-secret-token-XYZZY\n",
+      "utf-8",
+    );
+
+    const escapePath = path.join(linkedDir, "escape");
+    try {
+      // junction works for directories without admin on Windows; on
+      // POSIX `type` is ignored and a plain symlink is created.
+      await fs.symlink(secretDir, escapePath, "junction");
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "EPERM" && code !== "ENOSYS") throw err;
+      // dev-mode/admin not available; fall back to a regular symlink
+      // attempt (will likely also fail on plain Windows) — if neither
+      // works, skip.
+      try {
+        await fs.symlink(secretDir, escapePath);
+      } catch {
+        return;
+      }
+    }
+
+    await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+
+    const fts = await sql<{
+      file_path: string;
+      content: string;
+    }>`SELECT file_path, content FROM document_index WHERE source_type = 'panel'`.execute(db);
+    for (const row of fts.rows) {
+      expect(row.content).not.toContain("top-secret-token-XYZZY");
+    }
+  });
 });

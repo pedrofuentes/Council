@@ -818,5 +818,84 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
         await fs.rm(linkDir, { recursive: true, force: true });
       }
     });
+
+    it("`panel docs unlink` also removes the document_index (FTS) entries", async () => {
+      // Sentinel cycle 2 #8: assert the FTS row is gone post-unlink.
+      await createPanel();
+      const linkDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-unlink-fts-"));
+      try {
+        await fs.writeFile(path.join(linkDir, "a.md"), "# A\nbody\n", "utf-8");
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { createDocumentIndexer } = await import(
+          "../../../../src/core/documents/indexer.js"
+        );
+        const { PanelDocumentRepository } = await import(
+          "../../../../src/memory/repositories/panel-document-repo.js"
+        );
+
+        const cmdLink = buildPanelCommand(() => {
+          /* noop */
+        });
+        await cmdLink.parseAsync([
+          "node",
+          "council-panel",
+          "docs",
+          "link",
+          "arch-review",
+          "--path",
+          linkDir,
+        ]);
+
+        const filePath = path.join(linkDir, "a.md");
+        const db1 = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          const indexer = createDocumentIndexer(db1);
+          await indexer.index({
+            content: "body",
+            sourceType: "panel",
+            sourceSlug: "arch-review",
+            filePath,
+          });
+          const repo = new PanelDocumentRepository(db1);
+          await repo.trackDocument({
+            panelName: "arch-review",
+            source: "linked",
+            filePath,
+            filename: "a.md",
+            checksum: "h",
+            sizeBytes: 5,
+            wordCount: 1,
+          });
+        } finally {
+          await db1.destroy();
+        }
+
+        const cmdUnlink = buildPanelCommand(() => {
+          /* noop */
+        });
+        await cmdUnlink.parseAsync([
+          "node",
+          "council-panel",
+          "docs",
+          "unlink",
+          "arch-review",
+          "--path",
+          linkDir,
+        ]);
+
+        const { sql } = await import("kysely");
+        const db2 = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          const r = await sql<{
+            n: number;
+          }>`SELECT COUNT(*) as n FROM document_index WHERE file_path = ${filePath}`.execute(db2);
+          expect(r.rows[0]?.n).toBe(0);
+        } finally {
+          await db2.destroy();
+        }
+      } finally {
+        await fs.rm(linkDir, { recursive: true, force: true });
+      }
+    });
   });
 });
