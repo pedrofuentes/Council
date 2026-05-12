@@ -397,5 +397,73 @@ describe("createDocumentProcessor", () => {
       expect(result.filesProcessed).toBe(1);
       expect(result.filesFailed).toBeGreaterThanOrEqual(1);
     });
+
+    // ── Sentinel pr373 cycle 3 follow-ups ────────────────────────────
+    it("rejects a docs root that is itself a symlink/junction (defense in depth)", async () => {
+      const dir = await makeDocsDir(env, "alice");
+      // Replace the freshly-created dir with a symlink to a sibling.
+      await fs.rm(dir, { recursive: true, force: true });
+      const realTarget = await fs.mkdtemp(path.join(os.tmpdir(), "council-target-"));
+      try {
+        await fs.symlink(realTarget, dir, "junction");
+      } catch {
+        // Symlinks/junctions not supported on this host — skip.
+        await fs.rm(realTarget, { recursive: true, force: true });
+        return;
+      }
+      await fs.writeFile(path.join(realTarget, "x.md"), "x");
+
+      const engine = new StubEngine([VALID_PROFILE_JSON]);
+      const proc = createDocumentProcessor({
+        engine,
+        documentRepo: env.docRepo,
+        profileRepo: env.profileRepo,
+        indexer: env.indexer,
+        config: CONFIG,
+      });
+      let threw = false;
+      try {
+        await proc.process("alice", dir);
+      } catch {
+        threw = true;
+      }
+      await fs.rm(realTarget, { recursive: true, force: true });
+      expect(threw).toBe(true);
+    });
+
+    it("reconciles deleted documents: marks them removed and prunes the FTS index", async () => {
+      const dir = await makeDocsDir(env, "alice");
+      const fileA = path.join(dir, "a.md");
+      const fileB = path.join(dir, "b.md");
+      await fs.writeFile(fileA, "alpha body alpha");
+      await fs.writeFile(fileB, "beta body beta");
+
+      const engine = new StubEngine([VALID_PROFILE_JSON, VALID_PROFILE_JSON]);
+      const proc = createDocumentProcessor({
+        engine,
+        documentRepo: env.docRepo,
+        profileRepo: env.profileRepo,
+        indexer: env.indexer,
+        config: CONFIG,
+      });
+      const first = await proc.process("alice", dir);
+      expect(first.filesProcessed).toBe(2);
+
+      // Delete one file, re-run.
+      await fs.rm(fileB);
+      const second = await proc.process("alice", dir);
+      expect(second.filesRemoved).toBe(1);
+
+      // The deleted file should no longer be tracked in expert_documents.
+      const remaining = await env.docRepo.getChecksumMap("alice");
+      expect(remaining.has(fileB)).toBe(false);
+      expect(remaining.has(fileA)).toBe(true);
+
+      // needsProcessing should also recognise a deletion as work to do
+      // *before* it is reconciled.
+      await fs.writeFile(path.join(dir, "c.md"), "gamma");
+      await fs.rm(fileA);
+      expect(await proc.needsProcessing("alice", dir)).toBe(true);
+    });
   });
 });

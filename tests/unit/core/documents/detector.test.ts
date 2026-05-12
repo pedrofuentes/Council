@@ -151,5 +151,14 @@ describe("detectDocumentChanges", () => {
       expect(result.newFiles).toHaveLength(1);
       expect(result.newFiles[0]?.checksum).toBe(sha256("hello fd"));
     });
+
+    it("surfaces non-ENOENT readdir errors instead of silently returning empty", async () => {
+      // Force a non-missing-directory error by passing a file path (ENOTDIR).
+      const filePath = path.join(dir, "file.md");
+      await fs.writeFile(filePath, "x");
+      await expect(
+        detectDocumentChanges(filePath, new Map(), [".md"], { confinementRoot: dir }),
+      ).rejects.toThrow();
+    });
   });
 });
