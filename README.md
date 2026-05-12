@@ -180,7 +180,7 @@ experts:
 
 Run with `council convene "<topic>" --template my-team`. Slug references
 are resolved against your expert library; unresolved slugs produce an
-explicit error so you can either add them with `council experts create`
+explicit error so you can either add them with `council expert create`
 or inline the definition.
 
 ### First-run template migration

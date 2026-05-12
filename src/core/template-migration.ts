@@ -78,12 +78,18 @@ export async function isMigrationNeeded(
   if (fsEmpty) return true;
 
   if (db) {
-    const anyRow = await db
+    const anyExpertRow = await db
       .selectFrom("expert_library")
       .select("slug")
       .limit(1)
       .executeTakeFirst();
-    if (!anyRow) return true;
+    if (!anyExpertRow) return true;
+    const anyPanelRow = await db
+      .selectFrom("panel_library")
+      .select("name")
+      .limit(1)
+      .executeTakeFirst();
+    if (!anyPanelRow) return true;
   }
   return false;
 }
@@ -191,6 +197,7 @@ export async function migrateBuiltInTemplates(
         onDisk.slugs,
         panelFile,
         onDiskContent,
+        true, // recovery: refresh existing row metadata from disk
       );
       skipped++;
       continue;
@@ -342,6 +349,7 @@ async function registerPanelFromDisk(
   slugs: readonly string[],
   yamlPath: string,
   yamlContent: string,
+  refreshExisting = false,
 ): Promise<void> {
   const now = new Date().toISOString();
   const checksum = sha256(yamlContent);
@@ -362,6 +370,20 @@ async function registerPanelFromDisk(
         created_at: now,
         updated_at: now,
       })
+      .execute();
+  } else if (refreshExisting) {
+    // Recovery path: panel row already exists (e.g. only expert tables
+    // were wiped) but its description/checksum may be stale relative to
+    // the user-edited YAML on disk. Re-sync from the file.
+    await db
+      .updateTable("panel_library")
+      .set({
+        description: description,
+        yaml_path: yamlPath,
+        yaml_checksum: checksum,
+        updated_at: now,
+      })
+      .where("name", "=", panelName)
       .execute();
   }
 

@@ -252,7 +252,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
               const safeMissing = missing.map((s) => stripControlChars(s)).join(", ");
               throw new Error(
                 `Panel "${safeName}" references experts not in the library: ${safeMissing}. ` +
-                  `Add them with 'council experts create' or use inline expert definitions.`,
+                  `Add them with 'council expert create' or use inline expert definitions.`,
               );
             }
             template = {
