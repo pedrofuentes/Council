@@ -199,6 +199,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
                   runExtractMemoryHook({
                     engine: ctx.engine,
                     db: ctx.db,
+                    panelId: ctx.panelId,
                     debateId: ctx.debateId,
                     expertSlugToId: ctx.expertSlugToId,
                     humanSlugs: new Set<string>(),

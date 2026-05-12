@@ -28,10 +28,18 @@ import { TurnRepository } from "../../../src/memory/repositories/turns.js";
 
 class CapturingEngine implements CouncilEngine {
   readonly capturedPrompts: string[] = [];
-  async start(): Promise<void> {}
-  async stop(): Promise<void> {}
-  async addExpert(_: ExpertSpec): Promise<void> {}
-  async removeExpert(_: string): Promise<void> {}
+  async start(): Promise<void> {
+    /* no-op */
+  }
+  async stop(): Promise<void> {
+    /* no-op */
+  }
+  async addExpert(_: ExpertSpec): Promise<void> {
+    /* no-op */
+  }
+  async removeExpert(_: string): Promise<void> {
+    /* no-op */
+  }
   async *send(args: {
     readonly prompt: string;
     readonly expertId: string;

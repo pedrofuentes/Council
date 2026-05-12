@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **LLM-based ExpertMemory extraction** (ROADMAP §3.1) — after each debate, an LLM extraction pass distils each AI expert's prior turns (bounded by the most-recent 5 debates × 20 turns) into structured `{ positions, updatedPriors, unresolved }` and caches the result on the expert row (new `experts.extracted_memory_json` column, migration 003). `recallMemory()` now prefers the cached LLM-distilled memory over the heuristic sentence scan, falling back to the heuristic when the cache is null or all-empty. Cost ceiling: one LLM call per AI expert per debate. Prompt-injection hardened: every `<` in interpolated turn content is escaped to `&lt;` before fencing (same pattern as the LLM summariser).
+- **`council convene --heuristic-memory`** and **`council resume --continue --heuristic-memory`** — opt-out flag that skips the post-debate LLM extraction pass and keeps the legacy heuristic-only recall behaviour. Useful for offline tests and air-gapped environments.
+
 - **Context window management** (ROADMAP §2.6, closes #229-ish; see PR #249) — keeps long debates within model limits without sacrificing fidelity. Three knobs, all opt-in:
   - **`council convene --context-scope <scope>`** — `all` (default, unchanged), `same-round` (each expert only sees turns from the current round, including intra-round turns that completed just before), or `recent` (a sliding window of the most-recent N turns across all rounds, default N=10). Backed by `filterPriorTurns()` in `src/core/context/visibility.ts`.
   - **`council convene --summarize-after <n>`** — once round `n` starts, the orchestrator prepends a compact heuristic rolling summary (each expert's first-sentence position + a disagreement-signal flag) to every prompt so the strategy can reference earlier deliberation without every verbatim turn. Backed by `buildRollingSummary()` in `src/core/context/summarizer.ts`.

@@ -372,6 +372,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
                   runExtractMemoryHook({
                     engine: ctx.engine,
                     db: ctx.db,
+                    panelId: ctx.panelId,
                     debateId: ctx.debateId,
                     expertSlugToId: ctx.expertSlugToId,
                     humanSlugs,
