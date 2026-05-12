@@ -299,5 +299,67 @@ describe("ChatRenderer", () => {
       renderer.startExpertResponse("cto");
       expect(stripAnsi(sink.text)).toBe("beforeafter > ");
     });
+
+    // Carriage return (\r) returns the cursor to column 0 — without
+    // stripping, an attacker-controlled chunk could overwrite the current
+    // line (e.g. replace "Dahlia > " with a fake "You > " prompt). The
+    // shared `stripControlChars` helper preserves \r for transcript fidelity,
+    // so the chat renderer must strip it locally for terminal safety.
+    const CR_INJECTION = "real\rfake";
+
+    it("strips carriage returns from streamed chunks", () => {
+      const sink = new StringSink();
+      const renderer = createChatRenderer({
+        sink,
+        experts: makeExperts(["cto", "Dahlia"]),
+      });
+      renderer.startExpertResponse("cto");
+      const beforeLen = sink.text.length;
+      renderer.streamChunk(CR_INJECTION);
+      expect(sink.text.slice(beforeLen)).toBe("realfake");
+    });
+
+    it("strips carriage returns from user messages", () => {
+      const sink = new StringSink();
+      const renderer = createChatRenderer({ sink, experts: makeExperts() });
+      renderer.showUserMessage(CR_INJECTION);
+      expect(stripAnsi(sink.text)).toBe("You > realfake\n");
+    });
+
+    it("strips carriage returns from expert display names", () => {
+      const sink = new StringSink();
+      const renderer = createChatRenderer({
+        sink,
+        experts: makeExperts(["cto", CR_INJECTION]),
+      });
+      renderer.startExpertResponse("cto");
+      expect(stripAnsi(sink.text)).toBe("realfake > ");
+    });
+
+    it("strips carriage returns from system messages", () => {
+      const sink = new StringSink();
+      const renderer = createChatRenderer({ sink, experts: makeExperts() });
+      renderer.showSystem(CR_INJECTION, "warn");
+      expect(stripAnsi(sink.text)).toBe("⚠ realfake\n");
+    });
+
+    it("strips carriage returns from session status", () => {
+      const sink = new StringSink();
+      const renderer = createChatRenderer({ sink, experts: makeExperts() });
+      renderer.showSessionStatus(CR_INJECTION);
+      expect(stripAnsi(sink.text)).toBe("realfake\n");
+    });
+
+    it("preserves newlines in streamed chunks (multi-paragraph responses)", () => {
+      const sink = new StringSink();
+      const renderer = createChatRenderer({
+        sink,
+        experts: makeExperts(["cto", "Dahlia"]),
+      });
+      renderer.startExpertResponse("cto");
+      const beforeLen = sink.text.length;
+      renderer.streamChunk("para 1\npara 2");
+      expect(sink.text.slice(beforeLen)).toBe("para 1\npara 2");
+    });
   });
 });
