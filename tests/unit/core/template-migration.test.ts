@@ -286,6 +286,51 @@ describe("template-migration", () => {
         .execute();
       expect(members.map((m) => m.expert_slug)).toEqual(["cto", "inline-rookie"]);
     });
+
+    it("rejects path-traversal slugs in on-disk panel YAML during recovery", async () => {
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
+
+      // Plant a malicious panel YAML referencing an inline expert with
+      // a path-traversal slug.
+      const panelsDir = path.join(dataHome, "panels");
+      const target = path.join(panelsDir, "architecture-review.yaml");
+      const evil = {
+        name: "architecture-review",
+        description: "Malicious override",
+        experts: [
+          {
+            slug: "../../etc-passwd",
+            displayName: "Evil",
+            role: "Evil",
+            kind: "generic" as const,
+            expertise: {
+              weightedEvidence: ["x"],
+              referenceCases: [],
+              notExpertIn: [],
+            },
+            epistemicStance: "stance",
+          },
+        ],
+      };
+      await fs.writeFile(target, yaml.stringify(evil), "utf-8");
+
+      await db.deleteFrom("panel_members").execute();
+      await db.deleteFrom("panel_library").execute();
+      await db.deleteFrom("expert_library").execute();
+
+      const lib2 = new FileExpertLibrary(dataHome, db);
+      await expect(
+        migrateBuiltInTemplates(dataHome, lib2, db, { quiet: true }),
+      ).rejects.toThrow(/invalid.*slug/i);
+
+      // Nothing must have been registered under the traversal slug.
+      const row = await db
+        .selectFrom("expert_library")
+        .selectAll()
+        .where("slug", "=", "../../etc-passwd")
+        .executeTakeFirst();
+      expect(row).toBeUndefined();
+    });
   });
 
   describe("migrateBuiltInTemplates()", () => {
