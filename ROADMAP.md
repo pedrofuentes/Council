@@ -34,8 +34,8 @@
 - ✅ **2.2 Structured Debate Engine** — 4-phase choreography (opening → cross-exam → rebuttal → synthesis)
 - ✅ **2.3 Pluggable Moderator Strategies** — `ModeratorStrategy` interface with built-in strategies (`round-robin`, `devils-advocate`, `consensus-check`), wired into `Debate.#runFreeform()` and exposed via `--strategy` CLI flag
 - ✅ **2.4 Anti-sycophancy Enforcement** — 3-layer quality gate (forbidden phrases, disagreement budget, specificity)
-- ✅ **2.5 Panel Auto-composition** — LLM meta-prompt generates expert panels from topic analysis
-- ✅ **2.6 Context Window Management** — Visibility scoping (`all` / `same-round` / `recent`), heuristic rolling summaries, and an opt-in `maxPromptChars` cap with newest-first eviction. CLI flags: `--context-scope`, `--summarize-after`.
+- ✅ **2.5 Panel Auto-composition** — LLM meta-prompt generates expert panels from topic analysis; interactive confirmation before proceeding (`--yes` to skip)
+- ✅ **2.6 Context Window Management** — Visibility scoping (`all` / `same-round` / `recent`), LLM-based rolling summaries (default, `--heuristic-summaries` for token-saving), and an opt-in `maxPromptChars` cap with newest-first eviction
 - ✅ **2.7 `council conclude` Command** — Decision matrix with consensus, tensions, and recommendation
 
 ---
@@ -44,7 +44,7 @@
 
 > Experts remember, sessions persist, and the UX is polished.
 
-- ✅ **3.1 Persistent Expert Memory** — Experts remember across sessions with sanitized prompt injection protection
+- ✅ **3.1 Persistent Expert Memory** — LLM-based post-debate extraction cached in DB (default, `--heuristic-memory` for token-saving), sanitized against prompt injection
 - ✅ **3.2 Session Resume** — `council resume` for transcript replay and `--continue` for new debates
 - ✅ **3.3 Human-as-expert** — `council convene --human` adds interactive human participants
 - ✅ **3.4 Rich Ink Terminal UI** — React + Ink components with color-coded experts and streaming text
