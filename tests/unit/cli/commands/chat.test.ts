@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   buildChatCommand,
   buildChatTurnPrompt,
+  buildPanelTurnPrompt,
   type ChatInputProvider,
 } from "../../../../src/cli/commands/chat.js";
 import { FileExpertLibrary } from "../../../../src/core/expert-library.js";
@@ -593,5 +594,390 @@ describe("buildChatCommand", () => {
         expect(expertTurns[0]?.content).not.toContain("PARTIAL");
       });
     });
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Panel chat mode (Roadmap 5.4)
+// ──────────────────────────────────────────────────────────────────────
+
+const PANEL_EXPERT_A: ExpertDefinition = {
+  slug: "panel-a",
+  displayName: "Alice (Architect)",
+  role: "Systems architect",
+  expertise: {
+    weightedEvidence: ["postmortems"],
+    referenceCases: [],
+    notExpertIn: [],
+  },
+  epistemicStance: "Engineering rigor",
+  kind: "generic",
+};
+
+const PANEL_EXPERT_B: ExpertDefinition = {
+  slug: "panel-b",
+  displayName: "Bob (Builder)",
+  role: "Implementation lead",
+  expertise: {
+    weightedEvidence: ["shipping cadence"],
+    referenceCases: [],
+    notExpertIn: [],
+  },
+  epistemicStance: "Pragmatist",
+  kind: "generic",
+};
+
+async function writeUserPanel(
+  env: TestEnv,
+  name: string,
+  experts: readonly string[],
+  description = "Test panel",
+): Promise<void> {
+  const dir = path.join(env.dataHome, "panels");
+  await fs.mkdir(dir, { recursive: true });
+  const lines = [
+    `name: ${name}`,
+    `description: ${description}`,
+    "experts:",
+    ...experts.map((s) => `  - ${s}`),
+  ];
+  await fs.writeFile(path.join(dir, `${name}.yaml`), lines.join("\n") + "\n", "utf-8");
+}
+
+describe("buildPanelTurnPrompt (pure)", () => {
+  it("returns just the user message when there is no history", () => {
+    const out = buildPanelTurnPrompt({
+      history: [],
+      userMessage: "Kickoff",
+      expertNames: new Map([["panel-a", "Alice (Architect)"]]),
+    });
+    expect(out).toBe("Kickoff");
+  });
+
+  it("labels each prior turn by speaker and appends the new user message", () => {
+    const history: readonly ChatTurn[] = [
+      {
+        id: "t1",
+        chatId: "c1",
+        seq: 1,
+        role: "user",
+        expertSlug: null,
+        content: "Plan?",
+        isMention: false,
+        tokensIn: null,
+        tokensOut: null,
+        createdAt: "2024-01-01T00:00:00Z",
+      },
+      {
+        id: "t2",
+        chatId: "c1",
+        seq: 2,
+        role: "expert",
+        expertSlug: "panel-a",
+        content: "Start with the schema.",
+        isMention: false,
+        tokensIn: null,
+        tokensOut: null,
+        createdAt: "2024-01-01T00:00:01Z",
+      },
+      {
+        id: "t3",
+        chatId: "c1",
+        seq: 3,
+        role: "expert",
+        expertSlug: "panel-b",
+        content: "Ship the API first.",
+        isMention: false,
+        tokensIn: null,
+        tokensOut: null,
+        createdAt: "2024-01-01T00:00:02Z",
+      },
+    ];
+    const out = buildPanelTurnPrompt({
+      history,
+      userMessage: "OK what next?",
+      expertNames: new Map([
+        ["panel-a", "Alice (Architect)"],
+        ["panel-b", "Bob (Builder)"],
+      ]),
+    });
+    expect(out).toContain("PRIOR CONVERSATION");
+    expect(out).toContain("User: Plan?");
+    expect(out).toContain("Alice (Architect): Start with the schema.");
+    expect(out).toContain("Bob (Builder): Ship the API first.");
+    expect(out).toContain("OK what next?");
+    expect(out.indexOf("Ship the API first.")).toBeLessThan(out.indexOf("OK what next?"));
+  });
+});
+
+describe("panel chat mode", () => {
+  let env: TestEnv;
+  beforeEach(async () => {
+    env = await makeEnv();
+  });
+  afterEach(async () => {
+    await teardown(env);
+  });
+
+  async function seedTwoExperts(): Promise<void> {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+  }
+
+  it("falls back to panel resolution when the target is not an expert slug", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "my-panel", ["panel-a", "panel-b"]);
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "my-panel", "--engine", "mock"]);
+
+    expect(out).toMatch(/Starting panel chat/i);
+    expect(out).toMatch(/2 experts/i);
+
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "my-panel");
+      expect(session).toBeDefined();
+      expect(session?.targetType).toBe("panel");
+      expect(session?.targetSlug).toBe("my-panel");
+    });
+  });
+
+  it("errors when target is neither an expert slug nor a panel", async () => {
+    let err = "";
+    const cmd = buildChatCommand({
+      write: () => undefined,
+      writeError: (s) => (err += s),
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput([]),
+    });
+    await expect(
+      cmd.parseAsync(["node", "council-chat", "nope", "--engine", "mock"]),
+    ).rejects.toThrow(/not found/i);
+    expect(err).toMatch(/not found/i);
+  });
+
+  it("each expert responds to every user message; turns are persisted with expertSlug", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "duo", ["panel-a", "panel-b"]);
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["hello panel", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "duo", "--engine", "mock"]);
+
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "duo");
+      expect(session).toBeDefined();
+      const turns = await repo.getTurns(session?.id ?? "");
+      // 1 user turn + 2 expert turns (one per expert).
+      expect(turns.length).toBe(3);
+      expect(turns[0]?.role).toBe("user");
+      expect(turns[0]?.content).toBe("hello panel");
+      expect(turns[1]?.role).toBe("expert");
+      expect(turns[2]?.role).toBe("expert");
+      const expertSlugs = new Set(turns.filter((t) => t.role === "expert").map((t) => t.expertSlug));
+      expect(expertSlugs.has("panel-a")).toBe(true);
+      expect(expertSlugs.has("panel-b")).toBe(true);
+    });
+  });
+
+  it("warns when a referenced expert slug is missing from the library and continues", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "with-gap", ["panel-a", "panel-b", "ghost"]);
+
+    let out = "";
+    let err = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: (s) => (err += s),
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "with-gap", "--engine", "mock"]);
+
+    const combined = out + err;
+    expect(combined).toMatch(/ghost/);
+    expect(combined).toMatch(/not found/i);
+    expect(combined).toMatch(/Continuing with 2 of 3 experts|2 of 3/i);
+  });
+
+  it("errors when no panel experts are resolvable", async () => {
+    await writeUserPanel(env, "empty-panel", ["ghost-1", "ghost-2"]);
+
+    let err = "";
+    const cmd = buildChatCommand({
+      write: () => undefined,
+      writeError: (s) => (err += s),
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput([]),
+    });
+    await expect(
+      cmd.parseAsync(["node", "council-chat", "empty-panel", "--engine", "mock"]),
+    ).rejects.toThrow(/no available experts/i);
+    expect(err).toMatch(/no available experts/i);
+  });
+
+  it("resumes an existing active panel session with a banner", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "resume-panel", ["panel-a", "panel-b"]);
+    await withRepo(env, async (repo) => {
+      const s = await repo.createSession({ targetType: "panel", targetSlug: "resume-panel" });
+      await repo.addTurn({ chatId: s.id, role: "user", content: "earlier" });
+      await repo.addTurn({
+        chatId: s.id,
+        role: "expert",
+        expertSlug: "panel-a",
+        content: "earlier reply",
+      });
+    });
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "resume-panel", "--engine", "mock"]);
+    expect(out).toMatch(/Resuming panel chat/i);
+    expect(out).toMatch(/2 messages/i);
+  });
+
+  it("when one expert fails, the others still respond and a warning is shown", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "mixed-fail", ["panel-a", "panel-b"]);
+
+    // Build a fake engine: first registered expert fails non-recoverably on send,
+    // second succeeds. We track addExpert calls to assign behavior by registration
+    // order (which mirrors the panel's expert order).
+    let registered = 0;
+    const failingSlugs = new Set<string>();
+    const engine: CouncilEngine = {
+      async start(): Promise<void> { /* ok */ },
+      async stop(): Promise<void> { /* ok */ },
+      async addExpert(spec): Promise<void> {
+        if (registered === 0) failingSlugs.add(spec.id);
+        registered += 1;
+      },
+      async removeExpert(): Promise<void> { /* ok */ },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock"];
+      },
+      send(opts) {
+        const expertId = opts.expertId;
+        const shouldFail = failingSlugs.has(expertId);
+        return {
+          async *[Symbol.asyncIterator]() {
+            if (shouldFail) {
+              yield {
+                kind: "error" as const,
+                expertId,
+                error: { code: "PROVIDER_ERROR" as const, message: "boom" },
+                recoverable: false,
+              };
+            } else {
+              yield { kind: "message.delta" as const, expertId, text: "OK-RESPONSE" };
+              yield {
+                kind: "message.complete" as const,
+                expertId,
+                response: { latencyMs: 1 },
+              };
+            }
+          },
+        };
+      },
+    };
+
+    let out = "";
+    let err = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: (s) => (err += s),
+      engineFactory: () => engine,
+      inputProvider: () => scriptedInput(["help me", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "mixed-fail", "--engine", "mock"]);
+
+    const combined = out + err;
+    expect(combined).toMatch(/could not respond|1 of 2 experts responded|1 of 2/i);
+
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "mixed-fail");
+      const turns = await repo.getTurns(session?.id ?? "");
+      const expertTurns = turns.filter((t) => t.role === "expert");
+      expect(expertTurns.length).toBe(1);
+      expect(expertTurns[0]?.content).toContain("OK-RESPONSE");
+    });
+  });
+
+  it("when all experts fail, no expert turns are saved and a clear warning is shown", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "all-fail", ["panel-a", "panel-b"]);
+
+    const engine: CouncilEngine = {
+      async start(): Promise<void> { /* ok */ },
+      async stop(): Promise<void> { /* ok */ },
+      async addExpert(): Promise<void> { /* ok */ },
+      async removeExpert(): Promise<void> { /* ok */ },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock"];
+      },
+      send(opts) {
+        const expertId = opts.expertId;
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              kind: "error" as const,
+              expertId,
+              error: { code: "PROVIDER_ERROR" as const, message: "boom" },
+              recoverable: false,
+            };
+          },
+        };
+      },
+    };
+
+    let out = "";
+    let err = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: (s) => (err += s),
+      engineFactory: () => engine,
+      inputProvider: () => scriptedInput(["help", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "all-fail", "--engine", "mock"]);
+
+    expect(out + err).toMatch(/No experts could respond/i);
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "all-fail");
+      const turns = await repo.getTurns(session?.id ?? "");
+      // User turn saved, no expert turns.
+      expect(turns.filter((t) => t.role === "user").length).toBe(1);
+      expect(turns.filter((t) => t.role === "expert").length).toBe(0);
+    });
+  });
+
+  it("--list shows panel chat sessions alongside expert chats", async () => {
+    await seedTwoExperts();
+    await withRepo(env, async (repo) => {
+      await repo.createSession({ targetType: "expert", targetSlug: "panel-a" });
+      await repo.createSession({ targetType: "panel", targetSlug: "duo" });
+    });
+
+    let out = "";
+    const cmd = buildChatCommand({ write: (s) => (out += s) });
+    await cmd.parseAsync(["node", "council-chat", "--list"]);
+    expect(out).toContain("panel-a");
+    expect(out).toContain("duo");
   });
 });
