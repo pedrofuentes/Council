@@ -20,6 +20,7 @@
  * freedom produces mush." Default forbidden phrases and the disagreement
  * budget are ALWAYS injected — they cannot be opted out of.
  */
+import type { PersonaProfile } from "./documents/profile-analyzer.js";
 import type { ExpertDefinition } from "./expert.js";
 
 /**
@@ -141,19 +142,55 @@ function renderMemory(memory: ExpertMemory | undefined): string {
   return sections.join("\n");
 }
 
+function renderPersonaProfile(profile: PersonaProfile): string {
+  const lines: string[] = [
+    "Based on analysis of documents about you, you exhibit the following traits:",
+    "",
+    `Communication Style: ${profile.communicationStyle}`,
+    "",
+    "Decision Patterns:",
+  ];
+  if (profile.decisionPatterns.length === 0) {
+    lines.push("  - (none observed)");
+  } else {
+    for (const p of profile.decisionPatterns) lines.push(`  - ${p}`);
+  }
+  lines.push("");
+  lines.push("Cognitive Tendencies:");
+  if (profile.biases.length === 0) {
+    lines.push("  - (none observed)");
+  } else {
+    for (const b of profile.biases) lines.push(`  - ${b}`);
+  }
+  lines.push("");
+  lines.push(`Characteristic Vocabulary: ${profile.vocabulary.join(", ")}`);
+  lines.push("");
+  lines.push(
+    "Adopt these traits naturally in your responses. Do not explicitly mention or quote this profile.",
+  );
+  return lines.join("\n");
+}
+
 /**
- * Build the full 8-section system prompt for an expert.
+ * Build the full system prompt for an expert.
  *
- * @param def     Static expert profile (validated by ExpertDefinitionSchema)
- * @param memory  Accumulated memory from past sessions (undefined on first run)
- * @param task    Per-turn instruction from the moderator
+ * Without a `personaProfile`, the prompt has the canonical 8 sections
+ * (sections 1-8 with `[8] CURRENT TASK`). When a `personaProfile` is
+ * provided, a new section `[8] PERSONA PROFILE` is injected and
+ * `CURRENT TASK` shifts to `[9]`.
+ *
+ * @param def             Static expert profile (validated by ExpertDefinitionSchema)
+ * @param memory          Accumulated memory from past sessions (undefined on first run)
+ * @param task            Per-turn instruction from the moderator
+ * @param personaProfile  Optional LLM-derived behavioral profile (Roadmap 6.2)
  */
 export function buildSystemPrompt(
   def: ExpertDefinition,
   memory: ExpertMemory | undefined,
   task: string,
+  personaProfile?: PersonaProfile,
 ): string {
-  return [
+  const sections: string[] = [
     "[1] IDENTITY",
     renderIdentity(def),
     "",
@@ -175,7 +212,16 @@ export function buildSystemPrompt(
     "[7] MEMORY",
     renderMemory(memory),
     "",
-    "[8] CURRENT TASK",
-    task,
-  ].join("\n");
+  ];
+  if (personaProfile) {
+    sections.push("[8] PERSONA PROFILE");
+    sections.push(renderPersonaProfile(personaProfile));
+    sections.push("");
+    sections.push("[9] CURRENT TASK");
+    sections.push(task);
+  } else {
+    sections.push("[8] CURRENT TASK");
+    sections.push(task);
+  }
+  return sections.join("\n");
 }

@@ -141,6 +141,19 @@ export interface ExpertDocumentRow {
   readonly created_at: string;
 }
 
+export interface PersonaProfileRow {
+  readonly expert_slug: string;
+  readonly communication_style: string;
+  readonly decision_patterns: string;
+  readonly biases: string;
+  readonly vocabulary: string;
+  readonly epistemic_stance: string;
+  readonly document_count: number;
+  readonly total_words: number;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
 export interface CouncilSchema {
   schema_version: SchemaVersionRow;
   panels: PanelRow;
@@ -153,6 +166,7 @@ export interface CouncilSchema {
   chat_sessions: ChatSessionRow;
   chat_turns: ChatTurnRow;
   expert_documents: ExpertDocumentRow;
+  persona_profiles: PersonaProfileRow;
 }
 
 export type CouncilDatabase = Kysely<CouncilSchema>;
@@ -203,6 +217,11 @@ function loadMigrations(): readonly Migration[] {
       version: 7,
       name: "007_document_index",
       sql: readFileSync(path.join(migrationsDir, "007_document_index.sql"), "utf-8"),
+    },
+    {
+      version: 8,
+      name: "008_persona_profiles",
+      sql: readFileSync(path.join(migrationsDir, "008_persona_profiles.sql"), "utf-8"),
     },
   ];
 }
