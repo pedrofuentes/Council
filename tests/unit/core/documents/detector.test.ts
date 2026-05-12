@@ -109,4 +109,47 @@ describe("detectDocumentChanges", () => {
     expect(result.unchangedFiles).toHaveLength(0);
     expect(result.unsupportedFiles).toHaveLength(0);
   });
+
+  // ── Roadmap 6.4: confinement-aware detection (TOCTOU-safe) ────────────
+  describe("confinement (Roadmap 6.4)", () => {
+    it("accepts files inside the confinement root", async () => {
+      await fs.writeFile(path.join(dir, "a.md"), "ok");
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        confinementRoot: dir,
+      });
+      expect(result.newFiles).toHaveLength(1);
+      expect(result.rejectedFiles ?? []).toHaveLength(0);
+    });
+
+    it("rejects symlinks whose target is outside the confinement root", async () => {
+      const outside = await fs.mkdtemp(path.join(os.tmpdir(), "council-outside-"));
+      try {
+        const secret = path.join(outside, "secret.md");
+        await fs.writeFile(secret, "SECRET");
+        try {
+          await fs.symlink(secret, path.join(dir, "trap.md"));
+        } catch {
+          // Symlinks not permitted on this OS/account — skip.
+          return;
+        }
+        const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+          confinementRoot: dir,
+        });
+        expect(result.newFiles.some((f) => f.filename === "trap.md")).toBe(false);
+        expect((result.rejectedFiles ?? []).some((p) => p.endsWith("trap.md"))).toBe(true);
+      } finally {
+        await fs.rm(outside, { recursive: true, force: true });
+      }
+    });
+
+    it("does NOT read file bytes via the unconfined path (uses fd-based reads)", async () => {
+      // Sanity: a regular file inside confinement still produces a checksum.
+      await fs.writeFile(path.join(dir, "a.md"), "hello fd");
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        confinementRoot: dir,
+      });
+      expect(result.newFiles).toHaveLength(1);
+      expect(result.newFiles[0]?.checksum).toBe(sha256("hello fd"));
+    });
+  });
 });

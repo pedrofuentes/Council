@@ -1729,15 +1729,18 @@ describe("persona expert — on-demand document processing", () => {
     });
 
     // First run — process.
+    let out1 = "";
     const cmd1 = buildChatCommand({
-      write: () => undefined,
+      write: (s) => (out1 += s),
       writeError: () => undefined,
       engineFactory: () => new MockEngine(),
       inputProvider: () => scriptedInput(["/quit"]),
     });
     await cmd1.parseAsync(["node", "council-chat", PERSONA_SAMPLE.slug, "--engine", "mock"]);
+    expect(out1).toMatch(/processing persona documents/i);
 
-    // Second run — no docs changed; processing should be skipped.
+    // Second run — no docs changed; the literal banner must NOT appear,
+    // and no per-file progress lines should be emitted either.
     let out2 = "";
     const cmd2 = buildChatCommand({
       write: (s) => (out2 += s),
@@ -1747,8 +1750,9 @@ describe("persona expert — on-demand document processing", () => {
     });
     await cmd2.parseAsync(["node", "council-chat", PERSONA_SAMPLE.slug, "--engine", "mock"]);
 
-    // No "processing N documents" line on the second run.
-    expect(out2).not.toMatch(/processing \d+ document/i);
+    expect(out2).not.toMatch(/processing persona documents/i);
+    expect(out2).not.toMatch(/processed \d+ new\/changed document/i);
+    expect(out2).not.toMatch(/memo\.md: \d+ words/i);
   });
 
   it("empty docs folder: surfaces info that the persona will work as a generic expert", async () => {
@@ -1790,7 +1794,7 @@ describe("persona expert — on-demand document processing", () => {
       inputProvider: () => scriptedInput(["/quit"]),
     });
     await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
-    expect(out).not.toMatch(/processing \d+ document/i);
+    expect(out).not.toMatch(/processing persona documents/i);
     expect(out).not.toMatch(/persona profile/i);
   });
 });
