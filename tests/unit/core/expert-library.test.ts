@@ -334,6 +334,28 @@ describe("FileExpertLibrary", () => {
         .execute();
       expect(members).toHaveLength(1);
     });
+
+    it("surfaces AggregateError when both unlink and rollback fail on delete()", async () => {
+      await lib.create(makeDef());
+      const yamlPath = path.join(dataHome, "experts", "cto.yaml");
+      await fs.unlink(yamlPath);
+      await fs.mkdir(yamlPath); // makes fs.unlink fail with EISDIR/EPERM
+
+      // Force the rollback insert to fail too — an AggregateError should
+      // surface BOTH errors so callers know storage is inconsistent.
+      const spy = vi.spyOn(db, "insertInto").mockImplementationOnce(() => {
+        throw new Error("rollback insert failed");
+      });
+
+      const err = await lib.delete("cto", { force: true }).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(AggregateError);
+      expect((err as AggregateError).message).toMatch(/storage may be inconsistent/i);
+      expect((err as AggregateError).errors.length).toBeGreaterThanOrEqual(2);
+      spy.mockRestore();
+    });
   });
 
   describe("resolvePanel()", () => {
