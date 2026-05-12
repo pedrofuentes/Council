@@ -23,6 +23,7 @@ import { buildDoctorCommand } from "../cli/commands/doctor.js";
 import { buildExpertCommand } from "../cli/commands/expert.js";
 import { buildExportCommand } from "../cli/commands/export.js";
 import { buildMemoryCommand } from "../cli/commands/memory.js";
+import { buildPanelCommand } from "../cli/commands/panel.js";
 import { buildPanelsCommand } from "../cli/commands/panels.js";
 import { buildResumeCommand } from "../cli/commands/resume.js";
 import { buildTemplatesCommand } from "../cli/commands/templates.js";
@@ -39,6 +40,7 @@ export function buildProgram(): Command {
   program.addCommand(buildConcludeCommand());
   program.addCommand(buildExportCommand());
   program.addCommand(buildPanelsCommand());
+  program.addCommand(buildPanelCommand());
   program.addCommand(buildExpertCommand());
   program.addCommand(buildTemplatesCommand());
   program.addCommand(buildMemoryCommand());
