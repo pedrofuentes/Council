@@ -128,7 +128,7 @@ Heuristic quality gate inspecting expert responses against the 3-layer system: f
 
 > Meta-prompt that analyzes a topic and suggests an expert panel (roles, models, expected disagreements).
 
-`council convene "<topic>"` without `--template` auto-generates a relevant panel via an LLM meta-prompt. The generated panel is validated against `PanelDefinitionSchema`; on validation failure or model refusal the command throws a user-facing error directing the user to specify `--template` manually. `--template` takes precedence when provided.
+`council convene "<topic>"` without `--template` auto-generates a relevant panel via an LLM meta-prompt. The generated panel is validated against `PanelDefinitionSchema`; on validation failure or model refusal the command throws a user-facing error directing the user to specify `--template` manually. `--template` takes precedence when provided. An interactive confirmation prompt displays the composed panel and requires explicit `y` to proceed; `--yes` bypasses the prompt for scripting/CI.
 
 **Key files**: `src/core/auto-compose.ts`, `src/cli/commands/convene.ts`
 
@@ -136,7 +136,7 @@ Heuristic quality gate inspecting expert responses against the 3-layer system: f
 
 > Smart context scoping so experts see only what's relevant and long debates don't overflow.
 
-Visibility scoping (`all` / `same-round` / `recent`), heuristic rolling summaries, and an opt-in `maxPromptChars` cap with newest-first eviction. CLI flags: `--context-scope`, `--summarize-after`.
+Visibility scoping (`all` / `same-round` / `recent`), LLM-based rolling summaries (default), and an opt-in `maxPromptChars` cap with newest-first eviction. CLI flags: `--context-scope`, `--summarize-after`, `--heuristic-summaries` (falls back to heuristic first-sentence extraction for token-saving).
 
 **Key files**: `src/core/context/visibility.ts`, `src/core/context/summarizer.ts`, `src/core/debate.ts` (`capByChars` eviction)
 
@@ -160,9 +160,9 @@ Visibility scoping (`all` / `same-round` / `recent`), heuristic rolling summarie
 
 > Experts remember positions, updated priors, and unresolved questions across sessions.
 
-`DebatePersister` writes debate/turn rows to SQLite; `src/memory/expert-memory.ts` extracts positions, updated priors, and unresolved questions from prior debate turns for a given expert. The prompt builder reads memory and populates section [7] MEMORY with a terse bulleted log, sanitized against prompt-injection. `council memory inspect <panel> --expert <slug>` displays the injected memory content.
+`DebatePersister` writes debate/turn rows to SQLite. After each debate completes, an LLM-based extractor (`src/memory/memory-extractor.ts`) runs against each expert's turns to produce a structured `ExpertMemory` (positions, updated priors, unresolved questions), which is cached in `experts.extracted_memory_json`. At the next `convene`, the cached memory is loaded directly (no LLM call). The prompt builder reads memory and populates section [7] MEMORY with a terse bulleted log, sanitized against prompt-injection. `--heuristic-memory` flag skips LLM extraction and uses heuristic first-sentence extraction instead. `council memory inspect <panel> --expert <slug>` displays the injected memory content.
 
-**Key files**: `src/memory/expert-memory.ts`, `src/memory/persister.ts`, `src/core/prompt-builder.ts`, `src/cli/commands/memory.ts`
+**Key files**: `src/memory/expert-memory.ts`, `src/memory/memory-extractor.ts`, `src/memory/persister.ts`, `src/core/prompt-builder.ts`, `src/cli/commands/memory.ts`
 
 ### 3.2 Session Resume ✅
 
