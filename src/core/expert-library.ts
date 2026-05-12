@@ -157,8 +157,18 @@ export class FileExpertLibrary implements ExpertLibrary {
       await fs.writeFile(yamlPath, content, "utf-8");
     } catch (err) {
       // Compensating action: undo the DB row so caller can retry without
-      // a phantom record. Best-effort — surface the original write error.
-      await this.repo.delete(validated.slug).catch(() => undefined);
+      // a phantom record. If the rollback itself fails, surface BOTH
+      // errors via AggregateError so callers know storage is inconsistent.
+      const restoreErrors: Error[] = [];
+      await this.repo
+        .delete(validated.slug)
+        .catch((e: unknown) => restoreErrors.push(e instanceof Error ? e : new Error(String(e))));
+      if (restoreErrors.length > 0) {
+        throw new AggregateError(
+          [err as Error, ...restoreErrors],
+          `Failed to write expert "${validated.slug}" YAML and DB rollback failed — storage may be inconsistent`,
+        );
+      }
       throw err;
     }
   }
@@ -195,11 +205,24 @@ export class FileExpertLibrary implements ExpertLibrary {
       });
     } catch (err) {
       // Restore the on-disk YAML to its prior state so library reads stay
-      // consistent with the DB row that did NOT get updated.
+      // consistent with the DB row that did NOT get updated. If the
+      // restore itself fails, surface BOTH errors via AggregateError so
+      // callers know storage is inconsistent.
+      const restoreErrors: Error[] = [];
       if (previousContent !== null) {
-        await fs.writeFile(yamlPath, previousContent, "utf-8").catch(() => undefined);
+        await fs
+          .writeFile(yamlPath, previousContent, "utf-8")
+          .catch((e: unknown) => restoreErrors.push(e instanceof Error ? e : new Error(String(e))));
       } else {
-        await fs.unlink(yamlPath).catch(() => undefined);
+        await fs
+          .unlink(yamlPath)
+          .catch((e: unknown) => restoreErrors.push(e instanceof Error ? e : new Error(String(e))));
+      }
+      if (restoreErrors.length > 0) {
+        throw new AggregateError(
+          [err as Error, ...restoreErrors],
+          `Failed to update expert "${slug}" and YAML restore failed — storage may be inconsistent`,
+        );
       }
       throw err;
     }
