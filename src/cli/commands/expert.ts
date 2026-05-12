@@ -534,8 +534,24 @@ function buildDocsCommand(write: Writer, writeError: Writer): Command {
             writeError(msg + "\n");
             throw new Error(msg);
           }
-          await indexer.remove(match.filePath);
+          // DB row is the source of truth for "is this document active?".
+          // Mark it removed FIRST: if indexer.remove() then fails, the row's
+          // 'removed' status causes the next training run to treat the file
+          // as new and re-index it (replace-by-path semantics in the
+          // indexer), which heals any stale FTS5 entry. Doing it in the
+          // opposite order would leave the index empty while the DB still
+          // reports the file as active — a state the processor cannot
+          // recover from without manual intervention.
           await documentRepo.markRemoved(match.id);
+          try {
+            await indexer.remove(match.filePath);
+          } catch (err: unknown) {
+            const detail = err instanceof Error ? err.message : String(err);
+            writeError(
+              `Warning: index entry for "${target}" could not be removed (${detail}). ` +
+                `It will be replaced on the next training run.\n`,
+            );
+          }
           write(
             `✓ "${target}" removed from index. Profile will be updated on next use.\n`,
           );
@@ -632,16 +648,36 @@ function buildTrainCommand(
         // analyzer is forced to re-run. The processor re-indexes on
         // re-processing (replace-by-path semantics), so the FTS5 entries
         // stay consistent without us touching them directly.
+        //
+        // Per-row failures are isolated and surfaced so a single bad row
+        // doesn't abort the whole retrain with the profile already gone.
+        // DB markRemoved runs FIRST: a subsequent indexer.remove() failure
+        // is recoverable on the next process() call (replace-by-path),
+        // whereas the inverse order would leave a stale FTS5 entry the
+        // processor can't reach.
         if (opts.retrain === true) {
           await profileRepo.delete(slug);
           const tracked = await documentRepo.findByExpert(slug);
+          let cleared = 0;
+          let clearFailed = 0;
           for (const row of tracked) {
-            if (row.status !== "removed") {
-              await indexer.remove(row.filePath);
+            if (row.status === "removed") continue;
+            try {
               await documentRepo.markRemoved(row.id);
+              await indexer.remove(row.filePath);
+              cleared += 1;
+            } catch (err: unknown) {
+              clearFailed += 1;
+              const detail = err instanceof Error ? err.message : String(err);
+              writeError(
+                `Warning: failed to clear "${row.filename}" during retrain (${detail}).\n`,
+              );
             }
           }
-          write(`↻ Retrain: cleared profile and tracking for "${slug}".\n`);
+          write(
+            `↻ Retrain: cleared profile and tracking for "${slug}" ` +
+              `(${cleared} cleared, ${clearFailed} failed).\n`,
+          );
         }
 
         const processor = createDocumentProcessor({
