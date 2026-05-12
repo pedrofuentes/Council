@@ -9,22 +9,30 @@
  * presence of a panel is never silently dropped.
  *
  * Results are ordered by `panel_library.updated_at` DESC (most
- * recently active first). Callers typically pass this directly to
- * `renderPanelMemberships`, which truncates to the prompt-budget cap.
+ * recently active first) and capped at `PANEL_MEMBERSHIPS_LIMIT` at
+ * the DB layer so the co-member fan-out stays bounded regardless of
+ * how many panels the expert belongs to.
  */
 import type { CouncilDatabase } from "../memory/db.js";
-import type { PanelMembership } from "./prompt-builder.js";
+import {
+  PANEL_MEMBERSHIPS_LIMIT,
+  type PanelMembership,
+} from "./prompt-builder.js";
 
 export async function getExpertPanelMemberships(
   expertSlug: string,
   db: CouncilDatabase,
 ): Promise<readonly PanelMembership[]> {
+  // Apply the prompt-budget cap at the DB level so a member of many
+  // panels does not pay N+1 co-member queries for rows that the prompt
+  // renderer will discard anyway.
   const panels = await db
     .selectFrom("panel_members as pm")
     .innerJoin("panel_library as pl", "pl.name", "pm.panel_name")
     .where("pm.expert_slug", "=", expertSlug)
     .select(["pl.name", "pl.description", "pl.updated_at"])
     .orderBy("pl.updated_at", "desc")
+    .limit(PANEL_MEMBERSHIPS_LIMIT)
     .execute();
 
   if (panels.length === 0) return [];

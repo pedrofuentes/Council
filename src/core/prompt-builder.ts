@@ -209,11 +209,18 @@ function renderPersonaProfile(profile: PersonaProfile): string {
  *   - Cap total length so a runaway field cannot drown the prompt.
  */
 function sanitizeProfileField(raw: string): string {
+  return sanitizePromptField(raw);
+}
+
+/**
+ * Shared defang for any externally-sourced string interpolated into the
+ * privileged system prompt — used by both persona-profile fields and
+ * panel-membership fields. Preserves the same conservative rules
+ * documented above on `sanitizeProfileField`.
+ */
+function sanitizePromptField(raw: string): string {
   // eslint-disable-next-line no-control-regex
   const stripped = raw.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
-  // Collapse every Unicode line-break code point (CR/LF, NEL, LS, PS) to
-  // a single space so injected directives cannot appear at column 0 of
-  // the system prompt.
   const collapsed = stripped.replace(/[\r\n\u0085\u2028\u2029]+/g, " ");
   const defanged = collapsed.replace(/\[(\d+)\]/g, "(sec-$1)");
   const MAX = 2000;
@@ -227,7 +234,10 @@ function sanitizeProfileField(raw: string): string {
  * whether to inject the section at all.
  *
  * Output is capped at `PANEL_MEMBERSHIPS_LIMIT` entries. Caller is
- * responsible for ordering (most-recently-active first).
+ * responsible for ordering (most-recently-active first). Panel names,
+ * descriptions, and co-member names are sanitized via
+ * `sanitizePromptField` because they originate from the panel/expert
+ * library which may contain user-authored YAML.
  */
 export function renderPanelMemberships(
   memberships: readonly PanelMembership[],
@@ -235,10 +245,14 @@ export function renderPanelMemberships(
   if (memberships.length === 0) return "";
   const lines = ["You are a member of the following panels:"];
   for (const m of memberships.slice(0, PANEL_MEMBERSHIPS_LIMIT)) {
-    const withClause = m.coMembers.length > 0 ? ` (with ${m.coMembers.join(", ")})` : "";
+    const safeName = sanitizePromptField(m.panelName);
+    const safeMembers = m.coMembers.map(sanitizePromptField);
+    const withClause = safeMembers.length > 0 ? ` (with ${safeMembers.join(", ")})` : "";
     const descClause =
-      m.description !== undefined && m.description.length > 0 ? `: ${m.description}` : "";
-    lines.push(`- ${m.panelName}${withClause}${descClause}`);
+      m.description !== undefined && m.description.length > 0
+        ? `: ${sanitizePromptField(m.description)}`
+        : "";
+    lines.push(`- ${safeName}${withClause}${descClause}`);
   }
   return lines.join("\n");
 }

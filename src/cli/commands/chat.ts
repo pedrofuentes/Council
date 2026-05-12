@@ -437,12 +437,17 @@ async function runExpertChat(opts: ExpertChatOptions): Promise<void> {
 
     // Cross-panel awareness (Roadmap 7.2): surface this expert's other
     // panel memberships in the system prompt so 1:1 chat is informed by
-    // shared context. Best-effort — a query failure must not block chat.
+    // shared context. Best-effort — a query failure must not block chat,
+    // but surface a warning so silent DB/schema regressions are visible.
     let panelMemberships: readonly PanelMembership[] = [];
     try {
       panelMemberships = await getExpertPanelMemberships(expert.slug, db);
-    } catch {
-      // Swallow — cross-panel awareness is a UX nicety, not a hard requirement.
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      renderer.showSystem(
+        `Could not load panel memberships for cross-panel context: ${msg}`,
+        "warn",
+      );
     }
 
     const expertSpec = buildExpertSpec(
