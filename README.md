@@ -180,8 +180,22 @@ experts:
 
 Run with `council convene "<topic>" --template my-team`. Slug references
 are resolved against your expert library; unresolved slugs produce an
-explicit error so you can either add them with `council experts create`
+explicit error so you can either add them with `council expert create`
 or inline the definition.
+
+### First-run template migration
+
+On the first `council convene --template <name>` after upgrade, Council
+extracts the inline experts from the built-in panels
+(`architecture-review`, `career-coaching`, `code-review`,
+`incident-postmortem`, `startup-validation`) into
+`~/Council/experts/<slug>.yaml` and rewrites the panels into
+`~/Council/panels/<name>.yaml` referencing those experts by slug. This
+makes the stock experts editable (with `council expert edit <slug>`)
+and reusable from your own panels. Migration is **non-destructive**
+(existing user files are never overwritten) and **idempotent** — it
+short-circuits on subsequent runs and re-registers library DB rows from
+disk if the database is reset.
 
 ## How It Works
 

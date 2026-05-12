@@ -22,6 +22,24 @@
 
 <!-- Add new decisions below this line, most recent first -->
 
+### ADR-006: `migrateBuiltInTemplates` takes both `library` and `db` explicitly
+**Date**: 2026-05-08
+**Status**: Accepted
+**Context**: Roadmap 4.6 needed a one-shot migration of the built-in panel templates' inline experts into the new library format (`~/Council/experts/<slug>.yaml` + an `expert_library` SQLite row) plus a rewrite of each panel into `~/Council/panels/<name>.yaml` with slug references (rows in `panel_library` + `panel_members`). The `ExpertLibrary` interface (`src/core/expert-library.ts`) intentionally abstracts the storage backend for experts only; it does NOT expose the `panel_library` / `panel_members` tables. The first implementation reached for the DB by `(library as FileExpertLibrary).getDb()`, an unsafe cast that hid the dependency from the type system and broke for any non-file backend.
+
+**Decision**: `migrateBuiltInTemplates(dataHome, library, db, options?)` accepts the `CouncilDatabase` handle as an explicit parameter alongside the library. The migration writes expert YAMLs (and library rows) through `library`/`ExpertLibraryRepository`, and panel rows through `db` directly. `isMigrationNeeded(dataHome, db?)` also accepts the DB optionally, returning true when either the experts directory is empty OR the `expert_library` table is empty OR the `panel_library` table is empty — so a DB reset that lost either side of the registry (with YAMLs still on disk) triggers a re-register pass that refreshes stale `panel_library` metadata from the user-edited panel YAML and materialises inline expert overrides into `expert_library`.
+
+**Alternatives considered**:
+- **Add `panel_library` / `panel_members` methods to the `ExpertLibrary` interface.** Rejected: panel storage is conceptually separate from expert storage, and a generic library backend (e.g. a future remote/Cloud library) might not own panel state at all. Polluting the interface would force every backend to implement panel methods it doesn't need.
+- **Introduce a `PanelLibrary` interface and pass that instead.** Worth doing eventually but premature for a single caller (the migration). Deferred until a second consumer materialises.
+- **Keep the `getDb()` cast but make it an explicit method on `ExpertLibrary`.** Same downsides as the first alternative, plus it leaks a libsql-specific handle through the abstraction.
+
+**Consequences**:
+- ✅ Type-safe: no `any` cast, no narrowing assumption about the library implementation.
+- ✅ Testable: tests pass an in-memory `CouncilDatabase` directly instead of constructing a backing `FileExpertLibrary` just to extract its DB.
+- ✅ Crash-recoverable: with the DB handle available, the migration can register panel rows idempotently and re-sync from disk after a DB reset.
+- ⚠️ Two parameters where one might feel cleaner. Acceptable until a `PanelLibrary` abstraction earns its keep.
+
 ### ADR-001: Use @github/copilot-sdk as primary AI engine
 **Date**: 2026-05-06
 **Status**: Accepted
