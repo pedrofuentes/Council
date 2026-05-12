@@ -39,6 +39,10 @@ import {
 } from "../../core/template-loader.js";
 import { createDatabase, type CouncilDatabase } from "../../memory/db.js";
 import { PanelLibraryRepository } from "../../memory/repositories/panel-library-repo.js";
+import {
+  PanelDocumentRepository,
+  type PanelDocument,
+} from "../../memory/repositories/panel-document-repo.js";
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
@@ -47,6 +51,7 @@ const PANEL_NAME_RE = /^[a-z][a-z0-9-]*$/;
 interface PanelContext {
   readonly library: ExpertLibrary;
   readonly panelRepo: PanelLibraryRepository;
+  readonly docsRepo: PanelDocumentRepository;
   readonly config: CouncilConfig;
   readonly dataHome: string;
   readonly db: CouncilDatabase;
@@ -60,8 +65,9 @@ async function withPanelContext<T>(fn: (ctx: PanelContext) => Promise<T>): Promi
   const db = await createDatabase(dbPath);
   const library = new FileExpertLibrary(dataHome, db);
   const panelRepo = new PanelLibraryRepository(db);
+  const docsRepo = new PanelDocumentRepository(db);
   try {
-    return await fn({ library, panelRepo, config, dataHome, db });
+    return await fn({ library, panelRepo, docsRepo, config, dataHome, db });
   } finally {
     await db.destroy();
   }
@@ -81,6 +87,10 @@ function sha256(content: string): string {
 
 function panelYamlPath(dataHome: string, name: string): string {
   return path.join(dataHome, "panels", `${name}.yaml`);
+}
+
+function panelDocsDir(dataHome: string, name: string): string {
+  return path.join(dataHome, "panels", name, "docs");
 }
 
 function validatePanelName(name: string): void {
@@ -105,6 +115,7 @@ export function buildPanelCommand(
   cmd.addCommand(buildListCommand(write));
   cmd.addCommand(buildInspectCommand(write, writeError));
   cmd.addCommand(buildEditCommand(write, writeError));
+  cmd.addCommand(buildDocsCommand(write, writeError));
   return cmd;
 }
 
@@ -179,6 +190,7 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
           await fs.mkdir(path.dirname(yamlPath), { recursive: true });
           await fs.writeFile(yamlPath, yamlContent, "utf-8");
           await ctx.panelRepo.setMembers(name, fields.expertSlugs);
+          await fs.mkdir(panelDocsDir(ctx.dataHome, name), { recursive: true });
         } catch (err) {
           const rollbackErrors: unknown[] = [];
           try {
@@ -543,4 +555,227 @@ async function runEditor(editorCmd: string, filePath: string): Promise<void> {
       reject(new Error(`Editor "${exe}" exited with code ${code ?? "unknown"}`));
     });
   });
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// docs (Roadmap 6.7)
+// ──────────────────────────────────────────────────────────────────────
+
+interface DocsLinkOptions {
+  readonly path?: string;
+}
+
+function buildDocsCommand(write: Writer, writeError: Writer): Command {
+  const cmd = new Command("docs");
+  cmd.description("Manage panel reference documents (list, link, unlink)");
+  cmd.addCommand(buildDocsListCommand(write, writeError));
+  cmd.addCommand(buildDocsLinkCommand(write, writeError));
+  cmd.addCommand(buildDocsUnlinkCommand(write, writeError));
+  // Allow `council panel docs <name>` to fall through to the list action
+  // without forcing users to type `docs list`. Commander treats the
+  // default argument as the panel name.
+  cmd
+    .argument("[name]", "Panel name (when omitted, prints usage)")
+    .action(async (name: string | undefined) => {
+      if (name === undefined) {
+        write(cmd.helpInformation());
+        return;
+      }
+      await runDocsList(name, write, writeError);
+    });
+  return cmd;
+}
+
+function buildDocsListCommand(write: Writer, writeError: Writer): Command {
+  const cmd = new Command("list");
+  cmd
+    .description("List all documents accessible to a panel (managed + linked)")
+    .argument("<name>", "Panel name")
+    .action(async (name: string) => {
+      await runDocsList(name, write, writeError);
+    });
+  return cmd;
+}
+
+async function runDocsList(
+  name: string,
+  write: Writer,
+  writeError: Writer,
+): Promise<void> {
+  await withPanelContext(async (ctx) => {
+    const panel = await ctx.panelRepo.findByName(name);
+    if (!panel) {
+      writeError(`Panel "${name}" not found.\n`);
+      throw new Error(`Panel "${name}" not found.`);
+    }
+    const docs = await ctx.docsRepo.listDocuments(name);
+    const folders = await ctx.docsRepo.getLinkedFolders(name);
+
+    if (docs.length === 0 && folders.length === 0) {
+      const docsDir = panelDocsDir(ctx.dataHome, name);
+      write(
+        `No documents found for panel "${name}". Drop files into ${displayPath(docsDir)} or run "council panel docs link ${name} --path <dir>".\n`,
+      );
+      return;
+    }
+
+    if (folders.length > 0) {
+      write(`Linked folders (${folders.length}):\n`);
+      for (const folder of folders) write(`  - ${displayPath(folder)}\n`);
+      write("\n");
+    }
+
+    if (docs.length === 0) {
+      write("No documents indexed yet.\n");
+      return;
+    }
+
+    const rows = docs.map((d: PanelDocument) => [
+      d.source,
+      displayPath(d.filePath),
+      d.filename,
+      String(d.wordCount),
+      d.processedAt ?? d.createdAt,
+    ]);
+    const header = ["source", "path", "filename", "words", "indexed"] as const;
+    const widths = header.map((h, i) =>
+      Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)),
+    );
+    const pad = (s: string, w: number): string => s + " ".repeat(Math.max(0, w - s.length));
+    write(header.map((h, i) => pad(h, widths[i] ?? 0)).join("  ") + "\n");
+    write(widths.map((w) => "-".repeat(w)).join("  ") + "\n");
+    for (const row of rows) {
+      write(row.map((c, i) => pad(c, widths[i] ?? 0)).join("  ") + "\n");
+    }
+  });
+}
+
+function buildDocsLinkCommand(write: Writer, writeError: Writer): Command {
+  const cmd = new Command("link");
+  cmd
+    .description("Link an external folder for RAG retrieval")
+    .argument("<name>", "Panel name")
+    .requiredOption("--path <path>", "Absolute path to the folder to link")
+    .action(async (name: string, opts: DocsLinkOptions) => {
+      const folderPath = opts.path;
+      if (folderPath === undefined || folderPath.trim().length === 0) {
+        writeError("--path is required\n");
+        throw new Error("--path is required");
+      }
+      const absolute = path.resolve(folderPath);
+
+      let stat;
+      try {
+        stat = await fs.stat(absolute);
+      } catch (err: unknown) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") {
+          writeError(`Path does not exist: ${displayPath(absolute)}\n`);
+          throw new Error(`Path does not exist: ${absolute}`);
+        }
+        throw err;
+      }
+      if (!stat.isDirectory()) {
+        writeError(`Path is not a directory: ${displayPath(absolute)}\n`);
+        throw new Error(`Path is not a directory: ${absolute}`);
+      }
+
+      await withPanelContext(async (ctx) => {
+        const panel = await ctx.panelRepo.findByName(name);
+        if (!panel) {
+          writeError(`Panel "${name}" not found.\n`);
+          throw new Error(`Panel "${name}" not found.`);
+        }
+        await ctx.docsRepo.addLinkedFolder(name, absolute);
+        const supported = new Set(
+          ctx.config.expert.supportedFormats.map((e) =>
+            e.toLowerCase().startsWith(".") ? e.toLowerCase() : `.${e.toLowerCase()}`,
+          ),
+        );
+        const count = await countSupportedFiles(absolute, supported);
+        write(`✓ Linked ${displayPath(absolute)} to ${name}. ${count} documents found.\n`);
+      });
+    });
+  return cmd;
+}
+
+function buildDocsUnlinkCommand(write: Writer, writeError: Writer): Command {
+  const cmd = new Command("unlink");
+  cmd
+    .description("Remove a linked folder and un-index its documents")
+    .argument("<name>", "Panel name")
+    .requiredOption("--path <path>", "Folder path previously linked")
+    .action(async (name: string, opts: DocsLinkOptions) => {
+      const folderPath = opts.path;
+      if (folderPath === undefined || folderPath.trim().length === 0) {
+        writeError("--path is required\n");
+        throw new Error("--path is required");
+      }
+      const absolute = path.resolve(folderPath);
+
+      await withPanelContext(async (ctx) => {
+        const panel = await ctx.panelRepo.findByName(name);
+        if (!panel) {
+          writeError(`Panel "${name}" not found.\n`);
+          throw new Error(`Panel "${name}" not found.`);
+        }
+        // Un-index any tracked documents from this folder and prune the
+        // FTS5 index so future chat retrieval cannot still surface them.
+        // Errors from indexer.remove() are collected rather than thrown
+        // so a single broken FTS entry cannot leave the panel half-
+        // unlinked (orphaned panel_documents rows + dangling
+        // panel_linked_folders row).
+        const { createDocumentIndexer } = await import("../../core/documents/indexer.js");
+        const indexer = createDocumentIndexer(ctx.db);
+        const docs = await ctx.docsRepo.listDocuments(name);
+        const indexerErrors: unknown[] = [];
+        for (const d of docs) {
+          if (
+            d.filePath === absolute ||
+            d.filePath.startsWith(absolute + path.sep) ||
+            d.filePath.startsWith(absolute + "/") ||
+            d.filePath.startsWith(absolute + "\\")
+          ) {
+            try {
+              await indexer.remove(d.filePath);
+            } catch (err: unknown) {
+              indexerErrors.push(err);
+            }
+          }
+        }
+        await ctx.docsRepo.removeDocumentsUnderFolder(name, absolute);
+        await ctx.docsRepo.removeLinkedFolder(name, absolute);
+        if (indexerErrors.length > 0) {
+          writeError(
+            `Warning: ${indexerErrors.length} FTS index entr${indexerErrors.length === 1 ? "y" : "ies"} could not be removed; metadata cleanup completed.\n`,
+          );
+        }
+        write(`✓ Unlinked ${displayPath(absolute)} from ${name}.\n`);
+      });
+    });
+  return cmd;
+}
+
+async function countSupportedFiles(
+  dir: string,
+  supportedExts: ReadonlySet<string>,
+): Promise<number> {
+  let entries: string[];
+  try {
+    entries = await fs.readdir(dir, { recursive: true });
+  } catch {
+    return 0;
+  }
+  let count = 0;
+  for (const rel of entries) {
+    const absolute = path.resolve(dir, rel);
+    try {
+      const stat = await fs.lstat(absolute);
+      if (!stat.isFile()) continue;
+    } catch {
+      continue;
+    }
+    if (supportedExts.has(path.extname(absolute).toLowerCase())) count += 1;
+  }
+  return count;
 }
