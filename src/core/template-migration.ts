@@ -188,13 +188,43 @@ export async function migrateBuiltInTemplates(
       // DB-reset recovery: preserve the user's on-disk panel YAML and
       // derive DB rows from it instead of the bundled template, so
       // edits to description / member ordering survive a re-register.
+      // Inline expert definitions in the user-edited panel are
+      // materialised into expert_library (and a standalone YAML if
+      // none exists) so panel_members FK is satisfied.
       const onDiskContent = await fs.readFile(panelFile, "utf-8");
       const onDisk = parseOnDiskPanel(onDiskContent);
+      const recoveredSlugs: string[] = [];
+      for (const entry of onDisk.entries) {
+        if (entry.kind === "slug") {
+          recoveredSlugs.push(entry.slug);
+          continue;
+        }
+        // Inline: ensure an expert_library row exists for this slug.
+        const slug = entry.definition.slug;
+        const existing = await library.get(slug);
+        if (!existing) {
+          const yamlPath = path.join(expertsDir, `${slug}.yaml`);
+          if (await fileExists(yamlPath)) {
+            const content = await fs.readFile(yamlPath, "utf-8");
+            await expertRepo.create({
+              slug,
+              kind: entry.definition.kind,
+              displayName: entry.definition.displayName,
+              yamlPath,
+              yamlChecksum: sha256(content),
+            });
+          } else {
+            await library.create(entry.definition);
+          }
+          expertsExtracted++;
+        }
+        recoveredSlugs.push(slug);
+      }
       await registerPanelFromDisk(
         db,
         name,
         onDisk.description,
-        onDisk.slugs,
+        recoveredSlugs,
         panelFile,
         onDiskContent,
         true, // recovery: refresh existing row metadata from disk
@@ -410,8 +440,12 @@ async function registerPanelFromDisk(
 
 interface OnDiskPanel {
   readonly description: string | null;
-  readonly slugs: readonly string[];
+  readonly entries: readonly OnDiskEntry[];
 }
+
+type OnDiskEntry =
+  | { readonly kind: "slug"; readonly slug: string }
+  | { readonly kind: "inline"; readonly definition: ExpertDefinition };
 
 function parseOnDiskPanel(content: string): OnDiskPanel {
   const raw = yaml.parse(content) as Record<string, unknown> | null;
@@ -420,16 +454,27 @@ function parseOnDiskPanel(content: string): OnDiskPanel {
       ? (raw["description"] as string)
       : null;
   const experts = raw && Array.isArray(raw["experts"]) ? raw["experts"] : [];
-  const slugs: string[] = [];
+  const entries: OnDiskEntry[] = [];
   for (const entry of experts as unknown[]) {
     if (typeof entry === "string") {
-      slugs.push(entry);
-    } else if (entry && typeof entry === "object" && "slug" in entry) {
-      const slug = (entry as { slug: unknown }).slug;
-      if (typeof slug === "string") slugs.push(slug);
+      entries.push({ kind: "slug", slug: entry });
+    } else if (entry && typeof entry === "object") {
+      // Try to parse as a full inline ExpertDefinition. If parsing fails,
+      // fall back to treating it as a slug reference (the runtime
+      // resolveExperts() will surface a clearer error if the slug is
+      // missing).
+      const parsed = ExpertDefinitionSchema.safeParse(entry);
+      if (parsed.success) {
+        entries.push({ kind: "inline", definition: parsed.data });
+      } else if ("slug" in entry) {
+        const slug = (entry as { slug: unknown }).slug;
+        if (typeof slug === "string") {
+          entries.push({ kind: "slug", slug });
+        }
+      }
     }
   }
-  return { description, slugs };
+  return { description, entries };
 }
 
 /**
