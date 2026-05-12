@@ -272,7 +272,7 @@ describe("buildExpertCommand", () => {
     });
 
     it("rejects invalid slug", async () => {
-      const cmd = buildExpertCommand(() => {});
+      const cmd = buildExpertCommand(() => { /* noop */ });
       await expect(
         cmd.parseAsync([
           "node",
@@ -343,7 +343,7 @@ describe("buildExpertCommand", () => {
         await db.destroy();
       }
 
-      const cmd = buildExpertCommand(() => {});
+      const cmd = buildExpertCommand(() => { /* noop */ });
       await expect(
         cmd.parseAsync(["node", "council-expert", "delete", "dahlia-cto"]),
       ).rejects.toThrow(/--force|panels/i);
@@ -386,7 +386,7 @@ describe("buildExpertCommand", () => {
     });
 
     it("reports not found", async () => {
-      const cmd = buildExpertCommand(() => {});
+      const cmd = buildExpertCommand(() => { /* noop */ });
       await expect(
         cmd.parseAsync(["node", "council-expert", "delete", "ghost"]),
       ).rejects.toThrow(/not found/i);
@@ -403,7 +403,7 @@ describe("buildExpertCommand", () => {
     });
 
     it("reports not found when slug is missing", async () => {
-      const cmd = buildExpertCommand(() => {});
+      const cmd = buildExpertCommand(() => { /* noop */ });
       await expect(
         cmd.parseAsync(["node", "council-expert", "edit", "ghost"]),
       ).rejects.toThrow(/not found/i);
