@@ -30,6 +30,11 @@ import { listTemplates, loadTemplate, type ResolvedPanelDefinition } from "./tem
 import type { CouncilDatabase } from "../memory/db.js";
 import { ExpertLibraryRepository } from "../memory/repositories/expert-library-repo.js";
 
+// Mirrors FileExpertLibrary's slug constraint (kept local to avoid an
+// unnecessary export). Used by the recovery path to reject malicious
+// slugs read off disk before any filesystem access with that slug.
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
 export interface MigrationResult {
   readonly panelsMigrated: number;
   readonly expertsExtracted: number;
@@ -195,6 +200,17 @@ export async function migrateBuiltInTemplates(
       const onDisk = parseOnDiskPanel(onDiskContent);
       const recoveredSlugs: string[] = [];
       for (const entry of onDisk.entries) {
+        const candidateSlug =
+          entry.kind === "slug" ? entry.slug : entry.definition.slug;
+        // Hard slug validation BEFORE any filesystem access. Mirrors
+        // FileExpertLibrary.create()'s SLUG_RE so a maliciously-crafted
+        // user panel YAML cannot escape <dataHome>/experts/ via
+        // path.join("../...") into fs.access / fs.readFile.
+        if (!SLUG_RE.test(candidateSlug)) {
+          throw new Error(
+            `template-migration: invalid expert slug in panel "${name}": ${JSON.stringify(candidateSlug)}`,
+          );
+        }
         if (entry.kind === "slug") {
           recoveredSlugs.push(entry.slug);
           continue;
