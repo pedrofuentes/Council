@@ -34,6 +34,8 @@ import {
   type CouncilConfig,
 } from "../../config/index.js";
 import type { ChatSession, ChatTurn } from "../../core/chat/chat-session.js";
+import { parseUserInput, type ParsedInput } from "../../core/chat/mention-parser.js";
+import { Debate } from "../../core/debate.js";
 import type { ExpertDefinition } from "../../core/expert.js";
 import { FileExpertLibrary } from "../../core/expert-library.js";
 import { buildSystemPrompt } from "../../core/prompt-builder.js";
@@ -747,7 +749,44 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
       return;
     }
 
-    await repo.addTurn({ chatId: session.id, role: "user", content: trimmed });
+    // Roadmap 5.5/5.6 — classify input before persisting/routing so a
+    // malformed @mention can be rejected without leaving a stray user
+    // row behind. Unknown slugs throw with the available list.
+    const panelSlugs = members.map((m) => m.expert.slug);
+    let parsed: ParsedInput;
+    try {
+      parsed = parseUserInput(trimmed, panelSlugs);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      writeError(msg + "\n");
+      continue;
+    }
+
+    if (parsed.type === "convene") {
+      await runInlineDebate({
+        engine,
+        members,
+        session,
+        repo,
+        renderer,
+        topic: parsed.content,
+        writeError,
+      });
+      continue;
+    }
+
+    // Routed flow: which members should respond this turn?
+    const isMention = parsed.type === "mention";
+    const respondingMembers: readonly PanelMember[] = isMention
+      ? members.filter((m) => parsed.targetSlugs.includes(m.expert.slug))
+      : members;
+
+    await repo.addTurn({
+      chatId: session.id,
+      role: "user",
+      content: parsed.content,
+      isMention,
+    });
 
     // Each expert sees the same recent-history slice (including the just-
     // saved user turn from earlier; we strip the trailing user-turn copy
@@ -770,11 +809,11 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
     // it once per turn rather than once per expert.
     const prompt = buildPanelTurnPrompt({
       history,
-      userMessage: trimmed,
+      userMessage: parsed.content,
       expertNames,
     });
 
-    for (const { expert, spec } of members) {
+    for (const { expert, spec } of respondingMembers) {
       let assembled = "";
       let failed = false;
       let recoverable = false;
@@ -819,6 +858,7 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
           role: "expert",
           expertSlug: expert.slug,
           content: assembled,
+          isMention,
         });
         succeeded += 1;
         continue;
@@ -841,7 +881,7 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
       );
     }
 
-    const total = members.length;
+    const total = respondingMembers.length;
     if (succeeded === 0) {
       // Be honest about *why* nobody responded so the user can act on
       // the right signal (retry vs. inspect the expert config vs. wait).
@@ -877,6 +917,146 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
       );
     }
   }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// @convene — inline structured debate (Roadmap 5.6)
+// ──────────────────────────────────────────────────────────────────────
+
+interface InlineDebateOptions {
+  readonly engine: CouncilEngine;
+  readonly members: readonly PanelMember[];
+  readonly session: ChatSession;
+  readonly repo: ChatRepository;
+  readonly renderer: ChatRenderer;
+  readonly topic: string;
+  readonly writeError: Writer;
+}
+
+/**
+ * Run a structured 4-phase `Debate` inline within an active panel chat
+ * session. Reuses the chat's engine and registered experts; debate
+ * `turn.end` events are persisted as `ChatTurn`s so the deliberation
+ * becomes part of the chat history visible to subsequent turns.
+ *
+ * The user-typed `@convene <topic>` line is persisted (with the
+ * `@convene ` prefix stripped) as the user turn that triggered the
+ * debate. Debate errors at the turn level are non-terminal — the
+ * orchestrator continues with the next expert / phase — and we surface
+ * an "interrupted" notice if NOT every member produced a turn for every
+ * phase. Per PRD §F6, partial results are preserved on interruption.
+ */
+async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
+  const { engine, members, session, repo, renderer, topic, writeError } = opts;
+
+  renderer.showSystem(`⚙ Starting structured deliberation: "${topic}"...`, "info");
+
+  const debate = new Debate(
+    engine,
+    members.map((m) => m.spec),
+    {
+      maxRounds: 1,
+      maxWordsPerResponse: 0,
+      mode: "structured",
+    },
+  );
+
+  // Single-expert panels run 3 phases (cross-exam is skipped); 2+ run 4.
+  const phaseCount = members.length === 1 ? 3 : 4;
+  const expectedTurns = phaseCount * members.length;
+
+  // Defer the user-turn persistence until the first expert turn is
+  // about to land (Sentinel SR-PR-mention-1). This keeps the chat
+  // history consistent: a debate that throws or yields zero turns
+  // leaves no orphan @convene user row that subsequent panel turns
+  // would treat as an unanswered question.
+  let userTurnPersisted = false;
+  const persistUserTurnOnce = async (): Promise<void> => {
+    if (!userTurnPersisted) {
+      await repo.addTurn({ chatId: session.id, role: "user", content: topic });
+      userTurnPersisted = true;
+    }
+  };
+
+  let persistedTurns = 0;
+  let lastPhase: string | undefined;
+  let inTurn = false;
+  let buffer = "";
+  let bufferSlug: string | undefined;
+
+  try {
+    for await (const evt of debate.run(topic)) {
+      switch (evt.kind) {
+        case "round.start":
+          if (evt.phase !== undefined) {
+            lastPhase = evt.phase;
+            renderer.showSystem(`— Phase: ${evt.phase} —`, "info");
+          }
+          break;
+        case "turn.start":
+          inTurn = true;
+          buffer = "";
+          bufferSlug = evt.expertSlug;
+          renderer.startExpertResponse(evt.expertSlug);
+          break;
+        case "turn.delta":
+          buffer += evt.text;
+          renderer.streamChunk(evt.text);
+          break;
+        case "turn.end":
+          renderer.endExpertResponse();
+          if (buffer.length > 0 && bufferSlug !== undefined) {
+            await persistUserTurnOnce();
+            await repo.addTurn({
+              chatId: session.id,
+              role: "expert",
+              expertSlug: bufferSlug,
+              content: buffer,
+            });
+            persistedTurns += 1;
+          }
+          inTurn = false;
+          buffer = "";
+          bufferSlug = undefined;
+          break;
+        case "error":
+          if (inTurn) {
+            renderer.endExpertResponse();
+            inTurn = false;
+            buffer = "";
+            bufferSlug = undefined;
+          }
+          writeError(
+            formatEngineError({ code: "PROVIDER_ERROR", message: evt.message }) + "\n",
+          );
+          break;
+        case "panel.assembled":
+        case "round.end":
+        case "cost.update":
+        case "debate.end":
+        case "turn.retry":
+          break;
+      }
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    writeError(`Structured deliberation failed: ${msg}\n`);
+    renderer.showSystem(
+      `⚠ Structured deliberation interrupted${lastPhase ? ` during ${lastPhase}` : ""}. Chat mode resumed.`,
+      "warn",
+    );
+    return;
+  }
+
+  if (persistedTurns < expectedTurns) {
+    renderer.showSystem(
+      `⚠ Structured deliberation completed with ${persistedTurns} of ${expectedTurns} turns. Chat mode resumed.`,
+      "warn",
+    );
+    return;
+  }
+
+  renderer.showSystem("✓ Structured deliberation complete. Resuming chat mode.", "info");
 }
 
 // ──────────────────────────────────────────────────────────────────────

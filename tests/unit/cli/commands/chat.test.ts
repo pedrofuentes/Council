@@ -1304,3 +1304,348 @@ describe("panel chat mode", () => {
     expect(out).not.toContain(panelArchivedId);
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────
+// @mention + @convene routing (Roadmap 5.5 + 5.6)
+// ──────────────────────────────────────────────────────────────────────
+
+describe("panel chat — @mention routing", () => {
+  let env: TestEnv;
+  beforeEach(async () => {
+    env = await makeEnv();
+  });
+  afterEach(async () => {
+    await teardown(env);
+  });
+
+  async function seedTwoExperts(): Promise<void> {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+  }
+
+  it("@mention routes to only the targeted expert; turn marked isMention", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "duo", ["panel-a", "panel-b"]);
+
+    const cmd = buildChatCommand({
+      write: () => undefined,
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["@panel-a what's up?", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "duo", "--engine", "mock"]);
+
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "duo");
+      expect(session).toBeDefined();
+      const turns = await repo.getTurns(session?.id ?? "");
+      const expertTurns = turns.filter((t) => t.role === "expert");
+      // Only the mentioned expert responds.
+      expect(expertTurns.length).toBe(1);
+      expect(expertTurns[0]?.expertSlug).toBe("panel-a");
+      expect(expertTurns[0]?.isMention).toBe(true);
+      // User content has the @prefix stripped before being saved.
+      const userTurns = turns.filter((t) => t.role === "user");
+      expect(userTurns[0]?.content).toBe("what's up?");
+      expect(userTurns[0]?.isMention).toBe(true);
+    });
+  });
+
+  it("multiple @mentions route to all targets in panel order", async () => {
+    await seedTwoExperts();
+    // Panel declares panel-a first, panel-b second. The user mentions
+    // them in reverse — responses should still come back in panel order.
+    await writeUserPanel(env, "duo2", ["panel-a", "panel-b"]);
+
+    const cmd = buildChatCommand({
+      write: () => undefined,
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["@panel-b @panel-a thoughts?", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "duo2", "--engine", "mock"]);
+
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "duo2");
+      const turns = await repo.getTurns(session?.id ?? "");
+      const expertTurns = turns.filter((t) => t.role === "expert");
+      expect(expertTurns.length).toBe(2);
+      // Order matches panel declaration order, not mention order.
+      expect(expertTurns[0]?.expertSlug).toBe("panel-a");
+      expect(expertTurns[1]?.expertSlug).toBe("panel-b");
+      expect(expertTurns[0]?.isMention).toBe(true);
+      expect(expertTurns[1]?.isMention).toBe(true);
+    });
+  });
+
+  it("general (no @mention) routes to every expert (isMention=false)", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "all-respond", ["panel-a", "panel-b"]);
+
+    const cmd = buildChatCommand({
+      write: () => undefined,
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["plain question", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "all-respond", "--engine", "mock"]);
+
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "all-respond");
+      const turns = await repo.getTurns(session?.id ?? "");
+      const expertTurns = turns.filter((t) => t.role === "expert");
+      expect(expertTurns.length).toBe(2);
+      expect(expertTurns.every((t) => t.isMention === false)).toBe(true);
+    });
+  });
+
+  it("unknown @slug surfaces the error and does NOT persist the user turn", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "panel3", ["panel-a", "panel-b"]);
+
+    let err = "";
+    const cmd = buildChatCommand({
+      write: () => undefined,
+      writeError: (s) => (err += s),
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["@ghost hi", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "panel3", "--engine", "mock"]);
+
+    expect(err).toMatch(/Expert "ghost" is not in this panel/);
+    expect(err).toMatch(/panel-a, panel-b/);
+
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "panel3");
+      const turns = await repo.getTurns(session?.id ?? "");
+      // Malformed input is rejected pre-persist so the user can retry
+      // without leaving a stray fragment in the conversation.
+      expect(turns.length).toBe(0);
+    });
+  });
+
+  it("non-mentioned experts see the @mention exchange in their context on next turn", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "ctx", ["panel-a", "panel-b"]);
+
+    const engine = new MockEngine();
+    const cmd = buildChatCommand({
+      write: () => undefined,
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () =>
+        scriptedInput([
+          "@panel-a tell me one fact",
+          "now everyone weigh in",
+          "/quit",
+        ]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "ctx", "--engine", "mock"]);
+
+    // After turn 1: only panel-a sent. After turn 2 (general): both sent.
+    // The crucial assertion is that turn-2 prompts include panel-a's
+    // prior reply — i.e. the non-mentioned expert sees the @mention
+    // exchange in its context.
+    const promptsWithPriorReply = engine.sentPrompts.filter((p) =>
+      p.prompt.includes("[mock response from"),
+    );
+    // Both turn-2 sends carry the prior reply (1 per panelist).
+    expect(promptsWithPriorReply.length).toBe(2);
+    expect(promptsWithPriorReply.every((p) => p.prompt.includes("tell me one fact"))).toBe(true);
+  });
+
+  it("@mention in 1:1 expert chat is processed normally (parser bypassed)", async () => {
+    await seedExpert(env);
+
+    const cmd = buildChatCommand({
+      write: () => undefined,
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      // The literal "@nonexistent foo" should NOT throw in 1:1 chat —
+      // there's no panel context, so the parser isn't invoked.
+      inputProvider: () => scriptedInput(["@nonexistent foo", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", SAMPLE.slug, "--engine", "mock"]);
+
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("expert", SAMPLE.slug);
+      const turns = await repo.getTurns(session?.id ?? "");
+      // User + 1 expert reply, both persisted normally.
+      expect(turns.length).toBe(2);
+      expect(turns[0]?.content).toBe("@nonexistent foo");
+      expect(turns[0]?.isMention).toBe(false);
+    });
+  });
+});
+
+describe("panel chat — @convene structured debate", () => {
+  let env: TestEnv;
+  beforeEach(async () => {
+    env = await makeEnv();
+  });
+  afterEach(async () => {
+    await teardown(env);
+  });
+
+  async function seedTwoExperts(): Promise<void> {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+  }
+
+  it("@convene triggers a structured debate and persists each debate turn", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "deb", ["panel-a", "panel-b"]);
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["@convene should we ship?", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "deb", "--engine", "mock"]);
+
+    expect(out).toMatch(/Starting structured deliberation/i);
+    expect(out).toMatch(/Structured deliberation complete/i);
+
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "deb");
+      const turns = await repo.getTurns(session?.id ?? "");
+      // 1 user turn (the @convene command) + 4 phases × 2 experts = 8
+      // debate turns persisted as chat turns.
+      const userTurns = turns.filter((t) => t.role === "user");
+      const expertTurns = turns.filter((t) => t.role === "expert");
+      expect(userTurns.length).toBe(1);
+      expect(userTurns[0]?.content).toBe("should we ship?");
+      expect(expertTurns.length).toBe(8);
+      // Both experts produced turns.
+      const slugs = new Set(expertTurns.map((t) => t.expertSlug));
+      expect(slugs.has("panel-a")).toBe(true);
+      expect(slugs.has("panel-b")).toBe(true);
+    });
+  });
+
+  it("@convene with no topic surfaces an error to the user", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "deb2", ["panel-a", "panel-b"]);
+
+    let err = "";
+    const cmd = buildChatCommand({
+      write: () => undefined,
+      writeError: (s) => (err += s),
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["@convene", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "deb2", "--engine", "mock"]);
+
+    expect(err).toMatch(/@convene requires a topic/i);
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "deb2");
+      const turns = await repo.getTurns(session?.id ?? "");
+      expect(turns.length).toBe(0);
+    });
+  });
+
+  it("@convene partial failure: persists turns from completed phases and resumes chat", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "deb3", ["panel-a", "panel-b"]);
+
+    // First two sends succeed (opening turns), all subsequent sends
+    // fail. Debate continues through all phases (errors are non-
+    // terminal at the debate level), so we expect 2 successful turns +
+    // a partial-completion notice from the chat command.
+    let sendCount = 0;
+    const engine: CouncilEngine = {
+      async start(): Promise<void> { /* ok */ },
+      async stop(): Promise<void> { /* ok */ },
+      async addExpert(): Promise<void> { /* ok */ },
+      async removeExpert(): Promise<void> { /* ok */ },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock"];
+      },
+      send(opts) {
+        const expertId = opts.expertId;
+        const n = ++sendCount;
+        return {
+          async *[Symbol.asyncIterator]() {
+            if (n > 2) {
+              yield {
+                kind: "error" as const,
+                expertId,
+                error: { code: "PROVIDER_ERROR" as const, message: "boom" },
+                recoverable: false,
+              };
+              return;
+            }
+            yield { kind: "message.delta" as const, expertId, text: `phase-resp-${n}` };
+            yield {
+              kind: "message.complete" as const,
+              expertId,
+              response: { latencyMs: 1 },
+            };
+          },
+        };
+      },
+    };
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () => scriptedInput(["@convene topic", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "deb3", "--engine", "mock"]);
+
+    // Even with widespread failures, the structured run completes — but
+    // the chat session must still resume cleanly (no thrown exception
+    // bubbles out of the loop).
+    expect(out).toMatch(/Structured deliberation/i);
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "deb3");
+      const turns = await repo.getTurns(session?.id ?? "");
+      const expertTurns = turns.filter((t) => t.role === "expert");
+      // Exactly the 2 successful sends got persisted.
+      expect(expertTurns.length).toBe(2);
+      expect(expertTurns[0]?.content).toContain("phase-resp-1");
+      expect(expertTurns[1]?.content).toContain("phase-resp-2");
+    });
+  });
+
+  it("@convene with a synchronously-throwing engine.send leaves no orphan user turn", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "deb4", ["panel-a", "panel-b"]);
+
+    // Engine that throws synchronously from send() — propagates through
+    // Debate.run() and bubbles into runInlineDebate's catch. The user
+    // row for the @convene line must NOT be left dangling without any
+    // expert response (Sentinel SR-PR-mention-1).
+    const engine: CouncilEngine = {
+      async start(): Promise<void> { /* ok */ },
+      async stop(): Promise<void> { /* ok */ },
+      async addExpert(): Promise<void> { /* ok */ },
+      async removeExpert(): Promise<void> { /* ok */ },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock"];
+      },
+      send(): never {
+        throw new Error("send-blew-up");
+      },
+    };
+
+    const cmd = buildChatCommand({
+      write: () => undefined,
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () => scriptedInput(["@convene topic", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "deb4", "--engine", "mock"]);
+
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "deb4");
+      const turns = await repo.getTurns(session?.id ?? "");
+      // No expert turns produced AND no orphan user row.
+      expect(turns.length).toBe(0);
+    });
+  });
+});
