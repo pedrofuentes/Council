@@ -30,8 +30,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildMemoryCommand } from "../../../../src/cli/commands/memory.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import { DebateRepository } from "../../../../src/memory/repositories/debates.js";
+import { ExpertLibraryRepository } from "../../../../src/memory/repositories/expert-library-repo.js";
 import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
 import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
+import { ProfileRepository } from "../../../../src/memory/repositories/profile-repository.js";
 import { TurnRepository } from "../../../../src/memory/repositories/turns.js";
 
 interface SeededPanel {
@@ -406,6 +408,144 @@ describe("buildMemoryCommand", () => {
       } finally {
         await db.destroy();
       }
+    });
+  });
+
+  // ── memory/profile separation (Roadmap 7.4) ──────────────────────
+
+  describe("memory reset — profile separation", () => {
+    it("--yes: clears extracted_memory_json on each panel expert (debate memory gone)", async () => {
+      const seed = await seedPanel(testHome);
+      // Seed extracted_memory_json on both experts so we can verify it's cleared.
+      const dbSeed = await createDatabase(path.join(testHome, "council.db"));
+      try {
+        const exp = new ExpertRepository(dbSeed);
+        await exp.update(seed.ctoId, {
+          extractedMemoryJson: JSON.stringify({ positions: ["ship the MVP"] }),
+        });
+        await exp.update(seed.pmId, {
+          extractedMemoryJson: JSON.stringify({ positions: ["wait one sprint"] }),
+        });
+      } finally {
+        await dbSeed.destroy();
+      }
+
+      const cmd = buildMemoryCommand({ write: () => undefined });
+      await cmd.parseAsync(["node", "council-memory", "reset", seed.name, "--yes"]);
+
+      const db = await createDatabase(path.join(testHome, "council.db"));
+      try {
+        const experts = await new ExpertRepository(db).findByPanelId(seed.panelId);
+        expect(experts).toHaveLength(2);
+        for (const e of experts) {
+          expect(e.extractedMemoryJson).toBeNull();
+        }
+      } finally {
+        await db.destroy();
+      }
+    });
+
+    it("--yes: preserves persona_profiles rows for experts with document-derived profiles", async () => {
+      const seed = await seedPanel(testHome);
+      // Insert library row + persona profile for the CTO (FK targets expert_library.slug).
+      const dbSeed = await createDatabase(path.join(testHome, "council.db"));
+      try {
+        await new ExpertLibraryRepository(dbSeed).create({
+          slug: "cto",
+          kind: "persona",
+          displayName: "CTO",
+          yamlPath: "/tmp/cto.yaml",
+          yamlChecksum: "deadbeef",
+        });
+        await new ProfileRepository(dbSeed).upsert("cto", {
+          communicationStyle: "Direct, technical",
+          decisionPatterns: ["weighs risk first"],
+          biases: ["favors proven tech"],
+          vocabulary: ["latency", "throughput"],
+          epistemicStance: "empirical",
+          documentCount: 3,
+          totalWords: 1200,
+          lastUpdated: new Date().toISOString(),
+        });
+        await new ExpertRepository(dbSeed).update(seed.ctoId, {
+          extractedMemoryJson: JSON.stringify({ positions: ["ship now"] }),
+        });
+      } finally {
+        await dbSeed.destroy();
+      }
+
+      const cmd = buildMemoryCommand({ write: () => undefined });
+      await cmd.parseAsync(["node", "council-memory", "reset", seed.name, "--yes"]);
+
+      const db = await createDatabase(path.join(testHome, "council.db"));
+      try {
+        const experts = await new ExpertRepository(db).findByPanelId(seed.panelId);
+        const cto = experts.find((e) => e.slug === "cto");
+        expect(cto?.extractedMemoryJson).toBeNull(); // debate memory gone
+        const profile = await new ProfileRepository(db).findBySlug("cto");
+        expect(profile).not.toBeNull();
+        expect(profile?.communicationStyle).toBe("Direct, technical");
+        expect(profile?.decisionPatterns).toEqual(["weighs risk first"]);
+      } finally {
+        await db.destroy();
+      }
+    });
+
+    it("--yes: shows profile-preservation message for persona experts and simple cleared message for generic experts", async () => {
+      const seed = await seedPanel(testHome);
+      // Give CTO a persona profile; PM has none.
+      const dbSeed = await createDatabase(path.join(testHome, "council.db"));
+      try {
+        await new ExpertLibraryRepository(dbSeed).create({
+          slug: "cto",
+          kind: "persona",
+          displayName: "CTO",
+          yamlPath: "/tmp/cto.yaml",
+          yamlChecksum: "deadbeef",
+        });
+        await new ProfileRepository(dbSeed).upsert("cto", {
+          communicationStyle: "Direct",
+          decisionPatterns: [],
+          biases: [],
+          vocabulary: [],
+          epistemicStance: "empirical",
+          documentCount: 1,
+          totalWords: 100,
+          lastUpdated: new Date().toISOString(),
+        });
+      } finally {
+        await dbSeed.destroy();
+      }
+
+      let captured = "";
+      const cmd = buildMemoryCommand({
+        write: (s) => {
+          captured += s;
+        },
+      });
+      await cmd.parseAsync(["node", "council-memory", "reset", seed.name, "--yes"]);
+
+      // CTO has a persona profile — both lines should appear for the CTO.
+      expect(captured).toMatch(/Debate memory cleared for "CTO"/);
+      expect(captured).toMatch(
+        /Document-derived persona profile preserved.*council expert train --retrain/,
+      );
+      // PM has no profile — only the simple cleared message, no preservation hint tied to PM.
+      expect(captured).toMatch(/Debate memory cleared for "PM"/);
+      // The preservation hint should appear exactly once (only for CTO).
+      const hintMatches = captured.match(/persona profile preserved/g) ?? [];
+      expect(hintMatches).toHaveLength(1);
+    });
+
+    it("reset --help text documents that persona profiles are preserved", () => {
+      const cmd = buildMemoryCommand();
+      const reset = cmd.commands.find((c) => c.name() === "reset");
+      expect(reset).toBeDefined();
+      if (!reset) throw new Error("reset subcommand missing");
+      const help = reset.helpInformation();
+      expect(help.toLowerCase()).toMatch(/persona profile/);
+      // Commander may wrap the description across lines, so allow whitespace flex.
+      expect(help.replace(/\s+/g, " ")).toMatch(/council expert train --retrain/);
     });
   });
 
