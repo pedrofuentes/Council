@@ -19,10 +19,12 @@ import { autoComposePanel } from "../../core/auto-compose.js";
 import { getCouncilDataHome, getCouncilHome, DEFAULT_MODEL } from "../../config/index.js";
 import type { ContextConfig } from "../../core/debate.js";
 import type { VisibilityConfig } from "../../core/context/visibility.js";
+import { FileExpertLibrary } from "../../core/expert-library.js";
 import type { DebateMode } from "../../core/template-loader.js";
 import {
   assertAllInline,
   loadPanel,
+  resolveExperts,
   type ResolvedPanelDefinition,
 } from "../../core/template-loader.js";
 import { buildSystemPrompt, type ExpertMemory } from "../../core/prompt-builder.js";
@@ -212,9 +214,35 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       let template: ResolvedPanelDefinition;
       if (opts.template) {
         // User panels in <dataHome>/panels/ override built-in templates.
+        // If the chosen panel references library experts by slug, resolve
+        // them via the expert library before handing off to the engine.
         const dataHome = getCouncilDataHome();
         const panel = await loadPanel(opts.template, dataHome);
-        template = assertAllInline(panel, opts.template);
+        const hasSlugRefs = panel.experts.some((e) => typeof e === "string");
+        if (!hasSlugRefs) {
+          template = assertAllInline(panel, opts.template);
+        } else {
+          const libDbPath = path.join(getCouncilHome(), "council.db");
+          const libDb = await createDatabase(libDbPath);
+          try {
+            const library = new FileExpertLibrary(dataHome, libDb);
+            const { resolved, missing } = await resolveExperts(panel.experts, library);
+            if (missing.length > 0) {
+              throw new Error(
+                `Panel "${opts.template}" references experts not in the library: ${missing.join(", ")}. ` +
+                  `Add them with 'council experts create' or use inline expert definitions.`,
+              );
+            }
+            template = {
+              name: panel.name,
+              ...(panel.description !== undefined ? { description: panel.description } : {}),
+              ...(panel.defaults !== undefined ? { defaults: panel.defaults } : {}),
+              experts: resolved,
+            };
+          } finally {
+            libDb.destroy();
+          }
+        }
       } else {
         // §2.5 auto-compose: spin up a temporary engine session, ask the
         // composer to design the panel, then tear it down. The real debate

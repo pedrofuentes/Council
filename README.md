@@ -44,11 +44,11 @@ pain points before choosing an architecture...
 
 ChatGPT gives you **one perspective**. Council gives you **structured deliberation** from multiple expert viewpoints — with memory, disagreement, and synthesis.
 
-| You ask... | Single AI says... | Council deliberates... |
-|-----------|------------------|----------------------|
-| "Should we use microservices?" | Generic pros/cons list | CTO argues operational risk, PM argues time-to-learning, Adversary challenges both — then synthesis names the crux |
-| "Review this auth middleware" | Unified feedback | Security auditor flags JWT expiry, performance engineer finds N+1, future maintainer asks "will I understand this in 6 months?" |
-| "Should I take the manager role?" | Balanced advice | IC mentor argues stay, manager argues switch, career coach provides a decision framework |
+| You ask...                        | Single AI says...      | Council deliberates...                                                                                                          |
+| --------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| "Should we use microservices?"    | Generic pros/cons list | CTO argues operational risk, PM argues time-to-learning, Adversary challenges both — then synthesis names the crux              |
+| "Review this auth middleware"     | Unified feedback       | Security auditor flags JWT expiry, performance engineer finds N+1, future maintainer asks "will I understand this in 6 months?" |
+| "Should I take the manager role?" | Balanced advice        | IC mentor argues stay, manager argues switch, career coach provides a decision framework                                        |
 
 ## Install
 
@@ -57,6 +57,7 @@ npm install -g @council/cli
 ```
 
 **Requirements:**
+
 - Node.js 20+
 - GitHub Copilot subscription (Individual, Business, or Enterprise)
 - No API keys. No OpenAI account. No credits to manage.
@@ -127,13 +128,13 @@ council memory reset <panel-name> --hard --yes      # delete the panel entirely
 
 ## Built-in Panels
 
-| Panel | Experts | Best For |
-|-------|---------|----------|
-| `architecture-review` | CTO, Staff Engineer, SRE, Product Manager | Technical architecture decisions |
-| `startup-validation` | VC Partner, Target Customer, Competitor, Distribution Expert | Idea validation |
-| `code-review` | Senior Dev, Security Auditor, Performance Engineer, Future Maintainer | Code quality |
-| `incident-postmortem` | SRE, Engineering Manager, Customer Advocate, Blameless Facilitator | Blameless analysis |
-| `career-coaching` | IC Mentor, Engineering Manager, VP Eng, Career Coach | Career decisions |
+| Panel                 | Experts                                                               | Best For                         |
+| --------------------- | --------------------------------------------------------------------- | -------------------------------- |
+| `architecture-review` | CTO, Staff Engineer, SRE, Product Manager                             | Technical architecture decisions |
+| `startup-validation`  | VC Partner, Target Customer, Competitor, Distribution Expert          | Idea validation                  |
+| `code-review`         | Senior Dev, Security Auditor, Performance Engineer, Future Maintainer | Code quality                     |
+| `incident-postmortem` | SRE, Engineering Manager, Customer Advocate, Blameless Facilitator    | Blameless analysis               |
+| `career-coaching`     | IC Mentor, Engineering Manager, VP Eng, Career Coach                  | Career decisions                 |
 
 ```bash
 council convene --template architecture-review "Should we adopt GraphQL?"
@@ -141,31 +142,38 @@ council convene --template architecture-review "Should we adopt GraphQL?"
 
 ## Create Custom Panels
 
+User panels live in `<dataHome>/panels/<name>.yaml` (default `~/Council/panels/`)
+and take precedence over Council's built-in templates of the same name.
+Each `experts` entry is **either** an inline definition **or** a slug
+string referencing an expert in your library (see `council experts ...`).
+
 ```yaml
-# panels/my-team.yaml
+# ~/Council/panels/my-team.yaml
 name: product-strategy
 description: "Evaluate product decisions"
 experts:
-  - slug: pm
-    displayName: "Product Manager"
-    role: "User-value-focused PM who references metrics"
-    expertise:
-      weightedEvidence:
-        - "User research and behavioral data"
-        - "Market positioning and competitive analysis"
-        - "Revenue impact and unit economics"
-      referenceCases:
-        - "Feature factories: shipping features without measuring impact"
-      notExpertIn: ["infrastructure", "security"]
-    epistemicStance: >
-      You've been burned by engineering-led products that nobody used.
-      You trust user data over architectural elegance.
-
+  # Reference a reusable library expert by slug:
+  - pm-veteran
+  # Or define one inline for this panel only:
   - slug: engineer
     displayName: "Staff Engineer"
     role: "Systems thinker focused on long-term maintainability"
-    # ...
+    expertise:
+      weightedEvidence:
+        - "Distributed systems design"
+        - "Production incident postmortems"
+      referenceCases:
+        - "Microservices sprawl: more services than engineers"
+      notExpertIn: ["product-market fit", "pricing"]
+    epistemicStance: >
+      You've debugged enough on-call pages to distrust shiny abstractions.
+      You optimise for the team that maintains this in two years.
 ```
+
+Run with `council convene "<topic>" --template my-team`. Slug references
+are resolved against your expert library; unresolved slugs produce an
+explicit error so you can either add them with `council experts create`
+or inline the definition.
 
 ## How It Works
 
@@ -176,7 +184,7 @@ experts:
 
 ### What Makes Council Different
 
-- **Expertise as prior, not persona** — Experts have distinct *objective functions*, not just different labels. Disagreement emerges naturally from weighing evidence differently.
+- **Expertise as prior, not persona** — Experts have distinct _objective functions_, not just different labels. Disagreement emerges naturally from weighing evidence differently.
 - **Anti-sycophancy by design** — 3-layer system prevents experts from agreeing with each other reflexively: forbidden phrases, mandatory disagreement budget, identity stakes.
 - **Persistent memory** — Experts remember past positions, updated priors, and unresolved questions across sessions. By default, an LLM extraction pass runs at the end of each debate and persists structured memory per expert; the next debate recalls that distilled context instead of a heuristic scan. Pass `--heuristic-memory` to convene/resume to opt out (e.g. for offline or air-gapped runs).
 - **CLI-native** — Built for developer workflows. Pipe-friendly (`--format json`), scriptable, CI-compatible.

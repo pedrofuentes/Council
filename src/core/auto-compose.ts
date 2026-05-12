@@ -127,8 +127,19 @@ function sanitizeComposedPanel(
   panel: PanelDefinition,
   defaultModel: string,
 ): ResolvedPanelDefinition {
-  // The composer is instructed to return inline definitions only. Defensively
-  // drop any slug-reference entries that may have slipped in.
+  // The composer is instructed to return inline definitions only. A slug
+  // reference would indicate either a misbehaving model or an attempt to
+  // bypass policy by pointing at an arbitrary library expert. Reject loudly
+  // rather than silently drop, so the user sees the broken response.
+  const slugRefs = panel.experts.filter((e): e is string => typeof e === "string");
+  if (slugRefs.length > 0) {
+    throw new Error(
+      `Auto-compose failed: composer returned slug references (${slugRefs.join(", ")}) ` +
+        `but inline expert definitions are required. The composer must produce a ` +
+        `complete panel — slug references to library experts are not allowed in ` +
+        `auto-composed panels.`,
+    );
+  }
   const inlineEntries = panel.experts.filter(
     (e): e is Exclude<typeof e, string> => typeof e !== "string",
   );
