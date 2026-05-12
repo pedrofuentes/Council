@@ -7,10 +7,18 @@
  *
  * RED at this commit: src/cli/renderers/chat-renderer.ts does not exist.
  */
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import chalk from "chalk";
 
 import { createChatRenderer } from "../../../../src/cli/renderers/chat-renderer.js";
 import type { Sink } from "../../../../src/cli/renderers/types.js";
+
+// Force chalk to emit basic 16-color SGR codes regardless of the runner's
+// TTY/FORCE_COLOR detection. Without this, ANSI assertions are flaky in
+// CI and no-color environments.
+beforeAll(() => {
+  chalk.level = 1;
+});
 
 class StringSink implements Sink {
   text = "";
@@ -20,6 +28,14 @@ class StringSink implements Sink {
   }
   writeError(s: string): void {
     this.errText += s;
+  }
+}
+
+/** Sink without `writeError` — exercises the stdout-fallback branch. */
+class WriteOnlySink implements Sink {
+  text = "";
+  write(s: string): void {
+    this.text += s;
   }
 }
 
@@ -206,6 +222,13 @@ describe("ChatRenderer", () => {
       renderer.showSystem("Engine failed.", "error");
       expect(stripAnsi(sink.errText)).toBe("✗ Engine failed.\n");
       expect(sink.text).toBe("");
+    });
+
+    it("falls back to write() when the sink has no writeError method", () => {
+      const sink = new WriteOnlySink();
+      const renderer = createChatRenderer({ sink, experts: makeExperts() });
+      renderer.showSystem("Engine failed.", "error");
+      expect(stripAnsi(sink.text)).toBe("✗ Engine failed.\n");
     });
   });
 
