@@ -121,6 +121,32 @@ describe("getExpertPanelMemberships()", () => {
     ]);
   });
 
+  it("caps the query at PANEL_MEMBERSHIPS_LIMIT entries to bound co-member fan-out", async () => {
+    await seedExpert(db, "cto", "Dahlia");
+    await seedExpert(db, "arch", "Marcus");
+
+    // Create 8 panels with descending updated_at; only the 5 most-recent
+    // should come back from the DB query so co-member fan-out stays
+    // bounded regardless of how many panels the expert belongs to.
+    for (let i = 0; i < 8; i += 1) {
+      const name = `panel-${i}`;
+      await seedPanel(db, name, `desc-${i}`, ["cto", "arch"]);
+      // Year shifts to give each panel a deterministic ordering.
+      await bumpPanelUpdatedAt(db, name, `20${20 + i}-01-01T00:00:00.000Z`);
+    }
+
+    const result = await getExpertPanelMemberships("cto", db);
+    expect(result).toHaveLength(5);
+    // Most-recent-first: 2027, 2026, 2025, 2024, 2023 -> panels 7..3.
+    expect(result.map((m) => m.panelName)).toEqual([
+      "panel-7",
+      "panel-6",
+      "panel-5",
+      "panel-4",
+      "panel-3",
+    ]);
+  });
+
   it("excludes the queried expert from co-members even in a 2-expert panel", async () => {
     await seedExpert(db, "cto", "Dahlia");
     await seedExpert(db, "arch", "Marcus");
