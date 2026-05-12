@@ -178,7 +178,7 @@ experts:
 
 - **Expertise as prior, not persona** — Experts have distinct *objective functions*, not just different labels. Disagreement emerges naturally from weighing evidence differently.
 - **Anti-sycophancy by design** — 3-layer system prevents experts from agreeing with each other reflexively: forbidden phrases, mandatory disagreement budget, identity stakes.
-- **Persistent memory** — Experts remember past positions, updated priors, and unresolved questions across sessions.
+- **Persistent memory** — Experts remember past positions, updated priors, and unresolved questions across sessions. By default, an LLM extraction pass runs at the end of each debate and persists structured memory per expert; the next debate recalls that distilled context instead of a heuristic scan. Pass `--heuristic-memory` to convene/resume to opt out (e.g. for offline or air-gapped runs).
 - **CLI-native** — Built for developer workflows. Pipe-friendly (`--format json`), scriptable, CI-compatible.
 - **Zero key management** — Uses GitHub Copilot SDK. One auth, all models (GPT, Claude, Gemini).
 
