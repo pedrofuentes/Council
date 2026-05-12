@@ -10,7 +10,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 
 import { FileExpertLibrary } from "../../../src/core/expert-library.js";
 import type { ExpertDefinition } from "../../../src/core/expert.js";
@@ -261,6 +261,36 @@ describe("FileExpertLibrary", () => {
       await lib.create(makeDef());
       const panels = await lib.panelsFor("cto");
       expect(panels).toEqual([]);
+    });
+  });
+
+  describe("atomicity / rollback", () => {
+    it("rolls back the DB row when YAML write fails on create()", async () => {
+      // Pre-create a *directory* where the YAML file would live so writeFile
+      // fails with EISDIR — exercises the compensating DB delete on create.
+      const yamlPath = path.join(dataHome, "experts", "cto.yaml");
+      await fs.mkdir(yamlPath, { recursive: true });
+      await expect(lib.create(makeDef())).rejects.toThrow();
+      const row = await db
+        .selectFrom("expert_library")
+        .selectAll()
+        .where("slug", "=", "cto")
+        .executeTakeFirst();
+      expect(row).toBeUndefined();
+    });
+
+    it("restores prior YAML when DB update fails on update()", async () => {
+      await lib.create(makeDef());
+      const yamlPath = path.join(dataHome, "experts", "cto.yaml");
+      const before = await fs.readFile(yamlPath, "utf-8");
+
+      const spy = vi.spyOn(db, "updateTable").mockImplementationOnce(() => {
+        throw new Error("db unavailable");
+      });
+      await expect(lib.update("cto", { displayName: "x" })).rejects.toThrow(/db unavailable/);
+      const after = await fs.readFile(yamlPath, "utf-8");
+      expect(after).toBe(before);
+      spy.mockRestore();
     });
   });
 
