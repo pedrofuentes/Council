@@ -84,7 +84,10 @@ export class FileExpertLibrary implements ExpertLibrary {
   private readonly repo: ExpertLibraryRepository;
   private readonly expertsDir: string;
 
-  constructor(dataHome: string, db: CouncilDatabase) {
+  constructor(
+    dataHome: string,
+    private readonly db: CouncilDatabase,
+  ) {
     this.repo = new ExpertLibraryRepository(db);
     this.expertsDir = path.join(dataHome, "experts");
   }
@@ -218,16 +221,24 @@ export class FileExpertLibrary implements ExpertLibrary {
     }
 
     const yamlPath = existing.yamlPath;
-    // Delete DB row first; the row is the authoritative pointer to the
-    // YAML file. If the unlink later fails, the leftover file is orphaned
-    // but cannot resurrect the expert (list/get both go through the DB).
+    // Snapshot membership rows BEFORE the DB delete: ON DELETE CASCADE on
+    // panel_members will wipe them when expert_library is deleted, so we
+    // need the snapshot to restore relational state if the unlink fails.
+    const memberSnapshot = await this.db
+      .selectFrom("panel_members")
+      .selectAll()
+      .where("expert_slug", "=", slug)
+      .execute();
+
     await this.repo.delete(slug);
     try {
       await fs.unlink(yamlPath);
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== "ENOENT") {
-        // Best-effort restore so the caller can retry.
+        // Compensating action: recreate the expert row and restore every
+        // membership the cascade deleted. Best-effort — surface the
+        // original unlink error so the caller knows something went wrong.
         await this.repo
           .create({
             slug: existing.slug,
@@ -237,6 +248,18 @@ export class FileExpertLibrary implements ExpertLibrary {
             yamlChecksum: existing.yamlChecksum,
           })
           .catch(() => undefined);
+        for (const m of memberSnapshot) {
+          await this.db
+            .insertInto("panel_members")
+            .values({
+              panel_name: m.panel_name,
+              expert_slug: m.expert_slug,
+              position: m.position,
+              created_at: m.created_at,
+            })
+            .execute()
+            .catch(() => undefined);
+        }
         throw err;
       }
     }
