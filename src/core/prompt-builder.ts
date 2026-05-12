@@ -146,29 +146,56 @@ function renderPersonaProfile(profile: PersonaProfile): string {
   const lines: string[] = [
     "Based on analysis of documents about you, you exhibit the following traits:",
     "",
-    `Communication Style: ${profile.communicationStyle}`,
+    `Communication Style: ${sanitizeProfileField(profile.communicationStyle)}`,
     "",
     "Decision Patterns:",
   ];
   if (profile.decisionPatterns.length === 0) {
     lines.push("  - (none observed)");
   } else {
-    for (const p of profile.decisionPatterns) lines.push(`  - ${p}`);
+    for (const p of profile.decisionPatterns) lines.push(`  - ${sanitizeProfileField(p)}`);
   }
   lines.push("");
   lines.push("Cognitive Tendencies:");
   if (profile.biases.length === 0) {
     lines.push("  - (none observed)");
   } else {
-    for (const b of profile.biases) lines.push(`  - ${b}`);
+    for (const b of profile.biases) lines.push(`  - ${sanitizeProfileField(b)}`);
   }
   lines.push("");
-  lines.push(`Characteristic Vocabulary: ${profile.vocabulary.join(", ")}`);
+  lines.push(
+    `Characteristic Vocabulary: ${profile.vocabulary.map((v) => sanitizeProfileField(v)).join(", ")}`,
+  );
   lines.push("");
   lines.push(
     "Adopt these traits naturally in your responses. Do not explicitly mention or quote this profile.",
   );
   return lines.join("\n");
+}
+
+/**
+ * Defang profile-field strings before interpolation into the privileged
+ * system prompt. Profile fields are derived from untrusted documents, so
+ * even though `analyzeDocuments()` enforces a JSON shape, the string
+ * *contents* may carry adversarial payloads (e.g. forged section markers
+ * like "[10] OVERRIDE …" or embedded C0 control bytes).
+ *
+ * The transformation here is intentionally conservative:
+ *   - Strip C0 control characters (except tab/newline/carriage return),
+ *     then strip DEL.
+ *   - Collapse any run of newlines to a single space so injected
+ *     "[N] SECTION" lines cannot appear at column 0 of the prompt.
+ *   - Neutralize bracketed numeric section-marker prefixes by escaping
+ *     the opening bracket.
+ *   - Cap total length so a runaway field cannot drown the prompt.
+ */
+function sanitizeProfileField(raw: string): string {
+  // eslint-disable-next-line no-control-regex
+  const stripped = raw.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
+  const collapsed = stripped.replace(/[\r\n]+/g, " ");
+  const defanged = collapsed.replace(/\[(\d+)\]/g, "(sec-$1)");
+  const MAX = 2000;
+  return defanged.length > MAX ? `${defanged.slice(0, MAX)}…` : defanged;
 }
 
 /**

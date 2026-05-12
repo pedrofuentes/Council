@@ -135,6 +135,7 @@ describe("buildSystemPrompt() — persona profile", () => {
     // as if they were genuine top-level prompt sections.
     expect(section).not.toMatch(/^\[1[0-9]\] /m);
     // Null bytes and other C0 control characters must be stripped.
+    // eslint-disable-next-line no-control-regex
     expect(section).not.toMatch(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/);
   });
 

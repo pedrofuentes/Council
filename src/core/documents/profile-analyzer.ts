@@ -87,11 +87,13 @@ function formatPromptBody(
 
   if (existingProfile) {
     lines.push("Existing profile to update:");
-    lines.push(`- communicationStyle: ${existingProfile.communicationStyle}`);
-    lines.push(`- decisionPatterns: ${existingProfile.decisionPatterns.join("; ")}`);
-    lines.push(`- biases: ${existingProfile.biases.join("; ")}`);
-    lines.push(`- vocabulary: ${existingProfile.vocabulary.join(", ")}`);
-    lines.push(`- epistemicStance: ${existingProfile.epistemicStance}`);
+    lines.push(`- communicationStyle: ${sanitizeFenceField(existingProfile.communicationStyle)}`);
+    lines.push(
+      `- decisionPatterns: ${sanitizeFenceField(existingProfile.decisionPatterns.join("; "))}`,
+    );
+    lines.push(`- biases: ${sanitizeFenceField(existingProfile.biases.join("; "))}`);
+    lines.push(`- vocabulary: ${sanitizeFenceField(existingProfile.vocabulary.join(", "))}`);
+    lines.push(`- epistemicStance: ${sanitizeFenceField(existingProfile.epistemicStance)}`);
     lines.push("");
   }
 

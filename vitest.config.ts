@@ -6,6 +6,12 @@ export default defineConfig({
     exclude: ["node_modules", "dist", ".worktrees"],
     environment: "node",
     globals: false,
+    // Default 5000ms is too tight under maximal parallel worker load
+    // (several CLI command tests legitimately spawn child processes and
+    // each takes ~1.5–2s). Raise the ceiling so genuine slowness doesn't
+    // present as flake on busy machines.
+    testTimeout: 15000,
+    hookTimeout: 15000,
     // Per-process test isolation: tests/setup.ts redirects COUNCIL_HOME
     // to a per-process temp dir so commands that touch the filesystem
     // cannot pollute the user's real ~/.council/ directory.
