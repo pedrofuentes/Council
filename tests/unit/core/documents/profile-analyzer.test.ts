@@ -89,7 +89,7 @@ const sampleDocs = [
   },
 ] as const;
 
-const defaultOptions: AnalyzeOptions = { recencyWeightHalfLife: 30 };
+const defaultOptions: AnalyzeOptions = { recencyWeightHalfLife: 30, model: "gpt-test" };
 
 const validProfileJSON = JSON.stringify({
   communicationStyle:
@@ -129,6 +129,7 @@ describe("analyzeDocuments() — engine-backed profile extraction", () => {
     const spec = engine.registered[0];
     if (!spec) throw new Error("expected registered analyzer");
     expect(spec.displayName).toMatch(/Profile Analyzer/i);
+    expect(spec.model).toBe("gpt-test");
 
     expect(engine.sends.length).toBe(1);
     const send = engine.sends[0];
