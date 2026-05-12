@@ -117,4 +117,118 @@ describe("extractDocument", () => {
     expect(result.content).toBe("café — naïve résumé");
     expect(result.wordCount).toBe(4);
   });
+
+  // ──────────────────────────────────────────────────────────────────
+  // fd-based confinement (Roadmap 6.4) — closes TOCTOU race where a
+  // symlink could be swapped between a realpath check and the read.
+  // The extractor must: open fd → verify realpath confined →
+  // verify the fd's inode still matches the canonical path (no swap)
+  // → read via the file handle.
+  // ──────────────────────────────────────────────────────────────────
+
+  describe("confinement (TOCTOU-safe)", () => {
+    it("accepts a regular file inside confinementRoot", async () => {
+      const filePath = path.join(dir, "ok.txt");
+      await fs.writeFile(filePath, "inside");
+      const result = await extractDocument(filePath, { confinementRoot: dir });
+      expect(result.content).toBe("inside");
+    });
+
+    it("rejects a path outside confinementRoot (no symlinks involved)", async () => {
+      const otherDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-extract-other-"));
+      try {
+        const filePath = path.join(otherDir, "secret.txt");
+        await fs.writeFile(filePath, "secret");
+        await expect(
+          extractDocument(filePath, { confinementRoot: dir }),
+        ).rejects.toThrow(/outside|traversal|confine/i);
+      } finally {
+        await fs.rm(otherDir, { recursive: true, force: true });
+      }
+    });
+
+    it("rejects a symlink whose target lives outside confinementRoot", async () => {
+      const otherDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-extract-other-"));
+      try {
+        const target = path.join(otherDir, "secret.txt");
+        await fs.writeFile(target, "secret");
+        const link = path.join(dir, "link.txt");
+        try {
+          await fs.symlink(target, link);
+        } catch {
+          // Symlink creation requires admin on Windows; skip the body
+          // rather than fail the whole suite when unsupported.
+          return;
+        }
+        await expect(
+          extractDocument(link, { confinementRoot: dir }),
+        ).rejects.toThrow(/outside|traversal|confine/i);
+      } finally {
+        await fs.rm(otherDir, { recursive: true, force: true });
+      }
+    });
+
+    it("rejects when the canonical path's inode does not match the fd inode (post-resolve swap)", async () => {
+      // Defense-in-depth: the extractor should compare fh.stat() inode/dev
+      // with lstat(canonical) and reject on mismatch. We exercise it with
+      // an injected `_realpathOverride` (test-only seam) so we can simulate
+      // a post-realpath swap without racing the filesystem.
+      const inside = path.join(dir, "real.txt");
+      const decoy = path.join(dir, "decoy.txt");
+      await fs.writeFile(inside, "real-content");
+      await fs.writeFile(decoy, "decoy-content");
+
+      // The override pretends realpath(inside) === decoy: open() will still
+      // bind to inside's inode, but the integrity check (lstat on the
+      // returned canonical) will see decoy's inode → mismatch → reject.
+      await expect(
+        extractDocument(inside, {
+          confinementRoot: dir,
+          _realpathOverride: async (p: string) => {
+            if (path.resolve(p) === path.resolve(inside)) return decoy;
+            return fs.realpath(p);
+          },
+        }),
+      ).rejects.toThrow(/TOCTOU|mismatch|changed/i);
+    });
+
+    it("rejects a directory passed as filePath", async () => {
+      const sub = path.join(dir, "subdir");
+      await fs.mkdir(sub);
+      await expect(
+        extractDocument(sub, { confinementRoot: dir }),
+      ).rejects.toThrow(/regular file|not a file/i);
+    });
+
+    it("works without confinementRoot (back-compat)", async () => {
+      const filePath = path.join(dir, "compat.txt");
+      await fs.writeFile(filePath, "still works");
+      const result = await extractDocument(filePath);
+      expect(result.content).toBe("still works");
+    });
+
+    // ── Sentinel pr373 cycle 4: root-swap TOCTOU ─────────────────────
+    it("does NOT re-resolve the confinement root when _rootIsCanonical is set", async () => {
+      const canonical = await fs.realpath(dir);
+      const filePath = path.join(canonical, "frozen.md");
+      await fs.writeFile(filePath, "frozen body");
+
+      const calls: string[] = [];
+      const override = async (p: string): Promise<string> => {
+        calls.push(p);
+        if (p === canonical) {
+          throw new Error(`extractor re-resolved the root: ${p}`);
+        }
+        return fs.realpath(p);
+      };
+
+      const result = await extractDocument(filePath, {
+        confinementRoot: canonical,
+        _rootIsCanonical: true,
+        _realpathOverride: override,
+      });
+      expect(result.content).toBe("frozen body");
+      expect(calls.every((p) => p !== canonical)).toBe(true);
+    });
+  });
 });

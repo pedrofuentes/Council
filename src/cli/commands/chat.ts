@@ -49,6 +49,11 @@ import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import type { CouncilDatabase } from "../../memory/db.js";
 import { createDatabase } from "../../memory/db.js";
 import { ChatRepository } from "../../memory/repositories/chat-repository.js";
+import { DocumentRepository } from "../../memory/repositories/document-repository.js";
+import { ProfileRepository } from "../../memory/repositories/profile-repository.js";
+import { createDocumentIndexer } from "../../core/documents/indexer.js";
+import { createDocumentProcessor } from "../../core/documents/processor.js";
+import type { PersonaProfile } from "../../core/documents/profile-analyzer.js";
 
 import { createChatRenderer, type ChatRenderer } from "../renderers/chat-renderer.js";
 import type { Sink } from "../renderers/types.js";
@@ -329,6 +334,7 @@ async function runChat(
         config,
         db,
         engineKind,
+        dataHome,
       });
       return;
     }
@@ -383,10 +389,11 @@ interface ExpertChatOptions {
   readonly config: CouncilConfig;
   readonly db: CouncilDatabase;
   readonly engineKind: EngineKind;
+  readonly dataHome: string;
 }
 
 async function runExpertChat(opts: ExpertChatOptions): Promise<void> {
-  const { target, expert, raw, deps, writeError, config, db, engineKind } = opts;
+  const { target, expert, raw, deps, writeError, config, db, engineKind, dataHome } = opts;
   const repo = new ChatRepository(db);
 
   // Resolve which session we'll use, but defer mutations (archive/create
@@ -416,7 +423,17 @@ async function runExpertChat(opts: ExpertChatOptions): Promise<void> {
 
   try {
     await engine.start();
-    const expertSpec = buildExpertSpec(expert, config, CHAT_TASK_DESCRIPTION);
+
+    const personaProfile = await maybeProcessPersonaDocs({
+      expert,
+      dataHome,
+      db,
+      engine,
+      config,
+      renderer,
+    });
+
+    const expertSpec = buildExpertSpec(expert, config, CHAT_TASK_DESCRIPTION, personaProfile);
     await engine.addExpert(expertSpec);
 
     // Engine ready — NOW it's safe to mutate persistent chat state.
@@ -698,8 +715,9 @@ function buildExpertSpec(
   expert: ExpertDefinition,
   config: CouncilConfig,
   taskDescription: string,
+  personaProfile?: PersonaProfile,
 ): ExpertSpec {
-  const systemMessage = buildSystemPrompt(expert, undefined, taskDescription);
+  const systemMessage = buildSystemPrompt(expert, undefined, taskDescription, personaProfile);
   return {
     id: ulid(),
     slug: expert.slug,
@@ -707,6 +725,84 @@ function buildExpertSpec(
     model: expert.model ?? config.defaults.model ?? DEFAULT_MODEL,
     systemMessage,
   };
+}
+
+interface MaybeProcessPersonaDocsOptions {
+  readonly expert: ExpertDefinition;
+  readonly dataHome: string;
+  readonly db: CouncilDatabase;
+  readonly engine: CouncilEngine;
+  readonly config: CouncilConfig;
+  readonly renderer: ChatRenderer;
+}
+
+/**
+ * If the expert is a persona, scan its docs folder for new/changed files,
+ * extract + index them, and refresh the persona profile (Roadmap 6.4).
+ *
+ * Failures are surfaced as warnings — the chat still launches so the user
+ * is never blocked by a broken document or a flaky LLM analyzer call.
+ * Returns the (possibly stale) persisted profile, or undefined for
+ * non-persona experts and personas with no usable profile yet.
+ */
+async function maybeProcessPersonaDocs(
+  opts: MaybeProcessPersonaDocsOptions,
+): Promise<PersonaProfile | undefined> {
+  const { expert, dataHome, db, engine, config, renderer } = opts;
+  if (expert.kind !== "persona") return undefined;
+
+  const docsPath = path.join(dataHome, "experts", expert.slug, "docs");
+  const documentRepo = new DocumentRepository(db);
+  const profileRepo = new ProfileRepository(db);
+  const indexer = createDocumentIndexer(db);
+  const processor = createDocumentProcessor({
+    engine,
+    documentRepo,
+    profileRepo,
+    indexer,
+    config: {
+      supportedFormats: config.expert.supportedFormats,
+      recencyHalfLifeDays: config.expert.recencyHalfLifeDays,
+    },
+  });
+
+  try {
+    const needs = await processor.needsProcessing(expert.slug, docsPath);
+    if (needs) {
+      renderer.showSystem("Processing persona documents...", "info");
+      const result = await processor.process(expert.slug, docsPath, (p) => {
+        if (p.status === "failed") {
+          renderer.showSystem(`  ${p.filename}: failed (${p.error ?? "unknown"})`, "warn");
+        } else {
+          renderer.showSystem(`  ${p.filename}: ${p.wordCount} words`, "info");
+        }
+      });
+      renderer.showSystem(
+        `Processed ${result.filesProcessed} new/changed document(s) ` +
+          `(${result.filesSkipped} unchanged, ${result.filesFailed} failed, ${result.filesRemoved} removed).`,
+        "info",
+      );
+      if (result.profileError !== null) {
+        renderer.showSystem(
+          `Persona profile refresh failed (continuing with stale profile): ${result.profileError}`,
+          "warn",
+        );
+      }
+    } else {
+      const tracked = await documentRepo.getChecksumMap(expert.slug);
+      if (tracked.size === 0) {
+        renderer.showSystem(
+          `No documents found in ${docsPath} — running ${expert.displayName} as a generic expert.`,
+          "info",
+        );
+      }
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    renderer.showSystem(`Document processing skipped: ${msg}`, "warn");
+  }
+
+  return (await profileRepo.findBySlug(expert.slug)) ?? undefined;
 }
 
 interface PanelInteractiveLoopOptions {

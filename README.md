@@ -132,6 +132,19 @@ council expert list                                 # table view (also --format 
 council expert inspect <slug>                       # full detail + panel memberships
 council expert edit <slug>                          # open YAML in $EDITOR, re-validate on save
 council expert delete <slug>                        # refuses if in any panel (use --force to override)
+
+# Chat 1:1 with a persona expert — drop reference docs in
+# ~/Council/experts/<slug>/docs/ (any combination of .md / .txt / .html).
+# On every `council chat <slug>` invocation, Council auto-detects new,
+# changed, or deleted documents, re-extracts and re-indexes them
+# (deletions prune the FTS index and mark the DB row as removed),
+# refreshes the persona profile, and only THEN registers the expert —
+# so the next reply already reflects the latest reference material.
+# Files outside the docs folder (e.g. symlinks pointing elsewhere) are
+# rejected for safety; the docs folder itself must be a real directory
+# (symlinks/junctions as the root are also rejected). An empty docs
+# folder is fine: the persona just runs as a generic expert.
+council chat <persona-slug>                         # auto-processes ~/Council/experts/<slug>/docs/
 ```
 
 ## Built-in Panels

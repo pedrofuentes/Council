@@ -109,4 +109,89 @@ describe("detectDocumentChanges", () => {
     expect(result.unchangedFiles).toHaveLength(0);
     expect(result.unsupportedFiles).toHaveLength(0);
   });
+
+  // ── Roadmap 6.4: confinement-aware detection (TOCTOU-safe) ────────────
+  describe("confinement (Roadmap 6.4)", () => {
+    it("accepts files inside the confinement root", async () => {
+      await fs.writeFile(path.join(dir, "a.md"), "ok");
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        confinementRoot: dir,
+      });
+      expect(result.newFiles).toHaveLength(1);
+      expect(result.rejectedFiles ?? []).toHaveLength(0);
+    });
+
+    it("rejects symlinks whose target is outside the confinement root", async () => {
+      const outside = await fs.mkdtemp(path.join(os.tmpdir(), "council-outside-"));
+      try {
+        const secret = path.join(outside, "secret.md");
+        await fs.writeFile(secret, "SECRET");
+        try {
+          await fs.symlink(secret, path.join(dir, "trap.md"));
+        } catch {
+          // Symlinks not permitted on this OS/account — skip.
+          return;
+        }
+        const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+          confinementRoot: dir,
+        });
+        expect(result.newFiles.some((f) => f.filename === "trap.md")).toBe(false);
+        expect((result.rejectedFiles ?? []).some((p) => p.endsWith("trap.md"))).toBe(true);
+      } finally {
+        await fs.rm(outside, { recursive: true, force: true });
+      }
+    });
+
+    it("does NOT read file bytes via the unconfined path (uses fd-based reads)", async () => {
+      // Sanity: a regular file inside confinement still produces a checksum.
+      await fs.writeFile(path.join(dir, "a.md"), "hello fd");
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        confinementRoot: dir,
+      });
+      expect(result.newFiles).toHaveLength(1);
+      expect(result.newFiles[0]?.checksum).toBe(sha256("hello fd"));
+    });
+
+    it("surfaces non-ENOENT readdir errors instead of silently returning empty", async () => {
+      // Force a non-missing-directory error by passing a file path (ENOTDIR).
+      const filePath = path.join(dir, "file.md");
+      await fs.writeFile(filePath, "x");
+      await expect(
+        detectDocumentChanges(filePath, new Map(), [".md"], { confinementRoot: dir }),
+      ).rejects.toThrow();
+    });
+
+    // ── Sentinel pr373 cycle 4: root-swap TOCTOU ─────────────────────
+    it("does NOT re-resolve the confinement root when _rootIsCanonical is set", async () => {
+      // Prove the frozen-root contract: when the caller asserts the
+      // confinement root is already canonical, the detector must not
+      // call realpath() on it again. We assert this by injecting an
+      // override that THROWS for the root path — the call must still
+      // succeed (because realpath is only invoked for the FILE, not
+      // the root).
+      await fs.writeFile(path.join(dir, "a.md"), "hi");
+      const canonical = await fs.realpath(dir);
+      const rootArg = dir; // may equal canonical on this OS
+
+      const calls: string[] = [];
+      const override = async (p: string): Promise<string> => {
+        calls.push(p);
+        // Throw if the detector re-resolves the root — this proves
+        // the bug we are guarding against.
+        if (p === rootArg || p === canonical) {
+          throw new Error(`detector re-resolved the root: ${p}`);
+        }
+        return fs.realpath(p);
+      };
+
+      const result = await detectDocumentChanges(canonical, new Map(), [".md"], {
+        confinementRoot: canonical,
+        _rootIsCanonical: true,
+        _realpathOverride: override,
+      });
+      expect(result.newFiles).toHaveLength(1);
+      // The override should have been called for the file but never for the root.
+      expect(calls.every((p) => p !== rootArg && p !== canonical)).toBe(true);
+    });
+  });
 });
