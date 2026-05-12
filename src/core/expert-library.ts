@@ -142,8 +142,7 @@ export class FileExpertLibrary implements ExpertLibrary {
 
     await fs.mkdir(this.expertsDir, { recursive: true });
     const content = serializeYaml(validated);
-    await fs.writeFile(yamlPath, content, "utf-8");
-
+    // DB insert first so a YAML write failure can cleanly roll back the DB row.
     await this.repo.create({
       slug: validated.slug,
       kind: validated.kind,
@@ -151,6 +150,14 @@ export class FileExpertLibrary implements ExpertLibrary {
       yamlPath,
       yamlChecksum: sha256(content),
     });
+    try {
+      await fs.writeFile(yamlPath, content, "utf-8");
+    } catch (err) {
+      // Compensating action: undo the DB row so caller can retry without
+      // a phantom record. Best-effort — surface the original write error.
+      await this.repo.delete(validated.slug).catch(() => undefined);
+      throw err;
+    }
   }
 
   async update(slug: string, patch: Partial<ExpertDefinition>): Promise<void> {
@@ -166,14 +173,33 @@ export class FileExpertLibrary implements ExpertLibrary {
     });
     const yamlPath = this.yamlPathFor(slug);
     const content = serializeYaml(merged);
+    // Snapshot the previous YAML so a DB failure (after the write) can
+    // restore the file content. Read-and-keep is cheaper than a copy file.
+    let previousContent: string | null = null;
+    try {
+      previousContent = await fs.readFile(yamlPath, "utf-8");
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") throw err;
+    }
     await fs.writeFile(yamlPath, content, "utf-8");
-
-    await this.repo.update(slug, {
-      kind: merged.kind,
-      displayName: merged.displayName,
-      yamlPath,
-      yamlChecksum: sha256(content),
-    });
+    try {
+      await this.repo.update(slug, {
+        kind: merged.kind,
+        displayName: merged.displayName,
+        yamlPath,
+        yamlChecksum: sha256(content),
+      });
+    } catch (err) {
+      // Restore the on-disk YAML to its prior state so library reads stay
+      // consistent with the DB row that did NOT get updated.
+      if (previousContent !== null) {
+        await fs.writeFile(yamlPath, previousContent, "utf-8").catch(() => undefined);
+      } else {
+        await fs.unlink(yamlPath).catch(() => undefined);
+      }
+      throw err;
+    }
   }
 
   async delete(
@@ -192,13 +218,28 @@ export class FileExpertLibrary implements ExpertLibrary {
     }
 
     const yamlPath = existing.yamlPath;
+    // Delete DB row first; the row is the authoritative pointer to the
+    // YAML file. If the unlink later fails, the leftover file is orphaned
+    // but cannot resurrect the expert (list/get both go through the DB).
+    await this.repo.delete(slug);
     try {
       await fs.unlink(yamlPath);
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
-      if (code !== "ENOENT") throw err;
+      if (code !== "ENOENT") {
+        // Best-effort restore so the caller can retry.
+        await this.repo
+          .create({
+            slug: existing.slug,
+            kind: existing.kind,
+            displayName: existing.displayName,
+            yamlPath: existing.yamlPath,
+            yamlChecksum: existing.yamlChecksum,
+          })
+          .catch(() => undefined);
+        throw err;
+      }
     }
-    await this.repo.delete(slug);
     return { affectedPanels: panels };
   }
 
