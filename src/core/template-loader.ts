@@ -87,6 +87,20 @@ export interface ResolvedPanelDefinition {
 }
 
 /**
+ * Typed error: a panel was looked up by name but no matching file exists.
+ *
+ * Distinguishing this from "panel file exists but failed to parse/validate"
+ * lets callers (e.g. {@link loadPanel}) fall back to a different source on
+ * "not found" while still propagating real validation errors verbatim.
+ */
+export class PanelNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PanelNotFoundError";
+  }
+}
+
+/**
  * Resolve the panels directory by probing candidate paths in order.
  *
  * Council ships `panels/*.yaml` at the package root (per package.json#files).
@@ -171,7 +185,7 @@ export async function loadTemplate(name: string): Promise<ResolvedPanelDefinitio
       if (!isENOENT(err)) throw err;
     }
   }
-  throw new Error(`Panel template "${name}" not found in ${PANELS_DIR}`);
+  throw new PanelNotFoundError(`Panel template "${name}" not found in ${PANELS_DIR}`);
 }
 
 /**
@@ -179,8 +193,11 @@ export async function loadTemplate(name: string): Promise<ResolvedPanelDefinitio
  * asserting every entry is an inline {@link ExpertDefinition}. Throws a
  * descriptive error when any slug-reference is present — used by
  * {@link loadTemplate} since built-in templates must remain self-contained.
+ *
+ * Exported so callers that already have a `PanelDefinition` in hand can
+ * narrow it without going through {@link loadTemplate}.
  */
-function assertAllInline(panel: PanelDefinition, source: string): ResolvedPanelDefinition {
+export function assertAllInline(panel: PanelDefinition, source: string): ResolvedPanelDefinition {
   const slugRefs = panel.experts.filter((e): e is string => typeof e === "string");
   if (slugRefs.length > 0) {
     throw new Error(
@@ -288,7 +305,7 @@ export async function loadUserPanel(name: string, dataHome: string): Promise<Pan
       if (!isENOENT(err)) throw err;
     }
   }
-  throw new Error(`User panel "${name}" not found in ${userPanelsDir}`);
+  throw new PanelNotFoundError(`User panel "${name}" not found in ${userPanelsDir}`);
 }
 
 /**
@@ -320,12 +337,10 @@ export async function loadPanel(name: string, dataHome: string): Promise<PanelDe
   try {
     return await loadUserPanel(name, dataHome);
   } catch (err: unknown) {
-    // Validation errors (invalid name, bad YAML, schema failure) must
-    // surface verbatim — only a genuine "user panel doesn't exist" should
-    // fall through to built-ins.
-    const message = err instanceof Error ? err.message : String(err);
-    const isNotFound = /not found in /.test(message);
-    if (!isNotFound) throw err;
+    // Only fall back to built-ins when the user panel is genuinely absent.
+    // YAML parse errors, schema-validation failures, traversal-rejections,
+    // etc. surface verbatim so the user can fix their file.
+    if (!(err instanceof PanelNotFoundError)) throw err;
   }
   const resolved = await loadTemplate(name);
   return {
