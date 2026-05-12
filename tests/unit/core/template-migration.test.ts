@@ -109,6 +109,17 @@ describe("template-migration", () => {
       // …but the DB-aware check correctly demands a re-register pass.
       expect(await isMigrationNeeded(dataHome, db)).toBe(true);
     });
+
+    it("returns true when expert_library survives but panel_library was wiped", async () => {
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
+      expect(await isMigrationNeeded(dataHome, db)).toBe(false);
+
+      // Targeted wipe: panel registry only, leaving experts intact.
+      await db.deleteFrom("panel_members").execute();
+      await db.deleteFrom("panel_library").execute();
+
+      expect(await isMigrationNeeded(dataHome, db)).toBe(true);
+    });
   });
 
   describe("DB-reset recovery (re-register from preserved YAML)", () => {
@@ -185,6 +196,39 @@ describe("template-migration", () => {
       const afterRaw = await fs.readFile(samplePath, "utf-8");
       const after = yaml.parse(afterRaw) as Record<string, unknown>;
       expect(after["description"]).toBe("Customised by the user");
+    });
+
+    it("refreshes existing panel_library description from on-disk YAML when expert tables were wiped", async () => {
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
+
+      const panelsDir = path.join(dataHome, "panels");
+      const sample = (await fs.readdir(panelsDir)).filter((f) =>
+        f.endsWith(".yaml"),
+      )[0];
+      if (!sample) throw new Error("expected migrated panel yaml");
+      const sampleName = sample.replace(/\.yaml$/, "");
+      const samplePath = path.join(panelsDir, sample);
+
+      // User edits the panel description on disk.
+      const raw = await fs.readFile(samplePath, "utf-8");
+      const parsed = yaml.parse(raw) as Record<string, unknown>;
+      parsed["description"] = "Edited after migration";
+      await fs.writeFile(samplePath, yaml.stringify(parsed), "utf-8");
+
+      // Wipe ONLY the expert tables — panel_library row survives but its
+      // description is now stale (matches the original template).
+      await db.deleteFrom("panel_members").execute();
+      await db.deleteFrom("expert_library").execute();
+
+      const lib2 = new FileExpertLibrary(dataHome, db);
+      await migrateBuiltInTemplates(dataHome, lib2, db, { quiet: true });
+
+      const row = await db
+        .selectFrom("panel_library")
+        .selectAll()
+        .where("name", "=", sampleName)
+        .executeTakeFirstOrThrow();
+      expect(row.description).toBe("Edited after migration");
     });
   });
 
