@@ -24,16 +24,32 @@ import {
   loadConfig,
   type CouncilConfig,
 } from "../../config/index.js";
+import { createDocumentIndexer } from "../../core/documents/indexer.js";
+import { createDocumentProcessor } from "../../core/documents/processor.js";
 import { FileExpertLibrary, type ExpertLibrary } from "../../core/expert-library.js";
 import { ExpertDefinitionSchema, type ExpertDefinition } from "../../core/expert.js";
-import { createDatabase } from "../../memory/db.js";
+import type { CouncilEngine } from "../../engine/index.js";
+import { createDatabase, type CouncilDatabase } from "../../memory/db.js";
+import { DocumentRepository } from "../../memory/repositories/document-repository.js";
+import { ProfileRepository } from "../../memory/repositories/profile-repository.js";
+import { ENGINE_KINDS, type EngineKind, makeEngineFromKind } from "../run-with-engine.js";
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
+export interface ExpertCommandDeps {
+  /** Test-only override for the CouncilEngine used by `expert train`. */
+  readonly engineFactory?: () => CouncilEngine;
+}
+
 async function withExpertLibrary<T>(
-  fn: (library: ExpertLibrary, config: CouncilConfig, dataHome: string) => Promise<T>,
+  fn: (
+    library: ExpertLibrary,
+    config: CouncilConfig,
+    dataHome: string,
+    db: CouncilDatabase,
+  ) => Promise<T>,
 ): Promise<T> {
   const config = await loadConfig();
   const dataHome = getCouncilDataHome(config);
@@ -42,7 +58,7 @@ async function withExpertLibrary<T>(
   const db = await createDatabase(dbPath);
   const library = new FileExpertLibrary(dataHome, db);
   try {
-    return await fn(library, config, dataHome);
+    return await fn(library, config, dataHome, db);
   } finally {
     await db.destroy();
   }
@@ -59,6 +75,7 @@ function displayPath(absPath: string): string {
 export function buildExpertCommand(
   write: Writer = defaultWriter,
   writeError: Writer = defaultErrorWriter,
+  deps: ExpertCommandDeps = {},
 ): Command {
   const cmd = new Command("expert");
   cmd.description("Manage Council's expert library (create, list, inspect, edit, delete)");
@@ -67,6 +84,8 @@ export function buildExpertCommand(
   cmd.addCommand(buildInspectCommand(write, writeError));
   cmd.addCommand(buildEditCommand(write, writeError));
   cmd.addCommand(buildDeleteCommand(write, writeError));
+  cmd.addCommand(buildDocsCommand(write, writeError));
+  cmd.addCommand(buildTrainCommand(write, writeError, deps));
   return cmd;
 }
 
@@ -470,3 +489,243 @@ function buildDeleteCommand(write: Writer, writeError: Writer): Command {
     });
   return cmd;
 }
+
+// ──────────────────────────────────────────────────────────────────────
+// docs (Roadmap 6.6)
+// ──────────────────────────────────────────────────────────────────────
+
+interface DocsOptions {
+  readonly remove?: string;
+}
+
+function buildDocsCommand(write: Writer, writeError: Writer): Command {
+  const cmd = new Command("docs");
+  cmd
+    .description("List or un-index documents for a persona expert")
+    .argument("<slug>", "Persona expert slug")
+    .option(
+      "--remove <file>",
+      "Un-index the named document (kept on disk; profile refreshes on next use)",
+    )
+    .action(async (slug: string, opts: DocsOptions) => {
+      await withExpertLibrary(async (library, _config, _dataHome, db) => {
+        const expert = await library.get(slug);
+        if (!expert) {
+          writeError(`Expert "${slug}" not found.\n`);
+          throw new Error(`Expert "${slug}" not found.`);
+        }
+        if (expert.kind !== "persona") {
+          const msg = `Expert "${slug}" is not a persona expert — only persona experts have indexed documents.`;
+          writeError(msg + "\n");
+          throw new Error(msg);
+        }
+
+        const documentRepo = new DocumentRepository(db);
+        const indexer = createDocumentIndexer(db);
+
+        if (opts.remove !== undefined) {
+          const target = opts.remove;
+          const rows = await documentRepo.findByExpert(slug);
+          const match = rows.find(
+            (r) => r.status !== "removed" && (r.filename === target || r.filePath === target),
+          );
+          if (!match) {
+            const msg = `Document "${target}" not found in the index for "${slug}".`;
+            writeError(msg + "\n");
+            throw new Error(msg);
+          }
+          // DB row is the source of truth for "is this document active?".
+          // Mark it removed FIRST: if indexer.remove() then fails, the row's
+          // 'removed' status causes the next training run to treat the file
+          // as new and re-index it (replace-by-path semantics in the
+          // indexer), which heals any stale FTS5 entry. Doing it in the
+          // opposite order would leave the index empty while the DB still
+          // reports the file as active — a state the processor cannot
+          // recover from without manual intervention.
+          await documentRepo.markRemoved(match.id);
+          try {
+            await indexer.remove(match.filePath);
+          } catch (err: unknown) {
+            const detail = err instanceof Error ? err.message : String(err);
+            writeError(
+              `Warning: index entry for "${target}" could not be removed (${detail}). ` +
+                `It will be replaced on the next training run.\n`,
+            );
+          }
+          write(
+            `✓ "${target}" removed from index. Profile will be updated on next use.\n`,
+          );
+          return;
+        }
+
+        const all = await documentRepo.findByExpert(slug);
+        const active = all.filter((d) => d.status !== "removed");
+        if (active.length === 0) {
+          write(`ℹ No documents indexed for "${slug}".\n`);
+          return;
+        }
+
+        const header = ["filename", "words", "processed", "status"] as const;
+        const rows: readonly (readonly string[])[] = active.map((d) => [
+          d.filename,
+          String(d.wordCount),
+          d.processedAt ?? "—",
+          d.status,
+        ]);
+        const widths = header.map((h, i) =>
+          Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)),
+        );
+        const pad = (s: string, w: number): string => s + " ".repeat(Math.max(0, w - s.length));
+        write(header.map((h, i) => pad(h, widths[i] ?? 0)).join("  ") + "\n");
+        write(widths.map((w) => "-".repeat(w)).join("  ") + "\n");
+        for (const row of rows) {
+          write(row.map((c, i) => pad(c, widths[i] ?? 0)).join("  ") + "\n");
+        }
+      });
+    });
+  return cmd;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// train (Roadmap 6.6)
+// ──────────────────────────────────────────────────────────────────────
+
+interface TrainOptions {
+  readonly retrain?: boolean;
+  readonly engine?: string;
+}
+
+function buildTrainCommand(
+  write: Writer,
+  writeError: Writer,
+  deps: ExpertCommandDeps,
+): Command {
+  const cmd = new Command("train");
+  cmd
+    .description("Reprocess all documents for a persona expert and refresh its profile")
+    .argument("<slug>", "Persona expert slug")
+    .option("--retrain", "Clear the existing profile and rebuild from scratch")
+    .option(
+      "--engine <kind>",
+      `Engine to use for profile analysis (${ENGINE_KINDS.join("|")})`,
+      "copilot",
+    )
+    .action(async (slug: string, opts: TrainOptions) => {
+      if (
+        opts.engine !== undefined &&
+        !ENGINE_KINDS.includes(opts.engine as EngineKind)
+      ) {
+        throw new Error(
+          `Unknown --engine value: ${opts.engine}. Expected one of: ${ENGINE_KINDS.join(", ")}`,
+        );
+      }
+      const engineKind = (opts.engine ?? "copilot") as EngineKind;
+
+      await withExpertLibrary(async (library, config, dataHome, db) => {
+        const expert = await library.get(slug);
+        if (!expert) {
+          writeError(`Expert "${slug}" not found.\n`);
+          throw new Error(`Expert "${slug}" not found.`);
+        }
+        if (expert.kind !== "persona") {
+          const msg = `Expert "${slug}" is not a persona expert — only persona experts can be trained.`;
+          writeError(msg + "\n");
+          throw new Error(msg);
+        }
+
+        const docsPath = path.join(dataHome, "experts", slug, "docs");
+        await fs.mkdir(docsPath, { recursive: true });
+
+        const documentRepo = new DocumentRepository(db);
+        const profileRepo = new ProfileRepository(db);
+        const indexer = createDocumentIndexer(db);
+        const engine = deps.engineFactory
+          ? deps.engineFactory()
+          : makeEngineFromKind(engineKind);
+
+        // --retrain: drop the profile and mark every existing doc row as
+        // removed so the detector reclassifies all files as new and the
+        // analyzer is forced to re-run. The processor re-indexes on
+        // re-processing (replace-by-path semantics), so the FTS5 entries
+        // stay consistent without us touching them directly.
+        //
+        // Ordering is deliberate: clear tracked docs FIRST and only delete
+        // the persisted profile AFTER every clear succeeded. If any
+        // markRemoved fails, the prior profile is preserved so the user
+        // is never left with an empty profile + partially-cleared tracking
+        // (rows that were successfully cleared earlier in the loop will be
+        // reprocessed naturally on the next training run). DB markRemoved
+        // runs before indexer.remove for each row so a failed FTS5
+        // deletion self-heals on the next process() call.
+        if (opts.retrain === true) {
+          const tracked = await documentRepo.findByExpert(slug);
+          let cleared = 0;
+          let clearFailed = 0;
+          for (const row of tracked) {
+            if (row.status === "removed") continue;
+            try {
+              await documentRepo.markRemoved(row.id);
+              await indexer.remove(row.filePath);
+              cleared += 1;
+            } catch (err: unknown) {
+              clearFailed += 1;
+              const detail = err instanceof Error ? err.message : String(err);
+              writeError(
+                `Warning: failed to clear "${row.filename}" during retrain (${detail}).\n`,
+              );
+            }
+          }
+          if (clearFailed > 0) {
+            const msg =
+              `Retrain aborted for "${slug}": ${clearFailed} of ${cleared + clearFailed} ` +
+              `tracked document(s) failed to clear. Existing profile preserved. ` +
+              `Re-run "council expert train ${slug} --retrain" after addressing the warnings above.`;
+            writeError(msg + "\n");
+            throw new Error(msg);
+          }
+          await profileRepo.delete(slug);
+          write(
+            `↻ Retrain: cleared profile and tracking for "${slug}" (${cleared} cleared).\n`,
+          );
+        }
+
+        const processor = createDocumentProcessor({
+          engine,
+          documentRepo,
+          profileRepo,
+          indexer,
+          config: {
+            supportedFormats: config.expert.supportedFormats,
+            recencyHalfLifeDays: config.expert.recencyHalfLifeDays,
+          },
+        });
+
+        try {
+          await engine.start();
+          write(`Training "${slug}" from ${displayPath(docsPath)}...\n`);
+          const result = await processor.process(slug, docsPath, (p) => {
+            if (p.status === "failed") {
+              write(`  ${p.filename}: failed (${p.error ?? "unknown"})\n`);
+            } else {
+              write(`  ${p.filename}: ${p.wordCount} words\n`);
+            }
+          });
+          write(
+            `✓ Processed ${result.filesProcessed} document(s) ` +
+              `(${result.filesSkipped} unchanged, ${result.filesFailed} failed, ${result.filesRemoved} removed, ${result.totalWords} total words).\n`,
+          );
+          if (result.profileError !== null) {
+            writeError(
+              `Persona profile refresh failed: ${result.profileError}\n`,
+            );
+          } else if (result.profileUpdated) {
+            write(`✓ Persona profile updated.\n`);
+          }
+        } finally {
+          await engine.stop().catch(() => undefined);
+        }
+      });
+    });
+  return cmd;
+}
+
