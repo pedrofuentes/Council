@@ -367,12 +367,14 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
       expertDisplayName: expert.displayName,
     });
 
-    renderer.startExpertResponse(expert.slug);
-
     let assembled = "";
     let failed = false;
     let recoverable = false;
     let lastError = "";
+    // Buffer chunks during each attempt — only flush to the renderer
+    // after a successful attempt completes. This prevents partial deltas
+    // from a failed first attempt from being double-rendered when the
+    // retry runs (PRD §F4).
     const attempt = async (): Promise<void> => {
       assembled = "";
       failed = false;
@@ -382,7 +384,6 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
         for await (const evt of engine.send({ prompt, expertId: expertSpec.id })) {
           if (evt.kind === "message.delta") {
             assembled += evt.text;
-            renderer.streamChunk(evt.text);
           } else if (evt.kind === "error") {
             failed = true;
             recoverable = evt.recoverable;
@@ -398,11 +399,17 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
 
     await attempt();
     if (failed && recoverable) {
-      // One retry per PRD §F4.
+      // One retry per PRD §F4. Surface the retry to the user so the UX
+      // doesn't appear frozen during the second attempt.
+      renderer.showSystem("Transient error from engine. Retrying once...", "warn");
       await attempt();
     }
 
-    renderer.endExpertResponse();
+    if (!failed && assembled.length > 0) {
+      renderer.startExpertResponse(expert.slug);
+      renderer.streamChunk(assembled);
+      renderer.endExpertResponse();
+    }
 
     if (failed) {
       writeError(formatEngineError({ code: "PROVIDER_ERROR", message: lastError }) + "\n");
