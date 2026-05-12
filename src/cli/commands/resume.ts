@@ -13,6 +13,7 @@ import * as path from "node:path";
 import { Command } from "commander";
 
 import { getCouncilHome } from "../../config/index.js";
+import { DEFAULT_MODEL } from "../../config/index.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import { createDatabase } from "../../memory/db.js";
 import { applyRecalledMemory, recallMemory } from "../../memory/expert-memory.js";
@@ -24,6 +25,7 @@ import {
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 import { ENGINE_KINDS, type EngineKind, runWithEngine } from "../run-with-engine.js";
+import { runExtractMemoryHook } from "../extract-memory-hook.js";
 import { RENDERER_FORMATS, type RendererFormat } from "../renderers/select.js";
 import { resolveStrategy, STRATEGY_NAMES } from "../strategy-resolver.js";
 
@@ -43,6 +45,7 @@ export interface ResumeOptions {
   readonly maxRounds: number;
   readonly maxWords: number;
   readonly strategy?: string;
+  readonly heuristicMemory?: boolean;
 }
 
 export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
@@ -81,6 +84,11 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
         `devils-advocate accepts an optional ":<slug>" suffix.`,
       "round-robin",
     )
+    .option(
+      "--heuristic-memory",
+      "Skip the post-debate LLM extraction pass and rely on the heuristic recall scan (§3.1). " +
+        "Useful for offline tests and air-gapped environments.",
+    )
     .action(async (panelName: string, raw: ResumeOptions) => {
       let engineKind: EngineKind | undefined;
       if (raw.continue !== undefined) {
@@ -104,6 +112,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
         maxRounds: Number.isFinite(raw.maxRounds) ? raw.maxRounds : DEFAULT_MAX_ROUNDS,
         maxWords: Number.isFinite(raw.maxWords) ? raw.maxWords : DEFAULT_MAX_WORDS,
         ...(raw.strategy !== undefined ? { strategy: raw.strategy } : {}),
+        heuristicMemory: raw.heuristicMemory === true,
       };
 
       const dbPath = path.join(getCouncilHome(), "council.db");
@@ -183,6 +192,21 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
             write(`Prompt: ${opts.continue}\n`);
             write(`Engine: ${continueEngine} | Max rounds: ${opts.maxRounds}\n\n`);
           },
+          ...(opts.heuristicMemory === true
+            ? {}
+            : {
+                onDebateComplete: async (ctx) =>
+                  runExtractMemoryHook({
+                    engine: ctx.engine,
+                    db: ctx.db,
+                    panelId: ctx.panelId,
+                    debateId: ctx.debateId,
+                    expertSlugToId: ctx.expertSlugToId,
+                    humanSlugs: new Set<string>(),
+                    model: DEFAULT_MODEL,
+                    writeError,
+                  }),
+              }),
         });
       } finally {
         await db.destroy().catch((err: unknown) => {

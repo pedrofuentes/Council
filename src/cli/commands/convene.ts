@@ -33,6 +33,8 @@ import { recallMemory } from "../../memory/expert-memory.js";
 import { ExpertRepository } from "../../memory/repositories/experts.js";
 import { PanelRepository, type Panel } from "../../memory/repositories/panels.js";
 
+import { runExtractMemoryHook } from "../extract-memory-hook.js";
+
 import { stripControlChars } from "../strip-control-chars.js";
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 import {
@@ -85,6 +87,7 @@ export interface ConveneOptions {
   readonly contextScope?: string;
   readonly summarizeAfter?: number;
   readonly heuristicSummaries?: boolean;
+  readonly heuristicMemory?: boolean;
   readonly yes?: boolean;
 }
 
@@ -166,6 +169,11 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       "Use the cheap heuristic summarizer instead of the default LLM-backed one (§2.6)",
     )
     .option(
+      "--heuristic-memory",
+      "Skip the post-debate LLM extraction pass and rely on the heuristic recall scan (§3.1). " +
+        "Useful for offline tests and air-gapped environments.",
+    )
+    .option(
       "--yes",
       "Skip the auto-compose confirmation prompt (non-interactive runs)",
     )
@@ -188,6 +196,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         human: humanNames,
         yes: raw.yes === true,
         heuristicSummaries: raw.heuristicSummaries === true,
+        heuristicMemory: raw.heuristicMemory === true,
         ...(raw.strategy !== undefined ? { strategy: raw.strategy } : {}),
         ...(raw.contextScope !== undefined ? { contextScope: raw.contextScope } : {}),
         ...(raw.summarizeAfter !== undefined && Number.isFinite(raw.summarizeAfter)
@@ -356,6 +365,21 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             }
             write("\n");
           },
+          ...(opts.heuristicMemory === true
+            ? {}
+            : {
+                onDebateComplete: async (ctx) =>
+                  runExtractMemoryHook({
+                    engine: ctx.engine,
+                    db: ctx.db,
+                    panelId: ctx.panelId,
+                    debateId: ctx.debateId,
+                    expertSlugToId: ctx.expertSlugToId,
+                    humanSlugs,
+                    model: DEFAULT_MODEL,
+                    writeError,
+                  }),
+              }),
         });
       } finally {
         await db.destroy().catch((err: unknown) => {

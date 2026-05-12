@@ -96,6 +96,33 @@ export interface RunWithEngineOpts {
   readonly humanSlugs?: ReadonlySet<string> | undefined;
   /** Provider for collecting human input during debate. */
   readonly humanInput?: HumanInputProvider | undefined;
+  /**
+   * Optional post-debate hook. Invoked exactly once on a successful
+   * debate, AFTER the renderer has finished streaming but BEFORE the
+   * engine is stopped — so the hook can register temporary experts
+   * (e.g. an LLM extractor) on the live engine.
+   *
+   * Errors thrown by the hook are caught and reported via
+   * `writeError`; they do NOT propagate. The hook is not invoked
+   * when the debate itself threw before the renderer finished.
+   */
+  readonly onDebateComplete?:
+    | ((ctx: OnDebateCompleteContext) => Promise<void>)
+    | undefined;
+}
+
+/**
+ * Context passed to {@link RunWithEngineOpts.onDebateComplete}. The
+ * hook is invoked with the still-running engine; `debateId` is the
+ * id of the row the DebatePersister created at the start of the
+ * debate.
+ */
+export interface OnDebateCompleteContext {
+  readonly engine: CouncilEngine;
+  readonly db: CouncilDatabase;
+  readonly panelId: string;
+  readonly debateId: string;
+  readonly expertSlugToId: Readonly<Record<string, string>>;
 }
 
 /**
@@ -172,6 +199,24 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
       opts.prompt,
     );
     await renderer.render(stream);
+
+    // Post-debate hook (e.g. LLM ExpertMemory extraction). Best-effort:
+    // hook failures are reported but never propagate — the debate
+    // succeeded and engine.stop must still run in the finally block.
+    if (opts.onDebateComplete !== undefined && persister.debateId !== undefined) {
+      try {
+        await opts.onDebateComplete({
+          engine,
+          db: opts.db,
+          panelId: opts.panelId,
+          debateId: persister.debateId,
+          expertSlugToId: opts.expertSlugToId,
+        });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        opts.writeError(`!! onDebateComplete hook failed: ${msg}\n`);
+      }
+    }
   } catch (err: unknown) {
     opts.writeError("\n" + formatEngineError(err as Error) + "\n\n");
     throw err;

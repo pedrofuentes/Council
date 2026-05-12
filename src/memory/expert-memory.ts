@@ -149,6 +149,14 @@ function renderMemoryBlock(memory: ExpertMemory): string {
  * Read the expert's past turns for the given panel and synthesise an
  * `ExpertMemory`. Returns `undefined` when the expert is unknown or has
  * no prior turns recorded.
+ *
+ * Preference order:
+ *   1. If the expert row has a non-empty `extracted_memory_json` (set
+ *      by the LLM extraction pass after a prior debate), parse and
+ *      return that — the LLM-distilled memory is higher quality than
+ *      the heuristic.
+ *   2. Otherwise, fall through to the heuristic extraction over the
+ *      expert's prior turns.
  */
 export async function recallMemory(
   db: CouncilDatabase,
@@ -162,6 +170,14 @@ export async function recallMemory(
   const experts = await new ExpertRepository(db).findByPanelId(panelId);
   const expert = experts.find((e) => e.slug === expertSlug);
   if (!expert) return undefined;
+
+  // §3.1 LLM-cache preference: if the row has a non-empty cached LLM
+  // memory, return it directly. The persister stores arrays; if every
+  // array is empty we treat the cache as absent and fall through to
+  // heuristic so we still surface SOMETHING when the LLM extractor
+  // returned no signal.
+  const cached = readCachedLLMMemory(expert.extractedMemoryJson);
+  if (cached !== undefined) return cached;
 
   const allDebates = await new DebateRepository(db).findByPanelId(panelId);
   if (allDebates.length === 0) return undefined;
@@ -253,4 +269,68 @@ function splitSentences(text: string): readonly string[] {
 function truncate(s: string): string {
   if (s.length <= ENTRY_MAX_CHARS) return s;
   return s.slice(0, ENTRY_MAX_CHARS) + "…";
+}
+
+/**
+ * Persist an LLM-extracted ExpertMemory to the expert row, so the
+ * next `recallMemory` call returns it directly (bypassing the
+ * heuristic scan). Stored as JSON in `experts.extracted_memory_json`.
+ *
+ * Caller contract: best-effort. If the expert id does not exist this
+ * is a no-op — we do NOT throw, because the post-debate extraction
+ * hook should never fail the debate.
+ */
+export async function persistExtractedMemory(
+  db: CouncilDatabase,
+  expertId: string,
+  memory: ExpertMemory,
+): Promise<void> {
+  const json = JSON.stringify({
+    positions: [...memory.positions],
+    updatedPriors: [...memory.updatedPriors],
+    unresolved: [...memory.unresolved],
+  });
+  await new ExpertRepository(db).update(expertId, {
+    extractedMemoryJson: json,
+  });
+}
+
+/**
+ * Parse a stored LLM ExpertMemory JSON column. Returns `undefined`
+ * when the column is null, malformed, or contains no entries at all
+ * (so the caller falls back to heuristic recall and still surfaces
+ * something).
+ */
+function readCachedLLMMemory(json: string | null): ExpertMemory | undefined {
+  if (json === null || json.length === 0) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return undefined;
+  }
+  if (parsed === null || typeof parsed !== "object") return undefined;
+  const obj = parsed as Record<string, unknown>;
+  const positions = sanitizeArray(obj["positions"]);
+  const updatedPriors = sanitizeArray(obj["updatedPriors"]);
+  const unresolved = sanitizeArray(obj["unresolved"]);
+  if (
+    positions.length === 0 &&
+    updatedPriors.length === 0 &&
+    unresolved.length === 0
+  ) {
+    return undefined;
+  }
+  return { positions, updatedPriors, unresolved };
+}
+
+function sanitizeArray(v: unknown): readonly string[] {
+  if (!Array.isArray(v)) return [];
+  const out: string[] = [];
+  for (const item of v) {
+    if (typeof item !== "string") continue;
+    const cleaned = sanitizeMemorySnippet(truncate(item));
+    if (cleaned.length > 0) out.push(cleaned);
+  }
+  return out;
 }

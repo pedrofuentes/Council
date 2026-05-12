@@ -50,6 +50,7 @@ export interface ExpertRow {
   readonly system_message: string;
   readonly copilot_session_id: string | null;
   readonly created_at: string;
+  readonly extracted_memory_json: string | null;
 }
 
 export interface DebateRow {
@@ -108,6 +109,14 @@ function loadMigrations(): readonly Migration[] {
       version: 2,
       name: "002_add_indexes",
       sql: readFileSync(path.join(migrationsDir, "002_add_indexes.sql"), "utf-8"),
+    },
+    {
+      version: 3,
+      name: "003_expert_extracted_memory",
+      sql: readFileSync(
+        path.join(migrationsDir, "003_expert_extracted_memory.sql"),
+        "utf-8",
+      ),
     },
   ];
 }
