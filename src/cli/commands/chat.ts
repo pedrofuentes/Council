@@ -37,6 +37,12 @@ import type { ChatSession, ChatTurn } from "../../core/chat/chat-session.js";
 import type { ExpertDefinition } from "../../core/expert.js";
 import { FileExpertLibrary } from "../../core/expert-library.js";
 import { buildSystemPrompt } from "../../core/prompt-builder.js";
+import {
+  PanelNotFoundError,
+  loadPanel,
+  resolveExperts,
+  type PanelDefinition,
+} from "../../core/template-loader.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import type { CouncilDatabase } from "../../memory/db.js";
 import { createDatabase } from "../../memory/db.js";
@@ -52,6 +58,11 @@ import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 const CHAT_TASK_DESCRIPTION =
   "You are in a persistent 1:1 conversation. Respond naturally and helpfully. " +
   "Reference prior conversation context when relevant.";
+
+const PANEL_CHAT_TASK_DESCRIPTION =
+  "You are participating in a persistent group conversation with the user and " +
+  "other experts. Respond naturally as yourself, referencing prior turns from " +
+  "the user and fellow experts when relevant. Be concise and stay in character.";
 
 const EXIT_TOKENS = new Set(["exit", "/quit", "quit", "/exit"]);
 
@@ -89,8 +100,8 @@ export function buildChatCommand(deps: ChatCommandDeps = {}): Command {
 
   const cmd = new Command("chat");
   cmd
-    .description("Persistent conversation with an expert from the library")
-    .argument("[target]", "Expert slug to chat with")
+    .description("Persistent conversation with an expert or panel from the library")
+    .argument("[target]", "Expert slug or panel name to chat with")
     .option(
       "--engine <kind>",
       `Engine: ${ENGINE_KINDS.join(" | ")} (required for interactive chat)`,
@@ -105,13 +116,13 @@ export function buildChatCommand(deps: ChatCommandDeps = {}): Command {
       }
       if (raw.history) {
         if (!target) {
-          throw new Error("--history requires a target (expert slug)");
+          throw new Error("--history requires a target (expert slug or panel name)");
         }
-        await runHistory(target, write);
+        await runHistory(target, write, writeError);
         return;
       }
       if (!target) {
-        throw new Error("Missing required argument: <target> (expert slug)");
+        throw new Error("Missing required argument: <target> (expert slug or panel name)");
       }
       if (!raw.engine || !ENGINE_KINDS.includes(raw.engine)) {
         throw new Error(
@@ -157,6 +168,45 @@ export function buildChatTurnPrompt(opts: BuildChatTurnPromptOptions): string {
   return lines.join("\n");
 }
 
+export interface BuildPanelTurnPromptOptions {
+  readonly history: readonly ChatTurn[];
+  readonly userMessage: string;
+  /**
+   * Map of expert slug → display name. Used to label each prior expert
+   * turn by its actual speaker so the panelist can distinguish "Alice
+   * said X" from "Bob said Y" in the rolled-up history.
+   */
+  readonly expertNames: ReadonlyMap<string, string>;
+}
+
+/**
+ * Render the per-turn prompt for a panel chat. Identical in shape to
+ * {@link buildChatTurnPrompt} but labels each expert turn by its actual
+ * speaker (via `expertNames`) rather than collapsing to a single name —
+ * so every participant sees who said what.
+ *
+ * Pure: no I/O, no globals.
+ */
+export function buildPanelTurnPrompt(opts: BuildPanelTurnPromptOptions): string {
+  const { history, userMessage, expertNames } = opts;
+  if (history.length === 0) {
+    return userMessage;
+  }
+  const lines: string[] = ["PRIOR CONVERSATION:"];
+  for (const turn of history) {
+    if (turn.role === "user") {
+      lines.push(`User: ${turn.content}`);
+    } else {
+      const slug = turn.expertSlug;
+      const name = slug !== null ? (expertNames.get(slug) ?? slug) : "Expert";
+      lines.push(`${name}: ${turn.content}`);
+    }
+  }
+  lines.push("");
+  lines.push(`USER: ${userMessage}`);
+  return lines.join("\n");
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // --list
 // ──────────────────────────────────────────────────────────────────────
@@ -183,9 +233,47 @@ async function runList(write: Writer): Promise<void> {
 // --history
 // ──────────────────────────────────────────────────────────────────────
 
-async function runHistory(target: string, write: Writer): Promise<void> {
+async function runHistory(target: string, write: Writer, writeError: Writer): Promise<void> {
+  // Resolve the target's type so we don't leak archived sessions from
+  // the "other namespace" when an expert slug and a panel name collide.
+  // Resolution precedence matches `runChat`: expert first, panel second.
+  const config = await loadConfig();
+  const dataHome = getCouncilDataHome(config);
+  await ensureDataDirectories(dataHome);
+  const dbPath = path.join(getCouncilHome(), "council.db");
+  const db = await createDatabase(dbPath);
+  let resolvedType: "expert" | "panel";
+  try {
+    const library = new FileExpertLibrary(dataHome, db);
+    const expert = await library.get(target);
+    if (expert) {
+      resolvedType = "expert";
+    } else {
+      try {
+        await loadPanel(target, dataHome);
+        resolvedType = "panel";
+      } catch (err: unknown) {
+        if (err instanceof PanelNotFoundError) {
+          const available = (await library.list()).map((e) => e.slug);
+          const list =
+            available.length > 0
+              ? available.join(", ")
+              : "(none — create one with `council expert create`)";
+          writeError(
+            `"${target}" not found as expert or panel. Available experts: ${list}\n`,
+          );
+          throw new Error(`"${target}" not found`);
+        }
+        throw err;
+      }
+    }
+  } finally {
+    await db.destroy();
+  }
+
   await withChatRepository(async (repo) => {
-    const archived = await repo.listSessions({ targetSlug: target, status: "archived" });
+    const all = await repo.listSessions({ targetSlug: target, status: "archived" });
+    const archived = all.filter((s) => s.targetType === resolvedType);
     if (archived.length === 0) {
       write(`No archived conversations for "${target}".\n`);
       return;
@@ -228,93 +316,263 @@ async function runChat(
   try {
     const library = new FileExpertLibrary(dataHome, db);
     const expert = await library.get(target);
-    if (!expert) {
-      const available = (await library.list()).map((e) => e.slug);
-      const list =
-        available.length > 0
-          ? available.join(", ")
-          : "(none — create one with `council expert create`)";
-      writeError(`Expert "${target}" not found. Available experts: ${list}\n`);
-      throw new Error(`Expert "${target}" not found`);
-    }
-
-    const repo = new ChatRepository(db);
-
-    // Resolve which session we'll use, but defer mutations (archive/create
-    // for --new) until AFTER engine startup succeeds so a failed
-    // `engine.start()` / `addExpert()` doesn't leave the user with a
-    // freshly-archived prior session and an empty replacement.
-    const existingActive = await repo.findActiveSession("expert", target);
-    let priorToArchive: ChatSession | undefined;
-    let resumingSession: ChatSession | undefined;
-    let willCreateFresh = false;
-    if (raw.new) {
-      priorToArchive = existingActive;
-      willCreateFresh = true;
-    } else if (existingActive) {
-      resumingSession = existingActive;
-    } else {
-      willCreateFresh = true;
-    }
-
-    const renderer = createChatRenderer({
-      sink: makeSink(write, writeError),
-      experts: new Map([[expert.slug, expert.displayName]]),
-    });
-
-    const engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(engineKind);
-    const inputProvider = (deps.inputProvider ?? defaultInputProvider)();
-
-    try {
-      await engine.start();
-      const expertSpec = buildExpertSpec(expert, config);
-      await engine.addExpert(expertSpec);
-
-      // Engine ready — NOW it's safe to mutate persistent chat state.
-      let session: ChatSession;
-      if (raw.new && priorToArchive) {
-        await repo.archiveSession(priorToArchive.id);
-        renderer.showSystem("Previous conversation archived. Starting fresh...", "info");
-      }
-      if (willCreateFresh) {
-        session = await repo.createSession({ targetType: "expert", targetSlug: target });
-        renderer.showSessionStatus(`Starting new conversation with ${expert.displayName}...`);
-      } else if (resumingSession) {
-        session = resumingSession;
-        const existingCount = await repo.getTurnCount(session.id);
-        renderer.showSessionStatus(
-          `Resuming conversation with ${expert.displayName} (${existingCount} messages, last active ${formatDate(session.updatedAt)})...`,
-        );
-      } else {
-        // Defensive — the dispatch above always sets one of the two flags.
-        throw new Error("internal: chat session resolution failed");
-      }
-
-      await runInteractiveLoop({
-        engine,
-        expertSpec,
+    if (expert) {
+      await runExpertChat({
+        target,
         expert,
-        session,
-        repo,
-        renderer,
-        inputProvider,
-        config,
+        raw,
+        deps,
+        write,
         writeError,
+        config,
+        db,
+        engineKind,
       });
-    } catch (err: unknown) {
-      writeError("\n" + formatEngineError(err as Error) + "\n\n");
-      throw err;
-    } finally {
-      inputProvider.close();
-      await engine.stop().catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        writeError(`!! engine.stop() failed during cleanup: ${msg}\n`);
-      });
+      return;
     }
+
+    // Not an expert — try loading as a panel before erroring out so users
+    // can `council chat <panel-name>` for group conversations (Roadmap 5.4).
+    let panel: PanelDefinition | undefined;
+    try {
+      panel = await loadPanel(target, dataHome);
+    } catch (err: unknown) {
+      if (err instanceof PanelNotFoundError) {
+        const available = (await library.list()).map((e) => e.slug);
+        const list =
+          available.length > 0
+            ? available.join(", ")
+            : "(none — create one with `council expert create`)";
+        writeError(
+          `"${target}" not found as expert or panel. Available experts: ${list}\n`,
+        );
+        throw new Error(`"${target}" not found`);
+      }
+      throw err;
+    }
+
+    await runPanelChat({
+      target,
+      panel,
+      library,
+      raw,
+      deps,
+      write,
+      writeError,
+      config,
+      db,
+      engineKind,
+    });
   } finally {
     await db.destroy().catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
       writeError(`!! db.destroy() failed during cleanup: ${msg}\n`);
+    });
+  }
+}
+
+interface ExpertChatOptions {
+  readonly target: string;
+  readonly expert: ExpertDefinition;
+  readonly raw: ChatRunOptions;
+  readonly deps: ChatCommandDeps;
+  readonly write: Writer;
+  readonly writeError: Writer;
+  readonly config: CouncilConfig;
+  readonly db: CouncilDatabase;
+  readonly engineKind: EngineKind;
+}
+
+async function runExpertChat(opts: ExpertChatOptions): Promise<void> {
+  const { target, expert, raw, deps, writeError, config, db, engineKind } = opts;
+  const repo = new ChatRepository(db);
+
+  // Resolve which session we'll use, but defer mutations (archive/create
+  // for --new) until AFTER engine startup succeeds so a failed
+  // `engine.start()` / `addExpert()` doesn't leave the user with a
+  // freshly-archived prior session and an empty replacement.
+  const existingActive = await repo.findActiveSession("expert", target);
+  let priorToArchive: ChatSession | undefined;
+  let resumingSession: ChatSession | undefined;
+  let willCreateFresh = false;
+  if (raw.new) {
+    priorToArchive = existingActive;
+    willCreateFresh = true;
+  } else if (existingActive) {
+    resumingSession = existingActive;
+  } else {
+    willCreateFresh = true;
+  }
+
+  const renderer = createChatRenderer({
+    sink: makeSink(opts.write, writeError),
+    experts: new Map([[expert.slug, expert.displayName]]),
+  });
+
+  const engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(engineKind);
+  const inputProvider = (deps.inputProvider ?? defaultInputProvider)();
+
+  try {
+    await engine.start();
+    const expertSpec = buildExpertSpec(expert, config, CHAT_TASK_DESCRIPTION);
+    await engine.addExpert(expertSpec);
+
+    // Engine ready — NOW it's safe to mutate persistent chat state.
+    let session: ChatSession;
+    if (raw.new && priorToArchive) {
+      await repo.archiveSession(priorToArchive.id);
+      renderer.showSystem("Previous conversation archived. Starting fresh...", "info");
+    }
+    if (willCreateFresh) {
+      session = await repo.createSession({ targetType: "expert", targetSlug: target });
+      renderer.showSessionStatus(`Starting new conversation with ${expert.displayName}...`);
+    } else if (resumingSession) {
+      session = resumingSession;
+      const existingCount = await repo.getTurnCount(session.id);
+      renderer.showSessionStatus(
+        `Resuming conversation with ${expert.displayName} (${existingCount} messages, last active ${formatDate(session.updatedAt)})...`,
+      );
+    } else {
+      // Defensive — the dispatch above always sets one of the two flags.
+      throw new Error("internal: chat session resolution failed");
+    }
+
+    await runInteractiveLoop({
+      engine,
+      expertSpec,
+      expert,
+      session,
+      repo,
+      renderer,
+      inputProvider,
+      config,
+      writeError,
+    });
+  } catch (err: unknown) {
+    writeError("\n" + formatEngineError(err as Error) + "\n\n");
+    throw err;
+  } finally {
+    inputProvider.close();
+    await engine.stop().catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      writeError(`!! engine.stop() failed during cleanup: ${msg}\n`);
+    });
+  }
+}
+
+interface PanelChatOptions {
+  readonly target: string;
+  readonly panel: PanelDefinition;
+  readonly library: FileExpertLibrary;
+  readonly raw: ChatRunOptions;
+  readonly deps: ChatCommandDeps;
+  readonly write: Writer;
+  readonly writeError: Writer;
+  readonly config: CouncilConfig;
+  readonly db: CouncilDatabase;
+  readonly engineKind: EngineKind;
+}
+
+interface PanelMember {
+  readonly expert: ExpertDefinition;
+  readonly spec: ExpertSpec;
+}
+
+async function runPanelChat(opts: PanelChatOptions): Promise<void> {
+  const { target, panel, library, raw, deps, write, writeError, config, db, engineKind } = opts;
+
+  // Resolve panel experts up-front so we can warn about missing slugs and
+  // bail early when nothing is left to chat with. Inline expert defs in
+  // the panel YAML pass through unchanged via resolveExperts().
+  const { resolved, missing } = await resolveExperts(panel.experts, library);
+  if (missing.length > 0) {
+    const total = panel.experts.length;
+    const remaining = resolved.length;
+    for (const slug of missing) {
+      writeError(`⚠ Expert "${slug}" not found in library.\n`);
+    }
+    writeError(`Continuing with ${remaining} of ${total} experts.\n`);
+  }
+  if (resolved.length === 0) {
+    writeError(`Panel "${target}" has no available experts.\n`);
+    throw new Error(`Panel "${target}" has no available experts`);
+  }
+
+  const repo = new ChatRepository(db);
+
+  const existingActive = await repo.findActiveSession("panel", target);
+  let priorToArchive: ChatSession | undefined;
+  let resumingSession: ChatSession | undefined;
+  let willCreateFresh = false;
+  if (raw.new) {
+    priorToArchive = existingActive;
+    willCreateFresh = true;
+  } else if (existingActive) {
+    resumingSession = existingActive;
+  } else {
+    willCreateFresh = true;
+  }
+
+  const expertNames = new Map<string, string>();
+  for (const e of resolved) expertNames.set(e.slug, e.displayName);
+
+  const renderer = createChatRenderer({
+    sink: makeSink(write, writeError),
+    experts: expertNames,
+  });
+
+  const engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(engineKind);
+  const inputProvider = (deps.inputProvider ?? defaultInputProvider)();
+
+  try {
+    await engine.start();
+    const members: PanelMember[] = [];
+    for (const expert of resolved) {
+      const spec = buildExpertSpec(expert, config, PANEL_CHAT_TASK_DESCRIPTION);
+      await engine.addExpert(spec);
+      members.push({ expert, spec });
+    }
+
+    let session: ChatSession;
+    if (raw.new && priorToArchive) {
+      await repo.archiveSession(priorToArchive.id);
+      renderer.showSystem("Previous conversation archived. Starting fresh...", "info");
+    }
+    if (willCreateFresh) {
+      session = await repo.createSession({ targetType: "panel", targetSlug: target });
+      const names = resolved.map((e) => e.displayName).join(", ");
+      renderer.showSessionStatus(
+        `Starting panel chat with ${panel.name} (${resolved.length} experts: ${names})...`,
+      );
+    } else if (resumingSession) {
+      session = resumingSession;
+      const existingCount = await repo.getTurnCount(session.id);
+      renderer.showSessionStatus(
+        `Resuming panel chat with ${panel.name} (${existingCount} messages, last active ${formatDate(session.updatedAt)})...`,
+      );
+    } else {
+      throw new Error("internal: panel chat session resolution failed");
+    }
+
+    await runPanelInteractiveLoop({
+      engine,
+      members,
+      expertNames,
+      session,
+      repo,
+      renderer,
+      inputProvider,
+      config,
+      writeError,
+    });
+  } catch (err: unknown) {
+    writeError("\n" + formatEngineError(err as Error) + "\n\n");
+    throw err;
+  } finally {
+    inputProvider.close();
+    await engine.stop().catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      writeError(`!! engine.stop() failed during cleanup: ${msg}\n`);
     });
   }
 }
@@ -434,8 +692,12 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
   }
 }
 
-function buildExpertSpec(expert: ExpertDefinition, config: CouncilConfig): ExpertSpec {
-  const systemMessage = buildSystemPrompt(expert, undefined, CHAT_TASK_DESCRIPTION);
+function buildExpertSpec(
+  expert: ExpertDefinition,
+  config: CouncilConfig,
+  taskDescription: string,
+): ExpertSpec {
+  const systemMessage = buildSystemPrompt(expert, undefined, taskDescription);
   return {
     id: ulid(),
     slug: expert.slug,
@@ -443,6 +705,178 @@ function buildExpertSpec(expert: ExpertDefinition, config: CouncilConfig): Exper
     model: expert.model ?? config.defaults.model ?? DEFAULT_MODEL,
     systemMessage,
   };
+}
+
+interface PanelInteractiveLoopOptions {
+  readonly engine: CouncilEngine;
+  readonly members: readonly PanelMember[];
+  readonly expertNames: ReadonlyMap<string, string>;
+  readonly session: ChatSession;
+  readonly repo: ChatRepository;
+  readonly renderer: ChatRenderer;
+  readonly inputProvider: ChatInputProvider;
+  readonly config: CouncilConfig;
+  readonly writeError: Writer;
+}
+
+async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promise<void> {
+  const {
+    engine,
+    members,
+    expertNames,
+    session,
+    repo,
+    renderer,
+    inputProvider,
+    config,
+    writeError,
+  } = opts;
+  const recentLimit = config.chat.recentTurnCount;
+
+  while (true) {
+    renderer.showPrompt();
+    const line = await inputProvider.readLine();
+    if (line === null) {
+      renderer.showSystem("Conversation saved.", "info");
+      return;
+    }
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    if (EXIT_TOKENS.has(trimmed.toLowerCase())) {
+      renderer.showSystem("Conversation saved.", "info");
+      return;
+    }
+
+    await repo.addTurn({ chatId: session.id, role: "user", content: trimmed });
+
+    // Each expert sees the same recent-history slice (including the just-
+    // saved user turn from earlier; we strip the trailing user-turn copy
+    // before passing it as `history` since the prompt re-renders it as
+    // the new USER line).
+    const latestSeq = await repo.getLatestSeq(session.id);
+    const after = Math.max(0, latestSeq - recentLimit - 1);
+    const recent = await repo.getTurns(session.id, {
+      afterSeq: after,
+      limit: recentLimit + 1,
+    });
+    const history = recent.slice(0, -1);
+
+    const errorExperts: string[] = [];
+    const emptyExperts: string[] = [];
+    let succeeded = 0;
+
+    // The per-turn prompt is identical for every panelist (they all see
+    // the same shared history + same just-asked user message), so build
+    // it once per turn rather than once per expert.
+    const prompt = buildPanelTurnPrompt({
+      history,
+      userMessage: trimmed,
+      expertNames,
+    });
+
+    for (const { expert, spec } of members) {
+      let assembled = "";
+      let failed = false;
+      let recoverable = false;
+      let lastError = "";
+      const attempt = async (): Promise<void> => {
+        assembled = "";
+        failed = false;
+        recoverable = false;
+        lastError = "";
+        try {
+          for await (const evt of engine.send({ prompt, expertId: spec.id })) {
+            if (evt.kind === "message.delta") {
+              assembled += evt.text;
+            } else if (evt.kind === "error") {
+              failed = true;
+              recoverable = evt.recoverable;
+              lastError = evt.error.message;
+            }
+          }
+        } catch (err: unknown) {
+          failed = true;
+          recoverable = false;
+          lastError = err instanceof Error ? err.message : String(err);
+        }
+      };
+
+      await attempt();
+      if (failed && recoverable) {
+        renderer.showSystem(
+          `Transient error from ${expert.displayName}. Retrying once...`,
+          "warn",
+        );
+        await attempt();
+      }
+
+      if (!failed && assembled.length > 0) {
+        renderer.startExpertResponse(expert.slug);
+        renderer.streamChunk(assembled);
+        renderer.endExpertResponse();
+        await repo.addTurn({
+          chatId: session.id,
+          role: "expert",
+          expertSlug: expert.slug,
+          content: assembled,
+        });
+        succeeded += 1;
+        continue;
+      }
+
+      if (failed) {
+        writeError(formatEngineError({ code: "PROVIDER_ERROR", message: lastError }) + "\n");
+        errorExperts.push(expert.displayName);
+        continue;
+      }
+
+      // No content, no error — count as an empty (but non-error) response
+      // and surface a per-expert notice so the user isn't confused by
+      // silence. Tracked separately from engine errors so the aggregate
+      // summary stays honest about what actually happened.
+      emptyExperts.push(expert.displayName);
+      renderer.showSystem(
+        `${expert.displayName} returned an empty response.`,
+        "warn",
+      );
+    }
+
+    const total = members.length;
+    if (succeeded === 0) {
+      // Be honest about *why* nobody responded so the user can act on
+      // the right signal (retry vs. inspect the expert config vs. wait).
+      if (errorExperts.length > 0 && emptyExperts.length === 0) {
+        renderer.showSystem(
+          "No experts could respond. Check your connection and try again.",
+          "warn",
+        );
+      } else if (errorExperts.length === 0 && emptyExperts.length > 0) {
+        renderer.showSystem(
+          `All ${total} experts returned empty responses.`,
+          "warn",
+        );
+      } else {
+        renderer.showSystem(
+          `${errorExperts.join(", ")} could not respond (engine error); ` +
+            `${emptyExperts.join(", ")} returned an empty response. ` +
+            `0 of ${total} experts responded.`,
+          "warn",
+        );
+      }
+    } else if (errorExperts.length > 0 || emptyExperts.length > 0) {
+      const parts: string[] = [];
+      if (errorExperts.length > 0) {
+        parts.push(`${errorExperts.join(", ")} could not respond (engine error)`);
+      }
+      if (emptyExperts.length > 0) {
+        parts.push(`${emptyExperts.join(", ")} returned an empty response`);
+      }
+      renderer.showSystem(
+        `${parts.join("; ")}. ${succeeded} of ${total} experts responded.`,
+        "warn",
+      );
+    }
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────────
