@@ -1,15 +1,13 @@
 /**
- * Tests for the persona-profile extension to `buildSystemPrompt()`
- * (Roadmap 6.2).
+ * Tests for `buildSystemPrompt()`: persona-profile rendering (Roadmap 6.2)
+ * and memory-model enforcement by expert kind (Roadmap 7.1).
  *
  * Backwards-compat contract: when no `personaProfile` is passed, the
  * generated prompt MUST be byte-identical to the previous 8-section
- * output. When a profile IS passed, a new section `[8] PERSONA PROFILE`
- * is injected and the existing `CURRENT TASK` section shifts to `[9]`.
- *
- * RED at this commit: `buildSystemPrompt` does not yet accept a
- * PersonaProfile parameter and does not render the [8] PERSONA PROFILE
- * section.
+ * output. When a profile IS passed AND `def.kind === "persona"`, a new
+ * section `[8] PERSONA PROFILE` is injected and the existing
+ * `CURRENT TASK` section shifts to `[9]`. Generic experts ignore any
+ * supplied profile and never receive section [8] PERSONA PROFILE.
  */
 import { describe, expect, it } from "vitest";
 
@@ -27,6 +25,20 @@ const baseDefinition: ExpertDefinition = {
     notExpertIn: [],
   },
   epistemicStance: "Burned by elegant designs the team can't operate.",
+  kind: "persona",
+} as ExpertDefinition;
+
+const genericDefinition: ExpertDefinition = {
+  slug: "cto",
+  displayName: "Dahlia Renner (CTO)",
+  role: "Skeptical CTO with 20 years of production systems experience",
+  expertise: {
+    weightedEvidence: ["Production incident post-mortems"],
+    referenceCases: [],
+    notExpertIn: [],
+  },
+  epistemicStance: "Burned by elegant designs the team can't operate.",
+  kind: "generic",
 } as ExpertDefinition;
 
 const sampleProfile: PersonaProfile = {
@@ -144,5 +156,59 @@ describe("buildSystemPrompt() — persona profile", () => {
     const prompt = buildSystemPrompt(baseDefinition, undefined, task, sampleProfile);
     const taskIdx = prompt.indexOf("[9] CURRENT TASK");
     expect(prompt.slice(taskIdx)).toContain(task);
+  });
+});
+
+describe("buildSystemPrompt() — memory model enforcement (Roadmap 7.1)", () => {
+  const sampleMemory = {
+    positions: ["Argued against premature microservices migration"],
+    updatedPriors: ["Distributed tracing matters more than I thought"],
+    unresolved: ["When does a monolith justify a split?"],
+  } as const;
+
+  it("ignores a personaProfile when the expert kind is 'generic'", () => {
+    const withProfile = buildSystemPrompt(
+      genericDefinition,
+      undefined,
+      "task",
+      sampleProfile,
+    );
+    const withoutProfile = buildSystemPrompt(genericDefinition, undefined, "task");
+    expect(withProfile).toBe(withoutProfile);
+    expect(withProfile).not.toContain("[8] PERSONA PROFILE");
+    expect(withProfile).not.toContain("[9] CURRENT TASK");
+    expect(withProfile).toContain("[8] CURRENT TASK");
+  });
+
+  it("injects [8] PERSONA PROFILE when the expert kind is 'persona' and profile is provided", () => {
+    const prompt = buildSystemPrompt(baseDefinition, undefined, "task", sampleProfile);
+    expect(prompt).toContain("[8] PERSONA PROFILE");
+    expect(prompt).toContain("[9] CURRENT TASK");
+    expect(prompt).not.toContain("[8] CURRENT TASK");
+  });
+
+  it("persona expert without a profile falls back to the canonical 8-section layout", () => {
+    const prompt = buildSystemPrompt(baseDefinition, undefined, "task");
+    expect(prompt).toContain("[8] CURRENT TASK");
+    expect(prompt).not.toContain("[8] PERSONA PROFILE");
+    expect(prompt).not.toContain("[9] CURRENT TASK");
+  });
+
+  it("renders [7] MEMORY (debate memory) for generic experts", () => {
+    const prompt = buildSystemPrompt(genericDefinition, sampleMemory, "task");
+    expect(prompt).toContain("[7] MEMORY");
+    expect(prompt).toContain("Argued against premature microservices migration");
+    expect(prompt).toContain("Distributed tracing matters more than I thought");
+    expect(prompt).toContain("When does a monolith justify a split?");
+  });
+
+  it("renders [7] MEMORY (debate memory) for persona experts alongside [8] PERSONA PROFILE", () => {
+    const prompt = buildSystemPrompt(baseDefinition, sampleMemory, "task", sampleProfile);
+    expect(prompt).toContain("[7] MEMORY");
+    expect(prompt).toContain("Argued against premature microservices migration");
+    expect(prompt).toContain("[8] PERSONA PROFILE");
+    expect(prompt).toContain("[9] CURRENT TASK");
+    // Memory section precedes the persona profile section.
+    expect(prompt.indexOf("[7] MEMORY")).toBeLessThan(prompt.indexOf("[8] PERSONA PROFILE"));
   });
 });

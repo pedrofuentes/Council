@@ -206,13 +206,20 @@ function sanitizeProfileField(raw: string): string {
  *
  * Without a `personaProfile`, the prompt has the canonical 8 sections
  * (sections 1-8 with `[8] CURRENT TASK`). When a `personaProfile` is
- * provided, a new section `[8] PERSONA PROFILE` is injected and
- * `CURRENT TASK` shifts to `[9]`.
+ * provided AND `def.kind === "persona"`, a new section
+ * `[8] PERSONA PROFILE` is injected and `CURRENT TASK` shifts to `[9]`.
+ * For `def.kind === "generic"` the `personaProfile` argument is ignored
+ * (Roadmap 7.1 memory-model enforcement) — generic experts only ever
+ * receive [7] MEMORY (debate memory).
  *
  * @param def             Static expert profile (validated by ExpertDefinitionSchema)
  * @param memory          Accumulated memory from past sessions (undefined on first run)
  * @param task            Per-turn instruction from the moderator
- * @param personaProfile  Optional LLM-derived behavioral profile (Roadmap 6.2)
+ * @param personaProfile  Optional LLM-derived behavioral profile (Roadmap 6.2).
+ *                        Ignored unless `def.kind === "persona"` — generic
+ *                        experts never receive section [8] PERSONA PROFILE even
+ *                        if a profile is supplied (Roadmap 7.1 memory-model
+ *                        enforcement).
  */
 export function buildSystemPrompt(
   def: ExpertDefinition,
@@ -220,6 +227,7 @@ export function buildSystemPrompt(
   task: string,
   personaProfile?: PersonaProfile,
 ): string {
+  const effectiveProfile = def.kind === "persona" ? personaProfile : undefined;
   const sections: string[] = [
     "[1] IDENTITY",
     renderIdentity(def),
@@ -243,9 +251,9 @@ export function buildSystemPrompt(
     renderMemory(memory),
     "",
   ];
-  if (personaProfile) {
+  if (effectiveProfile) {
     sections.push("[8] PERSONA PROFILE");
-    sections.push(renderPersonaProfile(personaProfile));
+    sections.push(renderPersonaProfile(effectiveProfile));
     sections.push("");
     sections.push("[9] CURRENT TASK");
     sections.push(task);
