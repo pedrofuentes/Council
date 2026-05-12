@@ -180,12 +180,24 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
           await fs.writeFile(yamlPath, yamlContent, "utf-8");
           await ctx.panelRepo.setMembers(name, fields.expertSlugs);
         } catch (err) {
-          await ctx.panelRepo.delete(name).catch(() => {
-            /* best-effort rollback */
-          });
-          await fs.unlink(yamlPath).catch(() => {
-            /* best-effort rollback — file may not exist yet */
-          });
+          const rollbackErrors: unknown[] = [];
+          try {
+            await ctx.panelRepo.delete(name);
+          } catch (deleteErr) {
+            rollbackErrors.push(deleteErr);
+          }
+          try {
+            await fs.unlink(yamlPath);
+          } catch (unlinkErr) {
+            const code = (unlinkErr as NodeJS.ErrnoException).code;
+            if (code !== "ENOENT") rollbackErrors.push(unlinkErr);
+          }
+          if (rollbackErrors.length > 0) {
+            throw new AggregateError(
+              [err, ...rollbackErrors],
+              `Failed to create panel "${name}" and rollback also failed — storage may be inconsistent`,
+            );
+          }
           throw err;
         }
 

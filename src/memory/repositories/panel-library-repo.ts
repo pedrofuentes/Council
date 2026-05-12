@@ -115,20 +115,24 @@ export class PanelLibraryRepository {
       await this.db.insertInto("panel_members").values(rows).execute();
     } catch (err) {
       if (snapshot.length > 0) {
-        await this.db
-          .insertInto("panel_members")
-          .values(
-            snapshot.map((s) => ({
-              panel_name: s.panel_name,
-              expert_slug: s.expert_slug,
-              position: s.position,
-              created_at: s.created_at,
-            })),
-          )
-          .execute()
-          .catch(() => {
-            /* best-effort restore — caller already sees the original failure */
-          });
+        try {
+          await this.db
+            .insertInto("panel_members")
+            .values(
+              snapshot.map((s) => ({
+                panel_name: s.panel_name,
+                expert_slug: s.expert_slug,
+                position: s.position,
+                created_at: s.created_at,
+              })),
+            )
+            .execute();
+        } catch (restoreErr) {
+          throw new AggregateError(
+            [err, restoreErr],
+            `setMembers("${panelName}") failed and restoring prior membership also failed — storage may be inconsistent`,
+          );
+        }
       }
       throw err;
     }
