@@ -90,11 +90,11 @@ describe("createDatabase", () => {
     expect(after.length).toBe(before.length); // no duplicate version rows
   });
 
-  it("applies migrations 001, 002, and 003, creating the expected indexes", async () => {
+  it("applies migrations 001, 002, 003, and 004, creating the expected indexes", async () => {
     const versions = (
       await db.selectFrom("schema_version").select("version").orderBy("version").execute()
     ).map((r) => r.version);
-    expect(versions).toEqual([1, 2, 3]);
+    expect(versions).toEqual([1, 2, 3, 4]);
 
     const indexes = (
       await sql<{
@@ -103,6 +103,132 @@ describe("createDatabase", () => {
     ).rows.map((r) => r.name);
     expect(indexes).toContain("idx_panels_name");
     expect(indexes).toContain("idx_debates_panel_id");
+    expect(indexes).toContain("idx_panel_members_expert");
+  });
+});
+
+describe("Migration 004 — expert library tables", () => {
+  let db: CouncilDatabase;
+
+  beforeEach(async () => {
+    db = await createDatabase(":memory:");
+  });
+
+  afterEach(async () => {
+    await db.destroy();
+  });
+
+  it("creates expert_library, panel_library, and panel_members tables", async () => {
+    await expect(
+      db.selectFrom("expert_library").selectAll().execute(),
+    ).resolves.toEqual([]);
+    await expect(
+      db.selectFrom("panel_library").selectAll().execute(),
+    ).resolves.toEqual([]);
+    await expect(
+      db.selectFrom("panel_members").selectAll().execute(),
+    ).resolves.toEqual([]);
+  });
+
+  it("supports inserting and reading an expert_library row", async () => {
+    const now = new Date().toISOString();
+    await db
+      .insertInto("expert_library")
+      .values({
+        slug: "cto",
+        kind: "generic",
+        display_name: "CTO Expert",
+        yaml_path: "/tmp/cto.yaml",
+        yaml_checksum: "abc123",
+        created_at: now,
+        updated_at: now,
+      })
+      .execute();
+    const rows = await db.selectFrom("expert_library").selectAll().execute();
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.slug).toBe("cto");
+    expect(rows[0]?.kind).toBe("generic");
+    expect(rows[0]?.display_name).toBe("CTO Expert");
+  });
+
+  it("supports inserting and reading a panel_library row", async () => {
+    const now = new Date().toISOString();
+    await db
+      .insertInto("panel_library")
+      .values({
+        name: "architecture-review",
+        description: "Reviews architecture",
+        yaml_path: "/tmp/arch.yaml",
+        yaml_checksum: "def456",
+        created_at: now,
+        updated_at: now,
+      })
+      .execute();
+    const rows = await db.selectFrom("panel_library").selectAll().execute();
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.name).toBe("architecture-review");
+    expect(rows[0]?.description).toBe("Reviews architecture");
+  });
+
+  it("panel_members enforces FK to expert_library and cascades on delete", async () => {
+    const now = new Date().toISOString();
+    await db
+      .insertInto("expert_library")
+      .values({
+        slug: "cto",
+        kind: "generic",
+        display_name: "CTO",
+        yaml_path: "/tmp/cto.yaml",
+        yaml_checksum: "h1",
+        created_at: now,
+        updated_at: now,
+      })
+      .execute();
+    // Foreign keys must be enabled on libsql/sqlite
+    await sql`PRAGMA foreign_keys = ON`.execute(db);
+    await db
+      .insertInto("panel_members")
+      .values({
+        panel_name: "arch",
+        expert_slug: "cto",
+        position: 0,
+        created_at: now,
+      })
+      .execute();
+    const before = await db.selectFrom("panel_members").selectAll().execute();
+    expect(before.length).toBe(1);
+
+    await db.deleteFrom("expert_library").where("slug", "=", "cto").execute();
+    const after = await db.selectFrom("panel_members").selectAll().execute();
+    expect(after.length).toBe(0);
+  });
+
+  it("panel_members FK rejects insertion referencing nonexistent expert", async () => {
+    await sql`PRAGMA foreign_keys = ON`.execute(db);
+    const now = new Date().toISOString();
+    await expect(
+      db
+        .insertInto("panel_members")
+        .values({
+          panel_name: "arch",
+          expert_slug: "nonexistent",
+          position: 0,
+          created_at: now,
+        })
+        .execute(),
+    ).rejects.toThrow();
+  });
+
+  it("is idempotent across two createDatabase calls on the same file", async () => {
+    const tempPath = path.join(os.tmpdir(), `council-mig004-${Date.now()}.db`);
+    const db1 = await createDatabase(tempPath);
+    await db1.destroy();
+    const db2 = await createDatabase(tempPath);
+    const versions = (
+      await db2.selectFrom("schema_version").select("version").execute()
+    ).map((r) => r.version);
+    await db2.destroy();
+    expect(versions.filter((v) => v === 4).length).toBe(1);
   });
 });
 
