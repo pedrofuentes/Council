@@ -17,6 +17,12 @@ export interface Expert {
   readonly systemMessage: string;
   readonly copilotSessionId: string | null;
   readonly createdAt: string;
+  /**
+   * JSON-encoded {@link ExpertMemory} produced by the LLM extraction
+   * pass at the end of a debate. `null` when no extraction has run
+   * yet for this expert (or when extraction failed best-effort).
+   */
+  readonly extractedMemoryJson: string | null;
 }
 
 export interface NewExpert {
@@ -33,6 +39,10 @@ export interface ExpertUpdate {
   readonly model?: string;
   readonly systemMessage?: string;
   readonly copilotSessionId?: string | null;
+  /**
+   * JSON-encoded {@link ExpertMemory}. Use `null` to clear the cache.
+   */
+  readonly extractedMemoryJson?: string | null;
 }
 
 function toDomain(row: ExpertRow): Expert {
@@ -45,6 +55,7 @@ function toDomain(row: ExpertRow): Expert {
     systemMessage: row.system_message,
     copilotSessionId: row.copilot_session_id,
     createdAt: row.created_at,
+    extractedMemoryJson: row.extracted_memory_json,
   };
 }
 
@@ -65,6 +76,7 @@ export class ExpertRepository {
         system_message: input.systemMessage,
         copilot_session_id: input.copilotSessionId ?? null,
         created_at: now,
+        extracted_memory_json: null,
       })
       .execute();
     const row = await this.db.selectFrom("experts").selectAll().where("id", "=", id).executeTakeFirstOrThrow();
@@ -92,6 +104,8 @@ export class ExpertRepository {
     if (patch.model !== undefined) updates["model"] = patch.model;
     if (patch.systemMessage !== undefined) updates["system_message"] = patch.systemMessage;
     if (patch.copilotSessionId !== undefined) updates["copilot_session_id"] = patch.copilotSessionId;
+    if (patch.extractedMemoryJson !== undefined)
+      updates["extracted_memory_json"] = patch.extractedMemoryJson;
     if (Object.keys(updates).length > 0) {
       await this.db.updateTable("experts").set(updates).where("id", "=", id).execute();
     }

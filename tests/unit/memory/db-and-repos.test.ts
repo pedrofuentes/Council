@@ -90,11 +90,11 @@ describe("createDatabase", () => {
     expect(after.length).toBe(before.length); // no duplicate version rows
   });
 
-  it("applies migrations 001 and 002, creating the expected indexes", async () => {
+  it("applies migrations 001, 002, and 003, creating the expected indexes", async () => {
     const versions = (
       await db.selectFrom("schema_version").select("version").orderBy("version").execute()
     ).map((r) => r.version);
-    expect(versions).toEqual([1, 2]);
+    expect(versions).toEqual([1, 2, 3]);
 
     const indexes = (
       await sql<{

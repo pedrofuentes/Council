@@ -101,6 +101,7 @@ describe("LLM memory persistence + recall", () => {
       expertId: fx.expertId,
       speakerKind: "expert",
       round: 0,
+      seq: 0,
       content: "Heuristic would extract this opener.",
     });
 
@@ -127,6 +128,7 @@ describe("LLM memory persistence + recall", () => {
       expertId: fx.expertId,
       speakerKind: "expert",
       round: 0,
+      seq: 0,
       content: "We must validate falsifiability before shipping. An open question remains: how?",
     });
 
@@ -143,6 +145,7 @@ describe("LLM memory persistence + recall", () => {
       expertId: fx.expertId,
       speakerKind: "expert",
       round: 0,
+      seq: 0,
       content: "We must validate falsifiability before shipping.",
     });
 

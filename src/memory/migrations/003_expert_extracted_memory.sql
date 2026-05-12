@@ -1,0 +1,12 @@
+-- Migration 003 — LLM-extracted ExpertMemory cache.
+--
+-- After a debate ends, an LLM extraction pass distills each expert's
+-- prior turns into structured ExpertMemory (positions / updatedPriors /
+-- unresolved) and stores the result here. On future recall the cached
+-- value is preferred over the heuristic.
+--
+-- HUMAN-REQUIRED note: per AGENTS.md DB migrations are HUMAN REQUIRED.
+-- This migration is purely additive (ADD COLUMN with no constraints
+-- and no data backfill) and was explicitly requested by the user as
+-- part of the LLM-memory work; rationale captured in the PR.
+ALTER TABLE experts ADD COLUMN extracted_memory_json TEXT;
