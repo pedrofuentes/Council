@@ -87,7 +87,7 @@ describe("runWithEngine — onDebateComplete post-debate hook", () => {
     await runWithEngine({
       engineKind: "mock",
       engineFactory: () => mock,
-      experts: [{ ...expert, id: expertSlugToId[expert.slug]! }],
+      experts: [{ ...expert, id: (expertSlugToId[expert.slug] ?? "") }],
       debateConfig: { maxRounds: 1, maxWordsPerResponse: 50, mode: "freeform" },
       prompt: "Topic",
       panelId,
@@ -128,7 +128,7 @@ describe("runWithEngine — onDebateComplete post-debate hook", () => {
       runWithEngine({
         engineKind: "mock",
         engineFactory: () => mock,
-        experts: [{ ...expert, id: expertSlugToId[expert.slug]! }],
+        experts: [{ ...expert, id: (expertSlugToId[expert.slug] ?? "") }],
         debateConfig: { maxRounds: 1, maxWordsPerResponse: 50, mode: "freeform" },
         prompt: "Topic",
         panelId,

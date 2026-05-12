@@ -33,6 +33,8 @@ import { recallMemory } from "../../memory/expert-memory.js";
 import { ExpertRepository } from "../../memory/repositories/experts.js";
 import { PanelRepository, type Panel } from "../../memory/repositories/panels.js";
 
+import { runExtractMemoryHook } from "../extract-memory-hook.js";
+
 import { stripControlChars } from "../strip-control-chars.js";
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 import {
@@ -363,6 +365,20 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             }
             write("\n");
           },
+          ...(opts.heuristicMemory === true
+            ? {}
+            : {
+                onDebateComplete: async (ctx) =>
+                  runExtractMemoryHook({
+                    engine: ctx.engine,
+                    db: ctx.db,
+                    debateId: ctx.debateId,
+                    expertSlugToId: ctx.expertSlugToId,
+                    humanSlugs,
+                    model: DEFAULT_MODEL,
+                    writeError,
+                  }),
+              }),
         });
       } finally {
         await db.destroy().catch((err: unknown) => {
