@@ -237,8 +237,10 @@ export class FileExpertLibrary implements ExpertLibrary {
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== "ENOENT") {
         // Compensating action: recreate the expert row and restore every
-        // membership the cascade deleted. Best-effort — surface the
-        // original unlink error so the caller knows something went wrong.
+        // membership the cascade deleted. Capture failures from the
+        // restore path and surface them via AggregateError so callers see
+        // both the original unlink failure AND any partial-restore state.
+        const restoreErrors: Error[] = [];
         await this.repo
           .create({
             slug: existing.slug,
@@ -247,7 +249,7 @@ export class FileExpertLibrary implements ExpertLibrary {
             yamlPath: existing.yamlPath,
             yamlChecksum: existing.yamlChecksum,
           })
-          .catch(() => undefined);
+          .catch((e: unknown) => restoreErrors.push(e instanceof Error ? e : new Error(String(e))));
         for (const m of memberSnapshot) {
           await this.db
             .insertInto("panel_members")
@@ -258,7 +260,15 @@ export class FileExpertLibrary implements ExpertLibrary {
               created_at: m.created_at,
             })
             .execute()
-            .catch(() => undefined);
+            .catch((e: unknown) =>
+              restoreErrors.push(e instanceof Error ? e : new Error(String(e))),
+            );
+        }
+        if (restoreErrors.length > 0) {
+          throw new AggregateError(
+            [err as Error, ...restoreErrors],
+            `Failed to delete expert "${slug}" and rollback partially failed (${restoreErrors.length} restore error(s)) — storage may be inconsistent`,
+          );
         }
         throw err;
       }
