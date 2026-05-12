@@ -800,6 +800,37 @@ fs.writeFileSync(p, body, 'utf-8');`,
         ]),
       ).rejects.toThrow(/not found|not indexed|no such/i);
     });
+
+    it("--remove also accepts a full file path", async () => {
+      await seedExpert(env, PERSONA);
+      await seedDocRow("boss", "alpha.md", 75);
+      const filePath = path.join(env.dataHome, "experts", "boss", "docs", "alpha.md");
+      let captured = "";
+      const cmd = buildExpertCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync([
+        "node",
+        "council-expert",
+        "docs",
+        "boss",
+        "--remove",
+        filePath,
+      ]);
+      expect(captured).toMatch(/removed/i);
+
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { DocumentRepository } = await import(
+        "../../../../src/memory/repositories/document-repository.js"
+      );
+      const db = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        const rows = await new DocumentRepository(db).findByExpert("boss");
+        expect(rows[0]?.status).toBe("removed");
+      } finally {
+        await db.destroy();
+      }
+    });
   });
 
   // ────────────────────────────────────────────────────────────────────
@@ -831,6 +862,29 @@ fs.writeFileSync(p, body, 'utf-8');`,
       await fs.writeFile(p, body, "utf-8");
       return p;
     }
+
+    it("rejects an unknown --engine value", async () => {
+      await seedExpert(env, PERSONA);
+      const cmd = buildExpertCommand(
+        () => {
+          /* noop */
+        },
+        () => {
+          /* noop */
+        },
+        { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+      );
+      await expect(
+        cmd.parseAsync([
+          "node",
+          "council-expert",
+          "train",
+          "boss",
+          "--engine",
+          "bogus",
+        ]),
+      ).rejects.toThrow(/engine/i);
+    });
 
     it("reports not found when slug does not exist", async () => {
       const cmd = buildExpertCommand(
@@ -952,7 +1006,7 @@ fs.writeFileSync(p, body, 'utf-8');`,
         { engineFactory: () => stub },
       );
       await cmd2.parseAsync(["node", "council-expert", "train", "boss", "--retrain"]);
-      expect(captured.toLowerCase()).toMatch(/retrain|rebuild|processed/);
+      expect(captured.toLowerCase()).toMatch(/retrain|rebuild|cleared profile/);
 
       db = await createDatabase(path.join(env.home, "council.db"));
       try {
