@@ -212,7 +212,11 @@ function sanitizeProfileField(raw: string): string {
  * @param def             Static expert profile (validated by ExpertDefinitionSchema)
  * @param memory          Accumulated memory from past sessions (undefined on first run)
  * @param task            Per-turn instruction from the moderator
- * @param personaProfile  Optional LLM-derived behavioral profile (Roadmap 6.2)
+ * @param personaProfile  Optional LLM-derived behavioral profile (Roadmap 6.2).
+ *                        Ignored unless `def.kind === "persona"` — generic
+ *                        experts never receive section [8] PERSONA PROFILE even
+ *                        if a profile is supplied (Roadmap 7.1 memory-model
+ *                        enforcement).
  */
 export function buildSystemPrompt(
   def: ExpertDefinition,
@@ -220,6 +224,7 @@ export function buildSystemPrompt(
   task: string,
   personaProfile?: PersonaProfile,
 ): string {
+  const effectiveProfile = def.kind === "persona" ? personaProfile : undefined;
   const sections: string[] = [
     "[1] IDENTITY",
     renderIdentity(def),
@@ -243,9 +248,9 @@ export function buildSystemPrompt(
     renderMemory(memory),
     "",
   ];
-  if (personaProfile) {
+  if (effectiveProfile) {
     sections.push("[8] PERSONA PROFILE");
-    sections.push(renderPersonaProfile(personaProfile));
+    sections.push(renderPersonaProfile(effectiveProfile));
     sections.push("");
     sections.push("[9] CURRENT TASK");
     sections.push(task);
