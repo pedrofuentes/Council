@@ -170,16 +170,24 @@ export class PanelDocumentRepository {
     // `folderPath` followed by either OS separator. We test both `/` and
     // `\` rather than relying on `path.sep` because stored paths may
     // originate from cross-platform sources (e.g. Windows + WSL).
-    await this.db
-      .deleteFrom("panel_documents")
+    //
+    // We filter in application code rather than via SQL LIKE so that
+    // folder names containing `%` or `_` (rare but valid on POSIX) do
+    // not over-match. The result-set is bounded by the panel scope.
+    const rows = await this.db
+      .selectFrom("panel_documents")
+      .select(["id", "file_path"])
       .where("panel_name", "=", panelName)
-      .where((eb) =>
-        eb.or([
-          eb("file_path", "=", folderPath),
-          eb("file_path", "like", `${folderPath}/%`),
-          eb("file_path", "like", `${folderPath}\\%`),
-        ]),
-      )
       .execute();
+    const ids = rows
+      .filter(
+        (r) =>
+          r.file_path === folderPath ||
+          r.file_path.startsWith(folderPath + "/") ||
+          r.file_path.startsWith(folderPath + "\\"),
+      )
+      .map((r) => r.id);
+    if (ids.length === 0) return;
+    await this.db.deleteFrom("panel_documents").where("id", "in", ids).execute();
   }
 }

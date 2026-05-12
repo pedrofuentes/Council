@@ -15,6 +15,7 @@
  * persona-profile analyzer pass: panel documents are shared reference
  * material, not biographical input.
  */
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import { detectDocumentChanges, type DocumentFile } from "./detector.js";
@@ -47,6 +48,7 @@ export interface PanelScanResult {
   readonly unchanged: number;
   readonly failed: number;
   readonly foldersFailed: number;
+  readonly managedFolderFailed: boolean;
 }
 
 interface FolderToScan {
@@ -73,17 +75,55 @@ export async function scanAndIndexPanelDocuments(
   let unchanged = 0;
   let failed = 0;
   let foldersFailed = 0;
+  let managedFolderFailed = false;
 
   for (const folder of folders) {
+    // Canonicalize first so the confinement boundary is anchored at the
+    // *real* directory (mirrors the expert DocumentProcessor; see
+    // src/core/documents/processor.ts:resolveRealRoot). Reject symlinked
+    // roots outright, and treat non-directories / missing paths as a
+    // folder-level failure so the operator notices.
+    let canonical: string;
+    try {
+      const lst = await fs.lstat(folder.path);
+      if (lst.isSymbolicLink()) {
+        throw new Error(
+          `panel docs: folder ${folder.path} is a symlink; refusing to follow it for confinement safety`,
+        );
+      }
+      canonical = await fs.realpath(folder.path);
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException).code;
+      // Missing managed folder is a no-op (the docs dir may not have
+      // been created yet); anything else is a folder-level failure.
+      if (folder.source === "managed" && code === "ENOENT") {
+        continue;
+      }
+      foldersFailed += 1;
+      if (folder.source === "managed") managedFolderFailed = true;
+      const msg = err instanceof Error ? err.message : String(err);
+      onProgress?.({
+        filename: folder.path,
+        source: folder.source,
+        status: "folder-failed",
+        error: msg,
+      });
+      continue;
+    }
+
     let detection;
     try {
-      detection = await detectDocumentChanges(folder.path, known, supportedFormats);
+      detection = await detectDocumentChanges(canonical, known, supportedFormats, {
+        confinementRoot: canonical,
+        _rootIsCanonical: true,
+      });
     } catch (err: unknown) {
       // A folder that disappears between link and scan should not bring
       // down the panel — but surface it via the result + progress so
       // callers (and end users) are not left wondering why nothing
       // appeared.
       foldersFailed += 1;
+      if (folder.source === "managed") managedFolderFailed = true;
       const msg = err instanceof Error ? err.message : String(err);
       onProgress?.({
         filename: folder.path,
@@ -141,5 +181,5 @@ export async function scanAndIndexPanelDocuments(
     }
   }
 
-  return { indexed, unchanged, failed, foldersFailed };
+  return { indexed, unchanged, failed, foldersFailed, managedFolderFailed };
 }

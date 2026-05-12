@@ -170,36 +170,50 @@ describe("scanAndIndexPanelDocuments", () => {
     );
 
     const escapePath = path.join(linkedDir, "escape");
+    let linkCreated = false;
     try {
       // junction works for directories without admin on Windows; on
       // POSIX `type` is ignored and a plain symlink is created.
       await fs.symlink(secretDir, escapePath, "junction");
+      linkCreated = true;
     } catch (err: unknown) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== "EPERM" && code !== "ENOSYS") throw err;
-      // dev-mode/admin not available; fall back to a regular symlink
-      // attempt (will likely also fail on plain Windows) — if neither
-      // works, skip.
       try {
         await fs.symlink(secretDir, escapePath);
+        linkCreated = true;
       } catch {
         return;
       }
     }
 
-    await scanAndIndexPanelDocuments({
-      panelName: "arch-review",
-      managedDocsDir: managedDir,
-      db,
-      supportedFormats: [".md", ".txt", ".html"],
-    });
+    try {
+      await scanAndIndexPanelDocuments({
+        panelName: "arch-review",
+        managedDocsDir: managedDir,
+        db,
+        supportedFormats: [".md", ".txt", ".html"],
+      });
 
-    const fts = await sql<{
-      file_path: string;
-      content: string;
-    }>`SELECT file_path, content FROM document_index WHERE source_type = 'panel'`.execute(db);
-    for (const row of fts.rows) {
-      expect(row.content).not.toContain("top-secret-token-XYZZY");
+      const fts = await sql<{
+        file_path: string;
+        content: string;
+      }>`SELECT file_path, content FROM document_index WHERE source_type = 'panel'`.execute(db);
+      for (const row of fts.rows) {
+        expect(row.content).not.toContain("top-secret-token-XYZZY");
+      }
+    } finally {
+      // Explicitly remove the junction/symlink before afterEach
+      // recursively removes linkedDir, so the recursive removal does
+      // not traverse into secretDir (which would on Windows manifest
+      // as a worker crash when racing with other tests' cleanup).
+      if (linkCreated) {
+        try {
+          await fs.unlink(escapePath);
+        } catch {
+          /* best-effort */
+        }
+      }
     }
   });
 });

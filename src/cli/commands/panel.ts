@@ -721,9 +721,14 @@ function buildDocsUnlinkCommand(write: Writer, writeError: Writer): Command {
         }
         // Un-index any tracked documents from this folder and prune the
         // FTS5 index so future chat retrieval cannot still surface them.
+        // Errors from indexer.remove() are collected rather than thrown
+        // so a single broken FTS entry cannot leave the panel half-
+        // unlinked (orphaned panel_documents rows + dangling
+        // panel_linked_folders row).
         const { createDocumentIndexer } = await import("../../core/documents/indexer.js");
         const indexer = createDocumentIndexer(ctx.db);
         const docs = await ctx.docsRepo.listDocuments(name);
+        const indexerErrors: unknown[] = [];
         for (const d of docs) {
           if (
             d.filePath === absolute ||
@@ -731,11 +736,20 @@ function buildDocsUnlinkCommand(write: Writer, writeError: Writer): Command {
             d.filePath.startsWith(absolute + "/") ||
             d.filePath.startsWith(absolute + "\\")
           ) {
-            await indexer.remove(d.filePath);
+            try {
+              await indexer.remove(d.filePath);
+            } catch (err: unknown) {
+              indexerErrors.push(err);
+            }
           }
         }
         await ctx.docsRepo.removeDocumentsUnderFolder(name, absolute);
         await ctx.docsRepo.removeLinkedFolder(name, absolute);
+        if (indexerErrors.length > 0) {
+          writeError(
+            `Warning: ${indexerErrors.length} FTS index entr${indexerErrors.length === 1 ? "y" : "ies"} could not be removed; metadata cleanup completed.\n`,
+          );
+        }
         write(`✓ Unlinked ${displayPath(absolute)} from ${name}.\n`);
       });
     });

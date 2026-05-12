@@ -574,8 +574,15 @@ async function runPanelChat(opts: PanelChatOptions): Promise<void> {
         );
       }
       if (result.foldersFailed > 0) {
+        const linkedFailed = result.foldersFailed - (result.managedFolderFailed ? 1 : 0);
+        const parts: string[] = [];
+        if (result.managedFolderFailed) parts.push("the managed docs folder");
+        if (linkedFailed > 0) {
+          parts.push(`${linkedFailed} linked folder(s)`);
+        }
+        const what = parts.join(" and ");
         renderer.showSystem(
-          `${result.foldersFailed} linked folder(s) could not be scanned — run \`council panel docs list <name>\` to review.`,
+          `Could not scan ${what} — run \`council panel docs list <name>\` to review.`,
           "warn",
         );
       }
