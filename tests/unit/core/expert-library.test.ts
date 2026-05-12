@@ -292,6 +292,48 @@ describe("FileExpertLibrary", () => {
       expect(after).toBe(before);
       spy.mockRestore();
     });
+
+    it("preserves expert + panel memberships when fs.unlink fails on delete()", async () => {
+      await lib.create(makeDef());
+      const now = new Date().toISOString();
+      await db
+        .insertInto("panel_library")
+        .values({
+          name: "arch",
+          description: null,
+          yaml_path: "/tmp/x.yaml",
+          yaml_checksum: "x",
+          created_at: now,
+          updated_at: now,
+        })
+        .execute();
+      await db
+        .insertInto("panel_members")
+        .values({ panel_name: "arch", expert_slug: "cto", position: 0, created_at: now })
+        .execute();
+
+      // Replace the YAML file with a directory so fs.unlink fails (EISDIR
+      // / EPERM on most platforms). The transactional delete must roll
+      // back the expert row AND the cascade-deleted panel_members row.
+      const yamlPath = path.join(dataHome, "experts", "cto.yaml");
+      await fs.unlink(yamlPath);
+      await fs.mkdir(yamlPath);
+
+      await expect(lib.delete("cto", { force: true })).rejects.toThrow();
+
+      const expert = await db
+        .selectFrom("expert_library")
+        .selectAll()
+        .where("slug", "=", "cto")
+        .executeTakeFirst();
+      expect(expert).toBeDefined();
+      const members = await db
+        .selectFrom("panel_members")
+        .selectAll()
+        .where("expert_slug", "=", "cto")
+        .execute();
+      expect(members).toHaveLength(1);
+    });
   });
 
   describe("resolvePanel()", () => {
