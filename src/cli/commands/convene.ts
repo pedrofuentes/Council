@@ -20,12 +20,9 @@ import { getCouncilHome, DEFAULT_MODEL } from "../../config/index.js";
 import type { ContextConfig } from "../../core/debate.js";
 import type { VisibilityConfig } from "../../core/context/visibility.js";
 import type { DebateMode } from "../../core/template-loader.js";
-import { loadTemplate, type PanelDefinition } from "../../core/template-loader.js";
+import { loadTemplate, type ResolvedPanelDefinition } from "../../core/template-loader.js";
 import { buildSystemPrompt, type ExpertMemory } from "../../core/prompt-builder.js";
-import {
-  resolveStrategy,
-  STRATEGY_NAMES,
-} from "../strategy-resolver.js";
+import { resolveStrategy, STRATEGY_NAMES } from "../strategy-resolver.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import type { HumanInputProvider } from "../../core/human-input.js";
 import { createDatabase } from "../../memory/db.js";
@@ -173,10 +170,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       "Skip the post-debate LLM extraction pass and rely on the heuristic recall scan (§3.1). " +
         "Useful for offline tests and air-gapped environments.",
     )
-    .option(
-      "--yes",
-      "Skip the auto-compose confirmation prompt (non-interactive runs)",
-    )
+    .option("--yes", "Skip the auto-compose confirmation prompt (non-interactive runs)")
     .action(async (topic: string, raw: ConveneOptions) => {
       if (!ENGINE_KINDS.includes(raw.engine)) {
         throw new Error(
@@ -211,7 +205,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         );
       }
 
-      let template: PanelDefinition;
+      let template: ResolvedPanelDefinition;
       if (opts.template) {
         template = await loadTemplate(opts.template);
       } else {
@@ -306,7 +300,6 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
 
         const contextConfig = buildContextConfig(opts);
 
-
         const panel = await panelRepo.create({
           name: `${template.name}-${new Date().toISOString().slice(0, 19)}`,
           topic,
@@ -347,9 +340,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           panelId: panel.id,
           expertSlugToId,
           moderator:
-            opts.mode === "structured"
-              ? "structured-phases"
-              : (strategy?.name ?? "round-robin"),
+            opts.mode === "structured" ? "structured-phases" : (strategy?.name ?? "round-robin"),
           format: opts.format,
           write,
           writeError,
@@ -403,7 +394,7 @@ function parseFormat(raw: string | undefined): RendererFormat {
 }
 
 function buildExpertSpecs(
-  template: PanelDefinition,
+  template: ResolvedPanelDefinition,
   topic: string,
   memoryBySlug: ReadonlyMap<string, ExpertMemory>,
 ): ExpertSpec[] {
@@ -483,9 +474,7 @@ export function buildContextConfig(opts: SummarizerOptions): ContextConfig | und
       ? {
           summarizeAfterRound: opts.summarizeAfter,
           maxSummaryLength: 500,
-          mode: (opts.heuristicSummaries === true ? "heuristic" : "llm") as
-            | "heuristic"
-            | "llm",
+          mode: (opts.heuristicSummaries === true ? "heuristic" : "llm") as "heuristic" | "llm",
         }
       : undefined;
   if (visibility === undefined && summarizer === undefined) return undefined;
