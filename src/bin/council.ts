@@ -17,6 +17,7 @@ import { Command } from "commander";
 import packageJson from "../../package.json" with { type: "json" };
 
 import { buildAskCommand } from "../cli/commands/ask.js";
+import { buildChatCommand } from "../cli/commands/chat.js";
 import { buildConcludeCommand } from "../cli/commands/conclude.js";
 import { buildConveneCommand } from "../cli/commands/convene.js";
 import { buildDoctorCommand } from "../cli/commands/doctor.js";
@@ -36,6 +37,7 @@ export function buildProgram(): Command {
     .version(packageJson.version);
   program.addCommand(buildConveneCommand());
   program.addCommand(buildAskCommand());
+  program.addCommand(buildChatCommand());
   program.addCommand(buildResumeCommand());
   program.addCommand(buildConcludeCommand());
   program.addCommand(buildExportCommand());
