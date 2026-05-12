@@ -13,6 +13,8 @@
  */
 import chalk, { type ChalkInstance } from "chalk";
 
+import { stripControlChars } from "../strip-control-chars.js";
+
 import type { Sink } from "./types.js";
 
 /**
@@ -101,7 +103,7 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
 
   return {
     showSessionStatus(message: string): void {
-      write(`${message}\n`);
+      write(`${stripControlChars(message)}\n`);
     },
 
     showPrompt(): void {
@@ -109,17 +111,18 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
     },
 
     showUserMessage(content: string): void {
-      write(`${chalk.bold.white(PROMPT_PREFIX)}${content}\n`);
+      write(`${chalk.bold.white(PROMPT_PREFIX)}${stripControlChars(content)}\n`);
     },
 
     startExpertResponse(expertSlug: string): void {
-      const displayName = experts.get(expertSlug) ?? expertSlug;
+      const rawName = experts.get(expertSlug) ?? expertSlug;
+      const displayName = stripControlChars(rawName);
       const color = colorFor(expertSlug);
       write(`${color(`${displayName} > `)}`);
     },
 
     streamChunk(text: string): void {
-      write(text);
+      write(stripControlChars(text));
     },
 
     endExpertResponse(): void {
@@ -127,15 +130,16 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
     },
 
     showSystem(message: string, level: "info" | "warn" | "error" = "info"): void {
+      const safe = stripControlChars(message);
       switch (level) {
         case "info":
-          write(`${chalk.blue("ℹ")} ${message}\n`);
+          write(`${chalk.blue("ℹ")} ${safe}\n`);
           return;
         case "warn":
-          write(`${chalk.yellow("⚠")} ${message}\n`);
+          write(`${chalk.yellow("⚠")} ${safe}\n`);
           return;
         case "error":
-          writeError(`${chalk.red("✗")} ${message}\n`);
+          writeError(`${chalk.red("✗")} ${safe}\n`);
           return;
       }
     },
