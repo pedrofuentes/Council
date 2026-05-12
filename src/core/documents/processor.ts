@@ -25,6 +25,8 @@
  * called from chat startup so we only show progress UX when there's
  * actually work to do.
  */
+import * as path from "node:path";
+
 import { detectDocumentChanges } from "./detector.js";
 import { extractDocument } from "./extractor.js";
 import {
@@ -85,6 +87,7 @@ export function createDocumentProcessor(
         docsPath,
         known,
         config.supportedFormats,
+        { confinementRoot: docsPath },
       );
       return detection.newFiles.length > 0 || detection.modifiedFiles.length > 0;
     },
@@ -99,6 +102,7 @@ export function createDocumentProcessor(
         docsPath,
         known,
         config.supportedFormats,
+        { confinementRoot: docsPath },
       );
 
       const toProcess = [...detection.newFiles, ...detection.modifiedFiles];
@@ -108,6 +112,20 @@ export function createDocumentProcessor(
       let failed = 0;
       let totalWords = 0;
       const successfullyExtracted: AnalyzerDoc[] = [];
+
+      // Confinement-rejected files (symlinks pointing outside docsPath,
+      // post-open inode swaps, etc.) are reported up-front as failures
+      // so callers see them in the progress stream without ever reading
+      // their bytes.
+      for (const rejected of detection.rejectedFiles) {
+        failed += 1;
+        onProgress?.({
+          filename: path.basename(rejected),
+          wordCount: 0,
+          status: "failed",
+          error: "rejected: outside confinement root or TOCTOU mismatch",
+        });
+      }
 
       for (const file of toProcess) {
         try {
