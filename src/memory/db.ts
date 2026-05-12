@@ -128,6 +128,19 @@ export interface ChatTurnRow {
   readonly created_at: string;
 }
 
+export interface ExpertDocumentRow {
+  readonly id: string;
+  readonly expert_slug: string;
+  readonly file_path: string;
+  readonly filename: string;
+  readonly checksum: string;
+  readonly size_bytes: number;
+  readonly word_count: number;
+  readonly status: string;
+  readonly processed_at: string | null;
+  readonly created_at: string;
+}
+
 export interface CouncilSchema {
   schema_version: SchemaVersionRow;
   panels: PanelRow;
@@ -139,6 +152,7 @@ export interface CouncilSchema {
   panel_members: PanelMemberRow;
   chat_sessions: ChatSessionRow;
   chat_turns: ChatTurnRow;
+  expert_documents: ExpertDocumentRow;
 }
 
 export type CouncilDatabase = Kysely<CouncilSchema>;
@@ -179,6 +193,11 @@ function loadMigrations(): readonly Migration[] {
       version: 5,
       name: "005_chat",
       sql: readFileSync(path.join(migrationsDir, "005_chat.sql"), "utf-8"),
+    },
+    {
+      version: 6,
+      name: "006_documents",
+      sql: readFileSync(path.join(migrationsDir, "006_documents.sql"), "utf-8"),
     },
   ];
 }
