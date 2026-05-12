@@ -34,6 +34,37 @@ export function getCouncilHome(): string {
   return path.join(os.homedir(), ".council");
 }
 
+/**
+ * Resolve the user-facing data directory for Council expert/panel YAML.
+ * Honors `COUNCIL_DATA_HOME` env var for test isolation. Falls back to
+ * `config.paths.dataHome` (with `~` expansion), then `~/Council`.
+ *
+ * Kept separate from `getCouncilHome()` so the visible YAML library
+ * (`~/Council/`) is distinct from the hidden runtime dir (`~/.council/`).
+ */
+export function getCouncilDataHome(config?: CouncilConfig): string {
+  const envHome = process.env["COUNCIL_DATA_HOME"];
+  if (envHome && envHome.length > 0) return envHome;
+  if (config?.paths?.dataHome) {
+    const dataHome = config.paths.dataHome;
+    if (dataHome === "~") return os.homedir();
+    if (dataHome.startsWith("~/")) {
+      return path.join(os.homedir(), dataHome.slice(2));
+    }
+    return dataHome;
+  }
+  return path.join(os.homedir(), "Council");
+}
+
+/**
+ * Ensure the user-facing data directories exist. Creates
+ * `<dataHome>/experts/` and `<dataHome>/panels/` if missing. Idempotent.
+ */
+export async function ensureDataDirectories(dataHome: string): Promise<void> {
+  await fs.mkdir(path.join(dataHome, "experts"), { recursive: true });
+  await fs.mkdir(path.join(dataHome, "panels"), { recursive: true });
+}
+
 function configPath(): string {
   return path.join(getCouncilHome(), CONFIG_FILE);
 }

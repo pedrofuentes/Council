@@ -38,6 +38,47 @@ export const ConfigSchema = z
         enabled: z.boolean().default(false),
       })
       .default({ enabled: false }),
+    /**
+     * Expert library settings — govern how experts ingest sources and
+     * decay memory weights over time. Background processing is off by
+     * default to keep first-run behavior predictable.
+     */
+    expert: z
+      .object({
+        backgroundProcessing: z.boolean().default(false),
+        recencyHalfLifeDays: z.number().int().min(1).max(365).default(90),
+        supportedFormats: z.array(z.string()).default([".md", ".txt", ".html"]),
+      })
+      .default({
+        backgroundProcessing: false,
+        recencyHalfLifeDays: 90,
+        supportedFormats: [".md", ".txt", ".html"],
+      }),
+    /**
+     * Chat-mode tuning: how much recent context to keep verbatim, how
+     * aggressively to summarize, and when to warn the user about long
+     * conversations.
+     */
+    chat: z
+      .object({
+        recentTurnCount: z.number().int().min(5).max(50).default(10),
+        summaryMaxWords: z.number().int().min(100).max(2000).default(500),
+        longConversationWarning: z.number().int().min(50).max(10000).default(500),
+      })
+      .default({
+        recentTurnCount: 10,
+        summaryMaxWords: 500,
+        longConversationWarning: 500,
+      }),
+    /**
+     * User-facing data directory paths. `dataHome` holds expert and panel
+     * YAML files (separate from the hidden `~/.council/` runtime dir).
+     */
+    paths: z
+      .object({
+        dataHome: z.string().default("~/Council"),
+      })
+      .default({ dataHome: "~/Council" }),
   })
   .default({
     defaults: {
@@ -47,6 +88,17 @@ export const ConfigSchema = z
       maxWordsPerResponse: 250,
     },
     telemetry: { enabled: false },
+    expert: {
+      backgroundProcessing: false,
+      recencyHalfLifeDays: 90,
+      supportedFormats: [".md", ".txt", ".html"],
+    },
+    chat: {
+      recentTurnCount: 10,
+      summaryMaxWords: 500,
+      longConversationWarning: 500,
+    },
+    paths: { dataHome: "~/Council" },
   });
 
 export type CouncilConfig = z.infer<typeof ConfigSchema>;

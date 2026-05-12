@@ -78,12 +78,41 @@ export interface TurnRow {
   readonly created_at: string;
 }
 
+export interface ExpertLibraryRow {
+  readonly slug: string;
+  readonly kind: string;
+  readonly display_name: string;
+  readonly yaml_path: string;
+  readonly yaml_checksum: string;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+export interface PanelLibraryRow {
+  readonly name: string;
+  readonly description: string | null;
+  readonly yaml_path: string;
+  readonly yaml_checksum: string;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+export interface PanelMemberRow {
+  readonly panel_name: string;
+  readonly expert_slug: string;
+  readonly position: number;
+  readonly created_at: string;
+}
+
 export interface CouncilSchema {
   schema_version: SchemaVersionRow;
   panels: PanelRow;
   experts: ExpertRow;
   debates: DebateRow;
   turns: TurnRow;
+  expert_library: ExpertLibraryRow;
+  panel_library: PanelLibraryRow;
+  panel_members: PanelMemberRow;
 }
 
 export type CouncilDatabase = Kysely<CouncilSchema>;
@@ -113,10 +142,12 @@ function loadMigrations(): readonly Migration[] {
     {
       version: 3,
       name: "003_expert_extracted_memory",
-      sql: readFileSync(
-        path.join(migrationsDir, "003_expert_extracted_memory.sql"),
-        "utf-8",
-      ),
+      sql: readFileSync(path.join(migrationsDir, "003_expert_extracted_memory.sql"), "utf-8"),
+    },
+    {
+      version: 4,
+      name: "004_expert_library",
+      sql: readFileSync(path.join(migrationsDir, "004_expert_library.sql"), "utf-8"),
     },
   ];
 }

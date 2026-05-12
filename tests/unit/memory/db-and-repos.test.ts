@@ -21,18 +21,9 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { sql } from "kysely";
 
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
-import {
-  PanelRepository,
-  type NewPanel,
-} from "../../../src/memory/repositories/panels.js";
-import {
-  ExpertRepository,
-  type NewExpert,
-} from "../../../src/memory/repositories/experts.js";
-import {
-  TurnRepository,
-  type NewTurn,
-} from "../../../src/memory/repositories/turns.js";
+import { PanelRepository, type NewPanel } from "../../../src/memory/repositories/panels.js";
+import { ExpertRepository, type NewExpert } from "../../../src/memory/repositories/experts.js";
+import { TurnRepository, type NewTurn } from "../../../src/memory/repositories/turns.js";
 
 const SAMPLE_PANEL: NewPanel = {
   name: "architecture-review",
@@ -119,15 +110,9 @@ describe("Migration 004 — expert library tables", () => {
   });
 
   it("creates expert_library, panel_library, and panel_members tables", async () => {
-    await expect(
-      db.selectFrom("expert_library").selectAll().execute(),
-    ).resolves.toEqual([]);
-    await expect(
-      db.selectFrom("panel_library").selectAll().execute(),
-    ).resolves.toEqual([]);
-    await expect(
-      db.selectFrom("panel_members").selectAll().execute(),
-    ).resolves.toEqual([]);
+    await expect(db.selectFrom("expert_library").selectAll().execute()).resolves.toEqual([]);
+    await expect(db.selectFrom("panel_library").selectAll().execute()).resolves.toEqual([]);
+    await expect(db.selectFrom("panel_members").selectAll().execute()).resolves.toEqual([]);
   });
 
   it("supports inserting and reading an expert_library row", async () => {
@@ -224,9 +209,9 @@ describe("Migration 004 — expert library tables", () => {
     const db1 = await createDatabase(tempPath);
     await db1.destroy();
     const db2 = await createDatabase(tempPath);
-    const versions = (
-      await db2.selectFrom("schema_version").select("version").execute()
-    ).map((r) => r.version);
+    const versions = (await db2.selectFrom("schema_version").select("version").execute()).map(
+      (r) => r.version,
+    );
     await db2.destroy();
     expect(versions.filter((v) => v === 4).length).toBe(1);
   });
@@ -410,15 +395,27 @@ describe("TurnRepository", () => {
 
   it("findByDebateId() returns turns ordered by (round, seq)", async () => {
     await turnRepo.create({
-      debateId, round: 1, seq: 0, speakerKind: "expert", expertId,
+      debateId,
+      round: 1,
+      seq: 0,
+      speakerKind: "expert",
+      expertId,
       content: "Round 1 first.",
     });
     await turnRepo.create({
-      debateId, round: 0, seq: 1, speakerKind: "expert", expertId,
+      debateId,
+      round: 0,
+      seq: 1,
+      speakerKind: "expert",
+      expertId,
       content: "Round 0 second.",
     });
     await turnRepo.create({
-      debateId, round: 0, seq: 0, speakerKind: "expert", expertId,
+      debateId,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId,
       content: "Round 0 first.",
     });
     const turns = await turnRepo.findByDebateId(debateId);
@@ -431,11 +428,19 @@ describe("TurnRepository", () => {
 
   it("search() finds turns via FTS5 substring match", async () => {
     await turnRepo.create({
-      debateId, round: 0, seq: 0, speakerKind: "expert", expertId,
+      debateId,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId,
       content: "Microservices add operational complexity that smaller teams cannot afford.",
     });
     await turnRepo.create({
-      debateId, round: 0, seq: 1, speakerKind: "expert", expertId,
+      debateId,
+      round: 0,
+      seq: 1,
+      speakerKind: "expert",
+      expertId,
       content: "A modular monolith gets you 80% of the benefit at 20% of the cost.",
     });
     const hits = await turnRepo.search("microservices");
@@ -445,7 +450,11 @@ describe("TurnRepository", () => {
 
   it("search() with no matches returns empty array", async () => {
     await turnRepo.create({
-      debateId, round: 0, seq: 0, speakerKind: "expert", expertId,
+      debateId,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId,
       content: "Nothing about the search term here.",
     });
     expect(await turnRepo.search("kubernetes")).toEqual([]);

@@ -132,9 +132,7 @@ describe("ConfigSchema", () => {
   });
 
   it("rejects wrong types in expert section", () => {
-    expect(() =>
-      ConfigSchema.parse({ expert: { backgroundProcessing: "yes" } }),
-    ).toThrow();
+    expect(() => ConfigSchema.parse({ expert: { backgroundProcessing: "yes" } })).toThrow();
   });
 });
 
