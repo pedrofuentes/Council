@@ -60,7 +60,20 @@ export const ExpertDefinitionSchema = z.object({
   forbiddenMoves: z.array(NonEmptyString).optional(),
   /** Personality flavor — the last 5% of value, applied to identity tone. */
   personality: NonEmptyString.optional(),
+  /**
+   * Discriminates between generic (template-based) and persona
+   * (document-trained) experts. Defaults to "generic" for back-compat.
+   */
+  kind: z.enum(["generic", "persona"]).default("generic"),
+  /**
+   * For persona experts: relationship description
+   * (e.g. "VP of Engineering I report to").
+   */
+  personaDescription: NonEmptyString.optional(),
+  /** For persona experts: override default docs location. */
+  docsPath: NonEmptyString.optional(),
 });
 
 export type Expertise = z.infer<typeof ExpertiseSchema>;
 export type ExpertDefinition = z.infer<typeof ExpertDefinitionSchema>;
+export type ExpertKind = "generic" | "persona";

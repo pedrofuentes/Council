@@ -79,9 +79,7 @@ export async function autoComposePanel(
             `Auto-compose timed out after ${timeoutMs}ms — the engine did not respond in time.`,
           );
         }
-        throw new Error(
-          `Auto-compose engine error (${event.error.code}): ${event.error.message}`,
-        );
+        throw new Error(`Auto-compose engine error (${event.error.code}): ${event.error.message}`);
       }
     }
   } finally {
@@ -110,9 +108,7 @@ export async function autoComposePanel(
       const fieldPath = i.path.length > 0 ? i.path.join(".") : "(root)";
       return `  - ${fieldPath}: ${i.message}`;
     });
-    throw new Error(
-      `Auto-compose produced an invalid panel definition:\n${lines.join("\n")}`,
-    );
+    throw new Error(`Auto-compose produced an invalid panel definition:\n${lines.join("\n")}`);
   }
 
   return sanitizeComposedPanel(result.data, model);
@@ -127,10 +123,7 @@ export async function autoComposePanel(
  * Safe fields kept: slug, displayName, role, expertise, epistemicStance,
  *                   personality. Plus panel-level name + description.
  */
-function sanitizeComposedPanel(
-  panel: PanelDefinition,
-  defaultModel: string,
-): PanelDefinition {
+function sanitizeComposedPanel(panel: PanelDefinition, defaultModel: string): PanelDefinition {
   return {
     name: panel.name,
     description: panel.description,
@@ -142,6 +135,7 @@ function sanitizeComposedPanel(
       model: defaultModel,
       expertise: e.expertise,
       epistemicStance: e.epistemicStance,
+      kind: e.kind,
       ...(e.personality !== undefined ? { personality: e.personality } : {}),
     })),
   };
