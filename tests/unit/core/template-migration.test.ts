@@ -230,6 +230,62 @@ describe("template-migration", () => {
         .executeTakeFirstOrThrow();
       expect(row.description).toBe("Edited after migration");
     });
+
+    it("materializes inline expert definitions found in a user-overridden panel YAML during recovery", async () => {
+      // First migration so the standard files exist.
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
+
+      // User has overridden a built-in panel YAML to embed an inline
+      // expert (supported per template-loader.ts).
+      const panelsDir = path.join(dataHome, "panels");
+      const target = path.join(panelsDir, "architecture-review.yaml");
+      const customPanel = {
+        name: "architecture-review",
+        description: "User-customised arch review",
+        experts: [
+          "cto", // existing library slug
+          {
+            slug: "inline-rookie",
+            displayName: "Inline Rookie",
+            role: "Junior reviewer added inline",
+            kind: "generic" as const,
+            expertise: {
+              weightedEvidence: ["learning the codebase"],
+              referenceCases: [],
+              notExpertIn: [],
+            },
+            epistemicStance: "I ask basic questions a senior would skip.",
+          },
+        ],
+      };
+      await fs.writeFile(target, yaml.stringify(customPanel), "utf-8");
+
+      // Wipe the entire DB.
+      await db.deleteFrom("panel_members").execute();
+      await db.deleteFrom("panel_library").execute();
+      await db.deleteFrom("expert_library").execute();
+
+      // Recovery must materialize the inline expert into the library
+      // before inserting panel_members (FK to expert_library.slug).
+      const lib2 = new FileExpertLibrary(dataHome, db);
+      await migrateBuiltInTemplates(dataHome, lib2, db, { quiet: true });
+
+      const inlineRow = await db
+        .selectFrom("expert_library")
+        .selectAll()
+        .where("slug", "=", "inline-rookie")
+        .executeTakeFirst();
+      expect(inlineRow).toBeDefined();
+      expect(inlineRow?.display_name).toBe("Inline Rookie");
+
+      const members = await db
+        .selectFrom("panel_members")
+        .selectAll()
+        .where("panel_name", "=", "architecture-review")
+        .orderBy("position")
+        .execute();
+      expect(members.map((m) => m.expert_slug)).toEqual(["cto", "inline-rookie"]);
+    });
   });
 
   describe("migrateBuiltInTemplates()", () => {

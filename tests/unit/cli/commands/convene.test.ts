@@ -700,6 +700,6 @@ describe("buildConveneCommand — user panels with slug references", () => {
         "--engine",
         "mock",
       ]),
-    ).rejects.toThrow(/not in the library.*library-missing/);
+    ).rejects.toThrow(/not in the library.*library-missing.*council expert create/s);
   });
 });
