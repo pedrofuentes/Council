@@ -159,9 +159,9 @@ describe("buildExpertCommand", () => {
           errored += s;
         },
       );
-      await expect(
-        cmd.parseAsync(["node", "council-expert", "inspect", "nobody"]),
-      ).rejects.toThrow(/not found/i);
+      await expect(cmd.parseAsync(["node", "council-expert", "inspect", "nobody"])).rejects.toThrow(
+        /not found/i,
+      );
       expect(errored + captured).toMatch(/not found|nobody/i);
     });
   });
@@ -238,11 +238,10 @@ describe("buildExpertCommand", () => {
 
     it("rejects duplicate slug with a helpful message", async () => {
       await seedExpert(env, SAMPLE);
-      let captured = "";
       let errored = "";
       const cmd = buildExpertCommand(
-        (s) => {
-          captured += s;
+        () => {
+          /* noop */
         },
         (s) => {
           errored += s;
@@ -271,7 +270,9 @@ describe("buildExpertCommand", () => {
     });
 
     it("rejects invalid slug", async () => {
-      const cmd = buildExpertCommand(() => { /* noop */ });
+      const cmd = buildExpertCommand(() => {
+        /* noop */
+      });
       await expect(
         cmd.parseAsync([
           "node",
@@ -342,7 +343,9 @@ describe("buildExpertCommand", () => {
         await db.destroy();
       }
 
-      const cmd = buildExpertCommand(() => { /* noop */ });
+      const cmd = buildExpertCommand(() => {
+        /* noop */
+      });
       await expect(
         cmd.parseAsync(["node", "council-expert", "delete", "dahlia-cto"]),
       ).rejects.toThrow(/--force|panels/i);
@@ -385,10 +388,12 @@ describe("buildExpertCommand", () => {
     });
 
     it("reports not found", async () => {
-      const cmd = buildExpertCommand(() => { /* noop */ });
-      await expect(
-        cmd.parseAsync(["node", "council-expert", "delete", "ghost"]),
-      ).rejects.toThrow(/not found/i);
+      const cmd = buildExpertCommand(() => {
+        /* noop */
+      });
+      await expect(cmd.parseAsync(["node", "council-expert", "delete", "ghost"])).rejects.toThrow(
+        /not found/i,
+      );
     });
   });
 
@@ -402,10 +407,12 @@ describe("buildExpertCommand", () => {
     });
 
     it("reports not found when slug is missing", async () => {
-      const cmd = buildExpertCommand(() => { /* noop */ });
-      await expect(
-        cmd.parseAsync(["node", "council-expert", "edit", "ghost"]),
-      ).rejects.toThrow(/not found/i);
+      const cmd = buildExpertCommand(() => {
+        /* noop */
+      });
+      await expect(cmd.parseAsync(["node", "council-expert", "edit", "ghost"])).rejects.toThrow(
+        /not found/i,
+      );
     });
 
     it("invokes the configured editor and re-validates", async () => {
@@ -457,9 +464,8 @@ fs.writeFileSync(p, body, 'utf-8');`,
 
         // Verify DB metadata caught up with the on-disk YAML edit.
         const { createDatabase } = await import("../../../../src/memory/db.js");
-        const { ExpertLibraryRepository } = await import(
-          "../../../../src/memory/repositories/expert-library-repo.js"
-        );
+        const { ExpertLibraryRepository } =
+          await import("../../../../src/memory/repositories/expert-library-repo.js");
         const db = await createDatabase(path.join(env.home, "council.db"));
         try {
           const repo = new ExpertLibraryRepository(db);

@@ -7,6 +7,7 @@
  *   - `resume`     reopen a panel: show transcript or continue
  *   - `export`     export a panel transcript to markdown, json, or adr
  *   - `panels`     list panels in the local DB
+ *   - `expert`     manage the expert library (create/list/inspect/edit/delete)
  *   - `templates`  list built-in panel templates
  *   - `memory`     inspect and curate Council's local SQLite state
  *   - `doctor`     diagnose Council setup

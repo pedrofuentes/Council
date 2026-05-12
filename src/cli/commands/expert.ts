@@ -64,9 +64,9 @@ export function buildExpertCommand(
   cmd.description("Manage Council's expert library (create, list, inspect, edit, delete)");
   cmd.addCommand(buildCreateCommand(write, writeError));
   cmd.addCommand(buildListCommand(write));
-  cmd.addCommand(buildInspectCommand(write));
+  cmd.addCommand(buildInspectCommand(write, writeError));
   cmd.addCommand(buildEditCommand(write, writeError));
-  cmd.addCommand(buildDeleteCommand(write));
+  cmd.addCommand(buildDeleteCommand(write, writeError));
   return cmd;
 }
 
@@ -305,7 +305,7 @@ function buildListCommand(write: Writer): Command {
 // inspect
 // ──────────────────────────────────────────────────────────────────────
 
-function buildInspectCommand(write: Writer): Command {
+function buildInspectCommand(write: Writer, writeError: Writer): Command {
   const cmd = new Command("inspect");
   cmd
     .description("Show full detail for a single expert")
@@ -314,6 +314,7 @@ function buildInspectCommand(write: Writer): Command {
       await withExpertLibrary(async (library, _config, dataHome) => {
         const expert = await library.get(slug);
         if (!expert) {
+          writeError(`Expert "${slug}" not found.\n`);
           throw new Error(`Expert "${slug}" not found.`);
         }
         const panels = await library.panelsFor(slug);
@@ -365,6 +366,7 @@ function buildEditCommand(write: Writer, writeError: Writer): Command {
       await withExpertLibrary(async (library, _config, dataHome) => {
         const existing = await library.get(slug);
         if (!existing) {
+          writeError(`Expert "${slug}" not found.\n`);
           throw new Error(`Expert "${slug}" not found.`);
         }
         const yamlPath = path.join(dataHome, "experts", `${slug}.yaml`);
@@ -372,20 +374,35 @@ function buildEditCommand(write: Writer, writeError: Writer): Command {
 
         await runEditor(editor, yamlPath);
 
-        // Re-validate the on-disk YAML. Library `get()` round-trips the
-        // file through ExpertDefinitionSchema, so any structural breakage
-        // surfaces here as a Zod error.
+        // Re-read and validate the edited file. We do this directly rather
+        // than via library.get() because the library reads the YAML path
+        // recorded in the DB metadata row — we need to parse what is on
+        // disk to detect slug renames and to refresh the DB checksum.
+        let parsed: ExpertDefinition;
         try {
-          const parsed = await library.get(slug);
-          if (!parsed) {
-            throw new Error("YAML file disappeared during edit");
-          }
-          write(`✓ Expert "${slug}" saved and validated.\n`);
+          const yamlMod = await import("yaml");
+          const onDisk = await fs.readFile(yamlPath, "utf-8");
+          parsed = ExpertDefinitionSchema.parse(yamlMod.parse(onDisk));
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           writeError(`Validation failed after edit: ${message}\n`);
           throw err;
         }
+
+        if (parsed.slug !== slug) {
+          writeError(
+            `Refusing to rename slug "${slug}" → "${parsed.slug}" via edit. Delete and re-create the expert to change its slug.\n`,
+          );
+          throw new Error(
+            `Slug rename via edit is not supported (was "${slug}", became "${parsed.slug}")`,
+          );
+        }
+
+        // Persist the freshly-parsed definition through the library so the
+        // expert_library row (kind, displayName, yaml_checksum) catches up
+        // with the on-disk YAML.
+        await library.update(slug, parsed);
+        write(`✓ Expert "${slug}" saved and validated.\n`);
       });
     });
   return cmd;
@@ -410,9 +427,16 @@ async function runEditor(editorCmd: string, filePath: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn(exe, args, { stdio: "inherit" });
     child.on("error", reject);
-    child.on("exit", (code) => {
-      if (code === 0 || code === null) resolve();
-      else reject(new Error(`Editor "${exe}" exited with code ${code}`));
+    child.on("exit", (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      if (signal !== null) {
+        reject(new Error(`Editor "${exe}" was terminated by signal ${signal}`));
+        return;
+      }
+      reject(new Error(`Editor "${exe}" exited with code ${code ?? "unknown"}`));
     });
   });
 }
@@ -421,7 +445,7 @@ async function runEditor(editorCmd: string, filePath: string): Promise<void> {
 // delete
 // ──────────────────────────────────────────────────────────────────────
 
-function buildDeleteCommand(write: Writer): Command {
+function buildDeleteCommand(write: Writer, writeError: Writer): Command {
   const cmd = new Command("delete");
   cmd
     .description("Delete an expert from the library")
@@ -431,13 +455,14 @@ function buildDeleteCommand(write: Writer): Command {
       await withExpertLibrary(async (library) => {
         const existing = await library.get(slug);
         if (!existing) {
+          writeError(`Expert "${slug}" not found.\n`);
           throw new Error(`Expert "${slug}" not found.`);
         }
         const panels = await library.panelsFor(slug);
         if (panels.length > 0 && !opts.force) {
-          throw new Error(
-            `Expert "${slug}" is used in ${panels.length} panel${panels.length === 1 ? "" : "s"}: ${panels.join(", ")}\nUse --force to delete anyway.`,
-          );
+          const msg = `Expert "${slug}" is used in ${panels.length} panel${panels.length === 1 ? "" : "s"}: ${panels.join(", ")}\nUse --force to delete anyway.`;
+          writeError(msg + "\n");
+          throw new Error(msg);
         }
         await library.delete(slug, { force: opts.force === true });
         write(`✓ Expert "${slug}" deleted.\n`);
