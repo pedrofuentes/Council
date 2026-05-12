@@ -162,8 +162,7 @@ describe("buildExpertCommand", () => {
       await expect(
         cmd.parseAsync(["node", "council-expert", "inspect", "nobody"]),
       ).rejects.toThrow(/not found/i);
-      // Either the error writer or the thrown error carries the message.
-      expect((captured + errored).length).toBeGreaterThanOrEqual(0);
+      expect(errored + captured).toMatch(/not found|nobody/i);
     });
   });
 
@@ -266,9 +265,9 @@ describe("buildExpertCommand", () => {
           "any",
         ]),
       ).rejects.toThrow(/already exists/i);
-      const msg = captured + errored;
-      // The error path should mention the edit hint somewhere (either thrown or written).
-      expect(msg + " " + (msg.length === 0 ? "checked-in-throw" : "")).toBeTruthy();
+      // Error stream carries the user-facing hint pointing at `expert edit`.
+      expect(errored).toMatch(/already exists/i);
+      expect(errored).toMatch(/council expert edit/i);
     });
 
     it("rejects invalid slug", async () => {
@@ -423,6 +422,113 @@ describe("buildExpertCommand", () => {
         });
         await cmd.parseAsync(["node", "council-expert", "edit", "dahlia-cto"]);
         expect(captured.toLowerCase()).toMatch(/saved|updated|ok|validated|✓/);
+      } finally {
+        if (originalEditor === undefined) delete process.env["EDITOR"];
+        else process.env["EDITOR"] = originalEditor;
+      }
+    });
+
+    it("syncs DB metadata (displayName + checksum) after a real YAML mutation", async () => {
+      await seedExpert(env, SAMPLE);
+      // Write a node stub that rewrites the YAML with a new displayName so
+      // we can verify that the DB metadata row + yaml_checksum get refreshed
+      // on save (not just that the YAML parses).
+      const stubPath = path.join(env.home, "edit-stub.cjs");
+      await fs.writeFile(
+        stubPath,
+        `const fs = require('fs');
+const p = process.argv[2];
+let body = fs.readFileSync(p, 'utf-8');
+body = body.replace(/displayName: .*/, 'displayName: Dahlia Renner (Renamed CTO)');
+body = body.replace(/^role: .*/m, 'role: Renamed role');
+fs.writeFileSync(p, body, 'utf-8');`,
+        "utf-8",
+      );
+
+      const originalEditor = process.env["EDITOR"];
+      process.env["EDITOR"] = `node "${stubPath}"`;
+      try {
+        let captured = "";
+        const cmd = buildExpertCommand((s) => {
+          captured += s;
+        });
+        await cmd.parseAsync(["node", "council-expert", "edit", "dahlia-cto"]);
+        expect(captured.toLowerCase()).toMatch(/saved|✓/);
+
+        // Verify DB metadata caught up with the on-disk YAML edit.
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { ExpertLibraryRepository } = await import(
+          "../../../../src/memory/repositories/expert-library-repo.js"
+        );
+        const db = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          const repo = new ExpertLibraryRepository(db);
+          const row = await repo.findBySlug("dahlia-cto");
+          expect(row?.displayName).toBe("Dahlia Renner (Renamed CTO)");
+          const onDisk = await fs.readFile(
+            path.join(env.dataHome, "experts", "dahlia-cto.yaml"),
+            "utf-8",
+          );
+          const { createHash } = await import("node:crypto");
+          const expected = createHash("sha256").update(onDisk).digest("hex");
+          expect(row?.yamlChecksum).toBe(expected);
+        } finally {
+          await db.destroy();
+        }
+      } finally {
+        if (originalEditor === undefined) delete process.env["EDITOR"];
+        else process.env["EDITOR"] = originalEditor;
+      }
+    });
+
+    it("rejects slug renames via edit", async () => {
+      await seedExpert(env, SAMPLE);
+      const stubPath = path.join(env.home, "edit-rename.cjs");
+      await fs.writeFile(
+        stubPath,
+        `const fs = require('fs');
+const p = process.argv[2];
+const body = fs.readFileSync(p, 'utf-8').replace(/^slug: .*/m, 'slug: renamed-slug');
+fs.writeFileSync(p, body, 'utf-8');`,
+        "utf-8",
+      );
+      const originalEditor = process.env["EDITOR"];
+      process.env["EDITOR"] = `node "${stubPath}"`;
+      try {
+        const cmd = buildExpertCommand(
+          () => {
+            /* noop */
+          },
+          () => {
+            /* noop */
+          },
+        );
+        await expect(
+          cmd.parseAsync(["node", "council-expert", "edit", "dahlia-cto"]),
+        ).rejects.toThrow(/slug/i);
+      } finally {
+        if (originalEditor === undefined) delete process.env["EDITOR"];
+        else process.env["EDITOR"] = originalEditor;
+      }
+    });
+
+    it("rejects when the editor exits with a non-zero status", async () => {
+      await seedExpert(env, SAMPLE);
+      const originalEditor = process.env["EDITOR"];
+      // node -e "process.exit(2)" — exits non-zero regardless of file arg.
+      process.env["EDITOR"] = `node -e process.exit(2)`;
+      try {
+        const cmd = buildExpertCommand(
+          () => {
+            /* noop */
+          },
+          () => {
+            /* noop */
+          },
+        );
+        await expect(
+          cmd.parseAsync(["node", "council-expert", "edit", "dahlia-cto"]),
+        ).rejects.toThrow(/editor/i);
       } finally {
         if (originalEditor === undefined) delete process.env["EDITOR"];
         else process.env["EDITOR"] = originalEditor;
