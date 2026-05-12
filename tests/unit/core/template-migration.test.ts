@@ -120,8 +120,10 @@ describe("template-migration", () => {
       const yamlFiles = (await fs.readdir(expertsDir)).filter((f) =>
         f.endsWith(".yaml"),
       );
-      const editedSlug = yamlFiles[0]!.replace(/\.yaml$/, "");
-      const editedPath = path.join(expertsDir, yamlFiles[0]!);
+      const firstFile = yamlFiles[0];
+      if (!firstFile) throw new Error("expected migrated expert yaml");
+      const editedSlug = firstFile.replace(/\.yaml$/, "");
+      const editedPath = path.join(expertsDir, firstFile);
       const raw = await fs.readFile(editedPath, "utf-8");
       const parsed = yaml.parse(raw) as Record<string, unknown>;
       parsed["displayName"] = "User-Edited Name";
@@ -155,7 +157,8 @@ describe("template-migration", () => {
       const panelsDir = path.join(dataHome, "panels");
       const sample = (await fs.readdir(panelsDir)).filter((f) =>
         f.endsWith(".yaml"),
-      )[0]!;
+      )[0];
+      if (!sample) throw new Error("expected migrated panel yaml");
       const sampleName = sample.replace(/\.yaml$/, "");
       const samplePath = path.join(panelsDir, sample);
 

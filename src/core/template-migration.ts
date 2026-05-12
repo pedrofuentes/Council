@@ -137,20 +137,25 @@ export async function migrateBuiltInTemplates(
       slugForEntry.push(decision.slug);
       switch (decision.action) {
         case "create": {
+          const yamlPath = path.join(expertsDir, `${decision.slug}.yaml`);
           const toCreate: ExpertDefinition = ExpertDefinitionSchema.parse({
             ...expert,
             slug: decision.slug,
           });
-          const yamlPath = path.join(expertsDir, `${decision.slug}.yaml`);
           if (await fileExists(yamlPath)) {
             // File present but no DB row — register the DB row from the
             // on-disk YAML content so re-running migration after a DB
-            // reset re-syncs library state without overwriting files.
+            // reset re-syncs library state from preserved (possibly
+            // user-edited) files instead of clobbering metadata with the
+            // bundled template.
             const content = await fs.readFile(yamlPath, "utf-8");
+            const onDisk = ExpertDefinitionSchema.parse(
+              yaml.parse(content) as unknown,
+            );
             await expertRepo.create({
-              slug: decision.slug,
-              kind: toCreate.kind,
-              displayName: toCreate.displayName,
+              slug: onDisk.slug,
+              kind: onDisk.kind,
+              displayName: onDisk.displayName,
               yamlPath,
               yamlChecksum: sha256(content),
             });
@@ -170,19 +175,40 @@ export async function migrateBuiltInTemplates(
       }
     }
 
-    // Compute panel YAML once so we can write OR register from it.
     const panelFile = path.join(panelsDir, `${name}.yaml`);
-    const panelYaml = renderPanelYaml(template, slugForEntry);
     const panelFileExists = await fileExists(panelFile);
 
-    // Always register DB rows (idempotent — registerPanel guards with a
-    // SELECT). This handles the "DB reset but files preserved" case.
-    await registerPanel(db, name, template, slugForEntry, panelFile, panelYaml);
-
     if (panelFileExists) {
+      // DB-reset recovery: preserve the user's on-disk panel YAML and
+      // derive DB rows from it instead of the bundled template, so
+      // edits to description / member ordering survive a re-register.
+      const onDiskContent = await fs.readFile(panelFile, "utf-8");
+      const onDisk = parseOnDiskPanel(onDiskContent);
+      await registerPanelFromDisk(
+        db,
+        name,
+        onDisk.description,
+        onDisk.slugs,
+        panelFile,
+        onDiskContent,
+      );
       skipped++;
       continue;
     }
+
+    // Fresh-write path: render and persist the bundled template's panel
+    // YAML, then register DB rows from the template. Order is
+    // registerPanel → writeFile so a crash between the two is
+    // recoverable on retry (registerPanel is idempotent).
+    const panelYaml = renderPanelYaml(template, slugForEntry);
+    await registerPanelFromDisk(
+      db,
+      name,
+      template.description ?? null,
+      slugForEntry,
+      panelFile,
+      panelYaml,
+    );
     await fs.writeFile(panelFile, panelYaml, "utf-8");
     panelsMigrated++;
   }
@@ -309,10 +335,10 @@ function sha256(content: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
-async function registerPanel(
+async function registerPanelFromDisk(
   db: CouncilDatabase,
   panelName: string,
-  template: ResolvedPanelDefinition,
+  description: string | null,
   slugs: readonly string[],
   yamlPath: string,
   yamlContent: string,
@@ -330,7 +356,7 @@ async function registerPanel(
       .insertInto("panel_library")
       .values({
         name: panelName,
-        description: template.description ?? null,
+        description: description,
         yaml_path: yamlPath,
         yaml_checksum: checksum,
         created_at: now,
@@ -358,6 +384,30 @@ async function registerPanel(
       })
       .execute();
   }
+}
+
+interface OnDiskPanel {
+  readonly description: string | null;
+  readonly slugs: readonly string[];
+}
+
+function parseOnDiskPanel(content: string): OnDiskPanel {
+  const raw = yaml.parse(content) as Record<string, unknown> | null;
+  const description =
+    raw && typeof raw["description"] === "string"
+      ? (raw["description"] as string)
+      : null;
+  const experts = raw && Array.isArray(raw["experts"]) ? raw["experts"] : [];
+  const slugs: string[] = [];
+  for (const entry of experts as unknown[]) {
+    if (typeof entry === "string") {
+      slugs.push(entry);
+    } else if (entry && typeof entry === "object" && "slug" in entry) {
+      const slug = (entry as { slug: unknown }).slug;
+      if (typeof slug === "string") slugs.push(slug);
+    }
+  }
+  return { description, slugs };
 }
 
 /**
