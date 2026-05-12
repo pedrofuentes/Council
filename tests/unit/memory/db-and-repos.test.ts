@@ -85,7 +85,7 @@ describe("createDatabase", () => {
     const versions = (
       await db.selectFrom("schema_version").select("version").orderBy("version").execute()
     ).map((r) => r.version);
-    expect(versions).toEqual([1, 2, 3, 4, 5]);
+    expect(versions).toEqual([1, 2, 3, 4, 5, 6]);
 
     const indexes = (
       await sql<{
