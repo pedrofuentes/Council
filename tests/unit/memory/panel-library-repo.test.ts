@@ -143,4 +143,18 @@ describe("PanelLibraryRepository", () => {
     await repo.create(samplePanel("arch-review"));
     await expect(repo.setMembers("arch-review", ["does-not-exist"])).rejects.toThrow();
   });
+
+  it("setMembers() preserves existing membership when the new insert fails (atomic)", async () => {
+    await repo.create(samplePanel("arch-review"));
+    await seedExpert(db, "cto");
+    await seedExpert(db, "staff");
+    await repo.setMembers("arch-review", ["cto", "staff"]);
+
+    // Attempt to replace with a list containing an unknown slug — must fail
+    // AND leave the prior membership intact (no partial wipe).
+    await expect(repo.setMembers("arch-review", ["cto", "does-not-exist"])).rejects.toThrow();
+
+    const after = await repo.getMembers("arch-review");
+    expect(after).toEqual(["cto", "staff"]);
+  });
 });
