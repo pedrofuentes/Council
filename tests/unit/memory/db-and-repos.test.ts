@@ -21,18 +21,9 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { sql } from "kysely";
 
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
-import {
-  PanelRepository,
-  type NewPanel,
-} from "../../../src/memory/repositories/panels.js";
-import {
-  ExpertRepository,
-  type NewExpert,
-} from "../../../src/memory/repositories/experts.js";
-import {
-  TurnRepository,
-  type NewTurn,
-} from "../../../src/memory/repositories/turns.js";
+import { PanelRepository, type NewPanel } from "../../../src/memory/repositories/panels.js";
+import { ExpertRepository, type NewExpert } from "../../../src/memory/repositories/experts.js";
+import { TurnRepository, type NewTurn } from "../../../src/memory/repositories/turns.js";
 
 const SAMPLE_PANEL: NewPanel = {
   name: "architecture-review",
@@ -90,11 +81,11 @@ describe("createDatabase", () => {
     expect(after.length).toBe(before.length); // no duplicate version rows
   });
 
-  it("applies migrations 001, 002, and 003, creating the expected indexes", async () => {
+  it("applies migrations 001, 002, 003, and 004, creating the expected indexes", async () => {
     const versions = (
       await db.selectFrom("schema_version").select("version").orderBy("version").execute()
     ).map((r) => r.version);
-    expect(versions).toEqual([1, 2, 3]);
+    expect(versions).toEqual([1, 2, 3, 4]);
 
     const indexes = (
       await sql<{
@@ -103,6 +94,212 @@ describe("createDatabase", () => {
     ).rows.map((r) => r.name);
     expect(indexes).toContain("idx_panels_name");
     expect(indexes).toContain("idx_debates_panel_id");
+    expect(indexes).toContain("idx_panel_members_expert");
+  });
+});
+
+describe("Migration 004 — expert library tables", () => {
+  let db: CouncilDatabase;
+
+  beforeEach(async () => {
+    db = await createDatabase(":memory:");
+  });
+
+  afterEach(async () => {
+    await db.destroy();
+  });
+
+  it("creates expert_library, panel_library, and panel_members tables", async () => {
+    await expect(db.selectFrom("expert_library").selectAll().execute()).resolves.toEqual([]);
+    await expect(db.selectFrom("panel_library").selectAll().execute()).resolves.toEqual([]);
+    await expect(db.selectFrom("panel_members").selectAll().execute()).resolves.toEqual([]);
+  });
+
+  it("supports inserting and reading an expert_library row", async () => {
+    const now = new Date().toISOString();
+    await db
+      .insertInto("expert_library")
+      .values({
+        slug: "cto",
+        kind: "generic",
+        display_name: "CTO Expert",
+        yaml_path: "/tmp/cto.yaml",
+        yaml_checksum: "abc123",
+        created_at: now,
+        updated_at: now,
+      })
+      .execute();
+    const rows = await db.selectFrom("expert_library").selectAll().execute();
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.slug).toBe("cto");
+    expect(rows[0]?.kind).toBe("generic");
+    expect(rows[0]?.display_name).toBe("CTO Expert");
+  });
+
+  it("supports inserting and reading a panel_library row", async () => {
+    const now = new Date().toISOString();
+    await db
+      .insertInto("panel_library")
+      .values({
+        name: "architecture-review",
+        description: "Reviews architecture",
+        yaml_path: "/tmp/arch.yaml",
+        yaml_checksum: "def456",
+        created_at: now,
+        updated_at: now,
+      })
+      .execute();
+    const rows = await db.selectFrom("panel_library").selectAll().execute();
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.name).toBe("architecture-review");
+    expect(rows[0]?.description).toBe("Reviews architecture");
+  });
+
+  it("panel_members enforces FK to expert_library and cascades on delete", async () => {
+    const now = new Date().toISOString();
+    await db
+      .insertInto("panel_library")
+      .values({
+        name: "arch",
+        description: null,
+        yaml_path: "/tmp/arch.yaml",
+        yaml_checksum: "p1",
+        created_at: now,
+        updated_at: now,
+      })
+      .execute();
+    await db
+      .insertInto("expert_library")
+      .values({
+        slug: "cto",
+        kind: "generic",
+        display_name: "CTO",
+        yaml_path: "/tmp/cto.yaml",
+        yaml_checksum: "h1",
+        created_at: now,
+        updated_at: now,
+      })
+      .execute();
+    await db
+      .insertInto("panel_members")
+      .values({
+        panel_name: "arch",
+        expert_slug: "cto",
+        position: 0,
+        created_at: now,
+      })
+      .execute();
+    const before = await db.selectFrom("panel_members").selectAll().execute();
+    expect(before.length).toBe(1);
+
+    await db.deleteFrom("expert_library").where("slug", "=", "cto").execute();
+    const after = await db.selectFrom("panel_members").selectAll().execute();
+    expect(after.length).toBe(0);
+  });
+
+  it("panel_members cascades when the referenced panel is deleted", async () => {
+    const now = new Date().toISOString();
+    await db
+      .insertInto("panel_library")
+      .values({
+        name: "arch",
+        description: null,
+        yaml_path: "/tmp/arch.yaml",
+        yaml_checksum: "p1",
+        created_at: now,
+        updated_at: now,
+      })
+      .execute();
+    await db
+      .insertInto("expert_library")
+      .values({
+        slug: "cto",
+        kind: "generic",
+        display_name: "CTO",
+        yaml_path: "/tmp/cto.yaml",
+        yaml_checksum: "h1",
+        created_at: now,
+        updated_at: now,
+      })
+      .execute();
+    await db
+      .insertInto("panel_members")
+      .values({
+        panel_name: "arch",
+        expert_slug: "cto",
+        position: 0,
+        created_at: now,
+      })
+      .execute();
+
+    await db.deleteFrom("panel_library").where("name", "=", "arch").execute();
+    const after = await db.selectFrom("panel_members").selectAll().execute();
+    expect(after.length).toBe(0);
+  });
+
+  it("panel_members FK rejects insertion referencing nonexistent expert", async () => {
+    const now = new Date().toISOString();
+    await db
+      .insertInto("panel_library")
+      .values({
+        name: "arch",
+        description: null,
+        yaml_path: "/tmp/arch.yaml",
+        yaml_checksum: "p1",
+        created_at: now,
+        updated_at: now,
+      })
+      .execute();
+    await expect(
+      db
+        .insertInto("panel_members")
+        .values({
+          panel_name: "arch",
+          expert_slug: "nonexistent",
+          position: 0,
+          created_at: now,
+        })
+        .execute(),
+    ).rejects.toThrow();
+  });
+
+  it("panel_members FK rejects insertion referencing nonexistent panel", async () => {
+    const now = new Date().toISOString();
+    await db
+      .insertInto("expert_library")
+      .values({
+        slug: "cto",
+        kind: "generic",
+        display_name: "CTO",
+        yaml_path: "/tmp/cto.yaml",
+        yaml_checksum: "h1",
+        created_at: now,
+        updated_at: now,
+      })
+      .execute();
+    await expect(
+      db
+        .insertInto("panel_members")
+        .values({
+          panel_name: "ghost-panel",
+          expert_slug: "cto",
+          position: 0,
+          created_at: now,
+        })
+        .execute(),
+    ).rejects.toThrow();
+  });
+
+  it("is idempotent across two createDatabase calls on the same file", async () => {
+    const tempPath = path.join(os.tmpdir(), `council-mig004-${Date.now()}.db`);
+    const db1 = await createDatabase(tempPath);
+    await db1.destroy();
+    const db2 = await createDatabase(tempPath);
+    const versions = (await db2.selectFrom("schema_version").select("version").execute()).map(
+      (r) => r.version,
+    );
+    await db2.destroy();
+    expect(versions.filter((v) => v === 4).length).toBe(1);
   });
 });
 
@@ -284,15 +481,27 @@ describe("TurnRepository", () => {
 
   it("findByDebateId() returns turns ordered by (round, seq)", async () => {
     await turnRepo.create({
-      debateId, round: 1, seq: 0, speakerKind: "expert", expertId,
+      debateId,
+      round: 1,
+      seq: 0,
+      speakerKind: "expert",
+      expertId,
       content: "Round 1 first.",
     });
     await turnRepo.create({
-      debateId, round: 0, seq: 1, speakerKind: "expert", expertId,
+      debateId,
+      round: 0,
+      seq: 1,
+      speakerKind: "expert",
+      expertId,
       content: "Round 0 second.",
     });
     await turnRepo.create({
-      debateId, round: 0, seq: 0, speakerKind: "expert", expertId,
+      debateId,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId,
       content: "Round 0 first.",
     });
     const turns = await turnRepo.findByDebateId(debateId);
@@ -305,11 +514,19 @@ describe("TurnRepository", () => {
 
   it("search() finds turns via FTS5 substring match", async () => {
     await turnRepo.create({
-      debateId, round: 0, seq: 0, speakerKind: "expert", expertId,
+      debateId,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId,
       content: "Microservices add operational complexity that smaller teams cannot afford.",
     });
     await turnRepo.create({
-      debateId, round: 0, seq: 1, speakerKind: "expert", expertId,
+      debateId,
+      round: 0,
+      seq: 1,
+      speakerKind: "expert",
+      expertId,
       content: "A modular monolith gets you 80% of the benefit at 20% of the cost.",
     });
     const hits = await turnRepo.search("microservices");
@@ -319,7 +536,11 @@ describe("TurnRepository", () => {
 
   it("search() with no matches returns empty array", async () => {
     await turnRepo.create({
-      debateId, round: 0, seq: 0, speakerKind: "expert", expertId,
+      debateId,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId,
       content: "Nothing about the search term here.",
     });
     expect(await turnRepo.search("kubernetes")).toEqual([]);

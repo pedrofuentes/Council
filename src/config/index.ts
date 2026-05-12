@@ -7,4 +7,4 @@
  */
 export { ConfigSchema, DEFAULT_MODEL } from "./schema.js";
 export type { CouncilConfig } from "./schema.js";
-export { getCouncilHome, loadConfig } from "./loader.js";
+export { ensureDataDirectories, getCouncilDataHome, getCouncilHome, loadConfig } from "./loader.js";

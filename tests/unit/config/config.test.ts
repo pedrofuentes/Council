@@ -20,6 +20,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ConfigSchema,
   type CouncilConfig,
+  ensureDataDirectories,
+  getCouncilDataHome,
   getCouncilHome,
   loadConfig,
 } from "../../../src/config/index.js";
@@ -78,6 +80,59 @@ describe("ConfigSchema", () => {
   it("rejects wrong types", () => {
     expect(() => ConfigSchema.parse({ defaults: { maxRounds: "lots" } })).toThrow();
     expect(() => ConfigSchema.parse({ telemetry: { enabled: "yes" } })).toThrow();
+  });
+
+  it("applies defaults for new expert/chat/paths sections from empty input", () => {
+    const config = ConfigSchema.parse({});
+    expect(config.expert.backgroundProcessing).toBe(false);
+    expect(config.expert.recencyHalfLifeDays).toBe(90);
+    expect(config.expert.supportedFormats).toEqual([".md", ".txt", ".html"]);
+    expect(config.chat.recentTurnCount).toBe(10);
+    expect(config.chat.summaryMaxWords).toBe(500);
+    expect(config.chat.longConversationWarning).toBe(500);
+    expect(config.paths.dataHome).toBe("~/Council");
+  });
+
+  it("parses fully populated expert/chat/paths sections", () => {
+    const config = ConfigSchema.parse({
+      expert: {
+        backgroundProcessing: true,
+        recencyHalfLifeDays: 30,
+        supportedFormats: [".md", ".pdf"],
+      },
+      chat: {
+        recentTurnCount: 20,
+        summaryMaxWords: 800,
+        longConversationWarning: 1000,
+      },
+      paths: { dataHome: "/var/lib/council" },
+    });
+    expect(config.expert.backgroundProcessing).toBe(true);
+    expect(config.expert.recencyHalfLifeDays).toBe(30);
+    expect(config.expert.supportedFormats).toEqual([".md", ".pdf"]);
+    expect(config.chat.recentTurnCount).toBe(20);
+    expect(config.chat.summaryMaxWords).toBe(800);
+    expect(config.chat.longConversationWarning).toBe(1000);
+    expect(config.paths.dataHome).toBe("/var/lib/council");
+  });
+
+  it("rejects out-of-range chat.recentTurnCount", () => {
+    expect(() => ConfigSchema.parse({ chat: { recentTurnCount: 4 } })).toThrow();
+    expect(() => ConfigSchema.parse({ chat: { recentTurnCount: 51 } })).toThrow();
+  });
+
+  it("rejects out-of-range chat.summaryMaxWords", () => {
+    expect(() => ConfigSchema.parse({ chat: { summaryMaxWords: 50 } })).toThrow();
+    expect(() => ConfigSchema.parse({ chat: { summaryMaxWords: 9999 } })).toThrow();
+  });
+
+  it("rejects out-of-range expert.recencyHalfLifeDays", () => {
+    expect(() => ConfigSchema.parse({ expert: { recencyHalfLifeDays: 0 } })).toThrow();
+    expect(() => ConfigSchema.parse({ expert: { recencyHalfLifeDays: 9999 } })).toThrow();
+  });
+
+  it("rejects wrong types in expert section", () => {
+    expect(() => ConfigSchema.parse({ expert: { backgroundProcessing: "yes" } })).toThrow();
   });
 });
 
@@ -147,6 +202,72 @@ describe("loadConfig() / getCouncilHome() — file I/O", () => {
     );
 
     await expect(loadConfig()).rejects.toThrow(/maxRounds/i);
+  });
+
+  it("getCouncilDataHome() returns COUNCIL_DATA_HOME env var when set", () => {
+    const originalDataHome = process.env["COUNCIL_DATA_HOME"];
+    process.env["COUNCIL_DATA_HOME"] = testHome;
+    try {
+      expect(getCouncilDataHome()).toBe(testHome);
+    } finally {
+      if (originalDataHome === undefined) {
+        delete process.env["COUNCIL_DATA_HOME"];
+      } else {
+        process.env["COUNCIL_DATA_HOME"] = originalDataHome;
+      }
+    }
+  });
+
+  it("getCouncilDataHome() defaults to ~/Council when env unset and no config", () => {
+    const originalDataHome = process.env["COUNCIL_DATA_HOME"];
+    delete process.env["COUNCIL_DATA_HOME"];
+    try {
+      expect(getCouncilDataHome()).toBe(path.join(os.homedir(), "Council"));
+    } finally {
+      if (originalDataHome !== undefined) {
+        process.env["COUNCIL_DATA_HOME"] = originalDataHome;
+      }
+    }
+  });
+
+  it("getCouncilDataHome() expands ~ in config dataHome", () => {
+    const originalDataHome = process.env["COUNCIL_DATA_HOME"];
+    delete process.env["COUNCIL_DATA_HOME"];
+    try {
+      const config = ConfigSchema.parse({ paths: { dataHome: "~/MyCouncil" } });
+      expect(getCouncilDataHome(config)).toBe(path.join(os.homedir(), "MyCouncil"));
+    } finally {
+      if (originalDataHome !== undefined) {
+        process.env["COUNCIL_DATA_HOME"] = originalDataHome;
+      }
+    }
+  });
+
+  it("getCouncilDataHome() returns absolute config dataHome verbatim", () => {
+    const originalDataHome = process.env["COUNCIL_DATA_HOME"];
+    delete process.env["COUNCIL_DATA_HOME"];
+    try {
+      const abs = path.join(testHome, "data");
+      const config = ConfigSchema.parse({ paths: { dataHome: abs } });
+      expect(getCouncilDataHome(config)).toBe(abs);
+    } finally {
+      if (originalDataHome !== undefined) {
+        process.env["COUNCIL_DATA_HOME"] = originalDataHome;
+      }
+    }
+  });
+
+  it("ensureDataDirectories() creates experts/ and panels/ subdirs", async () => {
+    const dataHome = path.join(testHome, "data-home");
+    await ensureDataDirectories(dataHome);
+    await expect(fs.access(path.join(dataHome, "experts"))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(dataHome, "panels"))).resolves.toBeUndefined();
+  });
+
+  it("ensureDataDirectories() is idempotent", async () => {
+    const dataHome = path.join(testHome, "data-home-idem");
+    await ensureDataDirectories(dataHome);
+    await expect(ensureDataDirectories(dataHome)).resolves.toBeUndefined();
   });
 
   it("loadConfig() throws a descriptive error on malformed YAML", async () => {
