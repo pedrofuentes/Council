@@ -104,6 +104,30 @@ export interface PanelMemberRow {
   readonly created_at: string;
 }
 
+export interface ChatSessionRow {
+  readonly id: string;
+  readonly target_type: string;
+  readonly target_slug: string;
+  readonly status: string;
+  readonly summary: string | null;
+  readonly summary_through_seq: number;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+export interface ChatTurnRow {
+  readonly id: string;
+  readonly chat_id: string;
+  readonly seq: number;
+  readonly role: string;
+  readonly expert_slug: string | null;
+  readonly content: string;
+  readonly is_mention: number;
+  readonly tokens_in: number | null;
+  readonly tokens_out: number | null;
+  readonly created_at: string;
+}
+
 export interface CouncilSchema {
   schema_version: SchemaVersionRow;
   panels: PanelRow;
@@ -113,6 +137,8 @@ export interface CouncilSchema {
   expert_library: ExpertLibraryRow;
   panel_library: PanelLibraryRow;
   panel_members: PanelMemberRow;
+  chat_sessions: ChatSessionRow;
+  chat_turns: ChatTurnRow;
 }
 
 export type CouncilDatabase = Kysely<CouncilSchema>;
@@ -148,6 +174,11 @@ function loadMigrations(): readonly Migration[] {
       version: 4,
       name: "004_expert_library",
       sql: readFileSync(path.join(migrationsDir, "004_expert_library.sql"), "utf-8"),
+    },
+    {
+      version: 5,
+      name: "005_chat",
+      sql: readFileSync(path.join(migrationsDir, "005_chat.sql"), "utf-8"),
     },
   ];
 }
