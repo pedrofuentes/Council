@@ -218,4 +218,63 @@ describe("ChatRenderer", () => {
       expect(stripped).toBe("─".repeat(40) + "\n");
     });
   });
+
+  describe("control-character sanitization", () => {
+    // Untrusted strings (model output, user input, LLM-generated displayNames)
+    // must not pass raw ANSI/OSC/C0 sequences to the terminal — otherwise a
+    // malicious or compromised model could spoof prompts, clear the screen,
+    // or emit OSC hyperlinks. The renderer reuses stripControlChars().
+    const INJECTION = "before\u001b[2J\u001b]0;evil\u0007\u0007after";
+
+    it("strips control sequences from streamed chunks", () => {
+      const sink = new StringSink();
+      const renderer = createChatRenderer({
+        sink,
+        experts: makeExperts(["cto", "Dahlia"]),
+      });
+      renderer.startExpertResponse("cto");
+      const beforeLen = sink.text.length;
+      renderer.streamChunk(INJECTION);
+      const chunk = sink.text.slice(beforeLen);
+      expect(chunk).toBe("beforeafter");
+    });
+
+    it("strips control sequences from user messages", () => {
+      const sink = new StringSink();
+      const renderer = createChatRenderer({ sink, experts: makeExperts() });
+      renderer.showUserMessage(INJECTION);
+      expect(stripAnsi(sink.text)).toBe("You > beforeafter\n");
+    });
+
+    it("strips control sequences from session status messages", () => {
+      const sink = new StringSink();
+      const renderer = createChatRenderer({ sink, experts: makeExperts() });
+      renderer.showSessionStatus(INJECTION);
+      expect(stripAnsi(sink.text)).toBe("beforeafter\n");
+    });
+
+    it("strips control sequences from system messages", () => {
+      const sink = new StringSink();
+      const renderer = createChatRenderer({ sink, experts: makeExperts() });
+      renderer.showSystem(INJECTION, "warn");
+      expect(stripAnsi(sink.text)).toBe("⚠ beforeafter\n");
+    });
+
+    it("strips control sequences from system error messages on stderr", () => {
+      const sink = new StringSink();
+      const renderer = createChatRenderer({ sink, experts: makeExperts() });
+      renderer.showSystem(INJECTION, "error");
+      expect(stripAnsi(sink.errText)).toBe("✗ beforeafter\n");
+    });
+
+    it("strips control sequences from expert display names", () => {
+      const sink = new StringSink();
+      const renderer = createChatRenderer({
+        sink,
+        experts: makeExperts(["cto", INJECTION]),
+      });
+      renderer.startExpertResponse("cto");
+      expect(stripAnsi(sink.text)).toBe("beforeafter > ");
+    });
+  });
 });
