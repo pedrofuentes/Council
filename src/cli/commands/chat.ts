@@ -784,7 +784,7 @@ async function maybeProcessPersonaDocs(
       );
     } else {
       const tracked = await documentRepo.getChecksumMap(expert.slug);
-      if (Object.keys(tracked).length === 0) {
+      if (tracked.size === 0) {
         renderer.showSystem(
           `No documents found in ${docsPath} — running ${expert.displayName} as a generic expert.`,
           "info",
