@@ -7,6 +7,7 @@
  *   - `resume`     reopen a panel: show transcript or continue
  *   - `export`     export a panel transcript to markdown, json, or adr
  *   - `panels`     list panels in the local DB
+ *   - `expert`     manage the expert library (create/list/inspect/edit/delete)
  *   - `templates`  list built-in panel templates
  *   - `memory`     inspect and curate Council's local SQLite state
  *   - `doctor`     diagnose Council setup
@@ -19,6 +20,7 @@ import { buildAskCommand } from "../cli/commands/ask.js";
 import { buildConcludeCommand } from "../cli/commands/conclude.js";
 import { buildConveneCommand } from "../cli/commands/convene.js";
 import { buildDoctorCommand } from "../cli/commands/doctor.js";
+import { buildExpertCommand } from "../cli/commands/expert.js";
 import { buildExportCommand } from "../cli/commands/export.js";
 import { buildMemoryCommand } from "../cli/commands/memory.js";
 import { buildPanelsCommand } from "../cli/commands/panels.js";
@@ -37,6 +39,7 @@ export function buildProgram(): Command {
   program.addCommand(buildConcludeCommand());
   program.addCommand(buildExportCommand());
   program.addCommand(buildPanelsCommand());
+  program.addCommand(buildExpertCommand());
   program.addCommand(buildTemplatesCommand());
   program.addCommand(buildMemoryCommand());
   program.addCommand(buildDoctorCommand());
