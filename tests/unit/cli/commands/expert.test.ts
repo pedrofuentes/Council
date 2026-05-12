@@ -1022,5 +1022,87 @@ fs.writeFileSync(p, body, 'utf-8');`,
       // Stub engine must have been called for the retrain analysis.
       expect(stub.sends.length).toBeGreaterThan(0);
     });
+
+    it("--retrain aborts and preserves the profile when a doc clear fails", async () => {
+      await seedExpert(env, PERSONA);
+      await writeDoc("boss", "intro.md", "First training document.");
+
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { DocumentRepository } = await import(
+        "../../../../src/memory/repositories/document-repository.js"
+      );
+      const { ProfileRepository } = await import(
+        "../../../../src/memory/repositories/profile-repository.js"
+      );
+
+      // Seed a baseline profile and a tracked doc row so retrain has
+      // something to clear and a profile to (try to) discard.
+      {
+        const db = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          await new ProfileRepository(db).upsert("boss", {
+            communicationStyle: "Pre-existing baseline.",
+            decisionPatterns: ["baseline"],
+            biases: ["baseline"],
+            vocabulary: ["baseline"],
+            epistemicStance: "Baseline.",
+            lastUpdated: new Date().toISOString(),
+            documentCount: 1,
+            totalWords: 4,
+          });
+          const filePath = path.join(env.dataHome, "experts", "boss", "docs", "intro.md");
+          const repo = new DocumentRepository(db);
+          const created = await repo.create({
+            expertSlug: "boss",
+            filePath,
+            filename: "intro.md",
+            checksum: "cs",
+            sizeBytes: 1,
+            wordCount: 4,
+          });
+          await repo.updateStatus(created.id, "processed", new Date().toISOString());
+        } finally {
+          await db.destroy();
+        }
+      }
+
+      // Force markRemoved to fail so the retrain clear loop reports a
+      // failure and must abort BEFORE deleting the existing profile.
+      const originalMarkRemoved = DocumentRepository.prototype.markRemoved;
+      DocumentRepository.prototype.markRemoved = async function (): Promise<void> {
+        throw new Error("simulated DB failure");
+      };
+
+      let captured = "";
+      let erred = "";
+      try {
+        const cmd = buildExpertCommand(
+          (s) => {
+            captured += s;
+          },
+          (s) => {
+            erred += s;
+          },
+          { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+        );
+        await expect(
+          cmd.parseAsync(["node", "council-expert", "train", "boss", "--retrain"]),
+        ).rejects.toThrow(/retrain aborted|failed to clear/i);
+      } finally {
+        DocumentRepository.prototype.markRemoved = originalMarkRemoved;
+      }
+
+      expect(erred.toLowerCase()).toMatch(/failed to clear/);
+      expect(captured + erred).toMatch(/profile preserved/i);
+
+      // The pre-existing profile must still be in place.
+      const db = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        const profile = await new ProfileRepository(db).findBySlug("boss");
+        expect(profile?.communicationStyle).toMatch(/baseline/i);
+      } finally {
+        await db.destroy();
+      }
+    });
   });
 });
