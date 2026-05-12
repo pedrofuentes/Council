@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS chat_turns (
   is_mention   INTEGER NOT NULL DEFAULT 0,        -- 1 if @mention response
   tokens_in    INTEGER,
   tokens_out   INTEGER,
-  created_at   TEXT NOT NULL
+  created_at   TEXT NOT NULL,
+  UNIQUE (chat_id, seq)                           -- atomic seq allocation invariant
 );
 
 CREATE INDEX IF NOT EXISTS idx_chat_turns_chat_seq

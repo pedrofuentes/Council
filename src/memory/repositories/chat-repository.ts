@@ -179,22 +179,24 @@ export class ChatRepository {
   async addTurn(input: NewChatTurn): Promise<ChatTurn> {
     const now = new Date().toISOString();
     const id = ulid();
-    const seq = (await this.getLatestSeq(input.chatId)) + 1;
-    await this.db
-      .insertInto("chat_turns")
-      .values({
-        id,
-        chat_id: input.chatId,
-        seq,
-        role: input.role,
-        expert_slug: input.expertSlug ?? null,
-        content: input.content,
-        is_mention: input.isMention === true ? 1 : 0,
-        tokens_in: input.tokensIn ?? null,
-        tokens_out: input.tokensOut ?? null,
-        created_at: now,
-      })
-      .execute();
+    const expertSlug = input.expertSlug ?? null;
+    const isMention = input.isMention === true ? 1 : 0;
+    const tokensIn = input.tokensIn ?? null;
+    const tokensOut = input.tokensOut ?? null;
+    // Atomic seq allocation: compute COALESCE(MAX(seq), 0) + 1 inside the
+    // same INSERT statement so SQLite's per-statement write serialization
+    // protects against the read-modify-write race that a separate
+    // getLatestSeq() + insert would have. The UNIQUE (chat_id, seq)
+    // constraint in migration 005 backs this up at the schema level.
+    await sql`
+      INSERT INTO chat_turns
+        (id, chat_id, seq, role, expert_slug, content, is_mention, tokens_in, tokens_out, created_at)
+      SELECT ${id}, ${input.chatId}, COALESCE(MAX(seq), 0) + 1,
+        ${input.role}, ${expertSlug}, ${input.content},
+        ${isMention}, ${tokensIn}, ${tokensOut}, ${now}
+      FROM chat_turns
+      WHERE chat_id = ${input.chatId}
+    `.execute(this.db);
     const row = await this.db
       .selectFrom("chat_turns")
       .selectAll()
