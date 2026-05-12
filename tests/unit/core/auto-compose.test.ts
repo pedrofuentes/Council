@@ -411,4 +411,32 @@ describe("autoComposePanel", () => {
     // diagnose what came back.
     expect(message).toContain("FAKE-ERROR");
   });
+
+  it("rejects composer responses that reference experts by slug (Sentinel #291)", async () => {
+    // The composer is explicitly instructed to return inline definitions,
+    // but the widened PanelDefinitionSchema (Roadmap 4.2) accepts slug
+    // strings too. If the LLM hallucinates slug references like
+    // ["library-cto", "library-pm"], they should NOT be silently dropped —
+    // that would yield a zero-expert panel and a broken debate. Auto-compose
+    // must surface a clear error instead.
+    const slugOnlyPanel = {
+      name: "slug-only",
+      description: "Composer returned only slug strings",
+      experts: ["library-cto", "library-pm", "library-skeptic"],
+    };
+    const engine = new StubEngine({ response: JSON.stringify(slugOnlyPanel) });
+    await engine.start();
+    await expect(autoComposePanel("topic", engine)).rejects.toThrow(/slug|inline/i);
+  });
+
+  it("rejects composer responses that mix slug refs with inline experts (Sentinel #291)", async () => {
+    const mixed = {
+      name: "mixed",
+      description: "Composer mixed inline with slugs",
+      experts: [validPanel.experts[0], "library-other", validPanel.experts[1]],
+    };
+    const engine = new StubEngine({ response: JSON.stringify(mixed) });
+    await engine.start();
+    await expect(autoComposePanel("topic", engine)).rejects.toThrow(/slug|inline/i);
+  });
 });
