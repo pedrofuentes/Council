@@ -573,6 +573,12 @@ async function runPanelChat(opts: PanelChatOptions): Promise<void> {
           "info",
         );
       }
+      if (result.foldersFailed > 0) {
+        renderer.showSystem(
+          `${result.foldersFailed} linked folder(s) could not be scanned — run \`council panel docs list <name>\` to review.`,
+          "warn",
+        );
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       renderer.showSystem(`Panel document scan failed (continuing): ${msg}`, "warn");

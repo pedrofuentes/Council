@@ -161,4 +161,25 @@ export class PanelDocumentRepository {
       .execute();
     return rows.map(toDomain);
   }
+
+  async removeDocumentsUnderFolder(
+    panelName: string,
+    folderPath: string,
+  ): Promise<void> {
+    // Match the folder itself plus any descendant whose path starts with
+    // `folderPath` followed by either OS separator. We test both `/` and
+    // `\` rather than relying on `path.sep` because stored paths may
+    // originate from cross-platform sources (e.g. Windows + WSL).
+    await this.db
+      .deleteFrom("panel_documents")
+      .where("panel_name", "=", panelName)
+      .where((eb) =>
+        eb.or([
+          eb("file_path", "=", folderPath),
+          eb("file_path", "like", `${folderPath}/%`),
+          eb("file_path", "like", `${folderPath}\\%`),
+        ]),
+      )
+      .execute();
+  }
 }

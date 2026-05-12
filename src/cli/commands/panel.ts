@@ -725,10 +725,16 @@ function buildDocsUnlinkCommand(write: Writer, writeError: Writer): Command {
         const indexer = createDocumentIndexer(ctx.db);
         const docs = await ctx.docsRepo.listDocuments(name);
         for (const d of docs) {
-          if (d.filePath.startsWith(absolute + path.sep) || d.filePath === absolute) {
+          if (
+            d.filePath === absolute ||
+            d.filePath.startsWith(absolute + path.sep) ||
+            d.filePath.startsWith(absolute + "/") ||
+            d.filePath.startsWith(absolute + "\\")
+          ) {
             await indexer.remove(d.filePath);
           }
         }
+        await ctx.docsRepo.removeDocumentsUnderFolder(name, absolute);
         await ctx.docsRepo.removeLinkedFolder(name, absolute);
         write(`✓ Unlinked ${displayPath(absolute)} from ${name}.\n`);
       });

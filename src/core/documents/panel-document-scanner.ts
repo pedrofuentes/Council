@@ -38,7 +38,7 @@ export interface ScanPanelDocumentsOptions {
 export interface PanelScanProgress {
   readonly filename: string;
   readonly source: PanelDocumentSource;
-  readonly status: "indexed" | "unchanged" | "failed";
+  readonly status: "indexed" | "unchanged" | "failed" | "folder-failed";
   readonly error?: string;
 }
 
@@ -46,6 +46,7 @@ export interface PanelScanResult {
   readonly indexed: number;
   readonly unchanged: number;
   readonly failed: number;
+  readonly foldersFailed: number;
 }
 
 interface FolderToScan {
@@ -71,14 +72,25 @@ export async function scanAndIndexPanelDocuments(
   let indexed = 0;
   let unchanged = 0;
   let failed = 0;
+  let foldersFailed = 0;
 
   for (const folder of folders) {
     let detection;
     try {
       detection = await detectDocumentChanges(folder.path, known, supportedFormats);
-    } catch {
+    } catch (err: unknown) {
       // A folder that disappears between link and scan should not bring
-      // down the panel; just skip it.
+      // down the panel — but surface it via the result + progress so
+      // callers (and end users) are not left wondering why nothing
+      // appeared.
+      foldersFailed += 1;
+      const msg = err instanceof Error ? err.message : String(err);
+      onProgress?.({
+        filename: folder.path,
+        source: folder.source,
+        status: "folder-failed",
+        error: msg,
+      });
       continue;
     }
 
@@ -129,5 +141,5 @@ export async function scanAndIndexPanelDocuments(
     }
   }
 
-  return { indexed, unchanged, failed };
+  return { indexed, unchanged, failed, foldersFailed };
 }
