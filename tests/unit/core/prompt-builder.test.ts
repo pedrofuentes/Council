@@ -1,15 +1,13 @@
 /**
- * Tests for the persona-profile extension to `buildSystemPrompt()`
- * (Roadmap 6.2).
+ * Tests for `buildSystemPrompt()`: persona-profile rendering (Roadmap 6.2)
+ * and memory-model enforcement by expert kind (Roadmap 7.1).
  *
  * Backwards-compat contract: when no `personaProfile` is passed, the
  * generated prompt MUST be byte-identical to the previous 8-section
- * output. When a profile IS passed, a new section `[8] PERSONA PROFILE`
- * is injected and the existing `CURRENT TASK` section shifts to `[9]`.
- *
- * RED at this commit: `buildSystemPrompt` does not yet accept a
- * PersonaProfile parameter and does not render the [8] PERSONA PROFILE
- * section.
+ * output. When a profile IS passed AND `def.kind === "persona"`, a new
+ * section `[8] PERSONA PROFILE` is injected and the existing
+ * `CURRENT TASK` section shifts to `[9]`. Generic experts ignore any
+ * supplied profile and never receive section [8] PERSONA PROFILE.
  */
 import { describe, expect, it } from "vitest";
 

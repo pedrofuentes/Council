@@ -206,8 +206,11 @@ function sanitizeProfileField(raw: string): string {
  *
  * Without a `personaProfile`, the prompt has the canonical 8 sections
  * (sections 1-8 with `[8] CURRENT TASK`). When a `personaProfile` is
- * provided, a new section `[8] PERSONA PROFILE` is injected and
- * `CURRENT TASK` shifts to `[9]`.
+ * provided AND `def.kind === "persona"`, a new section
+ * `[8] PERSONA PROFILE` is injected and `CURRENT TASK` shifts to `[9]`.
+ * For `def.kind === "generic"` the `personaProfile` argument is ignored
+ * (Roadmap 7.1 memory-model enforcement) — generic experts only ever
+ * receive [7] MEMORY (debate memory).
  *
  * @param def             Static expert profile (validated by ExpertDefinitionSchema)
  * @param memory          Accumulated memory from past sessions (undefined on first run)
