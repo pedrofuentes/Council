@@ -228,8 +228,10 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             const library = new FileExpertLibrary(dataHome, libDb);
             const { resolved, missing } = await resolveExperts(panel.experts, library);
             if (missing.length > 0) {
+              const safeName = stripControlChars(opts.template);
+              const safeMissing = missing.map((s) => stripControlChars(s)).join(", ");
               throw new Error(
-                `Panel "${opts.template}" references experts not in the library: ${missing.join(", ")}. ` +
+                `Panel "${safeName}" references experts not in the library: ${safeMissing}. ` +
                   `Add them with 'council experts create' or use inline expert definitions.`,
               );
             }
@@ -240,7 +242,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
               experts: resolved,
             };
           } finally {
-            libDb.destroy();
+            await libDb.destroy();
           }
         }
       } else {
