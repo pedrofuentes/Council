@@ -124,6 +124,14 @@ council memory inspect <panel-name> --expert cto    # single-expert detail (syst
 # Curate (destructive — requires --yes)
 council memory reset <panel-name> --yes             # clear debates+turns, keep panel+experts
 council memory reset <panel-name> --hard --yes      # delete the panel entirely
+
+# Manage the expert library (~/Council/experts/*.yaml)
+council expert create                               # interactive wizard
+council expert create --persona                     # persona expert (creates docs/ folder)
+council expert list                                 # table view (also --format json)
+council expert inspect <slug>                       # full detail + panel memberships
+council expert edit <slug>                          # open YAML in $EDITOR, re-validate on save
+council expert delete <slug>                        # refuses if in any panel (use --force to override)
 ```
 
 ## Built-in Panels
