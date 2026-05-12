@@ -42,6 +42,7 @@ import type { ExpertDefinition } from "../../core/expert.js";
 import {
   DEBATE_MODES,
   PanelDefinitionSchema,
+  PanelNotFoundError,
   listUserPanels,
   loadUserPanel,
   type DebateMode,
@@ -91,6 +92,29 @@ function sha256(content: string): string {
 
 function panelYamlPath(dataHome: string, name: string): string {
   return path.join(dataHome, "panels", `${name}.yaml`);
+}
+
+/**
+ * Resolve the on-disk panel YAML path, preferring `.yaml` then `.yml`.
+ * Returns null when neither extension exists. Used by inspect/edit so a
+ * panel authored as `<name>.yml` is operated on in place rather than
+ * silently shadowed by a sibling `<name>.yaml`.
+ */
+async function resolveExistingPanelYamlPath(
+  dataHome: string,
+  name: string,
+): Promise<string | null> {
+  const dir = path.join(dataHome, "panels");
+  for (const ext of ["yaml", "yml"] as const) {
+    const candidate = path.join(dir, `${name}.${ext}`);
+    try {
+      await fs.access(candidate);
+      return candidate;
+    } catch {
+      /* try next */
+    }
+  }
+  return null;
 }
 
 function validatePanelName(name: string): void {
@@ -206,13 +230,30 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
           yamlPath,
           yamlChecksum: sha256(content),
         });
+        let yamlWritten = false;
         try {
           await fs.writeFile(yamlPath, content, "utf-8");
+          yamlWritten = true;
           await ctx.panels.setMembers(name, selectedSlugs);
         } catch (err) {
-          await ctx.panels.delete(name).catch(() => {
-            /* best-effort rollback */
+          const rollbackErrors: Error[] = [];
+          await ctx.panels.delete(name).catch((e: unknown) => {
+            rollbackErrors.push(e instanceof Error ? e : new Error(String(e)));
           });
+          if (yamlWritten) {
+            await fs.unlink(yamlPath).catch((e: unknown) => {
+              const code = (e as NodeJS.ErrnoException).code;
+              if (code !== "ENOENT") {
+                rollbackErrors.push(e instanceof Error ? e : new Error(String(e)));
+              }
+            });
+          }
+          if (rollbackErrors.length > 0) {
+            throw new AggregateError(
+              [err as Error, ...rollbackErrors],
+              `Failed to create panel "${name}" and rollback partially failed — storage may be inconsistent`,
+            );
+          }
           throw err;
         }
 
@@ -416,12 +457,17 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
         let def: PanelDefinition;
         try {
           def = await loadUserPanel(name, ctx.dataHome);
-        } catch {
-          const msg = `Panel "${name}" not found.`;
-          writeError(msg + "\n");
-          throw new Error(msg);
+        } catch (err) {
+          if (err instanceof PanelNotFoundError) {
+            const msg = `Panel "${name}" not found.`;
+            writeError(msg + "\n");
+            throw new Error(msg);
+          }
+          throw err;
         }
-        const yamlPath = panelYamlPath(ctx.dataHome, name);
+        const yamlPath =
+          (await resolveExistingPanelYamlPath(ctx.dataHome, name)) ??
+          panelYamlPath(ctx.dataHome, name);
         const slugs = def.experts.map(entrySlug);
 
         write(`Panel: ${def.name}\n`);
@@ -459,15 +505,20 @@ function buildEditCommand(write: Writer, writeError: Writer): Command {
     .argument("<name>", "Panel name to edit")
     .action(async (name: string) => {
       await withPanelContext(async (ctx) => {
-        // Confirm panel exists by attempting to load it.
+        // Confirm panel exists and resolve its actual on-disk file (.yaml or .yml).
         try {
           await loadUserPanel(name, ctx.dataHome);
-        } catch {
-          const msg = `Panel "${name}" not found.`;
-          writeError(msg + "\n");
-          throw new Error(msg);
+        } catch (err) {
+          if (err instanceof PanelNotFoundError) {
+            const msg = `Panel "${name}" not found.`;
+            writeError(msg + "\n");
+            throw new Error(msg);
+          }
+          throw err;
         }
-        const yamlPath = panelYamlPath(ctx.dataHome, name);
+        const yamlPath =
+          (await resolveExistingPanelYamlPath(ctx.dataHome, name)) ??
+          panelYamlPath(ctx.dataHome, name);
         const editor = resolveEditor();
 
         await runEditor(editor, yamlPath);

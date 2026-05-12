@@ -206,7 +206,12 @@ council convene --template <name>  # Use a built-in panel
 council ask <question>           # Continue with the full panel
 council ask --expert <slug> <q>  # Talk to one expert directly
 council conclude                 # Get decision matrix + recommendation
-council panels                              # List all panels
+council panels                              # List runtime debate panels (DB)
+council panel create <name>                 # Create a reusable panel from library experts
+council panel list                          # List user-created panel-library panels
+council panel inspect <name>                # Show panel definition + member detail
+council panel edit <name>                   # Open panel YAML in $EDITOR
+council expert create|list|inspect|edit|delete  # Manage the expert library
 council resume <panel>                      # Resume a previous panel
 council export <panel> --format <fmt>       # Export (markdown | json | adr)
 council memory list                         # Show what experts remember

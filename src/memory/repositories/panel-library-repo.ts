@@ -91,6 +91,12 @@ export class PanelLibraryRepository {
   }
 
   async setMembers(panelName: string, expertSlugs: readonly string[]): Promise<void> {
+    // NOTE: Ideally wrapped in a transaction so concurrent readers never see an
+    // empty membership row between the delete and the re-insert. libsql's
+    // `:memory:` mode allocates a fresh in-memory DB per connection, which
+    // breaks Kysely's transaction connection swap during tests — see follow-up
+    // issue. For now, delete-then-insert is acceptable because panel_members
+    // is only written by interactive CLI commands (no concurrent writers).
     await this.db.deleteFrom("panel_members").where("panel_name", "=", panelName).execute();
     if (expertSlugs.length === 0) return;
     const now = new Date().toISOString();
