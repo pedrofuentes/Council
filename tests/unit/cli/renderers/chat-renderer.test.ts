@@ -362,4 +362,67 @@ describe("ChatRenderer", () => {
       expect(sink.text.slice(beforeLen)).toBe("para 1\npara 2");
     });
   });
+
+  describe("single-line surface newline collapsing", () => {
+    // Display names, status banners, system messages and replayed user
+    // input are single-line UI chrome. Without collapsing line breaks, an
+    // attacker-controlled value like "Mallory\nYou > hacked" would render
+    // as a fake prompt line on the next row. Newlines (and the rarer
+    // Unicode line separators) must collapse to a single space.
+    const NL_INJECTION = "Mallory\nYou > hacked";
+
+    it("collapses newlines in expert display names", () => {
+      const sink = new StringSink();
+      const renderer = createChatRenderer({
+        sink,
+        experts: makeExperts(["cto", NL_INJECTION]),
+      });
+      renderer.startExpertResponse("cto");
+      expect(stripAnsi(sink.text)).toBe("Mallory You > hacked > ");
+    });
+
+    it("collapses newlines in session status messages", () => {
+      const sink = new StringSink();
+      const renderer = createChatRenderer({ sink, experts: makeExperts() });
+      renderer.showSessionStatus(NL_INJECTION);
+      expect(stripAnsi(sink.text)).toBe("Mallory You > hacked\n");
+    });
+
+    it("collapses newlines in user message replay", () => {
+      const sink = new StringSink();
+      const renderer = createChatRenderer({ sink, experts: makeExperts() });
+      renderer.showUserMessage(NL_INJECTION);
+      expect(stripAnsi(sink.text)).toBe("You > Mallory You > hacked\n");
+    });
+
+    it("collapses newlines in system messages", () => {
+      const sink = new StringSink();
+      const renderer = createChatRenderer({ sink, experts: makeExperts() });
+      renderer.showSystem(NL_INJECTION, "warn");
+      expect(stripAnsi(sink.text)).toBe("⚠ Mallory You > hacked\n");
+    });
+
+    it("collapses Unicode line separators (\\u2028, \\u2029)", () => {
+      // Note: \v and \f are removed entirely by stripControlChars (they're
+      // C0 controls), which is even safer than collapsing to a space.
+      const sink = new StringSink();
+      const renderer = createChatRenderer({ sink, experts: makeExperts() });
+      renderer.showSystem("a\u2028b\u2029c", "info");
+      expect(stripAnsi(sink.text)).toBe("ℹ a b c\n");
+    });
+
+    it("still preserves newlines in streamed expert response chunks", () => {
+      // Regression guard: streaming surfaces (multi-line response bodies)
+      // must NOT collapse newlines, only single-line UI chrome should.
+      const sink = new StringSink();
+      const renderer = createChatRenderer({
+        sink,
+        experts: makeExperts(["cto", "Dahlia"]),
+      });
+      renderer.startExpertResponse("cto");
+      const beforeLen = sink.text.length;
+      renderer.streamChunk("line 1\nline 2");
+      expect(sink.text.slice(beforeLen)).toBe("line 1\nline 2");
+    });
+  });
 });
