@@ -1649,3 +1649,148 @@ describe("panel chat — @convene structured debate", () => {
     });
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────
+// Persona expert — on-demand document processing (Roadmap 6.4)
+// ──────────────────────────────────────────────────────────────────────
+
+const PERSONA_SAMPLE: ExpertDefinition = {
+  slug: "sarah-vp",
+  displayName: "Sarah VP",
+  role: "VP of Engineering",
+  expertise: {
+    weightedEvidence: ["delivery commitments"],
+    referenceCases: [],
+    notExpertIn: [],
+  },
+  epistemicStance: "Pragmatist focused on customer outcomes",
+  kind: "persona",
+  personaDescription: "VP of Engineering I report to",
+};
+
+async function seedPersonaWithDocs(
+  env: TestEnv,
+  files: Readonly<Record<string, string>>,
+): Promise<string> {
+  await seedExpert(env, PERSONA_SAMPLE);
+  const docsDir = path.join(env.dataHome, "experts", PERSONA_SAMPLE.slug, "docs");
+  await fs.mkdir(docsDir, { recursive: true });
+  for (const [name, content] of Object.entries(files)) {
+    await fs.writeFile(path.join(docsDir, name), content);
+  }
+  return docsDir;
+}
+
+describe("persona expert — on-demand document processing", () => {
+  let env: TestEnv;
+
+  beforeEach(async () => {
+    env = await makeEnv();
+  });
+  afterEach(async () => {
+    await teardown(env);
+  });
+
+  it("processes new docs on first chat invocation, tracks them in the DB, and shows progress", async () => {
+    await seedPersonaWithDocs(env, {
+      "memo.md": "# Memo\n\nShip incrementally; data over opinions.",
+      "notes.txt": "Customer commitments come first.",
+    });
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", PERSONA_SAMPLE.slug, "--engine", "mock"]);
+
+    // Documents tracked in expert_documents.
+    const db = await createDatabase(path.join(env.home, "council.db"));
+    try {
+      const repo = new (await import(
+        "../../../../src/memory/repositories/document-repository.js"
+      )).DocumentRepository(db);
+      const docs = await repo.findByExpert(PERSONA_SAMPLE.slug);
+      expect(docs.length).toBe(2);
+      expect(docs.every((d) => d.status === "processed")).toBe(true);
+    } finally {
+      await db.destroy();
+    }
+
+    // Progress UX surfaced to the user.
+    expect(out.toLowerCase()).toMatch(/processing|document/);
+  });
+
+  it("skips re-processing on subsequent invocations when no docs changed", async () => {
+    await seedPersonaWithDocs(env, {
+      "memo.md": "# Memo\n\nstable content",
+    });
+
+    // First run — process.
+    const cmd1 = buildChatCommand({
+      write: () => undefined,
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+    await cmd1.parseAsync(["node", "council-chat", PERSONA_SAMPLE.slug, "--engine", "mock"]);
+
+    // Second run — no docs changed; processing should be skipped.
+    let out2 = "";
+    const cmd2 = buildChatCommand({
+      write: (s) => (out2 += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+    await cmd2.parseAsync(["node", "council-chat", PERSONA_SAMPLE.slug, "--engine", "mock"]);
+
+    // No "processing N documents" line on the second run.
+    expect(out2).not.toMatch(/processing \d+ document/i);
+  });
+
+  it("empty docs folder: surfaces info that the persona will work as a generic expert", async () => {
+    await seedPersonaWithDocs(env, {});
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", PERSONA_SAMPLE.slug, "--engine", "mock"]);
+
+    // No documents tracked.
+    const db = await createDatabase(path.join(env.home, "council.db"));
+    try {
+      const repo = new (await import(
+        "../../../../src/memory/repositories/document-repository.js"
+      )).DocumentRepository(db);
+      const docs = await repo.findByExpert(PERSONA_SAMPLE.slug);
+      expect(docs.length).toBe(0);
+    } finally {
+      await db.destroy();
+    }
+
+    // User informed the expert will operate without persona-specific docs.
+    expect(out.toLowerCase()).toMatch(/no documents|generic|empty/);
+  });
+
+  it("generic experts skip the document-processing pipeline entirely", async () => {
+    // Generic expert — no docs folder, no processing UX, chat runs normally.
+    await seedExpert(env);
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+    expect(out).not.toMatch(/processing \d+ document/i);
+    expect(out).not.toMatch(/persona profile/i);
+  });
+});
