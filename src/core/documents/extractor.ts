@@ -44,6 +44,13 @@ export interface ExtractDocumentOptions {
    */
   readonly confinementRoot?: string;
   /**
+   * When true, `confinementRoot` is treated as already-canonical and
+   * the extractor skips its own `fs.realpath()` of the root. Callers
+   * that resolve the root ONCE up front pass this to close the
+   * root-swap TOCTOU window.
+   */
+  readonly _rootIsCanonical?: boolean;
+  /**
    * Test seam — replace `fs.realpath` for the duration of a single
    * call. Used by the unit tests to simulate a post-resolve inode swap
    * without racing the filesystem. Production callers leave this
@@ -144,7 +151,10 @@ export async function extractDocument(
     // 4. Confinement: canonical must lie inside the docs root. Symlinks
     //    pointing outside are rejected here.
     if (options.confinementRoot !== undefined) {
-      const rootCanonical = await realpath(options.confinementRoot);
+      const rootCanonical =
+        options._rootIsCanonical === true
+          ? options.confinementRoot
+          : await realpath(options.confinementRoot);
       if (!isPathInside(canonical, rootCanonical)) {
         throw new Error(
           `extractDocument: ${filePath} resolves outside confinement root ${options.confinementRoot}`,

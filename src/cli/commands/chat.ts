@@ -782,6 +782,12 @@ async function maybeProcessPersonaDocs(
           `(${result.filesSkipped} unchanged, ${result.filesFailed} failed, ${result.filesRemoved} removed).`,
         "info",
       );
+      if (result.profileError !== null) {
+        renderer.showSystem(
+          `Persona profile refresh failed (continuing with stale profile): ${result.profileError}`,
+          "warn",
+        );
+      }
     } else {
       const tracked = await documentRepo.getChecksumMap(expert.slug);
       if (tracked.size === 0) {

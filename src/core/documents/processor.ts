@@ -47,6 +47,12 @@ export interface ProcessingResult {
   readonly filesRemoved: number;
   readonly totalWords: number;
   readonly profileUpdated: boolean;
+  /**
+   * When the analyzer or profile upsert failed, this is a short
+   * description suitable for logging. `null` when profile refresh
+   * succeeded or wasn't attempted.
+   */
+  readonly profileError: string | null;
 }
 
 export interface ProcessingProgress {
@@ -83,41 +89,45 @@ export function createDocumentProcessor(
   const { engine, documentRepo, profileRepo, indexer, config } = options;
 
   /**
-   * Reject docs roots that are themselves symlinks/junctions — when the
-   * root is a link, its canonical target becomes the trusted
-   * confinement boundary, allowing files outside the user's intended
-   * expert sandbox to be ingested. Anchoring confinement to a real
-   * (non-symlink) directory closes that bypass. Missing directories
-   * pass through; the underlying scan returns an empty result.
+   * Resolve and freeze the docs root's canonical identity ONCE at entry.
+   * Returns the canonical path so all downstream confinement checks
+   * compare against the same immutable string — closing the race window
+   * where a post-entry path swap could re-anchor confinement to an
+   * attacker-chosen target. Also rejects symlinked roots outright.
+   *
+   * Returns `null` when the root does not exist (so the underlying scan
+   * can produce an empty result without throwing).
    */
-  async function assertRealDirRoot(docsPath: string): Promise<void> {
+  async function resolveRealRoot(docsPath: string): Promise<string | null> {
     let stat;
     try {
       stat = await fs.lstat(docsPath);
-    } catch {
-      return; // ENOENT etc. — detector will produce an empty result.
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw err;
     }
     if (stat.isSymbolicLink()) {
       throw new Error(
         `documents: docs root ${docsPath} is a symlink/junction; refusing to follow it for confinement safety`,
       );
     }
+    return fs.realpath(docsPath);
   }
 
   return {
     async needsProcessing(expertSlug: string, docsPath: string): Promise<boolean> {
-      await assertRealDirRoot(docsPath);
+      const rootCanonical = await resolveRealRoot(docsPath);
+      if (rootCanonical === null) return false;
       const known = await documentRepo.getChecksumMap(expertSlug);
       const detection = await detectDocumentChanges(
-        docsPath,
+        rootCanonical,
         known,
         config.supportedFormats,
-        { confinementRoot: docsPath },
+        { confinementRoot: rootCanonical, _rootIsCanonical: true },
       );
       if (detection.newFiles.length > 0 || detection.modifiedFiles.length > 0) {
         return true;
       }
-      // A tracked file that's no longer present is also "work to do".
       const present = new Set<string>([
         ...detection.newFiles.map((f) => f.path),
         ...detection.modifiedFiles.map((f) => f.path),
@@ -134,14 +144,23 @@ export function createDocumentProcessor(
       docsPath: string,
       onProgress?: (progress: ProcessingProgress) => void,
     ): Promise<ProcessingResult> {
-      await assertRealDirRoot(docsPath);
+      const rootCanonical = await resolveRealRoot(docsPath);
       const known = await documentRepo.getChecksumMap(expertSlug);
-      const detection = await detectDocumentChanges(
-        docsPath,
-        known,
-        config.supportedFormats,
-        { confinementRoot: docsPath },
-      );
+      const detection =
+        rootCanonical === null
+          ? {
+              newFiles: [],
+              modifiedFiles: [],
+              unchangedFiles: [],
+              unsupportedFiles: [],
+              rejectedFiles: [],
+            }
+          : await detectDocumentChanges(
+              rootCanonical,
+              known,
+              config.supportedFormats,
+              { confinementRoot: rootCanonical, _rootIsCanonical: true },
+            );
 
       const toProcess = [...detection.newFiles, ...detection.modifiedFiles];
       const skipped = detection.unchangedFiles.length;
@@ -189,7 +208,8 @@ export function createDocumentProcessor(
       for (const file of toProcess) {
         try {
           const extracted = await extractDocument(file.path, {
-            confinementRoot: docsPath,
+            confinementRoot: rootCanonical ?? docsPath,
+            _rootIsCanonical: rootCanonical !== null,
           });
 
           await indexer.index({
@@ -248,12 +268,13 @@ export function createDocumentProcessor(
       }
 
       let profileUpdated = false;
+      let profileError: string | null = null;
       if (successfullyExtracted.length > 0) {
         try {
           const models = await engine.listModels();
           const model = models[0];
           if (model === undefined) {
-            throw new Error("engine returned no models for profile analysis");
+            throw new Error("documents: no engine models available for analysis");
           }
           const existingProfile: PersonaProfile | null =
             await profileRepo.findBySlug(expertSlug);
@@ -268,9 +289,11 @@ export function createDocumentProcessor(
           );
           await profileRepo.upsert(expertSlug, profile);
           profileUpdated = true;
-        } catch {
-          // Non-fatal: existing profile (if any) is preserved.
+        } catch (err: unknown) {
+          // Non-fatal: existing profile (if any) is preserved, but
+          // surface a diagnostic so the caller can warn the user.
           profileUpdated = false;
+          profileError = err instanceof Error ? err.message : String(err);
         }
       }
 
@@ -281,6 +304,7 @@ export function createDocumentProcessor(
         filesRemoved: removed,
         totalWords,
         profileUpdated,
+        profileError,
       };
     },
   };

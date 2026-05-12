@@ -53,6 +53,15 @@ export interface DetectDocumentChangesOptions {
    */
   readonly confinementRoot?: string;
   /**
+   * When true, `confinementRoot` is treated as already-canonical: the
+   * detector skips its own `fs.realpath()` of the root and uses the
+   * provided string directly. Callers that resolve the root ONCE at
+   * entry (e.g. `DocumentProcessor`) set this to close the root-swap
+   * TOCTOU window where re-resolving the root could pick up a fresh
+   * symlink installed between entry and per-file confinement checks.
+   */
+  readonly _rootIsCanonical?: boolean;
+  /**
    * Test seam — replace `fs.realpath` for the duration of a single
    * call. Production callers leave this undefined.
    */
@@ -96,7 +105,10 @@ async function readConfined(
       if (lstat.ino !== fdStat.ino || lstat.dev !== fdStat.dev) {
         return null;
       }
-      const rootCanonical = await realpath(options.confinementRoot);
+      const rootCanonical =
+        options._rootIsCanonical === true
+          ? options.confinementRoot
+          : await realpath(options.confinementRoot);
       if (!isPathInside(canonical, rootCanonical)) {
         return null;
       }
