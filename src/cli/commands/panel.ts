@@ -183,6 +183,9 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
           await ctx.panelRepo.delete(name).catch(() => {
             /* best-effort rollback */
           });
+          await fs.unlink(yamlPath).catch(() => {
+            /* best-effort rollback — file may not exist yet */
+          });
           throw err;
         }
 
@@ -457,10 +460,13 @@ function buildEditCommand(write: Writer, writeError: Writer): Command {
 
         await runEditor(editor, yamlPath);
 
-        // Re-read and validate.
+        // Re-read and validate. Keep the bytes so checksum below describes
+        // exactly the content we validated (closes a TOCTOU race vs. a
+        // second readFile() at write time).
+        let onDisk: string;
         let parsed: PanelDefinition;
         try {
-          const onDisk = await fs.readFile(yamlPath, "utf-8");
+          onDisk = await fs.readFile(yamlPath, "utf-8");
           parsed = PanelDefinitionSchema.parse(yaml.parse(onDisk));
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -481,8 +487,7 @@ function buildEditCommand(write: Writer, writeError: Writer): Command {
         const slugRefs = parsed.experts.map(entrySlug);
         await assertExpertsExist(slugRefs, ctx.library, writeError);
 
-        const onDiskContent = await fs.readFile(yamlPath, "utf-8");
-        const checksum = sha256(onDiskContent);
+        const checksum = sha256(onDisk);
         await ctx.panelRepo.update(name, {
           description: parsed.description ?? null,
           yamlPath,

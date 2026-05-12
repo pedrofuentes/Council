@@ -93,6 +93,15 @@ export class PanelLibraryRepository {
   }
 
   async setMembers(panelName: string, expertSlugs: readonly string[]): Promise<void> {
+    // Snapshot existing membership so we can restore on failure. We can't
+    // use a Kysely transaction here because the libsql :memory: dialect
+    // opens transactions on a fresh connection that does not see the
+    // primary connection's schema, which breaks every in-memory unit test.
+    const snapshot = await this.db
+      .selectFrom("panel_members")
+      .selectAll()
+      .where("panel_name", "=", panelName)
+      .execute();
     await this.db.deleteFrom("panel_members").where("panel_name", "=", panelName).execute();
     if (expertSlugs.length === 0) return;
     const now = new Date().toISOString();
@@ -102,7 +111,27 @@ export class PanelLibraryRepository {
       position: index,
       created_at: now,
     }));
-    await this.db.insertInto("panel_members").values(rows).execute();
+    try {
+      await this.db.insertInto("panel_members").values(rows).execute();
+    } catch (err) {
+      if (snapshot.length > 0) {
+        await this.db
+          .insertInto("panel_members")
+          .values(
+            snapshot.map((s) => ({
+              panel_name: s.panel_name,
+              expert_slug: s.expert_slug,
+              position: s.position,
+              created_at: s.created_at,
+            })),
+          )
+          .execute()
+          .catch(() => {
+            /* best-effort restore — caller already sees the original failure */
+          });
+      }
+      throw err;
+    }
   }
 
   async getMembers(panelName: string): Promise<readonly string[]> {
