@@ -169,12 +169,30 @@ describe("autoComposePanel", () => {
     expect(result.experts.map((e) => e.slug)).toEqual(["expert-a", "expert-b", "expert-c"]);
   });
 
+  it("preserves expert kind when the model returns persona experts", async () => {
+    const personaPanel = {
+      ...validPanel,
+      experts: [
+        {
+          ...validPanel.experts[0],
+          kind: "persona",
+          personaDescription: "A pragmatic engineering leader with 20 years of experience.",
+        },
+        validPanel.experts[1],
+        validPanel.experts[2],
+      ],
+    };
+    const engine = new StubEngine({ response: JSON.stringify(personaPanel) });
+    await engine.start();
+    const result = await autoComposePanel("topic", engine);
+    expect(result.experts[0]?.kind).toBe("persona");
+    expect(result.experts[1]?.kind).toBe("generic");
+  });
+
   it("throws a descriptive error when the engine returns malformed JSON", async () => {
     const engine = new StubEngine({ response: "not json at all { invalid" });
     await engine.start();
-    await expect(
-      autoComposePanel("topic", engine),
-    ).rejects.toThrow(/JSON|parse/i);
+    await expect(autoComposePanel("topic", engine)).rejects.toThrow(/JSON|parse/i);
   });
 
   it("throws a descriptive error when the JSON fails Zod validation", async () => {
@@ -283,13 +301,15 @@ describe("autoComposePanel", () => {
     await autoComposePanel("topic", engine);
     const composerId = engine.addedSpecs[0]?.id ?? "";
     expect(engine.removedExperts).toContain(composerId);
-    await expect(engine.addExpert({
-      id: composerId,
-      slug: "x",
-      displayName: "x",
-      model: "m",
-      systemMessage: "m",
-    })).resolves.not.toThrow();
+    await expect(
+      engine.addExpert({
+        id: composerId,
+        slug: "x",
+        displayName: "x",
+        model: "m",
+        systemMessage: "m",
+      }),
+    ).resolves.not.toThrow();
   });
 
   it("sanitizes policy-bearing fields the LLM may inject (model, debateProtocol, outputContract, forbiddenMoves)", async () => {
@@ -355,9 +375,9 @@ describe("autoComposePanel", () => {
   it("times out and aborts the composer send when the engine hangs", async () => {
     const engine = new StubEngine({ response: "", hang: true });
     await engine.start();
-    await expect(
-      autoComposePanel("topic", engine, { timeoutMs: 25 }),
-    ).rejects.toThrow(/timed out|ABORTED|abort/i);
+    await expect(autoComposePanel("topic", engine, { timeoutMs: 25 })).rejects.toThrow(
+      /timed out|ABORTED|abort/i,
+    );
     // Cleanup must still happen on timeout.
     const composerId = engine.addedSpecs[0]?.id ?? "";
     expect(engine.removedExperts).toContain(composerId);

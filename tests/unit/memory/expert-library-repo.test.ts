@@ -72,6 +72,13 @@ describe("ExpertLibraryRepository", () => {
     expect(after?.updatedAt >= created.updatedAt).toBe(true);
   });
 
+  it("update() patches the kind column", async () => {
+    await repo.create(sample("cto"));
+    await repo.update("cto", { kind: "persona" });
+    const after = await repo.findBySlug("cto");
+    expect(after?.kind).toBe("persona");
+  });
+
   it("delete() removes the row", async () => {
     await repo.create(sample("cto"));
     await repo.delete("cto");

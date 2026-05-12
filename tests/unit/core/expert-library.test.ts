@@ -281,12 +281,24 @@ describe("FileExpertLibrary", () => {
 
     it("surfaces AggregateError when both YAML write and DB rollback fail on create()", async () => {
       const yamlPath = path.join(dataHome, "experts", "cto.yaml");
-      await fs.mkdir(yamlPath, { recursive: true }); // makes writeFile fail
+      const fsSync = await import("node:fs");
 
-      // Force the rollback delete to also fail.
-      const spy = vi.spyOn(db, "deleteFrom").mockImplementationOnce(() => {
-        throw new Error("rollback delete failed");
+      // Reach into the library's internal repo (TS private is compile-time
+      // only) so we can choreograph the rollback failure deterministically:
+      //  1) Let the real DB insert happen.
+      //  2) Swap the YAML target to a directory so writeFile fails (EISDIR).
+      //  3) Make the compensating delete throw too.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const repo = (lib as any).repo;
+      const originalCreate = repo.create.bind(repo);
+      const createSpy = vi.spyOn(repo, "create").mockImplementationOnce(async (input: unknown) => {
+        await originalCreate(input);
+        await fs.mkdir(path.dirname(yamlPath), { recursive: true });
+        fsSync.mkdirSync(yamlPath);
       });
+      const deleteSpy = vi
+        .spyOn(repo, "delete")
+        .mockImplementationOnce(() => Promise.reject(new Error("rollback delete failed")));
 
       const err = await lib.create(makeDef()).then(
         () => null,
@@ -295,7 +307,8 @@ describe("FileExpertLibrary", () => {
       expect(err).toBeInstanceOf(AggregateError);
       expect((err as AggregateError).message).toMatch(/storage may be inconsistent/i);
       expect((err as AggregateError).errors.length).toBeGreaterThanOrEqual(2);
-      spy.mockRestore();
+      createSpy.mockRestore();
+      deleteSpy.mockRestore();
     });
 
     it("restores prior YAML when DB update fails on update()", async () => {
