@@ -23,6 +23,7 @@ import type { ChatTurn } from "../../../../src/core/chat/chat-session.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import { ChatRepository } from "../../../../src/memory/repositories/chat-repository.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
+import type { CouncilEngine } from "../../../../src/engine/index.js";
 
 interface TestEnv {
   readonly home: string;
@@ -238,6 +239,29 @@ describe("buildChatCommand", () => {
       await teardown(env);
     });
 
+    it("errors when --engine is missing", async () => {
+      await seedExpert(env);
+      let err = "";
+      const cmd = buildChatCommand({
+        write: () => undefined,
+        writeError: (s) => (err += s),
+      });
+      await expect(
+        cmd.parseAsync(["node", "council-chat", "dahlia-cto"]),
+      ).rejects.toThrow(/--engine is required/i);
+    });
+
+    it("errors when --engine value is unknown", async () => {
+      await seedExpert(env);
+      const cmd = buildChatCommand({
+        write: () => undefined,
+        writeError: () => undefined,
+      });
+      await expect(
+        cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "bogus"]),
+      ).rejects.toThrow(/--engine is required.*mock|copilot/i);
+    });
+
     it("errors when the expert slug does not exist", async () => {
       let err = "";
       const cmd = buildChatCommand({
@@ -349,6 +373,116 @@ describe("buildChatCommand", () => {
         expect(active).toBeDefined();
         expect(active?.id).not.toBe(priorId);
       });
+    });
+
+    it("--new does NOT archive the prior session when engine startup fails", async () => {
+      await seedExpert(env);
+      let priorId = "";
+      await withRepo(env, async (repo) => {
+        const s = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        priorId = s.id;
+        await repo.addTurn({ chatId: s.id, role: "user", content: "old" });
+      });
+
+      // Engine that fails on addExpert immediately.
+      const failing = new MockEngine({ failOnAddExpert: { afterN: 0 } });
+      const cmd = buildChatCommand({
+        write: () => undefined,
+        writeError: () => undefined,
+        engineFactory: () => failing,
+        inputProvider: () => scriptedInput([]),
+      });
+      await expect(
+        cmd.parseAsync([
+          "node",
+          "council-chat",
+          "dahlia-cto",
+          "--engine",
+          "mock",
+          "--new",
+        ]),
+      ).rejects.toThrow();
+
+      await withRepo(env, async (repo) => {
+        const prior = await repo.findSessionById(priorId);
+        // Atomicity: prior session must remain ACTIVE since startup failed.
+        expect(prior?.status).toBe("active");
+      });
+    });
+
+    it("exits gracefully on EOF (input provider returns null)", async () => {
+      await seedExpert(env);
+      let out = "";
+      const cmd = buildChatCommand({
+        write: (s) => (out += s),
+        writeError: () => undefined,
+        engineFactory: () => new MockEngine(),
+        inputProvider: () => scriptedInput([]),
+      });
+      await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+      expect(out).toMatch(/Conversation saved/i);
+    });
+
+    it("on engine error: saves the user turn, warns, and continues the loop", async () => {
+      await seedExpert(env);
+
+      // Custom engine: succeeds add/start/stop but every send() yields
+      // a non-recoverable error event. Lets us assert the failure path
+      // without depending on MockEngine's expertId-keyed failure seams
+      // (chat.ts assigns a fresh ULID per spec).
+      const failingEngine: CouncilEngine = {
+        async start(): Promise<void> {
+          /* ok */
+        },
+        async stop(): Promise<void> {
+          /* ok */
+        },
+        async addExpert(): Promise<void> {
+          /* ok */
+        },
+        async removeExpert(): Promise<void> {
+          /* ok */
+        },
+        async listModels(): Promise<readonly string[]> {
+          return ["mock"];
+        },
+        send(opts) {
+          const expertId = opts.expertId;
+          return {
+            async *[Symbol.asyncIterator]() {
+              yield {
+                kind: "error" as const,
+                expertId,
+                error: { code: "PROVIDER_ERROR" as const, message: "boom" },
+                recoverable: false,
+              };
+            },
+          };
+        },
+      };
+
+      let out = "";
+      let err = "";
+      const cmd = buildChatCommand({
+        write: (s) => (out += s),
+        writeError: (s) => (err += s),
+        engineFactory: () => failingEngine,
+        inputProvider: () => scriptedInput(["help me", "exit"]),
+      });
+      await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+
+      // User turn must be persisted even when the response failed (PRD §F4).
+      await withRepo(env, async (repo) => {
+        const session = await repo.findActiveSession("expert", "dahlia-cto");
+        const turns = await repo.getTurns(session?.id ?? "");
+        expect(turns.some((t) => t.role === "user" && t.content === "help me")).toBe(true);
+        // No expert turn was saved (the response failed).
+        expect(turns.some((t) => t.role === "expert")).toBe(false);
+      });
+      // The loop continued past the failure to the second scripted line.
+      expect(out).toMatch(/Conversation saved/i);
+      // A user-facing warning was emitted somewhere.
+      expect(out + err).toMatch(/Failed to get response/i);
     });
   });
 });
