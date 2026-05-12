@@ -25,6 +25,7 @@
  * called from chat startup so we only show progress UX when there's
  * actually work to do.
  */
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import { detectDocumentChanges } from "./detector.js";
@@ -43,6 +44,7 @@ export interface ProcessingResult {
   readonly filesProcessed: number;
   readonly filesSkipped: number;
   readonly filesFailed: number;
+  readonly filesRemoved: number;
   readonly totalWords: number;
   readonly profileUpdated: boolean;
 }
@@ -80,8 +82,31 @@ export function createDocumentProcessor(
 ): DocumentProcessor {
   const { engine, documentRepo, profileRepo, indexer, config } = options;
 
+  /**
+   * Reject docs roots that are themselves symlinks/junctions — when the
+   * root is a link, its canonical target becomes the trusted
+   * confinement boundary, allowing files outside the user's intended
+   * expert sandbox to be ingested. Anchoring confinement to a real
+   * (non-symlink) directory closes that bypass. Missing directories
+   * pass through; the underlying scan returns an empty result.
+   */
+  async function assertRealDirRoot(docsPath: string): Promise<void> {
+    let stat;
+    try {
+      stat = await fs.lstat(docsPath);
+    } catch {
+      return; // ENOENT etc. — detector will produce an empty result.
+    }
+    if (stat.isSymbolicLink()) {
+      throw new Error(
+        `documents: docs root ${docsPath} is a symlink/junction; refusing to follow it for confinement safety`,
+      );
+    }
+  }
+
   return {
     async needsProcessing(expertSlug: string, docsPath: string): Promise<boolean> {
+      await assertRealDirRoot(docsPath);
       const known = await documentRepo.getChecksumMap(expertSlug);
       const detection = await detectDocumentChanges(
         docsPath,
@@ -89,7 +114,19 @@ export function createDocumentProcessor(
         config.supportedFormats,
         { confinementRoot: docsPath },
       );
-      return detection.newFiles.length > 0 || detection.modifiedFiles.length > 0;
+      if (detection.newFiles.length > 0 || detection.modifiedFiles.length > 0) {
+        return true;
+      }
+      // A tracked file that's no longer present is also "work to do".
+      const present = new Set<string>([
+        ...detection.newFiles.map((f) => f.path),
+        ...detection.modifiedFiles.map((f) => f.path),
+        ...detection.unchangedFiles.map((f) => f.path),
+      ]);
+      for (const tracked of known.keys()) {
+        if (!present.has(tracked)) return true;
+      }
+      return false;
     },
 
     async process(
@@ -97,6 +134,7 @@ export function createDocumentProcessor(
       docsPath: string,
       onProgress?: (progress: ProcessingProgress) => void,
     ): Promise<ProcessingResult> {
+      await assertRealDirRoot(docsPath);
       const known = await documentRepo.getChecksumMap(expertSlug);
       const detection = await detectDocumentChanges(
         docsPath,
@@ -110,8 +148,29 @@ export function createDocumentProcessor(
 
       let processed = 0;
       let failed = 0;
+      let removed = 0;
       let totalWords = 0;
       const successfullyExtracted: AnalyzerDoc[] = [];
+
+      // Reconcile deletions: any tracked file that did not appear in the
+      // current scan (and wasn't merely rejected by confinement) is
+      // marked removed in `expert_documents` and pruned from the FTS
+      // index, so deleted content cannot continue influencing retrieval
+      // or persona analysis.
+      const seenPaths = new Set<string>([
+        ...detection.newFiles.map((f) => f.path),
+        ...detection.modifiedFiles.map((f) => f.path),
+        ...detection.unchangedFiles.map((f) => f.path),
+        ...detection.rejectedFiles,
+      ]);
+      for (const trackedPath of known.keys()) {
+        if (seenPaths.has(trackedPath)) continue;
+        const existing = await documentRepo.findByPath(expertSlug, trackedPath);
+        if (!existing) continue;
+        await indexer.remove(trackedPath);
+        await documentRepo.markRemoved(existing.id);
+        removed += 1;
+      }
 
       // Confinement-rejected files (symlinks pointing outside docsPath,
       // post-open inode swaps, etc.) are reported up-front as failures
@@ -219,6 +278,7 @@ export function createDocumentProcessor(
         filesProcessed: processed,
         filesSkipped: skipped,
         filesFailed: failed,
+        filesRemoved: removed,
         totalWords,
         profileUpdated,
       };

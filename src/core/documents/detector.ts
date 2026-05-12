@@ -126,14 +126,21 @@ export async function detectDocumentChanges(
   let entries: string[];
   try {
     entries = await fs.readdir(docsPath, { recursive: true });
-  } catch {
-    return {
-      newFiles: [],
-      modifiedFiles: [],
-      unchangedFiles: [],
-      unsupportedFiles: [],
-      rejectedFiles: [],
-    };
+  } catch (err: unknown) {
+    // Only treat truly-missing directories as empty; surface any other
+    // filesystem error (permission denied, ENOTDIR, etc.) so callers
+    // see a real problem instead of mistaking it for "no documents".
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") {
+      return {
+        newFiles: [],
+        modifiedFiles: [],
+        unchangedFiles: [],
+        unsupportedFiles: [],
+        rejectedFiles: [],
+      };
+    }
+    throw err;
   }
 
   const newFiles: DocumentFile[] = [];

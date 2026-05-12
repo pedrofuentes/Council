@@ -779,7 +779,7 @@ async function maybeProcessPersonaDocs(
       });
       renderer.showSystem(
         `Processed ${result.filesProcessed} new/changed document(s) ` +
-          `(${result.filesSkipped} unchanged, ${result.filesFailed} failed).`,
+          `(${result.filesSkipped} unchanged, ${result.filesFailed} failed, ${result.filesRemoved} removed).`,
         "info",
       );
     } else {
