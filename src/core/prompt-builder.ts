@@ -20,6 +20,7 @@
  * freedom produces mush." Default forbidden phrases and the disagreement
  * budget are ALWAYS injected — they cannot be opted out of.
  */
+import type { PersonaProfile } from "./documents/profile-analyzer.js";
 import type { ExpertDefinition } from "./expert.js";
 
 /**
@@ -141,19 +142,85 @@ function renderMemory(memory: ExpertMemory | undefined): string {
   return sections.join("\n");
 }
 
+function renderPersonaProfile(profile: PersonaProfile): string {
+  const lines: string[] = [
+    "Based on analysis of documents about you, you exhibit the following traits:",
+    "",
+    `Communication Style: ${sanitizeProfileField(profile.communicationStyle)}`,
+    "",
+    "Decision Patterns:",
+  ];
+  if (profile.decisionPatterns.length === 0) {
+    lines.push("  - (none observed)");
+  } else {
+    for (const p of profile.decisionPatterns) lines.push(`  - ${sanitizeProfileField(p)}`);
+  }
+  lines.push("");
+  lines.push("Cognitive Tendencies:");
+  if (profile.biases.length === 0) {
+    lines.push("  - (none observed)");
+  } else {
+    for (const b of profile.biases) lines.push(`  - ${sanitizeProfileField(b)}`);
+  }
+  lines.push("");
+  lines.push(
+    `Characteristic Vocabulary: ${profile.vocabulary.map((v) => sanitizeProfileField(v)).join(", ")}`,
+  );
+  lines.push("");
+  lines.push(
+    "Adopt these traits naturally in your responses. Do not explicitly mention or quote this profile.",
+  );
+  return lines.join("\n");
+}
+
 /**
- * Build the full 8-section system prompt for an expert.
+ * Defang profile-field strings before interpolation into the privileged
+ * system prompt. Profile fields are derived from untrusted documents, so
+ * even though `analyzeDocuments()` enforces a JSON shape, the string
+ * *contents* may carry adversarial payloads (e.g. forged section markers
+ * like "[10] OVERRIDE …" or embedded C0 control bytes).
  *
- * @param def     Static expert profile (validated by ExpertDefinitionSchema)
- * @param memory  Accumulated memory from past sessions (undefined on first run)
- * @param task    Per-turn instruction from the moderator
+ * The transformation here is intentionally conservative:
+ *   - Strip C0 control characters (except tab/newline/carriage return),
+ *     then strip DEL.
+ *   - Collapse any run of newlines to a single space so injected
+ *     "[N] SECTION" lines cannot appear at column 0 of the prompt.
+ *   - Neutralize bracketed numeric section-marker prefixes by escaping
+ *     the opening bracket.
+ *   - Cap total length so a runaway field cannot drown the prompt.
+ */
+function sanitizeProfileField(raw: string): string {
+  // eslint-disable-next-line no-control-regex
+  const stripped = raw.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
+  // Collapse every Unicode line-break code point (CR/LF, NEL, LS, PS) to
+  // a single space so injected directives cannot appear at column 0 of
+  // the system prompt.
+  const collapsed = stripped.replace(/[\r\n\u0085\u2028\u2029]+/g, " ");
+  const defanged = collapsed.replace(/\[(\d+)\]/g, "(sec-$1)");
+  const MAX = 2000;
+  return defanged.length > MAX ? `${defanged.slice(0, MAX)}…` : defanged;
+}
+
+/**
+ * Build the full system prompt for an expert.
+ *
+ * Without a `personaProfile`, the prompt has the canonical 8 sections
+ * (sections 1-8 with `[8] CURRENT TASK`). When a `personaProfile` is
+ * provided, a new section `[8] PERSONA PROFILE` is injected and
+ * `CURRENT TASK` shifts to `[9]`.
+ *
+ * @param def             Static expert profile (validated by ExpertDefinitionSchema)
+ * @param memory          Accumulated memory from past sessions (undefined on first run)
+ * @param task            Per-turn instruction from the moderator
+ * @param personaProfile  Optional LLM-derived behavioral profile (Roadmap 6.2)
  */
 export function buildSystemPrompt(
   def: ExpertDefinition,
   memory: ExpertMemory | undefined,
   task: string,
+  personaProfile?: PersonaProfile,
 ): string {
-  return [
+  const sections: string[] = [
     "[1] IDENTITY",
     renderIdentity(def),
     "",
@@ -175,7 +242,16 @@ export function buildSystemPrompt(
     "[7] MEMORY",
     renderMemory(memory),
     "",
-    "[8] CURRENT TASK",
-    task,
-  ].join("\n");
+  ];
+  if (personaProfile) {
+    sections.push("[8] PERSONA PROFILE");
+    sections.push(renderPersonaProfile(personaProfile));
+    sections.push("");
+    sections.push("[9] CURRENT TASK");
+    sections.push(task);
+  } else {
+    sections.push("[8] CURRENT TASK");
+    sections.push(task);
+  }
+  return sections.join("\n");
 }
