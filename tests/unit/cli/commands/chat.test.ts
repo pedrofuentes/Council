@@ -454,6 +454,41 @@ describe("buildChatCommand", () => {
       expect(out).toMatch(/Conversation saved/i);
     });
 
+    it("surfaces a warning (not silence) when the panel-membership query fails, and still starts chat", async () => {
+      // Force the membership query to throw by dropping the panel_members
+      // table from the underlying DB after the schema migration. The chat
+      // command opens its own DB connection but reads the same file, so
+      // the dropped table will surface as a SQLite "no such table" error
+      // at query time. The chat must still launch (best-effort context).
+      await seedExpert(env);
+      const setupDb = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        await setupDb.schema.dropTable("panel_members").execute();
+      } finally {
+        await setupDb.destroy();
+      }
+
+      let out = "";
+      const cmd = buildChatCommand({
+        write: (s) => (out += s),
+        writeError: () => undefined,
+        engineFactory: () => new MockEngine(),
+        inputProvider: () => scriptedInput(["hi", "/quit"]),
+      });
+      await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+
+      // Warning must be surfaced — a silent swallow would leave operators
+      // unable to diagnose why cross-panel context never appears.
+      expect(out).toMatch(/panel memberships|cross-panel/i);
+      // Chat must still complete: user turn is persisted.
+      await withRepo(env, async (repo) => {
+        const session = await repo.findActiveSession("expert", "dahlia-cto");
+        expect(session).toBeDefined();
+        const turns = await repo.getTurns(session?.id ?? "");
+        expect(turns.some((t) => t.role === "user" && t.content === "hi")).toBe(true);
+      });
+    });
+
     it("on engine error: saves the user turn, warns, and continues the loop", async () => {
       await seedExpert(env);
 
