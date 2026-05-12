@@ -206,5 +206,29 @@ describe("extractDocument", () => {
       const result = await extractDocument(filePath);
       expect(result.content).toBe("still works");
     });
+
+    // ── Sentinel pr373 cycle 4: root-swap TOCTOU ─────────────────────
+    it("does NOT re-resolve the confinement root when _rootIsCanonical is set", async () => {
+      const canonical = await fs.realpath(dir);
+      const filePath = path.join(canonical, "frozen.md");
+      await fs.writeFile(filePath, "frozen body");
+
+      const calls: string[] = [];
+      const override = async (p: string): Promise<string> => {
+        calls.push(p);
+        if (p === canonical) {
+          throw new Error(`extractor re-resolved the root: ${p}`);
+        }
+        return fs.realpath(p);
+      };
+
+      const result = await extractDocument(filePath, {
+        confinementRoot: canonical,
+        _rootIsCanonical: true,
+        _realpathOverride: override,
+      });
+      expect(result.content).toBe("frozen body");
+      expect(calls.every((p) => p !== canonical)).toBe(true);
+    });
   });
 });

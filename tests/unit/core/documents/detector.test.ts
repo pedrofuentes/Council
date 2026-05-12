@@ -160,5 +160,38 @@ describe("detectDocumentChanges", () => {
         detectDocumentChanges(filePath, new Map(), [".md"], { confinementRoot: dir }),
       ).rejects.toThrow();
     });
+
+    // ── Sentinel pr373 cycle 4: root-swap TOCTOU ─────────────────────
+    it("does NOT re-resolve the confinement root when _rootIsCanonical is set", async () => {
+      // Prove the frozen-root contract: when the caller asserts the
+      // confinement root is already canonical, the detector must not
+      // call realpath() on it again. We assert this by injecting an
+      // override that THROWS for the root path — the call must still
+      // succeed (because realpath is only invoked for the FILE, not
+      // the root).
+      await fs.writeFile(path.join(dir, "a.md"), "hi");
+      const canonical = await fs.realpath(dir);
+      const rootArg = dir; // may equal canonical on this OS
+
+      const calls: string[] = [];
+      const override = async (p: string): Promise<string> => {
+        calls.push(p);
+        // Throw if the detector re-resolves the root — this proves
+        // the bug we are guarding against.
+        if (p === rootArg || p === canonical) {
+          throw new Error(`detector re-resolved the root: ${p}`);
+        }
+        return fs.realpath(p);
+      };
+
+      const result = await detectDocumentChanges(canonical, new Map(), [".md"], {
+        confinementRoot: canonical,
+        _rootIsCanonical: true,
+        _realpathOverride: override,
+      });
+      expect(result.newFiles).toHaveLength(1);
+      // The override should have been called for the file but never for the root.
+      expect(calls.every((p) => p !== rootArg && p !== canonical)).toBe(true);
+    });
   });
 });
