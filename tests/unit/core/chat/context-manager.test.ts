@@ -11,6 +11,7 @@ import {
   type ContextManagerConfig,
   createContextManager,
 } from "../../../../src/core/chat/context-manager.js";
+import type { EngineEvent } from "../../../../src/engine/index.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
 import { type CouncilDatabase, createDatabase } from "../../../../src/memory/db.js";
 import { ChatRepository } from "../../../../src/memory/repositories/chat-repository.js";
@@ -106,20 +107,13 @@ describe("ContextManager", () => {
     });
 
     it("calls engine and updates summary when threshold exceeded", async () => {
-      const newSummary = "fresh rolling summary";
-      const localEngine = new MockEngine({
-        // The engine receives a synthetic expertId per addExpert call. Use
-        // default response keyed off that id by overriding only via the
-        // generic stub: rebuild manager with a custom engine.
-      });
+      const localEngine = new MockEngine();
       await localEngine.start();
       const localManager = createContextManager(repo, localEngine, baseConfig);
 
       const session = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
       await seedTurns(repo, session.id, 3); // 6 turns, recentTurnCount=3
 
-      // Override response after addExpert by intercepting via failures map
-      // is awkward — instead spy via sentPrompts & stored summary text.
       const result = await localManager.maybeSummarize(session.id);
 
       expect(result).toBe(true);
@@ -137,9 +131,6 @@ describe("ContextManager", () => {
       expect(localEngine.expertCount).toBe(0);
 
       await localEngine.stop();
-
-      // Suppress unused-variable lint
-      void newSummary;
     });
 
     it("includes the existing summary in the prompt", async () => {
@@ -179,25 +170,11 @@ describe("ContextManager", () => {
     });
 
     it("returns false (and does not crash) when the engine yields an error", async () => {
-      const failingEngine = new MockEngine({
-        // Fail every send for any expert id by configuring failOnSend
-        // dynamically — but failOnSend needs the expertId. Use the
-        // generic `failures` map keyed at runtime via a wrapper:
-        // simpler — fail the FIRST send via failOnSend with afterN=0 and
-        // a wildcard id won't work; instead, intercept by removing
-        // experts so send throws.
-      });
+      const failingEngine = new MockEngine();
       await failingEngine.start();
       // Patch send() to yield an error event for any expertId
-      const origSend = failingEngine.send.bind(failingEngine);
       failingEngine.send = function patchedSend(opts) {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        void origSend;
-        async function* gen(): AsyncGenerator<
-          import("../../../../src/engine/types.js").EngineEvent,
-          void,
-          void
-        > {
+        async function* gen(): AsyncGenerator<EngineEvent, void, void> {
           yield {
             kind: "error",
             expertId: opts.expertId,
