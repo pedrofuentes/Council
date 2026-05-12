@@ -74,7 +74,7 @@ describe("template-migration", () => {
     });
 
     it("returns false after a successful migration", async () => {
-      await migrateBuiltInTemplates(dataHome, lib, { quiet: true });
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
       expect(await isMigrationNeeded(dataHome)).toBe(false);
     });
 
@@ -97,7 +97,7 @@ describe("template-migration", () => {
 
   describe("migrateBuiltInTemplates()", () => {
     it("extracts experts from all 5 built-in panels", async () => {
-      const result = await migrateBuiltInTemplates(dataHome, lib, { quiet: true });
+      const result = await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
       expect(result.panelsMigrated).toBe(5);
       expect(result.expertsExtracted).toBeGreaterThanOrEqual(15);
 
@@ -109,7 +109,7 @@ describe("template-migration", () => {
     });
 
     it("writes standalone expert YAMLs that pass ExpertDefinitionSchema", async () => {
-      await migrateBuiltInTemplates(dataHome, lib, { quiet: true });
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
       const expertsDir = path.join(dataHome, "experts");
       const files = (await fs.readdir(expertsDir)).filter((f) => f.endsWith(".yaml"));
       expect(files.length).toBeGreaterThan(0);
@@ -120,7 +120,7 @@ describe("template-migration", () => {
     });
 
     it("writes user panel YAMLs that reference slugs (not inline definitions)", async () => {
-      await migrateBuiltInTemplates(dataHome, lib, { quiet: true });
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
       const panelsDir = path.join(dataHome, "panels");
       for (const name of BUILTIN_PANELS) {
         const file = path.join(panelsDir, `${name}.yaml`);
@@ -136,7 +136,7 @@ describe("template-migration", () => {
     });
 
     it("registers panels and members in panel_library / panel_members", async () => {
-      await migrateBuiltInTemplates(dataHome, lib, { quiet: true });
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
       const panels = await db.selectFrom("panel_library").selectAll().execute();
       expect(panels.length).toBe(5);
       const members = await db
@@ -159,7 +159,7 @@ describe("template-migration", () => {
       // verify dedup logic via the result counter for any panels that DO
       // share an identical inline definition. At minimum, after migration,
       // each slug appears at most once in expert_library.
-      await migrateBuiltInTemplates(dataHome, lib, { quiet: true });
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
       const experts = await db.selectFrom("expert_library").select("slug").execute();
       const slugs = experts.map((e) => e.slug);
       const unique = new Set(slugs);
@@ -169,7 +169,7 @@ describe("template-migration", () => {
     it("disambiguates different experts that share a slug", async () => {
       // architecture-review.sre and incident-postmortem.sre have different
       // role/expertise — both must end up in the library with distinct slugs.
-      await migrateBuiltInTemplates(dataHome, lib, { quiet: true });
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
       const experts = await db.selectFrom("expert_library").select("slug").execute();
       const slugs = experts.map((e) => e.slug);
       // First-occurrence keeps the original slug; subsequent different ones
@@ -180,7 +180,7 @@ describe("template-migration", () => {
     });
 
     it("is idempotent — running twice produces the same state", async () => {
-      const first = await migrateBuiltInTemplates(dataHome, lib, { quiet: true });
+      const first = await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
       const expertsAfterFirst = (
         await fs.readdir(path.join(dataHome, "experts"))
       ).filter((f) => f.endsWith(".yaml")).length;
@@ -188,7 +188,7 @@ describe("template-migration", () => {
         await fs.readdir(path.join(dataHome, "panels"))
       ).filter((f) => f.endsWith(".yaml")).length;
 
-      const second = await migrateBuiltInTemplates(dataHome, lib, { quiet: true });
+      const second = await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
       expect(second.expertsExtracted).toBe(0);
       expect(second.panelsMigrated).toBe(0);
       expect(second.skipped).toBeGreaterThan(0);
@@ -222,7 +222,7 @@ describe("template-migration", () => {
       };
       await lib.create(preExisting);
 
-      const result = await migrateBuiltInTemplates(dataHome, lib, { quiet: true });
+      const result = await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
       expect(result.skipped).toBeGreaterThanOrEqual(1);
 
       const def = await lib.get("cto");
@@ -236,17 +236,92 @@ describe("template-migration", () => {
       const customContent = "name: architecture-review\nexperts:\n  - cto\n";
       await fs.writeFile(existing, customContent, "utf-8");
 
-      await migrateBuiltInTemplates(dataHome, lib, { quiet: true });
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
       const after = await fs.readFile(existing, "utf-8");
       expect(after).toBe(customContent);
     });
 
     it("returns accurate counts in MigrationResult", async () => {
-      const result = await migrateBuiltInTemplates(dataHome, lib, { quiet: true });
+      const result = await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
       expect(result.panelsMigrated).toBe(5);
       expect(result.expertsExtracted).toBeGreaterThan(0);
       expect(result.skipped).toBe(0);
       expect(typeof result.duplicatesUnified).toBe("number");
     });
+
+    it("unifies identical experts shared across two panels (duplicatesUnified > 0)", async () => {
+      // Use an injected loader so we can guarantee two panels share an
+      // identical inline definition — the production built-ins don't.
+      const shared: ExpertDefinition = {
+        slug: "shared-expert",
+        displayName: "Shared Expert",
+        role: "An expert appearing in two panels with identical config",
+        kind: "generic",
+        expertise: {
+          weightedEvidence: ["evidence A"],
+          referenceCases: [],
+          notExpertIn: [],
+        },
+        epistemicStance: "consistent",
+      };
+      const stubLoader = async (name: string) => ({
+        name,
+        experts: [shared],
+      });
+
+      const result = await migrateBuiltInTemplates(dataHome, lib, db, {
+        quiet: true,
+        panelNames: ["panel-a", "panel-b"],
+        loadPanel: stubLoader,
+      });
+
+      expect(result.panelsMigrated).toBe(2);
+      expect(result.expertsExtracted).toBe(1);
+      expect(result.duplicatesUnified).toBe(1);
+
+      const experts = await db.selectFrom("expert_library").select("slug").execute();
+      expect(experts.map((e) => e.slug)).toEqual(["shared-expert"]);
+
+      const members = await db
+        .selectFrom("panel_members")
+        .selectAll()
+        .orderBy("panel_name", "asc")
+        .execute();
+      expect(members.map((m) => m.panel_name)).toEqual(["panel-a", "panel-b"]);
+      expect(members.every((m) => m.expert_slug === "shared-expert")).toBe(true);
+    });
+
+    it("migrated panels load via loadPanel + resolveExperts end-to-end", async () => {
+      // After migration, the production loader must be able to read every
+      // panel and the library must resolve every slug reference back to
+      // the original built-in expert definition.
+      const { loadPanel, resolveExperts, loadTemplate } = await import(
+        "../../../src/core/template-loader.js"
+      );
+
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
+
+      for (const name of BUILTIN_PANELS) {
+        const panel = await loadPanel(name, dataHome);
+        // Every entry must be a slug reference (migration shape).
+        expect(panel.experts.every((e) => typeof e === "string")).toBe(true);
+        const { resolved, missing } = await resolveExperts(panel.experts, lib);
+        expect(missing).toEqual([]);
+        expect(resolved.length).toBe(panel.experts.length);
+
+        // Every resolved expert matches an inline expert in the original
+        // built-in template (by content, not by slug — disambiguation may
+        // have suffixed the slug).
+        const original = await loadTemplate(name);
+        for (let i = 0; i < resolved.length; i++) {
+          const r = resolved[i] as ExpertDefinition;
+          const o = original.experts[i] as ExpertDefinition;
+          expect(r.displayName).toBe(o.displayName);
+          expect(r.role).toBe(o.role);
+          expect(r.epistemicStance).toBe(o.epistemicStance);
+        }
+      }
+    });
   });
 });
+

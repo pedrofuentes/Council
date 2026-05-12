@@ -20,6 +20,10 @@ import { getCouncilDataHome, getCouncilHome, DEFAULT_MODEL } from "../../config/
 import type { ContextConfig } from "../../core/debate.js";
 import type { VisibilityConfig } from "../../core/context/visibility.js";
 import { FileExpertLibrary } from "../../core/expert-library.js";
+import {
+  isMigrationNeeded,
+  migrateBuiltInTemplates,
+} from "../../core/template-migration.js";
 import type { DebateMode } from "../../core/template-loader.js";
 import {
   assertAllInline,
@@ -217,12 +221,28 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         // If the chosen panel references library experts by slug, resolve
         // them via the expert library before handing off to the engine.
         const dataHome = getCouncilDataHome();
+        const libDbPath = path.join(getCouncilHome(), "council.db");
+
+        // First-run (and DB-reset) hook: if the user has never migrated —
+        // or the DB has been reset but on-disk YAMLs remain — extract the
+        // built-in panels' inline experts into <dataHome>/experts/ and
+        // rewrite the panels in <dataHome>/panels/ to reference them by
+        // slug, plus (re-)register library DB rows. Idempotent.
+        const migDb = await createDatabase(libDbPath);
+        try {
+          if (await isMigrationNeeded(dataHome, migDb)) {
+            const migLib = new FileExpertLibrary(dataHome, migDb);
+            await migrateBuiltInTemplates(dataHome, migLib, migDb);
+          }
+        } finally {
+          await migDb.destroy();
+        }
+
         const panel = await loadPanel(opts.template, dataHome);
         const hasSlugRefs = panel.experts.some((e) => typeof e === "string");
         if (!hasSlugRefs) {
           template = assertAllInline(panel, opts.template);
         } else {
-          const libDbPath = path.join(getCouncilHome(), "council.db");
           const libDb = await createDatabase(libDbPath);
           try {
             const library = new FileExpertLibrary(dataHome, libDb);

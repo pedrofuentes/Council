@@ -28,6 +28,7 @@ import type { ExpertLibrary } from "./expert-library.js";
 import { ExpertDefinitionSchema, type ExpertDefinition } from "./expert.js";
 import { listTemplates, loadTemplate, type ResolvedPanelDefinition } from "./template-loader.js";
 import type { CouncilDatabase } from "../memory/db.js";
+import { ExpertLibraryRepository } from "../memory/repositories/expert-library-repo.js";
 
 export interface MigrationResult {
   readonly panelsMigrated: number;
@@ -37,13 +38,34 @@ export interface MigrationResult {
 }
 
 /**
- * Check whether a built-in template migration should run for this data
- * directory. Returns `true` when `<dataHome>/experts/` is missing or
- * contains no YAML files — i.e. the directory is "fresh" and nothing has
- * been migrated yet. Once any expert exists, migration is treated as
- * already done; future runs short-circuit.
+ * Loader injected by tests. Defaults to the built-in {@link loadTemplate}.
+ * Returns a fully-inlined panel definition (no slug references).
  */
-export async function isMigrationNeeded(dataHome: string): Promise<boolean> {
+export type PanelLoader = (name: string) => Promise<ResolvedPanelDefinition>;
+
+export interface MigrationOptions {
+  readonly quiet?: boolean;
+  /** Override the list of template names to migrate (default: all built-ins). */
+  readonly panelNames?: readonly string[];
+  /** Override the template loader (default: {@link loadTemplate}). */
+  readonly loadPanel?: PanelLoader;
+}
+
+/**
+ * Check whether a built-in template migration should run.
+ *
+ * Returns `true` when:
+ *   - `<dataHome>/experts/` is missing or contains no YAML files (fresh
+ *     install), OR
+ *   - `db` is provided and the `expert_library` table is empty (DB was
+ *     recreated/reset but files may still exist — re-register).
+ *
+ * Once both filesystem and DB show migrated state, returns `false`.
+ */
+export async function isMigrationNeeded(
+  dataHome: string,
+  db?: CouncilDatabase,
+): Promise<boolean> {
   const expertsDir = path.join(dataHome, "experts");
   let entries: string[];
   try {
@@ -52,27 +74,47 @@ export async function isMigrationNeeded(dataHome: string): Promise<boolean> {
     if (isENOENT(err)) return true;
     throw err;
   }
-  return !entries.some((f) => f.endsWith(".yaml") || f.endsWith(".yml"));
+  const fsEmpty = !entries.some((f) => f.endsWith(".yaml") || f.endsWith(".yml"));
+  if (fsEmpty) return true;
+
+  if (db) {
+    const anyRow = await db
+      .selectFrom("expert_library")
+      .select("slug")
+      .limit(1)
+      .executeTakeFirst();
+    if (!anyRow) return true;
+  }
+  return false;
 }
 
 /**
  * Migrate the built-in panel templates that ship with Council into the
  * user's data directory. Safe to call repeatedly — already-migrated items
  * are skipped.
+ *
+ * Takes `db` explicitly (alongside `library`) because the migration needs
+ * to write to `panel_library` / `panel_members`, which are *not* exposed
+ * on the abstract {@link ExpertLibrary} interface. Passing the handle
+ * makes the dependency on the underlying SQLite store explicit and lets
+ * tests substitute an in-memory database without reaching into the
+ * library implementation.
  */
 export async function migrateBuiltInTemplates(
   dataHome: string,
   library: ExpertLibrary,
-  options: { quiet?: boolean } = {},
+  db: CouncilDatabase,
+  options: MigrationOptions = {},
 ): Promise<MigrationResult> {
   const expertsDir = path.join(dataHome, "experts");
   const panelsDir = path.join(dataHome, "panels");
   await fs.mkdir(expertsDir, { recursive: true });
   await fs.mkdir(panelsDir, { recursive: true });
 
-  const db = getDb(library);
-
-  const templateNames = [...(await listTemplates())].sort();
+  const loader: PanelLoader = options.loadPanel ?? loadTemplate;
+  const templateNames = options.panelNames
+    ? [...options.panelNames]
+    : [...(await listTemplates())].sort();
 
   // Tracks slugs we have already claimed in this run (either created or
   // reused from the existing library). Maps final-slug → canonical def.
@@ -83,8 +125,10 @@ export async function migrateBuiltInTemplates(
   let skipped = 0;
   let panelsMigrated = 0;
 
+  const expertRepo = new ExpertLibraryRepository(db);
+
   for (const name of templateNames) {
-    const template = await loadTemplate(name);
+    const template = await loader(name);
 
     // Decide a final slug for each expert in this panel.
     const slugForEntry: string[] = [];
@@ -97,7 +141,22 @@ export async function migrateBuiltInTemplates(
             ...expert,
             slug: decision.slug,
           });
-          await library.create(toCreate);
+          const yamlPath = path.join(expertsDir, `${decision.slug}.yaml`);
+          if (await fileExists(yamlPath)) {
+            // File present but no DB row — register the DB row from the
+            // on-disk YAML content so re-running migration after a DB
+            // reset re-syncs library state without overwriting files.
+            const content = await fs.readFile(yamlPath, "utf-8");
+            await expertRepo.create({
+              slug: decision.slug,
+              kind: toCreate.kind,
+              displayName: toCreate.displayName,
+              yamlPath,
+              yamlChecksum: sha256(content),
+            });
+          } else {
+            await library.create(toCreate);
+          }
           claimed.set(decision.slug, toCreate);
           expertsExtracted++;
           break;
@@ -111,15 +170,20 @@ export async function migrateBuiltInTemplates(
       }
     }
 
-    // Write the panel YAML (skip if the user already has one with this name).
+    // Compute panel YAML once so we can write OR register from it.
     const panelFile = path.join(panelsDir, `${name}.yaml`);
-    if (await fileExists(panelFile)) {
+    const panelYaml = renderPanelYaml(template, slugForEntry);
+    const panelFileExists = await fileExists(panelFile);
+
+    // Always register DB rows (idempotent — registerPanel guards with a
+    // SELECT). This handles the "DB reset but files preserved" case.
+    await registerPanel(db, name, template, slugForEntry, panelFile, panelYaml);
+
+    if (panelFileExists) {
       skipped++;
       continue;
     }
-    const panelYaml = renderPanelYaml(template, slugForEntry);
     await fs.writeFile(panelFile, panelYaml, "utf-8");
-    await registerPanel(db, name, template, slugForEntry, panelFile, panelYaml);
     panelsMigrated++;
   }
 
@@ -241,6 +305,10 @@ function renderPanelYaml(template: ResolvedPanelDefinition, slugs: readonly stri
   return yaml.stringify(out);
 }
 
+function sha256(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
 async function registerPanel(
   db: CouncilDatabase,
   panelName: string,
@@ -250,7 +318,7 @@ async function registerPanel(
   yamlContent: string,
 ): Promise<void> {
   const now = new Date().toISOString();
-  const checksum = createHash("sha256").update(yamlContent).digest("hex");
+  const checksum = sha256(yamlContent);
 
   const existingPanel = await db
     .selectFrom("panel_library")
@@ -293,21 +361,13 @@ async function registerPanel(
 }
 
 /**
- * Reach into FileExpertLibrary to get its underlying database handle for
- * registering panel rows. We do not want to expose `db` on the public
- * `ExpertLibrary` interface, so we accept the pragmatic coupling here:
- * the migration is a Council-internal one-shot operation that needs both
- * the expert API and the panel-library tables that share the same DB.
+ * Document the deliberate coupling decision: this module needs access to
+ * `panel_library` / `panel_members` tables, which are NOT part of the
+ * abstract {@link ExpertLibrary} interface. Rather than leak `db` onto
+ * `ExpertLibrary`, callers pass `CouncilDatabase` explicitly — keeping
+ * the library abstraction clean while making the cross-table dependency
+ * obvious at the call site.
  */
-function getDb(library: ExpertLibrary): CouncilDatabase {
-  const db = (library as unknown as { db?: CouncilDatabase }).db;
-  if (!db) {
-    throw new Error(
-      "migrateBuiltInTemplates requires an ExpertLibrary backed by a CouncilDatabase (FileExpertLibrary).",
-    );
-  }
-  return db;
-}
 
 async function fileExists(p: string): Promise<boolean> {
   try {
