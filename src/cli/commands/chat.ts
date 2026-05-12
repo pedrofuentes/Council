@@ -949,8 +949,6 @@ interface InlineDebateOptions {
 async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
   const { engine, members, session, repo, renderer, topic, writeError } = opts;
 
-  await repo.addTurn({ chatId: session.id, role: "user", content: topic });
-
   renderer.showSystem(`⚙ Starting structured deliberation: "${topic}"...`, "info");
 
   const debate = new Debate(
@@ -966,6 +964,19 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
   // Single-expert panels run 3 phases (cross-exam is skipped); 2+ run 4.
   const phaseCount = members.length === 1 ? 3 : 4;
   const expectedTurns = phaseCount * members.length;
+
+  // Defer the user-turn persistence until the first expert turn is
+  // about to land (Sentinel SR-PR-mention-1). This keeps the chat
+  // history consistent: a debate that throws or yields zero turns
+  // leaves no orphan @convene user row that subsequent panel turns
+  // would treat as an unanswered question.
+  let userTurnPersisted = false;
+  const persistUserTurnOnce = async (): Promise<void> => {
+    if (!userTurnPersisted) {
+      await repo.addTurn({ chatId: session.id, role: "user", content: topic });
+      userTurnPersisted = true;
+    }
+  };
 
   let persistedTurns = 0;
   let lastPhase: string | undefined;
@@ -995,6 +1006,7 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
         case "turn.end":
           renderer.endExpertResponse();
           if (buffer.length > 0 && bufferSlug !== undefined) {
+            await persistUserTurnOnce();
             await repo.addTurn({
               chatId: session.id,
               role: "expert",
@@ -1009,8 +1021,6 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
           break;
         case "error":
           if (inTurn) {
-            // Close any open response so the renderer's bookkeeping
-            // stays balanced before we move on.
             renderer.endExpertResponse();
             inTurn = false;
             buffer = "";
