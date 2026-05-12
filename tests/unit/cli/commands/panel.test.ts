@@ -454,5 +454,142 @@ describe("buildPanelCommand", () => {
       ).rejects.toThrow(/not found/i);
       expect(errored).toMatch(/not found/i);
     });
+
+    it("operates on a .yml panel in place instead of shadowing it with .yaml", async () => {
+      await seedExpert(env, makeExpert("cto", "Dahlia", "CTO"));
+      // First create the panel via the CLI (writes .yaml + registers in DB),
+      // then rename to .yml on disk to simulate a hand-authored panel file.
+      const createCmd = buildPanelCommand(() => {
+        /* noop */
+      });
+      await createCmd.parseAsync([
+        "node",
+        "council-panel",
+        "create",
+        "ymlpanel",
+        "--experts",
+        "cto",
+      ]);
+      const yamlPath = path.join(env.dataHome, "panels", "ymlpanel.yaml");
+      const ymlPath = path.join(env.dataHome, "panels", "ymlpanel.yml");
+      await fs.rename(yamlPath, ymlPath);
+
+      const originalEditor = process.env["EDITOR"];
+      const originalVisual = process.env["VISUAL"];
+      process.env["EDITOR"] = process.platform === "win32" ? "cmd /c exit 0" : "true";
+      delete process.env["VISUAL"];
+      try {
+        const cmd = buildPanelCommand(() => {
+          /* noop */
+        });
+        await cmd.parseAsync(["node", "council-panel", "edit", "ymlpanel"]);
+        // .yaml must NOT be re-created — the on-disk .yml file is the source of truth.
+        await expect(fs.access(yamlPath)).rejects.toThrow();
+        // The .yml file must still be there.
+        await fs.access(ymlPath);
+      } finally {
+        if (originalEditor === undefined) delete process.env["EDITOR"];
+        else process.env["EDITOR"] = originalEditor;
+        if (originalVisual !== undefined) process.env["VISUAL"] = originalVisual;
+      }
+    });
+
+    it("inspect resolves a .yml panel in place", async () => {
+      await seedExpert(env, makeExpert("cto", "Dahlia Renner", "CTO"));
+      const createCmd = buildPanelCommand(() => {
+        /* noop */
+      });
+      await createCmd.parseAsync([
+        "node",
+        "council-panel",
+        "create",
+        "ymlinspect",
+        "--experts",
+        "cto",
+      ]);
+      const yamlPath = path.join(env.dataHome, "panels", "ymlinspect.yaml");
+      const ymlPath = path.join(env.dataHome, "panels", "ymlinspect.yml");
+      await fs.rename(yamlPath, ymlPath);
+
+      let captured = "";
+      const cmd = buildPanelCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-panel", "inspect", "ymlinspect"]);
+      expect(captured).toContain("ymlinspect.yml");
+      expect(captured).not.toMatch(/ymlinspect\.yaml(?!l)/);
+    });
+
+    it("inspect surfaces YAML parse errors instead of masking them as 'not found'", async () => {
+      const broken = path.join(env.dataHome, "panels", "broken.yaml");
+      await fs.mkdir(path.dirname(broken), { recursive: true });
+      // Schema-invalid: missing required `experts`.
+      await fs.writeFile(broken, `name: broken\ndescription: oops\n`, "utf-8");
+      let errored = "";
+      const cmd = buildPanelCommand(
+        () => {
+          /* noop */
+        },
+        (s) => {
+          errored += s;
+        },
+      );
+      await expect(
+        cmd.parseAsync(["node", "council-panel", "inspect", "broken"]),
+      ).rejects.toThrow();
+      // Must NOT report as "not found" — the YAML exists, it's just invalid.
+      const combined = errored.toLowerCase();
+      expect(combined).not.toMatch(/not found/);
+    });
+  });
+
+  describe("panel create — rollback on partial failure", () => {
+    let env: TestEnv;
+    beforeEach(async () => {
+      env = await makeEnv();
+    });
+    afterEach(async () => {
+      await teardown(env);
+    });
+
+    it("unlinks the YAML file when DB membership write fails after the file write", async () => {
+      await seedExpert(env, makeExpert("cto", "Dahlia", "CTO"));
+
+      // Force setMembers to fail AFTER the YAML has already been written, so
+      // the create command's catch block must clean up the partial state.
+      const repoMod = await import(
+        "../../../../src/memory/repositories/panel-library-repo.js"
+      );
+      const { vi } = await import("vitest");
+      const spy = vi
+        .spyOn(repoMod.PanelLibraryRepository.prototype, "setMembers")
+        .mockRejectedValueOnce(new Error("simulated setMembers failure"));
+
+      try {
+        const cmd = buildPanelCommand(() => {
+          /* noop */
+        });
+        await expect(
+          cmd.parseAsync([
+            "node",
+            "council-panel",
+            "create",
+            "rollback-test",
+            "--experts",
+            "cto",
+          ]),
+        ).rejects.toThrow(/simulated setMembers failure/);
+
+        // The YAML must have been cleaned up by the rollback.
+        const yamlPath = path.join(
+          env.dataHome,
+          "panels",
+          "rollback-test.yaml",
+        );
+        await expect(fs.access(yamlPath)).rejects.toThrow();
+      } finally {
+        spy.mockRestore();
+      }
+    });
   });
 });
