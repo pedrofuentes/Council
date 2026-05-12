@@ -15,10 +15,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import {
-  ExpertDefinitionSchema,
-  type ExpertDefinition,
-} from "../../../src/core/expert.js";
+import { ExpertDefinitionSchema, type ExpertDefinition } from "../../../src/core/expert.js";
 import {
   buildSystemPrompt,
   DEFAULT_FORBIDDEN_PHRASES,
@@ -54,9 +51,7 @@ describe("ExpertDefinitionSchema", () => {
   });
 
   it("rejects empty displayName", () => {
-    expect(() =>
-      ExpertDefinitionSchema.parse({ ...baseDefinition, displayName: "" }),
-    ).toThrow();
+    expect(() => ExpertDefinitionSchema.parse({ ...baseDefinition, displayName: "" })).toThrow();
   });
 
   it("rejects empty role", () => {
@@ -78,6 +73,42 @@ describe("ExpertDefinitionSchema", () => {
       model: "claude-opus-4",
     });
     expect(parsed.model).toBe("claude-opus-4");
+  });
+
+  it("defaults kind to 'generic' when omitted (back-compat)", () => {
+    const parsed = ExpertDefinitionSchema.parse(baseDefinition);
+    expect(parsed.kind).toBe("generic");
+  });
+
+  it("accepts kind: 'generic'", () => {
+    const parsed = ExpertDefinitionSchema.parse({ ...baseDefinition, kind: "generic" });
+    expect(parsed.kind).toBe("generic");
+  });
+
+  it("accepts kind: 'persona' with personaDescription and docsPath", () => {
+    const parsed = ExpertDefinitionSchema.parse({
+      ...baseDefinition,
+      kind: "persona",
+      personaDescription: "VP of Engineering I report to",
+      docsPath: "~/Council/experts/sarah-vp/docs",
+    });
+    expect(parsed.kind).toBe("persona");
+    expect(parsed.personaDescription).toBe("VP of Engineering I report to");
+    expect(parsed.docsPath).toBe("~/Council/experts/sarah-vp/docs");
+  });
+
+  it("rejects unknown kind value", () => {
+    expect(() => ExpertDefinitionSchema.parse({ ...baseDefinition, kind: "other" })).toThrow();
+  });
+
+  it("rejects empty personaDescription", () => {
+    expect(() =>
+      ExpertDefinitionSchema.parse({ ...baseDefinition, personaDescription: "" }),
+    ).toThrow();
+  });
+
+  it("rejects empty docsPath", () => {
+    expect(() => ExpertDefinitionSchema.parse({ ...baseDefinition, docsPath: "" })).toThrow();
   });
 
   it("accepts optional personality, debateProtocol, outputContract, forbiddenMoves", () => {
