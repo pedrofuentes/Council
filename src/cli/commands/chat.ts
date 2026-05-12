@@ -370,6 +370,7 @@ async function runChat(
       config,
       db,
       engineKind,
+      dataHome,
     });
   } finally {
     await db.destroy().catch((err: unknown) => {
@@ -490,6 +491,7 @@ interface PanelChatOptions {
   readonly config: CouncilConfig;
   readonly db: CouncilDatabase;
   readonly engineKind: EngineKind;
+  readonly dataHome: string;
 }
 
 interface PanelMember {
@@ -498,7 +500,7 @@ interface PanelMember {
 }
 
 async function runPanelChat(opts: PanelChatOptions): Promise<void> {
-  const { target, panel, library, raw, deps, write, writeError, config, db, engineKind } = opts;
+  const { target, panel, library, raw, deps, write, writeError, config, db, engineKind, dataHome } = opts;
 
   // Resolve panel experts up-front so we can warn about missing slugs and
   // bail early when nothing is left to chat with. Inline expert defs in
@@ -550,6 +552,30 @@ async function runPanelChat(opts: PanelChatOptions): Promise<void> {
       const spec = buildExpertSpec(expert, config, PANEL_CHAT_TASK_DESCRIPTION);
       await engine.addExpert(spec);
       members.push({ expert, spec });
+    }
+
+    // Refresh the panel's RAG corpus before any turns run so retrieval
+    // sees the latest on-disk state. Failures are logged but not fatal.
+    try {
+      const { scanAndIndexPanelDocuments } = await import(
+        "../../core/documents/panel-document-scanner.js"
+      );
+      const managedDocsDir = path.join(dataHome, "panels", target, "docs");
+      const result = await scanAndIndexPanelDocuments({
+        panelName: target,
+        managedDocsDir,
+        db,
+        supportedFormats: config.expert.supportedFormats,
+      });
+      if (result.indexed > 0) {
+        renderer.showSystem(
+          `Indexed ${result.indexed} panel document(s) (${result.unchanged} unchanged, ${result.failed} failed).`,
+          "info",
+        );
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      renderer.showSystem(`Panel document scan failed (continuing): ${msg}`, "warn");
     }
 
     let session: ChatSession;
