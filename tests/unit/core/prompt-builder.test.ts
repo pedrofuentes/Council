@@ -11,7 +11,11 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { buildSystemPrompt } from "../../../src/core/prompt-builder.js";
+import {
+  buildSystemPrompt,
+  renderPanelMemberships,
+  type PanelMembership,
+} from "../../../src/core/prompt-builder.js";
 import type { ExpertDefinition } from "../../../src/core/expert.js";
 import type { PersonaProfile } from "../../../src/core/documents/profile-analyzer.js";
 
@@ -210,5 +214,125 @@ describe("buildSystemPrompt() — memory model enforcement (Roadmap 7.1)", () =>
     expect(prompt).toContain("[9] CURRENT TASK");
     // Memory section precedes the persona profile section.
     expect(prompt.indexOf("[7] MEMORY")).toBeLessThan(prompt.indexOf("[8] PERSONA PROFILE"));
+  });
+});
+
+describe("renderPanelMemberships()", () => {
+  it("returns an empty string when no memberships are provided", () => {
+    expect(renderPanelMemberships([])).toBe("");
+  });
+
+  it("renders panels with co-members and description", () => {
+    const memberships: readonly PanelMembership[] = [
+      {
+        panelName: "Architecture Review",
+        description: "Multi-perspective review of architecture decisions",
+        coMembers: ["Marcus Chen", "Priya Vasan", "Liam Park"],
+      },
+      {
+        panelName: "Incident Postmortem",
+        description: "Post-incident analysis",
+        coMembers: ["Priya Vasan", "Dev Lead", "Comms Lead"],
+      },
+    ];
+    const rendered = renderPanelMemberships(memberships);
+    expect(rendered).toContain("You are a member of the following panels");
+    expect(rendered).toContain(
+      "- Architecture Review (with Marcus Chen, Priya Vasan, Liam Park): Multi-perspective review of architecture decisions",
+    );
+    expect(rendered).toContain(
+      "- Incident Postmortem (with Priya Vasan, Dev Lead, Comms Lead): Post-incident analysis",
+    );
+  });
+
+  it("omits the description colon when description is absent", () => {
+    const rendered = renderPanelMemberships([
+      { panelName: "Tiny Panel", coMembers: ["Alice"] },
+    ]);
+    expect(rendered).toContain("- Tiny Panel (with Alice)");
+    expect(rendered).not.toContain("(with Alice):");
+  });
+
+  it("renders a sole-member panel without the 'with' clause", () => {
+    const rendered = renderPanelMemberships([
+      { panelName: "Solo Panel", description: "Just me", coMembers: [] },
+    ]);
+    expect(rendered).toContain("- Solo Panel: Just me");
+    expect(rendered).not.toContain("(with )");
+  });
+
+  it("caps output at 5 entries", () => {
+    const many: PanelMembership[] = Array.from({ length: 8 }, (_, i) => ({
+      panelName: `Panel ${i + 1}`,
+      coMembers: ["X"],
+    }));
+    const rendered = renderPanelMemberships(many);
+    expect(rendered).toContain("Panel 1");
+    expect(rendered).toContain("Panel 5");
+    expect(rendered).not.toContain("Panel 6");
+    expect(rendered).not.toContain("Panel 7");
+    expect(rendered).not.toContain("Panel 8");
+  });
+});
+
+describe("buildSystemPrompt() — panel memberships", () => {
+  const memberships: readonly PanelMembership[] = [
+    {
+      panelName: "Architecture Review",
+      description: "Multi-perspective review of architecture decisions",
+      coMembers: ["Marcus Chen", "Priya Vasan"],
+    },
+  ];
+
+  it("omits the PANEL MEMBERSHIPS section when no memberships are provided", () => {
+    const prompt = buildSystemPrompt(baseDefinition, undefined, "task");
+    expect(prompt).not.toContain("PANEL MEMBERSHIPS");
+  });
+
+  it("omits the PANEL MEMBERSHIPS section when memberships is an empty array", () => {
+    const prompt = buildSystemPrompt(baseDefinition, undefined, "task", undefined, []);
+    expect(prompt).not.toContain("PANEL MEMBERSHIPS");
+    // Original [8] CURRENT TASK still present (no shift).
+    expect(prompt).toContain("[8] CURRENT TASK");
+  });
+
+  it("injects [8] PANEL MEMBERSHIPS and shifts CURRENT TASK to [9] when no persona profile is provided", () => {
+    const prompt = buildSystemPrompt(
+      baseDefinition,
+      undefined,
+      "task",
+      undefined,
+      memberships,
+    );
+    const membershipsIdx = prompt.indexOf("[8] PANEL MEMBERSHIPS");
+    const taskIdx = prompt.indexOf("[9] CURRENT TASK");
+    expect(membershipsIdx).toBeGreaterThan(-1);
+    expect(taskIdx).toBeGreaterThan(membershipsIdx);
+    expect(prompt).not.toContain("[8] CURRENT TASK");
+    expect(prompt).toContain("Architecture Review");
+    expect(prompt).toContain("Marcus Chen");
+  });
+
+  it("injects [9] PANEL MEMBERSHIPS after [8] PERSONA PROFILE and shifts CURRENT TASK to [10]", () => {
+    const prompt = buildSystemPrompt(
+      baseDefinition,
+      undefined,
+      "task",
+      sampleProfile,
+      memberships,
+    );
+    const personaIdx = prompt.indexOf("[8] PERSONA PROFILE");
+    const membershipsIdx = prompt.indexOf("[9] PANEL MEMBERSHIPS");
+    const taskIdx = prompt.indexOf("[10] CURRENT TASK");
+    expect(personaIdx).toBeGreaterThan(-1);
+    expect(membershipsIdx).toBeGreaterThan(personaIdx);
+    expect(taskIdx).toBeGreaterThan(membershipsIdx);
+    expect(prompt).not.toContain("[9] CURRENT TASK");
+  });
+
+  it("produces identical output when memberships is undefined vs not passed (backwards compat)", () => {
+    const before = buildSystemPrompt(baseDefinition, undefined, "task");
+    const after = buildSystemPrompt(baseDefinition, undefined, "task", undefined, undefined);
+    expect(after).toBe(before);
   });
 });

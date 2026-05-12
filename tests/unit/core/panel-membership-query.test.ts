@@ -1,0 +1,132 @@
+/**
+ * Tests for getExpertPanelMemberships() — joins panel_members,
+ * panel_library, and expert_library to surface an expert's panel
+ * memberships with co-member display names (Roadmap 7.2 + 7.3).
+ *
+ * RED at this commit: src/core/panel-membership-query.ts does not yet
+ * exist.
+ */
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
+import { getExpertPanelMemberships } from "../../../src/core/panel-membership-query.js";
+import { PanelLibraryRepository } from "../../../src/memory/repositories/panel-library-repo.js";
+import { ExpertLibraryRepository } from "../../../src/memory/repositories/expert-library-repo.js";
+
+async function seedExpert(
+  db: CouncilDatabase,
+  slug: string,
+  displayName: string,
+): Promise<void> {
+  const repo = new ExpertLibraryRepository(db);
+  await repo.create({
+    slug,
+    kind: "generic",
+    displayName,
+    yamlPath: `/tmp/Council/experts/${slug}.yaml`,
+    yamlChecksum: "x",
+  });
+}
+
+async function seedPanel(
+  db: CouncilDatabase,
+  name: string,
+  description: string | null,
+  members: readonly string[],
+): Promise<void> {
+  const repo = new PanelLibraryRepository(db);
+  await repo.create({
+    name,
+    description,
+    yamlPath: `/tmp/Council/panels/${name}.yaml`,
+    yamlChecksum: "x",
+  });
+  await repo.setMembers(name, members);
+}
+
+async function bumpPanelUpdatedAt(
+  db: CouncilDatabase,
+  name: string,
+  iso: string,
+): Promise<void> {
+  await db
+    .updateTable("panel_library")
+    .set({ updated_at: iso })
+    .where("name", "=", name)
+    .execute();
+}
+
+describe("getExpertPanelMemberships()", () => {
+  let db: CouncilDatabase;
+
+  beforeEach(async () => {
+    db = await createDatabase(":memory:");
+  });
+
+  afterEach(async () => {
+    await db.destroy();
+  });
+
+  it("returns an empty array for an expert not in any panel", async () => {
+    await seedExpert(db, "loner", "Lonely Expert");
+    const result = await getExpertPanelMemberships("loner", db);
+    expect(result).toEqual([]);
+  });
+
+  it("returns memberships with description and co-member display names, excluding the expert themselves", async () => {
+    await seedExpert(db, "cto", "Dahlia Renner");
+    await seedExpert(db, "arch", "Marcus Chen");
+    await seedExpert(db, "sec", "Priya Vasan");
+    await seedPanel(db, "arch-review", "Multi-perspective architecture review", [
+      "cto",
+      "arch",
+      "sec",
+    ]);
+
+    const result = await getExpertPanelMemberships("cto", db);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.panelName).toBe("arch-review");
+    expect(result[0]?.description).toBe("Multi-perspective architecture review");
+    expect(result[0]?.coMembers).toEqual(["Marcus Chen", "Priya Vasan"]);
+  });
+
+  it("omits description when panel description is null", async () => {
+    await seedExpert(db, "cto", "Dahlia");
+    await seedExpert(db, "arch", "Marcus");
+    await seedPanel(db, "no-desc", null, ["cto", "arch"]);
+
+    const result = await getExpertPanelMemberships("cto", db);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.description).toBeUndefined();
+  });
+
+  it("orders panels by panel_library.updated_at DESC (most recently active first)", async () => {
+    await seedExpert(db, "cto", "Dahlia");
+    await seedExpert(db, "arch", "Marcus");
+
+    await seedPanel(db, "old-panel", "old", ["cto", "arch"]);
+    await seedPanel(db, "mid-panel", "mid", ["cto", "arch"]);
+    await seedPanel(db, "new-panel", "new", ["cto", "arch"]);
+
+    await bumpPanelUpdatedAt(db, "old-panel", "2020-01-01T00:00:00.000Z");
+    await bumpPanelUpdatedAt(db, "mid-panel", "2023-01-01T00:00:00.000Z");
+    await bumpPanelUpdatedAt(db, "new-panel", "2026-01-01T00:00:00.000Z");
+
+    const result = await getExpertPanelMemberships("cto", db);
+    expect(result.map((m) => m.panelName)).toEqual([
+      "new-panel",
+      "mid-panel",
+      "old-panel",
+    ]);
+  });
+
+  it("excludes the queried expert from co-members even in a 2-expert panel", async () => {
+    await seedExpert(db, "cto", "Dahlia");
+    await seedExpert(db, "arch", "Marcus");
+    await seedPanel(db, "duo", "Two-expert panel", ["cto", "arch"]);
+
+    const result = await getExpertPanelMemberships("cto", db);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.coMembers).toEqual(["Marcus"]);
+  });
+});
