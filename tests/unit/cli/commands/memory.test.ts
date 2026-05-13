@@ -26,6 +26,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { Kysely, DefaultQueryExecutor } from "kysely";
 
 import { buildMemoryCommand } from "../../../../src/cli/commands/memory.js";
 import { createDatabase } from "../../../../src/memory/db.js";
@@ -546,6 +547,159 @@ describe("buildMemoryCommand", () => {
       expect(help.toLowerCase()).toMatch(/persona profile/);
       // Commander may wrap the description across lines, so allow whitespace flex.
       expect(help.replace(/\s+/g, " ")).toMatch(/council expert train --retrain/);
+    });
+  });
+
+  // ── atomicity (#403) ─────────────────────────────────────────────
+
+  describe("memory reset — atomicity (#403)", () => {
+    it("--yes (default path): rolls back debate deletion when a later expert update fails", async () => {
+      // Sentinel SENTINEL-PR400-0f62690 flagged that the default reset
+      // path deletes debates and then iterates experts to clear
+      // extracted_memory_json outside any transaction. If the expert
+      // update fails after debates are already gone, the panel is
+      // left in a half-reset state (debates lost, memory still set).
+      //
+      // This test asserts atomicity: when the SECOND expert update
+      // throws mid-way, the FIRST expert's memory must NOT be cleared
+      // AND the debates must NOT be deleted — the whole reset rolls
+      // back as a single unit.
+      const seed = await seedPanel(testHome);
+      const dbSeed = await createDatabase(path.join(testHome, "council.db"));
+      try {
+        const exp = new ExpertRepository(dbSeed);
+        await exp.update(seed.ctoId, {
+          extractedMemoryJson: JSON.stringify({ positions: ["ship the MVP"] }),
+        });
+        await exp.update(seed.pmId, {
+          extractedMemoryJson: JSON.stringify({ positions: ["wait one sprint"] }),
+        });
+      } finally {
+        await dbSeed.destroy();
+      }
+
+      // Sabotage the second expert update via prototype patch.
+      const originalUpdate = ExpertRepository.prototype.update;
+      let calls = 0;
+      ExpertRepository.prototype.update = async function patched(
+        this: ExpertRepository,
+        ...args: Parameters<typeof originalUpdate>
+      ) {
+        calls += 1;
+        // The default reset path calls update twice (once per expert)
+        // to clear extractedMemoryJson. Fail on the second call so the
+        // first one has already happened; without a transaction this
+        // leaves the panel half-reset.
+        if (calls === 2) {
+          throw new Error("simulated DB failure on second expert update");
+        }
+        return originalUpdate.apply(this, args);
+      } as typeof originalUpdate;
+
+      let thrown: unknown = null;
+      try {
+        const cmd = buildMemoryCommand({ write: () => undefined });
+        cmd.exitOverride();
+        await cmd.parseAsync(["node", "council-memory", "reset", seed.name, "--yes"]);
+      } catch (err) {
+        thrown = err;
+      } finally {
+        ExpertRepository.prototype.update = originalUpdate;
+      }
+      // The handler must surface the failure rather than silently swallow it.
+      expect(thrown).not.toBeNull();
+
+      // After the simulated failure, the panel state must be the SAME
+      // as before the reset attempt.
+      const db = await createDatabase(path.join(testHome, "council.db"));
+      try {
+        const debates = await new DebateRepository(db).findByPanelId(seed.panelId);
+        expect(debates).toHaveLength(1); // debate NOT deleted (rolled back)
+
+        const experts = await new ExpertRepository(db).findByPanelId(seed.panelId);
+        const cto = experts.find((e) => e.slug === "cto");
+        const pm = experts.find((e) => e.slug === "pm");
+        // First expert's memory must NOT have been cleared.
+        expect(cto?.extractedMemoryJson).not.toBeNull();
+        // Second expert's memory was never touched.
+        expect(pm?.extractedMemoryJson).not.toBeNull();
+      } finally {
+        await db.destroy();
+      }
+    });
+
+    it("--yes (default path): surfaces a ROLLBACK failure to writeError but still rethrows the original error", async () => {
+      // Sentinel SENTINEL-PR449-1EC8C30 flagged that a ROLLBACK failure
+      // was being silently swallowed. If both the inner reset AND the
+      // ROLLBACK fail, the operator must (a) still see the original
+      // error (so the command exits with a useful reason) AND (b) be
+      // told that ROLLBACK itself failed (so they know DB state may be
+      // inconsistent and a manual check is warranted).
+      await seedPanel(testHome);
+
+      // Sabotage the second expert update so the transaction body throws.
+      const originalUpdate = ExpertRepository.prototype.update;
+      let updateCalls = 0;
+      ExpertRepository.prototype.update = async function patched(
+        this: ExpertRepository,
+        ...args: Parameters<typeof originalUpdate>
+      ) {
+        updateCalls += 1;
+        if (updateCalls === 2) {
+          throw new Error("simulated DB failure on second expert update");
+        }
+        return originalUpdate.apply(this, args);
+      } as typeof originalUpdate;
+
+      // Sabotage ROLLBACK by patching Kysely's executor to throw when
+      // it sees a ROLLBACK statement. (BEGIN / COMMIT / DML still run
+      // normally.) `sql\`ROLLBACK\`.execute(db)` resolves the executor
+      // via `db.getExecutor()` and dispatches through
+      // `DefaultQueryExecutor.executeQuery`, so patching the prototype
+      // there intercepts every transactional statement.
+      const originalExecuteQuery = DefaultQueryExecutor.prototype.executeQuery;
+      DefaultQueryExecutor.prototype.executeQuery = async function patchedExec(
+        this: DefaultQueryExecutor,
+        compiledQuery: { readonly sql: string },
+        queryId: unknown,
+      ): Promise<unknown> {
+        if (typeof compiledQuery?.sql === "string" && /^\s*ROLLBACK\b/i.test(compiledQuery.sql)) {
+          throw new Error("simulated ROLLBACK failure");
+        }
+        return (originalExecuteQuery as (...a: unknown[]) => Promise<unknown>).apply(this, [
+          compiledQuery,
+          queryId,
+        ]);
+      } as typeof DefaultQueryExecutor.prototype.executeQuery;
+
+      const stderrChunks: string[] = [];
+      let thrown: unknown = null;
+      try {
+        const cmd = buildMemoryCommand({
+          write: () => undefined,
+          writeError: (chunk: string) => {
+            stderrChunks.push(chunk);
+          },
+        });
+        cmd.exitOverride();
+        await cmd.parseAsync(["node", "council-memory", "reset", "memory-test", "--yes"]);
+      } catch (err) {
+        thrown = err;
+      } finally {
+        ExpertRepository.prototype.update = originalUpdate;
+        DefaultQueryExecutor.prototype.executeQuery = originalExecuteQuery;
+      }
+
+      // (a) original error is still surfaced
+      expect(thrown).not.toBeNull();
+      const message = thrown instanceof Error ? thrown.message : String(thrown);
+      expect(message).toContain("simulated DB failure on second expert update");
+
+      // (b) the rollback failure is announced on stderr so the
+      //     operator knows DB state may be inconsistent
+      const stderr = stderrChunks.join("");
+      expect(stderr).toMatch(/ROLLBACK failed/i);
+      expect(stderr).toContain("simulated ROLLBACK failure");
     });
   });
 

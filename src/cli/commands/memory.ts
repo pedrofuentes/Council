@@ -39,6 +39,7 @@
 import * as path from "node:path";
 
 import { Command } from "commander";
+import { sql } from "kysely";
 
 import { getCouncilHome } from "../../config/index.js";
 import { createDatabase, type CouncilDatabase } from "../../memory/db.js";
@@ -417,16 +418,48 @@ function buildResetCommand(write: Writer, writeError: Writer): Command {
           //   2. Clear `extracted_memory_json` on each expert (debate-derived heuristic memory).
           //   3. Per Roadmap 7.4, NEVER touch `persona_profiles` — document-derived
           //      persona data is separate state, reset via `council expert train --retrain`.
+          //
+          // Atomicity (#403): wrap (1) + (2) in a single transaction.
+          // Without this, a failure between steps would leave the
+          // panel half-reset (debates gone, expert memory still set,
+          // or vice versa). We use raw BEGIN/COMMIT/ROLLBACK on the
+          // libsql connection — Kysely's `db.transaction()` reconnects
+          // the libsql client for `:memory:` databases, which loses
+          // virtual FTS5 tables (same workaround as
+          // `src/memory/repositories/document-repository.ts:clearForRetrain`
+          // and `src/core/documents/indexer.ts`).
           const debates = await new DebateRepository(db).findByPanelId(panel.id);
-          for (const d of debates) {
-            await db.deleteFrom("debates").where("id", "=", d.id).execute();
-          }
-
           const experts = await new ExpertRepository(db).findByPanelId(panel.id);
           const expertRepo = new ExpertRepository(db);
           const profileRepo = new ProfileRepository(db);
+
+          await sql`BEGIN`.execute(db);
+          try {
+            for (const d of debates) {
+              await db.deleteFrom("debates").where("id", "=", d.id).execute();
+            }
+            for (const e of experts) {
+              await expertRepo.update(e.id, { extractedMemoryJson: null });
+            }
+            await sql`COMMIT`.execute(db);
+          } catch (err) {
+            try {
+              await sql`ROLLBACK`.execute(db);
+            } catch (rollbackErr) {
+              // Surface the rollback failure so operators are not left
+              // believing DB state is consistent — but still rethrow the
+              // original error (the cause of the abort) below so the
+              // command exits with the underlying reason.
+              writeError(
+                `!! ROLLBACK failed after reset error — DB state may be inconsistent: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}\n`,
+              );
+            }
+            throw err;
+          }
+
+          // Output (post-commit) — separated from the mutation so a
+          // transaction failure is not partially announced.
           for (const e of experts) {
-            await expertRepo.update(e.id, { extractedMemoryJson: null });
             write(`✓ Debate memory cleared for "${e.displayName}".\n`);
             const profile = await profileRepo.findBySlug(e.slug);
             if (profile !== null) {
