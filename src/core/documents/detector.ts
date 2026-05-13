@@ -26,6 +26,7 @@
  */
 import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
+import type { Stats } from "node:fs";
 import * as path from "node:path";
 
 export interface DocumentFile {
@@ -66,6 +67,21 @@ export interface DetectDocumentChangesOptions {
    * call. Production callers leave this undefined.
    */
   readonly _realpathOverride?: (p: string) => Promise<string>;
+  /**
+   * Test seam — replace `fs.lstat` for the duration of a single call.
+   * Production callers leave this undefined. Used by the per-file
+   * resilience tests (#342) to simulate a single file's stat failing
+   * mid-scan without modifying the actual filesystem.
+   */
+  readonly _lstatOverride?: (p: string) => Promise<Stats>;
+  /**
+   * Optional warning sink (#342). Invoked once per individual file
+   * skipped due to a recoverable, per-file error (lstat failure,
+   * fd-based read failure) so callers can surface diagnostics to the
+   * user without aborting the scan. The scan continues regardless of
+   * whether the sink is provided.
+   */
+  readonly onWarning?: (message: string) => void;
 }
 
 function normalizeExt(ext: string): string {
@@ -152,8 +168,16 @@ export async function detectDocumentChanges(
         rejectedFiles: [],
       };
     }
-    throw err;
+    // Wrap so the failing path + a stable prefix are visible to callers
+    // (#341). Keeps the original error as `cause` for diagnostics.
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `document scan failed for path '${docsPath}': ${detail}`,
+      { cause: err },
+    );
   }
+
+  const lstat = options._lstatOverride ?? fs.lstat;
 
   const newFiles: DocumentFile[] = [];
   const modifiedFiles: DocumentFile[] = [];
@@ -165,8 +189,18 @@ export async function detectDocumentChanges(
     const absolute = path.resolve(docsPath, rel);
     let stat;
     try {
-      stat = await fs.lstat(absolute);
-    } catch {
+      stat = await lstat(absolute);
+    } catch (err: unknown) {
+      // A single file disappearing (or otherwise being unstatable)
+      // between readdir and lstat must not abort the whole scan
+      // (#342). Surface a warning so users can see WHICH file was
+      // skipped and WHY, then continue with the rest.
+      if (options.onWarning) {
+        const detail = err instanceof Error ? err.message : String(err);
+        options.onWarning(
+          `document scan: skipping '${absolute}' (lstat failed: ${detail})`,
+        );
+      }
       continue;
     }
     // Recurse-marker entries from readdir include directories themselves;
@@ -183,7 +217,13 @@ export async function detectDocumentChanges(
     let read;
     try {
       read = await readConfined(absolute, options);
-    } catch {
+    } catch (err: unknown) {
+      if (options.onWarning) {
+        const detail = err instanceof Error ? err.message : String(err);
+        options.onWarning(
+          `document scan: rejecting '${absolute}' (read failed: ${detail})`,
+        );
+      }
       rejectedFiles.push(absolute);
       continue;
     }
