@@ -249,15 +249,19 @@ describe("detectDocumentChanges", () => {
       expect(warning).toMatch(/lstat|stat|ENOENT/i);
     });
 
-    it("surfaces lstat-failed files in rejectedFiles so deletion reconciliation does not prune them (#342)", async () => {
-      // CRITICAL regression guard. `DocumentProcessor.process()` builds
-      // its `seenPaths` set from `newFiles ∪ modifiedFiles ∪
-      // unchangedFiles ∪ rejectedFiles`. Any tracked file NOT in that
-      // set is reconciled as "deleted on disk" and pruned from the FTS
-      // index + marked removed in `expert_documents`. A transient
-      // `lstat` failure that silently skips a file would therefore cause
-      // permanent data loss. The detector must report stat-failed files
-      // in `rejectedFiles` so the processor preserves them.
+    it("surfaces lstat-failed files in unknownStateFiles so deletion reconciliation does not prune them (#342)", async () => {
+      // CRITICAL regression guard. `DocumentProcessor.process()` and
+      // `panel-document-scanner` build their `seenPaths` set from
+      // `newFiles ∪ modifiedFiles ∪ unchangedFiles ∪ rejectedFiles ∪
+      // unknownStateFiles`. Any tracked file NOT in that set is
+      // reconciled as "deleted on disk" and pruned from the FTS index
+      // + marked removed in `expert_documents` / `panel_documents`. A
+      // transient `lstat` failure that silently skips a file would
+      // therefore cause permanent data loss. The detector must report
+      // stat-failed files in `unknownStateFiles` (NOT `rejectedFiles`,
+      // which is reserved for hard confinement / TOCTOU rejections that
+      // panel-doc reconciliation is allowed to prune) so callers
+      // preserve them.
       await fs.writeFile(path.join(dir, "ghost.md"), "ghost");
       const ghostAbs = path.resolve(dir, "ghost.md");
 
@@ -273,7 +277,11 @@ describe("detectDocumentChanges", () => {
       });
 
       expect(result.newFiles).toHaveLength(0);
-      expect(result.rejectedFiles).toContain(ghostAbs);
+      expect(result.unknownStateFiles).toContain(ghostAbs);
+      // Hard-rejection bucket must NOT contain transient failures, or
+      // panel-doc reconciliation will skip pruning paths it should
+      // legitimately prune (and silently keep stale content).
+      expect(result.rejectedFiles).not.toContain(ghostAbs);
     });
 
     it("invokes onWarning when readConfined throws mid-scan and continues (#342)", async () => {
@@ -281,7 +289,12 @@ describe("detectDocumentChanges", () => {
       // failure. The `_realpathOverride` seam lets us throw inside
       // `readConfined()` for a specific file. The remaining files must
       // be processed, and a warning must name the broken file with a
-      // "read failed" tag.
+      // "read failed" tag. Like lstat failures, an error thrown from
+      // `readConfined` is treated as transient (`unknownStateFiles`)
+      // because the failure mode (EIO, EACCES, realpath error) does
+      // NOT prove the file is invalid — only that we couldn't read it
+      // this scan. A `null` return from `readConfined` is the hard
+      // TOCTOU/confinement signal and stays in `rejectedFiles`.
       await fs.writeFile(path.join(dir, "a.md"), "alpha");
       await fs.writeFile(path.join(dir, "broken.md"), "broken");
       const brokenAbs = path.resolve(dir, "broken.md");
@@ -301,7 +314,8 @@ describe("detectDocumentChanges", () => {
 
       const names = result.newFiles.map((f) => f.filename).sort();
       expect(names).toEqual(["a.md"]);
-      expect(result.rejectedFiles).toContain(brokenAbs);
+      expect(result.unknownStateFiles).toContain(brokenAbs);
+      expect(result.rejectedFiles).not.toContain(brokenAbs);
       expect(warnings.length).toBe(1);
       const warning = warnings[0] ?? "";
       expect(warning).toContain("broken.md");

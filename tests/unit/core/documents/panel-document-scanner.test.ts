@@ -462,6 +462,64 @@ describe("scanAndIndexPanelDocuments", () => {
     const paths = fts.rows.map((r) => r.file_path);
     expect(paths).toContain(path.join(linkedDir, "external.md"));
   });
+
+  it("does not prune docs whose lstat throws transiently mid-scan (#342)", async () => {
+    // Sentinel re-review: per-file `lstat` failures (EBUSY/EACCES races,
+    // permissions transients) used to drop the path from `seenPaths`,
+    // causing the panel-doc reconciliation loop to mark the file
+    // `removed` and prune it from the FTS index. This is silent data
+    // loss for content that still exists on disk. The detector now
+    // reports such files in `unknownStateFiles`, and the panel scanner
+    // must include that bucket in `seenPaths` so reconciliation
+    // preserves them.
+    //
+    // Seed: index spec.md.
+    await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+
+    const docsRepo = new PanelDocumentRepository(db);
+    const before = await docsRepo.listDocuments("arch-review");
+    const specRow = before.find((d) => d.filename === "spec.md");
+    expect(specRow).toBeDefined();
+    const specCanonical = await fs.realpath(path.join(managedDir, "spec.md"));
+
+    // Use the `_detectorLstatOverride` test seam to inject a per-file
+    // lstat failure for spec.md only. Cannot `vi.spyOn(fs, 'lstat')`
+    // because `node:fs/promises` ESM namespace bindings are
+    // non-configurable.
+    const realLstat = fs.lstat;
+    const result = await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+      _detectorLstatOverride: async (p: string) => {
+        const resolved = path.resolve(p);
+        if (resolved === specCanonical) {
+          const err: NodeJS.ErrnoException = new Error("EBUSY: simulated busy");
+          err.code = "EBUSY";
+          throw err;
+        }
+        return realLstat(p);
+      },
+    });
+    // The transient stat failure must NOT cause spec.md to be pruned.
+    expect(result.pruned).toBe(0);
+
+    const after = await docsRepo.listDocuments("arch-review");
+    const spec = after.find((d) => d.filename === "spec.md");
+    expect(spec?.status).not.toBe("removed");
+
+    const fts = await sql<{
+      file_path: string;
+    }>`SELECT file_path FROM document_index WHERE source_type = 'panel'`.execute(db);
+    const paths = fts.rows.map((r) => r.file_path);
+    expect(paths).toContain(specCanonical);
+  });
 });
 
 describe("formatAllFailedWarning", () => {
