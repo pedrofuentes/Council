@@ -349,6 +349,85 @@ describe("scanAndIndexPanelDocuments", () => {
     expect(external?.status).not.toBe("removed");
   });
 
+  it("prunes managed docs even when the docs root reaches through a symlinked ancestor (Sentinel cycle-2)", async () => {
+    // The managed root may be accessed via a path whose ancestor is a
+    // symlink (e.g. /tmp → /private/tmp on macOS, or any user-set
+    // mount alias). Tracked file paths are stored under the canonical
+    // form. If the docs folder is later deleted, prune must still
+    // recognise tracked paths as belonging to the (deleted) managed
+    // root — otherwise stale managed FTS entries remain searchable.
+
+    // Build: <tmp>/alias-parent/dir → real <tmp>/real-parent/dir
+    // where alias-parent is a symlink to real-parent. Place the
+    // managed docs dir UNDER the symlinked alias-parent.
+    const realParent = await makeTempDir("council-real-parent-");
+    const aliasHost = await makeTempDir("council-alias-host-");
+    cleanupDirs.push(realParent, aliasHost);
+    const aliasPath = path.join(aliasHost, "alias");
+
+    let linkCreated = false;
+    try {
+      await fs.symlink(realParent, aliasPath, "junction");
+      linkCreated = true;
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "EPERM" && code !== "ENOSYS") throw err;
+      try {
+        await fs.symlink(realParent, aliasPath);
+        linkCreated = true;
+      } catch {
+        return; // platform doesn't allow symlinks — skip
+      }
+    }
+    if (!linkCreated) return;
+
+    try {
+      const aliasManaged = path.join(aliasPath, "docs");
+      await fs.mkdir(aliasManaged, { recursive: true });
+      await fs.writeFile(path.join(aliasManaged, "alias-doc.md"), "# Alias\n", "utf-8");
+
+      // First scan via the aliased path: tracked under realpath form.
+      await scanAndIndexPanelDocuments({
+        panelName: "arch-review",
+        managedDocsDir: aliasManaged,
+        db,
+        supportedFormats: [".md", ".txt", ".html"],
+      });
+
+      // Sanity: tracked path is the canonical (real) form.
+      const docsRepo = new PanelDocumentRepository(db);
+      const beforeDocs = await docsRepo.listDocuments("arch-review");
+      const aliasTracked = beforeDocs.find((d) => d.filename === "alias-doc.md");
+      expect(aliasTracked).toBeDefined();
+      const realManaged = path.join(await fs.realpath(realParent), "docs");
+      expect(aliasTracked?.filePath.startsWith(realManaged)).toBe(true);
+
+      // Delete the docs folder so the next scan sees ENOENT at the
+      // managed root (via the aliased path).
+      await fs.rm(path.join(realParent, "docs"), { recursive: true, force: true });
+
+      const result = await scanAndIndexPanelDocuments({
+        panelName: "arch-review",
+        managedDocsDir: aliasManaged, // missing — accessed through symlink
+        db,
+        supportedFormats: [".md", ".txt", ".html"],
+      });
+      expect(result.pruned).toBeGreaterThanOrEqual(1);
+
+      const after = await docsRepo.listDocuments("arch-review");
+      const removed = after.find((d) => d.filename === "alias-doc.md");
+      expect(removed?.status).toBe("removed");
+    } finally {
+      if (linkCreated) {
+        try {
+          await fs.unlink(aliasPath);
+        } catch {
+          /* best-effort */
+        }
+      }
+    }
+  });
+
   it("does not prune tracked docs under a linked folder whose scan failed (Sentinel #3)", async () => {
     // Seed: index spec.md (managed) and external.md (linked).
     await scanAndIndexPanelDocuments({
