@@ -1039,5 +1039,166 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
         await fs.rm(linkDir, { recursive: true, force: true });
       }
     });
+
+    it("`panel docs unlink` is atomic across multiple docs — a mid-loop FTS failure rolls back earlier deletes (#388)", async () => {
+      await createPanel();
+      const linkDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-unlink-multi-"));
+      try {
+        await fs.writeFile(path.join(linkDir, "a.md"), "# A\nbody A\n", "utf-8");
+        await fs.writeFile(path.join(linkDir, "b.md"), "# B\nbody B\n", "utf-8");
+
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { PanelDocumentRepository } = await import(
+          "../../../../src/memory/repositories/panel-document-repo.js"
+        );
+        const { createDocumentIndexer } = await import(
+          "../../../../src/core/documents/indexer.js"
+        );
+
+        const cmdLink = buildPanelCommand(() => {
+          /* noop */
+        });
+        await cmdLink.parseAsync([
+          "node",
+          "council-panel",
+          "docs",
+          "link",
+          "arch-review",
+          "--path",
+          linkDir,
+        ]);
+
+        const filePathA = path.join(linkDir, "a.md");
+        const filePathB = path.join(linkDir, "b.md");
+
+        // Track BOTH docs and seed FTS rows for BOTH; then drop the FTS
+        // table so the SECOND indexer.remove() call inside the unlink
+        // loop will throw. The first call may already have removed
+        // doc A's row from the FTS table — under correct atomic
+        // semantics that delete must be rolled back when the loop
+        // aborts.
+        const setupDb = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          const repo = new PanelDocumentRepository(setupDb);
+          await repo.trackDocument({
+            panelName: "arch-review",
+            source: "linked",
+            filePath: filePathA,
+            filename: "a.md",
+            checksum: "ha",
+            sizeBytes: 1,
+            wordCount: 1,
+          });
+          await repo.trackDocument({
+            panelName: "arch-review",
+            source: "linked",
+            filePath: filePathB,
+            filename: "b.md",
+            checksum: "hb",
+            sizeBytes: 1,
+            wordCount: 1,
+          });
+          const indexer = createDocumentIndexer(setupDb);
+          await indexer.index({
+            content: "alpha alpha uniquetokenaaa",
+            sourceType: "panel",
+            sourceSlug: "arch-review",
+            filePath: filePathA,
+          });
+          await indexer.index({
+            content: "beta beta uniquetokenbbb",
+            sourceType: "panel",
+            sourceSlug: "arch-review",
+            filePath: filePathB,
+          });
+
+          // Sanity: both tokens findable now.
+          const { sql } = await import("kysely");
+          const before = (await sql<{
+            cnt: number;
+          }>`SELECT COUNT(*) AS cnt FROM document_index WHERE document_index MATCH 'uniquetokenaaa OR uniquetokenbbb'`.execute(
+            setupDb,
+          )) as unknown as { rows: readonly { cnt: number }[] };
+          expect(before.rows[0]?.cnt).toBe(2);
+        } finally {
+          await setupDb.destroy();
+        }
+
+        // Patch LibsqlConnection.prototype.executeQuery so the SECOND
+        // `DELETE FROM document_index WHERE file_path = ?` throws.
+        // This is the same interception strategy used by the indexer
+        // atomicity test and survives the cmd's internal `db` instance.
+        const { LibsqlConnection } = await import("@libsql/kysely-libsql");
+        const originalExecute = LibsqlConnection.prototype.executeQuery;
+        let ftsDeleteCount = 0;
+        LibsqlConnection.prototype.executeQuery = async function (
+          this: InstanceType<typeof LibsqlConnection>,
+          compiledQuery: { sql: string; parameters: readonly unknown[] },
+        ): Promise<unknown> {
+          const isPerFileFtsDelete =
+            /DELETE\s+FROM\s+document_index\s+WHERE\s+file_path\s*=/i.test(
+              compiledQuery.sql,
+            );
+          if (isPerFileFtsDelete) {
+            ftsDeleteCount += 1;
+            if (ftsDeleteCount === 2) {
+              throw new Error("simulated FTS failure on second doc");
+            }
+          }
+          return (originalExecute as (q: unknown) => unknown).call(this, compiledQuery);
+        } as typeof originalExecute;
+
+        try {
+          let captured = "";
+          let erred = "";
+          const cmdUnlink = buildPanelCommand(
+            (s) => {
+              captured += s;
+            },
+            (s) => {
+              erred += s;
+            },
+          );
+          await expect(
+            cmdUnlink.parseAsync([
+              "node",
+              "council-panel",
+              "docs",
+              "unlink",
+              "arch-review",
+              "--path",
+              linkDir,
+            ]),
+          ).rejects.toThrow(/Unlink aborted/i);
+          expect(captured).not.toContain("✓");
+          expect(erred.toLowerCase()).toMatch(/unlink aborted/);
+
+          // Atomicity check: the FTS row for doc A must STILL be present
+          // (rolled back), AND both panel_documents rows must still be
+          // present (linked folder preserved).
+          const verifyDb = await createDatabase(path.join(env.home, "council.db"));
+          try {
+            const { sql } = await import("kysely");
+            const after = (await sql<{
+              cnt: number;
+            }>`SELECT COUNT(*) AS cnt FROM document_index WHERE document_index MATCH 'uniquetokenaaa OR uniquetokenbbb'`.execute(
+              verifyDb,
+            )) as unknown as { rows: readonly { cnt: number }[] };
+            expect(after.rows[0]?.cnt).toBe(2);
+
+            const repo = new PanelDocumentRepository(verifyDb);
+            const docs = await repo.listDocuments("arch-review");
+            expect(docs.some((d) => d.filePath === filePathA)).toBe(true);
+            expect(docs.some((d) => d.filePath === filePathB)).toBe(true);
+          } finally {
+            await verifyDb.destroy();
+          }
+        } finally {
+          LibsqlConnection.prototype.executeQuery = originalExecute;
+        }
+      } finally {
+        await fs.rm(linkDir, { recursive: true, force: true });
+      }
+    });
   });
 });
