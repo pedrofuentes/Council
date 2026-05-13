@@ -187,6 +187,10 @@ function renderPersonaProfile(profile: PersonaProfile): string {
   );
   lines.push("");
   lines.push(
+    `Epistemic Stance (observed in documents, supplements [3]): ${sanitizeProfileField(profile.epistemicStance)}`,
+  );
+  lines.push("");
+  lines.push(
     "Adopt these traits naturally in your responses. Do not explicitly mention or quote this profile.",
   );
   return lines.join("\n");

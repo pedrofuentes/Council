@@ -107,6 +107,36 @@ describe("buildSystemPrompt() — persona profile", () => {
     }
   });
 
+  it("[8] PERSONA PROFILE renders profile.epistemicStance as supplementary to [3] EPISTEMIC STANCE (issue #365)", () => {
+    // Sentinel #365: epistemicStance is extracted by analyzeDocuments() and
+    // persisted in persona_profiles, but was never rendered into the prompt.
+    // It MUST appear inside the [8] PERSONA PROFILE block (not [3]) and be
+    // framed as supplementary, document-derived signal — not a replacement
+    // for the YAML-defined stance in [3].
+    const prompt = buildSystemPrompt(
+      baseDefinition,
+      undefined,
+      "task",
+      sampleProfile,
+    );
+    const yamlStanceIdx = prompt.indexOf("[3] EPISTEMIC STANCE");
+    const personaIdx = prompt.indexOf("[8] PERSONA PROFILE");
+    const taskIdx = prompt.indexOf("[9] CURRENT TASK");
+    const section = prompt.slice(personaIdx, taskIdx);
+
+    // [3] still renders the YAML-defined stance verbatim (unchanged).
+    expect(prompt.slice(yamlStanceIdx, personaIdx)).toContain(
+      baseDefinition.epistemicStance,
+    );
+    // [8] also surfaces the profile-derived stance.
+    expect(section).toContain(sampleProfile.epistemicStance);
+    // The framing must mark the profile stance as supplementary/observed
+    // from documents, not as an override of [3].
+    expect(section.toLowerCase()).toMatch(
+      /document|observ|also exhibit|supplement|additionally|in addition/i,
+    );
+  });
+
   it("[8] PERSONA PROFILE instructs the expert not to quote or mention the profile explicitly", () => {
     const prompt = buildSystemPrompt(
       baseDefinition,
