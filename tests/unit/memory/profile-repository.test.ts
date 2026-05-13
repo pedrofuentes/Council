@@ -4,7 +4,7 @@
  * RED at this commit: migration 007 and
  * src/memory/repositories/profile-repository.ts do not exist yet.
  */
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
 import { ExpertLibraryRepository } from "../../../src/memory/repositories/expert-library-repo.js";
@@ -87,6 +87,59 @@ describe("ProfileRepository", () => {
 
   it("delete of an unknown slug is a no-op", async () => {
     await expect(repo.delete("nobody")).resolves.toBeUndefined();
+  });
+
+  it("warns (does not silently coerce) when a stored JSON array column is corrupt (#362)", async () => {
+    // Issue #362: previously safeParseArray silently returned [] for any
+    // unparseable / non-array JSON, masking real DB corruption from users.
+    // The repository must now log a clear warning identifying the field,
+    // slug, and raw value when this happens, while still returning [] so
+    // the rest of the profile remains usable.
+    await repo.upsert("ceo", sampleProfile());
+
+    // Directly corrupt one of the JSON-encoded array columns.
+    await db
+      .updateTable("persona_profiles")
+      .set({ decision_patterns: "{not-json" })
+      .where("expert_slug", "=", "ceo")
+      .execute();
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const found = await repo.findBySlug("ceo");
+      expect(found).not.toBeNull();
+      // Corrupt field is recovered to an empty array (graceful degradation).
+      expect(found?.decisionPatterns).toEqual([]);
+      // Other fields remain intact.
+      expect(found?.communicationStyle).toBe(sampleProfile().communicationStyle);
+      // A warning was emitted that names both the field and the slug.
+      expect(warnSpy).toHaveBeenCalled();
+      const msg = warnSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+      expect(msg).toMatch(/decision_patterns/);
+      expect(msg).toMatch(/ceo/);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("warns when stored JSON parses to a non-array value (#362)", async () => {
+    await repo.upsert("ceo", sampleProfile());
+    await db
+      .updateTable("persona_profiles")
+      .set({ biases: '"a string, not an array"' })
+      .where("expert_slug", "=", "ceo")
+      .execute();
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const found = await repo.findBySlug("ceo");
+      expect(found?.biases).toEqual([]);
+      expect(warnSpy).toHaveBeenCalled();
+      const msg = warnSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+      expect(msg).toMatch(/biases/);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("profiles are scoped per slug", async () => {
