@@ -11,6 +11,7 @@ import * as fs from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildSessionsCommand } from "../../../../src/cli/commands/sessions.js";
+import { buildProgram } from "../../../../src/bin/council.js";
 
 describe("buildSessionsCommand", () => {
   it("registers a 'sessions' command with description", () => {
@@ -116,6 +117,21 @@ describe("buildSessionsCommand", () => {
       expect(lines).toHaveLength(1);
       const parsed = JSON.parse(lines[0] ?? "{}");
       expect(parsed.name).toBe("another-session");
+    });
+  });
+
+  describe("CLI registration in buildProgram()", () => {
+    it("registers 'sessions' as a subcommand of the root program", () => {
+      const program = buildProgram();
+      const found = program.commands.find((c) => c.name() === "sessions");
+      expect(found).toBeDefined();
+    });
+
+    it("preserves 'panels' as a backwards-compatibility alias for 'sessions'", () => {
+      const program = buildProgram();
+      const found = program.commands.find((c) => c.name() === "sessions");
+      expect(found).toBeDefined();
+      expect(found?.aliases()).toContain("panels");
     });
   });
 });

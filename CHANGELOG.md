@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- **`council panels` renamed to `council sessions`** — the command that lists debate-session records from the local DB is now `council sessions`. The previous name was confusingly close to `council panel` (which manages the panel YAML library: `create | list | inspect | edit | docs`). The DB table is still named `panels` — only the CLI surface changed. `council panels` continues to work as a hidden alias for backwards compatibility. File rename: `src/cli/commands/panels.ts` → `src/cli/commands/sessions.ts`; export rename: `buildPanelsCommand()` → `buildSessionsCommand()`.
+- **`council panels` renamed to `council sessions`** — the command that lists debate-session records from the local DB is now `council sessions`. The previous name was confusingly close to `council panel` (which manages the panel YAML library: `create | list | inspect | edit | docs`). The DB table is still named `panels` — only the CLI surface changed. `council panels` continues to work as a Commander alias for backwards compatibility (the alias is visible in `--help` as `sessions|panels`). File rename: `src/cli/commands/panels.ts` → `src/cli/commands/sessions.ts`; export rename: `buildPanelsCommand()` → `buildSessionsCommand()`.
 
 ### Added
 
