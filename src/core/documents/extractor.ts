@@ -177,6 +177,18 @@ export async function extractDocument(
     const checksum = createHash("sha256").update(buf).digest("hex");
     const ext = path.extname(filePath).toLowerCase();
 
+    // 6. Re-stat through the same fd AFTER the read so `modifiedAt` is
+    //    bound to the bytes we actually returned (issue #376). If the
+    //    inode's mtime or size changed between the initial stat and now,
+    //    the file was modified mid-read — the buffer may be a torn copy
+    //    of two versions; refuse rather than persist incoherent state.
+    const postStat = await fh.stat();
+    if (postStat.size !== fdStat.size || postStat.mtimeMs !== fdStat.mtimeMs) {
+      throw new Error(
+        `extractDocument: ${filePath} was modified during read (size/mtime changed); refusing torn content`,
+      );
+    }
+
     let content: string;
     if (ext === ".md" || ext === ".markdown") content = normalizeMarkdown(raw);
     else if (ext === ".html" || ext === ".htm") content = normalizeHtml(raw);
@@ -189,7 +201,11 @@ export async function extractDocument(
       wordCount: countWords(content),
       checksum,
       sizeBytes: buf.byteLength,
-      modifiedAt: fdStat.mtime.toISOString(),
+      // postStat.mtime equals fdStat.mtime here (we just verified) and
+      // bounds the moment at which the inode was last written to be
+      // ≤ the moment we finished reading — modifiedAt is coherent with
+      // `content`/`checksum`.
+      modifiedAt: postStat.mtime.toISOString(),
     };
   } finally {
     await fh.close().catch(() => {
