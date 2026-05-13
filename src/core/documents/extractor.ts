@@ -34,6 +34,14 @@ export interface DocumentContent {
   readonly wordCount: number;
   readonly checksum: string;
   readonly sizeBytes: number;
+  /**
+   * ISO-8601 mtime of the file as observed via the bound file handle
+   * (`fh.stat`) during extraction. Reading mtime through the fd —
+   * instead of via a separate post-open `fs.stat(path)` — closes the
+   * TOCTOU window where the recorded mtime could diverge from the
+   * content actually read (issue #376).
+   */
+  readonly modifiedAt: string;
 }
 
 export interface ExtractDocumentOptions {
@@ -181,6 +189,7 @@ export async function extractDocument(
       wordCount: countWords(content),
       checksum,
       sizeBytes: buf.byteLength,
+      modifiedAt: fdStat.mtime.toISOString(),
     };
   } finally {
     await fh.close().catch(() => {
