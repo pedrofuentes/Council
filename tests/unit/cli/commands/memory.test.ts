@@ -26,6 +26,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { Kysely, DefaultQueryExecutor } from "kysely";
 
 import { buildMemoryCommand } from "../../../../src/cli/commands/memory.js";
 import { createDatabase } from "../../../../src/memory/db.js";
@@ -625,6 +626,80 @@ describe("buildMemoryCommand", () => {
       } finally {
         await db.destroy();
       }
+    });
+
+    it("--yes (default path): surfaces a ROLLBACK failure to writeError but still rethrows the original error", async () => {
+      // Sentinel SENTINEL-PR449-1EC8C30 flagged that a ROLLBACK failure
+      // was being silently swallowed. If both the inner reset AND the
+      // ROLLBACK fail, the operator must (a) still see the original
+      // error (so the command exits with a useful reason) AND (b) be
+      // told that ROLLBACK itself failed (so they know DB state may be
+      // inconsistent and a manual check is warranted).
+      await seedPanel(testHome);
+
+      // Sabotage the second expert update so the transaction body throws.
+      const originalUpdate = ExpertRepository.prototype.update;
+      let updateCalls = 0;
+      ExpertRepository.prototype.update = async function patched(
+        this: ExpertRepository,
+        ...args: Parameters<typeof originalUpdate>
+      ) {
+        updateCalls += 1;
+        if (updateCalls === 2) {
+          throw new Error("simulated DB failure on second expert update");
+        }
+        return originalUpdate.apply(this, args);
+      } as typeof originalUpdate;
+
+      // Sabotage ROLLBACK by patching Kysely's executor to throw when
+      // it sees a ROLLBACK statement. (BEGIN / COMMIT / DML still run
+      // normally.) `sql\`ROLLBACK\`.execute(db)` resolves the executor
+      // via `db.getExecutor()` and dispatches through
+      // `DefaultQueryExecutor.executeQuery`, so patching the prototype
+      // there intercepts every transactional statement.
+      const originalExecuteQuery = DefaultQueryExecutor.prototype.executeQuery;
+      DefaultQueryExecutor.prototype.executeQuery = async function patchedExec(
+        this: DefaultQueryExecutor,
+        compiledQuery: { readonly sql: string },
+        queryId: unknown,
+      ): Promise<unknown> {
+        if (typeof compiledQuery?.sql === "string" && /^\s*ROLLBACK\b/i.test(compiledQuery.sql)) {
+          throw new Error("simulated ROLLBACK failure");
+        }
+        return (originalExecuteQuery as (...a: unknown[]) => Promise<unknown>).apply(this, [
+          compiledQuery,
+          queryId,
+        ]);
+      } as typeof DefaultQueryExecutor.prototype.executeQuery;
+
+      const stderrChunks: string[] = [];
+      let thrown: unknown = null;
+      try {
+        const cmd = buildMemoryCommand({
+          write: () => undefined,
+          writeError: (chunk: string) => {
+            stderrChunks.push(chunk);
+          },
+        });
+        cmd.exitOverride();
+        await cmd.parseAsync(["node", "council-memory", "reset", "memory-test", "--yes"]);
+      } catch (err) {
+        thrown = err;
+      } finally {
+        ExpertRepository.prototype.update = originalUpdate;
+        DefaultQueryExecutor.prototype.executeQuery = originalExecuteQuery;
+      }
+
+      // (a) original error is still surfaced
+      expect(thrown).not.toBeNull();
+      const message = thrown instanceof Error ? thrown.message : String(thrown);
+      expect(message).toContain("simulated DB failure on second expert update");
+
+      // (b) the rollback failure is announced on stderr so the
+      //     operator knows DB state may be inconsistent
+      const stderr = stderrChunks.join("");
+      expect(stderr).toMatch(/ROLLBACK failed/i);
+      expect(stderr).toContain("simulated ROLLBACK failure");
     });
   });
 
