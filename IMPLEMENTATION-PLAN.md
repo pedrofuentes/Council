@@ -250,7 +250,7 @@ The 5 built-in panel templates (architecture, startup, code-review, incident, ca
 
 ### 4.7 Schema Migration 004 ✅
 
-`004_expert_library.sql` — adds `experts` and `expert_panels` tables and the panel-membership join required for cross-panel awareness in Phase 7. Applied automatically on first run after upgrade.
+`004_expert_library.sql` — adds `expert_library`, `panel_library`, and `panel_members` tables (the panel-membership join required for cross-panel awareness in Phase 7). Applied automatically on first run after upgrade.
 
 **Key files**: `src/memory/migrations/004_expert_library.sql`
 
@@ -326,7 +326,7 @@ LLM-based profile synthesis from documents into the expert's persona section of 
 
 ### 6.3 Content Indexing (RAG) ✅
 
-Documents are chunked and indexed via SQLite FTS5 for retrieval (`007_document_index.sql`). The retriever ranks chunks by relevance to the current turn and injects top-k snippets into the prompt.
+Documents are chunked and indexed into a SQLite FTS5 virtual table (`007_document_index.sql`). The retriever ranks chunks using FTS5's built-in BM25 scoring against the current turn and injects top-k snippets into the prompt.
 
 **Key files**: `src/core/documents/indexer.ts`, `src/core/documents/retriever.ts`, `src/memory/migrations/007_document_index.sql`
 

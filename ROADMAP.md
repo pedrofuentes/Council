@@ -64,7 +64,7 @@
 - ✅ **4.4 Panel CLI Commands (Updated)** — `council panel create | list | inspect | edit | delete` over slug-referencing panels
 - ✅ **4.5 User Data Directory** — `~/Council/` user-facing layout (`experts/`, `panels/`) replaces opaque `~/.council/`
 - ✅ **4.6 Template Migration** — 5 built-in panels migrated to the new expert+panel split with deterministic slugs
-- ✅ **4.7 Schema Migration 004** — `experts`, `expert_panels`, and panel-membership tables (`004_expert_library.sql`)
+- ✅ **4.7 Schema Migration 004** — `expert_library`, `panel_library`, and `panel_members` tables (`004_expert_library.sql`)
 
 ---
 
@@ -88,7 +88,7 @@
 
 - ✅ **6.1 Document Detection & Extraction** — Detect supported formats (md, txt, pdf, docx) under `docs/` and extract text
 - ✅ **6.2 Persona Profile Analysis** — LLM-based profile synthesis from documents into the expert's persona section
-- ✅ **6.3 Content Indexing (RAG)** — Chunk + embed documents into FTS index for retrieval (`007_document_index.sql`)
+- ✅ **6.3 Content Indexing (RAG)** — Chunk + index documents into SQLite FTS5 for BM25-ranked retrieval (`007_document_index.sql`)
 - ✅ **6.4 On-demand Processing** — Process documents lazily on first chat/debate use with visible progress feedback
 - ⏳ **6.5 Background Processing** — **Deferred** — on-demand processing (6.4) covers the primary use case; a background daemon adds complexity with limited incremental value for a CLI tool
 - ✅ **6.6 Expert Document CLI** — `council expert docs add | list | remove | reprocess`
