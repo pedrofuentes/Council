@@ -303,6 +303,44 @@ describe("Migration 004 — expert library tables", () => {
   });
 });
 
+describe("Migration 006 — expert_documents table", () => {
+  let db: CouncilDatabase;
+
+  beforeEach(async () => {
+    db = await createDatabase(":memory:");
+  });
+
+  afterEach(async () => {
+    await db.destroy();
+  });
+
+  it("creates the expert_documents table queryable via Kysely (issue #345)", async () => {
+    // Issue #345: the test suite asserted that DocumentRepository works
+    // but never independently verified that migration 006 created the
+    // backing table and its lookup index. A future migration squash or
+    // reorder could break this without a direct failure.
+    await expect(db.selectFrom("expert_documents").selectAll().execute()).resolves.toEqual([]);
+  });
+
+  it("registers the expert_documents lookup index idx_expert_documents_slug (issue #345)", async () => {
+    const indexes = (
+      await sql<{
+        name: string;
+      }>`SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'expert_documents'`.execute(
+        db,
+      )
+    ).rows.map((r) => r.name);
+    expect(indexes).toContain("idx_expert_documents_slug");
+  });
+
+  it("records schema_version row for migration 006", async () => {
+    const versions = (
+      await db.selectFrom("schema_version").select("version").execute()
+    ).map((r) => r.version);
+    expect(versions).toContain(6);
+  });
+});
+
 describe("PanelRepository", () => {
   let db: CouncilDatabase;
   let repo: PanelRepository;

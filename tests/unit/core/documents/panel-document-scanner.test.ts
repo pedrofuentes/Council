@@ -62,6 +62,60 @@ describe("scanAndIndexPanelDocuments", () => {
     }
   });
 
+  it("counts the file as failed when indexing succeeds but tracking throws (issue #393)", async () => {
+    // Partial-failure scenario: indexer.index() commits the FTS row but
+    // docsRepo.trackDocument() throws afterward. The scanner MUST surface
+    // this as a `failed` count (not silently as `indexed`) so operators
+    // can see that tracking metadata is out of sync with the FTS index.
+    //
+    // The fixture seeds two candidate files (spec.md + external.md) so
+    // we can assert the exact failure count and prove both files were
+    // attempted (issue #393 follow-up: not just >=1).
+    const trackSpy = vi
+      .spyOn(PanelDocumentRepository.prototype, "trackDocument")
+      .mockRejectedValue(new Error("simulated tracking failure"));
+    try {
+      const result = await scanAndIndexPanelDocuments({
+        panelName: "arch-review",
+        managedDocsDir: managedDir,
+        db,
+        supportedFormats: [".md", ".txt", ".html"],
+      });
+      // Neither file was tracked, both should be counted as failed.
+      expect(result.indexed).toBe(0);
+      expect(result.failed).toBe(2);
+      // The spy must have been called once per file before failing.
+      expect(trackSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      trackSpy.mockRestore();
+    }
+  });
+
+  it("counts the file as failed when indexer.index throws but tracking would have succeeded (issue #393)", async () => {
+    // Mirror of the above: drop the FTS table so indexer.index() throws,
+    // and verify the scanner reports the file as failed and does NOT
+    // persist a panel_documents row (otherwise we'd track docs that
+    // aren't searchable).
+    await sql`DROP TABLE document_index`.execute(db);
+
+    const result = await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+    expect(result.indexed).toBe(0);
+    // Both candidate files (spec.md + external.md) must be attempted
+    // and counted as failed.
+    expect(result.failed).toBe(2);
+
+    // No documents were tracked — only the pre-existing linked-folder
+    // registration should remain.
+    const docsRepo = new PanelDocumentRepository(db);
+    const tracked = await docsRepo.listDocuments("arch-review");
+    expect(tracked).toHaveLength(0);
+  });
+
   it("indexes new files from managed + linked folders into FTS5 under source_type='panel'", async () => {
     const result = await scanAndIndexPanelDocuments({
       panelName: "arch-review",
@@ -186,7 +240,17 @@ describe("scanAndIndexPanelDocuments", () => {
       try {
         await fs.symlink(secretDir, escapePath);
         linkCreated = true;
-      } catch {
+      } catch (innerErr: unknown) {
+        // Symlinks/junctions are unavailable in this environment
+        // (typical: unprivileged Windows runner without Developer
+        // Mode). Issue #392: instead of skipping silently or asserting
+        // a broad platform predicate, narrow the assertion to the
+        // specific filesystem error codes that indicate "this OS/user
+        // cannot create symlinks", so a future regression that swaps
+        // these for an unrelated error (e.g. ENOENT pointing at a bug
+        // in the test fixture itself) will fail loudly.
+        const innerCode = (innerErr as NodeJS.ErrnoException).code;
+        expect(["EPERM", "EACCES", "ENOSYS", "UNKNOWN"]).toContain(innerCode);
         return;
       }
     }

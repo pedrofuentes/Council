@@ -102,6 +102,41 @@ describe("extractDocument", () => {
     expect(result.content).toContain('"quoted"');
   });
 
+  it(".html strips <script> and <style> blocks including their inner content (issue #344)", async () => {
+    // Issue #344: the extractor must not leak the bodies of <script> and
+    // <style> tags into the indexed text — those are program code, not
+    // prose, and would pollute the persona profile / FTS index with
+    // tokens like `function`, `var`, hex color codes, etc.
+    const filePath = path.join(dir, "page-with-script.html");
+    const html = [
+      "<html><head>",
+      "<style>.hidden-css-token{color:#ff00aa;font-family:Inter}</style>",
+      "</head><body>",
+      "<h1>Visible Heading</h1>",
+      "<script>var SECRET_SCRIPT_TOKEN = 'do-not-index'; function leak(){return SECRET_SCRIPT_TOKEN;}</script>",
+      "<p>Visible body paragraph.</p>",
+      "<script type=\"application/json\">{\"another\":\"SECRET_JSON_TOKEN\"}</script>",
+      "</body></html>",
+    ].join("\n");
+    await fs.writeFile(filePath, html);
+    const result = await extractDocument(filePath);
+
+    // Visible prose survives.
+    expect(result.content).toContain("Visible Heading");
+    expect(result.content).toContain("Visible body paragraph");
+
+    // Script + style bodies are gone (both opening tags AND inner content).
+    expect(result.content).not.toMatch(/<script/i);
+    expect(result.content).not.toMatch(/<\/script>/i);
+    expect(result.content).not.toMatch(/<style/i);
+    expect(result.content).not.toMatch(/<\/style>/i);
+    expect(result.content).not.toContain("SECRET_SCRIPT_TOKEN");
+    expect(result.content).not.toContain("SECRET_JSON_TOKEN");
+    expect(result.content).not.toContain("hidden-css-token");
+    expect(result.content).not.toContain("#ff00aa");
+    expect(result.content).not.toContain("font-family");
+  });
+
   it("checksum matches SHA-256 of raw bytes", async () => {
     const filePath = path.join(dir, "x.md");
     const raw = "# Some heading\n\nbody text";
