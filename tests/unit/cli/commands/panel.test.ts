@@ -952,7 +952,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
         await fs.rm(linkDir, { recursive: true, force: true });
       }
     });
-    it("`panel docs unlink` warns and suppresses ✓ when FTS cleanup fails (#388)", async () => {
+    it("`panel docs unlink` aborts and preserves metadata when FTS cleanup fails (#388)", async () => {
       await createPanel();
       const linkDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-unlink-fts-fail-"));
       try {
@@ -1005,22 +1005,36 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
             erred += s;
           },
         );
-        await cmdUnlink.parseAsync([
-          "node",
-          "council-panel",
-          "docs",
-          "unlink",
-          "arch-review",
-          "--path",
-          linkDir,
-        ]);
+        // Unlink must FAIL closed when FTS cleanup fails — otherwise
+        // metadata is removed but stale `document_index` rows remain
+        // queryable (the linked folder is gone so no rescan can heal it).
+        await expect(
+          cmdUnlink.parseAsync([
+            "node",
+            "council-panel",
+            "docs",
+            "unlink",
+            "arch-review",
+            "--path",
+            linkDir,
+          ]),
+        ).rejects.toThrow(/Unlink aborted/i);
 
-        // Success ✓ must NOT be reported when FTS cleanup failed.
         expect(captured).not.toContain("✓");
-        // The combined output must surface the partial-failure warning.
-        expect((captured + erred).toLowerCase()).toMatch(
-          /fts index cleanup failed|fts index entr/i,
-        );
+        expect(erred.toLowerCase()).toMatch(/unlink aborted/);
+        expect(erred.toLowerCase()).toMatch(/linked folder preserved/);
+
+        // The `panel_documents` row MUST still be present so the user
+        // can retry the unlink after addressing the FTS failure. Recreate
+        // the dropped FTS5 table so the verification can open the DB.
+        const verifyDb = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          const repo = new PanelDocumentRepository(verifyDb);
+          const docs = await repo.listDocuments("arch-review");
+          expect(docs.some((d) => d.filePath === filePath)).toBe(true);
+        } finally {
+          await verifyDb.destroy();
+        }
       } finally {
         await fs.rm(linkDir, { recursive: true, force: true });
       }
