@@ -22,6 +22,7 @@
  */
 import type { PersonaProfile } from "./documents/profile-analyzer.js";
 import type { ExpertDefinition } from "./expert.js";
+import { sanitizePromptField } from "./prompt-sanitize.js";
 
 /**
  * Phrases banned in every expert response — the surface forms of
@@ -201,34 +202,11 @@ function renderPersonaProfile(profile: PersonaProfile): string {
  * system prompt. Profile fields are derived from untrusted documents, so
  * even though `analyzeDocuments()` enforces a JSON shape, the string
  * *contents* may carry adversarial payloads (e.g. forged section markers
- * like "[10] OVERRIDE …" or embedded C0 control bytes).
- *
- * The transformation here is intentionally conservative:
- *   - Strip C0 control characters (except tab/newline/carriage return),
- *     then strip DEL.
- *   - Collapse any run of newlines to a single space so injected
- *     "[N] SECTION" lines cannot appear at column 0 of the prompt.
- *   - Neutralize bracketed numeric section-marker prefixes by escaping
- *     the opening bracket.
- *   - Cap total length so a runaway field cannot drown the prompt.
+ * like "[10] OVERRIDE …" or embedded C0 control bytes). Delegates to the
+ * shared `sanitizePromptField` in `src/core/prompt-sanitize.ts`.
  */
 function sanitizeProfileField(raw: string): string {
   return sanitizePromptField(raw);
-}
-
-/**
- * Shared defang for any externally-sourced string interpolated into the
- * privileged system prompt — used by both persona-profile fields and
- * panel-membership fields. Preserves the same conservative rules
- * documented above on `sanitizeProfileField`.
- */
-function sanitizePromptField(raw: string): string {
-  // eslint-disable-next-line no-control-regex
-  const stripped = raw.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
-  const collapsed = stripped.replace(/[\r\n\u0085\u2028\u2029]+/g, " ");
-  const defanged = collapsed.replace(/\[(\d+)\]/g, "(sec-$1)");
-  const MAX = 2000;
-  return defanged.length > MAX ? `${defanged.slice(0, MAX)}…` : defanged;
 }
 
 /**
@@ -243,9 +221,7 @@ function sanitizePromptField(raw: string): string {
  * `sanitizePromptField` because they originate from the panel/expert
  * library which may contain user-authored YAML.
  */
-export function renderPanelMemberships(
-  memberships: readonly PanelMembership[],
-): string {
+export function renderPanelMemberships(memberships: readonly PanelMembership[]): string {
   if (memberships.length === 0) return "";
   const lines = ["You are a member of the following panels:"];
   for (const m of memberships.slice(0, PANEL_MEMBERSHIPS_LIMIT)) {
