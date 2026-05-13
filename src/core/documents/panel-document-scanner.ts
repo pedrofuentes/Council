@@ -171,6 +171,13 @@ export async function scanAndIndexPanelDocuments(
 
     unchanged += detection.unchangedFiles.length;
     for (const u of detection.unchangedFiles) seenPaths.add(u.path);
+    // Per-file detector rejections (confinement violations, transient
+    // lstat/read failures — #342) must be preserved across deletion
+    // reconciliation: a tracked file that the detector temporarily
+    // couldn't stat is NOT "deleted on disk" and must not be pruned
+    // from the FTS index. Including these paths in `seenPaths` makes
+    // the pruning loop (below) skip them.
+    for (const rejected of detection.rejectedFiles) seenPaths.add(rejected);
     scannedFolders.push(canonical);
 
     const targets: readonly DocumentFile[] = [

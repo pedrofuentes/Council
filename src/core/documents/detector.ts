@@ -193,14 +193,19 @@ export async function detectDocumentChanges(
     } catch (err: unknown) {
       // A single file disappearing (or otherwise being unstatable)
       // between readdir and lstat must not abort the whole scan
-      // (#342). Surface a warning so users can see WHICH file was
-      // skipped and WHY, then continue with the rest.
+      // (#342). Push to `rejectedFiles` so callers performing
+      // deletion reconciliation (`DocumentProcessor.process()`) treat
+      // a transient stat failure as "still present" rather than
+      // pruning the tracked record — otherwise an EBUSY/ENOENT race
+      // would silently delete persisted state. Surface a warning so
+      // users can see WHICH file was skipped and WHY.
       if (options.onWarning) {
         const detail = err instanceof Error ? err.message : String(err);
         options.onWarning(
           `document scan: skipping '${absolute}' (lstat failed: ${detail})`,
         );
       }
+      rejectedFiles.push(absolute);
       continue;
     }
     // Recurse-marker entries from readdir include directories themselves;
