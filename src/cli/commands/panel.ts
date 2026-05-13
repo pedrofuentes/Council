@@ -729,16 +729,16 @@ function buildDocsUnlinkCommand(write: Writer, writeError: Writer): Command {
           writeError(`Panel "${name}" not found.\n`);
           throw new Error(`Panel "${name}" not found.`);
         }
-        // Un-index any tracked documents from this folder and prune the
-        // FTS5 index so future chat retrieval cannot still surface them.
-        // Errors from indexer.remove() are collected rather than thrown
-        // so a single broken FTS entry cannot leave the panel half-
-        // unlinked (orphaned panel_documents rows + dangling
-        // panel_linked_folders row).
+        // #388: Un-index tracked documents BEFORE removing any metadata.
+        // Once the linked-folder row is gone, the next scan will not
+        // revisit this folder, so any FTS rows left behind would remain
+        // queryable indefinitely. Failing closed on the first indexer
+        // error preserves both the ``panel_documents`` rows and the
+        // ``panel_linked_folders`` row, so the user can retry the unlink
+        // after addressing the failure.
         const { createDocumentIndexer } = await import("../../core/documents/indexer.js");
         const indexer = createDocumentIndexer(ctx.db);
         const docs = await ctx.docsRepo.listDocuments(name);
-        const indexerErrors: unknown[] = [];
         for (const d of docs) {
           if (
             d.filePath === absolute ||
@@ -749,27 +749,19 @@ function buildDocsUnlinkCommand(write: Writer, writeError: Writer): Command {
             try {
               await indexer.remove(d.filePath);
             } catch (err: unknown) {
-              indexerErrors.push(err);
+              const detail = err instanceof Error ? err.message : String(err);
+              const msg =
+                `Unlink aborted for ${displayPath(absolute)}: failed to remove FTS ` +
+                `index entry for ${displayPath(d.filePath)} (${detail}). ` +
+                `Linked folder preserved; re-run unlink after addressing the error.`;
+              writeError(msg + "\n");
+              throw new Error(msg);
             }
           }
         }
         await ctx.docsRepo.removeDocumentsUnderFolder(name, absolute);
         await ctx.docsRepo.removeLinkedFolder(name, absolute);
-        // #388: do NOT report ✓ when the FTS5 cleanup failed. Metadata
-        // (panel_documents + panel_linked_folders) is cleaned up but the
-        // index is in a partial state, so a follow-up rescan is needed
-        // to heal it.
-        if (indexerErrors.length > 0) {
-          writeError(
-            `Warning: ${indexerErrors.length} FTS index entr${indexerErrors.length === 1 ? "y" : "ies"} could not be removed; metadata cleanup completed.\n`,
-          );
-          write(
-            `⚠ Unlinked ${displayPath(absolute)} from ${name} but FTS index cleanup failed. ` +
-              `Re-run the panel doc scan to repair the index.\n`,
-          );
-        } else {
-          write(`✓ Unlinked ${displayPath(absolute)} from ${name}.\n`);
-        }
+        write(`✓ Unlinked ${displayPath(absolute)} from ${name}.\n`);
       });
     });
   return cmd;

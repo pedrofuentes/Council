@@ -1204,16 +1204,15 @@ fs.writeFileSync(p, body, 'utf-8');`,
         }
       }
 
-      // Force the bulk-clear path to fail so the retrain reports a
+      // Force the atomic clear path to fail so the retrain reports a
       // failure and must abort BEFORE deleting the existing profile.
-      // Post-#383 the cli uses DocumentRepository.markAllRemovedByExpert
-      // (single bulk SQL UPDATE) instead of a per-row markRemoved loop.
-      const originalMarkAll =
-        DocumentRepository.prototype.markAllRemovedByExpert;
-      DocumentRepository.prototype.markAllRemovedByExpert =
-        async function (): Promise<void> {
-          throw new Error("simulated DB failure");
-        };
+      // Post-#383 (Sentinel revision) the cli uses
+      // DocumentRepository.clearForRetrain (a single BEGIN/COMMIT
+      // wrapping both the FTS DELETE and the tracking UPDATE).
+      const originalClear = DocumentRepository.prototype.clearForRetrain;
+      DocumentRepository.prototype.clearForRetrain = async function (): Promise<void> {
+        throw new Error("simulated DB failure");
+      };
 
       let captured = "";
       let erred = "";
@@ -1231,11 +1230,11 @@ fs.writeFileSync(p, body, 'utf-8');`,
           cmd.parseAsync(["node", "council-expert", "train", "boss", "--retrain"]),
         ).rejects.toThrow(/retrain aborted|failed to clear/i);
       } finally {
-        DocumentRepository.prototype.markAllRemovedByExpert = originalMarkAll;
+        DocumentRepository.prototype.clearForRetrain = originalClear;
       }
 
       expect(erred.toLowerCase()).toMatch(/failed to clear/);
-      expect(captured + erred).toMatch(/profile preserved/i);
+      expect(captured + erred).toMatch(/profile.*preserved/i);
 
       // The pre-existing profile must still be in place.
       const db = await createDatabase(path.join(env.home, "council.db"));

@@ -658,40 +658,33 @@ function buildTrainCommand(
 
         // --retrain: drop the profile and mark every existing doc row as
         // removed so the detector reclassifies all files as new and the
-        // analyzer is forced to re-run. The processor re-indexes on
-        // re-processing (replace-by-path semantics), so the FTS5 entries
-        // stay consistent without us touching them directly.
+        // analyzer is forced to re-run.
         //
-        // #383: clear tracked docs via a single bulk UPDATE so the
-        // operation is atomic (either every row flips to "removed" or
-        // none does). On failure the existing profile is preserved so
-        // the user is never left with an empty profile + partially-
-        // cleared tracking. The FTS5 index is pruned with a matching
-        // bulk removeAll() — a failure there is non-fatal because the
-        // indexer's replace-by-path semantics self-heal on the next
-        // training run.
+        // #383: the FTS index DELETE and the tracking UPDATE must run
+        // as a single atomic unit. If FTS rows were deleted but the
+        // tracking UPDATE failed, the processor would treat the docs as
+        // already-processed and skip them, so retrieval would return
+        // nothing until the user forced another retrain. If the tracking
+        // UPDATE succeeded but FTS rows were not deleted, stale snippets
+        // would surface from "removed" documents. ``clearForRetrain``
+        // wraps both in a BEGIN/COMMIT/ROLLBACK on the same libsql
+        // connection. On failure the existing profile is also preserved
+        // so the user is never left with an empty profile and partially
+        // cleared tracking.
         if (opts.retrain === true) {
           const tracked = await documentRepo.findByExpert(slug);
           const activeCount = tracked.filter((r) => r.status !== "removed").length;
           try {
-            await documentRepo.markAllRemovedByExpert(slug);
+            await documentRepo.clearForRetrain(slug);
           } catch (err: unknown) {
             const detail = err instanceof Error ? err.message : String(err);
             const msg =
               `Retrain aborted for "${slug}": failed to clear ${activeCount} ` +
-              `tracked document(s) (${detail}). Existing profile preserved. ` +
-              `Re-run "council expert train ${slug} --retrain" after addressing the warning above.`;
+              `tracked document(s) and FTS index entries (${detail}). ` +
+              `Existing profile and tracking preserved. ` +
+              `Re-run "council expert train ${slug} --retrain" after addressing the error above.`;
             writeError(msg + "\n");
             throw new Error(msg);
-          }
-          try {
-            await indexer.removeAll("expert", slug);
-          } catch (err: unknown) {
-            const detail = err instanceof Error ? err.message : String(err);
-            writeError(
-              `Warning: FTS index entries for "${slug}" could not be cleared (${detail}). ` +
-                `They will be replaced on the next training run.\n`,
-            );
           }
           await profileRepo.delete(slug);
           write(

@@ -145,4 +145,37 @@ export class DocumentRepository {
       .where("status", "!=", "removed")
       .execute();
   }
+
+  /**
+   * Atomically clear an expert's FTS index entries AND mark all of its
+   * tracked documents as removed (#383). The two writes must be a
+   * single unit: if FTS rows are deleted but the tracking UPDATE fails
+   * (or vice versa) retrieval can silently return stale or missing
+   * results.
+   *
+   * Implemented with raw ``BEGIN``/``COMMIT``/``ROLLBACK`` on the libsql
+   * client (same workaround as ``indexer.ts``: Kysely's ``transaction()``
+   * helper reconnects the libsql ``:memory:`` connection, which loses
+   * virtual FTS5 tables).
+   */
+  async clearForRetrain(expertSlug: string): Promise<void> {
+    const { sql } = await import("kysely");
+    await sql`BEGIN`.execute(this.db);
+    try {
+      await sql`DELETE FROM document_index WHERE source_type = 'expert' AND source_slug = ${expertSlug}`.execute(
+        this.db,
+      );
+      await sql`UPDATE expert_documents SET status = 'removed' WHERE expert_slug = ${expertSlug} AND status != 'removed'`.execute(
+        this.db,
+      );
+      await sql`COMMIT`.execute(this.db);
+    } catch (err) {
+      try {
+        await sql`ROLLBACK`.execute(this.db);
+      } catch {
+        /* swallow rollback errors so the original failure is preserved */
+      }
+      throw err;
+    }
+  }
 }
