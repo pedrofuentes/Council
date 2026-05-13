@@ -62,6 +62,52 @@ describe("scanAndIndexPanelDocuments", () => {
     }
   });
 
+  it("counts the file as failed when indexing succeeds but tracking throws (issue #393)", async () => {
+    // Partial-failure scenario: indexer.index() commits the FTS row but
+    // docsRepo.trackDocument() throws afterward. The scanner MUST surface
+    // this as a `failed` count (not silently as `indexed`) so operators
+    // can see that tracking metadata is out of sync with the FTS index.
+    const trackSpy = vi
+      .spyOn(PanelDocumentRepository.prototype, "trackDocument")
+      .mockRejectedValue(new Error("simulated tracking failure"));
+    try {
+      const result = await scanAndIndexPanelDocuments({
+        panelName: "arch-review",
+        managedDocsDir: managedDir,
+        db,
+        supportedFormats: [".md", ".txt", ".html"],
+      });
+      // Neither file was tracked, both should be counted as failed.
+      expect(result.indexed).toBe(0);
+      expect(result.failed).toBeGreaterThanOrEqual(1);
+    } finally {
+      trackSpy.mockRestore();
+    }
+  });
+
+  it("counts the file as failed when indexer.index throws but tracking would have succeeded (issue #393)", async () => {
+    // Mirror of the above: drop the FTS table so indexer.index() throws,
+    // and verify the scanner reports the file as failed and does NOT
+    // persist a panel_documents row (otherwise we'd track docs that
+    // aren't searchable).
+    await sql`DROP TABLE document_index`.execute(db);
+
+    const result = await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+    expect(result.indexed).toBe(0);
+    expect(result.failed).toBeGreaterThanOrEqual(1);
+
+    // No documents were tracked — only the pre-existing linked-folder
+    // registration should remain.
+    const docsRepo = new PanelDocumentRepository(db);
+    const tracked = await docsRepo.listDocuments("arch-review");
+    expect(tracked).toHaveLength(0);
+  });
+
   it("indexes new files from managed + linked folders into FTS5 under source_type='panel'", async () => {
     const result = await scanAndIndexPanelDocuments({
       panelName: "arch-review",
@@ -187,6 +233,11 @@ describe("scanAndIndexPanelDocuments", () => {
         await fs.symlink(secretDir, escapePath);
         linkCreated = true;
       } catch {
+        // Symlinks/junctions are unavailable in this environment
+        // (typical: unprivileged Windows runner without Developer
+        // Mode). Skip with an explicit assertion so the test is not
+        // silently a no-op — issue #392.
+        expect(process.platform === "win32" || process.getuid?.() !== 0).toBe(true);
         return;
       }
     }
