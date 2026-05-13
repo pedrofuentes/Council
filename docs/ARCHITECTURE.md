@@ -21,7 +21,7 @@ council/
 │   │   │   ├── export.ts              ← council export <panel>     (md/json/adr)
 │   │   │   ├── expert.ts              ← council expert create|list|inspect|edit|delete|docs|train
 │   │   │   ├── panel.ts               ← council panel create|list|inspect|edit|docs (link/unlink)
-│   │   │   ├── panels.ts              ← council panels             (list debate panels from DB)
+│   │   │   ├── sessions.ts            ← council sessions           (list debate sessions from DB; alias: panels)
 │   │   │   ├── templates.ts           ← council templates          (list built-in templates)
 │   │   │   ├── memory.ts              ← council memory list|inspect|reset
 │   │   │   ├── doctor.ts              ← council doctor             (diagnostics)
@@ -134,7 +134,7 @@ CLI Commands:
   council expert docs|train     — persona document management
   council panel create|list|inspect|edit  — panel library management
   council panel docs            — panel document management (link/unlink shared folders)
-  council panels                — list debate panels from DB
+  council sessions              — list debate sessions from DB (alias: panels)
   council templates             — list built-in templates
   council memory list|inspect|reset  — memory inspection
   council doctor                — diagnostics
