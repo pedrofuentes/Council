@@ -759,6 +759,59 @@ fs.writeFileSync(p, body, 'utf-8');`,
       }
     });
 
+    it("--remove warns and suppresses ✓ when FTS index cleanup fails (#382)", async () => {
+      await seedExpert(env, PERSONA);
+      await seedDocRow("boss", "alpha.md", 100);
+      // Drop the FTS5 table so indexer.remove() throws when called by the CLI.
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { sql } = await import("kysely");
+      const dropDb = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        await sql`DROP TABLE document_index`.execute(dropDb);
+      } finally {
+        await dropDb.destroy();
+      }
+
+      let captured = "";
+      let erred = "";
+      const cmd = buildExpertCommand(
+        (s) => {
+          captured += s;
+        },
+        (s) => {
+          erred += s;
+        },
+      );
+      await cmd.parseAsync([
+        "node",
+        "council-expert",
+        "docs",
+        "boss",
+        "--remove",
+        "alpha.md",
+      ]);
+
+      // Must NOT report success with ✓ when FTS cleanup failed.
+      expect(captured).not.toContain("✓");
+      // Combined output must surface the partial-failure warning.
+      expect((captured + erred).toLowerCase()).toMatch(
+        /fts index cleanup failed|removed from tracking but/i,
+      );
+
+      // DB row must still have been marked removed (tracking is the
+      // source of truth).
+      const { DocumentRepository } = await import(
+        "../../../../src/memory/repositories/document-repository.js"
+      );
+      const db = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        const rows = await new DocumentRepository(db).findByExpert("boss");
+        expect(rows[0]?.status).toBe("removed");
+      } finally {
+        await db.destroy();
+      }
+    });
+
     it("--remove preserves the file on disk", async () => {
       await seedExpert(env, PERSONA);
       await seedDocRow("boss", "alpha.md", 50);
@@ -1066,12 +1119,16 @@ fs.writeFileSync(p, body, 'utf-8');`,
         }
       }
 
-      // Force markRemoved to fail so the retrain clear loop reports a
+      // Force the bulk-clear path to fail so the retrain reports a
       // failure and must abort BEFORE deleting the existing profile.
-      const originalMarkRemoved = DocumentRepository.prototype.markRemoved;
-      DocumentRepository.prototype.markRemoved = async function (): Promise<void> {
-        throw new Error("simulated DB failure");
-      };
+      // Post-#383 the cli uses DocumentRepository.markAllRemovedByExpert
+      // (single bulk SQL UPDATE) instead of a per-row markRemoved loop.
+      const originalMarkAll =
+        DocumentRepository.prototype.markAllRemovedByExpert;
+      DocumentRepository.prototype.markAllRemovedByExpert =
+        async function (): Promise<void> {
+          throw new Error("simulated DB failure");
+        };
 
       let captured = "";
       let erred = "";
@@ -1089,7 +1146,7 @@ fs.writeFileSync(p, body, 'utf-8');`,
           cmd.parseAsync(["node", "council-expert", "train", "boss", "--retrain"]),
         ).rejects.toThrow(/retrain aborted|failed to clear/i);
       } finally {
-        DocumentRepository.prototype.markRemoved = originalMarkRemoved;
+        DocumentRepository.prototype.markAllRemovedByExpert = originalMarkAll;
       }
 
       expect(erred.toLowerCase()).toMatch(/failed to clear/);

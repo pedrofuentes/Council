@@ -952,5 +952,78 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
         await fs.rm(linkDir, { recursive: true, force: true });
       }
     });
+    it("`panel docs unlink` warns and suppresses ✓ when FTS cleanup fails (#388)", async () => {
+      await createPanel();
+      const linkDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-unlink-fts-fail-"));
+      try {
+        await fs.writeFile(path.join(linkDir, "a.md"), "# A\nbody\n", "utf-8");
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { PanelDocumentRepository } = await import(
+          "../../../../src/memory/repositories/panel-document-repo.js"
+        );
+
+        const cmdLink = buildPanelCommand(() => {
+          /* noop */
+        });
+        await cmdLink.parseAsync([
+          "node",
+          "council-panel",
+          "docs",
+          "link",
+          "arch-review",
+          "--path",
+          linkDir,
+        ]);
+
+        const filePath = path.join(linkDir, "a.md");
+        const db1 = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          const repo = new PanelDocumentRepository(db1);
+          await repo.trackDocument({
+            panelName: "arch-review",
+            source: "linked",
+            filePath,
+            filename: "a.md",
+            checksum: "h",
+            sizeBytes: 5,
+            wordCount: 1,
+          });
+          // Drop FTS5 table so indexer.remove() throws during unlink.
+          const { sql } = await import("kysely");
+          await sql`DROP TABLE document_index`.execute(db1);
+        } finally {
+          await db1.destroy();
+        }
+
+        let captured = "";
+        let erred = "";
+        const cmdUnlink = buildPanelCommand(
+          (s) => {
+            captured += s;
+          },
+          (s) => {
+            erred += s;
+          },
+        );
+        await cmdUnlink.parseAsync([
+          "node",
+          "council-panel",
+          "docs",
+          "unlink",
+          "arch-review",
+          "--path",
+          linkDir,
+        ]);
+
+        // Success ✓ must NOT be reported when FTS cleanup failed.
+        expect(captured).not.toContain("✓");
+        // The combined output must surface the partial-failure warning.
+        expect((captured + erred).toLowerCase()).toMatch(
+          /fts index cleanup failed|fts index entr/i,
+        );
+      } finally {
+        await fs.rm(linkDir, { recursive: true, force: true });
+      }
+    });
   });
 });

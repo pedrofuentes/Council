@@ -146,6 +146,47 @@ describe("createDocumentIndexer", () => {
     expect(await rowsForPath(db, "/docs/panels/exec/a.md")).toHaveLength(1);
   });
 
+  it("index() is atomic — DELETE+INSERT wrapped in BEGIN/COMMIT (#356)", async () => {
+    // Atomicity contract: DELETE and INSERT must run inside a single
+    // transaction so a failing INSERT rolls back the DELETE. Verified
+    // structurally by recording every compiled SQL statement at the
+    // libsql connection layer and asserting BEGIN appears before
+    // DELETE FROM document_index and COMMIT appears after INSERT INTO
+    // document_index.
+    const { LibsqlConnection } = await import("@libsql/kysely-libsql");
+    const protoAny = LibsqlConnection.prototype as unknown as {
+      executeQuery: (q: { sql: string }) => Promise<unknown>;
+    };
+    const orig = protoAny.executeQuery;
+    const calls: string[] = [];
+    protoAny.executeQuery = async function (
+      this: unknown,
+      q: { sql: string },
+    ) {
+      if (typeof q?.sql === "string") calls.push(q.sql);
+      return orig.call(this, q);
+    };
+    try {
+      const indexer = createDocumentIndexer(db);
+      await indexer.index({
+        content: "atomic test content",
+        sourceType: "expert",
+        sourceSlug: "ceo",
+        filePath: "/docs/atomic.md",
+      });
+    } finally {
+      protoAny.executeQuery = orig;
+    }
+    const beginIdx = calls.findIndex((s) => /^\s*BEGIN\b/i.test(s));
+    const deleteIdx = calls.findIndex((s) => /DELETE\s+FROM\s+document_index/i.test(s));
+    const insertIdx = calls.findIndex((s) => /INSERT\s+INTO\s+document_index/i.test(s));
+    const commitIdx = calls.findIndex((s) => /^\s*COMMIT\b/i.test(s));
+    expect(beginIdx).toBeGreaterThanOrEqual(0);
+    expect(deleteIdx).toBeGreaterThan(beginIdx);
+    expect(insertIdx).toBeGreaterThan(deleteIdx);
+    expect(commitIdx).toBeGreaterThan(insertIdx);
+  });
+
   it("removeAll() only removes the matching source_type", async () => {
     const indexer = createDocumentIndexer(db);
     await indexer.index({
