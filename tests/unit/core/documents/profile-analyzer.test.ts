@@ -495,6 +495,131 @@ describe("analyzeDocuments() — engine-backed profile extraction", () => {
 });
 
 
+describe("analyzeDocuments() — error handling (#359 #360 #361)", () => {
+  it("retries once when the first send yields an engine error event (#359)", async () => {
+    // A stream error must trigger the same single retry as malformed JSON,
+    // not propagate immediately. The retry, if it succeeds, returns a
+    // valid profile.
+    class FirstErrorThenOkEngine extends RecordingEngine {
+      callCount = 0;
+      override send(opts: SendOptions): AsyncIterable<EngineEvent> {
+        this.sends.push({ expertId: opts.expertId, prompt: opts.prompt });
+        const expertId = opts.expertId;
+        this.callCount += 1;
+        const isFirst = this.callCount === 1;
+        const okText = validProfileJSON;
+        return (async function* (): AsyncGenerator<EngineEvent, void, void> {
+          if (isFirst) {
+            yield {
+              kind: "error",
+              expertId,
+              error: { code: "PROVIDER_ERROR", message: "transient" },
+              recoverable: true,
+            };
+            return;
+          }
+          yield { kind: "message.delta", expertId, text: okText };
+          yield {
+            kind: "message.complete",
+            expertId,
+            response: { latencyMs: 1, tokensIn: 1, tokensOut: 1 },
+          };
+        })();
+      }
+    }
+    const engine = new FirstErrorThenOkEngine([]);
+    const out = await analyzeDocuments(sampleDocs, null, engine, defaultOptions);
+    expect(out.communicationStyle).toMatch(/Direct/);
+    expect(engine.callCount).toBe(2);
+    expect(engine.removed.length).toBe(1);
+  });
+
+  it("throws when both the initial send and the retry yield engine errors (#359)", async () => {
+    class AlwaysErrorEngine extends RecordingEngine {
+      override send(opts: SendOptions): AsyncIterable<EngineEvent> {
+        this.sends.push({ expertId: opts.expertId, prompt: opts.prompt });
+        const expertId = opts.expertId;
+        return (async function* (): AsyncGenerator<EngineEvent, void, void> {
+          yield {
+            kind: "error",
+            expertId,
+            error: { code: "PROVIDER_ERROR", message: "boom" },
+            recoverable: false,
+          };
+        })();
+      }
+    }
+    const engine = new AlwaysErrorEngine([]);
+    await expect(
+      analyzeDocuments(sampleDocs, null, engine, defaultOptions),
+    ).rejects.toThrow();
+    expect(engine.sends.length).toBe(2);
+    expect(engine.removed.length).toBe(1);
+  });
+
+  it("aborts the send when the configured timeout elapses (#360)", async () => {
+    // Engine never emits anything until aborted. With a 20ms timeout the
+    // analyzer must surface a timeout error rather than block forever.
+    class HangingEngine extends RecordingEngine {
+      readonly signals: AbortSignal[] = [];
+      override send(opts: SendOptions): AsyncIterable<EngineEvent> {
+        this.sends.push({ expertId: opts.expertId, prompt: opts.prompt });
+        if (opts.signal) this.signals.push(opts.signal);
+        const expertId = opts.expertId;
+        const signal = opts.signal;
+        return (async function* (): AsyncGenerator<EngineEvent, void, void> {
+          await new Promise<void>((resolve) => {
+            if (!signal) return; // never resolves -> test fails on timeout
+            if (signal.aborted) {
+              resolve();
+              return;
+            }
+            signal.addEventListener("abort", () => resolve(), { once: true });
+          });
+          yield {
+            kind: "error",
+            expertId,
+            error: { code: "ABORTED", message: "aborted" },
+            recoverable: false,
+          };
+        })();
+      }
+    }
+    const engine = new HangingEngine([]);
+    await expect(
+      analyzeDocuments(sampleDocs, null, engine, {
+        ...defaultOptions,
+        timeoutMs: 20,
+      }),
+    ).rejects.toThrow(/timeout|timed out|abort/i);
+    // Signal must have been forwarded.
+    expect(engine.signals.length).toBeGreaterThanOrEqual(1);
+    expect(engine.signals[0]?.aborted).toBe(true);
+    expect(engine.removed.length).toBe(1);
+  });
+
+  it("logs a warning when removeExpert cleanup fails instead of swallowing silently (#361)", async () => {
+    class CleanupFailingEngine extends RecordingEngine {
+      override async removeExpert(expertId: string): Promise<void> {
+        this.removed.push(expertId);
+        throw new Error("teardown boom");
+      }
+    }
+    const engine = new CleanupFailingEngine([validProfileJSON]);
+    const warnings: string[] = [];
+    const out = await analyzeDocuments(sampleDocs, null, engine, {
+      ...defaultOptions,
+      onWarning: (msg) => warnings.push(msg),
+    });
+    expect(out.communicationStyle).toMatch(/Direct/);
+    expect(engine.removed.length).toBe(1);
+    expect(warnings.length).toBe(1);
+    const warning = warnings[0] ?? "";
+    expect(warning).toMatch(/removeExpert|cleanup|teardown/i);
+    expect(warning).toContain(engine.registered[0]?.id ?? "<missing>");
+  });
+});
+
 describe("calculateRecencyWeight() — exponential decay (Roadmap 6.8)", () => {
   const now = new Date("2026-06-01T00:00:00Z");
 
