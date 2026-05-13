@@ -12,7 +12,7 @@
 
 ### 1.1 Project Scaffolding ✅
 
-TypeScript ESM project (Node 20+) with tsup bundler, Vitest test runner, ESLint flat config v9 (typescript-eslint strict), and Prettier. CLI binary entry via Commander.js. Packaged as `@council/cli` with `council` binary (not yet published to npm — see Phase 4).
+TypeScript ESM project (Node 20+) with tsup bundler, Vitest test runner, ESLint flat config v9 (typescript-eslint strict), and Prettier. CLI binary entry via Commander.js. Packaged as `@council/cli` with `council` binary (not yet published to npm — see Phase 8).
 
 **Key files**: `package.json`, `tsconfig.json`, `tsup.config.ts`, `vitest.config.ts`, `eslint.config.mjs`, `src/bin/council.ts`
 
@@ -206,13 +206,199 @@ Automatic retry (2× with exponential backoff: 250ms, 1s) on recoverable engine 
 
 ---
 
-## Phase 4: Growth & Ecosystem ⬜
+## Phase 4: Expert Library Foundation ✅
+
+> **Goal**: Promote experts to first-class, standalone entities — the prerequisite for chat, persona experts, and cross-panel awareness.
+>
+> **Status**: Complete. All 7 items shipped.
+
+### 4.1 Expert YAML Schema & Storage ✅
+
+Standalone expert YAML files at `~/Council/experts/<slug>.yaml` validated by `ExpertDefinitionSchema` (Zod). Each expert has stable slug, display name, expertise priors, and (for persona experts) a `persona` block. Experts are loaded by `ExpertLibrary` and reused across panels.
+
+**Key files**: `src/core/expert.ts`, `src/core/expert-library.ts`
+
+### 4.2 Panel Composition Model ✅
+
+Panel YAML decoupled from inline expert definitions — panels reference experts by slug. Updates to an expert propagate to every panel that references it. Panel schema also stores moderator strategy and round budget.
+
+**Key files**: `src/core/template-loader.ts`, `src/core/types.ts`
+
+### 4.3 Expert CLI Commands ✅
+
+`council expert create | list | inspect | edit | delete` for managing the expert library. `create` supports both generic and persona templates. `inspect` shows the rendered system prompt for debugging.
+
+**Key files**: `src/cli/commands/expert.ts`
+
+### 4.4 Panel CLI Commands (Updated) ✅
+
+`council panel create | list | inspect | edit | delete` over the slug-referencing panel model. Replaces the older inline-expert workflow. Existing `council panels` listing command kept as a backward-compatible alias.
+
+**Key files**: `src/cli/commands/panel.ts`
+
+### 4.5 User Data Directory ✅
+
+User-facing layout at `~/Council/` (`experts/`, `panels/`) replacing the opaque `~/.council/` data dir for human-editable assets. The runtime DB and cache stay under `~/.council/`. `COUNCIL_HOME` continues to override both for tests.
+
+**Key files**: `src/config/loader.ts`, `src/config/schema.ts`
+
+### 4.6 Template Migration ✅
+
+The 5 built-in panel templates (architecture, startup, code-review, incident, career) migrated to the new expert+panel split with deterministic slugs. One-shot migration helper backfills user-defined panels.
+
+**Key files**: `src/core/template-migration.ts`, `src/cli/commands/templates.ts`
+
+### 4.7 Schema Migration 004 ✅
+
+`004_expert_library.sql` — adds `experts` and `expert_panels` tables and the panel-membership join required for cross-panel awareness in Phase 7. Applied automatically on first run after upgrade.
+
+**Key files**: `src/memory/migrations/004_expert_library.sql`
+
+---
+
+## Phase 5: Conversational Experience ✅
+
+> **Goal**: Persistent chat — both 1:1 with an expert and multi-expert panel chat — with smart context handling and inline structured debates.
+>
+> **Status**: Complete. All 7 items shipped.
+
+### 5.1 Chat Session Infrastructure ✅
+
+`ChatSession` model and `chat_sessions` / `chat_turns` tables (`005_chat.sql`). Sessions are scoped to either a single expert or a panel and can be resumed across CLI invocations. Repository encapsulates persistence and pagination.
+
+**Key files**: `src/core/chat/chat-session.ts`, `src/memory/repositories/chat-repository.ts`, `src/memory/migrations/005_chat.sql`
+
+### 5.2 1:1 Expert Chat ✅
+
+`council chat <expert-slug>` opens a persistent single-expert conversation. Streams responses via the `CouncilEngine` event stream, persists each turn, and resumes the most recent session by default (`--new` to start fresh).
+
+**Key files**: `src/cli/commands/chat.ts`
+
+### 5.3 Context Management ✅
+
+Shared context manager between debate and chat: rolling LLM-based summaries for older turns plus full recent turns. Honors the existing `maxPromptChars` cap with newest-first eviction. Heuristic summarization remains available via `--heuristic-summaries`.
+
+**Key files**: `src/core/chat/context-manager.ts`, `src/core/context/`
+
+### 5.4 Panel Chat Mode ✅
+
+`council chat <panel>` enables multi-expert conversation. A lightweight moderator selects the next responder per turn (round-robin by default; configurable). Each expert sees the panel-shared transcript filtered by visibility scope.
+
+**Key files**: `src/cli/commands/chat.ts`, `src/core/moderator/`
+
+### 5.5 @Mention Support ✅
+
+`@<expert-slug>` in a chat message directs the next turn at a specific panel member, bypassing moderator rotation. Parser validates slugs against current panel membership and surfaces helpful errors.
+
+**Key files**: `src/core/chat/mention-parser.ts`
+
+### 5.6 Inline Structured Debate ✅
+
+`@convene <topic>` inside a chat triggers a 4-phase structured debate (opening → cross-exam → rebuttal → synthesis), then resumes the chat session with the debate summary attached as context.
+
+**Key files**: `src/cli/commands/chat.ts`, `src/core/debate.ts`
+
+### 5.7 Chat Renderer ✅
+
+Ink-based chat UI with streaming text, color-coded experts, `@mention` highlighting, and inline debate phase indicators. Reuses primitives from the Phase 3 debate renderer.
+
+**Key files**: `src/cli/renderers/chat-renderer.ts`
+
+---
+
+## Phase 6: Document Intelligence ✅
+
+> **Goal**: Persona experts grounded in user-supplied documents, plus panel-level document folders for shared context. RAG retrieval during conversations.
+>
+> **Status**: 7 of 8 items shipped. 6.5 deferred.
+
+### 6.1 Document Detection & Extraction ✅
+
+Detects supported formats (md, txt, pdf, docx) under an expert's or panel's `docs/` folder and extracts text content. Tracks file mtime + hash to skip unchanged files.
+
+**Key files**: `src/core/documents/detector.ts`, `src/core/documents/extractor.ts`
+
+### 6.2 Persona Profile Analysis ✅
+
+LLM-based profile synthesis from documents into the expert's persona section of the system prompt. Profiles are cached in `persona_profiles` (`008_persona_profiles.sql`) and re-generated when source documents change.
+
+**Key files**: `src/core/documents/profile-analyzer.ts`, `src/memory/migrations/008_persona_profiles.sql`
+
+### 6.3 Content Indexing (RAG) ✅
+
+Documents are chunked and indexed via SQLite FTS5 for retrieval (`007_document_index.sql`). The retriever ranks chunks by relevance to the current turn and injects top-k snippets into the prompt.
+
+**Key files**: `src/core/documents/indexer.ts`, `src/core/documents/retriever.ts`, `src/memory/migrations/007_document_index.sql`
+
+### 6.4 On-demand Processing ✅
+
+Document processing runs lazily on first use (chat or debate) with visible progress feedback in the CLI. The processor coordinates extraction → profile analysis → indexing and short-circuits when nothing has changed.
+
+**Key files**: `src/core/documents/processor.ts`
+
+### 6.5 Background Processing ⏳ Deferred
+
+A daemon-style background processor for document changes was scoped but **deferred**. On-demand processing (6.4) covers the primary use case for a CLI tool, and a long-lived background process adds installation, lifecycle, and platform-compatibility complexity disproportionate to its incremental value. Revisit if document corpora grow large enough that first-use latency becomes a real problem.
+
+### 6.6 Expert Document CLI ✅
+
+`council expert docs add | list | remove | reprocess` for managing an expert's persona document folder. `add` symlinks/copies into `~/Council/experts/<slug>/docs/`; `reprocess` forces re-extraction and re-indexing.
+
+**Key files**: `src/cli/commands/expert.ts`
+
+### 6.7 Panel Document Folder ✅
+
+`~/Council/panels/<panel>/docs/` and `council panel docs link/unlink` for shared panel context (`009_panel_documents.sql`). Panel documents are visible to every member during chat and debate.
+
+**Key files**: `src/cli/commands/panel.ts`, `src/core/documents/panel-document-scanner.ts`, `src/memory/migrations/009_panel_documents.sql`
+
+### 6.8 Recency Weighting ✅
+
+Newer documents are weighted higher during retrieval to bias persona experts toward the most recent material — important when a user adds an updated CV, design doc, or RFC alongside older versions.
+
+**Key files**: `src/core/documents/retriever.ts`
+
+---
+
+## Phase 7: Context & Awareness ✅
+
+> **Goal**: Final polish — strict memory boundaries by expert kind, plus cross-panel awareness so experts know which other panels they participate in.
+>
+> **Status**: Complete. All 4 items shipped.
+
+### 7.1 Memory Model Enforcement ✅
+
+Generic experts get debate memory only; persona experts get document + debate memory. Enforced inside the prompt builder so no caller can accidentally leak the wrong memory kind into a prompt.
+
+**Key files**: `src/core/prompt-builder.ts`
+
+### 7.2 Cross-Panel Awareness ✅
+
+1:1 chat surfaces a summary of the expert's other panels and recent cross-panel activity, so the expert can reference shared context across panels without re-introduction.
+
+**Key files**: `src/cli/commands/chat.ts`, `src/core/prompt-builder.ts`
+
+### 7.3 Panel Membership Tracking ✅
+
+`panel-membership-query` resolves the panels an expert belongs to and injects that list (with roles) into the prompt's `MEMBERSHIP` section.
+
+**Key files**: `src/core/panel-membership-query.ts`
+
+### 7.4 Memory/Profile Separation ✅
+
+`council memory reset` clears extracted debate memory (`extracted_memory_json`) but preserves persona profiles, so resetting an expert's debate history does not require re-processing their documents.
+
+**Key files**: `src/cli/commands/memory.ts`, `src/memory/expert-memory.ts`
+
+---
+
+## Phase 8: Growth & Ecosystem ⬜
 
 > **Goal**: Meet users where they are — GitHub, CI, and beyond Copilot.
 >
 > **Status**: Not started.
 
-### 4.1 `gh` CLI Extension ⬜
+### 8.1 `gh` CLI Extension ⬜
 
 > Package Council as a GitHub CLI extension (`gh council`).
 
@@ -228,7 +414,7 @@ Automatic retry (2× with exponential backoff: 250ms, 1s) on recoverable engine 
 - `gh council convene "topic"` produces the same output as `council convene "topic"`
 - Auth flows through `gh` — no separate Copilot login needed
 
-### 4.2 GitHub Action ⬜
+### 8.2 GitHub Action ⬜
 
 > Run Council panels as part of CI workflows.
 
@@ -246,7 +432,7 @@ Automatic retry (2× with exponential backoff: 250ms, 1s) on recoverable engine 
 - Output is available as step output and optional PR comment
 - Cost estimation available before running
 
-### 4.3 Opt-in Telemetry ⬜
+### 8.3 Opt-in Telemetry ⬜
 
 > Anonymous usage metrics for understanding adoption and quality.
 
@@ -264,7 +450,7 @@ Automatic retry (2× with exponential backoff: 250ms, 1s) on recoverable engine 
 - No performance impact when disabled
 - Clear privacy policy in README
 
-### 4.4 Direct Provider APIs ⬜
+### 8.4 Direct Provider APIs ⬜
 
 > Support OpenAI, Anthropic, Google APIs directly (not through Copilot SDK).
 
@@ -302,7 +488,11 @@ Automatic retry (2× with exponential backoff: 250ms, 1s) on recoverable engine 
 | Context window management | 2.6 | ✅ Done |
 | Panel auto-composition | 2.5 | ✅ Done |
 | Rich Ink terminal UI | 3.4 | ✅ Done |
-| `gh` CLI extension | 4.1 | ⬜ Planned |
-| GitHub Action | 4.2 | ⬜ Planned |
-| Direct provider APIs | 4.4 | ⬜ Planned |
-| Published to npm as `@council/cli` | 4 | ⬜ Planned |
+| Experts as standalone reusable entities | 4 | ✅ Done |
+| Persistent 1:1 and panel chat | 5 | ✅ Done |
+| Document-driven persona experts | 6 | ✅ Done (6.5 deferred) |
+| Cross-panel expert awareness | 7 | ✅ Done |
+| `gh` CLI extension | 8.1 | ⬜ Planned |
+| GitHub Action | 8.2 | ⬜ Planned |
+| Direct provider APIs | 8.4 | ⬜ Planned |
+| Published to npm as `@council/cli` | 8 | ⬜ Planned |
