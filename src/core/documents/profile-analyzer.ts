@@ -65,6 +65,22 @@ export interface AnalyzeOptions {
    * current wall-clock time; exposed for deterministic tests.
    */
   readonly now?: Date;
+  /**
+   * Per-send timeout in milliseconds (#360). When the engine stream does
+   * not terminate within this window, the analyzer aborts via the
+   * forwarded `AbortSignal` and surfaces a timeout error. Applies to
+   * each send independently, so the worst-case wall time of a single
+   * `analyzeDocuments()` invocation is `2 * timeoutMs` (initial + retry).
+   * Defaults to 60 000 ms.
+   */
+  readonly timeoutMs?: number;
+  /**
+   * Optional warning sink (#361). Invoked when best-effort cleanup of
+   * the transient Profile Analyzer expert fails — long-lived engine
+   * instances accumulate orphan experts otherwise, and the silent
+   * `catch` previously discarded the only available signal.
+   */
+  readonly onWarning?: (message: string) => void;
 }
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -253,24 +269,40 @@ function parseAnalyzerJSON(raw: string): ParsedFields | null {
   };
 }
 
+const DEFAULT_TIMEOUT_MS = 60_000;
+
 async function collectResponse(
   engine: CouncilEngine,
   expertId: string,
   prompt: string,
+  timeoutMs: number,
 ): Promise<string> {
   let collected = "";
   let errored = false;
-  const stream: AsyncIterable<EngineEvent> = engine.send({ prompt, expertId });
+  let errorMessage: string | undefined;
+  // AbortSignal.timeout() schedules a timer that aborts the signal when
+  // the deadline elapses; engine adapters wire it through to the
+  // underlying request and surface an ABORTED error event.
+  const signal = AbortSignal.timeout(timeoutMs);
+  const stream: AsyncIterable<EngineEvent> = engine.send({ prompt, expertId, signal });
   for await (const event of stream) {
     if (event.kind === "message.delta") {
       collected += event.text;
     } else if (event.kind === "error") {
       errored = true;
+      errorMessage = event.error?.message;
       break;
     }
   }
   if (errored) {
-    throw new Error("Profile analyzer engine call failed");
+    if (signal.aborted) {
+      throw new Error(
+        `Profile analyzer engine call timed out after ${timeoutMs}ms`,
+      );
+    }
+    throw new Error(
+      `Profile analyzer engine call failed${errorMessage ? `: ${errorMessage}` : ""}`,
+    );
   }
   return collected;
 }
@@ -300,13 +332,31 @@ export async function analyzeDocuments(
   });
 
   const prompt = formatPromptBody(documents, existingProfile, options);
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   try {
-    let raw = await collectResponse(engine, expertId, prompt);
-    let parsed = parseAnalyzerJSON(raw);
-    if (!parsed) {
-      // Single retry per spec.
-      raw = await collectResponse(engine, expertId, prompt);
+    // Single retry covers both unparsable JSON AND transient engine
+    // errors (#359): a stream `error` event in the first send must not
+    // propagate immediately — give the analyzer one more shot before
+    // declaring failure, mirroring the existing JSON-retry contract.
+    let raw: string;
+    let parsed: ParsedFields | null = null;
+    let firstError: unknown;
+    try {
+      raw = await collectResponse(engine, expertId, prompt, timeoutMs);
       parsed = parseAnalyzerJSON(raw);
+    } catch (err) {
+      firstError = err;
+    }
+    if (!parsed) {
+      try {
+        raw = await collectResponse(engine, expertId, prompt, timeoutMs);
+        parsed = parseAnalyzerJSON(raw);
+      } catch (err) {
+        // Retry also failed: surface the retry's error (which is the
+        // most recent symptom) so callers see the proximate cause.
+        void firstError;
+        throw err;
+      }
     }
     if (!parsed) {
       throw new Error("Profile analyzer returned unparsable JSON after retry");
@@ -323,8 +373,20 @@ export async function analyzeDocuments(
       totalWords,
     };
   } finally {
-    await engine.removeExpert(expertId).catch(() => {
-      /* best-effort cleanup */
-    });
+    try {
+      await engine.removeExpert(expertId);
+    } catch (err: unknown) {
+      // Long-lived engines accumulate orphan transient experts when
+      // teardown fails silently (#361). Surface the failure via the
+      // caller-provided warning sink; fall back to console.warn so the
+      // signal isn't lost entirely if no sink is wired.
+      const detail = err instanceof Error ? err.message : String(err);
+      const msg = `profile-analyzer: removeExpert(${expertId}) cleanup failed: ${detail}`;
+      if (options.onWarning) {
+        options.onWarning(msg);
+      } else {
+        console.warn(msg);
+      }
+    }
   }
 }
