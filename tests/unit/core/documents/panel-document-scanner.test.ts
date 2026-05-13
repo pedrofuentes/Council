@@ -67,6 +67,10 @@ describe("scanAndIndexPanelDocuments", () => {
     // docsRepo.trackDocument() throws afterward. The scanner MUST surface
     // this as a `failed` count (not silently as `indexed`) so operators
     // can see that tracking metadata is out of sync with the FTS index.
+    //
+    // The fixture seeds two candidate files (spec.md + external.md) so
+    // we can assert the exact failure count and prove both files were
+    // attempted (issue #393 follow-up: not just >=1).
     const trackSpy = vi
       .spyOn(PanelDocumentRepository.prototype, "trackDocument")
       .mockRejectedValue(new Error("simulated tracking failure"));
@@ -79,7 +83,9 @@ describe("scanAndIndexPanelDocuments", () => {
       });
       // Neither file was tracked, both should be counted as failed.
       expect(result.indexed).toBe(0);
-      expect(result.failed).toBeGreaterThanOrEqual(1);
+      expect(result.failed).toBe(2);
+      // The spy must have been called once per file before failing.
+      expect(trackSpy).toHaveBeenCalledTimes(2);
     } finally {
       trackSpy.mockRestore();
     }
@@ -99,7 +105,9 @@ describe("scanAndIndexPanelDocuments", () => {
       supportedFormats: [".md", ".txt", ".html"],
     });
     expect(result.indexed).toBe(0);
-    expect(result.failed).toBeGreaterThanOrEqual(1);
+    // Both candidate files (spec.md + external.md) must be attempted
+    // and counted as failed.
+    expect(result.failed).toBe(2);
 
     // No documents were tracked — only the pre-existing linked-folder
     // registration should remain.
@@ -232,12 +240,17 @@ describe("scanAndIndexPanelDocuments", () => {
       try {
         await fs.symlink(secretDir, escapePath);
         linkCreated = true;
-      } catch {
+      } catch (innerErr: unknown) {
         // Symlinks/junctions are unavailable in this environment
         // (typical: unprivileged Windows runner without Developer
-        // Mode). Skip with an explicit assertion so the test is not
-        // silently a no-op — issue #392.
-        expect(process.platform === "win32" || process.getuid?.() !== 0).toBe(true);
+        // Mode). Issue #392: instead of skipping silently or asserting
+        // a broad platform predicate, narrow the assertion to the
+        // specific filesystem error codes that indicate "this OS/user
+        // cannot create symlinks", so a future regression that swaps
+        // these for an unrelated error (e.g. ENOENT pointing at a bug
+        // in the test fixture itself) will fail loudly.
+        const innerCode = (innerErr as NodeJS.ErrnoException).code;
+        expect(["EPERM", "EACCES", "ENOSYS", "UNKNOWN"]).toContain(innerCode);
         return;
       }
     }

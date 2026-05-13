@@ -181,19 +181,24 @@ describe("DocumentRepository", () => {
       const a = await repo.create(sampleDoc({ filePath: "/p/a.md", checksum: "old" }));
       await repo.create(sampleDoc({ filePath: "/p/b.md", checksum: "keep" }));
 
-      const result = await db
-        .updateTable("expert_documents")
-        .set({ checksum: "new", size_bytes: 999, word_count: 42 })
-        .where("id", "=", a.id)
-        .executeTakeFirst();
-      expect(Number(result.numUpdatedRows)).toBe(1);
+      // Drive through the repository surface, then verify rows.
+      await repo.updateChecksum(a.id, "new", 999, 42);
 
       const aAfter = await repo.findByPath("ceo", "/p/a.md");
       const bAfter = await repo.findByPath("ceo", "/p/b.md");
       expect(aAfter?.checksum).toBe("new");
       expect(aAfter?.sizeBytes).toBe(999);
       expect(aAfter?.wordCount).toBe(42);
+      // Sibling row is untouched.
       expect(bAfter?.checksum).toBe("keep");
+
+      // Mirror the repo's SQL on a non-existent id to assert no-op semantics.
+      const noop = await db
+        .updateTable("expert_documents")
+        .set({ checksum: "x", size_bytes: 1, word_count: 1 })
+        .where("id", "=", "01ZZZZNONEXISTENT0000000000")
+        .executeTakeFirst();
+      expect(Number(noop.numUpdatedRows)).toBe(0);
     });
 
     it("markRemoved changes exactly one row to status='removed'", async () => {
@@ -225,21 +230,24 @@ describe("DocumentRepository", () => {
       expect(Number(noop.numUpdatedRows)).toBe(0);
     });
 
-    it("markAllRemovedByExpert flips every active row for the expert (numUpdatedRows == active count)", async () => {
-      await repo.create(sampleDoc({ filePath: "/p/a.md" }));
-      await repo.create(sampleDoc({ filePath: "/p/b.md" }));
+    it("markAllRemovedByExpert flips every active row for the expert and leaves pre-removed rows alone", async () => {
+      const a = await repo.create(sampleDoc({ filePath: "/p/a.md" }));
+      const b = await repo.create(sampleDoc({ filePath: "/p/b.md" }));
       const c = await repo.create(sampleDoc({ filePath: "/p/c.md" }));
       // Pre-mark one as removed so it should NOT be re-touched.
       await repo.markRemoved(c.id);
 
-      // Mirror the repo's bulk UPDATE to capture numUpdatedRows.
-      const result = await db
-        .updateTable("expert_documents")
-        .set({ status: "removed" })
+      // Snapshot pre-state to assert exact diff after the bulk update.
+      const activeBefore = await db
+        .selectFrom("expert_documents")
+        .select((eb) => eb.fn.countAll<number>().as("n"))
         .where("expert_slug", "=", "ceo")
         .where("status", "!=", "removed")
-        .executeTakeFirst();
-      expect(Number(result.numUpdatedRows)).toBe(2);
+        .executeTakeFirstOrThrow();
+      expect(Number(activeBefore.n)).toBe(2);
+
+      // Drive through the repository surface.
+      await repo.markAllRemovedByExpert("ceo");
 
       const stillActive = await db
         .selectFrom("expert_documents")
@@ -248,6 +256,25 @@ describe("DocumentRepository", () => {
         .where("status", "!=", "removed")
         .executeTakeFirstOrThrow();
       expect(Number(stillActive.n)).toBe(0);
+
+      // All three rows must now read as removed (including the pre-removed one).
+      for (const id of [a.id, b.id, c.id]) {
+        const row = await db
+          .selectFrom("expert_documents")
+          .select("status")
+          .where("id", "=", id)
+          .executeTakeFirstOrThrow();
+        expect(row.status).toBe("removed");
+      }
+
+      // Second call is a no-op: mirror the repo's SQL to read numUpdatedRows.
+      const noop = await db
+        .updateTable("expert_documents")
+        .set({ status: "removed" })
+        .where("expert_slug", "=", "ceo")
+        .where("status", "!=", "removed")
+        .executeTakeFirst();
+      expect(Number(noop.numUpdatedRows)).toBe(0);
     });
   });
 });
