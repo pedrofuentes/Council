@@ -282,6 +282,107 @@ describe("scanAndIndexPanelDocuments", () => {
     const paths = fts.rows.map((r) => r.file_path);
     expect(paths).not.toContain(path.join(linkedDir, "external.md"));
   });
+  it("prunes managed-source documents when the managed folder is deleted (Sentinel #1)", async () => {
+    // First scan: spec.md (managed) + external.md (linked) both indexed.
+    await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+
+    // Remove the entire managed dir from disk (simulates user deleting it).
+    await fs.rm(managedDir, { recursive: true, force: true });
+
+    const result = await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+    expect(result.pruned).toBe(1);
+
+    const docsRepo = new PanelDocumentRepository(db);
+    const after = await docsRepo.listDocuments("arch-review");
+    const removedManaged = after.filter(
+      (d) => d.status === "removed" && d.source === "managed",
+    );
+    expect(removedManaged).toHaveLength(1);
+
+    const fts = await sql<{
+      file_path: string;
+    }>`SELECT file_path FROM document_index WHERE source_type = 'panel'`.execute(db);
+    const paths = fts.rows.map((r) => r.file_path);
+    expect(paths).not.toContain(path.join(managedDir, "spec.md"));
+  });
+
+  it("does NOT markRemoved when indexer.remove fails (Sentinel #2)", async () => {
+    // First indexing run.
+    await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+
+    // Delete external.md so prune logic engages.
+    await fs.unlink(path.join(linkedDir, "external.md"));
+
+    // Force the FTS deletion to fail by dropping the document_index
+    // table. The scanner must NOT mark the row removed in metadata if
+    // the FTS deletion didn't succeed — otherwise the row appears
+    // pruned while stale searchable content lingers.
+    await sql`DROP TABLE document_index`.execute(db);
+
+    const result = await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+    expect(result.pruned).toBe(0);
+
+    const docsRepo = new PanelDocumentRepository(db);
+    const after = await docsRepo.listDocuments("arch-review");
+    const external = after.find((d) => d.filename === "external.md");
+    expect(external).toBeDefined();
+    expect(external?.status).not.toBe("removed");
+  });
+
+  it("does not prune tracked docs under a linked folder whose scan failed (Sentinel #3)", async () => {
+    // Seed: index spec.md (managed) and external.md (linked).
+    await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+
+    // Replace linkedDir with a file → readdir will fail with ENOTDIR,
+    // triggering a folder-level failure in the next scan.
+    await fs.rm(linkedDir, { recursive: true, force: true });
+    await fs.writeFile(linkedDir, "now a file, not a dir", "utf-8");
+
+    const result = await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+    expect(result.foldersFailed).toBeGreaterThanOrEqual(1);
+    expect(result.pruned).toBe(0);
+
+    const docsRepo = new PanelDocumentRepository(db);
+    const after = await docsRepo.listDocuments("arch-review");
+    const external = after.find((d) => d.filename === "external.md");
+    expect(external?.status).not.toBe("removed");
+
+    const fts = await sql<{
+      file_path: string;
+    }>`SELECT file_path FROM document_index WHERE source_type = 'panel'`.execute(db);
+    const paths = fts.rows.map((r) => r.file_path);
+    expect(paths).toContain(path.join(linkedDir, "external.md"));
+  });
 });
 
 describe("formatAllFailedWarning", () => {
