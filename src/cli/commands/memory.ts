@@ -445,8 +445,14 @@ function buildResetCommand(write: Writer, writeError: Writer): Command {
           } catch (err) {
             try {
               await sql`ROLLBACK`.execute(db);
-            } catch {
-              /* swallow rollback errors so the original failure is preserved */
+            } catch (rollbackErr) {
+              // Surface the rollback failure so operators are not left
+              // believing DB state is consistent — but still rethrow the
+              // original error (the cause of the abort) below so the
+              // command exits with the underlying reason.
+              writeError(
+                `!! ROLLBACK failed after reset error — DB state may be inconsistent: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}\n`,
+              );
             }
             throw err;
           }
