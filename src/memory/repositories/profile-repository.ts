@@ -10,22 +10,43 @@
 import type { CouncilDatabase, PersonaProfileRow } from "../db.js";
 import type { PersonaProfile } from "../../core/documents/profile-analyzer.js";
 
-function safeParseArray(json: string): readonly string[] {
+function safeParseArray(
+  json: string,
+  context: { slug: string; field: string },
+): readonly string[] {
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(json);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((v): v is string => typeof v === "string");
-  } catch {
+    parsed = JSON.parse(json);
+  } catch (err) {
+    console.warn(
+      `[profile-repository] Corrupt JSON in persona_profiles.${context.field} for slug "${context.slug}": ${json} (${(err as Error).message}). Recovering as []; profile data may be damaged.`,
+    );
     return [];
   }
+  if (!Array.isArray(parsed)) {
+    console.warn(
+      `[profile-repository] Expected JSON array in persona_profiles.${context.field} for slug "${context.slug}" but got ${typeof parsed}: ${json}. Recovering as []; profile data may be damaged.`,
+    );
+    return [];
+  }
+  return parsed.filter((v): v is string => typeof v === "string");
 }
 
 function toDomain(row: PersonaProfileRow): PersonaProfile {
   return {
     communicationStyle: row.communication_style,
-    decisionPatterns: safeParseArray(row.decision_patterns),
-    biases: safeParseArray(row.biases),
-    vocabulary: safeParseArray(row.vocabulary),
+    decisionPatterns: safeParseArray(row.decision_patterns, {
+      slug: row.expert_slug,
+      field: "decision_patterns",
+    }),
+    biases: safeParseArray(row.biases, {
+      slug: row.expert_slug,
+      field: "biases",
+    }),
+    vocabulary: safeParseArray(row.vocabulary, {
+      slug: row.expert_slug,
+      field: "vocabulary",
+    }),
     epistemicStance: row.epistemic_stance,
     documentCount: row.document_count,
     totalWords: row.total_words,
