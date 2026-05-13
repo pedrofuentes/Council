@@ -6,6 +6,20 @@
  * `panel_documents`, and indexes their normalized content into the
  * existing FTS5 `document_index` table under `source_type = 'panel'`.
  *
+ * **Reconciliation scope is narrow and conditional.** A tracked file is
+ * pruned (its `panel_documents` row marked `removed` AND its
+ * `document_index` entry deleted) only when (a) the folder it lives in
+ * was scanned successfully on this invocation AND (b) the detector
+ * neither saw it on disk nor reported it as a "transient unknown
+ * state" (e.g. an lstat that failed without confirming a hard rejection
+ * — see issue #342). A folder-level scan failure (missing path,
+ * permission error, unreadable directory) skips pruning for every file
+ * tracked under that folder, so a transient mount problem cannot wipe
+ * the index. Hard confinement / TOCTOU rejections from the detector
+ * are NOT preserved across reconciliation — those entries become
+ * eligible for pruning so the scanner can drop content whose on-disk
+ * file is now invalid.
+ *
  * Designed to be called on panel chat startup so the RAG corpus reflects
  * the latest on-disk state without requiring a separate "rebuild" step.
  * Per-file failures are isolated — a single broken file does not block

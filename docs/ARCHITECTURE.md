@@ -30,6 +30,19 @@ council/
 │   │   │   └── strategies/            ← round-robin, sequential, socratic, devil's-advocate
 │   │   ├── transcript.ts              ← Immutable turn log
 │   │   └── cost.ts                    ← Cost estimation & enforcement
+│   ├── core/documents/                ← Document Intelligence (Roadmap 6.x)
+│   │   ├── detector.ts                ← Walks expert/panel docs folder, SHA-256 change detection,
+│   │   │                                fd-based confinement (TOCTOU-safe)
+│   │   ├── extractor.ts               ← Format-aware content normalisation (Markdown/HTML/text)
+│   │   │                                via regex normalisers; fd-bound reads with realpath/inode
+│   │   │                                comparison against `confinementRoot` (per ADR-007)
+│   │   ├── indexer.ts                 ← Writes extracted text into FTS5 `document_index`
+│   │   ├── retriever.ts               ← Sanitised FTS5 query → ranked snippets for RAG
+│   │   ├── processor.ts               ← End-to-end per-expert pipeline (detect → extract →
+│   │   │                                index → analyze) wired into `council chat <persona>`
+│   │   ├── profile-analyzer.ts        ← LLM-backed persona-profile distillation with
+│   │   │                                recency-weight tagging (Roadmap 6.2 + 6.8); see ADR-008
+│   │   └── panel-document-scanner.ts  ← Managed + linked folder scan for panel docs (6.7)
 │   ├── engine/
 │   │   ├── index.ts                   ← CouncilEngine interface (THE architectural seam)
 │   │   ├── copilot/
