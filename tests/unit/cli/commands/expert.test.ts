@@ -759,6 +759,59 @@ fs.writeFileSync(p, body, 'utf-8');`,
       }
     });
 
+    it("--remove warns and suppresses ✓ when FTS index cleanup fails (#382)", async () => {
+      await seedExpert(env, PERSONA);
+      await seedDocRow("boss", "alpha.md", 100);
+      // Drop the FTS5 table so indexer.remove() throws when called by the CLI.
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { sql } = await import("kysely");
+      const dropDb = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        await sql`DROP TABLE document_index`.execute(dropDb);
+      } finally {
+        await dropDb.destroy();
+      }
+
+      let captured = "";
+      let erred = "";
+      const cmd = buildExpertCommand(
+        (s) => {
+          captured += s;
+        },
+        (s) => {
+          erred += s;
+        },
+      );
+      await cmd.parseAsync([
+        "node",
+        "council-expert",
+        "docs",
+        "boss",
+        "--remove",
+        "alpha.md",
+      ]);
+
+      // Must NOT report success with ✓ when FTS cleanup failed.
+      expect(captured).not.toContain("✓");
+      // Combined output must surface the partial-failure warning.
+      expect((captured + erred).toLowerCase()).toMatch(
+        /fts index cleanup failed|removed from tracking but/i,
+      );
+
+      // DB row must still have been marked removed (tracking is the
+      // source of truth).
+      const { DocumentRepository } = await import(
+        "../../../../src/memory/repositories/document-repository.js"
+      );
+      const db = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        const rows = await new DocumentRepository(db).findByExpert("boss");
+        expect(rows[0]?.status).toBe("removed");
+      } finally {
+        await db.destroy();
+      }
+    });
+
     it("--remove preserves the file on disk", async () => {
       await seedExpert(env, PERSONA);
       await seedDocRow("boss", "alpha.md", 50);
@@ -1023,6 +1076,91 @@ fs.writeFileSync(p, body, 'utf-8');`,
       expect(stub.sends.length).toBeGreaterThan(0);
     });
 
+    it("--retrain aborts atomically and preserves tracking when FTS cleanup fails (#383)", async () => {
+      await seedExpert(env, PERSONA);
+      await writeDoc("boss", "intro.md", "First training document.");
+
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { DocumentRepository } = await import(
+        "../../../../src/memory/repositories/document-repository.js"
+      );
+      const { ProfileRepository } = await import(
+        "../../../../src/memory/repositories/profile-repository.js"
+      );
+
+      const filePath = path.join(env.dataHome, "experts", "boss", "docs", "intro.md");
+
+      // Seed a baseline profile + a tracked-processed doc row so retrain
+      // has something to clear, then DROP the `document_index` FTS table
+      // so the indexer.removeAll() invocation inside retrain throws.
+      {
+        const db = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          await new ProfileRepository(db).upsert("boss", {
+            communicationStyle: "Pre-existing baseline.",
+            decisionPatterns: ["baseline"],
+            biases: ["baseline"],
+            vocabulary: ["baseline"],
+            epistemicStance: "Baseline.",
+            lastUpdated: new Date().toISOString(),
+            documentCount: 1,
+            totalWords: 4,
+          });
+          const repo = new DocumentRepository(db);
+          const created = await repo.create({
+            expertSlug: "boss",
+            filePath,
+            filename: "intro.md",
+            checksum: "cs",
+            sizeBytes: 1,
+            wordCount: 4,
+          });
+          await repo.updateStatus(created.id, "processed", new Date().toISOString());
+          const { sql } = await import("kysely");
+          await sql`DROP TABLE document_index`.execute(db);
+        } finally {
+          await db.destroy();
+        }
+      }
+
+      let captured = "";
+      let erred = "";
+      const cmd = buildExpertCommand(
+        (s) => {
+          captured += s;
+        },
+        (s) => {
+          erred += s;
+        },
+        { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+      );
+      await expect(
+        cmd.parseAsync(["node", "council-expert", "train", "boss", "--retrain"]),
+      ).rejects.toThrow(/retrain aborted/i);
+
+      // ✓ must NOT be emitted on failure.
+      expect(captured).not.toContain("✓");
+      // The error must indicate the abort was atomic: profile AND
+      // tracking preserved (not just the profile).
+      expect(erred.toLowerCase()).toMatch(/retrain aborted/);
+      expect(erred.toLowerCase()).toMatch(/profile and tracking preserved/);
+
+      // The pre-existing profile AND tracked doc must both still be in
+      // place — otherwise we'd have a partial-clear: docs marked removed
+      // (or document_index rows deleted) while the profile lingers, or
+      // the converse — both of which corrupt retrieval.
+      const db = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        const profile = await new ProfileRepository(db).findBySlug("boss");
+        expect(profile?.communicationStyle).toMatch(/baseline/i);
+        const docs = await new DocumentRepository(db).findByExpert("boss");
+        const active = docs.filter((d) => d.status !== "removed");
+        expect(active.some((d) => d.filePath === filePath)).toBe(true);
+      } finally {
+        await db.destroy();
+      }
+    });
+
     it("--retrain aborts and preserves the profile when a doc clear fails", async () => {
       await seedExpert(env, PERSONA);
       await writeDoc("boss", "intro.md", "First training document.");
@@ -1066,10 +1204,13 @@ fs.writeFileSync(p, body, 'utf-8');`,
         }
       }
 
-      // Force markRemoved to fail so the retrain clear loop reports a
+      // Force the atomic clear path to fail so the retrain reports a
       // failure and must abort BEFORE deleting the existing profile.
-      const originalMarkRemoved = DocumentRepository.prototype.markRemoved;
-      DocumentRepository.prototype.markRemoved = async function (): Promise<void> {
+      // Post-#383 (Sentinel revision) the cli uses
+      // DocumentRepository.clearForRetrain (a single BEGIN/COMMIT
+      // wrapping both the FTS DELETE and the tracking UPDATE).
+      const originalClear = DocumentRepository.prototype.clearForRetrain;
+      DocumentRepository.prototype.clearForRetrain = async function (): Promise<void> {
         throw new Error("simulated DB failure");
       };
 
@@ -1089,11 +1230,11 @@ fs.writeFileSync(p, body, 'utf-8');`,
           cmd.parseAsync(["node", "council-expert", "train", "boss", "--retrain"]),
         ).rejects.toThrow(/retrain aborted|failed to clear/i);
       } finally {
-        DocumentRepository.prototype.markRemoved = originalMarkRemoved;
+        DocumentRepository.prototype.clearForRetrain = originalClear;
       }
 
       expect(erred.toLowerCase()).toMatch(/failed to clear/);
-      expect(captured + erred).toMatch(/profile preserved/i);
+      expect(captured + erred).toMatch(/profile.*preserved/i);
 
       // The pre-existing profile must still be in place.
       const db = await createDatabase(path.join(env.home, "council.db"));

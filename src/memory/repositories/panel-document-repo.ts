@@ -100,28 +100,10 @@ export class PanelDocumentRepository {
   }
 
   async trackDocument(input: NewPanelDocument): Promise<void> {
-    const existing = await this.db
-      .selectFrom("panel_documents")
-      .select(["id"])
-      .where("panel_name", "=", input.panelName)
-      .where("file_path", "=", input.filePath)
-      .executeTakeFirst();
-    if (existing) {
-      await this.db
-        .updateTable("panel_documents")
-        .set({
-          source: input.source,
-          filename: input.filename,
-          checksum: input.checksum,
-          size_bytes: input.sizeBytes,
-          word_count: input.wordCount,
-          status: "processed",
-          processed_at: new Date().toISOString(),
-        })
-        .where("id", "=", existing.id)
-        .execute();
-      return;
-    }
+    // Atomic upsert via ON CONFLICT on the (panel_name, file_path) UNIQUE
+    // constraint — eliminates the SELECT-then-INSERT race where two
+    // concurrent scans could both miss and both attempt INSERT (#387).
+    const nowIso = new Date().toISOString();
     await this.db
       .insertInto("panel_documents")
       .values({
@@ -135,8 +117,19 @@ export class PanelDocumentRepository {
         word_count: input.wordCount,
         status: "pending",
         processed_at: null,
-        created_at: new Date().toISOString(),
+        created_at: nowIso,
       })
+      .onConflict((oc) =>
+        oc.columns(["panel_name", "file_path"]).doUpdateSet({
+          source: input.source,
+          filename: input.filename,
+          checksum: input.checksum,
+          size_bytes: input.sizeBytes,
+          word_count: input.wordCount,
+          status: "processed",
+          processed_at: nowIso,
+        }),
+      )
       .execute();
   }
 

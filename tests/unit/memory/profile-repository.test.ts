@@ -90,14 +90,8 @@ describe("ProfileRepository", () => {
   });
 
   it("warns (does not silently coerce) when a stored JSON array column is corrupt (#362)", async () => {
-    // Issue #362: previously safeParseArray silently returned [] for any
-    // unparseable / non-array JSON, masking real DB corruption from users.
-    // The repository must now log a clear warning identifying the field,
-    // slug, and raw value when this happens, while still returning [] so
-    // the rest of the profile remains usable.
     await repo.upsert("ceo", sampleProfile());
 
-    // Directly corrupt one of the JSON-encoded array columns.
     await db
       .updateTable("persona_profiles")
       .set({ decision_patterns: "{not-json" })
@@ -108,11 +102,8 @@ describe("ProfileRepository", () => {
     try {
       const found = await repo.findBySlug("ceo");
       expect(found).not.toBeNull();
-      // Corrupt field is recovered to an empty array (graceful degradation).
       expect(found?.decisionPatterns).toEqual([]);
-      // Other fields remain intact.
       expect(found?.communicationStyle).toBe(sampleProfile().communicationStyle);
-      // A warning was emitted that names both the field and the slug.
       expect(warnSpy).toHaveBeenCalled();
       const msg = warnSpy.mock.calls.map((c) => c.join(" ")).join("\n");
       expect(msg).toMatch(/decision_patterns/);
@@ -140,6 +131,27 @@ describe("ProfileRepository", () => {
     } finally {
       warnSpy.mockRestore();
     }
+  });
+
+  it("upsert is atomic — no SELECT-then-INSERT race (#363)", async () => {
+    let preSelected = false;
+    const dbAny = db as unknown as {
+      selectFrom: (t: string) => unknown;
+    };
+    const origSelect = dbAny.selectFrom.bind(db);
+    dbAny.selectFrom = (table: string) => {
+      if (table === "persona_profiles") preSelected = true;
+      return origSelect(table);
+    };
+    try {
+      await repo.upsert("ceo", sampleProfile({ communicationStyle: "atomic-1" }));
+      await repo.upsert("ceo", sampleProfile({ communicationStyle: "atomic-2" }));
+    } finally {
+      dbAny.selectFrom = origSelect;
+    }
+    expect(preSelected).toBe(false);
+    const found = await repo.findBySlug("ceo");
+    expect(found?.communicationStyle).toBe("atomic-2")
   });
 
   it("profiles are scoped per slug", async () => {

@@ -729,36 +729,47 @@ function buildDocsUnlinkCommand(write: Writer, writeError: Writer): Command {
           writeError(`Panel "${name}" not found.\n`);
           throw new Error(`Panel "${name}" not found.`);
         }
-        // Un-index any tracked documents from this folder and prune the
-        // FTS5 index so future chat retrieval cannot still surface them.
-        // Errors from indexer.remove() are collected rather than thrown
-        // so a single broken FTS entry cannot leave the panel half-
-        // unlinked (orphaned panel_documents rows + dangling
-        // panel_linked_folders row).
+        // #388: All FTS removes + metadata deletes must be a single
+        // atomic unit. Removing FTS rows one at a time without a
+        // surrounding transaction means a mid-loop failure leaves
+        // already-removed entries gone, while the panel-doc scanner
+        // skips unchanged files (it only re-indexes new/modified ones).
+        // Stale-by-omission docs would silently disappear from
+        // retrieval. We wrap the whole sequence in BEGIN/COMMIT/ROLLBACK
+        // on the libsql client so any failure restores both the FTS
+        // index and the metadata to their pre-unlink state.
         const { createDocumentIndexer } = await import("../../core/documents/indexer.js");
+        const { sql } = await import("kysely");
         const indexer = createDocumentIndexer(ctx.db);
         const docs = await ctx.docsRepo.listDocuments(name);
-        const indexerErrors: unknown[] = [];
-        for (const d of docs) {
-          if (
-            d.filePath === absolute ||
-            d.filePath.startsWith(absolute + path.sep) ||
-            d.filePath.startsWith(absolute + "/") ||
-            d.filePath.startsWith(absolute + "\\")
-          ) {
-            try {
+        await sql`BEGIN`.execute(ctx.db);
+        try {
+          for (const d of docs) {
+            if (
+              d.filePath === absolute ||
+              d.filePath.startsWith(absolute + path.sep) ||
+              d.filePath.startsWith(absolute + "/") ||
+              d.filePath.startsWith(absolute + "\\")
+            ) {
               await indexer.remove(d.filePath);
-            } catch (err: unknown) {
-              indexerErrors.push(err);
             }
           }
-        }
-        await ctx.docsRepo.removeDocumentsUnderFolder(name, absolute);
-        await ctx.docsRepo.removeLinkedFolder(name, absolute);
-        if (indexerErrors.length > 0) {
-          writeError(
-            `Warning: ${indexerErrors.length} FTS index entr${indexerErrors.length === 1 ? "y" : "ies"} could not be removed; metadata cleanup completed.\n`,
-          );
+          await ctx.docsRepo.removeDocumentsUnderFolder(name, absolute);
+          await ctx.docsRepo.removeLinkedFolder(name, absolute);
+          await sql`COMMIT`.execute(ctx.db);
+        } catch (err: unknown) {
+          try {
+            await sql`ROLLBACK`.execute(ctx.db);
+          } catch {
+            /* swallow rollback errors so the original failure is preserved */
+          }
+          const detail = err instanceof Error ? err.message : String(err);
+          const msg =
+            `Unlink aborted for ${displayPath(absolute)}: failed to clean up FTS ` +
+            `index and/or metadata (${detail}). Linked folder preserved; re-run ` +
+            `unlink after addressing the error.`;
+          writeError(msg + "\n");
+          throw new Error(msg);
         }
         write(`✓ Unlinked ${displayPath(absolute)} from ${name}.\n`);
       });

@@ -115,6 +115,28 @@ describe("PanelDocumentRepository", () => {
       expect(docs[0]?.wordCount).toBe(20);
     });
 
+    it("trackDocument() is atomic — no SELECT-then-INSERT race (#387)", async () => {
+      // Atomic upsert (INSERT … ON CONFLICT DO UPDATE) must not pre-SELECT
+      // to decide between INSERT and UPDATE.
+      let preSelected = false;
+      const dbAny = db as unknown as { selectFrom: (t: string) => unknown };
+      const origSelect = dbAny.selectFrom.bind(db);
+      dbAny.selectFrom = (table: string) => {
+        if (table === "panel_documents") preSelected = true;
+        return origSelect(table);
+      };
+      try {
+        await repo.trackDocument(sampleDoc({ checksum: "atomic-1" }));
+        await repo.trackDocument(sampleDoc({ checksum: "atomic-2" }));
+      } finally {
+        dbAny.selectFrom = origSelect;
+      }
+      expect(preSelected).toBe(false);
+      const docs = await repo.listDocuments("arch-review");
+      expect(docs).toHaveLength(1);
+      expect(docs[0]?.checksum).toBe("atomic-2");
+    });
+
     it("trackDocument() supports a 'linked' source", async () => {
       await repo.trackDocument(
         sampleDoc({

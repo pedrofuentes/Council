@@ -40,12 +40,34 @@ export function createDocumentIndexer(db: CouncilDatabase): DocumentIndexer {
   return {
     async index(options: IndexDocumentOptions): Promise<void> {
       // Replace-by-path semantics: delete any prior row then insert fresh.
-      // FTS5 tables don't support UPSERT, so this two-step is the canonical pattern.
-      await sql`DELETE FROM document_index WHERE file_path = ${options.filePath}`.execute(db);
-      await sql`
-        INSERT INTO document_index (content, source_type, source_slug, file_path)
-        VALUES (${options.content}, ${options.sourceType}, ${options.sourceSlug}, ${options.filePath})
-      `.execute(db);
+      // FTS5 tables don't support UPSERT, so the canonical pattern is
+      // DELETE + INSERT. The pair MUST run as an atomic unit — without a
+      // transaction, an INSERT failure after a successful DELETE would
+      // silently lose the existing entry (#356).
+      //
+      // We issue raw BEGIN/COMMIT against the same libsql client
+      // connection rather than using Kysely's `db.transaction()`. The
+      // libsql sqlite3 client implements `client.transaction()` by
+      // detaching the current connection and lazily opening a new one
+      // for non-transactional calls, which breaks `:memory:` databases
+      // (the new connection is a brand-new empty DB). Raw BEGIN/COMMIT
+      // on the client keeps connection state intact.
+      await sql`BEGIN`.execute(db);
+      try {
+        await sql`DELETE FROM document_index WHERE file_path = ${options.filePath}`.execute(db);
+        await sql`
+          INSERT INTO document_index (content, source_type, source_slug, file_path)
+          VALUES (${options.content}, ${options.sourceType}, ${options.sourceSlug}, ${options.filePath})
+        `.execute(db);
+        await sql`COMMIT`.execute(db);
+      } catch (err) {
+        try {
+          await sql`ROLLBACK`.execute(db);
+        } catch {
+          /* ignore — original error is more informative */
+        }
+        throw err;
+      }
     },
 
     async remove(filePath: string): Promise<void> {
