@@ -8,13 +8,17 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sql } from "kysely";
 
 import { createDatabase, type CouncilDatabase } from "../../../../src/memory/db.js";
 import { PanelLibraryRepository } from "../../../../src/memory/repositories/panel-library-repo.js";
 import { PanelDocumentRepository } from "../../../../src/memory/repositories/panel-document-repo.js";
-import { scanAndIndexPanelDocuments } from "../../../../src/core/documents/panel-document-scanner.js";
+import {
+  scanAndIndexPanelDocuments,
+  formatAllFailedWarning,
+} from "../../../../src/core/documents/panel-document-scanner.js";
+import * as extractorModule from "../../../../src/core/documents/extractor.js";
 
 async function makeTempDir(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -215,5 +219,303 @@ describe("scanAndIndexPanelDocuments", () => {
         }
       }
     }
+  });
+
+  it("passes confinementRoot to extractDocument so symlink TOCTOU is blocked (issue #385)", async () => {
+    const spy = vi.spyOn(extractorModule, "extractDocument");
+    try {
+      await scanAndIndexPanelDocuments({
+        panelName: "arch-review",
+        managedDocsDir: managedDir,
+        db,
+        supportedFormats: [".md", ".txt", ".html"],
+      });
+      expect(spy).toHaveBeenCalled();
+      const canonicalManaged = await fs.realpath(managedDir);
+      const canonicalLinked = await fs.realpath(linkedDir);
+      for (const call of spy.mock.calls) {
+        const opts = call[1] as { confinementRoot?: string } | undefined;
+        expect(opts).toBeDefined();
+        const root = opts?.confinementRoot;
+        expect(root).toBeDefined();
+        expect([canonicalManaged, canonicalLinked]).toContain(root);
+      }
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("prunes documents that disappeared from disk (issue #386)", async () => {
+    // First scan: both files indexed.
+    await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+
+    const docsRepo = new PanelDocumentRepository(db);
+    const beforeDocs = await docsRepo.listDocuments("arch-review");
+    expect(beforeDocs.filter((d) => d.status !== "removed")).toHaveLength(2);
+
+    // Delete one file from disk.
+    await fs.unlink(path.join(linkedDir, "external.md"));
+
+    const result = await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+    expect(result.pruned).toBe(1);
+
+    // panel_documents: the deleted file is marked removed.
+    const after = await docsRepo.listDocuments("arch-review");
+    const removed = after.filter((d) => d.status === "removed");
+    expect(removed).toHaveLength(1);
+    expect(removed[0]?.filename).toBe("external.md");
+
+    // document_index: the FTS entry for the deleted file is gone.
+    const fts = await sql<{
+      file_path: string;
+    }>`SELECT file_path FROM document_index WHERE source_type = 'panel'`.execute(db);
+    const paths = fts.rows.map((r) => r.file_path);
+    expect(paths).not.toContain(path.join(linkedDir, "external.md"));
+  });
+  it("prunes managed-source documents when the managed folder is deleted (Sentinel #1)", async () => {
+    // First scan: spec.md (managed) + external.md (linked) both indexed.
+    await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+
+    // Remove the entire managed dir from disk (simulates user deleting it).
+    await fs.rm(managedDir, { recursive: true, force: true });
+
+    const result = await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+    expect(result.pruned).toBe(1);
+
+    const docsRepo = new PanelDocumentRepository(db);
+    const after = await docsRepo.listDocuments("arch-review");
+    const removedManaged = after.filter(
+      (d) => d.status === "removed" && d.source === "managed",
+    );
+    expect(removedManaged).toHaveLength(1);
+
+    const fts = await sql<{
+      file_path: string;
+    }>`SELECT file_path FROM document_index WHERE source_type = 'panel'`.execute(db);
+    const paths = fts.rows.map((r) => r.file_path);
+    expect(paths).not.toContain(path.join(managedDir, "spec.md"));
+  });
+
+  it("does NOT markRemoved when indexer.remove fails (Sentinel #2)", async () => {
+    // First indexing run.
+    await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+
+    // Delete external.md so prune logic engages.
+    await fs.unlink(path.join(linkedDir, "external.md"));
+
+    // Force the FTS deletion to fail by dropping the document_index
+    // table. The scanner must NOT mark the row removed in metadata if
+    // the FTS deletion didn't succeed — otherwise the row appears
+    // pruned while stale searchable content lingers.
+    await sql`DROP TABLE document_index`.execute(db);
+
+    const result = await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+    expect(result.pruned).toBe(0);
+
+    const docsRepo = new PanelDocumentRepository(db);
+    const after = await docsRepo.listDocuments("arch-review");
+    const external = after.find((d) => d.filename === "external.md");
+    expect(external).toBeDefined();
+    expect(external?.status).not.toBe("removed");
+  });
+
+  it("prunes managed docs even when the docs root reaches through a symlinked ancestor (Sentinel cycle-2)", async () => {
+    // The managed root may be accessed via a path whose ancestor is a
+    // symlink (e.g. /tmp → /private/tmp on macOS, or any user-set
+    // mount alias). Tracked file paths are stored under the canonical
+    // form. If the docs folder is later deleted, prune must still
+    // recognise tracked paths as belonging to the (deleted) managed
+    // root — otherwise stale managed FTS entries remain searchable.
+
+    // Build: <tmp>/alias-parent/dir → real <tmp>/real-parent/dir
+    // where alias-parent is a symlink to real-parent. Place the
+    // managed docs dir UNDER the symlinked alias-parent.
+    const realParent = await makeTempDir("council-real-parent-");
+    const aliasHost = await makeTempDir("council-alias-host-");
+    cleanupDirs.push(realParent, aliasHost);
+    const aliasPath = path.join(aliasHost, "alias");
+
+    let linkCreated = false;
+    try {
+      await fs.symlink(realParent, aliasPath, "junction");
+      linkCreated = true;
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "EPERM" && code !== "ENOSYS") throw err;
+      try {
+        await fs.symlink(realParent, aliasPath);
+        linkCreated = true;
+      } catch {
+        return; // platform doesn't allow symlinks — skip
+      }
+    }
+    if (!linkCreated) return;
+
+    try {
+      const aliasManaged = path.join(aliasPath, "docs");
+      await fs.mkdir(aliasManaged, { recursive: true });
+      await fs.writeFile(path.join(aliasManaged, "alias-doc.md"), "# Alias\n", "utf-8");
+
+      // First scan via the aliased path: tracked under realpath form.
+      await scanAndIndexPanelDocuments({
+        panelName: "arch-review",
+        managedDocsDir: aliasManaged,
+        db,
+        supportedFormats: [".md", ".txt", ".html"],
+      });
+
+      // Sanity: tracked path is the canonical (real) form.
+      const docsRepo = new PanelDocumentRepository(db);
+      const beforeDocs = await docsRepo.listDocuments("arch-review");
+      const aliasTracked = beforeDocs.find((d) => d.filename === "alias-doc.md");
+      expect(aliasTracked).toBeDefined();
+      const realManaged = path.join(await fs.realpath(realParent), "docs");
+      expect(aliasTracked?.filePath.startsWith(realManaged)).toBe(true);
+
+      // Delete the docs folder so the next scan sees ENOENT at the
+      // managed root (via the aliased path).
+      await fs.rm(path.join(realParent, "docs"), { recursive: true, force: true });
+
+      const result = await scanAndIndexPanelDocuments({
+        panelName: "arch-review",
+        managedDocsDir: aliasManaged, // missing — accessed through symlink
+        db,
+        supportedFormats: [".md", ".txt", ".html"],
+      });
+      expect(result.pruned).toBeGreaterThanOrEqual(1);
+
+      const after = await docsRepo.listDocuments("arch-review");
+      const removed = after.find((d) => d.filename === "alias-doc.md");
+      expect(removed?.status).toBe("removed");
+    } finally {
+      if (linkCreated) {
+        try {
+          await fs.unlink(aliasPath);
+        } catch {
+          /* best-effort */
+        }
+      }
+    }
+  });
+
+  it("does not prune tracked docs under a linked folder whose scan failed (Sentinel #3)", async () => {
+    // Seed: index spec.md (managed) and external.md (linked).
+    await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+
+    // Replace linkedDir with a file → readdir will fail with ENOTDIR,
+    // triggering a folder-level failure in the next scan.
+    await fs.rm(linkedDir, { recursive: true, force: true });
+    await fs.writeFile(linkedDir, "now a file, not a dir", "utf-8");
+
+    const result = await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+    expect(result.foldersFailed).toBeGreaterThanOrEqual(1);
+    expect(result.pruned).toBe(0);
+
+    const docsRepo = new PanelDocumentRepository(db);
+    const after = await docsRepo.listDocuments("arch-review");
+    const external = after.find((d) => d.filename === "external.md");
+    expect(external?.status).not.toBe("removed");
+
+    const fts = await sql<{
+      file_path: string;
+    }>`SELECT file_path FROM document_index WHERE source_type = 'panel'`.execute(db);
+    const paths = fts.rows.map((r) => r.file_path);
+    expect(paths).toContain(path.join(linkedDir, "external.md"));
+  });
+});
+
+describe("formatAllFailedWarning", () => {
+  it("returns a warning when every discovered document failed (issue #389)", () => {
+    const msg = formatAllFailedWarning({
+      indexed: 0,
+      unchanged: 0,
+      failed: 3,
+      pruned: 0,
+      foldersFailed: 0,
+      managedFolderFailed: false,
+    });
+    expect(msg).not.toBeNull();
+    expect(msg).toContain("3");
+    expect(msg).toMatch(/failed/i);
+    expect(msg).toMatch(/permissions|formats/i);
+  });
+
+  it("returns null when at least one document was indexed", () => {
+    expect(
+      formatAllFailedWarning({
+        indexed: 1,
+        unchanged: 0,
+        failed: 2,
+        pruned: 0,
+        foldersFailed: 0,
+        managedFolderFailed: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null when at least one document was unchanged", () => {
+    expect(
+      formatAllFailedWarning({
+        indexed: 0,
+        unchanged: 5,
+        failed: 1,
+        pruned: 0,
+        foldersFailed: 0,
+        managedFolderFailed: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null when nothing failed", () => {
+    expect(
+      formatAllFailedWarning({
+        indexed: 0,
+        unchanged: 0,
+        failed: 0,
+        pruned: 0,
+        foldersFailed: 0,
+        managedFolderFailed: false,
+      }),
+    ).toBeNull();
   });
 });

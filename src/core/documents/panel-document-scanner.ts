@@ -19,7 +19,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import { detectDocumentChanges, type DocumentFile } from "./detector.js";
-import { extractDocument } from "./extractor.js";
+import * as extractorModule from "./extractor.js";
 import { createDocumentIndexer } from "./indexer.js";
 import type { CouncilDatabase } from "../../memory/db.js";
 import {
@@ -47,6 +47,8 @@ export interface PanelScanResult {
   readonly indexed: number;
   readonly unchanged: number;
   readonly failed: number;
+  /** Number of previously-tracked documents pruned (file removed from disk). */
+  readonly pruned: number;
   readonly foldersFailed: number;
   readonly managedFolderFailed: boolean;
 }
@@ -70,12 +72,24 @@ export async function scanAndIndexPanelDocuments(
   ];
 
   const known = await docsRepo.getChecksumMap(panelName);
+  // Track which previously-known paths we observed on disk this scan.
+  // Anything left over after iterating all folders has been deleted and
+  // must be pruned from both `panel_documents` and `document_index` so
+  // RAG retrieval cannot still surface stale content (issue #386).
+  const seenPaths = new Set<string>();
 
   let indexed = 0;
   let unchanged = 0;
   let failed = 0;
+  let pruned = 0;
   let foldersFailed = 0;
   let managedFolderFailed = false;
+
+  // Track folders we successfully scanned (canonical paths). Pruning is
+  // only safe under these — if a folder failed to scan, its tracked
+  // documents must NOT be pruned (a transient failure shouldn't wipe
+  // the index for content we know was there).
+  const scannedFolders: string[] = [];
 
   for (const folder of folders) {
     // Canonicalize first so the confinement boundary is anchored at the
@@ -94,9 +108,30 @@ export async function scanAndIndexPanelDocuments(
       canonical = await fs.realpath(folder.path);
     } catch (err: unknown) {
       const code = (err as NodeJS.ErrnoException).code;
-      // Missing managed folder is a no-op (the docs dir may not have
-      // been created yet); anything else is a folder-level failure.
+      // Missing managed folder is a no-op for indexing (the docs dir
+      // may not have been created yet), but it still counts as a
+      // "successful empty scan" for prune purposes: any managed-source
+      // docs we previously tracked are now legitimately gone and must
+      // be pruned, otherwise stale FTS entries persist after a user
+      // wipes their docs folder (Sentinel finding #1).
+      //
+      // Tracked file paths were stored relative to the canonical
+      // root from a previous successful scan (e.g. /private/tmp/...
+      // on macOS where /tmp is a symlink to /private/tmp). The raw
+      // `folder.path` may differ. Resolve the closest existing
+      // ancestor via realpath and re-attach the missing tail so the
+      // prune prefix matches stored paths even through symlinked
+      // ancestors. We push BOTH variants (raw + resolved) to remain
+      // safe if a previous scan happened to store the non-canonical
+      // form.
       if (folder.source === "managed" && code === "ENOENT") {
+        scannedFolders.push(folder.path);
+        try {
+          const canonical = await resolveMissingPath(folder.path);
+          if (canonical !== folder.path) scannedFolders.push(canonical);
+        } catch {
+          /* best-effort — raw path is still tried */
+        }
         continue;
       }
       foldersFailed += 1;
@@ -135,14 +170,27 @@ export async function scanAndIndexPanelDocuments(
     }
 
     unchanged += detection.unchangedFiles.length;
+    for (const u of detection.unchangedFiles) seenPaths.add(u.path);
+    scannedFolders.push(canonical);
 
     const targets: readonly DocumentFile[] = [
       ...detection.newFiles,
       ...detection.modifiedFiles,
     ];
     for (const file of targets) {
+      seenPaths.add(file.path);
       try {
-        const extracted = await extractDocument(file.path);
+        // Pass `confinementRoot` so extractDocument re-validates that
+        // the file resolves inside the panel's docs folder. Without
+        // this, a TOCTOU race between detector and extractor — or a
+        // file that detector accepted but whose symlink target was
+        // swapped mid-scan — could read sensitive files outside the
+        // boundary (issue #385). The expert-side processor passes
+        // confinementRoot for the same reason.
+        const extracted = await extractorModule.extractDocument(file.path, {
+          confinementRoot: canonical,
+          _rootIsCanonical: true,
+        });
         await indexer.index({
           content: extracted.content,
           sourceType: "panel",
@@ -181,5 +229,79 @@ export async function scanAndIndexPanelDocuments(
     }
   }
 
-  return { indexed, unchanged, failed, foldersFailed, managedFolderFailed };
+  // Prune documents that exist in the DB but no longer on disk. Only
+  // prune when the path is under a folder we successfully scanned —
+  // otherwise a transient folder-level failure (unmounted drive,
+  // permission flap) would destroy index entries we'd want back next
+  // scan. The FTS deletion MUST succeed before we mark the metadata
+  // row `removed`: otherwise the row looks pruned while stale content
+  // is still searchable, an inconsistent state with privacy risk
+  // (Sentinel finding #2). (issue #386)
+  for (const [trackedPath] of known) {
+    if (seenPaths.has(trackedPath)) continue;
+    const ownerScanned = scannedFolders.some((f) => isUnderFolder(trackedPath, f));
+    if (!ownerScanned) continue;
+    try {
+      await indexer.remove(trackedPath);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      onProgress?.({
+        filename: path.basename(trackedPath),
+        source: "managed",
+        status: "failed",
+        error: `prune (FTS remove) failed: ${msg}`,
+      });
+      continue;
+    }
+    await docsRepo.markRemoved(panelName, trackedPath);
+    pruned += 1;
+  }
+
+  return { indexed, unchanged, failed, pruned, foldersFailed, managedFolderFailed };
+}
+
+function isUnderFolder(filePath: string, folderPath: string): boolean {
+  if (filePath === folderPath) return true;
+  return (
+    filePath.startsWith(folderPath + "/") || filePath.startsWith(folderPath + "\\")
+  );
+}
+
+/**
+ * Resolve the canonical form of a path that no longer exists by walking
+ * up to the closest existing ancestor, canonicalizing it via realpath,
+ * and reattaching the missing tail. Used when the managed docs folder
+ * has been deleted: tracked file paths in `panel_documents` were stored
+ * under the original (pre-deletion) canonical root — e.g. on macOS,
+ * `/tmp/foo` resolves to `/private/tmp/foo` — so a raw deleted path
+ * prefix won't match. Returns the input unchanged if no ancestor
+ * exists.
+ */
+async function resolveMissingPath(p: string): Promise<string> {
+  const segments: string[] = [];
+  let current = p;
+  for (;;) {
+    try {
+      const real = await fs.realpath(current);
+      return segments.length === 0 ? real : path.join(real, ...segments.reverse());
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) return p;
+      segments.push(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
+/**
+ * Build a user-facing warning when *every* discovered document failed
+ * to process. The scanner cannot tell the chat renderer to print
+ * anything itself, so callers (chat startup, future `docs scan`) format
+ * the result via this helper. Returns null when at least one document
+ * indexed/remained unchanged, or when nothing failed (issue #389).
+ */
+export function formatAllFailedWarning(result: PanelScanResult): string | null {
+  if (result.failed === 0) return null;
+  if (result.indexed > 0 || result.unchanged > 0) return null;
+  return `⚠ All ${result.failed} documents failed to process. Check file formats and permissions.`;
 }

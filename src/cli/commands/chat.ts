@@ -579,7 +579,7 @@ async function runPanelChat(opts: PanelChatOptions): Promise<void> {
     // Refresh the panel's RAG corpus before any turns run so retrieval
     // sees the latest on-disk state. Failures are logged but not fatal.
     try {
-      const { scanAndIndexPanelDocuments } = await import(
+      const { scanAndIndexPanelDocuments, formatAllFailedWarning } = await import(
         "../../core/documents/panel-document-scanner.js"
       );
       const managedDocsDir = path.join(dataHome, "panels", target, "docs");
@@ -594,6 +594,13 @@ async function runPanelChat(opts: PanelChatOptions): Promise<void> {
           `Indexed ${result.indexed} panel document(s) (${result.unchanged} unchanged, ${result.failed} failed).`,
           "info",
         );
+      }
+      const allFailedWarning = formatAllFailedWarning(result);
+      if (allFailedWarning !== null) {
+        // Surface the warning when every discovered document failed —
+        // otherwise the user sees an empty chat with no indication
+        // anything went wrong with their docs folder. (issue #389)
+        renderer.showSystem(allFailedWarning, "warn");
       }
       if (result.foldersFailed > 0) {
         const linkedFailed = result.foldersFailed - (result.managedFolderFailed ? 1 : 0);
