@@ -108,9 +108,14 @@ export async function scanAndIndexPanelDocuments(
       canonical = await fs.realpath(folder.path);
     } catch (err: unknown) {
       const code = (err as NodeJS.ErrnoException).code;
-      // Missing managed folder is a no-op (the docs dir may not have
-      // been created yet); anything else is a folder-level failure.
+      // Missing managed folder is a no-op for indexing (the docs dir
+      // may not have been created yet), but it still counts as a
+      // "successful empty scan" for prune purposes: any managed-source
+      // docs we previously tracked are now legitimately gone and must
+      // be pruned, otherwise stale FTS entries persist after a user
+      // wipes their docs folder (Sentinel finding #1).
       if (folder.source === "managed" && code === "ENOENT") {
+        scannedFolders.push(folder.path);
         continue;
       }
       foldersFailed += 1;
@@ -212,15 +217,25 @@ export async function scanAndIndexPanelDocuments(
   // prune when the path is under a folder we successfully scanned —
   // otherwise a transient folder-level failure (unmounted drive,
   // permission flap) would destroy index entries we'd want back next
-  // scan. (issue #386)
+  // scan. The FTS deletion MUST succeed before we mark the metadata
+  // row `removed`: otherwise the row looks pruned while stale content
+  // is still searchable, an inconsistent state with privacy risk
+  // (Sentinel finding #2). (issue #386)
   for (const [trackedPath] of known) {
     if (seenPaths.has(trackedPath)) continue;
     const ownerScanned = scannedFolders.some((f) => isUnderFolder(trackedPath, f));
     if (!ownerScanned) continue;
     try {
       await indexer.remove(trackedPath);
-    } catch {
-      /* best-effort — metadata mark still proceeds */
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      onProgress?.({
+        filename: path.basename(trackedPath),
+        source: "managed",
+        status: "failed",
+        error: `prune (FTS remove) failed: ${msg}`,
+      });
+      continue;
     }
     await docsRepo.markRemoved(panelName, trackedPath);
     pruned += 1;
