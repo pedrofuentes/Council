@@ -133,4 +133,16 @@ export class DocumentRepository {
       .where("id", "=", id)
       .execute();
   }
+
+  async markAllRemovedByExpert(expertSlug: string): Promise<void> {
+    // Single bulk UPDATE replaces a per-row loop (#383) so the retrain
+    // clear path is atomic: either every active row flips to "removed"
+    // or none does (SQLite per-statement transaction).
+    await this.db
+      .updateTable("expert_documents")
+      .set({ status: "removed" })
+      .where("expert_slug", "=", expertSlug)
+      .where("status", "!=", "removed")
+      .execute();
+  }
 }

@@ -755,12 +755,21 @@ function buildDocsUnlinkCommand(write: Writer, writeError: Writer): Command {
         }
         await ctx.docsRepo.removeDocumentsUnderFolder(name, absolute);
         await ctx.docsRepo.removeLinkedFolder(name, absolute);
+        // #388: do NOT report ✓ when the FTS5 cleanup failed. Metadata
+        // (panel_documents + panel_linked_folders) is cleaned up but the
+        // index is in a partial state, so a follow-up rescan is needed
+        // to heal it.
         if (indexerErrors.length > 0) {
           writeError(
             `Warning: ${indexerErrors.length} FTS index entr${indexerErrors.length === 1 ? "y" : "ies"} could not be removed; metadata cleanup completed.\n`,
           );
+          write(
+            `⚠ Unlinked ${displayPath(absolute)} from ${name} but FTS index cleanup failed. ` +
+              `Re-run the panel doc scan to repair the index.\n`,
+          );
+        } else {
+          write(`✓ Unlinked ${displayPath(absolute)} from ${name}.\n`);
         }
-        write(`✓ Unlinked ${displayPath(absolute)} from ${name}.\n`);
       });
     });
   return cmd;

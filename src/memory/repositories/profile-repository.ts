@@ -59,36 +59,36 @@ export class ProfileRepository {
 
   async upsert(expertSlug: string, profile: PersonaProfile): Promise<void> {
     const now = new Date().toISOString();
-    const existing = await this.db
-      .selectFrom("persona_profiles")
-      .select("expert_slug")
-      .where("expert_slug", "=", expertSlug)
-      .executeTakeFirst();
-    const values = {
-      communication_style: profile.communicationStyle,
-      decision_patterns: JSON.stringify(profile.decisionPatterns),
-      biases: JSON.stringify(profile.biases),
-      vocabulary: JSON.stringify(profile.vocabulary),
-      epistemic_stance: profile.epistemicStance,
-      document_count: profile.documentCount,
-      total_words: profile.totalWords,
-      updated_at: profile.lastUpdated || now,
-    };
-    if (existing) {
-      await this.db
-        .updateTable("persona_profiles")
-        .set(values)
-        .where("expert_slug", "=", expertSlug)
-        .execute();
-      return;
-    }
+    const updatedAt = profile.lastUpdated || now;
+    // Atomic upsert via SQLite's ON CONFLICT DO UPDATE — eliminates the
+    // SELECT-then-INSERT race where two concurrent calls could both
+    // observe "no row" and both attempt INSERT (#363).
     await this.db
       .insertInto("persona_profiles")
       .values({
         expert_slug: expertSlug,
-        ...values,
+        communication_style: profile.communicationStyle,
+        decision_patterns: JSON.stringify(profile.decisionPatterns),
+        biases: JSON.stringify(profile.biases),
+        vocabulary: JSON.stringify(profile.vocabulary),
+        epistemic_stance: profile.epistemicStance,
+        document_count: profile.documentCount,
+        total_words: profile.totalWords,
         created_at: now,
+        updated_at: updatedAt,
       })
+      .onConflict((oc) =>
+        oc.column("expert_slug").doUpdateSet({
+          communication_style: profile.communicationStyle,
+          decision_patterns: JSON.stringify(profile.decisionPatterns),
+          biases: JSON.stringify(profile.biases),
+          vocabulary: JSON.stringify(profile.vocabulary),
+          epistemic_stance: profile.epistemicStance,
+          document_count: profile.documentCount,
+          total_words: profile.totalWords,
+          updated_at: updatedAt,
+        }),
+      )
       .execute();
   }
 
