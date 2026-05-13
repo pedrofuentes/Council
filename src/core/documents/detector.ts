@@ -42,7 +42,24 @@ export interface DetectionResult {
   readonly modifiedFiles: readonly DocumentFile[];
   readonly unchangedFiles: readonly DocumentFile[];
   readonly unsupportedFiles: readonly string[];
+  /**
+   * Files that failed HARD validation and must not be indexed: confinement
+   * boundary violations, post-open inode swaps, TOCTOU rejections from
+   * `readConfined`. Callers performing deletion reconciliation are free
+   * to treat these as "no longer indexable" — pruning them is the safe
+   * choice for a file whose on-disk state is invalid (#342, see
+   * `panel-document-scanner.ts`).
+   */
   readonly rejectedFiles: readonly string[];
+  /**
+   * Files whose state could not be determined this scan due to a TRANSIENT
+   * I/O failure (lstat threw, readConfined threw with a non-rejection
+   * error). The on-disk file likely still exists; callers MUST preserve
+   * any prior indexed state across deletion reconciliation rather than
+   * pruning, otherwise an EBUSY/EACCES race would silently destroy
+   * persisted documents (#342).
+   */
+  readonly unknownStateFiles: readonly string[];
 }
 
 export interface DetectDocumentChangesOptions {
@@ -166,6 +183,7 @@ export async function detectDocumentChanges(
         unchangedFiles: [],
         unsupportedFiles: [],
         rejectedFiles: [],
+        unknownStateFiles: [],
       };
     }
     // Wrap so the failing path + a stable prefix are visible to callers
@@ -184,6 +202,7 @@ export async function detectDocumentChanges(
   const unchangedFiles: DocumentFile[] = [];
   const unsupportedFiles: string[] = [];
   const rejectedFiles: string[] = [];
+  const unknownStateFiles: string[] = [];
 
   for (const rel of entries) {
     const absolute = path.resolve(docsPath, rel);
@@ -193,19 +212,21 @@ export async function detectDocumentChanges(
     } catch (err: unknown) {
       // A single file disappearing (or otherwise being unstatable)
       // between readdir and lstat must not abort the whole scan
-      // (#342). Push to `rejectedFiles` so callers performing
-      // deletion reconciliation (`DocumentProcessor.process()`) treat
-      // a transient stat failure as "still present" rather than
-      // pruning the tracked record — otherwise an EBUSY/ENOENT race
-      // would silently delete persisted state. Surface a warning so
-      // users can see WHICH file was skipped and WHY.
+      // (#342). Push to `unknownStateFiles` (NOT `rejectedFiles`) so
+      // callers performing deletion reconciliation
+      // (`DocumentProcessor.process()`, `panel-document-scanner`) can
+      // treat a transient stat failure as "still present" and preserve
+      // tracked state. Hard rejections (`rejectedFiles`) keep their
+      // existing semantics so callers like the panel scanner remain
+      // free to prune confinement-violating paths. Surface a warning
+      // so users can see WHICH file was skipped and WHY.
       if (options.onWarning) {
         const detail = err instanceof Error ? err.message : String(err);
         options.onWarning(
           `document scan: skipping '${absolute}' (lstat failed: ${detail})`,
         );
       }
-      rejectedFiles.push(absolute);
+      unknownStateFiles.push(absolute);
       continue;
     }
     // Recurse-marker entries from readdir include directories themselves;
@@ -223,13 +244,18 @@ export async function detectDocumentChanges(
     try {
       read = await readConfined(absolute, options);
     } catch (err: unknown) {
+      // readConfined throwing (vs returning null) is a transient I/O
+      // failure — open(2)/read(2)/realpath errors that aren't
+      // confinement violations. Treat as unknown-state so reconciliation
+      // does not prune. Hard rejections (TOCTOU, confinement) come back
+      // as `read === null` below and remain in `rejectedFiles`.
       if (options.onWarning) {
         const detail = err instanceof Error ? err.message : String(err);
         options.onWarning(
           `document scan: rejecting '${absolute}' (read failed: ${detail})`,
         );
       }
-      rejectedFiles.push(absolute);
+      unknownStateFiles.push(absolute);
       continue;
     }
     if (read === null) {
@@ -252,5 +278,5 @@ export async function detectDocumentChanges(
     else modifiedFiles.push(file);
   }
 
-  return { newFiles, modifiedFiles, unchangedFiles, unsupportedFiles, rejectedFiles };
+  return { newFiles, modifiedFiles, unchangedFiles, unsupportedFiles, rejectedFiles, unknownStateFiles };
 }

@@ -154,6 +154,7 @@ export function createDocumentProcessor(
               unchangedFiles: [],
               unsupportedFiles: [],
               rejectedFiles: [],
+              unknownStateFiles: [],
             }
           : await detectDocumentChanges(
               rootCanonical,
@@ -181,6 +182,10 @@ export function createDocumentProcessor(
         ...detection.modifiedFiles.map((f) => f.path),
         ...detection.unchangedFiles.map((f) => f.path),
         ...detection.rejectedFiles,
+        // Transient per-file failures (lstat/read errors — #342) must
+        // also suppress prune so a flaky filesystem moment doesn't
+        // delete persisted state.
+        ...detection.unknownStateFiles,
       ]);
       for (const trackedPath of known.keys()) {
         if (seenPaths.has(trackedPath)) continue;

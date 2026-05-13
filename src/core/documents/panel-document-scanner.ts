@@ -18,6 +18,8 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
+import type { Stats } from "node:fs";
+
 import { detectDocumentChanges, type DocumentFile } from "./detector.js";
 import * as extractorModule from "./extractor.js";
 import { createDocumentIndexer } from "./indexer.js";
@@ -34,6 +36,13 @@ export interface ScanPanelDocumentsOptions {
   readonly supportedFormats: readonly string[];
   /** Optional progress callback — invoked once per file outcome. */
   readonly onProgress?: (event: PanelScanProgress) => void;
+  /**
+   * Test-only seam: forwarded to the underlying detector as
+   * `_lstatOverride`. Lets reconciliation tests inject per-file
+   * lstat failures without monkey-patching the `node:fs/promises`
+   * ESM namespace (which is non-configurable on V8).
+   */
+  readonly _detectorLstatOverride?: (path: string) => Promise<Stats>;
 }
 
 export interface PanelScanProgress {
@@ -151,6 +160,9 @@ export async function scanAndIndexPanelDocuments(
       detection = await detectDocumentChanges(canonical, known, supportedFormats, {
         confinementRoot: canonical,
         _rootIsCanonical: true,
+        ...(options._detectorLstatOverride
+          ? { _lstatOverride: options._detectorLstatOverride }
+          : {}),
       });
     } catch (err: unknown) {
       // A folder that disappears between link and scan should not bring
@@ -171,13 +183,15 @@ export async function scanAndIndexPanelDocuments(
 
     unchanged += detection.unchangedFiles.length;
     for (const u of detection.unchangedFiles) seenPaths.add(u.path);
-    // Per-file detector rejections (confinement violations, transient
-    // lstat/read failures — #342) must be preserved across deletion
-    // reconciliation: a tracked file that the detector temporarily
-    // couldn't stat is NOT "deleted on disk" and must not be pruned
-    // from the FTS index. Including these paths in `seenPaths` makes
-    // the pruning loop (below) skip them.
-    for (const rejected of detection.rejectedFiles) seenPaths.add(rejected);
+    // Transient per-file detector failures (lstat/read errors that did
+    // NOT confirm a hard rejection — #342) must be preserved across
+    // deletion reconciliation: a tracked file that the detector
+    // temporarily couldn't stat is NOT "deleted on disk" and pruning it
+    // would silently destroy persisted FTS / panel_documents state.
+    // HARD `rejectedFiles` (confinement violations / TOCTOU) are
+    // intentionally NOT added here so the panel scanner is free to
+    // prune indexed content whose on-disk file is now invalid.
+    for (const unknown of detection.unknownStateFiles) seenPaths.add(unknown);
     scannedFolders.push(canonical);
 
     const targets: readonly DocumentFile[] = [
