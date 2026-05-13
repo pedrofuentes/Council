@@ -194,4 +194,132 @@ describe("detectDocumentChanges", () => {
       expect(calls.every((p) => p !== rootArg && p !== canonical)).toBe(true);
     });
   });
+
+  // ── Sentinel #341 / #342: error surfacing & per-file resilience ─────
+  describe("error surfacing (#341, #342)", () => {
+    it("wraps readdir failures with a descriptive message naming the docsPath (#341)", async () => {
+      // ENOTDIR (passing a regular file) is a typical misconfiguration:
+      // a stray empty message is unhelpful — callers need to see WHICH
+      // path failed and WHY, with a stable prefix they can recognize.
+      const filePath = path.join(dir, "regular-file.md");
+      await fs.writeFile(filePath, "x");
+      await expect(
+        detectDocumentChanges(filePath, new Map(), [".md"]),
+      ).rejects.toThrow(/document scan failed/i);
+      await expect(
+        detectDocumentChanges(filePath, new Map(), [".md"]),
+      ).rejects.toThrow(new RegExp(filePath.replace(/\\/g, "\\\\")));
+    });
+
+    it("invokes onWarning and continues when a single file's lstat fails (#342)", async () => {
+      // Use the `_lstatOverride` test seam to simulate one file's stat
+      // failing mid-scan (e.g. a transient EBUSY / ENOENT race) without
+      // mutating the actual filesystem. The two healthy files must still
+      // be classified normally and a warning must name the broken file.
+      await fs.writeFile(path.join(dir, "a.md"), "alpha");
+      await fs.writeFile(path.join(dir, "b.md"), "bravo");
+      await fs.writeFile(path.join(dir, "ghost.md"), "ghost");
+
+      const ghostAbs = path.resolve(dir, "ghost.md");
+      const realLstat = fs.lstat;
+      const warnings: string[] = [];
+
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        onWarning: (msg) => warnings.push(msg),
+        _lstatOverride: async (p: string) => {
+          if (path.resolve(p) === ghostAbs) {
+            const err: NodeJS.ErrnoException = new Error(
+              "ENOENT: no such file",
+            );
+            err.code = "ENOENT";
+            throw err;
+          }
+          return realLstat(p);
+        },
+      });
+
+      // The two healthy files were processed.
+      const names = result.newFiles.map((f) => f.filename).sort();
+      expect(names).toEqual(["a.md", "b.md"]);
+      // Ghost file did not bring the scan down — it was skipped, and a
+      // warning naming the file + error was emitted.
+      expect(warnings.length).toBe(1);
+      const warning = warnings[0] ?? "";
+      expect(warning).toContain("ghost.md");
+      expect(warning).toMatch(/lstat|stat|ENOENT/i);
+    });
+
+    it("surfaces lstat-failed files in unknownStateFiles so deletion reconciliation does not prune them (#342)", async () => {
+      // CRITICAL regression guard. `DocumentProcessor.process()` and
+      // `panel-document-scanner` build their `seenPaths` set from
+      // `newFiles ∪ modifiedFiles ∪ unchangedFiles ∪ rejectedFiles ∪
+      // unknownStateFiles`. Any tracked file NOT in that set is
+      // reconciled as "deleted on disk" and pruned from the FTS index
+      // + marked removed in `expert_documents` / `panel_documents`. A
+      // transient `lstat` failure that silently skips a file would
+      // therefore cause permanent data loss. The detector must report
+      // stat-failed files in `unknownStateFiles` (NOT `rejectedFiles`,
+      // which is reserved for hard confinement / TOCTOU rejections that
+      // panel-doc reconciliation is allowed to prune) so callers
+      // preserve them.
+      await fs.writeFile(path.join(dir, "ghost.md"), "ghost");
+      const ghostAbs = path.resolve(dir, "ghost.md");
+
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        _lstatOverride: async (p: string) => {
+          if (path.resolve(p) === ghostAbs) {
+            const err: NodeJS.ErrnoException = new Error("EBUSY: busy");
+            err.code = "EBUSY";
+            throw err;
+          }
+          return fs.lstat(p);
+        },
+      });
+
+      expect(result.newFiles).toHaveLength(0);
+      expect(result.unknownStateFiles).toContain(ghostAbs);
+      // Hard-rejection bucket must NOT contain transient failures, or
+      // panel-doc reconciliation will skip pruning paths it should
+      // legitimately prune (and silently keep stale content).
+      expect(result.rejectedFiles).not.toContain(ghostAbs);
+    });
+
+    it("invokes onWarning when readConfined throws mid-scan and continues (#342)", async () => {
+      // A second per-file failure mode: post-open read/confinement
+      // failure. The `_realpathOverride` seam lets us throw inside
+      // `readConfined()` for a specific file. The remaining files must
+      // be processed, and a warning must name the broken file with a
+      // "read failed" tag. Like lstat failures, an error thrown from
+      // `readConfined` is treated as transient (`unknownStateFiles`)
+      // because the failure mode (EIO, EACCES, realpath error) does
+      // NOT prove the file is invalid — only that we couldn't read it
+      // this scan. A `null` return from `readConfined` is the hard
+      // TOCTOU/confinement signal and stays in `rejectedFiles`.
+      await fs.writeFile(path.join(dir, "a.md"), "alpha");
+      await fs.writeFile(path.join(dir, "broken.md"), "broken");
+      const brokenAbs = path.resolve(dir, "broken.md");
+
+      const warnings: string[] = [];
+      const realRealpath = fs.realpath;
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        confinementRoot: dir,
+        onWarning: (msg) => warnings.push(msg),
+        _realpathOverride: async (p: string) => {
+          if (path.resolve(p) === brokenAbs) {
+            throw new Error("simulated readConfined failure");
+          }
+          return realRealpath(p);
+        },
+      });
+
+      const names = result.newFiles.map((f) => f.filename).sort();
+      expect(names).toEqual(["a.md"]);
+      expect(result.unknownStateFiles).toContain(brokenAbs);
+      expect(result.rejectedFiles).not.toContain(brokenAbs);
+      expect(warnings.length).toBe(1);
+      const warning = warnings[0] ?? "";
+      expect(warning).toContain("broken.md");
+      expect(warning).toMatch(/read failed|simulated readConfined/i);
+    });
+  });
 });

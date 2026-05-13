@@ -26,6 +26,7 @@
  */
 import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
+import type { Stats } from "node:fs";
 import * as path from "node:path";
 
 export interface DocumentFile {
@@ -41,7 +42,24 @@ export interface DetectionResult {
   readonly modifiedFiles: readonly DocumentFile[];
   readonly unchangedFiles: readonly DocumentFile[];
   readonly unsupportedFiles: readonly string[];
+  /**
+   * Files that failed HARD validation and must not be indexed: confinement
+   * boundary violations, post-open inode swaps, TOCTOU rejections from
+   * `readConfined`. Callers performing deletion reconciliation are free
+   * to treat these as "no longer indexable" — pruning them is the safe
+   * choice for a file whose on-disk state is invalid (#342, see
+   * `panel-document-scanner.ts`).
+   */
   readonly rejectedFiles: readonly string[];
+  /**
+   * Files whose state could not be determined this scan due to a TRANSIENT
+   * I/O failure (lstat threw, readConfined threw with a non-rejection
+   * error). The on-disk file likely still exists; callers MUST preserve
+   * any prior indexed state across deletion reconciliation rather than
+   * pruning, otherwise an EBUSY/EACCES race would silently destroy
+   * persisted documents (#342).
+   */
+  readonly unknownStateFiles: readonly string[];
 }
 
 export interface DetectDocumentChangesOptions {
@@ -66,6 +84,21 @@ export interface DetectDocumentChangesOptions {
    * call. Production callers leave this undefined.
    */
   readonly _realpathOverride?: (p: string) => Promise<string>;
+  /**
+   * Test seam — replace `fs.lstat` for the duration of a single call.
+   * Production callers leave this undefined. Used by the per-file
+   * resilience tests (#342) to simulate a single file's stat failing
+   * mid-scan without modifying the actual filesystem.
+   */
+  readonly _lstatOverride?: (p: string) => Promise<Stats>;
+  /**
+   * Optional warning sink (#342). Invoked once per individual file
+   * skipped due to a recoverable, per-file error (lstat failure,
+   * fd-based read failure) so callers can surface diagnostics to the
+   * user without aborting the scan. The scan continues regardless of
+   * whether the sink is provided.
+   */
+  readonly onWarning?: (message: string) => void;
 }
 
 function normalizeExt(ext: string): string {
@@ -150,23 +183,50 @@ export async function detectDocumentChanges(
         unchangedFiles: [],
         unsupportedFiles: [],
         rejectedFiles: [],
+        unknownStateFiles: [],
       };
     }
-    throw err;
+    // Wrap so the failing path + a stable prefix are visible to callers
+    // (#341). Keeps the original error as `cause` for diagnostics.
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `document scan failed for path '${docsPath}': ${detail}`,
+      { cause: err },
+    );
   }
+
+  const lstat = options._lstatOverride ?? fs.lstat;
 
   const newFiles: DocumentFile[] = [];
   const modifiedFiles: DocumentFile[] = [];
   const unchangedFiles: DocumentFile[] = [];
   const unsupportedFiles: string[] = [];
   const rejectedFiles: string[] = [];
+  const unknownStateFiles: string[] = [];
 
   for (const rel of entries) {
     const absolute = path.resolve(docsPath, rel);
     let stat;
     try {
-      stat = await fs.lstat(absolute);
-    } catch {
+      stat = await lstat(absolute);
+    } catch (err: unknown) {
+      // A single file disappearing (or otherwise being unstatable)
+      // between readdir and lstat must not abort the whole scan
+      // (#342). Push to `unknownStateFiles` (NOT `rejectedFiles`) so
+      // callers performing deletion reconciliation
+      // (`DocumentProcessor.process()`, `panel-document-scanner`) can
+      // treat a transient stat failure as "still present" and preserve
+      // tracked state. Hard rejections (`rejectedFiles`) keep their
+      // existing semantics so callers like the panel scanner remain
+      // free to prune confinement-violating paths. Surface a warning
+      // so users can see WHICH file was skipped and WHY.
+      if (options.onWarning) {
+        const detail = err instanceof Error ? err.message : String(err);
+        options.onWarning(
+          `document scan: skipping '${absolute}' (lstat failed: ${detail})`,
+        );
+      }
+      unknownStateFiles.push(absolute);
       continue;
     }
     // Recurse-marker entries from readdir include directories themselves;
@@ -183,8 +243,19 @@ export async function detectDocumentChanges(
     let read;
     try {
       read = await readConfined(absolute, options);
-    } catch {
-      rejectedFiles.push(absolute);
+    } catch (err: unknown) {
+      // readConfined throwing (vs returning null) is a transient I/O
+      // failure — open(2)/read(2)/realpath errors that aren't
+      // confinement violations. Treat as unknown-state so reconciliation
+      // does not prune. Hard rejections (TOCTOU, confinement) come back
+      // as `read === null` below and remain in `rejectedFiles`.
+      if (options.onWarning) {
+        const detail = err instanceof Error ? err.message : String(err);
+        options.onWarning(
+          `document scan: rejecting '${absolute}' (read failed: ${detail})`,
+        );
+      }
+      unknownStateFiles.push(absolute);
       continue;
     }
     if (read === null) {
@@ -207,5 +278,5 @@ export async function detectDocumentChanges(
     else modifiedFiles.push(file);
   }
 
-  return { newFiles, modifiedFiles, unchangedFiles, unsupportedFiles, rejectedFiles };
+  return { newFiles, modifiedFiles, unchangedFiles, unsupportedFiles, rejectedFiles, unknownStateFiles };
 }
