@@ -26,6 +26,7 @@
  * actually work to do.
  */
 import * as fs from "node:fs/promises";
+import type { Stats } from "node:fs";
 import * as path from "node:path";
 
 import { detectDocumentChanges } from "./detector.js";
@@ -81,12 +82,20 @@ export interface DocumentProcessorOptions {
     readonly supportedFormats: readonly string[];
     readonly recencyHalfLifeDays: number;
   };
+  /**
+   * Test-only seam: forwarded to the detector as `_lstatOverride`.
+   * Lets reconciliation tests inject per-file lstat failures without
+   * patching the `node:fs/promises` ESM namespace (whose bindings
+   * are non-configurable on V8).
+   */
+  readonly _detectorLstatOverride?: (p: string) => Promise<Stats>;
 }
 
 export function createDocumentProcessor(
   options: DocumentProcessorOptions,
 ): DocumentProcessor {
   const { engine, documentRepo, profileRepo, indexer, config } = options;
+  const detectorLstatOverride = options._detectorLstatOverride;
 
   /**
    * Resolve and freeze the docs root's canonical identity ONCE at entry.
@@ -160,7 +169,13 @@ export function createDocumentProcessor(
               rootCanonical,
               known,
               config.supportedFormats,
-              { confinementRoot: rootCanonical, _rootIsCanonical: true },
+              {
+                confinementRoot: rootCanonical,
+                _rootIsCanonical: true,
+                ...(detectorLstatOverride
+                  ? { _lstatOverride: detectorLstatOverride }
+                  : {}),
+              },
             );
 
       const toProcess = [...detection.newFiles, ...detection.modifiedFiles];

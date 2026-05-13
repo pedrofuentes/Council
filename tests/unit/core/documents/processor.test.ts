@@ -465,5 +465,63 @@ describe("createDocumentProcessor", () => {
       await fs.rm(fileA);
       expect(await proc.needsProcessing("alice", dir)).toBe(true);
     });
+
+    it("does NOT reconcile-as-deleted a tracked file whose lstat throws transiently (#342)", async () => {
+      // Sentinel re-review #2: per-file `lstat` failures (EBUSY/EACCES
+      // races, transient permissions) used to drop the path from the
+      // detector entirely. `DocumentProcessor.process()` builds its
+      // `seenPaths` set and any tracked file not in it is marked
+      // removed + pruned from the FTS index — so a transient stat
+      // failure would silently destroy persisted expert_documents
+      // state for a file that still exists on disk. The detector now
+      // reports such files in `unknownStateFiles` and the processor
+      // must include that bucket in `seenPaths` (alongside
+      // newFiles/modifiedFiles/unchangedFiles/rejectedFiles).
+      const dir = await makeDocsDir(env, "alice");
+      const fileA = path.join(dir, "a.md");
+      const fileB = path.join(dir, "b.md");
+      await fs.writeFile(fileA, "alpha body alpha");
+      await fs.writeFile(fileB, "beta body beta");
+
+      // First run: both indexed and tracked.
+      const engine = new StubEngine([VALID_PROFILE_JSON, VALID_PROFILE_JSON]);
+      const proc = createDocumentProcessor({
+        engine,
+        documentRepo: env.docRepo,
+        profileRepo: env.profileRepo,
+        indexer: env.indexer,
+        config: CONFIG,
+      });
+      const first = await proc.process("alice", dir);
+      expect(first.filesProcessed).toBe(2);
+
+      // Second run: inject a transient lstat failure for fileB ONLY.
+      // The real fileB still exists on disk — the failure simulates an
+      // EBUSY/EACCES race. The processor must NOT mark fileB removed.
+      const realLstat = fs.lstat;
+      const fileBCanonical = await fs.realpath(fileB);
+      const procWithFault = createDocumentProcessor({
+        engine: new StubEngine([VALID_PROFILE_JSON]),
+        documentRepo: env.docRepo,
+        profileRepo: env.profileRepo,
+        indexer: env.indexer,
+        config: CONFIG,
+        _detectorLstatOverride: async (p: string) => {
+          if (path.resolve(p) === fileBCanonical) {
+            const err: NodeJS.ErrnoException = new Error("EBUSY: simulated");
+            err.code = "EBUSY";
+            throw err;
+          }
+          return realLstat(p);
+        },
+      });
+      const second = await procWithFault.process("alice", dir);
+      expect(second.filesRemoved).toBe(0);
+
+      // fileB must still be tracked in expert_documents.
+      const remaining = await env.docRepo.getChecksumMap("alice");
+      expect(remaining.has(fileBCanonical)).toBe(true);
+      expect(remaining.has(fileA)).toBe(true);
+    });
   });
 });
