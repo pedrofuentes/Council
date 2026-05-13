@@ -212,11 +212,10 @@ describe("detectDocumentChanges", () => {
     });
 
     it("invokes onWarning and continues when a single file's lstat fails (#342)", async () => {
-      // Two normal files plus one that disappears between readdir and
-      // lstat. Simulate the race by deleting after readdir entries are
-      // captured but before per-file lstat runs — readdir gives us the
-      // name list, then we delete the file via `unlink` BEFORE calling
-      // detectDocumentChanges using a `_lstatOverride` test seam.
+      // Use the `_lstatOverride` test seam to simulate one file's stat
+      // failing mid-scan (e.g. a transient EBUSY / ENOENT race) without
+      // mutating the actual filesystem. The two healthy files must still
+      // be classified normally and a warning must name the broken file.
       await fs.writeFile(path.join(dir, "a.md"), "alpha");
       await fs.writeFile(path.join(dir, "b.md"), "bravo");
       await fs.writeFile(path.join(dir, "ghost.md"), "ghost");
@@ -248,6 +247,65 @@ describe("detectDocumentChanges", () => {
       const warning = warnings[0] ?? "";
       expect(warning).toContain("ghost.md");
       expect(warning).toMatch(/lstat|stat|ENOENT/i);
+    });
+
+    it("surfaces lstat-failed files in rejectedFiles so deletion reconciliation does not prune them (#342)", async () => {
+      // CRITICAL regression guard. `DocumentProcessor.process()` builds
+      // its `seenPaths` set from `newFiles ∪ modifiedFiles ∪
+      // unchangedFiles ∪ rejectedFiles`. Any tracked file NOT in that
+      // set is reconciled as "deleted on disk" and pruned from the FTS
+      // index + marked removed in `expert_documents`. A transient
+      // `lstat` failure that silently skips a file would therefore cause
+      // permanent data loss. The detector must report stat-failed files
+      // in `rejectedFiles` so the processor preserves them.
+      await fs.writeFile(path.join(dir, "ghost.md"), "ghost");
+      const ghostAbs = path.resolve(dir, "ghost.md");
+
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        _lstatOverride: async (p: string) => {
+          if (path.resolve(p) === ghostAbs) {
+            const err: NodeJS.ErrnoException = new Error("EBUSY: busy");
+            err.code = "EBUSY";
+            throw err;
+          }
+          return fs.lstat(p);
+        },
+      });
+
+      expect(result.newFiles).toHaveLength(0);
+      expect(result.rejectedFiles).toContain(ghostAbs);
+    });
+
+    it("invokes onWarning when readConfined throws mid-scan and continues (#342)", async () => {
+      // A second per-file failure mode: post-open read/confinement
+      // failure. The `_realpathOverride` seam lets us throw inside
+      // `readConfined()` for a specific file. The remaining files must
+      // be processed, and a warning must name the broken file with a
+      // "read failed" tag.
+      await fs.writeFile(path.join(dir, "a.md"), "alpha");
+      await fs.writeFile(path.join(dir, "broken.md"), "broken");
+      const brokenAbs = path.resolve(dir, "broken.md");
+
+      const warnings: string[] = [];
+      const realRealpath = fs.realpath;
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        confinementRoot: dir,
+        onWarning: (msg) => warnings.push(msg),
+        _realpathOverride: async (p: string) => {
+          if (path.resolve(p) === brokenAbs) {
+            throw new Error("simulated readConfined failure");
+          }
+          return realRealpath(p);
+        },
+      });
+
+      const names = result.newFiles.map((f) => f.filename).sort();
+      expect(names).toEqual(["a.md"]);
+      expect(result.rejectedFiles).toContain(brokenAbs);
+      expect(warnings.length).toBe(1);
+      const warning = warnings[0] ?? "";
+      expect(warning).toContain("broken.md");
+      expect(warning).toMatch(/read failed|simulated readConfined/i);
     });
   });
 });
