@@ -125,13 +125,7 @@ describe("buildSessionsCommand", () => {
       const program = buildProgram();
       const found = program.commands.find((c) => c.name() === "sessions");
       expect(found).toBeDefined();
-    });
-
-    it("preserves 'panels' as a backwards-compatibility alias for 'sessions'", () => {
-      const program = buildProgram();
-      const found = program.commands.find((c) => c.name() === "sessions");
-      expect(found).toBeDefined();
-      expect(found?.aliases()).toContain("panels");
+      expect(found?.aliases()).not.toContain("panels");
     });
   });
 });

@@ -6,7 +6,7 @@
  *   - `ask`        ask one expert from an existing panel a single question
  *   - `resume`     reopen a panel: show transcript or continue
  *   - `export`     export a panel transcript to markdown, json, or adr
- *   - `sessions`   list debate sessions in the local DB (alias: `panels`)
+ *   - `sessions`   list debate sessions in the local DB
  *   - `expert`     manage the expert library (create/list/inspect/edit/delete)
  *   - `templates`  list built-in panel templates
  *   - `memory`     inspect and curate Council's local SQLite state
@@ -41,7 +41,7 @@ export function buildProgram(): Command {
   program.addCommand(buildResumeCommand());
   program.addCommand(buildConcludeCommand());
   program.addCommand(buildExportCommand());
-  program.addCommand(buildSessionsCommand().alias("panels"));
+  program.addCommand(buildSessionsCommand());
   program.addCommand(buildPanelCommand());
   program.addCommand(buildExpertCommand());
   program.addCommand(buildTemplatesCommand());

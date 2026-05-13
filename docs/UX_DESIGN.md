@@ -335,7 +335,7 @@ Users are **participants at the table**, not operators of a machine. They:
 ### Panel Organization
 
 ```
-$ council panels
+$ council sessions
 
   YOUR PANELS
   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

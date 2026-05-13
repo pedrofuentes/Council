@@ -26,7 +26,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Kysely, DefaultQueryExecutor } from "kysely";
+import { DefaultQueryExecutor } from "kysely";
 
 import { buildMemoryCommand } from "../../../../src/cli/commands/memory.js";
 import { createDatabase } from "../../../../src/memory/db.js";
