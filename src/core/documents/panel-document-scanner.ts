@@ -114,8 +114,24 @@ export async function scanAndIndexPanelDocuments(
       // docs we previously tracked are now legitimately gone and must
       // be pruned, otherwise stale FTS entries persist after a user
       // wipes their docs folder (Sentinel finding #1).
+      //
+      // Tracked file paths were stored relative to the canonical
+      // root from a previous successful scan (e.g. /private/tmp/...
+      // on macOS where /tmp is a symlink to /private/tmp). The raw
+      // `folder.path` may differ. Resolve the closest existing
+      // ancestor via realpath and re-attach the missing tail so the
+      // prune prefix matches stored paths even through symlinked
+      // ancestors. We push BOTH variants (raw + resolved) to remain
+      // safe if a previous scan happened to store the non-canonical
+      // form.
       if (folder.source === "managed" && code === "ENOENT") {
         scannedFolders.push(folder.path);
+        try {
+          const canonical = await resolveMissingPath(folder.path);
+          if (canonical !== folder.path) scannedFolders.push(canonical);
+        } catch {
+          /* best-effort — raw path is still tried */
+        }
         continue;
       }
       foldersFailed += 1;
@@ -249,6 +265,32 @@ function isUnderFolder(filePath: string, folderPath: string): boolean {
   return (
     filePath.startsWith(folderPath + "/") || filePath.startsWith(folderPath + "\\")
   );
+}
+
+/**
+ * Resolve the canonical form of a path that no longer exists by walking
+ * up to the closest existing ancestor, canonicalizing it via realpath,
+ * and reattaching the missing tail. Used when the managed docs folder
+ * has been deleted: tracked file paths in `panel_documents` were stored
+ * under the original (pre-deletion) canonical root — e.g. on macOS,
+ * `/tmp/foo` resolves to `/private/tmp/foo` — so a raw deleted path
+ * prefix won't match. Returns the input unchanged if no ancestor
+ * exists.
+ */
+async function resolveMissingPath(p: string): Promise<string> {
+  const segments: string[] = [];
+  let current = p;
+  for (;;) {
+    try {
+      const real = await fs.realpath(current);
+      return segments.length === 0 ? real : path.join(real, ...segments.reverse());
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) return p;
+      segments.push(path.basename(current));
+      current = parent;
+    }
+  }
 }
 
 /**
