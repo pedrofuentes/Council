@@ -231,4 +231,56 @@ describe("extractDocument", () => {
       expect(calls.every((p) => p !== canonical)).toBe(true);
     });
   });
+
+  // Issue #376: mtime must come from the bound file handle (already
+  // obtained via fh.stat in the TOCTOU-safe sequence), not a separate
+  // post-extraction fs.stat() call. A separate stat opens a TOCTOU
+  // window where the mtime stored on the document record may not
+  // correspond to the content that was actually extracted.
+  describe("modifiedAt (issue #376)", () => {
+    it("returns modifiedAt from the file handle so it is bound to the same inode that was read", async () => {
+      const filePath = path.join(dir, "doc.txt");
+      await fs.writeFile(filePath, "first body");
+      const beforeStat = await fs.stat(filePath);
+      const result = await extractDocument(filePath);
+      expect(result.content).toBe("first body");
+      // modifiedAt is an ISO-8601 string equal to the fd's mtime at the
+      // moment of extraction (which is the file's mtime at that point —
+      // tested via the host stat captured immediately before).
+      expect(typeof result.modifiedAt).toBe("string");
+      expect(result.modifiedAt).toBe(beforeStat.mtime.toISOString());
+    });
+
+    it("modifiedAt corresponds to the bytes actually read, not a later mutation", async () => {
+      const filePath = path.join(dir, "doc.txt");
+      await fs.writeFile(filePath, "first body");
+      const fdStatBefore = await fs.stat(filePath);
+
+      // Override realpath to mutate the file's mtime AFTER the extractor
+      // has opened the fd but BEFORE any internal post-open stat would
+      // run. With a fd-bound stat, modifiedAt must equal the pre-mutation
+      // value because the handle's inode mtime is what we report.
+      const realpath = fs.realpath;
+      const override = async (p: string): Promise<string> => {
+        const futureTime = new Date(fdStatBefore.mtime.getTime() + 60_000);
+        await fs.utimes(filePath, futureTime, futureTime);
+        return realpath(p);
+      };
+
+      const result = await extractDocument(filePath, {
+        _realpathOverride: override,
+      });
+      expect(result.content).toBe("first body");
+      // The post-open utimes mutation must NOT leak into modifiedAt —
+      // the fd was bound to the inode before the touch, and fh.stat
+      // reflects the inode state at the moment we read it through the
+      // handle. We assert modifiedAt equals the fd-handle stat captured
+      // *during* extraction. Since the test cannot peek into the handle,
+      // we assert via the contract: modifiedAt must NOT equal the new
+      // post-mutation host mtime (proving it came from the fd, not a
+      // late path-based stat).
+      const after = await fs.stat(filePath);
+      expect(result.modifiedAt).not.toBe(after.mtime.toISOString());
+    });
+  });
 });
