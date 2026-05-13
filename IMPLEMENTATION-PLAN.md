@@ -354,9 +354,34 @@ A daemon-style background processor for document changes was scoped but **deferr
 
 ### 6.8 Recency Weighting ✅
 
-Newer documents are weighted higher during retrieval to bias persona experts toward the most recent material — important when a user adds an updated CV, design doc, or RFC alongside older versions.
+Newer documents are weighted higher when the persona-profile analyzer
+distills the corpus, biasing the resulting profile toward the most
+recent material — important when a user adds an updated CV, design
+doc, or RFC alongside older versions.
 
-**Key files**: `src/core/documents/retriever.ts`
+**Mechanism (prompt-side, not retrieval-side).** Recency weighting is
+applied at *analyzer prompt construction* time, not at FTS5 retrieval
+time. `analyzeDocuments()` (in `src/core/documents/profile-analyzer.ts`)
+orders documents by `modifiedAt` (most-recent first) and annotates each
+fenced document block with a `[Weight: 0.NN]` tag computed via
+exponential decay: `weight = 2^(-ageDays / halfLifeDays)` (so age = 0 →
+1.0, age = halfLife → 0.5, age = 2 × halfLife → 0.25). The meta-prompt
+explicitly instructs the LLM to weight more-recent material more
+heavily when distilling `communicationStyle`, `decisionPatterns`, etc.
+The FTS5 retriever (`src/core/documents/retriever.ts`) is unchanged —
+BM25 ranking is still purely lexical.
+
+Half-life is configurable via `AnalyzeOptions.recencyWeightHalfLife`
+(`DocumentProcessor` default: 90 days). Edge cases: `halfLifeDays <= 0`
+clamps every weight to 1.0 (a misconfigured value cannot zero out every
+document); future-dated `modifiedAt` clamps to 1.0; documents without a
+`modifiedAt` render without a weight tag (back-compat). The reference
+"now" is injectable via `AnalyzeOptions.now` for deterministic tests.
+
+**Key files**: `src/core/documents/profile-analyzer.ts`
+(`calculateRecencyWeight`, prompt-tag emission); consumed via
+`AnalyzeOptions.recencyWeightHalfLife` from
+`src/core/documents/processor.ts`.
 
 ---
 

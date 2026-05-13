@@ -145,7 +145,67 @@ council expert delete <slug>                        # refuses if in any panel (u
 # (symlinks/junctions as the root are also rejected). An empty docs
 # folder is fine: the persona just runs as a generic expert.
 council chat <persona-slug>                         # auto-processes ~/Council/experts/<slug>/docs/
+
+# Manage a panel's shared document corpus (Roadmap 6.7) — drop reference
+# material into the auto-provisioned ~/Council/panels/<name>/docs/ folder
+# OR link an external folder. On `council chat <panel>`, the scanner
+# walks every managed + linked folder, indexes new/changed files into
+# the FTS5 corpus under source_type='panel', and prunes any tracked
+# documents that have disappeared from disk.
+council panel docs <name>                                  # list managed + linked folders + doc counts
+council panel docs link <name> --path <folder>             # link an external folder (symlinks rejected)
+council panel docs unlink <name> --path <folder>           # remove a linked folder + its FTS entries
 ```
+
+## Persona Experts & Document Intelligence
+
+A **persona expert** is one whose voice is shaped by a corpus of reference
+documents (CVs, design docs, RFCs, prior emails, transcripts). Create one
+with `council expert create --persona <slug>` — Council provisions
+`~/Council/experts/<slug>/docs/` and the expert is registered with
+`kind: "persona"`.
+
+**On every `council chat <persona-slug>` invocation** (Roadmap 6.1, 6.2,
+6.4, 6.8):
+
+1. **Detect** new, modified, and deleted files by SHA-256 checksum
+   against the `expert_documents` table (migration 006).
+2. **Extract** content from `.md`, `.txt`, and `.html` files (regex-based
+   normalisation — see ADR-009) using a TOCTOU-safe fd-bound read that
+   verifies inode equality and confines reads to the docs root.
+3. **Index** the normalised text into FTS5 (`document_index`,
+   migration 007) for retrieval-augmented prompts.
+4. **Analyze** the corpus into a structured `PersonaProfile`
+   (`communicationStyle`, `decisionPatterns`, `biases`, `vocabulary`,
+   `epistemicStance`) via a transient LLM "Profile Analyzer" expert. The
+   profile is persisted to `persona_profiles` (migration 008) and
+   injected into the expert's system prompt as `[N] PERSONA PROFILE` so
+   the very next reply already reflects the latest material.
+
+**Recency weighting** — documents are passed to the analyzer in
+recency order (most-recent first) and each block is annotated with a
+`[Weight: 0.NN]` tag computed via exponential decay
+(`weight = 2^(-ageDays / halfLifeDays)`, default half-life = 90 days).
+The LLM is instructed to weight more-recent material more heavily, so an
+updated CV or revised RFC takes priority over older versions without you
+having to delete the predecessors.
+
+**Reset behaviour** — `council memory reset <panel>` clears debate
+transcripts and extracted memory but **preserves persona profiles**
+(Roadmap 7.4): rebuilding a profile costs an LLM call, and the profile
+is derived from on-disk documents that survive the reset anyway.
+
+**Security** — the docs folder must be a real directory (symlinks /
+junctions as the root are rejected up front); per-file confinement uses
+a once-resolved canonical root passed through both the detector and the
+extractor (closing root-swap TOCTOU windows). Profile fields and
+document content are sanitised through layered defenses before reaching
+the privileged system prompt — see ADR-008.
+
+Generic experts (`kind` unset or `"generic"`) skip the entire pipeline
+and behave exactly as before — `personaProfile` arguments to
+`buildSystemPrompt()` are ignored unless the expert is a persona
+(Roadmap 7.1).
 
 ## Built-in Panels
 
@@ -234,6 +294,9 @@ council ask <question>           # Continue with the full panel
 council ask --expert <slug> <q>  # Talk to one expert directly
 council conclude                 # Get decision matrix + recommendation
 council panels                              # List all panels
+council panel docs <name>                   # List a panel's managed + linked doc folders
+council panel docs link <name> --path <p>   # Link an external folder into a panel's RAG corpus
+council panel docs unlink <name> --path <p> # Unlink a folder + clean up its FTS entries
 council resume <panel>                      # Resume a previous panel
 council export <panel> --format <fmt>       # Export (markdown | json | adr)
 council memory list                         # Show what experts remember

@@ -22,6 +22,72 @@
 
 <!-- Add new decisions below this line, most recent first -->
 
+### ADR-009: Regex-based document normalisation, not a Markdown/HTML parser
+**Date**: 2026-05-10
+**Status**: Accepted
+**Context**: Roadmap 6.1 needs to extract plain text from `.md`, `.html`, and `.txt` documents to feed both FTS5 indexing and the persona-profile analyzer. The natural reach is a real parser per format (`marked` / `remark` for Markdown, `parse5` / `cheerio` for HTML). Council's actual need is far narrower: strip formatting and emit a normalised body suitable for tokenisation. The extractor is on the `council chat` startup hot path and must work in offline / air-gapped environments where heavy parser dependencies hurt install size and audit surface.
+
+**Decision**: `src/core/documents/extractor.ts` uses a small set of hand-written regex normalisers per format (HTML entity decoding, tag stripping, Markdown punctuation removal, whitespace collapse). The JSDoc explicitly states "intentionally simple (regex-based); strips formatting but does not aim to be a full parser." Parser correctness is not promised; FTS5 robustness against imperfect tokenisation is.
+
+**Alternatives considered**:
+- **`marked` + `cheerio`** — production-grade output but adds ~400KB of runtime deps (transitive `entities`, `parse5`), expands the security audit surface, and pulls dependencies into a code path that already stays close to `node:fs`. Rejected as gold-plating for an FTS pre-processor.
+- **`@mozilla/readability` / `jsdom`** — designed for article extraction, not arbitrary user docs; too opinionated and pulls in ~3MB of DOM emulation.
+- **No normalisation (raw bytes → FTS)** — FTS5's tokeniser already handles punctuation, but Markdown link syntax (`[text](url)`) and HTML tags would inflate the index with noise tokens, and the persona-profile analyzer would receive markup soup.
+
+**Consequences**:
+- ✅ Zero runtime dependencies for extraction; install size unchanged.
+- ✅ Fast, predictable, offline-safe — the extractor never touches the network or spawns subprocesses.
+- ✅ Easy to audit: ~100 lines of regex with explicit test coverage per format.
+- ⚠️ Pathological inputs (deeply-nested HTML, custom Markdown extensions) may produce imperfect text. Acceptable: FTS5 ranking absorbs noise, and the persona analyzer treats every fenced document as untrusted data anyway.
+- 📝 If a real parser is ever needed (e.g. `.docx` / `.pdf` in Phase 8), it lands in a NEW module behind a format-dispatched interface — not by replacing the regex normalisers wholesale.
+
+### ADR-008: Persona profile analysis — LLM extraction with single-retry, multi-layer sanitisation
+**Date**: 2026-05-09
+**Status**: Accepted
+**Context**: Roadmap 6.2 turns persona-expert documents (CVs, design docs, RFCs, prior emails) into a structured behavioural profile that the prompt-builder injects as `[N] PERSONA PROFILE`. The mechanics had three open questions: (1) heuristic vs LLM extraction, (2) how to budget retries when the LLM returns malformed JSON, and (3) how to defend a privileged system prompt against injection through user-controlled file content.
+
+**Decision**:
+1. **LLM extraction via a transient "Profile Analyzer" expert.** Register, send a meta-prompt with fenced document blocks + any `existingProfile` to update, parse the JSON response into `PersonaProfile`. Tear the analyzer down in a `finally` block (engine-cleanup failures surface as warnings, never mask the analysis result).
+2. **One retry on malformed JSON.** A single retry absorbs transient streaming truncation; persistent malformedness throws with the raw response embedded in the error so failures are debuggable. No exponential back-off, no second retry — the cost ceiling is two LLM calls per persona refresh.
+3. **Defense-in-depth sanitisation:**
+   - System prompt explicitly marks document content as untrusted data.
+   - Document bodies are wrapped in `<documents>` fences; every `<` in interpolated content is escaped to `&lt;` so an XML-like tag cannot close the fence prematurely.
+   - `existingProfile` fields are run through `sanitizePromptField` (`src/core/prompt-sanitize.ts`) — C0 controls stripped, Unicode line breaks (NEL / U+2028 / U+2029) and CR/LF runs collapsed, bracketed `[N]` section markers defanged to `(sec-N)`, length capped at 2000 chars — BEFORE the per-character `<` escape is applied, layering field-level and fence-level defenses.
+
+**Alternatives considered**:
+- **Heuristic extraction (n-gram frequencies, regex stance phrases).** Cheap and offline, but cannot capture nuanced behavioural patterns or update an existing profile coherently. Kept as a fallback elsewhere (`recallMemory`); not appropriate for persona profiles.
+- **Multi-retry with exponential backoff.** Out of proportion for a JSON-parse failure mode; wastes premium-request budget on a structural problem the model is unlikely to fix on its own.
+- **Single-pass sanitisation (just the `<` escape, or just `sanitizePromptField`).** Either layer alone has known bypasses (e.g. raw newlines surviving the `<` escape; `<` payloads surviving `sanitizePromptField`'s defang-but-don't-escape rule). Stacking is the cheap, robust answer.
+
+**Consequences**:
+- ✅ Profile quality is meaningfully better than heuristics — the LLM can synthesise `epistemicStance` and `decisionPatterns` from prose.
+- ✅ Bounded cost: at most 2 LLM calls per `council chat <persona>` invocation that detected document changes.
+- ✅ Hardened against fence-break, `[N]`-marker spoofing, runaway-length fields, and C0 / Unicode-line-break payloads (regression tests live in `tests/unit/documents/profile-analyzer-sanitization.test.ts`).
+- ⚠️ Still depends on the engine respecting the "treat fenced content as data" instruction. Mitigated by the field-level + fence-level escape layers, but not absolutely guaranteed for all future models.
+- 📝 The transient-analyzer cleanup pattern is reusable: see `src/core/auto-compose.ts` for the original instance.
+
+### ADR-007: `panel_documents` schema mirrors `expert_documents`, with `source` discriminator
+**Date**: 2026-05-09
+**Status**: Accepted
+**Context**: Roadmap 6.7 (Panel Document Folder) adds a panel-shared RAG corpus that participates in the same FTS5 `document_index` as expert docs. The corpus has two provenance kinds: a managed folder auto-provisioned at `~/Council/panels/<name>/docs/` and an arbitrary number of user-linked external folders. Panels are addressed by `name` (string PK), not by ULID like experts. Two design questions: (1) one table or two for managed vs linked? (2) reuse the `expert_documents` shape verbatim, or design fresh?
+
+**Decision**: Migration 009 creates two tables:
+- **`panel_linked_folders`** — small registry of external folders per panel (`{ id (ULID), panel_name (FK CASCADE), folder_path, created_at }` with `UNIQUE (panel_name, folder_path)`).
+- **`panel_documents`** — file tracking, intentionally near-isomorphic to `expert_documents`: `{ id (ULID), panel_name (FK CASCADE → panel_library.name), source ('managed' | 'linked'), file_path, filename, checksum, size_bytes, word_count, status, processed_at, created_at }` with `UNIQUE (panel_name, file_path)` and `idx_panel_documents_panel (panel_name, status)`.
+
+Provenance is a column on the per-file row, not a separate table. FTS index entries differentiate panel docs from expert docs via `source_type='panel'` (already in migration 007).
+
+**Alternatives considered**:
+- **Single unified `documents` table for experts + panels.** Forces every row to carry both an `expert_slug` and a `panel_name` (one always NULL), complicating FK constraints (CASCADE on different parents) and indexing. The shapes are identical but the parent semantics aren't.
+- **Separate `panel_managed_documents` and `panel_linked_documents` tables.** Doubles the surface for queries that don't care about provenance ("how many docs does this panel have?") and makes the scanner query the same row shape twice.
+- **Store linked folders in a JSON column on `panel_library`.** Fast to write, but precludes `ON DELETE CASCADE`, breaks per-folder indexing, and forces the scanner to round-trip through application-level JSON parsing for every read.
+
+**Consequences**:
+- ✅ The expert and panel scanners share the same `DocumentDetectionResult` shape and the same FTS5 indexer, with provenance plumbed through as opaque metadata.
+- ✅ `ON DELETE CASCADE` on both tables means `panel delete <name>` cleans up linked-folder registrations and per-file rows automatically; the FTS index is purged separately by the unlink/delete handlers.
+- ✅ The `source` discriminator lets the scanner enforce the rule that **only the managed folder is auto-provisioned** while linked folders require an explicit `council panel docs link` (with up-front symlink rejection).
+- ⚠️ Two near-isomorphic tables (`expert_documents` and `panel_documents`) duplicate column definitions. Tolerated; consolidation would couple two independent migration tracks.
+
 ### ADR-006: `migrateBuiltInTemplates` takes both `library` and `db` explicitly
 **Date**: 2026-05-08
 **Status**: Accepted
