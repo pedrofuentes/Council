@@ -84,13 +84,24 @@ export function sanitizeMemorySnippet(text: string): string {
  * Replace the contents of section `[7] MEMORY` in a previously-built
  * system prompt with a freshly-rendered memory block. Returns the
  * original prompt unchanged when `memory` is undefined or when the
- * `[7] MEMORY` / `[8] CURRENT TASK` markers cannot be located (defensive
- * fallback — caller should never receive a silently-broken prompt).
+ * `[7] MEMORY` marker cannot be located (defensive fallback — caller
+ * should never receive a silently-broken prompt).
  *
- * Robustness: uses the **last** occurrence of the `\n[8] CURRENT TASK`
- * marker after `[7] MEMORY` rather than the first, so any injected copy
- * of `[8] CURRENT TASK` that survives sanitisation is absorbed into the
- * replaced span instead of extending the real task section.
+ * The end of the memory block is the next `\n[N] ` section header after
+ * `[7] MEMORY`. The section number is NOT fixed: `buildSystemPrompt`
+ * may inject `[8] PERSONA PROFILE` and/or `[9] PANEL MEMBERSHIPS`
+ * between `[7] MEMORY` and `[N] CURRENT TASK`, so any hardcoded
+ * `[8] CURRENT TASK` end marker silently fails to patch memory in those
+ * configurations (issue #364).
+ *
+ * Injection defense: a malicious turn could embed a `[N] ` marker
+ * inside the memory body that survives `sanitizeMemorySnippet`. We
+ * pick the **first** post-`[7] MEMORY` section marker — which is the
+ * legitimate next section emitted by `buildSystemPrompt`, never an
+ * injected one (injected markers in memory would appear at the line
+ * start AFTER the legitimate header in source order). Combined with
+ * the snippet sanitiser, this prevents attacker content from spilling
+ * past the memory boundary.
  *
  * Used by `council resume --continue`, where the persisted system prompt
  * was rendered with no memory but a fresh recall is now available.
@@ -101,18 +112,20 @@ export function applyRecalledMemory(
 ): string {
   if (!memory) return systemMessage;
   const startMarker = "[7] MEMORY\n";
-  const endMarker = "\n[8] CURRENT TASK";
   const startIdx = systemMessage.indexOf(startMarker);
   if (startIdx === -1) return systemMessage;
-  // Use lastIndexOf so a stray injected "[8] CURRENT TASK" inside the old
-  // memory block (or anywhere before the real task section) cannot trick
-  // us into preserving attacker-controlled content past the boundary.
-  const endIdx = systemMessage.lastIndexOf(endMarker);
-  if (endIdx === -1 || endIdx < startIdx + startMarker.length) return systemMessage;
+  const contentStart = startIdx + startMarker.length;
+  // End of memory body = first "\n[N] " section header after [7] MEMORY
+  // content begins. This handles task at [8], [9], or [10] and any
+  // intervening sections (PERSONA PROFILE, PANEL MEMBERSHIPS).
+  const endRe = /\n\[\d+\] /g;
+  endRe.lastIndex = contentStart;
+  const match = endRe.exec(systemMessage);
+  if (match === null) return systemMessage;
+  const endIdx = match.index;
+  if (endIdx < contentStart) return systemMessage;
   const block = renderMemoryBlock(sanitizeMemory(memory));
-  return (
-    systemMessage.slice(0, startIdx + startMarker.length) + block + systemMessage.slice(endIdx)
-  );
+  return systemMessage.slice(0, contentStart) + block + systemMessage.slice(endIdx);
 }
 
 function sanitizeMemory(memory: ExpertMemory): ExpertMemory {
