@@ -314,7 +314,7 @@ Ink-based chat UI with streaming text, color-coded experts, `@mention` highlight
 
 ### 6.1 Document Detection & Extraction ✅
 
-Detects supported formats (md, txt, pdf, docx) under an expert's or panel's `docs/` folder and extracts text content. Tracks file mtime + hash to skip unchanged files.
+Detects supported formats (`.md`, `.txt`, `.html`) under an expert's or panel's `docs/` folder and extracts text content via regex normalisers (see ADR-009). Tracks file checksum (SHA-256) and word count in `expert_documents` / `panel_documents` to skip unchanged files. PDF and DOCX formats are NOT supported in Phase 6; reserved for Phase 8.
 
 **Key files**: `src/core/documents/detector.ts`, `src/core/documents/extractor.ts`
 
