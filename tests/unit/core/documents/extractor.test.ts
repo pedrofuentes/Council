@@ -267,20 +267,27 @@ describe("extractDocument", () => {
         return realpath(p);
       };
 
-      const result = await extractDocument(filePath, {
-        _realpathOverride: override,
-      });
-      expect(result.content).toBe("first body");
-      // The post-open utimes mutation must NOT leak into modifiedAt —
-      // the fd was bound to the inode before the touch, and fh.stat
-      // reflects the inode state at the moment we read it through the
-      // handle. We assert modifiedAt equals the fd-handle stat captured
-      // *during* extraction. Since the test cannot peek into the handle,
-      // we assert via the contract: modifiedAt must NOT equal the new
-      // post-mutation host mtime (proving it came from the fd, not a
-      // late path-based stat).
-      const after = await fs.stat(filePath);
-      expect(result.modifiedAt).not.toBe(after.mtime.toISOString());
+      // With post-read consistency checking, the extractor detects the
+      // mid-extraction mutation and refuses to return torn content.
+      await expect(
+        extractDocument(filePath, { _realpathOverride: override }),
+      ).rejects.toThrow(/modified during read/i);
+    });
+
+    it("rejects torn reads when file content changes during extraction", async () => {
+      const filePath = path.join(dir, "doc.txt");
+      await fs.writeFile(filePath, "v1 body");
+      // Inject a mutation between the post-open stat and readFile by
+      // hooking realpath (called after the initial stat). This bumps
+      // mtime; the post-read stat will detect the mismatch and throw.
+      const realpath = fs.realpath;
+      const override = async (p: string): Promise<string> => {
+        await fs.writeFile(filePath, "v2 body has more bytes");
+        return realpath(p);
+      };
+      await expect(
+        extractDocument(filePath, { _realpathOverride: override }),
+      ).rejects.toThrow(/modified during read|inode changed/i);
     });
   });
 });
