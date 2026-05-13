@@ -19,7 +19,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import { detectDocumentChanges, type DocumentFile } from "./detector.js";
-import { extractDocument } from "./extractor.js";
+import * as extractorModule from "./extractor.js";
 import { createDocumentIndexer } from "./indexer.js";
 import type { CouncilDatabase } from "../../memory/db.js";
 import {
@@ -47,6 +47,8 @@ export interface PanelScanResult {
   readonly indexed: number;
   readonly unchanged: number;
   readonly failed: number;
+  /** Number of previously-tracked documents pruned (file removed from disk). */
+  readonly pruned: number;
   readonly foldersFailed: number;
   readonly managedFolderFailed: boolean;
 }
@@ -70,12 +72,24 @@ export async function scanAndIndexPanelDocuments(
   ];
 
   const known = await docsRepo.getChecksumMap(panelName);
+  // Track which previously-known paths we observed on disk this scan.
+  // Anything left over after iterating all folders has been deleted and
+  // must be pruned from both `panel_documents` and `document_index` so
+  // RAG retrieval cannot still surface stale content (issue #386).
+  const seenPaths = new Set<string>();
 
   let indexed = 0;
   let unchanged = 0;
   let failed = 0;
+  let pruned = 0;
   let foldersFailed = 0;
   let managedFolderFailed = false;
+
+  // Track folders we successfully scanned (canonical paths). Pruning is
+  // only safe under these — if a folder failed to scan, its tracked
+  // documents must NOT be pruned (a transient failure shouldn't wipe
+  // the index for content we know was there).
+  const scannedFolders: string[] = [];
 
   for (const folder of folders) {
     // Canonicalize first so the confinement boundary is anchored at the
@@ -135,14 +149,27 @@ export async function scanAndIndexPanelDocuments(
     }
 
     unchanged += detection.unchangedFiles.length;
+    for (const u of detection.unchangedFiles) seenPaths.add(u.path);
+    scannedFolders.push(canonical);
 
     const targets: readonly DocumentFile[] = [
       ...detection.newFiles,
       ...detection.modifiedFiles,
     ];
     for (const file of targets) {
+      seenPaths.add(file.path);
       try {
-        const extracted = await extractDocument(file.path);
+        // Pass `confinementRoot` so extractDocument re-validates that
+        // the file resolves inside the panel's docs folder. Without
+        // this, a TOCTOU race between detector and extractor — or a
+        // file that detector accepted but whose symlink target was
+        // swapped mid-scan — could read sensitive files outside the
+        // boundary (issue #385). The expert-side processor passes
+        // confinementRoot for the same reason.
+        const extracted = await extractorModule.extractDocument(file.path, {
+          confinementRoot: canonical,
+          _rootIsCanonical: true,
+        });
         await indexer.index({
           content: extracted.content,
           sourceType: "panel",
@@ -181,5 +208,43 @@ export async function scanAndIndexPanelDocuments(
     }
   }
 
-  return { indexed, unchanged, failed, foldersFailed, managedFolderFailed };
+  // Prune documents that exist in the DB but no longer on disk. Only
+  // prune when the path is under a folder we successfully scanned —
+  // otherwise a transient folder-level failure (unmounted drive,
+  // permission flap) would destroy index entries we'd want back next
+  // scan. (issue #386)
+  for (const [trackedPath] of known) {
+    if (seenPaths.has(trackedPath)) continue;
+    const ownerScanned = scannedFolders.some((f) => isUnderFolder(trackedPath, f));
+    if (!ownerScanned) continue;
+    try {
+      await indexer.remove(trackedPath);
+    } catch {
+      /* best-effort — metadata mark still proceeds */
+    }
+    await docsRepo.markRemoved(panelName, trackedPath);
+    pruned += 1;
+  }
+
+  return { indexed, unchanged, failed, pruned, foldersFailed, managedFolderFailed };
+}
+
+function isUnderFolder(filePath: string, folderPath: string): boolean {
+  if (filePath === folderPath) return true;
+  return (
+    filePath.startsWith(folderPath + "/") || filePath.startsWith(folderPath + "\\")
+  );
+}
+
+/**
+ * Build a user-facing warning when *every* discovered document failed
+ * to process. The scanner cannot tell the chat renderer to print
+ * anything itself, so callers (chat startup, future `docs scan`) format
+ * the result via this helper. Returns null when at least one document
+ * indexed/remained unchanged, or when nothing failed (issue #389).
+ */
+export function formatAllFailedWarning(result: PanelScanResult): string | null {
+  if (result.failed === 0) return null;
+  if (result.indexed > 0 || result.unchanged > 0) return null;
+  return `⚠ All ${result.failed} documents failed to process. Check file formats and permissions.`;
 }

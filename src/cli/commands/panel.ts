@@ -666,7 +666,7 @@ function buildDocsLinkCommand(write: Writer, writeError: Writer): Command {
 
       let stat;
       try {
-        stat = await fs.stat(absolute);
+        stat = await fs.lstat(absolute);
       } catch (err: unknown) {
         const code = (err as NodeJS.ErrnoException).code;
         if (code === "ENOENT") {
@@ -674,6 +674,16 @@ function buildDocsLinkCommand(write: Writer, writeError: Writer): Command {
           throw new Error(`Path does not exist: ${absolute}`);
         }
         throw err;
+      }
+      if (stat.isSymbolicLink()) {
+        // The scanner refuses to follow a symlinked folder root for
+        // confinement safety (panel-document-scanner.ts). Reject here
+        // too so the user gets a clear error at link-time rather than
+        // a silent "0 documents indexed" later. (issue #390)
+        writeError(
+          `Path is a symlink: ${displayPath(absolute)} — pass the real folder path instead.\n`,
+        );
+        throw new Error(`Path is a symlink: ${absolute}`);
       }
       if (!stat.isDirectory()) {
         writeError(`Path is not a directory: ${displayPath(absolute)}\n`);

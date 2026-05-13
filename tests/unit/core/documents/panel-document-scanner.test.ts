@@ -236,8 +236,8 @@ describe("scanAndIndexPanelDocuments", () => {
       for (const call of spy.mock.calls) {
         const opts = call[1] as { confinementRoot?: string } | undefined;
         expect(opts).toBeDefined();
-        expect(opts?.confinementRoot).toBeDefined();
-        const root = opts!.confinementRoot!;
+        const root = opts?.confinementRoot;
+        expect(root).toBeDefined();
         expect([canonicalManaged, canonicalLinked]).toContain(root);
       }
     } finally {

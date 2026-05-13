@@ -162,6 +162,22 @@ export class PanelDocumentRepository {
     return rows.map(toDomain);
   }
 
+  /**
+   * Mark a single tracked document as `removed` — used by the scanner
+   * when a previously-indexed file has disappeared from disk. The row
+   * stays for audit; future scans see no checksum for that path (the
+   * `getChecksumMap` query filters out `removed`) and will re-index if
+   * the file reappears.
+   */
+  async markRemoved(panelName: string, filePath: string): Promise<void> {
+    await this.db
+      .updateTable("panel_documents")
+      .set({ status: "removed", processed_at: new Date().toISOString() })
+      .where("panel_name", "=", panelName)
+      .where("file_path", "=", filePath)
+      .execute();
+  }
+
   async removeDocumentsUnderFolder(
     panelName: string,
     folderPath: string,
