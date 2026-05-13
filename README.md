@@ -182,13 +182,14 @@ with `council expert create --persona <slug>` — Council provisions
    injected into the expert's system prompt as `[N] PERSONA PROFILE` so
    the very next reply already reflects the latest material.
 
-**Recency weighting** — documents are passed to the analyzer in
-recency order (most-recent first) and each block is annotated with a
-`[Weight: 0.NN]` tag computed via exponential decay
+**Recency weighting** — each document block in the analyzer meta-prompt
+is annotated with a `[Weight: 0.NN]` tag computed via exponential decay
 (`weight = 2^(-ageDays / halfLifeDays)`, default half-life = 90 days).
-The LLM is instructed to weight more-recent material more heavily, so an
-updated CV or revised RFC takes priority over older versions without you
-having to delete the predecessors.
+The LLM is instructed to weight more-recent material more heavily, so
+an updated CV or revised RFC takes priority over older versions without
+you having to delete the predecessors. The analyzer preserves the
+caller's input order — weight tags reflect age regardless of how
+documents were enumerated.
 
 **Reset behaviour** — `council memory reset <panel>` clears debate
 transcripts and extracted memory but **preserves persona profiles**

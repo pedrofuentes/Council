@@ -359,17 +359,19 @@ distills the corpus, biasing the resulting profile toward the most
 recent material — important when a user adds an updated CV, design
 doc, or RFC alongside older versions.
 
-**Mechanism (prompt-side, not retrieval-side).** Recency weighting is
-applied at *analyzer prompt construction* time, not at FTS5 retrieval
-time. `analyzeDocuments()` (in `src/core/documents/profile-analyzer.ts`)
-orders documents by `modifiedAt` (most-recent first) and annotates each
-fenced document block with a `[Weight: 0.NN]` tag computed via
-exponential decay: `weight = 2^(-ageDays / halfLifeDays)` (so age = 0 →
-1.0, age = halfLife → 0.5, age = 2 × halfLife → 0.25). The meta-prompt
+**Mechanism (prompt-side annotation, not input ordering or retrieval
+scoring).** Recency weighting is applied at *analyzer prompt
+construction* time. `analyzeDocuments()` (in
+`src/core/documents/profile-analyzer.ts`) annotates each fenced
+document block with a `[Weight: 0.NN]` tag computed via exponential
+decay: `weight = 2^(-ageDays / halfLifeDays)` (so age = 0 → 1.0,
+age = halfLife → 0.5, age = 2 × halfLife → 0.25). The meta-prompt
 explicitly instructs the LLM to weight more-recent material more
 heavily when distilling `communicationStyle`, `decisionPatterns`, etc.
-The FTS5 retriever (`src/core/documents/retriever.ts`) is unchanged —
-BM25 ranking is still purely lexical.
+The analyzer preserves the caller's input order — it does NOT itself
+sort by `modifiedAt`. The FTS5 retriever
+(`src/core/documents/retriever.ts`) is unchanged — BM25 ranking is
+still purely lexical.
 
 Half-life is configurable via `AnalyzeOptions.recencyWeightHalfLife`
 (`DocumentProcessor` default: 90 days). Edge cases: `halfLifeDays <= 0`
