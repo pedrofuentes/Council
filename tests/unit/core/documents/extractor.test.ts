@@ -102,6 +102,41 @@ describe("extractDocument", () => {
     expect(result.content).toContain('"quoted"');
   });
 
+  it(".html strips <script> and <style> blocks including their inner content (issue #344)", async () => {
+    // Issue #344: the extractor must not leak the bodies of <script> and
+    // <style> tags into the indexed text — those are program code, not
+    // prose, and would pollute the persona profile / FTS index with
+    // tokens like `function`, `var`, hex color codes, etc.
+    const filePath = path.join(dir, "page-with-script.html");
+    const html = [
+      "<html><head>",
+      "<style>.hidden-css-token{color:#ff00aa;font-family:Inter}</style>",
+      "</head><body>",
+      "<h1>Visible Heading</h1>",
+      "<script>var SECRET_SCRIPT_TOKEN = 'do-not-index'; function leak(){return SECRET_SCRIPT_TOKEN;}</script>",
+      "<p>Visible body paragraph.</p>",
+      "<script type=\"application/json\">{\"another\":\"SECRET_JSON_TOKEN\"}</script>",
+      "</body></html>",
+    ].join("\n");
+    await fs.writeFile(filePath, html);
+    const result = await extractDocument(filePath);
+
+    // Visible prose survives.
+    expect(result.content).toContain("Visible Heading");
+    expect(result.content).toContain("Visible body paragraph");
+
+    // Script + style bodies are gone (both opening tags AND inner content).
+    expect(result.content).not.toMatch(/<script/i);
+    expect(result.content).not.toMatch(/<\/script>/i);
+    expect(result.content).not.toMatch(/<style/i);
+    expect(result.content).not.toMatch(/<\/style>/i);
+    expect(result.content).not.toContain("SECRET_SCRIPT_TOKEN");
+    expect(result.content).not.toContain("SECRET_JSON_TOKEN");
+    expect(result.content).not.toContain("hidden-css-token");
+    expect(result.content).not.toContain("#ff00aa");
+    expect(result.content).not.toContain("font-family");
+  });
+
   it("checksum matches SHA-256 of raw bytes", async () => {
     const filePath = path.join(dir, "x.md");
     const raw = "# Some heading\n\nbody text";
@@ -229,6 +264,65 @@ describe("extractDocument", () => {
       });
       expect(result.content).toBe("frozen body");
       expect(calls.every((p) => p !== canonical)).toBe(true);
+    });
+  });
+
+  // Issue #376: mtime must come from the bound file handle (already
+  // obtained via fh.stat in the TOCTOU-safe sequence), not a separate
+  // post-extraction fs.stat() call. A separate stat opens a TOCTOU
+  // window where the mtime stored on the document record may not
+  // correspond to the content that was actually extracted.
+  describe("modifiedAt (issue #376)", () => {
+    it("returns modifiedAt from the file handle so it is bound to the same inode that was read", async () => {
+      const filePath = path.join(dir, "doc.txt");
+      await fs.writeFile(filePath, "first body");
+      const beforeStat = await fs.stat(filePath);
+      const result = await extractDocument(filePath);
+      expect(result.content).toBe("first body");
+      // modifiedAt is an ISO-8601 string equal to the fd's mtime at the
+      // moment of extraction (which is the file's mtime at that point —
+      // tested via the host stat captured immediately before).
+      expect(typeof result.modifiedAt).toBe("string");
+      expect(result.modifiedAt).toBe(beforeStat.mtime.toISOString());
+    });
+
+    it("modifiedAt corresponds to the bytes actually read, not a later mutation", async () => {
+      const filePath = path.join(dir, "doc.txt");
+      await fs.writeFile(filePath, "first body");
+      const fdStatBefore = await fs.stat(filePath);
+
+      // Override realpath to mutate the file's mtime AFTER the extractor
+      // has opened the fd but BEFORE any internal post-open stat would
+      // run. With a fd-bound stat, modifiedAt must equal the pre-mutation
+      // value because the handle's inode mtime is what we report.
+      const realpath = fs.realpath;
+      const override = async (p: string): Promise<string> => {
+        const futureTime = new Date(fdStatBefore.mtime.getTime() + 60_000);
+        await fs.utimes(filePath, futureTime, futureTime);
+        return realpath(p);
+      };
+
+      // With post-read consistency checking, the extractor detects the
+      // mid-extraction mutation and refuses to return torn content.
+      await expect(
+        extractDocument(filePath, { _realpathOverride: override }),
+      ).rejects.toThrow(/modified during read/i);
+    });
+
+    it("rejects torn reads when file content changes during extraction", async () => {
+      const filePath = path.join(dir, "doc.txt");
+      await fs.writeFile(filePath, "v1 body");
+      // Inject a mutation between the post-open stat and readFile by
+      // hooking realpath (called after the initial stat). This bumps
+      // mtime; the post-read stat will detect the mismatch and throw.
+      const realpath = fs.realpath;
+      const override = async (p: string): Promise<string> => {
+        await fs.writeFile(filePath, "v2 body has more bytes");
+        return realpath(p);
+      };
+      await expect(
+        extractDocument(filePath, { _realpathOverride: override }),
+      ).rejects.toThrow(/modified during read|inode changed/i);
     });
   });
 });

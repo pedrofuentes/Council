@@ -737,7 +737,17 @@ describe("analyzeDocuments() — recency weight annotations in prompt (Roadmap 6
     });
     const send = engine.sends[0];
     if (!send) throw new Error("expected send");
-    expect(send.prompt.toLowerCase()).toMatch(/weight|recent.*more|heavier/);
+    // Issue #377: the previous regex `/weight|recent.*more|heavier/`
+    // matched any `[Weight: 1.00]` tag, so the test passed even when the
+    // instruction prose was missing. Pin the assertion to the actual
+    // instruction text: a sentence telling the LLM to give recent
+    // documents *more* influence than older ones. Strip the per-document
+    // `[Weight: …]` tags first so they cannot satisfy the regex on their
+    // own.
+    const withoutTags = send.prompt.replace(/\[Weight:[^\]]+\]/g, "");
+    expect(withoutTags.toLowerCase()).toMatch(
+      /weight\s+recent.*more\s+heavily|recent.*(?:more\s+heavily|higher\s+weight)|prioriti[sz]e\s+recent/,
+    );
   });
 
   it("omits weight tags when modifiedAt is absent (back-compat)", async () => {

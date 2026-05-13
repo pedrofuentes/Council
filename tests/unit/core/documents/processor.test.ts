@@ -523,5 +523,43 @@ describe("createDocumentProcessor", () => {
       expect(remaining.has(fileBCanonical)).toBe(true);
       expect(remaining.has(fileA)).toBe(true);
     });
+
+    it("propagates the extractor's fd-bound modifiedAt into the analyzer prompt (issue #376)", async () => {
+      // Two files with very different mtimes — older one should receive
+      // a markedly smaller recency weight than the newer one in the
+      // analyzer prompt. This proves the processor consumes mtime from
+      // the extractor (which reads it via fh.stat on the bound fd)
+      // rather than via a separate post-extraction fs.stat that could
+      // observe a different mtime.
+      const dir = await makeDocsDir(env, "alice");
+      const recent = path.join(dir, "recent.md");
+      const old = path.join(dir, "old.md");
+      await fs.writeFile(recent, "recent body");
+      await fs.writeFile(old, "old body");
+      // Move `old` 30 half-lives back so its weight rounds to ~0.
+      const halfLifeMs = CONFIG.recencyHalfLifeDays * 24 * 60 * 60 * 1000;
+      const oldTime = new Date(Date.now() - 30 * halfLifeMs);
+      await fs.utimes(old, oldTime, oldTime);
+
+      const engine = new StubEngine([VALID_PROFILE_JSON]);
+      const proc = createDocumentProcessor({
+        engine,
+        documentRepo: env.docRepo,
+        profileRepo: env.profileRepo,
+        indexer: env.indexer,
+        config: CONFIG,
+      });
+      const result = await proc.process("alice", dir);
+      expect(result.filesProcessed).toBe(2);
+      expect(result.filesFailed).toBe(0);
+
+      const prompt = engine.sends[0]?.prompt ?? "";
+      // Both files render their own weight header; recent's weight
+      // should be near 1.00, old's should be ~0.00. The mere presence
+      // of differentiated Weight tags proves modifiedAt propagated
+      // through the pipeline.
+      expect(prompt).toMatch(/--- recent\.md --- \[Weight: 1\.00\]/);
+      expect(prompt).toMatch(/--- old\.md --- \[Weight: 0\.00\]/);
+    });
   });
 });

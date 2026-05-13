@@ -263,32 +263,18 @@ export function createDocumentProcessor(
 
           processed += 1;
           totalWords += extracted.wordCount;
-          // Carry modified-at so the analyzer can compute recency weights.
-          // Best-effort: a stat failure (e.g. the file was just removed)
-          // simply omits the date and the analyzer treats the doc as
-          // un-weighted.
-          let modifiedAt: string | undefined;
-          try {
-            const st = await fs.stat(extracted.path);
-            modifiedAt = st.mtime.toISOString();
-          } catch {
-            modifiedAt = undefined;
-          }
-          const analyzerDoc: AnalyzerDoc =
-            modifiedAt !== undefined
-              ? {
-                  path: extracted.path,
-                  filename: extracted.filename,
-                  content: extracted.content,
-                  wordCount: extracted.wordCount,
-                  modifiedAt,
-                }
-              : {
-                  path: extracted.path,
-                  filename: extracted.filename,
-                  content: extracted.content,
-                  wordCount: extracted.wordCount,
-                };
+          // mtime comes from the extractor's fd-bound stat (issue #376):
+          // reading via `fh.stat()` during extraction guarantees the
+          // mtime corresponds to the inode the content was read from,
+          // closing the TOCTOU window that a separate post-extraction
+          // `fs.stat(path)` would open.
+          const analyzerDoc: AnalyzerDoc = {
+            path: extracted.path,
+            filename: extracted.filename,
+            content: extracted.content,
+            wordCount: extracted.wordCount,
+            modifiedAt: extracted.modifiedAt,
+          };
           successfullyExtracted.push(analyzerDoc);
 
           onProgress?.({

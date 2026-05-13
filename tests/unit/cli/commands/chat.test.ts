@@ -454,6 +454,84 @@ describe("buildChatCommand", () => {
       expect(out).toMatch(/Conversation saved/i);
     });
 
+    it("injects [PANEL MEMBERSHIPS] into the 1:1 chat system prompt when the expert belongs to a panel (issue #404)", async () => {
+      // Issue #404: cross-panel awareness is observable in `council chat
+      // <expert>` 1:1 mode only via the system prompt — but no test
+      // verified that. Seed a panel containing the expert, capture the
+      // ExpertSpec passed to `engine.addExpert`, and assert the system
+      // prompt carries the membership block.
+      await seedExpert(env);
+      // Seed a second expert as co-member so the rendered block carries
+      // a visible "(with …)" clause that proves the join walked
+      // expert_library too.
+      await seedExpert(env, {
+        slug: "marcus-arch",
+        displayName: "Marcus Chen (Architect)",
+        role: "Systems architect",
+        expertise: {
+          weightedEvidence: ["postmortems"],
+          referenceCases: [],
+          notExpertIn: [],
+        },
+        epistemicStance: "Engineering rigor",
+        kind: "generic",
+      });
+
+      // Register the panel directly via the repository (no template
+      // migration runs during `council chat`).
+      const { PanelLibraryRepository } = await import(
+        "../../../../src/memory/repositories/panel-library-repo.js"
+      );
+      const seedingDb = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        const repo = new PanelLibraryRepository(seedingDb);
+        await repo.create({
+          name: "architecture-review",
+          description: "Cross-functional architecture deliberation",
+          yamlPath: path.join(env.dataHome, "panels", "architecture-review.yaml"),
+          yamlChecksum: "ch1",
+        });
+        await repo.setMembers("architecture-review", ["dahlia-cto", "marcus-arch"]);
+      } finally {
+        await seedingDb.destroy();
+      }
+
+      // Capture the systemMessage handed to addExpert via a wrapping
+      // engine factory (same pattern as resume.test.ts).
+      const capturedSystemMessages: string[] = [];
+      const capturingFactory = (): CouncilEngine => {
+        const real = new MockEngine();
+        return {
+          start: () => real.start(),
+          stop: () => real.stop(),
+          addExpert: (spec) => {
+            capturedSystemMessages.push(spec.systemMessage);
+            return real.addExpert(spec);
+          },
+          removeExpert: (id) => real.removeExpert(id),
+          send: (opts) => real.send(opts),
+          listModels: () => real.listModels(),
+        };
+      };
+
+      const cmd = buildChatCommand({
+        write: () => undefined,
+        writeError: () => undefined,
+        engineFactory: capturingFactory,
+        inputProvider: () => scriptedInput(["hi", "/quit"]),
+      });
+      await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+
+      expect(capturedSystemMessages.length).toBeGreaterThanOrEqual(1);
+      const sys = capturedSystemMessages[0] ?? "";
+      expect(sys).toContain("PANEL MEMBERSHIPS");
+      // Panel name and co-member must be rendered into the block.
+      expect(sys).toMatch(/architecture-review/i);
+      expect(sys).toContain("Marcus Chen (Architect)");
+      // The expert themselves must NOT appear as a co-member.
+      expect(sys).not.toMatch(/with[^)]*Dahlia Renner/);
+    });
+
     it("surfaces a warning (not silence) when the panel-membership query fails, and still starts chat", async () => {
       // Force the membership query to throw by dropping the panel_members
       // table from the underlying DB after the schema migration. The chat
