@@ -222,6 +222,8 @@ and behave exactly as before — `personaProfile` arguments to
 council convene --template architecture-review "Should we adopt GraphQL?"
 ```
 
+> **Migration note**: On first use of `--template` after upgrading, Council auto-migrates built-in panels to the library format — extracting experts into `~/Council/experts/` and rewriting panels to use slug references. Migration **never overwrites existing files**: if you've already created `~/Council/experts/cto.yaml` with a custom definition, the migration skips it and your panel references your custom expert instead of the built-in one. To reset to built-in defaults, delete the expert YAML and re-run.
+
 ## Create Custom Panels
 
 User panels live in `<dataHome>/panels/<name>.yaml` (default `~/Council/panels/`)
