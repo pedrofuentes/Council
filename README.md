@@ -161,7 +161,7 @@ council panel docs unlink <name> --path <folder>           # remove a linked fol
 
 A **persona expert** is one whose voice is shaped by a corpus of reference
 documents (CVs, design docs, RFCs, prior emails, transcripts). Create one
-with `council expert create --persona <slug>` — Council provisions
+with `council expert create --persona --slug <slug>` — Council provisions
 `~/Council/experts/<slug>/docs/` and the expert is registered with
 `kind: "persona"`.
 
