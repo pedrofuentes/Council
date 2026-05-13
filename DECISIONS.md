@@ -22,6 +22,55 @@
 
 <!-- Add new decisions below this line, most recent first -->
 
+### ADR-011: User data directory split — `~/Council/` (visible) vs `~/.council/` (hidden)
+**Date**: 2026-05-12
+**Status**: Accepted
+**Context**: Council writes two very different kinds of state to the user's home directory: (a) **author-facing artifacts** — expert YAMLs, panel YAMLs, persona document folders that users are expected to open in an editor, drag documents into, and version-control if they choose; and (b) **internal state** — the libsql database file, the resolved config, FTS indexes, generated profiles. Putting both in a single hidden `~/.council/` (the "Unix dotfile" default) hides the author-facing files from normal file-browser navigation, drag-and-drop, and `~/Documents`-style discovery; putting both in a visible `~/Council/` clutters the user's home with internal binaries (`council.db`, FTS shadow files) that they should not be editing.
+
+**Decision**: Split user data across two directories on a single rule — **author-facing → visible, machine-managed → hidden**:
+- `~/Council/` (visible, capitalised like `~/Documents`) holds expert YAMLs (`experts/<slug>.yaml`), panel YAMLs (`panels/<name>.yaml`), persona document folders (`experts/<slug>/docs/`), and panel document folders (`panels/<name>/docs/`). Resolved via `getCouncilDataHome(config?)` in `src/config/loader.ts`, which honours the `COUNCIL_DATA_HOME` env var (and the `paths.dataHome` config key) for tests and ephemeral mode. Users can open, edit, version-control, and drag files in/out freely; the document scanners detect changes via SHA-256 on the next `council chat`.
+- `~/.council/` (hidden) holds `config.yaml` and `council.db` (and any future FTS shadow files / lock files / caches). Resolved via `getCouncilHome()` in `src/config/loader.ts`, which honours `COUNCIL_HOME`. Users have no business editing these directly.
+
+The two env vars (`COUNCIL_HOME` and `COUNCIL_DATA_HOME`) are independent so tests can isolate the hidden state, the visible library, or both.
+
+**Alternatives considered**:
+- **Single `~/.council/` for everything.** Familiar Unix convention, single env var, but defeats the entire premise of "drop documents in to teach an expert" — users cannot see the docs folder in Finder/Explorer without enabling hidden files, and drag-and-drop is awkward.
+- **Single `~/Council/` for everything.** Discoverable, but pollutes the user's home with `council.db` and internal state they shouldn't touch; risks accidental deletion of the DB while "cleaning up".
+- **`~/Documents/Council/` for visible, `~/.config/council/` for hidden** (XDG-style). Closer to convention on Linux, but `~/Documents/` paths are localised on Windows and macOS (e.g. `~/Documenti/`), and `~/.config/` is non-idiomatic on Windows. Capitalised `~/Council/` is short, cross-platform, and matches the brand.
+
+**Consequences**:
+- ✅ Users can teach a persona expert by dragging documents into a folder they can actually find.
+- ✅ Internal state stays out of the way; accidental `rm -rf ~/Council/` does not destroy the DB or config.
+- ✅ Backup/version-control story is clear: `~/Council/` is safe to commit (or to `rsync` to another machine); `~/.council/` is not portable (libsql DB, schema-versioned).
+- ⚠️ Two roots is one more concept than one root. Mitigated by: every CLI command resolves both paths via the same helpers (`getCouncilHome()` / `getCouncilDataHome()`), and `council doctor` prints both paths so users can find them.
+- 📝 If a third category emerges (e.g. exported transcripts, telemetry) it lands under whichever root matches the same rule — author-facing → visible, machine-managed → hidden.
+
+### ADR-010: Chat session model — separate `chat_sessions` / `chat_turns` tables, atomic seq allocation
+**Date**: 2026-05-11
+**Status**: Accepted
+**Context**: Roadmap 5.x introduces persistent conversational chat (`council chat <expert>` and `council chat <panel>`) alongside the existing structured-debate machinery. Chat and debate share superficial structure (a sequence of speaker turns), so the obvious move is to reuse `debates` + `turns` with a new `kind` discriminator. On closer inspection the lifecycles diverge sharply: a debate is **bounded** (one prompt, fixed phases, terminal `status`, cost-estimated up front, persisted moderator strategy), while a chat is **open-ended and resumable** (no terminal phase, indefinite turn count, archive-don't-delete semantics, no moderator). Reusing `debates`/`turns` would force every column to be nullable for the side it doesn't apply to, dilute the meaning of `status`, and complicate the queries that already drive `council resume` / `council export`. A separate concern: every per-turn write needs a monotonic `seq` per session for replay ordering, and the chat REPL is the first code path where two turns can race (user types ahead while the engine is still streaming).
+
+**Decision**:
+- **Two new tables** in migration 005:
+  - `chat_sessions` — `{ id (ULID), target_type ('expert'|'panel'), target_slug, status ('active'|'archived'), summary, summary_through_seq, created_at, updated_at }`. The "one active session per target" invariant is enforced at the application layer (`ChatRepository.findActiveSession` plus `archiveSession` before `createSession` in the chat command), not by a DB constraint, so the migration stays portable across libsql / Turso without partial-index syntax differences.
+  - `chat_turns` — `{ id (ULID), chat_id (FK CASCADE), seq, role ('user'|'expert'), expert_slug (NULL for user turns), content, is_mention, tokens_in, tokens_out, created_at }` with `UNIQUE (chat_id, seq)` (declared in `005_chat.sql`) plus `idx_chat_turns_chat_seq` for ordered reads.
+- **Atomic seq allocation** via `INSERT … SELECT COALESCE(MAX(seq), 0) + 1 …` in `ChatRepository.addTurn` so the read-and-increment happens in a single statement: no application-side race window even when a future caller concurrently appends to the same chat.
+- **No reuse of `debates` / `turns`.** The structured-debate tables stay focused on bounded debates with phases, moderators, and cost ceilings.
+
+**Alternatives considered**:
+- **Reuse `debates` + `turns` with a `kind` column.** Smallest schema delta, but every chat-irrelevant column (`moderator`, `mode`, `cost_estimate`, terminal `status`) becomes nullable-and-meaningless for chat rows, and every debate query has to filter `WHERE kind = 'debate'`. The conceptual saving evaporates almost immediately.
+- **App-side seq allocation (`SELECT MAX(seq) + 1` then `INSERT`).** Two statements, racy under concurrent appends — exactly the bug the single-statement form prevents. No retry loop needed because the seq is computed and inserted atomically.
+- **Auto-increment `seq` via a trigger.** Works, but pushes write logic into SQL the JS code can't easily reason about, and the `INSERT … SELECT` form is portable across libsql/Turso without custom trigger setup.
+- **Partial unique index on `(target_type, target_slug) WHERE status='active'`.** Would push the "one active session per target" rule into the schema, but libsql partial-index support is uneven and the application-layer guard is straightforward; deferred unless concurrent session creation becomes a real failure mode.
+
+**Consequences**:
+- ✅ Chat and debate evolve independently; adding a column for one cannot accidentally affect the other.
+- ✅ `ChatRepository.addTurn` is a single round-trip with no app-side race window.
+- ✅ Archive semantics are first-class: `council chat <target> --new` flips `status='archived'` on the active session and inserts a fresh one without touching turn history.
+- ⚠️ The "one active session per target" invariant lives in application code, not the schema; a future caller bypassing the chat command could create a duplicate active row. Mitigated by a single chokepoint (`runExpertChat` / `runPanelChat`) and a follow-up issue if a second writer ever materialises.
+- ⚠️ Two near-isomorphic table pairs (`debates`/`turns` and `chat_sessions`/`chat_turns`) — same trade-off as panel vs expert documents (ADR-007). Tolerated because the parent semantics differ.
+- 📝 If a future feature needs to query "all turns for an expert across debates AND chats" it will need a UNION view; acceptable, that view does not exist yet.
+
 ### ADR-009: Regex-based document normalisation, not a Markdown/HTML parser
 **Date**: 2026-05-10
 **Status**: Accepted

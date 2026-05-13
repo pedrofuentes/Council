@@ -13,22 +13,42 @@ council/
 │   │   └── council.ts                 ← CLI entry point, argv parsing, renderer selection
 │   ├── cli/
 │   │   ├── commands/
-│   │   │   ├── panel/                 ← panel create|list|show|delete
-│   │   │   ├── debate/                ← debate start|resume|export
-│   │   │   ├── expert/                ← expert add|remove|list
-│   │   │   └── config/               ← config get|set
+│   │   │   ├── convene.ts             ← council convene "<topic>"  (run a panel debate)
+│   │   │   ├── ask.ts                 ← council ask <panel> "<q>"  (one-shot single-expert)
+│   │   │   ├── chat.ts                ← council chat <target>      (persistent expert/panel chat)
+│   │   │   ├── resume.ts              ← council resume <panel>     (replay or continue)
+│   │   │   ├── conclude.ts            ← council conclude [panel]   (decision-matrix synthesis)
+│   │   │   ├── export.ts              ← council export <panel>     (md/json/adr)
+│   │   │   ├── expert.ts              ← council expert create|list|inspect|edit|delete|docs|train
+│   │   │   ├── panel.ts               ← council panel create|list|inspect|edit|docs (link/unlink)
+│   │   │   ├── panels.ts              ← council panels             (list debate panels from DB)
+│   │   │   ├── templates.ts           ← council templates          (list built-in templates)
+│   │   │   ├── memory.ts              ← council memory list|inspect|reset
+│   │   │   ├── doctor.ts              ← council doctor             (diagnostics)
+│   │   │   └── writer.ts              ← shared Writer injection (testable command output)
 │   │   └── renderers/
 │   │       ├── ink/                   ← Rich TUI components (TTY)
-│   │       ├── json.ts               ← NDJSON output (CI/scripts)
-│   │       └── plain.ts              ← Plain text fallback (non-TTY)
+│   │       ├── chat-renderer.ts       ← Chat-specific surface (per-expert color, You> prompt,
+│   │       │                            ANSI/OSC/C0 stripping, Unicode line-separator collapse)
+│   │       ├── json.ts                ← NDJSON output (CI/scripts)
+│   │       └── plain.ts               ← Plain text fallback (non-TTY)
 │   ├── core/
-│   │   ├── panel.ts                   ← Panel aggregate (creation, lifecycle)
 │   │   ├── expert.ts                  ← Expert entity (identity, prompt generation)
 │   │   ├── debate.ts                  ← Debate orchestrator (AsyncIterable<DebateEvent>)
+│   │   ├── chat/                      ← Chat session model (Roadmap 5.x)
+│   │   │   ├── chat-session.ts        ← ChatSession / ChatTurn domain types
+│   │   │   ├── context-manager.ts     ← Rolling-summary context window (recent N + LLM summary)
+│   │   │   └── mention-parser.ts      ← @<slug> routing for panel chat
 │   │   ├── moderator/
-│   │   │   ├── index.ts               ← ModeratorStrategy interface
-│   │   │   └── strategies/            ← round-robin, sequential, socratic, devil's-advocate
-│   │   ├── transcript.ts              ← Immutable turn log
+│   │   │   ├── strategy.ts            ← ModeratorStrategy interface
+│   │   │   ├── strategies.ts          ← round-robin, devil's-advocate, consensus-check
+│   │   │   └── phase-prompts.ts       ← Structured-mode phase prompt builders
+│   │   ├── prompt-builder.ts          ← 8-section system prompt; persona/panel sections inject dynamically
+│   │   ├── prompt-sanitize.ts         ← Shared C0 / Unicode / [N]-marker sanitiser
+│   │   ├── panel-membership-query.ts  ← Cross-panel awareness for 1:1 chat (Roadmap 7.2/7.3)
+│   │   ├── auto-compose.ts            ← LLM-driven panel composition
+│   │   ├── template-migration.ts      ← Built-in templates → library format (Roadmap 4.6)
+│   │   ├── expert-library.ts          ← Expert library loader/registry
 │   │   └── cost.ts                    ← Cost estimation & enforcement
 │   ├── core/documents/                ← Document Intelligence (Roadmap 6.x)
 │   │   ├── detector.ts                ← Walks expert/panel docs folder, SHA-256 change detection,
@@ -53,11 +73,21 @@ council/
 │   │       └── mock-engine.ts         ← Deterministic responses for testing
 │   ├── memory/
 │   │   ├── db.ts                      ← @libsql/client (WASM) + Kysely (per ADR-005)
+│   │   ├── persister.ts               ← DebatePersister: bridges Debate events → SQLite
+│   │   ├── transcript.ts              ← loadTranscript / synthesizeEvents (shared by resume/export)
+│   │   ├── memory-extractor.ts        ← LLM-driven ExpertMemory distillation (per debate)
 │   │   ├── repositories/
-│   │   │   ├── panels.ts
-│   │   │   ├── experts.ts
-│   │   │   └── turns.ts
-│   │   └── migrations/                ← SQL migration files
+│   │   │   ├── panels.ts              ← Debate-panel rows
+│   │   │   ├── panel-library-repo.ts  ← Reusable panel library (panel_library + panel_members)
+│   │   │   ├── panel-document-repo.ts ← panel_documents + panel_linked_folders (Roadmap 6.7)
+│   │   │   ├── experts.ts             ← Per-panel expert rows
+│   │   │   ├── expert-library-repo.ts ← Reusable expert library
+│   │   │   ├── document-repository.ts ← expert_documents (Roadmap 6.1)
+│   │   │   ├── profile-repository.ts  ← persona_profiles (Roadmap 6.2)
+│   │   │   ├── chat-repository.ts     ← chat_sessions + chat_turns (Roadmap 5.1)
+│   │   │   ├── debates.ts             ← Debate metadata
+│   │   │   └── turns.ts               ← Per-turn rows + FTS5 search
+│   │   └── migrations/                ← SQL migration files (001 init … 009 panel docs)
 │   ├── config/
 │   │   ├── schema.ts                  ← Zod schemas for panel YAML, config YAML
 │   │   └── loader.ts                  ← Config file discovery and loading
@@ -86,6 +116,28 @@ council/
 ├── tsconfig.json
 ├── tsup.config.ts
 └── vitest.config.ts
+```
+
+## CLI Commands
+
+The authoritative subcommand list lives in `src/bin/council.ts`; per-command flags and subcommands live under `src/cli/commands/`.
+
+```
+CLI Commands:
+  council convene "<topic>"     — run a panel debate
+  council ask <panel> "<q>"     — one-shot single-expert query
+  council chat <target>         — persistent chat (expert or panel)
+  council resume <panel>        — replay or continue a debate
+  council conclude [panel]      — synthesize decision matrix
+  council export <panel>        — export transcript (md/json/adr)
+  council expert create|list|inspect|edit|delete  — expert library management
+  council expert docs|train     — persona document management
+  council panel create|list|inspect|edit  — panel library management
+  council panel docs            — panel document management (link/unlink shared folders)
+  council panels                — list debate panels from DB
+  council templates             — list built-in templates
+  council memory list|inspect|reset  — memory inspection
+  council doctor                — diagnostics
 ```
 
 ## Key Technical Decisions
@@ -126,7 +178,7 @@ User input → CLI command → Core (Panel/Debate/Moderator) → Engine (Council
 | `src/engine/index.ts` | CouncilEngine interface — the architectural seam |
 | `src/engine/copilot/adapter.ts` | Only file importing @github/copilot-sdk |
 | `src/core/debate.ts` | Debate orchestrator, AsyncIterable<DebateEvent> |
-| `src/core/moderator/index.ts` | ModeratorStrategy interface |
+| `src/core/moderator/strategy.ts` | ModeratorStrategy interface |
 | `src/core/expert.ts` | Expert entity, 8-section prompt template |
 | `src/memory/db.ts` | libsql client (WASM) + Kysely connection, migrations, schema_version tracking |
 | `panels/*.yaml` | Built-in panel definitions (Zod-validated) |
