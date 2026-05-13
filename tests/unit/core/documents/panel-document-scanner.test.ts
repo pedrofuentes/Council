@@ -8,13 +8,17 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sql } from "kysely";
 
 import { createDatabase, type CouncilDatabase } from "../../../../src/memory/db.js";
 import { PanelLibraryRepository } from "../../../../src/memory/repositories/panel-library-repo.js";
 import { PanelDocumentRepository } from "../../../../src/memory/repositories/panel-document-repo.js";
-import { scanAndIndexPanelDocuments } from "../../../../src/core/documents/panel-document-scanner.js";
+import {
+  scanAndIndexPanelDocuments,
+  formatAllFailedWarning,
+} from "../../../../src/core/documents/panel-document-scanner.js";
+import * as extractorModule from "../../../../src/core/documents/extractor.js";
 
 async function makeTempDir(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -215,5 +219,123 @@ describe("scanAndIndexPanelDocuments", () => {
         }
       }
     }
+  });
+
+  it("passes confinementRoot to extractDocument so symlink TOCTOU is blocked (issue #385)", async () => {
+    const spy = vi.spyOn(extractorModule, "extractDocument");
+    try {
+      await scanAndIndexPanelDocuments({
+        panelName: "arch-review",
+        managedDocsDir: managedDir,
+        db,
+        supportedFormats: [".md", ".txt", ".html"],
+      });
+      expect(spy).toHaveBeenCalled();
+      const canonicalManaged = await fs.realpath(managedDir);
+      const canonicalLinked = await fs.realpath(linkedDir);
+      for (const call of spy.mock.calls) {
+        const opts = call[1] as { confinementRoot?: string } | undefined;
+        expect(opts).toBeDefined();
+        expect(opts?.confinementRoot).toBeDefined();
+        const root = opts!.confinementRoot!;
+        expect([canonicalManaged, canonicalLinked]).toContain(root);
+      }
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("prunes documents that disappeared from disk (issue #386)", async () => {
+    // First scan: both files indexed.
+    await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+
+    const docsRepo = new PanelDocumentRepository(db);
+    const beforeDocs = await docsRepo.listDocuments("arch-review");
+    expect(beforeDocs.filter((d) => d.status !== "removed")).toHaveLength(2);
+
+    // Delete one file from disk.
+    await fs.unlink(path.join(linkedDir, "external.md"));
+
+    const result = await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+    expect(result.pruned).toBe(1);
+
+    // panel_documents: the deleted file is marked removed.
+    const after = await docsRepo.listDocuments("arch-review");
+    const removed = after.filter((d) => d.status === "removed");
+    expect(removed).toHaveLength(1);
+    expect(removed[0]?.filename).toBe("external.md");
+
+    // document_index: the FTS entry for the deleted file is gone.
+    const fts = await sql<{
+      file_path: string;
+    }>`SELECT file_path FROM document_index WHERE source_type = 'panel'`.execute(db);
+    const paths = fts.rows.map((r) => r.file_path);
+    expect(paths).not.toContain(path.join(linkedDir, "external.md"));
+  });
+});
+
+describe("formatAllFailedWarning", () => {
+  it("returns a warning when every discovered document failed (issue #389)", () => {
+    const msg = formatAllFailedWarning({
+      indexed: 0,
+      unchanged: 0,
+      failed: 3,
+      pruned: 0,
+      foldersFailed: 0,
+      managedFolderFailed: false,
+    });
+    expect(msg).not.toBeNull();
+    expect(msg).toContain("3");
+    expect(msg).toMatch(/failed/i);
+    expect(msg).toMatch(/permissions|formats/i);
+  });
+
+  it("returns null when at least one document was indexed", () => {
+    expect(
+      formatAllFailedWarning({
+        indexed: 1,
+        unchanged: 0,
+        failed: 2,
+        pruned: 0,
+        foldersFailed: 0,
+        managedFolderFailed: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null when at least one document was unchanged", () => {
+    expect(
+      formatAllFailedWarning({
+        indexed: 0,
+        unchanged: 5,
+        failed: 1,
+        pruned: 0,
+        foldersFailed: 0,
+        managedFolderFailed: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null when nothing failed", () => {
+    expect(
+      formatAllFailedWarning({
+        indexed: 0,
+        unchanged: 0,
+        failed: 0,
+        pruned: 0,
+        foldersFailed: 0,
+        managedFolderFailed: false,
+      }),
+    ).toBeNull();
   });
 });

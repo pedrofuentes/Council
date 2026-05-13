@@ -676,6 +676,61 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
       }
     });
 
+    it("`panel docs link` errors when --path is a symlink (issue #390)", async () => {
+      await createPanel();
+      const realDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-link-real-"));
+      const linkParent = await fs.mkdtemp(path.join(os.tmpdir(), "council-link-parent-"));
+      const linkPath = path.join(linkParent, "alias");
+      let linkCreated = false;
+      try {
+        try {
+          await fs.symlink(realDir, linkPath, "junction");
+          linkCreated = true;
+        } catch (err: unknown) {
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code !== "EPERM" && code !== "ENOSYS") throw err;
+          try {
+            await fs.symlink(realDir, linkPath);
+            linkCreated = true;
+          } catch {
+            return;
+          }
+        }
+
+        let errored = "";
+        const cmd = buildPanelCommand(
+          () => {
+            /* noop */
+          },
+          (s) => {
+            errored += s;
+          },
+        );
+        await expect(
+          cmd.parseAsync([
+            "node",
+            "council-panel",
+            "docs",
+            "link",
+            "arch-review",
+            "--path",
+            linkPath,
+          ]),
+        ).rejects.toThrow(/symlink/i);
+        expect(errored).toMatch(/symlink/i);
+      } finally {
+        if (linkCreated) {
+          try {
+            await fs.unlink(linkPath);
+          } catch {
+            /* best-effort */
+          }
+        }
+        await fs.rm(realDir, { recursive: true, force: true });
+        await fs.rm(linkParent, { recursive: true, force: true });
+      }
+    });
+
     it("`panel docs link` errors when --path does not exist", async () => {
       await createPanel();
       let errored = "";
