@@ -64,7 +64,7 @@ npm install -g @council/cli
 
 ## Quick Start
 
-> **Phases 1–7 complete.** The CLI implements `convene`, `ask`, `resume`, `conclude`, `export`, `panels`, `templates`, `expert`, `panel`, `chat`, `memory`, and `doctor`. See [ROADMAP.md](./ROADMAP.md) for Phase 8 (Growth & Ecosystem) plans.
+> **Phases 1–7 complete.** The CLI implements `convene`, `ask`, `resume`, `conclude`, `export`, `sessions`, `templates`, `expert`, `panel`, `chat`, `memory`, and `doctor`. See [ROADMAP.md](./ROADMAP.md) for Phase 8 (Growth & Ecosystem) plans.
 
 ```bash
 # Verify your setup
@@ -294,7 +294,7 @@ council convene --template <name>  # Use a built-in panel
 council ask <question>           # Continue with the full panel
 council ask --expert <slug> <q>  # Talk to one expert directly
 council conclude                 # Get decision matrix + recommendation
-council panels                              # List all panels
+council sessions                            # List all debate sessions (alias: council panels)
 council panel docs <name>                   # List a panel's managed + linked doc folders
 council panel docs link <name> --path <p>   # Link an external folder into a panel's RAG corpus
 council panel docs unlink <name> --path <p> # Unlink a folder + clean up its FTS entries
