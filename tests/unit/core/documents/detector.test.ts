@@ -194,4 +194,60 @@ describe("detectDocumentChanges", () => {
       expect(calls.every((p) => p !== rootArg && p !== canonical)).toBe(true);
     });
   });
+
+  // ── Sentinel #341 / #342: error surfacing & per-file resilience ─────
+  describe("error surfacing (#341, #342)", () => {
+    it("wraps readdir failures with a descriptive message naming the docsPath (#341)", async () => {
+      // ENOTDIR (passing a regular file) is a typical misconfiguration:
+      // a stray empty message is unhelpful — callers need to see WHICH
+      // path failed and WHY, with a stable prefix they can recognize.
+      const filePath = path.join(dir, "regular-file.md");
+      await fs.writeFile(filePath, "x");
+      await expect(
+        detectDocumentChanges(filePath, new Map(), [".md"]),
+      ).rejects.toThrow(/document scan failed/i);
+      await expect(
+        detectDocumentChanges(filePath, new Map(), [".md"]),
+      ).rejects.toThrow(new RegExp(filePath.replace(/\\/g, "\\\\")));
+    });
+
+    it("invokes onWarning and continues when a single file's lstat fails (#342)", async () => {
+      // Two normal files plus one that disappears between readdir and
+      // lstat. Simulate the race by deleting after readdir entries are
+      // captured but before per-file lstat runs — readdir gives us the
+      // name list, then we delete the file via `unlink` BEFORE calling
+      // detectDocumentChanges using a `_lstatOverride` test seam.
+      await fs.writeFile(path.join(dir, "a.md"), "alpha");
+      await fs.writeFile(path.join(dir, "b.md"), "bravo");
+      await fs.writeFile(path.join(dir, "ghost.md"), "ghost");
+
+      const ghostAbs = path.resolve(dir, "ghost.md");
+      const realLstat = fs.lstat;
+      const warnings: string[] = [];
+
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        onWarning: (msg) => warnings.push(msg),
+        _lstatOverride: async (p: string) => {
+          if (path.resolve(p) === ghostAbs) {
+            const err: NodeJS.ErrnoException = new Error(
+              "ENOENT: no such file",
+            );
+            err.code = "ENOENT";
+            throw err;
+          }
+          return realLstat(p);
+        },
+      });
+
+      // The two healthy files were processed.
+      const names = result.newFiles.map((f) => f.filename).sort();
+      expect(names).toEqual(["a.md", "b.md"]);
+      // Ghost file did not bring the scan down — it was skipped, and a
+      // warning naming the file + error was emitted.
+      expect(warnings.length).toBe(1);
+      const warning = warnings[0] ?? "";
+      expect(warning).toContain("ghost.md");
+      expect(warning).toMatch(/lstat|stat|ENOENT/i);
+    });
+  });
 });
