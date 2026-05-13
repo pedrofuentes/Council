@@ -549,6 +549,85 @@ describe("buildMemoryCommand", () => {
     });
   });
 
+  // ── atomicity (#403) ─────────────────────────────────────────────
+
+  describe("memory reset — atomicity (#403)", () => {
+    it("--yes (default path): rolls back debate deletion when a later expert update fails", async () => {
+      // Sentinel SENTINEL-PR400-0f62690 flagged that the default reset
+      // path deletes debates and then iterates experts to clear
+      // extracted_memory_json outside any transaction. If the expert
+      // update fails after debates are already gone, the panel is
+      // left in a half-reset state (debates lost, memory still set).
+      //
+      // This test asserts atomicity: when the SECOND expert update
+      // throws mid-way, the FIRST expert's memory must NOT be cleared
+      // AND the debates must NOT be deleted — the whole reset rolls
+      // back as a single unit.
+      const seed = await seedPanel(testHome);
+      const dbSeed = await createDatabase(path.join(testHome, "council.db"));
+      try {
+        const exp = new ExpertRepository(dbSeed);
+        await exp.update(seed.ctoId, {
+          extractedMemoryJson: JSON.stringify({ positions: ["ship the MVP"] }),
+        });
+        await exp.update(seed.pmId, {
+          extractedMemoryJson: JSON.stringify({ positions: ["wait one sprint"] }),
+        });
+      } finally {
+        await dbSeed.destroy();
+      }
+
+      // Sabotage the second expert update via prototype patch.
+      const originalUpdate = ExpertRepository.prototype.update;
+      let calls = 0;
+      ExpertRepository.prototype.update = async function patched(
+        this: ExpertRepository,
+        ...args: Parameters<typeof originalUpdate>
+      ) {
+        calls += 1;
+        // The default reset path calls update twice (once per expert)
+        // to clear extractedMemoryJson. Fail on the second call so the
+        // first one has already happened; without a transaction this
+        // leaves the panel half-reset.
+        if (calls === 2) {
+          throw new Error("simulated DB failure on second expert update");
+        }
+        return originalUpdate.apply(this, args);
+      } as typeof originalUpdate;
+
+      let thrown: unknown = null;
+      try {
+        const cmd = buildMemoryCommand({ write: () => undefined });
+        cmd.exitOverride();
+        await cmd.parseAsync(["node", "council-memory", "reset", seed.name, "--yes"]);
+      } catch (err) {
+        thrown = err;
+      } finally {
+        ExpertRepository.prototype.update = originalUpdate;
+      }
+      // The handler must surface the failure rather than silently swallow it.
+      expect(thrown).not.toBeNull();
+
+      // After the simulated failure, the panel state must be the SAME
+      // as before the reset attempt.
+      const db = await createDatabase(path.join(testHome, "council.db"));
+      try {
+        const debates = await new DebateRepository(db).findByPanelId(seed.panelId);
+        expect(debates).toHaveLength(1); // debate NOT deleted (rolled back)
+
+        const experts = await new ExpertRepository(db).findByPanelId(seed.panelId);
+        const cto = experts.find((e) => e.slug === "cto");
+        const pm = experts.find((e) => e.slug === "pm");
+        // First expert's memory must NOT have been cleared.
+        expect(cto?.extractedMemoryJson).not.toBeNull();
+        // Second expert's memory was never touched.
+        expect(pm?.extractedMemoryJson).not.toBeNull();
+      } finally {
+        await db.destroy();
+      }
+    });
+  });
+
   // ── format validation (Sentinel pr178 #2 + #3) ───────────────────
 
   describe("--format validation", () => {
