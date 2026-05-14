@@ -2685,3 +2685,244 @@ describe("background processing config warning (expert.backgroundProcessing)", (
   });
 });
 
+// ──────────────────────────────────────────────────────────────────────
+// Edge cases: graceful Ctrl+C (SIGINT) and missing-YAML fallback
+// (PRD §F4)
+// ──────────────────────────────────────────────────────────────────────
+
+describe("graceful SIGINT handling (PRD §F4)", () => {
+  let env: TestEnv;
+  beforeEach(async () => {
+    env = await makeEnv();
+  });
+  afterEach(async () => {
+    await teardown(env);
+  });
+
+  it("during streaming: aborts, saves partial content as a turn, prints interrupt message, returns to prompt", async () => {
+    await seedExpert(env);
+
+    // Set up a controllable interrupt source via the test seam.
+    let triggerInterrupt: (() => void) | null = null;
+    const subscribeInterrupt = (handler: () => void): (() => void) => {
+      triggerInterrupt = handler;
+      return () => {
+        triggerInterrupt = null;
+      };
+    };
+
+    // Build a stub engine that streams 4 chunks with ~50ms between each,
+    // honoring opts.signal so the chat loop's SIGINT handler can abort
+    // mid-stream and we can assert that only the chunks that arrived
+    // before abort are persisted as the partial expert turn.
+    const chunks = [
+      "First sentence. ",
+      "Second sentence. ",
+      "Third sentence. ",
+      "Fourth sentence.",
+    ];
+    let registeredExpertId: string | null = null;
+    const engine: CouncilEngine = {
+      async start(): Promise<void> {
+        /* no-op */
+      },
+      async stop(): Promise<void> {
+        /* no-op */
+      },
+      async addExpert(spec): Promise<void> {
+        registeredExpertId = spec.id;
+      },
+      async removeExpert(): Promise<void> {
+        /* no-op */
+      },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock-model"];
+      },
+      send(opts): AsyncIterable<import("../../../../src/engine/types.js").EngineEvent> {
+        const expertId = opts.expertId;
+        if (expertId !== registeredExpertId) {
+          throw new Error(`Expert ${expertId} is not registered`);
+        }
+        const controller = new AbortController();
+        if (opts.signal) {
+          if (opts.signal.aborted) controller.abort();
+          else opts.signal.addEventListener("abort", () => controller.abort(), { once: true });
+        }
+        async function* gen(): AsyncGenerator<
+          import("../../../../src/engine/types.js").EngineEvent,
+          void,
+          void
+        > {
+          for (const c of chunks) {
+            await new Promise<void>((resolve) => {
+              const t = setTimeout(resolve, 50);
+              controller.signal.addEventListener(
+                "abort",
+                () => {
+                  clearTimeout(t);
+                  resolve();
+                },
+                { once: true },
+              );
+            });
+            if (controller.signal.aborted) {
+              yield {
+                kind: "error",
+                expertId,
+                error: { code: "ABORTED", message: "aborted", provider: "mock" },
+                recoverable: false,
+              };
+              return;
+            }
+            yield { kind: "message.delta", expertId, text: c };
+          }
+          yield {
+            kind: "message.complete",
+            expertId,
+            response: { latencyMs: 200, tokensIn: 1, tokensOut: 1 },
+          };
+        }
+        return gen();
+      },
+    };
+
+    let out = "";
+    const lines: readonly string[] = ["tell me a story", "/quit"];
+    let i = 0;
+    const inputProvider: ChatInputProvider = {
+      async readLine(): Promise<string | null> {
+        const line = lines[i++] ?? null;
+        if (line === "tell me a story") {
+          // Streaming = 4 chunks × ~50ms ≈ 200ms. Fire at ~80ms so at
+          // least one chunk lands before the abort.
+          setTimeout(() => {
+            triggerInterrupt?.();
+          }, 80);
+        }
+        return line;
+      },
+      close(): void {
+        /* no-op */
+      },
+    };
+
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () => inputProvider,
+      subscribeInterrupt,
+    });
+    await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+
+    expect(out).toMatch(/Response interrupted\. Partial response saved\./);
+
+    // Verify a partial expert turn was persisted.
+    await withRepo(env, async (repo) => {
+      const sessions = await repo.listSessions({ targetSlug: "dahlia-cto" });
+      expect(sessions.length).toBeGreaterThan(0);
+      const session = sessions[0]!;
+      const turns = await repo.getTurns(session.id);
+      const expertTurns = turns.filter((t) => t.role === "expert");
+      expect(expertTurns.length).toBe(1);
+      const partial = expertTurns[0]!;
+      // Should have at least one chunk worth of content but be shorter
+      // than the full 4-chunk response.
+      expect(partial.content.length).toBeGreaterThan(0);
+      expect(partial.content).toContain("First sentence");
+      expect(partial.content).not.toContain("Fourth sentence");
+    });
+  });
+
+  it("at the input prompt: prints save-and-resume message and exits cleanly", async () => {
+    await seedExpert(env);
+
+    let triggerInterrupt: (() => void) | null = null;
+    const subscribeInterrupt = (handler: () => void): (() => void) => {
+      triggerInterrupt = handler;
+      return () => {
+        triggerInterrupt = null;
+      };
+    };
+
+    let out = "";
+    // Input provider that "blocks" forever on the first readLine until the
+    // SIGINT handler closes it. We resolve to null after interrupt fires.
+    let resolveReadLine: ((v: string | null) => void) | null = null;
+    const inputProvider: ChatInputProvider = {
+      async readLine(): Promise<string | null> {
+        return new Promise<string | null>((resolve) => {
+          resolveReadLine = resolve;
+          // Fire SIGINT shortly after the prompt is awaited so we can
+          // simulate the user pressing Ctrl+C while waiting for input.
+          setTimeout(() => {
+            triggerInterrupt?.();
+          }, 30);
+        });
+      },
+      close(): void {
+        // When SIGINT handler closes the input provider, unblock pending
+        // readLine with null (EOF).
+        resolveReadLine?.(null);
+        resolveReadLine = null;
+      },
+    };
+
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => inputProvider,
+      subscribeInterrupt,
+    });
+    await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+
+    expect(out).toMatch(/Conversation saved\. Resume with "council chat dahlia-cto"\./);
+  });
+});
+
+describe("missing-YAML fallback (PRD §F4)", () => {
+  let env: TestEnv;
+  beforeEach(async () => {
+    env = await makeEnv();
+  });
+  afterEach(async () => {
+    await teardown(env);
+  });
+
+  it("warns and falls back to DB-cached metadata when expert YAML is missing", async () => {
+    await seedExpert(env);
+    // Delete the YAML file but leave the DB row intact.
+    await fs.unlink(path.join(env.dataHome, "experts", "dahlia-cto.yaml"));
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+
+    expect(out).toMatch(
+      /Expert file "dahlia-cto\.yaml" not found\. Using cached definition from database\./,
+    );
+    // Chat session should still start (display name from DB).
+    expect(out).toMatch(/Dahlia Renner \(CTO\)/);
+  });
+
+  it("errors clearly when both YAML file and DB entry are missing", async () => {
+    let err = "";
+    const cmd = buildChatCommand({
+      write: () => undefined,
+      writeError: (s) => (err += s),
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+    await expect(
+      cmd.parseAsync(["node", "council-chat", "no-such-slug", "--engine", "mock"]),
+    ).rejects.toThrow(/not found/);
+    expect(err).toMatch(/"no-such-slug" not found as expert or panel/);
+  });
+});
+
