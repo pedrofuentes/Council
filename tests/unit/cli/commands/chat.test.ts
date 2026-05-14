@@ -22,6 +22,7 @@ import {
   safeRetrieveSnippets,
   type ChatInputProvider,
 } from "../../../../src/cli/commands/chat.js";
+import { CliUserError } from "../../../../src/cli/cli-user-error.js";
 import { createDocumentIndexer } from "../../../../src/core/documents/indexer.js";
 import { FileExpertLibrary } from "../../../../src/core/expert-library.js";
 import type { ExpertDefinition } from "../../../../src/core/expert.js";
@@ -312,6 +313,21 @@ describe("buildChatCommand", () => {
       ).rejects.toThrow(/not found/i);
       expect(err).toMatch(/not found/i);
       expect(err).toMatch(/dahlia-cto|Available experts/i);
+    });
+
+    it("throws CliUserError (not plain Error) for not-found target", async () => {
+      const cmd = buildChatCommand({
+        write: () => undefined,
+        writeError: () => undefined,
+        engineFactory: () => new MockEngine(),
+        inputProvider: () => scriptedInput([]),
+      });
+      try {
+        await cmd.parseAsync(["node", "council-chat", "ghost", "--engine", "mock"]);
+        expect.unreachable("should have thrown");
+      } catch (err) {
+        expect(err).toBeInstanceOf(CliUserError);
+      }
     });
   });
 
