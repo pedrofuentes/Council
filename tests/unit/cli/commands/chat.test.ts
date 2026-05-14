@@ -2432,4 +2432,193 @@ describe("persona expert — on-demand document processing", () => {
   });
 });
 
+// ──────────────────────────────────────────────────────────────────────
+// Config wiring — `chat.longConversationWarning` & `expert.backgroundProcessing`
+// ──────────────────────────────────────────────────────────────────────
+
+async function writeConfigYaml(env: TestEnv, body: string): Promise<void> {
+  await fs.mkdir(env.home, { recursive: true });
+  await fs.writeFile(path.join(env.home, "config.yaml"), body, "utf-8");
+}
+
+async function seedTurns(
+  env: TestEnv,
+  targetType: "expert" | "panel",
+  targetSlug: string,
+  count: number,
+  expertSlugForExpertTurns: string,
+): Promise<string> {
+  const db = await createDatabase(path.join(env.home, "council.db"));
+  try {
+    const repo = new ChatRepository(db);
+    const session = await repo.createSession({ targetType, targetSlug });
+    for (let i = 0; i < count; i++) {
+      // Alternate user/expert so distribution is realistic; total count is what
+      // matters for `getTurnCount` — roles do not affect the threshold check.
+      if (i % 2 === 0) {
+        await repo.addTurn({ chatId: session.id, role: "user", content: `seed ${i}` });
+      } else {
+        await repo.addTurn({
+          chatId: session.id,
+          role: "expert",
+          expertSlug: expertSlugForExpertTurns,
+          content: `seed reply ${i}`,
+        });
+      }
+    }
+    return session.id;
+  } finally {
+    await db.destroy();
+  }
+}
+
+describe("long conversation warning (chat.longConversationWarning)", () => {
+  let env: TestEnv;
+  beforeEach(async () => {
+    env = await makeEnv();
+  });
+  afterEach(async () => {
+    await teardown(env);
+  });
+
+  it("1:1 chat: warns once when turn count reaches the configured threshold", async () => {
+    await seedExpert(env);
+    // Threshold = schema minimum (50). Pre-seed 48 turns so a single user
+    // message + one expert response brings the total to exactly 50.
+    await writeConfigYaml(env, "chat:\n  longConversationWarning: 50\n");
+    await seedTurns(env, "expert", "dahlia-cto", 48, "dahlia-cto");
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["msg1", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+
+    expect(out).toMatch(/This conversation has 50\+ messages/);
+    expect(out).toMatch(/Consider starting a new conversation with --new/);
+  });
+
+  it("1:1 chat: warning is shown only once, not repeated on subsequent turns", async () => {
+    await seedExpert(env);
+    await writeConfigYaml(env, "chat:\n  longConversationWarning: 50\n");
+    await seedTurns(env, "expert", "dahlia-cto", 48, "dahlia-cto");
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["msg1", "msg2", "msg3", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+
+    const matches = out.match(/Consider starting a new conversation with --new/g) ?? [];
+    expect(matches.length).toBe(1);
+  });
+
+  it("1:1 chat: no warning when turn count stays below threshold", async () => {
+    await seedExpert(env);
+    await writeConfigYaml(env, "chat:\n  longConversationWarning: 500\n");
+    // Few turns — won't approach the 500 threshold.
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["msg1", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+
+    expect(out).not.toMatch(/Consider starting a new conversation with --new/);
+  });
+
+  it("panel chat: warns once when turn count reaches threshold", async () => {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "long-panel", ["panel-a", "panel-b"]);
+    // Threshold = 50. Pre-seed 47; one user + two expert turns = +3 -> 50.
+    await writeConfigYaml(env, "chat:\n  longConversationWarning: 50\n");
+    await seedTurns(env, "panel", "long-panel", 47, "panel-a");
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["hello panel", "another", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "long-panel", "--engine", "mock"]);
+
+    expect(out).toMatch(/This conversation has 50\+ messages/);
+    const matches = out.match(/Consider starting a new conversation with --new/g) ?? [];
+    expect(matches.length).toBe(1);
+  });
+});
+
+describe("background processing config warning (expert.backgroundProcessing)", () => {
+  let env: TestEnv;
+  beforeEach(async () => {
+    env = await makeEnv();
+  });
+  afterEach(async () => {
+    await teardown(env);
+  });
+
+  it("1:1 chat: warns once at startup when expert.backgroundProcessing is true", async () => {
+    await seedExpert(env);
+    await writeConfigYaml(env, "expert:\n  backgroundProcessing: true\n");
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["hello", "again", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+
+    expect(out).toMatch(/Background document processing is not yet implemented/);
+    const matches =
+      out.match(/Background document processing is not yet implemented/g) ?? [];
+    expect(matches.length).toBe(1);
+  });
+
+  it("1:1 chat: no warning when expert.backgroundProcessing is false (default)", async () => {
+    await seedExpert(env);
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+
+    expect(out).not.toMatch(/Background document processing is not yet implemented/);
+  });
+
+  it("panel chat: warns once at startup when expert.backgroundProcessing is true", async () => {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "bg-panel", ["panel-a", "panel-b"]);
+    await writeConfigYaml(env, "expert:\n  backgroundProcessing: true\n");
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["hello", "again", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "bg-panel", "--engine", "mock"]);
+
+    expect(out).toMatch(/Background document processing is not yet implemented/);
+    const matches =
+      out.match(/Background document processing is not yet implemented/g) ?? [];
+    expect(matches.length).toBe(1);
+  });
+});
 
