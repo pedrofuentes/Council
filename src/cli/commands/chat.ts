@@ -386,6 +386,53 @@ export async function safeMaybeSummarize(
   }
 }
 
+/**
+ * PRD §F4 — surface a one-time advisory when a chat session crosses the
+ * configured `chat.longConversationWarning` threshold (default 500 turns).
+ * Fires only on the addTurn that lands the count exactly on the threshold,
+ * so the user is nudged once rather than on every subsequent turn.
+ *
+ * Best-effort: a count query failure must not block the chat loop. Failures
+ * are silent — the warning is advisory, not load-bearing.
+ */
+async function maybeWarnLongConversation(
+  repo: ChatRepository,
+  chatId: string,
+  config: CouncilConfig,
+  renderer: ChatRenderer,
+): Promise<void> {
+  const threshold = config.chat.longConversationWarning;
+  try {
+    const count = await repo.getTurnCount(chatId);
+    if (count === threshold) {
+      renderer.showSystem(
+        `This conversation has ${count}+ messages. Context quality may degrade. Consider starting a new conversation with --new.`,
+        "info",
+      );
+    }
+  } catch {
+    /* advisory — never block on count failure */
+  }
+}
+
+/**
+ * Roadmap 6.5 — `expert.backgroundProcessing: true` is reserved for a
+ * future async-indexing pipeline. Until that ships, surface a one-time
+ * startup notice so users who toggle the flag don't silently assume it
+ * had any effect. Fires once per chat invocation (1:1 or panel).
+ */
+function warnIfBackgroundProcessingEnabled(
+  config: CouncilConfig,
+  renderer: ChatRenderer,
+): void {
+  if (config.expert.backgroundProcessing) {
+    renderer.showSystem(
+      "Background document processing is not yet implemented. Documents are processed on-demand when you start a chat.",
+      "warn",
+    );
+  }
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // --list
 // ──────────────────────────────────────────────────────────────────────
@@ -591,6 +638,8 @@ async function runExpertChat(opts: ExpertChatOptions): Promise<void> {
     experts: new Map([[expert.slug, expert.displayName]]),
   });
 
+  warnIfBackgroundProcessingEnabled(config, renderer);
+
   const engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(engineKind);
   const inputProvider = (deps.inputProvider ?? defaultInputProvider)();
 
@@ -735,6 +784,8 @@ async function runPanelChat(opts: PanelChatOptions): Promise<void> {
     sink: makeSink(write, writeError),
     experts: expertNames,
   });
+
+  warnIfBackgroundProcessingEnabled(config, renderer);
 
   const engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(engineKind);
   const inputProvider = (deps.inputProvider ?? defaultInputProvider)();
@@ -978,6 +1029,8 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
       expertSlug: expert.slug,
       content: assembled,
     });
+
+    await maybeWarnLongConversation(repo, session.id, config, renderer);
 
     // Roll the conversation summary forward when the verbatim window
     // has overflowed. Best-effort — a summarizer failure leaves the
@@ -1271,6 +1324,7 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
           content: assembled,
           isMention,
         });
+        await maybeWarnLongConversation(repo, session.id, config, renderer);
         succeeded += 1;
         continue;
       }
