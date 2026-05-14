@@ -1899,12 +1899,14 @@ describe("RAG retrieval wiring", () => {
       write: () => undefined,
       writeError: () => undefined,
       engineFactory: () => engine,
-      inputProvider: () => scriptedInput(["how should we scale the api?", "/quit"]),
+      inputProvider: () => scriptedInput(["scaling api sharding", "/quit"]),
     });
     await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
 
     // The single user-turn prompt should carry the reference block.
-    const userPrompts = engine.sentPrompts.filter((p) => p.prompt.includes("how should we scale"));
+    const userPrompts = engine.sentPrompts.filter((p) =>
+      p.prompt.includes("scaling api sharding"),
+    );
     expect(userPrompts.length).toBe(1);
     expect(userPrompts[0]?.prompt).toContain("[REFERENCE DOCUMENTS]");
     expect(userPrompts[0]?.prompt).toContain("scaling-memo.md");
@@ -1941,12 +1943,12 @@ describe("RAG retrieval wiring", () => {
       write: () => undefined,
       writeError: () => undefined,
       engineFactory: () => engine,
-      inputProvider: () => scriptedInput(["explain the charter", "/quit"]),
+      inputProvider: () => scriptedInput(["charter architecture reviews?", "/quit"]),
     });
     await cmd.parseAsync(["node", "council-chat", "rag-panel", "--engine", "mock"]);
 
     const userPrompts = engine.sentPrompts.filter((p) =>
-      p.prompt.includes("explain the charter"),
+      p.prompt.includes("charter architecture reviews"),
     );
     // One prompt per panelist (2 experts).
     expect(userPrompts.length).toBe(2);

@@ -54,7 +54,14 @@ import { DocumentRepository } from "../../memory/repositories/document-repositor
 import { ProfileRepository } from "../../memory/repositories/profile-repository.js";
 import { createDocumentIndexer } from "../../core/documents/indexer.js";
 import { createDocumentProcessor } from "../../core/documents/processor.js";
+import {
+  createDocumentRetriever,
+  type DocumentRetriever,
+  type DocumentSnippet,
+  type RetrieveOptions,
+} from "../../core/documents/retriever.js";
 import type { PersonaProfile } from "../../core/documents/profile-analyzer.js";
+import { createContextManager, type ContextManager } from "../../core/chat/context-manager.js";
 
 import { createChatRenderer, type ChatRenderer } from "../renderers/chat-renderer.js";
 import type { Sink } from "../renderers/types.js";
@@ -151,6 +158,14 @@ export interface BuildChatTurnPromptOptions {
   readonly history: readonly ChatTurn[];
   readonly userMessage: string;
   readonly expertDisplayName: string;
+  /**
+   * Rolling-summary text covering all turns prior to `history`. When
+   * supplied (non-null/non-empty) it is rendered as a `PRIOR SUMMARY:`
+   * block above the verbatim history so the expert sees both the long-
+   * range context and the recent verbatim window. Wired by the
+   * {@link ContextManager} (Roadmap 5.3).
+   */
+  readonly summary?: string | null;
 }
 
 /**
@@ -162,16 +177,25 @@ export interface BuildChatTurnPromptOptions {
  * exact format.
  */
 export function buildChatTurnPrompt(opts: BuildChatTurnPromptOptions): string {
-  const { history, userMessage, expertDisplayName } = opts;
-  if (history.length === 0) {
+  const { history, userMessage, expertDisplayName, summary } = opts;
+  const hasSummary = typeof summary === "string" && summary.trim().length > 0;
+  if (history.length === 0 && !hasSummary) {
     return userMessage;
   }
-  const lines: string[] = ["PRIOR CONVERSATION:"];
-  for (const turn of history) {
-    const speaker = turn.role === "user" ? "User" : expertDisplayName;
-    lines.push(`${speaker}: ${turn.content}`);
+  const lines: string[] = [];
+  if (hasSummary) {
+    lines.push("PRIOR SUMMARY:");
+    lines.push(summary);
+    lines.push("");
   }
-  lines.push("");
+  if (history.length > 0) {
+    lines.push("PRIOR CONVERSATION:");
+    for (const turn of history) {
+      const speaker = turn.role === "user" ? "User" : expertDisplayName;
+      lines.push(`${speaker}: ${turn.content}`);
+    }
+    lines.push("");
+  }
   lines.push(`USER: ${userMessage}`);
   return lines.join("\n");
 }
@@ -185,6 +209,8 @@ export interface BuildPanelTurnPromptOptions {
    * said X" from "Bob said Y" in the rolled-up history.
    */
   readonly expertNames: ReadonlyMap<string, string>;
+  /** See {@link BuildChatTurnPromptOptions.summary}. */
+  readonly summary?: string | null;
 }
 
 /**
@@ -196,23 +222,98 @@ export interface BuildPanelTurnPromptOptions {
  * Pure: no I/O, no globals.
  */
 export function buildPanelTurnPrompt(opts: BuildPanelTurnPromptOptions): string {
-  const { history, userMessage, expertNames } = opts;
-  if (history.length === 0) {
+  const { history, userMessage, expertNames, summary } = opts;
+  const hasSummary = typeof summary === "string" && summary.trim().length > 0;
+  if (history.length === 0 && !hasSummary) {
     return userMessage;
   }
-  const lines: string[] = ["PRIOR CONVERSATION:"];
-  for (const turn of history) {
-    if (turn.role === "user") {
-      lines.push(`User: ${turn.content}`);
-    } else {
-      const slug = turn.expertSlug;
-      const name = slug !== null ? (expertNames.get(slug) ?? slug) : "Expert";
-      lines.push(`${name}: ${turn.content}`);
-    }
+  const lines: string[] = [];
+  if (hasSummary) {
+    lines.push("PRIOR SUMMARY:");
+    lines.push(summary);
+    lines.push("");
   }
-  lines.push("");
+  if (history.length > 0) {
+    lines.push("PRIOR CONVERSATION:");
+    for (const turn of history) {
+      if (turn.role === "user") {
+        lines.push(`User: ${turn.content}`);
+      } else {
+        const slug = turn.expertSlug;
+        const name = slug !== null ? (expertNames.get(slug) ?? slug) : "Expert";
+        lines.push(`${name}: ${turn.content}`);
+      }
+    }
+    lines.push("");
+  }
   lines.push(`USER: ${userMessage}`);
   return lines.join("\n");
+}
+
+/**
+ * Append a `[REFERENCE DOCUMENTS]` block to a user message when RAG
+ * snippets are available. Returns the original message unchanged when
+ * no snippets are provided. Per TSD §7, the block is appended to the
+ * user message (not the system prompt) so it varies per turn while the
+ * system prompt stays static.
+ *
+ * Pure: no I/O, no globals.
+ */
+export function appendReferenceDocuments(
+  userMessage: string,
+  snippets: readonly DocumentSnippet[],
+): string {
+  if (snippets.length === 0) return userMessage;
+  const lines: string[] = [
+    userMessage,
+    "",
+    "[REFERENCE DOCUMENTS]",
+    "The following excerpts from available documents may be relevant:",
+  ];
+  for (const s of snippets) {
+    lines.push(`- From ${s.source}: ${s.content}`);
+  }
+  lines.push("If these are relevant to the discussion, cite them.");
+  return lines.join("\n");
+}
+
+/**
+ * Best-effort wrapper around {@link DocumentRetriever.retrieve}. RAG
+ * failures must never block a chat turn — surface a warning to the
+ * caller and return an empty list so the prompt is built without
+ * reference snippets.
+ */
+async function safeRetrieveSnippets(
+  retriever: DocumentRetriever,
+  query: string,
+  options: RetrieveOptions,
+  onError: (message: string) => void,
+): Promise<readonly DocumentSnippet[]> {
+  try {
+    return await retriever.retrieve(query, options);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    onError(`Document retrieval failed (continuing without references): ${msg}`);
+    return [];
+  }
+}
+
+/**
+ * Best-effort wrapper around {@link ContextManager.maybeSummarize}.
+ * Summarization failures (LLM error, DB hiccup, etc.) must not break
+ * the next chat turn — log a warning and continue.
+ */
+async function safeMaybeSummarize(
+  contextMgr: ContextManager,
+  chatId: string,
+  onError: (message: string) => void,
+): Promise<void> {
+  try {
+    await contextMgr.maybeSummarize(chatId);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    onError(`Rolling summary update failed (continuing): ${msg}`);
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -489,6 +590,7 @@ async function runExpertChat(opts: ExpertChatOptions): Promise<void> {
       inputProvider,
       config,
       writeError,
+      db,
     });
   } catch (err: unknown) {
     writeError("\n" + formatEngineError(err as Error) + "\n\n");
@@ -651,6 +753,8 @@ async function runPanelChat(opts: PanelChatOptions): Promise<void> {
       inputProvider,
       config,
       writeError,
+      db,
+      panelName: target,
     });
   } catch (err: unknown) {
     writeError("\n" + formatEngineError(err as Error) + "\n\n");
@@ -674,12 +778,23 @@ interface InteractiveLoopOptions {
   readonly inputProvider: ChatInputProvider;
   readonly config: CouncilConfig;
   readonly writeError: Writer;
+  readonly db: CouncilDatabase;
 }
 
 async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
   const { engine, expertSpec, expert, session, repo, renderer, inputProvider, config, writeError } =
     opts;
-  const recentLimit = config.chat.recentTurnCount;
+
+  // Roadmap 6.3 / TSD §7 — RAG retriever and rolling-summary context
+  // manager are wired here (one per chat session) so they share the
+  // already-open DB / engine handles. Both are best-effort: failures
+  // never abort the chat turn.
+  const retriever = createDocumentRetriever(opts.db);
+  const contextMgr = createContextManager(repo, engine, {
+    recentTurnCount: config.chat.recentTurnCount,
+    summaryMaxWords: config.chat.summaryMaxWords,
+    model: expertSpec.model,
+  });
 
   while (true) {
     renderer.showPrompt();
@@ -699,17 +814,31 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
 
     await repo.addTurn({ chatId: session.id, role: "user", content: trimmed });
 
-    // Fetch only the recent tail (avoid re-reading the full transcript on
-    // every turn). The just-inserted user turn IS included; we drop it
-    // from `history` since it gets re-rendered in the prompt.
-    const latestSeq = await repo.getLatestSeq(session.id);
-    const after = Math.max(0, latestSeq - recentLimit - 1);
-    const recent = await repo.getTurns(session.id, { afterSeq: after, limit: recentLimit + 1 });
-    const history = recent.slice(0, -1);
+    // Pull the rolling-summary context (summary text + recent verbatim
+    // turns) from the manager. The just-inserted user turn is the last
+    // entry in `recentTurns`; strip it before passing as `history` since
+    // the prompt re-renders it as the new USER line.
+    const context = await contextMgr.getContext(session.id);
+    const history = context.recentTurns.length > 0
+      ? context.recentTurns.slice(0, -1)
+      : context.recentTurns;
+
+    // RAG: pull document snippets relevant to the current user message,
+    // scoped to this expert's indexed docs. Failures degrade silently
+    // to "no references" so a flaky FTS query can never block chat.
+    const snippets = await safeRetrieveSnippets(
+      retriever,
+      trimmed,
+      { expertSlug: expert.slug, maxResults: 5 },
+      (msg) => renderer.showSystem(msg, "warn"),
+    );
+    const userMessageWithRefs = appendReferenceDocuments(trimmed, snippets);
+
     const prompt = buildChatTurnPrompt({
       history,
-      userMessage: trimmed,
+      userMessage: userMessageWithRefs,
       expertDisplayName: expert.displayName,
+      summary: context.summary,
     });
 
     let assembled = "";
@@ -776,6 +905,13 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
       expertSlug: expert.slug,
       content: assembled,
     });
+
+    // Roll the conversation summary forward when the verbatim window
+    // has overflowed. Best-effort — a summarizer failure leaves the
+    // previous summary in place and the chat continues.
+    await safeMaybeSummarize(contextMgr, session.id, (msg) =>
+      renderer.showSystem(msg, "warn"),
+    );
   }
 }
 
@@ -890,6 +1026,8 @@ interface PanelInteractiveLoopOptions {
   readonly inputProvider: ChatInputProvider;
   readonly config: CouncilConfig;
   readonly writeError: Writer;
+  readonly db: CouncilDatabase;
+  readonly panelName: string;
 }
 
 async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promise<void> {
@@ -903,8 +1041,25 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
     inputProvider,
     config,
     writeError,
+    db,
+    panelName,
   } = opts;
-  const recentLimit = config.chat.recentTurnCount;
+
+  // Roadmap 6.3 / TSD §7 + Roadmap 5.3 — RAG retriever scoped to this
+  // panel's indexed docs, plus rolling-summary context manager. Both
+  // are best-effort and never block a chat turn on failure.
+  const retriever = createDocumentRetriever(db);
+  // Use the first panelist's resolved model as the summarizer model.
+  // ContextManager.runSummarizer registers a temporary expert under
+  // this model; the choice is opaque to the user and avoids touching
+  // their actual panel members.
+  const summarizerModel =
+    members[0]?.spec.model ?? config.defaults.model ?? DEFAULT_MODEL;
+  const contextMgr = createContextManager(repo, engine, {
+    recentTurnCount: config.chat.recentTurnCount,
+    summaryMaxWords: config.chat.summaryMaxWords,
+    model: summarizerModel,
+  });
 
   while (true) {
     renderer.showPrompt();
@@ -959,17 +1114,25 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
       isMention,
     });
 
-    // Each expert sees the same recent-history slice (including the just-
-    // saved user turn from earlier; we strip the trailing user-turn copy
-    // before passing it as `history` since the prompt re-renders it as
-    // the new USER line).
-    const latestSeq = await repo.getLatestSeq(session.id);
-    const after = Math.max(0, latestSeq - recentLimit - 1);
-    const recent = await repo.getTurns(session.id, {
-      afterSeq: after,
-      limit: recentLimit + 1,
-    });
-    const history = recent.slice(0, -1);
+    // Pull rolling-summary context (summary + recent verbatim window)
+    // from the manager. The just-saved user turn is the trailing entry
+    // in `recentTurns`; strip it so the prompt re-renders it as USER.
+    const context = await contextMgr.getContext(session.id);
+    const history =
+      context.recentTurns.length > 0
+        ? context.recentTurns.slice(0, -1)
+        : context.recentTurns;
+
+    // RAG: pull document snippets relevant to the current user message,
+    // scoped to this panel's indexed docs. Best-effort; failures degrade
+    // silently to "no references" so a flaky FTS query cannot block.
+    const snippets = await safeRetrieveSnippets(
+      retriever,
+      parsed.content,
+      { panelName, maxResults: 5 },
+      (msg) => renderer.showSystem(msg, "warn"),
+    );
+    const userMessageWithRefs = appendReferenceDocuments(parsed.content, snippets);
 
     const errorExperts: string[] = [];
     const emptyExperts: string[] = [];
@@ -980,8 +1143,9 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
     // it once per turn rather than once per expert.
     const prompt = buildPanelTurnPrompt({
       history,
-      userMessage: parsed.content,
+      userMessage: userMessageWithRefs,
       expertNames,
+      summary: context.summary,
     });
 
     for (const { expert, spec } of respondingMembers) {
@@ -1087,6 +1251,13 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
         "warn",
       );
     }
+
+    // Roll the conversation summary forward when the verbatim window
+    // has overflowed. Best-effort — failures leave the previous
+    // summary in place and the chat continues uninterrupted.
+    await safeMaybeSummarize(contextMgr, session.id, (msg) =>
+      renderer.showSystem(msg, "warn"),
+    );
   }
 }
 
