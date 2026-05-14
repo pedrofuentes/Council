@@ -23,6 +23,8 @@ import * as readline from "node:readline/promises";
 import { stdin as defaultStdin, stdout as defaultStdout } from "node:process";
 
 import { Command } from "commander";
+
+import { CliUserError } from "../cli-user-error.js";
 import { ulid } from "ulid";
 
 import {
@@ -139,16 +141,16 @@ export function buildChatCommand(deps: ChatCommandDeps = {}): Command {
       }
       if (raw.history) {
         if (!target) {
-          throw new Error("--history requires a target (expert slug or panel name)");
+          throw new CliUserError("--history requires a target (expert slug or panel name)");
         }
         await runHistory(target, write, writeError);
         return;
       }
       if (!target) {
-        throw new Error("Missing required argument: <target> (expert slug or panel name)");
+        throw new CliUserError("Missing required argument: <target> (expert slug or panel name)");
       }
       if (!raw.engine || !ENGINE_KINDS.includes(raw.engine)) {
-        throw new Error(
+        throw new CliUserError(
           `--engine is required for interactive chat. Expected one of: ${ENGINE_KINDS.join(", ")}`,
         );
       }
@@ -509,7 +511,7 @@ async function runHistory(target: string, write: Writer, writeError: Writer): Pr
               ? available.join(", ")
               : "(none — create one with `council expert create`)";
           writeError(`"${target}" not found as expert or panel. Available experts: ${list}\n`);
-          throw new Error(`"${target}" not found`);
+          throw new CliUserError(`"${target}" not found`);
         }
         throw err;
       }
@@ -605,7 +607,7 @@ async function runChat(
             ? available.join(", ")
             : "(none — create one with `council expert create`)";
         writeError(`"${target}" not found as expert or panel. Available experts: ${list}\n`);
-        throw new Error(`"${target}" not found`);
+        throw new CliUserError(`"${target}" not found`);
       }
       throw err;
     }
@@ -728,7 +730,7 @@ async function runExpertChat(opts: ExpertChatOptions): Promise<void> {
       );
     } else {
       // Defensive — the dispatch above always sets one of the two flags.
-      throw new Error("internal: chat session resolution failed");
+      throw new CliUserError("internal: chat session resolution failed");
     }
 
     await runInteractiveLoop({
@@ -794,7 +796,7 @@ async function runPanelChat(opts: PanelChatOptions): Promise<void> {
   }
   if (resolved.length === 0) {
     writeError(`Panel "${target}" has no available experts.\n`);
-    throw new Error(`Panel "${target}" has no available experts`);
+    throw new CliUserError(`Panel "${target}" has no available experts`);
   }
 
   const repo = new ChatRepository(db);
@@ -895,7 +897,7 @@ async function runPanelChat(opts: PanelChatOptions): Promise<void> {
         `Resuming panel chat with ${panel.name} (${existingCount} messages, last active ${formatDate(session.updatedAt)})...`,
       );
     } else {
-      throw new Error("internal: panel chat session resolution failed");
+      throw new CliUserError("internal: panel chat session resolution failed");
     }
 
     await runPanelInteractiveLoop({

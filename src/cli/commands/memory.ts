@@ -39,6 +39,8 @@
 import * as path from "node:path";
 
 import { Command } from "commander";
+
+import { CliUserError } from "../cli-user-error.js";
 import { sql } from "kysely";
 
 import { getCouncilHome } from "../../config/index.js";
@@ -46,10 +48,7 @@ import { createDatabase, type CouncilDatabase } from "../../memory/db.js";
 import { recallMemory } from "../../memory/expert-memory.js";
 import { DebateRepository } from "../../memory/repositories/debates.js";
 import { ExpertRepository, type Expert } from "../../memory/repositories/experts.js";
-import {
-  PanelRepository,
-  type Panel,
-} from "../../memory/repositories/panels.js";
+import { PanelRepository, type Panel } from "../../memory/repositories/panels.js";
 import { ProfileRepository } from "../../memory/repositories/profile-repository.js";
 import { TurnRepository } from "../../memory/repositories/turns.js";
 
@@ -99,7 +98,7 @@ function buildListCommand(write: Writer, writeError: Writer): Command {
     .action(async (raw: { panel?: string; format?: string }) => {
       // Sentinel pr178 #2: validate-then-assign rather than silent fallback.
       if (raw.format !== undefined && raw.format !== "plain" && raw.format !== "json") {
-        throw new Error(
+        throw new CliUserError(
           `Unknown --format value: ${raw.format}. Expected one of: plain, json`,
         );
       }
@@ -109,7 +108,7 @@ function buildListCommand(write: Writer, writeError: Writer): Command {
       try {
         const summaries = await loadSummaries(db, raw.panel);
         if (raw.panel !== undefined && summaries.length === 0) {
-          throw new Error(
+          throw new CliUserError(
             `No panel found with name '${raw.panel}'. Run \`council memory list\` to see available panels.`,
           );
         }
@@ -135,17 +134,16 @@ function buildListCommand(write: Writer, writeError: Writer): Command {
         }
       } finally {
         await db.destroy().catch((err: unknown) => {
-          writeError(`!! db.destroy() failed during cleanup: ${err instanceof Error ? err.message : String(err)}\n`);
+          writeError(
+            `!! db.destroy() failed during cleanup: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
         });
       }
     });
   return cmd;
 }
 
-async function loadSummaries(
-  db: CouncilDatabase,
-  filterName?: string,
-): Promise<PanelSummary[]> {
+async function loadSummaries(db: CouncilDatabase, filterName?: string): Promise<PanelSummary[]> {
   const panelRepo = new PanelRepository(db);
   const expertRepo = new ExpertRepository(db);
   const debateRepo = new DebateRepository(db);
@@ -193,7 +191,7 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
     .action(async (panelName: string, raw: { expert?: string; format?: string }) => {
       // Sentinel pr178 #3: validate-then-assign rather than silent fallback.
       if (raw.format !== undefined && raw.format !== "plain" && raw.format !== "json") {
-        throw new Error(
+        throw new CliUserError(
           `Unknown --format value: ${raw.format}. Expected one of: plain, json`,
         );
       }
@@ -203,7 +201,7 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
       try {
         const panel = await new PanelRepository(db).findByName(panelName);
         if (!panel) {
-          throw new Error(
+          throw new CliUserError(
             `No panel found with name '${panelName}'. Run \`council memory list\` to see available panels.`,
           );
         }
@@ -212,7 +210,7 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
         if (raw.expert !== undefined) {
           const expert = experts.find((e) => e.slug === raw.expert);
           if (!expert) {
-            throw new Error(
+            throw new CliUserError(
               `No expert found with slug '${raw.expert}' in panel '${panelName}'. Available slugs: ${experts.map((e) => e.slug).join(", ") || "(none)"}`,
             );
           }
@@ -222,7 +220,9 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
         await renderPanelDetail(db, panel, experts, format, write);
       } finally {
         await db.destroy().catch((err: unknown) => {
-          writeError(`!! db.destroy() failed during cleanup: ${err instanceof Error ? err.message : String(err)}\n`);
+          writeError(
+            `!! db.destroy() failed during cleanup: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
         });
       }
     });
@@ -369,114 +369,111 @@ function buildResetCommand(write: Writer, writeError: Writer): Command {
     .option("--yes", "Confirm the destructive operation (REQUIRED — no interactive prompt)")
     .option("--hard", "Delete the entire panel (CASCADE removes experts + debates + turns)")
     .option("--expert <slug>", "Drop only this expert from the panel (keeps panel + others)")
-    .action(
-      async (
-        panelName: string,
-        raw: { yes?: boolean; hard?: boolean; expert?: string },
-      ) => {
-        if (!raw.yes) {
-          throw new Error(
-            `Refusing destructive operation without --yes. \`council memory reset\` requires the --yes flag explicitly so accidental scripted destruction is harder. Re-run with --yes if you mean it.`,
+    .action(async (panelName: string, raw: { yes?: boolean; hard?: boolean; expert?: string }) => {
+      if (!raw.yes) {
+        throw new CliUserError(
+          `Refusing destructive operation without --yes. \`council memory reset\` requires the --yes flag explicitly so accidental scripted destruction is harder. Re-run with --yes if you mean it.`,
+        );
+      }
+
+      const dbPath = path.join(getCouncilHome(), "council.db");
+      const db = await createDatabase(dbPath);
+      try {
+        const panel = await new PanelRepository(db).findByName(panelName);
+        if (!panel) {
+          throw new CliUserError(
+            `No panel found with name '${panelName}'. Run \`council memory list\` to see available panels.`,
           );
         }
 
-        const dbPath = path.join(getCouncilHome(), "council.db");
-        const db = await createDatabase(dbPath);
-        try {
-          const panel = await new PanelRepository(db).findByName(panelName);
-          if (!panel) {
-            throw new Error(
-              `No panel found with name '${panelName}'. Run \`council memory list\` to see available panels.`,
-            );
-          }
-
-          if (raw.expert !== undefined) {
-            const experts = await new ExpertRepository(db).findByPanelId(panel.id);
-            const expert = experts.find((e) => e.slug === raw.expert);
-            if (!expert) {
-              throw new Error(
-                `No expert found with slug '${raw.expert}' in panel '${panelName}'. Available slugs: ${experts.map((e) => e.slug).join(", ") || "(none)"}`,
-              );
-            }
-            await new ExpertRepository(db).delete(expert.id);
-            write(
-              `Removed expert '${expert.slug}' (${expert.displayName}) from panel '${panel.name}'.\n`,
-            );
-            return;
-          }
-
-          if (raw.hard) {
-            await new PanelRepository(db).delete(panel.id);
-            write(
-              `Deleted panel '${panel.name}' entirely (FK CASCADE removed experts, debates, and turns).\n`,
-            );
-            return;
-          }
-
-          // Default: clear debate memory for this panel.
-          //   1. Delete debates+turns (debates CASCADE to turns via FK at migration 001).
-          //   2. Clear `extracted_memory_json` on each expert (debate-derived heuristic memory).
-          //   3. Per Roadmap 7.4, NEVER touch `persona_profiles` — document-derived
-          //      persona data is separate state, reset via `council expert train --retrain`.
-          //
-          // Atomicity (#403): wrap (1) + (2) in a single transaction.
-          // Without this, a failure between steps would leave the
-          // panel half-reset (debates gone, expert memory still set,
-          // or vice versa). We use raw BEGIN/COMMIT/ROLLBACK on the
-          // libsql connection — Kysely's `db.transaction()` reconnects
-          // the libsql client for `:memory:` databases, which loses
-          // virtual FTS5 tables (same workaround as
-          // `src/memory/repositories/document-repository.ts:clearForRetrain`
-          // and `src/core/documents/indexer.ts`).
-          const debates = await new DebateRepository(db).findByPanelId(panel.id);
+        if (raw.expert !== undefined) {
           const experts = await new ExpertRepository(db).findByPanelId(panel.id);
-          const expertRepo = new ExpertRepository(db);
-          const profileRepo = new ProfileRepository(db);
-
-          await sql`BEGIN`.execute(db);
-          try {
-            for (const d of debates) {
-              await db.deleteFrom("debates").where("id", "=", d.id).execute();
-            }
-            for (const e of experts) {
-              await expertRepo.update(e.id, { extractedMemoryJson: null });
-            }
-            await sql`COMMIT`.execute(db);
-          } catch (err) {
-            try {
-              await sql`ROLLBACK`.execute(db);
-            } catch (rollbackErr) {
-              // Surface the rollback failure so operators are not left
-              // believing DB state is consistent — but still rethrow the
-              // original error (the cause of the abort) below so the
-              // command exits with the underlying reason.
-              writeError(
-                `!! ROLLBACK failed after reset error — DB state may be inconsistent: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}\n`,
-              );
-            }
-            throw err;
+          const expert = experts.find((e) => e.slug === raw.expert);
+          if (!expert) {
+            throw new CliUserError(
+              `No expert found with slug '${raw.expert}' in panel '${panelName}'. Available slugs: ${experts.map((e) => e.slug).join(", ") || "(none)"}`,
+            );
           }
-
-          // Output (post-commit) — separated from the mutation so a
-          // transaction failure is not partially announced.
-          for (const e of experts) {
-            write(`✓ Debate memory cleared for "${e.displayName}".\n`);
-            const profile = await profileRepo.findBySlug(e.slug);
-            if (profile !== null) {
-              write(
-                `ℹ Document-derived persona profile preserved. Use \`council expert train --retrain\` to reset the profile.\n`,
-              );
-            }
-          }
+          await new ExpertRepository(db).delete(expert.id);
           write(
-            `Reset panel '${panel.name}': deleted ${debates.length} debate${debates.length === 1 ? "" : "s"} and their turns. Panel + experts kept (run \`council convene\` to start fresh).\n`,
+            `Removed expert '${expert.slug}' (${expert.displayName}) from panel '${panel.name}'.\n`,
           );
-        } finally {
-          await db.destroy().catch((err: unknown) => {
-            writeError(`!! db.destroy() failed during cleanup: ${err instanceof Error ? err.message : String(err)}\n`);
-          });
+          return;
         }
-      },
-    );
+
+        if (raw.hard) {
+          await new PanelRepository(db).delete(panel.id);
+          write(
+            `Deleted panel '${panel.name}' entirely (FK CASCADE removed experts, debates, and turns).\n`,
+          );
+          return;
+        }
+
+        // Default: clear debate memory for this panel.
+        //   1. Delete debates+turns (debates CASCADE to turns via FK at migration 001).
+        //   2. Clear `extracted_memory_json` on each expert (debate-derived heuristic memory).
+        //   3. Per Roadmap 7.4, NEVER touch `persona_profiles` — document-derived
+        //      persona data is separate state, reset via `council expert train --retrain`.
+        //
+        // Atomicity (#403): wrap (1) + (2) in a single transaction.
+        // Without this, a failure between steps would leave the
+        // panel half-reset (debates gone, expert memory still set,
+        // or vice versa). We use raw BEGIN/COMMIT/ROLLBACK on the
+        // libsql connection — Kysely's `db.transaction()` reconnects
+        // the libsql client for `:memory:` databases, which loses
+        // virtual FTS5 tables (same workaround as
+        // `src/memory/repositories/document-repository.ts:clearForRetrain`
+        // and `src/core/documents/indexer.ts`).
+        const debates = await new DebateRepository(db).findByPanelId(panel.id);
+        const experts = await new ExpertRepository(db).findByPanelId(panel.id);
+        const expertRepo = new ExpertRepository(db);
+        const profileRepo = new ProfileRepository(db);
+
+        await sql`BEGIN`.execute(db);
+        try {
+          for (const d of debates) {
+            await db.deleteFrom("debates").where("id", "=", d.id).execute();
+          }
+          for (const e of experts) {
+            await expertRepo.update(e.id, { extractedMemoryJson: null });
+          }
+          await sql`COMMIT`.execute(db);
+        } catch (err) {
+          try {
+            await sql`ROLLBACK`.execute(db);
+          } catch (rollbackErr) {
+            // Surface the rollback failure so operators are not left
+            // believing DB state is consistent — but still rethrow the
+            // original error (the cause of the abort) below so the
+            // command exits with the underlying reason.
+            writeError(
+              `!! ROLLBACK failed after reset error — DB state may be inconsistent: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}\n`,
+            );
+          }
+          throw err;
+        }
+
+        // Output (post-commit) — separated from the mutation so a
+        // transaction failure is not partially announced.
+        for (const e of experts) {
+          write(`✓ Debate memory cleared for "${e.displayName}".\n`);
+          const profile = await profileRepo.findBySlug(e.slug);
+          if (profile !== null) {
+            write(
+              `ℹ Document-derived persona profile preserved. Use \`council expert train --retrain\` to reset the profile.\n`,
+            );
+          }
+        }
+        write(
+          `Reset panel '${panel.name}': deleted ${debates.length} debate${debates.length === 1 ? "" : "s"} and their turns. Panel + experts kept (run \`council convene\` to start fresh).\n`,
+        );
+      } finally {
+        await db.destroy().catch((err: unknown) => {
+          writeError(
+            `!! db.destroy() failed during cleanup: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+        });
+      }
+    });
   return cmd;
 }

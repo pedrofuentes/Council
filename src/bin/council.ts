@@ -29,6 +29,8 @@ import { buildResumeCommand } from "../cli/commands/resume.js";
 import { buildSessionsCommand } from "../cli/commands/sessions.js";
 import { buildTemplatesCommand } from "../cli/commands/templates.js";
 
+import { handleCliError } from "../cli/handle-cli-error.js";
+
 export function buildProgram(): Command {
   const program = new Command();
   program
@@ -56,5 +58,9 @@ const isMainModule =
   import.meta.url.endsWith("/bin/council.js");
 
 if (isMainModule) {
-  buildProgram().parse(process.argv);
+  buildProgram()
+    .parseAsync(process.argv)
+    .catch((err: unknown) => {
+      process.exitCode = handleCliError(err, (s) => process.stderr.write(s));
+    });
 }

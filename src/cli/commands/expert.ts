@@ -17,6 +17,8 @@ import { stdin as input, stdout as output } from "node:process";
 
 import { Command } from "commander";
 
+import { CliUserError } from "../cli-user-error.js";
+
 import {
   ensureDataDirectories,
   getCouncilDataHome,
@@ -125,7 +127,7 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
       if (weightedEvidence.length === 0) {
-        throw new Error("At least one expertise / weighted-evidence entry is required");
+        throw new CliUserError("At least one expertise / weighted-evidence entry is required");
       }
 
       const definition: ExpertDefinition = ExpertDefinitionSchema.parse({
@@ -151,7 +153,7 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
           writeError(
             `Expert "${definition.slug}" already exists. Use "council expert edit ${definition.slug}" to modify or choose a different slug.\n`,
           );
-          throw new Error(`Expert "${definition.slug}" already exists`);
+          throw new CliUserError(`Expert "${definition.slug}" already exists`);
         }
 
         await library.create(definition);
@@ -259,7 +261,7 @@ async function gatherCreateFields(opts: CreateOptions, write: Writer): Promise<G
 
 function validateSlug(slug: string): void {
   if (!SLUG_RE.test(slug)) {
-    throw new Error(
+    throw new CliUserError(
       `Invalid slug "${slug}": must be lowercase alphanumeric and hyphens only, 1-64 chars`,
     );
   }
@@ -276,7 +278,9 @@ function buildListCommand(write: Writer): Command {
     .option("--format <kind>", "Output format: table (default) or json", "table")
     .action(async (raw: { format?: string }) => {
       if (raw.format !== undefined && raw.format !== "table" && raw.format !== "json") {
-        throw new Error(`Unknown --format value: ${raw.format}. Expected one of: table, json`);
+        throw new CliUserError(
+          `Unknown --format value: ${raw.format}. Expected one of: table, json`,
+        );
       }
       const format: "table" | "json" = raw.format === "json" ? "json" : "table";
 
@@ -334,7 +338,7 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
         const expert = await library.get(slug);
         if (!expert) {
           writeError(`Expert "${slug}" not found.\n`);
-          throw new Error(`Expert "${slug}" not found.`);
+          throw new CliUserError(`Expert "${slug}" not found.`);
         }
         const panels = await library.panelsFor(slug);
         const yamlPath = path.join(dataHome, "experts", `${slug}.yaml`);
@@ -386,7 +390,7 @@ function buildEditCommand(write: Writer, writeError: Writer): Command {
         const existing = await library.get(slug);
         if (!existing) {
           writeError(`Expert "${slug}" not found.\n`);
-          throw new Error(`Expert "${slug}" not found.`);
+          throw new CliUserError(`Expert "${slug}" not found.`);
         }
         const yamlPath = path.join(dataHome, "experts", `${slug}.yaml`);
         const editor = resolveEditor();
@@ -412,7 +416,7 @@ function buildEditCommand(write: Writer, writeError: Writer): Command {
           writeError(
             `Refusing to rename slug "${slug}" → "${parsed.slug}" via edit. Delete and re-create the expert to change its slug.\n`,
           );
-          throw new Error(
+          throw new CliUserError(
             `Slug rename via edit is not supported (was "${slug}", became "${parsed.slug}")`,
           );
         }
@@ -475,13 +479,13 @@ function buildDeleteCommand(write: Writer, writeError: Writer): Command {
         const existing = await library.get(slug);
         if (!existing) {
           writeError(`Expert "${slug}" not found.\n`);
-          throw new Error(`Expert "${slug}" not found.`);
+          throw new CliUserError(`Expert "${slug}" not found.`);
         }
         const panels = await library.panelsFor(slug);
         if (panels.length > 0 && !opts.force) {
           const msg = `Expert "${slug}" is used in ${panels.length} panel${panels.length === 1 ? "" : "s"}: ${panels.join(", ")}\nUse --force to delete anyway.`;
           writeError(msg + "\n");
-          throw new Error(msg);
+          throw new CliUserError(msg);
         }
         await library.delete(slug, { force: opts.force === true });
         write(`✓ Expert "${slug}" deleted.\n`);
@@ -512,12 +516,12 @@ function buildDocsCommand(write: Writer, writeError: Writer): Command {
         const expert = await library.get(slug);
         if (!expert) {
           writeError(`Expert "${slug}" not found.\n`);
-          throw new Error(`Expert "${slug}" not found.`);
+          throw new CliUserError(`Expert "${slug}" not found.`);
         }
         if (expert.kind !== "persona") {
           const msg = `Expert "${slug}" is not a persona expert — only persona experts have indexed documents.`;
           writeError(msg + "\n");
-          throw new Error(msg);
+          throw new CliUserError(msg);
         }
 
         const documentRepo = new DocumentRepository(db);
@@ -532,7 +536,7 @@ function buildDocsCommand(write: Writer, writeError: Writer): Command {
           if (!match) {
             const msg = `Document "${target}" not found in the index for "${slug}".`;
             writeError(msg + "\n");
-            throw new Error(msg);
+            throw new CliUserError(msg);
           }
           // DB row is the source of truth for "is this document active?".
           // Mark it removed FIRST: if indexer.remove() then fails, the row's
@@ -564,9 +568,7 @@ function buildDocsCommand(write: Writer, writeError: Writer): Command {
                 `Re-run "council expert train ${slug}" to repair the index.\n`,
             );
           } else {
-            write(
-              `✓ "${target}" removed from index. Profile will be updated on next use.\n`,
-            );
+            write(`✓ "${target}" removed from index. Profile will be updated on next use.\n`);
           }
           return;
         }
@@ -608,11 +610,7 @@ interface TrainOptions {
   readonly engine?: string;
 }
 
-function buildTrainCommand(
-  write: Writer,
-  writeError: Writer,
-  deps: ExpertCommandDeps,
-): Command {
+function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertCommandDeps): Command {
   const cmd = new Command("train");
   cmd
     .description("Reprocess all documents for a persona expert and refresh its profile")
@@ -624,11 +622,8 @@ function buildTrainCommand(
       "copilot",
     )
     .action(async (slug: string, opts: TrainOptions) => {
-      if (
-        opts.engine !== undefined &&
-        !ENGINE_KINDS.includes(opts.engine as EngineKind)
-      ) {
-        throw new Error(
+      if (opts.engine !== undefined && !ENGINE_KINDS.includes(opts.engine as EngineKind)) {
+        throw new CliUserError(
           `Unknown --engine value: ${opts.engine}. Expected one of: ${ENGINE_KINDS.join(", ")}`,
         );
       }
@@ -638,12 +633,12 @@ function buildTrainCommand(
         const expert = await library.get(slug);
         if (!expert) {
           writeError(`Expert "${slug}" not found.\n`);
-          throw new Error(`Expert "${slug}" not found.`);
+          throw new CliUserError(`Expert "${slug}" not found.`);
         }
         if (expert.kind !== "persona") {
           const msg = `Expert "${slug}" is not a persona expert — only persona experts can be trained.`;
           writeError(msg + "\n");
-          throw new Error(msg);
+          throw new CliUserError(msg);
         }
 
         const docsPath = path.join(dataHome, "experts", slug, "docs");
@@ -652,9 +647,7 @@ function buildTrainCommand(
         const documentRepo = new DocumentRepository(db);
         const profileRepo = new ProfileRepository(db);
         const indexer = createDocumentIndexer(db);
-        const engine = deps.engineFactory
-          ? deps.engineFactory()
-          : makeEngineFromKind(engineKind);
+        const engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(engineKind);
 
         // --retrain: drop the profile and mark every existing doc row as
         // removed so the detector reclassifies all files as new and the
@@ -684,7 +677,7 @@ function buildTrainCommand(
               `Existing profile and tracking preserved. ` +
               `Re-run "council expert train ${slug} --retrain" after addressing the error above.`;
             writeError(msg + "\n");
-            throw new Error(msg);
+            throw new CliUserError(msg);
           }
           await profileRepo.delete(slug);
           write(
@@ -718,9 +711,7 @@ function buildTrainCommand(
               `(${result.filesSkipped} unchanged, ${result.filesFailed} failed, ${result.filesRemoved} removed, ${result.totalWords} total words).\n`,
           );
           if (result.profileError !== null) {
-            writeError(
-              `Persona profile refresh failed: ${result.profileError}\n`,
-            );
+            writeError(`Persona profile refresh failed: ${result.profileError}\n`);
           } else if (result.profileUpdated) {
             write(`✓ Persona profile updated.\n`);
           }
@@ -731,4 +722,3 @@ function buildTrainCommand(
     });
   return cmd;
 }
-

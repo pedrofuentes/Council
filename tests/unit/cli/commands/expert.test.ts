@@ -224,7 +224,9 @@ describe("buildExpertCommand", () => {
     });
 
     it("throws CliUserError (not plain Error) for not-found", async () => {
-      const cmd = buildExpertCommand(() => {});
+      const cmd = buildExpertCommand(() => {
+        /* noop */
+      });
       try {
         await cmd.parseAsync(["node", "council-expert", "inspect", "nobody"]);
         expect.unreachable("should have thrown");

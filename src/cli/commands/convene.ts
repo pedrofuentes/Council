@@ -15,15 +15,14 @@ import { ulid } from "ulid";
 
 import { Command } from "commander";
 
+import { CliUserError } from "../cli-user-error.js";
+
 import { autoComposePanel } from "../../core/auto-compose.js";
 import { getCouncilDataHome, getCouncilHome, DEFAULT_MODEL } from "../../config/index.js";
 import type { ContextConfig } from "../../core/debate.js";
 import type { VisibilityConfig } from "../../core/context/visibility.js";
 import { FileExpertLibrary } from "../../core/expert-library.js";
-import {
-  isMigrationNeeded,
-  migrateBuiltInTemplates,
-} from "../../core/template-migration.js";
+import { isMigrationNeeded, migrateBuiltInTemplates } from "../../core/template-migration.js";
 import type { DebateMode } from "../../core/template-loader.js";
 import {
   assertAllInline,
@@ -183,7 +182,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
     .option("--yes", "Skip the auto-compose confirmation prompt (non-interactive runs)")
     .action(async (topic: string, raw: ConveneOptions) => {
       if (!ENGINE_KINDS.includes(raw.engine)) {
-        throw new Error(
+        throw new CliUserError(
           `Unknown --engine value: ${raw.engine}. Expected one of: ${ENGINE_KINDS.join(", ")}`,
         );
       }
@@ -250,7 +249,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             if (missing.length > 0) {
               const safeName = stripControlChars(opts.template);
               const safeMissing = missing.map((s) => stripControlChars(s)).join(", ");
-              throw new Error(
+              throw new CliUserError(
                 `Panel "${safeName}" references experts not in the library: ${safeMissing}. ` +
                   `Add them with 'council expert create' or use inline expert definitions.`,
               );
@@ -280,7 +279,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             });
           } catch (err: unknown) {
             const cause = err instanceof Error ? err.message : String(err);
-            throw new Error(
+            throw new CliUserError(
               `Could not auto-compose a panel for this topic. Use --template to specify one manually. (cause: ${cause})`,
             );
           }
@@ -308,7 +307,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           const ok = await provider.confirm("Proceed with this panel? [y/N] ");
           if (!ok) {
             writeError("Aborted. Use --template to specify a panel manually.\n");
-            throw new Error("Aborted: auto-composed panel was not confirmed.");
+            throw new CliUserError("Aborted: auto-composed panel was not confirmed.");
           }
         }
       }
@@ -445,7 +444,7 @@ function parseFormat(raw: string | undefined): RendererFormat {
   if ((RENDERER_FORMATS as readonly string[]).includes(raw)) {
     return raw as RendererFormat;
   }
-  throw new Error(
+  throw new CliUserError(
     `Unknown --format value: ${raw}. Expected one of: ${RENDERER_FORMATS.join(", ")}`,
   );
 }
@@ -543,7 +542,7 @@ export function buildContextConfig(opts: SummarizerOptions): ContextConfig | und
 
 function parseContextScope(raw: string): VisibilityConfig {
   if (!(VALID_CONTEXT_SCOPES as readonly string[]).includes(raw)) {
-    throw new Error(
+    throw new CliUserError(
       `Unknown --context-scope value: ${raw}. Expected one of: ${VALID_CONTEXT_SCOPES.join(", ")}`,
     );
   }

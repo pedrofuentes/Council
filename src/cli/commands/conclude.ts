@@ -28,28 +28,19 @@
 import * as path from "node:path";
 
 import { Command } from "commander";
+
+import { CliUserError } from "../cli-user-error.js";
 import { ulid } from "ulid";
 import { z } from "zod";
 
 import { DEFAULT_MODEL, getCouncilHome } from "../../config/index.js";
-import {
-  type CouncilEngine,
-  type EngineEvent,
-  type ExpertSpec,
-} from "../../engine/index.js";
+import { type CouncilEngine, type EngineEvent, type ExpertSpec } from "../../engine/index.js";
 import { createDatabase } from "../../memory/db.js";
 import { PanelRepository } from "../../memory/repositories/panels.js";
-import {
-  loadTranscript,
-  type TranscriptDocument,
-} from "../../memory/transcript.js";
+import { loadTranscript, type TranscriptDocument } from "../../memory/transcript.js";
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
-import {
-  ENGINE_KINDS,
-  type EngineKind,
-  makeEngineFromKind,
-} from "../run-with-engine.js";
+import { ENGINE_KINDS, type EngineKind, makeEngineFromKind } from "../run-with-engine.js";
 import { formatEngineError } from "../error-mapper.js";
 
 export const CONCLUDE_FORMATS = ["plain", "json"] as const;
@@ -137,25 +128,13 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
 
   const cmd = new Command("conclude");
   cmd
-    .description(
-      "Synthesize the latest debate of a panel into a structured decision framework",
-    )
-    .argument(
-      "[panel]",
-      "Panel name to conclude (defaults to the most recently created panel)",
-    )
-    .requiredOption(
-      "--engine <kind>",
-      `Engine kind: ${ENGINE_KINDS.join(" | ")}`,
-    )
-    .option(
-      "--format <kind>",
-      `Output format: ${CONCLUDE_FORMATS.join(" | ")}`,
-      "plain",
-    )
+    .description("Synthesize the latest debate of a panel into a structured decision framework")
+    .argument("[panel]", "Panel name to conclude (defaults to the most recently created panel)")
+    .requiredOption("--engine <kind>", `Engine kind: ${ENGINE_KINDS.join(" | ")}`)
+    .option("--format <kind>", `Output format: ${CONCLUDE_FORMATS.join(" | ")}`, "plain")
     .action(async (panelArg: string | undefined, raw: ConcludeRawOptions) => {
       if (!ENGINE_KINDS.includes(raw.engine)) {
-        throw new Error(
+        throw new CliUserError(
           `Unknown --engine value: ${raw.engine}. Expected one of: ${ENGINE_KINDS.join(", ")}`,
         );
       }
@@ -163,12 +142,11 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
         raw.format !== undefined &&
         !(CONCLUDE_FORMATS as readonly string[]).includes(raw.format)
       ) {
-        throw new Error(
+        throw new CliUserError(
           `Unknown --format value: ${raw.format}. Expected one of: ${CONCLUDE_FORMATS.join(", ")}`,
         );
       }
-      const format: ConcludeFormat =
-        raw.format === "json" ? "json" : "plain";
+      const format: ConcludeFormat = raw.format === "json" ? "json" : "plain";
 
       if (raw.engine === "mock") {
         writeError(
@@ -183,7 +161,7 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
         const doc = await loadTranscript(db, panelName);
 
         if (doc.turns.length === 0) {
-          throw new Error(
+          throw new CliUserError(
             `Panel '${panelName}' has no turns in its latest debate — nothing to conclude. Run \`council convene\` or \`council resume --continue\` first.`,
           );
         }
@@ -195,9 +173,7 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
           );
         }
 
-        const engine = deps.engineFactory
-          ? deps.engineFactory()
-          : makeEngineFromKind(raw.engine);
+        const engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(raw.engine);
         const synthesizerId = deps.synthesizerId ?? ulid();
         const synthesizerSpec: ExpertSpec = {
           id: synthesizerId,
@@ -217,20 +193,14 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
               `transcript truncated to last ${MAX_TRANSCRIPT_TURNS} turns / ${MAX_TRANSCRIPT_CHARS} chars to fit synthesis budget`,
             );
           }
-          raw_response = await collectResponse(
-            engine,
-            synthesizerId,
-            prompt,
-          );
+          raw_response = await collectResponse(engine, synthesizerId, prompt);
         } catch (err: unknown) {
           writeError("\n" + formatEngineError(err as Error) + "\n\n");
           throw err;
         } finally {
           await engine.stop().catch((err: unknown) => {
             const msg = err instanceof Error ? err.message : String(err);
-            writeError(
-              `!! engine.stop() failed during cleanup: ${msg}\n`,
-            );
+            writeError(`!! engine.stop() failed during cleanup: ${msg}\n`);
           });
         }
 
@@ -269,18 +239,14 @@ async function resolvePanelName(
   if (panelArg !== undefined && panelArg.length > 0) return panelArg;
   const panels = await new PanelRepository(db).findAll();
   if (panels.length === 0) {
-    throw new Error(
-      "No panels found in the local database. Run `council convene` first.",
-    );
+    throw new CliUserError("No panels found in the local database. Run `council convene` first.");
   }
   // PanelRepository.findAll() orders by id ASC. Panel ids are ULIDs
   // (lexicographically time-sortable), so the last entry is the most
   // recently created.
   const latest = panels[panels.length - 1];
   if (!latest) {
-    throw new Error(
-      "No panels found in the local database. Run `council convene` first.",
-    );
+    throw new CliUserError("No panels found in the local database. Run `council convene` first.");
   }
   return latest.name;
 }
@@ -308,12 +274,8 @@ export function buildSynthesisPrompt(doc: TranscriptDocument): BuiltSynthesisPro
   // first if we still exceed the budget.
   const turnBlocks: string[] = [];
   for (const t of turns) {
-    const speaker = t.expertId
-      ? (nameById.get(t.expertId) ?? t.speakerKind)
-      : t.speakerKind;
-    turnBlocks.push(
-      `[${speaker}] (round ${t.round}, seq ${t.seq}):\n${t.content}\n`,
-    );
+    const speaker = t.expertId ? (nameById.get(t.expertId) ?? t.speakerKind) : t.speakerKind;
+    turnBlocks.push(`[${speaker}] (round ${t.round}, seq ${t.seq}):\n${t.content}\n`);
   }
   let body = turnBlocks.join("\n");
   while (body.length > MAX_TRANSCRIPT_CHARS && turnBlocks.length > 1) {
@@ -359,9 +321,7 @@ async function collectResponse(
   const controller = new AbortController();
   const timer = setTimeout(() => {
     controller.abort(
-      new Error(
-        `Synthesis aborted after ${timeoutMs}ms — engine did not respond in time`,
-      ),
+      new Error(`Synthesis aborted after ${timeoutMs}ms — engine did not respond in time`),
     );
   }, timeoutMs);
   // Don't keep the event loop alive solely for this timer (matters in tests
@@ -389,12 +349,12 @@ async function collectResponse(
   if (controller.signal.aborted) {
     const reason = controller.signal.reason as unknown;
     if (reason instanceof Error) throw reason;
-    throw new Error(
+    throw new CliUserError(
       `Synthesis aborted after ${timeoutMs}ms — engine did not respond in time`,
     );
   }
   if (errorMessage !== undefined) {
-    throw new Error(`Engine returned error during synthesis: ${errorMessage}`);
+    throw new CliUserError(`Engine returned error during synthesis: ${errorMessage}`);
   }
   return buf.join("");
 }
@@ -420,13 +380,13 @@ export function parseSynthesisResponse(raw: string): z.infer<typeof SynthesisSch
     json = JSON.parse(candidate);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(
+    throw new CliUserError(
       `Failed to parse synthesizer response as JSON: ${msg}. Raw response: ${truncate(raw, 200)}`,
     );
   }
   const result = SynthesisSchema.safeParse(json);
   if (!result.success) {
-    throw new Error(
+    throw new CliUserError(
       `Synthesizer response did not match expected schema: ${result.error.message}`,
     );
   }

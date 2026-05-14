@@ -12,6 +12,8 @@ import * as path from "node:path";
 
 import { Command } from "commander";
 
+import { CliUserError } from "../cli-user-error.js";
+
 import { getCouncilHome } from "../../config/index.js";
 import { DEFAULT_MODEL } from "../../config/index.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
@@ -93,12 +95,12 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
       let engineKind: EngineKind | undefined;
       if (raw.continue !== undefined) {
         if (raw.engine === undefined) {
-          throw new Error(
+          throw new CliUserError(
             "--engine is required with --continue (one of: mock, copilot). Use --engine mock for offline/deterministic, --engine copilot for real Copilot SDK.",
           );
         }
         if (!ENGINE_KINDS.includes(raw.engine)) {
-          throw new Error(
+          throw new CliUserError(
             `Unknown --engine value: ${raw.engine}. Expected one of: ${ENGINE_KINDS.join(", ")}`,
           );
         }
@@ -180,9 +182,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
           panelId: resolved.panel.id,
           expertSlugToId,
           moderator:
-            panelMode === "structured"
-              ? "structured-phases"
-              : (strategy?.name ?? "round-robin"),
+            panelMode === "structured" ? "structured-phases" : (strategy?.name ?? "round-robin"),
           format: opts.format,
           write,
           writeError,
@@ -224,7 +224,7 @@ function parseFormat(raw: string | undefined): RendererFormat {
   if ((RENDERER_FORMATS as readonly string[]).includes(raw)) {
     return raw as RendererFormat;
   }
-  throw new Error(
+  throw new CliUserError(
     `Unknown --format value: ${raw}. Expected one of: ${RENDERER_FORMATS.join(", ")}`,
   );
 }

@@ -9,6 +9,8 @@ import * as path from "node:path";
 
 import { Command } from "commander";
 
+import { CliUserError } from "../cli-user-error.js";
+
 import { getCouncilHome } from "../../config/index.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import { createDatabase } from "../../memory/db.js";
@@ -64,7 +66,7 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
         },
       ) => {
         if (!ENGINE_KINDS.includes(raw.engine)) {
-          throw new Error(
+          throw new CliUserError(
             `Unknown --engine value: ${raw.engine}. Expected one of: ${ENGINE_KINDS.join(", ")}`,
           );
         }
@@ -85,13 +87,13 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
         try {
           const panel = await new PanelRepository(db).findByName(panelName);
           if (!panel) {
-            throw new Error(
+            throw new CliUserError(
               `No panel found with name '${panelName}'. Run \`council panels\` to list available panels.`,
             );
           }
           const allExperts = await new ExpertRepository(db).findByPanelId(panel.id);
           if (allExperts.length === 0) {
-            throw new Error(
+            throw new CliUserError(
               `Panel '${panelName}' has no experts. Run \`council convene\` to populate one.`,
             );
           }
@@ -101,7 +103,7 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
             : allExperts[0];
 
           if (!selectedExpert) {
-            throw new Error(
+            throw new CliUserError(
               `No expert found with slug '${raw.expert}' in panel '${panelName}'. Available: ${allExperts.map((e) => e.slug).join(", ")}`,
             );
           }
@@ -154,7 +156,7 @@ function parseFormat(raw: string | undefined): RendererFormat {
   if ((RENDERER_FORMATS as readonly string[]).includes(raw)) {
     return raw as RendererFormat;
   }
-  throw new Error(
+  throw new CliUserError(
     `Unknown --format value: ${raw}. Expected one of: ${RENDERER_FORMATS.join(", ")}`,
   );
 }
