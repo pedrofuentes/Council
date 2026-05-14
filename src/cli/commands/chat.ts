@@ -38,6 +38,7 @@ import { parseUserInput, type ParsedInput } from "../../core/chat/mention-parser
 import { Debate } from "../../core/debate.js";
 import type { ExpertDefinition } from "../../core/expert.js";
 import { FileExpertLibrary } from "../../core/expert-library.js";
+import { ExpertLibraryRepository } from "../../memory/repositories/expert-library-repo.js";
 import { buildSystemPrompt, type PanelMembership } from "../../core/prompt-builder.js";
 import { getExpertPanelMemberships } from "../../core/panel-membership-query.js";
 import {
@@ -100,6 +101,13 @@ export interface ChatCommandDeps {
    * Defaults to a `node:readline/promises` interface over stdin/stdout.
    */
   readonly inputProvider?: () => ChatInputProvider;
+  /**
+   * Test seam: subscribes a SIGINT (Ctrl+C) handler. Returns an
+   * unsubscribe function. Defaults to `process.on('SIGINT', ...)`. Tests
+   * inject a controllable emitter to deterministically simulate Ctrl+C
+   * during streaming or at the input prompt (PRD §F4).
+   */
+  readonly subscribeInterrupt?: (handler: () => void) => () => void;
 }
 
 interface ChatRunOptions {
@@ -326,7 +334,9 @@ export async function safeRetrieveSnippets(
   try {
     return await retriever.retrieve(query, options);
   } catch (err: unknown) {
-    onError(`Document retrieval failed (continuing without references): ${sanitizeErrorMessage(err)}`);
+    onError(
+      `Document retrieval failed (continuing without references): ${sanitizeErrorMessage(err)}`,
+    );
     return [];
   }
 }
@@ -345,7 +355,9 @@ export async function safeGetContext(
   try {
     return await contextMgr.getContext(chatId);
   } catch (err: unknown) {
-    onError(`Loading conversation context failed (continuing without history): ${sanitizeErrorMessage(err)}`);
+    onError(
+      `Loading conversation context failed (continuing without history): ${sanitizeErrorMessage(err)}`,
+    );
     return { summary: null, recentTurns: [] };
   }
 }
@@ -435,10 +447,7 @@ async function maybeWarnLongConversation(
  * startup notice so users who toggle the flag don't silently assume it
  * had any effect. Fires once per chat invocation (1:1 or panel).
  */
-function warnIfBackgroundProcessingEnabled(
-  config: CouncilConfig,
-  renderer: ChatRenderer,
-): void {
+function warnIfBackgroundProcessingEnabled(config: CouncilConfig, renderer: ChatRenderer): void {
   if (config.expert.backgroundProcessing) {
     renderer.showSystem(
       "Background document processing is not yet implemented. Documents are processed on-demand when you start a chat.",
@@ -499,9 +508,7 @@ async function runHistory(target: string, write: Writer, writeError: Writer): Pr
             available.length > 0
               ? available.join(", ")
               : "(none — create one with `council expert create`)";
-          writeError(
-            `"${target}" not found as expert or panel. Available experts: ${list}\n`,
-          );
+          writeError(`"${target}" not found as expert or panel. Available experts: ${list}\n`);
           throw new Error(`"${target}" not found`);
         }
         throw err;
@@ -555,7 +562,20 @@ async function runChat(
 
   try {
     const library = new FileExpertLibrary(dataHome, db);
-    const expert = await library.get(target);
+    let expert = await library.get(target);
+    if (!expert) {
+      // YAML may have been deleted while the DB row survives. Fall back
+      // to the cached metadata so the chat still works (PRD §F4 — "Expert
+      // YAML deleted mid-conversation: ... On next council chat, warn.").
+      const libRepo = new ExpertLibraryRepository(db);
+      const cached = await libRepo.findBySlug(target);
+      if (cached) {
+        write(
+          `\u26A0 Expert file "${target}.yaml" not found. Using cached definition from database.\n`,
+        );
+        expert = expertFromCachedRow(cached);
+      }
+    }
     if (expert) {
       await runExpertChat({
         target,
@@ -584,9 +604,7 @@ async function runChat(
           available.length > 0
             ? available.join(", ")
             : "(none — create one with `council expert create`)";
-        writeError(
-          `"${target}" not found as expert or panel. Available experts: ${list}\n`,
-        );
+        writeError(`"${target}" not found as expert or panel. Available experts: ${list}\n`);
         throw new Error(`"${target}" not found`);
       }
       throw err;
@@ -724,6 +742,8 @@ async function runExpertChat(opts: ExpertChatOptions): Promise<void> {
       config,
       writeError,
       db,
+      target,
+      subscribeInterrupt: deps.subscribeInterrupt ?? defaultSubscribeInterrupt,
     });
   } catch (err: unknown) {
     writeError("\n" + formatEngineError(err as Error) + "\n\n");
@@ -757,7 +777,8 @@ interface PanelMember {
 }
 
 async function runPanelChat(opts: PanelChatOptions): Promise<void> {
-  const { target, panel, library, raw, deps, write, writeError, config, db, engineKind, dataHome } = opts;
+  const { target, panel, library, raw, deps, write, writeError, config, db, engineKind, dataHome } =
+    opts;
 
   // Resolve panel experts up-front so we can warn about missing slugs and
   // bail early when nothing is left to chat with. Inline expert defs in
@@ -816,9 +837,8 @@ async function runPanelChat(opts: PanelChatOptions): Promise<void> {
     // Refresh the panel's RAG corpus before any turns run so retrieval
     // sees the latest on-disk state. Failures are logged but not fatal.
     try {
-      const { scanAndIndexPanelDocuments, formatAllFailedWarning } = await import(
-        "../../core/documents/panel-document-scanner.js"
-      );
+      const { scanAndIndexPanelDocuments, formatAllFailedWarning } =
+        await import("../../core/documents/panel-document-scanner.js");
       const managedDocsDir = path.join(dataHome, "panels", target, "docs");
       const result = await scanAndIndexPanelDocuments({
         panelName: target,
@@ -890,6 +910,8 @@ async function runPanelChat(opts: PanelChatOptions): Promise<void> {
       writeError,
       db,
       panelName: target,
+      target,
+      subscribeInterrupt: deps.subscribeInterrupt ?? defaultSubscribeInterrupt,
     });
   } catch (err: unknown) {
     writeError("\n" + formatEngineError(err as Error) + "\n\n");
@@ -914,11 +936,26 @@ interface InteractiveLoopOptions {
   readonly config: CouncilConfig;
   readonly writeError: Writer;
   readonly db: CouncilDatabase;
+  /** Resolution slug used in the SIGINT-at-prompt resume hint. */
+  readonly target: string;
+  /** Test seam: subscribes a SIGINT handler. See ChatCommandDeps. */
+  readonly subscribeInterrupt: (handler: () => void) => () => void;
 }
 
 async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
-  const { engine, expertSpec, expert, session, repo, renderer, inputProvider, config, writeError } =
-    opts;
+  const {
+    engine,
+    expertSpec,
+    expert,
+    session,
+    repo,
+    renderer,
+    inputProvider,
+    config,
+    writeError,
+    target,
+    subscribeInterrupt,
+  } = opts;
 
   // Roadmap 6.3 / TSD §7 — RAG retriever and rolling-summary context
   // manager are wired here (one per chat session) so they share the
@@ -937,140 +974,200 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
   // session (treated as already past), which matches "best-effort".
   let prevTurnCount = await repo.getTurnCount(session.id).catch(() => Number.MAX_SAFE_INTEGER);
 
-  while (true) {
-    renderer.showPrompt();
-    const line = await inputProvider.readLine();
-    if (line === null) {
-      renderer.showSystem("Conversation saved.", "info");
-      return;
+  // PRD §F4 — graceful Ctrl+C. The handler routes by current loop state:
+  //   - waiting at the prompt    → close the input provider so the
+  //                                 pending readLine resolves with null,
+  //                                 then the loop prints a save+resume
+  //                                 hint and exits cleanly.
+  //   - mid-stream from engine    → abort the active controller; the
+  //                                 engine yields ABORTED + done; whatever
+  //                                 was assembled gets persisted as a
+  //                                 partial expert turn before returning
+  //                                 to the prompt.
+  type LoopState =
+    | { readonly kind: "idle" }
+    | { readonly kind: "prompt" }
+    | { readonly kind: "streaming"; readonly controller: AbortController };
+  let state: LoopState = { kind: "idle" };
+  let interruptedAtPrompt = false;
+  let interruptedDuringStream = false;
+  const onInterrupt = (): void => {
+    if (state.kind === "streaming") {
+      interruptedDuringStream = true;
+      state.controller.abort();
+    } else if (state.kind === "prompt") {
+      interruptedAtPrompt = true;
+      inputProvider.close();
     }
-    const trimmed = line.trim();
-    if (trimmed.length === 0) {
-      continue;
-    }
-    if (EXIT_TOKENS.has(trimmed.toLowerCase())) {
-      renderer.showSystem("Conversation saved.", "info");
-      return;
-    }
+  };
+  const unsubscribeInterrupt = subscribeInterrupt(onInterrupt);
 
-    await repo.addTurn({ chatId: session.id, role: "user", content: trimmed });
-    prevTurnCount = await maybeWarnLongConversation(
-      repo,
-      session.id,
-      config,
-      renderer,
-      prevTurnCount,
-    );
-
-    // Pull the rolling-summary context (summary text + recent verbatim
-    // turns) from the manager. The just-inserted user turn is the last
-    // entry in `recentTurns`; strip it before passing as `history` since
-    // the prompt re-renders it as the new USER line.
-    const context = await safeGetContext(contextMgr, session.id, (msg) =>
-      renderer.showSystem(msg, "warn"),
-    );
-    const history = context.recentTurns.length > 0
-      ? context.recentTurns.slice(0, -1)
-      : context.recentTurns;
-
-    // RAG: pull document snippets relevant to the current user message,
-    // scoped to this expert's indexed docs. Best-effort: failures fall
-    // back to "no references" while surfacing a sanitized warning so a
-    // flaky FTS query can never block chat.
-    const snippets = await safeRetrieveSnippets(
-      retriever,
-      trimmed,
-      { expertSlug: expert.slug, maxResults: 5 },
-      (msg) => renderer.showSystem(msg, "warn"),
-    );
-    const userMessageWithRefs = appendReferenceDocuments(trimmed, snippets);
-
-    const prompt = buildChatTurnPrompt({
-      history,
-      userMessage: userMessageWithRefs,
-      expertDisplayName: expert.displayName,
-      summary: context.summary,
-    });
-
-    let assembled = "";
-    let failed = false;
-    let recoverable = false;
-    let lastError = "";
-    // Buffer chunks during each attempt — only flush to the renderer
-    // after a successful attempt completes. This prevents partial deltas
-    // from a failed first attempt from being double-rendered when the
-    // retry runs (PRD §F4).
-    const attempt = async (): Promise<void> => {
-      assembled = "";
-      failed = false;
-      recoverable = false;
-      lastError = "";
-      try {
-        for await (const evt of engine.send({ prompt, expertId: expertSpec.id })) {
-          if (evt.kind === "message.delta") {
-            assembled += evt.text;
-          } else if (evt.kind === "error") {
-            failed = true;
-            recoverable = evt.recoverable;
-            lastError = evt.error.message;
-          }
-        }
-      } catch (err: unknown) {
-        failed = true;
-        recoverable = false;
-        lastError = err instanceof Error ? err.message : String(err);
+  try {
+    while (true) {
+      renderer.showPrompt();
+      state = { kind: "prompt" };
+      const line = await inputProvider.readLine();
+      state = { kind: "idle" };
+      if (interruptedAtPrompt) {
+        renderer.showSystem(`Conversation saved. Resume with "council chat ${target}".`, "info");
+        return;
       }
-    };
+      if (line === null) {
+        renderer.showSystem("Conversation saved.", "info");
+        return;
+      }
+      const trimmed = line.trim();
+      if (trimmed.length === 0) {
+        continue;
+      }
+      if (EXIT_TOKENS.has(trimmed.toLowerCase())) {
+        renderer.showSystem("Conversation saved.", "info");
+        return;
+      }
 
-    await attempt();
-    if (failed && recoverable) {
-      // One retry per PRD §F4. Surface the retry to the user so the UX
-      // doesn't appear frozen during the second attempt.
-      renderer.showSystem("Transient error from engine. Retrying once...", "warn");
-      await attempt();
-    }
-
-    if (!failed && assembled.length > 0) {
-      renderer.startExpertResponse(expert.slug);
-      renderer.streamChunk(assembled);
-      renderer.endExpertResponse();
-    }
-
-    if (failed) {
-      writeError(formatEngineError({ code: "PROVIDER_ERROR", message: lastError }) + "\n");
-      renderer.showSystem(
-        "Failed to get response. Your message has been saved. Try again.",
-        "warn",
+      await repo.addTurn({ chatId: session.id, role: "user", content: trimmed });
+      prevTurnCount = await maybeWarnLongConversation(
+        repo,
+        session.id,
+        config,
+        renderer,
+        prevTurnCount,
       );
-      continue;
+
+      // Pull the rolling-summary context (summary text + recent verbatim
+      // turns) from the manager. The just-inserted user turn is the last
+      // entry in `recentTurns`; strip it before passing as `history` since
+      // the prompt re-renders it as the new USER line.
+      const context = await safeGetContext(contextMgr, session.id, (msg) =>
+        renderer.showSystem(msg, "warn"),
+      );
+      const history =
+        context.recentTurns.length > 0 ? context.recentTurns.slice(0, -1) : context.recentTurns;
+
+      // RAG: pull document snippets relevant to the current user message,
+      // scoped to this expert's indexed docs. Best-effort: failures fall
+      // back to "no references" while surfacing a sanitized warning so a
+      // flaky FTS query can never block chat.
+      const snippets = await safeRetrieveSnippets(
+        retriever,
+        trimmed,
+        { expertSlug: expert.slug, maxResults: 5 },
+        (msg) => renderer.showSystem(msg, "warn"),
+      );
+      const userMessageWithRefs = appendReferenceDocuments(trimmed, snippets);
+
+      const prompt = buildChatTurnPrompt({
+        history,
+        userMessage: userMessageWithRefs,
+        expertDisplayName: expert.displayName,
+        summary: context.summary,
+      });
+
+      let assembled = "";
+      let failed = false;
+      let recoverable = false;
+      let lastError = "";
+      // Buffer chunks during each attempt — only flush to the renderer
+      // after a successful attempt completes. This prevents partial deltas
+      // from a failed first attempt from being double-rendered when the
+      // retry runs (PRD §F4).
+      const attempt = async (): Promise<void> => {
+        assembled = "";
+        failed = false;
+        recoverable = false;
+        lastError = "";
+        const controller = new AbortController();
+        state = { kind: "streaming", controller };
+        try {
+          for await (const evt of engine.send({
+            prompt,
+            expertId: expertSpec.id,
+            signal: controller.signal,
+          })) {
+            if (evt.kind === "message.delta") {
+              assembled += evt.text;
+            } else if (evt.kind === "error") {
+              failed = true;
+              recoverable = evt.recoverable;
+              lastError = evt.error.message;
+            }
+          }
+        } catch (err: unknown) {
+          failed = true;
+          recoverable = false;
+          lastError = err instanceof Error ? err.message : String(err);
+        } finally {
+          state = { kind: "idle" };
+        }
+      };
+
+      interruptedDuringStream = false;
+      await attempt();
+      if (!interruptedDuringStream && failed && recoverable) {
+        // One retry per PRD §F4. Surface the retry to the user so the UX
+        // doesn't appear frozen during the second attempt.
+        renderer.showSystem("Transient error from engine. Retrying once...", "warn");
+        await attempt();
+      }
+
+      if (interruptedDuringStream) {
+        // PRD §F4 — Ctrl+C during expert response: persist whatever the
+        // engine produced before the abort, surface the interrupt notice,
+        // and return to the prompt (no exit).
+        if (assembled.length > 0) {
+          await repo.addTurn({
+            chatId: session.id,
+            role: "expert",
+            expertSlug: expert.slug,
+            content: assembled,
+          });
+        }
+        renderer.showSystem("Response interrupted. Partial response saved.", "info");
+        continue;
+      }
+
+      if (!failed && assembled.length > 0) {
+        renderer.startExpertResponse(expert.slug);
+        renderer.streamChunk(assembled);
+        renderer.endExpertResponse();
+      }
+
+      if (failed) {
+        writeError(formatEngineError({ code: "PROVIDER_ERROR", message: lastError }) + "\n");
+        renderer.showSystem(
+          "Failed to get response. Your message has been saved. Try again.",
+          "warn",
+        );
+        continue;
+      }
+
+      if (assembled.length === 0) {
+        renderer.showSystem("Empty response from engine. Your message has been saved.", "warn");
+        continue;
+      }
+
+      await repo.addTurn({
+        chatId: session.id,
+        role: "expert",
+        expertSlug: expert.slug,
+        content: assembled,
+      });
+
+      prevTurnCount = await maybeWarnLongConversation(
+        repo,
+        session.id,
+        config,
+        renderer,
+        prevTurnCount,
+      );
+
+      // Roll the conversation summary forward when the verbatim window
+      // has overflowed. Best-effort — a summarizer failure leaves the
+      // previous summary in place and the chat continues.
+      await safeMaybeSummarize(contextMgr, session.id, (msg) => renderer.showSystem(msg, "warn"));
     }
-
-    if (assembled.length === 0) {
-      renderer.showSystem("Empty response from engine. Your message has been saved.", "warn");
-      continue;
-    }
-
-    await repo.addTurn({
-      chatId: session.id,
-      role: "expert",
-      expertSlug: expert.slug,
-      content: assembled,
-    });
-
-    prevTurnCount = await maybeWarnLongConversation(
-      repo,
-      session.id,
-      config,
-      renderer,
-      prevTurnCount,
-    );
-
-    // Roll the conversation summary forward when the verbatim window
-    // has overflowed. Best-effort — a summarizer failure leaves the
-    // previous summary in place and the chat continues.
-    await safeMaybeSummarize(contextMgr, session.id, (msg) =>
-      renderer.showSystem(msg, "warn"),
-    );
+  } finally {
+    unsubscribeInterrupt();
   }
 }
 
@@ -1187,6 +1284,10 @@ interface PanelInteractiveLoopOptions {
   readonly writeError: Writer;
   readonly db: CouncilDatabase;
   readonly panelName: string;
+  /** Slug used in the SIGINT-at-prompt resume hint. */
+  readonly target: string;
+  /** Test seam: subscribes a SIGINT handler. See ChatCommandDeps. */
+  readonly subscribeInterrupt: (handler: () => void) => () => void;
 }
 
 async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promise<void> {
@@ -1202,6 +1303,8 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
     writeError,
     db,
     panelName,
+    target,
+    subscribeInterrupt,
   } = opts;
 
   // Roadmap 6.3 / TSD §7 + Roadmap 5.3 — RAG retriever scoped to this
@@ -1212,8 +1315,7 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
   // ContextManager.runSummarizer registers a temporary expert under
   // this model; the choice is opaque to the user and avoids touching
   // their actual panel members.
-  const summarizerModel =
-    members[0]?.spec.model ?? config.defaults.model ?? DEFAULT_MODEL;
+  const summarizerModel = members[0]?.spec.model ?? config.defaults.model ?? DEFAULT_MODEL;
   const contextMgr = createContextManager(repo, engine, {
     recentTurnCount: config.chat.recentTurnCount,
     summaryMaxWords: config.chat.summaryMaxWords,
@@ -1225,220 +1327,278 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
   // past-threshold so the warning never re-fires for this session.
   let prevTurnCount = await repo.getTurnCount(session.id).catch(() => Number.MAX_SAFE_INTEGER);
 
-  while (true) {
-    renderer.showPrompt();
-    const line = await inputProvider.readLine();
-    if (line === null) {
-      renderer.showSystem("Conversation saved.", "info");
-      return;
+  // PRD §F4 — graceful Ctrl+C. Same state machine as runInteractiveLoop:
+  // mid-stream interrupts abort the active controller and persist the
+  // partial expert turn for the *currently-streaming* member; remaining
+  // panelists in the same turn are skipped. At the prompt, the handler
+  // closes the input provider and the loop exits with a save+resume hint.
+  type LoopState =
+    | { readonly kind: "idle" }
+    | { readonly kind: "prompt" }
+    | { readonly kind: "streaming"; readonly controller: AbortController };
+  let state: LoopState = { kind: "idle" };
+  let interruptedAtPrompt = false;
+  let interruptedDuringStream = false;
+  const onInterrupt = (): void => {
+    if (state.kind === "streaming") {
+      interruptedDuringStream = true;
+      state.controller.abort();
+    } else if (state.kind === "prompt") {
+      interruptedAtPrompt = true;
+      inputProvider.close();
     }
-    const trimmed = line.trim();
-    if (trimmed.length === 0) continue;
-    if (EXIT_TOKENS.has(trimmed.toLowerCase())) {
-      renderer.showSystem("Conversation saved.", "info");
-      return;
-    }
+  };
+  const unsubscribeInterrupt = subscribeInterrupt(onInterrupt);
 
-    // Roadmap 5.5/5.6 — classify input before persisting/routing so a
-    // malformed @mention can be rejected without leaving a stray user
-    // row behind. Unknown slugs throw with the available list.
-    const panelSlugs = members.map((m) => m.expert.slug);
-    let parsed: ParsedInput;
-    try {
-      parsed = parseUserInput(trimmed, panelSlugs);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      writeError(msg + "\n");
-      continue;
-    }
-
-    if (parsed.type === "convene") {
-      await runInlineDebate({
-        engine,
-        members,
-        session,
-        repo,
-        renderer,
-        topic: parsed.content,
-        writeError,
-      });
-      continue;
-    }
-
-    // Routed flow: which members should respond this turn?
-    const isMention = parsed.type === "mention";
-    const respondingMembers: readonly PanelMember[] = isMention
-      ? members.filter((m) => parsed.targetSlugs.includes(m.expert.slug))
-      : members;
-
-    await repo.addTurn({
-      chatId: session.id,
-      role: "user",
-      content: parsed.content,
-      isMention,
-    });
-    prevTurnCount = await maybeWarnLongConversation(
-      repo,
-      session.id,
-      config,
-      renderer,
-      prevTurnCount,
-    );
-
-    // Pull rolling-summary context (summary + recent verbatim window)
-    // from the manager. The just-saved user turn is the trailing entry
-    // in `recentTurns`; strip it so the prompt re-renders it as USER.
-    const context = await safeGetContext(contextMgr, session.id, (msg) =>
-      renderer.showSystem(msg, "warn"),
-    );
-    const history =
-      context.recentTurns.length > 0
-        ? context.recentTurns.slice(0, -1)
-        : context.recentTurns;
-
-    // RAG: pull document snippets relevant to the current user message,
-    // scoped to this panel's indexed docs. Best-effort: failures fall
-    // back to "no references" while surfacing a sanitized warning so a
-    // flaky FTS query cannot block.
-    const snippets = await safeRetrieveSnippets(
-      retriever,
-      parsed.content,
-      { panelName, maxResults: 5 },
-      (msg) => renderer.showSystem(msg, "warn"),
-    );
-    const userMessageWithRefs = appendReferenceDocuments(parsed.content, snippets);
-
-    const errorExperts: string[] = [];
-    const emptyExperts: string[] = [];
-    let succeeded = 0;
-
-    // The per-turn prompt is identical for every panelist (they all see
-    // the same shared history + same just-asked user message), so build
-    // it once per turn rather than once per expert.
-    const prompt = buildPanelTurnPrompt({
-      history,
-      userMessage: userMessageWithRefs,
-      expertNames,
-      summary: context.summary,
-    });
-
-    for (const { expert, spec } of respondingMembers) {
-      let assembled = "";
-      let failed = false;
-      let recoverable = false;
-      let lastError = "";
-      const attempt = async (): Promise<void> => {
-        assembled = "";
-        failed = false;
-        recoverable = false;
-        lastError = "";
-        try {
-          for await (const evt of engine.send({ prompt, expertId: spec.id })) {
-            if (evt.kind === "message.delta") {
-              assembled += evt.text;
-            } else if (evt.kind === "error") {
-              failed = true;
-              recoverable = evt.recoverable;
-              lastError = evt.error.message;
-            }
-          }
-        } catch (err: unknown) {
-          failed = true;
-          recoverable = false;
-          lastError = err instanceof Error ? err.message : String(err);
-        }
-      };
-
-      await attempt();
-      if (failed && recoverable) {
-        renderer.showSystem(
-          `Transient error from ${expert.displayName}. Retrying once...`,
-          "warn",
-        );
-        await attempt();
+  try {
+    while (true) {
+      renderer.showPrompt();
+      state = { kind: "prompt" };
+      const line = await inputProvider.readLine();
+      state = { kind: "idle" };
+      if (interruptedAtPrompt) {
+        renderer.showSystem(`Conversation saved. Resume with "council chat ${target}".`, "info");
+        return;
+      }
+      if (line === null) {
+        renderer.showSystem("Conversation saved.", "info");
+        return;
+      }
+      const trimmed = line.trim();
+      if (trimmed.length === 0) continue;
+      if (EXIT_TOKENS.has(trimmed.toLowerCase())) {
+        renderer.showSystem("Conversation saved.", "info");
+        return;
       }
 
-      if (!failed && assembled.length > 0) {
-        renderer.startExpertResponse(expert.slug);
-        renderer.streamChunk(assembled);
-        renderer.endExpertResponse();
-        await repo.addTurn({
-          chatId: session.id,
-          role: "expert",
-          expertSlug: expert.slug,
-          content: assembled,
-          isMention,
-        });
-        prevTurnCount = await maybeWarnLongConversation(
+      // Roadmap 5.5/5.6 — classify input before persisting/routing so a
+      // malformed @mention can be rejected without leaving a stray user
+      // row behind. Unknown slugs throw with the available list.
+      const panelSlugs = members.map((m) => m.expert.slug);
+      let parsed: ParsedInput;
+      try {
+        parsed = parseUserInput(trimmed, panelSlugs);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        writeError(msg + "\n");
+        continue;
+      }
+
+      if (parsed.type === "convene") {
+        await runInlineDebate({
+          engine,
+          members,
+          session,
           repo,
-          session.id,
-          config,
           renderer,
-          prevTurnCount,
-        );
-        succeeded += 1;
+          topic: parsed.content,
+          writeError,
+        });
         continue;
       }
 
-      if (failed) {
-        writeError(formatEngineError({ code: "PROVIDER_ERROR", message: lastError }) + "\n");
-        errorExperts.push(expert.displayName);
+      // Routed flow: which members should respond this turn?
+      const isMention = parsed.type === "mention";
+      const respondingMembers: readonly PanelMember[] = isMention
+        ? members.filter((m) => parsed.targetSlugs.includes(m.expert.slug))
+        : members;
+
+      await repo.addTurn({
+        chatId: session.id,
+        role: "user",
+        content: parsed.content,
+        isMention,
+      });
+      prevTurnCount = await maybeWarnLongConversation(
+        repo,
+        session.id,
+        config,
+        renderer,
+        prevTurnCount,
+      );
+
+      // Pull rolling-summary context (summary + recent verbatim window)
+      // from the manager. The just-saved user turn is the trailing entry
+      // in `recentTurns`; strip it so the prompt re-renders it as USER.
+      const context = await safeGetContext(contextMgr, session.id, (msg) =>
+        renderer.showSystem(msg, "warn"),
+      );
+      const history =
+        context.recentTurns.length > 0 ? context.recentTurns.slice(0, -1) : context.recentTurns;
+
+      // RAG: pull document snippets relevant to the current user message,
+      // scoped to this panel's indexed docs. Best-effort: failures fall
+      // back to "no references" while surfacing a sanitized warning so a
+      // flaky FTS query cannot block.
+      const snippets = await safeRetrieveSnippets(
+        retriever,
+        parsed.content,
+        { panelName, maxResults: 5 },
+        (msg) => renderer.showSystem(msg, "warn"),
+      );
+      const userMessageWithRefs = appendReferenceDocuments(parsed.content, snippets);
+
+      const errorExperts: string[] = [];
+      const emptyExperts: string[] = [];
+      let succeeded = 0;
+
+      // The per-turn prompt is identical for every panelist (they all see
+      // the same shared history + same just-asked user message), so build
+      // it once per turn rather than once per expert.
+      const prompt = buildPanelTurnPrompt({
+        history,
+        userMessage: userMessageWithRefs,
+        expertNames,
+        summary: context.summary,
+      });
+
+      let interruptedThisTurn = false;
+      for (const { expert, spec } of respondingMembers) {
+        if (interruptedThisTurn) break;
+        let assembled = "";
+        let failed = false;
+        let recoverable = false;
+        let lastError = "";
+        const attempt = async (): Promise<void> => {
+          assembled = "";
+          failed = false;
+          recoverable = false;
+          lastError = "";
+          const controller = new AbortController();
+          state = { kind: "streaming", controller };
+          try {
+            for await (const evt of engine.send({
+              prompt,
+              expertId: spec.id,
+              signal: controller.signal,
+            })) {
+              if (evt.kind === "message.delta") {
+                assembled += evt.text;
+              } else if (evt.kind === "error") {
+                failed = true;
+                recoverable = evt.recoverable;
+                lastError = evt.error.message;
+              }
+            }
+          } catch (err: unknown) {
+            failed = true;
+            recoverable = false;
+            lastError = err instanceof Error ? err.message : String(err);
+          } finally {
+            state = { kind: "idle" };
+          }
+        };
+
+        interruptedDuringStream = false;
+        await attempt();
+        if (!interruptedDuringStream && failed && recoverable) {
+          renderer.showSystem(
+            `Transient error from ${expert.displayName}. Retrying once...`,
+            "warn",
+          );
+          await attempt();
+        }
+
+        if (interruptedDuringStream) {
+          // Persist the partial expert turn for whoever was mid-stream,
+          // surface the interrupt notice once, and skip remaining members
+          // in this turn. Loop returns to the prompt next iteration.
+          if (assembled.length > 0) {
+            await repo.addTurn({
+              chatId: session.id,
+              role: "expert",
+              expertSlug: expert.slug,
+              content: assembled,
+              isMention,
+            });
+          }
+          renderer.showSystem("Response interrupted. Partial response saved.", "info");
+          interruptedThisTurn = true;
+          continue;
+        }
+
+        if (!failed && assembled.length > 0) {
+          renderer.startExpertResponse(expert.slug);
+          renderer.streamChunk(assembled);
+          renderer.endExpertResponse();
+          await repo.addTurn({
+            chatId: session.id,
+            role: "expert",
+            expertSlug: expert.slug,
+            content: assembled,
+            isMention,
+          });
+          prevTurnCount = await maybeWarnLongConversation(
+            repo,
+            session.id,
+            config,
+            renderer,
+            prevTurnCount,
+          );
+          succeeded += 1;
+          continue;
+        }
+
+        if (failed) {
+          writeError(formatEngineError({ code: "PROVIDER_ERROR", message: lastError }) + "\n");
+          errorExperts.push(expert.displayName);
+          continue;
+        }
+
+        // No content, no error — count as an empty (but non-error) response
+        // and surface a per-expert notice so the user isn't confused by
+        // silence. Tracked separately from engine errors so the aggregate
+        // summary stays honest about what actually happened.
+        emptyExperts.push(expert.displayName);
+        renderer.showSystem(`${expert.displayName} returned an empty response.`, "warn");
+      }
+
+      if (interruptedThisTurn) {
+        // Skip aggregate summary + summarizer roll-forward when the turn
+        // was cut short — the prompt will simply re-fire next iteration.
         continue;
       }
 
-      // No content, no error — count as an empty (but non-error) response
-      // and surface a per-expert notice so the user isn't confused by
-      // silence. Tracked separately from engine errors so the aggregate
-      // summary stays honest about what actually happened.
-      emptyExperts.push(expert.displayName);
-      renderer.showSystem(
-        `${expert.displayName} returned an empty response.`,
-        "warn",
-      );
-    }
+      const total = respondingMembers.length;
+      if (succeeded === 0) {
+        // Be honest about *why* nobody responded so the user can act on
+        // the right signal (retry vs. inspect the expert config vs. wait).
+        if (errorExperts.length > 0 && emptyExperts.length === 0) {
+          renderer.showSystem(
+            "No experts could respond. Check your connection and try again.",
+            "warn",
+          );
+        } else if (errorExperts.length === 0 && emptyExperts.length > 0) {
+          renderer.showSystem(`All ${total} experts returned empty responses.`, "warn");
+        } else {
+          renderer.showSystem(
+            `${errorExperts.join(", ")} could not respond (engine error); ` +
+              `${emptyExperts.join(", ")} returned an empty response. ` +
+              `0 of ${total} experts responded.`,
+            "warn",
+          );
+        }
+      } else if (errorExperts.length > 0 || emptyExperts.length > 0) {
+        const parts: string[] = [];
+        if (errorExperts.length > 0) {
+          parts.push(`${errorExperts.join(", ")} could not respond (engine error)`);
+        }
+        if (emptyExperts.length > 0) {
+          parts.push(`${emptyExperts.join(", ")} returned an empty response`);
+        }
+        renderer.showSystem(
+          `${parts.join("; ")}. ${succeeded} of ${total} experts responded.`,
+          "warn",
+        );
+      }
 
-    const total = respondingMembers.length;
-    if (succeeded === 0) {
-      // Be honest about *why* nobody responded so the user can act on
-      // the right signal (retry vs. inspect the expert config vs. wait).
-      if (errorExperts.length > 0 && emptyExperts.length === 0) {
-        renderer.showSystem(
-          "No experts could respond. Check your connection and try again.",
-          "warn",
-        );
-      } else if (errorExperts.length === 0 && emptyExperts.length > 0) {
-        renderer.showSystem(
-          `All ${total} experts returned empty responses.`,
-          "warn",
-        );
-      } else {
-        renderer.showSystem(
-          `${errorExperts.join(", ")} could not respond (engine error); ` +
-            `${emptyExperts.join(", ")} returned an empty response. ` +
-            `0 of ${total} experts responded.`,
-          "warn",
-        );
-      }
-    } else if (errorExperts.length > 0 || emptyExperts.length > 0) {
-      const parts: string[] = [];
-      if (errorExperts.length > 0) {
-        parts.push(`${errorExperts.join(", ")} could not respond (engine error)`);
-      }
-      if (emptyExperts.length > 0) {
-        parts.push(`${emptyExperts.join(", ")} returned an empty response`);
-      }
-      renderer.showSystem(
-        `${parts.join("; ")}. ${succeeded} of ${total} experts responded.`,
-        "warn",
-      );
+      // Roll the conversation summary forward when the verbatim window
+      // has overflowed. Best-effort — failures leave the previous
+      // summary in place and the chat continues uninterrupted.
+      await safeMaybeSummarize(contextMgr, session.id, (msg) => renderer.showSystem(msg, "warn"));
     }
-
-    // Roll the conversation summary forward when the verbatim window
-    // has overflowed. Best-effort — failures leave the previous
-    // summary in place and the chat continues uninterrupted.
-    await safeMaybeSummarize(contextMgr, session.id, (msg) =>
-      renderer.showSystem(msg, "warn"),
-    );
+  } finally {
+    unsubscribeInterrupt();
   }
 }
 
@@ -1549,9 +1709,7 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
             buffer = "";
             bufferSlug = undefined;
           }
-          writeError(
-            formatEngineError({ code: "PROVIDER_ERROR", message: evt.message }) + "\n",
-          );
+          writeError(formatEngineError({ code: "PROVIDER_ERROR", message: evt.message }) + "\n");
           break;
         case "panel.assembled":
         case "round.end":
@@ -1625,6 +1783,41 @@ function defaultInputProvider(): ChatInputProvider {
   };
 }
 
+function defaultSubscribeInterrupt(handler: () => void): () => void {
+  process.on("SIGINT", handler);
+  return () => {
+    process.off("SIGINT", handler);
+  };
+}
+
+/**
+ * Build a minimal {@link ExpertDefinition} from the DB-cached library
+ * row when the YAML file is missing. Used as a graceful fallback so an
+ * accidentally-deleted YAML doesn't brick `council chat <slug>` (PRD
+ * §F4 — "Expert YAML deleted mid-conversation"). The returned definition
+ * is intentionally generic: the rich expertise prior is gone with the
+ * file, but slug + displayName + kind survive in the DB so the chat can
+ * proceed with sensible defaults until the YAML is restored.
+ */
+function expertFromCachedRow(row: {
+  readonly slug: string;
+  readonly displayName: string;
+  readonly kind: string;
+}): ExpertDefinition {
+  return {
+    slug: row.slug,
+    displayName: row.displayName,
+    role: "Expert",
+    expertise: {
+      weightedEvidence: ["general knowledge"],
+      referenceCases: [],
+      notExpertIn: [],
+    },
+    epistemicStance: "Reasoned and helpful",
+    kind: row.kind === "persona" ? "persona" : "generic",
+  };
+}
+
 function formatDate(iso: string): string {
   // Minimal display: keep the ISO `YYYY-MM-DD HH:MM` slice for both
   // table and resume banners. Avoids locale variance in tests.
@@ -1639,9 +1832,7 @@ function writeTable(
   rows: readonly (readonly string[])[],
   write: Writer,
 ): void {
-  const widths = header.map((h, i) =>
-    Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)),
-  );
+  const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)));
   const pad = (s: string, w: number): string => s + " ".repeat(Math.max(0, w - s.length));
   write(header.map((h, i) => pad(h, widths[i] ?? 0)).join("  ") + "\n");
   write(widths.map((w) => "-".repeat(w)).join("  ") + "\n");
