@@ -52,6 +52,10 @@ import {
   runWithEngine,
 } from "../run-with-engine.js";
 import { RENDERER_FORMATS, type RendererFormat } from "../renderers/select.js";
+import {
+  createReadlineConfirmProvider,
+  type ConfirmProvider,
+} from "./confirm.js";
 
 const DEFAULT_MAX_ROUNDS = 4;
 const DEFAULT_MAX_WORDS = 250;
@@ -59,15 +63,7 @@ const DEFAULT_MAX_WORDS = 250;
 export { ENGINE_KINDS as CONVENE_ENGINE_KINDS };
 export type ConveneEngineKind = EngineKind;
 
-/**
- * Prompts the user to confirm an action and resolves with their choice.
- * Used to gate the auto-composed panel behind explicit confirmation so
- * that an unexpected meta-prompt result cannot silently start a real
- * (premium-request-consuming) debate.
- */
-export interface ConfirmProvider {
-  confirm(message: string): Promise<boolean>;
-}
+export type { ConfirmProvider } from "./confirm.js";
 
 export interface ConveneCommandDeps {
   readonly engineFactory?: () => CouncilEngine;
@@ -564,30 +560,3 @@ function parseContextScope(raw: string): VisibilityConfig {
   return { scope: raw as (typeof VALID_CONTEXT_SCOPES)[number] };
 }
 
-/**
- * Default {@link ConfirmProvider} backed by Node's `readline`. Reads
- * a single line from stdin and resolves true only when the user typed
- * `y` or `yes` (case-insensitive). Anything else — including an empty
- * line or EOF — resolves false (the safer default for a prompt the user
- * may have missed entirely).
- */
-function createReadlineConfirmProvider(): ConfirmProvider {
-  return {
-    async confirm(message: string): Promise<boolean> {
-      const readline = await import("node:readline");
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stderr,
-      });
-      try {
-        const answer = await new Promise<string>((resolve) => {
-          rl.question(message, (a) => resolve(a));
-        });
-        const normalized = answer.trim().toLowerCase();
-        return normalized === "y" || normalized === "yes";
-      } finally {
-        rl.close();
-      }
-    },
-  };
-}
