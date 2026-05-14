@@ -2870,6 +2870,177 @@ describe("graceful SIGINT handling (PRD §F4)", () => {
 
     expect(out).toMatch(/Conversation saved\. Resume with "council chat dahlia-cto"\./);
   });
+
+  it("panel mode during streaming: aborts current member, persists partial turn, skips remaining members, returns to prompt", async () => {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "duo-sigint", ["panel-a", "panel-b"]);
+
+    let triggerInterrupt: (() => void) | null = null;
+    const subscribeInterrupt = (handler: () => void): (() => void) => {
+      triggerInterrupt = handler;
+      return () => {
+        triggerInterrupt = null;
+      };
+    };
+
+    const chunks = [
+      "First sentence. ",
+      "Second sentence. ",
+      "Third sentence. ",
+      "Fourth sentence.",
+    ];
+    const registered = new Set<string>();
+    const engine: CouncilEngine = {
+      async start(): Promise<void> {
+        /* no-op */
+      },
+      async stop(): Promise<void> {
+        /* no-op */
+      },
+      async addExpert(spec): Promise<void> {
+        registered.add(spec.id);
+      },
+      async removeExpert(): Promise<void> {
+        /* no-op */
+      },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock-model"];
+      },
+      send(opts): AsyncIterable<EngineEvent> {
+        const expertId = opts.expertId;
+        if (!registered.has(expertId)) {
+          throw new Error(`Expert ${expertId} is not registered`);
+        }
+        const controller = new AbortController();
+        if (opts.signal) {
+          if (opts.signal.aborted) controller.abort();
+          else opts.signal.addEventListener("abort", () => controller.abort(), { once: true });
+        }
+        async function* gen(): AsyncGenerator<EngineEvent, void, void> {
+          for (const c of chunks) {
+            await new Promise<void>((resolve) => {
+              const t = setTimeout(resolve, 50);
+              controller.signal.addEventListener(
+                "abort",
+                () => {
+                  clearTimeout(t);
+                  resolve();
+                },
+                { once: true },
+              );
+            });
+            if (controller.signal.aborted) {
+              yield {
+                kind: "error",
+                expertId,
+                error: { code: "ABORTED", message: "aborted", provider: "mock" },
+                recoverable: false,
+              };
+              return;
+            }
+            yield { kind: "message.delta", expertId, text: c };
+          }
+          yield {
+            kind: "message.complete",
+            expertId,
+            response: { latencyMs: 200, tokensIn: 1, tokensOut: 1 },
+          };
+        }
+        return gen();
+      },
+    };
+
+    let out = "";
+    const lines: readonly string[] = ["panel question", "/quit"];
+    let i = 0;
+    const inputProvider: ChatInputProvider = {
+      async readLine(): Promise<string | null> {
+        const line = lines[i++] ?? null;
+        if (line === "panel question") {
+          // First panel member streams; fire interrupt mid-stream.
+          setTimeout(() => {
+            triggerInterrupt?.();
+          }, 80);
+        }
+        return line;
+      },
+      close(): void {
+        /* no-op */
+      },
+    };
+
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () => inputProvider,
+      subscribeInterrupt,
+    });
+    await cmd.parseAsync(["node", "council-chat", "duo-sigint", "--engine", "mock"]);
+
+    expect(out).toMatch(/Response interrupted\. Partial response saved\./);
+
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "duo-sigint");
+      expect(session).toBeDefined();
+      if (!session) throw new Error("expected session");
+      const turns = await repo.getTurns(session.id);
+      const expertTurns = turns.filter((t) => t.role === "expert");
+      // Only the currently-streaming member should have a partial turn;
+      // remaining panelists in the same user-turn must be skipped.
+      expect(expertTurns.length).toBe(1);
+      const partial = expertTurns[0];
+      if (!partial) throw new Error("expected partial turn");
+      expect(partial.content.length).toBeGreaterThan(0);
+      expect(partial.content).toContain("First sentence");
+      expect(partial.content).not.toContain("Fourth sentence");
+    });
+  });
+
+  it("panel mode at the input prompt: prints save-and-resume message and exits cleanly", async () => {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "duo-prompt-sigint", ["panel-a", "panel-b"]);
+
+    let triggerInterrupt: (() => void) | null = null;
+    const subscribeInterrupt = (handler: () => void): (() => void) => {
+      triggerInterrupt = handler;
+      return () => {
+        triggerInterrupt = null;
+      };
+    };
+
+    let out = "";
+    let resolveReadLine: ((v: string | null) => void) | null = null;
+    const inputProvider: ChatInputProvider = {
+      async readLine(): Promise<string | null> {
+        return new Promise<string | null>((resolve) => {
+          resolveReadLine = resolve;
+          setTimeout(() => {
+            triggerInterrupt?.();
+          }, 30);
+        });
+      },
+      close(): void {
+        resolveReadLine?.(null);
+        resolveReadLine = null;
+      },
+    };
+
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => inputProvider,
+      subscribeInterrupt,
+    });
+    await cmd.parseAsync(["node", "council-chat", "duo-prompt-sigint", "--engine", "mock"]);
+
+    expect(out).toMatch(
+      /Conversation saved\. Resume with "council chat duo-prompt-sigint"\./,
+    );
+  });
 });
 
 describe("missing-YAML fallback (PRD §F4)", () => {
