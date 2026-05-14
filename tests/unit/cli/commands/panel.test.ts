@@ -697,6 +697,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
           "arch-review",
           "--path",
           linkDir,
+          "--yes",
         ]);
         expect(captured).toMatch(/✓|linked/i);
         expect(captured).toContain(path.basename(linkDir));
@@ -823,9 +824,8 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
 
         // Folder must NOT be recorded.
         const { createDatabase } = await import("../../../../src/memory/db.js");
-        const { PanelDocumentRepository } = await import(
-          "../../../../src/memory/repositories/panel-document-repo.js"
-        );
+        const { PanelDocumentRepository } =
+          await import("../../../../src/memory/repositories/panel-document-repo.js");
         const db = await createDatabase(path.join(env.home, "council.db"));
         try {
           const repo = new PanelDocumentRepository(db);
@@ -911,9 +911,8 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
         expect(captured).toMatch(/✓|linked/i);
 
         const { createDatabase } = await import("../../../../src/memory/db.js");
-        const { PanelDocumentRepository } = await import(
-          "../../../../src/memory/repositories/panel-document-repo.js"
-        );
+        const { PanelDocumentRepository } =
+          await import("../../../../src/memory/repositories/panel-document-repo.js");
         const db = await createDatabase(path.join(env.home, "council.db"));
         try {
           const repo = new PanelDocumentRepository(db);
@@ -942,6 +941,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
           "arch-review",
           "--path",
           linkDir,
+          "--yes",
         ]);
 
         let captured = "";
@@ -998,6 +998,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
           "arch-review",
           "--path",
           linkDir,
+          "--yes",
         ]);
 
         const db1 = await createDatabase(path.join(env.home, "council.db"));
@@ -1064,6 +1065,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
           "arch-review",
           "--path",
           linkDir,
+          "--yes",
         ]);
 
         const filePath = path.join(linkDir, "a.md");
@@ -1137,6 +1139,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
           "arch-review",
           "--path",
           linkDir,
+          "--yes",
         ]);
 
         const filePath = path.join(linkDir, "a.md");
@@ -1227,6 +1230,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
           "arch-review",
           "--path",
           linkDir,
+          "--yes",
         ]);
 
         const filePathA = path.join(linkDir, "a.md");
