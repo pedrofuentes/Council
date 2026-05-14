@@ -386,6 +386,67 @@ export async function safeMaybeSummarize(
   }
 }
 
+/**
+ * PRD §F4 — surface a one-time advisory the moment a chat session crosses
+ * the configured `chat.longConversationWarning` threshold (default 500
+ * turns). Detects threshold *crossing* (`prev < threshold <= current`) so
+ * the warning fires whether the user turn or an expert turn lands on the
+ * limit, and never re-fires once already past it (e.g. on resumes of an
+ * already-over-threshold session).
+ *
+ * Caller pattern: seed `prevCount` from `repo.getTurnCount(...)` once at
+ * the start of the loop, then update it via the returned value after each
+ * `addTurn` (user and expert) within the iteration.
+ *
+ * Best-effort: a count query failure must not break the chat loop, so we
+ * surface a one-time sanitized warning and disable further checks for the
+ * session by returning the previous count unchanged.
+ */
+async function maybeWarnLongConversation(
+  repo: ChatRepository,
+  chatId: string,
+  config: CouncilConfig,
+  renderer: ChatRenderer,
+  prevCount: number,
+): Promise<number> {
+  const threshold = config.chat.longConversationWarning;
+  let count: number;
+  try {
+    count = await repo.getTurnCount(chatId);
+  } catch (err: unknown) {
+    renderer.showSystem(
+      `Long-conversation check failed (continuing): ${sanitizeErrorMessage(err)}`,
+      "warn",
+    );
+    return prevCount;
+  }
+  if (prevCount < threshold && count >= threshold) {
+    renderer.showSystem(
+      `This conversation has ${count}+ messages. Context quality may degrade. Consider starting a new conversation with --new.`,
+      "info",
+    );
+  }
+  return count;
+}
+
+/**
+ * Roadmap 6.5 — `expert.backgroundProcessing: true` is reserved for a
+ * future async-indexing pipeline. Until that ships, surface a one-time
+ * startup notice so users who toggle the flag don't silently assume it
+ * had any effect. Fires once per chat invocation (1:1 or panel).
+ */
+function warnIfBackgroundProcessingEnabled(
+  config: CouncilConfig,
+  renderer: ChatRenderer,
+): void {
+  if (config.expert.backgroundProcessing) {
+    renderer.showSystem(
+      "Background document processing is not yet implemented. Documents are processed on-demand when you start a chat.",
+      "warn",
+    );
+  }
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // --list
 // ──────────────────────────────────────────────────────────────────────
@@ -591,6 +652,8 @@ async function runExpertChat(opts: ExpertChatOptions): Promise<void> {
     experts: new Map([[expert.slug, expert.displayName]]),
   });
 
+  warnIfBackgroundProcessingEnabled(config, renderer);
+
   const engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(engineKind);
   const inputProvider = (deps.inputProvider ?? defaultInputProvider)();
 
@@ -736,6 +799,8 @@ async function runPanelChat(opts: PanelChatOptions): Promise<void> {
     experts: expertNames,
   });
 
+  warnIfBackgroundProcessingEnabled(config, renderer);
+
   const engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(engineKind);
   const inputProvider = (deps.inputProvider ?? defaultInputProvider)();
 
@@ -866,6 +931,12 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
     model: expertSpec.model,
   });
 
+  // Seed the long-conversation crossing detector from the persisted state
+  // so resumes of an already-over-threshold session don't re-fire the
+  // advisory. Failure to read the count disables the warning for this
+  // session (treated as already past), which matches "best-effort".
+  let prevTurnCount = await repo.getTurnCount(session.id).catch(() => Number.MAX_SAFE_INTEGER);
+
   while (true) {
     renderer.showPrompt();
     const line = await inputProvider.readLine();
@@ -883,6 +954,13 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
     }
 
     await repo.addTurn({ chatId: session.id, role: "user", content: trimmed });
+    prevTurnCount = await maybeWarnLongConversation(
+      repo,
+      session.id,
+      config,
+      renderer,
+      prevTurnCount,
+    );
 
     // Pull the rolling-summary context (summary text + recent verbatim
     // turns) from the manager. The just-inserted user turn is the last
@@ -978,6 +1056,14 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
       expertSlug: expert.slug,
       content: assembled,
     });
+
+    prevTurnCount = await maybeWarnLongConversation(
+      repo,
+      session.id,
+      config,
+      renderer,
+      prevTurnCount,
+    );
 
     // Roll the conversation summary forward when the verbatim window
     // has overflowed. Best-effort — a summarizer failure leaves the
@@ -1134,6 +1220,11 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
     model: summarizerModel,
   });
 
+  // Seed the long-conversation crossing detector — see runInteractiveLoop
+  // for the rationale. A failure to read the count is treated as already
+  // past-threshold so the warning never re-fires for this session.
+  let prevTurnCount = await repo.getTurnCount(session.id).catch(() => Number.MAX_SAFE_INTEGER);
+
   while (true) {
     renderer.showPrompt();
     const line = await inputProvider.readLine();
@@ -1186,6 +1277,13 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
       content: parsed.content,
       isMention,
     });
+    prevTurnCount = await maybeWarnLongConversation(
+      repo,
+      session.id,
+      config,
+      renderer,
+      prevTurnCount,
+    );
 
     // Pull rolling-summary context (summary + recent verbatim window)
     // from the manager. The just-saved user turn is the trailing entry
@@ -1271,6 +1369,13 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
           content: assembled,
           isMention,
         });
+        prevTurnCount = await maybeWarnLongConversation(
+          repo,
+          session.id,
+          config,
+          renderer,
+          prevTurnCount,
+        );
         succeeded += 1;
         continue;
       }
