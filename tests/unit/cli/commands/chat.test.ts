@@ -2556,6 +2556,69 @@ describe("long conversation warning (chat.longConversationWarning)", () => {
     const matches = out.match(/Consider starting a new conversation with --new/g) ?? [];
     expect(matches.length).toBe(1);
   });
+
+  it("1:1 chat: warns when the user turn crosses the threshold (49 -> 50)", async () => {
+    // Regression for Sentinel SNT-20260513-192312 finding 1: previously the
+    // check ran only after the expert turn, so a user message that lands the
+    // session on the threshold (49 -> 50, then expert -> 51) silently skipped
+    // the warning. Crossing detection must catch it.
+    await seedExpert(env);
+    await writeConfigYaml(env, "chat:\n  longConversationWarning: 50\n");
+    await seedTurns(env, "expert", "dahlia-cto", 49, "dahlia-cto");
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["msg1", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+
+    expect(out).toMatch(/Consider starting a new conversation with --new/);
+    const matches = out.match(/Consider starting a new conversation with --new/g) ?? [];
+    expect(matches.length).toBe(1);
+  });
+
+  it("panel chat: warns when the user turn crosses the threshold (49 -> 50)", async () => {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "long-panel-2", ["panel-a", "panel-b"]);
+    await writeConfigYaml(env, "chat:\n  longConversationWarning: 50\n");
+    await seedTurns(env, "panel", "long-panel-2", 49, "panel-a");
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["hello panel", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "long-panel-2", "--engine", "mock"]);
+
+    expect(out).toMatch(/Consider starting a new conversation with --new/);
+    const matches = out.match(/Consider starting a new conversation with --new/g) ?? [];
+    expect(matches.length).toBe(1);
+  });
+
+  it("1:1 chat: does not re-warn when resuming an already-over-threshold session", async () => {
+    // Resuming a session that already crossed the threshold long ago must
+    // not re-fire the advisory on every new turn.
+    await seedExpert(env);
+    await writeConfigYaml(env, "chat:\n  longConversationWarning: 50\n");
+    await seedTurns(env, "expert", "dahlia-cto", 100, "dahlia-cto");
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["msg1", "msg2", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+
+    expect(out).not.toMatch(/Consider starting a new conversation with --new/);
+  });
 });
 
 describe("background processing config warning (expert.backgroundProcessing)", () => {
