@@ -232,7 +232,7 @@ Panel YAML decoupled from inline expert definitions — panels reference experts
 
 ### 4.4 Panel CLI Commands (Updated) ✅
 
-`council panel create | list | inspect | edit | delete` over the slug-referencing panel model. Replaces the older inline-expert workflow. Existing `council panels` listing command kept as a backward-compatible alias.
+`council panel create | list | inspect | edit | delete` over the slug-referencing panel model. Replaces the older inline-expert workflow.
 
 **Key files**: `src/cli/commands/panel.ts`
 
