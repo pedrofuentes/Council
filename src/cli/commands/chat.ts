@@ -387,32 +387,46 @@ export async function safeMaybeSummarize(
 }
 
 /**
- * PRD §F4 — surface a one-time advisory when a chat session crosses the
- * configured `chat.longConversationWarning` threshold (default 500 turns).
- * Fires only on the addTurn that lands the count exactly on the threshold,
- * so the user is nudged once rather than on every subsequent turn.
+ * PRD §F4 — surface a one-time advisory the moment a chat session crosses
+ * the configured `chat.longConversationWarning` threshold (default 500
+ * turns). Detects threshold *crossing* (`prev < threshold <= current`) so
+ * the warning fires whether the user turn or an expert turn lands on the
+ * limit, and never re-fires once already past it (e.g. on resumes of an
+ * already-over-threshold session).
  *
- * Best-effort: a count query failure must not block the chat loop. Failures
- * are silent — the warning is advisory, not load-bearing.
+ * Caller pattern: seed `prevCount` from `repo.getTurnCount(...)` once at
+ * the start of the loop, then update it via the returned value after each
+ * `addTurn` (user and expert) within the iteration.
+ *
+ * Best-effort: a count query failure must not break the chat loop, so we
+ * surface a one-time sanitized warning and disable further checks for the
+ * session by returning the previous count unchanged.
  */
 async function maybeWarnLongConversation(
   repo: ChatRepository,
   chatId: string,
   config: CouncilConfig,
   renderer: ChatRenderer,
-): Promise<void> {
+  prevCount: number,
+): Promise<number> {
   const threshold = config.chat.longConversationWarning;
+  let count: number;
   try {
-    const count = await repo.getTurnCount(chatId);
-    if (count === threshold) {
-      renderer.showSystem(
-        `This conversation has ${count}+ messages. Context quality may degrade. Consider starting a new conversation with --new.`,
-        "info",
-      );
-    }
-  } catch {
-    /* advisory — never block on count failure */
+    count = await repo.getTurnCount(chatId);
+  } catch (err: unknown) {
+    renderer.showSystem(
+      `Long-conversation check failed (continuing): ${sanitizeErrorMessage(err)}`,
+      "warn",
+    );
+    return prevCount;
   }
+  if (prevCount < threshold && count >= threshold) {
+    renderer.showSystem(
+      `This conversation has ${count}+ messages. Context quality may degrade. Consider starting a new conversation with --new.`,
+      "info",
+    );
+  }
+  return count;
 }
 
 /**
@@ -917,6 +931,12 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
     model: expertSpec.model,
   });
 
+  // Seed the long-conversation crossing detector from the persisted state
+  // so resumes of an already-over-threshold session don't re-fire the
+  // advisory. Failure to read the count disables the warning for this
+  // session (treated as already past), which matches "best-effort".
+  let prevTurnCount = await repo.getTurnCount(session.id).catch(() => Number.MAX_SAFE_INTEGER);
+
   while (true) {
     renderer.showPrompt();
     const line = await inputProvider.readLine();
@@ -934,6 +954,13 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
     }
 
     await repo.addTurn({ chatId: session.id, role: "user", content: trimmed });
+    prevTurnCount = await maybeWarnLongConversation(
+      repo,
+      session.id,
+      config,
+      renderer,
+      prevTurnCount,
+    );
 
     // Pull the rolling-summary context (summary text + recent verbatim
     // turns) from the manager. The just-inserted user turn is the last
@@ -1030,7 +1057,13 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
       content: assembled,
     });
 
-    await maybeWarnLongConversation(repo, session.id, config, renderer);
+    prevTurnCount = await maybeWarnLongConversation(
+      repo,
+      session.id,
+      config,
+      renderer,
+      prevTurnCount,
+    );
 
     // Roll the conversation summary forward when the verbatim window
     // has overflowed. Best-effort — a summarizer failure leaves the
@@ -1187,6 +1220,11 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
     model: summarizerModel,
   });
 
+  // Seed the long-conversation crossing detector — see runInteractiveLoop
+  // for the rationale. A failure to read the count is treated as already
+  // past-threshold so the warning never re-fires for this session.
+  let prevTurnCount = await repo.getTurnCount(session.id).catch(() => Number.MAX_SAFE_INTEGER);
+
   while (true) {
     renderer.showPrompt();
     const line = await inputProvider.readLine();
@@ -1239,6 +1277,13 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
       content: parsed.content,
       isMention,
     });
+    prevTurnCount = await maybeWarnLongConversation(
+      repo,
+      session.id,
+      config,
+      renderer,
+      prevTurnCount,
+    );
 
     // Pull rolling-summary context (summary + recent verbatim window)
     // from the manager. The just-saved user turn is the trailing entry
@@ -1324,7 +1369,13 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
           content: assembled,
           isMention,
         });
-        await maybeWarnLongConversation(repo, session.id, config, renderer);
+        prevTurnCount = await maybeWarnLongConversation(
+          repo,
+          session.id,
+          config,
+          renderer,
+          prevTurnCount,
+        );
         succeeded += 1;
         continue;
       }
