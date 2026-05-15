@@ -174,9 +174,7 @@ export class CopilotEngine implements CouncilEngine {
     // Wrap our domain-typed denyAll into the shape the SDK expects.
     // Council's contract is that we deny everything; the SDK uses
     // PermissionDecisionReject with kind: "reject" to express denial.
-    const sdkDenyAll = async (
-      _request: PermissionRequest,
-    ): Promise<{ kind: "reject" }> => {
+    const sdkDenyAll = async (_request: PermissionRequest): Promise<{ kind: "reject" }> => {
       // Run our domain-level handler for telemetry/inspection symmetry.
       await denyAll({ toolName: _request.kind });
       return { kind: "reject" };
@@ -220,8 +218,7 @@ export class CopilotEngine implements CouncilEngine {
       } else {
         const onAbort = (): void => controller.abort();
         options.signal.addEventListener("abort", onAbort, { once: true });
-        removeCallerListener = (): void =>
-          options.signal?.removeEventListener("abort", onAbort);
+        removeCallerListener = (): void => options.signal?.removeEventListener("abort", onAbort);
       }
     }
 
@@ -242,7 +239,11 @@ export class CopilotEngine implements CouncilEngine {
         yield {
           kind: "error",
           expertId,
-          error: { code: "ABORTED", message: "Send was aborted before invocation", provider: "copilot" },
+          error: {
+            code: "ABORTED",
+            message: "Send was aborted before invocation",
+            provider: "copilot",
+          },
           recoverable: false,
         };
         return;
@@ -269,6 +270,15 @@ export class CopilotEngine implements CouncilEngine {
           push({ kind: "message.delta", expertId, text });
         }
       };
+      // SDK v0.3.0 sends complete responses via assistant.message instead
+      // of streaming deltas. Emit as a single message.delta so downstream
+      // consumers (debate, chat) accumulate content identically.
+      const onMessage = (evt: { data: { content: string } }): void => {
+        const text = evt.data?.content ?? "";
+        if (text.length > 0) {
+          push({ kind: "message.delta", expertId, text });
+        }
+      };
       const onIdle = (): void => {
         finish();
       };
@@ -279,6 +289,7 @@ export class CopilotEngine implements CouncilEngine {
       };
 
       record.session.on("assistant.message_delta", onDelta);
+      record.session.on("assistant.message", onMessage);
       record.session.on("session.idle", onIdle);
       record.session.on("session.error", onError);
 
