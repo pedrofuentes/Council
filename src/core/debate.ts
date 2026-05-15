@@ -130,7 +130,22 @@ export class Debate {
     this.#humanInput = humanOpts?.humanInput;
   }
 
-  async *run(prompt: string): AsyncIterable<DebateEvent> {
+  /**
+   * Run the debate.
+   *
+   * `options.signal` (issue #503): when provided, the signal is
+   * forwarded to every `engine.send()` call so a Ctrl+C upstream of
+   * the orchestrator cancels the in-flight LLM request — not merely
+   * the local consumer loop. When the signal aborts, the debate stops
+   * at the next turn boundary and yields a terminal
+   * `{ kind: "debate.end", reason: "aborted" }` event. A pre-aborted
+   * signal short-circuits before any `engine.send()` runs.
+   */
+  async *run(
+    prompt: string,
+    options: { readonly signal?: AbortSignal } = {},
+  ): AsyncIterable<DebateEvent> {
+    const signal = options.signal;
     yield {
       kind: "panel.assembled",
       experts: this.experts.map((e) => ({
@@ -141,16 +156,21 @@ export class Debate {
       })),
     };
 
+    if (signal?.aborted) {
+      yield { kind: "debate.end", reason: "aborted" };
+      return;
+    }
+
     if (this.config.mode === "structured") {
-      yield* this.#runStructured(prompt);
+      yield* this.#runStructured(prompt, signal);
     } else {
-      yield* this.#runFreeform(prompt);
+      yield* this.#runFreeform(prompt, signal);
     }
   }
 
   // -------------- Freeform mode (§1.8 + #212 strategy wiring) --------------
 
-  async *#runFreeform(prompt: string): AsyncGenerator<DebateEvent> {
+  async *#runFreeform(prompt: string, signal?: AbortSignal): AsyncGenerator<DebateEvent> {
     const strategy = this.config.strategy ?? createRoundRobinStrategy();
     const counters: RunCounters = {
       premiumRequests: 0,
@@ -212,6 +232,10 @@ export class Debate {
     };
 
     for (let round = 0; round < this.config.maxRounds; round++) {
+      if (signal?.aborted) {
+        yield { kind: "debate.end", reason: "aborted" };
+        return;
+      }
       // Refresh the per-round LLM summary cache before any planning
       // happens so buildCtx() returns a stable summary for this round.
       // Heuristic mode keeps its sync per-turn behaviour via buildCtx().
@@ -264,6 +288,11 @@ export class Debate {
 
       let seq = 0;
       for (let i = 0; i < initialAssignments.length; i++) {
+        if (signal?.aborted) {
+          yield { kind: "round.end", round };
+          yield { kind: "debate.end", reason: "aborted" };
+          return;
+        }
         const initialAssignment = initialAssignments[i];
         if (initialAssignment === undefined) {
           seq += 1;
@@ -296,6 +325,7 @@ export class Debate {
           round,
           seq,
           counters,
+          signal,
         );
 
         if (captured !== null) {
@@ -316,7 +346,7 @@ export class Debate {
 
   // -------------- Structured mode (§2.2) --------------
 
-  async *#runStructured(topic: string): AsyncGenerator<DebateEvent> {
+  async *#runStructured(topic: string, signal?: AbortSignal): AsyncGenerator<DebateEvent> {
     // Phases that fire. Cross-exam is skipped for single-expert panels
     // since there is no one to cross-examine.
     const phases: readonly DebatePhase[] =
@@ -334,10 +364,19 @@ export class Debate {
     const rebuttalTurns: PriorTurn[] = [];
 
     for (const [phaseIdx, phase] of phases.entries()) {
+      if (signal?.aborted) {
+        yield { kind: "debate.end", reason: "aborted" };
+        return;
+      }
       yield { kind: "round.start", round: phaseIdx, phase };
 
       let seq = 0;
       for (const expert of this.experts) {
+        if (signal?.aborted) {
+          yield { kind: "round.end", round: phaseIdx, phase };
+          yield { kind: "debate.end", reason: "aborted" };
+          return;
+        }
         const phasePrompt = this.#buildPhasePrompt(
           phase,
           topic,
@@ -354,7 +393,7 @@ export class Debate {
           continue;
         }
 
-        const captured = yield* this.#runTurn(expert, phasePrompt, phaseIdx, seq, counters);
+        const captured = yield* this.#runTurn(expert, phasePrompt, phaseIdx, seq, counters, signal);
 
         if (captured !== null) {
           const turn: PriorTurn = {
@@ -419,6 +458,7 @@ export class Debate {
     round: number,
     seq: number,
     counters: RunCounters,
+    signal?: AbortSignal,
   ): AsyncGenerator<DebateEvent, string | null> {
     const isHuman = this.#humanSlugs.has(expert.slug);
     const speakerKind = isHuman ? ("human" as const) : ("expert" as const);
@@ -429,7 +469,7 @@ export class Debate {
       return yield* this.#runHumanTurn(expert, prompt, round, seq, counters);
     }
 
-    return yield* this.#runAiTurn(expert, prompt, round, seq, counters);
+    return yield* this.#runAiTurn(expert, prompt, round, seq, counters, signal);
   }
 
   async *#runHumanTurn(
@@ -498,6 +538,7 @@ export class Debate {
     _round: number,
     _seq: number,
     counters: RunCounters,
+    signal?: AbortSignal,
   ): AsyncGenerator<DebateEvent, string | null> {
 
     const backoffMs = this.config.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS;
@@ -517,7 +558,7 @@ export class Debate {
       lastErrorMessage = "";
 
       try {
-        for await (const evt of this.engine.send({ prompt, expertId: expert.id })) {
+        for await (const evt of this.engine.send({ prompt, expertId: expert.id, ...(signal ? { signal } : {}) })) {
           switch (evt.kind) {
             case "message.delta": {
               content += evt.text;

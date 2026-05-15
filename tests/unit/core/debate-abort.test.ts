@@ -60,10 +60,18 @@ interface RecordedSend {
 class RecordingEngine implements CouncilEngine {
   readonly sends: RecordedSend[] = [];
 
-  async start(): Promise<void> {}
-  async stop(): Promise<void> {}
-  async addExpert(_spec: ExpertSpec): Promise<void> {}
-  async removeExpert(_expertId: string): Promise<void> {}
+  async start(): Promise<void> {
+    /* no-op */
+  }
+  async stop(): Promise<void> {
+    /* no-op */
+  }
+  async addExpert(_spec: ExpertSpec): Promise<void> {
+    /* no-op */
+  }
+  async removeExpert(_expertId: string): Promise<void> {
+    /* no-op */
+  }
   async listModels(): Promise<readonly string[]> {
     return ["mock"];
   }

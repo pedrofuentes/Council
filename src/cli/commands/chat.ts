@@ -1847,8 +1847,10 @@ interface InlineDebateOptions {
    * Issue #466 — signal raised by the chat loop's SIGINT handler when
    * the user hits Ctrl+C during an inline debate. When fired, the
    * function stops iterating debate events, surfaces an "interrupted"
-   * notice, and returns so the chat prompt can resume. The underlying
-   * `Debate` does not accept a signal, so cancellation happens at the
+   * notice, and returns so the chat prompt can resume. The signal is
+   * also forwarded to `Debate.run()` (#503) so the in-flight upstream
+   * `engine.send()` is cancelled — not just the local consumer loop —
+   * preventing wasted token spend. Cancellation also happens at the
    * outer iteration boundary by racing event reads against this signal
    * and calling `iterator.return()` on abort.
    */
@@ -1915,7 +1917,7 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
   // Issue #466 — race each event read against the abort signal so a
   // SIGINT that arrives while we are awaiting the next debate event
   // (or an in-flight engine.send) breaks us out of the loop.
-  const iterator = debate.run(topic)[Symbol.asyncIterator]();
+  const iterator = debate.run(topic, signal ? { signal } : {})[Symbol.asyncIterator]();
   const ABORT_SENTINEL = Symbol("inline-debate-abort");
   let abortListener: (() => void) | undefined;
   const abortPromise = signal
