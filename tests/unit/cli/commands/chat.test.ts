@@ -18,6 +18,7 @@ import {
   buildChatTurnPrompt,
   buildPanelTurnPrompt,
   safeGetContext,
+  createSummarizationGate,
   safeMaybeSummarize,
   safeRetrieveSnippets,
   type ChatInputProvider,
@@ -2236,6 +2237,126 @@ describe("safe wrappers — best-effort failure handling", () => {
     expect(warnings.length).toBe(1);
     expect(warnings[0]).toContain("Loading conversation context failed");
     expect(warnings[0]).toContain("db gone");
+  });
+});
+
+describe("createSummarizationGate — non-blocking background summarization (#459)", () => {
+  it("kickOff returns synchronously without awaiting summarization (prompt is not blocked)", async () => {
+    let resolveWork: ((v: boolean) => void) | undefined;
+    const slow = {
+      maybeSummarize: () =>
+        new Promise<boolean>((resolve) => {
+          resolveWork = resolve;
+        }),
+    };
+    const warnings: string[] = [];
+    const gate = createSummarizationGate(
+      slow as unknown as Parameters<typeof createSummarizationGate>[0],
+      (m) => warnings.push(m),
+    );
+    const start = Date.now();
+    gate.kickOff("chat-id");
+    const elapsed = Date.now() - start;
+    // kickOff must not await the work — it returns immediately. Generous
+    // bound for CI jitter; the slow promise above never resolves until the
+    // test releases it.
+    expect(elapsed).toBeLessThan(50);
+    expect(gate.isInflight()).toBe(true);
+    // Release the in-flight work so the test does not leak a pending promise.
+    resolveWork?.(true);
+    // Drain the now-settled work so the gate state is clean.
+    await new Promise((r) => setImmediate(r));
+    await gate.awaitIfSettled();
+    expect(gate.isInflight()).toBe(false);
+  });
+
+  it("skips concurrent kickOff while one is in-flight (in-flight guard)", async () => {
+    let calls = 0;
+    let resolveWork: ((v: boolean) => void) | undefined;
+    const slow = {
+      maybeSummarize: () => {
+        calls += 1;
+        return new Promise<boolean>((resolve) => {
+          resolveWork = resolve;
+        });
+      },
+    };
+    const gate = createSummarizationGate(
+      slow as unknown as Parameters<typeof createSummarizationGate>[0],
+      () => undefined,
+    );
+    gate.kickOff("chat-id");
+    gate.kickOff("chat-id");
+    gate.kickOff("chat-id");
+    expect(calls).toBe(1);
+    resolveWork?.(true);
+    await new Promise((r) => setImmediate(r));
+    await gate.awaitIfSettled();
+    // After draining, a fresh kickOff is allowed again.
+    gate.kickOff("chat-id");
+    expect(calls).toBe(2);
+    resolveWork?.(true);
+    await new Promise((r) => setImmediate(r));
+    await gate.awaitIfSettled();
+  });
+
+  it("awaitIfSettled awaits a completed background summarization (so the summary is applied before next send)", async () => {
+    let observed = false;
+    const fast = {
+      maybeSummarize: async () => {
+        observed = true;
+        return true;
+      },
+    };
+    const gate = createSummarizationGate(
+      fast as unknown as Parameters<typeof createSummarizationGate>[0],
+      () => undefined,
+    );
+    gate.kickOff("chat-id");
+    // Let the microtask chain run so the inner promise settles.
+    await new Promise((r) => setImmediate(r));
+    expect(observed).toBe(true);
+    await gate.awaitIfSettled();
+    expect(gate.isInflight()).toBe(false);
+  });
+
+  it("awaitIfSettled does not block when the background work has not yet completed", async () => {
+    const slow = {
+      maybeSummarize: () => new Promise<boolean>(() => undefined),
+    };
+    const gate = createSummarizationGate(
+      slow as unknown as Parameters<typeof createSummarizationGate>[0],
+      () => undefined,
+      10_000,
+    );
+    gate.kickOff("chat-id");
+    const start = Date.now();
+    await gate.awaitIfSettled();
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(50);
+    // Still in-flight — the gate did not consume the unsettled promise.
+    expect(gate.isInflight()).toBe(true);
+  });
+
+  it("does not crash the chat loop when background summarization fails (warning surfaced, no rejection)", async () => {
+    const warnings: string[] = [];
+    const broken = {
+      maybeSummarize: async () => {
+        throw new Error("LLM unavailable");
+      },
+    };
+    const gate = createSummarizationGate(
+      broken as unknown as Parameters<typeof createSummarizationGate>[0],
+      (m) => warnings.push(m),
+    );
+    gate.kickOff("chat-id");
+    // Let the rejection settle through safeMaybeSummarize's catch.
+    await new Promise((r) => setImmediate(r));
+    await expect(gate.awaitIfSettled()).resolves.toBeUndefined();
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain("Rolling summary update failed");
+    expect(warnings[0]).toContain("LLM unavailable");
+    expect(gate.isInflight()).toBe(false);
   });
 });
 
