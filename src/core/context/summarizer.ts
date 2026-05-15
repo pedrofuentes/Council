@@ -135,6 +135,7 @@ export async function buildLLMSummary(
   config: SummarizerConfig,
   engine: CouncilEngine,
   model: string,
+  options: { readonly signal?: AbortSignal } = {},
 ): Promise<string> {
   if (turns.length === 0) return "";
   if (currentRound < config.summarizeAfterRound) return "";
@@ -157,7 +158,13 @@ export async function buildLLMSummary(
   let collected = "";
   try {
     const prompt = formatTurnsForLLM(turns);
-    const stream: AsyncIterable<EngineEvent> = engine.send({ prompt, expertId });
+    // #503: forward the parent debate's AbortSignal so a Ctrl+C also
+    // cancels the upstream summarizer request, not just the local read.
+    const stream: AsyncIterable<EngineEvent> = engine.send({
+      prompt,
+      expertId,
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
     for await (const event of stream) {
       if (event.kind === "message.delta") {
         collected += event.text;

@@ -252,6 +252,7 @@ export class Debate {
             contextConfig.summarizer,
             this.engine,
             moderatorModel,
+            signal ? { signal } : {},
           );
         } catch {
           // Defense-in-depth: buildLLMSummary already swallows engine
@@ -341,6 +342,10 @@ export class Debate {
       yield { kind: "round.end", round };
     }
 
+    if (signal?.aborted) {
+      yield { kind: "debate.end", reason: "aborted" };
+      return;
+    }
     yield { kind: "debate.end", reason: "completed" };
   }
 
@@ -412,6 +417,10 @@ export class Debate {
       yield { kind: "round.end", round: phaseIdx, phase };
     }
 
+    if (signal?.aborted) {
+      yield { kind: "debate.end", reason: "aborted" };
+      return;
+    }
     yield { kind: "debate.end", reason: "completed" };
   }
 
@@ -606,13 +615,20 @@ export class Debate {
       }
 
       // Either non-recoverable, or retries exhausted: emit final error.
+      // Exception (#503): when the caller's signal aborted, the engine's
+      // ABORTED error event surfaces here as a non-recoverable failure.
+      // Suppress the synthetic turn-level error so chat does not render
+      // it as a PROVIDER_ERROR — the outer loop will emit
+      // debate.end "aborted" instead.
       turnFailed = true;
-      yield {
-        kind: "error",
-        expertSlug: expert.slug,
-        message: lastErrorMessage,
-        recoverable: lastErrorRecoverable,
-      };
+      if (!signal?.aborted) {
+        yield {
+          kind: "error",
+          expertSlug: expert.slug,
+          message: lastErrorMessage,
+          recoverable: lastErrorRecoverable,
+        };
+      }
       break;
     }
 
