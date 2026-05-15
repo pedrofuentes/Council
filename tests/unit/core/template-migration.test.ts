@@ -479,6 +479,155 @@ describe("template-migration", () => {
       expect(after).toBe(customContent);
     });
 
+    it("serialises concurrent invocations without duplicating data (issue #303)", async () => {
+      // Two `council convene` processes racing on a fresh install both
+      // pass `isMigrationNeeded` and would each try to create the same
+      // expert/panel rows + write the same YAML files. Without locking,
+      // one of them fails with a UNIQUE constraint violation (or worse,
+      // a partially-written YAML file is observed). The migration must
+      // serialise: both promises resolve, exactly one performs the
+      // migration, the other observes the completed state and returns
+      // a zero-count result.
+      const [first, second] = await Promise.all([
+        migrateBuiltInTemplates(dataHome, lib, db, { quiet: true }),
+        migrateBuiltInTemplates(dataHome, lib, db, { quiet: true }),
+      ]);
+
+      // Exactly one of the two performed the migration; the other
+      // entered the critical section after the work was complete and
+      // recorded each panel via the idempotent skip path.
+      const totalPanels = first.panelsMigrated + second.panelsMigrated;
+      const totalExperts = first.expertsExtracted + second.expertsExtracted;
+      expect(totalPanels).toBe(BUILTIN_PANELS.length);
+      expect(totalExperts).toBeGreaterThan(0);
+
+      // Library state must match a single migration — no duplicate rows.
+      const expertRows = await db
+        .selectFrom("expert_library")
+        .selectAll()
+        .execute();
+      const panelRows = await db
+        .selectFrom("panel_library")
+        .selectAll()
+        .execute();
+      const memberRows = await db
+        .selectFrom("panel_members")
+        .selectAll()
+        .execute();
+      expect(panelRows.length).toBe(BUILTIN_PANELS.length);
+      const expertSlugs = new Set(expertRows.map((r) => r.slug));
+      expect(expertSlugs.size).toBe(expertRows.length);
+      const memberKeys = new Set(
+        memberRows.map((r) => `${r.panel_name}::${r.expert_slug}`),
+      );
+      expect(memberKeys.size).toBe(memberRows.length);
+
+      // Lock file must be cleaned up.
+      expect(await exists(path.join(dataHome, ".migration.lock"))).toBe(false);
+    });
+
+    it("releases the lock when the migration throws", async () => {
+      const lockPath = path.join(dataHome, ".migration.lock");
+      const failingLoader: (name: string) => Promise<never> = async () => {
+        throw new Error("boom");
+      };
+      await expect(
+        migrateBuiltInTemplates(dataHome, lib, db, {
+          quiet: true,
+          panelNames: ["architecture-review"],
+          loadPanel: failingLoader,
+        }),
+      ).rejects.toThrow(/boom/);
+      expect(await exists(lockPath)).toBe(false);
+    });
+
+    it("breaks an abandoned lock from a dead PID, even if mtime is fresh", async () => {
+      // Sentinel #303 cycle 1: a 60-second age threshold would let a
+      // contender delete the lock of a still-running migration that
+      // happens to take longer than a minute. Liveness must be
+      // determined by the holder PID, not by mtime alone.
+      const lockPath = path.join(dataHome, ".migration.lock");
+      // PID 2^31-1 is effectively guaranteed not to be allocated on
+      // either Linux (PID_MAX_LIMIT 4194304) or Windows (PIDs are
+      // multiples of 4 below 2^32).
+      const DEAD_PID = 2_147_483_647;
+      await fs.writeFile(
+        lockPath,
+        JSON.stringify({
+          pid: DEAD_PID,
+          hostname: os.hostname(),
+          acquiredAt: new Date().toISOString(),
+        }),
+        "utf-8",
+      );
+      const result = await migrateBuiltInTemplates(dataHome, lib, db, {
+        quiet: true,
+      });
+      expect(result.panelsMigrated + result.expertsExtracted).toBeGreaterThan(0);
+      expect(await exists(lockPath)).toBe(false);
+    });
+
+    it("does not evict a lock owned by a live PID, regardless of age", async () => {
+      const lockPath = path.join(dataHome, ".migration.lock");
+      await fs.writeFile(
+        lockPath,
+        JSON.stringify({
+          pid: process.pid,
+          hostname: os.hostname(),
+          acquiredAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+        }),
+        "utf-8",
+      );
+      const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
+      await fs.utimes(lockPath, tenMinAgo, tenMinAgo);
+      const stillHeld = await Promise.race([
+        migrateBuiltInTemplates(dataHome, lib, db, { quiet: true }).then(
+          () => "completed" as const,
+        ),
+        new Promise<"timeout">((resolve) =>
+          setTimeout(() => resolve("timeout"), 300),
+        ),
+      ]);
+      expect(stillHeld).toBe("timeout");
+      // The lock content must be untouched — proves the contender
+      // didn't unlink-and-replace it.
+      const observed = JSON.parse(await fs.readFile(lockPath, "utf-8")) as {
+        pid: number;
+      };
+      expect(observed.pid).toBe(process.pid);
+      // Cleanup: unlink so the dangling migration promise can proceed
+      // to its own acquire (avoids hanging afterEach on an open handle).
+      await fs.unlink(lockPath);
+    });
+
+    it("does not evict a lock owned by a different host, even with fresh mtime (#303 cycle 2)", async () => {
+      // We cannot prove a remote PID is dead, so the lock must NOT be
+      // evicted on hostname mismatch alone. Otherwise two hosts that
+      // share a `dataHome` (NFS, SMB) re-enter the concurrent-migration
+      // race the original fix was meant to close.
+      const lockPath = path.join(dataHome, ".migration.lock");
+      const remoteOwner = {
+        pid: 12345,
+        hostname: "__not-this-host__",
+        acquiredAt: new Date().toISOString(),
+      };
+      await fs.writeFile(lockPath, JSON.stringify(remoteOwner), "utf-8");
+      const stillHeld = await Promise.race([
+        migrateBuiltInTemplates(dataHome, lib, db, { quiet: true }).then(
+          () => "completed" as const,
+        ),
+        new Promise<"timeout">((resolve) =>
+          setTimeout(() => resolve("timeout"), 300),
+        ),
+      ]);
+      expect(stillHeld).toBe("timeout");
+      const observed = JSON.parse(await fs.readFile(lockPath, "utf-8")) as {
+        hostname: string;
+      };
+      expect(observed.hostname).toBe(remoteOwner.hostname);
+      await fs.unlink(lockPath);
+    });
+
     it("returns accurate counts in MigrationResult", async () => {
       const result = await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
       expect(result.panelsMigrated).toBe(5);

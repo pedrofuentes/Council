@@ -20,6 +20,7 @@
  */
 import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 
 import * as yaml from "yaml";
@@ -116,6 +117,22 @@ export async function migrateBuiltInTemplates(
   library: ExpertLibrary,
   db: CouncilDatabase,
   options: MigrationOptions = {},
+): Promise<MigrationResult> {
+  await fs.mkdir(dataHome, { recursive: true });
+  // Serialise concurrent invocations (issue #303). Once the holder
+  // finishes, contenders re-enter the body — by then the work is
+  // already done and the existing idempotent path simply records
+  // each panel as `skipped`.
+  return withMigrationLock(dataHome, () =>
+    runMigration(dataHome, library, db, options),
+  );
+}
+
+async function runMigration(
+  dataHome: string,
+  library: ExpertLibrary,
+  db: CouncilDatabase,
+  options: MigrationOptions,
 ): Promise<MigrationResult> {
   const expertsDir = path.join(dataHome, "experts");
   const panelsDir = path.join(dataHome, "panels");
@@ -518,4 +535,234 @@ function isENOENT(err: unknown): boolean {
     "code" in err &&
     (err as { code: unknown }).code === "ENOENT"
   );
+}
+
+function isEEXIST(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code: unknown }).code === "EEXIST"
+  );
+}
+
+const LOCK_FILENAME = ".migration.lock";
+// How long (ms) we wait for a peer to release the lock before assuming
+// it crashed. Bounded so a stale lock from a killed `council` process
+// can't block subsequent runs forever.
+const LOCK_WAIT_TIMEOUT_MS = 30_000;
+// How often (ms) we re-check whether the lock file has disappeared.
+const LOCK_POLL_INTERVAL_MS = 50;
+// Last-resort age threshold: if a lock file's content is unreadable or
+// malformed (so we can't probe holder liveness), only break it after
+// this much wall-clock time has elapsed. Set high to avoid breaking
+// long-running migrations from older binaries that wrote a different
+// payload format.
+const LOCK_FALLBACK_STALE_AFTER_MS = 60 * 60 * 1000; // 1 hour
+
+interface LockPayload {
+  readonly pid: number;
+  readonly hostname: string;
+  readonly acquiredAt: string;
+}
+
+/**
+ * Run `fn` while holding an exclusive lock at `<dataHome>/.migration.lock`,
+ * serialising concurrent template migrations across processes (issue #303).
+ *
+ * Uses an atomic `O_CREAT | O_EXCL` open as the lock primitive — the same
+ * mechanism `proper-lockfile` uses — which is safe across local Node.js
+ * processes on every supported filesystem. SQLite-level locks would not
+ * suffice here because the migration also touches the filesystem
+ * (`<dataHome>/experts/*.yaml`, `<dataHome>/panels/*.yaml`).
+ *
+ * On contention this function waits (polling) for the holder to release
+ * the lock, then runs `fn` itself. The lock is always removed in a
+ * `finally` block so a thrown error from `fn` does not leave behind a
+ * file that would block future runs.
+ *
+ * Stale-lock detection probes the recorded holder PID (and hostname)
+ * for liveness; we never break a lock by age alone while the owning
+ * process is still running. This is what blocks the regression Sentinel
+ * called out in cycle 1 of the #303 review: a migration that legitimately
+ * takes longer than any age threshold would otherwise have its lock
+ * deleted by a contender, reintroducing the concurrent-write race.
+ */
+async function withMigrationLock<T>(
+  dataHome: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const lockPath = path.join(dataHome, LOCK_FILENAME);
+  await acquireLock(lockPath);
+  try {
+    return await fn();
+  } finally {
+    await releaseLock(lockPath);
+  }
+}
+
+async function acquireLock(lockPath: string): Promise<void> {
+  const deadline = Date.now() + LOCK_WAIT_TIMEOUT_MS;
+  const payload: LockPayload = {
+    pid: process.pid,
+    hostname: os.hostname(),
+    acquiredAt: new Date().toISOString(),
+  };
+  const serialised = JSON.stringify(payload);
+  for (;;) {
+    try {
+      const handle = await fs.open(lockPath, "wx");
+      try {
+        await handle.writeFile(serialised, "utf-8");
+      } finally {
+        await handle.close();
+      }
+      return;
+    } catch (err: unknown) {
+      if (!isEEXIST(err)) throw err;
+      if (await tryBreakStaleLock(lockPath)) continue;
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `template-migration: timed out after ${LOCK_WAIT_TIMEOUT_MS}ms waiting for migration lock at ${lockPath}`,
+        );
+      }
+      await sleep(LOCK_POLL_INTERVAL_MS);
+    }
+  }
+}
+
+async function tryBreakStaleLock(lockPath: string): Promise<boolean> {
+  let content: string;
+  let mtimeMs: number;
+  try {
+    [content, mtimeMs] = await Promise.all([
+      fs.readFile(lockPath, "utf-8"),
+      fs.stat(lockPath).then((s) => s.mtimeMs),
+    ]);
+  } catch (err: unknown) {
+    // Lock vanished between our failed open and the read — caller can
+    // retry the open immediately.
+    if (isENOENT(err)) return true;
+    throw err;
+  }
+
+  const payload = parseLockPayload(content);
+  if (payload === null) {
+    // Unreadable/malformed lock from an older binary or partial write.
+    // Fall back to age-based breaking with a very generous threshold.
+    return await maybeEvictByAge(lockPath, mtimeMs);
+  }
+
+  const liveness = holderLiveness(payload);
+  if (liveness === "dead") {
+    return await unlinkIfExists(lockPath);
+  }
+  if (liveness === "unknown") {
+    // Cross-host PID — we cannot probe liveness from here, so we
+    // refuse to evict on identity alone (Sentinel #303 cycle 2). The
+    // lock remains until the conservative age fallback elapses,
+    // which prevents NFS/SMB-shared dataHomes from deadlocking
+    // forever if a remote owner truly went away.
+    return await maybeEvictByAge(lockPath, mtimeMs);
+  }
+  return false;
+}
+
+async function maybeEvictByAge(
+  lockPath: string,
+  mtimeMs: number,
+): Promise<boolean> {
+  if (Date.now() - mtimeMs > LOCK_FALLBACK_STALE_AFTER_MS) {
+    return await unlinkIfExists(lockPath);
+  }
+  return false;
+}
+
+function parseLockPayload(content: string): LockPayload | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(content);
+  } catch {
+    return null;
+  }
+  if (
+    typeof raw !== "object" ||
+    raw === null ||
+    typeof (raw as Record<string, unknown>)["pid"] !== "number" ||
+    typeof (raw as Record<string, unknown>)["hostname"] !== "string"
+  ) {
+    return null;
+  }
+  const r = raw as Record<string, unknown>;
+  return {
+    pid: r["pid"] as number,
+    hostname: r["hostname"] as string,
+    acquiredAt: typeof r["acquiredAt"] === "string" ? (r["acquiredAt"] as string) : "",
+  };
+}
+
+/**
+ * Best-effort liveness probe.
+ *
+ * Returns:
+ *   - "alive"   the holder is definitely still running
+ *   - "dead"    the holder is definitely gone (safe to evict)
+ *   - "unknown" we cannot prove either way — the caller should fall
+ *               back to the conservative age threshold rather than
+ *               evict immediately. This includes cross-host holders
+ *               (a PID number from another machine is meaningless on
+ *               this one) and other unexpected probe errors.
+ *
+ * On the local host we use `process.kill(pid, 0)`, which never sends a
+ * real signal and resolves to:
+ *   - success → process exists and we have permission → "alive"
+ *   - EPERM   → process exists but we lack permission → "alive"
+ *   - ESRCH   → no such process → "dead"
+ * Any other errno code is treated as "unknown".
+ */
+type Liveness = "alive" | "dead" | "unknown";
+
+function holderLiveness(payload: LockPayload): Liveness {
+  if (payload.hostname !== os.hostname()) {
+    // Different host. PID numbers don't apply to us — we cannot prove
+    // the remote process is dead, so refuse to evict on identity
+    // alone. The age-based fallback in maybeEvictByAge() still
+    // ensures a truly abandoned cross-host lock is recoverable.
+    return "unknown";
+  }
+  if (!Number.isInteger(payload.pid) || payload.pid <= 0) {
+    return "unknown";
+  }
+  try {
+    process.kill(payload.pid, 0);
+    return "alive";
+  } catch (err: unknown) {
+    if (typeof err === "object" && err !== null && "code" in err) {
+      const code = (err as { code: unknown }).code;
+      if (code === "ESRCH") return "dead";
+      if (code === "EPERM") return "alive";
+    }
+    return "unknown";
+  }
+}
+
+async function unlinkIfExists(p: string): Promise<boolean> {
+  try {
+    await fs.unlink(p);
+  } catch (err: unknown) {
+    if (!isENOENT(err)) throw err;
+  }
+  return true;
+}
+
+async function releaseLock(lockPath: string): Promise<void> {
+  try {
+    await fs.unlink(lockPath);
+  } catch (err: unknown) {
+    if (!isENOENT(err)) throw err;
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
