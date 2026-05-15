@@ -1,20 +1,5 @@
 /**
  * `council doctor` — diagnose the local Council setup.
- *
- * Verifies prerequisites that must hold for `council convene` to work:
- *   - Node.js 20+ (basic runtime check)
- *   - Council home directory exists (or can be created)
- *   - SQLite database is openable (creates a temp DB to confirm)
- *   - @github/copilot-sdk is importable (presence check)
- *   - Available disk space sanity check
- *
- * Each check has a status (pass / fail / warn) and a remediation hint.
- * Exits 0 if all checks pass; exits 1 if any check fails so CI scripts
- * can use this as a smoke test.
- *
- * Authentication check (`copilot auth login` status) is intentionally
- * deferred — it requires invoking the Copilot CLI which has side effects.
- * Tracked as a follow-up issue.
  */
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -22,10 +7,19 @@ import * as path from "node:path";
 
 import { Command } from "commander";
 
-import { getCouncilHome } from "../../config/index.js";
+import { getCouncilHome, loadConfig } from "../../config/index.js";
 import { pingProviderHealth } from "../../engine/copilot/health.js";
+import { KNOWN_MODELS } from "../../engine/models.js";
 
+import { probeCopilotModel } from "./doctor-online-probe.js";
 import { defaultWriter, type Writer } from "./writer.js";
+
+const CONFIG_FILE = "config.yaml";
+const MODEL_GROUPS = [
+  { label: "Anthropic", prefix: "claude-" },
+  { label: "OpenAI", prefix: "gpt-" },
+  { label: "Google", prefix: "gemini-" },
+] as const;
 
 interface CheckResult {
   readonly name: string;
@@ -33,10 +27,24 @@ interface CheckResult {
   readonly detail: string;
 }
 
+interface DoctorOptions {
+  readonly online?: boolean;
+  readonly models?: boolean;
+}
+
+export interface DoctorDeps {
+  readonly write?: Writer;
+  readonly onlineProbe?: (model: string) => Promise<{ ok: boolean; detail: string }>;
+}
+
 async function checkNodeVersion(): Promise<CheckResult> {
   const major = Number.parseInt(process.versions.node.split(".")[0] ?? "0", 10);
   if (major >= 20) {
-    return { name: "Node.js version", status: "pass", detail: `v${process.versions.node} (>= 20 required)` };
+    return {
+      name: "Node.js version",
+      status: "pass",
+      detail: `v${process.versions.node} (>= 20 required)`,
+    };
   }
   return {
     name: "Node.js version",
@@ -54,32 +62,28 @@ async function checkCouncilHome(): Promise<CheckResult> {
     return {
       name: "Council home",
       status: "fail",
-      detail: `cannot create ${home}: ${err instanceof Error ? err.message : String(err)}`,
+      detail: `cannot create ${home}: ${formatError(err)}`,
     };
   }
 }
 
 async function checkSqlite(): Promise<CheckResult> {
-  // Try opening an in-memory libsql DB. If this fails, the WASM bundle
-  // is broken or the runtime can't load it.
   try {
     const { createClient } = await import("@libsql/client");
-    const c = createClient({ url: ":memory:" });
-    await c.execute("SELECT 1");
-    c.close();
+    const client = createClient({ url: ":memory:" });
+    await client.execute("SELECT 1");
+    client.close();
     return { name: "SQLite (libsql)", status: "pass", detail: "in-memory DB OK" };
   } catch (err: unknown) {
     return {
       name: "SQLite (libsql)",
       status: "fail",
-      detail: err instanceof Error ? err.message : String(err),
+      detail: formatError(err),
     };
   }
 }
 
 async function checkCopilotSdk(): Promise<CheckResult> {
-  // Probe via the engine seam — keeps SDK imports inside src/engine/copilot/
-  // per AGENTS.md §🚫 NEVER. Does NOT start a client or hit the network.
   const health = pingProviderHealth();
   return {
     name: "Copilot SDK",
@@ -89,7 +93,6 @@ async function checkCopilotSdk(): Promise<CheckResult> {
 }
 
 async function checkDiskSpace(): Promise<CheckResult> {
-  // Cheap check: write a small file under the council home to ensure FS is writable.
   const home = getCouncilHome();
   const testFile = path.join(home, ".doctor-write-test");
   try {
@@ -100,9 +103,57 @@ async function checkDiskSpace(): Promise<CheckResult> {
     return {
       name: "Disk write",
       status: "fail",
-      detail: `cannot write under ${home}: ${err instanceof Error ? err.message : String(err)}`,
+      detail: `cannot write under ${home}: ${formatError(err)}`,
     };
   }
+}
+
+async function checkDefaultModelAccess(
+  onlineProbe: NonNullable<DoctorDeps["onlineProbe"]>,
+): Promise<CheckResult> {
+  const configPath = getConfigPath();
+
+  let model: string;
+  try {
+    const config = await loadConfig();
+    model = config.defaults.model;
+  } catch (err: unknown) {
+    return {
+      name: "Default model access",
+      status: "fail",
+      detail: `could not load config for online probe: ${formatError(err)}. Try changing defaults.model in ${configPath}`,
+    };
+  }
+
+  try {
+    const probe = await onlineProbe(model);
+    if (probe.ok) {
+      return {
+        name: "Default model access",
+        status: "pass",
+        detail: `Default model (${model}) is accessible`,
+      };
+    }
+    return {
+      name: "Default model access",
+      status: "fail",
+      detail: `Default model (${model}) is not accessible: ${probe.detail}. Try changing defaults.model in ${configPath}`,
+    };
+  } catch (err: unknown) {
+    return {
+      name: "Default model access",
+      status: "fail",
+      detail: `Default model (${model}) probe failed: ${formatError(err)}. Try changing defaults.model in ${configPath}`,
+    };
+  }
+}
+
+function getConfigPath(): string {
+  return path.join(getCouncilHome(), CONFIG_FILE);
+}
+
+function formatError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 function statusIcon(status: CheckResult["status"]): string {
@@ -116,18 +167,51 @@ function statusIcon(status: CheckResult["status"]): string {
   }
 }
 
-export function buildDoctorCommand(write: Writer = defaultWriter): Command {
+function writeKnownModels(write: Writer, models: readonly string[]): void {
+  write("Known models:\n");
+  const labelWidth = Math.max(...MODEL_GROUPS.map((group) => group.label.length));
+  for (const group of MODEL_GROUPS) {
+    const groupedModels = models.filter((model) => model.startsWith(group.prefix));
+    if (groupedModels.length === 0) {
+      continue;
+    }
+    write(`  ${group.label.padEnd(labelWidth, " ")}: ${groupedModels.join(", ")}\n`);
+  }
+  write("\n");
+  write("Note: Availability depends on your Copilot tier. Use --online to check.\n");
+}
+
+function isWriter(input: DoctorDeps | Writer): input is Writer {
+  return typeof input === "function";
+}
+
+function resolveDoctorDeps(input: DoctorDeps | Writer): Required<DoctorDeps> {
+  const deps = isWriter(input) ? { write: input } : input;
+  return {
+    write: deps.write ?? defaultWriter,
+    onlineProbe: deps.onlineProbe ?? probeCopilotModel,
+  };
+}
+
+export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
+  const { write, onlineProbe } = resolveDoctorDeps(input);
   const cmd = new Command("doctor");
   cmd
     .description("Diagnose Council setup (Node, libsql, Copilot SDK, disk)")
-    .action(async () => {
-      const checks: readonly (() => Promise<CheckResult>)[] = [
+    .option("--online", "Probe Copilot for model availability (requires auth)")
+    .option("--models", "List known Copilot model identifiers")
+    .action(async (options: DoctorOptions) => {
+      const checks: (() => Promise<CheckResult>)[] = [
         checkNodeVersion,
         checkCouncilHome,
         checkSqlite,
         checkCopilotSdk,
         checkDiskSpace,
       ];
+
+      if (options.online) {
+        checks.push(() => checkDefaultModelAccess(onlineProbe));
+      }
 
       write("Council Doctor\n");
       write("═".repeat(40) + "\n");
@@ -137,17 +221,25 @@ export function buildDoctorCommand(write: Writer = defaultWriter): Command {
       let allPassed = true;
       for (const run of checks) {
         const result = await run();
-        if (result.status === "fail") allPassed = false;
+        if (result.status === "fail") {
+          allPassed = false;
+        }
         write(`${statusIcon(result.status)} ${result.name}\n   ${result.detail}\n`);
+      }
+
+      if (options.models) {
+        write("\n");
+        writeKnownModels(write, KNOWN_MODELS);
       }
 
       write("\n");
       if (allPassed) {
         write("All checks passed. Council is ready to convene.\n");
-      } else {
-        write("Some checks failed. See output above for remediation.\n");
-        cmd.error("doctor checks failed", { exitCode: 1, code: "council.doctor.failed" });
+        return;
       }
+
+      write("Some checks failed. See output above for remediation.\n");
+      cmd.error("doctor checks failed", { exitCode: 1, code: "council.doctor.failed" });
     });
   return cmd;
 }
