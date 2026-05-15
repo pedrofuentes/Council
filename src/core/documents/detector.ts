@@ -92,6 +92,25 @@ export interface DetectDocumentChangesOptions {
    */
   readonly _lstatOverride?: (p: string) => Promise<Stats>;
   /**
+   * Test seam (#374) — replace `fs.lstat` for the root-identity
+   * verification (pre-readdir + post-readdir) only. Distinct from
+   * `_lstatOverride` (which targets per-file stats inside the loop)
+   * so tests can simulate a directory swap during the scan window
+   * without disturbing per-file stat behaviour. Production callers
+   * leave this undefined.
+   */
+  readonly _rootLstatOverride?: (p: string) => Promise<Stats>;
+  /**
+   * Test seam (#374) — replace `fs.open` for the directory-fd anchor
+   * step only. Lets tests simulate (a) the Windows graceful-fallback
+   * path (e.g. throwing `EISDIR`/`EACCES`), (b) an unexpected open
+   * failure that MUST be rethrown rather than silently downgraded,
+   * and (c) a `FileHandle` whose `.stat()` rejects after a successful
+   * open (verifies the handle is still closed). Production callers
+   * leave this undefined.
+   */
+  readonly _rootOpenOverride?: (p: string) => Promise<fs.FileHandle>;
+  /**
    * Optional warning sink (#342). Invoked once per individual file
    * skipped due to a recoverable, per-file error (lstat failure,
    * fd-based read failure) so callers can surface diagnostics to the
@@ -167,11 +186,98 @@ export async function detectDocumentChanges(
   options: DetectDocumentChangesOptions = {},
 ): Promise<DetectionResult> {
   const supported = new Set(supportedFormats.map(normalizeExt));
+  const rootLstat = options._rootLstatOverride ?? fs.lstat;
+
+  // ── Issue #374: fd-anchored root validation against scan-window TOCTOU.
+  // Capture the docs root's identity (dev/ino) BEFORE readdir so we can
+  // verify after readdir that the directory we enumerated is the same
+  // inode the caller validated. Where the platform supports it (POSIX),
+  // we additionally bind a file descriptor to the directory via
+  // `fs.open()` and stat through the fd: this anchors the identity
+  // check to a kernel handle rather than the path string, closing the
+  // window where a swap could land between two path-based lstat calls.
+  // Windows generally rejects `fs.open(<dir>)` with EISDIR/EACCES; we
+  // treat that as a soft-fail and rely on the pre/post lstat compare,
+  // matching the issue requirement to "handle gracefully" on platforms
+  // where directory fds aren't supported. Skipped entirely when the
+  // caller did not opt into confinement (back-compat).
+  let rootIdentity: { dev: number; ino: number } | null = null;
+  let rootHandle: fs.FileHandle | null = null;
+  if (options.confinementRoot !== undefined) {
+    try {
+      const pre = await rootLstat(docsPath);
+      rootIdentity = { dev: pre.dev, ino: pre.ino };
+    } catch {
+      // Pre-stat failures fall through — `fs.readdir` below will
+      // surface the same condition with the standard error wrapping
+      // (#341) and the right ENOENT short-circuit.
+    }
+    // Open-failure handling is INTENTIONALLY isolated from post-open
+    // verification: an `fs.open(<dir>)` rejection is a "directory cannot
+    // be opened for read" signal that a subset of platforms (Windows +
+    // some POSIX configurations) emit normally and we degrade
+    // gracefully on. A `rootHandle.stat()` failure AFTER open succeeded
+    // is fundamentally different — the fd is already bound, so a stat
+    // failure is a verification failure, not a directory-open failure;
+    // funneling it through the open allowlist would silently downgrade
+    // legitimate verification errors (Sentinel cycle 2 finding).
+    const open = options._rootOpenOverride ?? fs.open;
+    try {
+      rootHandle = await open(docsPath);
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException).code;
+      const isExpectedDirOpenFailure =
+        code === "EISDIR" ||
+        code === "EACCES" ||
+        code === "EPERM" ||
+        code === "ENOTSUP" ||
+        code === "EINVAL";
+      if (!isExpectedDirOpenFailure) {
+        // Sentinel #516 finding #1: operational failures (EMFILE, EIO,
+        // etc.) MUST surface to the caller — silently downgrading them
+        // would weaken the advertised fd-anchored hardening AND hide a
+        // real failure.
+        throw err;
+      }
+      rootHandle = null;
+    }
+
+    if (rootHandle !== null) {
+      let fdStat;
+      try {
+        fdStat = await rootHandle.stat();
+      } catch (statErr) {
+        // Sentinel #516 finding #2: stat() failure after a successful
+        // open MUST close the handle to prevent fd leaks; rethrow the
+        // original error so the caller sees the real cause. NOT
+        // suppressed by the open allowlist (Sentinel cycle 2 finding).
+        await rootHandle.close().catch(() => { /* best-effort close */ });
+        rootHandle = null;
+        throw statErr;
+      }
+      if (
+        rootIdentity !== null &&
+        (fdStat.dev !== rootIdentity.dev || fdStat.ino !== rootIdentity.ino)
+      ) {
+        await rootHandle.close().catch(() => { /* best-effort close */ });
+        rootHandle = null;
+        throw new Error(
+          `document scan: root '${docsPath}' identity changed between lstat and open (TOCTOU)`,
+        );
+      }
+      // Adopt fd-stat as the authoritative identity if pre-lstat was
+      // missing — the fd is bound to a specific inode at this instant.
+      if (rootIdentity === null) {
+        rootIdentity = { dev: fdStat.dev, ino: fdStat.ino };
+      }
+    }
+  }
 
   let entries: string[];
   try {
     entries = await fs.readdir(docsPath, { recursive: true });
   } catch (err: unknown) {
+    if (rootHandle !== null) await rootHandle.close().catch(() => { /* best-effort close */ });
     // Only treat truly-missing directories as empty; surface any other
     // filesystem error (permission denied, ENOTDIR, etc.) so callers
     // see a real problem instead of mistaking it for "no documents".
@@ -194,6 +300,37 @@ export async function detectDocumentChanges(
       { cause: err },
     );
   }
+
+  // Post-readdir verification: if the root's inode changed between
+  // pre-validation and now, the directory we enumerated is NOT the one
+  // the caller validated. Refuse the result — returning entries from a
+  // swapped directory would let an attacker redirect the scan into an
+  // attacker-chosen tree (issue #374). Best-effort close the fd first.
+  if (rootIdentity !== null) {
+    try {
+      const post = await rootLstat(docsPath);
+      if (post.dev !== rootIdentity.dev || post.ino !== rootIdentity.ino) {
+        if (rootHandle !== null) await rootHandle.close().catch(() => { /* best-effort close */ });
+        throw new Error(
+          `document scan: root '${docsPath}' identity changed during scan (TOCTOU)`,
+        );
+      }
+    } catch (err: unknown) {
+      // A post-stat failure on a path that just enumerated successfully
+      // is suspicious. Re-throw identity-change errors verbatim;
+      // otherwise wrap so callers see WHY post-validation failed.
+      if (rootHandle !== null) await rootHandle.close().catch(() => { /* best-effort close */ });
+      if (err instanceof Error && err.message.includes("identity changed during scan")) {
+        throw err;
+      }
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `document scan: post-scan root validation failed for '${docsPath}': ${detail}`,
+        { cause: err },
+      );
+    }
+  }
+  if (rootHandle !== null) await rootHandle.close().catch(() => { /* best-effort close */ });
 
   const lstat = options._lstatOverride ?? fs.lstat;
 

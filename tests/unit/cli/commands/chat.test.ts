@@ -30,6 +30,8 @@ import type { ExpertDefinition } from "../../../../src/core/expert.js";
 import type { ChatTurn } from "../../../../src/core/chat/chat-session.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import { ChatRepository } from "../../../../src/memory/repositories/chat-repository.js";
+import { Debate } from "../../../../src/core/debate.js";
+import type { DebateEvent } from "../../../../src/core/debate.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
 import type { CouncilEngine } from "../../../../src/engine/index.js";
 import type { EngineEvent } from "../../../../src/engine/types.js";
@@ -3896,6 +3898,113 @@ describe("graceful SIGINT handling (PRD §F4)", () => {
     // must still recover and consume `/quit`.
     expect(out).toMatch(
       /Could not persist partial panel-b response \(\d+ bytes\) after interruption/i,
+    );
+    expect(out).toMatch(/Structured deliberation interrupted/i);
+    expect(out).toMatch(/Conversation saved\./);
+  });
+
+  // Issue #505 — when the debate iterator's `return()` rejects during
+  // SIGINT cleanup, the chat loop must surface a visible warning rather
+  // than swallowing the rejection silently.
+  it("@convene Ctrl+C with rejecting iterator.return() surfaces a cleanup warning", async () => {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "deb-retfail", ["panel-a", "panel-b"]);
+
+    let triggerInterrupt: (() => void) | null = null;
+    const subscribeInterrupt = (handler: () => void): (() => void) => {
+      triggerInterrupt = handler;
+      return () => {
+        triggerInterrupt = null;
+      };
+    };
+
+    // The engine is irrelevant — we replace Debate.run() entirely with
+    // an async iterable whose iterator never yields (next() pends until
+    // the abort signal wins the Promise.race) and whose return() — the
+    // cleanup hook the chat loop calls on abort — rejects. This drives
+    // the iterator.return().catch() branch in runInlineDebate.
+    const engine: CouncilEngine = {
+      async start(): Promise<void> {
+        /* no-op */
+      },
+      async stop(): Promise<void> {
+        /* no-op */
+      },
+      async addExpert(): Promise<void> {
+        /* no-op */
+      },
+      async removeExpert(): Promise<void> {
+        /* no-op */
+      },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock-model"];
+      },
+      send(): AsyncIterable<EngineEvent> {
+        async function* gen(): AsyncGenerator<EngineEvent, void, void> {
+          /* no events — never reached because Debate.run is stubbed */
+        }
+        return gen();
+      },
+    };
+
+    let nextCalls = 0;
+    const runSpy = vi
+      .spyOn(Debate.prototype, "run")
+      .mockImplementation(function (this: Debate): AsyncIterable<DebateEvent> {
+        return {
+          [Symbol.asyncIterator](): AsyncIterator<DebateEvent> {
+            return {
+              next(): Promise<IteratorResult<DebateEvent>> {
+                nextCalls += 1;
+                // First poll: schedule the SIGINT so the abort wins
+                // the Promise.race in runInlineDebate. Then return a
+                // promise that never resolves — the abort path is the
+                // only way out of the loop.
+                if (nextCalls === 1) {
+                  setTimeout(() => triggerInterrupt?.(), 5);
+                }
+                return new Promise<IteratorResult<DebateEvent>>(() => {
+                  /* never resolves */
+                });
+              },
+              return(): Promise<IteratorResult<DebateEvent>> {
+                return Promise.reject(new Error("simulated cleanup failure"));
+              },
+            };
+          },
+        };
+      });
+
+    let out = "";
+    const lines: readonly string[] = ["@convene should we ship?", "/quit"];
+    let i = 0;
+    const inputProvider: ChatInputProvider = {
+      async readLine(): Promise<string | null> {
+        return lines[i++] ?? null;
+      },
+      close(): void {
+        /* no-op */
+      },
+    };
+
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () => inputProvider,
+      subscribeInterrupt,
+    });
+    try {
+      await cmd.parseAsync(["node", "council-chat", "deb-retfail", "--engine", "mock"]);
+    } finally {
+      runSpy.mockRestore();
+    }
+
+    // The cleanup-failure warning must surface (issue #505) and the
+    // chat must still recover and consume `/quit`.
+    expect(out).toMatch(
+      /Debate generator cleanup after interruption failed:\s*simulated cleanup failure/i,
     );
     expect(out).toMatch(/Structured deliberation interrupted/i);
     expect(out).toMatch(/Conversation saved\./);
