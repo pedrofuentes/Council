@@ -38,6 +38,7 @@ import { createDatabase } from "../../memory/db.js";
 import { PanelRepository } from "../../memory/repositories/panels.js";
 import { loadTranscript, type TranscriptDocument } from "../../memory/transcript.js";
 
+import { CliUserError } from "../cli-user-error.js";
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 import { ENGINE_KINDS, type EngineKind, makeEngineFromKind } from "../run-with-engine.js";
 import { formatEngineError } from "../error-mapper.js";
@@ -195,7 +196,7 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
           raw_response = await collectResponse(engine, synthesizerId, prompt);
         } catch (err: unknown) {
           writeError("\n" + formatEngineError(err as Error) + "\n\n");
-          throw err;
+          throw new CliUserError(err instanceof Error ? err.message : String(err));
         } finally {
           await engine.stop().catch((err: unknown) => {
             const msg = err instanceof Error ? err.message : String(err);
@@ -377,19 +378,13 @@ export function parseSynthesisResponse(raw: string): z.infer<typeof SynthesisSch
     json = JSON.parse(candidate);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `Failed to parse synthesizer response as JSON: ${msg}. Raw response: ${truncate(raw, 200)}`,
-    );
+    throw new Error(`Failed to parse synthesizer response as JSON: ${msg}`);
   }
   const result = SynthesisSchema.safeParse(json);
   if (!result.success) {
     throw new Error(`Synthesizer response did not match expected schema: ${result.error.message}`);
   }
   return result.data;
-}
-
-function truncate(s: string, n: number): string {
-  return s.length <= n ? s : s.slice(0, n) + "...";
 }
 
 function renderPlain(out: ConcludeOutput): string {

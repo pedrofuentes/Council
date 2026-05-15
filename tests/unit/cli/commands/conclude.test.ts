@@ -16,6 +16,7 @@ import {
   buildConcludeCommand,
   type ConcludeOutput,
 } from "../../../../src/cli/commands/conclude.js";
+import { CliUserError } from "../../../../src/cli/cli-user-error.js";
 import { buildProgram } from "../../../../src/bin/council.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
 import { createDatabase } from "../../../../src/memory/db.js";
@@ -604,8 +605,7 @@ describe("buildConcludeCommand", () => {
     // writeError should have been called with the engine diagnostic
     expect(errOutput).toMatch(/engine blew up|internal/i);
     // The thrown error should be a CliUserError (message already written)
-    expect(thrownErr).toBeDefined();
-    expect(thrownErr!.constructor.name).toBe("CliUserError");
+    expect(thrownErr).toBeInstanceOf(CliUserError);
   });
 
   it("buildProgram() registers the conclude command", () => {
