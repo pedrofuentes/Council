@@ -195,6 +195,114 @@ describe("detectDocumentChanges", () => {
     });
   });
 
+  // ── Issue #339: symlink traversal guard (no confinementRoot) ──────
+  describe("symlink traversal (#339)", () => {
+    it("rejects symlinks pointing outside the project when no confinementRoot is set", async () => {
+      const outside = await fs.mkdtemp(path.join(os.tmpdir(), "council-339-outside-"));
+      try {
+        const secret = path.join(outside, "secret.md");
+        await fs.writeFile(secret, "SECRET");
+        try {
+          await fs.symlink(secret, path.join(dir, "trap.md"));
+        } catch {
+          // Symlinks not permitted on this OS/account (Windows w/o
+          // Developer Mode or admin — see issue #452). Skip gracefully.
+          return;
+        }
+        const warnings: string[] = [];
+        const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+          onWarning: (msg) => warnings.push(msg),
+        });
+        // Symlink must NOT be classified as a normal file — its bytes
+        // must never have been hashed (the file lives outside the
+        // project root).
+        expect(result.newFiles.some((f) => f.filename === "trap.md")).toBe(false);
+        expect(result.modifiedFiles.some((f) => f.filename === "trap.md")).toBe(false);
+        expect(result.unchangedFiles.some((f) => f.filename === "trap.md")).toBe(false);
+        // The trap path must be reported in `rejectedFiles` so callers
+        // doing reconciliation see a definitive "do not index" signal.
+        expect(result.rejectedFiles.some((p) => p.endsWith("trap.md"))).toBe(true);
+        // A warning must name the symlink so users can diagnose.
+        expect(warnings.some((w) => w.includes("trap.md"))).toBe(true);
+        expect(warnings.some((w) => /symlink|symbolic link/i.test(w))).toBe(true);
+      } finally {
+        await fs.rm(outside, { recursive: true, force: true });
+      }
+    });
+
+    it("rejects symlinks pointing inside the project when no confinementRoot is set", async () => {
+      // Without a confinementRoot we cannot prove a symlink target is
+      // safe (today inside-root, tomorrow swapped to outside-root via
+      // a TOCTOU race on the link). Default-deny is the safe choice.
+      await fs.writeFile(path.join(dir, "real.md"), "real");
+      try {
+        await fs.symlink(path.join(dir, "real.md"), path.join(dir, "link.md"));
+      } catch {
+        return;
+      }
+      const warnings: string[] = [];
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        onWarning: (msg) => warnings.push(msg),
+      });
+      // The real file is indexed normally.
+      expect(result.newFiles.some((f) => f.filename === "real.md")).toBe(true);
+      // The symlink is rejected (default-deny w/o confinement) and a
+      // warning is emitted naming the link.
+      expect(result.newFiles.some((f) => f.filename === "link.md")).toBe(false);
+      expect(result.rejectedFiles.some((p) => p.endsWith("link.md"))).toBe(true);
+      expect(warnings.some((w) => w.includes("link.md"))).toBe(true);
+    });
+
+    it("rejects symlinks via _lstatOverride seam (cross-platform RED)", async () => {
+      // Cross-platform deterministic guard: real symlinks require
+      // Developer Mode/admin on Windows (#452) so the OS-level tests
+      // above skip there. This test uses the `_lstatOverride` seam to
+      // synthesize a symlink Stats object regardless of platform —
+      // proving the detector's symlink check fires unconditionally.
+      await fs.writeFile(path.join(dir, "real.md"), "real");
+      await fs.writeFile(path.join(dir, "fake-link.md"), "doesn't matter");
+      const linkAbs = path.resolve(dir, "fake-link.md");
+      const realLstat = fs.lstat;
+
+      const warnings: string[] = [];
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        onWarning: (msg) => warnings.push(msg),
+        _lstatOverride: async (p: string) => {
+          const stat = await realLstat(p);
+          if (path.resolve(p) === linkAbs) {
+            // Wrap the real Stats so isSymbolicLink() returns true.
+            return new Proxy(stat, {
+              get(target, prop, receiver) {
+                if (prop === "isSymbolicLink") return () => true;
+                if (prop === "isFile") return () => false;
+                return Reflect.get(target, prop, receiver);
+              },
+            });
+          }
+          return stat;
+        },
+      });
+
+      expect(result.newFiles.map((f) => f.filename)).toEqual(["real.md"]);
+      expect(result.rejectedFiles).toContain(linkAbs);
+      expect(warnings.some((w) => w.includes("fake-link.md"))).toBe(true);
+      expect(warnings.some((w) => /symlink|symbolic link/i.test(w))).toBe(true);
+    });
+
+    it("indexes regular (non-symlink) files normally when no confinementRoot is set", async () => {
+      // Regression guard: the symlink check must not affect plain files.
+      await fs.writeFile(path.join(dir, "a.md"), "alpha");
+      await fs.writeFile(path.join(dir, "b.md"), "bravo");
+      const warnings: string[] = [];
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        onWarning: (msg) => warnings.push(msg),
+      });
+      expect(result.newFiles.map((f) => f.filename).sort()).toEqual(["a.md", "b.md"]);
+      expect(result.rejectedFiles).toHaveLength(0);
+      expect(warnings).toHaveLength(0);
+    });
+  });
+
   // ── Sentinel #341 / #342: error surfacing & per-file resilience ─────
   describe("error surfacing (#341, #342)", () => {
     it("wraps readdir failures with a descriptive message naming the docsPath (#341)", async () => {
