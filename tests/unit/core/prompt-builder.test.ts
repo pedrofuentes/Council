@@ -152,6 +152,8 @@ describe("buildSystemPrompt() — persona profile", () => {
     );
     const startIdx = prompt.indexOf("[8] PERSONA PROFILE");
     const endIdx = prompt.indexOf("[9] CURRENT TASK");
+    expect(startIdx).toBeGreaterThan(-1);
+    expect(endIdx).toBeGreaterThan(startIdx);
     const section = prompt.slice(startIdx, endIdx);
 
     expect(section).toContain(sampleProfile.communicationStyle);
@@ -181,6 +183,9 @@ describe("buildSystemPrompt() — persona profile", () => {
     const yamlStanceIdx = prompt.indexOf("[3] EPISTEMIC STANCE");
     const personaIdx = prompt.indexOf("[8] PERSONA PROFILE");
     const taskIdx = prompt.indexOf("[9] CURRENT TASK");
+    expect(yamlStanceIdx).toBeGreaterThan(-1);
+    expect(personaIdx).toBeGreaterThan(yamlStanceIdx);
+    expect(taskIdx).toBeGreaterThan(personaIdx);
     const section = prompt.slice(personaIdx, taskIdx);
 
     // [3] still renders the YAML-defined stance verbatim (unchanged).
@@ -190,9 +195,12 @@ describe("buildSystemPrompt() — persona profile", () => {
     // [8] also surfaces the profile-derived stance.
     expect(section).toContain(sampleProfile.epistemicStance);
     // The framing must mark the profile stance as supplementary/observed
-    // from documents, not as an override of [3].
-    expect(section.toLowerCase()).toMatch(
-      /document|observ|also exhibit|supplement|additionally|in addition/i,
+    // from documents, not as an override of [3]. Assert the exact label
+    // co-located with the stance value on a single line, so a generic
+    // "documents" or "observ" elsewhere in the section intro cannot
+    // satisfy this contract (issue #411).
+    expect(section).toMatch(
+      /Epistemic Stance \(observed in documents, supplements \[3\]\):\s*[^\n]*Updates priors only after a real incident\./,
     );
   });
 
