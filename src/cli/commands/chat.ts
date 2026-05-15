@@ -1981,7 +1981,7 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
               err instanceof PersistTurnPairError && err.rollbackFailed;
             renderer.showSystem(
               rollbackFailed
-                ? `⚠ Could not persist partial ${slugBeingFlushed} response (${lostBytes} bytes) after interruption AND rollback failed; chat history may be inconsistent — inspect with \`council chat history\`: ${msg}`
+                ? `⚠ Could not persist partial ${slugBeingFlushed} response (${lostBytes} bytes) after interruption AND rollback failed; chat history may be inconsistent — inspect with \`council chat ${session.targetSlug} --history\`: ${msg}`
                 : `⚠ Could not persist partial ${slugBeingFlushed} response (${lostBytes} bytes) after interruption: ${msg}`,
               "warn",
             );
