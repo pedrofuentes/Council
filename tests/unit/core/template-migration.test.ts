@@ -541,6 +541,73 @@ describe("template-migration", () => {
       expect(await exists(lockPath)).toBe(false);
     });
 
+    it("breaks an abandoned lock from a dead PID, not by age alone", async () => {
+      // Sentinel #303 cycle 1: a 60-second age threshold would let a
+      // contender delete the lock of a still-running migration that
+      // happens to take longer than a minute. Liveness must be
+      // determined by the holder PID, not by mtime.
+      const lockPath = path.join(dataHome, ".migration.lock");
+
+      // (a) lock owned by a clearly-dead PID — must be broken even if
+      // its mtime is brand new. We use PID 1 with a hostname that
+      // cannot match this host so the liveness check rejects it.
+      // (PID 1 may exist on the host but our hostname mismatch ensures
+      // we don't mis-attribute it.)
+      await fs.writeFile(
+        lockPath,
+        JSON.stringify({
+          pid: 1,
+          hostname: "__sentinel-not-this-host__",
+          acquiredAt: new Date().toISOString(),
+        }),
+        "utf-8",
+      );
+      const result = await migrateBuiltInTemplates(dataHome, lib, db, {
+        quiet: true,
+      });
+      expect(result.panelsMigrated + result.expertsExtracted).toBeGreaterThan(0);
+      expect(await exists(lockPath)).toBe(false);
+
+      // (b) lock owned by THIS process — even with an old mtime it must
+      // NOT be broken (our PID is alive). Make the lock 10 minutes old
+      // and assert acquireLock times out trying to grab it. We pre-set
+      // a very short timeout via a contention-window probe instead of
+      // calling the real function — to keep the test fast we just
+      // verify the file survives a short wait while a "live" PID owns
+      // it.
+      await fs.writeFile(
+        lockPath,
+        JSON.stringify({
+          pid: process.pid,
+          hostname: os.hostname(),
+          acquiredAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+        }),
+        "utf-8",
+      );
+      const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
+      await fs.utimes(lockPath, tenMinAgo, tenMinAgo);
+      // Reset DB+library state so the migration would otherwise run.
+      await db.deleteFrom("panel_members").execute();
+      await db.deleteFrom("panel_library").execute();
+      await db.deleteFrom("expert_library").execute();
+      // Acquire should NOT immediately break this lock just because
+      // it's old; the live-PID owner is presumed to still hold it.
+      // We race the migration against a short timeout — the lock file
+      // must still exist when the timeout fires.
+      const stillHeld = await Promise.race([
+        migrateBuiltInTemplates(dataHome, lib, db, { quiet: true }).then(
+          () => "completed" as const,
+        ),
+        new Promise<"timeout">((resolve) =>
+          setTimeout(() => resolve("timeout"), 300),
+        ),
+      ]);
+      expect(stillHeld).toBe("timeout");
+      expect(await exists(lockPath)).toBe(true);
+      // Cleanup so afterEach doesn't hang on the abandoned promise.
+      await fs.unlink(lockPath);
+    });
+
     it("returns accurate counts in MigrationResult", async () => {
       const result = await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
       expect(result.panelsMigrated).toBe(5);
