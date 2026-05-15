@@ -52,10 +52,7 @@ import {
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import type { CouncilDatabase } from "../../memory/db.js";
 import { createDatabase } from "../../memory/db.js";
-import {
-  ChatRepository,
-  PersistTurnPairError,
-} from "../../memory/repositories/chat-repository.js";
+import { ChatRepository, PersistTurnPairError } from "../../memory/repositories/chat-repository.js";
 import { DocumentRepository } from "../../memory/repositories/document-repository.js";
 import { ProfileRepository } from "../../memory/repositories/profile-repository.js";
 import { createDocumentIndexer } from "../../core/documents/indexer.js";
@@ -897,10 +894,10 @@ async function runExpertChat(opts: ExpertChatOptions): Promise<void> {
     // Engine ready — NOW it's safe to mutate persistent chat state.
     let session: ChatSession;
     if (raw.new && priorToArchive) {
-      await repo.archiveSession(priorToArchive.id);
+      session = await repo.rotateActiveSession({ targetType: "expert", targetSlug: target });
       renderer.showSystem("Previous conversation archived. Starting fresh...", "info");
-    }
-    if (willCreateFresh) {
+      renderer.showSessionStatus(`Starting new conversation with ${expert.displayName}...`);
+    } else if (willCreateFresh) {
       session = await repo.createSession({ targetType: "expert", targetSlug: target });
       renderer.showSessionStatus(`Starting new conversation with ${expert.displayName}...`);
     } else if (resumingSession) {
@@ -1062,10 +1059,13 @@ async function runPanelChat(opts: PanelChatOptions): Promise<void> {
 
     let session: ChatSession;
     if (raw.new && priorToArchive) {
-      await repo.archiveSession(priorToArchive.id);
+      session = await repo.rotateActiveSession({ targetType: "panel", targetSlug: target });
       renderer.showSystem("Previous conversation archived. Starting fresh...", "info");
-    }
-    if (willCreateFresh) {
+      const names = resolved.map((e) => e.displayName).join(", ");
+      renderer.showSessionStatus(
+        `Starting panel chat with ${panel.name} (${resolved.length} experts: ${names})...`,
+      );
+    } else if (willCreateFresh) {
       session = await repo.createSession({ targetType: "panel", targetSlug: target });
       const names = resolved.map((e) => e.displayName).join(", ");
       renderer.showSessionStatus(
@@ -1979,8 +1979,7 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
             // claim that the prior state was preserved — an orphan
             // user or expert turn may have landed. Surface a stronger
             // warning in that case.
-            const rollbackFailed =
-              err instanceof PersistTurnPairError && err.rollbackFailed;
+            const rollbackFailed = err instanceof PersistTurnPairError && err.rollbackFailed;
             renderer.showSystem(
               rollbackFailed
                 ? `⚠ Could not persist partial ${slugBeingFlushed} response (${lostBytes} bytes) after interruption AND rollback failed; chat history may be inconsistent — inspect with \`council chat ${session.targetSlug} --history\`: ${msg}`

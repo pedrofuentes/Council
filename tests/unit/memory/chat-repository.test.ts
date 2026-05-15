@@ -74,7 +74,13 @@ describe("ChatRepository", () => {
   });
 
   it("findActiveSession() returns the most recent active session for a target", async () => {
+    // Per the single-active-per-target invariant (#333), there is at most
+    // one active session per (target_type, target_slug) at any instant.
+    // We exercise findActiveSession's "most recent" ordering by creating
+    // an active session, archiving it, and creating another — the second
+    // is the lone active row for `cto`.
     const first = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+    await repo.archiveSession(first.id);
     await new Promise((r) => setTimeout(r, 10));
     const second = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
     await repo.createSession({ targetType: "expert", targetSlug: "other" });
@@ -316,15 +322,16 @@ describe("ChatRepository", () => {
     // (user) insert is also rolled back so no orphan user row remains.
     const original = ChatRepository.prototype.addTurn;
     let calls = 0;
-    const spy = vi
-      .spyOn(ChatRepository.prototype, "addTurn")
-      .mockImplementation(async function (this: ChatRepository, args) {
-        calls += 1;
-        if (calls === 2) {
-          throw new Error("simulated expert insert failure");
-        }
-        return original.call(this, args);
-      });
+    const spy = vi.spyOn(ChatRepository.prototype, "addTurn").mockImplementation(async function (
+      this: ChatRepository,
+      args,
+    ) {
+      calls += 1;
+      if (calls === 2) {
+        throw new Error("simulated expert insert failure");
+      }
+      return original.call(this, args);
+    });
     try {
       await expect(
         repo.persistTurnPair(
@@ -586,7 +593,7 @@ describe("ChatRepository", () => {
 
     it("rolls back the archive when the create-new insert fails (atomicity)", async () => {
       const prior = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
-      const restore = patchExecuteQuery(db, { failOnSqlSubstring: "insert into \"chat_sessions\"" });
+      const restore = patchExecuteQuery(db, { failOnSqlSubstring: 'insert into "chat_sessions"' });
       let caught: unknown;
       try {
         await repo.rotateActiveSession({ targetType: "expert", targetSlug: "cto" });
@@ -610,7 +617,7 @@ describe("ChatRepository", () => {
     it("surfaces rollbackFailed=true when ROLLBACK itself fails after a mid-tx error", async () => {
       await repo.createSession({ targetType: "expert", targetSlug: "cto" });
       const restore = patchExecuteQuery(db, {
-        failOnSqlSubstring: "insert into \"chat_sessions\"",
+        failOnSqlSubstring: 'insert into "chat_sessions"',
         failRollback: true,
       });
       let caught: unknown;

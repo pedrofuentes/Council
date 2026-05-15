@@ -459,6 +459,14 @@ CREATE TABLE IF NOT EXISTS panel_documents (
 CREATE INDEX IF NOT EXISTS idx_panel_documents_panel
   ON panel_documents (panel_name, status);`,
     },
+    {
+      version: 10,
+      name: "010_chat_active_unique",
+      sql: `\
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_sessions_active_unique
+  ON chat_sessions (target_type, target_slug)
+  WHERE status = 'active';`,
+    },
   ];
 }
 
