@@ -626,8 +626,11 @@ export class Debate {
         };
         if (delay > 0) await abortableSleep(delay, signal);
         // #503: signal may have aborted *during* the backoff sleep —
-        // re-check before issuing another upstream send.
+        // mark the turn as failed and break out so we do NOT emit a
+        // phantom turn.end with empty content (which would also push
+        // an empty turn into priorTurns).
         if (signal?.aborted) {
+          turnFailed = true;
           break;
         }
         continue; // try again
