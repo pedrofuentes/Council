@@ -1339,13 +1339,16 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
   type LoopState =
     | { readonly kind: "idle" }
     | { readonly kind: "prompt" }
-    | { readonly kind: "streaming"; readonly controller: AbortController };
+    | { readonly kind: "streaming"; readonly controller: AbortController }
+    | { readonly kind: "debate"; readonly controller: AbortController };
   let state: LoopState = { kind: "idle" };
   let interruptedAtPrompt = false;
   let interruptedDuringStream = false;
   const onInterrupt = (): void => {
     if (state.kind === "streaming") {
       interruptedDuringStream = true;
+      state.controller.abort();
+    } else if (state.kind === "debate") {
       state.controller.abort();
     } else if (state.kind === "prompt") {
       interruptedAtPrompt = true;
@@ -1389,15 +1392,26 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
       }
 
       if (parsed.type === "convene") {
-        await runInlineDebate({
-          engine,
-          members,
-          session,
-          repo,
-          renderer,
-          topic: parsed.content,
-          writeError,
-        });
+        // Issue #466 — surface Ctrl+C during inline debate. Set the
+        // loop state to "debate" with a dedicated AbortController so
+        // the SIGINT handler can abort the running debate iterator
+        // instead of being swallowed.
+        const debateController = new AbortController();
+        state = { kind: "debate", controller: debateController };
+        try {
+          await runInlineDebate({
+            engine,
+            members,
+            session,
+            repo,
+            renderer,
+            topic: parsed.content,
+            writeError,
+            signal: debateController.signal,
+          });
+        } finally {
+          state = { kind: "idle" };
+        }
         continue;
       }
 
@@ -1618,6 +1632,16 @@ interface InlineDebateOptions {
   readonly renderer: ChatRenderer;
   readonly topic: string;
   readonly writeError: Writer;
+  /**
+   * Issue #466 — signal raised by the chat loop's SIGINT handler when
+   * the user hits Ctrl+C during an inline debate. When fired, the
+   * function stops iterating debate events, surfaces an "interrupted"
+   * notice, and returns so the chat prompt can resume. The underlying
+   * `Debate` does not accept a signal, so cancellation happens at the
+   * outer iteration boundary by racing event reads against this signal
+   * and calling `iterator.return()` on abort.
+   */
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -1634,9 +1658,14 @@ interface InlineDebateOptions {
  * phase. Per PRD §F6, partial results are preserved on interruption.
  */
 async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
-  const { engine, members, session, repo, renderer, topic, writeError } = opts;
+  const { engine, members, session, repo, renderer, topic, writeError, signal } = opts;
 
   renderer.showSystem(`⚙ Starting structured deliberation: "${topic}"...`, "info");
+
+  if (signal?.aborted) {
+    renderer.showSystem("⚠ Structured deliberation interrupted. Chat mode resumed.", "warn");
+    return;
+  }
 
   const debate = new Debate(
     engine,
@@ -1670,9 +1699,38 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
   let inTurn = false;
   let buffer = "";
   let bufferSlug: string | undefined;
+  let aborted = false;
+
+  // Issue #466 — race each event read against the abort signal so a
+  // SIGINT that arrives while we are awaiting the next debate event
+  // (or an in-flight engine.send) breaks us out of the loop.
+  const iterator = debate.run(topic)[Symbol.asyncIterator]();
+  const ABORT_SENTINEL = Symbol("inline-debate-abort");
+  let abortListener: (() => void) | undefined;
+  const abortPromise = signal
+    ? new Promise<typeof ABORT_SENTINEL>((resolve) => {
+        abortListener = (): void => resolve(ABORT_SENTINEL);
+        signal.addEventListener("abort", abortListener, { once: true });
+      })
+    : undefined;
 
   try {
-    for await (const evt of debate.run(topic)) {
+    while (true) {
+      const next = abortPromise
+        ? await Promise.race([iterator.next(), abortPromise])
+        : await iterator.next();
+
+      if (next === ABORT_SENTINEL) {
+        aborted = true;
+        // Best-effort: ask the generator to clean up. Fire-and-forget
+        // so a slow upstream send() does not block the prompt return.
+        void iterator.return?.(undefined).catch(() => undefined);
+        break;
+      }
+
+      if (next.done) break;
+      const evt = next.value;
+
       switch (evt.kind) {
         case "round.start":
           if (evt.phase !== undefined) {
@@ -1726,6 +1784,23 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     writeError(`Structured deliberation failed: ${msg}\n`);
+    renderer.showSystem(
+      `⚠ Structured deliberation interrupted${lastPhase ? ` during ${lastPhase}` : ""}. Chat mode resumed.`,
+      "warn",
+    );
+    return;
+  } finally {
+    if (signal && abortListener) {
+      signal.removeEventListener("abort", abortListener);
+    }
+    // Close any half-open expert response so the renderer state stays
+    // consistent for the next prompt iteration.
+    if (inTurn) {
+      renderer.endExpertResponse();
+    }
+  }
+
+  if (aborted) {
     renderer.showSystem(
       `⚠ Structured deliberation interrupted${lastPhase ? ` during ${lastPhase}` : ""}. Chat mode resumed.`,
       "warn",
