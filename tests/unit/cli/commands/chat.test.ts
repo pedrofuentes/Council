@@ -29,7 +29,10 @@ import { FileExpertLibrary } from "../../../../src/core/expert-library.js";
 import type { ExpertDefinition } from "../../../../src/core/expert.js";
 import type { ChatTurn } from "../../../../src/core/chat/chat-session.js";
 import { createDatabase } from "../../../../src/memory/db.js";
-import { ChatRepository } from "../../../../src/memory/repositories/chat-repository.js";
+import {
+  ChatRepository,
+  PersistTurnPairError,
+} from "../../../../src/memory/repositories/chat-repository.js";
 import { Debate } from "../../../../src/core/debate.js";
 import type { DebateEvent } from "../../../../src/core/debate.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
@@ -4125,6 +4128,112 @@ describe("graceful SIGINT handling (PRD §F4)", () => {
       expect(expertTurns.length).toBe(0);
       expect(userTurns.length).toBe(0);
     });
+  });
+
+  it("@convene Ctrl+C with first-turn partial-flush AND rollback failure surfaces inconsistency warning with correct recovery command (#504)", async () => {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "deb-rbfail", ["panel-a", "panel-b"]);
+
+    let triggerInterrupt: (() => void) | null = null;
+    const subscribeInterrupt = (handler: () => void): (() => void) => {
+      triggerInterrupt = handler;
+      return () => {
+        triggerInterrupt = null;
+      };
+    };
+
+    const registered = new Set<string>();
+    const engine: CouncilEngine = {
+      async start(): Promise<void> {
+        /* no-op */
+      },
+      async stop(): Promise<void> {
+        /* no-op */
+      },
+      async addExpert(spec): Promise<void> {
+        registered.add(spec.id);
+      },
+      async removeExpert(): Promise<void> {
+        /* no-op */
+      },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock-model"];
+      },
+      send(opts): AsyncIterable<EngineEvent> {
+        const expertId = opts.expertId;
+        if (!registered.has(expertId)) {
+          throw new Error(`Expert ${expertId} is not registered`);
+        }
+        async function* gen(): AsyncGenerator<EngineEvent, void, void> {
+          for (let i = 0; i < 4; i++) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 10));
+            yield { kind: "message.delta", expertId, text: `chunk${i} ` };
+            if (i === 0) {
+              triggerInterrupt?.();
+            }
+          }
+          yield {
+            kind: "message.complete",
+            expertId,
+            response: { latencyMs: 40, tokensIn: 1, tokensOut: 1 },
+          };
+        }
+        return gen();
+      },
+    };
+
+    // Force persistTurnPair to throw a PersistTurnPairError with
+    // rollbackFailed=true. This simulates the worst case from #504:
+    // the commit-path failure AND the rollback both fail, so the DB
+    // may be inconsistent. The CLI must surface this honestly and
+    // recommend the correct recovery command.
+    const spy = vi
+      .spyOn(ChatRepository.prototype, "persistTurnPair")
+      .mockImplementation(async () => {
+        throw new PersistTurnPairError(
+          "persistTurnPair failed and ROLLBACK also failed; database may be in an inconsistent state (an orphan user or expert turn may have landed): simulated insert failure",
+          {
+            cause: new Error("simulated insert failure"),
+            rollbackFailed: true,
+            rollbackError: new Error("simulated rollback failure"),
+          },
+        );
+      });
+
+    let out = "";
+    const lines: readonly string[] = ["@convene should we ship?", "/quit"];
+    let i = 0;
+    const inputProvider: ChatInputProvider = {
+      async readLine(): Promise<string | null> {
+        return lines[i++] ?? null;
+      },
+      close(): void {
+        /* no-op */
+      },
+    };
+
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () => inputProvider,
+      subscribeInterrupt,
+    });
+    try {
+      await cmd.parseAsync(["node", "council-chat", "deb-rbfail", "--engine", "mock"]);
+    } finally {
+      spy.mockRestore();
+    }
+
+    // The stronger warning must surface: it must explicitly say the
+    // rollback also failed, must NOT claim history was preserved, and
+    // must point operators at the actual `--history` syntax (#504).
+    expect(out).toMatch(/rollback failed/i);
+    expect(out).toMatch(/inconsistent/i);
+    expect(out).not.toMatch(/preserved/i);
+    expect(out).toMatch(/council chat deb-rbfail --history/);
+    expect(out).toMatch(/Conversation saved\./);
   });
 
   it("@convene Ctrl+C on first turn: persisted user prompt has lower seq than partial expert reply (#466)", async () => {

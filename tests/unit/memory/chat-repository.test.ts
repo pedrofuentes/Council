@@ -6,10 +6,14 @@
  * chat_sessions / chat_turns, and src/memory/repositories/chat-repository.ts
  * do not yet exist.
  */
+import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { type CouncilDatabase, createDatabase } from "../../../src/memory/db.js";
-import { ChatRepository } from "../../../src/memory/repositories/chat-repository.js";
+import {
+  ChatRepository,
+  PersistTurnPairError,
+} from "../../../src/memory/repositories/chat-repository.js";
 
 describe("ChatRepository", () => {
   let db: CouncilDatabase;
@@ -337,6 +341,142 @@ describe("ChatRepository", () => {
     }
     const turns = await repo.getTurns(session.id);
     expect(turns).toHaveLength(0);
+  });
+
+  describe("persistTurnPair rollback failure surfacing (#504)", () => {
+    /**
+     * Wrap the libsql Kysely executor so the next `executeQuery`
+     * matching `failOnSqlSubstring` (and optionally any subsequent
+     * `ROLLBACK`) throws — same technique used by the
+     * document-repository clearForRetrain tests (#425). Patches
+     * `getExecutor()` because raw `sql.execute(db)` resolves the
+     * executor via `db.getExecutor().executeQuery(...)`. We assign an
+     * own-property override on the executor instance (instead of
+     * using a Proxy) because Kysely's executor uses private class
+     * fields, and a Proxy on `executor` would re-bind `this` to the
+     * proxy and trigger "Cannot read private member" errors.
+     */
+    function patchExecuteQuery(
+      database: CouncilDatabase,
+      opts: { failOnSqlSubstring: string; failRollback?: boolean },
+    ): () => void {
+      const realExec = database.getExecutor();
+      type ExecQueryFn = typeof realExec.executeQuery;
+      const originalExecuteQuery: ExecQueryFn = realExec.executeQuery as ExecQueryFn;
+      const wrapped: ExecQueryFn = async function (this: typeof realExec, compiled, queryId) {
+        const text = compiled.sql;
+        if (text.includes(opts.failOnSqlSubstring)) {
+          throw new Error(`simulated failure on: ${opts.failOnSqlSubstring}`);
+        }
+        if (opts.failRollback === true && /^\s*ROLLBACK\b/i.test(text)) {
+          throw new Error("simulated ROLLBACK failure");
+        }
+        return originalExecuteQuery.call(this, compiled, queryId);
+      };
+      Object.defineProperty(realExec, "executeQuery", {
+        value: wrapped,
+        configurable: true,
+        writable: true,
+      });
+      return () => {
+        delete (realExec as { executeQuery?: ExecQueryFn }).executeQuery;
+      };
+    }
+
+    it("normal path returns both turns and does not throw", async () => {
+      const session = await repo.createSession({ targetType: "panel", targetSlug: "deb" });
+      const [user, expert] = await repo.persistTurnPair(
+        { chatId: session.id, role: "user", content: "hello" },
+        { chatId: session.id, role: "expert", expertSlug: "panel-a", content: "hi" },
+      );
+      expect(user.seq).toBe(1);
+      expect(expert.seq).toBe(2);
+      expect(await repo.getTurnCount(session.id)).toBe(2);
+    });
+
+    it("when an insert fails and ROLLBACK succeeds, throws PersistTurnPairError with rollbackFailed=false", async () => {
+      const session = await repo.createSession({ targetType: "panel", targetSlug: "deb" });
+      // Fail any INSERT into chat_turns — the first user insert will
+      // bubble out and trigger the catch+rollback path.
+      const restore = patchExecuteQuery(db, { failOnSqlSubstring: "INSERT INTO chat_turns" });
+      let caught: unknown;
+      try {
+        await repo.persistTurnPair(
+          { chatId: session.id, role: "user", content: "topic" },
+          { chatId: session.id, role: "expert", expertSlug: "panel-a", content: "reply" },
+        );
+      } catch (e) {
+        caught = e;
+      } finally {
+        restore();
+      }
+      expect(caught).toBeInstanceOf(PersistTurnPairError);
+      const err = caught as PersistTurnPairError;
+      expect(err.rollbackFailed).toBe(false);
+      expect(err.rollbackError).toBeUndefined();
+      expect(err.cause).toBeInstanceOf(Error);
+      expect(err.message).not.toMatch(/inconsistent/i);
+      // Atomicity: nothing landed.
+      expect(await repo.getTurnCount(session.id)).toBe(0);
+    });
+
+    it("when ROLLBACK itself fails, throws PersistTurnPairError with rollbackFailed=true and surfaces the rollback error", async () => {
+      const session = await repo.createSession({ targetType: "panel", targetSlug: "deb" });
+      const restore = patchExecuteQuery(db, {
+        failOnSqlSubstring: "INSERT INTO chat_turns",
+        failRollback: true,
+      });
+      let caught: unknown;
+      try {
+        await repo.persistTurnPair(
+          { chatId: session.id, role: "user", content: "topic" },
+          { chatId: session.id, role: "expert", expertSlug: "panel-a", content: "reply" },
+        );
+      } catch (e) {
+        caught = e;
+      } finally {
+        restore();
+      }
+      expect(caught).toBeInstanceOf(PersistTurnPairError);
+      const err = caught as PersistTurnPairError;
+      expect(err.rollbackFailed).toBe(true);
+      expect(err.rollbackError).toBeInstanceOf(Error);
+      expect(err.cause).toBeInstanceOf(Error);
+      expect(err.message).toMatch(/inconsistent/i);
+      expect(err.message).not.toMatch(/preserved/i);
+      // The rollback error itself must surface in the message so
+      // operators can diagnose why ROLLBACK failed (#504 follow-up).
+      expect(err.message).toMatch(/simulated ROLLBACK failure/);
+      // Best-effort cleanup so the next test's beforeEach can rebuild state.
+      try {
+        await sql`ROLLBACK`.execute(db);
+      } catch {
+        /* ignore — transaction may already be closed */
+      }
+    });
+
+    it("when BEGIN itself fails, throws PersistTurnPairError with rollbackFailed=false (no mutation occurred)", async () => {
+      const session = await repo.createSession({ targetType: "panel", targetSlug: "deb" });
+      const restore = patchExecuteQuery(db, { failOnSqlSubstring: "BEGIN" });
+      let caught: unknown;
+      try {
+        await repo.persistTurnPair(
+          { chatId: session.id, role: "user", content: "topic" },
+          { chatId: session.id, role: "expert", expertSlug: "panel-a", content: "reply" },
+        );
+      } catch (e) {
+        caught = e;
+      } finally {
+        restore();
+      }
+      expect(caught).toBeInstanceOf(PersistTurnPairError);
+      const err = caught as PersistTurnPairError;
+      expect(err.rollbackFailed).toBe(false);
+      expect(err.message).toMatch(/BEGIN/);
+      expect(err.message).toMatch(/no changes applied/i);
+      expect(err.cause).toBeInstanceOf(Error);
+      expect(await repo.getTurnCount(session.id)).toBe(0);
+    });
   });
 
   it("addTurn() allocates seq atomically against concurrent inserts", async () => {

@@ -52,7 +52,10 @@ import {
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import type { CouncilDatabase } from "../../memory/db.js";
 import { createDatabase } from "../../memory/db.js";
-import { ChatRepository } from "../../memory/repositories/chat-repository.js";
+import {
+  ChatRepository,
+  PersistTurnPairError,
+} from "../../memory/repositories/chat-repository.js";
 import { DocumentRepository } from "../../memory/repositories/document-repository.js";
 import { ProfileRepository } from "../../memory/repositories/profile-repository.js";
 import { createDocumentIndexer } from "../../core/documents/indexer.js";
@@ -1970,16 +1973,27 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
             bufferSlug = undefined;
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
+            // When ROLLBACK itself failed (#504), we cannot honestly
+            // claim that the prior state was preserved — an orphan
+            // user or expert turn may have landed. Surface a stronger
+            // warning in that case.
+            const rollbackFailed =
+              err instanceof PersistTurnPairError && err.rollbackFailed;
             renderer.showSystem(
-              `⚠ Could not persist partial ${slugBeingFlushed} response (${lostBytes} bytes) after interruption: ${msg}`,
+              rollbackFailed
+                ? `⚠ Could not persist partial ${slugBeingFlushed} response (${lostBytes} bytes) after interruption AND rollback failed; chat history may be inconsistent — inspect with \`council chat ${session.targetSlug} --history\`: ${msg}`
+                : `⚠ Could not persist partial ${slugBeingFlushed} response (${lostBytes} bytes) after interruption: ${msg}`,
               "warn",
             );
             // Intentionally leave buffer/bufferSlug in place so the
             // post-loop cleanup does not treat the half-rendered
             // turn as discarded silently. When persistTurnPair
-            // failed, neither the user prompt nor the expert reply
-            // landed (transaction rolled back), so no orphan @convene
-            // user row remains in chat history.
+            // failed AND rollback succeeded, neither the user prompt
+            // nor the expert reply landed (transaction rolled back),
+            // so no orphan @convene user row remains in chat history.
+            // When rollback also failed (rollbackFailed=true above),
+            // the DB state is uncertain and the warning above tells
+            // the user so.
           }
         }
         // Best-effort: ask the generator to clean up. Fire-and-forget
