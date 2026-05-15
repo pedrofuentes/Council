@@ -137,6 +137,20 @@ describe("PanelDocumentRepository", () => {
       expect(docs[0]?.checksum).toBe("atomic-2");
     });
 
+    it("trackDocument() concurrent calls on same (panel_name, file_path) yield exactly one row (#387)", async () => {
+      // Fire many overlapping upserts for the same key. With an atomic
+      // INSERT … ON CONFLICT DO UPDATE there can only ever be one row;
+      // a SELECT-then-INSERT implementation would race and either insert
+      // duplicates or trip the UNIQUE constraint.
+      const calls = Array.from({ length: 25 }, (_, i) =>
+        repo.trackDocument(sampleDoc({ checksum: `c${i}`, sizeBytes: i, wordCount: i })),
+      );
+      await Promise.all(calls);
+      const docs = await repo.listDocuments("arch-review");
+      expect(docs).toHaveLength(1);
+      expect(docs[0]?.checksum).toMatch(/^c\d+$/);
+    });
+
     it("trackDocument() supports a 'linked' source", async () => {
       await repo.trackDocument(
         sampleDoc({
