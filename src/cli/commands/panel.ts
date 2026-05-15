@@ -186,18 +186,26 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
         let yamlWritten = false;
         try {
           await fs.mkdir(path.dirname(yamlPath), { recursive: true });
+          // O_EXCL: fail if another concurrent create already wrote here.
+          // Split open from write so a mid-write failure (ENOSPC, EIO, …)
+          // still triggers rollback of the file we just created.
+          let handle: fs.FileHandle;
           try {
-            // O_EXCL: fail if another concurrent create already wrote here.
-            await fs.writeFile(yamlPath, yamlContent, { encoding: "utf-8", flag: "wx" });
-            yamlWritten = true;
-          } catch (writeErr) {
-            if ((writeErr as NodeJS.ErrnoException).code === "EEXIST") {
+            handle = await fs.open(yamlPath, "wx");
+          } catch (openErr) {
+            if ((openErr as NodeJS.ErrnoException).code === "EEXIST") {
               writeError(`Panel YAML already exists at ${displayPath(yamlPath)}\n`);
               throw new CliUserError(
                 `Panel "${name}" already exists at ${yamlPath}`,
               );
             }
-            throw writeErr;
+            throw openErr;
+          }
+          yamlWritten = true;
+          try {
+            await handle.writeFile(yamlContent, "utf-8");
+          } finally {
+            await handle.close();
           }
           await ctx.panelRepo.setMembers(name, fields.expertSlugs);
           await fs.mkdir(panelDocsDir(ctx.dataHome, name), { recursive: true });
