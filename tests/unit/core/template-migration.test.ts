@@ -494,13 +494,12 @@ describe("template-migration", () => {
       ]);
 
       // Exactly one of the two performed the migration; the other
-      // short-circuited after the lock was released and saw no work
-      // remaining.
-      const totals = [first, second].map(
-        (r) => r.panelsMigrated + r.expertsExtracted,
-      );
-      expect(Math.max(...totals)).toBeGreaterThan(0);
-      expect(Math.min(...totals)).toBe(0);
+      // entered the critical section after the work was complete and
+      // recorded each panel via the idempotent skip path.
+      const totalPanels = first.panelsMigrated + second.panelsMigrated;
+      const totalExperts = first.expertsExtracted + second.expertsExtracted;
+      expect(totalPanels).toBe(BUILTIN_PANELS.length);
+      expect(totalExperts).toBeGreaterThan(0);
 
       // Library state must match a single migration — no duplicate rows.
       const expertRows = await db

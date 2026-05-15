@@ -117,6 +117,22 @@ export async function migrateBuiltInTemplates(
   db: CouncilDatabase,
   options: MigrationOptions = {},
 ): Promise<MigrationResult> {
+  await fs.mkdir(dataHome, { recursive: true });
+  // Serialise concurrent invocations (issue #303). Once the holder
+  // finishes, contenders re-enter the body — by then the work is
+  // already done and the existing idempotent path simply records
+  // each panel as `skipped`.
+  return withMigrationLock(dataHome, () =>
+    runMigration(dataHome, library, db, options),
+  );
+}
+
+async function runMigration(
+  dataHome: string,
+  library: ExpertLibrary,
+  db: CouncilDatabase,
+  options: MigrationOptions,
+): Promise<MigrationResult> {
   const expertsDir = path.join(dataHome, "experts");
   const panelsDir = path.join(dataHome, "panels");
   await fs.mkdir(expertsDir, { recursive: true });
@@ -518,4 +534,117 @@ function isENOENT(err: unknown): boolean {
     "code" in err &&
     (err as { code: unknown }).code === "ENOENT"
   );
+}
+
+function isEEXIST(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code: unknown }).code === "EEXIST"
+  );
+}
+
+const LOCK_FILENAME = ".migration.lock";
+// How long (ms) we wait for a peer to release the lock before assuming
+// it crashed. Bounded so a stale lock from a killed `council` process
+// can't block subsequent runs forever.
+const LOCK_WAIT_TIMEOUT_MS = 30_000;
+// How often (ms) we re-check whether the lock file has disappeared.
+const LOCK_POLL_INTERVAL_MS = 50;
+// A lock file older than this is treated as stale (its owner crashed
+// without releasing it) and forcibly removed by the next contender.
+const LOCK_STALE_AFTER_MS = 60_000;
+
+/**
+ * Run `fn` while holding an exclusive lock at `<dataHome>/.migration.lock`,
+ * serialising concurrent template migrations across processes (issue #303).
+ *
+ * Uses an atomic `O_CREAT | O_EXCL` open as the lock primitive — the same
+ * mechanism `proper-lockfile` uses — which is safe across local Node.js
+ * processes on every supported filesystem. SQLite-level locks would not
+ * suffice here because the migration also touches the filesystem
+ * (`<dataHome>/experts/*.yaml`, `<dataHome>/panels/*.yaml`).
+ *
+ * On contention this function waits (polling) for the holder to release
+ * the lock, then runs `fn` itself. The lock is always removed in a
+ * `finally` block so a thrown error from `fn` does not leave behind a
+ * file that would block future runs (until the stale-lock timeout).
+ */
+async function withMigrationLock<T>(
+  dataHome: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const lockPath = path.join(dataHome, LOCK_FILENAME);
+  await acquireLock(lockPath);
+  try {
+    return await fn();
+  } finally {
+    await releaseLock(lockPath);
+  }
+}
+
+async function acquireLock(lockPath: string): Promise<void> {
+  const deadline = Date.now() + LOCK_WAIT_TIMEOUT_MS;
+  // Identify the holder (best-effort, for debugging only — we never
+  // act on this content for correctness).
+  const payload = JSON.stringify({
+    pid: process.pid,
+    acquiredAt: new Date().toISOString(),
+  });
+  for (;;) {
+    try {
+      const handle = await fs.open(lockPath, "wx");
+      try {
+        await handle.writeFile(payload, "utf-8");
+      } finally {
+        await handle.close();
+      }
+      return;
+    } catch (err: unknown) {
+      if (!isEEXIST(err)) throw err;
+      // Lock held by someone else. If it's stale (owner crashed), break
+      // it; otherwise wait a tick and retry.
+      if (await tryBreakStaleLock(lockPath)) continue;
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `template-migration: timed out after ${LOCK_WAIT_TIMEOUT_MS}ms waiting for migration lock at ${lockPath}`,
+        );
+      }
+      await sleep(LOCK_POLL_INTERVAL_MS);
+    }
+  }
+}
+
+async function tryBreakStaleLock(lockPath: string): Promise<boolean> {
+  let mtimeMs: number;
+  try {
+    const stat = await fs.stat(lockPath);
+    mtimeMs = stat.mtimeMs;
+  } catch (err: unknown) {
+    // Lock vanished between our failed open and the stat — caller can
+    // retry the open immediately.
+    if (isENOENT(err)) return true;
+    throw err;
+  }
+  if (Date.now() - mtimeMs <= LOCK_STALE_AFTER_MS) return false;
+  try {
+    await fs.unlink(lockPath);
+  } catch (err: unknown) {
+    // Another contender beat us to breaking the stale lock; that's fine.
+    if (!isENOENT(err)) throw err;
+  }
+  return true;
+}
+
+async function releaseLock(lockPath: string): Promise<void> {
+  try {
+    await fs.unlink(lockPath);
+  } catch (err: unknown) {
+    if (!isENOENT(err)) throw err;
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
