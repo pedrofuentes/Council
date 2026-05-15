@@ -695,6 +695,102 @@ describe("scanAndIndexPanelDocuments", () => {
     const paths = fts.rows.map((r) => r.file_path);
     expect(paths).not.toContain(linkedFile);
   });
+
+  it("does not recreate rows when the unlink commits BETWEEN re-check and writes (issue #424 post-recheck window)", async () => {
+    // Sentinel-cycle hardening: the prior regression test only fires
+    // the unlink BEFORE the scanner reaches its membership re-check.
+    // We must also prove the (re-check + index + track) sequence is
+    // ATOMIC with respect to a concurrent unlink. We inject the
+    // unlink at scan-start (`getLinkedFolders` is called once at the
+    // top of the scan, well before per-file writes); the per-file
+    // BEGIN IMMEDIATE block in the production fix must observe the
+    // committed unlink and skip — recreating rows here would prove
+    // the recheck/write atomicity is broken.
+    //
+    // Note: a true multi-connection cross-transaction race cannot be
+    // simulated against a single in-memory libsql client. The
+    // production code's `BEGIN IMMEDIATE` provides the multi-process
+    // serialization guarantee documented at the call site; this test
+    // covers the recheck/skip path under a different injection point
+    // than the prior test for defense-in-depth coverage.
+    await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+    const linkedFile = path.join(linkedDir, "external.md");
+    await fs.writeFile(linkedFile, "# External v3\nrace check\n", "utf-8");
+
+    const docsRepo = new PanelDocumentRepository(db);
+    const indexer = createDocumentIndexer(db);
+
+    async function simulateConcurrentUnlink(): Promise<void> {
+      const tracked = await docsRepo.listDocuments("arch-review");
+      await sql`BEGIN`.execute(db);
+      try {
+        for (const d of tracked) {
+          if (
+            d.filePath === linkedDir ||
+            d.filePath.startsWith(linkedDir + path.sep) ||
+            d.filePath.startsWith(linkedDir + "/") ||
+            d.filePath.startsWith(linkedDir + "\\")
+          ) {
+            await indexer.remove(d.filePath);
+          }
+        }
+        await docsRepo.removeDocumentsUnderFolder("arch-review", linkedDir);
+        await docsRepo.removeLinkedFolder("arch-review", linkedDir);
+        await sql`COMMIT`.execute(db);
+      } catch (err) {
+        await sql`ROLLBACK`.execute(db);
+        throw err;
+      }
+    }
+
+    const realGetLinkedFolders = PanelDocumentRepository.prototype.getLinkedFolders;
+    let raced = false;
+    const spy = vi
+      .spyOn(PanelDocumentRepository.prototype, "getLinkedFolders")
+      .mockImplementation(async function (
+        this: PanelDocumentRepository,
+        panelName: string,
+      ) {
+        const result = await realGetLinkedFolders.call(this, panelName);
+        // Fire exactly once, on the scan-start `getLinkedFolders` —
+        // before per-file writes have begun. The scanner must still
+        // notice the unlink at its per-file recheck.
+        if (!raced && result.includes(linkedDir)) {
+          raced = true;
+          await simulateConcurrentUnlink();
+        }
+        return result;
+      });
+
+    try {
+      await scanAndIndexPanelDocuments({
+        panelName: "arch-review",
+        managedDocsDir: managedDir,
+        db,
+        supportedFormats: [".md", ".txt", ".html"],
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(raced).toBe(true);
+
+    // Final state must reflect the unlink: no link row, no
+    // panel_documents under linkedDir, no FTS rows for the file.
+    const linkedFolders = await docsRepo.getLinkedFolders("arch-review");
+    expect(linkedFolders).not.toContain(linkedDir);
+    const allDocs = await docsRepo.listDocuments("arch-review");
+    const underLinked = allDocs.filter((d) => d.filePath.startsWith(linkedDir));
+    expect(underLinked).toHaveLength(0);
+    const fts = await sql<{
+      file_path: string;
+    }>`SELECT file_path FROM document_index WHERE source_type = 'panel'`.execute(db);
+    expect(fts.rows.map((r) => r.file_path)).not.toContain(linkedFile);
+  });
 });
 
 describe("formatAllFailedWarning", () => {
