@@ -195,12 +195,15 @@ describe("buildChatCommand", () => {
       let activeId = "";
       let archivedId = "";
       await withRepo(env, async (repo) => {
-        const a = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
-        activeId = a.id;
-        await repo.addTurn({ chatId: a.id, role: "user", content: "hi" });
+        // Create the to-be-archived session first, archive it, then create the
+        // active one. Doing it in this order preserves the single-active-per-
+        // target invariant (#333) at every step.
         const b = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
         archivedId = b.id;
         await repo.archiveSession(b.id);
+        const a = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        activeId = a.id;
+        await repo.addTurn({ chatId: a.id, role: "user", content: "hi" });
       });
       let out = "";
       const cmd = buildChatCommand({ write: (s) => (out += s) });

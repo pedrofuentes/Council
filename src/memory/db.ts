@@ -459,6 +459,31 @@ CREATE TABLE IF NOT EXISTS panel_documents (
 CREATE INDEX IF NOT EXISTS idx_panel_documents_panel
   ON panel_documents (panel_name, status);`,
     },
+    {
+      version: 10,
+      name: "010_chat_active_unique",
+      sql: `\
+UPDATE chat_sessions
+SET status = 'archived',
+    updated_at = COALESCE(updated_at, created_at)
+WHERE status = 'active'
+  AND id NOT IN (
+    SELECT id FROM (
+      SELECT id,
+             ROW_NUMBER() OVER (
+               PARTITION BY target_type, target_slug
+               ORDER BY created_at DESC, id DESC
+             ) AS rn
+      FROM chat_sessions
+      WHERE status = 'active'
+    )
+    WHERE rn = 1
+  );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_sessions_active_unique
+  ON chat_sessions (target_type, target_slug)
+  WHERE status = 'active';`,
+    },
   ];
 }
 

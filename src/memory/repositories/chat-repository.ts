@@ -51,9 +51,48 @@ export class PersistTurnPairError extends Error {
   }
 }
 
+/**
+ * Thrown by {@link ChatRepository.rotateActiveSession} when the
+ * archive-old + insert-new transaction aborts (#333). Mirrors
+ * {@link PersistTurnPairError}: the {@link rollbackFailed} flag lets
+ * callers produce honest user-facing messages — when `true`, the database
+ * state may be inconsistent and the message MUST NOT claim that the prior
+ * session was preserved.
+ */
+export class RotateActiveSessionError extends Error {
+  readonly rollbackFailed: boolean;
+  readonly rollbackError?: unknown;
+
+  constructor(
+    message: string,
+    opts: { cause: unknown; rollbackFailed: boolean; rollbackError?: unknown },
+  ) {
+    super(message, { cause: opts.cause });
+    this.name = "RotateActiveSessionError";
+    this.rollbackFailed = opts.rollbackFailed;
+    if (opts.rollbackError !== undefined) {
+      this.rollbackError = opts.rollbackError;
+    }
+  }
+}
+
 export interface NewChatSession {
   readonly targetType: ChatTargetType;
   readonly targetSlug: string;
+}
+
+/**
+ * Optional inputs to {@link ChatRepository.rotateActiveSession}.
+ *
+ * `priorActiveId` (#333 follow-up) makes the archive step a compare-and-swap:
+ * the rotation only archives the specific session the caller observed as
+ * active. This prevents a concurrent rotation from clobbering a brand-new
+ * active session created by an overlapping launch — under contention one
+ * rotation wins (its INSERT lands), and the other fails the partial unique
+ * index instead of silently archiving the winner's freshly-created session.
+ */
+export interface RotateActiveSessionOptions {
+  readonly priorActiveId?: string;
 }
 
 export interface NewChatTurn {
@@ -187,6 +226,120 @@ export class ChatRepository {
       .set({ status: "archived", updated_at: now })
       .where("id", "=", id)
       .execute();
+  }
+
+  /**
+   * Atomically rotate the active session for a given target (#333).
+   *
+   * Within a single SQLite transaction:
+   *   1. Archive every currently-active session for `(targetType, targetSlug)`
+   *      (in practice at most one, enforced by the partial unique index
+   *      `idx_chat_sessions_active_unique` from migration 010).
+   *   2. Insert a new active session for the same target.
+   *
+   * The transaction guarantees that a crash mid-rotation cannot leave the
+   * target with zero active sessions: either both steps land or neither
+   * does. The partial unique index provides defence-in-depth so any future
+   * code path that bypasses this helper still cannot create two active
+   * sessions for the same target.
+   *
+   * Implemented with raw `BEGIN`/`COMMIT`/`ROLLBACK` for the same reason as
+   * {@link persistTurnPair} and `clearForRetrain` (see
+   * document-repository.ts): Kysely's `transaction()` helper reconnects the
+   * libsql `:memory:` connection and would lose virtual FTS5 tables.
+   *
+   * On failure throws {@link RotateActiveSessionError}. Callers MUST inspect
+   * `rollbackFailed`: when the rollback itself failed the DB may be in an
+   * inconsistent state and any user-facing message must NOT claim that the
+   * prior session was preserved.
+   */
+  async rotateActiveSession(
+    input: NewChatSession,
+    options: RotateActiveSessionOptions = {},
+  ): Promise<ChatSession> {
+    try {
+      await sql`BEGIN`.execute(this.db);
+    } catch (beginErr) {
+      const detail = beginErr instanceof Error ? beginErr.message : String(beginErr);
+      throw new RotateActiveSessionError(
+        `rotateActiveSession failed before any changes ` +
+          `(BEGIN failed; no changes applied): ${detail}`,
+        { cause: beginErr, rollbackFailed: false },
+      );
+    }
+    const now = new Date().toISOString();
+    const id = ulid();
+    let committed = false;
+    try {
+      let archive = this.db
+        .updateTable("chat_sessions")
+        .set({ status: "archived", updated_at: now })
+        .where("status", "=", "active")
+        .where("target_type", "=", input.targetType)
+        .where("target_slug", "=", input.targetSlug);
+      if (options.priorActiveId !== undefined) {
+        archive = archive.where("id", "=", options.priorActiveId);
+      }
+      await archive.execute();
+      await this.db
+        .insertInto("chat_sessions")
+        .values({
+          id,
+          target_type: input.targetType,
+          target_slug: input.targetSlug,
+          status: "active",
+          summary: null,
+          summary_through_seq: 0,
+          created_at: now,
+          updated_at: now,
+        })
+        .execute();
+      await sql`COMMIT`.execute(this.db);
+      committed = true;
+      // Construct the domain object from the values we just inserted —
+      // a post-commit SELECT would conflate readback failures with
+      // rollback-needed failures and produce misleading "inconsistent"
+      // diagnostics for what is in fact a successful write.
+      return {
+        id,
+        targetType: input.targetType,
+        targetSlug: input.targetSlug,
+        status: "active",
+        summary: null,
+        summaryThroughSeq: 0,
+        createdAt: now,
+        updatedAt: now,
+      };
+    } catch (err) {
+      if (committed) {
+        // Defensive: with the readback removed this branch is unreachable,
+        // but if a future change adds work after COMMIT we must NOT issue
+        // a ROLLBACK against a closed transaction (which would itself
+        // throw and be misclassified as rollbackFailed).
+        throw err;
+      }
+      let rollbackFailed = false;
+      let rollbackError: unknown;
+      try {
+        await sql`ROLLBACK`.execute(this.db);
+      } catch (rbErr) {
+        rollbackFailed = true;
+        rollbackError = rbErr;
+      }
+      const detail = err instanceof Error ? err.message : String(err);
+      const message = rollbackFailed
+        ? `rotateActiveSession failed and ROLLBACK also failed; ` +
+          `database may be in an inconsistent state ` +
+          `(prior session may have been archived without a replacement): ${detail} ` +
+          `[rollback error: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}]`
+        : `rotateActiveSession failed (transaction rolled back cleanly; prior active session preserved): ${detail}`;
+      throw new RotateActiveSessionError(
+        message,
+        rollbackError === undefined
+          ? { cause: err, rollbackFailed }
+          : { cause: err, rollbackFailed, rollbackError },
+      );
+    }
   }
 
   async updateSummary(id: string, summary: string, throughSeq: number): Promise<void> {
