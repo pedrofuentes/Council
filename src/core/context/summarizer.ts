@@ -128,6 +128,12 @@ const SUMMARIZER_SYSTEM_PROMPT =
  *
  * @param model Model identifier the summarizer expert should use. The
  *   caller picks this — typically the panel's default model.
+ * @param options.signal Optional `AbortSignal` forwarded to
+ *   `engine.send()` so a Ctrl+C upstream of the summarizer cancels the
+ *   in-flight provider request rather than only abandoning the local
+ *   read loop. When the signal aborts mid-stream, whatever has been
+ *   collected so far is returned (best-effort, same contract as
+ *   `error`-event handling). See #503.
  */
 export async function buildLLMSummary(
   turns: readonly PriorTurnRecord[],
@@ -135,6 +141,7 @@ export async function buildLLMSummary(
   config: SummarizerConfig,
   engine: CouncilEngine,
   model: string,
+  options: { readonly signal?: AbortSignal } = {},
 ): Promise<string> {
   if (turns.length === 0) return "";
   if (currentRound < config.summarizeAfterRound) return "";
@@ -157,7 +164,13 @@ export async function buildLLMSummary(
   let collected = "";
   try {
     const prompt = formatTurnsForLLM(turns);
-    const stream: AsyncIterable<EngineEvent> = engine.send({ prompt, expertId });
+    // #503: forward the parent debate's AbortSignal so a Ctrl+C also
+    // cancels the upstream summarizer request, not just the local read.
+    const stream: AsyncIterable<EngineEvent> = engine.send({
+      prompt,
+      expertId,
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
     for await (const event of stream) {
       if (event.kind === "message.delta") {
         collected += event.text;

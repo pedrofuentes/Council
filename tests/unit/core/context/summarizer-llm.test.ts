@@ -27,6 +27,7 @@ import type { PriorTurnRecord } from "../../../../src/core/moderator/strategy.js
 interface RecordedSend {
   readonly expertId: string;
   readonly prompt: string;
+  readonly signal: AbortSignal | undefined;
 }
 
 class RecordingEngine implements CouncilEngine {
@@ -56,7 +57,7 @@ class RecordingEngine implements CouncilEngine {
   }
 
   send(opts: SendOptions): AsyncIterable<EngineEvent> {
-    this.sends.push({ expertId: opts.expertId, prompt: opts.prompt });
+    this.sends.push({ expertId: opts.expertId, prompt: opts.prompt, signal: opts.signal });
     const expertId = opts.expertId;
     const chunks = this.responseChunks;
     return (async function* (): AsyncGenerator<EngineEvent, void, void> {
@@ -145,7 +146,7 @@ describe("buildLLMSummary — engine-backed summarization", () => {
   it("removes the summarizer expert even if the engine errors mid-stream", async () => {
     class ErroringEngine extends RecordingEngine {
       override send(opts: SendOptions): AsyncIterable<EngineEvent> {
-        this.sends.push({ expertId: opts.expertId, prompt: opts.prompt });
+        this.sends.push({ expertId: opts.expertId, prompt: opts.prompt, signal: opts.signal });
         const expertId = opts.expertId;
         return (async function* (): AsyncGenerator<EngineEvent, void, void> {
           yield { kind: "message.delta", expertId, text: "partial" };
@@ -244,5 +245,13 @@ describe("buildLLMSummary — engine-backed summarization", () => {
     // whitespace-padded — may slip through.
     const closingMatches = send.prompt.match(/<\s*\/\s*transcript\s*>/gi) ?? [];
     expect(closingMatches.length).toBe(1);
+  });
+
+  it("forwards an AbortSignal through to engine.send (#503)", async () => {
+    const engine = new RecordingEngine(["summary"]);
+    const controller = new AbortController();
+    await buildLLMSummary(baseTurns, 2, cfg, engine, "gpt-test", { signal: controller.signal });
+    expect(engine.sends.length).toBe(1);
+    expect(engine.sends[0]?.signal).toBe(controller.signal);
   });
 });

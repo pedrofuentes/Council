@@ -130,7 +130,22 @@ export class Debate {
     this.#humanInput = humanOpts?.humanInput;
   }
 
-  async *run(prompt: string): AsyncIterable<DebateEvent> {
+  /**
+   * Run the debate.
+   *
+   * `options.signal` (issue #503): when provided, the signal is
+   * forwarded to every `engine.send()` call so a Ctrl+C upstream of
+   * the orchestrator cancels the in-flight LLM request — not merely
+   * the local consumer loop. When the signal aborts, the debate stops
+   * at the next turn boundary and yields a terminal
+   * `{ kind: "debate.end", reason: "aborted" }` event. A pre-aborted
+   * signal short-circuits before any `engine.send()` runs.
+   */
+  async *run(
+    prompt: string,
+    options: { readonly signal?: AbortSignal } = {},
+  ): AsyncIterable<DebateEvent> {
+    const signal = options.signal;
     yield {
       kind: "panel.assembled",
       experts: this.experts.map((e) => ({
@@ -141,16 +156,21 @@ export class Debate {
       })),
     };
 
+    if (signal?.aborted) {
+      yield { kind: "debate.end", reason: "aborted" };
+      return;
+    }
+
     if (this.config.mode === "structured") {
-      yield* this.#runStructured(prompt);
+      yield* this.#runStructured(prompt, signal);
     } else {
-      yield* this.#runFreeform(prompt);
+      yield* this.#runFreeform(prompt, signal);
     }
   }
 
   // -------------- Freeform mode (§1.8 + #212 strategy wiring) --------------
 
-  async *#runFreeform(prompt: string): AsyncGenerator<DebateEvent> {
+  async *#runFreeform(prompt: string, signal?: AbortSignal): AsyncGenerator<DebateEvent> {
     const strategy = this.config.strategy ?? createRoundRobinStrategy();
     const counters: RunCounters = {
       premiumRequests: 0,
@@ -212,6 +232,10 @@ export class Debate {
     };
 
     for (let round = 0; round < this.config.maxRounds; round++) {
+      if (signal?.aborted) {
+        yield { kind: "debate.end", reason: "aborted" };
+        return;
+      }
       // Refresh the per-round LLM summary cache before any planning
       // happens so buildCtx() returns a stable summary for this round.
       // Heuristic mode keeps its sync per-turn behaviour via buildCtx().
@@ -228,12 +252,21 @@ export class Debate {
             contextConfig.summarizer,
             this.engine,
             moderatorModel,
+            signal ? { signal } : {},
           );
         } catch {
           // Defense-in-depth: buildLLMSummary already swallows engine
           // errors, but never let an optional summary abort the debate.
           cachedRoundSummary = "";
         }
+      }
+
+      // #503: re-check abort after the (potentially long-running)
+      // summarizer round-trip so we don't emit a fresh round.start
+      // when the user has already cancelled.
+      if (signal?.aborted) {
+        yield { kind: "debate.end", reason: "aborted" };
+        return;
       }
 
       // First plan locks the round's turn ordering and serves as the
@@ -264,6 +297,11 @@ export class Debate {
 
       let seq = 0;
       for (let i = 0; i < initialAssignments.length; i++) {
+        if (signal?.aborted) {
+          yield { kind: "round.end", round };
+          yield { kind: "debate.end", reason: "aborted" };
+          return;
+        }
         const initialAssignment = initialAssignments[i];
         if (initialAssignment === undefined) {
           seq += 1;
@@ -296,6 +334,7 @@ export class Debate {
           round,
           seq,
           counters,
+          signal,
         );
 
         if (captured !== null) {
@@ -311,12 +350,16 @@ export class Debate {
       yield { kind: "round.end", round };
     }
 
+    if (signal?.aborted) {
+      yield { kind: "debate.end", reason: "aborted" };
+      return;
+    }
     yield { kind: "debate.end", reason: "completed" };
   }
 
   // -------------- Structured mode (§2.2) --------------
 
-  async *#runStructured(topic: string): AsyncGenerator<DebateEvent> {
+  async *#runStructured(topic: string, signal?: AbortSignal): AsyncGenerator<DebateEvent> {
     // Phases that fire. Cross-exam is skipped for single-expert panels
     // since there is no one to cross-examine.
     const phases: readonly DebatePhase[] =
@@ -334,10 +377,19 @@ export class Debate {
     const rebuttalTurns: PriorTurn[] = [];
 
     for (const [phaseIdx, phase] of phases.entries()) {
+      if (signal?.aborted) {
+        yield { kind: "debate.end", reason: "aborted" };
+        return;
+      }
       yield { kind: "round.start", round: phaseIdx, phase };
 
       let seq = 0;
       for (const expert of this.experts) {
+        if (signal?.aborted) {
+          yield { kind: "round.end", round: phaseIdx, phase };
+          yield { kind: "debate.end", reason: "aborted" };
+          return;
+        }
         const phasePrompt = this.#buildPhasePrompt(
           phase,
           topic,
@@ -354,7 +406,7 @@ export class Debate {
           continue;
         }
 
-        const captured = yield* this.#runTurn(expert, phasePrompt, phaseIdx, seq, counters);
+        const captured = yield* this.#runTurn(expert, phasePrompt, phaseIdx, seq, counters, signal);
 
         if (captured !== null) {
           const turn: PriorTurn = {
@@ -373,6 +425,10 @@ export class Debate {
       yield { kind: "round.end", round: phaseIdx, phase };
     }
 
+    if (signal?.aborted) {
+      yield { kind: "debate.end", reason: "aborted" };
+      return;
+    }
     yield { kind: "debate.end", reason: "completed" };
   }
 
@@ -419,6 +475,7 @@ export class Debate {
     round: number,
     seq: number,
     counters: RunCounters,
+    signal?: AbortSignal,
   ): AsyncGenerator<DebateEvent, string | null> {
     const isHuman = this.#humanSlugs.has(expert.slug);
     const speakerKind = isHuman ? ("human" as const) : ("expert" as const);
@@ -429,7 +486,7 @@ export class Debate {
       return yield* this.#runHumanTurn(expert, prompt, round, seq, counters);
     }
 
-    return yield* this.#runAiTurn(expert, prompt, round, seq, counters);
+    return yield* this.#runAiTurn(expert, prompt, round, seq, counters, signal);
   }
 
   async *#runHumanTurn(
@@ -498,6 +555,7 @@ export class Debate {
     _round: number,
     _seq: number,
     counters: RunCounters,
+    signal?: AbortSignal,
   ): AsyncGenerator<DebateEvent, string | null> {
 
     const backoffMs = this.config.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS;
@@ -507,6 +565,7 @@ export class Debate {
     let turnFailed = false;
     let lastErrorRecoverable = false;
     let lastErrorMessage = "";
+    let lastErrorAborted = false;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       // Reset per-attempt state — partial deltas from a failed attempt
@@ -515,9 +574,10 @@ export class Debate {
       let attemptFailed = false;
       lastErrorRecoverable = false;
       lastErrorMessage = "";
+      lastErrorAborted = false;
 
       try {
-        for await (const evt of this.engine.send({ prompt, expertId: expert.id })) {
+        for await (const evt of this.engine.send({ prompt, expertId: expert.id, ...(signal ? { signal } : {}) })) {
           switch (evt.kind) {
             case "message.delta": {
               content += evt.text;
@@ -532,6 +592,7 @@ export class Debate {
               attemptFailed = true;
               lastErrorRecoverable = evt.recoverable;
               lastErrorMessage = evt.error.message;
+              lastErrorAborted = evt.error.code === "ABORTED";
               break;
             }
           }
@@ -543,6 +604,7 @@ export class Debate {
         attemptFailed = true;
         lastErrorRecoverable = false;
         lastErrorMessage = err instanceof Error ? err.message : String(err);
+        lastErrorAborted = false;
       }
 
       if (!attemptFailed) {
@@ -552,7 +614,9 @@ export class Debate {
       }
 
       // Decide whether to retry.
-      if (lastErrorRecoverable && attempt < maxRetries) {
+      // #503: skip retry when the caller has aborted; the abort takes
+      // priority over recoverable backoff so we don't sleep + reissue.
+      if (lastErrorRecoverable && attempt < maxRetries && !signal?.aborted) {
         const delay = backoffMs[attempt] ?? 0;
         yield {
           kind: "turn.retry",
@@ -560,18 +624,37 @@ export class Debate {
           attempt: attempt + 1,
           reason: lastErrorMessage,
         };
-        if (delay > 0) await sleep(delay);
+        if (delay > 0) await abortableSleep(delay, signal);
+        // #503: signal may have aborted *during* the backoff sleep —
+        // mark the turn as failed and break out so we do NOT emit a
+        // phantom turn.end with empty content (which would also push
+        // an empty turn into priorTurns).
+        if (signal?.aborted) {
+          turnFailed = true;
+          break;
+        }
         continue; // try again
       }
 
       // Either non-recoverable, or retries exhausted: emit final error.
+      // Exception (#503): suppress the synthetic turn-level error ONLY
+      // when BOTH (a) the engine's terminal error code was ABORTED and
+      // (b) the caller's signal is aborted — i.e. the abort actually
+      // came from this run's signal. We must not suppress when only
+      // one of those holds:
+      //   - engine ABORTED w/o caller signal (engine.stop() /
+      //     removeExpert path) ⇒ surface so the failure is visible.
+      //   - non-ABORTED engine error w/ caller signal aborted ⇒
+      //     surface so a real provider failure isn't masked by abort.
       turnFailed = true;
-      yield {
-        kind: "error",
-        expertSlug: expert.slug,
-        message: lastErrorMessage,
-        recoverable: lastErrorRecoverable,
-      };
+      if (!(lastErrorAborted && signal?.aborted)) {
+        yield {
+          kind: "error",
+          expertSlug: expert.slug,
+          message: lastErrorMessage,
+          recoverable: lastErrorRecoverable,
+        };
+      }
       break;
     }
 
@@ -593,6 +676,27 @@ export class Debate {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * sleep() that resolves early when the caller's AbortSignal fires.
+ * Used by retry backoff so a Ctrl+C does not have to wait out the
+ * remaining backoff before the orchestrator surfaces the abort (#503).
+ */
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return sleep(ms);
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 /**
