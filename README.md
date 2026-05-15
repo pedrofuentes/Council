@@ -291,21 +291,50 @@ disk if the database is reset.
 ## Commands
 
 ```bash
-council convene <topic>          # Create panel + start deliberation
-council convene --template <name>  # Use a built-in panel
-council ask <question>           # Continue with the full panel
-council ask --expert <slug> <q>  # Talk to one expert directly
-council conclude                 # Get decision matrix + recommendation
-council sessions                            # List all debate sessions
+# Debate orchestration
+council convene <topic>                     # Create panel + start deliberation
+council convene --template <name>           # Use a built-in panel
+council ask <question>                      # Continue with the full panel
+council ask --expert <slug> <q>             # One-shot: talk to one expert directly
+council conclude                            # Get decision matrix + recommendation
+council resume <panel>                      # Resume a previous panel
+council export <panel> --format <fmt>       # Export (markdown | json | adr)
+
+# Persistent conversational chat (Phase 5)
+council chat <expert-slug>                  # 1:1 conversational REPL with an expert
+council chat <panel-name>                   # Group chat with a panel (supports @mentions, @convene)
+council chat <target> --new                 # Archive active session and start fresh
+council chat --list                         # List every chat session across all targets
+council chat <target> --history             # Show archived sessions for a target
+
+# Expert library (Phase 4)
+council expert create [--persona]           # Interactive wizard (or non-TTY via flags)
+council expert list [--format json]         # Browse the expert library
+council expert inspect <slug>               # Full detail + panel memberships
+council expert edit <slug>                  # Open YAML in $EDITOR; re-validates on save
+council expert delete <slug> [--force]      # Refuses if expert is in any panel
+
+# Panel library (Phase 4)
+council panel create                        # Interactive wizard: pick experts, name, description, mode
+council panel list [--format json]          # Browse panels in the library
+council panel inspect <name>                # Panel metadata + resolved expert roster
+council panel edit <name>                   # Open YAML in $EDITOR; re-validates on save
+council panel delete <name> [--force]       # Remove a panel definition
 council panel docs <name>                   # List a panel's managed + linked doc folders
 council panel docs link <name> --path <p>   # Link an external folder into a panel's RAG corpus
 council panel docs unlink <name> --path <p> # Unlink a folder + clean up its FTS entries
-council resume <panel>                      # Resume a previous panel
-council export <panel> --format <fmt>       # Export (markdown | json | adr)
+
+# Inspection & diagnostics
+council sessions                            # List all debate sessions
+council templates                           # List built-in panel templates
 council memory list                         # Show what experts remember
+council memory inspect <panel>              # Per-panel + per-expert memory detail
+council memory reset <panel> --yes          # Destructive: clear debate state
 council doctor                              # Diagnose setup issues
-council config                   # View/set configuration
 ```
+
+> Configuration lives in `~/Council/config.yaml` (auto-created on first run).
+> Edit it directly — there is no dedicated `council config` subcommand.
 
 ## Roadmap
 

@@ -1,12 +1,15 @@
 /**
  * @council/cli — Command-line interface entry point.
  *
- * Subcommands:
+ * Subcommands (see `buildProgram()` below for the canonical list):
  *   - `convene`    run a panel debate on a topic (engine: mock | copilot)
  *   - `ask`        ask one expert from an existing panel a single question
+ *   - `chat`       open a persistent conversational REPL with an expert or panel
  *   - `resume`     reopen a panel: show transcript or continue
+ *   - `conclude`   synthesize a panel's latest debate into a decision framework
  *   - `export`     export a panel transcript to markdown, json, or adr
  *   - `sessions`   list debate sessions in the local DB
+ *   - `panel`      manage the panel library (create/list/inspect/edit/delete/docs)
  *   - `expert`     manage the expert library (create/list/inspect/edit/delete)
  *   - `templates`  list built-in panel templates
  *   - `memory`     inspect and curate Council's local SQLite state
