@@ -421,5 +421,35 @@ describe("DocumentRepository", () => {
       expect(err.message).not.toMatch(/preserved/i);
       expect(err.cause).toBeInstanceOf(Error);
     });
+
+    it("when BEGIN itself fails, throws ClearForRetrainError with rollbackFailed=false (no mutation occurred)", async () => {
+      await repo.create(sampleDoc({ filePath: "/p/a.md" }));
+      await seedFtsRow(db, "ceo", "a");
+
+      // Fail BEGIN itself — no rollback is needed because the
+      // transaction never opened, but the contract still requires a
+      // ClearForRetrainError so callers can branch correctly (#425).
+      const restore = patchExecuteQuery(db, { failOnSqlSubstring: "BEGIN" });
+
+      let caught: unknown;
+      try {
+        await repo.clearForRetrain("ceo");
+      } catch (e) {
+        caught = e;
+      } finally {
+        restore();
+      }
+
+      expect(caught).toBeInstanceOf(ClearForRetrainError);
+      const err = caught as ClearForRetrainError;
+      expect(err.rollbackFailed).toBe(false);
+      expect(err.message).toMatch(/BEGIN/);
+      expect(err.message).toMatch(/no changes applied/i);
+      expect(err.cause).toBeInstanceOf(Error);
+
+      // No mutation actually occurred — both stores are untouched.
+      expect(await countFts(db, "ceo")).toBe(1);
+      expect(await countActiveDocs(db, "ceo")).toBe(1);
+    });
   });
 });

@@ -1208,12 +1208,18 @@ fs.writeFileSync(p, body, 'utf-8');`,
 
       // Force the atomic clear path to fail so the retrain reports a
       // failure and must abort BEFORE deleting the existing profile.
-      // Post-#383 (Sentinel revision) the cli uses
-      // DocumentRepository.clearForRetrain (a single BEGIN/COMMIT
-      // wrapping both the FTS DELETE and the tracking UPDATE).
+      // Post-#383 / #425: clearForRetrain throws a typed
+      // ClearForRetrainError that flags whether the rollback succeeded.
+      // Stub with rollbackFailed=false to exercise the "clean rollback,
+      // existing profile + tracking preserved" branch in the CLI.
+      const { ClearForRetrainError } =
+        await import("../../../../src/memory/repositories/document-repository.js");
       const originalClear = DocumentRepository.prototype.clearForRetrain;
       DocumentRepository.prototype.clearForRetrain = async function (): Promise<void> {
-        throw new Error("simulated DB failure");
+        throw new ClearForRetrainError("simulated DB failure (rolled back cleanly)", {
+          cause: new Error("simulated DB failure"),
+          rollbackFailed: false,
+        });
       };
 
       let captured = "";
