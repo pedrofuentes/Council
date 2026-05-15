@@ -516,19 +516,19 @@ describe("Debate.run() — AbortSignal threading (#503)", () => {
   it("aborting after buildLLMSummary() returns but before the next round.start yields debate.end 'aborted' and issues no further engine.send", async () => {
     // The post-summarizer signal check must catch a Ctrl+C that lands
     // while the summarizer was running. We model this with a
-    // SummarizerAbortEngine whose summarizer-call (the second send,
-    // identified by expertId === "__summary__") aborts the controller
-    // during its stream and then returns normally. The detector for
-    // "no further send after summary" is: the engine records exactly
-    // one round-0 turn send + one summary send, and no round-1 turn.
+    // SummarizerAbortEngine whose summarizer call (detected by
+    // expertId !== cto.id, since the summarizer registers a fresh-ULID
+    // temp expert) aborts the controller during its stream and then
+    // returns normally. We assert (a) debate ends "aborted", (b) no
+    // further expert sends occur after the summary returns, and
+    // (c) round 1's structural events (round.start / round.end for
+    // round === 1) are never emitted — i.e. termination happens
+    // before the next round can begin.
     class SummarizerAbortEngine extends RecordingEngine {
       controller: AbortController | undefined;
       override send(options: SendOptions): AsyncIterable<EngineEvent> {
         this.sends.push({ expertId: options.expertId, signal: options.signal });
         const expertId = options.expertId;
-        // The summarizer registers a temporary expert with a fresh ULID,
-        // so any send for an expertId other than the registered cto is
-        // the summarizer call.
         const isSummarizer = expertId !== cto.id;
         const ctl = this.controller;
         return {
@@ -568,12 +568,24 @@ describe("Debate.run() — AbortSignal threading (#503)", () => {
     // Must NOT issue another expert turn after the summary returned.
     const expertSends = engine.sends.filter((s) => s.expertId === cto.id);
     expect(expertSends.length).toBe(1);
+    // Round 1 must NEVER begin or end — termination happens via the
+    // post-summary signal check, before the next round.start. This
+    // pins the "before the next round.start" guarantee: removing the
+    // post-summary guard would emit round.start / round.end for
+    // round === 1 and fail this assertion.
+    const round1Events = events.filter(
+      (e) => (e.kind === "round.start" || e.kind === "round.end") && e.round === 1,
+    );
+    expect(round1Events.length).toBe(0);
   });
 
-  it("aborting during recoverable-retry backoff cancels the retry: no further engine.send is issued", async () => {
+  it("aborting during recoverable-retry backoff cancels the retry, emits no turn.end, and records no empty turn", async () => {
     // Engine yields one recoverable error, the orchestrator schedules
     // a backoff sleep, then the caller aborts during the sleep. The
     // retry MUST NOT fire — `engine.send` must be called exactly once.
+    // Additionally, the aborted-retry path MUST NOT emit a phantom
+    // turn.end (which would also push an empty content into priorTurns
+    // and surface as a successful but empty turn to the consumer).
     class RetryEngine extends RecordingEngine {
       controller: AbortController | undefined;
       override send(options: SendOptions): AsyncIterable<EngineEvent> {
@@ -604,10 +616,14 @@ describe("Debate.run() — AbortSignal threading (#503)", () => {
     await engine.addExpert(cto);
 
     const debate = new Debate(engine, [cto], FREEFORM_1R);
-    await collect(debate.run("topic", { signal: engine.controller.signal }));
+    const events = await collect(debate.run("topic", { signal: engine.controller.signal }));
 
     // Exactly one send: the initial attempt. The retry must be skipped
     // because the signal aborted during/after backoff.
     expect(engine.sends.length).toBe(1);
+    // No phantom turn.end: aborting during backoff is a failed turn,
+    // not a successful empty one.
+    const turnEnds = events.filter((e) => e.kind === "turn.end");
+    expect(turnEnds.length).toBe(0);
   });
 });
