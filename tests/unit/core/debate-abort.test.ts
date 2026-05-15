@@ -471,4 +471,143 @@ describe("Debate.run() — AbortSignal threading (#503)", () => {
       expect(errors[0].message).toBe("real failure");
     }
   });
+
+  it("does NOT suppress an ABORTED engine error when the caller's signal was never aborted (engine.stop()/removeExpert path)", async () => {
+    // The engine itself can yield {error.code: "ABORTED"} from
+    // engine.stop() or removeExpert() — independent of the caller's
+    // AbortSignal. In that case the run signal is NOT aborted, so the
+    // synthetic turn-level error must still surface; otherwise the
+    // failure becomes a silent null turn and the debate may end as
+    // "completed".
+    class EngineSideAbortEngine extends RecordingEngine {
+      override send(options: SendOptions): AsyncIterable<EngineEvent> {
+        this.sends.push({ expertId: options.expertId, signal: options.signal });
+        const expertId = options.expertId;
+        return {
+          async *[Symbol.asyncIterator](): AsyncIterator<EngineEvent> {
+            yield {
+              kind: "error",
+              expertId,
+              error: { code: "ABORTED", message: "engine stopped" },
+              recoverable: false,
+            };
+          },
+        };
+      }
+    }
+
+    const engine = new EngineSideAbortEngine();
+    await engine.start();
+    await engine.addExpert(cto);
+
+    // No AbortController — caller never aborts.
+    const debate = new Debate(engine, [cto], FREEFORM_1R);
+    const events = await collect(debate.run("topic"));
+
+    const errors = events.filter((e) => e.kind === "error");
+    // Engine-side abort with no caller-side signal MUST surface as an
+    // error so the operator/UI sees what happened.
+    expect(errors.length).toBe(1);
+    if (errors[0]?.kind === "error") {
+      expect(errors[0].message).toBe("engine stopped");
+    }
+  });
+
+  it("aborting after buildLLMSummary() returns but before the next round.start yields debate.end 'aborted' and issues no further engine.send", async () => {
+    // The post-summarizer signal check must catch a Ctrl+C that lands
+    // while the summarizer was running. We model this with a
+    // SummarizerAbortEngine whose summarizer-call (the second send,
+    // identified by expertId === "__summary__") aborts the controller
+    // during its stream and then returns normally. The detector for
+    // "no further send after summary" is: the engine records exactly
+    // one round-0 turn send + one summary send, and no round-1 turn.
+    class SummarizerAbortEngine extends RecordingEngine {
+      controller: AbortController | undefined;
+      override send(options: SendOptions): AsyncIterable<EngineEvent> {
+        this.sends.push({ expertId: options.expertId, signal: options.signal });
+        const expertId = options.expertId;
+        // The summarizer registers a temporary expert with a fresh ULID,
+        // so any send for an expertId other than the registered cto is
+        // the summarizer call.
+        const isSummarizer = expertId !== cto.id;
+        const ctl = this.controller;
+        return {
+          async *[Symbol.asyncIterator](): AsyncIterator<EngineEvent> {
+            yield { kind: "message.delta", expertId, text: isSummarizer ? "sum" : "x" };
+            if (isSummarizer && ctl) ctl.abort();
+            yield {
+              kind: "message.complete",
+              expertId,
+              response: { latencyMs: 1 },
+            };
+          },
+        };
+      }
+    }
+
+    const engine = new SummarizerAbortEngine();
+    engine.controller = new AbortController();
+    await engine.start();
+    await engine.addExpert(cto);
+
+    const debate = new Debate(engine, [cto], {
+      maxRounds: 2,
+      maxWordsPerResponse: 50,
+      mode: "freeform",
+      contextConfig: {
+        summarizer: { mode: "llm", summarizeAfterRound: 1, maxSummaryLength: 200 },
+      },
+    });
+    const events = await collect(debate.run("topic", { signal: engine.controller.signal }));
+
+    const ends = events.filter((e) => e.kind === "debate.end");
+    expect(ends).toHaveLength(1);
+    if (ends[0]?.kind === "debate.end") {
+      expect(ends[0].reason).toBe("aborted");
+    }
+    // Must NOT issue another expert turn after the summary returned.
+    const expertSends = engine.sends.filter((s) => s.expertId === cto.id);
+    expect(expertSends.length).toBe(1);
+  });
+
+  it("aborting during recoverable-retry backoff cancels the retry: no further engine.send is issued", async () => {
+    // Engine yields one recoverable error, the orchestrator schedules
+    // a backoff sleep, then the caller aborts during the sleep. The
+    // retry MUST NOT fire — `engine.send` must be called exactly once.
+    class RetryEngine extends RecordingEngine {
+      controller: AbortController | undefined;
+      override send(options: SendOptions): AsyncIterable<EngineEvent> {
+        this.sends.push({ expertId: options.expertId, signal: options.signal });
+        const expertId = options.expertId;
+        const ctl = this.controller;
+        return {
+          async *[Symbol.asyncIterator](): AsyncIterator<EngineEvent> {
+            yield {
+              kind: "error",
+              expertId,
+              error: { code: "RATE_LIMITED", message: "slow down" },
+              recoverable: true,
+            };
+            // Trigger abort on a microtask so the orchestrator has
+            // already entered abortableSleep() before the signal fires.
+            if (ctl) {
+              setTimeout(() => ctl.abort(), 0);
+            }
+          },
+        };
+      }
+    }
+
+    const engine = new RetryEngine();
+    engine.controller = new AbortController();
+    await engine.start();
+    await engine.addExpert(cto);
+
+    const debate = new Debate(engine, [cto], FREEFORM_1R);
+    await collect(debate.run("topic", { signal: engine.controller.signal }));
+
+    // Exactly one send: the initial attempt. The retry must be skipped
+    // because the signal aborted during/after backoff.
+    expect(engine.sends.length).toBe(1);
+  });
 });
