@@ -208,6 +208,9 @@ export class CopilotEngine implements CouncilEngine {
     removeCallerListener: (() => void) | undefined,
   ): AsyncGenerator<EngineEvent, void, void> {
     const start = Date.now();
+    // Tracks unsubscribers for any SDK listeners registered below; drained
+    // in the finally block so long chats don't accumulate handlers (#479).
+    const unsubscribes: (() => void)[] = [];
     try {
       // Pre-aborted check.
       if (controller.signal.aborted) {
@@ -263,10 +266,12 @@ export class CopilotEngine implements CouncilEngine {
         finish();
       };
 
-      record.session.on("assistant.message_delta", onDelta);
-      record.session.on("assistant.message", onMessage);
-      record.session.on("session.idle", onIdle);
-      record.session.on("session.error", onError);
+      // Track unsubscribers so we can release SDK listeners in finally (#479).
+      // Without this, every send() would leak handlers on the long-lived session.
+      unsubscribes.push(record.session.on("assistant.message_delta", onDelta));
+      unsubscribes.push(record.session.on("assistant.message", onMessage));
+      unsubscribes.push(record.session.on("session.idle", onIdle));
+      unsubscribes.push(record.session.on("session.error", onError));
 
       const onAbort = (): void => {
         push({
@@ -316,6 +321,13 @@ export class CopilotEngine implements CouncilEngine {
       // Ensure the send promise resolves (errors already handled in its catch).
       await sendPromise;
     } finally {
+      for (const unsub of unsubscribes) {
+        try {
+          unsub();
+        } catch {
+          /* ignore — best-effort cleanup */
+        }
+      }
       record.inFlight.delete(controller);
       removeCallerListener?.();
     }
