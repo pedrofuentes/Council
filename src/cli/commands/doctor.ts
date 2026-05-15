@@ -131,7 +131,7 @@ async function checkDefaultModelAccess(
       return {
         name: "Default model access",
         status: "pass",
-        detail: `Default model (${model}) is accessible`,
+        detail: `Default model (${model}) session created successfully`,
       };
     }
     return {
@@ -178,7 +178,9 @@ function writeKnownModels(write: Writer, models: readonly string[]): void {
     write(`  ${group.label.padEnd(labelWidth, " ")}: ${groupedModels.join(", ")}\n`);
   }
   write("\n");
-  write("Note: Availability depends on your Copilot tier. Use --online to check.\n");
+  write(
+    "Note: Availability depends on your Copilot tier. Use --online to verify your default model is accessible.\n",
+  );
 }
 
 function isWriter(input: DoctorDeps | Writer): input is Writer {
@@ -198,7 +200,7 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
   const cmd = new Command("doctor");
   cmd
     .description("Diagnose Council setup (Node, libsql, Copilot SDK, disk)")
-    .option("--online", "Probe Copilot for model availability (requires auth)")
+    .option("--online", "Probe Copilot for default model availability (requires auth)")
     .option("--models", "List known Copilot model identifiers")
     .action(async (options: DoctorOptions) => {
       const checks: (() => Promise<CheckResult>)[] = [

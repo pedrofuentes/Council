@@ -48,7 +48,7 @@ describe("buildDoctorCommand", () => {
     await fs.rm(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
-  it("doctor --online with successful probe shows model accessible", async () => {
+  it("doctor --online with successful probe shows session creation success", async () => {
     const onlineProbe = vi.fn(async (model: string) => ({
       ok: true,
       detail: `probe ok for ${model}`,
@@ -58,7 +58,9 @@ describe("buildDoctorCommand", () => {
 
     expect(onlineProbe).toHaveBeenCalledTimes(1);
     expect(onlineProbe).toHaveBeenCalledWith("claude-sonnet-4-20250514");
-    expect(output).toContain("Default model (claude-sonnet-4-20250514) is accessible");
+    expect(output).toContain(
+      "Default model (claude-sonnet-4-20250514) session created successfully",
+    );
   });
 
   it("doctor --online with failed probe shows error", async () => {
@@ -89,6 +91,12 @@ describe("buildDoctorCommand", () => {
     expect(output).toContain("claude-sonnet-4.5");
     expect(output).toContain("gpt-5");
     expect(output).toContain("gemini-2.5-pro");
-    expect(output).toContain("Use --online to check");
+    expect(output).toContain("Use --online to verify your default model is accessible");
+  });
+
+  it("doctor help describes the online probe as a default-model check", () => {
+    const help = buildDoctorCommandWithDeps({}).helpInformation();
+
+    expect(help).toContain("Probe Copilot for default model availability (requires auth)");
   });
 });
