@@ -461,6 +461,38 @@ describe("applyRecalledMemory", () => {
     expect(out).toContain("[9] CURRENT TASK");
     expect(out).toContain("Discuss the rollout plan.");
     expect(out).toContain("Communication Style: terse.");
+
+    // Boundary assertions (issue #430): the recalled memory content must
+    // be confined to the [7] MEMORY section. Verify it appears AFTER the
+    // [7] MEMORY header and BEFORE the next section header ([8] PERSONA
+    // PROFILE), so it cannot leak into PERSONA PROFILE or CURRENT TASK.
+    const memoryHeaderIdx = out.indexOf("[7] MEMORY");
+    const personaHeaderIdx = out.indexOf("[8] PERSONA PROFILE");
+    const taskHeaderIdx = out.indexOf("[9] CURRENT TASK");
+    const positionsHeaderIdx = out.indexOf("Positions you have taken:");
+    const positionItemIdx = out.indexOf("- adopt microservices for billing");
+    expect(memoryHeaderIdx).toBeGreaterThanOrEqual(0);
+    expect(personaHeaderIdx).toBeGreaterThan(memoryHeaderIdx);
+    expect(positionsHeaderIdx).toBeGreaterThan(memoryHeaderIdx);
+    expect(positionsHeaderIdx).toBeLessThan(personaHeaderIdx);
+    expect(positionItemIdx).toBeGreaterThan(memoryHeaderIdx);
+    expect(positionItemIdx).toBeLessThan(personaHeaderIdx);
+    // And of course strictly before [9] CURRENT TASK as well.
+    expect(positionItemIdx).toBeLessThan(taskHeaderIdx);
+    // The slice between [7] MEMORY and [8] PERSONA PROFILE must contain
+    // the memory payload — a stronger structural check.
+    const memorySection = out.slice(memoryHeaderIdx, personaHeaderIdx);
+    expect(memorySection).toContain("Positions you have taken:");
+    expect(memorySection).toContain("- adopt microservices for billing");
+    // Symmetric downstream negative assertions: the memory payload must
+    // not appear in PERSONA PROFILE or in the CURRENT TASK section. This
+    // catches regressions that would duplicate memory into a later section.
+    const personaSection = out.slice(personaHeaderIdx, taskHeaderIdx);
+    expect(personaSection).not.toContain("adopt microservices for billing");
+    expect(personaSection).not.toContain("Positions you have taken:");
+    const taskSection = out.slice(taskHeaderIdx);
+    expect(taskSection).not.toContain("adopt microservices for billing");
+    expect(taskSection).not.toContain("Positions you have taken:");
   });
 
   it("applies memory when CURRENT TASK is [10] (persona + panel memberships)", () => {
@@ -494,6 +526,37 @@ describe("applyRecalledMemory", () => {
     expect(out).toContain("- exec-panel (with cto, cfo)");
     expect(out).toContain("[10] CURRENT TASK");
     expect(out).toContain("Discuss the rollout plan.");
+
+    // Boundary assertions (issue #430): the recalled memory content must
+    // be confined to the [7] MEMORY section. Verify it appears AFTER the
+    // [7] MEMORY header and BEFORE the next section header ([8] PERSONA
+    // PROFILE), so it cannot leak into PERSONA PROFILE, PANEL MEMBERSHIPS,
+    // or CURRENT TASK.
+    const memoryHeaderIdx = out.indexOf("[7] MEMORY");
+    const personaHeaderIdx = out.indexOf("[8] PERSONA PROFILE");
+    const panelHeaderIdx = out.indexOf("[9] PANEL MEMBERSHIPS");
+    const taskHeaderIdx = out.indexOf("[10] CURRENT TASK");
+    const positionItemIdx = out.indexOf("- adopt microservices for billing");
+    expect(memoryHeaderIdx).toBeGreaterThanOrEqual(0);
+    expect(personaHeaderIdx).toBeGreaterThan(memoryHeaderIdx);
+    expect(panelHeaderIdx).toBeGreaterThan(personaHeaderIdx);
+    expect(taskHeaderIdx).toBeGreaterThan(panelHeaderIdx);
+    expect(positionItemIdx).toBeGreaterThan(memoryHeaderIdx);
+    expect(positionItemIdx).toBeLessThan(personaHeaderIdx);
+    // The slice between [7] MEMORY and [8] PERSONA PROFILE must contain
+    // the memory payload, and downstream sections must not.
+    const memorySection = out.slice(memoryHeaderIdx, personaHeaderIdx);
+    expect(memorySection).toContain("Positions you have taken:");
+    expect(memorySection).toContain("- adopt microservices for billing");
+    const personaSection = out.slice(personaHeaderIdx, panelHeaderIdx);
+    expect(personaSection).not.toContain("adopt microservices for billing");
+    expect(personaSection).not.toContain("Positions you have taken:");
+    const panelSection = out.slice(panelHeaderIdx, taskHeaderIdx);
+    expect(panelSection).not.toContain("adopt microservices for billing");
+    expect(panelSection).not.toContain("Positions you have taken:");
+    const taskSection = out.slice(taskHeaderIdx);
+    expect(taskSection).not.toContain("adopt microservices for billing");
+    expect(taskSection).not.toContain("Positions you have taken:");
   });
 
   it("when CURRENT TASK is [9], injected '[9] CURRENT TASK' in memory cannot extend the real task section", () => {
