@@ -1,0 +1,94 @@
+/**
+ * Tests for `council doctor`.
+ */
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { buildDoctorCommand } from "../../../../src/cli/commands/doctor.js";
+import type { Writer } from "../../../../src/cli/commands/writer.js";
+
+interface DoctorDepsLike {
+  readonly write?: Writer;
+  readonly onlineProbe?: (model: string) => Promise<{ ok: boolean; detail: string }>;
+}
+
+const buildDoctorCommandWithDeps = buildDoctorCommand as unknown as (
+  deps: DoctorDepsLike,
+) => ReturnType<typeof buildDoctorCommand>;
+
+async function runDoctor(args: readonly string[], deps: DoctorDepsLike = {}): Promise<string> {
+  let captured = "";
+  const cmd = buildDoctorCommandWithDeps({
+    ...deps,
+    write: (chunk: string) => {
+      captured += chunk;
+    },
+  });
+  cmd.exitOverride();
+  await cmd.parseAsync(["node", "council-doctor", ...args]).catch(() => undefined);
+  return captured;
+}
+
+describe("buildDoctorCommand", () => {
+  let testHome: string;
+  let originalHome: string | undefined;
+
+  beforeEach(async () => {
+    testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-doctor-test-"));
+    originalHome = process.env["COUNCIL_HOME"];
+    process.env["COUNCIL_HOME"] = testHome;
+  });
+
+  afterEach(async () => {
+    if (originalHome === undefined) delete process.env["COUNCIL_HOME"];
+    else process.env["COUNCIL_HOME"] = originalHome;
+    await fs.rm(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+
+  it("doctor --online with successful probe shows model accessible", async () => {
+    const onlineProbe = vi.fn(async (model: string) => ({
+      ok: true,
+      detail: `probe ok for ${model}`,
+    }));
+
+    const output = await runDoctor(["--online"], { onlineProbe });
+
+    expect(onlineProbe).toHaveBeenCalledTimes(1);
+    expect(onlineProbe).toHaveBeenCalledWith("claude-sonnet-4-20250514");
+    expect(output).toContain("Default model (claude-sonnet-4-20250514) is accessible");
+  });
+
+  it("doctor --online with failed probe shows error", async () => {
+    const onlineProbe = vi.fn(async () => ({ ok: false, detail: "authentication required" }));
+
+    const output = await runDoctor(["--online"], { onlineProbe });
+
+    expect(onlineProbe).toHaveBeenCalledTimes(1);
+    expect(output).toContain("Default model (claude-sonnet-4-20250514)");
+    expect(output).toContain("authentication required");
+    expect(output).toContain("Try changing defaults.model in");
+  });
+
+  it("doctor without --online skips model probe", async () => {
+    const onlineProbe = vi.fn(async () => ({ ok: true, detail: "should not run" }));
+
+    const output = await runDoctor([], { onlineProbe });
+
+    expect(onlineProbe).not.toHaveBeenCalled();
+    expect(output).toContain("Council Doctor");
+    expect(output).not.toContain("Default model (");
+  });
+
+  it("doctor --models lists known models", async () => {
+    const output = await runDoctor(["--models"]);
+
+    expect(output).toContain("Known models:");
+    expect(output).toContain("claude-sonnet-4.5");
+    expect(output).toContain("gpt-5");
+    expect(output).toContain("gemini-2.5-pro");
+    expect(output).toContain("Use --online to check");
+  });
+});
