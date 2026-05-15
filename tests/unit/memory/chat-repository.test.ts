@@ -13,6 +13,7 @@ import { type CouncilDatabase, createDatabase } from "../../../src/memory/db.js"
 import {
   ChatRepository,
   PersistTurnPairError,
+  RotateActiveSessionError,
 } from "../../../src/memory/repositories/chat-repository.js";
 
 describe("ChatRepository", () => {
@@ -502,6 +503,203 @@ describe("ChatRepository", () => {
       .where("chat_id", "=", session.id)
       .execute();
     expect(remaining).toHaveLength(0);
+  });
+
+  // -------- rotateActiveSession (#333) --------
+
+  describe("rotateActiveSession (#333) — atomic single-active-per-target rotation", () => {
+    /**
+     * Same executor-patching technique as the `persistTurnPair rollback`
+     * suite above. Lets us simulate mid-transaction insert failures and
+     * ROLLBACK failures so we can verify the rotation is genuinely atomic
+     * (not just "two sequential calls in a row").
+     */
+    function patchExecuteQuery(
+      database: CouncilDatabase,
+      opts: { failOnSqlSubstring: string; failRollback?: boolean },
+    ): () => void {
+      const realExec = database.getExecutor();
+      type ExecQueryFn = typeof realExec.executeQuery;
+      const originalExecuteQuery: ExecQueryFn = realExec.executeQuery as ExecQueryFn;
+      const wrapped: ExecQueryFn = async function (this: typeof realExec, compiled, queryId) {
+        const text = compiled.sql;
+        if (text.includes(opts.failOnSqlSubstring)) {
+          throw new Error(`simulated failure on: ${opts.failOnSqlSubstring}`);
+        }
+        if (opts.failRollback === true && /^\s*ROLLBACK\b/i.test(text)) {
+          throw new Error("simulated ROLLBACK failure");
+        }
+        return originalExecuteQuery.call(this, compiled, queryId);
+      };
+      Object.defineProperty(realExec, "executeQuery", {
+        value: wrapped,
+        configurable: true,
+        writable: true,
+      });
+      return () => {
+        delete (realExec as { executeQuery?: ExecQueryFn }).executeQuery;
+      };
+    }
+
+    it("archives the prior active session and creates a new one in a single transaction", async () => {
+      const prior = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+      await new Promise((r) => setTimeout(r, 5));
+      const next = await repo.rotateActiveSession({ targetType: "expert", targetSlug: "cto" });
+
+      expect(next.id).not.toBe(prior.id);
+      expect(next.status).toBe("active");
+      expect(next.targetType).toBe("expert");
+      expect(next.targetSlug).toBe("cto");
+
+      const priorAfter = await repo.findSessionById(prior.id);
+      expect(priorAfter?.status).toBe("archived");
+
+      // Single-active invariant: exactly one active row for this target.
+      const actives = await repo.listSessions({ targetSlug: "cto", status: "active" });
+      expect(actives).toHaveLength(1);
+      expect(actives[0]?.id).toBe(next.id);
+    });
+
+    it("creates a new active session when no prior active session exists", async () => {
+      const created = await repo.rotateActiveSession({ targetType: "panel", targetSlug: "arch" });
+      expect(created.status).toBe("active");
+      const actives = await repo.listSessions({ targetSlug: "arch", status: "active" });
+      expect(actives).toHaveLength(1);
+      expect(actives[0]?.id).toBe(created.id);
+    });
+
+    it("does not touch active sessions for other targets", async () => {
+      const otherExpert = await repo.createSession({ targetType: "expert", targetSlug: "pm" });
+      const otherPanel = await repo.createSession({ targetType: "panel", targetSlug: "cto" });
+      const cto = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+
+      await repo.rotateActiveSession({ targetType: "expert", targetSlug: "cto" });
+
+      const otherExpertAfter = await repo.findSessionById(otherExpert.id);
+      const otherPanelAfter = await repo.findSessionById(otherPanel.id);
+      const ctoAfter = await repo.findSessionById(cto.id);
+
+      expect(otherExpertAfter?.status).toBe("active");
+      expect(otherPanelAfter?.status).toBe("active");
+      expect(ctoAfter?.status).toBe("archived");
+    });
+
+    it("rolls back the archive when the create-new insert fails (atomicity)", async () => {
+      const prior = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+      const restore = patchExecuteQuery(db, { failOnSqlSubstring: "insert into \"chat_sessions\"" });
+      let caught: unknown;
+      try {
+        await repo.rotateActiveSession({ targetType: "expert", targetSlug: "cto" });
+      } catch (err) {
+        caught = err;
+      } finally {
+        restore();
+      }
+      expect(caught).toBeInstanceOf(RotateActiveSessionError);
+      const err = caught as RotateActiveSessionError;
+      expect(err.rollbackFailed).toBe(false);
+
+      // Atomicity: prior must STILL be active — the archive UPDATE was rolled back.
+      const priorAfter = await repo.findSessionById(prior.id);
+      expect(priorAfter?.status).toBe("active");
+      const actives = await repo.listSessions({ targetSlug: "cto", status: "active" });
+      expect(actives).toHaveLength(1);
+      expect(actives[0]?.id).toBe(prior.id);
+    });
+
+    it("surfaces rollbackFailed=true when ROLLBACK itself fails after a mid-tx error", async () => {
+      await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+      const restore = patchExecuteQuery(db, {
+        failOnSqlSubstring: "insert into \"chat_sessions\"",
+        failRollback: true,
+      });
+      let caught: unknown;
+      try {
+        await repo.rotateActiveSession({ targetType: "expert", targetSlug: "cto" });
+      } catch (err) {
+        caught = err;
+      } finally {
+        restore();
+      }
+      expect(caught).toBeInstanceOf(RotateActiveSessionError);
+      const err = caught as RotateActiveSessionError;
+      expect(err.rollbackFailed).toBe(true);
+      expect(err.message).toMatch(/inconsistent/i);
+      expect(err.message).toMatch(/simulated ROLLBACK failure/);
+
+      // Best-effort cleanup so afterEach can tear down cleanly.
+      try {
+        await sql`ROLLBACK`.execute(db);
+      } catch {
+        // expected — no active tx if executor was already restored
+      }
+    });
+
+    it("throws RotateActiveSessionError with rollbackFailed=false when BEGIN fails", async () => {
+      const restore = patchExecuteQuery(db, { failOnSqlSubstring: "BEGIN" });
+      let caught: unknown;
+      try {
+        await repo.rotateActiveSession({ targetType: "expert", targetSlug: "cto" });
+      } catch (err) {
+        caught = err;
+      } finally {
+        restore();
+      }
+      expect(caught).toBeInstanceOf(RotateActiveSessionError);
+      const err = caught as RotateActiveSessionError;
+      expect(err.rollbackFailed).toBe(false);
+      expect(err.message).toMatch(/BEGIN/);
+      expect(err.message).toMatch(/no changes applied/i);
+    });
+
+    it("schema enforces single-active-per-target via partial unique index", async () => {
+      // Manually insert two active rows for the same target, bypassing
+      // rotateActiveSession. The partial unique index must reject the
+      // second insert at the schema level — defence-in-depth so that any
+      // future code path that forgets to use rotateActiveSession still
+      // cannot violate the invariant.
+      const now = new Date().toISOString();
+      await db
+        .insertInto("chat_sessions")
+        .values({
+          id: "01ABCDEFGHJKMNPQRSTVWXYZ00",
+          target_type: "expert",
+          target_slug: "cto",
+          status: "active",
+          summary: null,
+          summary_through_seq: 0,
+          created_at: now,
+          updated_at: now,
+        })
+        .execute();
+      await expect(
+        db
+          .insertInto("chat_sessions")
+          .values({
+            id: "01ABCDEFGHJKMNPQRSTVWXYZ01",
+            target_type: "expert",
+            target_slug: "cto",
+            status: "active",
+            summary: null,
+            summary_through_seq: 0,
+            created_at: now,
+            updated_at: now,
+          })
+          .execute(),
+      ).rejects.toThrow(/UNIQUE|unique/);
+    });
+
+    it("schema allows multiple archived sessions for the same target", async () => {
+      // The partial unique index is scoped to status='active', so historical
+      // archived sessions can stack up freely (this is what makes
+      // rotateActiveSession's archive→insert sequence safe).
+      const a = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+      await repo.archiveSession(a.id);
+      const b = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+      await repo.archiveSession(b.id);
+      const archived = await repo.listSessions({ targetSlug: "cto", status: "archived" });
+      expect(archived).toHaveLength(2);
+    });
   });
 
   // -------- search --------
