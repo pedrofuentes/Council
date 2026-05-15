@@ -18,6 +18,11 @@
  *   - System prompt explicitly marks document contents as untrusted.
  *   - Documents are fenced; every '<' in interpolated content is
  *     escaped so no XML-like closing tag can break the fence.
+ *   - Existing profiles (when updating) are wrapped in
+ *     `<existing_profile>...</existing_profile>` fence tags. The system
+ *     prompt describes that fence as containing untrusted user-generated
+ *     content (derived from earlier untrusted documents) that must be
+ *     merged with — never followed as instructions.
  */
 import { ulid } from "ulid";
 
@@ -140,19 +145,26 @@ function sanitizeFenceField(s: string): string {
 
 /**
  * Sanitize a persisted-profile field before interpolating it into the
- * pre-fence portion of the analyzer prompt. The existing-profile block
- * is rendered as labeled single-line entries OUTSIDE the `<documents>`
- * untrusted-data fence, so an attacker-controlled field could otherwise
- * emit fresh trusted-context lines on a subsequent extraction run, or
- * forge a top-level "[N] SECTION" marker to impersonate analyzer
- * instructions. Delegates to the shared `sanitizePromptField`
+ * `<existing_profile>...</existing_profile>` block of the analyzer
+ * prompt. That fence is described in the system prompt as untrusted
+ * user-generated context (the previous profile is itself derived from
+ * earlier untrusted documents), so attacker-controlled fields must not
+ * be able to:
+ *   - break out of the fence by emitting a literal `</existing_profile>`
+ *     (or any other XML-like closing tag) — every `<` is escaped to
+ *     `&lt;` to neutralize fence breakout, and
+ *   - smuggle fresh trusted-context lines or forge a top-level
+ *     "[N] SECTION" marker that would impersonate analyzer instructions.
+ *
+ * Delegates to the shared `sanitizePromptField`
  * (`src/core/prompt-sanitize.ts`) which:
  *   - strips C0 control bytes (except tab/newline/CR),
  *   - collapses every Unicode line-break code point to a single space,
  *   - defangs `[NN]` bracketed numeric section markers,
  *   - caps total length.
- * The fence-specific `<` escape is applied on top so the field cannot
- * prematurely close the upcoming `<documents>` fence.
+ * The fence-specific `<` → `&lt;` escape is then applied on top so the
+ * field cannot prematurely close the surrounding `<existing_profile>`
+ * fence (or any other XML-like fence in the prompt).
  */
 function sanitizeExistingProfileField(raw: string): string {
   return sanitizeFenceField(sanitizePromptField(raw));
@@ -360,9 +372,23 @@ export async function analyzeDocuments(
         raw = await collectResponse(engine, expertId, prompt, timeoutMs);
         parsed = parseAnalyzerJSON(raw);
       } catch (err) {
-        // Retry also failed: surface the retry's error (which is the
-        // most recent symptom) so callers see the proximate cause.
-        void firstError;
+        // Retry also failed: surface the retry's error (the proximate
+        // symptom) but preserve the original first-send error on
+        // `.cause` so callers and logs can trace the full failure
+        // chain (#432). Without this the upstream provider error from
+        // the first attempt is silently lost.
+        if (firstError !== undefined) {
+          const wrapped =
+            err instanceof Error ? err : new Error(String(err));
+          if (wrapped.cause === undefined) {
+            const original =
+              firstError instanceof Error
+                ? firstError
+                : new Error(String(firstError));
+            (wrapped as { cause?: unknown }).cause = original;
+          }
+          throw wrapped;
+        }
         throw err;
       }
     }
