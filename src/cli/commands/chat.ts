@@ -1725,24 +1725,34 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
         // PRD §F6 — preserve partial results on interruption. If a
         // turn was mid-stream, flush the deferred user turn (so we
         // never leave an orphan-free buffer in chat history) and
-        // persist whatever expert content has been buffered. Errors
-        // here are swallowed so a flaky DB write cannot block the
-        // chat prompt from coming back.
+        // persist whatever expert content has been buffered. If the
+        // write itself fails, surface a visible warning rather than
+        // silently dropping content the user already saw streamed —
+        // PRD §F6 forbids silent loss of streamed output.
         if (inTurn && buffer.length > 0 && bufferSlug !== undefined) {
+          const slugBeingFlushed = bufferSlug;
+          const lostBytes = buffer.length;
           try {
             await persistUserTurnOnce();
             await repo.addTurn({
               chatId: session.id,
               role: "expert",
-              expertSlug: bufferSlug,
+              expertSlug: slugBeingFlushed,
               content: buffer,
             });
             persistedTurns += 1;
-          } catch {
-            /* best-effort */
+            buffer = "";
+            bufferSlug = undefined;
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            renderer.showSystem(
+              `⚠ Could not persist partial ${slugBeingFlushed} response (${lostBytes} bytes) after interruption: ${msg}`,
+              "warn",
+            );
+            // Intentionally leave buffer/bufferSlug in place so the
+            // post-loop cleanup does not treat the half-rendered
+            // turn as discarded silently.
           }
-          buffer = "";
-          bufferSlug = undefined;
         }
         // Best-effort: ask the generator to clean up. Fire-and-forget
         // so a slow upstream send() does not block the prompt return.
