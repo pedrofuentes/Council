@@ -261,6 +261,14 @@ export class Debate {
         }
       }
 
+      // #503: re-check abort after the (potentially long-running)
+      // summarizer round-trip so we don't emit a fresh round.start
+      // when the user has already cancelled.
+      if (signal?.aborted) {
+        yield { kind: "debate.end", reason: "aborted" };
+        return;
+      }
+
       // First plan locks the round's turn ordering and serves as the
       // shouldContinue() / validation context.
       const initialCtx = buildCtx(round);
@@ -557,6 +565,7 @@ export class Debate {
     let turnFailed = false;
     let lastErrorRecoverable = false;
     let lastErrorMessage = "";
+    let lastErrorAborted = false;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       // Reset per-attempt state — partial deltas from a failed attempt
@@ -565,6 +574,7 @@ export class Debate {
       let attemptFailed = false;
       lastErrorRecoverable = false;
       lastErrorMessage = "";
+      lastErrorAborted = false;
 
       try {
         for await (const evt of this.engine.send({ prompt, expertId: expert.id, ...(signal ? { signal } : {}) })) {
@@ -582,6 +592,7 @@ export class Debate {
               attemptFailed = true;
               lastErrorRecoverable = evt.recoverable;
               lastErrorMessage = evt.error.message;
+              lastErrorAborted = evt.error.code === "ABORTED";
               break;
             }
           }
@@ -593,6 +604,7 @@ export class Debate {
         attemptFailed = true;
         lastErrorRecoverable = false;
         lastErrorMessage = err instanceof Error ? err.message : String(err);
+        lastErrorAborted = false;
       }
 
       if (!attemptFailed) {
@@ -602,7 +614,9 @@ export class Debate {
       }
 
       // Decide whether to retry.
-      if (lastErrorRecoverable && attempt < maxRetries) {
+      // #503: skip retry when the caller has aborted; the abort takes
+      // priority over recoverable backoff so we don't sleep + reissue.
+      if (lastErrorRecoverable && attempt < maxRetries && !signal?.aborted) {
         const delay = backoffMs[attempt] ?? 0;
         yield {
           kind: "turn.retry",
@@ -610,18 +624,20 @@ export class Debate {
           attempt: attempt + 1,
           reason: lastErrorMessage,
         };
-        if (delay > 0) await sleep(delay);
+        if (delay > 0) await abortableSleep(delay, signal);
         continue; // try again
       }
 
       // Either non-recoverable, or retries exhausted: emit final error.
-      // Exception (#503): when the caller's signal aborted, the engine's
-      // ABORTED error event surfaces here as a non-recoverable failure.
-      // Suppress the synthetic turn-level error so chat does not render
-      // it as a PROVIDER_ERROR — the outer loop will emit
-      // debate.end "aborted" instead.
+      // Exception (#503): when the engine's terminal error was the
+      // ABORTED code (i.e. caused by the caller's signal), suppress
+      // the synthetic turn-level error so chat does not render it as a
+      // PROVIDER_ERROR — the outer loop will emit debate.end "aborted"
+      // instead. We deliberately key on the engine's error code, NOT
+      // on `signal.aborted` alone, so a real provider failure that
+      // races with an abort still surfaces.
       turnFailed = true;
-      if (!signal?.aborted) {
+      if (!lastErrorAborted) {
         yield {
           kind: "error",
           expertSlug: expert.slug,
@@ -650,6 +666,27 @@ export class Debate {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * sleep() that resolves early when the caller's AbortSignal fires.
+ * Used by retry backoff so a Ctrl+C does not have to wait out the
+ * remaining backoff before the orchestrator surfaces the abort (#503).
+ */
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return sleep(ms);
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 /**
