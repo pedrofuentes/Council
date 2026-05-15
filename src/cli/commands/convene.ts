@@ -15,15 +15,14 @@ import { ulid } from "ulid";
 
 import { Command } from "commander";
 
+import { CliUserError } from "../cli-user-error.js";
+
 import { autoComposePanel } from "../../core/auto-compose.js";
 import { getCouncilDataHome, getCouncilHome, DEFAULT_MODEL } from "../../config/index.js";
 import type { ContextConfig } from "../../core/debate.js";
 import type { VisibilityConfig } from "../../core/context/visibility.js";
 import { FileExpertLibrary } from "../../core/expert-library.js";
-import {
-  isMigrationNeeded,
-  migrateBuiltInTemplates,
-} from "../../core/template-migration.js";
+import { isMigrationNeeded, migrateBuiltInTemplates } from "../../core/template-migration.js";
 import type { DebateMode } from "../../core/template-loader.js";
 import {
   assertAllInline,
@@ -248,10 +247,8 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             const library = new FileExpertLibrary(dataHome, libDb);
             const { resolved, missing } = await resolveExperts(panel.experts, library);
             if (missing.length > 0) {
-              const safeName = stripControlChars(opts.template);
-              const safeMissing = missing.map((s) => stripControlChars(s)).join(", ");
               throw new Error(
-                `Panel "${safeName}" references experts not in the library: ${safeMissing}. ` +
+                `Panel "${stripControlChars(opts.template)}" references experts not in the library: ${missing.map((s) => stripControlChars(s)).join(", ")}. ` +
                   `Add them with 'council expert create' or use inline expert definitions.`,
               );
             }
@@ -308,7 +305,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           const ok = await provider.confirm("Proceed with this panel? [y/N] ");
           if (!ok) {
             writeError("Aborted. Use --template to specify a panel manually.\n");
-            throw new Error("Aborted: auto-composed panel was not confirmed.");
+            throw new CliUserError("Aborted: auto-composed panel was not confirmed.");
           }
         }
       }

@@ -180,9 +180,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
           panelId: resolved.panel.id,
           expertSlugToId,
           moderator:
-            panelMode === "structured"
-              ? "structured-phases"
-              : (strategy?.name ?? "round-robin"),
+            panelMode === "structured" ? "structured-phases" : (strategy?.name ?? "round-robin"),
           format: opts.format,
           write,
           writeError,

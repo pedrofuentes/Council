@@ -55,15 +55,8 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
   cmd
     .description("Export a panel transcript to markdown, json, or adr format")
     .argument("<panel>", "Panel name to export (as shown by `council panels`)")
-    .option(
-      "--format <kind>",
-      `Output format: ${EXPORT_FORMATS.join(" | ")}`,
-      "markdown",
-    )
-    .option(
-      "--output <path>",
-      "Write to file instead of stdout (default: stdout)",
-    )
+    .option("--format <kind>", `Output format: ${EXPORT_FORMATS.join(" | ")}`, "markdown")
+    .option("--output <path>", "Write to file instead of stdout (default: stdout)")
     .action(async (panelName: string, raw: ExportOptions) => {
       if (!EXPORT_FORMATS.includes(raw.format)) {
         throw new Error(
@@ -115,9 +108,11 @@ function renderForExport(doc: TranscriptDocument, format: ExportFormat): string 
 
 function renderJson(doc: TranscriptDocument): string {
   // NDJSON identical to `council resume --format json`.
-  return synthesizeEvents(doc)
-    .map((e) => JSON.stringify(e))
-    .join("\n") + "\n";
+  return (
+    synthesizeEvents(doc)
+      .map((e) => JSON.stringify(e))
+      .join("\n") + "\n"
+  );
 }
 
 function renderMarkdown(doc: TranscriptDocument): string {
@@ -219,7 +214,10 @@ function renderAdr(doc: TranscriptDocument): string {
     });
   }
 
-  const status = doc.latestDebate.status === "completed" ? "Accepted" : `${doc.latestDebate.status} (incomplete)`;
+  const status =
+    doc.latestDebate.status === "completed"
+      ? "Accepted"
+      : `${doc.latestDebate.status} (incomplete)`;
 
   const lines: string[] = [];
   lines.push(`# Decision Record: ${doc.panel.topic ?? doc.latestDebate.prompt}`);

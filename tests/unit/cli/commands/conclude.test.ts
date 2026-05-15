@@ -16,6 +16,7 @@ import {
   buildConcludeCommand,
   type ConcludeOutput,
 } from "../../../../src/cli/commands/conclude.js";
+import { CliUserError } from "../../../../src/cli/cli-user-error.js";
 import { buildProgram } from "../../../../src/bin/council.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
 import { createDatabase } from "../../../../src/memory/db.js";
@@ -60,10 +61,7 @@ interface SeedResult {
   readonly panelName: string;
 }
 
-async function seedPanelWithDebate(
-  testHome: string,
-  name = "conclude-test",
-): Promise<SeedResult> {
+async function seedPanelWithDebate(testHome: string, name = "conclude-test"): Promise<SeedResult> {
   const db = await createDatabase(path.join(testHome, "council.db"));
   try {
     const panel = await new PanelRepository(db).create({
@@ -228,13 +226,7 @@ describe("buildConcludeCommand", () => {
     cmd.exitOverride();
     let thrown = "";
     try {
-      await cmd.parseAsync([
-        "node",
-        "council-conclude",
-        "no-such-panel",
-        "--engine",
-        "mock",
-      ]);
+      await cmd.parseAsync(["node", "council-conclude", "no-such-panel", "--engine", "mock"]);
     } catch (err) {
       thrown = err instanceof Error ? err.message : String(err);
     }
@@ -251,13 +243,7 @@ describe("buildConcludeCommand", () => {
     cmd.exitOverride();
     let thrown = "";
     try {
-      await cmd.parseAsync([
-        "node",
-        "council-conclude",
-        seed.panelName,
-        "--engine",
-        "openai",
-      ]);
+      await cmd.parseAsync(["node", "council-conclude", seed.panelName, "--engine", "openai"]);
     } catch (err) {
       thrown = err instanceof Error ? err.message : String(err);
     }
@@ -275,13 +261,7 @@ describe("buildConcludeCommand", () => {
     cmd.exitOverride();
     let thrown = "";
     try {
-      await cmd.parseAsync([
-        "node",
-        "council-conclude",
-        seed.panelName,
-        "--engine",
-        "mock",
-      ]);
+      await cmd.parseAsync(["node", "council-conclude", seed.panelName, "--engine", "mock"]);
     } catch (err) {
       thrown = err instanceof Error ? err.message : String(err);
     }
@@ -331,13 +311,7 @@ describe("buildConcludeCommand", () => {
       engineFactory: () => makeMockEngine(JSON.stringify(SAMPLE_OUTPUT)),
       synthesizerId: SYNTH_ID,
     });
-    await cmd.parseAsync([
-      "node",
-      "council-conclude",
-      seed.panelName,
-      "--engine",
-      "mock",
-    ]);
+    await cmd.parseAsync(["node", "council-conclude", seed.panelName, "--engine", "mock"]);
 
     expect(captured.toLowerCase()).toContain("consensus");
     expect(captured.toLowerCase()).toContain("tension");
@@ -360,13 +334,7 @@ describe("buildConcludeCommand", () => {
       engineFactory: () => engine,
       synthesizerId: SYNTH_ID,
     });
-    await cmd.parseAsync([
-      "node",
-      "council-conclude",
-      seed.panelName,
-      "--engine",
-      "mock",
-    ]);
+    await cmd.parseAsync(["node", "council-conclude", seed.panelName, "--engine", "mock"]);
 
     expect(engine.sentPrompts).toHaveLength(1);
     const prompt = engine.sentPrompts[0]?.prompt ?? "";
@@ -382,10 +350,7 @@ describe("buildConcludeCommand", () => {
 
   it("tolerates JSON wrapped in fenced ```json code blocks", async () => {
     const seed = await seedPanelWithDebate(testHome);
-    const fenced =
-      "Here is the synthesis:\n```json\n" +
-      JSON.stringify(SAMPLE_OUTPUT) +
-      "\n```\n";
+    const fenced = "Here is the synthesis:\n```json\n" + JSON.stringify(SAMPLE_OUTPUT) + "\n```\n";
     let captured = "";
     const cmd = buildConcludeCommand({
       write: (s) => {
@@ -419,13 +384,7 @@ describe("buildConcludeCommand", () => {
     cmd.exitOverride();
     let thrown = "";
     try {
-      await cmd.parseAsync([
-        "node",
-        "council-conclude",
-        seed.panelName,
-        "--engine",
-        "mock",
-      ]);
+      await cmd.parseAsync(["node", "council-conclude", seed.panelName, "--engine", "mock"]);
     } catch (err) {
       thrown = err instanceof Error ? err.message : String(err);
     }
@@ -449,14 +408,7 @@ describe("buildConcludeCommand", () => {
       engineFactory: () => makeMockEngine(JSON.stringify(SAMPLE_OUTPUT)),
       synthesizerId: SYNTH_ID,
     });
-    await cmd.parseAsync([
-      "node",
-      "council-conclude",
-      "--engine",
-      "mock",
-      "--format",
-      "json",
-    ]);
+    await cmd.parseAsync(["node", "council-conclude", "--engine", "mock", "--format", "json"]);
 
     const parsed = JSON.parse(captured.trim()) as ConcludeOutput;
     expect(parsed.panelName).toBe(newer.panelName);
@@ -529,13 +481,7 @@ describe("buildConcludeCommand", () => {
       engineFactory: () => makeMockEngine(JSON.stringify(SAMPLE_OUTPUT)),
       synthesizerId: SYNTH_ID,
     });
-    await cmd.parseAsync([
-      "node",
-      "council-conclude",
-      seed.panelName,
-      "--engine",
-      "mock",
-    ]);
+    await cmd.parseAsync(["node", "council-conclude", seed.panelName, "--engine", "mock"]);
     expect(captured.toLowerCase()).toContain("warning");
   });
 
@@ -548,13 +494,7 @@ describe("buildConcludeCommand", () => {
       engineFactory: () => engine,
       synthesizerId: SYNTH_ID,
     });
-    await cmd.parseAsync([
-      "node",
-      "council-conclude",
-      seed.panelName,
-      "--engine",
-      "mock",
-    ]);
+    await cmd.parseAsync(["node", "council-conclude", seed.panelName, "--engine", "mock"]);
     const prompt = engine.sentPrompts[0]?.prompt ?? "";
     expect(prompt).toContain("<transcript>");
     expect(prompt).toContain("</transcript>");
@@ -614,17 +554,58 @@ describe("buildConcludeCommand", () => {
     cmd.exitOverride();
     let thrown = "";
     try {
-      await cmd.parseAsync([
-        "node",
-        "council-conclude",
-        seed.panelName,
-        "--engine",
-        "mock",
-      ]);
+      await cmd.parseAsync(["node", "council-conclude", seed.panelName, "--engine", "mock"]);
     } catch (err) {
       thrown = err instanceof Error ? err.message : String(err);
     }
     expect(thrown.toLowerCase()).toMatch(/schema|invalid|confidence|expected/);
+  });
+
+  it("rejects malformed (non-JSON) engine response with a clear error", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    const cmd = buildConcludeCommand({
+      write: () => undefined,
+      writeError: () => undefined,
+      engineFactory: () => makeMockEngine("this is not json at all"),
+      synthesizerId: SYNTH_ID,
+    });
+    cmd.exitOverride();
+    let thrown = "";
+    try {
+      await cmd.parseAsync(["node", "council-conclude", seed.panelName, "--engine", "mock"]);
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    expect(thrown.toLowerCase()).toMatch(/failed to parse|json/);
+    // Must NOT leak raw model output
+    expect(thrown).not.toContain("this is not json at all");
+  });
+
+  it("emits one diagnostic when the engine fails during synthesis", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    const errorEngine = new MockEngine({
+      failures: {
+        [SYNTH_ID]: { code: "INTERNAL", message: "engine blew up" },
+      },
+    });
+    let errOutput = "";
+    const cmd = buildConcludeCommand({
+      write: () => undefined,
+      writeError: (s) => (errOutput += s),
+      engineFactory: () => errorEngine,
+      synthesizerId: SYNTH_ID,
+    });
+    cmd.exitOverride();
+    let thrownErr: Error | undefined;
+    try {
+      await cmd.parseAsync(["node", "council-conclude", seed.panelName, "--engine", "mock"]);
+    } catch (err) {
+      thrownErr = err instanceof Error ? err : undefined;
+    }
+    // writeError should have been called with the engine diagnostic
+    expect(errOutput).toMatch(/engine blew up|internal/i);
+    // The thrown error should be a CliUserError (message already written)
+    expect(thrownErr).toBeInstanceOf(CliUserError);
   });
 
   it("buildProgram() registers the conclude command", () => {

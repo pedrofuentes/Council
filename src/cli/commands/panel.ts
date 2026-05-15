@@ -19,6 +19,8 @@ import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 
 import { Command } from "commander";
+
+import { CliUserError } from "../cli-user-error.js";
 import * as yaml from "yaml";
 
 import {
@@ -148,14 +150,14 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
           writeError(
             `Panel "${name}" already exists. Use "council panel edit ${name}" to modify or choose a different name.\n`,
           );
-          throw new Error(`Panel "${name}" already exists`);
+          throw new CliUserError(`Panel "${name}" already exists`);
         }
 
         const yamlPath = panelYamlPath(ctx.dataHome, name);
         try {
           await fs.access(yamlPath);
           writeError(`Panel YAML already exists at ${displayPath(yamlPath)}\n`);
-          throw new Error(`Panel "${name}" already exists at ${yamlPath}`);
+          throw new CliUserError(`Panel "${name}" already exists at ${yamlPath}`);
         } catch (err) {
           const code = (err as NodeJS.ErrnoException).code;
           if (code !== "ENOENT") {
@@ -316,7 +318,7 @@ async function assertExpertsExist(
   if (missing.length > 0) {
     const msg = `Unknown expert slug${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}. Create with "council expert create" or pick from "council expert list".`;
     if (writeError) writeError(msg + "\n");
-    throw new Error(msg);
+    throw new CliUserError(msg);
   }
 }
 
@@ -424,7 +426,7 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
         const row = await ctx.panelRepo.findByName(name);
         if (!row) {
           writeError(`Panel "${name}" not found.\n`);
-          throw new Error(`Panel "${name}" not found.`);
+          throw new CliUserError(`Panel "${name}" not found.`);
         }
         const memberSlugs = await ctx.panelRepo.getMembers(name);
 
@@ -477,7 +479,7 @@ function buildEditCommand(write: Writer, writeError: Writer): Command {
         const existing = await ctx.panelRepo.findByName(name);
         if (!existing) {
           writeError(`Panel "${name}" not found.\n`);
-          throw new Error(`Panel "${name}" not found.`);
+          throw new CliUserError(`Panel "${name}" not found.`);
         }
         const yamlPath = existing.yamlPath;
         const editor = resolveEditor();
@@ -502,7 +504,7 @@ function buildEditCommand(write: Writer, writeError: Writer): Command {
           writeError(
             `Refusing to rename panel "${name}" → "${parsed.name}" via edit. Delete and re-create to change the name.\n`,
           );
-          throw new Error(
+          throw new CliUserError(
             `Panel rename via edit is not supported (was "${name}", became "${parsed.name}")`,
           );
         }
@@ -597,16 +599,12 @@ function buildDocsListCommand(write: Writer, writeError: Writer): Command {
   return cmd;
 }
 
-async function runDocsList(
-  name: string,
-  write: Writer,
-  writeError: Writer,
-): Promise<void> {
+async function runDocsList(name: string, write: Writer, writeError: Writer): Promise<void> {
   await withPanelContext(async (ctx) => {
     const panel = await ctx.panelRepo.findByName(name);
     if (!panel) {
       writeError(`Panel "${name}" not found.\n`);
-      throw new Error(`Panel "${name}" not found.`);
+      throw new CliUserError(`Panel "${name}" not found.`);
     }
     const docs = await ctx.docsRepo.listDocuments(name);
     const folders = await ctx.docsRepo.getLinkedFolders(name);
@@ -660,7 +658,7 @@ function buildDocsLinkCommand(write: Writer, writeError: Writer): Command {
       const folderPath = opts.path;
       if (folderPath === undefined || folderPath.trim().length === 0) {
         writeError("--path is required\n");
-        throw new Error("--path is required");
+        throw new CliUserError("--path is required");
       }
       const absolute = path.resolve(folderPath);
 
@@ -671,7 +669,7 @@ function buildDocsLinkCommand(write: Writer, writeError: Writer): Command {
         const code = (err as NodeJS.ErrnoException).code;
         if (code === "ENOENT") {
           writeError(`Path does not exist: ${displayPath(absolute)}\n`);
-          throw new Error(`Path does not exist: ${absolute}`);
+          throw new CliUserError(`Path does not exist: ${absolute}`);
         }
         throw err;
       }
@@ -683,18 +681,18 @@ function buildDocsLinkCommand(write: Writer, writeError: Writer): Command {
         writeError(
           `Path is a symlink: ${displayPath(absolute)} — pass the real folder path instead.\n`,
         );
-        throw new Error(`Path is a symlink: ${absolute}`);
+        throw new CliUserError(`Path is a symlink: ${absolute}`);
       }
       if (!stat.isDirectory()) {
         writeError(`Path is not a directory: ${displayPath(absolute)}\n`);
-        throw new Error(`Path is not a directory: ${absolute}`);
+        throw new CliUserError(`Path is not a directory: ${absolute}`);
       }
 
       await withPanelContext(async (ctx) => {
         const panel = await ctx.panelRepo.findByName(name);
         if (!panel) {
           writeError(`Panel "${name}" not found.\n`);
-          throw new Error(`Panel "${name}" not found.`);
+          throw new CliUserError(`Panel "${name}" not found.`);
         }
         await ctx.docsRepo.addLinkedFolder(name, absolute);
         const supported = new Set(
@@ -719,7 +717,7 @@ function buildDocsUnlinkCommand(write: Writer, writeError: Writer): Command {
       const folderPath = opts.path;
       if (folderPath === undefined || folderPath.trim().length === 0) {
         writeError("--path is required\n");
-        throw new Error("--path is required");
+        throw new CliUserError("--path is required");
       }
       const absolute = path.resolve(folderPath);
 
@@ -727,7 +725,7 @@ function buildDocsUnlinkCommand(write: Writer, writeError: Writer): Command {
         const panel = await ctx.panelRepo.findByName(name);
         if (!panel) {
           writeError(`Panel "${name}" not found.\n`);
-          throw new Error(`Panel "${name}" not found.`);
+          throw new CliUserError(`Panel "${name}" not found.`);
         }
         // #388: All FTS removes + metadata deletes must be a single
         // atomic unit. Removing FTS rows one at a time without a
@@ -769,7 +767,7 @@ function buildDocsUnlinkCommand(write: Writer, writeError: Writer): Command {
             `index and/or metadata (${detail}). Linked folder preserved; re-run ` +
             `unlink after addressing the error.`;
           writeError(msg + "\n");
-          throw new Error(msg);
+          throw new CliUserError(msg);
         }
         write(`✓ Unlinked ${displayPath(absolute)} from ${name}.\n`);
       });

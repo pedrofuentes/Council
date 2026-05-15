@@ -14,6 +14,7 @@ import * as fs from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildExpertCommand } from "../../../../src/cli/commands/expert.js";
+import { CliUserError } from "../../../../src/cli/cli-user-error.js";
 import type { ExpertDefinition } from "../../../../src/core/expert.js";
 import type {
   CouncilEngine,
@@ -220,6 +221,18 @@ describe("buildExpertCommand", () => {
         /not found/i,
       );
       expect(errored + captured).toMatch(/not found|nobody/i);
+    });
+
+    it("throws CliUserError (not plain Error) for not-found", async () => {
+      const cmd = buildExpertCommand(() => {
+        /* noop */
+      });
+      try {
+        await cmd.parseAsync(["node", "council-expert", "inspect", "nobody"]);
+        expect.unreachable("should have thrown");
+      } catch (err) {
+        expect(err).toBeInstanceOf(CliUserError);
+      }
     });
   });
 
