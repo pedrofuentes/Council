@@ -444,6 +444,9 @@ describe("ChatRepository", () => {
       expect(err.cause).toBeInstanceOf(Error);
       expect(err.message).toMatch(/inconsistent/i);
       expect(err.message).not.toMatch(/preserved/i);
+      // The rollback error itself must surface in the message so
+      // operators can diagnose why ROLLBACK failed (#504 follow-up).
+      expect(err.message).toMatch(/simulated ROLLBACK failure/);
       // Best-effort cleanup so the next test's beforeEach can rebuild state.
       try {
         await sql`ROLLBACK`.execute(db);
