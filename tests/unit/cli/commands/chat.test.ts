@@ -2893,6 +2893,17 @@ describe("long conversation warning (chat.longConversationWarning)", () => {
     // check ran only after the expert turn, so a user message that lands the
     // session on the threshold (49 -> 50, then expert -> 51) silently skipped
     // the warning. Crossing detection must catch it.
+    //
+    // Issue #463 hardening: the warning must originate from the user-turn
+    // call site, not the expert-response call site. The user-turn call lands
+    // the session at exactly 50 (the crossing); the expert-response call
+    // pushes it to 51 — at which point prevCount=50 and count=51, so the
+    // crossing predicate `prevCount < threshold && count >= threshold` is
+    // false and the expert-path call cannot emit the warning. The only way
+    // the warning can be observed in this scenario is via the user-turn
+    // path. We pin that by asserting the warning appears BEFORE the expert
+    // response body is streamed to the output stream — proving it was
+    // emitted between user-turn `addTurn` and expert streaming.
     await seedExpert(env);
     await writeConfigYaml(env, "chat:\n  longConversationWarning: 50\n");
     await seedTurns(env, "expert", "dahlia-cto", 49, "dahlia-cto");
@@ -2909,9 +2920,29 @@ describe("long conversation warning (chat.longConversationWarning)", () => {
     expect(out).toMatch(/Consider starting a new conversation with --new/);
     const matches = out.match(/Consider starting a new conversation with --new/g) ?? [];
     expect(matches.length).toBe(1);
+
+    // Pin the warning to the user-turn call site by ordering: the advisory
+    // must precede the expert response banner. The renderer prefixes every
+    // expert reply with `${displayName} > ` (see chat-renderer.ts
+    // `startExpertResponse`), so the presence of "Dahlia Renner (CTO) > "
+    // in the buffer is a faithful proxy for "the expert response started
+    // streaming". If the warning were (re)emitted from the post-expert
+    // call site, it would appear AFTER that banner — which this ordering
+    // assertion would catch.
+    const warningIdx = out.indexOf("Consider starting a new conversation with --new");
+    const expertReplyIdx = out.indexOf("Dahlia Renner (CTO) > ");
+    expect(warningIdx).toBeGreaterThanOrEqual(0);
+    expect(expertReplyIdx).toBeGreaterThanOrEqual(0);
+    expect(warningIdx).toBeLessThan(expertReplyIdx);
   });
 
   it("panel chat: warns when the user turn crosses the threshold (49 -> 50)", async () => {
+    // Issue #463 hardening: same call-site pinning as the 1:1 case. With 49
+    // seeded turns, the user message takes the count to 50 (crossing fires
+    // from the user-turn call site); panel-a's reply pushes it to 51 and
+    // panel-b's to 52 — neither of which can re-fire the crossing predicate.
+    // The warning must therefore appear before the FIRST panel expert's
+    // streamed response.
     await seedExpert(env, PANEL_EXPERT_A);
     await seedExpert(env, PANEL_EXPERT_B);
     await writeUserPanel(env, "long-panel-2", ["panel-a", "panel-b"]);
@@ -2930,6 +2961,22 @@ describe("long conversation warning (chat.longConversationWarning)", () => {
     expect(out).toMatch(/Consider starting a new conversation with --new/);
     const matches = out.match(/Consider starting a new conversation with --new/g) ?? [];
     expect(matches.length).toBe(1);
+
+    // Pin the warning to the user-turn call site: it must precede ALL panel
+    // expert response banners, not just one. The renderer prefixes every
+    // expert reply with `${displayName} > ` (see chat-renderer.ts
+    // `startExpertResponse`), so each `${displayName} > ` marker is a
+    // faithful proxy for "this panellist began streaming". If the warning
+    // were emitted from any post-expert call site we'd see it interleaved
+    // with or after one of these banners.
+    const warningIdx = out.indexOf("Consider starting a new conversation with --new");
+    const panelAIdx = out.indexOf("Alice (Architect) > ");
+    const panelBIdx = out.indexOf("Bob (Builder) > ");
+    expect(warningIdx).toBeGreaterThanOrEqual(0);
+    expect(panelAIdx).toBeGreaterThanOrEqual(0);
+    expect(panelBIdx).toBeGreaterThanOrEqual(0);
+    expect(warningIdx).toBeLessThan(panelAIdx);
+    expect(warningIdx).toBeLessThan(panelBIdx);
   });
 
   it("1:1 chat: does not re-warn when resuming an already-over-threshold session", async () => {
