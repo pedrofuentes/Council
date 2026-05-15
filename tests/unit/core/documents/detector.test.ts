@@ -195,6 +195,74 @@ describe("detectDocumentChanges", () => {
     });
   });
 
+  // ── Issue #374: fd-anchored root validation against scan-window TOCTOU ─
+  describe("root-swap TOCTOU protection (#374)", () => {
+    it("rejects the scan when the root directory's identity (dev/ino) changes between pre-readdir and post-readdir lstat", async () => {
+      // Simulate a directory swap during the scan window: an attacker
+      // (or a racy mount/replace) substitutes the docs root with a
+      // different inode between the detector's entry validation and
+      // its post-readdir verification. The detector MUST notice the
+      // identity flip and refuse to return any results, otherwise
+      // entries enumerated from the swapped directory would silently
+      // be processed as if they came from the validated root.
+      await fs.writeFile(path.join(dir, "a.md"), "hello");
+      const realStat = await fs.lstat(dir);
+      let calls = 0;
+      const rootLstatOverride = async (_p: string) => {
+        calls += 1;
+        // First call (pre-readdir): return the real identity.
+        // Second call (post-readdir): return a different inode to
+        // simulate the directory having been swapped out.
+        if (calls === 1) return realStat;
+        return {
+          ...realStat,
+          ino: realStat.ino + 1,
+          dev: realStat.dev,
+          isFile: () => realStat.isFile(),
+          isDirectory: () => realStat.isDirectory(),
+          isSymbolicLink: () => false,
+        } as unknown as Awaited<ReturnType<typeof fs.lstat>>;
+      };
+
+      await expect(
+        detectDocumentChanges(dir, new Map(), [".md"], {
+          confinementRoot: dir,
+          _rootIsCanonical: true,
+          _rootLstatOverride: rootLstatOverride,
+        }),
+      ).rejects.toThrow(/identity changed|root.*swap|TOCTOU/i);
+    });
+
+    it("succeeds when the root directory's identity is stable across the scan", async () => {
+      // Back-compat / happy-path guard: the new check must not produce
+      // false positives on a normal scan where the root inode is the
+      // same before and after readdir.
+      await fs.writeFile(path.join(dir, "a.md"), "hi");
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        confinementRoot: dir,
+        _rootIsCanonical: true,
+      });
+      expect(result.newFiles).toHaveLength(1);
+      expect(result.newFiles[0]?.filename).toBe("a.md");
+    });
+
+    it("does not perform root-identity checks when no confinementRoot is provided", async () => {
+      // When the caller has not opted into confinement, the detector
+      // must remain back-compat: no root-identity checks and no calls
+      // into the root-lstat seam. We assert the seam is never invoked.
+      await fs.writeFile(path.join(dir, "a.md"), "hi");
+      let called = false;
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        _rootLstatOverride: async (p: string) => {
+          called = true;
+          return fs.lstat(p);
+        },
+      });
+      expect(result.newFiles).toHaveLength(1);
+      expect(called).toBe(false);
+    });
+  });
+
   // ── Sentinel #341 / #342: error surfacing & per-file resilience ─────
   describe("error surfacing (#341, #342)", () => {
     it("wraps readdir failures with a descriptive message naming the docsPath (#341)", async () => {
