@@ -29,7 +29,6 @@ import * as path from "node:path";
 
 import { Command } from "commander";
 
-import { CliUserError } from "../cli-user-error.js";
 import { ulid } from "ulid";
 import { z } from "zod";
 
@@ -134,7 +133,7 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
     .option("--format <kind>", `Output format: ${CONCLUDE_FORMATS.join(" | ")}`, "plain")
     .action(async (panelArg: string | undefined, raw: ConcludeRawOptions) => {
       if (!ENGINE_KINDS.includes(raw.engine)) {
-        throw new CliUserError(
+        throw new Error(
           `Unknown --engine value: ${raw.engine}. Expected one of: ${ENGINE_KINDS.join(", ")}`,
         );
       }
@@ -142,7 +141,7 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
         raw.format !== undefined &&
         !(CONCLUDE_FORMATS as readonly string[]).includes(raw.format)
       ) {
-        throw new CliUserError(
+        throw new Error(
           `Unknown --format value: ${raw.format}. Expected one of: ${CONCLUDE_FORMATS.join(", ")}`,
         );
       }
@@ -161,7 +160,7 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
         const doc = await loadTranscript(db, panelName);
 
         if (doc.turns.length === 0) {
-          throw new CliUserError(
+          throw new Error(
             `Panel '${panelName}' has no turns in its latest debate — nothing to conclude. Run \`council convene\` or \`council resume --continue\` first.`,
           );
         }
@@ -239,14 +238,14 @@ async function resolvePanelName(
   if (panelArg !== undefined && panelArg.length > 0) return panelArg;
   const panels = await new PanelRepository(db).findAll();
   if (panels.length === 0) {
-    throw new CliUserError("No panels found in the local database. Run `council convene` first.");
+    throw new Error("No panels found in the local database. Run `council convene` first.");
   }
   // PanelRepository.findAll() orders by id ASC. Panel ids are ULIDs
   // (lexicographically time-sortable), so the last entry is the most
   // recently created.
   const latest = panels[panels.length - 1];
   if (!latest) {
-    throw new CliUserError("No panels found in the local database. Run `council convene` first.");
+    throw new Error("No panels found in the local database. Run `council convene` first.");
   }
   return latest.name;
 }
@@ -349,12 +348,10 @@ async function collectResponse(
   if (controller.signal.aborted) {
     const reason = controller.signal.reason as unknown;
     if (reason instanceof Error) throw reason;
-    throw new CliUserError(
-      `Synthesis aborted after ${timeoutMs}ms — engine did not respond in time`,
-    );
+    throw new Error(`Synthesis aborted after ${timeoutMs}ms — engine did not respond in time`);
   }
   if (errorMessage !== undefined) {
-    throw new CliUserError(`Engine returned error during synthesis: ${errorMessage}`);
+    throw new Error(`Engine returned error during synthesis: ${errorMessage}`);
   }
   return buf.join("");
 }
@@ -380,15 +377,13 @@ export function parseSynthesisResponse(raw: string): z.infer<typeof SynthesisSch
     json = JSON.parse(candidate);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    throw new CliUserError(
+    throw new Error(
       `Failed to parse synthesizer response as JSON: ${msg}. Raw response: ${truncate(raw, 200)}`,
     );
   }
   const result = SynthesisSchema.safeParse(json);
   if (!result.success) {
-    throw new CliUserError(
-      `Synthesizer response did not match expected schema: ${result.error.message}`,
-    );
+    throw new Error(`Synthesizer response did not match expected schema: ${result.error.message}`);
   }
   return result.data;
 }

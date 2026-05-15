@@ -40,7 +40,6 @@ import * as path from "node:path";
 
 import { Command } from "commander";
 
-import { CliUserError } from "../cli-user-error.js";
 import { sql } from "kysely";
 
 import { getCouncilHome } from "../../config/index.js";
@@ -98,9 +97,7 @@ function buildListCommand(write: Writer, writeError: Writer): Command {
     .action(async (raw: { panel?: string; format?: string }) => {
       // Sentinel pr178 #2: validate-then-assign rather than silent fallback.
       if (raw.format !== undefined && raw.format !== "plain" && raw.format !== "json") {
-        throw new CliUserError(
-          `Unknown --format value: ${raw.format}. Expected one of: plain, json`,
-        );
+        throw new Error(`Unknown --format value: ${raw.format}. Expected one of: plain, json`);
       }
       const format: "plain" | "json" = raw.format === "json" ? "json" : "plain";
       const dbPath = path.join(getCouncilHome(), "council.db");
@@ -108,7 +105,7 @@ function buildListCommand(write: Writer, writeError: Writer): Command {
       try {
         const summaries = await loadSummaries(db, raw.panel);
         if (raw.panel !== undefined && summaries.length === 0) {
-          throw new CliUserError(
+          throw new Error(
             `No panel found with name '${raw.panel}'. Run \`council memory list\` to see available panels.`,
           );
         }
@@ -191,9 +188,7 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
     .action(async (panelName: string, raw: { expert?: string; format?: string }) => {
       // Sentinel pr178 #3: validate-then-assign rather than silent fallback.
       if (raw.format !== undefined && raw.format !== "plain" && raw.format !== "json") {
-        throw new CliUserError(
-          `Unknown --format value: ${raw.format}. Expected one of: plain, json`,
-        );
+        throw new Error(`Unknown --format value: ${raw.format}. Expected one of: plain, json`);
       }
       const format: "plain" | "json" = raw.format === "json" ? "json" : "plain";
       const dbPath = path.join(getCouncilHome(), "council.db");
@@ -201,7 +196,7 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
       try {
         const panel = await new PanelRepository(db).findByName(panelName);
         if (!panel) {
-          throw new CliUserError(
+          throw new Error(
             `No panel found with name '${panelName}'. Run \`council memory list\` to see available panels.`,
           );
         }
@@ -210,7 +205,7 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
         if (raw.expert !== undefined) {
           const expert = experts.find((e) => e.slug === raw.expert);
           if (!expert) {
-            throw new CliUserError(
+            throw new Error(
               `No expert found with slug '${raw.expert}' in panel '${panelName}'. Available slugs: ${experts.map((e) => e.slug).join(", ") || "(none)"}`,
             );
           }
@@ -371,7 +366,7 @@ function buildResetCommand(write: Writer, writeError: Writer): Command {
     .option("--expert <slug>", "Drop only this expert from the panel (keeps panel + others)")
     .action(async (panelName: string, raw: { yes?: boolean; hard?: boolean; expert?: string }) => {
       if (!raw.yes) {
-        throw new CliUserError(
+        throw new Error(
           `Refusing destructive operation without --yes. \`council memory reset\` requires the --yes flag explicitly so accidental scripted destruction is harder. Re-run with --yes if you mean it.`,
         );
       }
@@ -381,7 +376,7 @@ function buildResetCommand(write: Writer, writeError: Writer): Command {
       try {
         const panel = await new PanelRepository(db).findByName(panelName);
         if (!panel) {
-          throw new CliUserError(
+          throw new Error(
             `No panel found with name '${panelName}'. Run \`council memory list\` to see available panels.`,
           );
         }
@@ -390,7 +385,7 @@ function buildResetCommand(write: Writer, writeError: Writer): Command {
           const experts = await new ExpertRepository(db).findByPanelId(panel.id);
           const expert = experts.find((e) => e.slug === raw.expert);
           if (!expert) {
-            throw new CliUserError(
+            throw new Error(
               `No expert found with slug '${raw.expert}' in panel '${panelName}'. Available slugs: ${experts.map((e) => e.slug).join(", ") || "(none)"}`,
             );
           }

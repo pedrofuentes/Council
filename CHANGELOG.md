@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - **`council panels` renamed to `council sessions`** — the command that lists debate-session records from the local DB is now `council sessions`. The previous name was confusingly close to `council panel` (which manages the panel YAML library: `create | list | inspect | edit | docs`). The DB table is still named `panels` — only the CLI surface changed. File rename: `src/cli/commands/panels.ts` → `src/cli/commands/sessions.ts`; export rename: `buildPanelsCommand()` → `buildSessionsCommand()`.
 
+### Fixed
+
+- **Graceful CLI error handling** — user-facing errors (not-found, validation, missing flags) now print a clean one-line message to stderr and exit with code 1 instead of dumping full Node.js stack traces. Internally, errors that have already been written to stderr by command handlers throw `CliUserError` (suppressed by the top-level handler); all other errors have their message printed without a stack trace.
+
 ### Added
 
 - **Chat session infrastructure** (Roadmap 5.1) — new `chat_sessions` and `chat_turns` tables (migration 005) provide the persistence substrate for open-ended conversations alongside the structured-debate `debates`/`turns` tables (per ADR-010). `ChatRepository` (`src/memory/repositories/chat-repository.ts`) exposes `createSession`, `findSessionById`, `findActiveSession`, `listSessions`, `archiveSession`, `updateSummary`, `addTurn`, `getTurns`, `getTurnCount`, `getLatestSeq`, and `searchTurns`. `addTurn` allocates per-session monotonic `seq` atomically via `INSERT … SELECT COALESCE(MAX(seq), 0) + 1 …` so concurrent appends cannot collide on the `UNIQUE (chat_id, seq)` constraint declared in migration 005. Domain types `ChatSession` and `ChatTurn` — with `ChatRole = "user" | "expert"` — live in `src/core/chat/chat-session.ts` and are the shared currency between the chat command, renderer, and context manager.

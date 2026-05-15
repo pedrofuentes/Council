@@ -141,16 +141,16 @@ export function buildChatCommand(deps: ChatCommandDeps = {}): Command {
       }
       if (raw.history) {
         if (!target) {
-          throw new CliUserError("--history requires a target (expert slug or panel name)");
+          throw new Error("--history requires a target (expert slug or panel name)");
         }
         await runHistory(target, write, writeError);
         return;
       }
       if (!target) {
-        throw new CliUserError("Missing required argument: <target> (expert slug or panel name)");
+        throw new Error("Missing required argument: <target> (expert slug or panel name)");
       }
       if (!raw.engine || !ENGINE_KINDS.includes(raw.engine)) {
-        throw new CliUserError(
+        throw new Error(
           `--engine is required for interactive chat. Expected one of: ${ENGINE_KINDS.join(", ")}`,
         );
       }
@@ -730,7 +730,7 @@ async function runExpertChat(opts: ExpertChatOptions): Promise<void> {
       );
     } else {
       // Defensive — the dispatch above always sets one of the two flags.
-      throw new CliUserError("internal: chat session resolution failed");
+      throw new Error("internal: chat session resolution failed");
     }
 
     await runInteractiveLoop({
@@ -897,7 +897,7 @@ async function runPanelChat(opts: PanelChatOptions): Promise<void> {
         `Resuming panel chat with ${panel.name} (${existingCount} messages, last active ${formatDate(session.updatedAt)})...`,
       );
     } else {
-      throw new CliUserError("internal: panel chat session resolution failed");
+      throw new Error("internal: panel chat session resolution failed");
     }
 
     await runPanelInteractiveLoop({

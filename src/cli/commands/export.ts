@@ -24,8 +24,6 @@ import * as path from "node:path";
 
 import { Command } from "commander";
 
-import { CliUserError } from "../cli-user-error.js";
-
 import { getCouncilHome } from "../../config/index.js";
 import { createDatabase } from "../../memory/db.js";
 import {
@@ -61,7 +59,7 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
     .option("--output <path>", "Write to file instead of stdout (default: stdout)")
     .action(async (panelName: string, raw: ExportOptions) => {
       if (!EXPORT_FORMATS.includes(raw.format)) {
-        throw new CliUserError(
+        throw new Error(
           `Unknown --format value: ${raw.format}. Expected one of: ${EXPORT_FORMATS.join(", ")}`,
         );
       }
@@ -103,7 +101,7 @@ function renderForExport(doc: TranscriptDocument, format: ExportFormat): string 
       return renderAdr(doc);
     default: {
       const _exhaustive: never = format;
-      throw new CliUserError(`Unknown export format: ${String(_exhaustive)}`);
+      throw new Error(`Unknown export format: ${String(_exhaustive)}`);
     }
   }
 }

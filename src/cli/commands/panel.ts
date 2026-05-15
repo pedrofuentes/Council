@@ -97,7 +97,7 @@ function panelDocsDir(dataHome: string, name: string): string {
 
 function validatePanelName(name: string): void {
   if (!PANEL_NAME_RE.test(name)) {
-    throw new CliUserError(
+    throw new Error(
       `Invalid panel name "${name}": must be kebab-case (lowercase letters, digits, hyphens; must start with a letter)`,
     );
   }
@@ -251,7 +251,7 @@ async function gatherCreateFields(
   // Interactive wizard — list available experts then prompt for selection.
   const available = await library.list();
   if (available.length === 0) {
-    throw new CliUserError(
+    throw new Error(
       'No experts found in the library. Create one first with "council expert create".',
     );
   }
@@ -270,7 +270,7 @@ async function gatherCreateFields(
     ).trim();
     const expertSlugs = resolveSelection(selection, available);
     if (expertSlugs.length === 0) {
-      throw new CliUserError("At least one expert is required");
+      throw new Error("At least one expert is required");
     }
 
     const modeRaw = (
@@ -300,7 +300,7 @@ function parseExpertList(raw: string): readonly string[] {
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
   if (slugs.length === 0) {
-    throw new CliUserError("At least one expert slug is required (use --experts <slug1>,<slug2>)");
+    throw new Error("At least one expert slug is required (use --experts <slug1>,<slug2>)");
   }
   return slugs;
 }
@@ -325,16 +325,14 @@ async function assertExpertsExist(
 function parseMode(raw: string | undefined): DebateMode {
   if (raw === undefined) return "freeform";
   if ((DEBATE_MODES as readonly string[]).includes(raw)) return raw as DebateMode;
-  throw new CliUserError(`Unknown mode "${raw}". Expected one of: ${DEBATE_MODES.join(", ")}`);
+  throw new Error(`Unknown mode "${raw}". Expected one of: ${DEBATE_MODES.join(", ")}`);
 }
 
 function parseMaxRounds(raw: string | undefined): number | undefined {
   if (raw === undefined) return undefined;
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 1 || n > 20) {
-    throw new CliUserError(
-      `Invalid --max-rounds value "${raw}": must be an integer between 1 and 20`,
-    );
+    throw new Error(`Invalid --max-rounds value "${raw}": must be an integer between 1 and 20`);
   }
   return n;
 }
@@ -368,9 +366,7 @@ function buildListCommand(write: Writer): Command {
     .option("--format <kind>", "Output format: table (default) or json", "table")
     .action(async (raw: { format?: string }) => {
       if (raw.format !== undefined && raw.format !== "table" && raw.format !== "json") {
-        throw new CliUserError(
-          `Unknown --format value: ${raw.format}. Expected one of: table, json`,
-        );
+        throw new Error(`Unknown --format value: ${raw.format}. Expected one of: table, json`);
       }
       const format: "table" | "json" = raw.format === "json" ? "json" : "table";
 

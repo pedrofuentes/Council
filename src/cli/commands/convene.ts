@@ -182,7 +182,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
     .option("--yes", "Skip the auto-compose confirmation prompt (non-interactive runs)")
     .action(async (topic: string, raw: ConveneOptions) => {
       if (!ENGINE_KINDS.includes(raw.engine)) {
-        throw new CliUserError(
+        throw new Error(
           `Unknown --engine value: ${raw.engine}. Expected one of: ${ENGINE_KINDS.join(", ")}`,
         );
       }
@@ -247,10 +247,8 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             const library = new FileExpertLibrary(dataHome, libDb);
             const { resolved, missing } = await resolveExperts(panel.experts, library);
             if (missing.length > 0) {
-              const safeName = stripControlChars(opts.template);
-              const safeMissing = missing.map((s) => stripControlChars(s)).join(", ");
-              throw new CliUserError(
-                `Panel "${safeName}" references experts not in the library: ${safeMissing}. ` +
+              throw new Error(
+                `Panel "${stripControlChars(opts.template)}" references experts not in the library: ${missing.map((s) => stripControlChars(s)).join(", ")}. ` +
                   `Add them with 'council expert create' or use inline expert definitions.`,
               );
             }
@@ -279,7 +277,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             });
           } catch (err: unknown) {
             const cause = err instanceof Error ? err.message : String(err);
-            throw new CliUserError(
+            throw new Error(
               `Could not auto-compose a panel for this topic. Use --template to specify one manually. (cause: ${cause})`,
             );
           }
@@ -444,7 +442,7 @@ function parseFormat(raw: string | undefined): RendererFormat {
   if ((RENDERER_FORMATS as readonly string[]).includes(raw)) {
     return raw as RendererFormat;
   }
-  throw new CliUserError(
+  throw new Error(
     `Unknown --format value: ${raw}. Expected one of: ${RENDERER_FORMATS.join(", ")}`,
   );
 }
@@ -542,7 +540,7 @@ export function buildContextConfig(opts: SummarizerOptions): ContextConfig | und
 
 function parseContextScope(raw: string): VisibilityConfig {
   if (!(VALID_CONTEXT_SCOPES as readonly string[]).includes(raw)) {
-    throw new CliUserError(
+    throw new Error(
       `Unknown --context-scope value: ${raw}. Expected one of: ${VALID_CONTEXT_SCOPES.join(", ")}`,
     );
   }

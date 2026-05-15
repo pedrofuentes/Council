@@ -127,7 +127,7 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
       if (weightedEvidence.length === 0) {
-        throw new CliUserError("At least one expertise / weighted-evidence entry is required");
+        throw new Error("At least one expertise / weighted-evidence entry is required");
       }
 
       const definition: ExpertDefinition = ExpertDefinitionSchema.parse({
@@ -261,7 +261,7 @@ async function gatherCreateFields(opts: CreateOptions, write: Writer): Promise<G
 
 function validateSlug(slug: string): void {
   if (!SLUG_RE.test(slug)) {
-    throw new CliUserError(
+    throw new Error(
       `Invalid slug "${slug}": must be lowercase alphanumeric and hyphens only, 1-64 chars`,
     );
   }
@@ -278,9 +278,7 @@ function buildListCommand(write: Writer): Command {
     .option("--format <kind>", "Output format: table (default) or json", "table")
     .action(async (raw: { format?: string }) => {
       if (raw.format !== undefined && raw.format !== "table" && raw.format !== "json") {
-        throw new CliUserError(
-          `Unknown --format value: ${raw.format}. Expected one of: table, json`,
-        );
+        throw new Error(`Unknown --format value: ${raw.format}. Expected one of: table, json`);
       }
       const format: "table" | "json" = raw.format === "json" ? "json" : "table";
 
@@ -623,7 +621,7 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
     )
     .action(async (slug: string, opts: TrainOptions) => {
       if (opts.engine !== undefined && !ENGINE_KINDS.includes(opts.engine as EngineKind)) {
-        throw new CliUserError(
+        throw new Error(
           `Unknown --engine value: ${opts.engine}. Expected one of: ${ENGINE_KINDS.join(", ")}`,
         );
       }
