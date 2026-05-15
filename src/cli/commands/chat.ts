@@ -1733,13 +1733,26 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
           const slugBeingFlushed = bufferSlug;
           const lostBytes = buffer.length;
           try {
-            await persistUserTurnOnce();
+            // Persist the expert turn FIRST. If this write fails we
+            // must NOT commit the deferred user turn — otherwise an
+            // orphan @convene "user" row would be left behind with no
+            // corresponding expert response (issue #466 follow-up).
             await repo.addTurn({
               chatId: session.id,
               role: "expert",
               expertSlug: slugBeingFlushed,
               content: buffer,
             });
+            try {
+              await persistUserTurnOnce();
+            } catch (userErr: unknown) {
+              const msg =
+                userErr instanceof Error ? userErr.message : String(userErr);
+              renderer.showSystem(
+                `⚠ Could not persist @convene topic after interruption (partial ${slugBeingFlushed} response was saved): ${msg}`,
+                "warn",
+              );
+            }
             persistedTurns += 1;
             buffer = "";
             bufferSlug = undefined;
@@ -1751,7 +1764,8 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
             );
             // Intentionally leave buffer/bufferSlug in place so the
             // post-loop cleanup does not treat the half-rendered
-            // turn as discarded silently.
+            // turn as discarded silently. The deferred user turn is
+            // intentionally NOT flushed here — see comment above.
           }
         }
         // Best-effort: ask the generator to clean up. Fire-and-forget
