@@ -333,16 +333,22 @@ describe("detectDocumentChanges", () => {
       ).rejects.toThrow(/EMFILE/);
     });
 
-    it("closes the directory handle when fh.stat() throws after a successful open (Sentinel #2: no fd leak)", async () => {
-      // Sentinel #2: if `fs.open` succeeds but `.stat()` rejects, the
-      // catch path must still close the handle — otherwise a faulting
-      // scan leaks directory fds. We supply a stub handle whose
-      // .close() records the call, then assert it was invoked.
+    it("rejects when fh.stat() throws an allowlisted code after a successful open (Sentinel re2 #1)", async () => {
+      // Sentinel cycle 2 finding: once `fs.open()` succeeds, the root
+      // fd has been bound to a real inode. A subsequent `rootHandle
+      // .stat()` failure is NOT a "directory cannot be opened" signal
+      // and must NOT funnel through the open-failure allowlist —
+      // doing so would let an EACCES/EPERM/ENOTSUP/EINVAL on the
+      // post-open verification silently downgrade the scan to
+      // lstat-only mode, defeating the advertised fd-anchored
+      // hardening. Verify the handle is still closed (no fd leak).
       await fs.writeFile(path.join(dir, "a.md"), "hi");
       let closed = false;
       const stubHandle = {
         async stat(): Promise<never> {
-          throw new Error("synthetic stat failure");
+          const err: NodeJS.ErrnoException = new Error("EACCES: permission denied");
+          err.code = "EACCES";
+          throw err;
         },
         async close() {
           closed = true;
@@ -355,7 +361,7 @@ describe("detectDocumentChanges", () => {
           _rootIsCanonical: true,
           _rootOpenOverride: async () => stubHandle,
         }),
-      ).rejects.toThrow(/synthetic stat failure/);
+      ).rejects.toThrow(/EACCES/);
       expect(closed).toBe(true);
     });
   });
