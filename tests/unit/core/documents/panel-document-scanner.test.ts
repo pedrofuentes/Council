@@ -19,6 +19,7 @@ import {
   formatAllFailedWarning,
 } from "../../../../src/core/documents/panel-document-scanner.js";
 import * as extractorModule from "../../../../src/core/documents/extractor.js";
+import { createDocumentIndexer } from "../../../../src/core/documents/indexer.js";
 
 async function makeTempDir(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -584,6 +585,116 @@ describe("scanAndIndexPanelDocuments", () => {
     const paths = fts.rows.map((r) => r.file_path);
     expect(paths).toContain(specCanonical);
   });
+
+  it("does not recreate panel_documents/FTS rows for a folder unlinked mid-scan (issue #424)", async () => {
+    // Race regression: `panel docs unlink` and a concurrent
+    // `panel-document-scanner` scan both touch the same panel_documents
+    // + document_index rows. Before the fix, the scanner snapshotted
+    // `getLinkedFolders` at start and then wrote new index/track rows
+    // for files under that folder without re-checking link membership —
+    // so a concurrent unlink would appear to succeed, but the rows
+    // would be silently recreated by the still-running scan.
+    //
+    // We simulate the race deterministically by spying on
+    // `extractDocument`: when the scanner calls it for the linked
+    // file, we run the unlink-equivalent SQL (drop FTS row, drop
+    // panel_documents rows, drop the linked-folder row) before
+    // returning the extraction result. The scanner must observe the
+    // unlink and skip writing the index + track for that file —
+    // otherwise the unlink's effect is undone.
+    //
+    // The first scan populates the tracked state; rewriting the file
+    // on disk forces the second scan to enter the "modified file"
+    // branch (where the recreation race lives).
+    await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+    const linkedFile = path.join(linkedDir, "external.md");
+    await fs.writeFile(linkedFile, "# External v2\nupdated body\n", "utf-8");
+
+    const docsRepo = new PanelDocumentRepository(db);
+    const indexer = createDocumentIndexer(db);
+
+    // Simulate `council panel docs unlink --path linkedDir`. Mirrors
+    // the operations in src/cli/commands/panel.ts buildDocsUnlinkCommand.
+    async function simulateConcurrentUnlink(): Promise<void> {
+      const tracked = await docsRepo.listDocuments("arch-review");
+      await sql`BEGIN`.execute(db);
+      try {
+        for (const d of tracked) {
+          if (
+            d.filePath === linkedDir ||
+            d.filePath.startsWith(linkedDir + path.sep) ||
+            d.filePath.startsWith(linkedDir + "/") ||
+            d.filePath.startsWith(linkedDir + "\\")
+          ) {
+            await indexer.remove(d.filePath);
+          }
+        }
+        await docsRepo.removeDocumentsUnderFolder("arch-review", linkedDir);
+        await docsRepo.removeLinkedFolder("arch-review", linkedDir);
+        await sql`COMMIT`.execute(db);
+      } catch (err) {
+        await sql`ROLLBACK`.execute(db);
+        throw err;
+      }
+    }
+
+    let unlinkRan = false;
+    const realExtract = extractorModule.extractDocument;
+    const spy = vi
+      .spyOn(extractorModule, "extractDocument")
+      .mockImplementation(async (filePath, opts) => {
+        const result = await realExtract(filePath, opts);
+        // Trigger the unlink exactly once, when the scanner is about
+        // to write the linked file. The managed file is allowed to
+        // proceed normally so we can assert it remains unaffected.
+        if (!unlinkRan && filePath === linkedFile) {
+          unlinkRan = true;
+          await simulateConcurrentUnlink();
+        }
+        return result;
+      });
+
+    try {
+      await scanAndIndexPanelDocuments({
+        panelName: "arch-review",
+        managedDocsDir: managedDir,
+        db,
+        supportedFormats: [".md", ".txt", ".html"],
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(unlinkRan).toBe(true);
+
+    // The linked folder must remain unlinked.
+    const linkedFolders = await docsRepo.getLinkedFolders("arch-review");
+    expect(linkedFolders).not.toContain(linkedDir);
+
+    // No active panel_documents rows under the unlinked folder. The
+    // unlink path uses DELETE (not "removed" status), so both forms
+    // must report zero rows under linkedDir.
+    const allDocs = await docsRepo.listDocuments("arch-review");
+    const underLinked = allDocs.filter(
+      (d) =>
+        d.filePath === linkedFile ||
+        d.filePath.startsWith(linkedDir + path.sep) ||
+        d.filePath.startsWith(linkedDir + "/") ||
+        d.filePath.startsWith(linkedDir + "\\"),
+    );
+    expect(underLinked).toHaveLength(0);
+
+    // No FTS rows for the unlinked file path.
+    const fts = await sql<{
+      file_path: string;
+    }>`SELECT file_path FROM document_index WHERE source_type = 'panel'`.execute(db);
+    const paths = fts.rows.map((r) => r.file_path);
+    expect(paths).not.toContain(linkedFile);
+  });
 });
 
 describe("formatAllFailedWarning", () => {
@@ -640,4 +751,5 @@ describe("formatAllFailedWarning", () => {
       }),
     ).toBeNull();
   });
+
 });
