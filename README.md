@@ -291,21 +291,22 @@ disk if the database is reset.
 ## Commands
 
 ```bash
-# Debate orchestration
-council convene <topic>                     # Create panel + start deliberation
-council convene --template <name>           # Use a built-in panel
-council ask <question>                      # Continue with the full panel
-council ask --expert <slug> <q>             # One-shot: talk to one expert directly
-council conclude                            # Get decision matrix + recommendation
-council resume <panel>                      # Resume a previous panel
-council export <panel> --format <fmt>       # Export (markdown | json | adr)
+# Debate orchestration (most run a real engine — pass --engine copilot or --engine mock)
+council convene <topic> --engine copilot          # Auto-compose a panel + start deliberation
+council convene --template <name> --engine copilot  # Use a built-in or library panel
+council ask <panel> "<question>" --engine copilot   # Continue with the full panel
+council ask <panel> "<q>" --expert <slug> --engine copilot  # One-shot to a single expert
+council conclude [panel] --engine copilot         # Decision matrix + recommendation
+council resume <panel>                             # Replay transcript (no engine needed)
+council resume <panel> --continue "<prompt>" --engine copilot  # New round on the same panel
+council export <panel> --format <fmt>              # Export (markdown | json | adr)
 
-# Persistent conversational chat (Phase 5)
-council chat <expert-slug>                  # 1:1 conversational REPL with an expert
-council chat <panel-name>                   # Group chat with a panel (supports @mentions, @convene)
-council chat <target> --new                 # Archive active session and start fresh
-council chat --list                         # List every chat session across all targets
-council chat <target> --history             # Show archived sessions for a target
+# Persistent conversational chat (Phase 5) — interactive sessions require --engine
+council chat <expert-slug> --engine copilot      # 1:1 conversational REPL with an expert
+council chat <panel-name> --engine copilot       # Group chat with a panel (supports @mentions, @convene)
+council chat <target> --new --engine copilot     # Archive active session and start fresh
+council chat --list                              # List every chat session across all targets (no engine needed)
+council chat <target> --history                  # Show archived sessions read-only (no engine needed)
 
 # Expert library (Phase 4)
 council expert create [--persona]           # Interactive wizard (or non-TTY via flags)
@@ -313,13 +314,14 @@ council expert list [--format json]         # Browse the expert library
 council expert inspect <slug>               # Full detail + panel memberships
 council expert edit <slug>                  # Open YAML in $EDITOR; re-validates on save
 council expert delete <slug> [--force]      # Refuses if expert is in any panel
+council expert docs <slug>                  # Manage a persona expert's reference-docs folder
+council expert train <slug> [--retrain]     # (Re-)run the persona profile analyzer
 
 # Panel library (Phase 4)
-council panel create                        # Interactive wizard: pick experts, name, description, mode
+council panel create <name>                 # Interactive wizard: pick experts, set description + mode
 council panel list [--format json]          # Browse panels in the library
 council panel inspect <name>                # Panel metadata + resolved expert roster
 council panel edit <name>                   # Open YAML in $EDITOR; re-validates on save
-council panel delete <name> [--force]       # Remove a panel definition
 council panel docs <name>                   # List a panel's managed + linked doc folders
 council panel docs link <name> --path <p>   # Link an external folder into a panel's RAG corpus
 council panel docs unlink <name> --path <p> # Unlink a folder + clean up its FTS entries

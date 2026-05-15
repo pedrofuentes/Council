@@ -9,8 +9,8 @@
  *   - `conclude`   synthesize a panel's latest debate into a decision framework
  *   - `export`     export a panel transcript to markdown, json, or adr
  *   - `sessions`   list debate sessions in the local DB
- *   - `panel`      manage the panel library (create/list/inspect/edit/delete/docs)
- *   - `expert`     manage the expert library (create/list/inspect/edit/delete)
+ *   - `panel`      manage the panel library (create/list/inspect/edit/docs)
+ *   - `expert`     manage the expert library (create/list/inspect/edit/delete/docs/train)
  *   - `templates`  list built-in panel templates
  *   - `memory`     inspect and curate Council's local SQLite state
  *   - `doctor`     diagnose Council setup
