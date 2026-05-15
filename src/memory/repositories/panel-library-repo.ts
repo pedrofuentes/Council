@@ -8,6 +8,8 @@
  * via the `position` column; setMembers replaces the full list
  * transactionally.
  */
+import { sql } from "kysely";
+
 import type { CouncilDatabase, PanelLibraryRow } from "../db.js";
 
 export interface LibraryPanel {
@@ -24,6 +26,32 @@ export interface NewLibraryPanel {
   readonly description: string | null;
   readonly yamlPath: string;
   readonly yamlChecksum: string;
+}
+
+/**
+ * Thrown by {@link PanelLibraryRepository.setMembers} when the
+ * transaction aborts (#298). Mirrors {@link ClearForRetrainError} from
+ * document-repository.ts: exposes whether ROLLBACK itself succeeded so
+ * call sites can produce honest user-facing messages — when
+ * {@link rollbackFailed} is `true`, the database state may be
+ * inconsistent (membership rows partially deleted with no replacement)
+ * and the message MUST NOT claim that prior data was preserved.
+ */
+export class SetMembersError extends Error {
+  readonly rollbackFailed: boolean;
+  readonly rollbackError?: unknown;
+
+  constructor(
+    message: string,
+    opts: { cause: unknown; rollbackFailed: boolean; rollbackError?: unknown },
+  ) {
+    super(message, { cause: opts.cause });
+    this.name = "SetMembersError";
+    this.rollbackFailed = opts.rollbackFailed;
+    if (opts.rollbackError !== undefined) {
+      this.rollbackError = opts.rollbackError;
+    }
+  }
 }
 
 function toDomain(row: PanelLibraryRow): LibraryPanel {
@@ -92,49 +120,69 @@ export class PanelLibraryRepository {
     await this.db.deleteFrom("panel_library").where("name", "=", name).execute();
   }
 
+  /**
+   * Atomically replace the membership of a panel (#298). Wraps the
+   * delete-all + insert-new pair in a raw ``BEGIN``/``COMMIT``/``ROLLBACK``
+   * transaction so a failure mid-insert cannot leave the panel with zero
+   * (or partial) members.
+   *
+   * Implemented with raw transaction statements on the libsql client —
+   * NOT Kysely's ``db.transaction().execute(...)`` — because the libsql
+   * ``:memory:`` dialect opens transactions on a fresh connection that
+   * does not see the primary connection's schema, breaking every
+   * in-memory unit test (see issue #298). The same workaround is used
+   * by ``DocumentRepository.clearForRetrain``.
+   *
+   * On failure, throws {@link SetMembersError}. Callers MUST inspect
+   * ``rollbackFailed``: when the rollback itself failed the DB may be
+   * in an inconsistent state and the user-facing message must NOT claim
+   * that prior membership was preserved.
+   */
   async setMembers(panelName: string, expertSlugs: readonly string[]): Promise<void> {
-    // Snapshot existing membership so we can restore on failure. We can't
-    // use a Kysely transaction here because the libsql :memory: dialect
-    // opens transactions on a fresh connection that does not see the
-    // primary connection's schema, which breaks every in-memory unit test.
-    const snapshot = await this.db
-      .selectFrom("panel_members")
-      .selectAll()
-      .where("panel_name", "=", panelName)
-      .execute();
-    await this.db.deleteFrom("panel_members").where("panel_name", "=", panelName).execute();
-    if (expertSlugs.length === 0) return;
-    const now = new Date().toISOString();
-    const rows = expertSlugs.map((slug, index) => ({
-      panel_name: panelName,
-      expert_slug: slug,
-      position: index,
-      created_at: now,
-    }));
     try {
-      await this.db.insertInto("panel_members").values(rows).execute();
-    } catch (err) {
-      if (snapshot.length > 0) {
-        try {
-          await this.db
-            .insertInto("panel_members")
-            .values(
-              snapshot.map((s) => ({
-                panel_name: s.panel_name,
-                expert_slug: s.expert_slug,
-                position: s.position,
-                created_at: s.created_at,
-              })),
-            )
-            .execute();
-        } catch (restoreErr) {
-          throw new AggregateError(
-            [err, restoreErr],
-            `setMembers("${panelName}") failed and restoring prior membership also failed — storage may be inconsistent`,
-          );
-        }
+      await sql`BEGIN`.execute(this.db);
+    } catch (beginErr) {
+      const detail = beginErr instanceof Error ? beginErr.message : String(beginErr);
+      throw new SetMembersError(
+        `setMembers failed for "${panelName}" before any changes ` +
+          `(BEGIN failed; no changes applied): ${detail}`,
+        { cause: beginErr, rollbackFailed: false },
+      );
+    }
+    try {
+      await this.db.deleteFrom("panel_members").where("panel_name", "=", panelName).execute();
+      if (expertSlugs.length > 0) {
+        const now = new Date().toISOString();
+        const rows = expertSlugs.map((slug, index) => ({
+          panel_name: panelName,
+          expert_slug: slug,
+          position: index,
+          created_at: now,
+        }));
+        await this.db.insertInto("panel_members").values(rows).execute();
       }
-      throw err;
+      await sql`COMMIT`.execute(this.db);
+    } catch (err) {
+      let rollbackFailed = false;
+      let rollbackError: unknown;
+      try {
+        await sql`ROLLBACK`.execute(this.db);
+      } catch (rbErr) {
+        rollbackFailed = true;
+        rollbackError = rbErr;
+      }
+      const detail = err instanceof Error ? err.message : String(err);
+      const message = rollbackFailed
+        ? `setMembers failed for "${panelName}" and ROLLBACK also failed; ` +
+          `database may be in an inconsistent state (panel membership may be ` +
+          `partially deleted): ${detail}`
+        : `setMembers failed for "${panelName}" (transaction rolled back cleanly): ${detail}`;
+      throw new SetMembersError(
+        message,
+        rollbackError === undefined
+          ? { cause: err, rollbackFailed }
+          : { cause: err, rollbackFailed, rollbackError },
+      );
     }
   }
 
