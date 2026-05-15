@@ -18,6 +18,7 @@ import {
   buildChatTurnPrompt,
   buildPanelTurnPrompt,
   safeGetContext,
+  createSummarizationGate,
   safeMaybeSummarize,
   safeRetrieveSnippets,
   type ChatInputProvider,
@@ -2104,6 +2105,59 @@ describe("context manager wiring", () => {
       expect(p.prompt).toContain("Panel discussed migration tradeoffs.");
     }
   });
+
+  it("panel chat: background summarization is flushed on exit so session.summary persists (#459)", async () => {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "panel-flush", ["panel-a", "panel-b"]);
+    let sessionId = "";
+    await withRepo(env, async (repo) => {
+      const s = await repo.createSession({ targetType: "panel", targetSlug: "panel-flush" });
+      sessionId = s.id;
+      // Seed past the recentTurnCount window so the summarizer has work
+      // to do after the next live turn.
+      for (let i = 0; i < 12; i++) {
+        await repo.addTurn({ chatId: s.id, role: "user", content: `seed user ${i}` });
+        await repo.addTurn({
+          chatId: s.id,
+          role: "expert",
+          expertSlug: "panel-a",
+          content: `seed a ${i}`,
+        });
+        await repo.addTurn({
+          chatId: s.id,
+          role: "expert",
+          expertSlug: "panel-b",
+          content: `seed b ${i}`,
+        });
+      }
+    });
+
+    await withRepo(env, async (repo) => {
+      const before = await repo.findSessionById(sessionId);
+      expect(before?.summary).toBeNull();
+    });
+
+    const cmd = buildChatCommand({
+      write: () => undefined,
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["another", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "panel-flush", "--engine", "mock"]);
+
+    // The chat loop kicks off summarization in the background after the
+    // panel turn, then exits via /quit. The `awaitOutstanding` drain in
+    // the loop's `finally` must ensure the summary write lands before
+    // `parseAsync` resolves — otherwise the persisted state would be
+    // empty here.
+    await withRepo(env, async (repo) => {
+      const after = await repo.findSessionById(sessionId);
+      expect(after?.summary).not.toBeNull();
+      expect(after?.summary?.length ?? 0).toBeGreaterThan(0);
+      expect(after?.summaryThroughSeq).toBeGreaterThan(0);
+    });
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────
@@ -2236,6 +2290,208 @@ describe("safe wrappers — best-effort failure handling", () => {
     expect(warnings.length).toBe(1);
     expect(warnings[0]).toContain("Loading conversation context failed");
     expect(warnings[0]).toContain("db gone");
+  });
+});
+
+describe("createSummarizationGate — non-blocking background summarization (#459)", () => {
+  it("kickOff returns synchronously without awaiting summarization (prompt is not blocked)", async () => {
+    let resolveWork: ((v: boolean) => void) | undefined;
+    const slow = {
+      maybeSummarize: () =>
+        new Promise<boolean>((resolve) => {
+          resolveWork = resolve;
+        }),
+    };
+    const warnings: string[] = [];
+    const gate = createSummarizationGate(
+      slow as unknown as Parameters<typeof createSummarizationGate>[0],
+      (m) => warnings.push(m),
+    );
+    const start = Date.now();
+    gate.kickOff("chat-id");
+    const elapsed = Date.now() - start;
+    // kickOff must not await the work — it returns immediately. Generous
+    // bound for CI jitter; the slow promise above never resolves until the
+    // test releases it.
+    expect(elapsed).toBeLessThan(50);
+    expect(gate.isInflight()).toBe(true);
+    // Release the in-flight work so the test does not leak a pending promise.
+    resolveWork?.(true);
+    // Drain the now-settled work so the gate state is clean.
+    await new Promise((r) => setImmediate(r));
+    await gate.awaitIfSettled();
+    expect(gate.isInflight()).toBe(false);
+  });
+
+  it("skips concurrent kickOff while one is in-flight (in-flight guard)", async () => {
+    let calls = 0;
+    let resolveWork: ((v: boolean) => void) | undefined;
+    const slow = {
+      maybeSummarize: () => {
+        calls += 1;
+        return new Promise<boolean>((resolve) => {
+          resolveWork = resolve;
+        });
+      },
+    };
+    const gate = createSummarizationGate(
+      slow as unknown as Parameters<typeof createSummarizationGate>[0],
+      () => undefined,
+    );
+    gate.kickOff("chat-id");
+    gate.kickOff("chat-id");
+    gate.kickOff("chat-id");
+    expect(calls).toBe(1);
+    resolveWork?.(true);
+    await new Promise((r) => setImmediate(r));
+    await gate.awaitIfSettled();
+    // After draining, a fresh kickOff is allowed again.
+    gate.kickOff("chat-id");
+    expect(calls).toBe(2);
+    resolveWork?.(true);
+    await new Promise((r) => setImmediate(r));
+    await gate.awaitIfSettled();
+  });
+
+  it("awaitIfSettled awaits a completed background summarization (so the summary is applied before next send)", async () => {
+    let observed = false;
+    const fast = {
+      maybeSummarize: async () => {
+        observed = true;
+        return true;
+      },
+    };
+    const gate = createSummarizationGate(
+      fast as unknown as Parameters<typeof createSummarizationGate>[0],
+      () => undefined,
+    );
+    gate.kickOff("chat-id");
+    // Let the microtask chain run so the inner promise settles.
+    await new Promise((r) => setImmediate(r));
+    expect(observed).toBe(true);
+    await gate.awaitIfSettled();
+    expect(gate.isInflight()).toBe(false);
+  });
+
+  it("awaitIfSettled does not block when the background work has not yet completed", async () => {
+    const slow = {
+      maybeSummarize: () => new Promise<boolean>(() => undefined),
+    };
+    const gate = createSummarizationGate(
+      slow as unknown as Parameters<typeof createSummarizationGate>[0],
+      () => undefined,
+      10_000,
+    );
+    gate.kickOff("chat-id");
+    const start = Date.now();
+    await gate.awaitIfSettled();
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(50);
+    // Still in-flight — the gate did not consume the unsettled promise.
+    expect(gate.isInflight()).toBe(true);
+  });
+
+  it("does not crash the chat loop when background summarization fails (warning surfaced, no rejection)", async () => {
+    const warnings: string[] = [];
+    const broken = {
+      maybeSummarize: async () => {
+        throw new Error("LLM unavailable");
+      },
+    };
+    const gate = createSummarizationGate(
+      broken as unknown as Parameters<typeof createSummarizationGate>[0],
+      (m) => warnings.push(m),
+    );
+    gate.kickOff("chat-id");
+    // Let the rejection settle through safeMaybeSummarize's catch.
+    await new Promise((r) => setImmediate(r));
+    await expect(gate.awaitIfSettled()).resolves.toBeUndefined();
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain("Rolling summary update failed");
+    expect(warnings[0]).toContain("LLM unavailable");
+    expect(gate.isInflight()).toBe(false);
+  });
+
+  it("awaitOutstanding is bounded by timeoutMs so a hung summarizer cannot wedge chat exit (Sentinel SNT-PR508-5f0d62a)", async () => {
+    // Regression test for Sentinel's follow-up critical: tying the gate
+    // to the real summarizer is correct, but `/quit` and process exit
+    // must not wait on an unbounded promise. The drain races the in-
+    // flight work against a hard `timeoutMs` budget and surfaces a
+    // warning if the summarizer is still running when the budget
+    // expires — preserving liveness without giving up single-flight.
+    const warnings: string[] = [];
+    const slow = {
+      // Hangs forever — never resolves. Simulates a wedged summarizer.
+      maybeSummarize: () => new Promise<boolean>(() => undefined),
+    };
+    const gate = createSummarizationGate(
+      slow as unknown as Parameters<typeof createSummarizationGate>[0],
+      (m) => warnings.push(m),
+      40, // very short exit budget for the test
+    );
+    gate.kickOff("chat-id");
+    const start = Date.now();
+    await gate.awaitOutstanding();
+    const elapsed = Date.now() - start;
+    // Generous upper bound for CI jitter; well below the prod default
+    // (30s). The drain MUST return promptly even though the underlying
+    // summarizer never settles.
+    expect(elapsed).toBeLessThan(2000);
+    // The exit-budget warning is distinct from the kickOff timeout and
+    // mentions the chat-exit context.
+    expect(warnings.some((w) => /chat exit/i.test(w))).toBe(true);
+  });
+
+  it("holds the single-flight gate until the underlying summarizer settles, even after the timeout fires (Sentinel SNT-PR508)", async () => {
+    // Regression test for the concurrency bug Sentinel flagged: if the
+    // gate were released when the timeout warning fires, a follow-up
+    // kickOff() could launch a SECOND summarizer while the first was
+    // still running — risking overlapping `updateSummary` writes that
+    // regress fresher context. The gate must stay held until the actual
+    // `maybeSummarize()` promise settles.
+    const warnings: string[] = [];
+    let calls = 0;
+    let resolveWork: ((v: boolean) => void) | undefined;
+    const slow = {
+      maybeSummarize: () => {
+        calls += 1;
+        return new Promise<boolean>((resolve) => {
+          resolveWork = resolve;
+        });
+      },
+    };
+    const gate = createSummarizationGate(
+      slow as unknown as Parameters<typeof createSummarizationGate>[0],
+      (m) => warnings.push(m),
+      20, // very short timeout to force the warning quickly
+    );
+    gate.kickOff("chat-id");
+    // Wait long enough for the timeout to fire.
+    await new Promise((r) => setTimeout(r, 80));
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toMatch(/timed out/i);
+    // Gate must still consider itself in-flight — the underlying work
+    // is still running.
+    expect(gate.isInflight()).toBe(true);
+    // A follow-up kickOff while the prior work is still running must
+    // be dropped (single-flight). Underlying summarizer call count
+    // stays at 1.
+    gate.kickOff("chat-id");
+    gate.kickOff("chat-id");
+    expect(calls).toBe(1);
+    // Release the original work; the gate finally clears.
+    resolveWork?.(true);
+    await new Promise((r) => setImmediate(r));
+    await gate.awaitIfSettled();
+    expect(gate.isInflight()).toBe(false);
+    // The post-timeout success must not have produced a second warning.
+    expect(warnings.length).toBe(1);
+    // Now a fresh kickOff is allowed.
+    gate.kickOff("chat-id");
+    expect(calls).toBe(2);
+    resolveWork?.(true);
+    await new Promise((r) => setImmediate(r));
+    await gate.awaitIfSettled();
   });
 });
 
