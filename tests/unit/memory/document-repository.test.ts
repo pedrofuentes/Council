@@ -306,18 +306,26 @@ describe("DocumentRepository", () => {
     }
 
     /**
-     * Wrap the libsql Kysely instance so that the next `executeQuery`
+     * Wrap the libsql Kysely executor so the next `executeQuery`
      * matching `failOnSqlSubstring` (and optionally any subsequent
      * `ROLLBACK`) throws — letting tests exercise the transaction's
-     * failure paths without corrupting the real DB driver.
+     * failure paths without corrupting the real DB driver. Patches
+     * `getExecutor()` because raw `sql.execute(db)` resolves the
+     * executor via `db.getExecutor().executeQuery(...)`. We assign an
+     * own-property override on the executor instance (instead of using
+     * a Proxy) because Kysely's executor uses private class fields, and
+     * a Proxy on `executor` would re-bind `this` to the proxy and
+     * trigger "Cannot read private member" errors.
      */
     function patchExecuteQuery(
       database: CouncilDatabase,
       opts: { failOnSqlSubstring: string; failRollback?: boolean },
     ): () => void {
-      type ExecFn = CouncilDatabase["executeQuery"];
-      const original = database.executeQuery.bind(database) as ExecFn;
-      const patched: ExecFn = async (compiled, queryId) => {
+      const realExec = database.getExecutor();
+      type ExecQueryFn = typeof realExec.executeQuery;
+      // Capture the original (likely prototype) method so we can restore it.
+      const originalExecuteQuery: ExecQueryFn = realExec.executeQuery as ExecQueryFn;
+      const wrapped: ExecQueryFn = async function (this: typeof realExec, compiled, queryId) {
         const text = compiled.sql;
         if (text.includes(opts.failOnSqlSubstring)) {
           throw new Error(`simulated failure on: ${opts.failOnSqlSubstring}`);
@@ -325,11 +333,16 @@ describe("DocumentRepository", () => {
         if (opts.failRollback === true && /^\s*ROLLBACK\b/i.test(text)) {
           throw new Error("simulated ROLLBACK failure");
         }
-        return original(compiled, queryId);
+        return originalExecuteQuery.call(this, compiled, queryId);
       };
-      (database as { executeQuery: ExecFn }).executeQuery = patched;
+      Object.defineProperty(realExec, "executeQuery", {
+        value: wrapped,
+        configurable: true,
+        writable: true,
+      });
       return () => {
-        (database as { executeQuery: ExecFn }).executeQuery = original;
+        // Remove the own-property override so the prototype method is used again.
+        delete (realExec as { executeQuery?: ExecQueryFn }).executeQuery;
       };
     }
 

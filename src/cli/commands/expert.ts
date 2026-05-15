@@ -32,7 +32,10 @@ import { FileExpertLibrary, type ExpertLibrary } from "../../core/expert-library
 import { ExpertDefinitionSchema, type ExpertDefinition } from "../../core/expert.js";
 import type { CouncilEngine } from "../../engine/index.js";
 import { createDatabase, type CouncilDatabase } from "../../memory/db.js";
-import { DocumentRepository } from "../../memory/repositories/document-repository.js";
+import {
+  ClearForRetrainError,
+  DocumentRepository,
+} from "../../memory/repositories/document-repository.js";
 import { ProfileRepository } from "../../memory/repositories/profile-repository.js";
 import { ENGINE_KINDS, type EngineKind, makeEngineFromKind } from "../run-with-engine.js";
 
@@ -675,10 +678,18 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
             await documentRepo.clearForRetrain(slug);
           } catch (err: unknown) {
             const detail = err instanceof Error ? err.message : String(err);
+            const rollbackFailed =
+              err instanceof ClearForRetrainError && err.rollbackFailed;
+            const stateNote = rollbackFailed
+              ? `Cleanup failed AND rollback also failed — database may be in an ` +
+                `inconsistent state for "${slug}" (FTS index and tracked documents may ` +
+                `disagree). Inspect the document_index and expert_documents tables ` +
+                `before retrying.`
+              : `Existing profile and tracking preserved.`;
             const msg =
               `Retrain aborted for "${slug}": failed to clear ${activeCount} ` +
               `tracked document(s) and FTS index entries (${detail}). ` +
-              `Existing profile and tracking preserved. ` +
+              `${stateNote} ` +
               `Re-run "council expert train ${slug} --retrain" after addressing the error above.`;
             writeError(msg + "\n");
             throw new CliUserError(msg);
