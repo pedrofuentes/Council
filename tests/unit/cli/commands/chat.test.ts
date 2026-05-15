@@ -2356,7 +2356,7 @@ describe("appendReferenceDocuments — prompt-injection fencing", () => {
     expect((headerLine.match(/"/g) ?? []).length).toBe(2);
     // No raw forbidden sequences leak through into the header.
     expect(headerLine).not.toMatch(/>>>.+>>>/);
-    expect(headerLine).not.toContain("<<<DOC source=\"\"");
+    expect(headerLine).not.toContain('<<<DOC source=""');
   });
 });
 
@@ -2776,6 +2776,80 @@ describe("long conversation warning (chat.longConversationWarning)", () => {
 
     try {
       await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+    } finally {
+      spy.mockRestore();
+    }
+
+    const failureMatches = out.match(/Long-conversation check failed/g) ?? [];
+    expect(failureMatches.length).toBe(1);
+  });
+
+  it("1:1 chat: initial getTurnCount seed failure surfaces the warning exactly once (issue #462)", async () => {
+    // Sentinel SNT-20260515-044608 finding 1: when the chat-loop seed
+    // query fails, the loop must surface the sanitized warning a single
+    // time (not silently disable the advisory) and then short-circuit on
+    // every subsequent call. The seed failure path is the *first*
+    // opportunity to inform the user that the long-conversation check is
+    // disabled — dropping it leaves users unaware.
+    await seedExpert(env);
+    await writeConfigYaml(env, "chat:\n  longConversationWarning: 500\n");
+
+    const spy = vi
+      .spyOn(ChatRepository.prototype, "getTurnCount")
+      .mockImplementation(async () => {
+        throw new Error("simulated seed getTurnCount failure");
+      });
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["msg1", "msg2", "/quit"]),
+    });
+
+    try {
+      await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+    } finally {
+      spy.mockRestore();
+    }
+
+    const failureMatches = out.match(/Long-conversation check failed/g) ?? [];
+    expect(failureMatches.length).toBe(1);
+  });
+
+  it("panel chat: repeated getTurnCount failures only emit the warning once (issue #462)", async () => {
+    // Mirror of the 1:1 late-failure regression for the panel path —
+    // ensure the sentinel suppression also dedupes across user + per-
+    // member expert checks within a panel iteration.
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "long-panel-fail", ["panel-a", "panel-b"]);
+    await writeConfigYaml(env, "chat:\n  longConversationWarning: 500\n");
+
+    const realGetTurnCount = ChatRepository.prototype.getTurnCount;
+    let callIndex = 0;
+    const spy = vi
+      .spyOn(ChatRepository.prototype, "getTurnCount")
+      .mockImplementation(async function (this: ChatRepository, id: string) {
+        callIndex += 1;
+        // Seed succeeds; every per-turn check fails.
+        if (callIndex === 1) {
+          return realGetTurnCount.call(this, id);
+        }
+        throw new Error("simulated panel getTurnCount failure");
+      });
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["hi panel", "again", "/quit"]),
+    });
+
+    try {
+      await cmd.parseAsync(["node", "council-chat", "long-panel-fail", "--engine", "mock"]);
     } finally {
       spy.mockRestore();
     }
@@ -3206,9 +3280,7 @@ describe("graceful SIGINT handling (PRD §F4)", () => {
     });
     await cmd.parseAsync(["node", "council-chat", "duo-prompt-sigint", "--engine", "mock"]);
 
-    expect(out).toMatch(
-      /Conversation saved\. Resume with "council chat duo-prompt-sigint"\./,
-    );
+    expect(out).toMatch(/Conversation saved\. Resume with "council chat duo-prompt-sigint"\./);
   });
 
   // Issue #466 — Ctrl+C during an inline @convene structured debate must
@@ -3384,11 +3456,7 @@ describe("graceful SIGINT handling (PRD §F4)", () => {
     };
 
     let out = "";
-    const lines: readonly string[] = [
-      "@convene should we ship?",
-      "follow up question",
-      "/quit",
-    ];
+    const lines: readonly string[] = ["@convene should we ship?", "follow up question", "/quit"];
     let i = 0;
     const inputProvider: ChatInputProvider = {
       async readLine(): Promise<string | null> {
@@ -3485,14 +3553,15 @@ describe("graceful SIGINT handling (PRD §F4)", () => {
     // can observe the visible-warning branch added in response to
     // Sentinel SNT-20260515-020946-convene-ctrlc-rereview.
     const originalAddTurn = ChatRepository.prototype.addTurn;
-    const spy = vi
-      .spyOn(ChatRepository.prototype, "addTurn")
-      .mockImplementation(async function (this: ChatRepository, args) {
-        if (args.role === "expert" && args.expertSlug === "panel-b") {
-          throw new Error("simulated db write failure");
-        }
-        return originalAddTurn.call(this, args);
-      });
+    const spy = vi.spyOn(ChatRepository.prototype, "addTurn").mockImplementation(async function (
+      this: ChatRepository,
+      args,
+    ) {
+      if (args.role === "expert" && args.expertSlug === "panel-b") {
+        throw new Error("simulated db write failure");
+      }
+      return originalAddTurn.call(this, args);
+    });
 
     let out = "";
     const lines: readonly string[] = ["@convene should we ship?", "/quit"];
@@ -3593,14 +3662,15 @@ describe("graceful SIGINT handling (PRD §F4)", () => {
 
     // Force the partial-expert flush for panel-a to fail.
     const originalAddTurn = ChatRepository.prototype.addTurn;
-    const spy = vi
-      .spyOn(ChatRepository.prototype, "addTurn")
-      .mockImplementation(async function (this: ChatRepository, args) {
-        if (args.role === "expert" && args.expertSlug === "panel-a") {
-          throw new Error("simulated db write failure");
-        }
-        return originalAddTurn.call(this, args);
-      });
+    const spy = vi.spyOn(ChatRepository.prototype, "addTurn").mockImplementation(async function (
+      this: ChatRepository,
+      args,
+    ) {
+      if (args.role === "expert" && args.expertSlug === "panel-a") {
+        throw new Error("simulated db write failure");
+      }
+      return originalAddTurn.call(this, args);
+    });
 
     let out = "";
     const lines: readonly string[] = ["@convene should we ship?", "/quit"];
