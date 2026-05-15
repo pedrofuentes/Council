@@ -27,6 +27,8 @@ interface MockClientState {
   started: boolean;
   stopped: boolean;
   sessions: MockSession[];
+  /** Live MockCopilotSession instances, in creation order. */
+  sessionInstances: { listenerCount: () => number }[];
   /** Per-session: queue of events to emit on `send()` */
   sendQueues: Map<string, { kind: string; data: Record<string, unknown> }[]>;
   /** Per-session: error to throw on `send()` (sync) */
@@ -37,6 +39,7 @@ const mockState: MockClientState = {
   started: false,
   stopped: false,
   sessions: [],
+  sessionInstances: [],
   sendQueues: new Map(),
   sendErrors: new Map(),
 };
@@ -50,10 +53,21 @@ vi.mock("@github/copilot-sdk", () => {
       this.id = id;
       this.model = model;
     }
-    on(event: string, handler: (evt: unknown) => void): void {
+    on(event: string, handler: (evt: unknown) => void): () => void {
       const arr = this.handlers.get(event) ?? [];
       arr.push(handler);
       this.handlers.set(event, arr);
+      return () => {
+        const current = this.handlers.get(event);
+        if (!current) return;
+        const idx = current.indexOf(handler);
+        if (idx >= 0) current.splice(idx, 1);
+      };
+    }
+    listenerCount(): number {
+      let total = 0;
+      for (const arr of this.handlers.values()) total += arr.length;
+      return total;
     }
     async send(_options: { prompt: string }): Promise<void> {
       const err = mockState.sendErrors.get(this.id);
@@ -95,6 +109,7 @@ vi.mock("@github/copilot-sdk", () => {
         events: [],
         disconnected: false,
       });
+      mockState.sessionInstances.push(session);
       return session;
     }
   }
@@ -128,6 +143,7 @@ describe("CopilotEngine — implements CouncilEngine", () => {
     mockState.started = false;
     mockState.stopped = false;
     mockState.sessions = [];
+    mockState.sessionInstances = [];
     mockState.sendQueues.clear();
     mockState.sendErrors.clear();
   });
@@ -185,6 +201,7 @@ describe("CopilotEngine — expert registration", () => {
     mockState.started = false;
     mockState.stopped = false;
     mockState.sessions = [];
+    mockState.sessionInstances = [];
     mockState.sendQueues.clear();
     mockState.sendErrors.clear();
   });
@@ -226,6 +243,7 @@ describe("CopilotEngine — send() event translation", () => {
     mockState.started = false;
     mockState.stopped = false;
     mockState.sessions = [];
+    mockState.sessionInstances = [];
     mockState.sendQueues.clear();
     mockState.sendErrors.clear();
   });
@@ -307,6 +325,7 @@ describe("CopilotEngine — cancellation", () => {
     mockState.started = false;
     mockState.stopped = false;
     mockState.sessions = [];
+    mockState.sessionInstances = [];
     mockState.sendQueues.clear();
     mockState.sendErrors.clear();
   });
@@ -329,5 +348,74 @@ describe("CopilotEngine — cancellation", () => {
       expect(last.error.code).toBe("ABORTED");
       expect(last.recoverable).toBe(false);
     }
+  });
+});
+
+describe("CopilotEngine — listener cleanup (#479)", () => {
+  beforeEach(() => {
+    mockState.started = false;
+    mockState.stopped = false;
+    mockState.sessions = [];
+    mockState.sessionInstances = [];
+    mockState.sendQueues.clear();
+    mockState.sendErrors.clear();
+  });
+
+  it("unregisters per-send SDK listeners after each successful send", async () => {
+    const engine = new CopilotEngine();
+    await engine.start();
+    await engine.addExpert(expertA);
+    const session = mockState.sessionInstances[0];
+    expect(session).toBeDefined();
+    if (!session) return;
+
+    const baseline = session.listenerCount();
+    for (let i = 0; i < 5; i++) {
+      mockState.sendQueues.set("session-0", [
+        { kind: "assistant.message_delta", data: { deltaContent: `chunk-${i}` } },
+      ]);
+      await collect(engine.send({ prompt: `p${i}`, expertId: expertA.id }));
+    }
+    // After every send returns, all SDK listeners registered inside #stream
+    // must be unregistered. Otherwise long chats accumulate handlers (#479).
+    expect(session.listenerCount()).toBe(baseline);
+  });
+
+  it("unregisters listeners even when the SDK send throws", async () => {
+    const engine = new CopilotEngine();
+    await engine.start();
+    await engine.addExpert(expertA);
+    const session = mockState.sessionInstances[0];
+    expect(session).toBeDefined();
+    if (!session) return;
+
+    const baseline = session.listenerCount();
+    mockState.sendErrors.set("session-0", new Error("rate limit"));
+    for (let i = 0; i < 3; i++) {
+      await collect(engine.send({ prompt: `p${i}`, expertId: expertA.id }));
+    }
+    expect(session.listenerCount()).toBe(baseline);
+  });
+
+  it("unregisters listeners when send is aborted mid-stream", async () => {
+    const engine = new CopilotEngine();
+    await engine.start();
+    await engine.addExpert(expertA);
+    const session = mockState.sessionInstances[0];
+    expect(session).toBeDefined();
+    if (!session) return;
+
+    const baseline = session.listenerCount();
+    for (let i = 0; i < 3; i++) {
+      const controller = new AbortController();
+      controller.abort();
+      mockState.sendQueues.set("session-0", [
+        { kind: "assistant.message_delta", data: { deltaContent: "x" } },
+      ]);
+      await collect(
+        engine.send({ prompt: `p${i}`, expertId: expertA.id, signal: controller.signal }),
+      );
+    }
+    expect(session.listenerCount()).toBe(baseline);
   });
 });
