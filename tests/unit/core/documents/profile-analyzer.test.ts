@@ -596,25 +596,50 @@ describe("analyzeDocuments() — error handling (#359 #360 #361)", () => {
     expect(engine.removed.length).toBe(1);
   });
 
-  it("throws when both the initial send and the retry yield engine errors (#359)", async () => {
+  it("throws when both the initial send and the retry yield engine errors, preserving the first error via Error.cause (#359, #432, #433)", async () => {
+    // Use distinct messages on the two calls so we can verify which one
+    // surfaces as the thrown error's message and which one is preserved
+    // on `.cause`. Without #432, the first-send error is silently dropped
+    // and only the retry error is observable to callers.
     class AlwaysErrorEngine extends RecordingEngine {
+      callCount = 0;
       override send(opts: SendOptions): AsyncIterable<EngineEvent> {
         this.sends.push({ expertId: opts.expertId, prompt: opts.prompt });
         const expertId = opts.expertId;
+        this.callCount += 1;
+        const message = this.callCount === 1 ? "first-send-boom" : "retry-send-boom";
         return (async function* (): AsyncGenerator<EngineEvent, void, void> {
           yield {
             kind: "error",
             expertId,
-            error: { code: "PROVIDER_ERROR", message: "boom" },
+            error: { code: "PROVIDER_ERROR", message },
             recoverable: false,
           };
         })();
       }
     }
     const engine = new AlwaysErrorEngine([]);
-    await expect(
-      analyzeDocuments(sampleDocs, null, engine, defaultOptions),
-    ).rejects.toThrow();
+    const thrown: unknown = await analyzeDocuments(
+      sampleDocs,
+      null,
+      engine,
+      defaultOptions,
+    ).then(
+      () => {
+        throw new Error("expected analyzeDocuments to reject");
+      },
+      (e: unknown) => e,
+    );
+    expect(thrown).toBeInstanceOf(Error);
+    const err = thrown as Error;
+    // The proximate (retry) error message must surface to the caller.
+    expect(err.message).toMatch(/retry-send-boom/);
+    // #432/#433: the original first-send error must be preserved via
+    // Error.cause so debugging can trace the full failure chain. The
+    // upstream provider error message ("first-send-boom") MUST survive.
+    expect(err.cause).toBeInstanceOf(Error);
+    const cause = err.cause as Error;
+    expect(cause.message).toMatch(/first-send-boom/);
     expect(engine.sends.length).toBe(2);
     expect(engine.removed.length).toBe(1);
   });
