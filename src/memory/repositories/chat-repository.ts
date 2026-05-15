@@ -283,7 +283,8 @@ export class ChatRepository {
       const message = rollbackFailed
         ? `persistTurnPair failed and ROLLBACK also failed; ` +
           `database may be in an inconsistent state ` +
-          `(an orphan user or expert turn may have landed): ${detail}`
+          `(an orphan user or expert turn may have landed): ${detail} ` +
+          `[rollback error: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}]`
         : `persistTurnPair failed (transaction rolled back cleanly): ${detail}`;
       throw new PersistTurnPairError(
         message,
