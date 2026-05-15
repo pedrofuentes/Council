@@ -506,10 +506,30 @@ export function createSummarizationGate(
       const p = inflight;
       inflight = undefined;
       settled = false;
-      // Errors are absorbed inside the inflight chain, so this await
-      // never rejects. May block until the underlying summarizer
-      // resolves — the timeout warning is informational, not a release.
-      await p;
+      // Sentinel SNT-PR508-5f0d62a critical fix: bound the exit drain.
+      // Tying single-flight to the real summarizer is correct, but if
+      // the summarizer is exactly the hung case the kickOff timeout is
+      // designed to detect, an unbounded await here would wedge `/quit`
+      // forever. Race the real work against a hard `timeoutMs` exit
+      // budget — on expiry, surface a single warning and let the
+      // process continue. The orphaned summarizer keeps running on its
+      // own promise but cannot block shutdown. Errors are absorbed in
+      // the inflight chain, so this await never rejects.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const exitBudget = new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+          onError(
+            `Rolling summary did not complete within ${timeoutMs}ms on chat exit — continuing without it.`,
+          );
+          resolve();
+        }, timeoutMs);
+        timer.unref?.();
+      });
+      try {
+        await Promise.race([p, exitBudget]);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
     },
     isInflight(): boolean {
       return inflight !== undefined && !settled;
