@@ -205,6 +205,44 @@ export class ChatRepository {
     return turnToDomain(row);
   }
 
+  /**
+   * Atomically persist a user turn followed by an expert turn within a
+   * single SQLite transaction (#466 follow-up). The user turn is
+   * inserted first so its allocated `seq` is strictly less than the
+   * expert turn's `seq`, ensuring `getTurns()` returns the prompt
+   * before the reply that it triggered.
+   *
+   * Used by the `@convene` Ctrl+C abort path in chat.ts: when an abort
+   * lands mid-stream of the FIRST expert turn, the deferred user prompt
+   * and the partial expert reply must land together — either both
+   * succeed with correct ordering, or neither lands (no orphan rows).
+   *
+   * Implemented with raw `BEGIN`/`COMMIT`/`ROLLBACK` for the same
+   * reason as `clearForRetrain` (see document-repository.ts): Kysely's
+   * `transaction()` helper reconnects the libsql `:memory:` connection
+   * and would lose virtual FTS5 tables.
+   */
+  async persistTurnPair(
+    userInput: NewChatTurn,
+    expertInput: NewChatTurn,
+  ): Promise<readonly [ChatTurn, ChatTurn]> {
+    await sql`BEGIN`.execute(this.db);
+    try {
+      const user = await this.addTurn(userInput);
+      const expert = await this.addTurn(expertInput);
+      await sql`COMMIT`.execute(this.db);
+      return [user, expert] as const;
+    } catch (err) {
+      try {
+        await sql`ROLLBACK`.execute(this.db);
+      } catch {
+        // Best-effort rollback; the original error is the meaningful
+        // signal to surface to the caller.
+      }
+      throw err;
+    }
+  }
+
   async getTurns(chatId: string, options: GetTurnsOptions = {}): Promise<readonly ChatTurn[]> {
     let query = this.db.selectFrom("chat_turns").selectAll().where("chat_id", "=", chatId);
     if (options.afterSeq !== undefined) {

@@ -1723,35 +1723,39 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
       if (next === ABORT_SENTINEL) {
         aborted = true;
         // PRD §F6 — preserve partial results on interruption. If a
-        // turn was mid-stream, flush the deferred user turn (so we
-        // never leave an orphan-free buffer in chat history) and
-        // persist whatever expert content has been buffered. If the
-        // write itself fails, surface a visible warning rather than
-        // silently dropping content the user already saw streamed —
-        // PRD §F6 forbids silent loss of streamed output.
+        // turn was mid-stream, persist the deferred user prompt and
+        // the buffered expert content together. The order matters:
+        // the user prompt MUST land at a lower `seq` than the expert
+        // reply so getTurns() returns them in conversational order
+        // (#466 follow-up). When the user turn has not yet been
+        // persisted, use the atomic ChatRepository.persistTurnPair()
+        // — either both rows land in correct order or neither does
+        // (no orphan rows, no inverted ordering). When the user
+        // prompt was already committed by an earlier turn.end, a
+        // plain addTurn() suffices: the user is already at a lower
+        // seq.
         if (inTurn && buffer.length > 0 && bufferSlug !== undefined) {
           const slugBeingFlushed = bufferSlug;
           const lostBytes = buffer.length;
           try {
-            // Persist the expert turn FIRST. If this write fails we
-            // must NOT commit the deferred user turn — otherwise an
-            // orphan @convene "user" row would be left behind with no
-            // corresponding expert response (issue #466 follow-up).
-            await repo.addTurn({
-              chatId: session.id,
-              role: "expert",
-              expertSlug: slugBeingFlushed,
-              content: buffer,
-            });
-            try {
-              await persistUserTurnOnce();
-            } catch (userErr: unknown) {
-              const msg =
-                userErr instanceof Error ? userErr.message : String(userErr);
-              renderer.showSystem(
-                `⚠ Could not persist @convene topic after interruption (partial ${slugBeingFlushed} response was saved): ${msg}`,
-                "warn",
+            if (!userTurnPersisted) {
+              await repo.persistTurnPair(
+                { chatId: session.id, role: "user", content: topic },
+                {
+                  chatId: session.id,
+                  role: "expert",
+                  expertSlug: slugBeingFlushed,
+                  content: buffer,
+                },
               );
+              userTurnPersisted = true;
+            } else {
+              await repo.addTurn({
+                chatId: session.id,
+                role: "expert",
+                expertSlug: slugBeingFlushed,
+                content: buffer,
+              });
             }
             persistedTurns += 1;
             buffer = "";
@@ -1764,8 +1768,10 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
             );
             // Intentionally leave buffer/bufferSlug in place so the
             // post-loop cleanup does not treat the half-rendered
-            // turn as discarded silently. The deferred user turn is
-            // intentionally NOT flushed here — see comment above.
+            // turn as discarded silently. When persistTurnPair
+            // failed, neither the user prompt nor the expert reply
+            // landed (transaction rolled back), so no orphan @convene
+            // user row remains in chat history.
           }
         }
         // Best-effort: ask the generator to clean up. Fire-and-forget
