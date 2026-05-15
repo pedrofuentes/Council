@@ -50,6 +50,24 @@ describe("stripControlChars", () => {
     expect(stripControlChars("a\x7Fb")).toBe("ab");
   });
 
+  it("strips C1 control characters (U+0080–U+009F)", () => {
+    const dirty = "a\x80b\x9Fc\x85d\x90e";
+    expect(stripControlChars(dirty)).toBe("abcde");
+  });
+
+  it("strips every C1 control codepoint in the 0x80-0x9F range", () => {
+    let dirty = "x";
+    for (let cp = 0x80; cp <= 0x9f; cp++) {
+      dirty += String.fromCharCode(cp);
+    }
+    dirty += "y";
+    expect(stripControlChars(dirty)).toBe("xy");
+  });
+
+  it("preserves printable Latin-1 characters above the C1 range (U+00A0+)", () => {
+    expect(stripControlChars("\u00A0\u00A1\u00FF")).toBe("\u00A0\u00A1\u00FF");
+  });
+
   it("handles empty input", () => {
     expect(stripControlChars("")).toBe("");
   });
