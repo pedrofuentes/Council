@@ -292,14 +292,13 @@ disk if the database is reset.
 
 ```bash
 # Debate orchestration (most run a real engine — pass --engine copilot or --engine mock)
-council convene <topic> --engine copilot          # Auto-compose a panel + start deliberation
-council convene --template <name> --engine copilot  # Use a built-in or library panel
-council ask <panel> "<question>" --engine copilot   # Continue with the full panel
-council ask <panel> "<q>" --expert <slug> --engine copilot  # One-shot to a single expert
-council conclude [panel] --engine copilot         # Decision matrix + recommendation
-council resume <panel>                             # Replay transcript (no engine needed)
-council resume <panel> --continue "<prompt>" --engine copilot  # New round on the same panel
-council export <panel> --format <fmt>              # Export (markdown | json | adr)
+council convene <topic> --engine copilot                       # Auto-compose a panel + start deliberation
+council convene <topic> --template <name> --engine copilot     # Use a built-in or library panel
+council ask <panel> "<question>" --engine copilot              # One-shot to one expert (default: first; pin with --expert <slug>)
+council conclude [panel] --engine copilot                      # Decision matrix + recommendation
+council resume <panel>                                          # Replay transcript (no engine needed)
+council resume <panel> --continue "<prompt>" --engine copilot  # Continue the panel with a new round
+council export <panel> --format <fmt>                          # Export (markdown | json | adr)
 
 # Persistent conversational chat (Phase 5) — interactive sessions require --engine
 council chat <expert-slug> --engine copilot      # 1:1 conversational REPL with an expert
