@@ -541,23 +541,21 @@ describe("template-migration", () => {
       expect(await exists(lockPath)).toBe(false);
     });
 
-    it("breaks an abandoned lock from a dead PID, not by age alone", async () => {
+    it("breaks an abandoned lock from a dead PID, even if mtime is fresh", async () => {
       // Sentinel #303 cycle 1: a 60-second age threshold would let a
       // contender delete the lock of a still-running migration that
       // happens to take longer than a minute. Liveness must be
-      // determined by the holder PID, not by mtime.
+      // determined by the holder PID, not by mtime alone.
       const lockPath = path.join(dataHome, ".migration.lock");
-
-      // (a) lock owned by a clearly-dead PID — must be broken even if
-      // its mtime is brand new. We use PID 1 with a hostname that
-      // cannot match this host so the liveness check rejects it.
-      // (PID 1 may exist on the host but our hostname mismatch ensures
-      // we don't mis-attribute it.)
+      // PID 2^31-1 is effectively guaranteed not to be allocated on
+      // either Linux (PID_MAX_LIMIT 4194304) or Windows (PIDs are
+      // multiples of 4 below 2^32).
+      const DEAD_PID = 2_147_483_647;
       await fs.writeFile(
         lockPath,
         JSON.stringify({
-          pid: 1,
-          hostname: "__sentinel-not-this-host__",
+          pid: DEAD_PID,
+          hostname: os.hostname(),
           acquiredAt: new Date().toISOString(),
         }),
         "utf-8",
@@ -567,14 +565,10 @@ describe("template-migration", () => {
       });
       expect(result.panelsMigrated + result.expertsExtracted).toBeGreaterThan(0);
       expect(await exists(lockPath)).toBe(false);
+    });
 
-      // (b) lock owned by THIS process — even with an old mtime it must
-      // NOT be broken (our PID is alive). Make the lock 10 minutes old
-      // and assert acquireLock times out trying to grab it. We pre-set
-      // a very short timeout via a contention-window probe instead of
-      // calling the real function — to keep the test fast we just
-      // verify the file survives a short wait while a "live" PID owns
-      // it.
+    it("does not evict a lock owned by a live PID, regardless of age", async () => {
+      const lockPath = path.join(dataHome, ".migration.lock");
       await fs.writeFile(
         lockPath,
         JSON.stringify({
@@ -586,14 +580,6 @@ describe("template-migration", () => {
       );
       const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
       await fs.utimes(lockPath, tenMinAgo, tenMinAgo);
-      // Reset DB+library state so the migration would otherwise run.
-      await db.deleteFrom("panel_members").execute();
-      await db.deleteFrom("panel_library").execute();
-      await db.deleteFrom("expert_library").execute();
-      // Acquire should NOT immediately break this lock just because
-      // it's old; the live-PID owner is presumed to still hold it.
-      // We race the migration against a short timeout — the lock file
-      // must still exist when the timeout fires.
       const stillHeld = await Promise.race([
         migrateBuiltInTemplates(dataHome, lib, db, { quiet: true }).then(
           () => "completed" as const,
@@ -603,8 +589,42 @@ describe("template-migration", () => {
         ),
       ]);
       expect(stillHeld).toBe("timeout");
-      expect(await exists(lockPath)).toBe(true);
-      // Cleanup so afterEach doesn't hang on the abandoned promise.
+      // The lock content must be untouched — proves the contender
+      // didn't unlink-and-replace it.
+      const observed = JSON.parse(await fs.readFile(lockPath, "utf-8")) as {
+        pid: number;
+      };
+      expect(observed.pid).toBe(process.pid);
+      // Cleanup: unlink so the dangling migration promise can proceed
+      // to its own acquire (avoids hanging afterEach on an open handle).
+      await fs.unlink(lockPath);
+    });
+
+    it("does not evict a lock owned by a different host, even with fresh mtime (#303 cycle 2)", async () => {
+      // We cannot prove a remote PID is dead, so the lock must NOT be
+      // evicted on hostname mismatch alone. Otherwise two hosts that
+      // share a `dataHome` (NFS, SMB) re-enter the concurrent-migration
+      // race the original fix was meant to close.
+      const lockPath = path.join(dataHome, ".migration.lock");
+      const remoteOwner = {
+        pid: 12345,
+        hostname: "__not-this-host__",
+        acquiredAt: new Date().toISOString(),
+      };
+      await fs.writeFile(lockPath, JSON.stringify(remoteOwner), "utf-8");
+      const stillHeld = await Promise.race([
+        migrateBuiltInTemplates(dataHome, lib, db, { quiet: true }).then(
+          () => "completed" as const,
+        ),
+        new Promise<"timeout">((resolve) =>
+          setTimeout(() => resolve("timeout"), 300),
+        ),
+      ]);
+      expect(stillHeld).toBe("timeout");
+      const observed = JSON.parse(await fs.readFile(lockPath, "utf-8")) as {
+        hostname: string;
+      };
+      expect(observed.hostname).toBe(remoteOwner.hostname);
       await fs.unlink(lockPath);
     });
 
