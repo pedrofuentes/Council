@@ -24,6 +24,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mockState = vi.hoisted(() => ({
   forceMissingPath: null as string | null,
   failWriteForPath: null as string | null,
+  failCloseForPath: null as string | null,
 }));
 
 import type FsPromisesModule from "node:fs/promises";
@@ -67,6 +68,24 @@ vi.mock("node:fs/promises", async (importOriginal) => {
           err.code = "ENOSPC";
           throw err;
         }) as typeof handle.writeFile;
+      }
+      if (
+        typeof file === "string" &&
+        mockState.failCloseForPath !== null &&
+        file === mockState.failCloseForPath
+      ) {
+        const originalClose = handle.close.bind(handle);
+        handle.close = (async () => {
+          // Real close still runs so we don't leak the fd, but the surface
+          // call appears to fail — proving the impl preserves the upstream
+          // write error rather than letting close() mask it.
+          try {
+            await originalClose();
+          } catch {
+            /* ignore — primary error is what matters */
+          }
+          throw new Error("EIO: simulated close failure");
+        }) as typeof handle.close;
       }
       return handle;
     }) as typeof actual.open,
@@ -142,11 +161,13 @@ describe("panel create — O_EXCL atomic write (issue #307)", () => {
   beforeEach(async () => {
     mockState.forceMissingPath = null;
     mockState.failWriteForPath = null;
+    mockState.failCloseForPath = null;
     env = await makeEnv();
   });
   afterEach(async () => {
     mockState.forceMissingPath = null;
     mockState.failWriteForPath = null;
+    mockState.failCloseForPath = null;
     await teardown(env);
   });
 
@@ -161,7 +182,6 @@ describe("panel create — O_EXCL atomic write (issue #307)", () => {
     // Simulate the race: existence pre-check reports ENOENT for the YAML
     // path, but the file actually exists when writeFile runs.
     mockState.forceMissingPath = yamlPath;
-
     let errored = "";
     const cmd = buildPanelCommand(
       () => {
@@ -231,5 +251,40 @@ describe("panel create — O_EXCL atomic write (issue #307)", () => {
     } finally {
       await db.destroy();
     }
+  });
+
+  it("preserves the primary write failure when handle.close() also fails", async () => {
+    await seedExpert(env, expertDef("cto"));
+
+    const yamlPath = path.join(env.dataHome, "panels", "arch-review.yaml");
+    mockState.failWriteForPath = yamlPath;
+    mockState.failCloseForPath = yamlPath;
+
+    const cmd = buildPanelCommand(
+      () => {
+        /* noop */
+      },
+      () => {
+        /* noop */
+      },
+    );
+
+    const err = await cmd
+      .parseAsync(["node", "council-panel", "create", "arch-review", "--experts", "cto"])
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+
+    expect(err).toBeInstanceOf(Error);
+    // Hard property: the user-visible failure must surface the original
+    // write-time error (or its message), not the secondary close failure.
+    const collected: string[] = [];
+    const visit = (e: unknown): void => {
+      if (e instanceof Error) collected.push(e.message);
+      if (e instanceof AggregateError) for (const sub of e.errors) visit(sub);
+    };
+    visit(err);
+    expect(collected.some((m) => /ENOSPC|simulated mid-write failure/i.test(m))).toBe(true);
   });
 });
