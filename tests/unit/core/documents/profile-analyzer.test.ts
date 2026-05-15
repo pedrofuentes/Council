@@ -169,6 +169,54 @@ describe("analyzeDocuments() — engine-backed profile extraction", () => {
     expect(send.prompt).toContain("Status-quo bias");
   });
 
+  it("wraps the existing profile in an <existing_profile> fence (issue #421)", async () => {
+    // The existing profile is itself derived from untrusted documents.
+    // Rendering its fields as bare labeled lines in the privileged
+    // pre-fence region of the analyzer prompt lets a malicious stored
+    // profile inject prompt instructions on the next analysis run.
+    // The fields must live INSIDE an <existing_profile>...</existing_profile>
+    // fence so the analyzer system prompt can mark them as untrusted data.
+    const engine = new RecordingEngine([validProfileJSON]);
+    const existing: PersonaProfile = {
+      communicationStyle: "Cautious, hedged, frequently qualified.",
+      decisionPatterns: ["Defers to consensus"],
+      biases: ["Status-quo bias"],
+      vocabulary: ["it depends", "potentially"],
+      epistemicStance: "Bayesian; updates slowly.",
+      lastUpdated: "2026-05-12T00:00:00Z",
+      documentCount: 3,
+      totalWords: 1500,
+    };
+    await analyzeDocuments(sampleDocs, existing, engine, defaultOptions);
+
+    const send = engine.sends[0];
+    if (!send) throw new Error("expected send");
+    const openIdx = send.prompt.indexOf("<existing_profile>");
+    const closeIdx = send.prompt.indexOf("</existing_profile>");
+    expect(openIdx).toBeGreaterThan(-1);
+    expect(closeIdx).toBeGreaterThan(openIdx);
+    // The labeled fields must live INSIDE the fence.
+    const block = send.prompt.slice(openIdx, closeIdx);
+    expect(block).toContain("Cautious, hedged");
+    expect(block).toContain("Defers to consensus");
+    // Exactly one fence pair.
+    expect(send.prompt.split("<existing_profile>").length - 1).toBe(1);
+    expect(send.prompt.split("</existing_profile>").length - 1).toBe(1);
+    // The <existing_profile> block must appear BEFORE the <documents>
+    // fence so it stays in the pre-fence ordering the analyzer expects.
+    const docsIdx = send.prompt.indexOf("<documents>");
+    expect(closeIdx).toBeLessThan(docsIdx);
+  });
+
+  it("omits the <existing_profile> fence when no existing profile is provided (issue #421)", async () => {
+    const engine = new RecordingEngine([validProfileJSON]);
+    await analyzeDocuments(sampleDocs, null, engine, defaultOptions);
+    const send = engine.sends[0];
+    if (!send) throw new Error("expected send");
+    expect(send.prompt).not.toContain("<existing_profile>");
+    expect(send.prompt).not.toContain("</existing_profile>");
+  });
+
   it("does NOT include the existing-profile block when none is provided", async () => {
     const engine = new RecordingEngine([validProfileJSON]);
     await analyzeDocuments(sampleDocs, null, engine, defaultOptions);
@@ -236,6 +284,20 @@ describe("analyzeDocuments() — engine-backed profile extraction", () => {
     await analyzeDocuments(sampleDocs, null, engine, defaultOptions);
     const spec = engine.registered[0];
     if (!spec) throw new Error("expected registered analyzer");
+    expect(spec.systemMessage.toLowerCase()).toMatch(
+      /untrusted|do not (?:follow|obey)|ignore (?:any )?instructions/,
+    );
+  });
+
+  it("frames the existing profile as untrusted data in the analyzer system prompt (issue #421)", async () => {
+    // The system prompt must explicitly name the <existing_profile>
+    // fence and instruct the model to treat its contents as context,
+    // not as directives — mirroring the <documents> framing.
+    const engine = new RecordingEngine([validProfileJSON]);
+    await analyzeDocuments(sampleDocs, null, engine, defaultOptions);
+    const spec = engine.registered[0];
+    if (!spec) throw new Error("expected registered analyzer");
+    expect(spec.systemMessage).toContain("<existing_profile>");
     expect(spec.systemMessage.toLowerCase()).toMatch(
       /untrusted|do not (?:follow|obey)|ignore (?:any )?instructions/,
     );
