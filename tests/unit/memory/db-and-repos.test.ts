@@ -341,6 +341,106 @@ describe("Migration 006 — expert_documents table", () => {
   });
 });
 
+describe("Inlined migrations regression (issue #476)", () => {
+  // Migrations were inlined into src/memory/db.ts as string literals so the
+  // tsup-bundled CLI works without copying src/memory/migrations/*.sql into
+  // dist/. This test would fail if a future change reverted to filesystem
+  // reads (e.g. `fs.readFileSync(".../migrations/001_init.sql")`) — those
+  // reads succeed under `vitest` (source tree present) only when run from
+  // the repo, but more importantly any regression that drops a migration
+  // from the inlined `loadMigrations()` array would leave the corresponding
+  // table missing and trip this exhaustive presence check.
+  let db: CouncilDatabase;
+
+  beforeEach(async () => {
+    db = await createDatabase(":memory:");
+  });
+
+  afterEach(async () => {
+    await db.destroy();
+  });
+
+  const EXPECTED_TABLES = [
+    "schema_version",
+    "panels",
+    "experts",
+    "debates",
+    "turns",
+    "turns_fts",
+    "expert_library",
+    "panel_library",
+    "panel_members",
+    "chat_sessions",
+    "chat_turns",
+    "chat_turns_fts",
+    "expert_documents",
+    "document_index",
+    "persona_profiles",
+    "panel_linked_folders",
+    "panel_documents",
+  ] as const;
+
+  it("creates every table from the inlined migration set on a fresh in-memory DB", async () => {
+    const rows = (
+      await sql<{
+        name: string;
+      }>`SELECT name FROM sqlite_master WHERE type IN ('table', 'virtual') OR (type = 'table' AND sql LIKE '%VIRTUAL%')`.execute(
+        db,
+      )
+    ).rows.map((r) => r.name);
+    // sqlite_master reports virtual tables under type='table'; just collect everything.
+    const all = (
+      await sql<{ name: string }>`SELECT name FROM sqlite_master WHERE type = 'table'`.execute(db)
+    ).rows.map((r) => r.name);
+    for (const expected of EXPECTED_TABLES) {
+      expect(all, `migration set must create table '${expected}' (issue #476)`).toContain(expected);
+    }
+    // Reference `rows` to keep the diagnostic query in scope; failure-time
+    // logging during debugging benefits from having both result sets.
+    expect(rows.length).toBeGreaterThanOrEqual(EXPECTED_TABLES.length);
+  });
+
+  it("records a schema_version row for every inlined migration (1..9)", async () => {
+    const versions = (
+      await db.selectFrom("schema_version").select("version").orderBy("version").execute()
+    ).map((r) => r.version);
+    expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  });
+
+  it("each expected table is queryable via Kysely without throwing", async () => {
+    // A missing inlined migration would raise "no such table" here.
+    await expect(db.selectFrom("panels").selectAll().execute()).resolves.toEqual([]);
+    await expect(db.selectFrom("experts").selectAll().execute()).resolves.toEqual([]);
+    await expect(db.selectFrom("debates").selectAll().execute()).resolves.toEqual([]);
+    await expect(db.selectFrom("turns").selectAll().execute()).resolves.toEqual([]);
+    await expect(db.selectFrom("schema_version").selectAll().execute()).resolves.toBeDefined();
+    await expect(db.selectFrom("expert_library").selectAll().execute()).resolves.toEqual([]);
+    await expect(db.selectFrom("panel_library").selectAll().execute()).resolves.toEqual([]);
+    await expect(db.selectFrom("panel_members").selectAll().execute()).resolves.toEqual([]);
+    await expect(db.selectFrom("chat_sessions").selectAll().execute()).resolves.toEqual([]);
+    await expect(db.selectFrom("chat_turns").selectAll().execute()).resolves.toEqual([]);
+    await expect(db.selectFrom("expert_documents").selectAll().execute()).resolves.toEqual([]);
+    await expect(db.selectFrom("persona_profiles").selectAll().execute()).resolves.toEqual([]);
+    await expect(db.selectFrom("panel_linked_folders").selectAll().execute()).resolves.toEqual([]);
+    await expect(db.selectFrom("panel_documents").selectAll().execute()).resolves.toEqual([]);
+  });
+
+  it("FTS5 virtual tables (turns_fts, chat_turns_fts, document_index) are queryable", async () => {
+    // FTS5 virtual tables require their backing module compiled into the
+    // libsql WASM build; if a migration that creates them was dropped
+    // these queries would fail with "no such table".
+    await expect(
+      sql`SELECT count(*) FROM turns_fts`.execute(db),
+    ).resolves.toBeDefined();
+    await expect(
+      sql`SELECT count(*) FROM chat_turns_fts`.execute(db),
+    ).resolves.toBeDefined();
+    await expect(
+      sql`SELECT count(*) FROM document_index`.execute(db),
+    ).resolves.toBeDefined();
+  });
+});
+
 describe("PanelRepository", () => {
   let db: CouncilDatabase;
   let repo: PanelRepository;
