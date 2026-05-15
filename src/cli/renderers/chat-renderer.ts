@@ -95,7 +95,8 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
    * Sanitize multi-line text (streamed response bodies) for terminal display.
    *
    * Builds on the shared `stripControlChars` helper (which removes ANSI/OSC
-   * escapes and most C0 controls) but additionally strips `\r`. The shared
+   * escapes, most C0 controls, and the C1 control range U+0080–U+009F) but
+   * additionally strips `\r`. The shared
    * helper preserves `\r` for transcript fidelity; in a live TTY, however, a
    * carriage return rewinds the cursor to column 0 and lets a malicious
    * chunk overwrite the current line (e.g. spoof a `You > ` prompt). Newlines
