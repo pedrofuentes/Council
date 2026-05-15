@@ -3,11 +3,36 @@
  * (migration 006). Follows the snake_case-row → camelCase-domain pattern
  * established by expert-library-repo.ts and panel-library-repo.ts.
  */
+import { sql } from "kysely";
 import { ulid } from "ulid";
 
 import type { CouncilDatabase, ExpertDocumentRow } from "../db.js";
 
 export type DocumentStatus = "pending" | "processed" | "failed" | "removed";
+
+/**
+ * Thrown by {@link DocumentRepository.clearForRetrain} when the
+ * transaction aborts. Exposes whether ROLLBACK itself succeeded so
+ * call sites can produce honest user-facing messages (#425): if
+ * {@link rollbackFailed} is `true`, the database state may be
+ * inconsistent and the message MUST NOT claim that data was preserved.
+ */
+export class ClearForRetrainError extends Error {
+  readonly rollbackFailed: boolean;
+  readonly rollbackError?: unknown;
+
+  constructor(
+    message: string,
+    opts: { cause: unknown; rollbackFailed: boolean; rollbackError?: unknown },
+  ) {
+    super(message, { cause: opts.cause });
+    this.name = "ClearForRetrainError";
+    this.rollbackFailed = opts.rollbackFailed;
+    if (opts.rollbackError !== undefined) {
+      this.rollbackError = opts.rollbackError;
+    }
+  }
+}
 
 export interface ExpertDocument {
   readonly id: string;
@@ -148,19 +173,36 @@ export class DocumentRepository {
 
   /**
    * Atomically clear an expert's FTS index entries AND mark all of its
-   * tracked documents as removed (#383). The two writes must be a
-   * single unit: if FTS rows are deleted but the tracking UPDATE fails
-   * (or vice versa) retrieval can silently return stale or missing
-   * results.
+   * tracked documents as removed (#383). The two writes are a single
+   * unit: if the FTS rows are deleted but the tracking UPDATE fails (or
+   * vice versa) retrieval can silently return stale or missing results.
    *
    * Implemented with raw ``BEGIN``/``COMMIT``/``ROLLBACK`` on the libsql
    * client (same workaround as ``indexer.ts``: Kysely's ``transaction()``
    * helper reconnects the libsql ``:memory:`` connection, which loses
    * virtual FTS5 tables).
+   *
+   * On failure, throws {@link ClearForRetrainError}. Callers MUST inspect
+   * ``rollbackFailed`` (#425): when the rollback itself failed the DB
+   * may be in an inconsistent state and the user-facing message must NOT
+   * claim that prior data was preserved.
    */
   async clearForRetrain(expertSlug: string): Promise<void> {
-    const { sql } = await import("kysely");
-    await sql`BEGIN`.execute(this.db);
+    try {
+      await sql`BEGIN`.execute(this.db);
+    } catch (beginErr) {
+      // Transaction never opened, so no rollback is needed and no DB
+      // mutation occurred. Still wrap the error in ClearForRetrainError
+      // so callers always see the same failure contract (#425): they
+      // can trust `rollbackFailed === false` here means the prior state
+      // is intact.
+      const detail = beginErr instanceof Error ? beginErr.message : String(beginErr);
+      throw new ClearForRetrainError(
+        `clearForRetrain failed for "${expertSlug}" before any changes ` +
+          `(BEGIN failed; no changes applied): ${detail}`,
+        { cause: beginErr, rollbackFailed: false },
+      );
+    }
     try {
       await sql`DELETE FROM document_index WHERE source_type = 'expert' AND source_slug = ${expertSlug}`.execute(
         this.db,
@@ -170,12 +212,26 @@ export class DocumentRepository {
       );
       await sql`COMMIT`.execute(this.db);
     } catch (err) {
+      let rollbackFailed = false;
+      let rollbackError: unknown;
       try {
         await sql`ROLLBACK`.execute(this.db);
-      } catch {
-        /* swallow rollback errors so the original failure is preserved */
+      } catch (rbErr) {
+        rollbackFailed = true;
+        rollbackError = rbErr;
       }
-      throw err;
+      const detail = err instanceof Error ? err.message : String(err);
+      const message = rollbackFailed
+        ? `clearForRetrain failed for "${expertSlug}" and ROLLBACK also failed; ` +
+          `database may be in an inconsistent state (FTS index and document tracking ` +
+          `may disagree): ${detail}`
+        : `clearForRetrain failed for "${expertSlug}" (transaction rolled back cleanly): ${detail}`;
+      throw new ClearForRetrainError(
+        message,
+        rollbackError === undefined
+          ? { cause: err, rollbackFailed }
+          : { cause: err, rollbackFailed, rollbackError },
+      );
     }
   }
 }
