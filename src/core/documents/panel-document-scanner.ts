@@ -34,6 +34,8 @@ import * as path from "node:path";
 
 import type { Stats } from "node:fs";
 
+import { sql } from "kysely";
+
 import { detectDocumentChanges, type DocumentFile } from "./detector.js";
 import * as extractorModule from "./extractor.js";
 import { createDocumentIndexer } from "./indexer.js";
@@ -226,21 +228,83 @@ export async function scanAndIndexPanelDocuments(
           confinementRoot: canonical,
           _rootIsCanonical: true,
         });
-        await indexer.index({
-          content: extracted.content,
-          sourceType: "panel",
-          sourceSlug: panelName,
-          filePath: file.path,
-        });
-        await docsRepo.trackDocument({
-          panelName,
-          source: folder.source,
-          filePath: file.path,
-          filename: file.filename,
-          checksum: extracted.checksum,
-          sizeBytes: extracted.sizeBytes,
-          wordCount: extracted.wordCount,
-        });
+        // For `linked` sources, the (link-membership re-check + FTS
+        // DELETE+INSERT + panel_documents UPSERT) sequence MUST run as
+        // a single atomic unit (issue #424). Without the transaction
+        // wrap, a concurrent `panel docs unlink` that committed
+        // between our re-check and our subsequent writes would have
+        // its FTS + panel_documents deletes silently undone — leaving
+        // the unlinked folder's content retrievable after a
+        // reported-success unlink. We use `BEGIN IMMEDIATE` so the
+        // writer lock is taken at the start: in multi-process
+        // operation (e.g. `panel docs unlink` running in one terminal
+        // while `chat <panel>` runs in another) SQLite serializes the
+        // two transactions, and our SELECT sees the committed result
+        // of whichever ran first. The FTS DELETE+INSERT block here
+        // mirrors the body of `indexer.index()` (which opens its own
+        // transaction we cannot nest inside another); managed-source
+        // files still go through `indexer.index()` since the managed
+        // dir cannot be unlinked.
+        if (folder.source === "linked") {
+          let skipped = false;
+          await sql`BEGIN IMMEDIATE`.execute(db);
+          try {
+            const linkRow = await sql<{
+              c: number;
+            }>`SELECT COUNT(*) AS c FROM panel_linked_folders WHERE panel_name = ${panelName} AND folder_path = ${folder.path}`.execute(
+              db,
+            );
+            if ((linkRow.rows[0]?.c ?? 0) === 0) {
+              await sql`COMMIT`.execute(db);
+              // Drop from `seenPaths` so the prune pass is free to
+              // reconcile the (already-unlinked) row if it still
+              // exists in `known`.
+              seenPaths.delete(file.path);
+              skipped = true;
+            } else {
+              await sql`DELETE FROM document_index WHERE file_path = ${file.path}`.execute(
+                db,
+              );
+              await sql`INSERT INTO document_index (content, source_type, source_slug, file_path) VALUES (${extracted.content}, 'panel', ${panelName}, ${file.path})`.execute(
+                db,
+              );
+              await docsRepo.trackDocument({
+                panelName,
+                source: folder.source,
+                filePath: file.path,
+                filename: file.filename,
+                checksum: extracted.checksum,
+                sizeBytes: extracted.sizeBytes,
+                wordCount: extracted.wordCount,
+              });
+              await sql`COMMIT`.execute(db);
+            }
+          } catch (err) {
+            try {
+              await sql`ROLLBACK`.execute(db);
+            } catch {
+              /* preserve original error */
+            }
+            throw err;
+          }
+          if (skipped) continue;
+        } else {
+          await indexer.index({
+            content: extracted.content,
+            sourceType: "panel",
+            sourceSlug: panelName,
+            filePath: file.path,
+          });
+          await docsRepo.trackDocument({
+            panelName,
+            source: folder.source,
+            filePath: file.path,
+            filename: file.filename,
+            checksum: extracted.checksum,
+            sizeBytes: extracted.sizeBytes,
+            wordCount: extracted.wordCount,
+          });
+        }
         indexed += 1;
         onProgress?.({ filename: file.filename, source: folder.source, status: "indexed" });
       } catch (err: unknown) {
