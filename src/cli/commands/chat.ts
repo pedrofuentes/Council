@@ -1770,7 +1770,16 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
         }
         // Best-effort: ask the generator to clean up. Fire-and-forget
         // so a slow upstream send() does not block the prompt return.
-        void iterator.return?.(undefined).catch(() => undefined);
+        // If cleanup itself rejects, surface a quiet warn so the
+        // failure is not swallowed silently (issue #466 follow-up).
+        void iterator.return?.(undefined).catch((cleanupErr: unknown) => {
+          const msg =
+            cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
+          renderer.showSystem(
+            `⚠ Debate generator cleanup after interruption failed: ${msg}`,
+            "warn",
+          );
+        });
         break;
       }
 
