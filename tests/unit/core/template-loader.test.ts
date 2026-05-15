@@ -456,6 +456,11 @@ experts:
     expect(typeof firstExpert).toBe("object");
   });
 
+  it("architecture-review template includes defaults.model", async () => {
+    const panel = await loadPanel("architecture-review", dataHome);
+    expect(panel.defaults?.model).toBe("claude-sonnet-4-20250514");
+  });
+
   it("loadPanel() throws when neither user nor built-in panel exists", async () => {
     await expect(loadPanel("does-not-exist", dataHome)).rejects.toThrow(/does-not-exist/);
   });
