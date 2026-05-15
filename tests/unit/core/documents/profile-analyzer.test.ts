@@ -293,13 +293,25 @@ describe("analyzeDocuments() — engine-backed profile extraction", () => {
     // The system prompt must explicitly name the <existing_profile>
     // fence and instruct the model to treat its contents as context,
     // not as directives — mirroring the <documents> framing.
+    //
+    // Issue #495: the untrusted-handling language must be CO-LOCATED
+    // with the <existing_profile> mention — not merely present somewhere
+    // else in the prompt (e.g. only attached to the <documents> framing).
+    // We extract the paragraph (\n\n-delimited block) containing the
+    // first <existing_profile> reference and require the untrusted-data
+    // / do-not-follow language to appear inside that same paragraph.
     const engine = new RecordingEngine([validProfileJSON]);
     await analyzeDocuments(sampleDocs, null, engine, defaultOptions);
     const spec = engine.registered[0];
     if (!spec) throw new Error("expected registered analyzer");
-    expect(spec.systemMessage).toContain("<existing_profile>");
-    expect(spec.systemMessage.toLowerCase()).toMatch(
-      /untrusted|do not (?:follow|obey)|ignore (?:any )?instructions/,
+    const sysMsg = spec.systemMessage;
+    expect(sysMsg).toContain("<existing_profile>");
+
+    const paragraphs = sysMsg.split(/\n\s*\n/);
+    const colocated = paragraphs.find((p) => p.includes("<existing_profile>"));
+    if (!colocated) throw new Error("expected a paragraph mentioning <existing_profile>");
+    expect(colocated.toLowerCase()).toMatch(
+      /untrusted|do not (?:follow|obey|blindly follow)|ignore (?:any )?instructions|not (?:as )?instructions/,
     );
   });
 
