@@ -1253,5 +1253,89 @@ fs.writeFileSync(p, body, 'utf-8');`,
         await db.destroy();
       }
     });
+
+    it("--retrain warns of inconsistent state when ROLLBACK itself fails (no 'preserved' claim) (#425)", async () => {
+      await seedExpert(env, PERSONA);
+      await writeDoc("boss", "intro.md", "First training document.");
+
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { DocumentRepository, ClearForRetrainError } = await import(
+        "../../../../src/memory/repositories/document-repository.js"
+      );
+      const { ProfileRepository } = await import(
+        "../../../../src/memory/repositories/profile-repository.js"
+      );
+
+      // Seed a baseline profile + a tracked doc so retrain has work to do.
+      {
+        const db = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          await new ProfileRepository(db).upsert("boss", {
+            communicationStyle: "Pre-existing baseline.",
+            decisionPatterns: ["baseline"],
+            biases: ["baseline"],
+            vocabulary: ["baseline"],
+            epistemicStance: "Baseline.",
+            lastUpdated: new Date().toISOString(),
+            documentCount: 1,
+            totalWords: 4,
+          });
+          const filePath = path.join(env.dataHome, "experts", "boss", "docs", "intro.md");
+          const repo = new DocumentRepository(db);
+          const created = await repo.create({
+            expertSlug: "boss",
+            filePath,
+            filename: "intro.md",
+            checksum: "cs",
+            sizeBytes: 1,
+            wordCount: 4,
+          });
+          await repo.updateStatus(created.id, "processed", new Date().toISOString());
+        } finally {
+          await db.destroy();
+        }
+      }
+
+      // Stub clearForRetrain to throw a ClearForRetrainError flagged
+      // rollbackFailed=true so the CLI exercises its conservative
+      // "state unknown" branch (#425).
+      const originalClear = DocumentRepository.prototype.clearForRetrain;
+      DocumentRepository.prototype.clearForRetrain = async function (): Promise<void> {
+        throw new ClearForRetrainError(
+          "simulated cleanup failure AND rollback failure",
+          {
+            cause: new Error("simulated cleanup failure"),
+            rollbackFailed: true,
+            rollbackError: new Error("simulated ROLLBACK failure"),
+          },
+        );
+      };
+
+      let captured = "";
+      let erred = "";
+      try {
+        const cmd = buildExpertCommand(
+          (s) => {
+            captured += s;
+          },
+          (s) => {
+            erred += s;
+          },
+          { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+        );
+        await expect(
+          cmd.parseAsync(["node", "council-expert", "train", "boss", "--retrain"]),
+        ).rejects.toThrow(/retrain aborted|failed to clear/i);
+      } finally {
+        DocumentRepository.prototype.clearForRetrain = originalClear;
+      }
+
+      const combined = (captured + erred).toLowerCase();
+      expect(erred.toLowerCase()).toMatch(/failed to clear/);
+      expect(combined).toMatch(/inconsistent state/);
+      // CRITICAL: must NOT claim preservation when rollback failed.
+      expect(combined).not.toMatch(/profile.*preserved/);
+      expect(combined).not.toMatch(/tracking preserved/);
+    });
   });
 });
