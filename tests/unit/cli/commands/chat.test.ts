@@ -3439,6 +3439,122 @@ describe("graceful SIGINT handling (PRD §F4)", () => {
     expect(out).toMatch(/Structured deliberation interrupted/i);
     expect(out).toMatch(/Conversation saved\./);
   });
+
+  it("@convene Ctrl+C with first-turn partial-flush failure leaves no orphan user row", async () => {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "deb-orphan", ["panel-a", "panel-b"]);
+
+    let triggerInterrupt: (() => void) | null = null;
+    const subscribeInterrupt = (handler: () => void): (() => void) => {
+      triggerInterrupt = handler;
+      return () => {
+        triggerInterrupt = null;
+      };
+    };
+
+    // Engine: abort fires during expert A's FIRST chunk — i.e. before
+    // any turn.end has landed. The deferred @convene user turn has
+    // therefore never been persisted yet. The abort branch will try
+    // to flush both: the user turn (deferred) and panel-a's partial
+    // buffer. We force the partial-expert write to fail, so no
+    // expert content lands; the function's invariant says no orphan
+    // @convene user row may remain.
+    const registered = new Set<string>();
+    const engine: CouncilEngine = {
+      async start(): Promise<void> {
+        /* no-op */
+      },
+      async stop(): Promise<void> {
+        /* no-op */
+      },
+      async addExpert(spec): Promise<void> {
+        registered.add(spec.id);
+      },
+      async removeExpert(): Promise<void> {
+        /* no-op */
+      },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock-model"];
+      },
+      send(opts): AsyncIterable<EngineEvent> {
+        const expertId = opts.expertId;
+        if (!registered.has(expertId)) {
+          throw new Error(`Expert ${expertId} is not registered`);
+        }
+        async function* gen(): AsyncGenerator<EngineEvent, void, void> {
+          for (let i = 0; i < 4; i++) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 10));
+            yield { kind: "message.delta", expertId, text: `chunk${i} ` };
+            // First expert (panel-a), first chunk: trigger abort
+            // immediately so no turn.end ever lands.
+            if (i === 0) {
+              triggerInterrupt?.();
+            }
+          }
+          yield {
+            kind: "message.complete",
+            expertId,
+            response: { latencyMs: 40, tokensIn: 1, tokensOut: 1 },
+          };
+        }
+        return gen();
+      },
+    };
+
+    // Force the partial-expert flush for panel-a to fail.
+    const originalAddTurn = ChatRepository.prototype.addTurn;
+    const spy = vi
+      .spyOn(ChatRepository.prototype, "addTurn")
+      .mockImplementation(async function (this: ChatRepository, args) {
+        if (args.role === "expert" && args.expertSlug === "panel-a") {
+          throw new Error("simulated db write failure");
+        }
+        return originalAddTurn.call(this, args);
+      });
+
+    let out = "";
+    const lines: readonly string[] = ["@convene should we ship?", "/quit"];
+    let i = 0;
+    const inputProvider: ChatInputProvider = {
+      async readLine(): Promise<string | null> {
+        return lines[i++] ?? null;
+      },
+      close(): void {
+        /* no-op */
+      },
+    };
+
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () => inputProvider,
+      subscribeInterrupt,
+    });
+    try {
+      await cmd.parseAsync(["node", "council-chat", "deb-orphan", "--engine", "mock"]);
+    } finally {
+      spy.mockRestore();
+    }
+
+    // Visible warning still surfaces; chat still recovers.
+    expect(out).toMatch(
+      /Could not persist partial panel-a response \(\d+ bytes\) after interruption/i,
+    );
+    expect(out).toMatch(/Conversation saved\./);
+
+    // Consistency invariant: no expert turns landed AND no orphan
+    // @convene user turn was committed.
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "deb-orphan");
+      const turns = await repo.getTurns(session?.id ?? "");
+      const userTurns = turns.filter((t) => t.role === "user");
+      const expertTurns = turns.filter((t) => t.role === "expert");
+      expect(expertTurns.length).toBe(0);
+      expect(userTurns.length).toBe(0);
+    });
+  });
 });
 
 describe("missing-YAML fallback (PRD §F4)", () => {
