@@ -360,9 +360,23 @@ export async function analyzeDocuments(
         raw = await collectResponse(engine, expertId, prompt, timeoutMs);
         parsed = parseAnalyzerJSON(raw);
       } catch (err) {
-        // Retry also failed: surface the retry's error (which is the
-        // most recent symptom) so callers see the proximate cause.
-        void firstError;
+        // Retry also failed: surface the retry's error (the proximate
+        // symptom) but preserve the original first-send error on
+        // `.cause` so callers and logs can trace the full failure
+        // chain (#432). Without this the upstream provider error from
+        // the first attempt is silently lost.
+        if (firstError !== undefined) {
+          const wrapped =
+            err instanceof Error ? err : new Error(String(err));
+          if (wrapped.cause === undefined) {
+            const original =
+              firstError instanceof Error
+                ? firstError
+                : new Error(String(firstError));
+            (wrapped as { cause?: unknown }).cause = original;
+          }
+          throw wrapped;
+        }
         throw err;
       }
     }
