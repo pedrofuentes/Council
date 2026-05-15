@@ -212,17 +212,45 @@ export async function detectDocumentChanges(
       // surface the same condition with the standard error wrapping
       // (#341) and the right ENOENT short-circuit.
     }
+    // Open-failure handling is INTENTIONALLY isolated from post-open
+    // verification: an `fs.open(<dir>)` rejection is a "directory cannot
+    // be opened for read" signal that a subset of platforms (Windows +
+    // some POSIX configurations) emit normally and we degrade
+    // gracefully on. A `rootHandle.stat()` failure AFTER open succeeded
+    // is fundamentally different — the fd is already bound, so a stat
+    // failure is a verification failure, not a directory-open failure;
+    // funneling it through the open allowlist would silently downgrade
+    // legitimate verification errors (Sentinel cycle 2 finding).
+    const open = options._rootOpenOverride ?? fs.open;
     try {
-      const open = options._rootOpenOverride ?? fs.open;
       rootHandle = await open(docsPath);
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException).code;
+      const isExpectedDirOpenFailure =
+        code === "EISDIR" ||
+        code === "EACCES" ||
+        code === "EPERM" ||
+        code === "ENOTSUP" ||
+        code === "EINVAL";
+      if (!isExpectedDirOpenFailure) {
+        // Sentinel #516 finding #1: operational failures (EMFILE, EIO,
+        // etc.) MUST surface to the caller — silently downgrading them
+        // would weaken the advertised fd-anchored hardening AND hide a
+        // real failure.
+        throw err;
+      }
+      rootHandle = null;
+    }
+
+    if (rootHandle !== null) {
       let fdStat;
       try {
         fdStat = await rootHandle.stat();
       } catch (statErr) {
-        // Sentinel #516 finding #2: a stat() failure after a successful
-        // open MUST still close the handle, otherwise faulting scans
-        // leak directory fds. Re-throw the original error so the caller
-        // sees the real cause.
+        // Sentinel #516 finding #2: stat() failure after a successful
+        // open MUST close the handle to prevent fd leaks; rethrow the
+        // original error so the caller sees the real cause. NOT
+        // suppressed by the open allowlist (Sentinel cycle 2 finding).
         await rootHandle.close().catch(() => { /* best-effort close */ });
         rootHandle = null;
         throw statErr;
@@ -242,33 +270,6 @@ export async function detectDocumentChanges(
       if (rootIdentity === null) {
         rootIdentity = { dev: fdStat.dev, ino: fdStat.ino };
       }
-    } catch (err: unknown) {
-      const code = (err as NodeJS.ErrnoException).code;
-      // Re-throw identity-mismatch errors verbatim — they ARE TOCTOU
-      // signals, not graceful-fallback conditions.
-      if (
-        err instanceof Error &&
-        err.message.includes("identity changed between lstat and open")
-      ) {
-        throw err;
-      }
-      // Windows + some POSIX configurations reject opening a directory
-      // for read with one of the codes below; that is graceful
-      // degradation, not a TOCTOU signal — fall back to lstat-only.
-      const isExpectedDirOpenFailure =
-        code === "EISDIR" ||
-        code === "EACCES" ||
-        code === "EPERM" ||
-        code === "ENOTSUP" ||
-        code === "EINVAL";
-      if (!isExpectedDirOpenFailure) {
-        // Sentinel #516 finding #1: operational failures (EMFILE, EIO,
-        // synthetic stat failures, etc.) MUST surface to the caller —
-        // silently downgrading them would weaken the advertised
-        // fd-anchored hardening AND hide a real failure.
-        throw err;
-      }
-      rootHandle = null;
     }
   }
 
