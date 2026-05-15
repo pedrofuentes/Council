@@ -156,16 +156,8 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
         }
 
         const yamlPath = panelYamlPath(ctx.dataHome, name);
-        try {
-          await fs.access(yamlPath);
-          writeError(`Panel YAML already exists at ${displayPath(yamlPath)}\n`);
-          throw new CliUserError(`Panel "${name}" already exists at ${yamlPath}`);
-        } catch (err) {
-          const code = (err as NodeJS.ErrnoException).code;
-          if (code !== "ENOENT") {
-            if ((err as Error).message?.includes("already exists")) throw err;
-          }
-        }
+        // Existence is enforced atomically below via O_EXCL ('wx') at write
+        // time — no fs.access pre-check, which would be racy (issue #307).
 
         const fields = await gatherCreateFields(opts, ctx.library, write, writeError);
 
@@ -191,9 +183,39 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
           yamlPath,
           yamlChecksum: checksum,
         });
+        let yamlWritten = false;
         try {
           await fs.mkdir(path.dirname(yamlPath), { recursive: true });
-          await fs.writeFile(yamlPath, yamlContent, "utf-8");
+          // O_EXCL: fail if another concurrent create already wrote here.
+          // Split open from write so a mid-write failure (ENOSPC, EIO, …)
+          // still triggers rollback of the file we just created.
+          let handle: fs.FileHandle;
+          try {
+            handle = await fs.open(yamlPath, "wx");
+          } catch (openErr) {
+            if ((openErr as NodeJS.ErrnoException).code === "EEXIST") {
+              writeError(`Panel YAML already exists at ${displayPath(yamlPath)}\n`);
+              throw new CliUserError(
+                `Panel "${name}" already exists at ${yamlPath}`,
+              );
+            }
+            throw openErr;
+          }
+          yamlWritten = true;
+          try {
+            await handle.writeFile(yamlContent, "utf-8");
+          } catch (writeErr) {
+            // Preserve the primary write failure if close() also fails —
+            // a secondary close error must not mask the ENOSPC/EIO root
+            // cause the operator needs to see.
+            try {
+              await handle.close();
+            } catch {
+              /* swallow secondary cleanup error */
+            }
+            throw writeErr;
+          }
+          await handle.close();
           await ctx.panelRepo.setMembers(name, fields.expertSlugs);
           await fs.mkdir(panelDocsDir(ctx.dataHome, name), { recursive: true });
         } catch (err) {
@@ -203,11 +225,15 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
           } catch (deleteErr) {
             rollbackErrors.push(deleteErr);
           }
-          try {
-            await fs.unlink(yamlPath);
-          } catch (unlinkErr) {
-            const code = (unlinkErr as NodeJS.ErrnoException).code;
-            if (code !== "ENOENT") rollbackErrors.push(unlinkErr);
+          // Only unlink the YAML if we are the writer that created it; an
+          // EEXIST collision means the file belongs to another process.
+          if (yamlWritten) {
+            try {
+              await fs.unlink(yamlPath);
+            } catch (unlinkErr) {
+              const code = (unlinkErr as NodeJS.ErrnoException).code;
+              if (code !== "ENOENT") rollbackErrors.push(unlinkErr);
+            }
           }
           if (rollbackErrors.length > 0) {
             throw new AggregateError(
