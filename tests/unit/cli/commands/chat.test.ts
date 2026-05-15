@@ -10,7 +10,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   appendReferenceDocuments,
@@ -3328,6 +3328,114 @@ describe("graceful SIGINT handling (PRD §F4)", () => {
 
     // The session must accept the follow-up turn after debate abort.
     expect(postAbortSends).toBeGreaterThan(0);
+    expect(out).toMatch(/Structured deliberation interrupted/i);
+    expect(out).toMatch(/Conversation saved\./);
+  });
+
+  it("@convene Ctrl+C with failing partial-flush write surfaces a visible warning instead of silently dropping content", async () => {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "deb-flushfail", ["panel-a", "panel-b"]);
+
+    let triggerInterrupt: (() => void) | null = null;
+    const subscribeInterrupt = (handler: () => void): (() => void) => {
+      triggerInterrupt = handler;
+      return () => {
+        triggerInterrupt = null;
+      };
+    };
+
+    // Engine layout mirrors the deterministic abort test: expert A
+    // completes one full turn, then expert B's first chunk triggers
+    // the interrupt mid-stream so the abort branch attempts a
+    // partial-flush of B's buffer.
+    const registered = new Set<string>();
+    let sendCount = 0;
+    const engine: CouncilEngine = {
+      async start(): Promise<void> {
+        /* no-op */
+      },
+      async stop(): Promise<void> {
+        /* no-op */
+      },
+      async addExpert(spec): Promise<void> {
+        registered.add(spec.id);
+      },
+      async removeExpert(): Promise<void> {
+        /* no-op */
+      },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock-model"];
+      },
+      send(opts): AsyncIterable<EngineEvent> {
+        const expertId = opts.expertId;
+        if (!registered.has(expertId)) {
+          throw new Error(`Expert ${expertId} is not registered`);
+        }
+        const myCallIndex = ++sendCount;
+        async function* gen(): AsyncGenerator<EngineEvent, void, void> {
+          for (let i = 0; i < 4; i++) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 10));
+            yield { kind: "message.delta", expertId, text: `chunk${i} ` };
+            if (myCallIndex === 2 && i === 0) {
+              triggerInterrupt?.();
+            }
+          }
+          yield {
+            kind: "message.complete",
+            expertId,
+            response: { latencyMs: 40, tokensIn: 1, tokensOut: 1 },
+          };
+        }
+        return gen();
+      },
+    };
+
+    // Force the ChatRepository.addTurn call that happens inside the
+    // abort branch (role=expert, expertSlug=panel-b) to throw, so we
+    // can observe the visible-warning branch added in response to
+    // Sentinel SNT-20260515-020946-convene-ctrlc-rereview.
+    const originalAddTurn = ChatRepository.prototype.addTurn;
+    const spy = vi
+      .spyOn(ChatRepository.prototype, "addTurn")
+      .mockImplementation(async function (this: ChatRepository, args) {
+        if (args.role === "expert" && args.expertSlug === "panel-b") {
+          throw new Error("simulated db write failure");
+        }
+        return originalAddTurn.call(this, args);
+      });
+
+    let out = "";
+    const lines: readonly string[] = ["@convene should we ship?", "/quit"];
+    let i = 0;
+    const inputProvider: ChatInputProvider = {
+      async readLine(): Promise<string | null> {
+        return lines[i++] ?? null;
+      },
+      close(): void {
+        /* no-op */
+      },
+    };
+
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () => inputProvider,
+      subscribeInterrupt,
+    });
+    try {
+      await cmd.parseAsync(["node", "council-chat", "deb-flushfail", "--engine", "mock"]);
+    } finally {
+      spy.mockRestore();
+    }
+
+    // The visible warning must surface (so the user knows their
+    // streamed partial response was not durably saved) and the chat
+    // must still recover and consume `/quit`.
+    expect(out).toMatch(
+      /Could not persist partial panel-b response \(\d+ bytes\) after interruption/i,
+    );
     expect(out).toMatch(/Structured deliberation interrupted/i);
     expect(out).toMatch(/Conversation saved\./);
   });
