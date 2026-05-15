@@ -185,4 +185,152 @@ describe("Debate.run() — AbortSignal threading (#503)", () => {
     const last = events[events.length - 1];
     expect(last?.kind).toBe("debate.end");
   });
+
+  it("aborts an in-flight engine.send before it completes", async () => {
+    class HangingEngine extends RecordingEngine {
+      override send(options: SendOptions): AsyncIterable<EngineEvent> {
+        this.sends.push({ expertId: options.expertId, signal: options.signal });
+        const expertId = options.expertId;
+        const signal = options.signal;
+        return {
+          async *[Symbol.asyncIterator](): AsyncIterator<EngineEvent> {
+            yield { kind: "message.delta", expertId, text: "partial..." };
+            await new Promise<void>((resolve) => {
+              if (signal?.aborted) {
+                resolve();
+                return;
+              }
+              signal?.addEventListener("abort", () => resolve(), { once: true });
+            });
+            yield {
+              kind: "error",
+              expertId,
+              error: { code: "ABORTED", message: "aborted upstream" },
+              recoverable: false,
+            };
+          },
+        };
+      }
+    }
+
+    const engine = new HangingEngine();
+    await engine.start();
+    await engine.addExpert(cto);
+
+    const controller = new AbortController();
+    const debate = new Debate(engine, [cto], FREEFORM_1R);
+    const events: DebateEvent[] = [];
+    const consumer = (async (): Promise<void> => {
+      for await (const evt of debate.run("topic", { signal: controller.signal })) {
+        events.push(evt);
+      }
+    })();
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    controller.abort();
+    await consumer;
+
+    expect(engine.sends.length).toBe(1);
+    expect(engine.sends[0]?.signal).toBe(controller.signal);
+    const last = events[events.length - 1];
+    expect(last?.kind).toBe("debate.end");
+    if (last?.kind === "debate.end") {
+      expect(last.reason).toBe("aborted");
+    }
+  });
+
+  it("does not surface a spurious turn-level error when abort fires mid-stream", async () => {
+    class HangingEngine extends RecordingEngine {
+      override send(options: SendOptions): AsyncIterable<EngineEvent> {
+        this.sends.push({ expertId: options.expertId, signal: options.signal });
+        const expertId = options.expertId;
+        const signal = options.signal;
+        return {
+          async *[Symbol.asyncIterator](): AsyncIterator<EngineEvent> {
+            yield { kind: "message.delta", expertId, text: "partial" };
+            await new Promise<void>((resolve) => {
+              if (signal?.aborted) return resolve();
+              signal?.addEventListener("abort", () => resolve(), { once: true });
+            });
+            yield {
+              kind: "error",
+              expertId,
+              error: { code: "ABORTED", message: "aborted upstream" },
+              recoverable: false,
+            };
+          },
+        };
+      }
+    }
+
+    const engine = new HangingEngine();
+    await engine.start();
+    await engine.addExpert(cto);
+
+    const controller = new AbortController();
+    const debate = new Debate(engine, [cto], FREEFORM_1R);
+    const events: DebateEvent[] = [];
+    const consumer = (async (): Promise<void> => {
+      for await (const evt of debate.run("topic", { signal: controller.signal })) {
+        events.push(evt);
+      }
+    })();
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    controller.abort();
+    await consumer;
+
+    const errors = events.filter((e) => e.kind === "error");
+    expect(errors).toHaveLength(0);
+  });
+
+  it("yields debate.end 'aborted' (not 'completed') when abort fires on the final turn", async () => {
+    class SlowEngine extends RecordingEngine {
+      override send(options: SendOptions): AsyncIterable<EngineEvent> {
+        this.sends.push({ expertId: options.expertId, signal: options.signal });
+        const expertId = options.expertId;
+        const signal = options.signal;
+        return {
+          async *[Symbol.asyncIterator](): AsyncIterator<EngineEvent> {
+            yield { kind: "message.delta", expertId, text: "x" };
+            await new Promise<void>((resolve) => setTimeout(resolve, 5));
+            if (signal?.aborted) {
+              yield {
+                kind: "error",
+                expertId,
+                error: { code: "ABORTED", message: "aborted" },
+                recoverable: false,
+              };
+              return;
+            }
+            yield {
+              kind: "message.complete",
+              expertId,
+              response: { latencyMs: 1 },
+            };
+          },
+        };
+      }
+    }
+
+    const engine = new SlowEngine();
+    await engine.start();
+    await engine.addExpert(cto);
+
+    const controller = new AbortController();
+    const debate = new Debate(engine, [cto], FREEFORM_1R);
+    const events: DebateEvent[] = [];
+    const consumer = (async (): Promise<void> => {
+      for await (const evt of debate.run("topic", { signal: controller.signal })) {
+        events.push(evt);
+        if (evt.kind === "turn.delta") controller.abort();
+      }
+    })();
+    await consumer;
+
+    const ends = events.filter((e) => e.kind === "debate.end");
+    expect(ends).toHaveLength(1);
+    if (ends[0]?.kind === "debate.end") {
+      expect(ends[0].reason).toBe("aborted");
+    }
+  });
 });
