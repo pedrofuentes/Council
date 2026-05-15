@@ -3,7 +3,7 @@
  *
  * Implements a layered model hierarchy:
  *   1. Per-expert override (expert YAML `model` field)
- *   2. Per-panel default (panel YAML `defaults.model`) — wired in a future increment
+ *   2. Per-panel default (panel YAML `defaults.model`)
  *   3. Global config default (`config.yaml` `defaults.model`)
  *
  * Empty strings are treated as "unset" so a YAML field set to `""` falls

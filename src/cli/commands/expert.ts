@@ -102,6 +102,7 @@ interface CreateOptions {
   readonly role?: string;
   readonly expertise?: string;
   readonly stance?: string;
+  readonly model?: string;
   readonly personality?: string;
   readonly personaDescription?: string;
 }
@@ -116,6 +117,7 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
     .option("--role <role>", "One-line role descriptor")
     .option("--expertise <items>", "Comma-separated weighted-evidence types (at least one)")
     .option("--stance <stance>", "Epistemic stance")
+    .option("--model <model>", "Model identifier (e.g. claude-haiku-4.5)")
     .option("--personality <flavor>", "Optional personality flavor")
     .option("--persona-description <text>", "Persona relationship description")
     .action(async (opts: CreateOptions) => {
@@ -140,6 +142,7 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
           notExpertIn: [],
         },
         epistemicStance: fields.stance,
+        ...(opts.model ? { model: opts.model } : {}),
         ...(fields.personality ? { personality: fields.personality } : {}),
         kind: opts.persona ? "persona" : "generic",
         ...(opts.persona && fields.personaDescription
@@ -345,6 +348,9 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
         write(`Name:   ${expert.displayName}\n`);
         write(`Role:   ${expert.role}\n`);
         write(`Kind:   ${expert.kind}\n`);
+        if (expert.model) {
+          write(`Model:  ${expert.model}\n`);
+        }
         write(`File:   ${displayPath(yamlPath)}\n`);
         write("\n");
         if (panels.length === 0) {

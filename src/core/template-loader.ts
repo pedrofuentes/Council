@@ -37,6 +37,7 @@ export type DebateMode = z.infer<typeof DebateModeSchema>;
 export const PanelDefaultsSchema = z.object({
   mode: DebateModeSchema.default("freeform"),
   maxRounds: z.number().int().min(1).max(20).optional(),
+  model: NonEmptyString.optional(),
 });
 
 /**

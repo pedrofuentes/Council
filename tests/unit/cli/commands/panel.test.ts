@@ -11,6 +11,7 @@ import * as path from "node:path";
 import * as fs from "node:fs/promises";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import * as yaml from "yaml";
 
 import { buildPanelCommand } from "../../../../src/cli/commands/panel.js";
 import type { ExpertDefinition } from "../../../../src/core/expert.js";
@@ -140,6 +141,30 @@ describe("buildPanelCommand", () => {
       }
     });
 
+    it("panel create --model sets defaults.model in YAML", async () => {
+      await seedExpert(env, expertDef("cto"));
+      await seedExpert(env, expertDef("staff"));
+
+      const cmd = buildPanelCommand(() => {
+        /* noop */
+      });
+      await cmd.parseAsync([
+        "node",
+        "council-panel",
+        "create",
+        "model-review",
+        "--experts",
+        "cto,staff",
+        "--model",
+        "claude-haiku-4.5",
+      ]);
+
+      const yamlPath = path.join(env.dataHome, "panels", "model-review.yaml");
+      const content = await fs.readFile(yamlPath, "utf-8");
+      const parsed = yaml.parse(content) as { defaults?: { model?: string } };
+      expect(parsed.defaults?.model).toBe("claude-haiku-4.5");
+    });
+
     it("rejects invalid (non-kebab-case) panel names", async () => {
       const cmd = buildPanelCommand(() => {
         /* noop */
@@ -218,16 +243,17 @@ describe("buildPanelCommand", () => {
     it("surfaces rollback failures via AggregateError when create fails mid-flight", async () => {
       await seedExpert(env, expertDef("cto"));
       const { vi } = await import("vitest");
-      const { PanelLibraryRepository } = await import(
-        "../../../../src/memory/repositories/panel-library-repo.js"
-      );
+      const { PanelLibraryRepository } =
+        await import("../../../../src/memory/repositories/panel-library-repo.js");
 
       const setSpy = vi
         .spyOn(PanelLibraryRepository.prototype, "setMembers")
         .mockImplementationOnce(() => Promise.reject(new Error("simulated setMembers failure")));
       const delSpy = vi
         .spyOn(PanelLibraryRepository.prototype, "delete")
-        .mockImplementationOnce(() => Promise.reject(new Error("simulated rollback delete failure")));
+        .mockImplementationOnce(() =>
+          Promise.reject(new Error("simulated rollback delete failure")),
+        );
 
       try {
         const cmd = buildPanelCommand(() => {
@@ -368,6 +394,30 @@ describe("buildPanelCommand", () => {
       expect(captured).toContain("generic");
       // file path should appear
       expect(captured).toMatch(/arch-review\.yaml/);
+    });
+
+    it("panel inspect shows model default when set", async () => {
+      await seedExpert(env, expertDef("cto"));
+      const createCmd = buildPanelCommand(() => {
+        /* noop */
+      });
+      await createCmd.parseAsync([
+        "node",
+        "council-panel",
+        "create",
+        "model-review",
+        "--experts",
+        "cto",
+        "--model",
+        "claude-sonnet-4.5",
+      ]);
+
+      let captured = "";
+      const cmd = buildPanelCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-panel", "inspect", "model-review"]);
+      expect(captured).toContain("Model:      claude-sonnet-4.5");
     });
 
     it("reports not found for unknown panel", async () => {
@@ -573,14 +623,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
       const cmd = buildPanelCommand(() => {
         /* noop */
       });
-      await cmd.parseAsync([
-        "node",
-        "council-panel",
-        "create",
-        "arch-review",
-        "--experts",
-        "cto",
-      ]);
+      await cmd.parseAsync(["node", "council-panel", "create", "arch-review", "--experts", "cto"]);
       const docsDir = path.join(env.dataHome, "panels", "arch-review", "docs");
       const stat = await fs.stat(docsDir);
       expect(stat.isDirectory()).toBe(true);
@@ -630,9 +673,9 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
           errored += s;
         },
       );
-      await expect(
-        cmd.parseAsync(["node", "council-panel", "docs", "ghost"]),
-      ).rejects.toThrow(/not found/i);
+      await expect(cmd.parseAsync(["node", "council-panel", "docs", "ghost"])).rejects.toThrow(
+        /not found/i,
+      );
       expect(errored).toMatch(/not found/i);
     });
 
@@ -660,9 +703,8 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
 
         // DB row landed.
         const { createDatabase } = await import("../../../../src/memory/db.js");
-        const { PanelDocumentRepository } = await import(
-          "../../../../src/memory/repositories/panel-document-repo.js"
-        );
+        const { PanelDocumentRepository } =
+          await import("../../../../src/memory/repositories/panel-document-repo.js");
         const db = await createDatabase(path.join(env.home, "council.db"));
         try {
           const repo = new PanelDocumentRepository(db);
@@ -744,15 +786,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
       );
       const missing = path.join(os.tmpdir(), "council-does-not-exist-" + Date.now());
       await expect(
-        cmd.parseAsync([
-          "node",
-          "council-panel",
-          "docs",
-          "link",
-          "arch-review",
-          "--path",
-          missing,
-        ]),
+        cmd.parseAsync(["node", "council-panel", "docs", "link", "arch-review", "--path", missing]),
       ).rejects.toThrow(/does not exist|not found/i);
       expect(errored).toMatch(/does not exist|not found/i);
     });
@@ -790,9 +824,8 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
         expect(captured).toMatch(/✓|unlinked/i);
 
         const { createDatabase } = await import("../../../../src/memory/db.js");
-        const { PanelDocumentRepository } = await import(
-          "../../../../src/memory/repositories/panel-document-repo.js"
-        );
+        const { PanelDocumentRepository } =
+          await import("../../../../src/memory/repositories/panel-document-repo.js");
         const db = await createDatabase(path.join(env.home, "council.db"));
         try {
           const repo = new PanelDocumentRepository(db);
@@ -812,9 +845,8 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
       try {
         await fs.writeFile(path.join(linkDir, "a.md"), "# A\nbody", "utf-8");
         const { createDatabase } = await import("../../../../src/memory/db.js");
-        const { PanelDocumentRepository } = await import(
-          "../../../../src/memory/repositories/panel-document-repo.js"
-        );
+        const { PanelDocumentRepository } =
+          await import("../../../../src/memory/repositories/panel-document-repo.js");
 
         // Link and then manually track a document for that folder (the
         // chat-startup scanner is what writes panel_documents rows in
@@ -881,12 +913,9 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
       try {
         await fs.writeFile(path.join(linkDir, "a.md"), "# A\nbody\n", "utf-8");
         const { createDatabase } = await import("../../../../src/memory/db.js");
-        const { createDocumentIndexer } = await import(
-          "../../../../src/core/documents/indexer.js"
-        );
-        const { PanelDocumentRepository } = await import(
-          "../../../../src/memory/repositories/panel-document-repo.js"
-        );
+        const { createDocumentIndexer } = await import("../../../../src/core/documents/indexer.js");
+        const { PanelDocumentRepository } =
+          await import("../../../../src/memory/repositories/panel-document-repo.js");
 
         const cmdLink = buildPanelCommand(() => {
           /* noop */
@@ -958,9 +987,8 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
       try {
         await fs.writeFile(path.join(linkDir, "a.md"), "# A\nbody\n", "utf-8");
         const { createDatabase } = await import("../../../../src/memory/db.js");
-        const { PanelDocumentRepository } = await import(
-          "../../../../src/memory/repositories/panel-document-repo.js"
-        );
+        const { PanelDocumentRepository } =
+          await import("../../../../src/memory/repositories/panel-document-repo.js");
 
         const cmdLink = buildPanelCommand(() => {
           /* noop */
@@ -1048,12 +1076,9 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
         await fs.writeFile(path.join(linkDir, "b.md"), "# B\nbody B\n", "utf-8");
 
         const { createDatabase } = await import("../../../../src/memory/db.js");
-        const { PanelDocumentRepository } = await import(
-          "../../../../src/memory/repositories/panel-document-repo.js"
-        );
-        const { createDocumentIndexer } = await import(
-          "../../../../src/core/documents/indexer.js"
-        );
+        const { PanelDocumentRepository } =
+          await import("../../../../src/memory/repositories/panel-document-repo.js");
+        const { createDocumentIndexer } = await import("../../../../src/core/documents/indexer.js");
 
         const cmdLink = buildPanelCommand(() => {
           /* noop */
@@ -1135,10 +1160,9 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
           this: InstanceType<typeof LibsqlConnection>,
           compiledQuery: { sql: string; parameters: readonly unknown[] },
         ): Promise<unknown> {
-          const isPerFileFtsDelete =
-            /DELETE\s+FROM\s+document_index\s+WHERE\s+file_path\s*=/i.test(
-              compiledQuery.sql,
-            );
+          const isPerFileFtsDelete = /DELETE\s+FROM\s+document_index\s+WHERE\s+file_path\s*=/i.test(
+            compiledQuery.sql,
+          );
           if (isPerFileFtsDelete) {
             ftsDeleteCount += 1;
             if (ftsDeleteCount === 2) {

@@ -129,6 +129,7 @@ interface CreateOptions {
   readonly experts?: string;
   readonly mode?: string;
   readonly maxRounds?: string;
+  readonly model?: string;
   readonly description?: string;
 }
 
@@ -140,6 +141,7 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
     .option("--experts <slugs>", "Comma-separated expert slugs from the library")
     .option("--mode <mode>", `Debate mode: ${DEBATE_MODES.join(" | ")}`)
     .option("--max-rounds <n>", "Maximum debate rounds (1-20)")
+    .option("--model <model>", "Default model for all experts in this panel")
     .option("--description <text>", "One-line description")
     .action(async (name: string, opts: CreateOptions) => {
       validatePanelName(name);
@@ -168,8 +170,9 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
         const fields = await gatherCreateFields(opts, ctx.library, write, writeError);
 
         const mode: DebateMode = fields.mode;
-        const defaults: { mode: DebateMode; maxRounds?: number } = { mode };
+        const defaults: { mode: DebateMode; maxRounds?: number; model?: string } = { mode };
         if (fields.maxRounds !== undefined) defaults.maxRounds = fields.maxRounds;
+        if (opts.model !== undefined) defaults.model = opts.model;
 
         const panel: PanelDefinition = PanelDefinitionSchema.parse({
           name,
@@ -445,6 +448,7 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
             if (parsed.defaults.mode) write(`Mode:       ${parsed.defaults.mode}\n`);
             if (parsed.defaults.maxRounds !== undefined)
               write(`Max Rounds: ${parsed.defaults.maxRounds}\n`);
+            if (parsed.defaults.model) write(`Model:      ${parsed.defaults.model}\n`);
             write("\n");
           }
         } catch {

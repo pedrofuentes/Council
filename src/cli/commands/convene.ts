@@ -334,7 +334,13 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           }
         }
 
-        const aiExperts = buildExpertSpecs(template, topic, memoryBySlug, defaultModel);
+        const aiExperts = buildExpertSpecs(
+          template,
+          topic,
+          memoryBySlug,
+          template.defaults?.model,
+          defaultModel,
+        );
 
         // Build human expert specs from --human flags
         const humanExperts: ExpertSpec[] = humanNames.map((name) => ({
@@ -454,6 +460,7 @@ function buildExpertSpecs(
   template: ResolvedPanelDefinition,
   topic: string,
   memoryBySlug: ReadonlyMap<string, ExpertMemory>,
+  panelDefaultModel: string | undefined,
   configDefaultModel: string,
 ): ExpertSpec[] {
   return template.experts.map((def) => {
@@ -462,7 +469,7 @@ function buildExpertSpecs(
       id: ulid(),
       slug: def.slug,
       displayName: def.displayName,
-      model: resolveModel({ expertModel: def.model, configDefaultModel }),
+      model: resolveModel({ expertModel: def.model, panelDefaultModel, configDefaultModel }),
       systemMessage,
     };
   });

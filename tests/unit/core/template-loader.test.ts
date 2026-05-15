@@ -28,6 +28,7 @@ import {
   loadTemplate,
   loadTemplateFromFile,
   loadUserPanel,
+  PanelDefaultsSchema,
   PanelDefinitionSchema,
   PanelExpertEntrySchema,
   PanelNotFoundError,
@@ -122,6 +123,15 @@ describe("PanelDefinitionSchema", () => {
     });
     expect(parsed.defaults?.mode).toBe("structured");
     expect(parsed.defaults?.maxRounds).toBe(6);
+  });
+
+  it("PanelDefaultsSchema accepts model field", () => {
+    const parsed = PanelDefaultsSchema.parse({
+      mode: "structured",
+      maxRounds: 6,
+      model: "claude-haiku-4.5",
+    });
+    expect(parsed.model).toBe("claude-haiku-4.5");
   });
 
   it("rejects unknown debate mode", () => {
@@ -287,17 +297,7 @@ describe("PanelDefinitionSchema — slug references and mixed entries", () => {
   });
 
   it("rejects more than 8 experts (mixed)", () => {
-    const tooMany = [
-      "a",
-      "b",
-      "c",
-      "d",
-      "e",
-      "f",
-      "g",
-      "h",
-      makeInlineExpert("i"),
-    ];
+    const tooMany = ["a", "b", "c", "d", "e", "f", "g", "h", makeInlineExpert("i")];
     expect(() => PanelDefinitionSchema.parse({ ...base, experts: tooMany })).toThrow();
   });
 });

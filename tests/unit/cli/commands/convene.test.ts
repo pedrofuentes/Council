@@ -273,13 +273,7 @@ describe("buildConveneCommand", () => {
     cmd.exitOverride();
 
     await expect(
-      cmd.parseAsync([
-        "node",
-        "council-convene",
-        "topic",
-        "--template",
-        "code-review",
-      ]),
+      cmd.parseAsync(["node", "council-convene", "topic", "--template", "code-review"]),
     ).rejects.toThrow();
   });
 
@@ -288,12 +282,8 @@ describe("buildConveneCommand", () => {
     // verify wiring without actually invoking the engine (which would
     // require a real Copilot session). End-to-end Copilot exercise lives
     // in tests/integration/convene-copilot.test.ts (gated by env var).
-    const { makeEngineFromKind } = await import(
-      "../../../../src/cli/commands/convene.js"
-    );
-    const { CopilotEngine } = await import(
-      "../../../../src/engine/copilot/adapter.js"
-    );
+    const { makeEngineFromKind } = await import("../../../../src/cli/commands/convene.js");
+    const { CopilotEngine } = await import("../../../../src/engine/copilot/adapter.js");
     const engine = makeEngineFromKind("copilot");
     expect(engine).toBeInstanceOf(CopilotEngine);
   });
@@ -369,14 +359,12 @@ describe("buildConveneCommand", () => {
 
   describe("makeEngineFromKind exhaustiveness (Sentinel pr132 #134)", () => {
     it("throws clearly when called with an unknown kind", async () => {
-      const { makeEngineFromKind } = await import(
-        "../../../../src/cli/commands/convene.js"
-      );
+      const { makeEngineFromKind } = await import("../../../../src/cli/commands/convene.js");
       // Cast to bypass TS exhaustiveness — simulates a future engine kind
       // added to ConveneEngineKind without a matching switch case.
-      expect(() =>
-        makeEngineFromKind("anthropic-direct" as unknown as "mock"),
-      ).toThrowError(/unknown.*engine.*kind/i);
+      expect(() => makeEngineFromKind("anthropic-direct" as unknown as "mock")).toThrowError(
+        /unknown.*engine.*kind/i,
+      );
     });
   });
 
@@ -434,8 +422,7 @@ describe("buildConveneCommand", () => {
           seq: 1,
           speakerKind: "expert",
           expertId: senior.id,
-          content:
-            "DISTINCTIVE_RECALL_MARKER_ALPHA — we should adopt microservices for billing.",
+          content: "DISTINCTIVE_RECALL_MARKER_ALPHA — we should adopt microservices for billing.",
         });
         await new DebateRepository(db).update(debate.id, {
           status: "completed",
@@ -553,9 +540,7 @@ describe("buildConveneCommand", () => {
       const db2 = await createDatabase(path.join(testHome, "council.db"));
       try {
         const panels = await new PanelRepository(db2).findAll();
-        const newPanel = panels.find(
-          (p) => p.name !== "real-prior" && p.name !== "mock-prior",
-        );
+        const newPanel = panels.find((p) => p.name !== "real-prior" && p.name !== "mock-prior");
         expect(newPanel).toBeDefined();
         const experts = await new ExpertRepository(db2).findByPanelId(newPanel?.id ?? "");
         const senior = experts.find((e) => e.slug === "senior");
@@ -699,25 +684,129 @@ describe("buildConveneCommand — user panels with slug references", () => {
 
     // panel.assembled must be the first emitted event — confirms the
     // command path reached the engine, not just YAML parsing.
-    const firstLine = captured
-      .split("\n")
-      .find((l) => l.trim().startsWith("{"));
+    const firstLine = captured.split("\n").find((l) => l.trim().startsWith("{"));
     expect(firstLine).toBeDefined();
     const firstEvent = JSON.parse(firstLine ?? "{}") as { kind: string };
     expect(firstEvent.kind).toBe("panel.assembled");
+  });
+
+  it("panel defaults.model is used when expert has no model override", async () => {
+    await fs.writeFile(path.join(testHome, "config.yaml"), "defaults:\n  model: global-model\n");
+    await writeUserPanel(
+      "panel-default-model",
+      [
+        "name: panel-default-model",
+        "defaults:",
+        "  model: panel-model",
+        "experts:",
+        "  - slug: alpha",
+        "    displayName: Alpha",
+        "    role: Alpha role",
+        "    expertise:",
+        "      weightedEvidence:",
+        "        - alpha evidence",
+        "    epistemicStance: Empirical",
+        "  - slug: beta",
+        "    displayName: Beta",
+        "    role: Beta role",
+        "    expertise:",
+        "      weightedEvidence:",
+        "        - beta evidence",
+        "    epistemicStance: Empirical",
+        "",
+      ].join("\n"),
+    );
+
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "Panel default model topic",
+      "--template",
+      "panel-default-model",
+      "--max-rounds",
+      "1",
+      "--engine",
+      "mock",
+    ]);
+
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const panels = await new PanelRepository(db).findAll();
+      const experts = await new ExpertRepository(db).findByPanelId(panels[0]?.id ?? "");
+      expect(experts.length).toBe(2);
+      for (const expert of experts) {
+        expect(expert.model).toBe("panel-model");
+      }
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it("expert.model overrides panel defaults.model in model resolution", async () => {
+    await fs.writeFile(path.join(testHome, "config.yaml"), "defaults:\n  model: global-model\n");
+    await writeUserPanel(
+      "expert-override-test",
+      [
+        "name: expert-override-test",
+        "defaults:",
+        "  model: panel-model",
+        "experts:",
+        "  - slug: no-override",
+        "    displayName: No Override",
+        "    role: test",
+        "    expertise:",
+        "      weightedEvidence: [x]",
+        "    epistemicStance: neutral",
+        "  - slug: has-override",
+        "    displayName: Has Override",
+        "    role: test",
+        "    model: expert-specific-model",
+        "    expertise:",
+        "      weightedEvidence: [x]",
+        "    epistemicStance: neutral",
+        "",
+      ].join("\n"),
+    );
+
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+    });
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "Test topic",
+      "--template",
+      "expert-override-test",
+      "--max-rounds",
+      "1",
+      "--engine",
+      "mock",
+    ]);
+
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const panels = await new PanelRepository(db).findAll();
+      const experts = await new ExpertRepository(db).findByPanelId(panels[0]?.id ?? "");
+      const noOverride = experts.find((e) => e.slug === "no-override");
+      const hasOverride = experts.find((e) => e.slug === "has-override");
+      expect(noOverride?.model).toBe("panel-model");
+      expect(hasOverride?.model).toBe("expert-specific-model");
+    } finally {
+      await db.destroy();
+    }
   });
 
   it("emits a clear error when a slug reference is not in the library", async () => {
     await seedLibraryExpert("library-known", "Known");
     await writeUserPanel(
       "broken-team",
-      [
-        "name: broken-team",
-        "experts:",
-        "  - library-known",
-        "  - library-missing",
-        "",
-      ].join("\n"),
+      ["name: broken-team", "experts:", "  - library-known", "  - library-missing", ""].join("\n"),
     );
 
     const cmd = buildConveneCommand({
