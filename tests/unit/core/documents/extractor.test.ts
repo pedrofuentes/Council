@@ -324,5 +324,33 @@ describe("extractDocument", () => {
         extractDocument(filePath, { _realpathOverride: override }),
       ).rejects.toThrow(/modified during read|inode changed/i);
     });
+
+    // Issue #444: a (size, mtime)-only token can be evaded by a same-size
+    // rewrite whose mtime is restored via utimes() after the write. ctime
+    // updates on every inode metadata change (including utimes), so the
+    // post-read stat must compare ctime as well to close that window.
+    it("rejects same-size rewrites whose mtime is restored after the write (issue #444)", async () => {
+      const filePath = path.join(dir, "doc.txt");
+      await fs.writeFile(filePath, "AAAAAAA"); // 7 bytes
+      // Pin atime/mtime to a fixed second-precision instant so the
+      // attacker's restoring utimes() can reproduce the exact same
+      // mtimeMs value (no sub-millisecond drift to mask the attack).
+      const pinned = new Date(Math.floor(Date.now() / 1000) * 1000 - 60_000);
+      await fs.utimes(filePath, pinned, pinned);
+
+      // Inject mid-extraction mutation: overwrite with same-size payload,
+      // then restore the original (pinned) mtime/atime via utimes — which
+      // bumps ctime, the only field a (size, mtime) token misses.
+      const realpath = fs.realpath;
+      const override = async (p: string): Promise<string> => {
+        await fs.writeFile(filePath, "BBBBBBB"); // same length, different bytes
+        await fs.utimes(filePath, pinned, pinned);
+        return realpath(p);
+      };
+
+      await expect(
+        extractDocument(filePath, { _realpathOverride: override }),
+      ).rejects.toThrow(/modified during read|inode changed/i);
+    });
   });
 });
