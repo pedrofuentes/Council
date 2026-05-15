@@ -4,11 +4,13 @@
  * RED at this commit: migration 006, ExpertDocumentRow, and
  * src/memory/repositories/document-repository.ts do not exist yet.
  */
+import { sql } from "kysely";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
 import { ExpertLibraryRepository } from "../../../src/memory/repositories/expert-library-repo.js";
 import {
+  ClearForRetrainError,
   DocumentRepository,
   type NewExpertDocument,
 } from "../../../src/memory/repositories/document-repository.js";
@@ -275,6 +277,136 @@ describe("DocumentRepository", () => {
         .where("status", "!=", "removed")
         .executeTakeFirst();
       expect(Number(noop.numUpdatedRows)).toBe(0);
+    });
+  });
+
+  describe("clearForRetrain atomicity and rollback honesty (#383, #425)", () => {
+    async function seedFtsRow(database: CouncilDatabase, slug: string, body: string): Promise<void> {
+      await sql`INSERT INTO document_index (content, source_type, source_slug, file_path)
+                VALUES (${body}, 'expert', ${slug}, ${"/p/" + body + ".md"})`.execute(database);
+    }
+
+    async function countFts(database: CouncilDatabase, slug: string): Promise<number> {
+      const row = await sql<{
+        n: number;
+      }>`SELECT COUNT(*) AS n FROM document_index WHERE source_type = 'expert' AND source_slug = ${slug}`.execute(
+        database,
+      );
+      return Number(row.rows[0]?.n ?? 0);
+    }
+
+    async function countActiveDocs(database: CouncilDatabase, slug: string): Promise<number> {
+      const r = await database
+        .selectFrom("expert_documents")
+        .select((eb) => eb.fn.countAll<number>().as("n"))
+        .where("expert_slug", "=", slug)
+        .where("status", "!=", "removed")
+        .executeTakeFirstOrThrow();
+      return Number(r.n);
+    }
+
+    /**
+     * Wrap the libsql Kysely instance so that the next `executeQuery`
+     * matching `failOnSqlSubstring` (and optionally any subsequent
+     * `ROLLBACK`) throws — letting tests exercise the transaction's
+     * failure paths without corrupting the real DB driver.
+     */
+    function patchExecuteQuery(
+      database: CouncilDatabase,
+      opts: { failOnSqlSubstring: string; failRollback?: boolean },
+    ): () => void {
+      type ExecFn = CouncilDatabase["executeQuery"];
+      const original = database.executeQuery.bind(database) as ExecFn;
+      const patched: ExecFn = async (compiled, queryId) => {
+        const text = compiled.sql;
+        if (text.includes(opts.failOnSqlSubstring)) {
+          throw new Error(`simulated failure on: ${opts.failOnSqlSubstring}`);
+        }
+        if (opts.failRollback === true && /^\s*ROLLBACK\b/i.test(text)) {
+          throw new Error("simulated ROLLBACK failure");
+        }
+        return original(compiled, queryId);
+      };
+      (database as { executeQuery: ExecFn }).executeQuery = patched;
+      return () => {
+        (database as { executeQuery: ExecFn }).executeQuery = original;
+      };
+    }
+
+    it("succeeds atomically: FTS rows are deleted and tracking rows flipped to removed", async () => {
+      const a = await repo.create(sampleDoc({ filePath: "/p/a.md" }));
+      const b = await repo.create(sampleDoc({ filePath: "/p/b.md" }));
+      await seedFtsRow(db, "ceo", "a");
+      await seedFtsRow(db, "ceo", "b");
+      expect(await countFts(db, "ceo")).toBe(2);
+      expect(await countActiveDocs(db, "ceo")).toBe(2);
+
+      await repo.clearForRetrain("ceo");
+
+      expect(await countFts(db, "ceo")).toBe(0);
+      expect(await countActiveDocs(db, "ceo")).toBe(0);
+      // Tracking rows are kept (status flipped) so the detector reclassifies
+      // them on retrain — they MUST still exist, only marked removed.
+      const aAfter = await repo.findByPath("ceo", a.filePath);
+      const bAfter = await repo.findByPath("ceo", b.filePath);
+      expect(aAfter?.status).toBe("removed");
+      expect(bAfter?.status).toBe("removed");
+    });
+
+    it("rolls back atomically when the tracking UPDATE fails: FTS rows survive, no docs flipped", async () => {
+      await repo.create(sampleDoc({ filePath: "/p/a.md" }));
+      await repo.create(sampleDoc({ filePath: "/p/b.md" }));
+      await seedFtsRow(db, "ceo", "a");
+      await seedFtsRow(db, "ceo", "b");
+
+      const restore = patchExecuteQuery(db, {
+        failOnSqlSubstring: "UPDATE expert_documents",
+      });
+
+      let caught: unknown;
+      try {
+        await repo.clearForRetrain("ceo");
+      } catch (e) {
+        caught = e;
+      } finally {
+        restore();
+      }
+
+      expect(caught).toBeInstanceOf(ClearForRetrainError);
+      const err = caught as ClearForRetrainError;
+      expect(err.rollbackFailed).toBe(false);
+      expect(err.message).not.toMatch(/inconsistent/i);
+
+      // Atomicity: the prior DELETE must have been rolled back.
+      expect(await countFts(db, "ceo")).toBe(2);
+      expect(await countActiveDocs(db, "ceo")).toBe(2);
+    });
+
+    it("when ROLLBACK itself fails, the thrown error reports it honestly (no 'preserved' claim)", async () => {
+      await repo.create(sampleDoc({ filePath: "/p/a.md" }));
+      await seedFtsRow(db, "ceo", "a");
+
+      const restore = patchExecuteQuery(db, {
+        failOnSqlSubstring: "UPDATE expert_documents",
+        failRollback: true,
+      });
+
+      let caught: unknown;
+      try {
+        await repo.clearForRetrain("ceo");
+      } catch (e) {
+        caught = e;
+      } finally {
+        restore();
+      }
+
+      expect(caught).toBeInstanceOf(ClearForRetrainError);
+      const err = caught as ClearForRetrainError;
+      expect(err.rollbackFailed).toBe(true);
+      expect(err.rollbackError).toBeInstanceOf(Error);
+      expect(err.message).toMatch(/inconsistent/i);
+      expect(err.message).not.toMatch(/preserved/i);
+      expect(err.cause).toBeInstanceOf(Error);
     });
   });
 });
