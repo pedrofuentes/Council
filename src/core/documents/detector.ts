@@ -213,13 +213,26 @@ export async function detectDocumentChanges(
       // (#341) and the right ENOENT short-circuit.
     }
     try {
-      rootHandle = await fs.open(docsPath);
-      const fdStat = await rootHandle.stat();
+      const open = options._rootOpenOverride ?? fs.open;
+      rootHandle = await open(docsPath);
+      let fdStat;
+      try {
+        fdStat = await rootHandle.stat();
+      } catch (statErr) {
+        // Sentinel #516 finding #2: a stat() failure after a successful
+        // open MUST still close the handle, otherwise faulting scans
+        // leak directory fds. Re-throw the original error so the caller
+        // sees the real cause.
+        await rootHandle.close().catch(() => { /* best-effort close */ });
+        rootHandle = null;
+        throw statErr;
+      }
       if (
         rootIdentity !== null &&
         (fdStat.dev !== rootIdentity.dev || fdStat.ino !== rootIdentity.ino)
       ) {
         await rootHandle.close().catch(() => { /* best-effort close */ });
+        rootHandle = null;
         throw new Error(
           `document scan: root '${docsPath}' identity changed between lstat and open (TOCTOU)`,
         );
@@ -231,25 +244,29 @@ export async function detectDocumentChanges(
       }
     } catch (err: unknown) {
       const code = (err as NodeJS.ErrnoException).code;
-      // Windows + some POSIX configurations reject opening a directory
-      // for read; that is a graceful degradation, not a TOCTOU signal.
-      // Re-throw only the explicit identity-mismatch error above.
+      // Re-throw identity-mismatch errors verbatim — they ARE TOCTOU
+      // signals, not graceful-fallback conditions.
       if (
         err instanceof Error &&
         err.message.includes("identity changed between lstat and open")
       ) {
         throw err;
       }
-      if (
-        code !== "EISDIR" &&
-        code !== "EACCES" &&
-        code !== "EPERM" &&
-        code !== "ENOTSUP" &&
-        code !== "EINVAL"
-      ) {
-        // Unexpected open failure: leave rootHandle null and rely on
-        // pre/post lstat compare. readdir below will still surface
-        // ENOENT/ENOTDIR through the standard wrapping.
+      // Windows + some POSIX configurations reject opening a directory
+      // for read with one of the codes below; that is graceful
+      // degradation, not a TOCTOU signal — fall back to lstat-only.
+      const isExpectedDirOpenFailure =
+        code === "EISDIR" ||
+        code === "EACCES" ||
+        code === "EPERM" ||
+        code === "ENOTSUP" ||
+        code === "EINVAL";
+      if (!isExpectedDirOpenFailure) {
+        // Sentinel #516 finding #1: operational failures (EMFILE, EIO,
+        // synthetic stat failures, etc.) MUST surface to the caller —
+        // silently downgrading them would weaken the advertised
+        // fd-anchored hardening AND hide a real failure.
+        throw err;
       }
       rootHandle = null;
     }
