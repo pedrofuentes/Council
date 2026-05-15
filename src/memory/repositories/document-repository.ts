@@ -188,7 +188,21 @@ export class DocumentRepository {
    * claim that prior data was preserved.
    */
   async clearForRetrain(expertSlug: string): Promise<void> {
-    await sql`BEGIN`.execute(this.db);
+    try {
+      await sql`BEGIN`.execute(this.db);
+    } catch (beginErr) {
+      // Transaction never opened, so no rollback is needed and no DB
+      // mutation occurred. Still wrap the error in ClearForRetrainError
+      // so callers always see the same failure contract (#425): they
+      // can trust `rollbackFailed === false` here means the prior state
+      // is intact.
+      const detail = beginErr instanceof Error ? beginErr.message : String(beginErr);
+      throw new ClearForRetrainError(
+        `clearForRetrain failed for "${expertSlug}" before any changes ` +
+          `(BEGIN failed; no changes applied): ${detail}`,
+        { cause: beginErr, rollbackFailed: false },
+      );
+    }
     try {
       await sql`DELETE FROM document_index WHERE source_type = 'expert' AND source_slug = ${expertSlug}`.execute(
         this.db,

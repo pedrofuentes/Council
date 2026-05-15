@@ -678,14 +678,18 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
             await documentRepo.clearForRetrain(slug);
           } catch (err: unknown) {
             const detail = err instanceof Error ? err.message : String(err);
-            const rollbackFailed =
-              err instanceof ClearForRetrainError && err.rollbackFailed;
-            const stateNote = rollbackFailed
-              ? `Cleanup failed AND rollback also failed — database may be in an ` +
-                `inconsistent state for "${slug}" (FTS index and tracked documents may ` +
-                `disagree). Inspect the document_index and expert_documents tables ` +
-                `before retrying.`
-              : `Existing profile and tracking preserved.`;
+            // Default conservatively: only claim "preserved" when we
+            // received a trusted ClearForRetrainError that reports a
+            // clean rollback. Any unexpected error type is treated as
+            // unknown DB state so the user is never falsely reassured.
+            const cleanRollback =
+              err instanceof ClearForRetrainError && !err.rollbackFailed;
+            const stateNote = cleanRollback
+              ? `Existing profile and tracking preserved.`
+              : `Cleanup failed AND rollback either failed or status is unknown — ` +
+                `database may be in an inconsistent state for "${slug}" (FTS index ` +
+                `and tracked documents may disagree). Inspect the document_index ` +
+                `and expert_documents tables before retrying.`;
             const msg =
               `Retrain aborted for "${slug}": failed to clear ${activeCount} ` +
               `tracked document(s) and FTS index entries (${detail}). ` +
