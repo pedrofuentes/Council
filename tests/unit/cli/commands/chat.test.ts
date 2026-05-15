@@ -3138,11 +3138,14 @@ describe("graceful SIGINT handling (PRD §F4)", () => {
       };
     };
 
-    // Slow-ish engine so a debate that runs ~8 phases worth of sends
-    // does not finish before the interrupt fires. Each chunk takes
-    // ~20ms; if abort propagates through the outer Promise.race, the
-    // inline-debate function returns within a chunk window.
+    // Slow-ish engine. We need the abort to land deterministically
+    // *after* at least one expert turn has completed (so the deferred
+    // user-turn persistence has fired) AND while another expert is
+    // mid-stream (so a partial buffer exists). To get there without
+    // relying on wall-clock timing, the engine itself triggers the
+    // abort from inside expert B's first chunk.
     const registered = new Set<string>();
+    let sendCount = 0;
     const engine: CouncilEngine = {
       async start(): Promise<void> {
         /* no-op */
@@ -3164,15 +3167,23 @@ describe("graceful SIGINT handling (PRD §F4)", () => {
         if (!registered.has(expertId)) {
           throw new Error(`Expert ${expertId} is not registered`);
         }
+        const myCallIndex = ++sendCount;
         async function* gen(): AsyncGenerator<EngineEvent, void, void> {
           for (let i = 0; i < 4; i++) {
-            await new Promise<void>((resolve) => setTimeout(resolve, 20));
+            await new Promise<void>((resolve) => setTimeout(resolve, 10));
             yield { kind: "message.delta", expertId, text: `chunk${i} ` };
+            // After expert B (the second send of the debate) has
+            // emitted its first chunk, fire the interrupt. The
+            // chat loop's debate state controller aborts and the
+            // outer Promise.race breaks us out of iteration.
+            if (myCallIndex === 2 && i === 0) {
+              triggerInterrupt?.();
+            }
           }
           yield {
             kind: "message.complete",
             expertId,
-            response: { latencyMs: 80, tokensIn: 1, tokensOut: 1 },
+            response: { latencyMs: 40, tokensIn: 1, tokensOut: 1 },
           };
         }
         return gen();
@@ -3184,15 +3195,7 @@ describe("graceful SIGINT handling (PRD §F4)", () => {
     let i = 0;
     const inputProvider: ChatInputProvider = {
       async readLine(): Promise<string | null> {
-        const line = lines[i++] ?? null;
-        if (line === "@convene should we ship?") {
-          // A full debate is 4 phases × 2 experts × ~80ms ≈ 640ms.
-          // Fire abort at ~50ms so we are well inside the run.
-          setTimeout(() => {
-            triggerInterrupt?.();
-          }, 50);
-        }
-        return line;
+        return lines[i++] ?? null;
       },
       close(): void {
         /* no-op */
@@ -3213,6 +3216,29 @@ describe("graceful SIGINT handling (PRD §F4)", () => {
     // emitting the standard "Conversation saved." message).
     expect(out).toMatch(/Structured deliberation interrupted/i);
     expect(out).toMatch(/Conversation saved\./);
+
+    // PRD §F6 — partial results are preserved on interruption. The
+    // engine completed expert A (the first send) before triggering
+    // the abort during expert B's first chunk; on a correct abort
+    // path:
+    //   - the deferred @convene user turn is persisted exactly once,
+    //   - expert A's full turn is persisted, and
+    //   - expert B's partially-buffered output is persisted (whatever
+    //     was streamed before abort) rather than silently dropped.
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "deb-sigint");
+      const turns = await repo.getTurns(session?.id ?? "");
+      const userTurns = turns.filter((t) => t.role === "user");
+      const expertTurns = turns.filter((t) => t.role === "expert");
+      expect(userTurns.length).toBe(1);
+      expect(userTurns[0]?.content).toBe("should we ship?");
+      const slugs = expertTurns.map((t) => t.expertSlug);
+      expect(slugs).toContain("panel-a");
+      expect(slugs).toContain("panel-b");
+      const partialB = expertTurns.find((t) => t.expertSlug === "panel-b");
+      expect(partialB?.content ?? "").toMatch(/chunk0/);
+      expect(partialB?.content ?? "").not.toMatch(/chunk3/);
+    });
   });
 
   it("after @convene abort: chat session remains usable for further input", async () => {
