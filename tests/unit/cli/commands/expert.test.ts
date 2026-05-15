@@ -206,6 +206,21 @@ describe("buildExpertCommand", () => {
       expect(captured).toContain("Bayesian skeptic");
     });
 
+    it("expert inspect shows model when set", async () => {
+      await seedExpert(env, {
+        ...SAMPLE,
+        slug: "model-seeded",
+        displayName: "Model Seeded",
+        model: "claude-sonnet-4.5",
+      });
+      let captured = "";
+      const cmd = buildExpertCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-expert", "inspect", "model-seeded"]);
+      expect(captured).toContain("Model:  claude-sonnet-4.5");
+    });
+
     it("reports not found", async () => {
       let captured = "";
       let errored = "";
@@ -271,6 +286,40 @@ describe("buildExpertCommand", () => {
       const content = await fs.readFile(yamlPath, "utf-8");
       expect(content).toContain("slug: alpha");
       expect(content).toContain("Pragmatic engineer");
+    });
+
+    it("expert create --model sets the model field in YAML", async () => {
+      const createCmd = buildExpertCommand(() => {
+        /* noop */
+      });
+      await createCmd.parseAsync([
+        "node",
+        "council-expert",
+        "create",
+        "--slug",
+        "model-alpha",
+        "--name",
+        "Model Alpha",
+        "--role",
+        "Model-aware engineer",
+        "--expertise",
+        "model selection",
+        "--stance",
+        "Empirical",
+        "--model",
+        "claude-haiku-4.5",
+      ]);
+
+      const yamlPath = path.join(env.dataHome, "experts", "model-alpha.yaml");
+      const content = await fs.readFile(yamlPath, "utf-8");
+      expect(content).toContain("model: claude-haiku-4.5");
+
+      let captured = "";
+      const inspectCmd = buildExpertCommand((s) => {
+        captured += s;
+      });
+      await inspectCmd.parseAsync(["node", "council-expert", "inspect", "model-alpha"]);
+      expect(captured).toContain("Model:  claude-haiku-4.5");
     });
 
     it("creates a persona expert with --persona and prepares docs dir", async () => {
@@ -634,18 +683,11 @@ fs.writeFileSync(p, body, 'utf-8');`,
       personaDescription: "VP of Engineering",
     };
 
-    async function seedDocRow(
-      slug: string,
-      filename: string,
-      wordCount: number,
-    ): Promise<void> {
+    async function seedDocRow(slug: string, filename: string, wordCount: number): Promise<void> {
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { DocumentRepository } = await import(
-        "../../../../src/memory/repositories/document-repository.js"
-      );
-      const { createDocumentIndexer } = await import(
-        "../../../../src/core/documents/indexer.js"
-      );
+      const { DocumentRepository } =
+        await import("../../../../src/memory/repositories/document-repository.js");
+      const { createDocumentIndexer } = await import("../../../../src/core/documents/indexer.js");
       const db = await createDatabase(path.join(env.home, "council.db"));
       try {
         const docsDir = path.join(env.dataHome, "experts", slug, "docs");
@@ -736,22 +778,14 @@ fs.writeFileSync(p, body, 'utf-8');`,
       const cmd = buildExpertCommand((s) => {
         captured += s;
       });
-      await cmd.parseAsync([
-        "node",
-        "council-expert",
-        "docs",
-        "boss",
-        "--remove",
-        "alpha.md",
-      ]);
+      await cmd.parseAsync(["node", "council-expert", "docs", "boss", "--remove", "alpha.md"]);
       expect(captured).toMatch(/removed/i);
       expect(captured).toContain("alpha.md");
 
       // Verify DB row flipped to 'removed' and FTS5 index pruned.
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { DocumentRepository } = await import(
-        "../../../../src/memory/repositories/document-repository.js"
-      );
+      const { DocumentRepository } =
+        await import("../../../../src/memory/repositories/document-repository.js");
       const db = await createDatabase(path.join(env.home, "council.db"));
       try {
         const repo = new DocumentRepository(db);
@@ -795,14 +829,7 @@ fs.writeFileSync(p, body, 'utf-8');`,
           erred += s;
         },
       );
-      await cmd.parseAsync([
-        "node",
-        "council-expert",
-        "docs",
-        "boss",
-        "--remove",
-        "alpha.md",
-      ]);
+      await cmd.parseAsync(["node", "council-expert", "docs", "boss", "--remove", "alpha.md"]);
 
       // Must NOT report success with ✓ when FTS cleanup failed.
       expect(captured).not.toContain("✓");
@@ -813,9 +840,8 @@ fs.writeFileSync(p, body, 'utf-8');`,
 
       // DB row must still have been marked removed (tracking is the
       // source of truth).
-      const { DocumentRepository } = await import(
-        "../../../../src/memory/repositories/document-repository.js"
-      );
+      const { DocumentRepository } =
+        await import("../../../../src/memory/repositories/document-repository.js");
       const db = await createDatabase(path.join(env.home, "council.db"));
       try {
         const rows = await new DocumentRepository(db).findByExpert("boss");
@@ -833,14 +859,7 @@ fs.writeFileSync(p, body, 'utf-8');`,
       const cmd = buildExpertCommand(() => {
         /* noop */
       });
-      await cmd.parseAsync([
-        "node",
-        "council-expert",
-        "docs",
-        "boss",
-        "--remove",
-        "alpha.md",
-      ]);
+      await cmd.parseAsync(["node", "council-expert", "docs", "boss", "--remove", "alpha.md"]);
       const stat = await fs.stat(filePath);
       expect(stat.isFile()).toBe(true);
     });
@@ -856,14 +875,7 @@ fs.writeFileSync(p, body, 'utf-8');`,
         },
       );
       await expect(
-        cmd.parseAsync([
-          "node",
-          "council-expert",
-          "docs",
-          "boss",
-          "--remove",
-          "missing.md",
-        ]),
+        cmd.parseAsync(["node", "council-expert", "docs", "boss", "--remove", "missing.md"]),
       ).rejects.toThrow(/not found|not indexed|no such/i);
     });
 
@@ -875,20 +887,12 @@ fs.writeFileSync(p, body, 'utf-8');`,
       const cmd = buildExpertCommand((s) => {
         captured += s;
       });
-      await cmd.parseAsync([
-        "node",
-        "council-expert",
-        "docs",
-        "boss",
-        "--remove",
-        filePath,
-      ]);
+      await cmd.parseAsync(["node", "council-expert", "docs", "boss", "--remove", filePath]);
       expect(captured).toMatch(/removed/i);
 
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { DocumentRepository } = await import(
-        "../../../../src/memory/repositories/document-repository.js"
-      );
+      const { DocumentRepository } =
+        await import("../../../../src/memory/repositories/document-repository.js");
       const db = await createDatabase(path.join(env.home, "council.db"));
       try {
         const rows = await new DocumentRepository(db).findByExpert("boss");
@@ -941,14 +945,7 @@ fs.writeFileSync(p, body, 'utf-8');`,
         { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
       );
       await expect(
-        cmd.parseAsync([
-          "node",
-          "council-expert",
-          "train",
-          "boss",
-          "--engine",
-          "bogus",
-        ]),
+        cmd.parseAsync(["node", "council-expert", "train", "boss", "--engine", "bogus"]),
       ).rejects.toThrow(/engine/i);
     });
 
@@ -1001,12 +998,10 @@ fs.writeFileSync(p, body, 'utf-8');`,
       expect(captured.toLowerCase()).toMatch(/processed|trained|complete/);
 
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { DocumentRepository } = await import(
-        "../../../../src/memory/repositories/document-repository.js"
-      );
-      const { ProfileRepository } = await import(
-        "../../../../src/memory/repositories/profile-repository.js"
-      );
+      const { DocumentRepository } =
+        await import("../../../../src/memory/repositories/document-repository.js");
+      const { ProfileRepository } =
+        await import("../../../../src/memory/repositories/profile-repository.js");
       const db = await createDatabase(path.join(env.home, "council.db"));
       try {
         const docs = await new DocumentRepository(db).findByExpert("boss");
@@ -1036,12 +1031,10 @@ fs.writeFileSync(p, body, 'utf-8');`,
 
       // Sanity: profile exists and doc is tracked.
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { DocumentRepository } = await import(
-        "../../../../src/memory/repositories/document-repository.js"
-      );
-      const { ProfileRepository } = await import(
-        "../../../../src/memory/repositories/profile-repository.js"
-      );
+      const { DocumentRepository } =
+        await import("../../../../src/memory/repositories/document-repository.js");
+      const { ProfileRepository } =
+        await import("../../../../src/memory/repositories/profile-repository.js");
       let db = await createDatabase(path.join(env.home, "council.db"));
       try {
         const profile = await new ProfileRepository(db).findBySlug("boss");
@@ -1094,12 +1087,10 @@ fs.writeFileSync(p, body, 'utf-8');`,
       await writeDoc("boss", "intro.md", "First training document.");
 
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { DocumentRepository } = await import(
-        "../../../../src/memory/repositories/document-repository.js"
-      );
-      const { ProfileRepository } = await import(
-        "../../../../src/memory/repositories/profile-repository.js"
-      );
+      const { DocumentRepository } =
+        await import("../../../../src/memory/repositories/document-repository.js");
+      const { ProfileRepository } =
+        await import("../../../../src/memory/repositories/profile-repository.js");
 
       const filePath = path.join(env.dataHome, "experts", "boss", "docs", "intro.md");
 
@@ -1179,12 +1170,10 @@ fs.writeFileSync(p, body, 'utf-8');`,
       await writeDoc("boss", "intro.md", "First training document.");
 
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { DocumentRepository } = await import(
-        "../../../../src/memory/repositories/document-repository.js"
-      );
-      const { ProfileRepository } = await import(
-        "../../../../src/memory/repositories/profile-repository.js"
-      );
+      const { DocumentRepository } =
+        await import("../../../../src/memory/repositories/document-repository.js");
+      const { ProfileRepository } =
+        await import("../../../../src/memory/repositories/profile-repository.js");
 
       // Seed a baseline profile and a tracked doc row so retrain has
       // something to clear and a profile to (try to) discard.
