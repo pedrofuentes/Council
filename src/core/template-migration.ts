@@ -20,6 +20,7 @@
  */
 import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 
 import * as yaml from "yaml";
@@ -552,9 +553,18 @@ const LOCK_FILENAME = ".migration.lock";
 const LOCK_WAIT_TIMEOUT_MS = 30_000;
 // How often (ms) we re-check whether the lock file has disappeared.
 const LOCK_POLL_INTERVAL_MS = 50;
-// A lock file older than this is treated as stale (its owner crashed
-// without releasing it) and forcibly removed by the next contender.
-const LOCK_STALE_AFTER_MS = 60_000;
+// Last-resort age threshold: if a lock file's content is unreadable or
+// malformed (so we can't probe holder liveness), only break it after
+// this much wall-clock time has elapsed. Set high to avoid breaking
+// long-running migrations from older binaries that wrote a different
+// payload format.
+const LOCK_FALLBACK_STALE_AFTER_MS = 60 * 60 * 1000; // 1 hour
+
+interface LockPayload {
+  readonly pid: number;
+  readonly hostname: string;
+  readonly acquiredAt: string;
+}
 
 /**
  * Run `fn` while holding an exclusive lock at `<dataHome>/.migration.lock`,
@@ -569,7 +579,14 @@ const LOCK_STALE_AFTER_MS = 60_000;
  * On contention this function waits (polling) for the holder to release
  * the lock, then runs `fn` itself. The lock is always removed in a
  * `finally` block so a thrown error from `fn` does not leave behind a
- * file that would block future runs (until the stale-lock timeout).
+ * file that would block future runs.
+ *
+ * Stale-lock detection probes the recorded holder PID (and hostname)
+ * for liveness; we never break a lock by age alone while the owning
+ * process is still running. This is what blocks the regression Sentinel
+ * called out in cycle 1 of the #303 review: a migration that legitimately
+ * takes longer than any age threshold would otherwise have its lock
+ * deleted by a contender, reintroducing the concurrent-write race.
  */
 async function withMigrationLock<T>(
   dataHome: string,
@@ -586,25 +603,23 @@ async function withMigrationLock<T>(
 
 async function acquireLock(lockPath: string): Promise<void> {
   const deadline = Date.now() + LOCK_WAIT_TIMEOUT_MS;
-  // Identify the holder (best-effort, for debugging only — we never
-  // act on this content for correctness).
-  const payload = JSON.stringify({
+  const payload: LockPayload = {
     pid: process.pid,
+    hostname: os.hostname(),
     acquiredAt: new Date().toISOString(),
-  });
+  };
+  const serialised = JSON.stringify(payload);
   for (;;) {
     try {
       const handle = await fs.open(lockPath, "wx");
       try {
-        await handle.writeFile(payload, "utf-8");
+        await handle.writeFile(serialised, "utf-8");
       } finally {
         await handle.close();
       }
       return;
     } catch (err: unknown) {
       if (!isEEXIST(err)) throw err;
-      // Lock held by someone else. If it's stale (owner crashed), break
-      // it; otherwise wait a tick and retry.
       if (await tryBreakStaleLock(lockPath)) continue;
       if (Date.now() >= deadline) {
         throw new Error(
@@ -617,21 +632,99 @@ async function acquireLock(lockPath: string): Promise<void> {
 }
 
 async function tryBreakStaleLock(lockPath: string): Promise<boolean> {
+  let content: string;
   let mtimeMs: number;
   try {
-    const stat = await fs.stat(lockPath);
-    mtimeMs = stat.mtimeMs;
+    [content, mtimeMs] = await Promise.all([
+      fs.readFile(lockPath, "utf-8"),
+      fs.stat(lockPath).then((s) => s.mtimeMs),
+    ]);
   } catch (err: unknown) {
-    // Lock vanished between our failed open and the stat — caller can
+    // Lock vanished between our failed open and the read — caller can
     // retry the open immediately.
     if (isENOENT(err)) return true;
     throw err;
   }
-  if (Date.now() - mtimeMs <= LOCK_STALE_AFTER_MS) return false;
+
+  const payload = parseLockPayload(content);
+  if (payload === null) {
+    // Unreadable/malformed lock from an older binary or partial write.
+    // Fall back to age-based breaking with a very generous threshold.
+    if (Date.now() - mtimeMs > LOCK_FALLBACK_STALE_AFTER_MS) {
+      return await unlinkIfExists(lockPath);
+    }
+    return false;
+  }
+
+  if (!isHolderAlive(payload)) {
+    return await unlinkIfExists(lockPath);
+  }
+  return false;
+}
+
+function parseLockPayload(content: string): LockPayload | null {
+  let raw: unknown;
   try {
-    await fs.unlink(lockPath);
+    raw = JSON.parse(content);
+  } catch {
+    return null;
+  }
+  if (
+    typeof raw !== "object" ||
+    raw === null ||
+    typeof (raw as Record<string, unknown>)["pid"] !== "number" ||
+    typeof (raw as Record<string, unknown>)["hostname"] !== "string"
+  ) {
+    return null;
+  }
+  const r = raw as Record<string, unknown>;
+  return {
+    pid: r["pid"] as number,
+    hostname: r["hostname"] as string,
+    acquiredAt: typeof r["acquiredAt"] === "string" ? (r["acquiredAt"] as string) : "",
+  };
+}
+
+/**
+ * Best-effort liveness probe. We only reason about processes on the
+ * same host — a PID from a different machine is presumed alive (we
+ * cannot prove otherwise) UNLESS the hostname differs, in which case
+ * the PID number is meaningless to us and the lock is treated as stale.
+ *
+ * On the local host we use `process.kill(pid, 0)`, which never sends a
+ * real signal and resolves to:
+ *   - success → process exists and we have permission → alive
+ *   - EPERM   → process exists but we lack permission → alive
+ *   - ESRCH   → no such process → dead
+ * Any other error is treated conservatively as alive (do not break).
+ */
+function isHolderAlive(payload: LockPayload): boolean {
+  if (payload.hostname !== os.hostname()) {
+    // Different host — the PID number doesn't apply to us. Treat as
+    // stale so we don't deadlock on a lock left by a different machine
+    // (e.g. a shared NFS-mounted dataHome whose owner went away).
+    return false;
+  }
+  if (!Number.isInteger(payload.pid) || payload.pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(payload.pid, 0);
+    return true;
   } catch (err: unknown) {
-    // Another contender beat us to breaking the stale lock; that's fine.
+    if (typeof err === "object" && err !== null && "code" in err) {
+      const code = (err as { code: unknown }).code;
+      if (code === "ESRCH") return false;
+      if (code === "EPERM") return true;
+    }
+    return true;
+  }
+}
+
+async function unlinkIfExists(p: string): Promise<boolean> {
+  try {
+    await fs.unlink(p);
+  } catch (err: unknown) {
     if (!isENOENT(err)) throw err;
   }
   return true;
