@@ -2412,6 +2412,36 @@ describe("createSummarizationGate — non-blocking background summarization (#45
     expect(gate.isInflight()).toBe(false);
   });
 
+  it("awaitOutstanding is bounded by timeoutMs so a hung summarizer cannot wedge chat exit (Sentinel SNT-PR508-5f0d62a)", async () => {
+    // Regression test for Sentinel's follow-up critical: tying the gate
+    // to the real summarizer is correct, but `/quit` and process exit
+    // must not wait on an unbounded promise. The drain races the in-
+    // flight work against a hard `timeoutMs` budget and surfaces a
+    // warning if the summarizer is still running when the budget
+    // expires — preserving liveness without giving up single-flight.
+    const warnings: string[] = [];
+    const slow = {
+      // Hangs forever — never resolves. Simulates a wedged summarizer.
+      maybeSummarize: () => new Promise<boolean>(() => undefined),
+    };
+    const gate = createSummarizationGate(
+      slow as unknown as Parameters<typeof createSummarizationGate>[0],
+      (m) => warnings.push(m),
+      40, // very short exit budget for the test
+    );
+    gate.kickOff("chat-id");
+    const start = Date.now();
+    await gate.awaitOutstanding();
+    const elapsed = Date.now() - start;
+    // Generous upper bound for CI jitter; well below the prod default
+    // (30s). The drain MUST return promptly even though the underlying
+    // summarizer never settles.
+    expect(elapsed).toBeLessThan(2000);
+    // The exit-budget warning is distinct from the kickOff timeout and
+    // mentions the chat-exit context.
+    expect(warnings.some((w) => /chat exit/i.test(w))).toBe(true);
+  });
+
   it("holds the single-flight gate until the underlying summarizer settles, even after the timeout fires (Sentinel SNT-PR508)", async () => {
     // Regression test for the concurrency bug Sentinel flagged: if the
     // gate were released when the timeout warning fires, a follow-up
