@@ -261,6 +261,103 @@ describe("detectDocumentChanges", () => {
       expect(result.newFiles).toHaveLength(1);
       expect(called).toBe(false);
     });
+
+    it("rejects when the fd-anchored stat reports a different inode than the pre-lstat (open-window swap)", async () => {
+      // Sentinel #1: lock down the fd-stat mismatch branch. If the
+      // directory was swapped between the pre-lstat and the fs.open()
+      // call, the kernel-bound fd's stat will diverge from the lstat
+      // identity. The detector MUST refuse the scan with the explicit
+      // "identity changed between lstat and open" error.
+      await fs.writeFile(path.join(dir, "a.md"), "hi");
+      const realStat = await fs.lstat(dir);
+
+      const fakeHandle = {
+        async stat() {
+          return {
+            ...realStat,
+            ino: realStat.ino + 1,
+            isFile: () => false,
+            isDirectory: () => true,
+          };
+        },
+        async close() {
+          /* no-op for the test seam */
+        },
+      } as unknown as Awaited<ReturnType<typeof fs.open>>;
+
+      await expect(
+        detectDocumentChanges(dir, new Map(), [".md"], {
+          confinementRoot: dir,
+          _rootIsCanonical: true,
+          _rootOpenOverride: async () => fakeHandle,
+        }),
+      ).rejects.toThrow(/identity changed between lstat and open/);
+    });
+
+    it("falls back gracefully when fs.open(<dir>) rejects with EISDIR (Windows path)", async () => {
+      // Sentinel #3: prove the Windows graceful-fallback branch.
+      // On Windows (and some POSIX configurations) `fs.open` of a
+      // directory rejects with EISDIR/EACCES. The detector must NOT
+      // surface that as a TOCTOU error — it should fall back to the
+      // pre/post lstat compare and complete the scan normally.
+      await fs.writeFile(path.join(dir, "a.md"), "hi");
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        confinementRoot: dir,
+        _rootIsCanonical: true,
+        _rootOpenOverride: async () => {
+          const err: NodeJS.ErrnoException = new Error("EISDIR: illegal operation on a directory");
+          err.code = "EISDIR";
+          throw err;
+        },
+      });
+      expect(result.newFiles).toHaveLength(1);
+      expect(result.newFiles[0]?.filename).toBe("a.md");
+    });
+
+    it("rethrows non-allowlisted fs.open errors instead of silently downgrading (Sentinel #1)", async () => {
+      // Operational failures like EMFILE / EIO from `fs.open(<dir>)`
+      // are NOT graceful-fallback signals — silently swallowing them
+      // would weaken the advertised fd-anchored hardening AND hide a
+      // real failure. The detector must surface these to the caller.
+      await fs.writeFile(path.join(dir, "a.md"), "hi");
+      await expect(
+        detectDocumentChanges(dir, new Map(), [".md"], {
+          confinementRoot: dir,
+          _rootIsCanonical: true,
+          _rootOpenOverride: async () => {
+            const err: NodeJS.ErrnoException = new Error("EMFILE: too many open files");
+            err.code = "EMFILE";
+            throw err;
+          },
+        }),
+      ).rejects.toThrow(/EMFILE/);
+    });
+
+    it("closes the directory handle when fh.stat() throws after a successful open (Sentinel #2: no fd leak)", async () => {
+      // Sentinel #2: if `fs.open` succeeds but `.stat()` rejects, the
+      // catch path must still close the handle — otherwise a faulting
+      // scan leaks directory fds. We supply a stub handle whose
+      // .close() records the call, then assert it was invoked.
+      await fs.writeFile(path.join(dir, "a.md"), "hi");
+      let closed = false;
+      const stubHandle = {
+        async stat(): Promise<never> {
+          throw new Error("synthetic stat failure");
+        },
+        async close() {
+          closed = true;
+        },
+      } as unknown as Awaited<ReturnType<typeof fs.open>>;
+
+      await expect(
+        detectDocumentChanges(dir, new Map(), [".md"], {
+          confinementRoot: dir,
+          _rootIsCanonical: true,
+          _rootOpenOverride: async () => stubHandle,
+        }),
+      ).rejects.toThrow(/synthetic stat failure/);
+      expect(closed).toBe(true);
+    });
   });
 
   // ── Sentinel #341 / #342: error surfacing & per-file resilience ─────

@@ -101,6 +101,16 @@ export interface DetectDocumentChangesOptions {
    */
   readonly _rootLstatOverride?: (p: string) => Promise<Stats>;
   /**
+   * Test seam (#374) — replace `fs.open` for the directory-fd anchor
+   * step only. Lets tests simulate (a) the Windows graceful-fallback
+   * path (e.g. throwing `EISDIR`/`EACCES`), (b) an unexpected open
+   * failure that MUST be rethrown rather than silently downgraded,
+   * and (c) a `FileHandle` whose `.stat()` rejects after a successful
+   * open (verifies the handle is still closed). Production callers
+   * leave this undefined.
+   */
+  readonly _rootOpenOverride?: (p: string) => Promise<fs.FileHandle>;
+  /**
    * Optional warning sink (#342). Invoked once per individual file
    * skipped due to a recoverable, per-file error (lstat failure,
    * fd-based read failure) so callers can surface diagnostics to the
