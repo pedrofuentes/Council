@@ -26,8 +26,11 @@ shipping.
 
 ## 1. Doctor & first-run sanity
 
-- [ ] `council doctor` reports Copilot SDK reachable, model list
-      non-empty, and DB writable.
+- [ ] `council doctor` reports Copilot SDK reachable and DB writable.
+- [ ] `council doctor --models` lists known model identifiers and notes
+      that `--online` verifies whether your default model is accessible.
+- [ ] `council doctor --online` creates a session against the configured
+      default model and reports that session creation succeeded.
 - [ ] First-ever run on a fresh `COUNCIL_HOME` creates the directory
       tree (`experts/`, `panels/`, `council.db`) without errors.
 - [ ] `council --help` and `council <subcommand> --help` render
@@ -75,7 +78,7 @@ shipping.
 ## 4. Built-in panels & migration behavior
 
 - [ ] On a fresh home, `council convene --template architecture-review
-      "Should we adopt GraphQL?"` runs the built-in panel without
+    "Should we adopt GraphQL?"` runs the built-in panel without
       manual setup.
 - [ ] After the first `--template` run, `$COUNCIL_HOME/experts/`
       contains the extracted built-in expert YAMLs (cto, staff-eng,
@@ -93,8 +96,8 @@ shipping.
 ## 5. Debate (`council convene`)
 
 - [ ] `council convene --template code-review --max-rounds 1
-      --max-words 60 "What's one risk of skipping observability in
-      MVPs?"` finishes within ~90 s, prints turns from each panel
+    --max-words 60 "What's one risk of skipping observability in
+    MVPs?"` finishes within ~90 s, prints turns from each panel
       member, and exits 0.
 - [ ] `council convene` with no `--template` and a non-trivial topic
       auto-composes a panel; you are prompted to confirm; `y`
@@ -104,7 +107,7 @@ shipping.
       output structure (turn order, terminal `debate.end` event in
       `--format json`).
 - [ ] `council convene --template career-coaching "Should I move to
-      management?" --max-rounds 2` runs both rounds and persists
+    management?" --max-rounds 2` runs both rounds and persists
       every turn to `council.db`.
 
 ## 6. 1:1 expert chat
@@ -135,8 +138,8 @@ shipping.
 - [ ] `@cto what would you ship first?` routes ONLY to `cto`; other
       experts do not respond and the turn is marked `isMention=1`
       in the DB (verify with `sqlite3 $COUNCIL_HOME/council.db "SELECT
-      role, expert_slug, is_mention FROM chat_turns ORDER BY seq DESC
-      LIMIT 5;"`).
+    role, expert_slug, is_mention FROM chat_turns ORDER BY seq DESC
+    LIMIT 5;"`).
 - [ ] `@cto @sre what about reliability?` routes to both, in panel
       order.
 - [ ] `@unknown ...` surfaces a helpful "no such expert" error and
@@ -161,7 +164,7 @@ shipping.
 ## 10. Persona expert documents
 
 - [ ] Create a persona expert: `council experts create alex --kind
-      persona`.
+    persona`.
 - [ ] Place 2–3 markdown files in
       `$COUNCIL_HOME/experts/alex/docs/`.
 - [ ] `council chat alex` shows a one-time progress banner as
@@ -174,7 +177,7 @@ shipping.
 - [ ] Empty the docs folder and relaunch: a one-line info message
       explains the persona is running as a generic expert.
 - [ ] `sqlite3 $COUNCIL_HOME/council.db "SELECT count(*) FROM
-      document_index WHERE source_slug = 'alex';"` reflects the
+    document_index WHERE source_slug = 'alex';"` reflects the
       current set of indexed documents.
 - [ ] Symlink the docs folder root to another directory and try
       `council chat alex`: the symlinked root is rejected up front
@@ -209,7 +212,7 @@ shipping.
 
 - [ ] In a 1:1 chat, send 30+ alternating turns. Each turn streams
       without OOM, the renderer scrolls cleanly, and `council chat
-      cto --history` shows the full session length.
+    cto --history` shows the full session length.
 - [ ] After a long session, exit and `council chat cto` again: the
       history is reloaded; the model continues coherently
       (auto-summary, if implemented, kicks in without errors).
