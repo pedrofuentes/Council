@@ -27,6 +27,30 @@ import type {
 } from "../../core/chat/chat-session.js";
 import type { ChatSessionRow, ChatTurnRow, CouncilDatabase } from "../db.js";
 
+/**
+ * Thrown by {@link ChatRepository.persistTurnPair} when the user+expert
+ * transaction aborts. Mirrors {@link ClearForRetrainError} (#425): the
+ * {@link rollbackFailed} flag lets callers produce honest user-facing
+ * messages — when `true`, the database state may be inconsistent and
+ * the message MUST NOT claim that data was preserved.
+ */
+export class PersistTurnPairError extends Error {
+  readonly rollbackFailed: boolean;
+  readonly rollbackError?: unknown;
+
+  constructor(
+    message: string,
+    opts: { cause: unknown; rollbackFailed: boolean; rollbackError?: unknown },
+  ) {
+    super(message, { cause: opts.cause });
+    this.name = "PersistTurnPairError";
+    this.rollbackFailed = opts.rollbackFailed;
+    if (opts.rollbackError !== undefined) {
+      this.rollbackError = opts.rollbackError;
+    }
+  }
+}
+
 export interface NewChatSession {
   readonly targetType: ChatTargetType;
   readonly targetSlug: string;
@@ -221,25 +245,52 @@ export class ChatRepository {
    * reason as `clearForRetrain` (see document-repository.ts): Kysely's
    * `transaction()` helper reconnects the libsql `:memory:` connection
    * and would lose virtual FTS5 tables.
+   *
+   * On failure throws {@link PersistTurnPairError} (#504). Callers MUST
+   * inspect `rollbackFailed`: when the rollback itself failed the DB
+   * may be in an inconsistent state and any user-facing message must
+   * NOT claim that prior data was preserved.
    */
   async persistTurnPair(
     userInput: NewChatTurn,
     expertInput: NewChatTurn,
   ): Promise<readonly [ChatTurn, ChatTurn]> {
-    await sql`BEGIN`.execute(this.db);
+    try {
+      await sql`BEGIN`.execute(this.db);
+    } catch (beginErr) {
+      const detail = beginErr instanceof Error ? beginErr.message : String(beginErr);
+      throw new PersistTurnPairError(
+        `persistTurnPair failed before any changes ` +
+          `(BEGIN failed; no changes applied): ${detail}`,
+        { cause: beginErr, rollbackFailed: false },
+      );
+    }
     try {
       const user = await this.addTurn(userInput);
       const expert = await this.addTurn(expertInput);
       await sql`COMMIT`.execute(this.db);
       return [user, expert] as const;
     } catch (err) {
+      let rollbackFailed = false;
+      let rollbackError: unknown;
       try {
         await sql`ROLLBACK`.execute(this.db);
-      } catch {
-        // Best-effort rollback; the original error is the meaningful
-        // signal to surface to the caller.
+      } catch (rbErr) {
+        rollbackFailed = true;
+        rollbackError = rbErr;
       }
-      throw err;
+      const detail = err instanceof Error ? err.message : String(err);
+      const message = rollbackFailed
+        ? `persistTurnPair failed and ROLLBACK also failed; ` +
+          `database may be in an inconsistent state ` +
+          `(an orphan user or expert turn may have landed): ${detail}`
+        : `persistTurnPair failed (transaction rolled back cleanly): ${detail}`;
+      throw new PersistTurnPairError(
+        message,
+        rollbackError === undefined
+          ? { cause: err, rollbackFailed }
+          : { cause: err, rollbackFailed, rollbackError },
+      );
     }
   }
 
