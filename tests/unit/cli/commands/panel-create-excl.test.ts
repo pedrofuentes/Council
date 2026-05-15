@@ -23,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockState = vi.hoisted(() => ({
   forceMissingPath: null as string | null,
+  failWriteForPath: null as string | null,
 }));
 
 import type FsPromisesModule from "node:fs/promises";
@@ -45,6 +46,30 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       }
       return (actual.access as (f: unknown, m?: unknown) => Promise<void>)(file, mode);
     }) as typeof actual.access,
+    open: (async (file: unknown, flags?: unknown, mode?: unknown) => {
+      const handle = await (
+        actual.open as (f: unknown, fl?: unknown, m?: unknown) => Promise<FsPromisesModule.FileHandle>
+      )(file, flags, mode);
+      if (
+        typeof file === "string" &&
+        mockState.failWriteForPath !== null &&
+        file === mockState.failWriteForPath
+      ) {
+        const originalWriteFile = handle.writeFile.bind(handle);
+        handle.writeFile = (async () => {
+          // Simulate a mid-write failure (e.g. ENOSPC) AFTER the OS has
+          // already created the file via O_EXCL. Touch the file so callers
+          // that drop us mid-way still see real bytes on disk.
+          await originalWriteFile("partial bytes from mock\n", "utf-8");
+          const err: NodeJS.ErrnoException = new Error(
+            "ENOSPC: simulated mid-write failure",
+          );
+          err.code = "ENOSPC";
+          throw err;
+        }) as typeof handle.writeFile;
+      }
+      return handle;
+    }) as typeof actual.open,
   };
 });
 
@@ -116,10 +141,12 @@ describe("panel create — O_EXCL atomic write (issue #307)", () => {
   let env: TestEnv;
   beforeEach(async () => {
     mockState.forceMissingPath = null;
+    mockState.failWriteForPath = null;
     env = await makeEnv();
   });
   afterEach(async () => {
     mockState.forceMissingPath = null;
+    mockState.failWriteForPath = null;
     await teardown(env);
   });
 
@@ -159,6 +186,43 @@ describe("panel create — O_EXCL atomic write (issue #307)", () => {
 
     // Hard property #3: rollback removed the half-created DB row, so the
     // pre-existing file is not paired with stale metadata.
+    const db = await createDatabase(path.join(env.home, "council.db"));
+    try {
+      const repo = new PanelLibraryRepository(db);
+      const row = await repo.findByName("arch-review");
+      expect(row).toBeUndefined();
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it("rolls back the freshly-created YAML when a mid-write failure occurs after O_EXCL succeeded", async () => {
+    await seedExpert(env, expertDef("cto"));
+
+    const yamlPath = path.join(env.dataHome, "panels", "arch-review.yaml");
+    // The file does not exist yet — fs.open(...,'wx') will succeed and
+    // CREATE the file, then the mocked handle.writeFile will reject.
+    mockState.failWriteForPath = yamlPath;
+
+    const cmd = buildPanelCommand(
+      () => {
+        /* noop */
+      },
+      () => {
+        /* noop */
+      },
+    );
+
+    await expect(
+      cmd.parseAsync(["node", "council-panel", "create", "arch-review", "--experts", "cto"]),
+    ).rejects.toThrow(/ENOSPC|simulated mid-write failure/i);
+
+    // Hard property: the freshly-created YAML must be unlinked even though
+    // the write itself failed — otherwise a subsequent `panel create`
+    // would trip over the orphan file.
+    await expect(fs.access(yamlPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    // And the half-created DB row must be rolled back.
     const db = await createDatabase(path.join(env.home, "council.db"));
     try {
       const repo = new PanelLibraryRepository(db);
