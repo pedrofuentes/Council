@@ -14,16 +14,21 @@
  *   - OSC sequences:        ESC ] ... BEL
  *   - C0 controls except newline (\n), tab (\t), carriage return (\r)
  *   - DEL (0x7F)
+ *   - C1 controls (U+0080–U+009F) — invisible non-printable codepoints
+ *     that some terminals interpret as alternate escape introducers
+ *     (e.g. 0x9B = CSI, 0x9D = OSC). Stripping these closes a TTY-injection
+ *     vector equivalent to the ANSI ESC-prefixed sequences above.
  *
- * Printable Unicode (emoji, accents, CJK) is preserved.
+ * Printable Unicode (emoji, accents, CJK, NBSP and other Latin-1 supplement
+ * characters at U+00A0+) is preserved.
  */
 const CONTROL_CHAR_PATTERN =
   // Order matters: match the multi-char ANSI/OSC sequences BEFORE the C0
   // character class, otherwise the class would consume the leading ESC
   // (\x1B is in the \x0E-\x1F range) and leave the rest of the sequence
-  // visible. eslint-disable-next-line no-control-regex
+  // visible.
   // eslint-disable-next-line no-control-regex
-  /\x1B\[[0-9;]*[a-zA-Z]|\x1B\].*?\x07|[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g;
+  /\x1B\[[0-9;]*[a-zA-Z]|\x1B\].*?\x07|[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g;
 
 export function stripControlChars(text: string): string {
   return text.replace(CONTROL_CHAR_PATTERN, "");
