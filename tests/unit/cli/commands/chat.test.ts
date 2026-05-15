@@ -2694,6 +2694,95 @@ describe("long conversation warning (chat.longConversationWarning)", () => {
 
     expect(out).not.toMatch(/Consider starting a new conversation with --new/);
   });
+
+  it("1:1 chat: long-conversation failure warning is shown only once across the session (issue #462)", async () => {
+    // Regression for issue #462: when `getTurnCount` keeps failing, the
+    // best-effort fallback used to return the previous count unchanged, so
+    // every subsequent turn re-queried, re-failed, and re-emitted the
+    // advisory. After the first failure we must set a sentinel that
+    // suppresses both the query and the warning for the remainder of the
+    // chat loop.
+    await seedExpert(env);
+    await writeConfigYaml(env, "chat:\n  longConversationWarning: 500\n");
+
+    const realGetTurnCount = ChatRepository.prototype.getTurnCount;
+    let callIndex = 0;
+    const callCounter = { value: 0 };
+    const spy = vi
+      .spyOn(ChatRepository.prototype, "getTurnCount")
+      .mockImplementation(async function (this: ChatRepository, id: string) {
+        callCounter.value += 1;
+        callIndex += 1;
+        // First call (initial seed at chat-loop startup) succeeds so the
+        // sentinel is NOT triggered up-front; every subsequent call fails
+        // to simulate a flaky DB.
+        if (callIndex === 1) {
+          return realGetTurnCount.call(this, id);
+        }
+        throw new Error("simulated getTurnCount failure");
+      });
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["msg1", "msg2", "msg3", "/quit"]),
+    });
+
+    try {
+      await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+    } finally {
+      spy.mockRestore();
+    }
+
+    const failureMatches = out.match(/Long-conversation check failed/g) ?? [];
+    expect(failureMatches.length).toBe(1);
+    // The advisory text is only emitted from maybeWarnLongConversation's
+    // own catch block, so a single occurrence proves the function
+    // short-circuited and did not re-query on subsequent turns. Other
+    // call sites (context-manager) may still query getTurnCount, so a
+    // raw spy-count upper bound would be brittle.
+    expect(callCounter.value).toBeGreaterThan(0);
+  });
+
+  it("1:1 chat: a late getTurnCount failure still warns at most once (issue #462)", async () => {
+    // After several successful queries, the first failure should emit the
+    // sanitized warning a single time and never again, even on later turns.
+    await seedExpert(env);
+    await writeConfigYaml(env, "chat:\n  longConversationWarning: 500\n");
+
+    const realGetTurnCount = ChatRepository.prototype.getTurnCount;
+    let callIndex = 0;
+    const spy = vi
+      .spyOn(ChatRepository.prototype, "getTurnCount")
+      .mockImplementation(async function (this: ChatRepository, id: string) {
+        callIndex += 1;
+        // Succeed for the seed and the first user-turn check; then fail
+        // for every subsequent invocation.
+        if (callIndex <= 2) {
+          return realGetTurnCount.call(this, id);
+        }
+        throw new Error("simulated getTurnCount failure");
+      });
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["msg1", "msg2", "msg3", "/quit"]),
+    });
+
+    try {
+      await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+    } finally {
+      spy.mockRestore();
+    }
+
+    const failureMatches = out.match(/Long-conversation check failed/g) ?? [];
+    expect(failureMatches.length).toBe(1);
+  });
 });
 
 describe("background processing config warning (expert.backgroundProcessing)", () => {
