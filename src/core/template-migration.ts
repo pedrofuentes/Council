@@ -650,13 +650,29 @@ async function tryBreakStaleLock(lockPath: string): Promise<boolean> {
   if (payload === null) {
     // Unreadable/malformed lock from an older binary or partial write.
     // Fall back to age-based breaking with a very generous threshold.
-    if (Date.now() - mtimeMs > LOCK_FALLBACK_STALE_AFTER_MS) {
-      return await unlinkIfExists(lockPath);
-    }
-    return false;
+    return await maybeEvictByAge(lockPath, mtimeMs);
   }
 
-  if (!isHolderAlive(payload)) {
+  const liveness = holderLiveness(payload);
+  if (liveness === "dead") {
+    return await unlinkIfExists(lockPath);
+  }
+  if (liveness === "unknown") {
+    // Cross-host PID — we cannot probe liveness from here, so we
+    // refuse to evict on identity alone (Sentinel #303 cycle 2). The
+    // lock remains until the conservative age fallback elapses,
+    // which prevents NFS/SMB-shared dataHomes from deadlocking
+    // forever if a remote owner truly went away.
+    return await maybeEvictByAge(lockPath, mtimeMs);
+  }
+  return false;
+}
+
+async function maybeEvictByAge(
+  lockPath: string,
+  mtimeMs: number,
+): Promise<boolean> {
+  if (Date.now() - mtimeMs > LOCK_FALLBACK_STALE_AFTER_MS) {
     return await unlinkIfExists(lockPath);
   }
   return false;
@@ -686,38 +702,47 @@ function parseLockPayload(content: string): LockPayload | null {
 }
 
 /**
- * Best-effort liveness probe. We only reason about processes on the
- * same host — a PID from a different machine is presumed alive (we
- * cannot prove otherwise) UNLESS the hostname differs, in which case
- * the PID number is meaningless to us and the lock is treated as stale.
+ * Best-effort liveness probe.
+ *
+ * Returns:
+ *   - "alive"   the holder is definitely still running
+ *   - "dead"    the holder is definitely gone (safe to evict)
+ *   - "unknown" we cannot prove either way — the caller should fall
+ *               back to the conservative age threshold rather than
+ *               evict immediately. This includes cross-host holders
+ *               (a PID number from another machine is meaningless on
+ *               this one) and other unexpected probe errors.
  *
  * On the local host we use `process.kill(pid, 0)`, which never sends a
  * real signal and resolves to:
- *   - success → process exists and we have permission → alive
- *   - EPERM   → process exists but we lack permission → alive
- *   - ESRCH   → no such process → dead
- * Any other error is treated conservatively as alive (do not break).
+ *   - success → process exists and we have permission → "alive"
+ *   - EPERM   → process exists but we lack permission → "alive"
+ *   - ESRCH   → no such process → "dead"
+ * Any other errno code is treated as "unknown".
  */
-function isHolderAlive(payload: LockPayload): boolean {
+type Liveness = "alive" | "dead" | "unknown";
+
+function holderLiveness(payload: LockPayload): Liveness {
   if (payload.hostname !== os.hostname()) {
-    // Different host — the PID number doesn't apply to us. Treat as
-    // stale so we don't deadlock on a lock left by a different machine
-    // (e.g. a shared NFS-mounted dataHome whose owner went away).
-    return false;
+    // Different host. PID numbers don't apply to us — we cannot prove
+    // the remote process is dead, so refuse to evict on identity
+    // alone. The age-based fallback in maybeEvictByAge() still
+    // ensures a truly abandoned cross-host lock is recoverable.
+    return "unknown";
   }
   if (!Number.isInteger(payload.pid) || payload.pid <= 0) {
-    return false;
+    return "unknown";
   }
   try {
     process.kill(payload.pid, 0);
-    return true;
+    return "alive";
   } catch (err: unknown) {
     if (typeof err === "object" && err !== null && "code" in err) {
       const code = (err as { code: unknown }).code;
-      if (code === "ESRCH") return false;
-      if (code === "EPERM") return true;
+      if (code === "ESRCH") return "dead";
+      if (code === "EPERM") return "alive";
     }
-    return true;
+    return "unknown";
   }
 }
 
