@@ -176,6 +176,42 @@ describe("buildConveneCommand", () => {
     expect(captured).toContain("Topic");
   });
 
+  it("uses config.defaults.model (not hardcoded DEFAULT_MODEL) for expert registration", async () => {
+    // Write a config file that overrides the default model
+    const configPath = path.join(testHome, "config.yaml");
+    await fs.writeFile(configPath, "defaults:\n  model: test-custom-model\n");
+
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "Test topic",
+      "--template",
+      "code-review",
+      "--max-rounds",
+      "1",
+      "--engine",
+      "mock",
+    ]);
+
+    // Check the DB — expert rows should have the config model, not the hardcoded one
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const panels = await new PanelRepository(db).findAll();
+      const experts = await new ExpertRepository(db).findByPanelId(panels[0]?.id ?? "");
+      expect(experts.length).toBeGreaterThan(0);
+      for (const e of experts) {
+        expect(e.model).toBe("test-custom-model");
+      }
+    } finally {
+      await db.destroy();
+    }
+  });
+
   it("respects --mode structured (4-phase choreography)", async () => {
     let captured = "";
     const cmd = buildConveneCommand({

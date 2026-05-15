@@ -12,8 +12,7 @@ import * as path from "node:path";
 
 import { Command } from "commander";
 
-import { getCouncilHome } from "../../config/index.js";
-import { DEFAULT_MODEL } from "../../config/index.js";
+import { getCouncilHome, loadConfig } from "../../config/index.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import { createDatabase } from "../../memory/db.js";
 import { applyRecalledMemory, recallMemory } from "../../memory/expert-memory.js";
@@ -115,6 +114,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
         heuristicMemory: raw.heuristicMemory === true,
       };
 
+      const config = await loadConfig();
       const dbPath = path.join(getCouncilHome(), "council.db");
       const db = await createDatabase(dbPath);
       try {
@@ -201,7 +201,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
                     debateId: ctx.debateId,
                     expertSlugToId: ctx.expertSlugToId,
                     humanSlugs: new Set<string>(),
-                    model: DEFAULT_MODEL,
+                    model: config.defaults.model,
                     writeError,
                   }),
               }),

@@ -19,6 +19,7 @@ import {
 import { CliUserError } from "../../../../src/cli/cli-user-error.js";
 import { buildProgram } from "../../../../src/bin/council.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
+import type { ExpertSpec } from "../../../../src/engine/index.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import { DebateRepository } from "../../../../src/memory/repositories/debates.js";
 import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
@@ -606,6 +607,31 @@ describe("buildConcludeCommand", () => {
     expect(errOutput).toMatch(/engine blew up|internal/i);
     // The thrown error should be a CliUserError (message already written)
     expect(thrownErr).toBeInstanceOf(CliUserError);
+  });
+
+  it("uses config.defaults.model for the synthesizer expert", async () => {
+    const configPath = path.join(testHome, "config.yaml");
+    await fs.writeFile(configPath, "defaults:\n  model: conclude-test-model\n");
+
+    const seed = await seedPanelWithDebate(testHome);
+    const addedSpecs: ExpertSpec[] = [];
+    const spyEngine = makeMockEngine(JSON.stringify(SAMPLE_OUTPUT));
+    const origAddExpert = spyEngine.addExpert.bind(spyEngine);
+    spyEngine.addExpert = async (spec: ExpertSpec) => {
+      addedSpecs.push(spec);
+      return origAddExpert(spec);
+    };
+
+    const cmd = buildConcludeCommand({
+      write: () => undefined,
+      writeError: () => undefined,
+      engineFactory: () => spyEngine,
+      synthesizerId: SYNTH_ID,
+    });
+
+    await cmd.parseAsync(["node", "council-conclude", seed.panelName, "--engine", "mock"]);
+    expect(addedSpecs).toHaveLength(1);
+    expect(addedSpecs[0]?.model).toBe("conclude-test-model");
   });
 
   it("buildProgram() registers the conclude command", () => {

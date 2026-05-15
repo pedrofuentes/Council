@@ -32,7 +32,7 @@ import { Command } from "commander";
 import { ulid } from "ulid";
 import { z } from "zod";
 
-import { DEFAULT_MODEL, getCouncilHome } from "../../config/index.js";
+import { getCouncilHome, loadConfig } from "../../config/index.js";
 import { type CouncilEngine, type EngineEvent, type ExpertSpec } from "../../engine/index.js";
 import { createDatabase } from "../../memory/db.js";
 import { PanelRepository } from "../../memory/repositories/panels.js";
@@ -154,6 +154,7 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
         );
       }
 
+      const config = await loadConfig();
       const dbPath = path.join(getCouncilHome(), "council.db");
       const db = await createDatabase(dbPath);
       try {
@@ -179,7 +180,7 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
           id: synthesizerId,
           slug: "synthesizer",
           displayName: "Council Synthesizer",
-          model: DEFAULT_MODEL,
+          model: config.defaults.model,
           systemMessage: SYNTHESIS_SYSTEM_PROMPT,
         };
 
