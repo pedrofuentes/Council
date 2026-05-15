@@ -261,6 +261,24 @@ describe("CopilotEngine — send() event translation", () => {
     expect(complete.response.latencyMs).toBeGreaterThanOrEqual(0);
   });
 
+  it("translates SDK assistant.message complete-response to message.delta", async () => {
+    const engine = new CopilotEngine();
+    await engine.start();
+    await engine.addExpert(expertA);
+    // SDK v0.3.0 sends complete responses via assistant.message instead of streaming deltas
+    mockState.sendQueues.set("session-0", [
+      { kind: "assistant.message", data: { content: "Complete response text" } },
+    ]);
+    const events = await collect(engine.send({ prompt: "hi", expertId: expertA.id }));
+    const deltas = events.filter(
+      (e): e is Extract<EngineEvent, { kind: "message.delta" }> => e.kind === "message.delta",
+    );
+    expect(deltas.length).toBeGreaterThan(0);
+    expect(deltas.map((d) => d.text).join("")).toBe("Complete response text");
+    const complete = events.find((e) => e.kind === "message.complete");
+    expect(complete).toBeDefined();
+  });
+
   it("throws synchronously on send() to unknown expert", async () => {
     const engine = new CopilotEngine();
     await engine.start();
