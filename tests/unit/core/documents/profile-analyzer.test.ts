@@ -293,13 +293,25 @@ describe("analyzeDocuments() — engine-backed profile extraction", () => {
     // The system prompt must explicitly name the <existing_profile>
     // fence and instruct the model to treat its contents as context,
     // not as directives — mirroring the <documents> framing.
+    //
+    // Issue #495: the untrusted-handling language must be CO-LOCATED
+    // with the <existing_profile> mention — not merely present somewhere
+    // else in the prompt (e.g. only attached to the <documents> framing).
+    // We extract the paragraph (\n\n-delimited block) containing the
+    // first <existing_profile> reference and require the untrusted-data
+    // / do-not-follow language to appear inside that same paragraph.
     const engine = new RecordingEngine([validProfileJSON]);
     await analyzeDocuments(sampleDocs, null, engine, defaultOptions);
     const spec = engine.registered[0];
     if (!spec) throw new Error("expected registered analyzer");
-    expect(spec.systemMessage).toContain("<existing_profile>");
-    expect(spec.systemMessage.toLowerCase()).toMatch(
-      /untrusted|do not (?:follow|obey)|ignore (?:any )?instructions/,
+    const sysMsg = spec.systemMessage;
+    expect(sysMsg).toContain("<existing_profile>");
+
+    const paragraphs = sysMsg.split(/\n\s*\n/);
+    const colocated = paragraphs.find((p) => p.includes("<existing_profile>"));
+    if (!colocated) throw new Error("expected a paragraph mentioning <existing_profile>");
+    expect(colocated.toLowerCase()).toMatch(
+      /untrusted|do not (?:follow|obey|blindly follow)|ignore (?:any )?instructions|not (?:as )?instructions/,
     );
   });
 
@@ -596,25 +608,50 @@ describe("analyzeDocuments() — error handling (#359 #360 #361)", () => {
     expect(engine.removed.length).toBe(1);
   });
 
-  it("throws when both the initial send and the retry yield engine errors (#359)", async () => {
+  it("throws when both the initial send and the retry yield engine errors, preserving the first error via Error.cause (#359, #432, #433)", async () => {
+    // Use distinct messages on the two calls so we can verify which one
+    // surfaces as the thrown error's message and which one is preserved
+    // on `.cause`. Without #432, the first-send error is silently dropped
+    // and only the retry error is observable to callers.
     class AlwaysErrorEngine extends RecordingEngine {
+      callCount = 0;
       override send(opts: SendOptions): AsyncIterable<EngineEvent> {
         this.sends.push({ expertId: opts.expertId, prompt: opts.prompt });
         const expertId = opts.expertId;
+        this.callCount += 1;
+        const message = this.callCount === 1 ? "first-send-boom" : "retry-send-boom";
         return (async function* (): AsyncGenerator<EngineEvent, void, void> {
           yield {
             kind: "error",
             expertId,
-            error: { code: "PROVIDER_ERROR", message: "boom" },
+            error: { code: "PROVIDER_ERROR", message },
             recoverable: false,
           };
         })();
       }
     }
     const engine = new AlwaysErrorEngine([]);
-    await expect(
-      analyzeDocuments(sampleDocs, null, engine, defaultOptions),
-    ).rejects.toThrow();
+    const thrown: unknown = await analyzeDocuments(
+      sampleDocs,
+      null,
+      engine,
+      defaultOptions,
+    ).then(
+      () => {
+        throw new Error("expected analyzeDocuments to reject");
+      },
+      (e: unknown) => e,
+    );
+    expect(thrown).toBeInstanceOf(Error);
+    const err = thrown as Error;
+    // The proximate (retry) error message must surface to the caller.
+    expect(err.message).toMatch(/retry-send-boom/);
+    // #432/#433: the original first-send error must be preserved via
+    // Error.cause so debugging can trace the full failure chain. The
+    // upstream provider error message ("first-send-boom") MUST survive.
+    expect(err.cause).toBeInstanceOf(Error);
+    const cause = err.cause as Error;
+    expect(cause.message).toMatch(/first-send-boom/);
     expect(engine.sends.length).toBe(2);
     expect(engine.removed.length).toBe(1);
   });

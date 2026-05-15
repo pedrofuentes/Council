@@ -30,6 +30,8 @@ import type { ExpertDefinition } from "../../../../src/core/expert.js";
 import type { ChatTurn } from "../../../../src/core/chat/chat-session.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import { ChatRepository } from "../../../../src/memory/repositories/chat-repository.js";
+import { Debate } from "../../../../src/core/debate.js";
+import type { DebateEvent } from "../../../../src/core/debate.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
 import type { CouncilEngine } from "../../../../src/engine/index.js";
 import type { EngineEvent } from "../../../../src/engine/types.js";
@@ -2893,6 +2895,17 @@ describe("long conversation warning (chat.longConversationWarning)", () => {
     // check ran only after the expert turn, so a user message that lands the
     // session on the threshold (49 -> 50, then expert -> 51) silently skipped
     // the warning. Crossing detection must catch it.
+    //
+    // Issue #463 hardening: the warning must originate from the user-turn
+    // call site, not the expert-response call site. The user-turn call lands
+    // the session at exactly 50 (the crossing); the expert-response call
+    // pushes it to 51 — at which point prevCount=50 and count=51, so the
+    // crossing predicate `prevCount < threshold && count >= threshold` is
+    // false and the expert-path call cannot emit the warning. The only way
+    // the warning can be observed in this scenario is via the user-turn
+    // path. We pin that by asserting the warning appears BEFORE the expert
+    // response body is streamed to the output stream — proving it was
+    // emitted between user-turn `addTurn` and expert streaming.
     await seedExpert(env);
     await writeConfigYaml(env, "chat:\n  longConversationWarning: 50\n");
     await seedTurns(env, "expert", "dahlia-cto", 49, "dahlia-cto");
@@ -2909,9 +2922,29 @@ describe("long conversation warning (chat.longConversationWarning)", () => {
     expect(out).toMatch(/Consider starting a new conversation with --new/);
     const matches = out.match(/Consider starting a new conversation with --new/g) ?? [];
     expect(matches.length).toBe(1);
+
+    // Pin the warning to the user-turn call site by ordering: the advisory
+    // must precede the expert response banner. The renderer prefixes every
+    // expert reply with `${displayName} > ` (see chat-renderer.ts
+    // `startExpertResponse`), so the presence of "Dahlia Renner (CTO) > "
+    // in the buffer is a faithful proxy for "the expert response started
+    // streaming". If the warning were (re)emitted from the post-expert
+    // call site, it would appear AFTER that banner — which this ordering
+    // assertion would catch.
+    const warningIdx = out.indexOf("Consider starting a new conversation with --new");
+    const expertReplyIdx = out.indexOf("Dahlia Renner (CTO) > ");
+    expect(warningIdx).toBeGreaterThanOrEqual(0);
+    expect(expertReplyIdx).toBeGreaterThanOrEqual(0);
+    expect(warningIdx).toBeLessThan(expertReplyIdx);
   });
 
   it("panel chat: warns when the user turn crosses the threshold (49 -> 50)", async () => {
+    // Issue #463 hardening: same call-site pinning as the 1:1 case. With 49
+    // seeded turns, the user message takes the count to 50 (crossing fires
+    // from the user-turn call site); panel-a's reply pushes it to 51 and
+    // panel-b's to 52 — neither of which can re-fire the crossing predicate.
+    // The warning must therefore appear before the FIRST panel expert's
+    // streamed response.
     await seedExpert(env, PANEL_EXPERT_A);
     await seedExpert(env, PANEL_EXPERT_B);
     await writeUserPanel(env, "long-panel-2", ["panel-a", "panel-b"]);
@@ -2930,6 +2963,22 @@ describe("long conversation warning (chat.longConversationWarning)", () => {
     expect(out).toMatch(/Consider starting a new conversation with --new/);
     const matches = out.match(/Consider starting a new conversation with --new/g) ?? [];
     expect(matches.length).toBe(1);
+
+    // Pin the warning to the user-turn call site: it must precede ALL panel
+    // expert response banners, not just one. The renderer prefixes every
+    // expert reply with `${displayName} > ` (see chat-renderer.ts
+    // `startExpertResponse`), so each `${displayName} > ` marker is a
+    // faithful proxy for "this panellist began streaming". If the warning
+    // were emitted from any post-expert call site we'd see it interleaved
+    // with or after one of these banners.
+    const warningIdx = out.indexOf("Consider starting a new conversation with --new");
+    const panelAIdx = out.indexOf("Alice (Architect) > ");
+    const panelBIdx = out.indexOf("Bob (Builder) > ");
+    expect(warningIdx).toBeGreaterThanOrEqual(0);
+    expect(panelAIdx).toBeGreaterThanOrEqual(0);
+    expect(panelBIdx).toBeGreaterThanOrEqual(0);
+    expect(warningIdx).toBeLessThan(panelAIdx);
+    expect(warningIdx).toBeLessThan(panelBIdx);
   });
 
   it("1:1 chat: does not re-warn when resuming an already-over-threshold session", async () => {
@@ -3849,6 +3898,113 @@ describe("graceful SIGINT handling (PRD §F4)", () => {
     // must still recover and consume `/quit`.
     expect(out).toMatch(
       /Could not persist partial panel-b response \(\d+ bytes\) after interruption/i,
+    );
+    expect(out).toMatch(/Structured deliberation interrupted/i);
+    expect(out).toMatch(/Conversation saved\./);
+  });
+
+  // Issue #505 — when the debate iterator's `return()` rejects during
+  // SIGINT cleanup, the chat loop must surface a visible warning rather
+  // than swallowing the rejection silently.
+  it("@convene Ctrl+C with rejecting iterator.return() surfaces a cleanup warning", async () => {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "deb-retfail", ["panel-a", "panel-b"]);
+
+    let triggerInterrupt: (() => void) | null = null;
+    const subscribeInterrupt = (handler: () => void): (() => void) => {
+      triggerInterrupt = handler;
+      return () => {
+        triggerInterrupt = null;
+      };
+    };
+
+    // The engine is irrelevant — we replace Debate.run() entirely with
+    // an async iterable whose iterator never yields (next() pends until
+    // the abort signal wins the Promise.race) and whose return() — the
+    // cleanup hook the chat loop calls on abort — rejects. This drives
+    // the iterator.return().catch() branch in runInlineDebate.
+    const engine: CouncilEngine = {
+      async start(): Promise<void> {
+        /* no-op */
+      },
+      async stop(): Promise<void> {
+        /* no-op */
+      },
+      async addExpert(): Promise<void> {
+        /* no-op */
+      },
+      async removeExpert(): Promise<void> {
+        /* no-op */
+      },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock-model"];
+      },
+      send(): AsyncIterable<EngineEvent> {
+        async function* gen(): AsyncGenerator<EngineEvent, void, void> {
+          /* no events — never reached because Debate.run is stubbed */
+        }
+        return gen();
+      },
+    };
+
+    let nextCalls = 0;
+    const runSpy = vi
+      .spyOn(Debate.prototype, "run")
+      .mockImplementation(function (this: Debate): AsyncIterable<DebateEvent> {
+        return {
+          [Symbol.asyncIterator](): AsyncIterator<DebateEvent> {
+            return {
+              next(): Promise<IteratorResult<DebateEvent>> {
+                nextCalls += 1;
+                // First poll: schedule the SIGINT so the abort wins
+                // the Promise.race in runInlineDebate. Then return a
+                // promise that never resolves — the abort path is the
+                // only way out of the loop.
+                if (nextCalls === 1) {
+                  setTimeout(() => triggerInterrupt?.(), 5);
+                }
+                return new Promise<IteratorResult<DebateEvent>>(() => {
+                  /* never resolves */
+                });
+              },
+              return(): Promise<IteratorResult<DebateEvent>> {
+                return Promise.reject(new Error("simulated cleanup failure"));
+              },
+            };
+          },
+        };
+      });
+
+    let out = "";
+    const lines: readonly string[] = ["@convene should we ship?", "/quit"];
+    let i = 0;
+    const inputProvider: ChatInputProvider = {
+      async readLine(): Promise<string | null> {
+        return lines[i++] ?? null;
+      },
+      close(): void {
+        /* no-op */
+      },
+    };
+
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () => inputProvider,
+      subscribeInterrupt,
+    });
+    try {
+      await cmd.parseAsync(["node", "council-chat", "deb-retfail", "--engine", "mock"]);
+    } finally {
+      runSpy.mockRestore();
+    }
+
+    // The cleanup-failure warning must surface (issue #505) and the
+    // chat must still recover and consume `/quit`.
+    expect(out).toMatch(
+      /Debate generator cleanup after interruption failed:\s*simulated cleanup failure/i,
     );
     expect(out).toMatch(/Structured deliberation interrupted/i);
     expect(out).toMatch(/Conversation saved\./);

@@ -178,14 +178,31 @@ export async function extractDocument(
     const ext = path.extname(filePath).toLowerCase();
 
     // 6. Re-stat through the same fd AFTER the read so `modifiedAt` is
-    //    bound to the bytes we actually returned (issue #376). If the
-    //    inode's mtime or size changed between the initial stat and now,
-    //    the file was modified mid-read — the buffer may be a torn copy
-    //    of two versions; refuse rather than persist incoherent state.
+    //    bound to the bytes we actually returned (issue #376). The
+    //    staleness token includes (size, mtimeMs, ctimeMs) — issue #444:
+    //    a same-size rewrite whose mtime is restored via utimes() would
+    //    evade a (size, mtime) token, but utimes() bumps ctime, so any
+    //    mid-read inode metadata write is detectable. We also assert
+    //    that the bytes we read fill exactly the size the kernel
+    //    reported, which catches truncations or extensions racing the
+    //    read itself.
+    //
+    //    Residual limit: an attacker who can write to the inode AND
+    //    forge ctime (raw block-device or kernel-level access — well
+    //    outside the docs-folder threat model) could still produce a
+    //    same-size, same-mtime, same-ctime rewrite that this guard
+    //    cannot detect. Defending against that requires a content
+    //    checksum of a re-read pass, which we judge unjustified given
+    //    the I/O cost and the privilege required for the attack.
     const postStat = await fh.stat();
-    if (postStat.size !== fdStat.size || postStat.mtimeMs !== fdStat.mtimeMs) {
+    if (
+      postStat.size !== fdStat.size ||
+      postStat.mtimeMs !== fdStat.mtimeMs ||
+      postStat.ctimeMs !== fdStat.ctimeMs ||
+      buf.byteLength !== fdStat.size
+    ) {
       throw new Error(
-        `extractDocument: ${filePath} was modified during read (size/mtime changed); refusing torn content`,
+        `extractDocument: ${filePath} was modified during read (size/mtime/ctime changed); refusing torn content`,
       );
     }
 

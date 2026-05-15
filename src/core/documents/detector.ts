@@ -371,6 +371,24 @@ export async function detectDocumentChanges(
     // the fd-based read which will validate the target.
     if (!stat.isFile() && !stat.isSymbolicLink()) continue;
 
+    // Issue #339: guard against symlink traversal. When a confinement
+    // root is configured, `readConfined` validates that the realpath
+    // lies inside it (rejecting out-of-root symlinks via the existing
+    // TOCTOU-safe sequence). When NO confinement root is configured we
+    // cannot prove a symlink target is safe — default-deny: skip the
+    // entry, surface a warning naming the link, and report it in
+    // `rejectedFiles` so reconciliation sees a definitive "do not
+    // index" signal. Plain files are unaffected.
+    if (stat.isSymbolicLink() && options.confinementRoot === undefined) {
+      if (options.onWarning) {
+        options.onWarning(
+          `document scan: skipping symlink '${absolute}' (no confinement root configured)`,
+        );
+      }
+      rejectedFiles.push(absolute);
+      continue;
+    }
+
     const ext = path.extname(absolute).toLowerCase();
     if (!supported.has(ext)) {
       unsupportedFiles.push(absolute);

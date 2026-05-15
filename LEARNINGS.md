@@ -19,7 +19,39 @@
 
 <!-- Add new learnings below this line, most recent first -->
 
-### [2026-05-12] Persona profile analysis — multi-cycle sanitisation hardening, TOCTOU-safe extraction, layered prompt-injection defenses
+### [2026-05-13] Recalled-memory section boundaries — match the next `\n[N] ` header dynamically, never hardcode the trailing section number
+**Context**: Sentinel review (#503) on the recalled-memory rendering path flagged a parser that delimited the `[7] MEMORY` body by searching forward for the literal string `[8] CURRENT TASK`. The system prompt has a *canonical* 8-section layout, but two optional sections — `[N] PERSONA PROFILE` (when `def.kind === "persona"` and a profile exists) and `[N] PANEL MEMBERSHIPS` (when the expert belongs to other panels) — are injected between `[7] MEMORY` and `CURRENT TASK`, shifting `CURRENT TASK` to `[8]`, `[9]`, or `[10]` depending on which optionals are present (see `src/core/prompt-builder.ts:buildSystemPrompt` and the CHANGELOG entry "buildSystemPrompt(def, memory, task, personaProfile?, panelMemberships?)"). Hardcoding `[8] CURRENT TASK` therefore over-captures into the optional sections whenever they are present, contaminating the recalled-memory body with persona-profile or panel-membership text.
+**Learning**:
+1. **Section numbers in this prompt are dynamic, not stable.** Any code that slices the system prompt by section header MUST treat the trailing index as a wildcard. The only reliable boundary marker is the next `\n[N] ` header (e.g. regex `/\n\[\d+\]\s/`).
+2. **Do not encode the canonical layout into parsers.** Even though `[7] MEMORY` is currently always section 7, future additions (e.g. another optional section before MEMORY) could shift it. Anchor on the section *name* you are extracting (`[N] MEMORY`) and terminate at the next `\n[\d+] ` match — never at a specific successor name or number.
+3. **Round-trip test the layout matrix.** When changing prompt-builder section logic, exercise the four combinations: `{persona profile: yes/no} × {panel memberships: yes/no}`. Section-boundary parsers must work in all four.
+**Impact**: Project-wide rule for any code that consumes `buildSystemPrompt()` output — section delimiters are dynamic. Match `/\n\[\d+\]\s/` (or `^\[\d+\]\s` with the `m` flag) for the *next* header; never write `indexOf("[8] CURRENT TASK")` or any other literal-numbered boundary. Add a layout-matrix test whenever you write a section-aware parser against this prompt.
+
+### [2026-05-13] `@github/copilot-sdk` `session.on(event, handler)` returns an unsubscribe callback — call it in `finally` after every `send()` or listeners accumulate
+**Context**: Sentinel review (#497) and the leak fix (#491) on `engine/copilot/adapter.ts`. Each `send()` call subscribed to streaming events (`message`, `delta`, `tool-call`, `error`, etc.) via `session.on(event, handler)` and the handlers were never removed. Over a long-running chat (or repeated `@convene` debates re-using the same session), every send added another full set of listeners; older listeners stayed live and re-fired on subsequent turns, producing duplicate writes to the renderer, ballooning closure-retained memory, and tripping Node's `MaxListenersExceededWarning` after ~10 turns.
+**Learning**:
+1. **`session.on(event, handler)` returns an unsubscribe function** — capture its return value. The SDK does not provide a `removeListener` / `off` method that takes the handler reference; the returned callback is the only sanctioned removal path.
+2. **Collect every unsubscribe in a local array; drain it in `finally`.** Pattern:
+   ```ts
+   const unsubs: Array<() => void> = [];
+   try {
+     unsubs.push(session.on("message", onMessage));
+     unsubs.push(session.on("delta", onDelta));
+     unsubs.push(session.on("tool-call", onToolCall));
+     unsubs.push(session.on("error", onError));
+     return await session.send(prompt);
+   } finally {
+     for (const off of unsubs) {
+       try { off(); } catch { /* best-effort cleanup */ }
+     }
+   }
+   ```
+   The `try` around each `off()` is required because a partially-torn-down SDK session can throw on unsubscribe; cleanup of subsequent handlers must still run.
+3. **Per-`send()` registration, per-`send()` cleanup.** Do NOT hoist subscriptions to session-construction time hoping to register once and reuse — handler closures usually capture per-call state (the request id, the renderer instance, the abort signal). The leak fix's invariant is "every `on()` paired with its `off()` inside the same `try/finally` as the `send()` that needed it."
+4. **Adapter is the only allowed `@github/copilot-sdk` importer** (per AGENTS.md Boundaries — `no-restricted-imports`). All listener lifecycle MUST live in `engine/copilot/adapter.ts`; downstream consumers see only the adapter's own callback API and cannot leak SDK listeners through it.
+**Impact**: Mandatory pattern for any new `send()`-shaped code path in `engine/copilot/adapter.ts`. Code review checklist item: every `session.on(...)` call must have its return value captured and drained in `finally`. When adding a new SDK event subscription to the adapter, extend both the registration block and the `finally` drain in the same commit — never one without the other.
+
+### [2026-05-12] Persona profile analysis— multi-cycle sanitisation hardening, TOCTOU-safe extraction, layered prompt-injection defenses
 **Context**: Roadmap 6.2 + 6.4 + 6.8 (persona profile analysis, on-demand document processing, recency weighting). Across PRs #357, #373, #375 and follow-up Sentinel cycles, the persona-profile pipeline went through several rounds of hardening before landing.
 **Learning**:
 1. **Single-layer sanitisation has bypasses; stack escapes deliberately.** First-pass code applied only the per-`<` fence escape; a Sentinel finding showed that `[N]` markers in `existingProfile` fields could still spoof section headers in the privileged system prompt. The fix layered `sanitizePromptField` (C0 strip + line-break collapse + `[N]` defang + length cap) on top of the per-character escape. **Rule of thumb**: every interpolated, externally-sourced field in a privileged prompt needs *both* a structural sanitiser AND a context-specific escape (e.g. `<` → `&lt;` for fenced data).

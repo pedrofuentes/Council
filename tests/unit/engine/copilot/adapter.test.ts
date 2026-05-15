@@ -418,4 +418,58 @@ describe("CopilotEngine — listener cleanup (#479)", () => {
     }
     expect(session.listenerCount()).toBe(baseline);
   });
+
+  // Regression test for #498: PR #491 added `finally`-block listener cleanup,
+  // but the existing pre-aborted test never enters #stream's listener-registration
+  // path (it short-circuits on the `controller.signal.aborted` check). This test
+  // aborts AFTER listeners are registered and the SDK has emitted at least one
+  // delta — i.e., genuinely in-flight — and verifies the count returns to
+  // baseline. Without the finally block, this would leak 4 listeners per send.
+  it("unregisters listeners when abort fires in-flight after listeners are registered (#498)", async () => {
+    const engine = new CopilotEngine();
+    await engine.start();
+    await engine.addExpert(expertA);
+    const session = mockState.sessionInstances[0];
+    expect(session).toBeDefined();
+    if (!session) return;
+
+    const baseline = session.listenerCount();
+    mockState.sendQueues.set("session-0", [
+      { kind: "assistant.message_delta", data: { deltaContent: "first" } },
+      { kind: "assistant.message_delta", data: { deltaContent: "second" } },
+      { kind: "assistant.message_delta", data: { deltaContent: "third" } },
+    ]);
+
+    const controller = new AbortController();
+    const stream = engine.send({
+      prompt: "stream-then-abort",
+      expertId: expertA.id,
+      signal: controller.signal,
+    });
+
+    let observedInFlightCount = 0;
+    const events: EngineEvent[] = [];
+    for await (const evt of stream) {
+      events.push(evt);
+      if (evt.kind === "message.delta" && !controller.signal.aborted) {
+        // Listeners must be registered now — we are between SDK emissions.
+        observedInFlightCount = session.listenerCount();
+        controller.abort();
+      }
+    }
+
+    // Sanity: we genuinely hit the in-flight path (listeners were live).
+    expect(observedInFlightCount).toBeGreaterThan(baseline);
+
+    // Stream must have terminated with ABORTED, not message.complete.
+    const last = events[events.length - 1];
+    expect(last?.kind).toBe("error");
+    if (last?.kind === "error") {
+      expect(last.error.code).toBe("ABORTED");
+      expect(last.recoverable).toBe(false);
+    }
+
+    // Core assertion: finally block ran and unregistered every SDK listener.
+    expect(session.listenerCount()).toBe(baseline);
+  });
 });

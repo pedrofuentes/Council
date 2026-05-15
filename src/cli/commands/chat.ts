@@ -420,7 +420,7 @@ export async function safeMaybeSummarize(
  *     the previous summary — preferring responsiveness over freshness,
  *     exactly as PRD §F4 specifies.
  *
- * Concurrency contract (Sentinel SNT-PR508 fix): `settled` tracks the
+ * Concurrency contract: `settled` tracks the
  * underlying `contextMgr.maybeSummarize()` promise — NOT a timeout race.
  * If we cleared the gate when a wall-clock timer expired, a follow-up
  * `kickOff()` could launch a second summarizer while the first was
@@ -454,7 +454,7 @@ export function createSummarizationGate(
       // Surface a one-shot timeout warning if the summarizer hangs past
       // `timeoutMs`, but DO NOT release the gate — single-flight is tied
       // to the underlying work's actual completion to prevent overlapping
-      // summary writers (Sentinel SNT-PR508-2ea84c3).
+      // summary writers.
       let warned = false;
       const timer = setTimeout(() => {
         warned = true;
@@ -506,7 +506,7 @@ export function createSummarizationGate(
       const p = inflight;
       inflight = undefined;
       settled = false;
-      // Sentinel SNT-PR508-5f0d62a critical fix: bound the exit drain.
+      // Critical: bound the exit drain.
       // Tying single-flight to the real summarizer is correct, but if
       // the summarizer is exactly the hung case the kickOff timeout is
       // designed to detect, an unbounded await here would wedge `/quit`
@@ -1890,10 +1890,10 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
   const expectedTurns = phaseCount * members.length;
 
   // Defer the user-turn persistence until the first expert turn is
-  // about to land (Sentinel SR-PR-mention-1). This keeps the chat
-  // history consistent: a debate that throws or yields zero turns
-  // leaves no orphan @convene user row that subsequent panel turns
-  // would treat as an unanswered question.
+  // about to land. This keeps the chat history consistent: a debate
+  // that throws or yields zero turns leaves no orphan @convene user
+  // row that subsequent panel turns would treat as an unanswered
+  // question.
   let userTurnPersisted = false;
   const persistUserTurnOnce = async (): Promise<void> => {
     if (!userTurnPersisted) {

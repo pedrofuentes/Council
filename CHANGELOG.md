@@ -15,7 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+### Fixed
+
 - **Document scan TOCTOU hardening** (#374) — the document detector now anchors directory access with a file-descriptor stat before `readdir` (POSIX, with graceful fallback on Windows where directory fds aren't supported) and re-validates the root directory's identity (`dev`/`ino`) after `readdir`. A swap of the docs root between validation and enumeration is now detected and rejected with a `TOCTOU` error instead of silently scanning the substituted directory.
+- Copilot adapter now unregisters SDK event listeners after each `send()`, preventing memory leak in long chat sessions (#491).
 - **Ctrl+C during `@convene` debate**— interrupting an inline structured debate via Ctrl+C now aborts the debate cleanly, persists any partial expert response that was already streamed, and surfaces a visible warning if that flush itself fails. The deferred `@convene` user turn is only committed after the partial expert turn writes successfully so an aborted, never-answered prompt no longer leaves an orphan user row in chat history (#466).
 - **Graceful CLI error handling** — user-facing errors (not-found, validation, missing flags) now print a clean one-line message to stderr and exit with code 1 instead of dumping full Node.js stack traces. Internally, errors that have already been written to stderr by command handlers throw `CliUserError` (suppressed by the top-level handler); all other errors have their message printed without a stack trace.
 - Persona profile prompts now render `epistemicStance` field correctly instead of silently dropping it (#407).
