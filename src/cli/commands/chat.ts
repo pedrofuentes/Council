@@ -420,8 +420,18 @@ export async function safeMaybeSummarize(
  *     the previous summary — preferring responsiveness over freshness,
  *     exactly as PRD §F4 specifies.
  *
- * Errors are absorbed by `safeMaybeSummarize`'s onError contract, so a
- * background failure surfaces a single warning and never rejects.
+ * Concurrency contract (Sentinel SNT-PR508 fix): `settled` tracks the
+ * underlying `contextMgr.maybeSummarize()` promise — NOT a timeout race.
+ * If we cleared the gate when a wall-clock timer expired, a follow-up
+ * `kickOff()` could launch a second summarizer while the first was
+ * still running, and a late `updateSummary()` write could regress
+ * fresher context. The timeout still surfaces a one-shot warning so a
+ * hung summarizer is visible, but the gate stays held until the real
+ * work completes — guaranteeing single-flight summary writes per chat.
+ *
+ * Errors from the underlying summarizer are absorbed: a sanitized
+ * warning is delivered via `onError` and the returned promise resolves.
+ * The gate never propagates a rejection.
  */
 export interface SummarizationGate {
   kickOff(chatId: string): void;
@@ -441,9 +451,48 @@ export function createSummarizationGate(
     kickOff(chatId: string): void {
       if (inflight !== undefined) return;
       settled = false;
-      inflight = safeMaybeSummarize(contextMgr, chatId, onError, timeoutMs).finally(() => {
+      // Surface a one-shot timeout warning if the summarizer hangs past
+      // `timeoutMs`, but DO NOT release the gate — single-flight is tied
+      // to the underlying work's actual completion to prevent overlapping
+      // summary writers (Sentinel SNT-PR508-2ea84c3).
+      let warned = false;
+      const timer = setTimeout(() => {
+        warned = true;
+        onError(
+          `Rolling summary update failed (continuing): maybeSummarize timed out after ${timeoutMs}ms`,
+        );
+      }, timeoutMs);
+      // Keep the timer from holding the event loop open during process
+      // exit (e.g. tests that shut down before the summarizer settles).
+      timer.unref?.();
+      // Invoke synchronously so single-flight `calls` tracking and any
+      // synchronous setup inside `maybeSummarize` (e.g. capturing a
+      // resolver in a unit test) take effect immediately. Wrap the
+      // result in `Promise.resolve` so a synchronous throw and a
+      // returned promise are normalized to the same rejection path.
+      let work: Promise<unknown>;
+      try {
+        work = Promise.resolve(contextMgr.maybeSummarize(chatId));
+      } catch (err: unknown) {
+        clearTimeout(timer);
+        onError(`Rolling summary update failed (continuing): ${sanitizeErrorMessage(err)}`);
         settled = true;
-      });
+        inflight = Promise.resolve();
+        return;
+      }
+      inflight = work
+        .then(
+          () => undefined,
+          (err: unknown) => {
+            if (!warned) {
+              onError(`Rolling summary update failed (continuing): ${sanitizeErrorMessage(err)}`);
+            }
+          },
+        )
+        .finally(() => {
+          clearTimeout(timer);
+          settled = true;
+        });
     },
     async awaitIfSettled(): Promise<void> {
       if (inflight === undefined || !settled) return;
@@ -457,9 +506,9 @@ export function createSummarizationGate(
       const p = inflight;
       inflight = undefined;
       settled = false;
-      // Bounded by safeMaybeSummarize's internal timeout — never hangs
-      // process exit beyond `timeoutMs`. Errors are absorbed by
-      // safeMaybeSummarize, so this await never rejects.
+      // Errors are absorbed inside the inflight chain, so this await
+      // never rejects. May block until the underlying summarizer
+      // resolves — the timeout warning is informational, not a release.
       await p;
     },
     isInflight(): boolean {
