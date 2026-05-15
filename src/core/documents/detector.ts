@@ -92,6 +92,15 @@ export interface DetectDocumentChangesOptions {
    */
   readonly _lstatOverride?: (p: string) => Promise<Stats>;
   /**
+   * Test seam (#374) — replace `fs.lstat` for the root-identity
+   * verification (pre-readdir + post-readdir) only. Distinct from
+   * `_lstatOverride` (which targets per-file stats inside the loop)
+   * so tests can simulate a directory swap during the scan window
+   * without disturbing per-file stat behaviour. Production callers
+   * leave this undefined.
+   */
+  readonly _rootLstatOverride?: (p: string) => Promise<Stats>;
+  /**
    * Optional warning sink (#342). Invoked once per individual file
    * skipped due to a recoverable, per-file error (lstat failure,
    * fd-based read failure) so callers can surface diagnostics to the
@@ -167,11 +176,80 @@ export async function detectDocumentChanges(
   options: DetectDocumentChangesOptions = {},
 ): Promise<DetectionResult> {
   const supported = new Set(supportedFormats.map(normalizeExt));
+  const rootLstat = options._rootLstatOverride ?? fs.lstat;
+
+  // ── Issue #374: fd-anchored root validation against scan-window TOCTOU.
+  // Capture the docs root's identity (dev/ino) BEFORE readdir so we can
+  // verify after readdir that the directory we enumerated is the same
+  // inode the caller validated. Where the platform supports it (POSIX),
+  // we additionally bind a file descriptor to the directory via
+  // `fs.open()` and stat through the fd: this anchors the identity
+  // check to a kernel handle rather than the path string, closing the
+  // window where a swap could land between two path-based lstat calls.
+  // Windows generally rejects `fs.open(<dir>)` with EISDIR/EACCES; we
+  // treat that as a soft-fail and rely on the pre/post lstat compare,
+  // matching the issue requirement to "handle gracefully" on platforms
+  // where directory fds aren't supported. Skipped entirely when the
+  // caller did not opt into confinement (back-compat).
+  let rootIdentity: { dev: number; ino: number } | null = null;
+  let rootHandle: fs.FileHandle | null = null;
+  if (options.confinementRoot !== undefined) {
+    try {
+      const pre = await rootLstat(docsPath);
+      rootIdentity = { dev: pre.dev, ino: pre.ino };
+    } catch {
+      // Pre-stat failures fall through — `fs.readdir` below will
+      // surface the same condition with the standard error wrapping
+      // (#341) and the right ENOENT short-circuit.
+    }
+    try {
+      rootHandle = await fs.open(docsPath);
+      const fdStat = await rootHandle.stat();
+      if (
+        rootIdentity !== null &&
+        (fdStat.dev !== rootIdentity.dev || fdStat.ino !== rootIdentity.ino)
+      ) {
+        await rootHandle.close().catch(() => { /* best-effort close */ });
+        throw new Error(
+          `document scan: root '${docsPath}' identity changed between lstat and open (TOCTOU)`,
+        );
+      }
+      // Adopt fd-stat as the authoritative identity if pre-lstat was
+      // missing — the fd is bound to a specific inode at this instant.
+      if (rootIdentity === null) {
+        rootIdentity = { dev: fdStat.dev, ino: fdStat.ino };
+      }
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException).code;
+      // Windows + some POSIX configurations reject opening a directory
+      // for read; that is a graceful degradation, not a TOCTOU signal.
+      // Re-throw only the explicit identity-mismatch error above.
+      if (
+        err instanceof Error &&
+        err.message.includes("identity changed between lstat and open")
+      ) {
+        throw err;
+      }
+      if (
+        code !== "EISDIR" &&
+        code !== "EACCES" &&
+        code !== "EPERM" &&
+        code !== "ENOTSUP" &&
+        code !== "EINVAL"
+      ) {
+        // Unexpected open failure: leave rootHandle null and rely on
+        // pre/post lstat compare. readdir below will still surface
+        // ENOENT/ENOTDIR through the standard wrapping.
+      }
+      rootHandle = null;
+    }
+  }
 
   let entries: string[];
   try {
     entries = await fs.readdir(docsPath, { recursive: true });
   } catch (err: unknown) {
+    if (rootHandle !== null) await rootHandle.close().catch(() => { /* best-effort close */ });
     // Only treat truly-missing directories as empty; surface any other
     // filesystem error (permission denied, ENOTDIR, etc.) so callers
     // see a real problem instead of mistaking it for "no documents".
@@ -194,6 +272,37 @@ export async function detectDocumentChanges(
       { cause: err },
     );
   }
+
+  // Post-readdir verification: if the root's inode changed between
+  // pre-validation and now, the directory we enumerated is NOT the one
+  // the caller validated. Refuse the result — returning entries from a
+  // swapped directory would let an attacker redirect the scan into an
+  // attacker-chosen tree (issue #374). Best-effort close the fd first.
+  if (rootIdentity !== null) {
+    try {
+      const post = await rootLstat(docsPath);
+      if (post.dev !== rootIdentity.dev || post.ino !== rootIdentity.ino) {
+        if (rootHandle !== null) await rootHandle.close().catch(() => { /* best-effort close */ });
+        throw new Error(
+          `document scan: root '${docsPath}' identity changed during scan (TOCTOU)`,
+        );
+      }
+    } catch (err: unknown) {
+      // A post-stat failure on a path that just enumerated successfully
+      // is suspicious. Re-throw identity-change errors verbatim;
+      // otherwise wrap so callers see WHY post-validation failed.
+      if (rootHandle !== null) await rootHandle.close().catch(() => { /* best-effort close */ });
+      if (err instanceof Error && err.message.includes("identity changed during scan")) {
+        throw err;
+      }
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `document scan: post-scan root validation failed for '${docsPath}': ${detail}`,
+        { cause: err },
+      );
+    }
+  }
+  if (rootHandle !== null) await rootHandle.close().catch(() => { /* best-effort close */ });
 
   const lstat = options._lstatOverride ?? fs.lstat;
 
