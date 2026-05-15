@@ -154,6 +154,31 @@ describe("ProfileRepository", () => {
     expect(found?.communicationStyle).toBe("atomic-2")
   });
 
+  it("concurrent upserts for the same slug result in exactly one row (#363)", async () => {
+    const N = 20;
+    const calls = Array.from({ length: N }, (_, i) =>
+      repo.upsert(
+        "ceo",
+        sampleProfile({
+          communicationStyle: `concurrent-${i}`,
+          documentCount: i,
+        }),
+      ),
+    );
+    await Promise.all(calls);
+
+    const rows = await db
+      .selectFrom("persona_profiles")
+      .selectAll()
+      .where("expert_slug", "=", "ceo")
+      .execute();
+    expect(rows).toHaveLength(1);
+
+    const found = await repo.findBySlug("ceo");
+    expect(found).not.toBeNull();
+    expect(found?.communicationStyle).toMatch(/^concurrent-\d+$/);
+  });
+
   it("profiles are scoped per slug", async () => {
     await seedExpert(db, "cto");
     await repo.upsert("ceo", sampleProfile({ communicationStyle: "ceo style" }));
