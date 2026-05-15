@@ -6,7 +6,7 @@
  * chat_sessions / chat_turns, and src/memory/repositories/chat-repository.ts
  * do not yet exist.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { type CouncilDatabase, createDatabase } from "../../../src/memory/db.js";
 import { ChatRepository } from "../../../src/memory/repositories/chat-repository.js";
@@ -254,6 +254,89 @@ describe("ChatRepository", () => {
         })
         .execute(),
     ).rejects.toThrow(/UNIQUE|constraint/i);
+  });
+
+  // Issue #466 follow-up — atomic user+expert pair persistence so the
+  // @convene abort-path flush cannot interleave a higher-seq expert
+  // turn before its parent user prompt.
+  it("persistTurnPair() inserts user before expert with strictly increasing seq", async () => {
+    const session = await repo.createSession({ targetType: "panel", targetSlug: "deb" });
+    const [user, expert] = await repo.persistTurnPair(
+      { chatId: session.id, role: "user", content: "should we ship?" },
+      {
+        chatId: session.id,
+        role: "expert",
+        expertSlug: "panel-a",
+        content: "partial reply",
+      },
+    );
+    expect(user.role).toBe("user");
+    expect(expert.role).toBe("expert");
+    expect(user.seq).toBe(1);
+    expect(expert.seq).toBe(2);
+
+    const turns = await repo.getTurns(session.id);
+    expect(turns.map((t) => t.role)).toEqual(["user", "expert"]);
+    expect(turns.map((t) => t.seq)).toEqual([1, 2]);
+    expect(turns[0]?.content).toBe("should we ship?");
+    expect(turns[1]?.expertSlug).toBe("panel-a");
+  });
+
+  it("persistTurnPair() respects existing turns when computing seq", async () => {
+    const session = await repo.createSession({ targetType: "panel", targetSlug: "deb" });
+    await repo.addTurn({ chatId: session.id, role: "user", content: "earlier" });
+    await repo.addTurn({
+      chatId: session.id,
+      role: "expert",
+      expertSlug: "panel-a",
+      content: "prior reply",
+    });
+    const [user, expert] = await repo.persistTurnPair(
+      { chatId: session.id, role: "user", content: "follow-up" },
+      {
+        chatId: session.id,
+        role: "expert",
+        expertSlug: "panel-b",
+        content: "partial",
+      },
+    );
+    expect(user.seq).toBe(3);
+    expect(expert.seq).toBe(4);
+  });
+
+  it("persistTurnPair() rolls back the user insert when the expert insert fails", async () => {
+    const session = await repo.createSession({ targetType: "panel", targetSlug: "deb" });
+    // Force the second underlying insert (the expert turn) to throw mid-
+    // transaction. The atomic-flush invariant requires that the first
+    // (user) insert is also rolled back so no orphan user row remains.
+    const original = ChatRepository.prototype.addTurn;
+    let calls = 0;
+    const spy = vi
+      .spyOn(ChatRepository.prototype, "addTurn")
+      .mockImplementation(async function (this: ChatRepository, args) {
+        calls += 1;
+        if (calls === 2) {
+          throw new Error("simulated expert insert failure");
+        }
+        return original.call(this, args);
+      });
+    try {
+      await expect(
+        repo.persistTurnPair(
+          { chatId: session.id, role: "user", content: "topic" },
+          {
+            chatId: session.id,
+            role: "expert",
+            expertSlug: "panel-a",
+            content: "reply",
+          },
+        ),
+      ).rejects.toThrow(/simulated/i);
+    } finally {
+      spy.mockRestore();
+    }
+    const turns = await repo.getTurns(session.id);
+    expect(turns).toHaveLength(0);
   });
 
   it("addTurn() allocates seq atomically against concurrent inserts", async () => {

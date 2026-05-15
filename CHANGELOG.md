@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Ctrl+C during `@convene` debate** — interrupting an inline structured debate via Ctrl+C now aborts the debate cleanly, persists any partial expert response that was already streamed, and surfaces a visible warning if that flush itself fails. The deferred `@convene` user turn is only committed after the partial expert turn writes successfully so an aborted, never-answered prompt no longer leaves an orphan user row in chat history (#466).
 - **Graceful CLI error handling** — user-facing errors (not-found, validation, missing flags) now print a clean one-line message to stderr and exit with code 1 instead of dumping full Node.js stack traces. Internally, errors that have already been written to stderr by command handlers throw `CliUserError` (suppressed by the top-level handler); all other errors have their message printed without a stack trace.
 - Persona profile prompts now render `epistemicStance` field correctly instead of silently dropping it (#407).
 - Corrupt profile JSON in the database now emits a warning and degrades gracefully instead of crashing (#408).

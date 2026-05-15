@@ -10,7 +10,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   appendReferenceDocuments,
@@ -3120,6 +3120,540 @@ describe("graceful SIGINT handling (PRD §F4)", () => {
     expect(out).toMatch(
       /Conversation saved\. Resume with "council chat duo-prompt-sigint"\./,
     );
+  });
+
+  // Issue #466 — Ctrl+C during an inline @convene structured debate must
+  // abort the debate and return cleanly to the chat prompt rather than
+  // being swallowed.
+  it("during @convene structured debate: aborts, surfaces interrupted notice, returns to prompt", async () => {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "deb-sigint", ["panel-a", "panel-b"]);
+
+    let triggerInterrupt: (() => void) | null = null;
+    const subscribeInterrupt = (handler: () => void): (() => void) => {
+      triggerInterrupt = handler;
+      return () => {
+        triggerInterrupt = null;
+      };
+    };
+
+    // Slow-ish engine. We need the abort to land deterministically
+    // *after* at least one expert turn has completed (so the deferred
+    // user-turn persistence has fired) AND while another expert is
+    // mid-stream (so a partial buffer exists). To get there without
+    // relying on wall-clock timing, the engine itself triggers the
+    // abort from inside expert B's first chunk.
+    const registered = new Set<string>();
+    let sendCount = 0;
+    const engine: CouncilEngine = {
+      async start(): Promise<void> {
+        /* no-op */
+      },
+      async stop(): Promise<void> {
+        /* no-op */
+      },
+      async addExpert(spec): Promise<void> {
+        registered.add(spec.id);
+      },
+      async removeExpert(): Promise<void> {
+        /* no-op */
+      },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock-model"];
+      },
+      send(opts): AsyncIterable<EngineEvent> {
+        const expertId = opts.expertId;
+        if (!registered.has(expertId)) {
+          throw new Error(`Expert ${expertId} is not registered`);
+        }
+        const myCallIndex = ++sendCount;
+        async function* gen(): AsyncGenerator<EngineEvent, void, void> {
+          for (let i = 0; i < 4; i++) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 10));
+            yield { kind: "message.delta", expertId, text: `chunk${i} ` };
+            // After expert B (the second send of the debate) has
+            // emitted its first chunk, fire the interrupt. The
+            // chat loop's debate state controller aborts and the
+            // outer Promise.race breaks us out of iteration.
+            if (myCallIndex === 2 && i === 0) {
+              triggerInterrupt?.();
+            }
+          }
+          yield {
+            kind: "message.complete",
+            expertId,
+            response: { latencyMs: 40, tokensIn: 1, tokensOut: 1 },
+          };
+        }
+        return gen();
+      },
+    };
+
+    let out = "";
+    const lines: readonly string[] = ["@convene should we ship?", "/quit"];
+    let i = 0;
+    const inputProvider: ChatInputProvider = {
+      async readLine(): Promise<string | null> {
+        return lines[i++] ?? null;
+      },
+      close(): void {
+        /* no-op */
+      },
+    };
+
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () => inputProvider,
+      subscribeInterrupt,
+    });
+    await cmd.parseAsync(["node", "council-chat", "deb-sigint", "--engine", "mock"]);
+
+    // Debate-interrupted notice must surface, and the chat must have
+    // returned to the prompt (so the subsequent `/quit` is consumed,
+    // emitting the standard "Conversation saved." message).
+    expect(out).toMatch(/Structured deliberation interrupted/i);
+    expect(out).toMatch(/Conversation saved\./);
+
+    // PRD §F6 — partial results are preserved on interruption. The
+    // engine completed expert A (the first send) before triggering
+    // the abort during expert B's first chunk; on a correct abort
+    // path:
+    //   - the deferred @convene user turn is persisted exactly once,
+    //   - expert A's full turn is persisted, and
+    //   - expert B's partially-buffered output is persisted (whatever
+    //     was streamed before abort) rather than silently dropped.
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "deb-sigint");
+      const turns = await repo.getTurns(session?.id ?? "");
+      const userTurns = turns.filter((t) => t.role === "user");
+      const expertTurns = turns.filter((t) => t.role === "expert");
+      expect(userTurns.length).toBe(1);
+      expect(userTurns[0]?.content).toBe("should we ship?");
+      const slugs = expertTurns.map((t) => t.expertSlug);
+      expect(slugs).toContain("panel-a");
+      expect(slugs).toContain("panel-b");
+      const partialB = expertTurns.find((t) => t.expertSlug === "panel-b");
+      expect(partialB?.content ?? "").toMatch(/chunk0/);
+      expect(partialB?.content ?? "").not.toMatch(/chunk3/);
+    });
+  });
+
+  it("after @convene abort: chat session remains usable for further input", async () => {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "deb-resume", ["panel-a", "panel-b"]);
+
+    let triggerInterrupt: (() => void) | null = null;
+    const subscribeInterrupt = (handler: () => void): (() => void) => {
+      triggerInterrupt = handler;
+      return () => {
+        triggerInterrupt = null;
+      };
+    };
+
+    const registered = new Set<string>();
+    let postAbortSends = 0;
+    let abortFired = false;
+    const engine: CouncilEngine = {
+      async start(): Promise<void> {
+        /* no-op */
+      },
+      async stop(): Promise<void> {
+        /* no-op */
+      },
+      async addExpert(spec): Promise<void> {
+        registered.add(spec.id);
+      },
+      async removeExpert(): Promise<void> {
+        /* no-op */
+      },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock-model"];
+      },
+      send(opts): AsyncIterable<EngineEvent> {
+        const expertId = opts.expertId;
+        if (!registered.has(expertId)) {
+          throw new Error(`Expert ${expertId} is not registered`);
+        }
+        if (abortFired) postAbortSends += 1;
+        async function* gen(): AsyncGenerator<EngineEvent, void, void> {
+          for (let i = 0; i < 4; i++) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 20));
+            yield { kind: "message.delta", expertId, text: `chunk${i} ` };
+          }
+          yield {
+            kind: "message.complete",
+            expertId,
+            response: { latencyMs: 80, tokensIn: 1, tokensOut: 1 },
+          };
+        }
+        return gen();
+      },
+    };
+
+    let out = "";
+    const lines: readonly string[] = [
+      "@convene should we ship?",
+      "follow up question",
+      "/quit",
+    ];
+    let i = 0;
+    const inputProvider: ChatInputProvider = {
+      async readLine(): Promise<string | null> {
+        const line = lines[i++] ?? null;
+        if (line === "@convene should we ship?") {
+          setTimeout(() => {
+            abortFired = true;
+            triggerInterrupt?.();
+          }, 50);
+        }
+        return line;
+      },
+      close(): void {
+        /* no-op */
+      },
+    };
+
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () => inputProvider,
+      subscribeInterrupt,
+    });
+    await cmd.parseAsync(["node", "council-chat", "deb-resume", "--engine", "mock"]);
+
+    // The session must accept the follow-up turn after debate abort.
+    expect(postAbortSends).toBeGreaterThan(0);
+    expect(out).toMatch(/Structured deliberation interrupted/i);
+    expect(out).toMatch(/Conversation saved\./);
+  });
+
+  it("@convene Ctrl+C with failing partial-flush write surfaces a visible warning instead of silently dropping content", async () => {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "deb-flushfail", ["panel-a", "panel-b"]);
+
+    let triggerInterrupt: (() => void) | null = null;
+    const subscribeInterrupt = (handler: () => void): (() => void) => {
+      triggerInterrupt = handler;
+      return () => {
+        triggerInterrupt = null;
+      };
+    };
+
+    // Engine layout mirrors the deterministic abort test: expert A
+    // completes one full turn, then expert B's first chunk triggers
+    // the interrupt mid-stream so the abort branch attempts a
+    // partial-flush of B's buffer.
+    const registered = new Set<string>();
+    let sendCount = 0;
+    const engine: CouncilEngine = {
+      async start(): Promise<void> {
+        /* no-op */
+      },
+      async stop(): Promise<void> {
+        /* no-op */
+      },
+      async addExpert(spec): Promise<void> {
+        registered.add(spec.id);
+      },
+      async removeExpert(): Promise<void> {
+        /* no-op */
+      },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock-model"];
+      },
+      send(opts): AsyncIterable<EngineEvent> {
+        const expertId = opts.expertId;
+        if (!registered.has(expertId)) {
+          throw new Error(`Expert ${expertId} is not registered`);
+        }
+        const myCallIndex = ++sendCount;
+        async function* gen(): AsyncGenerator<EngineEvent, void, void> {
+          for (let i = 0; i < 4; i++) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 10));
+            yield { kind: "message.delta", expertId, text: `chunk${i} ` };
+            if (myCallIndex === 2 && i === 0) {
+              triggerInterrupt?.();
+            }
+          }
+          yield {
+            kind: "message.complete",
+            expertId,
+            response: { latencyMs: 40, tokensIn: 1, tokensOut: 1 },
+          };
+        }
+        return gen();
+      },
+    };
+
+    // Force the ChatRepository.addTurn call that happens inside the
+    // abort branch (role=expert, expertSlug=panel-b) to throw, so we
+    // can observe the visible-warning branch added in response to
+    // Sentinel SNT-20260515-020946-convene-ctrlc-rereview.
+    const originalAddTurn = ChatRepository.prototype.addTurn;
+    const spy = vi
+      .spyOn(ChatRepository.prototype, "addTurn")
+      .mockImplementation(async function (this: ChatRepository, args) {
+        if (args.role === "expert" && args.expertSlug === "panel-b") {
+          throw new Error("simulated db write failure");
+        }
+        return originalAddTurn.call(this, args);
+      });
+
+    let out = "";
+    const lines: readonly string[] = ["@convene should we ship?", "/quit"];
+    let i = 0;
+    const inputProvider: ChatInputProvider = {
+      async readLine(): Promise<string | null> {
+        return lines[i++] ?? null;
+      },
+      close(): void {
+        /* no-op */
+      },
+    };
+
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () => inputProvider,
+      subscribeInterrupt,
+    });
+    try {
+      await cmd.parseAsync(["node", "council-chat", "deb-flushfail", "--engine", "mock"]);
+    } finally {
+      spy.mockRestore();
+    }
+
+    // The visible warning must surface (so the user knows their
+    // streamed partial response was not durably saved) and the chat
+    // must still recover and consume `/quit`.
+    expect(out).toMatch(
+      /Could not persist partial panel-b response \(\d+ bytes\) after interruption/i,
+    );
+    expect(out).toMatch(/Structured deliberation interrupted/i);
+    expect(out).toMatch(/Conversation saved\./);
+  });
+
+  it("@convene Ctrl+C with first-turn partial-flush failure leaves no orphan user row", async () => {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "deb-orphan", ["panel-a", "panel-b"]);
+
+    let triggerInterrupt: (() => void) | null = null;
+    const subscribeInterrupt = (handler: () => void): (() => void) => {
+      triggerInterrupt = handler;
+      return () => {
+        triggerInterrupt = null;
+      };
+    };
+
+    // Engine: abort fires during expert A's FIRST chunk — i.e. before
+    // any turn.end has landed. The deferred @convene user turn has
+    // therefore never been persisted yet. The abort branch will try
+    // to flush both: the user turn (deferred) and panel-a's partial
+    // buffer. We force the partial-expert write to fail, so no
+    // expert content lands; the function's invariant says no orphan
+    // @convene user row may remain.
+    const registered = new Set<string>();
+    const engine: CouncilEngine = {
+      async start(): Promise<void> {
+        /* no-op */
+      },
+      async stop(): Promise<void> {
+        /* no-op */
+      },
+      async addExpert(spec): Promise<void> {
+        registered.add(spec.id);
+      },
+      async removeExpert(): Promise<void> {
+        /* no-op */
+      },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock-model"];
+      },
+      send(opts): AsyncIterable<EngineEvent> {
+        const expertId = opts.expertId;
+        if (!registered.has(expertId)) {
+          throw new Error(`Expert ${expertId} is not registered`);
+        }
+        async function* gen(): AsyncGenerator<EngineEvent, void, void> {
+          for (let i = 0; i < 4; i++) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 10));
+            yield { kind: "message.delta", expertId, text: `chunk${i} ` };
+            // First expert (panel-a), first chunk: trigger abort
+            // immediately so no turn.end ever lands.
+            if (i === 0) {
+              triggerInterrupt?.();
+            }
+          }
+          yield {
+            kind: "message.complete",
+            expertId,
+            response: { latencyMs: 40, tokensIn: 1, tokensOut: 1 },
+          };
+        }
+        return gen();
+      },
+    };
+
+    // Force the partial-expert flush for panel-a to fail.
+    const originalAddTurn = ChatRepository.prototype.addTurn;
+    const spy = vi
+      .spyOn(ChatRepository.prototype, "addTurn")
+      .mockImplementation(async function (this: ChatRepository, args) {
+        if (args.role === "expert" && args.expertSlug === "panel-a") {
+          throw new Error("simulated db write failure");
+        }
+        return originalAddTurn.call(this, args);
+      });
+
+    let out = "";
+    const lines: readonly string[] = ["@convene should we ship?", "/quit"];
+    let i = 0;
+    const inputProvider: ChatInputProvider = {
+      async readLine(): Promise<string | null> {
+        return lines[i++] ?? null;
+      },
+      close(): void {
+        /* no-op */
+      },
+    };
+
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () => inputProvider,
+      subscribeInterrupt,
+    });
+    try {
+      await cmd.parseAsync(["node", "council-chat", "deb-orphan", "--engine", "mock"]);
+    } finally {
+      spy.mockRestore();
+    }
+
+    // Visible warning still surfaces; chat still recovers.
+    expect(out).toMatch(
+      /Could not persist partial panel-a response \(\d+ bytes\) after interruption/i,
+    );
+    expect(out).toMatch(/Conversation saved\./);
+
+    // Consistency invariant: no expert turns landed AND no orphan
+    // @convene user turn was committed.
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "deb-orphan");
+      const turns = await repo.getTurns(session?.id ?? "");
+      const userTurns = turns.filter((t) => t.role === "user");
+      const expertTurns = turns.filter((t) => t.role === "expert");
+      expect(expertTurns.length).toBe(0);
+      expect(userTurns.length).toBe(0);
+    });
+  });
+
+  it("@convene Ctrl+C on first turn: persisted user prompt has lower seq than partial expert reply (#466)", async () => {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "deb-order", ["panel-a", "panel-b"]);
+
+    let triggerInterrupt: (() => void) | null = null;
+    const subscribeInterrupt = (handler: () => void): (() => void) => {
+      triggerInterrupt = handler;
+      return () => {
+        triggerInterrupt = null;
+      };
+    };
+
+    // Engine: abort fires during expert A's FIRST chunk — before any
+    // turn.end has landed and BEFORE the deferred @convene user turn
+    // has been persisted. The abort branch must persist the user turn
+    // and the partial expert turn ATOMICALLY so user.seq < expert.seq —
+    // otherwise getTurns() returns the expert reply before the prompt
+    // that triggered it (#466 follow-up, Sentinel cycle 5 finding).
+    const registered = new Set<string>();
+    const engine: CouncilEngine = {
+      async start(): Promise<void> {
+        /* no-op */
+      },
+      async stop(): Promise<void> {
+        /* no-op */
+      },
+      async addExpert(spec): Promise<void> {
+        registered.add(spec.id);
+      },
+      async removeExpert(): Promise<void> {
+        /* no-op */
+      },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock-model"];
+      },
+      send(opts): AsyncIterable<EngineEvent> {
+        const expertId = opts.expertId;
+        if (!registered.has(expertId)) {
+          throw new Error(`Expert ${expertId} is not registered`);
+        }
+        async function* gen(): AsyncGenerator<EngineEvent, void, void> {
+          for (let i = 0; i < 4; i++) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 10));
+            yield { kind: "message.delta", expertId, text: `chunk${i} ` };
+            if (i === 0) {
+              triggerInterrupt?.();
+            }
+          }
+          yield {
+            kind: "message.complete",
+            expertId,
+            response: { latencyMs: 40, tokensIn: 1, tokensOut: 1 },
+          };
+        }
+        return gen();
+      },
+    };
+
+    let out = "";
+    const lines: readonly string[] = ["@convene should we ship?", "/quit"];
+    let i = 0;
+    const inputProvider: ChatInputProvider = {
+      async readLine(): Promise<string | null> {
+        return lines[i++] ?? null;
+      },
+      close(): void {
+        /* no-op */
+      },
+    };
+
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () => inputProvider,
+      subscribeInterrupt,
+    });
+    await cmd.parseAsync(["node", "council-chat", "deb-order", "--engine", "mock"]);
+
+    expect(out).toMatch(/Structured deliberation interrupted/i);
+    expect(out).toMatch(/Conversation saved\./);
+
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "deb-order");
+      const turns = await repo.getTurns(session?.id ?? "");
+      // Both rows must be present: the user @convene topic and the
+      // partial panel-a expert reply.
+      expect(turns).toHaveLength(2);
+      expect(turns[0]?.role).toBe("user");
+      expect(turns[0]?.content).toBe("should we ship?");
+      expect(turns[1]?.role).toBe("expert");
+      expect(turns[1]?.expertSlug).toBe("panel-a");
+      expect(turns[1]?.content).toMatch(/chunk0/);
+      // Atomic-ordering invariant: user.seq < expert.seq so getTurns
+      // returns the prompt before its reply.
+      expect(turns[0]?.seq).toBeLessThan(turns[1]?.seq ?? 0);
+    });
   });
 });
 
