@@ -25,7 +25,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildResumeCommand } from "../../../../src/cli/commands/resume.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
-import type { CouncilEngine } from "../../../../src/engine/index.js";
+import type { CouncilEngine, ExpertSpec } from "../../../../src/engine/index.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import { DebateRepository } from "../../../../src/memory/repositories/debates.js";
 import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
@@ -498,8 +498,7 @@ describe("buildResumeCommand", () => {
         seq: 1,
         speakerKind: "expert",
         expertId: expert.id,
-        content:
-          "RESUME_RECALL_MARKER_BETA — keep the migration window narrow and reversible.",
+        content: "RESUME_RECALL_MARKER_BETA — keep the migration window narrow and reversible.",
       });
       await new DebateRepository(seedingDb).update(debate.id, {
         status: "completed",
@@ -611,7 +610,57 @@ describe("buildResumeCommand", () => {
       "1",
     ]);
 
-    expect(stderr.toLowerCase()).toMatch(/parse.*panel config|panel config.*parse|could not parse panel config/);
+    expect(stderr.toLowerCase()).toMatch(
+      /parse.*panel config|panel config.*parse|could not parse panel config/,
+    );
     expect(stderr.toLowerCase()).toContain("freeform");
+  });
+
+  it("uses config.defaults.model for the memory-extraction synthesizer", async () => {
+    const configPath = path.join(testHome, "config.yaml");
+    await fs.writeFile(configPath, "defaults:\n  model: resume-test-model\n");
+
+    const seed = await seedPanelWithDebate(testHome);
+
+    const addedSpecs: ExpertSpec[] = [];
+    const capturingFactory = (): CouncilEngine => {
+      const real = new MockEngine({ responses: {} });
+      const origAdd = real.addExpert.bind(real);
+      return {
+        start: () => real.start(),
+        stop: () => real.stop(),
+        addExpert: async (spec: ExpertSpec) => {
+          addedSpecs.push(spec);
+          return origAdd(spec);
+        },
+        removeExpert: (id: string) => real.removeExpert(id),
+        send: (opts) => real.send(opts),
+        listModels: () => real.listModels(),
+      };
+    };
+
+    const cmd = buildResumeCommand({
+      engineFactory: capturingFactory,
+      write: () => undefined,
+      writeError: () => undefined,
+    });
+    await cmd.parseAsync([
+      "node",
+      "council-resume",
+      seed.panelName,
+      "--continue",
+      "follow-up",
+      "--engine",
+      "mock",
+      "--max-rounds",
+      "1",
+    ]);
+
+    // The memory extraction hook creates a per-expert synthesizer with slug
+    // pattern "__memory-extractor-<expertId>". Find it by prefix.
+    const synthSpec = addedSpecs.find((s) => s.slug.startsWith("__memory-extractor-"));
+    expect(synthSpec).toBeDefined();
+    if (!synthSpec) return; // unreachable after expect above; satisfies lint
+    expect(synthSpec.model).toBe("resume-test-model");
   });
 });

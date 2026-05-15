@@ -18,11 +18,12 @@ import { Command } from "commander";
 import { CliUserError } from "../cli-user-error.js";
 
 import { autoComposePanel } from "../../core/auto-compose.js";
-import { getCouncilDataHome, getCouncilHome, DEFAULT_MODEL } from "../../config/index.js";
+import { getCouncilDataHome, getCouncilHome, loadConfig } from "../../config/index.js";
 import type { ContextConfig } from "../../core/debate.js";
 import type { VisibilityConfig } from "../../core/context/visibility.js";
 import { FileExpertLibrary } from "../../core/expert-library.js";
 import { isMigrationNeeded, migrateBuiltInTemplates } from "../../core/template-migration.js";
+import { resolveModel } from "../../core/model-resolver.js";
 import type { DebateMode } from "../../core/template-loader.js";
 import {
   assertAllInline,
@@ -187,6 +188,8 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         );
       }
 
+      const config = await loadConfig();
+      const defaultModel = config.defaults.model;
       const humanNames: readonly string[] = raw.human ?? [];
 
       const opts: ConveneOptions = {
@@ -273,7 +276,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           await composeEngine.start();
           try {
             template = await autoComposePanel(topic, composeEngine, {
-              defaultModel: DEFAULT_MODEL,
+              defaultModel,
             });
           } catch (err: unknown) {
             const cause = err instanceof Error ? err.message : String(err);
@@ -331,7 +334,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           }
         }
 
-        const aiExperts = buildExpertSpecs(template, topic, memoryBySlug);
+        const aiExperts = buildExpertSpecs(template, topic, memoryBySlug, defaultModel);
 
         // Build human expert specs from --human flags
         const humanExperts: ExpertSpec[] = humanNames.map((name) => ({
@@ -421,7 +424,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
                     debateId: ctx.debateId,
                     expertSlugToId: ctx.expertSlugToId,
                     humanSlugs,
-                    model: DEFAULT_MODEL,
+                    model: defaultModel,
                     writeError,
                   }),
               }),
@@ -451,6 +454,7 @@ function buildExpertSpecs(
   template: ResolvedPanelDefinition,
   topic: string,
   memoryBySlug: ReadonlyMap<string, ExpertMemory>,
+  configDefaultModel: string,
 ): ExpertSpec[] {
   return template.experts.map((def) => {
     const systemMessage = buildSystemPrompt(def, memoryBySlug.get(def.slug), topic);
@@ -458,7 +462,7 @@ function buildExpertSpecs(
       id: ulid(),
       slug: def.slug,
       displayName: def.displayName,
-      model: def.model ?? DEFAULT_MODEL,
+      model: resolveModel({ expertModel: def.model, configDefaultModel }),
       systemMessage,
     };
   });
