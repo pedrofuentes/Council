@@ -484,6 +484,15 @@ describe("applyRecalledMemory", () => {
     const memorySection = out.slice(memoryHeaderIdx, personaHeaderIdx);
     expect(memorySection).toContain("Positions you have taken:");
     expect(memorySection).toContain("- adopt microservices for billing");
+    // Symmetric downstream negative assertions: the memory payload must
+    // not appear in PERSONA PROFILE or in the CURRENT TASK section. This
+    // catches regressions that would duplicate memory into a later section.
+    const personaSection = out.slice(personaHeaderIdx, taskHeaderIdx);
+    expect(personaSection).not.toContain("adopt microservices for billing");
+    expect(personaSection).not.toContain("Positions you have taken:");
+    const taskSection = out.slice(taskHeaderIdx);
+    expect(taskSection).not.toContain("adopt microservices for billing");
+    expect(taskSection).not.toContain("Positions you have taken:");
   });
 
   it("applies memory when CURRENT TASK is [10] (persona + panel memberships)", () => {
