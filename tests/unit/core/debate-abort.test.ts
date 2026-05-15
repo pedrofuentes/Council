@@ -46,6 +46,12 @@ const FREEFORM_1R: DebateConfig = {
   mode: "freeform",
 };
 
+const STRUCTURED: DebateConfig = {
+  maxRounds: 1,
+  maxWordsPerResponse: 50,
+  mode: "structured",
+};
+
 interface RecordedSend {
   readonly expertId: string;
   readonly signal: AbortSignal | undefined;
@@ -331,6 +337,138 @@ describe("Debate.run() — AbortSignal threading (#503)", () => {
     expect(ends).toHaveLength(1);
     if (ends[0]?.kind === "debate.end") {
       expect(ends[0].reason).toBe("aborted");
+    }
+  });
+
+  it("structured mode: abort during the final phase yields debate.end 'aborted', not 'completed'", async () => {
+    class SlowEngine extends RecordingEngine {
+      override send(options: SendOptions): AsyncIterable<EngineEvent> {
+        this.sends.push({ expertId: options.expertId, signal: options.signal });
+        const expertId = options.expertId;
+        const signal = options.signal;
+        return {
+          async *[Symbol.asyncIterator](): AsyncIterator<EngineEvent> {
+            yield { kind: "message.delta", expertId, text: "x" };
+            await new Promise<void>((resolve) => setTimeout(resolve, 5));
+            if (signal?.aborted) {
+              yield {
+                kind: "error",
+                expertId,
+                error: { code: "ABORTED", message: "aborted" },
+                recoverable: false,
+              };
+              return;
+            }
+            yield {
+              kind: "message.complete",
+              expertId,
+              response: { latencyMs: 1 },
+            };
+          },
+        };
+      }
+    }
+
+    const engine = new SlowEngine();
+    await engine.start();
+    await engine.addExpert(cto);
+
+    const controller = new AbortController();
+    // Single-expert structured debate runs 3 phases (opening, rebuttal,
+    // synthesis). Abort during the synthesis phase (the last one) so
+    // the final-completion path is the one exercised.
+    const debate = new Debate(engine, [cto], STRUCTURED);
+    const events: DebateEvent[] = [];
+    let phaseCount = 0;
+    for await (const evt of debate.run("topic", { signal: controller.signal })) {
+      events.push(evt);
+      if (evt.kind === "round.start") {
+        phaseCount += 1;
+        if (phaseCount === 3) controller.abort();
+      }
+    }
+
+    const ends = events.filter((e) => e.kind === "debate.end");
+    expect(ends).toHaveLength(1);
+    if (ends[0]?.kind === "debate.end") {
+      expect(ends[0].reason).toBe("aborted");
+    }
+  });
+
+  it("forwards the run() signal through to the LLM summarizer's engine.send", async () => {
+    // Two-round freeform with LLM summarization enabled — the
+    // per-round buildLLMSummary() runs at the top of round 1 (after
+    // round 0 has produced prior turns). The summarizer's send MUST
+    // receive the same signal as the per-turn sends.
+    const engine = new RecordingEngine();
+    await engine.start();
+    await engine.addExpert(cto);
+
+    const controller = new AbortController();
+    const debate = new Debate(engine, [cto], {
+      maxRounds: 2,
+      maxWordsPerResponse: 50,
+      mode: "freeform",
+      contextConfig: {
+        summarizer: { mode: "llm", summarizeAfterRound: 1, maxSummaryLength: 200 },
+      },
+    });
+    await collect(debate.run("topic", { signal: controller.signal }));
+
+    // sends include: round-0 cto turn, round-1 summarizer (temp expert),
+    // and round-1 cto turn. All must carry the caller's signal.
+    expect(engine.sends.length).toBeGreaterThanOrEqual(2);
+    for (const s of engine.sends) {
+      expect(s.signal).toBe(controller.signal);
+    }
+  });
+
+  it("does NOT suppress a non-ABORTED engine error just because signal is aborted", async () => {
+    // Engine yields a recoverable error (RATE_LIMITED) on the first
+    // attempt. Caller's signal aborts before the retry can fire. The
+    // turn-level error must still surface so the failure cause is
+    // visible — suppression is reserved for ABORTED engine errors.
+    class FlakyEngine extends RecordingEngine {
+      callCount = 0;
+      override send(options: SendOptions): AsyncIterable<EngineEvent> {
+        this.sends.push({ expertId: options.expertId, signal: options.signal });
+        const expertId = options.expertId;
+        this.callCount += 1;
+        return {
+          async *[Symbol.asyncIterator](): AsyncIterator<EngineEvent> {
+            yield {
+              kind: "error",
+              expertId,
+              error: { code: "PROVIDER_ERROR", message: "real failure" },
+              recoverable: false,
+            };
+          },
+        };
+      }
+    }
+
+    const engine = new FlakyEngine();
+    await engine.start();
+    await engine.addExpert(cto);
+
+    const controller = new AbortController();
+    const debate = new Debate(engine, [cto], FREEFORM_1R);
+    const events: DebateEvent[] = [];
+    for await (const evt of debate.run("topic", { signal: controller.signal })) {
+      events.push(evt);
+      // Abort right after the engine's error event has surfaced through
+      // the orchestrator. The turn-level error is yielded synchronously
+      // from #runAiTurn after the engine stream ends, so by the time we
+      // see ANY event after turn.start, the error has been emitted.
+      if (evt.kind === "turn.start") controller.abort();
+    }
+
+    const errors = events.filter((e) => e.kind === "error");
+    // The non-ABORTED error MUST surface — masking it would hide a real
+    // provider failure behind the abort.
+    expect(errors.length).toBe(1);
+    if (errors[0]?.kind === "error") {
+      expect(errors[0].message).toBe("real failure");
     }
   });
 });
