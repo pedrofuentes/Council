@@ -300,7 +300,9 @@ export function appendReferenceDocuments(
   for (const s of snippets) {
     const safeSource = String(s.source)
       .replace(/[\r\n]+/g, " ")
-      .replace(/<<</g, "<_<");
+      .replace(/<<</g, "<_<")
+      .replace(/>>>/g, ">_>_>")
+      .replace(/"/g, "'");
     const safeContent = String(s.content).replace(/<<</g, "<_<");
     lines.push(`<<<DOC source="${safeSource}">>>`);
     lines.push(safeContent);
