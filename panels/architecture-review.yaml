@@ -6,6 +6,7 @@ description: >
 defaults:
   mode: freeform
   maxRounds: 4
+  model: claude-sonnet-4-20250514
 
 experts:
   - slug: cto
