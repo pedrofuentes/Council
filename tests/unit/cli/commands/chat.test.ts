@@ -3121,6 +3121,190 @@ describe("graceful SIGINT handling (PRD §F4)", () => {
       /Conversation saved\. Resume with "council chat duo-prompt-sigint"\./,
     );
   });
+
+  // Issue #466 — Ctrl+C during an inline @convene structured debate must
+  // abort the debate and return cleanly to the chat prompt rather than
+  // being swallowed.
+  it("during @convene structured debate: aborts, surfaces interrupted notice, returns to prompt", async () => {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "deb-sigint", ["panel-a", "panel-b"]);
+
+    let triggerInterrupt: (() => void) | null = null;
+    const subscribeInterrupt = (handler: () => void): (() => void) => {
+      triggerInterrupt = handler;
+      return () => {
+        triggerInterrupt = null;
+      };
+    };
+
+    // Slow-ish engine so a debate that runs ~8 phases worth of sends
+    // does not finish before the interrupt fires. Each chunk takes
+    // ~20ms; if abort propagates through the outer Promise.race, the
+    // inline-debate function returns within a chunk window.
+    const registered = new Set<string>();
+    const engine: CouncilEngine = {
+      async start(): Promise<void> {
+        /* no-op */
+      },
+      async stop(): Promise<void> {
+        /* no-op */
+      },
+      async addExpert(spec): Promise<void> {
+        registered.add(spec.id);
+      },
+      async removeExpert(): Promise<void> {
+        /* no-op */
+      },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock-model"];
+      },
+      send(opts): AsyncIterable<EngineEvent> {
+        const expertId = opts.expertId;
+        if (!registered.has(expertId)) {
+          throw new Error(`Expert ${expertId} is not registered`);
+        }
+        async function* gen(): AsyncGenerator<EngineEvent, void, void> {
+          for (let i = 0; i < 4; i++) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 20));
+            yield { kind: "message.delta", expertId, text: `chunk${i} ` };
+          }
+          yield {
+            kind: "message.complete",
+            expertId,
+            response: { latencyMs: 80, tokensIn: 1, tokensOut: 1 },
+          };
+        }
+        return gen();
+      },
+    };
+
+    let out = "";
+    const lines: readonly string[] = ["@convene should we ship?", "/quit"];
+    let i = 0;
+    const inputProvider: ChatInputProvider = {
+      async readLine(): Promise<string | null> {
+        const line = lines[i++] ?? null;
+        if (line === "@convene should we ship?") {
+          // A full debate is 4 phases × 2 experts × ~80ms ≈ 640ms.
+          // Fire abort at ~50ms so we are well inside the run.
+          setTimeout(() => {
+            triggerInterrupt?.();
+          }, 50);
+        }
+        return line;
+      },
+      close(): void {
+        /* no-op */
+      },
+    };
+
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () => inputProvider,
+      subscribeInterrupt,
+    });
+    await cmd.parseAsync(["node", "council-chat", "deb-sigint", "--engine", "mock"]);
+
+    // Debate-interrupted notice must surface, and the chat must have
+    // returned to the prompt (so the subsequent `/quit` is consumed,
+    // emitting the standard "Conversation saved." message).
+    expect(out).toMatch(/Structured deliberation interrupted/i);
+    expect(out).toMatch(/Conversation saved\./);
+  });
+
+  it("after @convene abort: chat session remains usable for further input", async () => {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "deb-resume", ["panel-a", "panel-b"]);
+
+    let triggerInterrupt: (() => void) | null = null;
+    const subscribeInterrupt = (handler: () => void): (() => void) => {
+      triggerInterrupt = handler;
+      return () => {
+        triggerInterrupt = null;
+      };
+    };
+
+    const registered = new Set<string>();
+    let postAbortSends = 0;
+    let abortFired = false;
+    const engine: CouncilEngine = {
+      async start(): Promise<void> {
+        /* no-op */
+      },
+      async stop(): Promise<void> {
+        /* no-op */
+      },
+      async addExpert(spec): Promise<void> {
+        registered.add(spec.id);
+      },
+      async removeExpert(): Promise<void> {
+        /* no-op */
+      },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock-model"];
+      },
+      send(opts): AsyncIterable<EngineEvent> {
+        const expertId = opts.expertId;
+        if (!registered.has(expertId)) {
+          throw new Error(`Expert ${expertId} is not registered`);
+        }
+        if (abortFired) postAbortSends += 1;
+        async function* gen(): AsyncGenerator<EngineEvent, void, void> {
+          for (let i = 0; i < 4; i++) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 20));
+            yield { kind: "message.delta", expertId, text: `chunk${i} ` };
+          }
+          yield {
+            kind: "message.complete",
+            expertId,
+            response: { latencyMs: 80, tokensIn: 1, tokensOut: 1 },
+          };
+        }
+        return gen();
+      },
+    };
+
+    let out = "";
+    const lines: readonly string[] = [
+      "@convene should we ship?",
+      "follow up question",
+      "/quit",
+    ];
+    let i = 0;
+    const inputProvider: ChatInputProvider = {
+      async readLine(): Promise<string | null> {
+        const line = lines[i++] ?? null;
+        if (line === "@convene should we ship?") {
+          setTimeout(() => {
+            abortFired = true;
+            triggerInterrupt?.();
+          }, 50);
+        }
+        return line;
+      },
+      close(): void {
+        /* no-op */
+      },
+    };
+
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () => inputProvider,
+      subscribeInterrupt,
+    });
+    await cmd.parseAsync(["node", "council-chat", "deb-resume", "--engine", "mock"]);
+
+    // The session must accept the follow-up turn after debate abort.
+    expect(postAbortSends).toBeGreaterThan(0);
+    expect(out).toMatch(/Structured deliberation interrupted/i);
+    expect(out).toMatch(/Conversation saved\./);
+  });
 });
 
 describe("missing-YAML fallback (PRD §F4)", () => {
