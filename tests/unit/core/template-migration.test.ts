@@ -479,6 +479,69 @@ describe("template-migration", () => {
       expect(after).toBe(customContent);
     });
 
+    it("serialises concurrent invocations without duplicating data (issue #303)", async () => {
+      // Two `council convene` processes racing on a fresh install both
+      // pass `isMigrationNeeded` and would each try to create the same
+      // expert/panel rows + write the same YAML files. Without locking,
+      // one of them fails with a UNIQUE constraint violation (or worse,
+      // a partially-written YAML file is observed). The migration must
+      // serialise: both promises resolve, exactly one performs the
+      // migration, the other observes the completed state and returns
+      // a zero-count result.
+      const [first, second] = await Promise.all([
+        migrateBuiltInTemplates(dataHome, lib, db, { quiet: true }),
+        migrateBuiltInTemplates(dataHome, lib, db, { quiet: true }),
+      ]);
+
+      // Exactly one of the two performed the migration; the other
+      // short-circuited after the lock was released and saw no work
+      // remaining.
+      const totals = [first, second].map(
+        (r) => r.panelsMigrated + r.expertsExtracted,
+      );
+      expect(Math.max(...totals)).toBeGreaterThan(0);
+      expect(Math.min(...totals)).toBe(0);
+
+      // Library state must match a single migration — no duplicate rows.
+      const expertRows = await db
+        .selectFrom("expert_library")
+        .selectAll()
+        .execute();
+      const panelRows = await db
+        .selectFrom("panel_library")
+        .selectAll()
+        .execute();
+      const memberRows = await db
+        .selectFrom("panel_members")
+        .selectAll()
+        .execute();
+      expect(panelRows.length).toBe(BUILTIN_PANELS.length);
+      const expertSlugs = new Set(expertRows.map((r) => r.slug));
+      expect(expertSlugs.size).toBe(expertRows.length);
+      const memberKeys = new Set(
+        memberRows.map((r) => `${r.panel_name}::${r.expert_slug}`),
+      );
+      expect(memberKeys.size).toBe(memberRows.length);
+
+      // Lock file must be cleaned up.
+      expect(await exists(path.join(dataHome, ".migration.lock"))).toBe(false);
+    });
+
+    it("releases the lock when the migration throws", async () => {
+      const lockPath = path.join(dataHome, ".migration.lock");
+      const failingLoader: (name: string) => Promise<never> = async () => {
+        throw new Error("boom");
+      };
+      await expect(
+        migrateBuiltInTemplates(dataHome, lib, db, {
+          quiet: true,
+          panelNames: ["architecture-review"],
+          loadPanel: failingLoader,
+        }),
+      ).rejects.toThrow(/boom/);
+      expect(await exists(lockPath)).toBe(false);
+    });
+
     it("returns accurate counts in MigrationResult", async () => {
       const result = await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
       expect(result.panelsMigrated).toBe(5);
