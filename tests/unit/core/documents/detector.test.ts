@@ -195,6 +195,177 @@ describe("detectDocumentChanges", () => {
     });
   });
 
+  // ── Issue #374: fd-anchored root validation against scan-window TOCTOU ─
+  describe("root-swap TOCTOU protection (#374)", () => {
+    it("rejects the scan when the root directory's identity (dev/ino) changes between pre-readdir and post-readdir lstat", async () => {
+      // Simulate a directory swap during the scan window: an attacker
+      // (or a racy mount/replace) substitutes the docs root with a
+      // different inode between the detector's entry validation and
+      // its post-readdir verification. The detector MUST notice the
+      // identity flip and refuse to return any results, otherwise
+      // entries enumerated from the swapped directory would silently
+      // be processed as if they came from the validated root.
+      await fs.writeFile(path.join(dir, "a.md"), "hello");
+      const realStat = await fs.lstat(dir);
+      let calls = 0;
+      const rootLstatOverride = async (_p: string) => {
+        calls += 1;
+        // First call (pre-readdir): return the real identity.
+        // Second call (post-readdir): return a different inode to
+        // simulate the directory having been swapped out.
+        if (calls === 1) return realStat;
+        return {
+          ...realStat,
+          ino: realStat.ino + 1,
+          dev: realStat.dev,
+          isFile: () => realStat.isFile(),
+          isDirectory: () => realStat.isDirectory(),
+          isSymbolicLink: () => false,
+        } as unknown as Awaited<ReturnType<typeof fs.lstat>>;
+      };
+
+      await expect(
+        detectDocumentChanges(dir, new Map(), [".md"], {
+          confinementRoot: dir,
+          _rootIsCanonical: true,
+          _rootLstatOverride: rootLstatOverride,
+        }),
+      ).rejects.toThrow(/identity changed|root.*swap|TOCTOU/i);
+    });
+
+    it("succeeds when the root directory's identity is stable across the scan", async () => {
+      // Back-compat / happy-path guard: the new check must not produce
+      // false positives on a normal scan where the root inode is the
+      // same before and after readdir.
+      await fs.writeFile(path.join(dir, "a.md"), "hi");
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        confinementRoot: dir,
+        _rootIsCanonical: true,
+      });
+      expect(result.newFiles).toHaveLength(1);
+      expect(result.newFiles[0]?.filename).toBe("a.md");
+    });
+
+    it("does not perform root-identity checks when no confinementRoot is provided", async () => {
+      // When the caller has not opted into confinement, the detector
+      // must remain back-compat: no root-identity checks and no calls
+      // into the root-lstat seam. We assert the seam is never invoked.
+      await fs.writeFile(path.join(dir, "a.md"), "hi");
+      let called = false;
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        _rootLstatOverride: async (p: string) => {
+          called = true;
+          return fs.lstat(p);
+        },
+      });
+      expect(result.newFiles).toHaveLength(1);
+      expect(called).toBe(false);
+    });
+
+    it("rejects when the fd-anchored stat reports a different inode than the pre-lstat (open-window swap)", async () => {
+      // Sentinel #1: lock down the fd-stat mismatch branch. If the
+      // directory was swapped between the pre-lstat and the fs.open()
+      // call, the kernel-bound fd's stat will diverge from the lstat
+      // identity. The detector MUST refuse the scan with the explicit
+      // "identity changed between lstat and open" error.
+      await fs.writeFile(path.join(dir, "a.md"), "hi");
+      const realStat = await fs.lstat(dir);
+
+      const fakeHandle = {
+        async stat() {
+          return {
+            ...realStat,
+            ino: realStat.ino + 1,
+            isFile: () => false,
+            isDirectory: () => true,
+          };
+        },
+        async close() {
+          /* no-op for the test seam */
+        },
+      } as unknown as Awaited<ReturnType<typeof fs.open>>;
+
+      await expect(
+        detectDocumentChanges(dir, new Map(), [".md"], {
+          confinementRoot: dir,
+          _rootIsCanonical: true,
+          _rootOpenOverride: async () => fakeHandle,
+        }),
+      ).rejects.toThrow(/identity changed between lstat and open/);
+    });
+
+    it("falls back gracefully when fs.open(<dir>) rejects with EISDIR (Windows path)", async () => {
+      // Sentinel #3: prove the Windows graceful-fallback branch.
+      // On Windows (and some POSIX configurations) `fs.open` of a
+      // directory rejects with EISDIR/EACCES. The detector must NOT
+      // surface that as a TOCTOU error — it should fall back to the
+      // pre/post lstat compare and complete the scan normally.
+      await fs.writeFile(path.join(dir, "a.md"), "hi");
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        confinementRoot: dir,
+        _rootIsCanonical: true,
+        _rootOpenOverride: async () => {
+          const err: NodeJS.ErrnoException = new Error("EISDIR: illegal operation on a directory");
+          err.code = "EISDIR";
+          throw err;
+        },
+      });
+      expect(result.newFiles).toHaveLength(1);
+      expect(result.newFiles[0]?.filename).toBe("a.md");
+    });
+
+    it("rethrows non-allowlisted fs.open errors instead of silently downgrading (Sentinel #1)", async () => {
+      // Operational failures like EMFILE / EIO from `fs.open(<dir>)`
+      // are NOT graceful-fallback signals — silently swallowing them
+      // would weaken the advertised fd-anchored hardening AND hide a
+      // real failure. The detector must surface these to the caller.
+      await fs.writeFile(path.join(dir, "a.md"), "hi");
+      await expect(
+        detectDocumentChanges(dir, new Map(), [".md"], {
+          confinementRoot: dir,
+          _rootIsCanonical: true,
+          _rootOpenOverride: async () => {
+            const err: NodeJS.ErrnoException = new Error("EMFILE: too many open files");
+            err.code = "EMFILE";
+            throw err;
+          },
+        }),
+      ).rejects.toThrow(/EMFILE/);
+    });
+
+    it("rejects when fh.stat() throws an allowlisted code after a successful open (Sentinel re2 #1)", async () => {
+      // Sentinel cycle 2 finding: once `fs.open()` succeeds, the root
+      // fd has been bound to a real inode. A subsequent `rootHandle
+      // .stat()` failure is NOT a "directory cannot be opened" signal
+      // and must NOT funnel through the open-failure allowlist —
+      // doing so would let an EACCES/EPERM/ENOTSUP/EINVAL on the
+      // post-open verification silently downgrade the scan to
+      // lstat-only mode, defeating the advertised fd-anchored
+      // hardening. Verify the handle is still closed (no fd leak).
+      await fs.writeFile(path.join(dir, "a.md"), "hi");
+      let closed = false;
+      const stubHandle = {
+        async stat(): Promise<never> {
+          const err: NodeJS.ErrnoException = new Error("EACCES: permission denied");
+          err.code = "EACCES";
+          throw err;
+        },
+        async close() {
+          closed = true;
+        },
+      } as unknown as Awaited<ReturnType<typeof fs.open>>;
+
+      await expect(
+        detectDocumentChanges(dir, new Map(), [".md"], {
+          confinementRoot: dir,
+          _rootIsCanonical: true,
+          _rootOpenOverride: async () => stubHandle,
+        }),
+      ).rejects.toThrow(/EACCES/);
+      expect(closed).toBe(true);
+    });
+  });
+
   // ── Issue #339: symlink traversal guard (no confinementRoot) ──────
   describe("symlink traversal (#339)", () => {
     it("rejects symlinks pointing outside the project when no confinementRoot is set", async () => {
