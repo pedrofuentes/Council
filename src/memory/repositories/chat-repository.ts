@@ -81,6 +81,20 @@ export interface NewChatSession {
   readonly targetSlug: string;
 }
 
+/**
+ * Optional inputs to {@link ChatRepository.rotateActiveSession}.
+ *
+ * `priorActiveId` (#333 follow-up) makes the archive step a compare-and-swap:
+ * the rotation only archives the specific session the caller observed as
+ * active. This prevents a concurrent rotation from clobbering a brand-new
+ * active session created by an overlapping launch — under contention one
+ * rotation wins (its INSERT lands), and the other fails the partial unique
+ * index instead of silently archiving the winner's freshly-created session.
+ */
+export interface RotateActiveSessionOptions {
+  readonly priorActiveId?: string;
+}
+
 export interface NewChatTurn {
   readonly chatId: string;
   readonly role: ChatRole;
@@ -239,7 +253,10 @@ export class ChatRepository {
    * inconsistent state and any user-facing message must NOT claim that the
    * prior session was preserved.
    */
-  async rotateActiveSession(input: NewChatSession): Promise<ChatSession> {
+  async rotateActiveSession(
+    input: NewChatSession,
+    options: RotateActiveSessionOptions = {},
+  ): Promise<ChatSession> {
     try {
       await sql`BEGIN`.execute(this.db);
     } catch (beginErr) {
@@ -250,16 +267,20 @@ export class ChatRepository {
         { cause: beginErr, rollbackFailed: false },
       );
     }
+    const now = new Date().toISOString();
+    const id = ulid();
+    let committed = false;
     try {
-      const now = new Date().toISOString();
-      await this.db
+      let archive = this.db
         .updateTable("chat_sessions")
         .set({ status: "archived", updated_at: now })
-        .where("target_type", "=", input.targetType)
-        .where("target_slug", "=", input.targetSlug)
         .where("status", "=", "active")
-        .execute();
-      const id = ulid();
+        .where("target_type", "=", input.targetType)
+        .where("target_slug", "=", input.targetSlug);
+      if (options.priorActiveId !== undefined) {
+        archive = archive.where("id", "=", options.priorActiveId);
+      }
+      await archive.execute();
       await this.db
         .insertInto("chat_sessions")
         .values({
@@ -274,13 +295,29 @@ export class ChatRepository {
         })
         .execute();
       await sql`COMMIT`.execute(this.db);
-      const row = await this.db
-        .selectFrom("chat_sessions")
-        .selectAll()
-        .where("id", "=", id)
-        .executeTakeFirstOrThrow();
-      return sessionToDomain(row);
+      committed = true;
+      // Construct the domain object from the values we just inserted —
+      // a post-commit SELECT would conflate readback failures with
+      // rollback-needed failures and produce misleading "inconsistent"
+      // diagnostics for what is in fact a successful write.
+      return {
+        id,
+        targetType: input.targetType,
+        targetSlug: input.targetSlug,
+        status: "active",
+        summary: null,
+        summaryThroughSeq: 0,
+        createdAt: now,
+        updatedAt: now,
+      };
     } catch (err) {
+      if (committed) {
+        // Defensive: with the readback removed this branch is unreachable,
+        // but if a future change adds work after COMMIT we must NOT issue
+        // a ROLLBACK against a closed transaction (which would itself
+        // throw and be misclassified as rollbackFailed).
+        throw err;
+      }
       let rollbackFailed = false;
       let rollbackError: unknown;
       try {

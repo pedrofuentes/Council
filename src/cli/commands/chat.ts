@@ -52,7 +52,11 @@ import {
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import type { CouncilDatabase } from "../../memory/db.js";
 import { createDatabase } from "../../memory/db.js";
-import { ChatRepository, PersistTurnPairError } from "../../memory/repositories/chat-repository.js";
+import {
+  ChatRepository,
+  PersistTurnPairError,
+  RotateActiveSessionError,
+} from "../../memory/repositories/chat-repository.js";
 import { DocumentRepository } from "../../memory/repositories/document-repository.js";
 import { ProfileRepository } from "../../memory/repositories/profile-repository.js";
 import { createDocumentIndexer } from "../../core/documents/indexer.js";
@@ -824,6 +828,26 @@ interface ExpertChatOptions {
   readonly dataHome: string;
 }
 
+/**
+ * Translate a {@link RotateActiveSessionError} into a user-facing Error
+ * with rollback-aware guidance (#333). When the rollback itself failed
+ * the DB may be in an inconsistent state — the message must NOT claim
+ * the prior session was preserved, and operators need a hint to inspect
+ * `council chat --list` for any orphan archived rows. Non-rotation errors
+ * pass through unchanged.
+ */
+function rewriteRotateError(err: unknown): Error {
+  if (!(err instanceof RotateActiveSessionError)) {
+    return err instanceof Error ? err : new Error(String(err));
+  }
+  const base = "Could not start a fresh chat: rotating the active chat session failed";
+  const guidance = err.rollbackFailed
+    ? "the database may be in an inconsistent state (the prior session may have been archived without a replacement). " +
+      "Inspect `council chat --list` and reconcile manually before retrying."
+    : "the prior conversation is preserved unchanged. Retry the command, or open the existing session without `--new`.";
+  return new Error(`${base} — ${guidance} (cause: ${err.message})`);
+}
+
 async function runExpertChat(opts: ExpertChatOptions): Promise<void> {
   const { target, expert, raw, deps, writeError, config, db, engineKind, dataHome } = opts;
   const repo = new ChatRepository(db);
@@ -894,7 +918,14 @@ async function runExpertChat(opts: ExpertChatOptions): Promise<void> {
     // Engine ready — NOW it's safe to mutate persistent chat state.
     let session: ChatSession;
     if (raw.new && priorToArchive) {
-      session = await repo.rotateActiveSession({ targetType: "expert", targetSlug: target });
+      try {
+        session = await repo.rotateActiveSession(
+          { targetType: "expert", targetSlug: target },
+          { priorActiveId: priorToArchive.id },
+        );
+      } catch (err) {
+        throw rewriteRotateError(err);
+      }
       renderer.showSystem("Previous conversation archived. Starting fresh...", "info");
       renderer.showSessionStatus(`Starting new conversation with ${expert.displayName}...`);
     } else if (willCreateFresh) {
@@ -1059,7 +1090,14 @@ async function runPanelChat(opts: PanelChatOptions): Promise<void> {
 
     let session: ChatSession;
     if (raw.new && priorToArchive) {
-      session = await repo.rotateActiveSession({ targetType: "panel", targetSlug: target });
+      try {
+        session = await repo.rotateActiveSession(
+          { targetType: "panel", targetSlug: target },
+          { priorActiveId: priorToArchive.id },
+        );
+      } catch (err) {
+        throw rewriteRotateError(err);
+      }
       renderer.showSystem("Previous conversation archived. Starting fresh...", "info");
       const names = resolved.map((e) => e.displayName).join(", ");
       renderer.showSessionStatus(

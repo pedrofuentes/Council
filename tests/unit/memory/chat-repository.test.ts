@@ -707,6 +707,59 @@ describe("ChatRepository", () => {
       const archived = await repo.listSessions({ targetSlug: "cto", status: "archived" });
       expect(archived).toHaveLength(2);
     });
+
+    it("priorActiveId scopes the archive to a specific session id (concurrent-rotation safety)", async () => {
+      // Simulate the concurrent-launch race: two callers both observed the
+      // same prior active session X. Caller A wins by completing first;
+      // caller B's rotation must not blindly archive A's freshly-created
+      // session. Encoding the observed id as a compare-and-swap forces B
+      // to fail the unique-index INSERT instead.
+      const x = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+      const aNew = await repo.rotateActiveSession(
+        { targetType: "expert", targetSlug: "cto" },
+        { priorActiveId: x.id },
+      );
+      // Caller B now arrives, still believing X is active.
+      let bError: unknown;
+      try {
+        await repo.rotateActiveSession(
+          { targetType: "expert", targetSlug: "cto" },
+          { priorActiveId: x.id },
+        );
+      } catch (err) {
+        bError = err;
+      }
+      expect(bError).toBeInstanceOf(RotateActiveSessionError);
+      // A's freshly-created session must still be the lone active row —
+      // B did not get to archive it.
+      const actives = await repo.listSessions({ targetSlug: "cto", status: "active" });
+      expect(actives).toHaveLength(1);
+      expect(actives[0]?.id).toBe(aNew.id);
+      const xAfter = await repo.findSessionById(x.id);
+      expect(xAfter?.status).toBe("archived");
+    });
+
+    it("returns the new ChatSession constructed in-memory (no post-commit SELECT)", async () => {
+      // Regression guard for Sentinel SNT-535-20260515-140527 finding #5:
+      // a post-commit SELECT would conflate readback failures with rollback
+      // paths, producing a misleading "may be inconsistent" diagnosis for
+      // a row that was successfully written. The returned object MUST
+      // therefore reflect the values we just inserted, not a re-read.
+      const result = await repo.rotateActiveSession({
+        targetType: "panel",
+        targetSlug: "arch-review",
+      });
+      expect(result.targetType).toBe("panel");
+      expect(result.targetSlug).toBe("arch-review");
+      expect(result.status).toBe("active");
+      expect(result.summary).toBeNull();
+      expect(result.summaryThroughSeq).toBe(0);
+      expect(result.createdAt).toBe(result.updatedAt);
+      // And the row must of course be queryable (proves the INSERT actually
+      // committed, separately from the in-memory return value).
+      const row = await repo.findSessionById(result.id);
+      expect(row?.id).toBe(result.id);
+    });
   });
 
   // -------- search --------

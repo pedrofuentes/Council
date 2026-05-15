@@ -81,11 +81,11 @@ describe("createDatabase", () => {
     expect(after.length).toBe(before.length); // no duplicate version rows
   });
 
-  it("applies migrations 001 through 008, creating the expected indexes", async () => {
+  it("applies migrations 001 through 010, creating the expected indexes", async () => {
     const versions = (
       await db.selectFrom("schema_version").select("version").orderBy("version").execute()
     ).map((r) => r.version);
-    expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 
     const indexes = (
       await sql<{
@@ -400,11 +400,11 @@ describe("Inlined migrations regression (issue #476)", () => {
     expect(rows.length).toBeGreaterThanOrEqual(EXPECTED_TABLES.length);
   });
 
-  it("records a schema_version row for every inlined migration (1..9)", async () => {
+  it("records a schema_version row for every inlined migration (1..10)", async () => {
     const versions = (
       await db.selectFrom("schema_version").select("version").orderBy("version").execute()
     ).map((r) => r.version);
-    expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   });
 
   it("each expected table is queryable via Kysely without throwing", async () => {
