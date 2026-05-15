@@ -625,19 +625,26 @@ export class Debate {
           reason: lastErrorMessage,
         };
         if (delay > 0) await abortableSleep(delay, signal);
+        // #503: signal may have aborted *during* the backoff sleep —
+        // re-check before issuing another upstream send.
+        if (signal?.aborted) {
+          break;
+        }
         continue; // try again
       }
 
       // Either non-recoverable, or retries exhausted: emit final error.
-      // Exception (#503): when the engine's terminal error was the
-      // ABORTED code (i.e. caused by the caller's signal), suppress
-      // the synthetic turn-level error so chat does not render it as a
-      // PROVIDER_ERROR — the outer loop will emit debate.end "aborted"
-      // instead. We deliberately key on the engine's error code, NOT
-      // on `signal.aborted` alone, so a real provider failure that
-      // races with an abort still surfaces.
+      // Exception (#503): suppress the synthetic turn-level error ONLY
+      // when BOTH (a) the engine's terminal error code was ABORTED and
+      // (b) the caller's signal is aborted — i.e. the abort actually
+      // came from this run's signal. We must not suppress when only
+      // one of those holds:
+      //   - engine ABORTED w/o caller signal (engine.stop() /
+      //     removeExpert path) ⇒ surface so the failure is visible.
+      //   - non-ABORTED engine error w/ caller signal aborted ⇒
+      //     surface so a real provider failure isn't masked by abort.
       turnFailed = true;
-      if (!lastErrorAborted) {
+      if (!(lastErrorAborted && signal?.aborted)) {
         yield {
           kind: "error",
           expertSlug: expert.slug,
