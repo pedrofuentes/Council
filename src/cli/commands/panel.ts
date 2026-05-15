@@ -204,9 +204,18 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
           yamlWritten = true;
           try {
             await handle.writeFile(yamlContent, "utf-8");
-          } finally {
-            await handle.close();
+          } catch (writeErr) {
+            // Preserve the primary write failure if close() also fails —
+            // a secondary close error must not mask the ENOSPC/EIO root
+            // cause the operator needs to see.
+            try {
+              await handle.close();
+            } catch {
+              /* swallow secondary cleanup error */
+            }
+            throw writeErr;
           }
+          await handle.close();
           await ctx.panelRepo.setMembers(name, fields.expertSlugs);
           await fs.mkdir(panelDocsDir(ctx.dataHome, name), { recursive: true });
         } catch (err) {
