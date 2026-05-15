@@ -403,6 +403,42 @@ export async function safeMaybeSummarize(
 }
 
 /**
+ * Sentinel value returned by `maybeWarnLongConversation` (and the seed
+ * helper) after either the initial seed or any per-turn `getTurnCount`
+ * query fails. Subsequent invocations short-circuit on this value: no
+ * further DB query, no warning, no advisory. `Number.MAX_SAFE_INTEGER`
+ * is chosen so that the existing crossing check
+ * (`prevCount < threshold && count >= threshold`) can never be true while
+ * the sentinel is in effect — defense in depth in case the short-circuit
+ * guard is ever bypassed. Exported for tests.
+ */
+export const LONG_CONVERSATION_CHECK_DISABLED = Number.MAX_SAFE_INTEGER;
+
+/**
+ * Seed the long-conversation crossing detector at chat-loop startup.
+ * Wraps the initial `repo.getTurnCount` query so that a failure surfaces
+ * the same one-time sanitized warning as the in-loop catch path and
+ * returns the `LONG_CONVERSATION_CHECK_DISABLED` sentinel — keeping the
+ * "first failure visible, then silent" contract consistent across seed
+ * and per-turn checks (issue #462).
+ */
+async function seedLongConversationCount(
+  repo: ChatRepository,
+  chatId: string,
+  renderer: ChatRenderer,
+): Promise<number> {
+  try {
+    return await repo.getTurnCount(chatId);
+  } catch (err: unknown) {
+    renderer.showSystem(
+      `Long-conversation check failed (continuing): ${sanitizeErrorMessage(err)}`,
+      "warn",
+    );
+    return LONG_CONVERSATION_CHECK_DISABLED;
+  }
+}
+
+/**
  * PRD §F4 — surface a one-time advisory the moment a chat session crosses
  * the configured `chat.longConversationWarning` threshold (default 500
  * turns). Detects threshold *crossing* (`prev < threshold <= current`) so
@@ -414,9 +450,11 @@ export async function safeMaybeSummarize(
  * the start of the loop, then update it via the returned value after each
  * `addTurn` (user and expert) within the iteration.
  *
- * Best-effort: a count query failure must not break the chat loop, so we
- * surface a one-time sanitized warning and disable further checks for the
- * session by returning the previous count unchanged.
+ * Best-effort: a count query failure must not break the chat loop. The
+ * first failure surfaces a one-time sanitized warning and returns the
+ * `LONG_CONVERSATION_CHECK_DISABLED` sentinel; every subsequent call sees
+ * the sentinel and short-circuits — no re-query, no re-warning — for the
+ * remainder of the chat loop (issue #462).
  */
 async function maybeWarnLongConversation(
   repo: ChatRepository,
@@ -425,6 +463,9 @@ async function maybeWarnLongConversation(
   renderer: ChatRenderer,
   prevCount: number,
 ): Promise<number> {
+  if (prevCount === LONG_CONVERSATION_CHECK_DISABLED) {
+    return prevCount;
+  }
   const threshold = config.chat.longConversationWarning;
   let count: number;
   try {
@@ -434,7 +475,7 @@ async function maybeWarnLongConversation(
       `Long-conversation check failed (continuing): ${sanitizeErrorMessage(err)}`,
       "warn",
     );
-    return prevCount;
+    return LONG_CONVERSATION_CHECK_DISABLED;
   }
   if (prevCount < threshold && count >= threshold) {
     renderer.showSystem(
@@ -974,9 +1015,9 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
 
   // Seed the long-conversation crossing detector from the persisted state
   // so resumes of an already-over-threshold session don't re-fire the
-  // advisory. Failure to read the count disables the warning for this
-  // session (treated as already past), which matches "best-effort".
-  let prevTurnCount = await repo.getTurnCount(session.id).catch(() => Number.MAX_SAFE_INTEGER);
+  // advisory. A seed failure surfaces a one-time sanitized warning and
+  // disables further checks for this session (issue #462).
+  let prevTurnCount = await seedLongConversationCount(repo, session.id, renderer);
 
   // PRD §F4 — graceful Ctrl+C. The handler routes by current loop state:
   //   - waiting at the prompt    → close the input provider so the
@@ -1327,9 +1368,9 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
   });
 
   // Seed the long-conversation crossing detector — see runInteractiveLoop
-  // for the rationale. A failure to read the count is treated as already
-  // past-threshold so the warning never re-fires for this session.
-  let prevTurnCount = await repo.getTurnCount(session.id).catch(() => Number.MAX_SAFE_INTEGER);
+  // for the rationale. A seed failure surfaces a one-time sanitized
+  // warning and disables further checks for this session (issue #462).
+  let prevTurnCount = await seedLongConversationCount(repo, session.id, renderer);
 
   // PRD §F4 — graceful Ctrl+C. Same state machine as runInteractiveLoop:
   // mid-stream interrupts abort the active controller and persist the
@@ -1779,8 +1820,7 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
         // If cleanup itself rejects, surface a quiet warn so the
         // failure is not swallowed silently (issue #466 follow-up).
         void iterator.return?.(undefined).catch((cleanupErr: unknown) => {
-          const msg =
-            cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
+          const msg = cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
           renderer.showSystem(
             `⚠ Debate generator cleanup after interruption failed: ${msg}`,
             "warn",
