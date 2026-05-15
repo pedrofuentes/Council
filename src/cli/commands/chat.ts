@@ -1722,6 +1722,28 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
 
       if (next === ABORT_SENTINEL) {
         aborted = true;
+        // PRD §F6 — preserve partial results on interruption. If a
+        // turn was mid-stream, flush the deferred user turn (so we
+        // never leave an orphan-free buffer in chat history) and
+        // persist whatever expert content has been buffered. Errors
+        // here are swallowed so a flaky DB write cannot block the
+        // chat prompt from coming back.
+        if (inTurn && buffer.length > 0 && bufferSlug !== undefined) {
+          try {
+            await persistUserTurnOnce();
+            await repo.addTurn({
+              chatId: session.id,
+              role: "expert",
+              expertSlug: bufferSlug,
+              content: buffer,
+            });
+            persistedTurns += 1;
+          } catch {
+            /* best-effort */
+          }
+          buffer = "";
+          bufferSlug = undefined;
+        }
         // Best-effort: ask the generator to clean up. Fire-and-forget
         // so a slow upstream send() does not block the prompt return.
         void iterator.return?.(undefined).catch(() => undefined);
