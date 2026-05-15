@@ -10,9 +10,46 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
 import {
   PanelLibraryRepository,
+  SetMembersError,
   type NewLibraryPanel,
 } from "../../../src/memory/repositories/panel-library-repo.js";
 import { ExpertLibraryRepository } from "../../../src/memory/repositories/expert-library-repo.js";
+
+/**
+ * Wrap the libsql Kysely executor so the next `executeQuery` matching
+ * `failOnSqlSubstring` (and optionally any subsequent `ROLLBACK`) throws.
+ * Mirrors the helper in document-repository.test.ts so we can exercise
+ * the BEGIN/COMMIT/ROLLBACK paths added for #298 without corrupting the
+ * driver. We override `executeQuery` as an own-property on the executor
+ * instance because Kysely's executor uses private class fields and a
+ * Proxy would re-bind `this` and break private access.
+ */
+function patchExecuteQuery(
+  database: CouncilDatabase,
+  opts: { failOnSqlSubstring: string; failRollback?: boolean },
+): () => void {
+  const realExec = database.getExecutor();
+  type ExecQueryFn = typeof realExec.executeQuery;
+  const originalExecuteQuery: ExecQueryFn = realExec.executeQuery as ExecQueryFn;
+  const wrapped: ExecQueryFn = async function (this: typeof realExec, compiled, queryId) {
+    const text = compiled.sql;
+    if (text.includes(opts.failOnSqlSubstring)) {
+      throw new Error(`simulated failure on: ${opts.failOnSqlSubstring}`);
+    }
+    if (opts.failRollback === true && /^\s*ROLLBACK\b/i.test(text)) {
+      throw new Error("simulated ROLLBACK failure");
+    }
+    return originalExecuteQuery.call(this, compiled, queryId);
+  };
+  Object.defineProperty(realExec, "executeQuery", {
+    value: wrapped,
+    configurable: true,
+    writable: true,
+  });
+  return () => {
+    delete (realExec as { executeQuery?: ExecQueryFn }).executeQuery;
+  };
+}
 
 function samplePanel(name = "arch-review"): NewLibraryPanel {
   return {
@@ -144,57 +181,89 @@ describe("PanelLibraryRepository", () => {
     await expect(repo.setMembers("arch-review", ["does-not-exist"])).rejects.toThrow();
   });
 
-  it("setMembers() preserves existing membership when the new insert fails (atomic)", async () => {
-    await repo.create(samplePanel("arch-review"));
-    await seedExpert(db, "cto");
-    await seedExpert(db, "staff");
-    await repo.setMembers("arch-review", ["cto", "staff"]);
+  describe("setMembers atomicity and rollback honesty (#298)", () => {
+    it("preserves existing membership when the new insert fails (transaction rolls back cleanly)", async () => {
+      await repo.create(samplePanel("arch-review"));
+      await seedExpert(db, "cto");
+      await seedExpert(db, "staff");
+      await repo.setMembers("arch-review", ["cto", "staff"]);
 
-    // Attempt to replace with a list containing an unknown slug — must fail
-    // AND leave the prior membership intact (no partial wipe).
-    await expect(repo.setMembers("arch-review", ["cto", "does-not-exist"])).rejects.toThrow();
-
-    const after = await repo.getMembers("arch-review");
-    expect(after).toEqual(["cto", "staff"]);
-  });
-
-  it("setMembers() surfaces AggregateError when both insert and restore fail", async () => {
-    const { vi } = await import("vitest");
-    await repo.create(samplePanel("arch-review"));
-    await seedExpert(db, "cto");
-    await repo.setMembers("arch-review", ["cto"]);
-
-    // Now spy on insertInto: let the first panel_members insert proceed
-    // (it will fail naturally on the unknown FK), then force the second
-    // (the snapshot restore) to throw so we exercise the rollback-failure
-    // path.
-    const realInsert = db.insertInto.bind(db);
-    let panelMembersInsertCalls = 0;
-    const spy = vi.spyOn(db, "insertInto").mockImplementation(((table: unknown) => {
-      if (table === "panel_members") {
-        panelMembersInsertCalls += 1;
-        if (panelMembersInsertCalls === 2) {
-          throw new Error("simulated restore failure");
-        }
+      // Attempt to replace with a list containing an unknown slug — must
+      // fail (FK violation) AND leave the prior membership intact.
+      let caught: unknown;
+      try {
+        await repo.setMembers("arch-review", ["cto", "does-not-exist"]);
+      } catch (e) {
+        caught = e;
       }
-      return realInsert(table as never) as never;
-    }) as never);
 
-    try {
-      const err = await repo.setMembers("arch-review", ["does-not-exist"]).then(
-        () => null,
-        (e: unknown) => e,
-      );
-      // Must be an AggregateError surfacing BOTH the original FK failure
-      // and the restore failure — the silent-swallow pattern (.catch(()=>{}))
-      // would surface only one cause.
-      expect(err).toBeInstanceOf(AggregateError);
-      const errors = (err as AggregateError).errors;
-      const messages = errors.map((e) => (e instanceof Error ? e.message : String(e)));
-      expect(messages.some((m) => m.includes("simulated restore failure"))).toBe(true);
-      expect(messages.length).toBeGreaterThanOrEqual(2);
-    } finally {
-      spy.mockRestore();
-    }
+      expect(caught).toBeInstanceOf(SetMembersError);
+      const err = caught as SetMembersError;
+      expect(err.rollbackFailed).toBe(false);
+      expect(err.message).not.toMatch(/inconsistent/i);
+      expect(err.cause).toBeInstanceOf(Error);
+
+      const after = await repo.getMembers("arch-review");
+      expect(after).toEqual(["cto", "staff"]);
+    });
+
+    it("when ROLLBACK itself fails, the thrown error reports it honestly (no 'preserved' claim)", async () => {
+      await repo.create(samplePanel("arch-review"));
+      await seedExpert(db, "cto");
+      await repo.setMembers("arch-review", ["cto"]);
+
+      // Force the INSERT into panel_members to fail, then force ROLLBACK
+      // to fail too. We must observe an honest SetMembersError that does
+      // NOT claim prior data was preserved.
+      const restore = patchExecuteQuery(db, {
+        failOnSqlSubstring: 'insert into "panel_members"',
+        failRollback: true,
+      });
+
+      let caught: unknown;
+      try {
+        await repo.setMembers("arch-review", ["cto"]);
+      } catch (e) {
+        caught = e;
+      } finally {
+        restore();
+      }
+
+      expect(caught).toBeInstanceOf(SetMembersError);
+      const err = caught as SetMembersError;
+      expect(err.rollbackFailed).toBe(true);
+      expect(err.rollbackError).toBeInstanceOf(Error);
+      expect(err.message).toMatch(/inconsistent/i);
+      expect(err.message).not.toMatch(/preserved/i);
+      expect(err.cause).toBeInstanceOf(Error);
+    });
+
+    it("when BEGIN itself fails, throws SetMembersError with rollbackFailed=false (no mutation occurred)", async () => {
+      await repo.create(samplePanel("arch-review"));
+      await seedExpert(db, "cto");
+      await repo.setMembers("arch-review", ["cto"]);
+
+      const restore = patchExecuteQuery(db, { failOnSqlSubstring: "BEGIN" });
+
+      let caught: unknown;
+      try {
+        await repo.setMembers("arch-review", ["cto"]);
+      } catch (e) {
+        caught = e;
+      } finally {
+        restore();
+      }
+
+      expect(caught).toBeInstanceOf(SetMembersError);
+      const err = caught as SetMembersError;
+      expect(err.rollbackFailed).toBe(false);
+      expect(err.message).toMatch(/BEGIN/);
+      expect(err.message).toMatch(/no changes applied/i);
+      expect(err.cause).toBeInstanceOf(Error);
+
+      // No mutation actually occurred — prior membership is untouched.
+      const after = await repo.getMembers("arch-review");
+      expect(after).toEqual(["cto"]);
+    });
   });
 });
