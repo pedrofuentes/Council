@@ -403,6 +403,72 @@ export async function safeMaybeSummarize(
 }
 
 /**
+ * Issue #459 — non-blocking rolling summarization for the chat REPL.
+ *
+ * Awaiting `safeMaybeSummarize` between turns wedges the prompt: even
+ * with the timeout in place, the user can be locked out for tens of
+ * seconds while the summarizer runs. The gate decouples that work from
+ * the prompt path:
+ *
+ *   - `kickOff(chatId)` fires summarization in the background. If a
+ *     prior run is still in flight, the call is dropped (in-flight
+ *     guard) — no concurrent summarizers stomp on the same chat.
+ *   - `awaitIfSettled()` is called just before the next `engine.send()`.
+ *     If the background work has *already* settled, we drain it so the
+ *     fresh summary is visible to the next context fetch. If it has
+ *     not, we return immediately and the next turn proceeds against
+ *     the previous summary — preferring responsiveness over freshness,
+ *     exactly as PRD §F4 specifies.
+ *
+ * Errors are absorbed by `safeMaybeSummarize`'s onError contract, so a
+ * background failure surfaces a single warning and never rejects.
+ */
+export interface SummarizationGate {
+  kickOff(chatId: string): void;
+  awaitIfSettled(): Promise<void>;
+  awaitOutstanding(): Promise<void>;
+  isInflight(): boolean;
+}
+
+export function createSummarizationGate(
+  contextMgr: ContextManager,
+  onError: (message: string) => void,
+  timeoutMs: number = SAFE_MAYBE_SUMMARIZE_TIMEOUT_MS,
+): SummarizationGate {
+  let inflight: Promise<void> | undefined;
+  let settled = false;
+  return {
+    kickOff(chatId: string): void {
+      if (inflight !== undefined) return;
+      settled = false;
+      inflight = safeMaybeSummarize(contextMgr, chatId, onError, timeoutMs).finally(() => {
+        settled = true;
+      });
+    },
+    async awaitIfSettled(): Promise<void> {
+      if (inflight === undefined || !settled) return;
+      const p = inflight;
+      inflight = undefined;
+      settled = false;
+      await p;
+    },
+    async awaitOutstanding(): Promise<void> {
+      if (inflight === undefined) return;
+      const p = inflight;
+      inflight = undefined;
+      settled = false;
+      // Bounded by safeMaybeSummarize's internal timeout — never hangs
+      // process exit beyond `timeoutMs`. Errors are absorbed by
+      // safeMaybeSummarize, so this await never rejects.
+      await p;
+    },
+    isInflight(): boolean {
+      return inflight !== undefined && !settled;
+    },
+  };
+}
+
+/**
  * Sentinel value returned by `maybeWarnLongConversation` (and the seed
  * helper) after either the initial seed or any per-turn `getTurnCount`
  * query fails. Subsequent invocations short-circuit on this value: no
@@ -1019,6 +1085,14 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
   // disables further checks for this session (issue #462).
   let prevTurnCount = await seedLongConversationCount(repo, session.id, renderer);
 
+  // Issue #459 — rolling summary runs in the background between turns so
+  // the prompt comes back instantly. The gate enforces a single-flight
+  // invariant and lets the next send pick up a fresh summary if it has
+  // already settled by then.
+  const summarizationGate = createSummarizationGate(contextMgr, (msg) =>
+    renderer.showSystem(msg, "warn"),
+  );
+
   // PRD §F4 — graceful Ctrl+C. The handler routes by current loop state:
   //   - waiting at the prompt    → close the input provider so the
   //                                 pending readLine resolves with null,
@@ -1078,6 +1152,12 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
         renderer,
         prevTurnCount,
       );
+
+      // Issue #459 — drain a settled background summarization before
+      // pulling context so the next prompt picks up the fresh summary.
+      // If still in-flight, we proceed against the previous summary
+      // (responsiveness > freshness — see SummarizationGate).
+      await summarizationGate.awaitIfSettled();
 
       // Pull the rolling-summary context (summary text + recent verbatim
       // turns) from the manager. The just-inserted user turn is the last
@@ -1207,11 +1287,16 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
       );
 
       // Roll the conversation summary forward when the verbatim window
-      // has overflowed. Best-effort — a summarizer failure leaves the
-      // previous summary in place and the chat continues.
-      await safeMaybeSummarize(contextMgr, session.id, (msg) => renderer.showSystem(msg, "warn"));
+      // has overflowed. Issue #459 — best-effort *and* non-blocking: we
+      // fire-and-forget so the prompt reappears immediately. The gate
+      // drains a settled run before the next send.
+      summarizationGate.kickOff(session.id);
     }
   } finally {
+    // Issue #459 — drain any in-flight background summarization so the
+    // chat-loop exit doesn't lose a pending summary write. Bounded by
+    // safeMaybeSummarize's timeout; errors already absorbed.
+    await summarizationGate.awaitOutstanding();
     unsubscribeInterrupt();
   }
 }
@@ -1372,6 +1457,12 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
   // warning and disables further checks for this session (issue #462).
   let prevTurnCount = await seedLongConversationCount(repo, session.id, renderer);
 
+  // Issue #459 — rolling summary runs in the background between turns so
+  // the prompt comes back instantly. See runInteractiveLoop for details.
+  const summarizationGate = createSummarizationGate(contextMgr, (msg) =>
+    renderer.showSystem(msg, "warn"),
+  );
+
   // PRD §F4 — graceful Ctrl+C. Same state machine as runInteractiveLoop:
   // mid-stream interrupts abort the active controller and persist the
   // partial expert turn for the *currently-streaming* member; remaining
@@ -1475,6 +1566,10 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
         renderer,
         prevTurnCount,
       );
+
+      // Issue #459 — drain a settled background summarization before
+      // pulling context so the next prompt picks up the fresh summary.
+      await summarizationGate.awaitIfSettled();
 
       // Pull rolling-summary context (summary + recent verbatim window)
       // from the manager. The just-saved user turn is the trailing entry
@@ -1652,11 +1747,14 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
       }
 
       // Roll the conversation summary forward when the verbatim window
-      // has overflowed. Best-effort — failures leave the previous
-      // summary in place and the chat continues uninterrupted.
-      await safeMaybeSummarize(contextMgr, session.id, (msg) => renderer.showSystem(msg, "warn"));
+      // has overflowed. Issue #459 — non-blocking: kicked off in the
+      // background, drained at the next send if already settled.
+      summarizationGate.kickOff(session.id);
     }
   } finally {
+    // Issue #459 — drain any in-flight background summarization so the
+    // chat-loop exit doesn't lose a pending summary write.
+    await summarizationGate.awaitOutstanding();
     unsubscribeInterrupt();
   }
 }
