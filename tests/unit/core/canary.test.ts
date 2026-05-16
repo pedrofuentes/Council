@@ -15,7 +15,12 @@ import {
   injectCanary,
 } from "../../../src/core/canary.js";
 import { Debate, type DebateConfig } from "../../../src/core/debate.js";
-import type { ExpertSpec } from "../../../src/engine/index.js";
+import type {
+  CouncilEngine,
+  EngineEvent,
+  ExpertSpec,
+  SendOptions,
+} from "../../../src/engine/index.js";
 import { MockEngine } from "../../../src/engine/mock/mock-engine.js";
 import type { DebateEvent } from "../../../src/core/types.js";
 
@@ -186,5 +191,141 @@ describe("Debate — canary integration", () => {
     expect(warnSpy).not.toHaveBeenCalled();
 
     await engine.stop();
+  });
+
+  // -------------------------------------------------------------------------
+  // Cross-delta canary detection — guards against an attacker (or model)
+  // emitting the canary across two streamed chunks. Uses a hand-rolled
+  // fake engine because MockEngine chunks on sentence boundaries only.
+  // -------------------------------------------------------------------------
+  it("detects a canary that is split across multiple message.delta chunks", async () => {
+    const cto = expertSpec("01HZ-cto", "cto", "You are a CTO.");
+    const FIXED = "CANARY_split789abc";
+    const halfA = FIXED.slice(0, 8); // "CANARY_s"
+    const halfB = FIXED.slice(8);    // "plit789abc"
+
+    const fakeEngine: CouncilEngine = {
+      start: async (): Promise<void> => { /* no-op */ },
+      stop: async (): Promise<void> => { /* no-op */ },
+      addExpert: async (): Promise<void> => { /* no-op */ },
+      removeExpert: async (): Promise<void> => { /* no-op */ },
+      listModels: async () => ["claude-sonnet-4"],
+      async *send(opts: SendOptions): AsyncIterable<EngineEvent> {
+        // Emit the canary across two deltas so substring detection
+        // on the per-delta text alone would miss it.
+        yield { kind: "message.delta", expertId: opts.expertId, text: `prefix ${halfA}` };
+        yield { kind: "message.delta", expertId: opts.expertId, text: `${halfB} suffix` };
+        yield {
+          kind: "message.complete",
+          expertId: opts.expertId,
+          response: { latencyMs: 1, tokensIn: 1, tokensOut: 1 },
+        };
+      },
+    };
+
+    const debate = new Debate(fakeEngine, [cto], FREEFORM_1R, {
+      canaryFor: () => FIXED,
+    });
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+      // suppress noisy stderr in test output
+    });
+
+    await collect(debate.run("topic"));
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(String(warnSpy.mock.calls[0]?.[0])).toContain("01HZ-cto");
+  });
+
+  // -------------------------------------------------------------------------
+  // Per-turn dedup contract: warning fires exactly once per leaking turn
+  // (not once per delta), AND a later leaking turn from the same expert
+  // produces a fresh warning. Guards against accumulating-state suppression.
+  // -------------------------------------------------------------------------
+  it("warns exactly once per leaking turn and re-warns on subsequent leaking turns", async () => {
+    const cto = expertSpec("01HZ-cto", "cto", "You are a CTO.");
+    const FIXED = "CANARY_persist";
+
+    const fakeEngine: CouncilEngine = {
+      start: async (): Promise<void> => { /* no-op */ },
+      stop: async (): Promise<void> => { /* no-op */ },
+      addExpert: async (): Promise<void> => { /* no-op */ },
+      removeExpert: async (): Promise<void> => { /* no-op */ },
+      listModels: async () => ["claude-sonnet-4"],
+      async *send(opts: SendOptions): AsyncIterable<EngineEvent> {
+        // Two deltas, both contain the canary — should produce ONE warning,
+        // not two.
+        yield { kind: "message.delta", expertId: opts.expertId, text: `leak ${FIXED} once` };
+        yield { kind: "message.delta", expertId: opts.expertId, text: `leak ${FIXED} twice` };
+        yield {
+          kind: "message.complete",
+          expertId: opts.expertId,
+          response: { latencyMs: 1, tokensIn: 1, tokensOut: 1 },
+        };
+      },
+    };
+
+    // Two rounds so the same expert speaks twice.
+    const TWO_R: DebateConfig = { ...FREEFORM_1R, maxRounds: 2 };
+    const debate = new Debate(fakeEngine, [cto], TWO_R, {
+      canaryFor: () => FIXED,
+    });
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+      // suppress noisy stderr in test output
+    });
+
+    await collect(debate.run("topic"));
+
+    // Exactly one warning per turn × 2 turns = 2 warnings. NOT 4 (one per
+    // delta) and NOT 1 (suppressed across turns).
+    expect(warnSpy).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runWithEngine integration contract — Sentinel pr561 required regression
+// for the registration path. We don't import runWithEngine here (heavy
+// DB/renderer dependencies); instead we assert the structural invariant
+// it relies on: `debate.experts[i].systemMessage` ends with the canary
+// instruction, so passing `debate.experts` to `engine.addExpert` is what
+// actually ships the canary to the LLM.
+// ---------------------------------------------------------------------------
+describe("Debate.experts registration contract", () => {
+  it("returns specs whose systemMessage ends with a confidentiality + canary instruction", () => {
+    const cto = expertSpec("01HZ-cto", "cto", "You are a CTO.");
+    const debate = new Debate(new MockEngine(), [cto], {
+      maxRounds: 1,
+      maxWordsPerResponse: 50,
+      mode: "freeform",
+    });
+
+    const [augmented] = debate.experts;
+    expect(augmented).toBeDefined();
+    if (augmented === undefined) return;
+
+    // The augmented systemMessage is a strict superset of the original
+    // (so the expert persona is preserved) AND includes both the
+    // confidentiality instruction text and the per-expert canary.
+    expect(augmented.systemMessage.startsWith("You are a CTO.")).toBe(true);
+    expect(augmented.systemMessage).toMatch(/confidential and must NEVER appear/);
+    const canary = debate.canaries.get("01HZ-cto");
+    expect(canary).toBeDefined();
+    if (canary === undefined) return;
+    expect(augmented.systemMessage.endsWith(canary)).toBe(true);
+  });
+
+  it("preserves non-systemMessage spec fields on the augmented experts", () => {
+    const cto = expertSpec("01HZ-cto", "cto", "You are a CTO.");
+    const debate = new Debate(new MockEngine(), [cto], {
+      maxRounds: 1,
+      maxWordsPerResponse: 50,
+      mode: "freeform",
+    });
+    const [augmented] = debate.experts;
+    expect(augmented?.id).toBe(cto.id);
+    expect(augmented?.slug).toBe(cto.slug);
+    expect(augmented?.displayName).toBe(cto.displayName);
+    expect(augmented?.model).toBe(cto.model);
   });
 });

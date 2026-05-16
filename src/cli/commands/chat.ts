@@ -1928,6 +1928,19 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
     },
   );
 
+  // T-09: each expert was already registered with the engine in the
+  // outer chat setup using its non-canary systemMessage. The Debate
+  // constructor produced canary-injected variants in `debate.experts`
+  // — re-register each in-place so the canary actually reaches the
+  // LLM during the structured deliberation, making leak detection
+  // effective on this code path. removeExpert is idempotent for
+  // unknown ids (no-op safety) and addExpert requires the id to be
+  // free, so the remove+add pair is the documented swap protocol.
+  for (const augmented of debate.experts) {
+    await engine.removeExpert(augmented.id);
+    await engine.addExpert(augmented);
+  }
+
   // Single-expert panels run 3 phases (cross-exam is skipped); 2+ run 4.
   const phaseCount = members.length === 1 ? 3 : 4;
   const expectedTurns = phaseCount * members.length;

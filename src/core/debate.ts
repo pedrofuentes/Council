@@ -146,12 +146,6 @@ export class Debate {
    * meaningful.
    */
   readonly #experts: readonly ExpertSpec[];
-  /**
-   * Tracks which (expertId × turn) pairs have already produced a
-   * canary-leak warning, so a single multi-delta leaking response
-   * only warns once instead of once per chunk.
-   */
-  readonly #leakWarned = new Set<string>();
 
   constructor(
     private readonly engine: CouncilEngine,
@@ -631,6 +625,12 @@ export class Debate {
     const backoffMs = this.config.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS;
     const maxRetries = backoffMs.length;
 
+    // Reset the canary-leak dedup set so each new turn for this
+    // expert can warn again even if a previous turn already leaked.
+    // The dedup is per (turn × attempt) only — it exists to avoid
+    // spamming warnings across multiple deltas within one response.
+    let turnLeakWarned = false;
+
     let content = "";
     let turnFailed = false;
     let lastErrorRecoverable = false;
@@ -655,20 +655,19 @@ export class Debate {
               // Canary leak detection (T-09). Check accumulated content
               // (not just this chunk) so a canary split across delta
               // boundaries is still caught. Warn at most once per
-              // (expertId × attempt) to avoid log spam on long
-              // responses.
+              // turn-attempt to avoid log spam on long responses; the
+              // flag is local to #runAiTurn so subsequent turns from
+              // the same expert can warn again.
               const canary = this.#canaries.get(expert.id);
-              if (canary !== undefined) {
-                const warnKey = `${expert.id}::${attempt}`;
-                if (
-                  !this.#leakWarned.has(warnKey) &&
-                  checkCanaryLeak(content, canary)
-                ) {
-                  this.#leakWarned.add(warnKey);
-                  console.warn(
-                    `[canary] leak detected in response from expert ${expert.id} (slug=${expert.slug}) — system prompt may have been exfiltrated`,
-                  );
-                }
+              if (
+                canary !== undefined &&
+                !turnLeakWarned &&
+                checkCanaryLeak(content, canary)
+              ) {
+                turnLeakWarned = true;
+                console.warn(
+                  `[canary] leak detected in response from expert ${expert.id} (slug=${expert.slug}) — system prompt may have been exfiltrated`,
+                );
               }
               break;
             }
