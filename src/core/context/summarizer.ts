@@ -29,7 +29,7 @@ import type {
   EngineEvent,
 } from "../../engine/index.js";
 import type { PriorTurnRecord } from "../moderator/strategy.js";
-import { escapeFenceContent } from "../prompt-sanitize.js";
+import { escapeFenceContent, sanitizePromptBlock } from "../prompt-sanitize.js";
 
 /**
  * Selects which summarizer the orchestrator should invoke.
@@ -189,8 +189,8 @@ export async function buildLLMSummary(
     });
   }
 
-  if (collected.length <= config.maxSummaryLength) return collected;
-  return collected.slice(0, config.maxSummaryLength);
+  const sanitized = sanitizePromptBlock(collected, config.maxSummaryLength);
+  return sanitized;
 }
 
 function formatTurnsForLLM(turns: readonly PriorTurnRecord[]): string {
