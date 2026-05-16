@@ -22,6 +22,7 @@ import { ulid } from "ulid";
 
 import type { CouncilEngine, ExpertSpec } from "../engine/index.js";
 import { stripControlChars } from "../cli/strip-control-chars.js";
+import { sanitizePromptField, sanitizePromptBlock } from "./prompt-sanitize.js";
 
 import type { PanelDefinition, ResolvedPanelDefinition } from "./template-loader.js";
 import { PanelDefinitionSchema } from "./template-loader.js";
@@ -115,6 +116,17 @@ export async function autoComposePanel(
 }
 
 /**
+ * Strip terminal controls first (complete ANSI sequences), then prompt-sanitize.
+ */
+function sanitizeField(raw: string, maxLength?: number): string {
+  return sanitizePromptField(stripControlChars(raw)).slice(0, maxLength ?? 2000);
+}
+
+function sanitizeBlock(raw: string, maxLength?: number): string {
+  return sanitizePromptBlock(stripControlChars(raw), maxLength);
+}
+
+/**
  * Strip policy-bearing fields the LLM may have injected and force every
  * expert's `model` to the trusted default. The composer is untrusted —
  * it must not be able to override the debate protocol, output contract,
@@ -145,18 +157,26 @@ function sanitizeComposedPanel(
     (e): e is Exclude<typeof e, string> => typeof e !== "string",
   );
   return {
-    name: panel.name,
-    ...(panel.description !== undefined ? { description: panel.description } : {}),
+    name: sanitizeField(panel.name, 100),
+    ...(panel.description !== undefined
+      ? { description: sanitizeField(panel.description, 500) }
+      : {}),
     ...(panel.defaults ? { defaults: panel.defaults } : {}),
     experts: inlineEntries.map((e) => ({
       slug: e.slug,
-      displayName: e.displayName,
-      role: e.role,
+      displayName: sanitizeField(e.displayName, 80),
+      role: sanitizeField(e.role, 200),
       model: defaultModel,
-      expertise: e.expertise,
-      epistemicStance: e.epistemicStance,
+      expertise: {
+        weightedEvidence: e.expertise.weightedEvidence.map((w) => sanitizeField(w)),
+        referenceCases: e.expertise.referenceCases.map((r) => sanitizeField(r)),
+        notExpertIn: e.expertise.notExpertIn.map((n) => sanitizeField(n)),
+      },
+      epistemicStance: sanitizeBlock(e.epistemicStance, 1000),
       kind: e.kind,
-      ...(e.personality !== undefined ? { personality: e.personality } : {}),
+      ...(e.personality !== undefined
+        ? { personality: sanitizeField(e.personality, 200) }
+        : {}),
     })),
   };
 }
