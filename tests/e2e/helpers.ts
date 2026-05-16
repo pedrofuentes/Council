@@ -43,6 +43,15 @@ function normalizeTempPath(dirPath: string): string {
   return process.platform === "win32" ? resolvedPath.toLowerCase() : resolvedPath;
 }
 
+function isBestEffortCleanupError(error: unknown): boolean {
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? String((error as { readonly code?: unknown }).code ?? "")
+      : "";
+  const message = error instanceof Error ? error.message : String(error);
+  return /busy|lock|ebusy|eperm|enotempty|sqlite_busy/i.test(`${code} ${message}`);
+}
+
 async function removeDir(dirPath: string): Promise<void> {
   const tempRoot = normalizeTempPath(os.tmpdir());
   const candidatePath = normalizeTempPath(dirPath);
@@ -54,7 +63,11 @@ async function removeDir(dirPath: string): Promise<void> {
 
   try {
     await fs.rm(dirPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-  } catch {
+  } catch (error: unknown) {
+    if (!isBestEffortCleanupError(error)) {
+      throw error;
+    }
+
     // best-effort: Windows may hold SQLite file handles after db.destroy()
   }
 }
@@ -130,7 +143,11 @@ export async function openTestDb(testHome: string): Promise<CouncilDatabase> {
 export async function destroyTestDb(db: CouncilDatabase): Promise<void> {
   try {
     await db.destroy();
-  } catch {
+  } catch (error: unknown) {
+    if (!isBestEffortCleanupError(error)) {
+      throw error;
+    }
+
     // best-effort: Windows may still be unwinding SQLite/libsql handles
   }
 }
