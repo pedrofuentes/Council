@@ -22,7 +22,39 @@
 
 <!-- Add new decisions below this line, most recent first -->
 
-### ADR-011: User data directory split — `~/Council/` (visible) vs `~/.council/` (hidden)
+### ADR-012: Layered prompt injection defense (zero external dependencies)
+**Date**: 2026-05-14
+**Status**: Accepted
+**Context**: Council's multi-agent architecture creates an unusually wide prompt-injection surface compared to a single-agent chat tool. Cross-expert turns, LLM-composed panel definitions, persisted rolling summaries, RAG document snippets, persona profiles distilled from user-supplied documents, and `extracted_memory_json` rows all carry untrusted text that ends up interpolated into a privileged system prompt for the *next* expert. A successful injection in one expert's output can therefore propagate to another expert in the same panel, to a future chat turn (via summary or memory), or to a different panel altogether (via the cross-panel-awareness `[PANEL MEMBERSHIPS]` section). The defense must be present at every untrusted-data surface, must not rely on a single sanitiser working perfectly, and — critically for a zero-setup CLI — must not require a network API key, an ONNX runtime, or a 100MB+ classifier download to be functional out of the box.
+
+**Decision**: Adopt a **5-layer in-process defense** with **zero new dependencies**:
+1. **Structural sanitisation** — `sanitizePromptField` / `sanitizePromptBlock` / `sanitizeFenced` / `escapeFenceContent` in `src/core/prompt-sanitize.ts`. NFKC-normalises the input first so compatibility/fullwidth forms (e.g. `Ａ` → `A`, `［１］` → `[1]`) cannot bypass downstream pattern matching, then strips C0 controls (except `\t`/`\n`/`\r`) and DEL, strips bidi/zero-width characters, collapses Unicode line separators (NEL / U+2028 / U+2029), defangs `[N]` section markers, caps length. (C1 controls U+0080–U+009F are stripped separately by the chat renderer where terminal-side reinterpretation is the threat.) Field variant collapses newlines (for system-prompt fields); block variant preserves them (for fenced bodies).
+2. **Heuristic detection** — `detectInstructionPatterns` in the same module returns matched suspicious-pattern names for telemetry/canary-triage. Does not hard-block (false-positive cost too high).
+3. **Fencing & spotlighting** — untrusted content is wrapped in XML-style fences (`<from_expert>`, `<summary>`, `<transcript>`, `<<<DOC>>>`) with paired preambles instructing the model to treat fenced regions as evidence, not instructions. Fence attributes are escaped against both tag-break (`<`) and attribute-break (`"`).
+4. **Schema enforcement** — `ExpertDefinitionSchema`'s Zod `superRefine` rejects `[NN]` section markers in string fields at parse time, so malicious YAML cannot even load.
+5. **Canary tokens** — `src/core/canary.ts` injects a random opaque token into the system prompt and scans every expert response. A leak is a strong prompt-injection signal surfaced to the user as a warning.
+
+All five layers are sync, in-process, and execute in under 1ms per call.
+
+**Alternatives considered**:
+- **External ML classifier (Lakera Guard, hosted)** — high-quality detection, but requires a network round-trip per turn, an API key in every user's install, and shipping every expert turn to a third party. Conflicts with the zero-setup CLI promise and the privacy posture of a local-first tool.
+- **Local ONNX classifier (Microsoft Prompt Guard 2)** — no network, but adds ~100MB of model weights, an `onnxruntime` native dependency (re-introduces the `better-sqlite3`-style prebuild risk that ADR-005 was specifically designed to avoid), and ~50–200ms inference latency per check. Out of proportion to the threat model for a CLI deliberation tool.
+- **Heuristic regex blocking only (no sanitisation, no fencing)** — trivial to bypass with Unicode homoglyphs, zero-width spaces, or split tokens. Single-layer defenses are by definition not defense-in-depth.
+- **Trust the LLM to ignore injection attempts** — modern instruction-tuned models are partially robust, but the academic and red-team literature (Greshake et al.; Willison's prompt-injection series; the OWASP LLM Top 10) is unambiguous that this is not a defense.
+
+External ML classifiers are **deferred to Phase 4** as an optional layer if the heuristic and canary signals prove insufficient in practice. The architectural seam to add one is straightforward: a single `IPromptInspector` interface in front of the heuristic detector.
+
+**Consequences**:
+- ✅ Zero new dependencies. No API key, no ONNX runtime, no model download — the defense works on `npm install -g` with nothing else configured.
+- ✅ All defense is sync and sub-millisecond. No per-turn latency budget consumed by injection screening.
+- ✅ Local-first / privacy posture preserved — no expert content is shipped to a third party for screening.
+- ✅ Layered: a bypass of one layer (e.g. a novel Unicode sequence that survives sanitisation) is still caught by fencing, schema rejection, or canary detection.
+- ⚠️ No ML-based semantic classification. Sophisticated obfuscated attacks that survive heuristic detection will only be caught at fence/canary boundaries, not pre-flagged.
+- ⚠️ Heuristic and canary detection are *signals*, not blocks — surfaced as warnings, not enforced rejections. Adding a hard-block mode is a future decision tied to deployment context (CI vs. interactive).
+- 📝 Test coverage in `tests/security/` (30 deterministic red-team payloads) is the ratchet — coverage of injection categories must not decrease, and new bypasses discovered in the wild land as new hardcoded tests cited by issue/PR.
+- 📝 When adding a new untrusted-data surface (new RAG source, new cross-expert relay, new LLM-distilled field), the author MUST identify which of the five layers apply and wire them in before the surface ships. Sentinel verifies this on the introducing PR.
+
+### ADR-011: User data directory split— `~/Council/` (visible) vs `~/.council/` (hidden)
 **Date**: 2026-05-12
 **Status**: Accepted
 **Context**: Council writes two very different kinds of state to the user's home directory: (a) **author-facing artifacts** — expert YAMLs, panel YAMLs, persona document folders that users are expected to open in an editor, drag documents into, and version-control if they choose; and (b) **internal state** — the libsql database file, the resolved config, FTS indexes, generated profiles. Putting both in a single hidden `~/.council/` (the "Unix dotfile" default) hides the author-facing files from normal file-browser navigation, drag-and-drop, and `~/Documents`-style discovery; putting both in a visible `~/Council/` clutters the user's home with internal binaries (`council.db`, FTS shadow files) that they should not be editing.
