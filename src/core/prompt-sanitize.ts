@@ -39,3 +39,68 @@ export function sanitizePromptField(raw: string): string {
   const MAX = 2000;
   return defanged.length > MAX ? `${defanged.slice(0, MAX)}…` : defanged;
 }
+
+/**
+ * Escape fence-breaking characters. Use inside `<tag>...</tag>` fences
+ * around untrusted content so no XML-like closing tag — including
+ * whitespace-padded variants — can break out of the fence.
+ */
+export function escapeFenceContent(s: string): string {
+  return s.replace(/</g, "&lt;");
+}
+
+/**
+ * Sanitize multi-line prompt blocks (debate protocols, output contracts,
+ * persisted memory dumps, etc.) before interpolating them into a
+ * privileged prompt.
+ *
+ * Behaves like {@link sanitizePromptField} EXCEPT it preserves newline
+ * characters so the original block structure (paragraphs, bullet lists)
+ * survives. Callers must therefore wrap the result in an explicit fence
+ * if they need to prevent the block from forging fresh top-level prompt
+ * sections.
+ *
+ * Pipeline: NFKC normalize → strip bidi/zero-width → strip C0 controls
+ * (except tab/newline/CR) → defang `[NN]` section markers → cap length.
+ */
+export function sanitizePromptBlock(raw: string, maxLength = 4000): string {
+  const normalized = raw.normalize("NFKC");
+  const unicodeSafe = normalized.replace(
+    /[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g,
+    "",
+  );
+  // eslint-disable-next-line no-control-regex
+  const stripped = unicodeSafe.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
+  const defanged = stripped.replace(/\[(\d+)\]/g, "(sec-$1)");
+  return defanged.length > maxLength ? `${defanged.slice(0, maxLength)}…` : defanged;
+}
+
+/**
+ * Combined helper: {@link sanitizePromptBlock} followed by
+ * {@link escapeFenceContent}. Use for multi-line untrusted content that
+ * will be interpolated inside an XML-like fence.
+ */
+export function sanitizeFenced(raw: string, maxLength = 4000): string {
+  return escapeFenceContent(sanitizePromptBlock(raw, maxLength));
+}
+
+/**
+ * Heuristic check for instruction-like patterns commonly used in prompt
+ * injection attempts. Returns the source strings of every matching
+ * pattern. Use as a defense-in-depth signal (logging, telemetry, soft
+ * warnings) — NOT as a hard block, since legitimate content can match
+ * these patterns and determined attackers can rephrase to evade them.
+ */
+export function detectInstructionPatterns(text: string): readonly string[] {
+  const PATTERNS = [
+    /\bignore\s+(all\s+)?(previous|prior|above|earlier)\b/i,
+    /\bdisregard\s+(all\s+)?(previous|prior|above|instructions?)\b/i,
+    /\boverride\b/i,
+    /\bsystem\s*:/i,
+    /\badmin\s*:/i,
+    /\bnew\s+instructions?\s*:/i,
+    /\byou\s+are\s+now\b/i,
+    /\bforget\s+(everything|all|your)\b/i,
+  ];
+  return PATTERNS.filter((p) => p.test(text)).map((p) => p.source);
+}

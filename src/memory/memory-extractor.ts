@@ -26,6 +26,7 @@
 import { ulid } from "ulid";
 
 import type { ExpertMemory } from "../core/prompt-builder.js";
+import { escapeFenceContent } from "../core/prompt-sanitize.js";
 import type { CouncilEngine, EngineEvent } from "../engine/index.js";
 
 const ENTRY_MAX_CHARS = 200;
@@ -52,12 +53,6 @@ export const EMPTY_MEMORY: ExpertMemory = {
   unresolved: [],
 };
 
-function sanitizeFenceField(s: string): string {
-  // Escape every '<' so no XML-like closing tag — including
-  // whitespace-padded variants — can break the fence.
-  return s.replace(/</g, "&lt;");
-}
-
 function formatTurnsForLLM(turns: readonly string[]): string {
   const lines: string[] = [
     "Below is one expert's prior turns. Distill them into the JSON memory object.",
@@ -66,7 +61,7 @@ function formatTurnsForLLM(turns: readonly string[]): string {
     "<transcript>",
   ];
   for (const t of turns) {
-    lines.push(sanitizeFenceField(t));
+    lines.push(escapeFenceContent(t));
     lines.push("");
   }
   lines.push("</transcript>");
