@@ -12,9 +12,12 @@ import {
   cleanupE2EContext,
   createE2EContext,
   makeMockEngineFactory,
-  openTestDb,
   type E2EContext,
 } from "./helpers.js";
+
+async function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 describe("Config and Migration E2E", () => {
   let ctx: E2EContext;
@@ -24,7 +27,11 @@ describe("Config and Migration E2E", () => {
   });
 
   afterEach(async () => {
-    await cleanupE2EContext(ctx);
+    try {
+      await cleanupE2EContext(ctx);
+    } catch {
+      // best-effort cleanup — Windows may hold SQLite file handles
+    }
   });
 
   it("fresh install: missing config auto-creates", async () => {
@@ -79,8 +86,8 @@ describe("Config and Migration E2E", () => {
     const convene = buildConveneCommand({
       engineFactory: makeMockEngineFactory({
         responses: {
-          cto: "CTO perspective",
-          pm: "PM perspective",
+          senior: "Senior Developer perspective",
+          security: "Security Auditor perspective",
           moderator: "Thank you all",
         },
       }),
@@ -95,8 +102,8 @@ describe("Config and Migration E2E", () => {
 
     // Verify model was applied by checking output includes execution
     const stdout = output.stdout();
-    expect(stdout).toContain("CTO");
-    expect(stdout).toContain("PM");
+    expect(stdout).toContain("Senior Developer");
+    expect(stdout).toContain("Security Auditor");
   });
 
   it("COUNCIL_HOME env var respected", async () => {
@@ -129,7 +136,7 @@ describe("Config and Migration E2E", () => {
     const convene = buildConveneCommand({
       engineFactory: makeMockEngineFactory({
         responses: {
-          cto: "CTO response",
+          senior: "Senior Developer response",
           moderator: "Thank you",
         },
       }),
@@ -160,8 +167,8 @@ describe("Config and Migration E2E", () => {
     const convene = buildConveneCommand({
       engineFactory: makeMockEngineFactory({
         responses: {
-          cto: "CTO perspective",
-          pm: "PM perspective",
+          senior: "Senior Developer perspective",
+          security: "Security Auditor perspective",
           moderator: "Conclusion",
         },
       }),
@@ -192,8 +199,8 @@ describe("Config and Migration E2E", () => {
     const convene = buildConveneCommand({
       engineFactory: makeMockEngineFactory({
         responses: {
-          cto: "CTO first",
-          pm: "PM first",
+          senior: "Senior Developer first",
+          security: "Security Auditor first",
           moderator: "Done",
         },
       }),
@@ -221,8 +228,8 @@ describe("Config and Migration E2E", () => {
     const convene2 = buildConveneCommand({
       engineFactory: makeMockEngineFactory({
         responses: {
-          cto: "CTO second",
-          pm: "PM second",
+          senior: "Senior Developer second",
+          security: "Security Auditor second",
           moderator: "Finished",
         },
       }),
@@ -259,7 +266,7 @@ describe("Config and Migration E2E", () => {
     const convene = buildConveneCommand({
       engineFactory: makeMockEngineFactory({
         responses: {
-          cto: "Response",
+          senior: "Response",
           moderator: "Done",
         },
       }),
