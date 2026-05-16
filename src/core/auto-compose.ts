@@ -172,7 +172,7 @@ function sanitizeComposedPanel(
         referenceCases: e.expertise.referenceCases.map((r) => sanitizeField(r)),
         notExpertIn: e.expertise.notExpertIn.map((n) => sanitizeField(n)),
       },
-      epistemicStance: sanitizeBlock(e.epistemicStance, 1000),
+      epistemicStance: sanitizeField(e.epistemicStance, 1000),
       kind: e.kind,
       ...(e.personality !== undefined
         ? { personality: sanitizeField(e.personality, 200) }
