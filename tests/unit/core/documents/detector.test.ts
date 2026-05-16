@@ -207,6 +207,15 @@ describe("detectDocumentChanges", () => {
       // be processed as if they came from the validated root.
       await fs.writeFile(path.join(dir, "a.md"), "hello");
       const realStat = await fs.lstat(dir);
+      // Pick a swapped inode guaranteed to differ from the real one.
+      // `realStat.ino + 1` is NOT safe on Windows: NTFS inode values
+      // routinely exceed Number.MAX_SAFE_INTEGER (2^53), at which point
+      // floating-point precision causes `ino + 1 === ino`, collapsing
+      // the "swap" into a no-op and producing an intermittent flake
+      // under parallel-suite load (which advances the file-index
+      // counter into the unsafe range). Use a small sentinel that is
+      // always distinct from a real temp-dir inode.
+      const swappedIno = realStat.ino === 1 ? 2 : 1;
       let calls = 0;
       const rootLstatOverride = async (_p: string) => {
         calls += 1;
@@ -216,7 +225,7 @@ describe("detectDocumentChanges", () => {
         if (calls === 1) return realStat;
         return {
           ...realStat,
-          ino: realStat.ino + 1,
+          ino: swappedIno,
           dev: realStat.dev,
           isFile: () => realStat.isFile(),
           isDirectory: () => realStat.isDirectory(),
@@ -270,12 +279,17 @@ describe("detectDocumentChanges", () => {
       // "identity changed between lstat and open" error.
       await fs.writeFile(path.join(dir, "a.md"), "hi");
       const realStat = await fs.lstat(dir);
+      // See "(dev/ino) changes" test above: `realStat.ino + 1` can
+      // round back to `realStat.ino` on Windows because NTFS inodes
+      // can exceed Number.MAX_SAFE_INTEGER. Use a sentinel inode
+      // guaranteed to differ from any real temp-dir inode.
+      const swappedIno = realStat.ino === 1 ? 2 : 1;
 
       const fakeHandle = {
         async stat() {
           return {
             ...realStat,
-            ino: realStat.ino + 1,
+            ino: swappedIno,
             isFile: () => false,
             isDirectory: () => true,
           };
