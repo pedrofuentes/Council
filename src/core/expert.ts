@@ -36,43 +36,66 @@ export const ExpertiseSchema = z.object({
   notExpertIn: z.array(NonEmptyString).default([]),
 });
 
-export const ExpertDefinitionSchema = z.object({
-  /** Short identifier scoped to the panel (e.g. "cto", "skeptic"). */
-  slug: NonEmptyString,
-  /** Name shown in transcripts and renderers (e.g. "Dahlia Renner (CTO)"). */
-  displayName: NonEmptyString,
-  /** One-line role descriptor used in section [1] IDENTITY of the prompt. */
-  role: NonEmptyString,
-  /** Optional model override. Falls back to panel/global default. */
-  model: NonEmptyString.optional(),
-  /** Expertise prior (section [2]). */
-  expertise: ExpertiseSchema,
-  /** Stance from which the expert forms beliefs (section [3]). */
-  epistemicStance: NonEmptyString,
-  /**
-   * Optional override for section [4] DEBATE PROTOCOL. When omitted, the
-   * default anti-sycophancy template is used (see prompt-builder.ts).
-   */
-  debateProtocol: NonEmptyString.optional(),
-  /** Optional override for section [5] OUTPUT CONTRACT. */
-  outputContract: NonEmptyString.optional(),
-  /** Additional forbidden moves; combined with the global defaults. */
-  forbiddenMoves: z.array(NonEmptyString).optional(),
-  /** Personality flavor — the last 5% of value, applied to identity tone. */
-  personality: NonEmptyString.optional(),
-  /**
-   * Discriminates between generic (template-based) and persona
-   * (document-trained) experts. Defaults to "generic" for back-compat.
-   */
-  kind: z.enum(["generic", "persona"]).default("generic"),
-  /**
-   * For persona experts: relationship description
-   * (e.g. "VP of Engineering I report to").
-   */
-  personaDescription: NonEmptyString.optional(),
-  /** For persona experts: override default docs location. */
-  docsPath: NonEmptyString.optional(),
-});
+export const ExpertDefinitionSchema = z
+  .object({
+    /** Short identifier scoped to the panel (e.g. "cto", "skeptic"). */
+    slug: NonEmptyString,
+    /** Name shown in transcripts and renderers (e.g. "Dahlia Renner (CTO)"). */
+    displayName: NonEmptyString,
+    /** One-line role descriptor used in section [1] IDENTITY of the prompt. */
+    role: NonEmptyString,
+    /** Optional model override. Falls back to panel/global default. */
+    model: NonEmptyString.optional(),
+    /** Expertise prior (section [2]). */
+    expertise: ExpertiseSchema,
+    /** Stance from which the expert forms beliefs (section [3]). */
+    epistemicStance: NonEmptyString,
+    /**
+     * Optional override for section [4] DEBATE PROTOCOL. When omitted, the
+     * default anti-sycophancy template is used (see prompt-builder.ts).
+     */
+    debateProtocol: NonEmptyString.optional(),
+    /** Optional override for section [5] OUTPUT CONTRACT. */
+    outputContract: NonEmptyString.optional(),
+    /** Additional forbidden moves; combined with the global defaults. */
+    forbiddenMoves: z.array(NonEmptyString).optional(),
+    /** Personality flavor — the last 5% of value, applied to identity tone. */
+    personality: NonEmptyString.optional(),
+    /**
+     * Discriminates between generic (template-based) and persona
+     * (document-trained) experts. Defaults to "generic" for back-compat.
+     */
+    kind: z.enum(["generic", "persona"]).default("generic"),
+    /**
+     * For persona experts: relationship description
+     * (e.g. "VP of Engineering I report to").
+     */
+    personaDescription: NonEmptyString.optional(),
+    /** For persona experts: override default docs location. */
+    docsPath: NonEmptyString.optional(),
+  })
+  .superRefine((val, ctx) => {
+    // Reject `[NN]` patterns in user-facing string fields so authored or
+    // imported expert YAML cannot smuggle forged section markers into the
+    // privileged system prompt. Runtime sanitization in `prompt-builder.ts`
+    // is the defense-in-depth backstop; this schema rule is the front door.
+    const SECTION_MARKER = /\[\d+\]/;
+    const fieldsToCheck: readonly (readonly [string, string | undefined])[] = [
+      ["displayName", val.displayName],
+      ["role", val.role],
+      ["personality", val.personality],
+      ["epistemicStance", val.epistemicStance],
+    ];
+    for (const [field, value] of fieldsToCheck) {
+      if (value && SECTION_MARKER.test(value)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Field "${field}" must not contain section markers like [1], [2], etc.`,
+          path: [field],
+        });
+      }
+    }
+  });
 
 export type Expertise = z.infer<typeof ExpertiseSchema>;
 export type ExpertDefinition = z.infer<typeof ExpertDefinitionSchema>;
