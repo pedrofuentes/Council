@@ -222,7 +222,7 @@ export default class Expert {
 Council's multi-agent architecture (cross-expert turns, LLM-composed panels, RAG snippets, persisted summaries) creates many surfaces where untrusted text reaches a privileged system prompt. Defense is **layered** — no single layer is sufficient, and every untrusted-data surface MUST traverse the appropriate layers before interpolation. See ADR-012 for the full decision record.
 
 ### Layer 1 — Structural Sanitisation (sync, <1ms)
-Strips C0 controls (`\x00`–`\x1F` minus `\t`/`\n`), C1 controls (`\x80`–`\x9F`), bidi/zero-width characters, collapses Unicode line separators (NEL / U+2028 / U+2029), defangs `[N]`-style section markers to `(sec-N)`, and caps length. Three variants:
+NFKC-normalises the input, then strips C0 controls (`\x00`–`\x1F` except `\t`/`\n`/`\r`) and DEL (`\x7F`), strips bidi/zero-width characters (U+200B–U+200F, U+202A–U+202E, U+2066–U+2069, U+FEFF), collapses Unicode line separators (`\r`, `\n`, NEL U+0085, LS U+2028, PS U+2029), defangs `[N]`-style section markers to `(sec-N)`, and caps length. C1 controls (U+0080–U+009F) are NOT stripped at this layer — they are stripped only at the chat renderer (`src/cli/renderers/chat-renderer.ts`) where terminal-side reinterpretation as CSI/OSC alternates is the threat. Three variants:
 - `sanitizePromptField` — single-line, **collapses** newlines (use for fields flowing into the system prompt, e.g. persona profile fields, speaker names, expert YAML fields).
 - `sanitizePromptBlock` — multi-line, **preserves** `\n` (use for summary/transcript bodies displayed inside data fences).
 - `sanitizeFenced` — `sanitizePromptBlock` + `escapeFenceContent` (escapes `<` so a forged closing tag cannot break out of an XML-style fence).
