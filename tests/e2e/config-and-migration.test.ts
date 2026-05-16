@@ -27,11 +27,7 @@ describe("Config and Migration E2E", () => {
   });
 
   afterEach(async () => {
-    try {
-      await cleanupE2EContext(ctx);
-    } catch {
-      // best-effort cleanup — Windows may hold SQLite file handles
-    }
+    await cleanupE2EContext(ctx);
   });
 
   it("fresh install: missing config auto-creates", async () => {

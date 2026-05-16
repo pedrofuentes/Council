@@ -29,14 +29,6 @@ import {
   type E2EContext,
 } from "./helpers.js";
 
-/**
- * Delay helper to allow DB connections to fully close on Windows.
- * SQLite on Windows sometimes needs a brief moment to release file locks.
- */
-async function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 interface JsonEvent {
   readonly kind: string;
   [key: string]: unknown;
@@ -58,21 +50,7 @@ describe.sequential("output formats e2e", () => {
   });
 
   afterEach(async () => {
-    // Give Windows time to release all file locks before cleanup
-    await delay(3000);
-
-    try {
-      await cleanupE2EContext(ctx);
-    } catch (err) {
-      if (err instanceof Error && err.message.includes("EBUSY")) {
-        await delay(2000);
-        await cleanupE2EContext(ctx).catch(() => {
-          console.warn("Cleanup delayed due to Windows file lock - temp files may persist");
-        });
-      } else {
-        throw err;
-      }
-    }
+    await cleanupE2EContext(ctx);
   });
 
   it("convene JSON output is valid NDJSON", async () => {

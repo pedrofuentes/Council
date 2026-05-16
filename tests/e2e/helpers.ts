@@ -38,8 +38,25 @@ function restoreEnvVar(
   else process.env.COUNCIL_DATA_HOME = value;
 }
 
+function normalizeTempPath(dirPath: string): string {
+  const resolvedPath = path.resolve(dirPath);
+  return process.platform === "win32" ? resolvedPath.toLowerCase() : resolvedPath;
+}
+
 async function removeDir(dirPath: string): Promise<void> {
-  await fs.rm(dirPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  const tempRoot = normalizeTempPath(os.tmpdir());
+  const candidatePath = normalizeTempPath(dirPath);
+  const tempPrefix = `${tempRoot}${path.sep}`;
+
+  if (candidatePath !== tempRoot && !candidatePath.startsWith(tempPrefix)) {
+    throw new Error(`Refusing to delete non-temp path: ${dirPath}`);
+  }
+
+  try {
+    await fs.rm(dirPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } catch {
+    // best-effort: Windows may hold SQLite file handles after db.destroy()
+  }
 }
 
 export async function createE2EContext(): Promise<E2EContext> {
@@ -49,6 +66,7 @@ export async function createE2EContext(): Promise<E2EContext> {
   const testDataHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-e2e-data-"));
 
   try {
+    // These helpers mutate process.env, so E2E suites must avoid overlapping contexts in one process.
     process.env["COUNCIL_HOME"] = testHome;
     process.env["COUNCIL_DATA_HOME"] = testDataHome;
     await fs.mkdir(path.join(testDataHome, "experts"), { recursive: true });
@@ -109,6 +127,14 @@ export async function openTestDb(testHome: string): Promise<CouncilDatabase> {
   return createDatabase(path.join(testHome, "council.db"));
 }
 
+export async function destroyTestDb(db: CouncilDatabase): Promise<void> {
+  try {
+    await db.destroy();
+  } catch {
+    // best-effort: Windows may still be unwinding SQLite/libsql handles
+  }
+}
+
 export async function seedPanelWithExperts(
   testHome: string,
   opts?: {
@@ -145,7 +171,7 @@ export async function seedPanelWithExperts(
 
     return { panelName, panelId: panel.id, expertIds };
   } finally {
-    await db.destroy();
+    await destroyTestDb(db);
   }
 }
 
@@ -199,6 +225,6 @@ export async function seedCompletedDebate(
       debateId: debate.id,
     };
   } finally {
-    await db.destroy();
+    await destroyTestDb(db);
   }
 }

@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import { sql } from "kysely";
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildExpertCommand, type ExpertCommandDeps } from "../../src/cli/commands/expert.js";
 import { buildPanelCommand } from "../../src/cli/commands/panel.js";
@@ -19,7 +19,14 @@ import {
 import { PanelDocumentRepository } from "../../src/memory/repositories/panel-document-repo.js";
 import { ProfileRepository } from "../../src/memory/repositories/profile-repository.js";
 
-import { captureOutput, createE2EContext, openTestDb, type E2EContext } from "./helpers.js";
+import {
+  captureOutput,
+  cleanupE2EContext,
+  createE2EContext,
+  destroyTestDb,
+  openTestDb,
+  type E2EContext,
+} from "./helpers.js";
 
 interface CommandOutput {
   readonly stdout: string;
@@ -169,7 +176,7 @@ async function readExpertDocuments(
   try {
     return await new DocumentRepository(db).findByExpert(slug);
   } finally {
-    await db.destroy();
+    await destroyTestDb(db);
   }
 }
 
@@ -178,7 +185,7 @@ async function readProfile(ctx: E2EContext, slug: string) {
   try {
     return await new ProfileRepository(db).findBySlug(slug);
   } finally {
-    await db.destroy();
+    await destroyTestDb(db);
   }
 }
 
@@ -198,7 +205,7 @@ async function readFtsFilePaths(
     `.execute(db);
     return result.rows.map((row) => row.file_path);
   } finally {
-    await db.destroy();
+    await destroyTestDb(db);
   }
 }
 
@@ -207,59 +214,19 @@ async function readLinkedFolders(ctx: E2EContext, panelName: string): Promise<re
   try {
     return await new PanelDocumentRepository(db).getLinkedFolders(panelName);
   } finally {
-    await db.destroy();
+    await destroyTestDb(db);
   }
-}
-
-function restoreContextEnv(ctx: E2EContext): void {
-  if (ctx.originalHome === undefined) delete process.env.COUNCIL_HOME;
-  else process.env.COUNCIL_HOME = ctx.originalHome;
-
-  if (ctx.originalDataHome === undefined) delete process.env.COUNCIL_DATA_HOME;
-  else process.env.COUNCIL_DATA_HOME = ctx.originalDataHome;
-}
-
-async function removeDirWithRetry(dirPath: string): Promise<void> {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    try {
-      await fs.rm(dirPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-      return;
-    } catch (error: unknown) {
-      const code =
-        typeof error === "object" && error !== null && "code" in error
-          ? String((error as { readonly code?: unknown }).code)
-          : undefined;
-      if (code !== "EBUSY" || attempt === 7) {
-        throw error;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
-    }
-  }
-}
-
-async function cleanupContextWithRetry(ctx: E2EContext): Promise<void> {
-  restoreContextEnv(ctx);
-  await removeDirWithRetry(ctx.testHome);
-  await removeDirWithRetry(ctx.testDataHome);
 }
 
 describe.sequential("document intelligence e2e", () => {
   let ctx: E2EContext;
-  const contextsToCleanup: E2EContext[] = [];
 
   beforeEach(async () => {
     ctx = await createE2EContext();
   });
 
-  afterEach(() => {
-    restoreContextEnv(ctx);
-    contextsToCleanup.push(ctx);
-  });
-
-  afterAll(async () => {
-    for (const context of contextsToCleanup) {
-      await cleanupContextWithRetry(context);
-    }
+  afterEach(async () => {
+    await cleanupE2EContext(ctx);
   });
 
   it("expert train indexes documents", async () => {

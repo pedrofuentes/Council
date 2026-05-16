@@ -17,6 +17,7 @@ import {
   captureOutput,
   cleanupE2EContext,
   createE2EContext,
+  destroyTestDb,
   makeMockEngineFactory,
   openTestDb,
   seedCompletedDebate,
@@ -83,7 +84,7 @@ async function loadPersistedState(ctx: E2EContext): Promise<PersistedDebateState
       expertCount: experts.length,
     };
   } finally {
-    await db.destroy();
+    await destroyTestDb(db);
   }
 }
 
@@ -156,14 +157,7 @@ describe("debate lifecycle e2e", () => {
   });
 
   afterEach(async () => {
-    try {
-      await cleanupE2EContext(ctx);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (!message.includes("EBUSY")) {
-        throw error;
-      }
-    }
+    await cleanupE2EContext(ctx);
   });
 
   it("convene with built-in template produces debate in DB", async () => {
@@ -224,7 +218,7 @@ describe("debate lifecycle e2e", () => {
     try {
       expect(await new PanelRepository(db).findAll()).toHaveLength(0);
     } finally {
-      await db.destroy();
+      await destroyTestDb(db);
     }
   });
 
@@ -334,7 +328,7 @@ describe("debate lifecycle e2e", () => {
       expect(debates.at(-1)?.prompt).toBe("What about security?");
       expect(debates.at(-1)?.status).toBe("completed");
     } finally {
-      await db.destroy();
+      await destroyTestDb(db);
     }
   });
 

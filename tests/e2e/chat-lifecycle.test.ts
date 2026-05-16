@@ -1,22 +1,22 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildChatCommand, type ChatInputProvider } from "../../src/cli/commands/chat.js";
 import { FileExpertLibrary } from "../../src/core/expert-library.js";
 import type { ExpertDefinition } from "../../src/core/expert.js";
 import type { CouncilEngine } from "../../src/engine/index.js";
 import type { ChatSessionRow, ChatTurnRow } from "../../src/memory/db.js";
-import { captureOutput, makeMockEngineFactory, openTestDb } from "./helpers.js";
-
-interface LocalE2EContext {
-  readonly rootDir: string;
-  readonly testHome: string;
-  readonly testDataHome: string;
-  readonly originalHome: string | undefined;
-  readonly originalDataHome: string | undefined;
-}
+import {
+  captureOutput,
+  cleanupE2EContext,
+  createE2EContext,
+  destroyTestDb,
+  makeMockEngineFactory,
+  openTestDb,
+  type E2EContext,
+} from "./helpers.js";
 
 interface CommandOutput {
   readonly stdout: string;
@@ -28,72 +28,11 @@ interface RunChatOptions {
   readonly engineFactory?: () => CouncilEngine;
 }
 
-function restoreEnvVar(
-  name: "COUNCIL_HOME" | "COUNCIL_DATA_HOME",
-  value: string | undefined,
-): void {
-  if (name === "COUNCIL_HOME") {
-    if (value === undefined) delete process.env.COUNCIL_HOME;
-    else process.env.COUNCIL_HOME = value;
-    return;
-  }
-
-  if (value === undefined) delete process.env.COUNCIL_DATA_HOME;
-  else process.env.COUNCIL_DATA_HOME = value;
-}
-
 function requireValue<T>(value: T | undefined, message: string): T {
   if (value === undefined) {
     throw new Error(message);
   }
   return value;
-}
-
-async function removeDirWithRetry(dirPath: string): Promise<void> {
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    try {
-      await fs.rm(dirPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-      return;
-    } catch (error: unknown) {
-      const code =
-        typeof error === "object" && error !== null && "code" in error
-          ? String((error as { readonly code?: unknown }).code)
-          : undefined;
-      if (code !== "EBUSY" || attempt === 5) {
-        throw error;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
-    }
-  }
-}
-
-async function createLocalE2EContext(): Promise<LocalE2EContext> {
-  const originalHome = process.env["COUNCIL_HOME"];
-  const originalDataHome = process.env["COUNCIL_DATA_HOME"];
-  const rootDir = await fs.mkdtemp(path.join(process.cwd(), ".chat-lifecycle-e2e-"));
-  const testHome = path.join(rootDir, "home");
-  const testDataHome = path.join(rootDir, "data");
-
-  await fs.mkdir(path.join(testDataHome, "experts"), { recursive: true });
-  await fs.mkdir(path.join(testDataHome, "panels"), { recursive: true });
-  await fs.mkdir(testHome, { recursive: true });
-
-  process.env["COUNCIL_HOME"] = testHome;
-  process.env["COUNCIL_DATA_HOME"] = testDataHome;
-
-  return {
-    rootDir,
-    testHome,
-    testDataHome,
-    originalHome,
-    originalDataHome,
-  };
-}
-
-async function cleanupLocalE2EContext(ctx: LocalE2EContext): Promise<void> {
-  restoreEnvVar("COUNCIL_HOME", ctx.originalHome);
-  restoreEnvVar("COUNCIL_DATA_HOME", ctx.originalDataHome);
-  await removeDirWithRetry(ctx.rootDir);
 }
 
 function createScriptedInput(lines: readonly string[]): ChatInputProvider {
@@ -148,18 +87,18 @@ function buildExpertDefinition(slug: string, displayName: string, role: string):
   };
 }
 
-async function seedExpert(ctx: LocalE2EContext, definition: ExpertDefinition): Promise<void> {
+async function seedExpert(ctx: E2EContext, definition: ExpertDefinition): Promise<void> {
   const db = await openTestDb(ctx.testHome);
   try {
     const library = new FileExpertLibrary(ctx.testDataHome, db);
     await library.create(definition);
   } finally {
-    await db.destroy();
+    await destroyTestDb(db);
   }
 }
 
 async function seedPanel(
-  ctx: LocalE2EContext,
+  ctx: E2EContext,
   name: string,
   expertSlugs: readonly string[],
 ): Promise<void> {
@@ -174,7 +113,7 @@ async function seedPanel(
 }
 
 async function listChatSessions(
-  ctx: LocalE2EContext,
+  ctx: E2EContext,
   filters: {
     readonly targetType?: "expert" | "panel";
     readonly targetSlug?: string;
@@ -195,14 +134,11 @@ async function listChatSessions(
     }
     return await query.orderBy("created_at", "asc").orderBy("id", "asc").execute();
   } finally {
-    await db.destroy();
+    await destroyTestDb(db);
   }
 }
 
-async function readChatTurns(
-  ctx: LocalE2EContext,
-  chatId: string,
-): Promise<readonly ChatTurnRow[]> {
+async function readChatTurns(ctx: E2EContext, chatId: string): Promise<readonly ChatTurnRow[]> {
   const db = await openTestDb(ctx.testHome);
   try {
     return await db
@@ -212,11 +148,11 @@ async function readChatTurns(
       .orderBy("seq", "asc")
       .execute();
   } finally {
-    await db.destroy();
+    await destroyTestDb(db);
   }
 }
 
-async function archiveChatSession(ctx: LocalE2EContext, chatId: string): Promise<void> {
+async function archiveChatSession(ctx: E2EContext, chatId: string): Promise<void> {
   const db = await openTestDb(ctx.testHome);
   try {
     await db
@@ -225,29 +161,20 @@ async function archiveChatSession(ctx: LocalE2EContext, chatId: string): Promise
       .where("id", "=", chatId)
       .execute();
   } finally {
-    await db.destroy();
+    await destroyTestDb(db);
   }
 }
 
 describe("chat lifecycle e2e", () => {
-  let ctx: LocalE2EContext;
-  const createdContexts: LocalE2EContext[] = [];
+  let ctx: E2EContext;
 
   beforeEach(async () => {
-    ctx = await createLocalE2EContext();
-    createdContexts.push(ctx);
+    ctx = await createE2EContext();
   });
 
-  afterEach(() => {
-    restoreEnvVar("COUNCIL_HOME", ctx.originalHome);
-    restoreEnvVar("COUNCIL_DATA_HOME", ctx.originalDataHome);
+  afterEach(async () => {
+    await cleanupE2EContext(ctx);
   });
-
-  afterAll(async () => {
-    for (const createdContext of createdContexts.reverse()) {
-      await cleanupLocalE2EContext(createdContext);
-    }
-  }, 60000);
 
   it("1:1 chat: single turn persists the session and turns", async () => {
     await seedExpert(ctx, buildExpertDefinition("cto", "CTO", "Technology lead"));

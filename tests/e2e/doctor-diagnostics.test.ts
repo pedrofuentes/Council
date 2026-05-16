@@ -109,7 +109,7 @@ describe("doctor diagnostics E2E", () => {
       expect.fail("Expected doctor to throw when checks fail");
     } catch (err: unknown) {
       expect(err).toBeInstanceOf(Error);
-      expect((err as Error).message).toContain("process.exit unexpectedly called with \"1\"");
+      expect((err as Error).message).toContain('process.exit unexpectedly called with "1"');
       const stdout = output.stdout();
       expect(stdout).toContain("Default model access");
       expect(stdout).toContain("❌");
