@@ -22,7 +22,7 @@ import { ulid } from "ulid";
 
 import type { CouncilEngine, ExpertSpec } from "../engine/index.js";
 import { stripControlChars } from "../cli/strip-control-chars.js";
-import { sanitizePromptField, sanitizePromptBlock } from "./prompt-sanitize.js";
+import { sanitizePromptField } from "./prompt-sanitize.js";
 
 import type { PanelDefinition, ResolvedPanelDefinition } from "./template-loader.js";
 import { PanelDefinitionSchema } from "./template-loader.js";
@@ -117,13 +117,12 @@ export async function autoComposePanel(
 
 /**
  * Strip terminal controls first (complete ANSI sequences), then prompt-sanitize.
+ * All auto-composed expert fields use this to collapse newlines and defang
+ * special chars — multiline content from untrusted LLM output would allow
+ * prompt injection in downstream system prompts.
  */
 function sanitizeField(raw: string, maxLength?: number): string {
   return sanitizePromptField(stripControlChars(raw)).slice(0, maxLength ?? 2000);
-}
-
-function sanitizeBlock(raw: string, maxLength?: number): string {
-  return sanitizePromptBlock(stripControlChars(raw), maxLength);
 }
 
 /**
