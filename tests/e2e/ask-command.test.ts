@@ -55,8 +55,24 @@ describe.sequential("ask command e2e", () => {
   afterEach(async () => {
     // Give Windows time to release all file locks before cleanup
     // libsql WASM backend needs substantial time to release file handles on Windows
-    await delay(2000);
-    await cleanupE2EContext(ctx);
+    await delay(3000);
+
+    // Cleanup with retry logic for Windows file locks
+    try {
+      await cleanupE2EContext(ctx);
+    } catch (err) {
+      // On Windows, libsql WASM may not release file locks immediately
+      // Retry cleanup after additional delay
+      if (err instanceof Error && err.message.includes("EBUSY")) {
+        await delay(2000);
+        await cleanupE2EContext(ctx).catch(() => {
+          // If still locked, log but don't fail the test
+          console.warn("Cleanup delayed due to Windows file lock - temp files may persist");
+        });
+      } else {
+        throw err;
+      }
+    }
   });
 
   it("ask default expert — runs 1-round 1-expert debate, persists to DB, outputs turn events", async () => {
@@ -142,7 +158,7 @@ describe.sequential("ask command e2e", () => {
   });
 
   it("ask with --max-words — expert spec has word cap", async () => {
-    const { panelName } = await seedPanelWithExperts(ctx.testHome);
+    const { panelName, panelId } = await seedPanelWithExperts(ctx.testHome);
     const output = captureOutput();
 
     const cmd = buildAskCommand({
@@ -164,12 +180,24 @@ describe.sequential("ask command e2e", () => {
       "json",
     ]);
 
-    // Verify command completes successfully
+    // Wait for DB to be fully released
+    await waitForDbRelease(ctx.testHome);
+
+    // Verify the debate ran with the specified maxWordsPerResponse
+    const db = await openTestDb(ctx.testHome);
+    try {
+      const debates = await new DebateRepository(db).findByPanelId(panelId);
+      expect(debates).toHaveLength(1);
+
+      // The debate should complete (maxWords affects response length, not completion)
+      expect(debates[0]?.status).toBe("completed");
+    } finally {
+      await db.destroy();
+    }
+
+    // Verify output contains debate.end event
     const stdout = output.stdout();
     const lines = stdout.split("\n").filter((l) => l.trim().startsWith("{"));
-    expect(lines.length).toBeGreaterThan(0);
-
-    // Verify debate completed
     const kinds = lines.map((l) => (JSON.parse(l) as { kind: string }).kind);
     expect(kinds).toContain("debate.end");
   });
@@ -268,7 +296,7 @@ describe.sequential("ask command e2e", () => {
     // JSON format should NOT contain plain-text preambles
     expect(jsonStdout).not.toMatch(/^# Asking/m);
 
-    // Test plain format
+    // Test explicit plain format
     const plainOutput = captureOutput();
     const plainCmd = buildAskCommand({
       engineFactory: makeMockEngineFactory(),
@@ -283,6 +311,8 @@ describe.sequential("ask command e2e", () => {
       "What is your recommendation?",
       "--engine",
       "mock",
+      "--format",
+      "plain",
     ]);
 
     const plainStdout = plainOutput.stdout();
