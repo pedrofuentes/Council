@@ -1,5 +1,4 @@
 import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 import { buildDoctorCommand } from "../../src/cli/commands/doctor.js";
@@ -31,18 +30,15 @@ describe("doctor diagnostics E2E", () => {
     expect(stdout).toContain("All checks passed");
   });
 
-  it("doctor with missing config auto-creates", async () => {
-    const configPath = path.join(ctx.testHome, "config.yaml");
-    const configExists = async (): Promise<boolean> => {
+  it("doctor ensures council home directory exists", async () => {
+    const homeExists = async (): Promise<boolean> => {
       try {
-        await fs.access(configPath);
+        await fs.access(ctx.testHome);
         return true;
       } catch {
         return false;
       }
     };
-
-    expect(await configExists()).toBe(false);
 
     const output = captureOutput();
     const cmd = buildDoctorCommand({ write: output.write });
@@ -52,6 +48,7 @@ describe("doctor diagnostics E2E", () => {
     const stdout = output.stdout();
     expect(stdout).toContain("Council home");
     expect(stdout).toContain(ctx.testHome);
+    expect(await homeExists()).toBe(true);
   });
 
   it("doctor --models lists known models", async () => {
@@ -93,7 +90,9 @@ describe("doctor diagnostics E2E", () => {
     try {
       await cmd.parseAsync(["node", "council-doctor", "--online"]);
       expect.fail("Expected doctor to throw when checks fail");
-    } catch {
+    } catch (err: unknown) {
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain("process.exit unexpectedly called with \"1\"");
       const stdout = output.stdout();
       expect(stdout).toContain("Default model access");
       expect(stdout).toContain("❌");
