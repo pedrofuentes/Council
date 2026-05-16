@@ -14,6 +14,7 @@ import {
   captureOutput,
   cleanupE2EContext,
   createE2EContext,
+  destroyTestDb,
   makeMockEngineFactory,
   openTestDb,
   seedPanelWithExperts,
@@ -53,26 +54,7 @@ describe.sequential("ask command e2e", () => {
   });
 
   afterEach(async () => {
-    // Give Windows time to release all file locks before cleanup
-    // libsql WASM backend needs substantial time to release file handles on Windows
-    await delay(3000);
-
-    // Cleanup with retry logic for Windows file locks
-    try {
-      await cleanupE2EContext(ctx);
-    } catch (err) {
-      // On Windows, libsql WASM may not release file locks immediately
-      // Retry cleanup after additional delay
-      if (err instanceof Error && err.message.includes("EBUSY")) {
-        await delay(2000);
-        await cleanupE2EContext(ctx).catch(() => {
-          // If still locked, log but don't fail the test
-          console.warn("Cleanup delayed due to Windows file lock - temp files may persist");
-        });
-      } else {
-        throw err;
-      }
-    }
+    await cleanupE2EContext(ctx);
   });
 
   it("ask default expert — runs 1-round 1-expert debate, persists to DB, outputs turn events", async () => {
@@ -110,7 +92,7 @@ describe.sequential("ask command e2e", () => {
       const turns = await new TurnRepository(db).findByDebateId(debates[0]?.id ?? "");
       expect(turns).toHaveLength(1); // 1 expert × 1 round = 1 turn
     } finally {
-      await db.destroy();
+      await destroyTestDb(db);
     }
 
     // Verify output contains turn events
@@ -192,7 +174,7 @@ describe.sequential("ask command e2e", () => {
       expect(debates).toHaveLength(1);
       expect(debates[0]?.status).toBe("completed");
     } finally {
-      await db.destroy();
+      await destroyTestDb(db);
     }
 
     // Verify output contains debate.end event
@@ -361,7 +343,7 @@ describe.sequential("ask command e2e", () => {
       expect(turns[0]?.debateId).toBe(debateId);
       expect(turns[0]?.round).toBe(0); // rounds are 0-indexed
     } finally {
-      await db.destroy();
+      await destroyTestDb(db);
     }
   });
 });

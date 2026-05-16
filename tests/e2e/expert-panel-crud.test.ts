@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildExpertCommand, type ExpertCommandDeps } from "../../src/cli/commands/expert.js";
 import { buildPanelCommand } from "../../src/cli/commands/panel.js";
@@ -11,7 +11,9 @@ import { buildConveneCommand } from "../../src/cli/commands/convene.js";
 import type { MockEngineOptions } from "../../src/engine/mock/mock-engine.js";
 import {
   captureOutput,
+  cleanupE2EContext,
   createE2EContext,
+  destroyTestDb,
   makeMockEngineFactory,
   openTestDb,
   type E2EContext,
@@ -131,38 +133,6 @@ async function writeEditorStub(
   return `node "${stubPath}"`;
 }
 
-function restoreContextEnv(ctx: E2EContext): void {
-  if (ctx.originalHome === undefined) delete process.env["COUNCIL_HOME"];
-  else process.env["COUNCIL_HOME"] = ctx.originalHome;
-
-  if (ctx.originalDataHome === undefined) delete process.env["COUNCIL_DATA_HOME"];
-  else process.env["COUNCIL_DATA_HOME"] = ctx.originalDataHome;
-}
-
-async function removeDirWithRetry(dirPath: string): Promise<void> {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    try {
-      await fs.rm(dirPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-      return;
-    } catch (error: unknown) {
-      const code =
-        typeof error === "object" && error !== null && "code" in error
-          ? String((error as { readonly code?: unknown }).code)
-          : undefined;
-      if (code !== "EBUSY" || attempt === 7) {
-        throw error;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
-    }
-  }
-}
-
-async function cleanupContextWithRetry(ctx: E2EContext): Promise<void> {
-  restoreContextEnv(ctx);
-  await removeDirWithRetry(ctx.testHome);
-  await removeDirWithRetry(ctx.testDataHome);
-}
-
 async function readExpertLibraryRow(
   ctx: E2EContext,
   slug: string,
@@ -184,7 +154,7 @@ async function readExpertLibraryRow(
       .where("slug", "=", slug)
       .executeTakeFirst();
   } finally {
-    await db.destroy();
+    await destroyTestDb(db);
   }
 }
 
@@ -208,7 +178,7 @@ async function readPanelLibraryRow(
       .where("name", "=", name)
       .executeTakeFirst();
   } finally {
-    await db.destroy();
+    await destroyTestDb(db);
   }
 }
 
@@ -223,7 +193,7 @@ async function readPanelMembers(ctx: E2EContext, panelName: string): Promise<rea
       .execute();
     return rows.map((row) => row.expert_slug);
   } finally {
-    await db.destroy();
+    await destroyTestDb(db);
   }
 }
 
@@ -255,27 +225,19 @@ async function findRuntimePanelByTemplate(
       }
     });
   } finally {
-    await db.destroy();
+    await destroyTestDb(db);
   }
 }
 
 describe("expert/panel CRUD E2E", () => {
   let ctx: E2EContext;
-  const contextsToCleanup: E2EContext[] = [];
 
   beforeEach(async () => {
     ctx = await createE2EContext();
   });
 
-  afterEach(() => {
-    restoreContextEnv(ctx);
-    contextsToCleanup.push(ctx);
-  });
-
-  afterAll(async () => {
-    for (const context of contextsToCleanup) {
-      await cleanupContextWithRetry(context);
-    }
+  afterEach(async () => {
+    await cleanupE2EContext(ctx);
   });
 
   it("expert create -> list -> inspect persists YAML and DB metadata", async () => {
@@ -539,7 +501,7 @@ fs.writeFileSync(file, body, "utf-8");`,
       const expertRows = await db.selectFrom("expert_library").select("slug").execute();
       expect(expertRows.length).toBeGreaterThan(0);
     } finally {
-      await db.destroy();
+      await destroyTestDb(db);
     }
 
     await expect(
@@ -627,7 +589,7 @@ fs.writeFileSync(file, body, "utf-8");`,
       expect(turns.every((turn) => turn.speaker_kind === "expert")).toBe(true);
       expect(turns.every((turn) => turn.content.length > 0)).toBe(true);
     } finally {
-      await db.destroy();
+      await destroyTestDb(db);
     }
   });
 });

@@ -11,6 +11,7 @@ import {
   captureOutput,
   cleanupE2EContext,
   createE2EContext,
+  destroyTestDb,
   makeMockEngineFactory,
   openTestDb,
   seedCompletedDebate,
@@ -52,20 +53,6 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
-}
-
-function restoreContextEnv(ctx: E2EContext): void {
-  if (ctx.originalHome === undefined) {
-    delete process.env.COUNCIL_HOME;
-  } else {
-    process.env.COUNCIL_HOME = ctx.originalHome;
-  }
-
-  if (ctx.originalDataHome === undefined) {
-    delete process.env.COUNCIL_DATA_HOME;
-  } else {
-    process.env.COUNCIL_DATA_HOME = ctx.originalDataHome;
-  }
 }
 
 async function runConveneCommand(ctx: E2EContext, topic: string): Promise<CommandOutput> {
@@ -138,7 +125,7 @@ async function loadLatestPanelSummary(ctx: E2EContext): Promise<StoredPanelSumma
       turnCount: turns.length,
     };
   } finally {
-    await db.destroy();
+    await destroyTestDb(db);
   }
 }
 
@@ -150,18 +137,7 @@ describe("memory management e2e", () => {
   });
 
   afterEach(async () => {
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      try {
-        await cleanupE2EContext(ctx);
-        return;
-      } catch (error: unknown) {
-        restoreContextEnv(ctx);
-        if (!String(error).includes("EBUSY") || attempt === 4) {
-          return;
-        }
-        await wait(250);
-      }
-    }
+    await cleanupE2EContext(ctx);
   });
 
   it("memory list after convene shows persisted panel counts", async () => {
@@ -260,7 +236,7 @@ describe("memory management e2e", () => {
       expect(debates).toHaveLength(0);
       expect(turns).toHaveLength(0);
     } finally {
-      await db.destroy();
+      await destroyTestDb(db);
     }
   });
 
@@ -281,7 +257,7 @@ describe("memory management e2e", () => {
       expect(debates).toHaveLength(0);
       expect(turns).toHaveLength(0);
     } finally {
-      await db.destroy();
+      await destroyTestDb(db);
     }
   });
 
@@ -298,7 +274,7 @@ describe("memory management e2e", () => {
       expect(experts.map((expert) => expert.slug)).toEqual(["pm"]);
       expect(debates).toHaveLength(1);
     } finally {
-      await db.destroy();
+      await destroyTestDb(db);
     }
   });
 
@@ -332,7 +308,7 @@ describe("memory management e2e", () => {
       expect(debates).toHaveLength(1);
       expect(turns).toHaveLength(2);
     } finally {
-      await db.destroy();
+      await destroyTestDb(db);
     }
   });
 
@@ -370,7 +346,7 @@ describe("memory management e2e", () => {
       expect(reconvenedPanelDebates).toHaveLength(1);
       expect(reconvenedPanelDebates[0]?.id).not.toBe(firstPanel.debateId);
     } finally {
-      await db.destroy();
+      await destroyTestDb(db);
     }
   });
 });

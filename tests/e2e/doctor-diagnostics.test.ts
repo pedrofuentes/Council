@@ -1,4 +1,5 @@
 import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 import { buildDoctorCommand } from "../../src/cli/commands/doctor.js";
@@ -28,6 +29,17 @@ describe("doctor diagnostics E2E", () => {
     expect(stdout).toContain("Council home");
     expect(stdout).toContain("SQLite (libsql)");
     expect(stdout).toContain("All checks passed");
+
+    const unsafeCleanupCtx: E2EContext = {
+      testHome: path.join(process.cwd(), ".should-not-delete-home"),
+      testDataHome: path.join(process.cwd(), ".should-not-delete-data"),
+      originalHome: process.env["COUNCIL_HOME"],
+      originalDataHome: process.env["COUNCIL_DATA_HOME"],
+    };
+
+    await expect(cleanupE2EContext(unsafeCleanupCtx)).rejects.toThrow(
+      /Refusing to delete non-temp path/,
+    );
   });
 
   it("doctor ensures council home directory exists", async () => {
@@ -97,7 +109,7 @@ describe("doctor diagnostics E2E", () => {
       expect.fail("Expected doctor to throw when checks fail");
     } catch (err: unknown) {
       expect(err).toBeInstanceOf(Error);
-      expect((err as Error).message).toContain("process.exit unexpectedly called with \"1\"");
+      expect((err as Error).message).toContain('process.exit unexpectedly called with "1"');
       const stdout = output.stdout();
       expect(stdout).toContain("Default model access");
       expect(stdout).toContain("❌");

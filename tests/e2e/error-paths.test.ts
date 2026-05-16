@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Command } from "commander";
 
 import { buildAskCommand } from "../../src/cli/commands/ask.js";
@@ -19,6 +19,7 @@ import {
   captureOutput,
   cleanupE2EContext,
   createE2EContext,
+  destroyTestDb,
   makeMockEngineFactory,
   openTestDb,
   seedCompletedDebate,
@@ -42,10 +43,6 @@ function prepareCommand(command: Command): Command {
 
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-async function sleep(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function expectCommandFailure(
@@ -103,30 +100,19 @@ async function seedEmptyCompletedDebate(testHome: string, panelName: string): Pr
       endedAt: new Date().toISOString(),
     });
   } finally {
-    await db.destroy();
+    await destroyTestDb(db);
   }
 }
 
 describe("CLI error paths E2E", () => {
   let ctx: E2EContext;
 
-  beforeAll(async () => {
+  beforeEach(async () => {
     ctx = await createE2EContext();
   });
 
-  afterAll(async () => {
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      try {
-        await cleanupE2EContext(ctx);
-        return;
-      } catch (error: unknown) {
-        const code = error instanceof Error && "code" in error ? error.code : undefined;
-        if (code !== "EBUSY" || attempt === 9) {
-          throw error;
-        }
-        await sleep(100);
-      }
-    }
+  afterEach(async () => {
+    await cleanupE2EContext(ctx);
   });
 
   describe("convene", () => {
@@ -453,7 +439,7 @@ describe("CLI error paths E2E", () => {
         expect(debates).toHaveLength(1);
         expect(turns).toHaveLength(2);
       } finally {
-        await db.destroy();
+        await destroyTestDb(db);
       }
     });
   });
