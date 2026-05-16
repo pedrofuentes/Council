@@ -204,7 +204,10 @@ describe("buildSystemPrompt() — persona profile", () => {
     );
   });
 
-  it("[8] PERSONA PROFILE instructs the expert not to quote or mention the profile explicitly", () => {
+  it("[8] PERSONA PROFILE uses descriptive non-procedural phrasing (not instructional)", () => {
+    // T-10: the profile section should describe observed traits, not
+    // instruct the LLM to adopt them. This prevents adversary-influenced
+    // profile content from being treated as directives.
     const prompt = buildSystemPrompt(
       baseDefinition,
       undefined,
@@ -214,8 +217,10 @@ describe("buildSystemPrompt() — persona profile", () => {
     const startIdx = prompt.indexOf("[8] PERSONA PROFILE");
     const endIdx = prompt.indexOf("[9] CURRENT TASK");
     const section = prompt.slice(startIdx, endIdx);
+    // The new wording emphasizes descriptive observation over procedural
+    // instructions.
     expect(section.toLowerCase()).toMatch(
-      /do not (?:explicitly )?(?:mention|quote)|naturally/i,
+      /observed.*traits|descriptive observations/i,
     );
   });
 
