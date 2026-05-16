@@ -31,6 +31,9 @@ describe("doctor diagnostics E2E", () => {
   });
 
   it("doctor ensures council home directory exists", async () => {
+    // Remove the directory to verify doctor recreates it
+    await fs.rm(ctx.testHome, { recursive: true, force: true });
+
     const homeExists = async (): Promise<boolean> => {
       try {
         await fs.access(ctx.testHome);
@@ -39,6 +42,8 @@ describe("doctor diagnostics E2E", () => {
         return false;
       }
     };
+
+    expect(await homeExists()).toBe(false);
 
     const output = captureOutput();
     const cmd = buildDoctorCommand({ write: output.write });
