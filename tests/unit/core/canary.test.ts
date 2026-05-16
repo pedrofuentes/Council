@@ -122,7 +122,9 @@ describe("Debate — canary integration", () => {
     expect(augmented?.systemMessage.startsWith("You are a CTO.")).toBe(true);
     const canary = debate.canaries.get("01HZ-cto");
     expect(canary).toBeDefined();
-    expect(augmented?.systemMessage).toContain(canary!);
+    if (canary !== undefined) {
+      expect(augmented?.systemMessage).toContain(canary);
+    }
   });
 
   it("warns via console.warn when an LLM response leaks the canary", async () => {
@@ -139,9 +141,14 @@ describe("Debate — canary integration", () => {
     expect(debate.canaries.get("01HZ-cto")).toBe(FIXED);
 
     // Register the augmented (canary-injected) expert with the engine.
-    await engine.addExpert(debate.experts[0]!);
+    const [augmentedSpec] = debate.experts;
+    expect(augmentedSpec).toBeDefined();
+    if (augmentedSpec === undefined) return;
+    await engine.addExpert(augmentedSpec);
 
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+      // suppress noisy stderr in test output
+    });
 
     const events = await collect(debate.run("topic"));
 
@@ -167,9 +174,14 @@ describe("Debate — canary integration", () => {
     const debate = new Debate(engine, [cto], FREEFORM_1R, {
       canaryFor: () => "CANARY_neverleaks",
     });
-    await engine.addExpert(debate.experts[0]!);
+    const [augmentedSpec] = debate.experts;
+    expect(augmentedSpec).toBeDefined();
+    if (augmentedSpec === undefined) return;
+    await engine.addExpert(augmentedSpec);
 
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+      // suppress noisy stderr in test output
+    });
     await collect(debate.run("topic"));
     expect(warnSpy).not.toHaveBeenCalled();
 

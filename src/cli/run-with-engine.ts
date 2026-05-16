@@ -143,10 +143,21 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
   try {
     await engine.start();
 
+    const humanSlugs = opts.humanSlugs ?? new Set<string>();
+
+    // Build the Debate first so canary tokens (T-09) are injected
+    // into each expert's systemMessage. The augmented specs are then
+    // registered with the engine via `debate.experts`, ensuring the
+    // canary actually reaches the LLM — otherwise leak detection in
+    // `#runAiTurn` would be meaningless.
+    const debate = new Debate(engine, opts.experts, opts.debateConfig, {
+      humanSlugs: humanSlugs.size > 0 ? humanSlugs : undefined,
+      humanInput: opts.humanInput,
+    });
+
     // Leak-safe parallel addExpert (Sentinel #142 + #151).
     // Filter out human participants — they don't register with the engine.
-    const humanSlugs = opts.humanSlugs ?? new Set<string>();
-    const aiExperts = opts.experts.filter((e) => !humanSlugs.has(e.slug));
+    const aiExperts = debate.experts.filter((e) => !humanSlugs.has(e.slug));
     const startedEngine = engine;
     const settled = await Promise.allSettled(aiExperts.map((e) => startedEngine.addExpert(e)));
     const failures = settled
@@ -192,10 +203,7 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
     }
 
     const stream = persister.persist(
-      new Debate(engine, opts.experts, opts.debateConfig, {
-        humanSlugs: humanSlugs.size > 0 ? humanSlugs : undefined,
-        humanInput: opts.humanInput,
-      }).run(opts.prompt),
+      debate.run(opts.prompt),
       opts.prompt,
     );
     await renderer.render(stream);
