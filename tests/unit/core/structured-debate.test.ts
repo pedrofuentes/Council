@@ -236,11 +236,17 @@ describe("Structured debate — phase prompts", () => {
     const synthesis = engine.sentPrompts.slice(6, 8);
     const ctoSynth = synthesis.find((s) => s.expertId === cto.id);
     expect(ctoSynth).toBeDefined();
-    // Marker that buildSynthesisPrompt emits per phase line.
-    expect(ctoSynth?.prompt ?? "").toMatch(/Rebuttal/);
+    // Marker that buildSynthesisPrompt emits per phase fence. After the
+    // prompt-injection hardening (T-02, issues #107/#213) other-expert
+    // content is wrapped in `<from_expert>` fences with a lowercase
+    // `phase` attribute instead of a "Name (Phase):" header.
+    expect(ctoSynth?.prompt ?? "").toMatch(/phase="rebuttal"/);
     // PM is the other expert; their rebuttal token must appear in CTO's
-    // synthesis prompt under a `(Rebuttal)` line.
-    expect(ctoSynth?.prompt ?? "").toContain("PM (Rebuttal)");
+    // synthesis prompt inside a PM/rebuttal fence.
+    expect(ctoSynth?.prompt ?? "").toContain(
+      '<from_expert name="PM" phase="rebuttal">',
+    );
+    expect(ctoSynth?.prompt ?? "").toContain("PM_REBUTTAL_TOKEN");
   });
 });
 
