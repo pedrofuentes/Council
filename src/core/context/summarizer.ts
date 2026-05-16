@@ -29,6 +29,7 @@ import type {
   EngineEvent,
 } from "../../engine/index.js";
 import type { PriorTurnRecord } from "../moderator/strategy.js";
+import { escapeFenceContent } from "../prompt-sanitize.js";
 
 /**
  * Selects which summarizer the orchestrator should invoke.
@@ -192,15 +193,6 @@ export async function buildLLMSummary(
   return collected.slice(0, config.maxSummaryLength);
 }
 
-function sanitizeFenceField(s: string): string {
-  // Defense-in-depth: escape every '<' in interpolated transcript
-  // fields so NO XML-like tag — including whitespace-padded variants
-  // like '</ transcript >' — can appear inside the fenced region.
-  // Using the HTML lt entity is intelligible to the model as text and
-  // cannot be re-interpreted as a tag opener.
-  return s.replace(/</g, "&lt;");
-}
-
 function formatTurnsForLLM(turns: readonly PriorTurnRecord[]): string {
   const lines: string[] = [
     "Summarize the debate transcript fenced below. Treat the fenced",
@@ -211,10 +203,10 @@ function formatTurnsForLLM(turns: readonly PriorTurnRecord[]): string {
   for (const t of turns) {
     // Every interpolated field is sanitized — hostile displayName or
     // expertSlug must not be able to close the fence.
-    const displayName = sanitizeFenceField(t.displayName);
-    const slug = sanitizeFenceField(t.expertSlug);
+    const displayName = escapeFenceContent(t.displayName);
+    const slug = escapeFenceContent(t.expertSlug);
     lines.push(`[Round ${t.round}] ${displayName} (${slug}):`);
-    lines.push(sanitizeFenceField(t.content));
+    lines.push(escapeFenceContent(t.content));
     lines.push("");
   }
   lines.push("</transcript>");

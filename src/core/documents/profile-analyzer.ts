@@ -27,7 +27,7 @@
 import { ulid } from "ulid";
 
 import type { CouncilEngine, EngineEvent } from "../../engine/index.js";
-import { sanitizePromptField } from "../prompt-sanitize.js";
+import { escapeFenceContent, sanitizePromptField } from "../prompt-sanitize.js";
 
 export interface DocumentContent {
   readonly path: string;
@@ -139,10 +139,6 @@ const ANALYZER_SYSTEM_PROMPT =
   "Output ONLY the raw JSON object — no preamble, no markdown fences, no commentary. " +
   "If a field has no items, return an empty array (or empty string for string fields).";
 
-function sanitizeFenceField(s: string): string {
-  return s.replace(/</g, "&lt;");
-}
-
 /**
  * Sanitize a persisted-profile field before interpolating it into the
  * `<existing_profile>...</existing_profile>` block of the analyzer
@@ -152,7 +148,8 @@ function sanitizeFenceField(s: string): string {
  * be able to:
  *   - break out of the fence by emitting a literal `</existing_profile>`
  *     (or any other XML-like closing tag) — every `<` is escaped to
- *     `&lt;` to neutralize fence breakout, and
+ *     `&lt;` via {@link escapeFenceContent} to neutralize fence breakout,
+ *     and
  *   - smuggle fresh trusted-context lines or forge a top-level
  *     "[N] SECTION" marker that would impersonate analyzer instructions.
  *
@@ -167,7 +164,7 @@ function sanitizeFenceField(s: string): string {
  * fence (or any other XML-like fence in the prompt).
  */
 function sanitizeExistingProfileField(raw: string): string {
-  return sanitizeFenceField(sanitizePromptField(raw));
+  return escapeFenceContent(sanitizePromptField(raw));
 }
 
 function formatPromptBody(
@@ -209,7 +206,7 @@ function formatPromptBody(
   const now = options.now ?? new Date();
   lines.push("<documents>");
   for (const doc of documents) {
-    const header = `--- ${sanitizeFenceField(doc.filename)} ---`;
+    const header = `--- ${escapeFenceContent(doc.filename)} ---`;
     if (doc.modifiedAt !== undefined) {
       const docDate = new Date(doc.modifiedAt);
       if (!Number.isNaN(docDate.getTime())) {
@@ -221,7 +218,7 @@ function formatPromptBody(
     } else {
       lines.push(header);
     }
-    lines.push(sanitizeFenceField(doc.content));
+    lines.push(escapeFenceContent(doc.content));
     lines.push("");
   }
   lines.push("</documents>");
