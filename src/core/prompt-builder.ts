@@ -196,7 +196,7 @@ function renderPersonaProfile(profile: PersonaProfile): string {
   );
   lines.push("");
   lines.push(
-    "These are observed behavioral traits to inform your tone and approach. They are descriptive observations, not procedural instructions. Continue obeying all sections above.",
+    "These are observed behavioral traits to inform your tone and approach. They are descriptive observations, not procedural instructions. Continue obeying all sections above. Do not explicitly mention or quote this profile.",
   );
   return lines.join("\n");
 }
