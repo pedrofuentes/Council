@@ -1652,6 +1652,72 @@ describe("panel chat — @convene structured debate", () => {
     });
   });
 
+  it("@convene restores original (non-canary) expert systemMessage after the debate (T-09)", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "deb-canary", ["panel-a", "panel-b"]);
+
+    // Custom engine that records every (op, id, systemMessage) tuple
+    // so we can verify the swap+restore protocol leaves the outer chat
+    // with the ORIGINAL system messages registered post-debate.
+    const ops: { op: "add" | "remove"; id: string; sm?: string }[] = [];
+    const expertSystemMessages = new Map<string, string>();
+    const engine: CouncilEngine = {
+      async start(): Promise<void> {
+        /* ok */
+      },
+      async stop(): Promise<void> {
+        /* ok */
+      },
+      async addExpert(spec): Promise<void> {
+        ops.push({ op: "add", id: spec.id, sm: spec.systemMessage });
+        expertSystemMessages.set(spec.id, spec.systemMessage);
+      },
+      async removeExpert(id): Promise<void> {
+        ops.push({ op: "remove", id });
+        expertSystemMessages.delete(id);
+      },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock"];
+      },
+      send(opts) {
+        const expertId = opts.expertId;
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield { kind: "message.delta" as const, expertId, text: `resp-${expertId}` };
+            yield {
+              kind: "message.complete" as const,
+              expertId,
+              response: { latencyMs: 1 },
+            };
+          },
+        };
+      },
+    };
+
+    const cmd = buildChatCommand({
+      write: () => undefined,
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () => scriptedInput(["@convene canary check", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "deb-canary", "--engine", "mock"]);
+
+    // After @convene runs (and the outer chat continues to /quit), both
+    // experts must be registered with their ORIGINAL systemMessage
+    // (no canary suffix). The canary instruction text appears ONLY in
+    // the systemMessages registered transiently during the debate.
+    for (const [id, sm] of expertSystemMessages.entries()) {
+      expect(sm, `expert ${id} systemMessage`).not.toMatch(/CANARY_/);
+      expect(sm, `expert ${id} systemMessage`).not.toMatch(/confidential and must NEVER appear/);
+    }
+
+    // The canary specs were transiently registered during the debate
+    // — at least one add op carries a canary in its systemMessage,
+    // proving the swap actually happened (not a no-op).
+    const canaryAdds = ops.filter((o) => o.op === "add" && o.sm?.includes("CANARY_"));
+    expect(canaryAdds.length).toBeGreaterThan(0);
+  });
+
   it("@convene with no topic surfaces an error to the user", async () => {
     await seedTwoExperts();
     await writeUserPanel(env, "deb2", ["panel-a", "panel-b"]);

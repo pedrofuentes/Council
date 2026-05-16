@@ -281,6 +281,64 @@ describe("Debate — canary integration", () => {
     // delta) and NOT 1 (suppressed across turns).
     expect(warnSpy).toHaveBeenCalledTimes(2);
   });
+
+  // -------------------------------------------------------------------------
+  // Retry-attempt dedup contract: if attempt #1 leaks then fails recoverably
+  // and attempt #2 also leaks, BOTH attempts must warn. A flag scoped to
+  // the whole turn would suppress the second warning — regression for
+  // Sentinel pr561 r2 #1.
+  // -------------------------------------------------------------------------
+  it("re-warns on the retry attempt when both the failed and successful attempts leak", async () => {
+    const cto = expertSpec("01HZ-cto", "cto", "You are a CTO.");
+    const FIXED = "CANARY_retry";
+
+    let sendCalls = 0;
+    const fakeEngine: CouncilEngine = {
+      start: async (): Promise<void> => { /* no-op */ },
+      stop: async (): Promise<void> => { /* no-op */ },
+      addExpert: async (): Promise<void> => { /* no-op */ },
+      removeExpert: async (): Promise<void> => { /* no-op */ },
+      listModels: async () => ["claude-sonnet-4"],
+      async *send(opts: SendOptions): AsyncIterable<EngineEvent> {
+        sendCalls += 1;
+        // Both attempts leak the canary in a delta before terminating.
+        yield { kind: "message.delta", expertId: opts.expertId, text: `leak ${FIXED}` };
+        if (sendCalls === 1) {
+          // Attempt 1: recoverable failure.
+          yield {
+            kind: "error",
+            expertId: opts.expertId,
+            error: { code: "RATE_LIMITED", message: "throttled", provider: "fake" },
+            recoverable: true,
+          };
+          return;
+        }
+        // Attempt 2: success.
+        yield {
+          kind: "message.complete",
+          expertId: opts.expertId,
+          response: { latencyMs: 1, tokensIn: 1, tokensOut: 1 },
+        };
+      },
+    };
+
+    const debate = new Debate(
+      fakeEngine,
+      [cto],
+      { ...FREEFORM_1R, retryBackoffMs: [1] },
+      { canaryFor: () => FIXED },
+    );
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+      // suppress noisy stderr in test output
+    });
+
+    await collect(debate.run("topic"));
+
+    expect(sendCalls).toBe(2);
+    // Two attempts, each leaking → two warnings (one per attempt).
+    expect(warnSpy).toHaveBeenCalledTimes(2);
+  });
 });
 
 // ---------------------------------------------------------------------------

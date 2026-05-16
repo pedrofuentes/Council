@@ -625,12 +625,6 @@ export class Debate {
     const backoffMs = this.config.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS;
     const maxRetries = backoffMs.length;
 
-    // Reset the canary-leak dedup set so each new turn for this
-    // expert can warn again even if a previous turn already leaked.
-    // The dedup is per (turn × attempt) only — it exists to avoid
-    // spamming warnings across multiple deltas within one response.
-    let turnLeakWarned = false;
-
     let content = "";
     let turnFailed = false;
     let lastErrorRecoverable = false;
@@ -641,6 +635,10 @@ export class Debate {
       // Reset per-attempt state — partial deltas from a failed attempt
       // must not bleed into the retry's content.
       content = "";
+      // Reset canary-leak dedup per attempt as well: if a previous
+      // attempt leaked + failed recoverably, the successful retry must
+      // still warn fresh if it also leaks. (Sentinel pr561 r2 #1.)
+      let attemptLeakWarned = false;
       let attemptFailed = false;
       lastErrorRecoverable = false;
       lastErrorMessage = "";
@@ -661,10 +659,10 @@ export class Debate {
               const canary = this.#canaries.get(expert.id);
               if (
                 canary !== undefined &&
-                !turnLeakWarned &&
+                !attemptLeakWarned &&
                 checkCanaryLeak(content, canary)
               ) {
-                turnLeakWarned = true;
+                attemptLeakWarned = true;
                 console.warn(
                   `[canary] leak detected in response from expert ${expert.id} (slug=${expert.slug}) — system prompt may have been exfiltrated`,
                 );

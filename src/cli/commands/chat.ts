@@ -1933,9 +1933,13 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
   // constructor produced canary-injected variants in `debate.experts`
   // — re-register each in-place so the canary actually reaches the
   // LLM during the structured deliberation, making leak detection
-  // effective on this code path. removeExpert is idempotent for
-  // unknown ids (no-op safety) and addExpert requires the id to be
-  // free, so the remove+add pair is the documented swap protocol.
+  // effective on this code path. The original specs are restored in
+  // the finally block below so post-debate chat turns continue to use
+  // the un-augmented system prompts (the outer chat send paths do not
+  // perform canary leak checks). `removeExpert` is idempotent for
+  // unknown ids, and `addExpert` requires the id to be free — the
+  // remove+add pair is the documented swap protocol.
+  const originalSpecs: ExpertSpec[] = members.map((m) => m.spec);
   for (const augmented of debate.experts) {
     await engine.removeExpert(augmented.id);
     await engine.addExpert(augmented);
@@ -2131,6 +2135,20 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
     // consistent for the next prompt iteration.
     if (inTurn) {
       renderer.endExpertResponse();
+    }
+    // T-09: restore the original (non-canary) expert registrations so
+    // post-debate chat turns continue with the un-augmented system
+    // prompts. Best-effort: failures here are logged via writeError
+    // but do NOT propagate — the debate already completed (or aborted)
+    // and the outer chat loop must keep running.
+    for (const original of originalSpecs) {
+      try {
+        await engine.removeExpert(original.id);
+        await engine.addExpert(original);
+      } catch (restoreErr: unknown) {
+        const msg = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
+        writeError(`!! failed to restore expert ${original.id} after structured deliberation: ${msg}\n`);
+      }
     }
   }
 
