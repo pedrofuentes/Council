@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Prompt-injection hardening in structured-debate phase prompts** (#107, #213) — `buildCrossExamPrompt`, `buildRebuttalPrompt`, and `buildSynthesisPrompt` now wrap every cross-expert turn content block in an XML-style `<from_expert name="..." phase="...">…</from_expert>` fence. Bodies are run through `sanitizeFenced` (strip bidi/zero-width, defang `[NN]` markers, escape `<`, cap at 4000 chars); `displayName` is run through `sanitizePromptField` plus attribute-context escaping (`<` and `"`) so a malicious expert name cannot break out of the `name="..."` attribute and forge a tag. A standing preamble instructs the model to treat fenced content as evidence, not as instructions. `buildOpeningPrompt` is unchanged (only takes the trusted topic). Supersedes the "quote prior-turn content verbatim" wording in the earlier Unreleased `Added` entry for `src/core/moderator/phase-prompts.ts`.
+
 ### Changed
 
 - **`council panels` renamed to `council sessions`** — the command that lists debate-session records from the local DB is now `council sessions`. The previous name was confusingly close to `council panel` (which manages the panel YAML library: `create | list | inspect | edit | docs`). The DB table is still named `panels` — only the CLI surface changed. File rename: `src/cli/commands/panels.ts` → `src/cli/commands/sessions.ts`; export rename: `buildPanelsCommand()` → `buildSessionsCommand()`.
