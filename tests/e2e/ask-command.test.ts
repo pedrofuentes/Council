@@ -157,7 +157,7 @@ describe.sequential("ask command e2e", () => {
     expect(turnEnds[0]?.expertSlug).toBe("pm");
   });
 
-  it("ask with --max-words — expert spec has word cap", async () => {
+  it("ask with --max-words — command accepts flag and completes", async () => {
     const { panelName, panelId } = await seedPanelWithExperts(ctx.testHome);
     const output = captureOutput();
 
@@ -167,6 +167,7 @@ describe.sequential("ask command e2e", () => {
       writeError: output.writeError,
     });
 
+    // Verify command accepts --max-words flag without error
     await cmd.parseAsync([
       "node",
       "council-ask",
@@ -183,13 +184,12 @@ describe.sequential("ask command e2e", () => {
     // Wait for DB to be fully released
     await waitForDbRelease(ctx.testHome);
 
-    // Verify the debate ran with the specified maxWordsPerResponse
+    // Verify the debate ran successfully
+    // Note: MockEngine doesn't enforce word limits, so we only verify the flag is accepted
     const db = await openTestDb(ctx.testHome);
     try {
       const debates = await new DebateRepository(db).findByPanelId(panelId);
       expect(debates).toHaveLength(1);
-
-      // The debate should complete (maxWords affects response length, not completion)
       expect(debates[0]?.status).toBe("completed");
     } finally {
       await db.destroy();
