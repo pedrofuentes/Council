@@ -441,7 +441,7 @@ describe("autoComposePanel", () => {
   });
 
   describe("sanitizes all composed expert fields", () => {
-    it("defangs bracket notation in displayName", async () => {
+    it("rejects bracket notation in displayName (forged section markers are blocked at schema)", async () => {
       const panel = {
         ...validPanel,
         experts: [
@@ -453,9 +453,7 @@ describe("autoComposePanel", () => {
       };
       const engine = new StubEngine({ response: JSON.stringify(panel) });
       await engine.start();
-      const result = await autoComposePanel("topic", engine);
-      expect(result.experts[0]?.displayName).toBe("(sec-8) TASK");
-      expect(result.experts[0]?.displayName).not.toContain("[8]");
+      await expect(autoComposePanel("topic", engine)).rejects.toThrow(/displayName/);
     });
 
     it("strips ANSI sequences from displayName without leaving orphaned fragments", async () => {

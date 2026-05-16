@@ -22,7 +22,7 @@
  */
 import type { PersonaProfile } from "./documents/profile-analyzer.js";
 import type { ExpertDefinition } from "./expert.js";
-import { sanitizePromptField } from "./prompt-sanitize.js";
+import { sanitizePromptBlock, sanitizePromptField } from "./prompt-sanitize.js";
 
 /**
  * Phrases banned in every expert response — the surface forms of
@@ -99,26 +99,30 @@ export interface ExpertMemory {
 }
 
 function renderIdentity(def: ExpertDefinition): string {
-  const personality = def.personality ? ` ${def.personality}` : "";
-  return `You are ${def.displayName}. ${def.role}.${personality}`;
+  const safeName = sanitizePromptField(def.displayName);
+  const safeRole = sanitizePromptField(def.role);
+  const personality = def.personality ? ` ${sanitizePromptField(def.personality)}` : "";
+  return `You are ${safeName}. ${safeRole}.${personality}`;
 }
 
 function renderExpertise(def: ExpertDefinition): string {
   const lines: string[] = [];
   lines.push("You weight evidence in this priority order:");
   def.expertise.weightedEvidence.forEach((item, i) => {
-    lines.push(`  ${i + 1}. ${item}`);
+    lines.push(`  ${i + 1}. ${sanitizePromptField(item)}`);
   });
   if (def.expertise.referenceCases.length > 0) {
     lines.push("");
     lines.push("Reference cases you draw on (cite by name when used):");
     for (const ref of def.expertise.referenceCases) {
-      lines.push(`  - ${ref}`);
+      lines.push(`  - ${sanitizePromptField(ref)}`);
     }
   }
   if (def.expertise.notExpertIn.length > 0) {
     lines.push("");
-    lines.push(`You are NOT expert in: ${def.expertise.notExpertIn.join(", ")}.`);
+    lines.push(
+      `You are NOT expert in: ${def.expertise.notExpertIn.map((n) => sanitizePromptField(n)).join(", ")}.`,
+    );
     lines.push("Defer explicitly when asked about these.");
   }
   return lines.join("\n");
@@ -273,13 +277,13 @@ export function buildSystemPrompt(
     renderExpertise(def),
     "",
     "[3] EPISTEMIC STANCE",
-    def.epistemicStance,
+    sanitizePromptBlock(def.epistemicStance),
     "",
     "[4] DEBATE PROTOCOL",
-    def.debateProtocol ?? DEFAULT_DEBATE_PROTOCOL,
+    sanitizePromptBlock(def.debateProtocol ?? DEFAULT_DEBATE_PROTOCOL),
     "",
     "[5] OUTPUT CONTRACT",
-    def.outputContract ?? DEFAULT_OUTPUT_CONTRACT,
+    sanitizePromptBlock(def.outputContract ?? DEFAULT_OUTPUT_CONTRACT),
     "",
     "[6] FORBIDDEN MOVES",
     renderForbiddenMoves(def),
