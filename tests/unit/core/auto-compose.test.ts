@@ -527,7 +527,10 @@ describe("autoComposePanel", () => {
       const engine = new StubEngine({ response: JSON.stringify(panel) });
       await engine.start();
       const result = await autoComposePanel("topic", engine);
-      // Newlines must be collapsed to prevent fake section-marker injection
+      // Auto-composed epistemicStance is untrusted LLM output. Newlines must
+      // be collapsed to prevent injection of instruction lines into the
+      // privileged expert system prompt (buildSystemPrompt interpolates
+      // epistemicStance without fencing). See Sentinel PR #557.
       expect(result.experts[0]?.epistemicStance).not.toContain("\n");
       expect(result.experts[0]?.epistemicStance).toBe("Line 1 Line 2 Line 3");
     });
