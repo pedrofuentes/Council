@@ -6,6 +6,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { E2EContext } from "./helpers.js";
 
+interface HelpersModule {
+  readonly cleanupE2EContext: (ctx: E2EContext) => Promise<void>;
+  readonly destroyTestDb: (db: { destroy: () => Promise<void> }) => Promise<void>;
+}
+
 function buildContext(testHome: string, testDataHome: string): E2EContext {
   return {
     testHome,
@@ -15,7 +20,7 @@ function buildContext(testHome: string, testDataHome: string): E2EContext {
   };
 }
 
-async function importHelpers(): Promise<typeof import("./helpers.js")> {
+async function importHelpers(): Promise<HelpersModule> {
   return import("./helpers.js");
 }
 
@@ -39,12 +44,27 @@ describe("E2E cleanup helpers", () => {
     ).rejects.toThrow(/Refusing to delete non-temp path/);
   });
 
-  it("rejects the temp root itself", async () => {
+  it("rejects the temp root itself before deleting anything", async () => {
+    const rmMock = vi.fn(async (): Promise<void> => {
+      throw new Error("rm should not be called for the temp root");
+    });
+
+    vi.doMock("node:fs/promises", () => ({
+      ...fs,
+      rm: rmMock,
+    }));
+
     const { cleanupE2EContext } = await importHelpers();
 
-    await expect(
-      cleanupE2EContext(buildContext(os.tmpdir(), path.join(os.tmpdir(), "child"))),
-    ).rejects.toThrow(/Refusing to delete non-temp path/);
+    try {
+      await expect(cleanupE2EContext(buildContext(os.tmpdir(), os.tmpdir()))).rejects.toThrow(
+        /Refusing to delete non-temp path/,
+      );
+      expect(rmMock).not.toHaveBeenCalled();
+    } finally {
+      vi.doUnmock("node:fs/promises");
+      vi.resetModules();
+    }
   });
 
   it("swallows temp-dir removal failures", async () => {
