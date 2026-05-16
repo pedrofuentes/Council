@@ -514,7 +514,7 @@ describe("autoComposePanel", () => {
       expect(result.experts[0]?.role).not.toContain("\r");
     });
 
-    it("preserves newlines in epistemicStance", async () => {
+    it("collapses newlines in epistemicStance (prompt injection defense)", async () => {
       const panel = {
         ...validPanel,
         experts: [
@@ -527,8 +527,9 @@ describe("autoComposePanel", () => {
       const engine = new StubEngine({ response: JSON.stringify(panel) });
       await engine.start();
       const result = await autoComposePanel("topic", engine);
-      expect(result.experts[0]?.epistemicStance).toContain("\n");
-      expect(result.experts[0]?.epistemicStance).toBe("Line 1\nLine 2\n\nLine 3");
+      // Newlines must be collapsed to prevent fake section-marker injection
+      expect(result.experts[0]?.epistemicStance).not.toContain("\n");
+      expect(result.experts[0]?.epistemicStance).toBe("Line 1 Line 2 Line 3");
     });
 
     it("truncates epistemicStance to 1000 characters", async () => {
@@ -545,9 +546,8 @@ describe("autoComposePanel", () => {
       const engine = new StubEngine({ response: JSON.stringify(panel) });
       await engine.start();
       const result = await autoComposePanel("topic", engine);
-      // sanitizePromptBlock adds ellipsis when truncating, so it's 1001
-      expect(result.experts[0]?.epistemicStance.length).toBeLessThanOrEqual(1001);
-      expect(result.experts[0]?.epistemicStance).toMatch(/…$/);
+      expect(result.experts[0]?.epistemicStance).toHaveLength(1000);
+      expect(result.experts[0]?.epistemicStance).toBe("A".repeat(1000));
     });
 
     it("strips bidi overrides from personality", async () => {
