@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Comprehensive E2E test suite** (T-01 through T-11) — 94 tests across 10 files covering all 12 CLI commands (convene, resume, export, conclude, sessions, ask, chat, memory, expert, panel, doctor, templates). Tests use in-process execution with MockEngine for fast, deterministic verification of command workflows, error paths, output formats, and persistent state management. Full suite < 2 minutes with zero premium requests.
+
 ### Security
 
 - **Consolidated prompt-sanitisation utilities** (#542, T-01) — `src/core/prompt-sanitize.ts` now exports four additional helpers — `escapeFenceContent` (escapes `<` to `&lt;`; the shared replacement for the prior per-`<` fence escape — orphan-ESC handling is the upstream responsibility of `stripControlChars` / `sanitizePromptField`, not this helper), `sanitizePromptBlock` (multi-line variant: preserves `\n` for transcript/summary bodies, still strips C0/bidi/zero-width and defangs `[NN]` markers), `sanitizeFenced` (combined block-sanitise + fence-escape pipeline for fenced data bodies), and `detectInstructionPatterns` (Layer 2 heuristic check returning matched-pattern names for telemetry/logging). Replaced three private `sanitizeFenceField` copies (phase-prompts, summarizer, context-manager) with the shared `escapeFenceContent` export so the sanitiser semantics cannot drift between sites.
