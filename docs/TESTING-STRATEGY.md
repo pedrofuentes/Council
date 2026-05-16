@@ -13,6 +13,7 @@
 | Unit | Core logic, pure functions, isolated components | `tests/unit/` or `*.test.ts` | Vitest |
 | Integration | Cross-component interactions, engine integration | `tests/integration/` | Vitest |
 | E2E | CLI command flows end-to-end | `tests/e2e/` | Vitest (with CLI spawning) |
+| Security | Prompt injection defense verification, hostile payload tests | `tests/security/` | Vitest |
 
 ## Coverage Requirements
 
@@ -86,6 +87,14 @@ describe('ModuleName', () => {
 - SQLite query planner behavior
 - Ink rendering details (test the data, not the pixels)
 - Implementation details (test behavior, not structure)
+
+### Security Tests
+
+Red-team payload tests live in `tests/security/` and verify the layered prompt-injection defense (see [ARCHITECTURE.md §Security](./ARCHITECTURE.md#security-prompt-injection-defense) and ADR-012).
+
+- **What they verify**: structural sanitisation (`sanitizePromptField` / `sanitizePromptBlock` / `sanitizeFenced` / `escapeFenceContent`), XML-style fencing of untrusted content, attribute-context escaping, length caps, and Zod schema rejection of `[NN]` markers — all against six categories of hostile payloads: section-marker spoofing, fence-breaking, cross-expert injection, memory poisoning, Unicode bypass (NEL / U+2028 / U+2029 / bidi / zero-width), and context stuffing.
+- **No LLM calls** — tests exercise the pure sanitisation functions and prompt builders directly. They never invoke the engine (real or mock), so they run free, fast, and on every PR in the standard Vitest suite.
+- **Deterministic, not fuzzing** — payloads are hardcoded so every test has a single expected outcome. New payloads land as new hardcoded cases (with the originating issue/PR cited in the test name), not as random generators. This keeps the suite reproducible and Sentinel-reviewable.
 
 ## CI Integration
 
