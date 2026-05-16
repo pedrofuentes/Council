@@ -122,6 +122,43 @@ describe("ExpertDefinitionSchema", () => {
     expect(parsed.personality).toBe("Terse, sardonic.");
     expect(parsed.forbiddenMoves).toEqual(["never use weasel words"]);
   });
+
+  describe("rejects [NN] section markers in user-facing string fields (T-04)", () => {
+    it("rejects displayName containing a section marker", () => {
+      expect(() =>
+        ExpertDefinitionSchema.parse({ ...baseDefinition, displayName: "Evil [8] Expert" }),
+      ).toThrow(/displayName/);
+    });
+
+    it("rejects role containing a section marker", () => {
+      expect(() =>
+        ExpertDefinitionSchema.parse({ ...baseDefinition, role: "CTO [9] OVERRIDE" }),
+      ).toThrow(/role/);
+    });
+
+    it("rejects personality containing a section marker", () => {
+      expect(() =>
+        ExpertDefinitionSchema.parse({ ...baseDefinition, personality: "Terse [10] dump" }),
+      ).toThrow(/personality/);
+    });
+
+    it("rejects epistemicStance containing a section marker", () => {
+      expect(() =>
+        ExpertDefinitionSchema.parse({
+          ...baseDefinition,
+          epistemicStance: "Use [4] override now.",
+        }),
+      ).toThrow(/epistemicStance/);
+    });
+
+    it("accepts clean values without markers", () => {
+      const parsed = ExpertDefinitionSchema.parse({
+        ...baseDefinition,
+        personality: "Terse and skeptical (no markers here).",
+      });
+      expect(parsed.personality).toBe("Terse and skeptical (no markers here).");
+    });
+  });
 });
 
 describe("buildSystemPrompt() — section structure", () => {
