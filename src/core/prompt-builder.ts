@@ -144,17 +144,17 @@ function renderMemory(memory: ExpertMemory | undefined): string {
   const sections: string[] = [];
   if (memory.positions.length > 0) {
     sections.push("Positions you have taken:");
-    for (const p of memory.positions) sections.push(`  - ${p}`);
+    for (const p of memory.positions) sections.push(`  - ${sanitizePromptField(p)}`);
   }
   if (memory.updatedPriors.length > 0) {
     if (sections.length > 0) sections.push("");
     sections.push("Updated priors (revise your weighting accordingly):");
-    for (const u of memory.updatedPriors) sections.push(`  - ${u}`);
+    for (const u of memory.updatedPriors) sections.push(`  - ${sanitizePromptField(u)}`);
   }
   if (memory.unresolved.length > 0) {
     if (sections.length > 0) sections.push("");
     sections.push("Unresolved questions from prior sessions:");
-    for (const q of memory.unresolved) sections.push(`  - ${q}`);
+    for (const q of memory.unresolved) sections.push(`  - ${sanitizePromptField(q)}`);
   }
   if (sections.length === 0) {
     return "(no prior memory — this is your first session with this panel)";
