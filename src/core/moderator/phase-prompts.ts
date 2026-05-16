@@ -27,9 +27,11 @@
  * `<from_expert>` XML-style fences with `sanitizeFenced` defang
  * (escape `<`, strip bidi/zero-width, strip C0 controls, defang
  * `[NN]` section markers, cap at TURN_CHAR_CAP). `displayName` is
- * passed through `sanitizePromptField` so it cannot forge attributes
- * or extra lines. A standing preamble instructs the model to treat
- * fenced content as evidence, not as instructions.
+ * passed through `safeAttrName` (sanitizePromptField + attribute-context
+ * escape of `<` and `"`) so it cannot break out of the `name="..."`
+ * attribute, forge tags, or inject extra lines. A standing preamble
+ * instructs the model to treat fenced content as evidence, not as
+ * instructions.
  */
 import type { ExpertSpec } from "../../engine/index.js";
 import { sanitizeFenced, sanitizePromptField } from "../prompt-sanitize.js";
@@ -67,8 +69,9 @@ export function buildOpeningPrompt(topic: string): string {
 
 /**
  * Cross-examination phase: ask `expert` to address the OTHER experts'
- * opening statements. Quotes their content verbatim so the LLM has
- * concrete material to engage with.
+ * opening statements. Other-expert opening content is wrapped in
+ * `<from_expert>` fences and sanitized (see module header) so it is
+ * presented to the LLM as evidence rather than instructions.
  *
  * Returns `null` when there is only one expert in the panel — the
  * orchestrator skips the cross-exam phase entirely in that case.
