@@ -103,6 +103,32 @@ describe("E2E cleanup helpers", () => {
     }
   });
 
+  it("rethrows unexpected temp-dir removal failures", async () => {
+    const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-e2e-cleanup-home-"));
+    const tempDataHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-e2e-cleanup-data-"));
+    const rmMock = vi.fn(async (): Promise<void> => {
+      throw new Error("kapow");
+    });
+
+    vi.doMock("node:fs/promises", () => ({
+      ...fs,
+      rm: rmMock,
+    }));
+
+    const { cleanupE2EContext } = await importHelpers();
+
+    try {
+      await expect(cleanupE2EContext(buildContext(tempHome, tempDataHome))).rejects.toThrow(
+        /kapow/,
+      );
+    } finally {
+      vi.doUnmock("node:fs/promises");
+      vi.resetModules();
+      await fs.rm(tempHome, { recursive: true, force: true });
+      await fs.rm(tempDataHome, { recursive: true, force: true });
+    }
+  });
+
   it("swallows database destroy errors", async () => {
     const { destroyTestDb } = await importHelpers();
     const db = {
@@ -112,6 +138,18 @@ describe("E2E cleanup helpers", () => {
     };
 
     await expect(destroyTestDb(db as never)).resolves.toBeUndefined();
+    expect(db.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("rethrows unexpected database destroy errors", async () => {
+    const { destroyTestDb } = await importHelpers();
+    const db = {
+      destroy: vi.fn(async (): Promise<void> => {
+        throw new Error("kapow");
+      }),
+    };
+
+    await expect(destroyTestDb(db as never)).rejects.toThrow(/kapow/);
     expect(db.destroy).toHaveBeenCalledOnce();
   });
 });
