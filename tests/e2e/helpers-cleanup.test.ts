@@ -21,8 +21,8 @@ async function importHelpers(): Promise<typeof import("./helpers.js")> {
 
 afterEach((): void => {
   vi.restoreAllMocks();
+  vi.doUnmock("node:fs/promises");
   vi.resetModules();
-  vi.unmock("node:fs/promises");
 });
 
 describe("E2E cleanup helpers", () => {
@@ -71,10 +71,12 @@ describe("E2E cleanup helpers", () => {
     const { cleanupE2EContext } = await importHelpers();
 
     try {
-      await expect(cleanupE2EContext(buildContext(tempHome, tempDataHome))).resolves.toBeUndefined();
+      await expect(
+        cleanupE2EContext(buildContext(tempHome, tempDataHome)),
+      ).resolves.toBeUndefined();
       expect(rmMock).toHaveBeenCalled();
     } finally {
-      vi.unmock("node:fs/promises");
+      vi.doUnmock("node:fs/promises");
       vi.resetModules();
       await fs.rm(tempHome, { recursive: true, force: true });
       await fs.rm(tempDataHome, { recursive: true, force: true });

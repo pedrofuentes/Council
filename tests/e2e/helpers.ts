@@ -48,7 +48,7 @@ async function removeDir(dirPath: string): Promise<void> {
   const candidatePath = normalizeTempPath(dirPath);
   const tempPrefix = `${tempRoot}${path.sep}`;
 
-  if (candidatePath !== tempRoot && !candidatePath.startsWith(tempPrefix)) {
+  if (!candidatePath.startsWith(tempPrefix)) {
     throw new Error(`Refusing to delete non-temp path: ${dirPath}`);
   }
 
