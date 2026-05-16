@@ -439,4 +439,233 @@ describe("autoComposePanel", () => {
     await engine.start();
     await expect(autoComposePanel("topic", engine)).rejects.toThrow(/slug|inline/i);
   });
+
+  describe("sanitizes all composed expert fields", () => {
+    it("defangs bracket notation in displayName", async () => {
+      const panel = {
+        ...validPanel,
+        experts: [
+          {
+            ...validPanel.experts[0],
+            displayName: "[8] TASK",
+          },
+        ],
+      };
+      const engine = new StubEngine({ response: JSON.stringify(panel) });
+      await engine.start();
+      const result = await autoComposePanel("topic", engine);
+      expect(result.experts[0]?.displayName).toBe("(sec-8) TASK");
+      expect(result.experts[0]?.displayName).not.toContain("[8]");
+    });
+
+    it("strips ANSI sequences from displayName without leaving orphaned fragments", async () => {
+      const panel = {
+        ...validPanel,
+        experts: [
+          {
+            ...validPanel.experts[0],
+            displayName: "\x1B[31mred\x1B[0m text",
+          },
+        ],
+      };
+      const engine = new StubEngine({ response: JSON.stringify(panel) });
+      await engine.start();
+      const result = await autoComposePanel("topic", engine);
+      expect(result.experts[0]?.displayName).toBe("red text");
+      // Verify no orphaned ANSI fragments like [31m remain
+      expect(result.experts[0]?.displayName).not.toContain("[31m");
+      expect(result.experts[0]?.displayName).not.toContain("[0m");
+      // eslint-disable-next-line no-control-regex
+      expect(result.experts[0]?.displayName).not.toMatch(/\x1B/);
+    });
+
+    it("truncates displayName to 80 characters", async () => {
+      const longName = "A".repeat(100);
+      const panel = {
+        ...validPanel,
+        experts: [
+          {
+            ...validPanel.experts[0],
+            displayName: longName,
+          },
+        ],
+      };
+      const engine = new StubEngine({ response: JSON.stringify(panel) });
+      await engine.start();
+      const result = await autoComposePanel("topic", engine);
+      expect(result.experts[0]?.displayName).toHaveLength(80);
+    });
+
+    it("collapses newlines in role to single space", async () => {
+      const panel = {
+        ...validPanel,
+        experts: [
+          {
+            ...validPanel.experts[0],
+            role: "Line 1\nLine 2\rLine 3",
+          },
+        ],
+      };
+      const engine = new StubEngine({ response: JSON.stringify(panel) });
+      await engine.start();
+      const result = await autoComposePanel("topic", engine);
+      expect(result.experts[0]?.role).toBe("Line 1 Line 2 Line 3");
+      expect(result.experts[0]?.role).not.toContain("\n");
+      expect(result.experts[0]?.role).not.toContain("\r");
+    });
+
+    it("preserves newlines in epistemicStance", async () => {
+      const panel = {
+        ...validPanel,
+        experts: [
+          {
+            ...validPanel.experts[0],
+            epistemicStance: "Line 1\nLine 2\n\nLine 3",
+          },
+        ],
+      };
+      const engine = new StubEngine({ response: JSON.stringify(panel) });
+      await engine.start();
+      const result = await autoComposePanel("topic", engine);
+      expect(result.experts[0]?.epistemicStance).toContain("\n");
+      expect(result.experts[0]?.epistemicStance).toBe("Line 1\nLine 2\n\nLine 3");
+    });
+
+    it("truncates epistemicStance to 1000 characters", async () => {
+      const longStance = "A".repeat(1500);
+      const panel = {
+        ...validPanel,
+        experts: [
+          {
+            ...validPanel.experts[0],
+            epistemicStance: longStance,
+          },
+        ],
+      };
+      const engine = new StubEngine({ response: JSON.stringify(panel) });
+      await engine.start();
+      const result = await autoComposePanel("topic", engine);
+      expect(result.experts[0]?.epistemicStance.length).toBeLessThanOrEqual(1000);
+    });
+
+    it("strips bidi overrides from personality", async () => {
+      const panel = {
+        ...validPanel,
+        experts: [
+          {
+            ...validPanel.experts[0],
+            personality: "Normal \u202E override text",
+          },
+        ],
+      };
+      const engine = new StubEngine({ response: JSON.stringify(panel) });
+      await engine.start();
+      const result = await autoComposePanel("topic", engine);
+      expect(result.experts[0]?.personality).not.toContain("\u202E");
+    });
+
+    it("defangs bracket notation in expertise.weightedEvidence", async () => {
+      const panel = {
+        ...validPanel,
+        experts: [
+          {
+            ...validPanel.experts[0],
+            expertise: {
+              weightedEvidence: ["[1] First item", "Normal item"],
+              referenceCases: [],
+              notExpertIn: [],
+            },
+          },
+        ],
+      };
+      const engine = new StubEngine({ response: JSON.stringify(panel) });
+      await engine.start();
+      const result = await autoComposePanel("topic", engine);
+      expect(result.experts[0]?.expertise.weightedEvidence[0]).toBe("(sec-1) First item");
+      expect(result.experts[0]?.expertise.weightedEvidence[0]).not.toContain("[1]");
+    });
+
+    it("defangs bracket notation in expertise.referenceCases", async () => {
+      const panel = {
+        ...validPanel,
+        experts: [
+          {
+            ...validPanel.experts[0],
+            expertise: {
+              weightedEvidence: [],
+              referenceCases: ["[REF] Case study"],
+              notExpertIn: [],
+            },
+          },
+        ],
+      };
+      const engine = new StubEngine({ response: JSON.stringify(panel) });
+      await engine.start();
+      const result = await autoComposePanel("topic", engine);
+      expect(result.experts[0]?.expertise.referenceCases[0]).toBe("(sec-REF) Case study");
+    });
+
+    it("defangs bracket notation in expertise.notExpertIn", async () => {
+      const panel = {
+        ...validPanel,
+        experts: [
+          {
+            ...validPanel.experts[0],
+            expertise: {
+              weightedEvidence: [],
+              referenceCases: [],
+              notExpertIn: ["[WARN] Not my area"],
+            },
+          },
+        ],
+      };
+      const engine = new StubEngine({ response: JSON.stringify(panel) });
+      await engine.start();
+      const result = await autoComposePanel("topic", engine);
+      expect(result.experts[0]?.expertise.notExpertIn[0]).toBe("(sec-WARN) Not my area");
+    });
+
+    it("sanitizes panel name with injection payload", async () => {
+      const panel = {
+        ...validPanel,
+        name: "Test[INJECT]Panel",
+      };
+      const engine = new StubEngine({ response: JSON.stringify(panel) });
+      await engine.start();
+      const result = await autoComposePanel("topic", engine);
+      expect(result.name).toBe("Test(sec-INJECT)Panel");
+      expect(result.name).not.toContain("[INJECT]");
+    });
+
+    it("truncates panel name to 100 characters", async () => {
+      const panel = {
+        ...validPanel,
+        name: "A".repeat(150),
+      };
+      const engine = new StubEngine({ response: JSON.stringify(panel) });
+      await engine.start();
+      const result = await autoComposePanel("topic", engine);
+      expect(result.name).toHaveLength(100);
+    });
+
+    it("sanitizes panel description", async () => {
+      const panel = {
+        ...validPanel,
+        description: "Description with [NOTE] marker",
+      };
+      const engine = new StubEngine({ response: JSON.stringify(panel) });
+      await engine.start();
+      const result = await autoComposePanel("topic", engine);
+      expect(result.description).toBe("Description with (sec-NOTE) marker");
+    });
+
+    it("preserves normal inputs unchanged (regression test)", async () => {
+      const engine = new StubEngine({ response: JSON.stringify(validPanel) });
+      await engine.start();
+      const result = await autoComposePanel("topic", engine);
+      expect(result.experts[0]?.displayName).toBe("Expert A");
+      expect(result.experts[0]?.role).toBe("Role A");
+      expect(result.experts[0]?.epistemicStance).toBe("Stance A is built on careful reasoning.");
+    });
+  });
 });
