@@ -12,7 +12,7 @@
 |------|---------|----------|--------|
 | Unit | Core logic, pure functions, isolated components | `tests/unit/` or `*.test.ts` | Vitest |
 | Integration | Cross-component interactions, engine integration | `tests/integration/` | Vitest |
-| E2E | CLI command flows end-to-end | `tests/e2e/` | Vitest (with CLI spawning) |
+| E2E | CLI command flows end-to-end | `tests/e2e/` (94 tests across 10 files) | Vitest (in-process) |
 | Security | Prompt injection defense verification, hostile payload tests | `tests/security/` | Vitest |
 
 ## Coverage Requirements
@@ -64,6 +64,56 @@ Integration tests that use the real Copilot SDK are:
 - Skipped in CI by default (costs money)
 - Run manually before major releases
 - Located in `tests/integration/`
+
+### E2E Tests — Command-Level Verification
+E2E tests verify all 12 CLI commands end-to-end using in-process execution with isolated test environments. The suite consists of **94 tests across 10 test files** covering every user-facing workflow.
+
+**Infrastructure** (`tests/e2e/helpers.ts`):
+- `createE2EContext()` / `cleanupE2EContext()` — isolated temp directories for `COUNCIL_HOME` and `COUNCIL_DATA_HOME`
+- `captureOutput()` — captures stdout/stderr for assertion
+- `makeMockEngineFactory()` — provides deterministic MockEngine instances
+- `seedCompletedDebate()` — sets up realistic test data (panel, debate, turns)
+- `openTestDb()` — creates isolated SQLite database instances
+
+**Test execution pattern**:
+```typescript
+import { buildConveneCommand } from '../../src/cli/commands/convene.js';
+import {
+  createE2EContext,
+  cleanupE2EContext,
+  captureOutput,
+  makeMockEngineFactory,
+} from './helpers.js';
+
+const ctx = await createE2EContext();
+const { write, stdout } = captureOutput();
+const mockEngineFactory = makeMockEngineFactory();
+
+// Execute command in-process (no subprocess)
+await buildConveneCommand({ write, engineFactory: mockEngineFactory })
+  .parseAsync(['debate', 'Test topic', '--panel', 'my-panel'], { from: 'user' });
+
+expect(stdout()).toContain('expected output');
+await cleanupE2EContext(ctx);
+```
+
+**Test coverage** (10 files):
+- `debate-lifecycle.test.ts` (17 tests) — convene, resume, export, conclude, sessions
+- `error-paths.test.ts` (15 tests) — error conditions across all commands
+- `memory-management.test.ts` (11 tests) — memory list/inspect/reset
+- `expert-panel-crud.test.ts` (10 tests) — expert/panel library CRUD operations
+- `chat-lifecycle.test.ts` (8 tests) — persistent chat system
+- `config-and-migration.test.ts` (8 tests) — config loading, template migration
+- `output-formats.test.ts` (7 tests) — JSON/plain/markdown/ADR format correctness
+- `ask-command.test.ts` (7 tests) — one-shot ask workflow
+- `document-intelligence.test.ts` (6 tests) — document processing pipeline
+- `doctor-diagnostics.test.ts` (5 tests) — diagnostics command
+
+**Why in-process execution (not subprocess)**:
+- Faster — no Node.js spawn overhead
+- Deterministic — MockEngine ensures consistent responses, no network
+- Debuggable — direct stack traces, no cross-process boundary
+- Free — zero premium requests consumed
 
 ### Test Naming Convention
 ```typescript
