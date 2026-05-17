@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildConveneCommand } from "../../src/cli/commands/convene.js";
 import { buildMemoryCommand } from "../../src/cli/commands/memory.js";
@@ -47,12 +47,6 @@ function parseNdjson<T>(text: string): readonly T[] {
     .split("\n")
     .filter((line) => line.trim().startsWith("{"))
     .map((line) => JSON.parse(line) as T);
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }
 
 async function runConveneCommand(ctx: E2EContext, topic: string): Promise<CommandOutput> {
@@ -321,32 +315,44 @@ describe("memory management e2e", () => {
 
   it("memory reset then re-convene creates a fresh debate on a new panel", async () => {
     const topic = "Should we split this module?";
+    const firstRunAt = new Date("2026-01-01T00:00:00.000Z");
+    const secondRunAt = new Date("2026-01-01T00:00:01.000Z");
 
-    await runConveneCommand(ctx, topic);
-    const firstPanel = await loadLatestPanelSummary(ctx);
+    vi.useFakeTimers();
 
-    await runMemoryCommand(["reset", firstPanel.panelName, "--yes"]);
-    await wait(1_100);
-    await runConveneCommand(ctx, topic);
-
-    const db = await openTestDb(ctx.testHome);
     try {
-      const panels = await new PanelRepository(db).findAll();
-      expect(panels).toHaveLength(2);
+      vi.setSystemTime(firstRunAt);
+      await runConveneCommand(ctx, topic);
+      const firstPanel = await loadLatestPanelSummary(ctx);
 
-      const latestPanel = panels[panels.length - 1];
-      expect(latestPanel?.name).not.toBe(firstPanel.panelName);
+      await runMemoryCommand(["reset", firstPanel.panelName, "--yes"]);
 
-      const resetPanelDebates = await new DebateRepository(db).findByPanelId(firstPanel.panelId);
-      const reconvenedPanelDebates = latestPanel
-        ? await new DebateRepository(db).findByPanelId(latestPanel.id)
-        : [];
+      vi.setSystemTime(secondRunAt);
+      await runConveneCommand(ctx, topic);
 
-      expect(resetPanelDebates).toHaveLength(0);
-      expect(reconvenedPanelDebates).toHaveLength(1);
-      expect(reconvenedPanelDebates[0]?.id).not.toBe(firstPanel.debateId);
+      const db = await openTestDb(ctx.testHome);
+      try {
+        const panels = await new PanelRepository(db).findAll();
+        expect(panels).toHaveLength(2);
+
+        const latestPanel = panels[panels.length - 1];
+        expect(firstPanel.panelName).toBe("code-review-2026-01-01T00:00:00");
+        expect(latestPanel?.name).toBe("code-review-2026-01-01T00:00:01");
+        expect(latestPanel?.id).not.toBe(firstPanel.panelId);
+
+        const resetPanelDebates = await new DebateRepository(db).findByPanelId(firstPanel.panelId);
+        const reconvenedPanelDebates = latestPanel
+          ? await new DebateRepository(db).findByPanelId(latestPanel.id)
+          : [];
+
+        expect(resetPanelDebates).toHaveLength(0);
+        expect(reconvenedPanelDebates).toHaveLength(1);
+        expect(reconvenedPanelDebates[0]?.id).not.toBe(firstPanel.debateId);
+      } finally {
+        await destroyTestDb(db);
+      }
     } finally {
-      await destroyTestDb(db);
+      vi.useRealTimers();
     }
   });
 });

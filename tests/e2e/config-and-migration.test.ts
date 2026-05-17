@@ -15,10 +15,6 @@ import {
   type E2EContext,
 } from "./helpers.js";
 
-async function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 describe("Config and Migration E2E", () => {
   let ctx: E2EContext;
 
@@ -144,8 +140,6 @@ describe("Config and Migration E2E", () => {
       ["node", "test", "Test topic", "--template", "code-review", "--engine", "mock"],
       { from: "user" },
     );
-
-    await delay(200); // Allow DB to fully close on Windows
 
     const expertsDir = path.join(customDataHome, "experts");
     const expertsDirExists = await fs
