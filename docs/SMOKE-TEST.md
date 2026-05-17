@@ -6,6 +6,13 @@ this checklist is the final gate that exercises the full system end to
 end with a live LLM, an interactive TTY, and the user's real
 filesystem.
 
+> **Release workflow**
+>
+> Release Please maintains a "Release PR" that accumulates unreleased
+> changes. Before merging that PR, run this smoke test checklist against
+> the release branch. File any ⚠️/❌ as a GitHub issue tagged
+> `release-blocker` before shipping.
+
 > **Prerequisites**
 >
 > - Authenticated GitHub Copilot: `gh auth status` shows an active

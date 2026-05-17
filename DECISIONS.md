@@ -22,6 +22,22 @@
 
 <!-- Add new decisions below this line, most recent first -->
 
+### ADR-014: Versioning strategy — Release Please with conventional commits
+**Date**: 2026-05-17
+**Status**: Accepted
+**Context**: The project declared semver intent in CHANGELOG.md and had `"version": "0.1.0"` in package.json, but no release tooling, version tags, or documented release process existed. A versioning system was needed to automate changelog generation, version bumping, and GitHub releases.
+**Decision**: Adopt [Release Please](https://github.com/googleapis/release-please) (v4) as the automated versioning tool. It reads conventional commits (already enforced by AGENTS.md commit format) to determine semver bumps and maintains a "Release PR" that accumulates changes. Merging the Release PR tags the release, bumps package.json, updates CHANGELOG.md, and creates a GitHub Release. Configuration: `bump-minor-pre-major: true` (breaking changes bump minor at 0.x), `bump-patch-for-minor-pre-major: false` (features bump minor as normal). Only `feat`, `fix`, `perf`, and `revert` commits appear in the changelog; `docs`, `chore`, `ci`, `test`, `refactor`, `style`, `build`, and `deps` are hidden.
+**Alternatives considered**:
+- **Changesets (`@changesets/cli`)** — requires developers to create a changeset file per PR describing the bump type. More manual control but adds friction. Council already enforces conventional commits, making this redundant.
+- **Manual versioning** — error-prone, inconsistent, and no automation. Doesn't scale.
+- **Semantic Release** — fully automated (publishes immediately on merge). Too aggressive for a pre-1.0 CLI tool where release timing should be deliberate.
+**Consequences**:
+- ✅ Zero workflow changes — leverages existing conventional commit enforcement
+- ✅ Deliberate releases — the Release PR accumulates changes; you merge when ready to ship
+- ✅ Automated changelog, version bumps, git tags, and GitHub Releases
+- ⚠️ Requires `GITHUB_TOKEN` with write permissions (default token works but CI won't trigger on release PRs — upgrade to PAT if needed)
+- ⚠️ `bootstrap-sha` set to current HEAD; commits before this SHA are excluded from the first release changelog
+
 ### ADR-013: Test execution policy — categorised scripts and CI pipeline
 **Date**: 2026-05-16
 **Status**: Accepted
