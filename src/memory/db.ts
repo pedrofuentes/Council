@@ -47,6 +47,10 @@ export interface ExpertRow {
   readonly copilot_session_id: string | null;
   readonly created_at: string;
   readonly extracted_memory_json: string | null;
+  readonly memory_source_debate_id: string | null;
+  readonly memory_derivation: string | null;
+  readonly memory_trust_score: number | null;
+  readonly memory_extracted_at: string | null;
 }
 
 export interface DebateRow {
@@ -483,6 +487,15 @@ WHERE status = 'active'
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_sessions_active_unique
   ON chat_sessions (target_type, target_slug)
   WHERE status = 'active';`,
+    },
+    {
+      version: 11,
+      name: "011_memory_provenance",
+      sql: `\
+ALTER TABLE experts ADD COLUMN memory_source_debate_id TEXT;
+ALTER TABLE experts ADD COLUMN memory_derivation TEXT DEFAULT 'llm_summary';
+ALTER TABLE experts ADD COLUMN memory_trust_score REAL DEFAULT 0.5;
+ALTER TABLE experts ADD COLUMN memory_extracted_at TEXT;`,
     },
   ];
 }

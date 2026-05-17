@@ -44,7 +44,7 @@ import { sql } from "kysely";
 
 import { getCouncilHome } from "../../config/index.js";
 import { createDatabase, type CouncilDatabase } from "../../memory/db.js";
-import { recallMemory } from "../../memory/expert-memory.js";
+import { recallMemoryWithProvenance } from "../../memory/expert-memory.js";
 import { DebateRepository } from "../../memory/repositories/debates.js";
 import { ExpertRepository, type Expert } from "../../memory/repositories/experts.js";
 import { PanelRepository, type Panel } from "../../memory/repositories/panels.js";
@@ -290,7 +290,7 @@ async function renderExpertDetail(
     expertTurnCount += turns.filter((t) => t.expertId === expert.id).length;
   }
 
-  const recalled = await recallMemory(db, panel.id, expert.slug);
+  const recalled = await recallMemoryWithProvenance(db, panel.id, expert.slug);
 
   if (format === "json") {
     write(
@@ -302,7 +302,8 @@ async function renderExpertDetail(
           model: expert.model,
           systemMessage: expert.systemMessage,
           turnCount: expertTurnCount,
-          memory: recalled ?? null,
+          memory: recalled?.memory ?? null,
+          provenance: recalled?.provenance ?? null,
         },
       }) + "\n",
     );
@@ -322,25 +323,43 @@ async function renderExpertDetail(
   write(`---\n`);
 
   if (recalled) {
+    const mem = recalled.memory;
     write(`\nRecalled memory:\n`);
-    if (recalled.positions.length > 0) {
-      write(`  Positions (${recalled.positions.length}):\n`);
-      for (const p of recalled.positions) write(`    - ${p}\n`);
+    if (mem.positions.length > 0) {
+      write(`  Positions (${mem.positions.length}):\n`);
+      for (const p of mem.positions) write(`    - ${p}\n`);
     }
-    if (recalled.updatedPriors.length > 0) {
-      write(`  Updated priors (${recalled.updatedPriors.length}):\n`);
-      for (const u of recalled.updatedPriors) write(`    - ${u}\n`);
+    if (mem.updatedPriors.length > 0) {
+      write(`  Updated priors (${mem.updatedPriors.length}):\n`);
+      for (const u of mem.updatedPriors) write(`    - ${u}\n`);
     }
-    if (recalled.unresolved.length > 0) {
-      write(`  Unresolved (${recalled.unresolved.length}):\n`);
-      for (const q of recalled.unresolved) write(`    - ${q}\n`);
+    if (mem.unresolved.length > 0) {
+      write(`  Unresolved (${mem.unresolved.length}):\n`);
+      for (const q of mem.unresolved) write(`    - ${q}\n`);
     }
     if (
-      recalled.positions.length === 0 &&
-      recalled.updatedPriors.length === 0 &&
-      recalled.unresolved.length === 0
+      mem.positions.length === 0 &&
+      mem.updatedPriors.length === 0 &&
+      mem.unresolved.length === 0
     ) {
       write(`  (none extracted from prior turns)\n`);
+    }
+
+    // Provenance block (T-2 / #569). Always rendered when memory is
+    // recalled — heuristic recall has no stored provenance so we surface
+    // that explicitly rather than hiding the block.
+    write(`\n  Provenance:\n`);
+    if (recalled.provenance === null) {
+      write(`    Source debate: (heuristic — computed on-the-fly)\n`);
+      write(`    Derivation: heuristic_scan\n`);
+      write(`    Trust score: 0.30\n`);
+      write(`    Extracted at: (not stored)\n`);
+    } else {
+      const p = recalled.provenance;
+      write(`    Source debate: ${p.sourceDebateId ?? "(unknown)"}\n`);
+      write(`    Derivation: ${p.derivation ?? "(unknown)"}\n`);
+      write(`    Trust score: ${p.trustScore === null ? "(unknown)" : p.trustScore.toFixed(2)}\n`);
+      write(`    Extracted at: ${p.extractedAt ?? "(unknown)"}\n`);
     }
   } else {
     write(`\nRecalled memory: (none — no prior turns by this expert)\n`);
@@ -430,7 +449,13 @@ function buildResetCommand(write: Writer, writeError: Writer): Command {
             await db.deleteFrom("debates").where("id", "=", d.id).execute();
           }
           for (const e of experts) {
-            await expertRepo.update(e.id, { extractedMemoryJson: null });
+            await expertRepo.update(e.id, {
+              extractedMemoryJson: null,
+              memorySourceDebateId: null,
+              memoryDerivation: null,
+              memoryTrustScore: null,
+              memoryExtractedAt: null,
+            });
           }
           await sql`COMMIT`.execute(db);
         } catch (err) {

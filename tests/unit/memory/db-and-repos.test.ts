@@ -81,11 +81,11 @@ describe("createDatabase", () => {
     expect(after.length).toBe(before.length); // no duplicate version rows
   });
 
-  it("applies migrations 001 through 010, creating the expected indexes", async () => {
+  it("applies migrations 001 through 011, creating the expected indexes", async () => {
     const versions = (
       await db.selectFrom("schema_version").select("version").orderBy("version").execute()
     ).map((r) => r.version);
-    expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
 
     const indexes = (
       await sql<{
@@ -334,9 +334,9 @@ describe("Migration 006 — expert_documents table", () => {
   });
 
   it("records schema_version row for migration 006", async () => {
-    const versions = (
-      await db.selectFrom("schema_version").select("version").execute()
-    ).map((r) => r.version);
+    const versions = (await db.selectFrom("schema_version").select("version").execute()).map(
+      (r) => r.version,
+    );
     expect(versions).toContain(6);
   });
 });
@@ -400,11 +400,11 @@ describe("Inlined migrations regression (issue #476)", () => {
     expect(rows.length).toBeGreaterThanOrEqual(EXPECTED_TABLES.length);
   });
 
-  it("records a schema_version row for every inlined migration (1..10)", async () => {
+  it("records a schema_version row for every inlined migration (1..11)", async () => {
     const versions = (
       await db.selectFrom("schema_version").select("version").orderBy("version").execute()
     ).map((r) => r.version);
-    expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
   });
 
   it("each expected table is queryable via Kysely without throwing", async () => {
@@ -429,15 +429,9 @@ describe("Inlined migrations regression (issue #476)", () => {
     // FTS5 virtual tables require their backing module compiled into the
     // libsql WASM build; if a migration that creates them was dropped
     // these queries would fail with "no such table".
-    await expect(
-      sql`SELECT count(*) FROM turns_fts`.execute(db),
-    ).resolves.toBeDefined();
-    await expect(
-      sql`SELECT count(*) FROM chat_turns_fts`.execute(db),
-    ).resolves.toBeDefined();
-    await expect(
-      sql`SELECT count(*) FROM document_index`.execute(db),
-    ).resolves.toBeDefined();
+    await expect(sql`SELECT count(*) FROM turns_fts`.execute(db)).resolves.toBeDefined();
+    await expect(sql`SELECT count(*) FROM chat_turns_fts`.execute(db)).resolves.toBeDefined();
+    await expect(sql`SELECT count(*) FROM document_index`.execute(db)).resolves.toBeDefined();
   });
 });
 

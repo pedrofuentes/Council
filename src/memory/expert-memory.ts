@@ -198,8 +198,7 @@ export async function recallMemory(
   // Sentinel pr222 cycle 3 #1 🟡: bound the debate scan to the most
   // recent N. `findByPanelId` is ordered by startedAt ascending — take
   // the tail to get the newest debates without loading everything.
-  const debates =
-    allDebates.length > maxDebates ? allDebates.slice(-maxDebates) : allDebates;
+  const debates = allDebates.length > maxDebates ? allDebates.slice(-maxDebates) : allDebates;
 
   const turnRepo = new TurnRepository(db);
   const collected: Turn[] = [];
@@ -292,11 +291,42 @@ function truncate(s: string): string {
  * Caller contract: best-effort. If the expert id does not exist this
  * is a no-op — we do NOT throw, because the post-debate extraction
  * hook should never fail the debate.
+ *
+ * Provenance (T-2 / #569): every write also records WHERE the memory
+ * came from (the triggering debate), HOW it was produced (LLM summary
+ * vs. heuristic scan), the producer's trust score, and the extraction
+ * timestamp — so a later inspector can distinguish trusted cache
+ * entries from potentially poisoned ones.
  */
+export interface MemoryProvenance {
+  /** Debate that triggered this extraction. */
+  readonly sourceDebateId: string;
+  /** How the memory was produced. */
+  readonly derivation: "llm_summary" | "heuristic_scan";
+  /** Confidence in the producer, 0.0–1.0. LLM = 0.5, heuristic = 0.3. */
+  readonly trustScore: number;
+}
+
+/**
+ * Result of {@link recallMemoryWithProvenance}: the recalled memory
+ * paired with its provenance metadata. Provenance is `null` for the
+ * heuristic fallback path (computed on-the-fly, not stored).
+ */
+export interface RecalledMemory {
+  readonly memory: ExpertMemory;
+  readonly provenance: {
+    readonly sourceDebateId: string | null;
+    readonly derivation: string | null;
+    readonly trustScore: number | null;
+    readonly extractedAt: string | null;
+  } | null;
+}
+
 export async function persistExtractedMemory(
   db: CouncilDatabase,
   expertId: string,
   memory: ExpertMemory,
+  provenance: MemoryProvenance,
 ): Promise<void> {
   const json = JSON.stringify({
     positions: [...memory.positions],
@@ -305,7 +335,48 @@ export async function persistExtractedMemory(
   });
   await new ExpertRepository(db).update(expertId, {
     extractedMemoryJson: json,
+    memorySourceDebateId: provenance.sourceDebateId,
+    memoryDerivation: provenance.derivation,
+    memoryTrustScore: provenance.trustScore,
+    memoryExtractedAt: new Date().toISOString(),
   });
+}
+
+/**
+ * Same recall logic as {@link recallMemory} but additionally returns
+ * provenance metadata when the LLM-cached path is taken. Heuristic
+ * recall is computed on-the-fly and has no stored provenance — in
+ * that case `provenance` is `null`.
+ *
+ * Kept as a separate function (rather than altering `recallMemory`'s
+ * return type) to minimise blast radius on existing callers.
+ */
+export async function recallMemoryWithProvenance(
+  db: CouncilDatabase,
+  panelId: string,
+  expertSlug: string,
+  options?: RecallOptions,
+): Promise<RecalledMemory | undefined> {
+  const experts = await new ExpertRepository(db).findByPanelId(panelId);
+  const expert = experts.find((e) => e.slug === expertSlug);
+  if (!expert) return undefined;
+
+  const cached = readCachedLLMMemory(expert.extractedMemoryJson);
+  if (cached !== undefined) {
+    return {
+      memory: cached,
+      provenance: {
+        sourceDebateId: expert.memorySourceDebateId,
+        derivation: expert.memoryDerivation,
+        trustScore: expert.memoryTrustScore,
+        extractedAt: expert.memoryExtractedAt,
+      },
+    };
+  }
+
+  const memory = await recallMemory(db, panelId, expertSlug, options);
+  if (memory === undefined) return undefined;
+  return { memory, provenance: null };
 }
 
 /**
@@ -327,11 +398,7 @@ function readCachedLLMMemory(json: string | null): ExpertMemory | undefined {
   const positions = sanitizeArray(obj["positions"]);
   const updatedPriors = sanitizeArray(obj["updatedPriors"]);
   const unresolved = sanitizeArray(obj["unresolved"]);
-  if (
-    positions.length === 0 &&
-    updatedPriors.length === 0 &&
-    unresolved.length === 0
-  ) {
+  if (positions.length === 0 && updatedPriors.length === 0 && unresolved.length === 0) {
     return undefined;
   }
   return { positions, updatedPriors, unresolved };
