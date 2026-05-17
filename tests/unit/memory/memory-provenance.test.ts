@@ -16,9 +16,10 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sql } from "kysely";
+import { createClient } from "@libsql/client";
 
 import { buildMemoryCommand } from "../../../src/cli/commands/memory.js";
-import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
+import { createDatabase, loadMigrations, type CouncilDatabase } from "../../../src/memory/db.js";
 import {
   persistExtractedMemory,
   recallMemoryWithProvenance,
@@ -86,10 +87,7 @@ interface ProvenanceRow {
   readonly memory_extracted_at: string | null;
 }
 
-async function readProvenanceRow(
-  db: CouncilDatabase,
-  expertId: string,
-): Promise<ProvenanceRow> {
+async function readProvenanceRow(db: CouncilDatabase, expertId: string): Promise<ProvenanceRow> {
   const result = await sql<ProvenanceRow>`
     SELECT memory_source_debate_id, memory_derivation, memory_trust_score, memory_extracted_at
     FROM experts
@@ -266,5 +264,72 @@ describe("memory provenance (T-2 / #569)", () => {
     // Legacy rows MUST surface as having no provenance, not as
     // fabricated llm_summary / 0.5 entries.
     expect(recalled?.provenance).toBeNull();
+  });
+
+  // Sentinel pr614 #1 🔴 — migration-layer regression.
+  //
+  // Direct test of migration v11 against a pre-v11 row created by
+  // running migrations 1-10 only, inserting an expert with
+  // extracted_memory_json, and THEN applying v11. Without the explicit
+  // UPDATE in v11, SQLite's ALTER TABLE ADD COLUMN DEFAULT would
+  // backfill 'llm_summary' / 0.5 into that legacy row. This test must
+  // fail if the UPDATE statement is removed from migration v11.
+  it("migration v11 nulls provenance defaults backfilled into pre-existing rows", async () => {
+    const client = createClient({ url: ":memory:" });
+    try {
+      const migrations = loadMigrations();
+      const preV11 = migrations.filter((m) => m.version < 11);
+      for (const m of preV11) {
+        await client.executeMultiple(m.sql);
+        await client.execute({
+          sql: "INSERT INTO schema_version (version, applied_at) VALUES (?, ?);",
+          args: [m.version, new Date().toISOString()],
+        });
+      }
+      const panelId = "panel-legacy";
+      const expertId = "expert-legacy";
+      await client.execute({
+        sql: "INSERT INTO panels (id, name, copilot_home, config_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?);",
+        args: [
+          panelId,
+          "legacy",
+          "/tmp/copilot",
+          "{}",
+          new Date().toISOString(),
+          new Date().toISOString(),
+        ],
+      });
+      await client.execute({
+        sql: "INSERT INTO experts (id, panel_id, slug, display_name, model, system_message, copilot_session_id, created_at, extracted_memory_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);",
+        args: [
+          expertId,
+          panelId,
+          "legacy-expert",
+          "Legacy Expert",
+          "gpt-4",
+          "you are legacy",
+          null,
+          new Date().toISOString(),
+          JSON.stringify({ positions: ["p"], updatedPriors: [], unresolved: [] }),
+        ],
+      });
+
+      const v11 = migrations.find((m) => m.version === 11);
+      if (!v11) throw new Error("migration v11 not found");
+      await client.executeMultiple(v11.sql);
+
+      const result = await client.execute({
+        sql: "SELECT memory_source_debate_id, memory_derivation, memory_trust_score, memory_extracted_at, extracted_memory_json FROM experts WHERE id = ?;",
+        args: [expertId],
+      });
+      const row = result.rows[0] as Record<string, unknown>;
+      expect(row["extracted_memory_json"]).not.toBeNull();
+      expect(row["memory_source_debate_id"]).toBeNull();
+      expect(row["memory_derivation"]).toBeNull();
+      expect(row["memory_trust_score"]).toBeNull();
+      expect(row["memory_extracted_at"]).toBeNull();
+    } finally {
+      client.close();
+    }
   });
 });

@@ -196,7 +196,7 @@ export type CouncilDatabase = Kysely<CouncilSchema>;
 
 // ---------- Migration runner ----------
 
-interface Migration {
+export interface Migration {
   readonly version: number;
   readonly name: string;
   readonly sql: string;
@@ -207,7 +207,7 @@ interface Migration {
 // The canonical .sql files remain in src/memory/migrations/ for
 // readability and git-diffable history.
 
-function loadMigrations(): readonly Migration[] {
+export function loadMigrations(): readonly Migration[] {
   return [
     {
       version: 1,
