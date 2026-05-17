@@ -300,6 +300,10 @@ council resume <panel>                                          # Replay transcr
 council resume <panel> --continue "<prompt>" --engine copilot  # Continue the panel with a new round
 council export <panel> --format <fmt>                          # Export (markdown | json | adr)
 
+# Safety: every entry point (convene, ask, chat, in-REPL @convene) runs a warn-only
+# topic-admission check first — sensitive topics emit "⚠ This topic touches sensitive
+# areas (…)" but are never blocked.
+
 # Persistent conversational chat (Phase 5) — interactive sessions require --engine
 council chat <expert-slug> --engine copilot      # 1:1 conversational REPL with an expert
 council chat <panel-name> --engine copilot       # Group chat with a panel (supports @mentions, @convene)

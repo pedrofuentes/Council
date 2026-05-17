@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Topic admission control** (#570) — new warn-only heuristic guard (`src/core/topic-admission.ts`) runs at every Council entry point (`council convene`, `council ask`, `council chat` — including the in-REPL `@convene` inline debate) and surfaces a non-blocking warning when the topic matches known sensitive categories: violence/weapons synthesis, controlled-substance synthesis, or Crescendo-style prompt-injection patterns. Input is NFKC-normalized before matching so fullwidth/compatibility characters cannot bypass the patterns. The check is pure (no I/O, no DB) and structurally cannot block (`admitted: true` is a literal type); it only echoes a `⚠ This topic touches sensitive areas (…)` line so the user is not surprised when experts engage their safety guidelines.
 - **Comprehensive E2E test suite** (T-01 through T-11) — 94 tests across 10 files covering all 12 CLI commands (convene, resume, export, conclude, sessions, ask, chat, memory, expert, panel, doctor, templates). Tests use in-process execution with MockEngine for fast, deterministic verification of command workflows, error paths, output formats, and persistent state management. Full suite < 2 minutes with zero premium requests.
 
 ### Security
