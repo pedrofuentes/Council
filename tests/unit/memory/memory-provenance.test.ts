@@ -232,4 +232,39 @@ describe("memory provenance (T-2 / #569)", () => {
       await dbAfter.destroy();
     }
   });
+
+  // Sentinel pr614 #1 🔴 — legacy-upgrade regression.
+  //
+  // Before migration v11, `experts.extracted_memory_json` could already
+  // hold an LLM-cached memory blob with no provenance. After running
+  // v11 we MUST NOT mislabel those rows as legitimate `llm_summary` /
+  // `0.5`-trust entries. Defaults applied by ALTER TABLE ADD COLUMN
+  // would have backfilled exactly that fabricated provenance.
+  it("legacy extracted_memory_json rows are not labelled as fabricated LLM provenance", async () => {
+    // Simulate a pre-v11 row: extracted_memory_json present, but the
+    // provenance columns left at whatever the schema defaults produce
+    // (which is what an ALTER TABLE ADD COLUMN would have produced for
+    // any row that pre-existed migration v11).
+    await sql`
+      UPDATE experts
+      SET extracted_memory_json = ${JSON.stringify({
+        positions: ["legacy cached position"],
+        updatedPriors: [],
+        unresolved: [],
+      })}
+      WHERE id = ${fx.expertId}
+    `.execute(fx.db);
+
+    const row = await readProvenanceRow(fx.db, fx.expertId);
+    // A legacy row has no source debate id — that's the canonical
+    // signal that provenance was never recorded.
+    expect(row.memory_source_debate_id).toBeNull();
+
+    const recalled = await recallMemoryWithProvenance(fx.db, fx.panelId, fx.expertSlug);
+    expect(recalled).toBeDefined();
+    expect(recalled?.memory.positions).toEqual(["legacy cached position"]);
+    // Legacy rows MUST surface as having no provenance, not as
+    // fabricated llm_summary / 0.5 entries.
+    expect(recalled?.provenance).toBeNull();
+  });
 });
