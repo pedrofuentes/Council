@@ -153,7 +153,7 @@ Red-team payload tests live in `tests/security/` and verify the layered prompt-i
 | Unit | `pnpm test:unit` | Every PR, every local change | ✅ Every PR + push to `main` |
 | E2E | `pnpm test:e2e` | Every PR, every local change | ✅ Every PR + push to `main` |
 | Security | `pnpm test:security` | Every PR, every local change | ✅ Every PR + push to `main` |
-| Integration | `pnpm test:integration` | Manual, before major releases | ❌ Requires real Copilot SDK |
+| Integration | `pnpm test:integration` | Manual for live SDK; offline subset in CI | ⚠️ Offline (MockEngine) in CI; live SDK manual |
 | Smoke | Manual checklist (`docs/SMOKE-TEST.md`) | Manual, final pre-release gate | ❌ Requires real Copilot engine + TTY |
 | All automated | `pnpm test` | Full local validation | ✅ (unit + e2e + security + integration-skip) |
 
@@ -167,7 +167,7 @@ COUNCIL_INTEGRATION=1 pnpm test:integration
 ## CI Integration
 
 - CI runs automatically on every PR targeting `main` and on every push to `main` (`.github/workflows/ci.yml`)
-- Pipeline: typecheck → lint → unit tests → e2e tests → security tests
+- Pipeline: typecheck → lint → unit tests → e2e tests → integration tests (offline subset) → security tests
 - All steps must pass before Sentinel review begins
 - Flaky tests must be fixed immediately, not skipped
-- Integration tests are manual-only (not in CI — they cost real tokens)
+- Integration tests that use MockEngine run in CI; live-SDK tests (`COUNCIL_INTEGRATION=1`) are manual-only
