@@ -18,6 +18,7 @@ import { Command } from "commander";
 import { CliUserError } from "../cli-user-error.js";
 
 import { autoComposePanel } from "../../core/auto-compose.js";
+import { checkTopicAdmission } from "../../core/topic-admission.js";
 import { getCouncilDataHome, getCouncilHome, loadConfig } from "../../config/index.js";
 import type { ContextConfig } from "../../core/debate.js";
 import type { VisibilityConfig } from "../../core/context/visibility.js";
@@ -186,6 +187,11 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         throw new Error(
           `Unknown --engine value: ${raw.engine}. Expected one of: ${ENGINE_KINDS.join(", ")}`,
         );
+      }
+
+      const admission = checkTopicAdmission(topic);
+      for (const warning of admission.warnings) {
+        writeError(warning + "\n");
       }
 
       const config = await loadConfig();
