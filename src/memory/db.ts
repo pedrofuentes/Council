@@ -495,7 +495,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_sessions_active_unique
 ALTER TABLE experts ADD COLUMN memory_source_debate_id TEXT;
 ALTER TABLE experts ADD COLUMN memory_derivation TEXT DEFAULT 'llm_summary';
 ALTER TABLE experts ADD COLUMN memory_trust_score REAL DEFAULT 0.5;
-ALTER TABLE experts ADD COLUMN memory_extracted_at TEXT;`,
+ALTER TABLE experts ADD COLUMN memory_extracted_at TEXT;
+-- Sentinel pr614 #1 🔴: SQLite's ALTER TABLE ADD COLUMN backfills
+-- the DEFAULT into pre-existing rows, which would fabricate
+-- 'llm_summary' / 0.5 provenance for any expert that already had
+-- extracted_memory_json from a pre-v11 install. Null those out so
+-- legacy caches surface as having no provenance (recall layer also
+-- guards on memory_source_debate_id IS NULL for defense-in-depth).
+UPDATE experts SET memory_derivation = NULL, memory_trust_score = NULL
+  WHERE memory_source_debate_id IS NULL;`,
     },
   ];
 }

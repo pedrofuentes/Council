@@ -363,14 +363,20 @@ export async function recallMemoryWithProvenance(
 
   const cached = readCachedLLMMemory(expert.extractedMemoryJson);
   if (cached !== undefined) {
+    // Sentinel pr614 #1 🔴: a row missing the source-debate id is a
+    // legacy cache (pre-v11 upgrade) — there is no real provenance,
+    // so do NOT mislabel it as legitimate LLM-derived memory.
+    const hasRealProvenance = expert.memorySourceDebateId !== null;
     return {
       memory: cached,
-      provenance: {
-        sourceDebateId: expert.memorySourceDebateId,
-        derivation: expert.memoryDerivation,
-        trustScore: expert.memoryTrustScore,
-        extractedAt: expert.memoryExtractedAt,
-      },
+      provenance: hasRealProvenance
+        ? {
+            sourceDebateId: expert.memorySourceDebateId,
+            derivation: expert.memoryDerivation,
+            trustScore: expert.memoryTrustScore,
+            extractedAt: expert.memoryExtractedAt,
+          }
+        : null,
     };
   }
 

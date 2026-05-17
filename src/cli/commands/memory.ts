@@ -12,9 +12,11 @@
  *     debate prompt + status + turn count, expert displayNames + per-
  *     expert turn counts. With `--expert <slug>`: focuses on one
  *     expert showing their (truncated) system prompt, per-expert turn
- *     count, and the heuristic memory recalled from prior turns
+ *     count, the heuristic memory recalled from prior turns
  *     (positions / updated priors / unresolved questions — see
- *     `recallMemory()` in `src/memory/expert-memory.ts`).
+ *     `recallMemory()` in `src/memory/expert-memory.ts`), and a
+ *     Provenance block recording where the cached memory came from,
+ *     how it was produced, and the producer's trust score (T-2 / #569).
  *
  *   - **reset <panel>**: destructive. Requires `--yes` flag (no
  *     interactive prompt — flag-only safety gate so accidental scripted
