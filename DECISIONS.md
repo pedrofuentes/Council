@@ -22,6 +22,21 @@
 
 <!-- Add new decisions below this line, most recent first -->
 
+### ADR-013: Test execution policy — categorised scripts and CI pipeline
+**Date**: 2026-05-16
+**Status**: Accepted
+**Context**: All tests ran under a single `pnpm test` command with no way to run categories independently. There was no CI workflow file. The testing strategy doc did not specify *when* each test type should run.
+**Decision**: Add category-specific scripts (`test:unit`, `test:e2e`, `test:integration`, `test:security`) to `package.json`. Create a GitHub Actions CI workflow (`.github/workflows/ci.yml`) that runs typecheck → lint → unit → e2e → security on every PR and push to `main`. Integration tests remain manual-only (`COUNCIL_INTEGRATION=1`). Smoke tests remain a manual pre-release checklist. Keep `pnpm test` as the full-suite command for local development.
+**Alternatives considered**:
+- **Vitest workspace/projects** — would allow parallel runs and separate configs per category, but adds configuration complexity for no practical gain since the full suite runs in under 2 minutes.
+- **Separate CI jobs per category** — would allow parallel execution, but adds matrix complexity and the current suite is fast enough that sequential steps are simpler and cheaper.
+- **Include integration tests in CI** — rejected because they require a real Copilot SDK session, consume premium tokens, and need authenticated `gh` credentials in the runner.
+**Consequences**:
+- ✅ Developers and CI can run specific test categories independently
+- ✅ CI catches regressions before Sentinel review begins
+- ✅ Integration and smoke tests stay manual, avoiding token costs and auth complexity in CI
+- ⚠️ Integration tests have no automated CI safety net — regressions caught only during manual pre-release testing
+
 ### ADR-012: Layered prompt injection defense (zero external dependencies)
 **Date**: 2026-05-14
 **Status**: Accepted

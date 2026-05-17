@@ -146,9 +146,28 @@ Red-team payload tests live in `tests/security/` and verify the layered prompt-i
 - **No LLM calls** — tests exercise the pure sanitisation functions and prompt builders directly. They never invoke the engine (real or mock), so they run free, fast, and on every PR in the standard Vitest suite.
 - **Deterministic, not fuzzing** — payloads are hardcoded so every test has a single expected outcome. New payloads land as new hardcoded cases (with the originating issue/PR cited in the test name), not as random generators. This keeps the suite reproducible and Sentinel-reviewable.
 
+## When to Run Each Test Type
+
+| Test Type | Command | When to Run | CI? |
+|-----------|---------|-------------|-----|
+| Unit | `pnpm test:unit` | Every PR, every local change | ✅ Every PR + push to `main` |
+| E2E | `pnpm test:e2e` | Every PR, every local change | ✅ Every PR + push to `main` |
+| Security | `pnpm test:security` | Every PR, every local change | ✅ Every PR + push to `main` |
+| Integration | `pnpm test:integration` | Manual, before major releases | ❌ Requires real Copilot SDK |
+| Smoke | Manual checklist (`docs/SMOKE-TEST.md`) | Manual, final pre-release gate | ❌ Requires real Copilot engine + TTY |
+| All automated | `pnpm test` | Full local validation | ✅ (unit + e2e + security + integration-skip) |
+
+**Integration tests** require a real Copilot SDK session. Set `COUNCIL_INTEGRATION=1` to opt in:
+```bash
+COUNCIL_INTEGRATION=1 pnpm test:integration
+```
+
+**Smoke tests** are the final gate before cutting a release. They exercise the full system end-to-end with a live LLM and interactive TTY. See `docs/SMOKE-TEST.md` for the checklist.
+
 ## CI Integration
 
-- Tests run automatically on every PR via GitHub Actions
-- All tests must pass before Sentinel review begins
+- CI runs automatically on every PR targeting `main` and on every push to `main` (`.github/workflows/ci.yml`)
+- Pipeline: typecheck → lint → unit tests → e2e tests → security tests
+- All steps must pass before Sentinel review begins
 - Flaky tests must be fixed immediately, not skipped
-- Integration tests are manual-only (not in CI)
+- Integration tests are manual-only (not in CI — they cost real tokens)
