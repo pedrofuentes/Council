@@ -38,6 +38,7 @@ import {
 import type { ChatSession, ChatTurn } from "../../core/chat/chat-session.js";
 import { parseUserInput, type ParsedInput } from "../../core/chat/mention-parser.js";
 import { Debate } from "../../core/debate.js";
+import { checkTopicAdmission } from "../../core/topic-admission.js";
 import type { ExpertDefinition } from "../../core/expert.js";
 import { FileExpertLibrary } from "../../core/expert-library.js";
 import { ExpertLibraryRepository } from "../../memory/repositories/expert-library-repo.js";
@@ -1254,6 +1255,11 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
         return;
       }
 
+      const admission = checkTopicAdmission(trimmed);
+      for (const warning of admission.warnings) {
+        renderer.showSystem(warning, "warn");
+      }
+
       await repo.addTurn({ chatId: session.id, role: "user", content: trimmed });
       prevTurnCount = await maybeWarnLongConversation(
         repo,
@@ -1634,6 +1640,10 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
       }
 
       if (parsed.type === "convene") {
+        const admission = checkTopicAdmission(parsed.content);
+        for (const warning of admission.warnings) {
+          renderer.showSystem(warning, "warn");
+        }
         // Issue #466 — surface Ctrl+C during inline debate. Set the
         // loop state to "debate" with a dedicated AbortController so
         // the SIGINT handler can abort the running debate iterator
@@ -2147,7 +2157,9 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
         await engine.addExpert(original);
       } catch (restoreErr: unknown) {
         const msg = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
-        writeError(`!! failed to restore expert ${original.id} after structured deliberation: ${msg}\n`);
+        writeError(
+          `!! failed to restore expert ${original.id} after structured deliberation: ${msg}\n`,
+        );
       }
     }
   }

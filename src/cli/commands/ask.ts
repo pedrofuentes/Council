@@ -10,6 +10,7 @@ import * as path from "node:path";
 import { Command } from "commander";
 
 import { getCouncilHome } from "../../config/index.js";
+import { checkTopicAdmission } from "../../core/topic-admission.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import { createDatabase } from "../../memory/db.js";
 import { ExpertRepository } from "../../memory/repositories/experts.js";
@@ -67,6 +68,11 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
           throw new Error(
             `Unknown --engine value: ${raw.engine}. Expected one of: ${ENGINE_KINDS.join(", ")}`,
           );
+        }
+
+        const admission = checkTopicAdmission(question);
+        for (const warning of admission.warnings) {
+          writeError(warning + "\n");
         }
 
         const format: RendererFormat = parseFormat(raw.format);
