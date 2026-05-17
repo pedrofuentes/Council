@@ -47,6 +47,10 @@ export interface ExpertRow {
   readonly copilot_session_id: string | null;
   readonly created_at: string;
   readonly extracted_memory_json: string | null;
+  readonly memory_source_debate_id: string | null;
+  readonly memory_derivation: string | null;
+  readonly memory_trust_score: number | null;
+  readonly memory_extracted_at: string | null;
 }
 
 export interface DebateRow {
@@ -192,7 +196,7 @@ export type CouncilDatabase = Kysely<CouncilSchema>;
 
 // ---------- Migration runner ----------
 
-interface Migration {
+export interface Migration {
   readonly version: number;
   readonly name: string;
   readonly sql: string;
@@ -203,7 +207,7 @@ interface Migration {
 // The canonical .sql files remain in src/memory/migrations/ for
 // readability and git-diffable history.
 
-function loadMigrations(): readonly Migration[] {
+export function loadMigrations(): readonly Migration[] {
   return [
     {
       version: 1,
@@ -483,6 +487,23 @@ WHERE status = 'active'
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_sessions_active_unique
   ON chat_sessions (target_type, target_slug)
   WHERE status = 'active';`,
+    },
+    {
+      version: 11,
+      name: "011_memory_provenance",
+      sql: `\
+ALTER TABLE experts ADD COLUMN memory_source_debate_id TEXT;
+ALTER TABLE experts ADD COLUMN memory_derivation TEXT DEFAULT 'llm_summary';
+ALTER TABLE experts ADD COLUMN memory_trust_score REAL DEFAULT 0.5;
+ALTER TABLE experts ADD COLUMN memory_extracted_at TEXT;
+-- Sentinel pr614 #1 🔴: SQLite's ALTER TABLE ADD COLUMN backfills
+-- the DEFAULT into pre-existing rows, which would fabricate
+-- 'llm_summary' / 0.5 provenance for any expert that already had
+-- extracted_memory_json from a pre-v11 install. Null those out so
+-- legacy caches surface as having no provenance (recall layer also
+-- guards on memory_source_debate_id IS NULL for defense-in-depth).
+UPDATE experts SET memory_derivation = NULL, memory_trust_score = NULL
+  WHERE memory_source_debate_id IS NULL;`,
     },
   ];
 }

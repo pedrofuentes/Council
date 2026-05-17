@@ -84,11 +84,20 @@ describe("LLM memory persistence + recall", () => {
     // PRAGMA table_info would be ideal; libsql exposes it via raw query.
     // We verify indirectly: persistExtractedMemory must succeed (would
     // throw on missing column).
-    await persistExtractedMemory(fx.db, fx.expertId, {
-      positions: ["a"],
-      updatedPriors: [],
-      unresolved: [],
-    });
+    await persistExtractedMemory(
+      fx.db,
+      fx.expertId,
+      {
+        positions: ["a"],
+        updatedPriors: [],
+        unresolved: [],
+      },
+      {
+        sourceDebateId: fx.debateId,
+        derivation: "llm_summary",
+        trustScore: 0.5,
+      },
+    );
     // No throw → column exists.
     expect(true).toBe(true);
   });
@@ -106,11 +115,20 @@ describe("LLM memory persistence + recall", () => {
     });
 
     // Now persist a distinctly different LLM-extracted memory.
-    await persistExtractedMemory(fx.db, fx.expertId, {
-      positions: ["LLM-distilled position."],
-      updatedPriors: ["LLM-distilled prior update."],
-      unresolved: ["LLM-distilled open question?"],
-    });
+    await persistExtractedMemory(
+      fx.db,
+      fx.expertId,
+      {
+        positions: ["LLM-distilled position."],
+        updatedPriors: ["LLM-distilled prior update."],
+        unresolved: ["LLM-distilled open question?"],
+      },
+      {
+        sourceDebateId: fx.debateId,
+        derivation: "llm_summary",
+        trustScore: 0.5,
+      },
+    );
 
     const recalled = await recallMemory(fx.db, fx.panelId, "cto");
     expect(recalled).toBeDefined();
@@ -150,11 +168,20 @@ describe("LLM memory persistence + recall", () => {
     });
 
     // Persist explicitly-empty LLM memory (e.g. extractor returned EMPTY_MEMORY).
-    await persistExtractedMemory(fx.db, fx.expertId, {
-      positions: [],
-      updatedPriors: [],
-      unresolved: [],
-    });
+    await persistExtractedMemory(
+      fx.db,
+      fx.expertId,
+      {
+        positions: [],
+        updatedPriors: [],
+        unresolved: [],
+      },
+      {
+        sourceDebateId: fx.debateId,
+        derivation: "llm_summary",
+        trustScore: 0.5,
+      },
+    );
 
     const recalled = await recallMemory(fx.db, fx.panelId, "cto");
     expect(recalled).toBeDefined();

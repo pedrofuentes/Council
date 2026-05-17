@@ -45,9 +45,7 @@ export interface ExtractMemoryHookOpts {
   readonly writeError: Writer;
 }
 
-export async function runExtractMemoryHook(
-  opts: ExtractMemoryHookOpts,
-): Promise<void> {
+export async function runExtractMemoryHook(opts: ExtractMemoryHookOpts): Promise<void> {
   const debateRepo = new DebateRepository(opts.db);
   const turnRepo = new TurnRepository(opts.db);
 
@@ -77,23 +75,21 @@ export async function runExtractMemoryHook(
 
     // Chronological order (createdAt is ISO-8601, lexicographically
     // sortable) then trim to the most recent EXTRACTOR_MAX_TURNS.
-    collected.sort((a, b) =>
-      a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0,
-    );
+    collected.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
     const recent =
-      collected.length > EXTRACTOR_MAX_TURNS
-        ? collected.slice(-EXTRACTOR_MAX_TURNS)
-        : collected;
+      collected.length > EXTRACTOR_MAX_TURNS ? collected.slice(-EXTRACTOR_MAX_TURNS) : collected;
     const expertTurns = recent.map((t) => t.content);
 
     try {
       const memory = await extractMemoryLLM(expertTurns, opts.engine, opts.model);
-      await persistExtractedMemory(opts.db, expertId, memory);
+      await persistExtractedMemory(opts.db, expertId, memory, {
+        sourceDebateId: opts.debateId,
+        derivation: "llm_summary",
+        trustScore: 0.5,
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      opts.writeError(
-        `!! memory extraction failed for expert ${slug}: ${msg}\n`,
-      );
+      opts.writeError(`!! memory extraction failed for expert ${slug}: ${msg}\n`);
     }
   }
 }
