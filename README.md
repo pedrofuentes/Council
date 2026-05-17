@@ -119,7 +119,7 @@ council export <panel-name> --format json --output transcript.ndjson
 # Inspect what's persisted locally
 council memory list                                 # summary of all panels
 council memory inspect <panel-name>                 # detail view
-council memory inspect <panel-name> --expert cto    # single-expert detail (system prompt + recalled memory + turn count)
+council memory inspect <panel-name> --expert cto    # single-expert detail (includes provenance: source debate, trust score)
 
 # Curate (destructive — requires --yes)
 council memory reset <panel-name> --yes             # clear debates+turns, keep panel+experts
@@ -192,7 +192,7 @@ caller's input order — weight tags reflect age regardless of how
 documents were enumerated.
 
 **Reset behaviour** — `council memory reset <panel>` clears debate
-transcripts and extracted memory but **preserves persona profiles**
+transcripts, extracted memory, and provenance metadata but **preserves persona profiles**
 (Roadmap 7.4): rebuilding a profile costs an LLM call, and the profile
 is derived from on-disk documents that survive the reset anyway.
 
