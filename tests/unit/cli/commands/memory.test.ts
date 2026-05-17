@@ -215,6 +215,11 @@ describe("buildMemoryCommand", () => {
       expect(captured).toContain("distributed-systems");
       // Should NOT show PM (the other expert)
       expect(captured).not.toContain("user value");
+      // Provenance block always rendered for --expert path (T-2 / #569).
+      expect(captured).toContain("Provenance:");
+      expect(captured).toMatch(/Source debate:/);
+      expect(captured).toMatch(/Derivation:/);
+      expect(captured).toMatch(/Trust score:/);
     });
 
     it("--expert <unknown-slug>: errors with a clear message", async () => {
@@ -285,6 +290,8 @@ describe("buildMemoryCommand", () => {
       expect(typeof expert["systemMessage"]).toBe("string");
       expect(expert).toHaveProperty("turnCount");
       expect(typeof expert["turnCount"]).toBe("number");
+      // Provenance must be present in JSON output (T-2 / #569).
+      expect(expert).toHaveProperty("provenance");
     });
 
     it("--format json: no plain-text headings leak into output", async () => {

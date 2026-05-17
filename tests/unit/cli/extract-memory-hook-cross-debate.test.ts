@@ -18,6 +18,8 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { sql } from "kysely";
+
 import { runExtractMemoryHook } from "../../../src/cli/extract-memory-hook.js";
 import type { CouncilEngine, EngineEvent, ExpertSpec } from "../../../src/engine/index.js";
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
@@ -141,5 +143,23 @@ describe("runExtractMemoryHook â€” cross-debate gathering (Sentinel pr273 #1 ðŸ”
     );
     expect(promptForExpert).toBeDefined();
     expect(promptForExpert).toContain("ANCHOR_FROM_OLDER_DEBATE");
+
+    // Provenance (T-2 / #569): the hook must record the current debate
+    // id as the source, derivation = llm_summary, and trustScore = 0.5.
+    const provRows = await sql<{
+      readonly memory_source_debate_id: string | null;
+      readonly memory_derivation: string | null;
+      readonly memory_trust_score: number | null;
+      readonly memory_extracted_at: string | null;
+    }>`
+      SELECT memory_source_debate_id, memory_derivation, memory_trust_score, memory_extracted_at
+      FROM experts WHERE id = ${expertId}
+    `.execute(db);
+    const prov = provRows.rows[0];
+    expect(prov).toBeDefined();
+    expect(prov?.memory_source_debate_id).toBe(d2.id);
+    expect(prov?.memory_derivation).toBe("llm_summary");
+    expect(prov?.memory_trust_score).toBe(0.5);
+    expect(prov?.memory_extracted_at).not.toBeNull();
   });
 });
