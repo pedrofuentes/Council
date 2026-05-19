@@ -83,6 +83,14 @@ describe("sanitizePromptField", () => {
       expect(result.slice(0, 2000)).toBe("x".repeat(2000));
     });
 
+    it("caps length at exactly MAX when truncated (issue #549)", () => {
+      const MAX = 2000;
+      const result = sanitizePromptField("x".repeat(3000));
+      expect(result.length).toBeLessThanOrEqual(MAX);
+      expect(result.length).toBe(MAX); // Should be exactly MAX, not MAX+1
+      expect(result.endsWith("…")).toBe(true);
+    });
+
     it("returns short input unchanged when no special characters present", () => {
       expect(sanitizePromptField("plain text")).toBe("plain text");
     });
@@ -158,6 +166,14 @@ describe("sanitizePromptBlock", () => {
   it("caps length at default 4000 with ellipsis", () => {
     const result = sanitizePromptBlock("x".repeat(5000));
     expect(result.length).toBe(4001);
+    expect(result.endsWith("…")).toBe(true);
+  });
+
+  it("caps length at exactly maxLength when truncated (issue #549)", () => {
+    const maxLength = 4000;
+    const result = sanitizePromptBlock("x".repeat(5000), maxLength);
+    expect(result.length).toBeLessThanOrEqual(maxLength);
+    expect(result.length).toBe(maxLength); // Should be exactly maxLength, not maxLength+1
     expect(result.endsWith("…")).toBe(true);
   });
 
