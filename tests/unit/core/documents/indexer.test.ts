@@ -187,6 +187,72 @@ describe("createDocumentIndexer", () => {
     expect(commitIdx).toBeGreaterThan(insertIdx);
   });
 
+  it("index() issues ROLLBACK when INSERT fails, then propagates error (#426)", async () => {
+    // Regression test for the rollback branch (lines 63-70 in indexer.ts).
+    // When the INSERT throws, the catch block must issue ROLLBACK so the
+    // prior DELETE does not commit orphaned. We verify: (a) ROLLBACK
+    // appears in the call log, (b) the original error propagates, (c) any
+    // pre-existing row survives.
+    const { LibsqlConnection } = await import("@libsql/kysely-libsql");
+    const protoAny = LibsqlConnection.prototype as unknown as {
+      executeQuery: (q: { sql: string }) => Promise<unknown>;
+    };
+    const orig = protoAny.executeQuery;
+    const calls: string[] = [];
+    let insertCallCount = 0;
+    protoAny.executeQuery = async function (
+      this: unknown,
+      q: { sql: string },
+    ) {
+      if (typeof q?.sql === "string") calls.push(q.sql);
+      // Fail the second INSERT attempt (the one that rewrites) to force rollback.
+      if (/INSERT\s+INTO\s+document_index/i.test(q?.sql ?? "")) {
+        insertCallCount++;
+        if (insertCallCount === 2) {
+          throw new Error("simulated INSERT failure");
+        }
+      }
+      return orig.call(this, q);
+    };
+
+    const indexer = createDocumentIndexer(db);
+    
+    try {
+      // Pre-populate a row so we can assert it survives the failed transaction.
+      await indexer.index({
+        content: "original content",
+        sourceType: "expert",
+        sourceSlug: "ceo",
+        filePath: "/docs/orig.md",
+      });
+
+      // Attempt to overwrite; the INSERT will fail → rollback.
+      await expect(
+        indexer.index({
+          content: "new content",
+          sourceType: "expert",
+          sourceSlug: "ceo",
+          filePath: "/docs/orig.md",
+        }),
+      ).rejects.toThrow("simulated INSERT failure");
+
+      // Verify ROLLBACK appeared in the call log.
+      const rollbackIdx = calls.findIndex((s) => /^\s*ROLLBACK\b/i.test(s));
+      expect(rollbackIdx).toBeGreaterThanOrEqual(0);
+
+      // Verify the original row still exists (DELETE was rolled back).
+      const results = await db
+        .selectFrom("document_index")
+        .selectAll()
+        .where("file_path", "=", "/docs/orig.md")
+        .execute();
+      expect(results).toHaveLength(1);
+      expect(results[0]?.content).toBe("original content");
+    } finally {
+      protoAny.executeQuery = orig;
+    }
+  });
+
   it("removeAll() only removes the matching source_type", async () => {
     const indexer = createDocumentIndexer(db);
     await indexer.index({
