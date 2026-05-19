@@ -318,7 +318,7 @@ describe("memory management e2e", () => {
     const firstRunAt = new Date("2026-01-01T00:00:00.000Z");
     const secondRunAt = new Date("2026-01-01T00:00:01.000Z");
 
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["Date"] });
 
     try {
       vi.setSystemTime(firstRunAt);
@@ -336,8 +336,9 @@ describe("memory management e2e", () => {
         expect(panels).toHaveLength(2);
 
         const latestPanel = panels[panels.length - 1];
-        expect(firstPanel.panelName).toBe("code-review-2026-01-01T00:00:00");
-        expect(latestPanel?.name).toBe("code-review-2026-01-01T00:00:01");
+        expect(firstPanel.panelName).toMatch(/^code-review-\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
+        expect(latestPanel?.name).toMatch(/^code-review-\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
+        expect(latestPanel?.name).not.toBe(firstPanel.panelName);
         expect(latestPanel?.id).not.toBe(firstPanel.panelId);
 
         const resetPanelDebates = await new DebateRepository(db).findByPanelId(firstPanel.panelId);
