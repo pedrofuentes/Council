@@ -18,41 +18,9 @@ import {
   makeMockEngineFactory,
   openTestDb,
   seedPanelWithExperts,
+  waitForDbRelease,
   type E2EContext,
 } from "./helpers.js";
-
-function isTransientDbLockError(error: unknown): boolean {
-  const code =
-    typeof error === "object" && error !== null && "code" in error
-      ? String((error as { readonly code?: unknown }).code ?? "")
-      : "";
-  const message = error instanceof Error ? error.message : String(error);
-
-  return /busy|lock|ebusy|eperm|enotempty|sqlite_busy/i.test(`${code} ${message}`);
-}
-
-async function isDbReleased(testHome: string): Promise<boolean> {
-  try {
-    const db = await openTestDb(testHome);
-    await destroyTestDb(db);
-    return true;
-  } catch (error: unknown) {
-    if (isTransientDbLockError(error)) {
-      return false;
-    }
-
-    throw error;
-  }
-}
-
-async function waitForDbRelease(testHome: string): Promise<void> {
-  await expect
-    .poll(async () => isDbReleased(testHome), {
-      interval: 50,
-      timeout: 2_000,
-    })
-    .toBe(true);
-}
 
 describe.sequential("ask command e2e", () => {
   let ctx: E2EContext;

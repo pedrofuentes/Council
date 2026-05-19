@@ -43,13 +43,37 @@ function normalizeTempPath(dirPath: string): string {
   return process.platform === "win32" ? resolvedPath.toLowerCase() : resolvedPath;
 }
 
+/**
+ * Determines if an error should be ignored during best-effort E2E cleanup.
+ *
+ * **Why each error code is allowed:**
+ * - `EBUSY`: Windows file system indicates the file/directory is in use
+ * - `EPERM`: Windows permissions error during deletion (often transient)
+ * - `ENOTEMPTY`: Directory not empty (Windows async I/O latency)
+ * - `sqlite_busy` / `database is locked`: SQLite/libsql handle release latency
+ *
+ * **Platform conditions:**
+ * These errors primarily affect Windows CI due to async file handle release
+ * behavior. SQLite database files may remain locked briefly after `db.destroy()`
+ * returns, especially under heavy parallel test execution.
+ *
+ * **Adding new error codes:**
+ * Before adding a new pattern to this allowlist, confirm the error is actually
+ * related to Windows handle-release timing, not a genuine bug in test teardown.
+ * Use word-boundary matching (`\b`) to avoid false positives.
+ *
+ * @param error - The error to classify
+ * @returns `true` if the error is expected during Windows cleanup and can be safely ignored
+ */
 function isBestEffortCleanupError(error: unknown): boolean {
   const code =
     typeof error === "object" && error !== null && "code" in error
       ? String((error as { readonly code?: unknown }).code ?? "")
       : "";
   const message = error instanceof Error ? error.message : String(error);
-  return /busy|lock|ebusy|eperm|enotempty|sqlite_busy/i.test(`${code} ${message}`);
+  return /\bEBUSY\b|\bEPERM\b|\bENOTEMPTY\b|\bsqlite_busy\b|\bdatabase is locked\b/i.test(
+    `${code} ${message}`,
+  );
 }
 
 async function removeDir(dirPath: string): Promise<void> {
@@ -150,6 +174,48 @@ export async function destroyTestDb(db: CouncilDatabase): Promise<void> {
 
     // best-effort: Windows may still be unwinding SQLite/libsql handles
   }
+}
+
+/**
+ * Polls until the test database is fully released and can be reopened/closed.
+ *
+ * **Use case:**
+ * After a command completes, Windows may hold SQLite file handles for a brief
+ * period. This helper polls with generous timeouts (10s on Windows, 2s elsewhere)
+ * to avoid flakes in E2E tests that need to verify database state.
+ *
+ * **Implementation:**
+ * Uses `expect.poll` to repeatedly attempt opening and closing the database.
+ * Returns `true` once successful, or throws after timeout if the database
+ * remains locked.
+ *
+ * @param testHome - Path to test home directory containing `council.db`
+ */
+export async function waitForDbRelease(testHome: string): Promise<void> {
+  const { expect } = await import("vitest");
+
+  async function isDbReleased(): Promise<boolean> {
+    try {
+      const db = await openTestDb(testHome);
+      await destroyTestDb(db);
+      return true;
+    } catch (error: unknown) {
+      if (!isBestEffortCleanupError(error)) {
+        throw error;
+      }
+
+      return false;
+    }
+  }
+
+  const timeout = process.platform === "win32" ? 10_000 : 2_000;
+
+  await expect
+    .poll(async () => isDbReleased(), {
+      interval: 50,
+      timeout,
+    })
+    .toBe(true);
 }
 
 export async function seedPanelWithExperts(
