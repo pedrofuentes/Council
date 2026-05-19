@@ -220,8 +220,10 @@ async function findRuntimePanelByTemplate(
       try {
         const config = JSON.parse(row.configJson) as StoredPanelConfig;
         return config.template === templateName;
-      } catch {
-        return false;
+      } catch (err) {
+        throw new Error(
+          `Malformed config_json for panel ${row.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     });
   } finally {
@@ -470,8 +472,28 @@ fs.writeFileSync(file, body, "utf-8");`,
     const jsonLines = convened.stdout
       .split("\n")
       .filter((line) => line.trim().startsWith("{"))
-      .map((line) => JSON.parse(line) as { readonly kind: string });
-    expect(jsonLines.map((line) => line.kind)).toContain("debate.end");
+      .map((line) => JSON.parse(line) as { readonly kind: string; readonly expertSlug?: string });
+    
+    const kinds = jsonLines.map((line) => line.kind);
+    
+    // Contract-level assertions
+    expect(kinds[0]).toBe("panel.assembled");
+    expect(kinds).toContain("turn.start");
+    expect(kinds).toContain("turn.end");
+    expect(kinds[kinds.length - 1]).toBe("debate.end");
+    
+    // Verify turn events are ordered per expert
+    const turnEvents = jsonLines.filter((e) => e.kind === "turn.start" || e.kind === "turn.end");
+    expect(turnEvents.length).toBeGreaterThan(0);
+    for (let i = 0; i < turnEvents.length; i += 2) {
+      const start = turnEvents[i];
+      const end = turnEvents[i + 1];
+      if (start && end) {
+        expect(start.kind).toBe("turn.start");
+        expect(end.kind).toBe("turn.end");
+        expect(start.expertSlug).toBe(end.expertSlug);
+      }
+    }
 
     const db = await openTestDb(ctx.testHome);
     try {
@@ -497,6 +519,8 @@ fs.writeFileSync(file, body, "utf-8");`,
         .orderBy("position", "asc")
         .execute();
       expect(codeReviewMembers.length).toBeGreaterThan(0);
+      const slugs = codeReviewMembers.map((m) => m.expert_slug);
+      expect(slugs).toEqual(expect.arrayContaining(["senior", "security", "perf", "maintainer"]));
 
       const expertRows = await db.selectFrom("expert_library").select("slug").execute();
       expect(expertRows.length).toBeGreaterThan(0);
@@ -551,6 +575,15 @@ fs.writeFileSync(file, body, "utf-8");`,
       "mock",
     ]);
     expect(convened.stderr).toMatch(/MOCK/i);
+    
+    // Contract-level assertions on JSON output
+    const jsonLines = convened.stdout
+      .split("\n")
+      .filter((line) => line.trim().startsWith("{"))
+      .map((line) => JSON.parse(line) as { readonly kind: string });
+    const kinds = jsonLines.map((line) => line.kind);
+    expect(kinds[0]).toBe("panel.assembled");
+    expect(kinds[kinds.length - 1]).toBe("debate.end");
 
     const runtimePanel = await findRuntimePanelByTemplate(ctx, "product-council");
     expect(runtimePanel?.topic).toBe("Should we expand into enterprise self-serve?");

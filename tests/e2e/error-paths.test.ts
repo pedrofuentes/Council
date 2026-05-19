@@ -406,7 +406,7 @@ describe("CLI error paths E2E", () => {
         output,
       );
 
-      expect(failure.message.toLowerCase()).toMatch(/unknown mode|mode/);
+      expect(failure.message.toLowerCase()).toMatch(/unknown.*mode|unsupported.*mode|invalid.*mode/i);
     });
   });
 
