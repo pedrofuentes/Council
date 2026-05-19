@@ -65,6 +65,13 @@ export interface ExtractDocumentOptions {
    * undefined.
    */
   readonly _realpathOverride?: (p: string) => Promise<string>;
+  /**
+   * Test seam — replace the file-handle read operation. Used to simulate
+   * short reads (kernel returns fewer bytes than stat reported) for
+   * regression testing of torn-read detection. Production callers leave
+   * this undefined.
+   */
+  readonly _readFileOverride?: (fh: fs.FileHandle) => Promise<Buffer>;
 }
 
 const HTML_ENTITIES: Readonly<Record<string, string>> = {
@@ -172,7 +179,8 @@ export async function extractDocument(
 
     // 5. Read via the file handle (NOT path) so the read targets the
     //    inode bound at step 1, immune to any post-open path swap.
-    const buf = await fh.readFile();
+    const readFile = options._readFileOverride ?? ((fh: fs.FileHandle) => fh.readFile());
+    const buf = await readFile(fh);
     const raw = buf.toString("utf-8");
     const checksum = createHash("sha256").update(buf).digest("hex");
     const ext = path.extname(filePath).toLowerCase();
