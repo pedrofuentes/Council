@@ -70,6 +70,14 @@ const SUMMARIZER_SYSTEM_MESSAGE =
 
 const SUMMARIZER_DISPLAY_NAME = "Context Summarizer";
 
+/**
+ * Timeout for summarization engine.send() calls. Prevents hung AI
+ * providers from wedging the chat session indefinitely (issue #330).
+ * Summarization is best-effort background work, so 5s is aggressive
+ * enough to fail fast without blocking the chat loop.
+ */
+const SUMMARIZER_TIMEOUT_MS = 5_000;
+
 function formatTurnsForPrompt(turns: readonly ChatTurn[]): string {
   const lines: string[] = [];
   for (const t of turns) {
@@ -140,8 +148,9 @@ async function runSummarizer(
 
   let collected = "";
   let errored = false;
+  const signal = AbortSignal.timeout(SUMMARIZER_TIMEOUT_MS);
   try {
-    const stream: AsyncIterable<EngineEvent> = engine.send({ prompt, expertId });
+    const stream: AsyncIterable<EngineEvent> = engine.send({ prompt, expertId, signal });
     for await (const event of stream) {
       if (event.kind === "message.delta") {
         collected += event.text;
