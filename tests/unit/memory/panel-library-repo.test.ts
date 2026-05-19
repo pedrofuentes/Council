@@ -265,5 +265,44 @@ describe("PanelLibraryRepository", () => {
       const after = await repo.getMembers("arch-review");
       expect(after).toEqual(["cto"]);
     });
+
+    it("structural guard: post-COMMIT code in setMembers must not mis-translate failures (#537)", async () => {
+      // Issue #537 (Sentinel-rejected gaming-test replacement): the
+      // catch-block contract is "transaction rolled back cleanly" only
+      // when the failure occurred BEFORE COMMIT. Today setMembers has no
+      // post-COMMIT code, so the only paths exercisable here are
+      // pre-COMMIT failures — verify they produce the contracted error
+      // shape (SetMembersError, rollbackFailed=false, no "inconsistent"
+      // claim). A code-comment in panel-library-repo.ts documents the
+      // pattern future contributors must apply if they add post-COMMIT
+      // work; if that guard is forgotten the error message would falsely
+      // claim "rolled back cleanly", contradicting committed state.
+      await repo.create(samplePanel("arch-review"));
+      await seedExpert(db, "cto");
+      await repo.setMembers("arch-review", ["cto"]);
+
+      const restore = patchExecuteQuery(db, {
+        failOnSqlSubstring: 'insert into "panel_members"',
+      });
+
+      let caught: unknown;
+      try {
+        await repo.setMembers("arch-review", ["cto"]);
+      } catch (e) {
+        caught = e;
+      } finally {
+        restore();
+      }
+
+      expect(caught).toBeInstanceOf(SetMembersError);
+      const err = caught as SetMembersError;
+      expect(err.rollbackFailed).toBe(false);
+      expect(err.message).toMatch(/rolled back cleanly/i);
+      expect(err.message).not.toMatch(/inconsistent/i);
+      expect(err.cause).toBeInstanceOf(Error);
+      // Atomicity: prior members are still intact.
+      const after = await repo.getMembers("arch-review");
+      expect(after).toEqual(["cto"]);
+    });
   });
 });

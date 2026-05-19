@@ -162,6 +162,16 @@ export class PanelLibraryRepository {
         await this.db.insertInto("panel_members").values(rows).execute();
       }
       await sql`COMMIT`.execute(this.db);
+      // NOTE (#537): if future work is added AFTER the COMMIT above (e.g.
+      // post-commit logging, verification reads, cache invalidation), it
+      // MUST be guarded so a thrown error is NOT mis-translated by the
+      // catch block below into a "transaction rolled back cleanly"
+      // message. The recommended pattern is a `committed` flag set right
+      // after COMMIT and a `if (committed) throw new SetMembersError(...,
+      // { rollbackFailed: true })` branch at the top of catch — note
+      // `rollbackFailed: true` (rollback is impossible once committed, so
+      // state is NOT preserved; the CLI consumer keys on !rollbackFailed
+      // to claim "prior state preserved", which would be false here).
     } catch (err) {
       let rollbackFailed = false;
       let rollbackError: unknown;
