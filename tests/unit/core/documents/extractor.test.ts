@@ -336,7 +336,7 @@ describe("extractDocument", () => {
       // Simulate kernel returning fewer bytes than stat says file has.
       await expect(
         extractDocument(filePath, {
-          _readFileOverride: async (fh: fs.FileHandle) => {
+          _readFileOverride: async (_fh: fs.FileHandle) => {
             // Stat says 17 bytes ("full content here"), but we return only 4.
             const truncated = Buffer.from("full", "utf-8");
             return truncated;
