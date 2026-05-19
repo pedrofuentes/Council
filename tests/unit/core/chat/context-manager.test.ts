@@ -361,30 +361,33 @@ describe("ContextManager", () => {
       await failingEngine.stop();
     });
 
-    it("passes AbortSignal with timeout to engine.send() to prevent indefinite hangs (#330)", async () => {
-      // A MockEngine configured to hang indefinitely (never respond).
-      // If the summarizer does NOT wire an AbortSignal, this test will
-      // hang forever. Once the fix is in place, the AbortSignal will fire
-      // after the timeout and the summarizer will return null.
-      const hangingEngine = new MockEngine({ deltaDelayMs: 999_999 });
-      await hangingEngine.start();
-      const hangingManager = createContextManager(repo, hangingEngine, baseConfig);
+    it(
+      "passes AbortSignal with timeout to engine.send() to prevent indefinite hangs (#330)",
+      async () => {
+        // A MockEngine configured to hang indefinitely (never respond).
+        // If the summarizer does NOT wire an AbortSignal, this test will
+        // hang forever. Once the fix is in place, the AbortSignal will fire
+        // after SUMMARIZER_TIMEOUT_MS and the summarizer will return false.
+        const hangingEngine = new MockEngine({ deltaDelayMs: 999_999 });
+        await hangingEngine.start();
+        const hangingManager = createContextManager(repo, hangingEngine, baseConfig);
 
-      const session = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
-      await seedTurns(repo, session.id, 3);
+        const session = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+        await seedTurns(repo, session.id, 3);
 
-      // This should complete quickly (within ~100ms if the timeout is wired
-      // correctly with a short test timeout). Without the fix, it will hang
-      // for 999_999ms.
-      const result = await hangingManager.maybeSummarize(session.id);
+        // This should complete after ~5s when the AbortSignal times out.
+        // Without the fix, it would hang for 999_999ms.
+        const result = await hangingManager.maybeSummarize(session.id);
 
-      // The summarizer should fail gracefully and return false when aborted.
-      expect(result).toBe(false);
-      const refreshed = await repo.findSessionById(session.id);
-      expect(refreshed?.summary).toBeNull();
+        // The summarizer should fail gracefully and return false when aborted.
+        expect(result).toBe(false);
+        const refreshed = await repo.findSessionById(session.id);
+        expect(refreshed?.summary).toBeNull();
 
-      await hangingEngine.stop();
-    });
+        await hangingEngine.stop();
+      },
+      10_000,
+    ); // 10s test timeout (2× the 5s abort timeout + overhead)
   });
 
   // ---------- forceSummarize ----------
