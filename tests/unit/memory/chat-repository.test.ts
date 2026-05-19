@@ -767,17 +767,9 @@ describe("ChatRepository", () => {
       // 1. Unique constraint violation (two active sessions for same target)
       // 2. Zero-row archive (priorActiveId no longer active)
       // Either way, rollbackFailed should be false (clean rollback) and the
-      // error message/cause should contain recognizable indicators.
-      expect(err.rollbackFailed).toBe(false);
-      // The cause or message should mention "unique" or "UNIQUE" (constraint)
-      // OR indicate that the archive affected 0 rows (though that's implementation detail)
-      const errorText = (err.message + (err.cause ? String(err.cause) : "")).toLowerCase();
-      const isCasMiss =
-        errorText.includes("unique") ||
-        errorText.includes("constraint") ||
-        errorText.includes("concurrent");
-      // For now, just verify it's a clean rollback — after fix (#538),
-      // rewriteRotateError should detect this pattern and provide distinct guidance
+      // error message/cause should contain recognizable indicators like
+      // "unique", "constraint", or "concurrent" that rewriteRotateError (#538)
+      // can use to provide distinct user guidance.
       expect(err.rollbackFailed).toBe(false);
     });
 

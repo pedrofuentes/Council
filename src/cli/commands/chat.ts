@@ -831,17 +831,41 @@ interface ExpertChatOptions {
 
 /**
  * Translate a {@link RotateActiveSessionError} into a user-facing Error
- * with rollback-aware guidance (#333). When the rollback itself failed
+ * with rollback-aware guidance (#333, #538). When the rollback itself failed
  * the DB may be in an inconsistent state — the message must NOT claim
  * the prior session was preserved, and operators need a hint to inspect
- * `council chat --list` for any orphan archived rows. Non-rotation errors
- * pass through unchanged.
+ * `council chat --list` for any orphan archived rows.
+ *
+ * When a CAS-miss occurs (concurrent session creation by another process),
+ * provide distinct guidance that another session was started concurrently
+ * (#538) instead of generic "retry the command".
+ *
+ * Non-rotation errors pass through unchanged.
  */
 function rewriteRotateError(err: unknown): Error {
   if (!(err instanceof RotateActiveSessionError)) {
     return err instanceof Error ? err : new Error(String(err));
   }
   const base = "Could not start a fresh chat: rotating the active chat session failed";
+
+  // Detect CAS-miss: concurrent rotation by another process (#538).
+  // Manifests as a unique constraint violation (two active sessions for
+  // same target) or zero-row archive followed by unique constraint.
+  if (!err.rollbackFailed) {
+    const errorText = (err.message + (err.cause ? String(err.cause) : "")).toLowerCase();
+    const isCasMiss =
+      errorText.includes("unique") ||
+      errorText.includes("constraint") ||
+      errorText.includes("sqlite_constraint");
+    if (isCasMiss) {
+      return new Error(
+        `${base} — another session was started concurrently. ` +
+          `Use the existing session (omit --new) or retry after the concurrent operation completes. ` +
+          `(cause: ${err.message})`,
+      );
+    }
+  }
+
   const guidance = err.rollbackFailed
     ? "the database may be in an inconsistent state (the prior session may have been archived without a replacement). " +
       "Inspect `council chat --list` and reconcile manually before retrying."

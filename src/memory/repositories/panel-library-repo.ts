@@ -149,6 +149,7 @@ export class PanelLibraryRepository {
         { cause: beginErr, rollbackFailed: false },
       );
     }
+    let committed = false;
     try {
       await this.db.deleteFrom("panel_members").where("panel_name", "=", panelName).execute();
       if (expertSlugs.length > 0) {
@@ -162,7 +163,20 @@ export class PanelLibraryRepository {
         await this.db.insertInto("panel_members").values(rows).execute();
       }
       await sql`COMMIT`.execute(this.db);
+      committed = true;
     } catch (err) {
+      if (committed) {
+        // Defensive: transaction already committed successfully, so any
+        // error here is from hypothetical post-COMMIT work. Do NOT issue
+        // ROLLBACK (transaction is closed) — just rethrow with a message
+        // that acknowledges the COMMIT succeeded (#537).
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new SetMembersError(
+          `setMembers committed successfully for "${panelName}" but a subsequent ` +
+            `operation failed: ${detail}`,
+          { cause: err, rollbackFailed: false },
+        );
+      }
       let rollbackFailed = false;
       let rollbackError: unknown;
       try {

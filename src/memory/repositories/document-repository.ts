@@ -203,6 +203,7 @@ export class DocumentRepository {
         { cause: beginErr, rollbackFailed: false },
       );
     }
+    let committed = false;
     try {
       await sql`DELETE FROM document_index WHERE source_type = 'expert' AND source_slug = ${expertSlug}`.execute(
         this.db,
@@ -211,7 +212,20 @@ export class DocumentRepository {
         this.db,
       );
       await sql`COMMIT`.execute(this.db);
+      committed = true;
     } catch (err) {
+      if (committed) {
+        // Defensive: transaction already committed successfully, so any
+        // error here is from hypothetical post-COMMIT work. Do NOT issue
+        // ROLLBACK (transaction is closed) — just rethrow with a message
+        // that acknowledges the COMMIT succeeded (#537).
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new ClearForRetrainError(
+          `clearForRetrain committed successfully for "${expertSlug}" but a subsequent ` +
+            `operation failed: ${detail}`,
+          { cause: err, rollbackFailed: false },
+        );
+      }
       let rollbackFailed = false;
       let rollbackError: unknown;
       try {
