@@ -561,5 +561,123 @@ describe("createDocumentProcessor", () => {
       expect(prompt).toMatch(/--- recent\.md --- \[Weight: 1\.00\]/);
       expect(prompt).toMatch(/--- old\.md --- \[Weight: 0\.00\]/);
     });
+
+    // ───────────────────────────────────────────────────────────────
+    // #447: rejectedFiles are added to seenPaths so a tracked file
+    // whose on-disk form turns into a confinement-violating symlink
+    // is NOT silently pruned. The detector reports it in
+    // `rejectedFiles`; the processor must preserve persisted state.
+    // ───────────────────────────────────────────────────────────────
+    it("does NOT prune a tracked file that becomes a confinement-rejected symlink (#447)", async () => {
+      const dir = await makeDocsDir(env, "alice");
+      const fileA = path.join(dir, "a.md");
+      const fileB = path.join(dir, "b.md");
+      await fs.writeFile(fileA, "alpha body alpha");
+      await fs.writeFile(fileB, "beta body beta");
+
+      // First run: index + track both files.
+      const proc = createDocumentProcessor({
+        engine: new StubEngine([VALID_PROFILE_JSON, VALID_PROFILE_JSON]),
+        documentRepo: env.docRepo,
+        profileRepo: env.profileRepo,
+        indexer: env.indexer,
+        config: CONFIG,
+      });
+      const first = await proc.process("alice", dir);
+      expect(first.filesProcessed).toBe(2);
+
+      // Replace fileB with a symlink that escapes the docs root. The
+      // detector's confinement check rejects the file, so the path
+      // lands in `rejectedFiles` (NOT in newFiles/modifiedFiles/
+      // unchangedFiles). Without the seenPaths fix, the reconciliation
+      // pass would treat the missing-from-scan path as deleted and
+      // mark the persisted row removed.
+      const outside = await fs.mkdtemp(path.join(os.tmpdir(), "council-outside-"));
+      const escapeTarget = path.join(outside, "secret.md");
+      await fs.writeFile(escapeTarget, "secret");
+      await fs.rm(fileB);
+      try {
+        await fs.symlink(escapeTarget, fileB);
+      } catch {
+        await fs.rm(outside, { recursive: true, force: true });
+        return; // symlinks unsupported on this host — skip
+      }
+
+      const proc2 = createDocumentProcessor({
+        engine: new StubEngine([VALID_PROFILE_JSON]),
+        documentRepo: env.docRepo,
+        profileRepo: env.profileRepo,
+        indexer: env.indexer,
+        config: CONFIG,
+      });
+      const second = await proc2.process("alice", dir);
+      await fs.rm(outside, { recursive: true, force: true });
+
+      // The rejected path must NOT have been reconciled-as-deleted.
+      expect(second.filesRemoved).toBe(0);
+      const remaining = await env.docRepo.getChecksumMap("alice");
+      expect(remaining.has(fileB)).toBe(true);
+      expect(remaining.has(fileA)).toBe(true);
+      // And the rejection must be surfaced in the failed counter so
+      // the user still sees it.
+      expect(second.filesFailed).toBeGreaterThanOrEqual(1);
+    });
+
+    // ───────────────────────────────────────────────────────────────
+    // #448: process() forwards `onWarning` to the detector so per-
+    // file transient failures (lstat EBUSY/EACCES) reach the caller.
+    // ───────────────────────────────────────────────────────────────
+    it("propagates onWarning to the detector for per-file transient failures (#448)", async () => {
+      const dir = await makeDocsDir(env, "alice");
+      const fileA = path.join(dir, "a.md");
+      const fileB = path.join(dir, "b.md");
+      await fs.writeFile(fileA, "alpha body alpha");
+      await fs.writeFile(fileB, "beta body beta");
+
+      // Seed: both files tracked.
+      const proc = createDocumentProcessor({
+        engine: new StubEngine([VALID_PROFILE_JSON, VALID_PROFILE_JSON]),
+        documentRepo: env.docRepo,
+        profileRepo: env.profileRepo,
+        indexer: env.indexer,
+        config: CONFIG,
+      });
+      await proc.process("alice", dir);
+
+      // Second run: inject a transient lstat failure for fileB. The
+      // detector emits a warning string through its `onWarning` sink
+      // (see detector.ts:onWarning). Without the processor wiring
+      // (#448), `process()` ignores its `onWarning` parameter and the
+      // callback never fires.
+      const realLstat = fs.lstat;
+      const fileBCanonical = await fs.realpath(fileB);
+      const procWithFault = createDocumentProcessor({
+        engine: new StubEngine([VALID_PROFILE_JSON]),
+        documentRepo: env.docRepo,
+        profileRepo: env.profileRepo,
+        indexer: env.indexer,
+        config: CONFIG,
+        _detectorLstatOverride: async (p: string) => {
+          if (path.resolve(p) === fileBCanonical) {
+            const err: NodeJS.ErrnoException = new Error("EBUSY: simulated");
+            err.code = "EBUSY";
+            throw err;
+          }
+          return realLstat(p);
+        },
+      });
+
+      const warnings: string[] = [];
+      await procWithFault.process(
+        "alice",
+        dir,
+        undefined,
+        (msg) => warnings.push(msg),
+      );
+
+      expect(warnings.length).toBeGreaterThan(0);
+      // The detector formats per-file warnings mentioning the path.
+      expect(warnings.some((w) => w.includes(fileBCanonical) || w.includes("b.md"))).toBe(true);
+    });
   });
 });

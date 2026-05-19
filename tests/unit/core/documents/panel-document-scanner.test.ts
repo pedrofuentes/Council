@@ -791,6 +791,142 @@ describe("scanAndIndexPanelDocuments", () => {
     }>`SELECT file_path FROM document_index WHERE source_type = 'panel'`.execute(db);
     expect(fts.rows.map((r) => r.file_path)).not.toContain(linkedFile);
   });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // #447: scanner must add rejectedFiles to seenPaths so a tracked file
+  // that turns into a confinement-violating symlink is NOT pruned.
+  // Mirrors the DocumentProcessor behavior (processor.ts:seenPaths).
+  // ─────────────────────────────────────────────────────────────────────
+  it("does NOT prune a tracked file that becomes a confinement-rejected symlink (#447)", async () => {
+    // First scan: spec.md (managed) + external.md (linked) both indexed.
+    await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+    const docsRepo = new PanelDocumentRepository(db);
+    const linkedFile = path.join(linkedDir, "external.md");
+    const tracked = await docsRepo.listDocuments("arch-review");
+    expect(tracked.map((d) => d.filename).sort()).toEqual([
+      "external.md",
+      "spec.md",
+    ]);
+
+    // Replace the tracked linked file with a symlink that escapes the
+    // linkedDir confinement root. The detector rejects it (lands in
+    // rejectedFiles, not unchanged/modified). Without the seenPaths
+    // fix, reconciliation would mark the persisted row `removed` and
+    // drop the FTS entry — silently destroying state for a file the
+    // user has not deleted.
+    const outside = await makeTempDir("council-outside-");
+    cleanupDirs.push(outside);
+    const escapeTarget = path.join(outside, "secret.md");
+    await fs.writeFile(escapeTarget, "secret", "utf-8");
+    await fs.unlink(linkedFile);
+    try {
+      await fs.symlink(escapeTarget, linkedFile);
+    } catch {
+      return; // symlinks not supported on this host
+    }
+
+    const result = await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+    expect(result.pruned).toBe(0);
+
+    const after = await docsRepo.listDocuments("arch-review");
+    const externalRow = after.find((d) => d.filename === "external.md");
+    expect(externalRow).toBeDefined();
+    expect(externalRow?.status).not.toBe("removed");
+
+    const fts = await sql<{
+      file_path: string;
+    }>`SELECT file_path FROM document_index WHERE source_type = 'panel'`.execute(db);
+    expect(fts.rows.map((r) => r.file_path)).toContain(linkedFile);
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // #528: when a linked folder is unlinked mid-scan, the per-file
+  // BEGIN IMMEDIATE re-check fires the "skipped" branch. The scanner
+  // must emit a progress event for that file instead of silently
+  // continuing, so the caller can render an accurate per-file status.
+  // ─────────────────────────────────────────────────────────────────────
+  it("emits a progress event for a linked file whose folder is unlinked mid-scan (#528)", async () => {
+    // Seed: both files tracked.
+    await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+
+    // Modify the linked file so the second scan enters the "modified
+    // file" branch — that is where the re-check + skipped path lives.
+    const linkedFile = path.join(linkedDir, "external.md");
+    await fs.writeFile(linkedFile, "# External v2\nupdated body\n", "utf-8");
+
+    const docsRepo = new PanelDocumentRepository(db);
+    const indexer = createDocumentIndexer(db);
+
+    async function simulateConcurrentUnlink(): Promise<void> {
+      const trackedDocs = await docsRepo.listDocuments("arch-review");
+      await sql`BEGIN`.execute(db);
+      try {
+        for (const d of trackedDocs) {
+          if (
+            d.filePath === linkedDir ||
+            d.filePath.startsWith(linkedDir + path.sep) ||
+            d.filePath.startsWith(linkedDir + "/") ||
+            d.filePath.startsWith(linkedDir + "\\")
+          ) {
+            await indexer.remove(d.filePath);
+          }
+        }
+        await docsRepo.removeDocumentsUnderFolder("arch-review", linkedDir);
+        await docsRepo.removeLinkedFolder("arch-review", linkedDir);
+        await sql`COMMIT`.execute(db);
+      } catch (err) {
+        await sql`ROLLBACK`.execute(db);
+        throw err;
+      }
+    }
+
+    let unlinkRan = false;
+    const realExtract = extractorModule.extractDocument;
+    const spy = vi
+      .spyOn(extractorModule, "extractDocument")
+      .mockImplementation(async (filePath, opts) => {
+        const result = await realExtract(filePath, opts);
+        if (!unlinkRan && filePath === linkedFile) {
+          unlinkRan = true;
+          await simulateConcurrentUnlink();
+        }
+        return result;
+      });
+
+    const progress: { filename: string; status: string }[] = [];
+    try {
+      await scanAndIndexPanelDocuments({
+        panelName: "arch-review",
+        managedDocsDir: managedDir,
+        db,
+        supportedFormats: [".md", ".txt", ".html"],
+        onProgress: (e) => progress.push({ filename: e.filename, status: e.status }),
+      });
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(unlinkRan).toBe(true);
+    // The skipped-due-to-mid-scan-unlink event must surface to the
+    // caller. Before the fix, `if (skipped) continue;` swallowed it.
+    const externalEvents = progress.filter((p) => p.filename === "external.md");
+    expect(externalEvents.length).toBeGreaterThan(0);
+  });
 });
 
 describe("formatAllFailedWarning", () => {
@@ -847,5 +983,4 @@ describe("formatAllFailedWarning", () => {
       }),
     ).toBeNull();
   });
-
 });

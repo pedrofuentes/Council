@@ -15,6 +15,7 @@ import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { FileExpertLibrary } from "../../../src/core/expert-library.js";
 import type { ExpertDefinition } from "../../../src/core/expert.js";
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
+import { ExpertLibraryRepository } from "../../../src/memory/repositories/expert-library-repo.js";
 
 function makeDef(overrides: Partial<ExpertDefinition> = {}): ExpertDefinition {
   return {
@@ -427,6 +428,76 @@ describe("FileExpertLibrary", () => {
       const result = await lib.resolvePanel([]);
       expect(result.resolved).toEqual([]);
       expect(result.missing).toEqual([]);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // #562: parseYaml wraps schema errors with file path + slug context.
+  // ─────────────────────────────────────────────────────────────────────
+  describe("get() schema-error context (#562)", () => {
+    it("wraps Zod parse failure with the file path and the raw YAML slug", async () => {
+      // Seed a DB row whose yaml_path points at an on-disk YAML file
+      // that fails ExpertDefinitionSchema validation (missing required
+      // `role`, `expertise`, `epistemicStance`). The library's `get()`
+      // calls the private `parseYaml(content, yamlPath)` wrapper, so
+      // the thrown error must mention BOTH the file path and the slug.
+      const yamlPath = path.join(dataHome, "experts", "broken.yaml");
+      await fs.mkdir(path.dirname(yamlPath), { recursive: true });
+      await fs.writeFile(
+        yamlPath,
+        // Valid YAML, but missing required ExpertDefinition fields.
+        "slug: broken\nkind: generic\ndisplayName: Broken\n",
+        "utf-8",
+      );
+      const repo = new ExpertLibraryRepository(db);
+      await repo.create({
+        slug: "broken",
+        kind: "generic",
+        displayName: "Broken",
+        yamlPath,
+        yamlChecksum: "x",
+      });
+
+      let caught: unknown = null;
+      try {
+        await lib.get("broken");
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      const message = (caught as Error).message;
+      // The wrapper must include the file path so users can locate
+      // which YAML failed validation (the bare Zod error does not).
+      expect(message).toContain(yamlPath);
+      // The wrapper must also surface the slug from the raw YAML.
+      expect(message).toContain("broken");
+      // And explicitly name itself as a schema validation failure.
+      expect(message).toMatch(/schema validation failed/i);
+    });
+
+    it("create() wraps schema validation errors with the slug", async () => {
+      // Bypass the assertValidSlug guard with a valid slug, but
+      // provide a definition that fails ExpertDefinitionSchema (the
+      // schema rejects an invalid `kind`). The error must mention the
+      // slug so users see which expert failed.
+      const bad = {
+        slug: "valid-slug",
+        kind: "not-a-real-kind",
+        displayName: "X",
+        role: "X",
+        expertise: { weightedEvidence: ["x"], referenceCases: [], notExpertIn: [] },
+        epistemicStance: "x",
+      } as unknown as ExpertDefinition;
+      let caught: unknown = null;
+      try {
+        await lib.create(bad);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      const message = (caught as Error).message;
+      expect(message).toContain("valid-slug");
+      expect(message).toMatch(/validation failed/i);
     });
   });
 });
