@@ -11,7 +11,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import * as yaml from "yaml";
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 
 import { FileExpertLibrary } from "../../../src/core/expert-library.js";
 import {
@@ -708,6 +708,85 @@ describe("template-migration", () => {
           expect(r.epistemicStance).toBe(o.epistemicStance);
         }
       }
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // #563: when an inline expert in an on-disk panel YAML fails schema
+  // validation but has a `slug` field, parseOnDiskPanel falls back to
+  // treating it as a slug reference. That fallback is now non-silent:
+  // a warning is logged so users see WHY their inline definition was
+  // not materialised.
+  // ─────────────────────────────────────────────────────────────────────
+  describe("inline expert fallback warning (#563)", () => {
+    it("logs a warning when an inline expert fails schema validation but has a slug", async () => {
+      // Seed standard files so re-running migration enters the DB-reset
+      // recovery path that calls parseOnDiskPanel.
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
+
+      // Pre-create a library expert whose slug matches the malformed
+      // inline expert. parseOnDiskPanel's fallback treats the inline
+      // entry as a slug reference; registerPanelFromDisk later inserts
+      // panel_members with FK to expert_library, so the slug must
+      // exist.
+      await lib.create({
+        slug: "broken-inline",
+        displayName: "Fallback Target",
+        role: "Resolved via slug fallback",
+        kind: "generic",
+        expertise: {
+          weightedEvidence: ["fallback evidence"],
+          referenceCases: [],
+          notExpertIn: [],
+        },
+        epistemicStance: "fallback stance",
+      });
+
+      // Plant a panel YAML containing an inline expert that fails
+      // ExpertDefinitionSchema (missing required fields) but has a
+      // `slug` field. parseOnDiskPanel's fallback uses the slug.
+      const panelsDir = path.join(dataHome, "panels");
+      const target = path.join(panelsDir, "architecture-review.yaml");
+      const malformedPanel = {
+        name: "architecture-review",
+        description: "Broken inline expert",
+        experts: [
+          {
+            slug: "broken-inline",
+            // intentionally missing role, expertise, epistemicStance,
+            // kind so ExpertDefinitionSchema.safeParse fails.
+            displayName: "Broken Inline",
+          },
+        ],
+      };
+      await fs.writeFile(target, yaml.stringify(malformedPanel), "utf-8");
+
+      // Wipe panel DB rows so DB-reset recovery runs (which is what
+      // calls parseOnDiskPanel). Keep expert_library intact so the
+      // fallback slug resolves.
+      await db.deleteFrom("panel_members").execute();
+      await db.deleteFrom("panel_library").execute();
+
+      const warnSpy = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => undefined);
+      let messages: string[] = [];
+      try {
+        await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
+        messages = warnSpy.mock.calls.map((c) => String(c[0] ?? ""));
+      } finally {
+        warnSpy.mockRestore();
+      }
+
+      // The fix must surface the validation failure as a warning to
+      // console.warn with the [template-migration] prefix + the slug
+      // that fell back. Without the fix, the fallback is silent and
+      // the spy receives zero calls referencing the broken inline
+      // expert.
+      const matching = messages.filter(
+        (m) => m.includes("[template-migration]") && m.includes("broken-inline"),
+      );
+      expect(matching.length).toBeGreaterThan(0);
     });
   });
 });

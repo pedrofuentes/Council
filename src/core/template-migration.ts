@@ -500,8 +500,14 @@ function parseOnDiskPanel(content: string): OnDiskPanel {
       if (parsed.success) {
         entries.push({ kind: "inline", definition: parsed.data });
       } else if ("slug" in entry) {
+        // Schema validation failed, but object has a slug field (#563).
+        // Surface the validation error as a warning so the user knows
+        // why the inline expert was treated as a slug reference.
         const slug = (entry as { slug: unknown }).slug;
         if (typeof slug === "string") {
+          console.warn(
+            `[template-migration] Inline expert with slug "${slug}" failed schema validation, treating as slug reference. Error: ${JSON.stringify(parsed.error.issues)}`,
+          );
           entries.push({ kind: "slug", slug });
         }
       }

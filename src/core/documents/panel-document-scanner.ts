@@ -52,6 +52,8 @@ export interface ScanPanelDocumentsOptions {
   readonly supportedFormats: readonly string[];
   /** Optional progress callback — invoked once per file outcome. */
   readonly onProgress?: (event: PanelScanProgress) => void;
+  /** Optional warning sink for per-file recoverable errors (#448). */
+  readonly onWarning?: (message: string) => void;
   /**
    * Test-only seam: forwarded to the underlying detector as
    * `_lstatOverride`. Lets reconciliation tests inject per-file
@@ -86,7 +88,7 @@ interface FolderToScan {
 export async function scanAndIndexPanelDocuments(
   options: ScanPanelDocumentsOptions,
 ): Promise<PanelScanResult> {
-  const { panelName, managedDocsDir, db, supportedFormats, onProgress } = options;
+  const { panelName, managedDocsDir, db, supportedFormats, onProgress, onWarning } = options;
   const docsRepo = new PanelDocumentRepository(db);
   const indexer = createDocumentIndexer(db);
 
@@ -176,6 +178,7 @@ export async function scanAndIndexPanelDocuments(
       detection = await detectDocumentChanges(canonical, known, supportedFormats, {
         confinementRoot: canonical,
         _rootIsCanonical: true,
+        ...(onWarning ? { onWarning } : {}),
         ...(options._detectorLstatOverride
           ? { _lstatOverride: options._detectorLstatOverride }
           : {}),
@@ -204,10 +207,12 @@ export async function scanAndIndexPanelDocuments(
     // deletion reconciliation: a tracked file that the detector
     // temporarily couldn't stat is NOT "deleted on disk" and pruning it
     // would silently destroy persisted FTS / panel_documents state.
-    // HARD `rejectedFiles` (confinement violations / TOCTOU) are
-    // intentionally NOT added here so the panel scanner is free to
-    // prune indexed content whose on-disk file is now invalid.
     for (const unknown of detection.unknownStateFiles) seenPaths.add(unknown);
+    // HARD `rejectedFiles` (confinement violations / TOCTOU) are added
+    // to seenPaths to match DocumentProcessor behavior (#447): rejected
+    // files suppress pruning so a file whose confinement status changed
+    // doesn't get its persisted state deleted automatically.
+    for (const rejected of detection.rejectedFiles) seenPaths.add(rejected);
     scannedFolders.push(canonical);
 
     const targets: readonly DocumentFile[] = [
@@ -287,7 +292,16 @@ export async function scanAndIndexPanelDocuments(
             }
             throw err;
           }
-          if (skipped) continue;
+          if (skipped) {
+            // File from a linked folder that was unlinked mid-scan (#528).
+            // Report as skipped before continuing to next file.
+            onProgress?.({
+              filename: file.filename,
+              source: folder.source,
+              status: "unchanged",
+            });
+            continue;
+          }
         } else {
           await indexer.index({
             content: extracted.content,
