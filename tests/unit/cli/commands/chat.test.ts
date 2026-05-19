@@ -21,6 +21,7 @@ import {
   createSummarizationGate,
   safeMaybeSummarize,
   safeRetrieveSnippets,
+  rewriteRotateError,
   type ChatInputProvider,
 } from "../../../../src/cli/commands/chat.js";
 import { CliUserError } from "../../../../src/cli/cli-user-error.js";
@@ -32,6 +33,7 @@ import { createDatabase } from "../../../../src/memory/db.js";
 import {
   ChatRepository,
   PersistTurnPairError,
+  RotateActiveSessionError,
 } from "../../../../src/memory/repositories/chat-repository.js";
 import { Debate } from "../../../../src/core/debate.js";
 import type { DebateEvent } from "../../../../src/core/debate.js";
@@ -4448,5 +4450,60 @@ describe("missing-YAML fallback (PRD §F4)", () => {
       cmd.parseAsync(["node", "council-chat", "no-such-slug", "--engine", "mock"]),
     ).rejects.toThrow(/not found/);
     expect(err).toMatch(/"no-such-slug" not found as expert or panel/);
+  });
+});
+
+
+describe("rewriteRotateError (#538) — CAS-miss user guidance", () => {
+  it("passes through non-rotation errors unchanged (Error)", () => {
+    const original = new Error("something else");
+    const rewritten = rewriteRotateError(original);
+    expect(rewritten).toBe(original);
+  });
+
+  it("wraps non-Error throwables in a generic Error", () => {
+    const rewritten = rewriteRotateError("oops");
+    expect(rewritten).toBeInstanceOf(Error);
+    expect(rewritten.message).toBe("oops");
+  });
+
+  it("CAS-miss detection: unique constraint error in cause produces concurrent-session guidance", () => {
+    const cause = new Error("SQLITE_CONSTRAINT: UNIQUE constraint failed: chat_sessions.target");
+    const rotateErr = new RotateActiveSessionError("rotation failed: UNIQUE constraint", {
+      cause,
+      rollbackFailed: false,
+    });
+    const rewritten = rewriteRotateError(rotateErr);
+    expect(rewritten.message).toMatch(/another session was started concurrently/i);
+    expect(rewritten.message).toMatch(/omit --new/);
+    expect(rewritten.message).not.toMatch(/inconsistent/i);
+  });
+
+  it("non-CAS pre-COMMIT failure: clean rollback yields 'preserved' guidance, not CAS message", () => {
+    const cause = new Error("disk I/O error");
+    const rotateErr = new RotateActiveSessionError("rotation failed: disk I/O error", {
+      cause,
+      rollbackFailed: false,
+    });
+    const rewritten = rewriteRotateError(rotateErr);
+    expect(rewritten.message).toMatch(/prior conversation is preserved/i);
+    expect(rewritten.message).not.toMatch(/concurrent/i);
+  });
+
+  it("rollback-failed path: inconsistent-state guidance wins regardless of constraint text", () => {
+    // Even if the underlying cause mentions "constraint", a failed rollback
+    // means state is unknown; we must NOT route to CAS guidance, which would
+    // imply "prior state preserved, just retry".
+    const cause = new Error("UNIQUE constraint failed");
+    const rotateErr = new RotateActiveSessionError("rotation failed and ROLLBACK failed", {
+      cause,
+      rollbackFailed: true,
+      rollbackError: new Error("rollback failed"),
+    });
+    const rewritten = rewriteRotateError(rotateErr);
+    expect(rewritten.message).toMatch(/inconsistent state/i);
+    expect(rewritten.message).toMatch(/council chat --list/);
+    expect(rewritten.message).not.toMatch(/concurrent/i);
+    expect(rewritten.message).not.toMatch(/preserved/i);
   });
 });

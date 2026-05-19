@@ -766,11 +766,19 @@ describe("ChatRepository", () => {
       // The CAS-miss manifests as either:
       // 1. Unique constraint violation (two active sessions for same target)
       // 2. Zero-row archive (priorActiveId no longer active)
-      // Either way, rollbackFailed should be false (clean rollback) and the
-      // error message/cause should contain recognizable indicators like
-      // "unique", "constraint", or "concurrent" that rewriteRotateError (#538)
-      // can use to provide distinct user guidance.
+      // Either way, rollbackFailed should be false (clean rollback).
       expect(err.rollbackFailed).toBe(false);
+
+      // Pin the detection contract for #538: rewriteRotateError keys on
+      // "unique" / "constraint" substrings in the error message + cause to
+      // produce CAS-miss user guidance. If the underlying error no longer
+      // contains those tokens (e.g. driver swaps to a different error
+      // string), this test fails BEFORE the user-facing guidance silently
+      // regresses to the generic "retry the command" message.
+      const errorText = (
+        err.message + (err.cause !== undefined ? String(err.cause) : "")
+      ).toLowerCase();
+      expect(errorText).toMatch(/unique|constraint/);
     });
 
     it("returns the new ChatSession constructed in-memory (no post-commit SELECT)", async () => {

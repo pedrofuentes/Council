@@ -266,28 +266,43 @@ describe("PanelLibraryRepository", () => {
       expect(after).toEqual(["cto"]);
     });
 
-    it("structural guard: committed flag prevents misleading error on post-COMMIT failure (#537)", async () => {
-      // Issue #537: Add a `committed` flag (line 152 in panel-library-repo.ts)
-      // that prevents ROLLBACK attempts and misleading error messages when
-      // post-COMMIT code fails. Currently, setMembers has NO code after COMMIT,
-      // so this defensive branch is unreachable. This test documents the
-      // requirement: if future code adds work after COMMIT (e.g., logging,
-      // verification), the committed flag will prevent incorrect error handling.
-      //
-      // The pattern is: set `committed = true` after COMMIT succeeds, then in
-      // catch block check `if (committed)` and throw without ROLLBACK attempt.
-      // This test verifies the pattern exists in the source code.
-      
-      // Since we can't test unreachable code directly, we verify that a normal
-      // operation succeeds and document the defensive pattern for future changes.
+    it("structural guard: post-COMMIT code in setMembers must not mis-translate failures (#537)", async () => {
+      // Issue #537 (Sentinel-rejected gaming-test replacement): the
+      // catch-block contract is "transaction rolled back cleanly" only
+      // when the failure occurred BEFORE COMMIT. Today setMembers has no
+      // post-COMMIT code, so the only paths exercisable here are
+      // pre-COMMIT failures — verify they produce the contracted error
+      // shape (SetMembersError, rollbackFailed=false, no "inconsistent"
+      // claim). A code-comment in panel-library-repo.ts documents the
+      // pattern future contributors must apply if they add post-COMMIT
+      // work; if that guard is forgotten the error message would falsely
+      // claim "rolled back cleanly", contradicting committed state.
       await repo.create(samplePanel("arch-review"));
       await seedExpert(db, "cto");
-      await expect(repo.setMembers("arch-review", ["cto"])).resolves.toBeUndefined();
-      
-      // The committed flag pattern is now in place (see lines 152, 167 of
-      // panel-library-repo.ts). If someone adds post-COMMIT code that throws,
-      // the error will correctly state "committed successfully but subsequent
-      // operation failed" instead of "rolled back cleanly".
+      await repo.setMembers("arch-review", ["cto"]);
+
+      const restore = patchExecuteQuery(db, {
+        failOnSqlSubstring: 'insert into "panel_members"',
+      });
+
+      let caught: unknown;
+      try {
+        await repo.setMembers("arch-review", ["cto"]);
+      } catch (e) {
+        caught = e;
+      } finally {
+        restore();
+      }
+
+      expect(caught).toBeInstanceOf(SetMembersError);
+      const err = caught as SetMembersError;
+      expect(err.rollbackFailed).toBe(false);
+      expect(err.message).toMatch(/rolled back cleanly/i);
+      expect(err.message).not.toMatch(/inconsistent/i);
+      expect(err.cause).toBeInstanceOf(Error);
+      // Atomicity: prior members are still intact.
+      const after = await repo.getMembers("arch-review");
+      expect(after).toEqual(["cto"]);
     });
   });
 });

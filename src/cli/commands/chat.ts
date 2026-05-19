@@ -842,7 +842,7 @@ interface ExpertChatOptions {
  *
  * Non-rotation errors pass through unchanged.
  */
-function rewriteRotateError(err: unknown): Error {
+export function rewriteRotateError(err: unknown): Error {
   if (!(err instanceof RotateActiveSessionError)) {
     return err instanceof Error ? err : new Error(String(err));
   }

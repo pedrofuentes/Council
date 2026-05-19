@@ -149,7 +149,6 @@ export class PanelLibraryRepository {
         { cause: beginErr, rollbackFailed: false },
       );
     }
-    let committed = false;
     try {
       await this.db.deleteFrom("panel_members").where("panel_name", "=", panelName).execute();
       if (expertSlugs.length > 0) {
@@ -163,20 +162,17 @@ export class PanelLibraryRepository {
         await this.db.insertInto("panel_members").values(rows).execute();
       }
       await sql`COMMIT`.execute(this.db);
-      committed = true;
+      // NOTE (#537): if future work is added AFTER the COMMIT above (e.g.
+      // post-commit logging, verification reads, cache invalidation), it
+      // MUST be guarded so a thrown error is NOT mis-translated by the
+      // catch block below into a "transaction rolled back cleanly"
+      // message. The recommended pattern is a `committed` flag set right
+      // after COMMIT and a `if (committed) throw new SetMembersError(...,
+      // { rollbackFailed: true })` branch at the top of catch — note
+      // `rollbackFailed: true` (rollback is impossible once committed, so
+      // state is NOT preserved; the CLI consumer keys on !rollbackFailed
+      // to claim "prior state preserved", which would be false here).
     } catch (err) {
-      if (committed) {
-        // Defensive: transaction already committed successfully, so any
-        // error here is from hypothetical post-COMMIT work. Do NOT issue
-        // ROLLBACK (transaction is closed) — just rethrow with a message
-        // that acknowledges the COMMIT succeeded (#537).
-        const detail = err instanceof Error ? err.message : String(err);
-        throw new SetMembersError(
-          `setMembers committed successfully for "${panelName}" but a subsequent ` +
-            `operation failed: ${detail}`,
-          { cause: err, rollbackFailed: false },
-        );
-      }
       let rollbackFailed = false;
       let rollbackError: unknown;
       try {

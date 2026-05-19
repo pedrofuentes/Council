@@ -452,20 +452,43 @@ describe("DocumentRepository", () => {
       expect(await countActiveDocs(db, "ceo")).toBe(1);
     });
 
-    it("structural guard: committed flag prevents misleading error on post-COMMIT failure (#537)", async () => {
-      // Issue #537: Same as setMembers — add a `committed` flag (line 206 in
-      // document-repository.ts) that prevents ROLLBACK attempts when post-COMMIT
-      // code fails. Currently, clearForRetrain has NO code after COMMIT, so this
-      // defensive branch is unreachable. This test documents the requirement for
-      // future code changes.
+    it("structural guard: post-COMMIT code in clearForRetrain must not mis-translate failures (#537)", async () => {
+      // Issue #537 (Sentinel-rejected gaming-test replacement): the
+      // catch-block contract is "transaction rolled back cleanly" only
+      // when the failure occurred BEFORE COMMIT. Today clearForRetrain
+      // has no post-COMMIT code; verify the pre-COMMIT failure path
+      // honours the contract (ClearForRetrainError, rollbackFailed=false,
+      // no "inconsistent" claim, and the FTS+document tables are rolled
+      // back atomically). A code-comment in document-repository.ts
+      // documents the pattern future contributors must apply if they add
+      // post-COMMIT work.
       await repo.create(sampleDoc({ filePath: "/p/a.md" }));
+      await repo.create(sampleDoc({ filePath: "/p/b.md", checksum: "b" }));
       await seedFtsRow(db, "ceo", "a");
-      await expect(repo.clearForRetrain("ceo")).resolves.toBeUndefined();
-      
-      // The committed flag pattern is now in place (see lines 206, 221 of
-      // document-repository.ts). If someone adds post-COMMIT code that throws,
-      // the error will correctly state "committed successfully but subsequent
-      // operation failed" instead of "rolled back cleanly".
+      await seedFtsRow(db, "ceo", "b");
+
+      const restore = patchExecuteQuery(db, {
+        failOnSqlSubstring: "UPDATE expert_documents",
+      });
+
+      let caught: unknown;
+      try {
+        await repo.clearForRetrain("ceo");
+      } catch (e) {
+        caught = e;
+      } finally {
+        restore();
+      }
+
+      expect(caught).toBeInstanceOf(ClearForRetrainError);
+      const err = caught as ClearForRetrainError;
+      expect(err.rollbackFailed).toBe(false);
+      expect(err.message).toMatch(/rolled back cleanly/i);
+      expect(err.message).not.toMatch(/inconsistent/i);
+      expect(err.cause).toBeInstanceOf(Error);
+      // Atomicity: prior DELETE was rolled back.
+      expect(await countFts(db, "ceo")).toBe(2);
+      expect(await countActiveDocs(db, "ceo")).toBe(2);
     });
   });
 });
