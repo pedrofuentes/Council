@@ -186,7 +186,7 @@ export async function destroyTestDb(db: CouncilDatabase): Promise<void> {
  *
  * **Implementation:**
  * Uses `expect.poll` to repeatedly attempt opening and closing the database.
- * Returns `true` once successful, or throws after timeout if the database
+ * Resolves once successful, or throws after timeout if the database
  * remains locked.
  *
  * @param testHome - Path to test home directory containing `council.db`
@@ -197,7 +197,7 @@ export async function waitForDbRelease(testHome: string): Promise<void> {
   async function isDbReleased(): Promise<boolean> {
     try {
       const db = await openTestDb(testHome);
-      await destroyTestDb(db);
+      await db.destroy();
       return true;
     } catch (error: unknown) {
       if (!isBestEffortCleanupError(error)) {
