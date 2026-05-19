@@ -18,6 +18,7 @@
  * (default 20) — older turns are dropped to bound prompt size.
  */
 import type { ExpertMemory } from "../core/prompt-builder.js";
+import { sanitizePromptField } from "../core/prompt-sanitize.js";
 
 import type { CouncilDatabase } from "./db.js";
 import { DebateRepository } from "./repositories/debates.js";
@@ -61,23 +62,16 @@ export interface RecallOptions {
  * like one of the prompt's own section headers (e.g. `"[8] CURRENT TASK"`)
  * and thereby smuggle instructions past the memory boundary.
  *
- * The sanitiser:
- *   1. Removes anything that looks like a Section header `[N]` at the
- *      start of a line (or the start of the string).
- *   2. Flattens all line breaks (`\n`, `\r`, `\r\n`) to single spaces so
- *      injected content cannot fake a new section by being multi-line.
- *   3. Collapses runs of whitespace.
+ * The sanitiser delegates to `sanitizePromptField` (the same function used
+ * by `renderMemory()` on the fresh-build path) to ensure both paths apply
+ * identical defenses: NFKC normalization, bidi/zero-width stripping, C0
+ * control stripping, `[N]` defanging, newline collapsing, and a 2000-char
+ * cap. Trailing whitespace is trimmed and runs of whitespace are collapsed
+ * for clean rendering.
  */
 export function sanitizeMemorySnippet(text: string): string {
   if (text.length === 0) return text;
-  // Strip [N] section-marker prefixes wherever they appear at the start of
-  // a line (covers both string start and post-newline positions before
-  // newlines are flattened).
-  const noMarkers = text.replace(/(^|\n|\r|\u2028|\u2029)\[\d+\]\s+/g, "$1");
-  // Flatten line breaks (including Unicode line/paragraph separators) to spaces.
-  const flat = noMarkers.replace(/[\r\n\u2028\u2029]+/g, " ");
-  // Collapse repeated whitespace.
-  return flat.replace(/[ \t]{2,}/g, " ").trim();
+  return sanitizePromptField(text).replace(/[ \t]{2,}/g, " ").trim();
 }
 
 /**
