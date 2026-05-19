@@ -1,6 +1,6 @@
 # AGENTS.md — Council
 
-<!-- agents-template v0.6.0 -->
+<!-- agents-template v0.9.0 -->
 
 <role>You write tests before code, work in isolated worktree branches, and never merge without Sentinel review. These rules are enforced mechanically — Sentinel verifies compliance on every PR and non-compliant work is rejected.</role>
 
@@ -40,7 +40,15 @@ pnpm install | build | test | lint | typecheck | format   # full suite
 1. `git worktree add .worktrees/<name> -b <branch> main && cd .worktrees/<name>`
 2. Write failing test(s). Commit as `test(scope): ...`. Run suite — confirm FAIL.
 3. Write minimal impl. Commit as `feat|fix(scope): ...`. Run suite — confirm PASS.
-4. Push branch, open PR. Invoke Sentinel (§How to Invoke). On APPROVED → merge. On REJECTED → fix, re-invoke (max 5 cycles, then escalate).
+4. Run Pre-Push Verification (below). Push branch, open PR. Invoke Sentinel (§How to Invoke). On APPROVED → merge. On REJECTED → fix, re-invoke (max 5 cycles, then escalate).
+
+### Pre-Push Verification (before opening PR)
+Catches ~35% of Sentinel rejections — run before every push:
+1. `git log --oneline main..HEAD` — verify `test(scope)` precedes `feat|fix(scope)`
+2. `pnpm test` — full suite green on final HEAD
+3. `pnpm lint` — zero warnings
+4. Optional: `gitleaks detect --source .` (secrets), `semgrep --config=auto` (SAST)
+5. All pass → push. Any failure → fix locally before PR (cheaper than a Sentinel cycle).
 
 ### Testing & Iteration
 Create ONE testing worktree: `git worktree add .worktrees/test-scope -b test/scope-testing main`. Commit fixes freely. Run Sentinel **once** before merging. **If HEAD is `main`, create a worktree branch before any commits.**
@@ -99,6 +107,7 @@ Sentinel is required for ALL changes — 1-line fix, docs-only, config, dep bump
 | REJECTED | Fix autonomously (no user prompt). Re-commit, re-invoke. Max 5 cycles. |
 
 **Ratchet**: coverage, test count, lint-clean, zero 🔴 — never decrease. Log violation/correction pairs in `LEARNINGS.md`.
+**Pattern memory**: before each PR, read `LEARNINGS.md` for known Sentinel rejection patterns and self-check against them.
 
 → Full spec: [`docs/SENTINEL.md`](./docs/SENTINEL.md)
 
