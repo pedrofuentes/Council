@@ -133,7 +133,7 @@ describe("E2E cleanup helpers", () => {
     const { destroyTestDb } = await importHelpers();
     const db = {
       destroy: vi.fn(async (): Promise<void> => {
-        throw new Error("busy");
+        throw Object.assign(new Error("resource busy or locked"), { code: "EBUSY" });
       }),
     };
 

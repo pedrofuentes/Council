@@ -19,6 +19,15 @@
 
 <!-- Add new learnings below this line, most recent first -->
 
+### [2026-05-19] Windows E2E timing flakes — SQLite handle release latency pattern
+**Context**: Windows CI E2E flakes from SQLite handle release latency after `db.destroy()` calls. Tests that immediately attempted to verify database state or clean up files would fail with `EBUSY`, `EPERM`, `ENOTEMPTY`, `sqlite_busy`, or `database is locked` errors. Investigation showed these were transient errors specific to Windows async file handle behavior, not genuine test failures.
+**Learning**:
+1. **Use `expect.poll` with generous timeouts, not fixed sleeps.** The `waitForDbRelease` helper (now in `tests/e2e/helpers.ts`) polls until the database is actually accessible, with platform-aware timeouts: 10s on Windows, 2s elsewhere. Fixed `setTimeout` delays are brittle and waste time on fast platforms.
+2. **`EBUSY`/`EPERM` after `db.destroy()` are expected on Windows.** These errors indicate the file system hasn't finished releasing handles. Use `isBestEffortCleanupError` from `helpers.ts` to classify them — word-boundary matching (`\bEBUSY\b`, not `busy`) prevents false positives like matching "deadlock" or "gridlock".
+3. **Extract shared polling helpers, don't duplicate.** Multiple E2E tests duplicated the same polling logic with slightly different timeouts and error classification. The shared `waitForDbRelease` helper ensures consistent behavior and makes Windows-specific tuning (like the 10s timeout) apply everywhere.
+4. **Document why each error code is allowed.** The `isBestEffortCleanupError` JSDoc explains that these are Windows SQLite handle-release errors, not bugs. Before adding new patterns, verify they're actually timing-related, not masking real issues.
+**Impact**: Future E2E test authors should use `waitForDbRelease(testHome)` after any command that writes to the database, before attempting to verify state or clean up. Import `isBestEffortCleanupError` if custom cleanup logic needs to classify lock errors. Always use word-boundary regex patterns (`\b`) when extending the allowlist to avoid false positives from substring matches.
+
 ### [2026-05-14] `stripControlChars` must run BEFORE `sanitizePromptField` when both apply
 **Context**: T-05 auto-compose sanitisation (PR #547). The first pass applied `sanitizePromptField` then `stripControlChars` to LLM-generated panel fields. Tests against payloads containing ANSI sequences (`\x1B[31mRED\x1B[0m`) showed the orphan suffix `[31m...[0m` surviving in the output: `sanitizePromptField` strips ESC (`\x1B`) individually as a C0 control, so by the time `stripControlChars` ran, the *complete* `\x1B[31m`-style CSI sequence no longer existed for its regex to match — only the trailing `[31m` literal text remained, indistinguishable from arbitrary user content.
 **Learning**:
