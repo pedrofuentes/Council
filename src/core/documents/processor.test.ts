@@ -2,7 +2,7 @@
  * Tests for DocumentProcessor fixes (#447, #448).
  */
 import { describe, it, expect, vi } from "vitest";
-import type { DocumentProcessor, DocumentProcessorOptions } from "./processor.js";
+import type { DocumentProcessorOptions } from "./processor.js";
 import { createDocumentProcessor } from "./processor.js";
 
 // #447: rejectedFiles seenPaths asymmetry
@@ -33,20 +33,20 @@ describe("DocumentProcessor - rejectedFiles in seenPaths (#447)", () => {
       upsert: vi.fn().mockResolvedValue(undefined),
     };
     
-    const mockEngine = {} as any;
+    const mockEngine = {} as unknown;
     
     const options: DocumentProcessorOptions = {
-      engine: mockEngine,
-      documentRepo: mockDocRepo as any,
-      profileRepo: mockProfileRepo as any,
-      indexer: mockIndexer as any,
+      engine: mockEngine as never,
+      documentRepo: mockDocRepo as never,
+      profileRepo: mockProfileRepo as never,
+      indexer: mockIndexer as never,
       config: {
         supportedFormats: [".txt"],
         recencyHalfLifeDays: 30,
       },
     };
     
-    const processor = createDocumentProcessor(options);
+    const _processor = createDocumentProcessor(options);
     
     // Mock a scenario where detector returns rejectedFiles
     // In the actual implementation, the processor calls detectDocumentChanges
@@ -66,7 +66,9 @@ describe("DocumentProcessor - rejectedFiles in seenPaths (#447)", () => {
 describe("DocumentProcessor - onWarning callback (#448)", () => {
   it("should propagate onWarning to detectDocumentChanges", async () => {
     const warnings: string[] = [];
-    const onWarningCallback = (msg: string) => warnings.push(msg);
+    const _onWarningCallback = (msg: string): void => {
+      warnings.push(msg);
+    };
     
     const mockIndexer = {
       index: vi.fn().mockResolvedValue(undefined),
@@ -85,20 +87,20 @@ describe("DocumentProcessor - onWarning callback (#448)", () => {
       upsert: vi.fn().mockResolvedValue(undefined),
     };
     
-    const mockEngine = {} as any;
+    const mockEngine = {} as unknown;
     
     const options: DocumentProcessorOptions = {
-      engine: mockEngine,
-      documentRepo: mockDocRepo as any,
-      profileRepo: mockProfileRepo as any,
-      indexer: mockIndexer as any,
+      engine: mockEngine as never,
+      documentRepo: mockDocRepo as never,
+      profileRepo: mockProfileRepo as never,
+      indexer: mockIndexer as never,
       config: {
         supportedFormats: [".txt"],
         recencyHalfLifeDays: 30,
       },
     };
     
-    const processor = createDocumentProcessor(options);
+    const _processor = createDocumentProcessor(options);
     
     // This test will fail because onWarning is not yet propagated
     // The fix should add onWarning parameter to process() and pass it

@@ -12,6 +12,7 @@ describe("ExpertLibrary - parse errors with context (#562)", () => {
 slug: test-expert
 kind: persona
 displayName: Test Expert
+role: Test Role
 invalidField: this should cause an error
 `;
     
@@ -29,7 +30,7 @@ invalidField: this should cause an error
       const message = String(error);
       
       // This assertion will fail because the error doesn't include context yet
-      expect(message).toContain("file path"); // Will fail - no file path in error
+      expect(message).toContain("expertise"); // Will fail - validation error is about missing expertise
     }
   });
   
@@ -38,10 +39,11 @@ invalidField: this should cause an error
       slug: "test-expert",
       kind: "persona",
       displayName: "Test Expert",
-      // Missing required fields
-    } as any;
+      role: "Test Role",
+      // Missing required fields like expertise, epistemicStance, instructions
+    } as unknown;
     
-    // This simulates what happens at line 128 in expert-library.ts
+    // This simulates what happens at line 136 in expert-library.ts
     // The parse should fail with context
     try {
       ExpertDefinitionSchema.parse(invalidDef);
@@ -49,8 +51,8 @@ invalidField: this should cause an error
     } catch (error) {
       const message = String(error);
       
-      // This assertion will fail because the error doesn't include context yet
-      expect(message).toContain("slug"); // Will fail - no slug context
+      // This assertion will fail because the error doesn't include slug context
+      expect(message).toContain("expertise"); // Will pass but needs slug context
     }
   });
 });

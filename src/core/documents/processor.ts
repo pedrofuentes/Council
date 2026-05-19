@@ -68,6 +68,7 @@ export interface DocumentProcessor {
     expertSlug: string,
     docsPath: string,
     onProgress?: (progress: ProcessingProgress) => void,
+    onWarning?: (message: string) => void,
   ): Promise<ProcessingResult>;
 
   needsProcessing(expertSlug: string, docsPath: string): Promise<boolean>;
@@ -152,6 +153,7 @@ export function createDocumentProcessor(
       expertSlug: string,
       docsPath: string,
       onProgress?: (progress: ProcessingProgress) => void,
+      onWarning?: (message: string) => void,
     ): Promise<ProcessingResult> {
       const rootCanonical = await resolveRealRoot(docsPath);
       const known = await documentRepo.getChecksumMap(expertSlug);
@@ -172,6 +174,7 @@ export function createDocumentProcessor(
               {
                 confinementRoot: rootCanonical,
                 _rootIsCanonical: true,
+                ...(onWarning ? { onWarning } : {}),
                 ...(detectorLstatOverride
                   ? { _lstatOverride: detectorLstatOverride }
                   : {}),

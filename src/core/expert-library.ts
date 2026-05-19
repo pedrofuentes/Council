@@ -75,9 +75,17 @@ function serializeYaml(def: ExpertDefinition): string {
   return yaml.stringify(def);
 }
 
-function parseYaml(content: string): ExpertDefinition {
+function parseYaml(content: string, filePath?: string): ExpertDefinition {
   const raw = yaml.parse(content) as unknown;
-  return ExpertDefinitionSchema.parse(raw);
+  try {
+    return ExpertDefinitionSchema.parse(raw);
+  } catch (error) {
+    const context = filePath ? ` in file: ${filePath}` : "";
+    const slug = raw && typeof raw === "object" && "slug" in raw
+      ? ` (slug: ${(raw as { slug: unknown }).slug})`
+      : "";
+    throw new Error(`Expert definition schema validation failed${context}${slug}: ${error}`);
+  }
 }
 
 export class FileExpertLibrary implements ExpertLibrary {
@@ -115,7 +123,7 @@ export class FileExpertLibrary implements ExpertLibrary {
   private async readYaml(row: LibraryExpert): Promise<ExpertDefinition | null> {
     try {
       const content = await fs.readFile(row.yamlPath, "utf-8");
-      return parseYaml(content);
+      return parseYaml(content, row.yamlPath);
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "ENOENT") return null;
@@ -125,7 +133,12 @@ export class FileExpertLibrary implements ExpertLibrary {
 
   async create(def: ExpertDefinition): Promise<void> {
     assertValidSlug(def.slug);
-    const validated = ExpertDefinitionSchema.parse(def);
+    let validated: ExpertDefinition;
+    try {
+      validated = ExpertDefinitionSchema.parse(def);
+    } catch (error) {
+      throw new Error(`Expert definition validation failed for slug "${def.slug}": ${error}`);
+    }
 
     const existing = await this.repo.findBySlug(validated.slug);
     if (existing) {
