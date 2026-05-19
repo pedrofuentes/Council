@@ -37,7 +37,7 @@ export function sanitizePromptField(raw: string): string {
   const collapsed = stripped.replace(/[\r\n\u0085\u2028\u2029]+/g, " ");
   const defanged = collapsed.replace(/\[(\d+)\]/g, "(sec-$1)");
   const MAX = 2000;
-  return defanged.length > MAX ? `${defanged.slice(0, MAX)}…` : defanged;
+  return defanged.length > MAX ? `${defanged.slice(0, MAX - 1)}…` : defanged;
 }
 
 /**
@@ -72,7 +72,7 @@ export function sanitizePromptBlock(raw: string, maxLength = 4000): string {
   // eslint-disable-next-line no-control-regex
   const stripped = unicodeSafe.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
   const defanged = stripped.replace(/\[(\d+)\]/g, "(sec-$1)");
-  return defanged.length > maxLength ? `${defanged.slice(0, maxLength)}…` : defanged;
+  return defanged.length > maxLength ? `${defanged.slice(0, maxLength - 1)}…` : defanged;
 }
 
 /**
