@@ -11,9 +11,13 @@ import {
   captureOutput,
   cleanupE2EContext,
   createE2EContext,
+  destroyTestDb,
   makeMockEngineFactory,
+  openTestDb,
   type E2EContext,
 } from "./helpers.js";
+import { ExpertRepository } from "../../src/memory/repositories/experts.js";
+import { PanelRepository } from "../../src/memory/repositories/panels.js";
 
 describe("Config and Migration E2E", () => {
   let ctx: E2EContext;
@@ -96,6 +100,24 @@ describe("Config and Migration E2E", () => {
     const stdout = output.stdout();
     expect(stdout).toContain("Senior Developer");
     expect(stdout).toContain("Security Auditor");
+
+    // Verify the configured model was actually routed to experts (#597)
+    const db = await openTestDb(ctx.testHome);
+    try {
+      const panels = await new PanelRepository(db).findAll();
+      const panel = panels[panels.length - 1];
+      if (!panel) {
+        throw new Error("Expected a convened panel to exist in the database.");
+      }
+
+      const experts = await new ExpertRepository(db).findByPanelId(panel.id);
+      expect(experts.length).toBeGreaterThan(0);
+      for (const expert of experts) {
+        expect(expert.model).toBe("gpt-4.1");
+      }
+    } finally {
+      await destroyTestDb(db);
+    }
   });
 
   it("COUNCIL_HOME env var respected", async () => {
