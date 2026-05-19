@@ -451,5 +451,52 @@ describe("DocumentRepository", () => {
       expect(await countFts(db, "ceo")).toBe(1);
       expect(await countActiveDocs(db, "ceo")).toBe(1);
     });
+
+    it("guards against misleading error when post-COMMIT code fails (#537)", async () => {
+      // Issue #537: Same as setMembers — if future code adds work after COMMIT
+      // and that work throws, the catch block must NOT attempt ROLLBACK (transaction
+      // is closed) and must give a distinct message acknowledging COMMIT succeeded.
+      await repo.create(sampleDoc({ filePath: "/p/a.md" }));
+      await seedFtsRow(db, "ceo", "a");
+
+      // Patch to allow COMMIT to succeed but then throw (simulates post-COMMIT work failing)
+      let commitIndex = -1;
+      let callIndex = -1;
+      const realExec = db.getExecutor();
+      type ExecQueryFn = typeof realExec.executeQuery;
+      const originalExecuteQuery: ExecQueryFn = realExec.executeQuery as ExecQueryFn;
+      const wrapped: ExecQueryFn = async function (this: typeof realExec, compiled, queryId) {
+        callIndex++;
+        const result = await originalExecuteQuery.call(this, compiled, queryId);
+        if (/^\s*COMMIT\b/i.test(compiled.sql)) {
+          commitIndex = callIndex;
+          // Throw right after COMMIT succeeds to simulate post-COMMIT code failing
+          throw new Error("simulated post-COMMIT failure");
+        }
+        return result;
+      };
+      Object.defineProperty(realExec, "executeQuery", {
+        value: wrapped,
+        configurable: true,
+        writable: true,
+      });
+
+      let caught: unknown;
+      try {
+        await repo.clearForRetrain("ceo");
+      } catch (e) {
+        caught = e;
+      } finally {
+        delete (realExec as { executeQuery?: ExecQueryFn }).executeQuery;
+      }
+
+      // Before fix (#537), would incorrectly try ROLLBACK. After fix with
+      // `committed` flag, error should acknowledge COMMIT succeeded.
+      expect(caught).toBeInstanceOf(ClearForRetrainError);
+      const err = caught as ClearForRetrainError;
+      expect(err.rollbackFailed).toBe(false);
+      expect(err.message).not.toMatch(/rolled back cleanly/i);
+      expect(err.message).toMatch(/commit.*success/i);
+    });
   });
 });
