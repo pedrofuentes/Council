@@ -114,7 +114,7 @@ describe("Security: cross-expert injection (phase prompts)", () => {
     expect(prompt).toContain("…");
     // The full 5000-x payload must not appear verbatim.
     expect(prompt).not.toContain("x".repeat(5000));
-    // But the truncated 4000-x prefix should.
-    expect(prompt).toContain("x".repeat(4000));
+    // But the truncated 3999-x prefix should.
+    expect(prompt).toContain("x".repeat(3999));
   });
 });

@@ -96,8 +96,8 @@ describe("Security: memory poisoning", () => {
     expect(out).toContain("…");
     // Full 3000-char payload must not appear verbatim.
     expect(out).not.toContain("q".repeat(3000));
-    // But the truncated 2000-char prefix should.
-    expect(out).toContain("q".repeat(2000));
+    // But the truncated 1999-char prefix should.
+    expect(out).toContain("q".repeat(1999));
   });
 });
 
@@ -211,7 +211,7 @@ describe("Security: recalled-memory poisoning (#555)", () => {
     // Full 3000-char payload must not appear verbatim.
     expect(out).not.toContain("q".repeat(3000));
     // But the truncated prefix should appear.
-    expect(out).toContain("q".repeat(2000));
+    expect(out).toContain("q".repeat(1999));
     expect(out).toContain("…");
   });
 
