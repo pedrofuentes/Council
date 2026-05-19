@@ -78,9 +78,17 @@ describe("sanitizePromptField", () => {
 
     it("caps length at 2000 characters with ellipsis", () => {
       const result = sanitizePromptField("x".repeat(2500));
-      expect(result.length).toBe(2001); // 2000 + ellipsis
+      expect(result.length).toBe(2000); // Fixed: should be exactly 2000
       expect(result.endsWith("…")).toBe(true);
-      expect(result.slice(0, 2000)).toBe("x".repeat(2000));
+      expect(result.slice(0, 1999)).toBe("x".repeat(1999)); // 1999 + ellipsis = 2000
+    });
+
+    it("caps length at exactly MAX when truncated (issue #549)", () => {
+      const MAX = 2000;
+      const result = sanitizePromptField("x".repeat(3000));
+      expect(result.length).toBeLessThanOrEqual(MAX);
+      expect(result.length).toBe(MAX); // Should be exactly MAX, not MAX+1
+      expect(result.endsWith("…")).toBe(true);
     });
 
     it("returns short input unchanged when no special characters present", () => {
@@ -157,15 +165,23 @@ describe("sanitizePromptBlock", () => {
 
   it("caps length at default 4000 with ellipsis", () => {
     const result = sanitizePromptBlock("x".repeat(5000));
-    expect(result.length).toBe(4001);
+    expect(result.length).toBe(4000); // Fixed: should be exactly 4000
+    expect(result.endsWith("…")).toBe(true);
+  });
+
+  it("caps length at exactly maxLength when truncated (issue #549)", () => {
+    const maxLength = 4000;
+    const result = sanitizePromptBlock("x".repeat(5000), maxLength);
+    expect(result.length).toBeLessThanOrEqual(maxLength);
+    expect(result.length).toBe(maxLength); // Should be exactly maxLength, not maxLength+1
     expect(result.endsWith("…")).toBe(true);
   });
 
   it("respects custom maxLength parameter", () => {
     const result = sanitizePromptBlock("x".repeat(100), 50);
-    expect(result.length).toBe(51);
+    expect(result.length).toBe(50); // Fixed: should be exactly 50
     expect(result.endsWith("…")).toBe(true);
-    expect(result.slice(0, 50)).toBe("x".repeat(50));
+    expect(result.slice(0, 49)).toBe("x".repeat(49)); // 49 + ellipsis = 50
   });
 
   it("returns short input unchanged when below cap", () => {
@@ -185,7 +201,7 @@ describe("sanitizeFenced", () => {
 
   it("respects custom maxLength parameter applied before escaping", () => {
     const result = sanitizeFenced("x".repeat(100), 50);
-    expect(result.length).toBe(51);
+    expect(result.length).toBe(50); // Fixed: should be exactly 50
     expect(result.endsWith("…")).toBe(true);
   });
 
