@@ -325,6 +325,26 @@ describe("extractDocument", () => {
       ).rejects.toThrow(/modified during read|inode changed/i);
     });
 
+    // Issue #522: regression test for the fourth torn-read condition
+    // (buf.byteLength !== fdStat.size) — kernel returns fewer bytes than
+    // the pre-read stat reported (short read), even though the pre/post
+    // stat agree. This catches races with truncations/extensions during
+    // the read itself, distinct from mtime/ctime changes.
+    it("rejects short reads where buf.byteLength < fdStat.size (issue #522)", async () => {
+      const filePath = path.join(dir, "doc.txt");
+      await fs.writeFile(filePath, "full content here");
+      // Simulate kernel returning fewer bytes than stat says file has.
+      await expect(
+        extractDocument(filePath, {
+          _readFileOverride: async (fh: fs.FileHandle) => {
+            // Stat says 17 bytes ("full content here"), but we return only 4.
+            const truncated = Buffer.from("full", "utf-8");
+            return truncated;
+          },
+        }),
+      ).rejects.toThrow(/modified during read|torn content/i);
+    });
+
     // Issue #444: a (size, mtime)-only token can be evaded by a same-size
     // rewrite whose mtime is restored via utimes() after the write. ctime
     // updates on every inode metadata change (including utimes), so the
