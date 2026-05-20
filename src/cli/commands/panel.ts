@@ -47,6 +47,7 @@ import {
 } from "../../memory/repositories/panel-document-repo.js";
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
+import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
 
 const PANEL_NAME_RE = /^[a-z][a-z0-9-]*$/;
 
@@ -110,6 +111,7 @@ function entrySlug(entry: PanelExpertEntry): string {
 export function buildPanelCommand(
   write: Writer = defaultWriter,
   writeError: Writer = defaultErrorWriter,
+  confirmProvider?: ConfirmProvider,
 ): Command {
   const cmd = new Command("panel");
   cmd.description("Manage Council panels (create, list, inspect, edit)");
@@ -117,7 +119,7 @@ export function buildPanelCommand(
   cmd.addCommand(buildListCommand(write));
   cmd.addCommand(buildInspectCommand(write, writeError));
   cmd.addCommand(buildEditCommand(write, writeError));
-  cmd.addCommand(buildDocsCommand(write, writeError));
+  cmd.addCommand(buildDocsCommand(write, writeError, confirmProvider));
   return cmd;
 }
 
@@ -595,13 +597,18 @@ async function runEditor(editorCmd: string, filePath: string): Promise<void> {
 
 interface DocsLinkOptions {
   readonly path?: string;
+  readonly yes?: boolean;
 }
 
-function buildDocsCommand(write: Writer, writeError: Writer): Command {
+function buildDocsCommand(
+  write: Writer,
+  writeError: Writer,
+  confirmProvider?: ConfirmProvider,
+): Command {
   const cmd = new Command("docs");
   cmd.description("Manage panel reference documents (list, link, unlink)");
   cmd.addCommand(buildDocsListCommand(write, writeError));
-  cmd.addCommand(buildDocsLinkCommand(write, writeError));
+  cmd.addCommand(buildDocsLinkCommand(write, writeError, confirmProvider));
   cmd.addCommand(buildDocsUnlinkCommand(write, writeError));
   // Allow `council panel docs <name>` to fall through to the list action
   // without forcing users to type `docs list`. Commander treats the
@@ -678,12 +685,17 @@ async function runDocsList(name: string, write: Writer, writeError: Writer): Pro
   });
 }
 
-function buildDocsLinkCommand(write: Writer, writeError: Writer): Command {
+function buildDocsLinkCommand(
+  write: Writer,
+  writeError: Writer,
+  confirmProvider?: ConfirmProvider,
+): Command {
   const cmd = new Command("link");
   cmd
     .description("Link an external folder for RAG retrieval")
     .argument("<name>", "Panel name")
     .requiredOption("--path <path>", "Absolute path to the folder to link")
+    .option("--yes", "Skip the confirmation prompt (non-interactive runs)")
     .action(async (name: string, opts: DocsLinkOptions) => {
       const folderPath = opts.path;
       if (folderPath === undefined || folderPath.trim().length === 0) {
@@ -716,6 +728,19 @@ function buildDocsLinkCommand(write: Writer, writeError: Writer): Command {
       if (!stat.isDirectory()) {
         writeError(`Path is not a directory: ${displayPath(absolute)}\n`);
         throw new CliUserError(`Path is not a directory: ${absolute}`);
+      }
+
+      // Confirmation gate — granting panel read access to an external
+      // folder should be an explicit user decision (PRD F7, issue #472).
+      if (opts.yes !== true) {
+        const provider = confirmProvider ?? createReadlineConfirmProvider();
+        const ok = await provider.confirm(
+          `Grant panel "${name}" read access to ${displayPath(absolute)}? [y/N] `,
+        );
+        if (!ok) {
+          writeError(`Aborted: declined to link ${displayPath(absolute)}.\n`);
+          throw new Error(`Aborted: declined to link ${absolute}`);
+        }
       }
 
       await withPanelContext(async (ctx) => {

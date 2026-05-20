@@ -697,6 +697,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
           "arch-review",
           "--path",
           linkDir,
+          "--yes",
         ]);
         expect(captured).toMatch(/✓|linked/i);
         expect(captured).toContain(path.basename(linkDir));
@@ -791,6 +792,140 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
       expect(errored).toMatch(/does not exist|not found/i);
     });
 
+    it("`panel docs link` aborts when confirmation is declined (#472)", async () => {
+      await createPanel();
+      const linkDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-link-confirm-"));
+      await fs.writeFile(path.join(linkDir, "a.md"), "# A\nhello", "utf-8");
+      try {
+        let captured = "";
+        let errored = "";
+        const cmd = buildPanelCommand(
+          (s) => {
+            captured += s;
+          },
+          (s) => {
+            errored += s;
+          },
+          { confirm: async () => false },
+        );
+        await expect(
+          cmd.parseAsync([
+            "node",
+            "council-panel",
+            "docs",
+            "link",
+            "arch-review",
+            "--path",
+            linkDir,
+          ]),
+        ).rejects.toThrow(/abort|cancel|decline/i);
+        expect(errored).toMatch(/abort|cancel|decline/i);
+        expect(captured).not.toMatch(/✓|linked/i);
+
+        // Folder must NOT be recorded.
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { PanelDocumentRepository } =
+          await import("../../../../src/memory/repositories/panel-document-repo.js");
+        const db = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          const repo = new PanelDocumentRepository(db);
+          const folders = await repo.getLinkedFolders("arch-review");
+          expect(folders).not.toContain(linkDir);
+        } finally {
+          await db.destroy();
+        }
+      } finally {
+        await fs.rm(linkDir, { recursive: true, force: true });
+      }
+    });
+
+    it("`panel docs link --yes` skips the confirmation prompt (#472)", async () => {
+      await createPanel();
+      const linkDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-link-yes-"));
+      await fs.writeFile(path.join(linkDir, "a.md"), "# A\nhello", "utf-8");
+      try {
+        let confirmCalled = false;
+        let captured = "";
+        const cmd = buildPanelCommand(
+          (s) => {
+            captured += s;
+          },
+          () => {
+            /* noop */
+          },
+          {
+            confirm: async () => {
+              confirmCalled = true;
+              return false;
+            },
+          },
+        );
+        await cmd.parseAsync([
+          "node",
+          "council-panel",
+          "docs",
+          "link",
+          "arch-review",
+          "--path",
+          linkDir,
+          "--yes",
+        ]);
+        expect(confirmCalled).toBe(false);
+        expect(captured).toMatch(/✓|linked/i);
+      } finally {
+        await fs.rm(linkDir, { recursive: true, force: true });
+      }
+    });
+
+    it("`panel docs link` proceeds when confirmation is accepted (#472)", async () => {
+      await createPanel();
+      const linkDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-link-accept-"));
+      await fs.writeFile(path.join(linkDir, "a.md"), "# A\nhello", "utf-8");
+      try {
+        let confirmCalled = false;
+        let captured = "";
+        const cmd = buildPanelCommand(
+          (s) => {
+            captured += s;
+          },
+          () => {
+            /* noop */
+          },
+          {
+            confirm: async () => {
+              confirmCalled = true;
+              return true;
+            },
+          },
+        );
+        await cmd.parseAsync([
+          "node",
+          "council-panel",
+          "docs",
+          "link",
+          "arch-review",
+          "--path",
+          linkDir,
+        ]);
+        expect(confirmCalled).toBe(true);
+        expect(captured).toMatch(/✓|linked/i);
+
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { PanelDocumentRepository } =
+          await import("../../../../src/memory/repositories/panel-document-repo.js");
+        const db = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          const repo = new PanelDocumentRepository(db);
+          const folders = await repo.getLinkedFolders("arch-review");
+          expect(folders).toContain(linkDir);
+        } finally {
+          await db.destroy();
+        }
+      } finally {
+        await fs.rm(linkDir, { recursive: true, force: true });
+      }
+    });
+
     it("`panel docs unlink` removes the linked folder", async () => {
       await createPanel();
       const linkDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-unlink-"));
@@ -806,6 +941,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
           "arch-review",
           "--path",
           linkDir,
+          "--yes",
         ]);
 
         let captured = "";
@@ -862,6 +998,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
           "arch-review",
           "--path",
           linkDir,
+          "--yes",
         ]);
 
         const db1 = await createDatabase(path.join(env.home, "council.db"));
@@ -928,6 +1065,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
           "arch-review",
           "--path",
           linkDir,
+          "--yes",
         ]);
 
         const filePath = path.join(linkDir, "a.md");
@@ -1001,6 +1139,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
           "arch-review",
           "--path",
           linkDir,
+          "--yes",
         ]);
 
         const filePath = path.join(linkDir, "a.md");
@@ -1091,6 +1230,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
           "arch-review",
           "--path",
           linkDir,
+          "--yes",
         ]);
 
         const filePathA = path.join(linkDir, "a.md");
