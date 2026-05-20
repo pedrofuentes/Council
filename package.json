@@ -72,14 +72,15 @@
     "@eslint/js": "^9.17.0",
     "@types/node": "^22.10.0",
     "@types/react": "^19.2.14",
-    "@vitest/coverage-v8": "^2.1.8",
+    "@vitest/coverage-v8": "^4.1.6",
     "eslint": "^9.17.0",
     "ink-testing-library": "^4.0.0",
     "prettier": "^3.4.2",
     "tsup": "^8.3.5",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.18.0",
-    "vitest": "^2.1.8"
+    "vite": "^8.0.0",
+    "vitest": "^4.1.6"
   },
   "packageManager": "pnpm@9.15.0",
   "pnpm": {
