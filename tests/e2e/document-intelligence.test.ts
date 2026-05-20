@@ -371,7 +371,7 @@ describe.sequential("document intelligence e2e", () => {
     await fs.writeFile(path.join(linkedDir, "a.md"), "# A\nhello world", "utf-8");
     await fs.writeFile(path.join(linkedDir, "b.md"), "# B\nrelease notes", "utf-8");
 
-    const linked = await runPanelCommand(["docs", "link", "arch-review", "--path", linkedDir]);
+    const linked = await runPanelCommand(["docs", "link", "arch-review", "--path", linkedDir, "--yes"]);
     expect(linked.stdout).toContain(path.basename(linkedDir));
     expect(linked.stdout).toContain("2 documents found");
 
@@ -389,7 +389,7 @@ describe.sequential("document intelligence e2e", () => {
     await fs.mkdir(linkedDir, { recursive: true });
     await fs.writeFile(path.join(linkedDir, "a.md"), "# A\ncleanup target", "utf-8");
 
-    await runPanelCommand(["docs", "link", "arch-review", "--path", linkedDir]);
+    await runPanelCommand(["docs", "link", "arch-review", "--path", linkedDir, "--yes"]);
 
     const unlinked = await runPanelCommand(["docs", "unlink", "arch-review", "--path", linkedDir]);
     expect(unlinked.stdout.toLowerCase()).toContain("unlinked");
