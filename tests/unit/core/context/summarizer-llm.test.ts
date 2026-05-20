@@ -140,9 +140,9 @@ describe("buildLLMSummary — engine-backed summarization", () => {
     const longChunk = "x".repeat(2000);
     const engine = new RecordingEngine([longChunk]);
     const out = await buildLLMSummary(baseTurns, 2, { ...cfg, maxSummaryLength: 50 }, engine, "gpt-test");
-    // sanitizePromptBlock truncates to maxLength and appends "…".
-    expect(out.length).toBeLessThanOrEqual(51);
-    expect(out.startsWith("x".repeat(50))).toBe(true);
+    // sanitizePromptBlock truncates to maxLength - 1 and appends "…".
+    expect(out.length).toBeLessThanOrEqual(50);
+    expect(out.startsWith("x".repeat(49))).toBe(true);
   });
 
   it("removes the summarizer expert even if the engine errors mid-stream", async () => {
@@ -288,8 +288,8 @@ describe("buildLLMSummary — engine-backed summarization", () => {
         "gpt-test",
       );
       // sanitizePromptBlock appends "…" when truncating.
-      expect(out.length).toBeLessThanOrEqual(51);
-      expect(out.startsWith("x".repeat(50))).toBe(true);
+      expect(out.length).toBeLessThanOrEqual(50);
+      expect(out.startsWith("x".repeat(49))).toBe(true);
     });
   });
 });

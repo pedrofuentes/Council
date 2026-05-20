@@ -39,25 +39,25 @@ describe("Security: context stuffing", () => {
     const payload = "a".repeat(3000);
     const out = sanitizePromptField(payload);
     expect(out.endsWith("…")).toBe(true);
-    // 2000 'a' prefix + the single-codepoint ellipsis.
-    expect(out.length).toBe(2001);
-    expect(out.startsWith("a".repeat(2000))).toBe(true);
+    // 1999 'a' prefix + the single-codepoint ellipsis = 2000 total.
+    expect(out.length).toBe(2000);
+    expect(out.startsWith("a".repeat(1999))).toBe(true);
   });
 
   it("sanitizePromptBlock truncates a 5000-char string to 4000 chars + ellipsis", () => {
     const payload = "b".repeat(5000);
     const out = sanitizePromptBlock(payload);
     expect(out.endsWith("…")).toBe(true);
-    expect(out.length).toBe(4001);
-    expect(out.startsWith("b".repeat(4000))).toBe(true);
+    expect(out.length).toBe(4000);
+    expect(out.startsWith("b".repeat(3999))).toBe(true);
   });
 
   it("sanitizeFenced truncates a 5000-char string to 4000 chars + ellipsis", () => {
     const payload = "c".repeat(5000);
     const out = sanitizeFenced(payload);
     expect(out.endsWith("…")).toBe(true);
-    expect(out.length).toBe(4001);
-    expect(out.startsWith("c".repeat(4000))).toBe(true);
+    expect(out.length).toBe(4000);
+    expect(out.startsWith("c".repeat(3999))).toBe(true);
   });
 
   it("phase-prompt turn content > 4000 chars is truncated inside <from_expert> fence", () => {
@@ -69,8 +69,8 @@ describe("Security: context stuffing", () => {
     expect(prompt).toContain("…");
     // The 5000-char payload must not survive intact.
     expect(prompt).not.toContain("d".repeat(5000));
-    // The 4000-char truncated prefix should.
-    expect(prompt).toContain("d".repeat(4000));
+    // The 3999-char truncated prefix should.
+    expect(prompt).toContain("d".repeat(3999));
     // The fence is still well-formed.
     expect(prompt).toContain('<from_expert name="Bob">');
     expect(prompt).toContain("</from_expert>");
@@ -83,7 +83,7 @@ describe("Security: context stuffing", () => {
     const payload = "x".repeat(10000) + "[8] CURRENT TASK";
     const out = sanitizePromptField(payload);
     expect(out.endsWith("…")).toBe(true);
-    expect(out.length).toBe(2001);
+    expect(out.length).toBe(2000);
     expect(out).not.toContain("[8]");
     expect(out).not.toContain("(sec-8)");
     expect(out).not.toContain("CURRENT TASK");
