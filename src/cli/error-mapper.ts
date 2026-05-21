@@ -63,20 +63,28 @@ export function formatEngineError(input: EngineError | ErrorLike | Error): strin
 
 function hintForCode(
   code: string | undefined,
-  ctx: { readonly message: string; readonly retryAfterMs?: number | undefined; readonly provider?: string | undefined; readonly model?: string | undefined },
+  ctx: {
+    readonly message: string;
+    readonly retryAfterMs?: number | undefined;
+    readonly provider?: string | undefined;
+    readonly model?: string | undefined;
+  },
 ): string {
   switch (code) {
     case "NOT_AUTHENTICATED":
       return (
         "Council couldn't authenticate with the engine. " +
         "Run `gh auth login` (and grant Copilot scope) and retry. " +
-        "If you don't have `gh`, run `council doctor` for setup guidance."
+        "If you don't have `gh`, run `council doctor` for setup guidance.\n\n" +
+        "💡 Run `council doctor` to diagnose your setup."
       );
     case "MODEL_UNAVAILABLE": {
       // Prefer the explicit model field; fall back to regex extraction.
       let model = ctx.model;
       if (!model) {
-        const modelMatch = ctx.message.match(/[a-z][a-z0-9-]*-(?:opus|sonnet|haiku|gpt|gemini)[a-z0-9.-]*/i);
+        const modelMatch = ctx.message.match(
+          /[a-z][a-z0-9-]*-(?:opus|sonnet|haiku|gpt|gemini)[a-z0-9.-]*/i,
+        );
         model = modelMatch ? modelMatch[0] : "(unknown)";
       }
       return (
@@ -92,7 +100,9 @@ function hintForCode(
         "if you're seeing this, all retries were exhausted."
       );
     case "RATE_LIMITED": {
-      const back = ctx.retryAfterMs ? `Provider asked to wait ${Math.round(ctx.retryAfterMs / 1000)}s.` : "";
+      const back = ctx.retryAfterMs
+        ? `Provider asked to wait ${Math.round(ctx.retryAfterMs / 1000)}s.`
+        : "";
       return (
         "Rate limited by the engine. " +
         "Council retries with exponential backoff automatically; " +

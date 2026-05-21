@@ -9,7 +9,7 @@ import * as path from "node:path";
 
 import { Command, Option } from "commander";
 
-import { getCouncilHome } from "../../config/index.js";
+import { getCouncilHome, loadConfig, resolveEngine } from "../../config/index.js";
 import { checkTopicAdmission } from "../../core/topic-admission.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import { createDatabase } from "../../memory/db.js";
@@ -36,16 +36,18 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
   cmd
     .description(
       "Ask one expert from an existing panel a single question. " +
-      "For multi-expert debates use `council convene`. For conversation use `council chat`."
+        "For multi-expert debates use `council convene`. For conversation use `council chat`.",
     )
     .argument(
       "<panel>",
       "Panel name from a previous debate (as shown by `council sessions`). " +
-      "For library experts, use `council chat`."
+        "For library experts, use `council chat`.",
     )
     .argument("<question>", "The question to ask")
     .addOption(
-      new Option("--engine <kind>", "Engine to use").choices([...ENGINE_KINDS]).makeOptionMandatory(),
+      new Option("--engine <kind>", "Engine to use (default: from config)").choices([
+        ...ENGINE_KINDS,
+      ]),
     )
     .option("--expert <slug>", "Expert slug to ask (default: first expert in the panel)")
     .addOption(
@@ -62,7 +64,7 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
         panelName: string,
         question: string,
         raw: {
-          engine: EngineKind;
+          engine?: EngineKind;
           expert?: string;
           format?: string;
           maxWords?: number;
@@ -73,12 +75,13 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
           writeError(warning + "\n");
         }
 
+        const resolvedEngine = raw.engine ?? resolveEngine(undefined, await loadConfig());
         const format: RendererFormat = parseFormat(raw.format);
         const maxWords = Number.isFinite(raw.maxWords)
           ? (raw.maxWords ?? DEFAULT_MAX_WORDS)
           : DEFAULT_MAX_WORDS;
 
-        if (raw.engine === "mock") {
+        if (resolvedEngine === "mock") {
           writeError(
             "\n!! [MOCK ENGINE] Running with deterministic offline mock — response is NOT real.\n\n",
           );
@@ -119,7 +122,7 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
           };
 
           await runWithEngine({
-            engineKind: raw.engine,
+            engineKind: resolvedEngine,
             engineFactory: deps.engineFactory,
             experts: [expertSpec],
             debateConfig: {

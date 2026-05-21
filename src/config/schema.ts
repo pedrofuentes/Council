@@ -13,12 +13,17 @@ import { z } from "zod";
 
 export const DEFAULT_MODEL = "claude-sonnet-4-20250514";
 
+export const ENGINE_CHOICES = ["copilot", "mock"] as const;
+export type EngineChoice = (typeof ENGINE_CHOICES)[number];
+
 export const ConfigSchema = z
   .object({
     defaults: z
       .object({
         /** Provider-agnostic model id (e.g. "claude-sonnet-4-20250514"). */
         model: z.string().min(1).default(DEFAULT_MODEL),
+        /** Engine to use when --engine is not specified on the CLI. */
+        engine: z.enum(ENGINE_CHOICES).default("copilot"),
         /** Maximum debate rounds; 1..20 inclusive. */
         maxRounds: z.number().int().min(1).max(20).default(4),
         /** Maximum experts per panel; 2..8 inclusive. */
@@ -28,6 +33,7 @@ export const ConfigSchema = z
       })
       .default({
         model: DEFAULT_MODEL,
+        engine: "copilot",
         maxRounds: 4,
         maxExperts: 3,
         maxWordsPerResponse: 250,
@@ -83,6 +89,7 @@ export const ConfigSchema = z
   .default({
     defaults: {
       model: DEFAULT_MODEL,
+      engine: "copilot",
       maxRounds: 4,
       maxExperts: 3,
       maxWordsPerResponse: 250,

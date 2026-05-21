@@ -20,7 +20,7 @@ import * as path from "node:path";
 import * as yaml from "yaml";
 import type { ZodError } from "zod";
 
-import { ConfigSchema, type CouncilConfig } from "./schema.js";
+import { ConfigSchema, type CouncilConfig, type EngineChoice } from "./schema.js";
 
 const CONFIG_FILE = "config.yaml";
 
@@ -97,6 +97,21 @@ function formatZodError(err: ZodError, source: string): Error {
  * Always returns a fully-defaulted CouncilConfig.
  */
 export async function loadConfig(): Promise<CouncilConfig> {
+  const { config } = await loadConfigWithMeta();
+  return config;
+}
+
+/**
+ * Extended config loader that also reports whether this was a first-run
+ * (config file was just created). Used by CLI entry points that want to
+ * show the welcome banner exactly once.
+ */
+export interface ConfigLoadResult {
+  readonly config: CouncilConfig;
+  readonly isFirstRun: boolean;
+}
+
+export async function loadConfigWithMeta(): Promise<ConfigLoadResult> {
   await ensureHomeDirectory();
   const file = configPath();
 
@@ -105,7 +120,8 @@ export async function loadConfig(): Promise<CouncilConfig> {
     raw = await fs.readFile(file, "utf-8");
   } catch (err: unknown) {
     if (isENOENT(err)) {
-      return writeDefaultConfig();
+      const config = await writeDefaultConfig();
+      return { config, isFirstRun: true };
     }
     throw err;
   }
@@ -125,7 +141,19 @@ export async function loadConfig(): Promise<CouncilConfig> {
   if (!result.success) {
     throw formatZodError(result.error, file);
   }
-  return result.data;
+  return { config: result.data, isFirstRun: false };
+}
+
+/**
+ * Resolve the engine to use given an optional CLI flag and a loaded config.
+ * Resolution order: CLI flag → config file → default "copilot".
+ */
+export function resolveEngine(
+  cliFlag: EngineChoice | undefined,
+  config: CouncilConfig,
+): EngineChoice {
+  if (cliFlag !== undefined) return cliFlag;
+  return config.defaults.engine;
 }
 
 function isENOENT(err: unknown): boolean {

@@ -19,7 +19,12 @@ import { CliUserError } from "../cli-user-error.js";
 
 import { autoComposePanel } from "../../core/auto-compose.js";
 import { checkTopicAdmission } from "../../core/topic-admission.js";
-import { getCouncilDataHome, getCouncilHome, loadConfig } from "../../config/index.js";
+import {
+  getCouncilDataHome,
+  getCouncilHome,
+  loadConfig,
+  resolveEngine,
+} from "../../config/index.js";
 import type { ContextConfig } from "../../core/debate.js";
 import type { VisibilityConfig } from "../../core/context/visibility.js";
 import { FileExpertLibrary } from "../../core/expert-library.js";
@@ -52,10 +57,8 @@ import {
   runWithEngine,
 } from "../run-with-engine.js";
 import { RENDERER_FORMATS, type RendererFormat } from "../renderers/select.js";
-import {
-  createReadlineConfirmProvider,
-  type ConfirmProvider,
-} from "./confirm.js";
+import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
+import { isNonInteractive } from "../non-interactive.js";
 
 const DEFAULT_MAX_ROUNDS = 4;
 const DEFAULT_MAX_WORDS = 250;
@@ -120,7 +123,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
   cmd
     .description(
       "Run a panel debate on a topic and persist results to the local DB. " +
-      "For one-shot questions use `council ask`. For conversation use `council chat`."
+        "For one-shot questions use `council ask`. For conversation use `council chat`.",
     )
     .argument("<topic>", "The topic / question for the panel to debate")
     .option(
@@ -128,10 +131,15 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       "Use a built-in or custom panel template. **Omit to let Council auto-design an expert panel from your topic.**",
     )
     .addOption(
-      new Option("--engine <kind>", "Engine to use").choices([...ENGINE_KINDS]).makeOptionMandatory(),
+      new Option("--engine <kind>", "Engine to use (default: from config)").choices([
+        ...ENGINE_KINDS,
+      ]),
     )
     .addOption(
-      new Option("--format <kind>", "Output format (auto picks Ink TUI on TTY, plain text otherwise)")
+      new Option(
+        "--format <kind>",
+        "Output format (auto picks Ink TUI on TTY, plain text otherwise)",
+      )
         .choices([...RENDERER_FORMATS])
         .default("auto"),
     )
@@ -141,7 +149,11 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       (v) => Number.parseInt(v, 10),
       DEFAULT_MAX_ROUNDS,
     )
-    .addOption(new Option("--mode <kind>", "Debate mode").choices(["freeform", "structured"]).default("freeform"))
+    .addOption(
+      new Option("--mode <kind>", "Debate mode")
+        .choices(["freeform", "structured"])
+        .default("freeform"),
+    )
     .option(
       "--max-words <n>",
       "Soft per-response word cap",
@@ -188,6 +200,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
 
       const config = await loadConfig();
       const defaultModel = config.defaults.model;
+      const resolvedEngine = resolveEngine(raw.engine, config);
       const humanNames: readonly string[] = raw.human ?? [];
 
       const opts: ConveneOptions = {
@@ -196,7 +209,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         maxRounds: Number.isFinite(raw.maxRounds) ? raw.maxRounds : DEFAULT_MAX_ROUNDS,
         mode: raw.mode === "structured" ? "structured" : "freeform",
         maxWords: Number.isFinite(raw.maxWords) ? raw.maxWords : DEFAULT_MAX_WORDS,
-        engine: raw.engine,
+        engine: resolvedEngine,
         human: humanNames,
         yes: raw.yes === true,
         heuristicSummaries: raw.heuristicSummaries === true,
@@ -297,16 +310,30 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         writeError("\n");
 
         // Confirmation gate — auto-composed panels are LLM-generated and may
-        // not match user intent. Block the debate behind explicit consent
-        // unless --yes was passed for non-interactive runs.
+        // not match user intent. Three branches:
+        //   1. Custom confirmProvider (tests/plugins) — always call it.
+        //   2. Non-TTY (CI/piped) — error, require --yes to proceed.
+        //   3. Interactive TTY — readline prompt, abort if declined.
         if (opts.yes !== true) {
-          const provider = deps.confirmProvider
-            ? deps.confirmProvider()
-            : createReadlineConfirmProvider();
-          const ok = await provider.confirm("Proceed with this panel? [y/N] ");
-          if (!ok) {
-            writeError("Aborted. Use --template to specify a panel manually.\n");
-            throw new CliUserError("Aborted: auto-composed panel was not confirmed.");
+          if (deps.confirmProvider) {
+            // Custom provider injected (tests or plugins) — always use it.
+            const provider = deps.confirmProvider();
+            const ok = await provider.confirm("Proceed with this panel? [y/N] ");
+            if (!ok) {
+              writeError("Aborted. Use --template to specify a panel manually.\n");
+              throw new CliUserError("Aborted: auto-composed panel was not confirmed.");
+            }
+          } else if (isNonInteractive()) {
+            throw new CliUserError(
+              "Non-interactive shell detected. Auto-compose requires --yes in non-interactive mode.",
+            );
+          } else {
+            const provider = createReadlineConfirmProvider();
+            const ok = await provider.confirm("Proceed with this panel? [y/N] ");
+            if (!ok) {
+              writeError("Aborted. Use --template to specify a panel manually.\n");
+              throw new CliUserError("Aborted: auto-composed panel was not confirmed.");
+            }
           }
         }
       }
@@ -565,4 +592,3 @@ function parseContextScope(raw: string): VisibilityConfig {
   }
   return { scope: raw as (typeof VALID_CONTEXT_SCOPES)[number] };
 }
-

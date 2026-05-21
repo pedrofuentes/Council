@@ -32,7 +32,7 @@ import { Command, Option } from "commander";
 import { ulid } from "ulid";
 import { z } from "zod";
 
-import { getCouncilHome, loadConfig } from "../../config/index.js";
+import { getCouncilHome, loadConfig, resolveEngine } from "../../config/index.js";
 import { type CouncilEngine, type EngineEvent, type ExpertSpec } from "../../engine/index.js";
 import { createDatabase } from "../../memory/db.js";
 import { PanelRepository } from "../../memory/repositories/panels.js";
@@ -119,7 +119,7 @@ export interface ConcludeCommandDeps {
 }
 
 interface ConcludeRawOptions {
-  readonly engine: EngineKind;
+  readonly engine?: EngineKind;
   readonly format?: string;
 }
 
@@ -135,7 +135,9 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
     )
     .argument("[panel]", "Panel name to conclude (defaults to the most recently created panel)")
     .addOption(
-      new Option("--engine <kind>", "Engine kind").choices([...ENGINE_KINDS]).makeOptionMandatory(),
+      new Option("--engine <kind>", "Engine kind (default: from config)").choices([
+        ...ENGINE_KINDS,
+      ]),
     )
     .addOption(
       new Option("--format <kind>", "Output format")
@@ -145,13 +147,14 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
     .action(async (panelArg: string | undefined, raw: ConcludeRawOptions) => {
       const format: ConcludeFormat = raw.format === "json" ? "json" : "plain";
 
-      if (raw.engine === "mock") {
+      const config = await loadConfig();
+      const resolvedEngine = resolveEngine(raw.engine, config);
+
+      if (resolvedEngine === "mock") {
         writeError(
           "\n!! [MOCK ENGINE] conclude running with deterministic offline mock — synthesis is NOT real.\n\n",
         );
       }
-
-      const config = await loadConfig();
       const dbPath = path.join(getCouncilHome(), "council.db");
       const db = await createDatabase(dbPath);
       try {
@@ -173,7 +176,9 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
           );
         }
 
-        const engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(raw.engine);
+        const engine = deps.engineFactory
+          ? deps.engineFactory()
+          : makeEngineFromKind(resolvedEngine);
         const synthesizerId = deps.synthesizerId ?? ulid();
         const synthesizerSpec: ExpertSpec = {
           id: synthesizerId,
