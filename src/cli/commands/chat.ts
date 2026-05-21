@@ -22,7 +22,7 @@ import * as path from "node:path";
 import * as readline from "node:readline/promises";
 import { stdin as defaultStdin, stdout as defaultStdout } from "node:process";
 
-import { Command } from "commander";
+import { Command, Option } from "commander";
 
 import { CliUserError } from "../cli-user-error.js";
 import { ulid } from "ulid";
@@ -75,6 +75,7 @@ import { createChatRenderer, type ChatRenderer } from "../renderers/chat-rendere
 import type { Sink } from "../renderers/types.js";
 import { formatEngineError } from "../error-mapper.js";
 import { ENGINE_KINDS, type EngineKind, makeEngineFromKind } from "../run-with-engine.js";
+import { suggestMatch } from "../fuzzy-match.js";
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
@@ -135,9 +136,8 @@ export function buildChatCommand(deps: ChatCommandDeps = {}): Command {
       "For structured debates use `council convene`."
     )
     .argument("[target]", "Expert slug or panel name to chat with")
-    .option(
-      "--engine <kind>",
-      `Engine: ${ENGINE_KINDS.join(" | ")} (required for interactive chat)`,
+    .addOption(
+      new Option("--engine <kind>", "Engine (required for interactive chat)").choices([...ENGINE_KINDS]),
     )
     .option("--new", "Archive the active conversation and start a fresh one")
     .option("--list", "List all chat conversations and exit")
@@ -157,7 +157,7 @@ export function buildChatCommand(deps: ChatCommandDeps = {}): Command {
       if (!target) {
         throw new Error("Missing required argument: <target> (expert slug or panel name)");
       }
-      if (!raw.engine || !ENGINE_KINDS.includes(raw.engine)) {
+      if (!raw.engine) {
         throw new Error(
           `--engine is required for interactive chat. Expected one of: ${ENGINE_KINDS.join(", ")}`,
         );
@@ -692,11 +692,13 @@ async function runHistory(target: string, write: Writer, writeError: Writer): Pr
       } catch (err: unknown) {
         if (err instanceof PanelNotFoundError) {
           const available = (await library.list()).map((e) => e.slug);
+          const suggestions = suggestMatch(target, available);
+          const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
           const list =
             available.length > 0
               ? available.join(", ")
               : "(none — create one with `council expert create`)";
-          writeError(`"${target}" not found as expert or panel. Available experts: ${list}\n`);
+          writeError(`"${target}" not found as expert or panel.${hint} Available experts: ${list}\n`);
           throw new CliUserError(`"${target}" not found`);
         }
         throw err;
@@ -788,11 +790,13 @@ async function runChat(
     } catch (err: unknown) {
       if (err instanceof PanelNotFoundError) {
         const available = (await library.list()).map((e) => e.slug);
+        const suggestions = suggestMatch(target, available);
+        const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
         const list =
           available.length > 0
             ? available.join(", ")
             : "(none — create one with `council expert create`)";
-        writeError(`"${target}" not found as expert or panel. Available experts: ${list}\n`);
+        writeError(`"${target}" not found as expert or panel.${hint} Available experts: ${list}\n`);
         throw new CliUserError(`"${target}" not found`);
       }
       throw err;

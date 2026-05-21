@@ -15,7 +15,7 @@ import * as path from "node:path";
 import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 
-import { Command } from "commander";
+import { Command, Option } from "commander";
 
 import { CliUserError } from "../cli-user-error.js";
 
@@ -38,10 +38,17 @@ import {
 } from "../../memory/repositories/document-repository.js";
 import { ProfileRepository } from "../../memory/repositories/profile-repository.js";
 import { ENGINE_KINDS, type EngineKind, makeEngineFromKind } from "../run-with-engine.js";
+import { suggestMatch } from "../fuzzy-match.js";
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+function formatNotFound(kind: string, slug: string, available: readonly string[]): string {
+  const suggestions = suggestMatch(slug, available);
+  const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
+  return `${kind} "${slug}" not found.${hint}`;
+}
 
 export interface ExpertCommandDeps {
   /** Test-only override for the CouncilEngine used by `expert train`. */
@@ -341,8 +348,10 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
       await withExpertLibrary(async (library, _config, dataHome) => {
         const expert = await library.get(slug);
         if (!expert) {
-          writeError(`Expert "${slug}" not found.\n`);
-          throw new CliUserError(`Expert "${slug}" not found.`);
+          const all = (await library.list()).map((e) => e.slug);
+          const msg = formatNotFound("Expert", slug, all);
+          writeError(`${msg}\n`);
+          throw new CliUserError(msg);
         }
         const panels = await library.panelsFor(slug);
         const yamlPath = path.join(dataHome, "experts", `${slug}.yaml`);
@@ -396,8 +405,10 @@ function buildEditCommand(write: Writer, writeError: Writer): Command {
       await withExpertLibrary(async (library, _config, dataHome) => {
         const existing = await library.get(slug);
         if (!existing) {
-          writeError(`Expert "${slug}" not found.\n`);
-          throw new CliUserError(`Expert "${slug}" not found.`);
+          const all = (await library.list()).map((e) => e.slug);
+          const msg = formatNotFound("Expert", slug, all);
+          writeError(`${msg}\n`);
+          throw new CliUserError(msg);
         }
         const yamlPath = path.join(dataHome, "experts", `${slug}.yaml`);
         const editor = resolveEditor();
@@ -485,8 +496,10 @@ function buildDeleteCommand(write: Writer, writeError: Writer): Command {
       await withExpertLibrary(async (library) => {
         const existing = await library.get(slug);
         if (!existing) {
-          writeError(`Expert "${slug}" not found.\n`);
-          throw new CliUserError(`Expert "${slug}" not found.`);
+          const all = (await library.list()).map((e) => e.slug);
+          const msg = formatNotFound("Expert", slug, all);
+          writeError(`${msg}\n`);
+          throw new CliUserError(msg);
         }
         const panels = await library.panelsFor(slug);
         if (panels.length > 0 && !opts.force) {
@@ -522,8 +535,10 @@ function buildDocsCommand(write: Writer, writeError: Writer): Command {
       await withExpertLibrary(async (library, _config, _dataHome, db) => {
         const expert = await library.get(slug);
         if (!expert) {
-          writeError(`Expert "${slug}" not found.\n`);
-          throw new CliUserError(`Expert "${slug}" not found.`);
+          const all = (await library.list()).map((e) => e.slug);
+          const msg = formatNotFound("Expert", slug, all);
+          writeError(`${msg}\n`);
+          throw new CliUserError(msg);
         }
         if (expert.kind !== "persona") {
           const msg = `Expert "${slug}" is not a persona expert — only persona experts have indexed documents.`;
@@ -623,24 +638,19 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
     .description("Reprocess all documents for a persona expert and refresh its profile")
     .argument("<slug>", "Persona expert slug")
     .option("--retrain", "Clear the existing profile and rebuild from scratch")
-    .option(
-      "--engine <kind>",
-      `Engine to use for profile analysis (${ENGINE_KINDS.join("|")})`,
-      "copilot",
+    .addOption(
+      new Option("--engine <kind>", "Engine to use for profile analysis").choices([...ENGINE_KINDS]).default("copilot"),
     )
     .action(async (slug: string, opts: TrainOptions) => {
-      if (opts.engine !== undefined && !ENGINE_KINDS.includes(opts.engine as EngineKind)) {
-        throw new Error(
-          `Unknown --engine value: ${opts.engine}. Expected one of: ${ENGINE_KINDS.join(", ")}`,
-        );
-      }
       const engineKind = (opts.engine ?? "copilot") as EngineKind;
 
       await withExpertLibrary(async (library, config, dataHome, db) => {
         const expert = await library.get(slug);
         if (!expert) {
-          writeError(`Expert "${slug}" not found.\n`);
-          throw new CliUserError(`Expert "${slug}" not found.`);
+          const all = (await library.list()).map((e) => e.slug);
+          const msg = formatNotFound("Expert", slug, all);
+          writeError(`${msg}\n`);
+          throw new CliUserError(msg);
         }
         if (expert.kind !== "persona") {
           const msg = `Expert "${slug}" is not a persona expert — only persona experts can be trained.`;

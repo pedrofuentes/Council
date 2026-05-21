@@ -10,7 +10,7 @@
  */
 import * as path from "node:path";
 
-import { Command } from "commander";
+import { Command, Option } from "commander";
 
 import { getCouncilHome, loadConfig } from "../../config/index.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
@@ -55,15 +55,12 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
   cmd
     .description("Reopen a panel: show transcript, or continue with a new prompt")
     .argument("<panel>", "Panel name to resume (as shown by `council sessions`)")
-    .option(
-      "--format <kind>",
-      `Output format (default: auto — uses interactive UI on terminals, plain text when piped). Options: ${RENDERER_FORMATS.join(" | ")}`,
-      "auto",
+    .addOption(
+      new Option("--format <kind>", "Output format").choices([...RENDERER_FORMATS]).default("auto"),
     )
     .option("--continue <prompt>", "Run a new debate against the same panel with this prompt")
-    .option(
-      "--engine <kind>",
-      "Engine for --continue mode: 'mock' (offline) or 'copilot' (real). Required when --continue is set.",
+    .addOption(
+      new Option("--engine <kind>", "Engine for --continue mode").choices([...ENGINE_KINDS]),
     )
     .option(
       "--max-rounds <n>",
@@ -94,11 +91,6 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
         if (raw.engine === undefined) {
           throw new Error(
             "--engine is required with --continue (one of: mock, copilot). Use --engine mock for offline/deterministic, --engine copilot for real Copilot SDK.",
-          );
-        }
-        if (!ENGINE_KINDS.includes(raw.engine)) {
-          throw new Error(
-            `Unknown --engine value: ${raw.engine}. Expected one of: ${ENGINE_KINDS.join(", ")}`,
           );
         }
         engineKind = raw.engine;

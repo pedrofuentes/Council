@@ -48,8 +48,15 @@ import {
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
+import { suggestMatch } from "../fuzzy-match.js";
 
 const PANEL_NAME_RE = /^[a-z][a-z0-9-]*$/;
+
+function formatPanelNotFound(name: string, available: readonly string[]): string {
+  const suggestions = suggestMatch(name, available);
+  const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
+  return `Panel "${name}" not found.${hint}`;
+}
 
 interface PanelContext {
   readonly library: ExpertLibrary;
@@ -456,8 +463,10 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
       await withPanelContext(async (ctx) => {
         const row = await ctx.panelRepo.findByName(name);
         if (!row) {
-          writeError(`Panel "${name}" not found.\n`);
-          throw new CliUserError(`Panel "${name}" not found.`);
+          const allPanels = (await ctx.panelRepo.findAll()).map((p) => p.name);
+          const msg = formatPanelNotFound(name, allPanels);
+          writeError(`${msg}\n`);
+          throw new CliUserError(msg);
         }
         const memberSlugs = await ctx.panelRepo.getMembers(name);
 
@@ -510,8 +519,10 @@ function buildEditCommand(write: Writer, writeError: Writer): Command {
       await withPanelContext(async (ctx) => {
         const existing = await ctx.panelRepo.findByName(name);
         if (!existing) {
-          writeError(`Panel "${name}" not found.\n`);
-          throw new CliUserError(`Panel "${name}" not found.`);
+          const allPanels = (await ctx.panelRepo.findAll()).map((p) => p.name);
+          const msg = formatPanelNotFound(name, allPanels);
+          writeError(`${msg}\n`);
+          throw new CliUserError(msg);
         }
         const yamlPath = existing.yamlPath;
         const editor = resolveEditor();

@@ -386,7 +386,7 @@ describe("buildConveneCommand", () => {
       } catch (err) {
         thrown = err instanceof Error ? err.message : String(err);
       }
-      expect(thrown.toLowerCase()).toMatch(/anthropic-direct|engine.*value|engine.*expected/);
+      expect(thrown.toLowerCase()).toMatch(/anthropic-direct|engine.*value|engine.*expected|allowed choices/);
     });
   });
 

@@ -25,6 +25,7 @@ interface ErrorLike {
   readonly message?: string;
   readonly retryAfterMs?: number;
   readonly provider?: string;
+  readonly model?: string;
 }
 
 /**
@@ -39,27 +40,30 @@ export function formatEngineError(input: EngineError | ErrorLike | Error): strin
   let message: string;
   let retryAfterMs: number | undefined;
   let provider: string | undefined;
+  let model: string | undefined;
 
   if (input instanceof Error) {
     // Thrown Error path — may have a tagged `code` we attached upstream,
     // otherwise fall through to the generic INTERNAL hint.
-    const maybeCoded = input as Error & { code?: string };
+    const maybeCoded = input as Error & { code?: string; model?: string };
     code = maybeCoded.code;
     message = input.message;
+    model = maybeCoded.model;
   } else {
     code = input.code;
     message = input.message ?? String(input);
     retryAfterMs = input.retryAfterMs;
     provider = input.provider;
+    model = (input as ErrorLike).model;
   }
 
-  const hint = hintForCode(code, { message, retryAfterMs, provider });
+  const hint = hintForCode(code, { message, retryAfterMs, provider, model });
   return `${hint}\n\n  Underlying: ${message}`;
 }
 
 function hintForCode(
   code: string | undefined,
-  ctx: { readonly message: string; readonly retryAfterMs?: number | undefined; readonly provider?: string | undefined },
+  ctx: { readonly message: string; readonly retryAfterMs?: number | undefined; readonly provider?: string | undefined; readonly model?: string | undefined },
 ): string {
   switch (code) {
     case "NOT_AUTHENTICATED":
@@ -69,10 +73,12 @@ function hintForCode(
         "If you don't have `gh`, run `council doctor` for setup guidance."
       );
     case "MODEL_UNAVAILABLE": {
-      // Try to extract a model identifier from the message so users
-      // see exactly which model isn't reachable.
-      const modelMatch = ctx.message.match(/[a-z][a-z0-9-]*-(?:opus|sonnet|haiku|gpt|gemini)[a-z0-9.-]*/i);
-      const model = modelMatch ? modelMatch[0] : "(unknown)";
+      // Prefer the explicit model field; fall back to regex extraction.
+      let model = ctx.model;
+      if (!model) {
+        const modelMatch = ctx.message.match(/[a-z][a-z0-9-]*-(?:opus|sonnet|haiku|gpt|gemini)[a-z0-9.-]*/i);
+        model = modelMatch ? modelMatch[0] : "(unknown)";
+      }
       return (
         `Model ${model} isn't available on your Copilot tier. ` +
         "Check `council doctor` for the model list, or try a different `--model` flag on the expert."

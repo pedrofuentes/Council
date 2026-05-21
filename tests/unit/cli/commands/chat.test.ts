@@ -306,9 +306,10 @@ describe("buildChatCommand", () => {
         write: () => undefined,
         writeError: () => undefined,
       });
+      cmd.exitOverride();
       await expect(
         cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "bogus"]),
-      ).rejects.toThrow(/--engine is required.*mock|copilot/i);
+      ).rejects.toThrow(/engine.*allowed choices|allowed choices.*engine/i);
     });
 
     it("errors when the expert slug does not exist", async () => {

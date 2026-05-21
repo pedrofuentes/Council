@@ -13,22 +13,22 @@ describe("handleCliError", () => {
     expect(stderr).toBe("");
   });
 
-  it("returns exit code 1 and writes message for plain Error (no stack trace)", () => {
+  it("returns exit code 4 and writes message for plain Error (no stack trace)", () => {
     let stderr = "";
     const result = handleCliError(new Error("something broke"), (s) => {
       stderr += s;
     });
-    expect(result).toBe(1);
+    expect(result).toBe(4);
     expect(stderr).toContain("something broke");
     expect(stderr).not.toContain("at "); // no stack trace lines
   });
 
-  it("returns exit code 1 and writes message for non-Error values", () => {
+  it("returns exit code 4 and writes message for non-Error values", () => {
     let stderr = "";
     const result = handleCliError("string error", (s) => {
       stderr += s;
     });
-    expect(result).toBe(1);
+    expect(result).toBe(4);
     expect(stderr).toContain("string error");
   });
 
@@ -40,7 +40,7 @@ describe("handleCliError", () => {
     const result = handleCliError(err, (s) => {
       stderr += s;
     });
-    expect(result).toBe(1);
+    expect(result).toBe(4);
     expect(stderr).toContain("ghost");
     expect(stderr).not.toContain("at "); // no stack trace
   });

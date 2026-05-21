@@ -7,7 +7,7 @@
  */
 import * as path from "node:path";
 
-import { Command } from "commander";
+import { Command, Option } from "commander";
 
 import { getCouncilHome } from "../../config/index.js";
 import { checkTopicAdmission } from "../../core/topic-admission.js";
@@ -44,15 +44,12 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
       "For library experts, use `council chat`."
     )
     .argument("<question>", "The question to ask")
-    .requiredOption(
-      "--engine <kind>",
-      "Engine: 'mock' (offline, deterministic) or 'copilot' (real Copilot SDK)",
+    .addOption(
+      new Option("--engine <kind>", "Engine to use").choices([...ENGINE_KINDS]).makeOptionMandatory(),
     )
     .option("--expert <slug>", "Expert slug to ask (default: first expert in the panel)")
-    .option(
-      "--format <kind>",
-      `Output format: ${RENDERER_FORMATS.join(" | ")} (auto picks Ink TUI on TTY, plain text otherwise)`,
-      "auto",
+    .addOption(
+      new Option("--format <kind>", "Output format").choices([...RENDERER_FORMATS]).default("auto"),
     )
     .option(
       "--max-words <n>",
@@ -71,12 +68,6 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
           maxWords?: number;
         },
       ) => {
-        if (!ENGINE_KINDS.includes(raw.engine)) {
-          throw new Error(
-            `Unknown --engine value: ${raw.engine}. Expected one of: ${ENGINE_KINDS.join(", ")}`,
-          );
-        }
-
         const admission = checkTopicAdmission(question);
         for (const warning of admission.warnings) {
           writeError(warning + "\n");

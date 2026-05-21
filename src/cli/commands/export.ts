@@ -22,7 +22,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import { Command } from "commander";
+import { Command, Option } from "commander";
 
 import { getCouncilHome } from "../../config/index.js";
 import { createDatabase } from "../../memory/db.js";
@@ -55,14 +55,11 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
   cmd
     .description("Export a panel transcript to markdown, json, or adr format")
     .argument("<panel>", "Panel name to export (as shown by `council sessions`)")
-    .option("--format <kind>", `Output format: ${EXPORT_FORMATS.join(" | ")}`, "markdown")
+    .addOption(
+      new Option("--format <kind>", "Output format").choices([...EXPORT_FORMATS]).default("markdown"),
+    )
     .option("--output <path>", "Write to file instead of stdout (default: stdout)")
     .action(async (panelName: string, raw: ExportOptions) => {
-      if (!EXPORT_FORMATS.includes(raw.format)) {
-        throw new Error(
-          `Unknown --format value: ${raw.format}. Expected one of: ${EXPORT_FORMATS.join(", ")}`,
-        );
-      }
       const opts: ExportOptions = {
         format: raw.format,
         ...(raw.output !== undefined ? { output: raw.output } : {}),
