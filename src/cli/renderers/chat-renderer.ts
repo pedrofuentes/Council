@@ -135,11 +135,11 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
     },
 
     showPrompt(): void {
-      write(chalk.bold.white(PROMPT_PREFIX));
+      write(chalk.bold(PROMPT_PREFIX));
     },
 
     showUserMessage(content: string): void {
-      write(`${chalk.bold.white(PROMPT_PREFIX)}${sanitizeSingleLine(content)}\n`);
+      write(`${chalk.bold(PROMPT_PREFIX)}${sanitizeSingleLine(content)}\n`);
     },
 
     startExpertResponse(expertSlug: string): void {

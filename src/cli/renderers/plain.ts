@@ -39,7 +39,7 @@ export class PlainRenderer implements Renderer {
   constructor(sink: Sink, options: PlainRendererOptions = {}) {
     this.#sink = sink;
     this.#color = options.color ?? true;
-    this.#chalk = new Chalk({ level: this.#color ? 1 : 0 });
+    this.#chalk = new Chalk({ level: this.#color && !process.env.NO_COLOR ? 1 : 0 });
   }
 
   async render(events: AsyncIterable<DebateEvent>): Promise<void> {
@@ -69,7 +69,7 @@ export class PlainRenderer implements Renderer {
           break;
         case "cost.update":
           this.write(
-            `${this.dim(`[Cost: ${evt.premiumRequests}/${evt.estimatedTotal} premium requests]`)}\n`,
+            `${this.gray(`[Cost: ${evt.premiumRequests}/${evt.estimatedTotal} premium requests]`)}\n`,
           );
           break;
         case "debate.end":
@@ -93,9 +93,9 @@ export class PlainRenderer implements Renderer {
       this.#displayNames.set(expert.slug, expert.displayName);
       if (expert.participantKind === "human") {
         this.#humanSlugs.add(expert.slug);
-        this.write(`  • ${expert.displayName} ${this.dim("(human)")}\n`);
+        this.write(`  • ${expert.displayName} ${this.gray("(human)")}\n`);
       } else {
-        this.write(`  • ${expert.displayName} ${this.dim(`(${expert.model})`)}\n`);
+        this.write(`  • ${expert.displayName} ${this.gray(`(${expert.model})`)}\n`);
       }
     }
   }
@@ -119,6 +119,9 @@ export class PlainRenderer implements Renderer {
   }
   private dim(text: string): string {
     return this.#chalk.dim(text);
+  }
+  private gray(text: string): string {
+    return this.#chalk.gray(text);
   }
   private red(text: string): string {
     return this.#chalk.red(text);
