@@ -183,7 +183,7 @@ describe("chat lifecycle e2e", () => {
       lines: ["Hello", "exit"],
     });
 
-    expect(output.stdout).toMatch(/Starting new conversation/i);
+    expect(output.stdout).toMatch(/Starting 1:1 chat/i);
     expect(output.stdout).toMatch(/Conversation saved/i);
 
     const sessions = await listChatSessions(ctx, { targetType: "expert", targetSlug: "cto" });

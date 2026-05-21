@@ -54,10 +54,10 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
   const cmd = new Command("resume");
   cmd
     .description("Reopen a panel: show transcript, or continue with a new prompt")
-    .argument("<panel>", "Panel name to resume (as shown by `council panels`)")
+    .argument("<panel>", "Panel name to resume (as shown by `council sessions`)")
     .option(
       "--format <kind>",
-      `Output format: ${RENDERER_FORMATS.join(" | ")} (auto picks Ink TUI on TTY, plain text otherwise)`,
+      `Output format (default: auto — uses interactive UI on terminals, plain text when piped). Options: ${RENDERER_FORMATS.join(" | ")}`,
       "auto",
     )
     .option("--continue <prompt>", "Run a new debate against the same panel with this prompt")
@@ -85,7 +85,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
     )
     .option(
       "--heuristic-memory",
-      "Skip the post-debate LLM extraction pass and rely on the heuristic recall scan (§3.1). " +
+      "Skip post-debate LLM extraction — for offline/air-gapped use. " +
         "Useful for offline tests and air-gapped environments.",
     )
     .action(async (panelName: string, raw: ResumeOptions) => {
@@ -254,6 +254,9 @@ async function renderTranscriptInline(
       write(`  ${t.content}\n\n`);
     }
     write(`--- end of transcript (${resolved.turns.length} turns) ---\n`);
+    write(
+      `\nTo continue this debate: council resume ${resolved.panel.name} --continue "<new question>" --engine copilot\n`
+    );
     return;
   }
 

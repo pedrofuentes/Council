@@ -362,7 +362,7 @@ describe("buildChatCommand", () => {
       });
       await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
 
-      expect(out).toMatch(/Starting new conversation/i);
+      expect(out).toMatch(/Starting 1:1 chat/i);
       expect(out).toMatch(/Conversation saved/i);
 
       await withRepo(env, async (repo) => {
@@ -868,7 +868,7 @@ describe("panel chat mode", () => {
     });
     await cmd.parseAsync(["node", "council-chat", "my-panel", "--engine", "mock"]);
 
-    expect(out).toMatch(/Starting panel chat/i);
+    expect(out).toMatch(/Starting group chat/i);
     expect(out).toMatch(/2 experts/i);
 
     await withRepo(env, async (repo) => {

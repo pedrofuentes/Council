@@ -128,7 +128,10 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
 
   const cmd = new Command("conclude");
   cmd
-    .description("Synthesize the latest debate of a panel into a structured decision framework")
+    .description(
+      "Synthesize the latest debate of a panel into a structured decision framework. " +
+      "For transcript-based ADR export, use `council export --format adr` instead."
+    )
     .argument("[panel]", "Panel name to conclude (defaults to the most recently created panel)")
     .requiredOption("--engine <kind>", `Engine kind: ${ENGINE_KINDS.join(" | ")}`)
     .option("--format <kind>", `Output format: ${CONCLUDE_FORMATS.join(" | ")}`, "plain")
@@ -163,7 +166,9 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
 
         if (doc.turns.length === 0) {
           throw new Error(
-            `Panel '${panelName}' has no turns in its latest debate — nothing to conclude. Run \`council convene\` or \`council resume --continue\` first.`,
+            `Panel '${panelName}' has no turns in its latest debate — nothing to conclude. ` +
+            `Run \`council convene "${doc.panel.topic ?? '<topic>'}" --template ${panelName} --engine copilot\` or ` +
+            `\`council resume ${panelName} --continue "<prompt>" --engine copilot\` first.`,
           );
         }
 

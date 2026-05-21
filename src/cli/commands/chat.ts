@@ -130,7 +130,10 @@ export function buildChatCommand(deps: ChatCommandDeps = {}): Command {
 
   const cmd = new Command("chat");
   cmd
-    .description("Persistent conversation with an expert or panel from the library")
+    .description(
+      "Persistent conversation with an expert or panel from the library. " +
+      "For structured debates use `council convene`."
+    )
     .argument("[target]", "Expert slug or panel name to chat with")
     .option(
       "--engine <kind>",
@@ -955,7 +958,7 @@ async function runExpertChat(opts: ExpertChatOptions): Promise<void> {
       renderer.showSessionStatus(`Starting new conversation with ${expert.displayName}...`);
     } else if (willCreateFresh) {
       session = await repo.createSession({ targetType: "expert", targetSlug: target });
-      renderer.showSessionStatus(`Starting new conversation with ${expert.displayName}...`);
+      renderer.showSessionStatus(`Starting 1:1 chat with ${expert.displayName}`);
     } else if (resumingSession) {
       session = resumingSession;
       const existingCount = await repo.getTurnCount(session.id);
@@ -1130,9 +1133,8 @@ async function runPanelChat(opts: PanelChatOptions): Promise<void> {
       );
     } else if (willCreateFresh) {
       session = await repo.createSession({ targetType: "panel", targetSlug: target });
-      const names = resolved.map((e) => e.displayName).join(", ");
       renderer.showSessionStatus(
-        `Starting panel chat with ${panel.name} (${resolved.length} experts: ${names})...`,
+        `Starting group chat with ${panel.name} (${resolved.length} experts) — use @name to address specific experts`,
       );
     } else if (resumingSession) {
       session = resumingSession;

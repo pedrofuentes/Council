@@ -54,7 +54,7 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
   const cmd = new Command("export");
   cmd
     .description("Export a panel transcript to markdown, json, or adr format")
-    .argument("<panel>", "Panel name to export (as shown by `council panels`)")
+    .argument("<panel>", "Panel name to export (as shown by `council sessions`)")
     .option("--format <kind>", `Output format: ${EXPORT_FORMATS.join(" | ")}`, "markdown")
     .option("--output <path>", "Write to file instead of stdout (default: stdout)")
     .action(async (panelName: string, raw: ExportOptions) => {

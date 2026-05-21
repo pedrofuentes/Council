@@ -77,7 +77,7 @@ export function buildMemoryCommand(deps: MemoryCommandDeps = {}): Command {
   const writeError: Writer = deps.writeError ?? defaultErrorWriter;
 
   const cmd = new Command("memory");
-  cmd.description("Inspect and curate Council's local SQLite state");
+  cmd.description("Manage past debates and what experts remember");
 
   cmd.addCommand(buildListCommand(write, writeError));
   cmd.addCommand(buildInspectCommand(write, writeError));
