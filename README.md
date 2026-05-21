@@ -338,7 +338,7 @@ council memory reset <panel> --yes          # Destructive: clear debate state
 council doctor                              # Diagnose setup issues
 ```
 
-> Configuration lives in `~/Council/config.yaml` (auto-created on first run).
+> Configuration lives in `~/.council/config.yaml` (auto-created on first run).
 > Edit it directly — there is no dedicated `council config` subcommand.
 
 ## Roadmap

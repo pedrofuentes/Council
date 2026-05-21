@@ -20,7 +20,9 @@ export interface SessionsCommandOptions {
 export function buildSessionsCommand(write: Writer = defaultWriter): Command {
   const cmd = new Command("sessions");
   cmd
-    .description("List all debate sessions stored in Council")
+    .description(
+      "List debate sessions (past runs). For panel templates, use `council panel list`."
+    )
     .option(
       "--format <kind>",
       "Output format: json (NDJSON) or plain (human-readable)",

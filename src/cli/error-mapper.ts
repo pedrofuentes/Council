@@ -65,7 +65,8 @@ function hintForCode(
     case "NOT_AUTHENTICATED":
       return (
         "Council couldn't authenticate with the engine. " +
-        "Run `gh auth login` (and grant Copilot scope) and retry."
+        "Run `gh auth login` (and grant Copilot scope) and retry. " +
+        "If you don't have `gh`, run `council doctor` for setup guidance."
       );
     case "MODEL_UNAVAILABLE": {
       // Try to extract a model identifier from the message so users

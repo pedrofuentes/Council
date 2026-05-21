@@ -118,19 +118,22 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
 
   const cmd = new Command("convene");
   cmd
-    .description("Run a panel debate on a topic and persist results to the local DB")
+    .description(
+      "Run a panel debate on a topic and persist results to the local DB. " +
+      "For one-shot questions use `council ask`. For conversation use `council chat`."
+    )
     .argument("<topic>", "The topic / question for the panel to debate")
     .option(
       "--template <name>",
-      "Built-in panel template (e.g. 'code-review'). If omitted, the panel is auto-composed from the topic.",
+      "Use a built-in or custom panel template. **Omit to let Council auto-design an expert panel from your topic.**",
     )
     .requiredOption(
       "--engine <kind>",
-      "Engine to use: 'mock' (offline, deterministic) or 'copilot' (real Copilot SDK)",
+      "Engine (default: copilot). Use 'mock' for offline testing.",
     )
     .option(
       "--format <kind>",
-      `Output format: ${RENDERER_FORMATS.join(" | ")} (auto picks Ink TUI on TTY, plain text otherwise)`,
+      `Output format (default: auto — uses interactive UI on terminals, plain text when piped). Options: ${RENDERER_FORMATS.join(" | ")}`,
       "auto",
     )
     .option(
@@ -160,21 +163,21 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
     )
     .option(
       "--context-scope <scope>",
-      "Visibility scope for prior turns: all | same-round | recent (§2.6)",
+      "Visibility scope for prior turns: all | same-round | recent",
       "all",
     )
     .option(
       "--summarize-after <n>",
-      "Start rolling-summary after N rounds (§2.6). Omit to disable.",
+      "Start rolling-summary after N rounds. Omit to disable.",
       (v) => Number.parseInt(v, 10),
     )
     .option(
       "--heuristic-summaries",
-      "Use the cheap heuristic summarizer instead of the default LLM-backed one (§2.6)",
+      "Use simpler local summarizer instead of LLM — for offline/air-gapped use",
     )
     .option(
       "--heuristic-memory",
-      "Skip the post-debate LLM extraction pass and rely on the heuristic recall scan (§3.1). " +
+      "Skip post-debate LLM extraction — for offline/air-gapped use. " +
         "Useful for offline tests and air-gapped environments.",
     )
     .option("--yes", "Skip the auto-compose confirmation prompt (non-interactive runs)")

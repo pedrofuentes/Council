@@ -34,8 +34,15 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
 
   const cmd = new Command("ask");
   cmd
-    .description("Ask one expert from an existing panel a single question")
-    .argument("<panel>", "Panel name (as shown by `council panels`)")
+    .description(
+      "Ask one expert from an existing panel a single question. " +
+      "For multi-expert debates use `council convene`. For conversation use `council chat`."
+    )
+    .argument(
+      "<panel>",
+      "Panel name from a previous debate (as shown by `council sessions`). " +
+      "For library experts, use `council chat`."
+    )
     .argument("<question>", "The question to ask")
     .requiredOption(
       "--engine <kind>",
@@ -92,7 +99,7 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
           const panel = await new PanelRepository(db).findByName(panelName);
           if (!panel) {
             throw new Error(
-              `No panel found with name '${panelName}'. Run \`council panels\` to list available panels.`,
+              `No panel found with name '${panelName}'. Run \`council sessions\` to list available panels.`,
             );
           }
           const allExperts = await new ExpertRepository(db).findByPanelId(panel.id);
