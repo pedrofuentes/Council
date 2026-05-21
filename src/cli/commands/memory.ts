@@ -131,6 +131,7 @@ function buildListCommand(write: Writer, writeError: Writer): Command {
           if (s.lastActivity) write(`    last activity: ${s.lastActivity}\n`);
           write("\n");
         }
+        write("\x1b[2mNext: council memory inspect <panel> --expert <slug>\x1b[0m\n");
       } finally {
         await db.destroy().catch((err: unknown) => {
           writeError(
@@ -276,6 +277,7 @@ async function renderPanelDetail(
   write(`  started: ${latest.startedAt}\n`);
   if (latest.endedAt) write(`  ended:   ${latest.endedAt}\n`);
   write(`\n${debates.length} debate${debates.length === 1 ? "" : "s"} total for this panel.\n`);
+  write("\x1b[2mNext: council export <panel> | council resume <panel>\x1b[0m\n");
 }
 
 async function renderExpertDetail(
@@ -366,6 +368,7 @@ async function renderExpertDetail(
   } else {
     write(`\nRecalled memory: (none — no prior turns by this expert)\n`);
   }
+  write("\x1b[2mNext: council export <panel> | council resume <panel>\x1b[0m\n");
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -414,6 +417,7 @@ function buildResetCommand(write: Writer, writeError: Writer): Command {
           write(
             `Removed expert '${expert.slug}' (${expert.displayName}) from panel '${panel.name}'.\n`,
           );
+          write("\x1b[2mRun 'council memory list' to verify.\x1b[0m\n");
           return;
         }
 
@@ -422,6 +426,7 @@ function buildResetCommand(write: Writer, writeError: Writer): Command {
           write(
             `Deleted panel '${panel.name}' entirely (FK CASCADE removed experts, debates, and turns).\n`,
           );
+          write("\x1b[2mRun 'council memory list' to verify.\x1b[0m\n");
           return;
         }
 
@@ -489,6 +494,7 @@ function buildResetCommand(write: Writer, writeError: Writer): Command {
         write(
           `Reset panel '${panel.name}': deleted ${debates.length} debate${debates.length === 1 ? "" : "s"} and their turns. Panel + experts kept (run \`council convene\` to start fresh).\n`,
         );
+        write("\x1b[2mRun 'council memory list' to verify.\x1b[0m\n");
       } finally {
         await db.destroy().catch((err: unknown) => {
           writeError(
