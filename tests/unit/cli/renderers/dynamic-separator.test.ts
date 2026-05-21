@@ -53,7 +53,7 @@ describe("PlainRenderer — dynamic separator width", () => {
     // The separator should be 60 chars wide (uses terminal width)
     const separatorLine = sink.output.split("\n").find((l) => l.includes("─"));
     expect(separatorLine).toBeDefined();
-    const dashCount = (separatorLine!.match(/─/g) ?? []).length;
+    const dashCount = (separatorLine?.match(/─/g) ?? []).length;
     expect(dashCount).toBe(60);
   });
 
@@ -75,7 +75,7 @@ describe("PlainRenderer — dynamic separator width", () => {
 
     const separatorLine = sink.output.split("\n").find((l) => l.includes("─"));
     expect(separatorLine).toBeDefined();
-    const dashCount = (separatorLine!.match(/─/g) ?? []).length;
+    const dashCount = (separatorLine?.match(/─/g) ?? []).length;
     expect(dashCount).toBe(100);
   });
 
@@ -97,7 +97,7 @@ describe("PlainRenderer — dynamic separator width", () => {
 
     const separatorLine = sink.output.split("\n").find((l) => l.includes("─"));
     expect(separatorLine).toBeDefined();
-    const dashCount = (separatorLine!.match(/─/g) ?? []).length;
+    const dashCount = (separatorLine?.match(/─/g) ?? []).length;
     expect(dashCount).toBe(80);
   });
 });

@@ -196,7 +196,8 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
 
     showSeparator(): void {
       const sym = getSymbols();
-      write(`${chalk.dim(sym.separator.repeat(40))}\n`);
+      const width = Math.min(process.stdout.columns ?? 80, 100);
+      write(`${chalk.dim(sym.separator.repeat(width))}\n`);
     },
   };
 }
