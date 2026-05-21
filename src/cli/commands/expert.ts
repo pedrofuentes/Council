@@ -98,6 +98,17 @@ export function buildExpertCommand(
   cmd.addCommand(buildDeleteCommand(write, writeError));
   cmd.addCommand(buildDocsCommand(write, writeError));
   cmd.addCommand(buildTrainCommand(write, writeError, deps));
+
+  cmd.addHelpText(
+    "after",
+    `
+Examples:
+  $ council expert create                           # interactive wizard
+  $ council expert list                             # browse your library
+  $ council expert inspect security-auditor         # full detail
+`,
+  );
+
   return cmd;
 }
 

@@ -441,6 +441,16 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       }
     });
 
+  cmd.addHelpText(
+    "after",
+    `
+Examples:
+  $ council convene "Should we adopt GraphQL?" --engine copilot
+  $ council convene "Review this PR" --template code-review --engine copilot
+  $ council convene "Ship now or wait?" --mode structured --engine copilot
+`,
+  );
+
   return cmd;
 }
 

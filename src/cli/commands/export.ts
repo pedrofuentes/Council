@@ -85,6 +85,16 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
       }
     });
 
+  cmd.addHelpText(
+    "after",
+    `
+Examples:
+  $ council export my-panel                         # markdown to stdout
+  $ council export my-panel --format adr            # Architecture Decision Record
+  $ council export my-panel --format json --output transcript.ndjson
+`,
+  );
+
   return cmd;
 }
 
