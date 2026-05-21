@@ -27,7 +27,8 @@ import { Box, Static, Text, render as inkRender, useInput, useStdin } from "ink"
 import Spinner from "ink-spinner";
 
 import type { DebateEndReason, DebateEvent, PanelMemberSnapshot } from "../../../core/types.js";
-import type { Renderer } from "../types.js";
+import type { Renderer, Sink } from "../types.js";
+import { PlainRenderer } from "../plain.js";
 
 import { assignExpertColor, formatExpertPrefix, type ExpertColor } from "./colors.js";
 import { getSymbols } from "../symbols.js";
@@ -48,6 +49,23 @@ function CtrlCHandler({ onCancel }: { readonly onCancel: () => void }): null {
 /** Returns separator width: min(stdout columns, 100), default 80. */
 export function getSeparatorWidth(): number {
   return Math.min(process.stdout.columns ?? 80, 100);
+}
+
+/** Returns max content width: min(stdout columns, 120), default 80. */
+export function getContentWidth(): number {
+  return Math.min(process.stdout.columns ?? 80, 120);
+}
+
+/**
+ * Determine whether the streaming cursor should be suppressed.
+ * Screen readers re-announce the cursor on every delta, so we hide it
+ * when ASCII mode is active (NO_COLOR, COUNCIL_ASCII, TERM=dumb).
+ */
+export function shouldSuppressCursor(): boolean {
+  if (process.env["NO_COLOR"]) return true;
+  if (process.env["COUNCIL_ASCII"] === "1") return true;
+  if (process.env["TERM"] === "dumb") return true;
+  return false;
 }
 
 // --- Static list item types ---
@@ -318,10 +336,11 @@ function StreamingText({
   readonly retrying: boolean;
 }): ReactElement {
   const sym = getSymbols();
+  const showCursor = !ended && !retrying && text.length > 0 && !shouldSuppressCursor();
   return (
-    <Text>
+    <Text wrap="wrap">
       {text}
-      {!ended && !retrying && text.length > 0 ? <Text color="cyan">{` ${sym.cursor}`}</Text> : null}
+      {showCursor ? <Text color="cyan">{` ${sym.cursor}`}</Text> : null}
     </Text>
   );
 }
@@ -517,6 +536,15 @@ export interface InkRendererOptions {
   readonly isTTY?: boolean;
 }
 
+/** Sentinel error class to distinguish Ink initialization failures from stream errors. */
+class InkRenderError extends Error {
+  override readonly cause: unknown;
+  constructor(cause: unknown) {
+    super("Ink render initialization failed");
+    this.cause = cause;
+  }
+}
+
 export class InkRenderer implements Renderer {
   readonly #stdout: NodeJS.WriteStream;
   readonly #stderr: NodeJS.WriteStream;
@@ -527,8 +555,30 @@ export class InkRenderer implements Renderer {
   }
 
   async render(events: AsyncIterable<DebateEvent>): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
+    try {
+      await this.#renderWithInk(events);
+    } catch (err: unknown) {
+      // A11Y-14: If Ink itself failed to initialize (ConPTY, MinTTY, etc.),
+      // fall back to PlainRenderer. Stream errors are re-thrown as-is.
+      if (err instanceof InkRenderError) {
+        const message = err.cause instanceof Error ? err.cause.message : String(err.cause);
+        this.#stderr.write(`[WARN] Ink renderer failed (${message}), falling back to plain text\n`);
+        const sink: Sink = {
+          write: (text: string) => this.#stdout.write(text),
+          writeError: (text: string) => this.#stderr.write(text),
+        };
+        const plain = new PlainRenderer(sink, { color: false });
+        await plain.render(events);
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  #renderWithInk(events: AsyncIterable<DebateEvent>): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
       let done = false;
+      let instance: ReturnType<typeof inkRender>;
       const finish = (err?: unknown): void => {
         if (done) return;
         done = true;
@@ -540,15 +590,20 @@ export class InkRenderer implements Renderer {
         if (err) reject(err instanceof Error ? err : new Error(String(err)));
         else resolve();
       };
-      const instance = inkRender(
-        <DebateApp events={events} onComplete={(err) => finish(err)} />,
-        {
-          stdout: this.#stdout,
-          stderr: this.#stderr,
-          exitOnCtrlC: false,
-          patchConsole: false,
-        },
-      );
+      try {
+        instance = inkRender(
+          <DebateApp events={events} onComplete={(err) => finish(err)} />,
+          {
+            stdout: this.#stdout,
+            stderr: this.#stderr,
+            exitOnCtrlC: false,
+            patchConsole: false,
+          },
+        );
+      } catch (initErr: unknown) {
+        reject(new InkRenderError(initErr));
+        return;
+      }
       instance.waitUntilExit().then(
         () => finish(),
         (err: unknown) => finish(err),
