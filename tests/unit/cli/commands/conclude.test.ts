@@ -243,7 +243,12 @@ describe("buildConcludeCommand", () => {
     let errorOutput = "";
     const cmd = buildConcludeCommand({
       write: () => undefined,
-      writeError: (s) => { errorOutput += s; },
+      writeError: (s) => {
+        errorOutput += s;
+      },
+      writeNotice: (s) => {
+        errorOutput += s;
+      },
       // NO engineFactory — exercises makeEngineFromKind(resolvedEngine)
       synthesizerId: SYNTH_ID,
     });
@@ -480,6 +485,9 @@ describe("buildConcludeCommand", () => {
         captured += s;
       },
       writeError: (s) => {
+        stderr += s;
+      },
+      writeNotice: (s) => {
         stderr += s;
       },
       engineFactory: () => makeMockEngine(JSON.stringify(SAMPLE_OUTPUT)),

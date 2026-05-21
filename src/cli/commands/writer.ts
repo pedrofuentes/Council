@@ -10,4 +10,25 @@
 export type Writer = (s: string) => void;
 
 export const defaultWriter: Writer = (s) => process.stdout.write(s);
+
+let quietMode = false;
+
+/** Enable quiet mode — suppresses informational notices on stderr. */
+export function setQuiet(enabled: boolean): void {
+  quietMode = enabled;
+}
+
+/** Returns whether quiet mode is currently active. */
+export function isQuiet(): boolean {
+  return quietMode;
+}
+
+/** Always writes to stderr — used for errors and diagnostics that must never be silenced. */
 export const defaultErrorWriter: Writer = (s) => process.stderr.write(s);
+
+/** Writes informational notices to stderr, suppressed by --quiet. */
+export const defaultNoticeWriter: Writer = (s) => {
+  if (!quietMode) {
+    process.stderr.write(s);
+  }
+};

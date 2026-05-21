@@ -39,7 +39,7 @@ import { PanelRepository } from "../../memory/repositories/panels.js";
 import { loadTranscript, type TranscriptDocument } from "../../memory/transcript.js";
 
 import { CliUserError } from "../cli-user-error.js";
-import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
+import { defaultErrorWriter, defaultNoticeWriter, defaultWriter, type Writer } from "./writer.js";
 import { ENGINE_KINDS, type EngineKind, makeEngineFromKind } from "../run-with-engine.js";
 import { formatEngineError } from "../error-mapper.js";
 import { exitCodeForEngineError } from "../exit-codes.js";
@@ -114,6 +114,7 @@ export interface ConcludeCommandDeps {
   readonly engineFactory?: () => CouncilEngine;
   readonly write?: Writer;
   readonly writeError?: Writer;
+  readonly writeNotice?: Writer;
   /** Test-only seam: pin the synthesizer expert id for response seeding. */
   readonly synthesizerId?: string;
 }
@@ -121,11 +122,13 @@ export interface ConcludeCommandDeps {
 interface ConcludeRawOptions {
   readonly engine?: EngineKind;
   readonly format?: string;
+  readonly timeout?: number;
 }
 
 export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
   const write: Writer = deps.write ?? defaultWriter;
   const writeError: Writer = deps.writeError ?? defaultErrorWriter;
+  const writeNotice: Writer = deps.writeNotice ?? defaultNoticeWriter;
 
   const cmd = new Command("conclude");
   cmd
@@ -144,6 +147,23 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
         .choices([...CONCLUDE_FORMATS])
         .default("plain"),
     )
+    .option(
+      "--timeout <ms>",
+      "Synthesis timeout in milliseconds",
+      (v) => {
+        if (!/^\d+$/.test(v)) {
+          throw new Error(`Invalid timeout value: "${v}" — must be a positive integer.`);
+        }
+        const n = Number.parseInt(v, 10);
+        if (n <= 0 || n > 2_147_483_647) {
+          throw new Error(
+            `Invalid timeout value: "${v}" — must be a positive integer (max 2147483647).`,
+          );
+        }
+        return n;
+      },
+      SYNTHESIS_TIMEOUT_MS,
+    )
     .action(async (panelArg: string | undefined, raw: ConcludeRawOptions) => {
       const format: ConcludeFormat = raw.format === "json" ? "json" : "plain";
 
@@ -151,7 +171,7 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
       const resolvedEngine = resolveEngine(raw.engine, config);
 
       if (resolvedEngine === "mock") {
-        writeError(
+        writeNotice(
           "\n!! [MOCK ENGINE] conclude running with deterministic offline mock — synthesis is NOT real.\n\n",
         );
       }
@@ -198,7 +218,7 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
               `transcript truncated to last ${MAX_TRANSCRIPT_TURNS} turns / ${MAX_TRANSCRIPT_CHARS} chars to fit synthesis budget`,
             );
           }
-          raw_response = await collectResponse(engine, synthesizerId, prompt);
+          raw_response = await collectResponse(engine, synthesizerId, prompt, raw.timeout);
         } catch (err: unknown) {
           writeError("\n" + formatEngineError(err as Error) + "\n\n");
           const cliErr = new CliUserError(err instanceof Error ? err.message : String(err));
