@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Unified 8-color expert palette** (TUI-01, TUI-13) — the expert color palette is now a single source of truth in `src/cli/renderers/ink/colors.ts`, shared by Ink, Chat, and Plain renderers. The palette uses 8 colors: `cyan`, `yellow`, `magenta`, `green`, `blue`, `cyanBright`, `magentaBright`, `yellowBright`. Red has been removed from the expert palette to avoid visual collision with error messages (which remain red).
 - **Per-expert colors in PlainRenderer** (TUI-12) — the Plain renderer now assigns distinct colors to each expert (previously all experts used uniform cyan).
 
+### Fixed
+
+- **Ink UX improvements** (TUI-03/04/05/14/15/20/22) — Ctrl+C now gracefully cancels debates and stops upstream processing; errors are capped to the last 3 with a hidden count; a loading spinner shows while waiting for first response in a round; streaming cursor is suppressed during retries to avoid flicker; completion banner now shows green-colored checkmark with the debate reason.
+
 ### Added
 
 - **Topic admission control** (#570) — new warn-only heuristic guard (`src/core/topic-admission.ts`) runs at every Council entry point (`council convene`, `council ask`, `council chat` — including the in-REPL `@convene` inline debate) and surfaces a non-blocking warning when the topic matches known sensitive categories: violence/weapons synthesis, controlled-substance synthesis, or Crescendo-style prompt-injection patterns. Input is NFKC-normalized before matching so fullwidth/compatibility characters cannot bypass the patterns. The check is pure (no I/O, no DB) and structurally cannot block (`admitted: true` is a literal type); it only echoes a `⚠ This topic touches sensitive areas (…)` line so the user is not surprised when experts engage their safety guidelines.

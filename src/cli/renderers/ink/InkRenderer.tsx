@@ -23,7 +23,7 @@
  * pass `--format`).
  */
 import { useEffect, useState, type ReactElement } from "react";
-import { Box, Static, Text, render as inkRender } from "ink";
+import { Box, Static, Text, render as inkRender, useInput, useStdin } from "ink";
 import Spinner from "ink-spinner";
 
 import type { DebateEndReason, DebateEvent, PanelMemberSnapshot } from "../../../core/types.js";
@@ -31,6 +31,19 @@ import type { Renderer } from "../types.js";
 
 import { assignExpertColor, formatExpertPrefix, type ExpertColor } from "./colors.js";
 import { getSymbols } from "../symbols.js";
+
+/**
+ * Wrapper that only mounts `useInput` when raw mode is supported.
+ * Prevents errors in non-TTY environments (e.g. tests using inkRender directly).
+ */
+function CtrlCHandler({ onCancel }: { readonly onCancel: () => void }): null {
+  useInput((_input, key) => {
+    if (key.ctrl && _input === "c") {
+      onCancel();
+    }
+  });
+  return null;
+}
 
 /** Returns separator width: min(stdout columns, 100), default 80. */
 export function getSeparatorWidth(): number {
@@ -88,6 +101,7 @@ export interface DebateState {
     readonly reason: string;
   } | null;
   readonly endReason: DebateEndReason | null;
+  readonly userCancelled: boolean;
 }
 
 /** Exported for testing — initial empty state. */
@@ -103,6 +117,7 @@ export const INITIAL_STATE: DebateState = {
   errors: [],
   retrying: null,
   endReason: null,
+  userCancelled: false,
 };
 
 let nextId = 0;
@@ -155,7 +170,7 @@ export function reduce(s: DebateState, ev: DebateEvent): DebateState {
       };
     }
     case "turn.end": {
-      // Move active turn to completed
+      // Move active turn to completed; dismiss recoverable errors
       const text =
         s.activeTurn && s.activeTurn.expertSlug === ev.expertSlug && s.activeTurn.text.length > 0
           ? s.activeTurn.text
@@ -171,6 +186,7 @@ export function reduce(s: DebateState, ev: DebateEvent): DebateState {
         ...s,
         completedItems: [...s.completedItems, completedTurn],
         activeTurn: null,
+        errors: s.errors.filter((e) => !e.recoverable),
       };
     }
     case "round.end": {
@@ -205,12 +221,18 @@ export function reduce(s: DebateState, ev: DebateEvent): DebateState {
     case "turn.retry":
       return {
         ...s,
+        activeTurn: s.activeTurn ? { ...s.activeTurn, text: "" } : null,
         retrying: {
           expertSlug: ev.expertSlug,
           attempt: ev.attempt,
           reason: ev.reason,
         },
       };
+    default: {
+      const _exhaustive: never = ev;
+      void _exhaustive;
+      return s;
+    }
   }
 }
 
@@ -289,15 +311,17 @@ function ExpertCard({
 function StreamingText({
   text,
   ended,
+  retrying,
 }: {
   readonly text: string;
   readonly ended: boolean;
+  readonly retrying: boolean;
 }): ReactElement {
   const sym = getSymbols();
   return (
     <Text>
       {text}
-      {!ended && text.length > 0 ? <Text color="cyan">{` ${sym.cursor}`}</Text> : null}
+      {!ended && !retrying && text.length > 0 ? <Text color="cyan">{` ${sym.cursor}`}</Text> : null}
     </Text>
   );
 }
@@ -319,7 +343,7 @@ function StaticItemView({
       return (
         <Box flexDirection="column">
           <ExpertCard state={state} slug={item.expertSlug} />
-          <StreamingText text={item.text} ended={true} />
+          <StreamingText text={item.text} ended={true} retrying={false} />
         </Box>
       );
   }
@@ -330,7 +354,7 @@ function ActiveTurnView({ state }: { readonly state: DebateState }): ReactElemen
   return (
     <Box flexDirection="column">
       <ExpertCard state={state} slug={state.activeTurn.expertSlug} />
-      <StreamingText text={state.activeTurn.text} ended={false} />
+      <StreamingText text={state.activeTurn.text} ended={false} retrying={state.retrying !== null} />
     </Box>
   );
 }
@@ -369,9 +393,15 @@ function CostIndicator({ state }: { readonly state: DebateState }): ReactElement
 
 function ErrorsView({ state }: { readonly state: DebateState }): ReactElement | null {
   if (state.errors.length === 0) return null;
+  const MAX_DISPLAYED = 3;
+  const hidden = Math.max(0, state.errors.length - MAX_DISPLAYED);
+  const visible = state.errors.slice(-MAX_DISPLAYED);
   return (
     <Box flexDirection="column" marginTop={1}>
-      {state.errors.map((err, i) => (
+      {hidden > 0 && (
+        <Text dimColor>{`(${hidden} previous hidden)`}</Text>
+      )}
+      {visible.map((err, i) => (
         <Text key={`err-${i}`} color="red">
           {`[error${err.expertSlug ? ` from ${err.expertSlug}` : ""}]: ${err.message}`}
           {err.recoverable ? " (recoverable)" : ""}
@@ -382,10 +412,29 @@ function ErrorsView({ state }: { readonly state: DebateState }): ReactElement | 
 }
 
 function CompletionMessage({ state }: { readonly state: DebateState }): ReactElement | null {
-  if (state.endReason === null) return null;
+  if (state.endReason === null && !state.userCancelled) return null;
+  const sym = getSymbols();
+  const reason = state.userCancelled ? "cancelled" : state.endReason;
   return (
     <Box marginTop={1}>
-      <Text bold>{`--- Debate complete (${state.endReason}) ---`}</Text>
+      <Text bold color="green">{`${sym.complete} Debate complete (${reason})`}</Text>
+    </Box>
+  );
+}
+
+function LoadingIndicator({ state }: { readonly state: DebateState }): ReactElement | null {
+  if (state.currentRound === null || state.activeTurn !== null) return null;
+  // Only show if no turns have been completed in this round
+  const hasCompletedTurnThisRound = state.completedItems.some(
+    (item) => item.type === "turn" && item.round === state.currentRound,
+  );
+  if (hasCompletedTurnThisRound) return null;
+  return (
+    <Box marginTop={1}>
+      <Text color="yellow">
+        <Spinner type="dots" />
+      </Text>
+      <Text>{" Waiting for responses..."}</Text>
     </Box>
   );
 }
@@ -397,13 +446,27 @@ export interface DebateAppProps {
 
 export function DebateApp({ events, onComplete }: DebateAppProps): ReactElement {
   const [state, setState] = useState<DebateState>(INITIAL_STATE);
+  const [iteratorRef] = useState<{ current: AsyncIterator<DebateEvent> | null }>({ current: null });
+
+  const { isRawModeSupported } = useStdin();
+
+  const handleCancel = (): void => {
+    setState((prev) => ({ ...prev, userCancelled: true }));
+    // Propagate cancellation to the upstream stream (best-effort)
+    void iteratorRef.current?.return?.(undefined)?.catch(() => {
+      // Swallow rejection — cancellation is best-effort
+    });
+    onComplete?.();
+  };
 
   useEffect(() => {
     let cancelled = false;
+    const iterator = events[Symbol.asyncIterator]();
+    iteratorRef.current = iterator;
     void (async () => {
       let streamError: unknown;
       try {
-        for await (const ev of events) {
+        for await (const ev of { [Symbol.asyncIterator]: () => iterator }) {
           if (cancelled) break;
           setState((prev) => reduce(prev, ev));
         }
@@ -420,16 +483,21 @@ export function DebateApp({ events, onComplete }: DebateAppProps): ReactElement 
     })();
     return () => {
       cancelled = true;
+      iteratorRef.current = null;
     };
-  }, [events, onComplete]);
+  }, [events, onComplete, iteratorRef]);
 
   return (
     <Box flexDirection="column">
+      {isRawModeSupported && !state.userCancelled && (
+        <CtrlCHandler onCancel={handleCancel} />
+      )}
       <PanelRoster state={state} />
       <Static items={state.completedItems as StaticItem[]}>
         {(item) => <StaticItemView key={item.id} item={item} state={state} />}
       </Static>
       <ActiveTurnView state={state} />
+      <LoadingIndicator state={state} />
       <RetryIndicator state={state} />
       <CostIndicator state={state} />
       <ErrorsView state={state} />
