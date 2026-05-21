@@ -209,7 +209,7 @@ describe("IA-06: Synthesis/moderator turn styling", () => {
     const text = stripAnsi(sink.text);
     // The turn header should contain a synthesis indicator (🎯 or [Synthesis])
     // distinct from the normal expert prefix
-    const turnHeaderArea = text.split("Final conclusion here.")[0]!;
+    const turnHeaderArea = text.split("Final conclusion here.")[0] ?? "";
     expect(turnHeaderArea).toMatch(/Synthesis|🎯/);
   });
 
@@ -230,7 +230,7 @@ describe("IA-06: Synthesis/moderator turn styling", () => {
       ),
     );
     const text = stripAnsi(sink.text);
-    const turnHeaderArea = text.split("Hello.")[0]!;
+    const turnHeaderArea = text.split("Hello.")[0] ?? "";
     expect(turnHeaderArea).not.toMatch(/Synthesis|🎯/);
   });
 });
@@ -402,9 +402,9 @@ describe("IA-10: Include debate ID in conclude output", () => {
       startedAt?: string;
     };
     expect(parsed.debateId).toBeDefined();
-    expect(parsed.debateId!.length).toBeGreaterThan(0);
+    expect(parsed.debateId?.length).toBeGreaterThan(0);
     expect(parsed.startedAt).toBeDefined();
-    expect(parsed.startedAt!.length).toBeGreaterThan(0);
+    expect(parsed.startedAt?.length).toBeGreaterThan(0);
   });
 
   it("plain output includes debate ID", async () => {
@@ -631,5 +631,96 @@ describe("DX-07: Edit creates backup before opening editor", () => {
       .then(() => true)
       .catch(() => false);
     expect(backupExists).toBe(true);
+  });
+});
+
+// ─── IA-05 format validation ────────────────────────────────────────────────
+describe("IA-05: --format validation", () => {
+  it("expert inspect rejects unknown format values", async () => {
+    const { buildExpertCommand } = await import("../../../src/cli/commands/expert.js");
+    const { createDatabase } = await import("../../../src/memory/db.js");
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-fmt-val-"));
+    const dataHome = path.join(tmpDir, "data");
+    await fs.mkdir(path.join(dataHome, "experts"), { recursive: true });
+    const dbPath = path.join(tmpDir, "council.db");
+    const db = await createDatabase(dbPath);
+    const { FileExpertLibrary } = await import("../../../src/core/expert-library.js");
+    const lib = new FileExpertLibrary(dataHome, db);
+    await lib.create({
+      slug: "fmt-test",
+      displayName: "Fmt Test",
+      role: "test",
+      expertise: {
+        weightedEvidence: ["x"],
+        referenceCases: [],
+        notExpertIn: [],
+      },
+      epistemicStance: "Empirical",
+      kind: "generic",
+    });
+    await db.destroy();
+
+    process.env["COUNCIL_HOME"] = tmpDir;
+    process.env["COUNCIL_DATA_HOME"] = dataHome;
+    try {
+      const cmd = buildExpertCommand(() => { /* noop */ });
+      await expect(
+        cmd.parseAsync(["node", "council-expert", "inspect", "fmt-test", "--format", "xml"]),
+      ).rejects.toThrow(/Unknown format.*xml/);
+    } finally {
+      delete process.env["COUNCIL_HOME"];
+      delete process.env["COUNCIL_DATA_HOME"];
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => { /* noop */ });
+    }
+  });
+
+  it("panel inspect rejects unknown format values", async () => {
+    const { buildPanelCommand } = await import("../../../src/cli/commands/panel.js");
+    const { createDatabase } = await import("../../../src/memory/db.js");
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-pfmt-val-"));
+    const dataHome = path.join(tmpDir, "data");
+    await fs.mkdir(path.join(dataHome, "experts"), { recursive: true });
+    await fs.mkdir(path.join(dataHome, "panels"), { recursive: true });
+    const dbPath = path.join(tmpDir, "council.db");
+    const db = await createDatabase(dbPath);
+    const { FileExpertLibrary } = await import("../../../src/core/expert-library.js");
+    const lib = new FileExpertLibrary(dataHome, db);
+    await lib.create({
+      slug: "pfmt-exp",
+      displayName: "P Fmt",
+      role: "test",
+      expertise: {
+        weightedEvidence: ["x"],
+        referenceCases: [],
+        notExpertIn: [],
+      },
+      epistemicStance: "Empirical",
+      kind: "generic",
+    });
+    await db.destroy();
+
+    process.env["COUNCIL_HOME"] = tmpDir;
+    process.env["COUNCIL_DATA_HOME"] = dataHome;
+    try {
+      // Use the CLI to create the panel (handles all DB fields)
+      const createCmd = buildPanelCommand(() => { /* noop */ });
+      await createCmd.parseAsync([
+        "node",
+        "council-panel",
+        "create",
+        "pfmt-panel",
+        "--experts",
+        "pfmt-exp",
+      ]);
+
+      const cmd = buildPanelCommand(() => { /* noop */ });
+      await expect(
+        cmd.parseAsync(["node", "council-panel", "inspect", "pfmt-panel", "--format", "csv"]),
+      ).rejects.toThrow(/Unknown format.*csv/);
+    } finally {
+      delete process.env["COUNCIL_HOME"];
+      delete process.env["COUNCIL_DATA_HOME"];
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => { /* noop */ });
+    }
   });
 });

@@ -464,6 +464,9 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
     .argument("<name>", "Panel name to inspect")
     .option("--format <kind>", "Output format (plain or json)", "plain")
     .action(async (name: string, opts: { format?: string }) => {
+      if (opts.format !== "plain" && opts.format !== "json") {
+        throw new CliUserError(`Unknown format "${opts.format}" — use "plain" or "json"`);
+      }
       await withPanelContext(async (ctx) => {
         const row = await ctx.panelRepo.findByName(name);
         if (!row) {
@@ -566,9 +569,26 @@ function buildEditCommand(write: Writer, writeError: Writer): Command {
         const yamlPath = existing.yamlPath;
         const editor = resolveEditor();
 
-        // DX-07: Create backup before editing
+        // DX-07: Create backup before editing (reject symlinks / path escape)
         const backupPath = yamlPath + ".backup";
-        await fs.copyFile(yamlPath, backupPath);
+        const realYamlPath = await fs.realpath(yamlPath);
+        const panelsDir = await fs.realpath(path.resolve(ctx.dataHome, "panels"));
+        const rel = path.relative(panelsDir, realYamlPath);
+        if (rel.startsWith("..") || path.isAbsolute(rel)) {
+          throw new CliUserError("Cannot edit panel file outside managed directory");
+        }
+        // Reject pre-existing backup symlinks to prevent write redirection
+        try {
+          const bstat = await fs.lstat(backupPath);
+          if (bstat.isSymbolicLink()) {
+            throw new CliUserError("Backup path is a symlink — remove it before editing");
+          }
+        } catch (e: unknown) {
+          if (e instanceof CliUserError) throw e;
+          const code = (e as NodeJS.ErrnoException).code;
+          if (code !== "ENOENT") throw e;
+        }
+        await fs.copyFile(realYamlPath, backupPath);
 
         await runEditor(editor, yamlPath);
 

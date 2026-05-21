@@ -358,6 +358,9 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
     .argument("<slug>", "Expert slug to inspect")
     .option("--format <kind>", "Output format (plain or json)", "plain")
     .action(async (slug: string, opts: { format?: string }) => {
+      if (opts.format !== "plain" && opts.format !== "json") {
+        throw new CliUserError(`Unknown format "${opts.format}" — use "plain" or "json"`);
+      }
       await withExpertLibrary(async (library, _config, dataHome) => {
         const expert = await library.get(slug);
         if (!expert) {
@@ -446,9 +449,26 @@ function buildEditCommand(write: Writer, writeError: Writer): Command {
         const yamlPath = path.join(dataHome, "experts", `${slug}.yaml`);
         const editor = resolveEditor();
 
-        // DX-07: Create backup before editing
+        // DX-07: Create backup before editing (reject symlinks / path escape)
         const backupPath = yamlPath + ".backup";
-        await fs.copyFile(yamlPath, backupPath);
+        const realYamlPath = await fs.realpath(yamlPath);
+        const expertsDir = await fs.realpath(path.resolve(dataHome, "experts"));
+        const rel = path.relative(expertsDir, realYamlPath);
+        if (rel.startsWith("..") || path.isAbsolute(rel)) {
+          throw new CliUserError("Cannot edit expert file outside managed directory");
+        }
+        // Reject pre-existing backup symlinks to prevent write redirection
+        try {
+          const bstat = await fs.lstat(backupPath);
+          if (bstat.isSymbolicLink()) {
+            throw new CliUserError("Backup path is a symlink — remove it before editing");
+          }
+        } catch (e: unknown) {
+          if (e instanceof CliUserError) throw e;
+          const code = (e as NodeJS.ErrnoException).code;
+          if (code !== "ENOENT") throw e;
+        }
+        await fs.copyFile(realYamlPath, backupPath);
 
         await runEditor(editor, yamlPath);
 
