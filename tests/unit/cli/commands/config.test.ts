@@ -125,5 +125,33 @@ describe("buildConfigCommand", () => {
       const { stdout } = await runConfig(["edit"], { editorRunner });
       expect(stdout).toContain("valid");
     });
+
+    it("reports YAML parse errors after edit", async () => {
+      await fs.mkdir(testHome, { recursive: true });
+      const configPath = path.join(testHome, "config.yaml");
+      await fs.writeFile(configPath, "defaults:\n  model: gpt-4o\n", "utf-8");
+
+      const editorRunner = vi.fn(async () => {
+        await fs.writeFile(configPath, "{{broken yaml: [", "utf-8");
+      });
+
+      const { stderr } = await runConfig(["edit"], { editorRunner });
+      expect(stderr).toContain("Validation failed");
+      expect(stderr).toContain("YAML parse error");
+    });
+
+    it("uses VISUAL env var for editor resolution", async () => {
+      const originalVisual = process.env["VISUAL"];
+      process.env["VISUAL"] = "custom-editor";
+
+      const editorRunner = vi.fn(async () => undefined);
+      await runConfig(["edit"], { editorRunner });
+
+      const call = editorRunner.mock.calls[0] as [string, string];
+      expect(call[0]).toBe("custom-editor");
+
+      if (originalVisual === undefined) delete process.env["VISUAL"];
+      else process.env["VISUAL"] = originalVisual;
+    });
   });
 });

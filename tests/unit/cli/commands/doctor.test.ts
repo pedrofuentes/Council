@@ -99,4 +99,37 @@ describe("buildDoctorCommand", () => {
 
     expect(help).toContain("Probe Copilot for default model availability (requires auth)");
   });
+
+  it("doctor shows Configuration section with defaults", async () => {
+    const output = await runDoctor([]);
+
+    expect(output).toContain("Config");
+    expect(output).toContain("Path:");
+    expect(output).toContain("config.yaml");
+    expect(output).toContain("Engine: copilot");
+    expect(output).toContain("Rounds: 4");
+  });
+
+  it("doctor shows Configuration with custom config values", async () => {
+    await fs.mkdir(testHome, { recursive: true });
+    await fs.writeFile(
+      path.join(testHome, "config.yaml"),
+      "defaults:\n  engine: mock\n  maxRounds: 7\n",
+      "utf-8",
+    );
+
+    const output = await runDoctor([]);
+
+    expect(output).toContain("Engine: mock");
+    expect(output).toContain("Rounds: 7");
+  });
+
+  it("doctor shows warning when config is invalid", async () => {
+    await fs.mkdir(testHome, { recursive: true });
+    await fs.writeFile(path.join(testHome, "config.yaml"), "{{invalid yaml", "utf-8");
+
+    const output = await runDoctor([]);
+
+    expect(output).toContain("Could not load configuration");
+  });
 });
