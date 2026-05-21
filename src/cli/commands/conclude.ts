@@ -165,7 +165,7 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
           throw new Error(
             `Panel '${panelName}' has no turns in its latest debate — nothing to conclude. ` +
               `Run \`council convene "${doc.panel.topic ?? "<topic>"}" --template ${panelName} --engine copilot\` or ` +
-              `\`council resume ${panelName} --continue "<prompt>" --engine copilot\` first.`,
+              `\`council resume ${panelName} --prompt "<prompt>" --engine copilot\` first.`,
           );
         }
 

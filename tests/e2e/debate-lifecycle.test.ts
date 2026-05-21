@@ -311,7 +311,7 @@ describe("debate lifecycle e2e", () => {
     const seed = await seedCompletedDebate(ctx.testHome);
     await runResume([
       seed.panelName,
-      "--continue",
+      "--prompt",
       "What about security?",
       "--engine",
       "mock",

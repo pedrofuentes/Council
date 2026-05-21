@@ -5,7 +5,7 @@
  *   - Resolve panel by name (CLI takes a friendly name, not a ULID)
  *   - Show a transcript of the most recent debate for that panel
  *     (panel.assembled summary → all turns in order → debate.end status)
- *   - With --continue "<prompt>": run a NEW debate against the same
+ *   - With --prompt "<prompt>": run a NEW debate against the same
  *     panel (reuses experts, creates new debate row, persists turns)
  *   - --format json|plain — matches convene
  *
@@ -137,11 +137,11 @@ describe("buildResumeCommand", () => {
     // rejects when missing.
   });
 
-  it("supports --format and --continue options", () => {
+  it("supports --format and --prompt options", () => {
     const cmd = buildResumeCommand({ engineFactory: makeMockEngineFactory() });
     const longs = cmd.options.map((o) => o.long);
     expect(longs).toContain("--format");
-    expect(longs).toContain("--continue");
+    expect(longs).toContain("--prompt");
   });
 
   it("rejects when the panel name is unknown", async () => {
@@ -208,7 +208,7 @@ describe("buildResumeCommand", () => {
     expect(kinds[kinds.length - 1]).toBe("debate.end");
   });
 
-  it("--continue '<new prompt>' runs a new debate against the same panel and persists it", async () => {
+  it("--prompt '<new prompt>' runs a new debate against the same panel and persists it", async () => {
     const seed = await seedPanelWithDebate(testHome);
     let captured = "";
     const cmd = buildResumeCommand({
@@ -222,7 +222,7 @@ describe("buildResumeCommand", () => {
       "node",
       "council-resume",
       seed.panelName,
-      "--continue",
+      "--prompt",
       "What about the migration risk?",
       "--engine",
       "mock",
@@ -232,7 +232,7 @@ describe("buildResumeCommand", () => {
       "1",
     ]);
 
-    // After resume --continue, the DB must have TWO debates for this panel.
+    // After resume --prompt, the DB must have TWO debates for this panel.
     const db = await createDatabase(path.join(testHome, "council.db"));
     try {
       const debates = await new DebateRepository(db).findByPanelId(seed.panelId);
@@ -257,7 +257,7 @@ describe("buildResumeCommand", () => {
 
   // ── Sentinel pr165 #1 + #5 — added edge-case coverage ─────────────
 
-  it("--continue without --engine resolves from config default (no longer throws)", async () => {
+  it("--prompt without --engine resolves from config default (no longer throws)", async () => {
     const seed = await seedPanelWithDebate(testHome);
     const cmd = buildResumeCommand({
       engineFactory: makeMockEngineFactory(),
@@ -265,7 +265,7 @@ describe("buildResumeCommand", () => {
     });
     cmd.exitOverride();
 
-    // With the engine default feature, --continue without --engine no longer
+    // With the engine default feature, --prompt without --engine no longer
     // throws — it resolves from config (default: "copilot"). Since the test
     // uses a mock engine factory, it should proceed without error.
     let thrown = "";
@@ -274,7 +274,7 @@ describe("buildResumeCommand", () => {
         "node",
         "council-resume",
         seed.panelName,
-        "--continue",
+        "--prompt",
         "follow-up prompt",
       ]);
     } catch (err) {
@@ -284,7 +284,7 @@ describe("buildResumeCommand", () => {
     expect(thrown.toLowerCase()).not.toMatch(/--engine.*required|engine.*required.*continue/);
   });
 
-  it("--continue --engine garbage rejects with clear error", async () => {
+  it("--prompt --engine garbage rejects with clear error", async () => {
     const seed = await seedPanelWithDebate(testHome);
     const cmd = buildResumeCommand({
       engineFactory: makeMockEngineFactory(),
@@ -298,7 +298,7 @@ describe("buildResumeCommand", () => {
         "node",
         "council-resume",
         seed.panelName,
-        "--continue",
+        "--prompt",
         "x",
         "--engine",
         "anthropic-direct",
@@ -470,7 +470,7 @@ describe("buildResumeCommand", () => {
 
   // ── Sentinel pr222 cycle 3 — recall + malformed-config coverage ───
 
-  it("--continue patches each expert's [7] MEMORY with recalled content from prior turns", async () => {
+  it("--prompt patches each expert's [7] MEMORY with recalled content from prior turns", async () => {
     // Seed a panel where the system prompt has a [7] MEMORY / [8] CURRENT
     // TASK skeleton, and a prior debate with a distinctive recall marker.
     const seedingDb = await createDatabase(path.join(testHome, "council.db"));
@@ -539,7 +539,7 @@ describe("buildResumeCommand", () => {
       "node",
       "council-resume",
       panelName,
-      "--continue",
+      "--prompt",
       "follow-up",
       "--engine",
       "mock",
@@ -554,7 +554,7 @@ describe("buildResumeCommand", () => {
     expect(combined).not.toContain("(no prior memory — placeholder)");
   });
 
-  it("--continue warns to stderr when configJson cannot be parsed (no silent fallback)", async () => {
+  it("--prompt warns to stderr when configJson cannot be parsed (no silent fallback)", async () => {
     // Seed a panel with deliberately-broken configJson.
     const seedingDb = await createDatabase(path.join(testHome, "council.db"));
     let panelName = "";
@@ -606,7 +606,7 @@ describe("buildResumeCommand", () => {
       "node",
       "council-resume",
       panelName,
-      "--continue",
+      "--prompt",
       "follow-up",
       "--engine",
       "mock",
@@ -652,7 +652,7 @@ describe("buildResumeCommand", () => {
       "node",
       "council-resume",
       seed.panelName,
-      "--continue",
+      "--prompt",
       "follow-up",
       "--engine",
       "mock",

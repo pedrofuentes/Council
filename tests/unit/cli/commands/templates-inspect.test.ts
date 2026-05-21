@@ -10,13 +10,10 @@ import { buildTemplatesCommand } from "../../../../src/cli/commands/templates.js
 
 describe("templates inspect", () => {
   it("registers 'inspect' as a subcommand of templates", () => {
-    let output = "";
-    const cmd = buildTemplatesCommand((s) => {
-      output += s;
-    });
+    const cmd = buildTemplatesCommand(() => undefined);
     const sub = cmd.commands.find((c) => c.name() === "inspect");
     expect(sub).toBeDefined();
-    expect(sub!.description()).toMatch(/detail|inspect|info/i);
+    expect(sub?.description()).toMatch(/detail|inspect|info/i);
   });
 
   it("displays template description, experts, mode, and maxRounds", async () => {
@@ -41,10 +38,7 @@ describe("templates inspect", () => {
   });
 
   it("errors when template name is not found", async () => {
-    let output = "";
-    const cmd = buildTemplatesCommand((s) => {
-      output += s;
-    });
+    const cmd = buildTemplatesCommand(() => undefined);
     cmd.exitOverride();
 
     let thrown = "";

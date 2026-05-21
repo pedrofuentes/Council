@@ -1,6 +1,6 @@
 /**
  * Shared engine-lifecycle helper — encapsulates the boilerplate that
- * `convene`, `resume --continue`, and `ask` all need:
+ * `convene`, `resume --prompt`, and `ask` all need:
  *
  *   1. Construct the engine (via factory or kind → constructor)
  *   2. Start it
@@ -106,9 +106,7 @@ export interface RunWithEngineOpts {
    * `writeError`; they do NOT propagate. The hook is not invoked
    * when the debate itself threw before the renderer finished.
    */
-  readonly onDebateComplete?:
-    | ((ctx: OnDebateCompleteContext) => Promise<void>)
-    | undefined;
+  readonly onDebateComplete?: ((ctx: OnDebateCompleteContext) => Promise<void>) | undefined;
 }
 
 /**
@@ -202,10 +200,7 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
       opts.preamble?.();
     }
 
-    const stream = persister.persist(
-      debate.run(opts.prompt),
-      opts.prompt,
-    );
+    const stream = persister.persist(debate.run(opts.prompt), opts.prompt);
     await renderer.render(stream);
 
     // Post-debate hook (e.g. LLM ExpertMemory extraction). Best-effort:
