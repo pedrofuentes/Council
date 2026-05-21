@@ -349,6 +349,13 @@ describe("extractDocument", () => {
     // rewrite whose mtime is restored via utimes() after the write. ctime
     // updates on every inode metadata change (including utimes), so the
     // post-read stat must compare ctime as well to close that window.
+    //
+    // Timing note: the test needs a gap between the initial utimes (which
+    // sets ctime to T1) and the extractor's fdStat capture, AND between
+    // fdStat and the override's writeFile+utimes (which bumps ctime to
+    // T2). Without these gaps, on fast systems or under parallel execution,
+    // T1 and T2 can land in the same filesystem timestamp tick, making
+    // postStat.ctimeMs === fdStat.ctimeMs and the guard ineffective.
     it("rejects same-size rewrites whose mtime is restored after the write (issue #444)", async () => {
       const filePath = path.join(dir, "doc.txt");
       await fs.writeFile(filePath, "AAAAAAA"); // 7 bytes
@@ -358,11 +365,21 @@ describe("extractDocument", () => {
       const pinned = new Date(Math.floor(Date.now() / 1000) * 1000 - 60_000);
       await fs.utimes(filePath, pinned, pinned);
 
+      // Ensure at least one filesystem timestamp tick elapses between
+      // the setup utimes (which sets ctime) and the extractor's fdStat.
+      // On Windows NTFS under parallel I/O or in git worktrees, the OS
+      // may batch-flush metadata updates, so a generous gap (50ms)
+      // guarantees the next ctime-bumping operation produces a distinct
+      // value from fdStat.ctimeMs.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
       // Inject mid-extraction mutation: overwrite with same-size payload,
       // then restore the original (pinned) mtime/atime via utimes — which
       // bumps ctime, the only field a (size, mtime) token misses.
       const realpath = fs.realpath;
       const override = async (p: string): Promise<string> => {
+        // Ensure ctime advances past the tick captured by fdStat.
+        await new Promise((resolve) => setTimeout(resolve, 50));
         await fs.writeFile(filePath, "BBBBBBB"); // same length, different bytes
         await fs.utimes(filePath, pinned, pinned);
         return realpath(p);
