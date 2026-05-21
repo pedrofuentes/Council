@@ -40,7 +40,7 @@ describe("TUI-03: Ctrl+C handler", () => {
         experts: [{ slug: "alice", displayName: "Alice", model: "gpt-5" }],
       };
       // Hold open indefinitely
-      await new Promise(() => {});
+      await new Promise((_resolve) => { /* hold open */ });
     };
 
     let completed = false;
@@ -54,6 +54,45 @@ describe("TUI-03: Ctrl+C handler", () => {
     await flush();
 
     expect(completed).toBe(true);
+    ui.unmount();
+  });
+
+  it("propagates cancellation to the upstream async iterator", async () => {
+    let iteratorReturned = false;
+    const cancellable = {
+      [Symbol.asyncIterator](): AsyncIterator<DebateEvent> {
+        const events: DebateEvent[] = [
+          {
+            kind: "panel.assembled",
+            experts: [{ slug: "alice", displayName: "Alice", model: "gpt-5" }],
+          },
+        ];
+        let index = 0;
+        return {
+          async next() {
+            if (index < events.length) {
+              return { value: events[index++], done: false };
+            }
+            // Hold open indefinitely
+            return new Promise((_resolve) => { /* hold open */ });
+          },
+          async return() {
+            iteratorReturned = true;
+            return { value: undefined, done: true };
+          },
+        };
+      },
+    };
+
+    const ui = render(
+      <DebateApp events={cancellable} onComplete={() => { /* noop */ }} />,
+    );
+    await flush();
+
+    ui.stdin.write("\x03");
+    await flush();
+
+    expect(iteratorReturned).toBe(true);
     ui.unmount();
   });
 });
@@ -113,7 +152,7 @@ describe("TUI-05: Loading indicator", () => {
         experts: [{ slug: "alice", displayName: "Alice", model: "gpt-5" }],
       };
       yield { kind: "round.start", round: 0 };
-      await new Promise(() => {});
+      await new Promise((_resolve) => { /* hold open */ });
     };
     const ui = render(<DebateApp events={neverEnd()} />);
     await flush();
@@ -140,6 +179,28 @@ describe("TUI-05: Loading indicator", () => {
     expect(frame).not.toMatch(/waiting for responses/i);
     ui.unmount();
   });
+
+  it("hides loading indicator after turn.end in same round", async () => {
+    const neverEnd = async function* (): AsyncIterable<DebateEvent> {
+      yield {
+        kind: "panel.assembled",
+        experts: [{ slug: "alice", displayName: "Alice", model: "gpt-5" }],
+      };
+      yield { kind: "round.start", round: 0 };
+      yield { kind: "turn.start", expertSlug: "alice", round: 0, seq: 0 };
+      yield { kind: "turn.delta", expertSlug: "alice", text: "done" };
+      yield { kind: "turn.end", expertSlug: "alice", turnId: "t1", content: "done" };
+      // Stream stays open — no more turns, but turn.end happened
+      await new Promise((_resolve) => { /* hold open */ });
+    };
+    const ui = render(<DebateApp events={neverEnd()} />);
+    await flush();
+    const frame = stripAnsi(ui.lastFrame() ?? "");
+
+    // Should not show loading since a turn already completed in this round
+    expect(frame).not.toMatch(/waiting for responses/i);
+    ui.unmount();
+  });
 });
 
 describe("TUI-14: Exhaustive default in reduce()", () => {
@@ -163,7 +224,7 @@ describe("TUI-15: Retry/cursor conflict", () => {
       yield { kind: "turn.start", expertSlug: "alice", round: 0, seq: 0 };
       yield { kind: "turn.delta", expertSlug: "alice", text: "partial" };
       yield { kind: "turn.retry", expertSlug: "alice", attempt: 1, reason: "RATE_LIMITED" };
-      await new Promise(() => {});
+      await new Promise((_resolve) => { /* hold open */ });
     };
     const ui = render(<DebateApp events={neverEnd()} />);
     await flush();
@@ -201,10 +262,10 @@ describe("TUI-20: Cancel banner", () => {
         kind: "panel.assembled",
         experts: [{ slug: "alice", displayName: "Alice", model: "gpt-5" }],
       };
-      await new Promise(() => {});
+      await new Promise((_resolve) => { /* hold open */ });
     };
 
-    const ui = render(<DebateApp events={neverEnd()} onComplete={() => {}} />);
+    const ui = render(<DebateApp events={neverEnd()} onComplete={() => { /* noop */ }} />);
     await flush();
 
     // Simulate Ctrl+C
@@ -227,9 +288,10 @@ describe("TUI-22: Completion message styling", () => {
     // Should contain green ANSI color (code 32)
     // eslint-disable-next-line no-control-regex
     expect(rawFrame).toMatch(/\u001b\[32m/);
-    // Should contain the checkmark symbol
+    // Should contain the checkmark symbol and text
     const frame = stripAnsi(rawFrame);
-    expect(frame).toContain("✓");
+    const sym = (await import("../../../../../src/cli/renderers/symbols.js")).getSymbols();
+    expect(frame).toContain(sym.complete);
     expect(frame).toContain("Debate complete");
     ui.unmount();
   });
