@@ -204,9 +204,7 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
           } catch (openErr) {
             if ((openErr as NodeJS.ErrnoException).code === "EEXIST") {
               writeError(`Panel YAML already exists at ${displayPath(yamlPath)}\n`);
-              throw new CliUserError(
-                `Panel "${name}" already exists at ${yamlPath}`,
-              );
+              throw new CliUserError(`Panel "${name}" already exists at ${yamlPath}`);
             }
             throw openErr;
           }
@@ -402,7 +400,8 @@ function buildListCommand(write: Writer): Command {
   cmd
     .description("List user panels in the library")
     .option("--format <kind>", "Output format: table (default) or json", "table")
-    .action(async (raw: { format?: string }) => {
+    .option("--long", "Show full descriptions without truncation")
+    .action(async (raw: { format?: string; long?: boolean }) => {
       if (raw.format !== undefined && raw.format !== "table" && raw.format !== "json") {
         throw new Error(`Unknown --format value: ${raw.format}. Expected one of: table, json`);
       }
@@ -427,12 +426,13 @@ function buildListCommand(write: Writer): Command {
           return;
         }
 
+        const useLong = raw.long === true;
         const rows: readonly (readonly string[])[] = await Promise.all(
           panels.map(async (p) => {
             const members = await ctx.panelRepo.getMembers(p.name);
             const desc = p.description ?? "";
-            const truncated = desc.length > 60 ? desc.slice(0, 57) + "..." : desc;
-            return [p.name, String(members.length), truncated] as const;
+            const displayed = useLong ? desc : desc.length > 60 ? desc.slice(0, 57) + "..." : desc;
+            return [p.name, String(members.length), displayed] as const;
           }),
         );
         const header = ["name", "experts", "description"] as const;
@@ -445,6 +445,9 @@ function buildListCommand(write: Writer): Command {
         for (const row of rows) {
           write(row.map((c, i) => pad(c, widths[i] ?? 0)).join("  ") + "\n");
         }
+        write(
+          "\x1b[2mNext: council panel inspect <name> | council convene --template <name>\x1b[0m\n",
+        );
       });
     });
   return cmd;
@@ -836,6 +839,7 @@ function buildDocsUnlinkCommand(write: Writer, writeError: Writer): Command {
           throw new CliUserError(msg);
         }
         write(`✓ Unlinked ${displayPath(absolute)} from ${name}.\n`);
+        write("\x1b[2mRun 'council panel list' to verify.\x1b[0m\n");
       });
     });
   return cmd;

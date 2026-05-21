@@ -341,6 +341,7 @@ function buildListCommand(write: Writer): Command {
         for (const row of rows) {
           write(row.map((c, i) => pad(c, widths[i] ?? 0)).join("  ") + "\n");
         }
+        write("\x1b[2mNext: council expert inspect <slug> | council chat <slug>\x1b[0m\n");
       });
     });
   return cmd;
@@ -520,6 +521,7 @@ function buildDeleteCommand(write: Writer, writeError: Writer): Command {
         }
         await library.delete(slug, { force: opts.force === true });
         write(`✓ Expert "${slug}" deleted.\n`);
+        write("\x1b[2mRun 'council expert list' to verify.\x1b[0m\n");
       });
     });
   return cmd;
@@ -650,7 +652,9 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
     .argument("<slug>", "Persona expert slug")
     .option("--retrain", "Clear the existing profile and rebuild from scratch")
     .addOption(
-      new Option("--engine <kind>", "Engine to use for profile analysis").choices([...ENGINE_KINDS]).default("copilot"),
+      new Option("--engine <kind>", "Engine to use for profile analysis")
+        .choices([...ENGINE_KINDS])
+        .default("copilot"),
     )
     .action(async (slug: string, opts: TrainOptions) => {
       const engineKind = (opts.engine ?? "copilot") as EngineKind;
@@ -703,8 +707,7 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
             // received a trusted ClearForRetrainError that reports a
             // clean rollback. Any unexpected error type is treated as
             // unknown DB state so the user is never falsely reassured.
-            const cleanRollback =
-              err instanceof ClearForRetrainError && !err.rollbackFailed;
+            const cleanRollback = err instanceof ClearForRetrainError && !err.rollbackFailed;
             const stateNote = cleanRollback
               ? `Existing profile and tracking preserved.`
               : `Cleanup failed AND rollback either failed or status is unknown — ` +

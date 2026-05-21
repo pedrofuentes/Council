@@ -11,7 +11,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildSessionsCommand } from "../../../../src/cli/commands/sessions.js";
 import { buildMemoryCommand } from "../../../../src/cli/commands/memory.js";
-import { buildExportCommand } from "../../../../src/cli/commands/export.js";
 import { buildTemplatesCommand } from "../../../../src/cli/commands/templates.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
@@ -41,13 +40,15 @@ afterEach(async () => {
   }
 });
 
-async function seedSession(opts: {
-  name?: string;
-  topic?: string;
-  debateStatus?: "running" | "completed" | "aborted" | "failed";
-  turnCount?: number;
-  expertCount?: number;
-} = {}) {
+async function seedSession(
+  opts: {
+    name?: string;
+    topic?: string;
+    debateStatus?: "running" | "completed" | "aborted" | "failed";
+    turnCount?: number;
+    expertCount?: number;
+  } = {},
+) {
   const db = await createDatabase(path.join(testHome, "council.db"));
   const panelRepo = new PanelRepository(db);
   const panel = await panelRepo.create({
@@ -86,7 +87,7 @@ async function seedSession(opts: {
   for (let i = 0; i < tCount; i++) {
     await turnRepo.create({
       debateId: debate.id,
-      expertId: expertIds[i % expertIds.length]!,
+      expertId: expertIds[i % expertIds.length] ?? expertIds[0],
       speakerKind: "expert",
       content: `Turn ${i} content`,
       round: Math.floor(i / eCount),
@@ -102,7 +103,9 @@ describe("IA-01: sessions terminology", () => {
   it("uses 'panel' label instead of 'name' in plain output", async () => {
     await seedSession({ name: "arch-review", debateStatus: "completed" });
     let captured = "";
-    const cmd = buildSessionsCommand((s) => { captured += s; });
+    const cmd = buildSessionsCommand((s) => {
+      captured += s;
+    });
     await cmd.parseAsync(["node", "council-sessions"]);
     expect(captured).toContain("arch-review");
     // Should use "panel:" label
@@ -112,7 +115,9 @@ describe("IA-01: sessions terminology", () => {
   it("shows footer hint about panels vs sessions", async () => {
     await seedSession();
     let captured = "";
-    const cmd = buildSessionsCommand((s) => { captured += s; });
+    const cmd = buildSessionsCommand((s) => {
+      captured += s;
+    });
     await cmd.parseAsync(["node", "council-sessions"]);
     expect(captured).toContain("council panel list");
     expect(captured).toMatch(/templates|Panels are templates/i);
@@ -121,7 +126,9 @@ describe("IA-01: sessions terminology", () => {
   it("does NOT show footer hint in json format", async () => {
     await seedSession();
     let captured = "";
-    const cmd = buildSessionsCommand((s) => { captured += s; });
+    const cmd = buildSessionsCommand((s) => {
+      captured += s;
+    });
     await cmd.parseAsync(["node", "council-sessions", "--format", "json"]);
     expect(captured).not.toContain("council panel list");
     expect(captured).not.toContain("Next:");
@@ -134,7 +141,9 @@ describe("IA-02: next-step hints", () => {
   it("sessions plain output includes Next: hint", async () => {
     await seedSession();
     let captured = "";
-    const cmd = buildSessionsCommand((s) => { captured += s; });
+    const cmd = buildSessionsCommand((s) => {
+      captured += s;
+    });
     await cmd.parseAsync(["node", "council-sessions"]);
     expect(captured).toContain("Next:");
     expect(captured).toMatch(/council memory inspect|council export/);
@@ -143,7 +152,9 @@ describe("IA-02: next-step hints", () => {
   it("sessions json output does NOT include Next: hint", async () => {
     await seedSession();
     let captured = "";
-    const cmd = buildSessionsCommand((s) => { captured += s; });
+    const cmd = buildSessionsCommand((s) => {
+      captured += s;
+    });
     await cmd.parseAsync(["node", "council-sessions", "--format", "json"]);
     expect(captured).not.toContain("Next:");
   });
@@ -151,7 +162,11 @@ describe("IA-02: next-step hints", () => {
   it("memory list plain output includes Next: hint", async () => {
     await seedSession();
     let captured = "";
-    const cmd = buildMemoryCommand({ write: (s) => { captured += s; } });
+    const cmd = buildMemoryCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
     await cmd.parseAsync(["node", "council-memory", "list"]);
     expect(captured).toContain("Next:");
     expect(captured).toMatch(/council memory inspect/);
@@ -160,7 +175,11 @@ describe("IA-02: next-step hints", () => {
   it("memory list json output does NOT include hint", async () => {
     await seedSession();
     let captured = "";
-    const cmd = buildMemoryCommand({ write: (s) => { captured += s; } });
+    const cmd = buildMemoryCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
     await cmd.parseAsync(["node", "council-memory", "list", "--format", "json"]);
     expect(captured).not.toContain("Next:");
   });
@@ -168,7 +187,11 @@ describe("IA-02: next-step hints", () => {
   it("memory inspect plain output includes Next: hint", async () => {
     await seedSession();
     let captured = "";
-    const cmd = buildMemoryCommand({ write: (s) => { captured += s; } });
+    const cmd = buildMemoryCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
     await cmd.parseAsync(["node", "council-memory", "inspect", "test-panel"]);
     expect(captured).toContain("Next:");
     expect(captured).toMatch(/council export|council resume/);
@@ -177,20 +200,29 @@ describe("IA-02: next-step hints", () => {
   it("memory inspect json output does NOT include hint", async () => {
     await seedSession();
     let captured = "";
-    const cmd = buildMemoryCommand({ write: (s) => { captured += s; } });
+    const cmd = buildMemoryCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
     await cmd.parseAsync(["node", "council-memory", "inspect", "test-panel", "--format", "json"]);
     expect(captured).not.toContain("Next:");
   });
 
-  it("templates output includes Next: hint", async () => {
+  it("templates output includes Next: hint when templates exist", async () => {
     let captured = "";
-    const cmd = buildTemplatesCommand((s) => { captured += s; });
+    const cmd = buildTemplatesCommand((s) => {
+      captured += s;
+    });
     await cmd.parseAsync(["node", "council-templates"]);
-    // Even if no templates, verify hint is present or not (empty state may not show it)
-    // With templates present, Next: hint should appear
-    // If no templates, hint is suppressed (nothing to act on)
-    // Just check it doesn't error
-    expect(typeof captured).toBe("string");
+    // Built-in templates ship with the package, so they should exist
+    if (captured.includes("Built-in templates:")) {
+      expect(captured).toContain("Next:");
+      expect(captured).toContain("council convene --template");
+    } else {
+      // No templates found — hint is not shown (nothing to act on)
+      expect(captured).not.toContain("Next:");
+    }
   });
 });
 
@@ -200,7 +232,9 @@ describe("IA-04: sessions enrichment", () => {
   it("shows status indicator for completed session", async () => {
     await seedSession({ debateStatus: "completed" });
     let captured = "";
-    const cmd = buildSessionsCommand((s) => { captured += s; });
+    const cmd = buildSessionsCommand((s) => {
+      captured += s;
+    });
     await cmd.parseAsync(["node", "council-sessions"]);
     const symbols = getSymbols();
     expect(captured).toContain(symbols.complete);
@@ -209,7 +243,9 @@ describe("IA-04: sessions enrichment", () => {
   it("shows status indicator for failed session", async () => {
     await seedSession({ debateStatus: "failed" });
     let captured = "";
-    const cmd = buildSessionsCommand((s) => { captured += s; });
+    const cmd = buildSessionsCommand((s) => {
+      captured += s;
+    });
     await cmd.parseAsync(["node", "council-sessions"]);
     const symbols = getSymbols();
     expect(captured).toContain(symbols.error);
@@ -218,7 +254,9 @@ describe("IA-04: sessions enrichment", () => {
   it("shows paused indicator for running session", async () => {
     await seedSession({ debateStatus: "running" });
     let captured = "";
-    const cmd = buildSessionsCommand((s) => { captured += s; });
+    const cmd = buildSessionsCommand((s) => {
+      captured += s;
+    });
     await cmd.parseAsync(["node", "council-sessions"]);
     const symbols = getSymbols();
     expect(captured).toContain(symbols.paused);
@@ -227,17 +265,21 @@ describe("IA-04: sessions enrichment", () => {
   it("shows turn count in plain output", async () => {
     await seedSession({ turnCount: 5 });
     let captured = "";
-    const cmd = buildSessionsCommand((s) => { captured += s; });
+    const cmd = buildSessionsCommand((s) => {
+      captured += s;
+    });
     await cmd.parseAsync(["node", "council-sessions"]);
-    expect(captured).toMatch(/5\s*turn/i);
+    expect(captured).toMatch(/turns:\s*5/i);
   });
 
   it("shows expert count in plain output", async () => {
     await seedSession({ expertCount: 3 });
     let captured = "";
-    const cmd = buildSessionsCommand((s) => { captured += s; });
+    const cmd = buildSessionsCommand((s) => {
+      captured += s;
+    });
     await cmd.parseAsync(["node", "council-sessions"]);
-    expect(captured).toMatch(/3\s*expert/i);
+    expect(captured).toMatch(/experts:\s*3/i);
   });
 });
 
@@ -247,7 +289,11 @@ describe("IA-11: destructive verification hints", () => {
   it("memory reset shows verification hint", async () => {
     await seedSession();
     let captured = "";
-    const cmd = buildMemoryCommand({ write: (s) => { captured += s; } });
+    const cmd = buildMemoryCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
     await cmd.parseAsync(["node", "council-memory", "reset", "test-panel", "--yes"]);
     expect(captured).toMatch(/council.*list.*verify/i);
   });
@@ -257,12 +303,12 @@ describe("IA-11: destructive verification hints", () => {
 
 describe("IA-12: panel list --long", () => {
   it("panel list command accepts --long flag", async () => {
-    // Import buildPanelCommand
     const { buildPanelCommand } = await import("../../../../src/cli/commands/panel.js");
     const cmd = buildPanelCommand();
     const listCmd = cmd.commands.find((c) => c.name() === "list");
     expect(listCmd).toBeDefined();
-    const longOpt = listCmd!.options.find((o) => o.long === "--long");
+    if (!listCmd) return;
+    const longOpt = listCmd.options.find((o) => o.long === "--long");
     expect(longOpt).toBeDefined();
   });
 });

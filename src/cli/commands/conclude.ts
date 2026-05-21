@@ -131,14 +131,16 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
   cmd
     .description(
       "Synthesize the latest debate of a panel into a structured decision framework. " +
-      "For transcript-based ADR export, use `council export --format adr` instead."
+        "For transcript-based ADR export, use `council export --format adr` instead.",
     )
     .argument("[panel]", "Panel name to conclude (defaults to the most recently created panel)")
     .addOption(
       new Option("--engine <kind>", "Engine kind").choices([...ENGINE_KINDS]).makeOptionMandatory(),
     )
     .addOption(
-      new Option("--format <kind>", "Output format").choices([...CONCLUDE_FORMATS]).default("plain"),
+      new Option("--format <kind>", "Output format")
+        .choices([...CONCLUDE_FORMATS])
+        .default("plain"),
     )
     .action(async (panelArg: string | undefined, raw: ConcludeRawOptions) => {
       const format: ConcludeFormat = raw.format === "json" ? "json" : "plain";
@@ -159,8 +161,8 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
         if (doc.turns.length === 0) {
           throw new Error(
             `Panel '${panelName}' has no turns in its latest debate — nothing to conclude. ` +
-            `Run \`council convene "${doc.panel.topic ?? '<topic>'}" --template ${panelName} --engine copilot\` or ` +
-            `\`council resume ${panelName} --continue "<prompt>" --engine copilot\` first.`,
+              `Run \`council convene "${doc.panel.topic ?? "<topic>"}" --template ${panelName} --engine copilot\` or ` +
+              `\`council resume ${panelName} --continue "<prompt>" --engine copilot\` first.`,
           );
         }
 
@@ -220,6 +222,7 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
           write(JSON.stringify(output, null, 2) + "\n");
         } else {
           write(renderPlain(output));
+          write(`\x1b[2mNext: council export ${panelName} --format adr\x1b[0m\n`);
         }
       } finally {
         await db.destroy().catch((err: unknown) => {

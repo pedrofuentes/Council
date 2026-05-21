@@ -56,7 +56,9 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
     .description("Export a panel transcript to markdown, json, or adr format")
     .argument("<panel>", "Panel name to export (as shown by `council sessions`)")
     .addOption(
-      new Option("--format <kind>", "Output format").choices([...EXPORT_FORMATS]).default("markdown"),
+      new Option("--format <kind>", "Output format")
+        .choices([...EXPORT_FORMATS])
+        .default("markdown"),
     )
     .option("--output <path>", "Write to file instead of stdout (default: stdout)")
     .action(async (panelName: string, raw: ExportOptions) => {
@@ -74,9 +76,19 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
         if (opts.output !== undefined) {
           await fs.writeFile(opts.output, rendered, "utf-8");
           writeError(`Wrote ${opts.format} export to ${opts.output}\n`);
+          if (opts.format !== "json") {
+            write(
+              `\x1b[2mNext: council conclude ${panelName} | council resume ${panelName}\x1b[0m\n`,
+            );
+          }
           return;
         }
         write(rendered);
+        if (opts.format !== "json") {
+          write(
+            `\x1b[2mNext: council conclude ${panelName} | council resume ${panelName}\x1b[0m\n`,
+          );
+        }
       } finally {
         await db.destroy().catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
