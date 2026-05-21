@@ -140,6 +140,9 @@ function buildEditCommand(write: Writer, writeError: Writer, editorRunner?: Edit
     // Ensure config file exists before opening editor
     await loadConfig();
 
+    // Preserve original contents for rollback on validation failure
+    const originalContents = await fs.readFile(configFilePath, "utf-8");
+
     const editor = resolveEditor();
     const runner = editorRunner ?? spawnEditor;
     await runner(editor, configFilePath);
@@ -158,17 +161,23 @@ function buildEditCommand(write: Writer, writeError: Writer, editorRunner?: Edit
     try {
       parsed = yaml.parse(rawText);
     } catch (err: unknown) {
+      // Restore original config on YAML parse failure
+      await fs.writeFile(configFilePath, originalContents, "utf-8");
       const msg = `YAML parse error: ${err instanceof Error ? err.message : String(err)}`;
       writeError(`Validation failed: ${msg}\n`);
+      writeError("Original config has been restored.\n");
       throw new CliUserError(msg);
     }
 
     const result = ConfigSchema.safeParse(parsed ?? {});
     if (!result.success) {
+      // Restore original config on schema validation failure
+      await fs.writeFile(configFilePath, originalContents, "utf-8");
       const issues = result.error.issues
         .map((i) => `  - ${i.path.join(".")}: ${i.message}`)
         .join("\n");
       writeError(`Validation failed:\n${issues}\n`);
+      writeError("Original config has been restored.\n");
       throw new CliUserError("Config validation failed after edit");
     }
 

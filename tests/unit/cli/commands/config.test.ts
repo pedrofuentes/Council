@@ -111,6 +111,11 @@ describe("buildConfigCommand", () => {
       const { stdout, stderr } = await runConfig(["edit"], { editorRunner });
       const combined = stdout + stderr;
       expect(combined).toContain("Validation");
+      expect(combined).toContain("restored");
+
+      // Verify original config was restored
+      const restored = await fs.readFile(configPath, "utf-8");
+      expect(restored).toContain("model: gpt-4o");
     });
 
     it("shows success message on valid edit", async () => {
@@ -126,7 +131,7 @@ describe("buildConfigCommand", () => {
       expect(stdout).toContain("valid");
     });
 
-    it("reports YAML parse errors after edit", async () => {
+    it("reports YAML parse errors after edit and restores original", async () => {
       await fs.mkdir(testHome, { recursive: true });
       const configPath = path.join(testHome, "config.yaml");
       await fs.writeFile(configPath, "defaults:\n  model: gpt-4o\n", "utf-8");
@@ -138,6 +143,11 @@ describe("buildConfigCommand", () => {
       const { stderr } = await runConfig(["edit"], { editorRunner });
       expect(stderr).toContain("Validation failed");
       expect(stderr).toContain("YAML parse error");
+      expect(stderr).toContain("restored");
+
+      // Verify original config was restored
+      const restored = await fs.readFile(configPath, "utf-8");
+      expect(restored).toContain("model: gpt-4o");
     });
 
     it("uses VISUAL env var for editor resolution", async () => {
