@@ -13,6 +13,7 @@ import { Chalk, type ChalkInstance } from "chalk";
 
 import type { DebateEvent, PanelMemberSnapshot } from "../../core/types.js";
 
+import { assignExpertColor, formatExpertPrefix } from "./ink/colors.js";
 import type { Renderer, Sink } from "./types.js";
 
 export interface PlainRendererOptions {
@@ -35,6 +36,8 @@ export class PlainRenderer implements Renderer {
   readonly #displayNames = new Map<string, string>();
   /** Track which slugs are human participants. */
   readonly #humanSlugs = new Set<string>();
+  /** Track expert → 0-based index for color and prefix assignment. */
+  readonly #expertIndex = new Map<string, number>();
 
   constructor(sink: Sink, options: PlainRendererOptions = {}) {
     this.#sink = sink;
@@ -54,8 +57,10 @@ export class PlainRenderer implements Renderer {
         case "turn.start": {
           const name = this.#displayNames.get(evt.expertSlug) ?? evt.expertSlug;
           const isHuman = evt.speakerKind === "human" || this.#humanSlugs.has(evt.expertSlug);
-          const label = isHuman ? `[You] ${name}` : name;
-          this.write(`\n${this.cyan(`[${label}]`)}\n`);
+          const idx = this.#expertIndex.get(evt.expertSlug) ?? 0;
+          const prefix = formatExpertPrefix(idx, name);
+          const label = isHuman ? `[You] ${prefix}` : prefix;
+          this.write(`\n${this.colorForExpert(evt.expertSlug)(`[${label}]`)}\n`);
           break;
         }
         case "turn.delta":
@@ -89,15 +94,17 @@ export class PlainRenderer implements Renderer {
 
   private renderPanelAssembled(experts: readonly PanelMemberSnapshot[]): void {
     this.write(`\n${this.bold("🏛️  Panel assembled:")}\n`);
-    for (const expert of experts) {
+    experts.forEach((expert, i) => {
       this.#displayNames.set(expert.slug, expert.displayName);
+      this.#expertIndex.set(expert.slug, i);
+      const prefix = formatExpertPrefix(i, expert.displayName);
       if (expert.participantKind === "human") {
         this.#humanSlugs.add(expert.slug);
-        this.write(`  • ${expert.displayName} ${this.gray("(human)")}\n`);
+        this.write(`  • ${prefix} ${this.gray("(human)")}\n`);
       } else {
-        this.write(`  • ${expert.displayName} ${this.gray(`(${expert.model})`)}\n`);
+        this.write(`  • ${prefix} ${this.gray(`(${expert.model})`)}\n`);
       }
-    }
+    });
   }
 
   private write(text: string): void {
@@ -111,11 +118,15 @@ export class PlainRenderer implements Renderer {
 
   // ---------- color helpers (no-op when color is disabled) ----------
 
+  private colorForExpert(slug: string): (text: string) => string {
+    const idx = this.#expertIndex.get(slug) ?? 0;
+    const colorName = assignExpertColor(idx);
+    const fn = this.#chalk[colorName];
+    return (text: string) => fn(text);
+  }
+
   private bold(text: string): string {
     return this.#chalk.bold(text);
-  }
-  private cyan(text: string): string {
-    return this.#chalk.cyan(text);
   }
   private dim(text: string): string {
     return this.#chalk.dim(text);
