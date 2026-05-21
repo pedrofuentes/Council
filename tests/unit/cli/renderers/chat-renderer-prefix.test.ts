@@ -47,7 +47,7 @@ describe("ChatRenderer expert index prefix (A11Y-01)", () => {
       experts: makeExperts(["cto", "Dahlia"]),
     });
     renderer.startExpertResponse("cto");
-    expect(stripAnsi(sink.text)).toBe("[1] Dahlia > ");
+    expect(stripAnsi(sink.text)).toBe("\r[1] Dahlia > ");
   });
 
   it("prefixes the second expert with [2]", () => {
@@ -57,7 +57,7 @@ describe("ChatRenderer expert index prefix (A11Y-01)", () => {
       experts: makeExperts(["cto", "Dahlia"], ["sre", "Priya"]),
     });
     renderer.startExpertResponse("sre");
-    expect(stripAnsi(sink.text)).toBe("[2] Priya > ");
+    expect(stripAnsi(sink.text)).toBe("\r[2] Priya > ");
   });
 
   it("unknown expert gets next index", () => {
@@ -67,7 +67,7 @@ describe("ChatRenderer expert index prefix (A11Y-01)", () => {
       experts: makeExperts(["cto", "Dahlia"]),
     });
     renderer.startExpertResponse("unknown");
-    expect(stripAnsi(sink.text)).toBe("[2] unknown > ");
+    expect(stripAnsi(sink.text)).toBe("\r[2] unknown > ");
   });
 });
 

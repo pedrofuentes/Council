@@ -98,7 +98,7 @@ describe("ChatRenderer", () => {
         experts: makeExperts(["cto", "Dahlia (CTO)"]),
       });
       renderer.startExpertResponse("cto");
-      expect(stripAnsi(sink.text)).toBe("[1] Dahlia (CTO) > ");
+      expect(stripAnsi(sink.text)).toBe("\r[1] Dahlia (CTO) > ");
     });
 
     it("streamChunk writes text without trailing newline", () => {
@@ -110,7 +110,7 @@ describe("ChatRenderer", () => {
       renderer.startExpertResponse("cto");
       renderer.streamChunk("Microservices ");
       renderer.streamChunk("are powerful.");
-      expect(stripAnsi(sink.text)).toBe("[1] Dahlia (CTO) > Microservices are powerful.");
+      expect(stripAnsi(sink.text)).toBe("\r[1] Dahlia (CTO) > Microservices are powerful.");
     });
 
     it("endExpertResponse adds a newline", () => {
@@ -122,14 +122,14 @@ describe("ChatRenderer", () => {
       renderer.startExpertResponse("cto");
       renderer.streamChunk("hello");
       renderer.endExpertResponse();
-      expect(stripAnsi(sink.text)).toBe("[1] Dahlia (CTO) > hello\n");
+      expect(stripAnsi(sink.text)).toBe("\r[1] Dahlia (CTO) > hello\n");
     });
 
     it("falls back to the slug when expert is not registered", () => {
       const sink = new StringSink();
       const renderer = createChatRenderer({ sink, experts: makeExperts() });
       renderer.startExpertResponse("unknown");
-      expect(stripAnsi(sink.text)).toBe("[1] unknown > ");
+      expect(stripAnsi(sink.text)).toBe("\r[1] unknown > ");
     });
   });
 
@@ -297,7 +297,7 @@ describe("ChatRenderer", () => {
         experts: makeExperts(["cto", INJECTION]),
       });
       renderer.startExpertResponse("cto");
-      expect(stripAnsi(sink.text)).toBe("[1] beforeafter > ");
+      expect(stripAnsi(sink.text)).toBe("\r[1] beforeafter > ");
     });
 
     // Carriage return (\r) returns the cursor to column 0 — without
@@ -333,7 +333,7 @@ describe("ChatRenderer", () => {
         experts: makeExperts(["cto", CR_INJECTION]),
       });
       renderer.startExpertResponse("cto");
-      expect(stripAnsi(sink.text)).toBe("[1] realfake > ");
+      expect(stripAnsi(sink.text)).toBe("\r[1] realfake > ");
     });
 
     it("strips carriage returns from system messages", () => {
@@ -359,7 +359,7 @@ describe("ChatRenderer", () => {
       renderer.startExpertResponse("cto");
       const beforeLen = sink.text.length;
       renderer.streamChunk("para 1\npara 2");
-      expect(sink.text.slice(beforeLen)).toBe("para 1\npara 2");
+      expect(sink.text.slice(beforeLen)).toBe("para 1\n  para 2");
     });
   });
 
@@ -378,7 +378,7 @@ describe("ChatRenderer", () => {
         experts: makeExperts(["cto", NL_INJECTION]),
       });
       renderer.startExpertResponse("cto");
-      expect(stripAnsi(sink.text)).toBe("[1] Mallory You > hacked > ");
+      expect(stripAnsi(sink.text)).toBe("\r[1] Mallory You > hacked > ");
     });
 
     it("collapses newlines in session status messages", () => {
@@ -388,11 +388,11 @@ describe("ChatRenderer", () => {
       expect(stripAnsi(sink.text)).toBe("Mallory You > hacked\n");
     });
 
-    it("collapses newlines in user message replay", () => {
+    it("preserves newlines in user message replay", () => {
       const sink = new StringSink();
       const renderer = createChatRenderer({ sink, experts: makeExperts() });
       renderer.showUserMessage(NL_INJECTION);
-      expect(stripAnsi(sink.text)).toBe("You > Mallory You > hacked\n");
+      expect(stripAnsi(sink.text)).toBe("You > Mallory\nYou > hacked\n");
     });
 
     it("collapses newlines in system messages", () => {
@@ -411,9 +411,10 @@ describe("ChatRenderer", () => {
       expect(stripAnsi(sink.text)).toBe("ℹ a b c\n");
     });
 
-    it("still preserves newlines in streamed expert response chunks", () => {
+    it("still preserves newlines in streamed expert response chunks (with indent)", () => {
       // Regression guard: streaming surfaces (multi-line response bodies)
       // must NOT collapse newlines, only single-line UI chrome should.
+      // TUI-16: continuation lines get 2-space indent.
       const sink = new StringSink();
       const renderer = createChatRenderer({
         sink,
@@ -422,7 +423,7 @@ describe("ChatRenderer", () => {
       renderer.startExpertResponse("cto");
       const beforeLen = sink.text.length;
       renderer.streamChunk("line 1\nline 2");
-      expect(sink.text.slice(beforeLen)).toBe("line 1\nline 2");
+      expect(sink.text.slice(beforeLen)).toBe("line 1\n  line 2");
     });
   });
 });
