@@ -18,6 +18,9 @@
  *     that some terminals interpret as alternate escape introducers
  *     (e.g. 0x9B = CSI, 0x9D = OSC). Stripping these closes a TTY-injection
  *     vector equivalent to the ANSI ESC-prefixed sequences above.
+ *   - Bidi override/isolate characters (U+202A–U+202E, U+2066–U+2069) that
+ *     enable Trojan Source attacks (CVE-2021-42574) by visually reordering
+ *     text in the terminal to disguise malicious content.
  *
  * Printable Unicode (emoji, accents, CJK, NBSP and other Latin-1 supplement
  * characters at U+00A0+) is preserved.
@@ -28,7 +31,7 @@ const CONTROL_CHAR_PATTERN =
   // (\x1B is in the \x0E-\x1F range) and leave the rest of the sequence
   // visible.
   // eslint-disable-next-line no-control-regex
-  /\x1B\[[0-9;]*[a-zA-Z]|\x1B\].*?\x07|[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g;
+  /\x1B\[[0-9;]*[a-zA-Z]|\x1B\].*?\x07|[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]|[\u202A-\u202E\u2066-\u2069]/g;
 
 export function stripControlChars(text: string): string {
   return text.replace(CONTROL_CHAR_PATTERN, "");
