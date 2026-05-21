@@ -39,7 +39,8 @@ export function buildProgram(): Command {
   program
     .name("council")
     .description("Persistent AI expert panels for deliberation and decision-making")
-    .version(packageJson.version);
+    .version(packageJson.version)
+    .showSuggestionAfterError(true);
   program.addCommand(buildConveneCommand());
   program.addCommand(buildAskCommand());
   program.addCommand(buildChatCommand());
