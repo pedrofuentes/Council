@@ -126,6 +126,7 @@ describe("ANSI accessibility", () => {
       // Fix: Use gray for model names (SGR 90).
       // chalk.gray uses SGR 90, chalk.dim uses SGR 2.
       // We can detect by checking for SGR 90 in the output.
+      // eslint-disable-next-line no-control-regex
       expect(sink.text).toMatch(/\u001b\[90m.*claude-sonnet-4/);
     });
 
@@ -137,7 +138,9 @@ describe("ANSI accessibility", () => {
       );
       
       // SGR 90 = gray, SGR 2 = dim.
+      // eslint-disable-next-line no-control-regex
       expect(sink.text).toMatch(/\u001b\[90m/);
+      // eslint-disable-next-line no-control-regex
       expect(sink.text).not.toMatch(/\u001b\[2m/);
     });
   });
@@ -151,7 +154,9 @@ describe("ANSI accessibility", () => {
       // The bug: chalk.bold.white (SGR 1;37) is invisible on light backgrounds.
       // Fix: Use chalk.bold (SGR 1) only, inherit terminal foreground.
       // Should have bold (SGR 1) but not white (SGR 37).
+      // eslint-disable-next-line no-control-regex
       expect(sink.text).toMatch(/\u001b\[1m/); // bold present
+      // eslint-disable-next-line no-control-regex
       expect(sink.text).not.toMatch(/\u001b\[37m/); // white absent
     });
 
@@ -160,7 +165,9 @@ describe("ANSI accessibility", () => {
       const renderer = createChatRenderer({ sink, experts: new Map() });
       renderer.showUserMessage("Hello");
       
+      // eslint-disable-next-line no-control-regex
       expect(sink.text).toMatch(/\u001b\[1m/); // bold present
+      // eslint-disable-next-line no-control-regex
       expect(sink.text).not.toMatch(/\u001b\[37m/); // white absent
     });
   });

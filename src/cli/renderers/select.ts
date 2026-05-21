@@ -32,7 +32,7 @@ export function selectRenderer(opts: SelectRendererOpts): Renderer {
     case "plain":
       return new PlainRenderer(opts.sink);
     case "auto":
-      return opts.isTTY ? new InkRenderer({ isTTY: true }) : new PlainRenderer(opts.sink);
+      return opts.isTTY ? new InkRenderer({ isTTY: true }) : new PlainRenderer(opts.sink, { color: false });
     default: {
       const _exhaustive: never = opts.format;
       throw new Error(`Unknown renderer format: ${String(_exhaustive)}`);

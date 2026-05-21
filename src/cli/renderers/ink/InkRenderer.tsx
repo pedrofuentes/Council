@@ -237,7 +237,7 @@ function StreamingText({
   return (
     <Text>
       {text}
-      {!ended && text.length > 0 ? <Text dimColor>{" ▋"}</Text> : null}
+      {!ended && text.length > 0 ? <Text color="cyan">{" ▋"}</Text> : null}
     </Text>
   );
 }
