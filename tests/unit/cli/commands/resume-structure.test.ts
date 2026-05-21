@@ -246,9 +246,13 @@ describe("resume prefix match and --latest (DX-12)", () => {
   });
 
   it("--latest errors when no panels exist", async () => {
+    let stderr = "";
     const cmd = buildResumeCommand({
       engineFactory: makeMockEngineFactory(),
       write: () => undefined,
+      writeError: (s) => {
+        stderr += s;
+      },
     });
     cmd.exitOverride();
 
@@ -259,6 +263,7 @@ describe("resume prefix match and --latest (DX-12)", () => {
       thrown = err instanceof Error ? err.message : String(err);
     }
     expect(thrown).toMatch(/no.*panel|no.*session|no.*debate/i);
+    expect(stderr).toMatch(/no.*panel/i);
   });
 
   it("errors when no panel argument is provided and --latest is not set", async () => {
