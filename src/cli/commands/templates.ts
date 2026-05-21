@@ -11,6 +11,8 @@
 import { Command } from "commander";
 
 import { listTemplates, loadTemplate } from "../../core/template-loader.js";
+import { PanelNotFoundError } from "../../core/template-loader.js";
+import { CliUserError } from "../cli-user-error.js";
 
 import { defaultWriter, type Writer } from "./writer.js";
 
@@ -41,7 +43,15 @@ function buildInspectCommand(write: Writer): Command {
     .description("Show detailed information about a template")
     .argument("<name>", "Template name to inspect")
     .action(async (name: string) => {
-      const panel = await loadTemplate(name);
+      let panel;
+      try {
+        panel = await loadTemplate(name);
+      } catch (err: unknown) {
+        if (err instanceof PanelNotFoundError) {
+          throw new CliUserError(err.message);
+        }
+        throw err;
+      }
 
       write(`\n# ${panel.name}\n`);
       if (panel.description) {

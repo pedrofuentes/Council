@@ -28,6 +28,8 @@ import {
 } from "../../memory/transcript.js";
 import { PanelRepository } from "../../memory/repositories/panels.js";
 
+import { CliUserError } from "../cli-user-error.js";
+
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 import { ENGINE_KINDS, type EngineKind, runWithEngine } from "../run-with-engine.js";
 import { runExtractMemoryHook } from "../extract-memory-hook.js";
@@ -291,15 +293,17 @@ async function resolvePanelName(
   if (latest) {
     const panel = await panelRepo.findMostRecentlyActive();
     if (!panel) {
-      throw new Error("No panels found. Run `council convene` to start one.");
+      writeError("No panels found. Run `council convene` to start one.\n");
+      throw new CliUserError("No panels found");
     }
     return panel.name;
   }
 
   if (!panelArg) {
-    throw new Error(
-      "Panel name is required. Use `council resume <name>` or `council resume --latest`.",
+    writeError(
+      "Panel name is required. Use `council resume <name>` or `council resume --latest`.\n",
     );
+    throw new CliUserError("Panel name is required");
   }
 
   // Try exact match first
@@ -318,9 +322,8 @@ async function resolvePanelName(
     for (const n of names) {
       writeError(`  • ${n}\n`);
     }
-    throw new Error(
-      `Ambiguous prefix "${panelArg}" matches ${prefixMatches.length} panels: ${names.join(", ")}. ` +
-        `Use a longer prefix or the full name.`,
+    throw new CliUserError(
+      `Ambiguous prefix "${panelArg}" matches ${prefixMatches.length} panels: ${names.join(", ")}`,
     );
   }
 
