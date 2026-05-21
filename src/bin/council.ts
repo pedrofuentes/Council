@@ -34,6 +34,15 @@ import { buildTemplatesCommand } from "../cli/commands/templates.js";
 
 import { handleCliError } from "../cli/handle-cli-error.js";
 
+// Command categories for grouped help output
+const COMMAND_CATEGORIES = {
+  "Getting Started": ["doctor"],
+  "Deliberation": ["convene", "resume", "conclude"],
+  "Conversation": ["ask", "chat"],
+  "Library": ["expert", "panel", "templates"],
+  "Inspection": ["sessions", "memory", "export"],
+} as const;
+
 export function buildProgram(): Command {
   const program = new Command();
   program
@@ -41,18 +50,71 @@ export function buildProgram(): Command {
     .description("Persistent AI expert panels for deliberation and decision-making")
     .version(packageJson.version)
     .showSuggestionAfterError(true);
+
+  // Register commands in category order
+  program.addCommand(buildDoctorCommand());
   program.addCommand(buildConveneCommand());
-  program.addCommand(buildAskCommand());
-  program.addCommand(buildChatCommand());
   program.addCommand(buildResumeCommand());
   program.addCommand(buildConcludeCommand());
-  program.addCommand(buildExportCommand());
-  program.addCommand(buildSessionsCommand());
-  program.addCommand(buildPanelCommand());
+  program.addCommand(buildAskCommand());
+  program.addCommand(buildChatCommand());
   program.addCommand(buildExpertCommand());
+  program.addCommand(buildPanelCommand());
   program.addCommand(buildTemplatesCommand());
+  program.addCommand(buildSessionsCommand());
   program.addCommand(buildMemoryCommand());
-  program.addCommand(buildDoctorCommand());
+  program.addCommand(buildExportCommand());
+
+  // Custom help formatter with command grouping
+  program.configureHelp({
+    formatHelp: (cmd, helper) => {
+      const termWidth = helper.padWidth(cmd, helper);
+
+      const sections: string[] = [];
+
+      // Usage
+      sections.push(`Usage: ${helper.commandUsage(cmd)}`);
+      sections.push("");
+
+      // Description
+      sections.push(helper.commandDescription(cmd));
+
+      // Options
+      if (cmd.options.length > 0) {
+        sections.push("");
+        sections.push("Options:");
+        cmd.options.forEach((option) => {
+          sections.push(
+            `  ${helper.optionTerm(option).padEnd(termWidth)}  ${helper.optionDescription(option)}`
+          );
+        });
+      }
+
+      // Commands - grouped by category
+      sections.push("");
+      sections.push("Commands:");
+      sections.push("");
+
+      for (const [category, commandNames] of Object.entries(COMMAND_CATEGORIES)) {
+        sections.push(`${category}:`);
+        for (const cmdName of commandNames) {
+          const subCmd = cmd.commands.find((c) => c.name() === cmdName);
+          if (subCmd) {
+            sections.push(
+              `  ${helper.subcommandTerm(subCmd).padEnd(termWidth)}  ${helper.subcommandDescription(subCmd)}`
+            );
+          }
+        }
+        sections.push("");
+      }
+
+      // Getting-started hint
+      sections.push("New to Council? Start with: council doctor");
+
+      return sections.join("\n");
+    },
+  });
+
   return program;
 }
 
