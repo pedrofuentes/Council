@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Expert index prefixes for accessibility** (A11Y-01) — all renderers (Ink, Chat, Plain) now prefix expert names with a 1-based index (`[1] Alice`, `[2] Bob`), providing a redundant cue for color-blind users who previously had to rely solely on color to distinguish speakers.
+
+### Changed
+
+- **Unified 8-color expert palette** (TUI-01, TUI-13) — the expert color palette is now a single source of truth in `src/cli/renderers/ink/colors.ts`, shared by Ink, Chat, and Plain renderers. The palette uses 8 colors: `cyan`, `yellow`, `magenta`, `green`, `blue`, `cyanBright`, `magentaBright`, `yellowBright`. Red has been removed from the expert palette to avoid visual collision with error messages (which remain red).
+- **Per-expert colors in PlainRenderer** (TUI-12) — the Plain renderer now assigns distinct colors to each expert (previously all experts used uniform cyan).
+
+### Added
+
 - **Topic admission control** (#570) — new warn-only heuristic guard (`src/core/topic-admission.ts`) runs at every Council entry point (`council convene`, `council ask`, `council chat` — including the in-REPL `@convene` inline debate) and surfaces a non-blocking warning when the topic matches known sensitive categories: violence/weapons synthesis, controlled-substance synthesis, or Crescendo-style prompt-injection patterns. Input is NFKC-normalized before matching so fullwidth/compatibility characters cannot bypass the patterns. The check is pure (no I/O, no DB) and structurally cannot block (`admitted: true` is a literal type); it only echoes a `⚠ This topic touches sensitive areas (…)` line so the user is not surprised when experts engage their safety guidelines.
 - **Memory provenance tracking** (#569) — `council memory inspect <panel> --expert <slug>` now displays provenance metadata for LLM-extracted memories: source debate ID, derivation method (`llm_summary`), trust score (0.0–1.0), and extraction timestamp. `council memory reset` also clears provenance data alongside extracted memory. This is the foundation for future memory quarantine — once you can trace which debate a memory came from, you can flag memories from debates later identified as adversarial.
 - **Comprehensive E2E test suite** (T-01 through T-11) — 94 tests across 10 files covering all 12 CLI commands (convene, resume, export, conclude, sessions, ask, chat, memory, expert, panel, doctor, templates). Tests use in-process execution with MockEngine for fast, deterministic verification of command workflows, error paths, output formats, and persistent state management. Full suite < 2 minutes with zero premium requests.
