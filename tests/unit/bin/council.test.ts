@@ -59,25 +59,26 @@ describe("buildProgram", () => {
 
       // Getting Started
       expect(commandNames[0]).toBe("doctor");
+      expect(commandNames[1]).toBe("config");
 
       // Deliberation
-      expect(commandNames[1]).toBe("convene");
-      expect(commandNames[2]).toBe("resume");
-      expect(commandNames[3]).toBe("conclude");
+      expect(commandNames[2]).toBe("convene");
+      expect(commandNames[3]).toBe("resume");
+      expect(commandNames[4]).toBe("conclude");
 
       // Conversation
-      expect(commandNames[4]).toBe("ask");
-      expect(commandNames[5]).toBe("chat");
+      expect(commandNames[5]).toBe("ask");
+      expect(commandNames[6]).toBe("chat");
 
       // Library
-      expect(commandNames[6]).toBe("expert");
-      expect(commandNames[7]).toBe("panel");
-      expect(commandNames[8]).toBe("templates");
+      expect(commandNames[7]).toBe("expert");
+      expect(commandNames[8]).toBe("panel");
+      expect(commandNames[9]).toBe("templates");
 
       // Inspection
-      expect(commandNames[9]).toBe("sessions");
-      expect(commandNames[10]).toBe("memory");
-      expect(commandNames[11]).toBe("export");
+      expect(commandNames[10]).toBe("sessions");
+      expect(commandNames[11]).toBe("memory");
+      expect(commandNames[12]).toBe("export");
     });
   });
 });

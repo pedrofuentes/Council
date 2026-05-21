@@ -23,8 +23,14 @@ async function runConfig(
   let stdout = "";
   let stderr = "";
   const cmd = buildConfigCommand(
-    deps.write ?? ((s: string) => { stdout += s; }),
-    deps.writeError ?? ((s: string) => { stderr += s; }),
+    deps.write ??
+      ((s: string) => {
+        stdout += s;
+      }),
+    deps.writeError ??
+      ((s: string) => {
+        stderr += s;
+      }),
     deps.editorRunner,
   );
   cmd.exitOverride();
@@ -75,7 +81,7 @@ describe("buildConfigCommand", () => {
 
       const { stdout } = await runConfig(["show"]);
       expect(stdout).toContain("gpt-4o");
-      expect(stdout).toContain("(from config file)");
+      expect(stdout).toContain("(config file)");
       expect(stdout).toContain("(default)");
     });
   });
@@ -86,7 +92,8 @@ describe("buildConfigCommand", () => {
       await runConfig(["edit"], { editorRunner });
 
       expect(editorRunner).toHaveBeenCalledTimes(1);
-      const [_editor, filePath] = editorRunner.mock.calls[0]!;
+      const call = editorRunner.mock.calls[0] as [string, string];
+      const [_editor, filePath] = call;
       expect(filePath).toBe(path.join(testHome, "config.yaml"));
     });
 

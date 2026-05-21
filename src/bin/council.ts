@@ -22,6 +22,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import { buildAskCommand } from "../cli/commands/ask.js";
 import { buildChatCommand } from "../cli/commands/chat.js";
 import { buildConcludeCommand } from "../cli/commands/conclude.js";
+import { buildConfigCommand } from "../cli/commands/config.js";
 import { buildConveneCommand } from "../cli/commands/convene.js";
 import { buildDoctorCommand } from "../cli/commands/doctor.js";
 import { buildExpertCommand } from "../cli/commands/expert.js";
@@ -36,11 +37,11 @@ import { handleCliError } from "../cli/handle-cli-error.js";
 
 // Command categories for grouped help output
 const COMMAND_CATEGORIES = {
-  "Getting Started": ["doctor"],
-  "Deliberation": ["convene", "resume", "conclude"],
-  "Conversation": ["ask", "chat"],
-  "Library": ["expert", "panel", "templates"],
-  "Inspection": ["sessions", "memory", "export"],
+  "Getting Started": ["doctor", "config"],
+  Deliberation: ["convene", "resume", "conclude"],
+  Conversation: ["ask", "chat"],
+  Library: ["expert", "panel", "templates"],
+  Inspection: ["sessions", "memory", "export"],
 } as const;
 
 export function buildProgram(): Command {
@@ -53,6 +54,7 @@ export function buildProgram(): Command {
 
   // Register commands in category order
   program.addCommand(buildDoctorCommand());
+  program.addCommand(buildConfigCommand());
   program.addCommand(buildConveneCommand());
   program.addCommand(buildResumeCommand());
   program.addCommand(buildConcludeCommand());
@@ -85,7 +87,7 @@ export function buildProgram(): Command {
         sections.push("Options:");
         cmd.options.forEach((option) => {
           sections.push(
-            `  ${helper.optionTerm(option).padEnd(termWidth)}  ${helper.optionDescription(option)}`
+            `  ${helper.optionTerm(option).padEnd(termWidth)}  ${helper.optionDescription(option)}`,
           );
         });
       }
@@ -101,7 +103,7 @@ export function buildProgram(): Command {
           const subCmd = cmd.commands.find((c) => c.name() === cmdName);
           if (subCmd) {
             sections.push(
-              `  ${helper.subcommandTerm(subCmd).padEnd(termWidth)}  ${helper.subcommandDescription(subCmd)}`
+              `  ${helper.subcommandTerm(subCmd).padEnd(termWidth)}  ${helper.subcommandDescription(subCmd)}`,
             );
           }
         }
