@@ -15,6 +15,7 @@ import type { DebateEvent, PanelMemberSnapshot } from "../../core/types.js";
 
 import { friendlyReason } from "./friendly-reasons.js";
 import { assignExpertColor, formatExpertPrefix } from "./ink/colors.js";
+import { getSymbols } from "./symbols.js";
 import type { Renderer, Sink } from "./types.js";
 import { stripControlChars } from "../strip-control-chars.js";
 
@@ -48,13 +49,14 @@ export class PlainRenderer implements Renderer {
   }
 
   async render(events: AsyncIterable<DebateEvent>): Promise<void> {
+    const sym = getSymbols();
     for await (const evt of events) {
       switch (evt.kind) {
         case "panel.assembled":
-          this.renderPanelAssembled(evt.experts);
+          this.renderPanelAssembled(evt.experts, sym.panel, sym.bullet);
           break;
         case "round.start":
-          this.write(`\n${this.bold(`━━━ Round ${evt.round + 1} ━━━`)}\n`);
+          this.write(`\n${this.bold(`${sym.roundRule.repeat(3)} Round ${evt.round + 1} ${sym.roundRule.repeat(3)}`)}\n`);
           break;
         case "turn.start": {
           const name = this.#displayNames.get(evt.expertSlug) ?? evt.expertSlug;
@@ -72,7 +74,7 @@ export class PlainRenderer implements Renderer {
           this.write("\n");
           break;
         case "round.end":
-          this.write(`\n${this.dim("─".repeat(40))}\n`);
+          this.write(`\n${this.dim(sym.separator.repeat(40))}\n`);
           break;
         case "cost.update":
           this.write(
@@ -101,17 +103,21 @@ export class PlainRenderer implements Renderer {
     }
   }
 
-  private renderPanelAssembled(experts: readonly PanelMemberSnapshot[]): void {
-    this.write(`\n${this.bold("🏛️  Panel assembled:")}\n`);
+  private renderPanelAssembled(
+    experts: readonly PanelMemberSnapshot[],
+    panelIcon: string,
+    bullet: string,
+  ): void {
+    this.write(`\n${this.bold(`${panelIcon}  Panel assembled:`)}\n`);
     experts.forEach((expert, i) => {
       this.#displayNames.set(expert.slug, expert.displayName);
       this.#expertIndex.set(expert.slug, i);
       const prefix = formatExpertPrefix(i, expert.displayName);
       if (expert.participantKind === "human") {
         this.#humanSlugs.add(expert.slug);
-        this.write(`  • ${prefix} ${this.gray("(human)")}\n`);
+        this.write(`  ${bullet} ${prefix} ${this.gray("(human)")}\n`);
       } else {
-        this.write(`  • ${prefix} ${this.gray(`(${expert.model})`)}\n`);
+        this.write(`  ${bullet} ${prefix} ${this.gray(`(${expert.model})`)}\n`);
       }
     });
   }

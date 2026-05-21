@@ -34,7 +34,7 @@ const UNICODE_SYMBOLS: SymbolSet = Object.freeze({
   cursor: "▋",
   pass: "✅",
   fail: "❌",
-  warn: "⚠️",
+  warn: "⚠",
   info: "ℹ",
   error: "✗",
   bullet: "•",

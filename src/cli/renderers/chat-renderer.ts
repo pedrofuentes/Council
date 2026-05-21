@@ -17,6 +17,7 @@ import { stripControlChars } from "../strip-control-chars.js";
 
 import type { ExpertColor } from "./ink/colors.js";
 import { EXPERT_COLOR_PALETTE, formatExpertPrefix } from "./ink/colors.js";
+import { getSymbols } from "./symbols.js";
 import type { Sink } from "./types.js";
 
 /**
@@ -179,21 +180,23 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
 
     showSystem(message: string, level: "info" | "warn" | "error" = "info"): void {
       const safe = sanitizeSingleLine(message);
+      const sym = getSymbols();
       switch (level) {
         case "info":
-          write(`${chalk.blue("ℹ")} ${safe}\n`);
+          write(`${chalk.blue(sym.info)} ${safe}\n`);
           return;
         case "warn":
-          write(`${chalk.yellow("⚠")} ${safe}\n`);
+          write(`${chalk.yellow(sym.warn)} ${safe}\n`);
           return;
         case "error":
-          writeError(`${chalk.red("✗")} ${safe}\n`);
+          writeError(`${chalk.red(sym.error)} ${safe}\n`);
           return;
       }
     },
 
     showSeparator(): void {
-      write(`${chalk.dim("─".repeat(40))}\n`);
+      const sym = getSymbols();
+      write(`${chalk.dim(sym.separator.repeat(40))}\n`);
     },
   };
 }

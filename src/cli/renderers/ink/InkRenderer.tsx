@@ -27,6 +27,7 @@ import type { DebateEndReason, DebateEvent, PanelMemberSnapshot } from "../../..
 import type { Renderer } from "../types.js";
 
 import { assignExpertColor, formatExpertPrefix, type ExpertColor } from "./colors.js";
+import { getSymbols } from "../symbols.js";
 
 interface TurnBlock {
   readonly round: number;
@@ -180,16 +181,17 @@ function nameFor(state: DebateState, slug: string): string {
 
 function PanelRoster({ state }: { readonly state: DebateState }): ReactElement | null {
   if (state.panel.length === 0) return null;
+  const sym = getSymbols();
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text bold>🏛️ Panel assembled</Text>
+      <Text bold>{sym.panel} Panel assembled</Text>
       {state.panel.map((expert) => {
         const color = colorFor(state, expert.slug);
         const idx = state.expertIndex.get(expert.slug) ?? 0;
         const isHuman = expert.participantKind === "human" || state.humanSlugs.has(expert.slug);
         return (
           <Text key={expert.slug}>
-            {"  • "}
+            {`  ${sym.bullet} `}
             <Text color={color} bold>
               {formatExpertPrefix(idx, expert.displayName)}
             </Text>
@@ -202,9 +204,10 @@ function PanelRoster({ state }: { readonly state: DebateState }): ReactElement |
 }
 
 function RoundHeader({ round }: { readonly round: number }): ReactElement {
+  const sym = getSymbols();
   return (
     <Box marginTop={1}>
-      <Text bold>{`━━━ Round ${round + 1} ━━━`}</Text>
+      <Text bold>{`${sym.roundRule.repeat(3)} Round ${round + 1} ${sym.roundRule.repeat(3)}`}</Text>
     </Box>
   );
 }
@@ -238,10 +241,11 @@ function StreamingText({
   readonly text: string;
   readonly ended: boolean;
 }): ReactElement {
+  const sym = getSymbols();
   return (
     <Text>
       {text}
-      {!ended && text.length > 0 ? <Text color="cyan">{" ▋"}</Text> : null}
+      {!ended && text.length > 0 ? <Text color="cyan">{` ${sym.cursor}`}</Text> : null}
     </Text>
   );
 }

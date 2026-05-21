@@ -27,7 +27,7 @@ describe("getSymbols", () => {
     expect(s.cursor).toBe("▋");
     expect(s.pass).toBe("✅");
     expect(s.fail).toBe("❌");
-    expect(s.warn).toBe("⚠️");
+    expect(s.warn).toBe("⚠");
     expect(s.info).toBe("ℹ");
     expect(s.error).toBe("✗");
     expect(s.bullet).toBe("•");
