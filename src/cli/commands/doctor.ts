@@ -10,6 +10,7 @@ import { Command } from "commander";
 import { getCouncilHome, loadConfig } from "../../config/index.js";
 import { pingProviderHealth } from "../../engine/copilot/health.js";
 import { KNOWN_MODELS } from "../../engine/models.js";
+import { getSymbols } from "../renderers/symbols.js";
 
 import { probeCopilotModel } from "./doctor-online-probe.js";
 import { defaultWriter, type Writer } from "./writer.js";
@@ -157,13 +158,14 @@ function formatError(err: unknown): string {
 }
 
 function statusIcon(status: CheckResult["status"]): string {
+  const sym = getSymbols();
   switch (status) {
     case "pass":
-      return "✅";
+      return `${sym.pass} PASS`;
     case "fail":
-      return "❌";
+      return `${sym.fail} FAIL`;
     case "warn":
-      return "⚠️";
+      return `${sym.warn} WARN`;
   }
 }
 
@@ -216,7 +218,8 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
       }
 
       write("Council Doctor\n");
-      write("═".repeat(40) + "\n");
+      const sym = getSymbols();
+      write(sym.headerRule.repeat(40) + "\n");
       write(`Platform: ${os.platform()} ${os.arch()}\n`);
       write("\n");
 
