@@ -232,6 +232,22 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
         write(`${statusIcon(result.status)} ${result.name}\n   ${result.detail}\n`);
       }
 
+      // Configuration section (DX-09)
+      write("\n");
+      try {
+        const config = await loadConfig();
+        const configFilePath = path.join(getCouncilHome(), CONFIG_FILE);
+        const sym2 = getSymbols();
+        write(
+          `${sym2.pass} Config\n` +
+            `   Path: ${configFilePath}\n` +
+            `   Engine: ${config.defaults.engine} | Model: ${config.defaults.model} | Rounds: ${config.defaults.maxRounds}\n`,
+        );
+      } catch {
+        const sym2 = getSymbols();
+        write(`${sym2.warn} Config\n   Could not load configuration\n`);
+      }
+
       if (options.models) {
         write("\n");
         writeKnownModels(write, KNOWN_MODELS);
