@@ -45,6 +45,9 @@ export interface ChatRenderer {
   /** Show a user message (for transcript replay). */
   showUserMessage(content: string): void;
 
+  /** Show a dim "thinking..." indicator before first token. No trailing newline. */
+  showThinking(expertSlug: string): void;
+
   /** Show the start of an expert's response (name prefix with color). */
   startExpertResponse(expertSlug: string): void;
 
@@ -146,7 +149,15 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
     },
 
     showUserMessage(content: string): void {
-      write(`${chalk.bold(PROMPT_PREFIX)}${sanitizeSingleLine(content)}\n`);
+      write(`${chalk.bold(PROMPT_PREFIX)}${sanitizeMultiline(content)}\n`);
+    },
+
+    showThinking(expertSlug: string): void {
+      const rawName = experts.get(expertSlug) ?? expertSlug;
+      const displayName = sanitizeSingleLine(rawName);
+      const color = colorFor(expertSlug);
+      const prefix = formatExpertPrefix(indexFor(expertSlug), displayName);
+      write(`${color(`${prefix} > `)}${chalk.gray("thinking...")}`);
     },
 
     startExpertResponse(expertSlug: string): void {
@@ -154,11 +165,12 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
       const displayName = sanitizeSingleLine(rawName);
       const color = colorFor(expertSlug);
       const prefix = formatExpertPrefix(indexFor(expertSlug), displayName);
-      write(`${color(`${prefix} > `)}`);
+      write(`\r${color(`${prefix} > `)}`);
     },
 
     streamChunk(text: string): void {
-      write(sanitizeMultiline(text));
+      const sanitized = sanitizeMultiline(text);
+      write(sanitized.replace(/\n/g, "\n  "));
     },
 
     endExpertResponse(): void {

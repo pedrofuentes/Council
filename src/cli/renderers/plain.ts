@@ -13,8 +13,10 @@ import { Chalk, type ChalkInstance } from "chalk";
 
 import type { DebateEvent, PanelMemberSnapshot } from "../../core/types.js";
 
+import { friendlyReason } from "./friendly-reasons.js";
 import { assignExpertColor, formatExpertPrefix } from "./ink/colors.js";
 import type { Renderer, Sink } from "./types.js";
+import { stripControlChars } from "../strip-control-chars.js";
 
 export interface PlainRendererOptions {
   /** Whether to emit ANSI color codes. Defaults to true; tests pass false. */
@@ -84,8 +86,15 @@ export class PlainRenderer implements Renderer {
           this.writeError(
             this.red(
               `[error${evt.expertSlug ? ` from ${evt.expertSlug}` : ""}]: ${evt.message}` +
-                (evt.recoverable ? " (recoverable)" : ""),
+                (evt.recoverable ? " — retrying automatically" : ""),
             ) + "\n",
+          );
+          break;
+        case "turn.retry":
+          this.write(
+            this.gray(
+              `[retry] ${evt.expertSlug} attempt ${evt.attempt}: ${this.sanitizeLine(friendlyReason(evt.reason))}\n`,
+            ),
           );
           break;
       }
@@ -117,6 +126,11 @@ export class PlainRenderer implements Renderer {
   }
 
   // ---------- color helpers (no-op when color is disabled) ----------
+
+  /** Sanitize untrusted single-line text for terminal display. */
+  private sanitizeLine(text: string): string {
+    return stripControlChars(text).replace(/[\r\n\v\f\u0085\u2028\u2029]+/g, " ");
+  }
 
   private colorForExpert(slug: string): (text: string) => string {
     const idx = this.#expertIndex.get(slug) ?? 0;
