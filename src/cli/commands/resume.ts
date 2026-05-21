@@ -206,6 +206,15 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
       }
     });
 
+  cmd.addHelpText(
+    "after",
+    `
+Examples:
+  $ council resume my-panel                                   # show transcript
+  $ council resume my-panel --continue "What about costs?"    # continue debate
+`,
+  );
+
   return cmd;
 }
 

@@ -150,6 +150,15 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
       },
     );
 
+  cmd.addHelpText(
+    "after",
+    `
+Examples:
+  $ council ask my-panel "What about the migration risk?"
+  $ council ask my-panel "Quick follow-up" --expert cto
+`,
+  );
+
   return cmd;
 }
 
