@@ -35,6 +35,7 @@ import { z } from "zod";
 import { getCouncilHome, loadConfig, resolveEngine } from "../../config/index.js";
 import { type CouncilEngine, type EngineEvent, type ExpertSpec } from "../../engine/index.js";
 import { createDatabase } from "../../memory/db.js";
+import { DebateRepository } from "../../memory/repositories/debates.js";
 import { PanelRepository } from "../../memory/repositories/panels.js";
 import { loadTranscript, type TranscriptDocument } from "../../memory/transcript.js";
 
@@ -67,6 +68,8 @@ export interface DecisionDimension {
 export interface ConcludeOutput {
   readonly panelName: string;
   readonly topic: string;
+  readonly debateId: string;
+  readonly startedAt: string;
   readonly consensus: readonly string[];
   readonly tensions: readonly string[];
   readonly decisionMatrix: readonly DecisionDimension[];
@@ -158,7 +161,7 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
       const dbPath = path.join(getCouncilHome(), "council.db");
       const db = await createDatabase(dbPath);
       try {
-        const panelName = await resolvePanelName(db, panelArg);
+        const panelName = await resolvePanelName(db, panelArg, writeError);
         const doc = await loadTranscript(db, panelName);
 
         if (doc.turns.length === 0) {
@@ -215,6 +218,8 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
         const output: ConcludeOutput = {
           panelName,
           topic: doc.panel.topic ?? doc.latestDebate.prompt,
+          debateId: doc.latestDebate.id,
+          startedAt: doc.latestDebate.startedAt,
           consensus: parsed.consensus,
           tensions: parsed.tensions,
           decisionMatrix: parsed.decisionMatrix,
@@ -243,20 +248,41 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
 async function resolvePanelName(
   db: Awaited<ReturnType<typeof createDatabase>>,
   panelArg: string | undefined,
+  writeError: Writer,
 ): Promise<string> {
   if (panelArg !== undefined && panelArg.length > 0) return panelArg;
-  const panels = await new PanelRepository(db).findAll();
+
+  // DX-14: Select panel with the most recent debate (not most recently created)
+  const panelRepo = new PanelRepository(db);
+  const panels = await panelRepo.findAll();
   if (panels.length === 0) {
     throw new Error("No panels found in the local database. Run `council convene` first.");
   }
-  // PanelRepository.findAll() orders by id ASC. Panel ids are ULIDs
-  // (lexicographically time-sortable), so the last entry is the most
-  // recently created.
-  const latest = panels[panels.length - 1];
-  if (!latest) {
-    throw new Error("No panels found in the local database. Run `council convene` first.");
+
+  const debateRepo = new DebateRepository(db);
+
+  let bestPanel: string | undefined;
+  let bestStartedAt: string | undefined;
+
+  for (const panel of panels) {
+    const debates = await debateRepo.findByPanelId(panel.id);
+    if (debates.length === 0) continue;
+    const latest = debates[debates.length - 1];
+    if (!latest) continue;
+    if (!bestStartedAt || latest.startedAt > bestStartedAt) {
+      bestStartedAt = latest.startedAt;
+      bestPanel = panel.name;
+    }
   }
-  return latest.name;
+
+  if (!bestPanel) {
+    throw new Error(
+      "No panels with debates found in the local database. Run `council convene` first.",
+    );
+  }
+
+  writeError(`Using panel: ${bestPanel}\n`);
+  return bestPanel;
 }
 
 export interface BuiltSynthesisPrompt {
@@ -406,6 +432,12 @@ function renderPlain(out: ConcludeOutput): string {
   }
   lines.push(`Panel: ${out.panelName}`);
   lines.push(`Topic: ${out.topic}`);
+  lines.push(`Debate: ${out.debateId} (started ${out.startedAt})`);
+  lines.push("");
+
+  // IA-08: Recommendation + Confidence first (most important info)
+  lines.push(`Recommendation: ${out.recommendation}`);
+  lines.push(`Confidence: ${out.confidence}`);
   lines.push("");
 
   lines.push("Consensus:");
@@ -435,10 +467,6 @@ function renderPlain(out: ConcludeOutput): string {
       }
     }
   }
-  lines.push("");
-
-  lines.push(`Recommendation: ${out.recommendation}`);
-  lines.push(`Confidence: ${out.confidence}`);
   lines.push("");
   return lines.join("\n");
 }

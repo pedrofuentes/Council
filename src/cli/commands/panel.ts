@@ -462,7 +462,8 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
   cmd
     .description("Show full detail for a single panel")
     .argument("<name>", "Panel name to inspect")
-    .action(async (name: string) => {
+    .option("--format <kind>", "Output format (plain or json)", "plain")
+    .action(async (name: string, opts: { format?: string }) => {
       await withPanelContext(async (ctx) => {
         const row = await ctx.panelRepo.findByName(name);
         if (!row) {
@@ -473,6 +474,49 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
         }
         const memberSlugs = await ctx.panelRepo.getMembers(name);
 
+        // Load YAML for defaults (mode, maxRounds) so inspect reflects on-disk state.
+        let defaults:
+          | {
+              mode?: string | undefined;
+              maxRounds?: number | undefined;
+              model?: string | undefined;
+            }
+          | undefined;
+        try {
+          const onDisk = await fs.readFile(row.yamlPath, "utf-8");
+          const parsed = PanelDefinitionSchema.parse(yaml.parse(onDisk));
+          defaults = parsed.defaults;
+        } catch {
+          /* tolerate missing/invalid file at inspect time */
+        }
+
+        if (opts.format === "json") {
+          const members: { slug: string; displayName?: string; role?: string; kind?: string }[] =
+            [];
+          for (const slug of memberSlugs) {
+            const expert = await ctx.library.get(slug);
+            if (expert) {
+              members.push({
+                slug,
+                displayName: expert.displayName,
+                role: expert.role,
+                kind: expert.kind,
+              });
+            } else {
+              members.push({ slug });
+            }
+          }
+          const json = {
+            name: row.name,
+            file: displayPath(row.yamlPath),
+            ...(row.description ? { description: row.description } : {}),
+            ...(defaults ? { defaults } : {}),
+            members,
+          };
+          write(JSON.stringify(json, null, 2) + "\n");
+          return;
+        }
+
         write(`Panel: ${row.name}\n`);
         write(`File:  ${displayPath(row.yamlPath)}\n`);
         if (row.description) {
@@ -480,19 +524,11 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
         }
         write("\n");
 
-        // Load YAML for defaults (mode, maxRounds) so inspect reflects on-disk state.
-        try {
-          const onDisk = await fs.readFile(row.yamlPath, "utf-8");
-          const parsed = PanelDefinitionSchema.parse(yaml.parse(onDisk));
-          if (parsed.defaults) {
-            if (parsed.defaults.mode) write(`Mode:       ${parsed.defaults.mode}\n`);
-            if (parsed.defaults.maxRounds !== undefined)
-              write(`Max Rounds: ${parsed.defaults.maxRounds}\n`);
-            if (parsed.defaults.model) write(`Model:      ${parsed.defaults.model}\n`);
-            write("\n");
-          }
-        } catch {
-          /* tolerate missing/invalid file at inspect time */
+        if (defaults) {
+          if (defaults.mode) write(`Mode:       ${defaults.mode}\n`);
+          if (defaults.maxRounds !== undefined) write(`Max Rounds: ${defaults.maxRounds}\n`);
+          if (defaults.model) write(`Model:      ${defaults.model}\n`);
+          write("\n");
         }
 
         write(`Members (${memberSlugs.length}):\n`);
@@ -530,6 +566,10 @@ function buildEditCommand(write: Writer, writeError: Writer): Command {
         const yamlPath = existing.yamlPath;
         const editor = resolveEditor();
 
+        // DX-07: Create backup before editing
+        const backupPath = yamlPath + ".backup";
+        await fs.copyFile(yamlPath, backupPath);
+
         await runEditor(editor, yamlPath);
 
         // Re-read and validate. Keep the bytes so checksum below describes
@@ -543,6 +583,7 @@ function buildEditCommand(write: Writer, writeError: Writer): Command {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           writeError(`Invalid panel YAML after edit: ${message}\n`);
+          writeError(`Backup saved at: ${backupPath}\n`);
           throw err;
         }
 

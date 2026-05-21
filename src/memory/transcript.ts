@@ -19,11 +19,7 @@
  *   - Sentinel pr165 #2 flagged the duplication risk preemptively;
  *     this extraction closes the synthesis half of that concern.
  */
-import type {
-  DebateEvent,
-  DebateEndReason,
-  PanelMemberSnapshot,
-} from "../core/types.js";
+import type { DebateEvent, DebateEndReason, PanelMemberSnapshot } from "../core/types.js";
 
 import type { CouncilDatabase } from "./db.js";
 import type { Panel } from "./repositories/panels.js";
@@ -39,6 +35,7 @@ export interface TranscriptDocument {
     readonly id: string;
     readonly prompt: string;
     readonly status: DebateStatus;
+    readonly startedAt: string;
     readonly endedAt: string | null;
   };
   readonly turns: readonly Turn[];
@@ -89,6 +86,7 @@ export async function loadTranscript(
       id: latest.id,
       prompt: latest.prompt,
       status: latest.status,
+      startedAt: latest.startedAt,
       endedAt: latest.endedAt,
     },
     turns,

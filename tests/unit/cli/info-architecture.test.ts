@@ -17,10 +17,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildExpertCommand } from "../../../src/cli/commands/expert.js";
 import { buildPanelCommand } from "../../../src/cli/commands/panel.js";
-import {
-  buildConcludeCommand,
-  type ConcludeOutput,
-} from "../../../src/cli/commands/conclude.js";
+import { buildConcludeCommand, type ConcludeOutput } from "../../../src/cli/commands/conclude.js";
 import { PlainRenderer } from "../../../src/cli/renderers/plain.js";
 import type { DebateEvent } from "../../../src/core/types.js";
 import type { ExpertDefinition } from "../../../src/core/expert.js";
