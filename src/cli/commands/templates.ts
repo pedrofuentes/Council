@@ -14,9 +14,12 @@ import { listTemplates, loadTemplate } from "../../core/template-loader.js";
 import { PanelNotFoundError } from "../../core/template-loader.js";
 import { CliUserError } from "../cli-user-error.js";
 
-import { defaultWriter, type Writer } from "./writer.js";
+import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
-export function buildTemplatesCommand(write: Writer = defaultWriter): Command {
+export function buildTemplatesCommand(
+  write: Writer = defaultWriter,
+  writeError: Writer = defaultErrorWriter,
+): Command {
   const cmd = new Command("templates");
   cmd.description("List built-in panel templates").action(async () => {
     const names = await listTemplates();
@@ -32,12 +35,12 @@ export function buildTemplatesCommand(write: Writer = defaultWriter): Command {
     write("\x1b[2mNext: council convene --template <name>\x1b[0m\n");
   });
 
-  cmd.addCommand(buildInspectCommand(write));
+  cmd.addCommand(buildInspectCommand(write, writeError));
 
   return cmd;
 }
 
-function buildInspectCommand(write: Writer): Command {
+function buildInspectCommand(write: Writer, writeError: Writer): Command {
   const cmd = new Command("inspect");
   cmd
     .description("Show detailed information about a template")
@@ -48,6 +51,7 @@ function buildInspectCommand(write: Writer): Command {
         panel = await loadTemplate(name);
       } catch (err: unknown) {
         if (err instanceof PanelNotFoundError) {
+          writeError(`Error: ${err.message}\n`);
           throw new CliUserError(err.message);
         }
         throw err;

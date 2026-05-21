@@ -38,7 +38,13 @@ describe("templates inspect", () => {
   });
 
   it("errors when template name is not found", async () => {
-    const cmd = buildTemplatesCommand(() => undefined);
+    let stderr = "";
+    const cmd = buildTemplatesCommand(
+      () => undefined,
+      (s) => {
+        stderr += s;
+      },
+    );
     cmd.exitOverride();
 
     let thrown = "";
@@ -48,5 +54,6 @@ describe("templates inspect", () => {
       thrown = err instanceof Error ? err.message : String(err);
     }
     expect(thrown).toMatch(/not found/i);
+    expect(stderr).toMatch(/not found/i);
   });
 });

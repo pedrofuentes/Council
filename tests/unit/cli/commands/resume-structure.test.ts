@@ -260,4 +260,25 @@ describe("resume prefix match and --latest (DX-12)", () => {
     }
     expect(thrown).toMatch(/no.*panel|no.*session|no.*debate/i);
   });
+
+  it("errors when no panel argument is provided and --latest is not set", async () => {
+    let stderr = "";
+    const cmd = buildResumeCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (s) => {
+        stderr += s;
+      },
+    });
+    cmd.exitOverride();
+
+    let thrown = "";
+    try {
+      await cmd.parseAsync(["node", "council-resume"]);
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    expect(thrown).toMatch(/panel.*required/i);
+    expect(stderr).toMatch(/panel.*required/i);
+  });
 });
