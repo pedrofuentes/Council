@@ -11,7 +11,16 @@
  * ANSI set) so output stays legible in any terminal.
  */
 
-export const EXPERT_COLOR_PALETTE = ["cyan", "yellow", "magenta", "green", "blue", "red"] as const;
+export const EXPERT_COLOR_PALETTE = [
+  "cyan",
+  "yellow",
+  "magenta",
+  "green",
+  "blue",
+  "cyanBright",
+  "magentaBright",
+  "yellowBright",
+] as const;
 
 export type ExpertColor = (typeof EXPERT_COLOR_PALETTE)[number];
 
@@ -21,4 +30,9 @@ export function assignExpertColor(index: number): ExpertColor {
     ((index % EXPERT_COLOR_PALETTE.length) + EXPERT_COLOR_PALETTE.length) %
     EXPERT_COLOR_PALETTE.length;
   return EXPERT_COLOR_PALETTE[i] as ExpertColor;
+}
+
+/** Returns the accessible "[N] Name" prefix for an expert (1-based index). */
+export function formatExpertPrefix(index: number, displayName: string): string {
+  return `[${index + 1}] ${displayName}`;
 }

@@ -26,7 +26,7 @@ import Spinner from "ink-spinner";
 import type { DebateEndReason, DebateEvent, PanelMemberSnapshot } from "../../../core/types.js";
 import type { Renderer } from "../types.js";
 
-import { assignExpertColor, type ExpertColor } from "./colors.js";
+import { assignExpertColor, formatExpertPrefix, type ExpertColor } from "./colors.js";
 
 interface TurnBlock {
   readonly round: number;
@@ -185,12 +185,13 @@ function PanelRoster({ state }: { readonly state: DebateState }): ReactElement |
       <Text bold>🏛️ Panel assembled</Text>
       {state.panel.map((expert) => {
         const color = colorFor(state, expert.slug);
+        const idx = state.expertIndex.get(expert.slug) ?? 0;
         const isHuman = expert.participantKind === "human" || state.humanSlugs.has(expert.slug);
         return (
           <Text key={expert.slug}>
             {"  • "}
             <Text color={color} bold>
-              {expert.displayName}
+              {formatExpertPrefix(idx, expert.displayName)}
             </Text>
             <Text dimColor>{isHuman ? "  (human)" : `  (${expert.model})`}</Text>
           </Text>
@@ -216,8 +217,11 @@ function ExpertCard({
   readonly slug: string;
 }): ReactElement {
   const color = colorFor(state, slug);
+  const idx = state.expertIndex.get(slug) ?? 0;
   const isHuman = state.humanSlugs.has(slug);
-  const label = isHuman ? `[You] ${nameFor(state, slug)}` : nameFor(state, slug);
+  const name = nameFor(state, slug);
+  const prefix = formatExpertPrefix(idx, name);
+  const label = isHuman ? `[You] ${prefix}` : prefix;
   return (
     <Text>
       <Text color={color} bold>

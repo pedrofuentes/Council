@@ -91,14 +91,14 @@ describe("ChatRenderer", () => {
   });
 
   describe("expert response streaming", () => {
-    it('starts with "<displayName> > " prefix using the assigned color', () => {
+    it('starts with "[N] <displayName> > " prefix using the assigned color', () => {
       const sink = new StringSink();
       const renderer = createChatRenderer({
         sink,
         experts: makeExperts(["cto", "Dahlia (CTO)"]),
       });
       renderer.startExpertResponse("cto");
-      expect(stripAnsi(sink.text)).toBe("Dahlia (CTO) > ");
+      expect(stripAnsi(sink.text)).toBe("[1] Dahlia (CTO) > ");
     });
 
     it("streamChunk writes text without trailing newline", () => {
@@ -110,7 +110,7 @@ describe("ChatRenderer", () => {
       renderer.startExpertResponse("cto");
       renderer.streamChunk("Microservices ");
       renderer.streamChunk("are powerful.");
-      expect(stripAnsi(sink.text)).toBe("Dahlia (CTO) > Microservices are powerful.");
+      expect(stripAnsi(sink.text)).toBe("[1] Dahlia (CTO) > Microservices are powerful.");
     });
 
     it("endExpertResponse adds a newline", () => {
@@ -122,14 +122,14 @@ describe("ChatRenderer", () => {
       renderer.startExpertResponse("cto");
       renderer.streamChunk("hello");
       renderer.endExpertResponse();
-      expect(stripAnsi(sink.text)).toBe("Dahlia (CTO) > hello\n");
+      expect(stripAnsi(sink.text)).toBe("[1] Dahlia (CTO) > hello\n");
     });
 
     it("falls back to the slug when expert is not registered", () => {
       const sink = new StringSink();
       const renderer = createChatRenderer({ sink, experts: makeExperts() });
       renderer.startExpertResponse("unknown");
-      expect(stripAnsi(sink.text)).toBe("unknown > ");
+      expect(stripAnsi(sink.text)).toBe("[1] unknown > ");
     });
   });
 
@@ -297,7 +297,7 @@ describe("ChatRenderer", () => {
         experts: makeExperts(["cto", INJECTION]),
       });
       renderer.startExpertResponse("cto");
-      expect(stripAnsi(sink.text)).toBe("beforeafter > ");
+      expect(stripAnsi(sink.text)).toBe("[1] beforeafter > ");
     });
 
     // Carriage return (\r) returns the cursor to column 0 — without
@@ -333,7 +333,7 @@ describe("ChatRenderer", () => {
         experts: makeExperts(["cto", CR_INJECTION]),
       });
       renderer.startExpertResponse("cto");
-      expect(stripAnsi(sink.text)).toBe("realfake > ");
+      expect(stripAnsi(sink.text)).toBe("[1] realfake > ");
     });
 
     it("strips carriage returns from system messages", () => {
@@ -378,7 +378,7 @@ describe("ChatRenderer", () => {
         experts: makeExperts(["cto", NL_INJECTION]),
       });
       renderer.startExpertResponse("cto");
-      expect(stripAnsi(sink.text)).toBe("Mallory You > hacked > ");
+      expect(stripAnsi(sink.text)).toBe("[1] Mallory You > hacked > ");
     });
 
     it("collapses newlines in session status messages", () => {

@@ -41,8 +41,8 @@ describe("DebateApp", () => {
     const ui = render(<DebateApp events={events} />);
     await flush();
     const frame = stripAnsi(ui.lastFrame() ?? "");
-    expect(frame).toContain("Alice");
-    expect(frame).toContain("Bob");
+    expect(frame).toContain("[1] Alice");
+    expect(frame).toContain("[2] Bob");
     ui.unmount();
   });
 
@@ -202,6 +202,66 @@ describe("DebateApp", () => {
     const codes = matches.map((m) => m[1]);
     // All Alice instances should share the same color escape code.
     expect(new Set(codes).size).toBe(1);
+    ui.unmount();
+  });
+  it("renders expert index prefix [N] in turn headers", async () => {
+    const events = stream(
+      {
+        kind: "panel.assembled",
+        experts: [
+          { slug: "alice", displayName: "Alice", model: "gpt-5" },
+          { slug: "bob", displayName: "Bob", model: "gpt-5" },
+        ],
+      },
+      { kind: "round.start", round: 0 },
+      { kind: "turn.start", expertSlug: "alice", round: 0, seq: 0 },
+      { kind: "turn.delta", expertSlug: "alice", text: "hi" },
+      {
+        kind: "turn.end",
+        expertSlug: "alice",
+        turnId: "t1",
+        content: "hi",
+      },
+      { kind: "turn.start", expertSlug: "bob", round: 0, seq: 1 },
+      { kind: "turn.delta", expertSlug: "bob", text: "hey" },
+      {
+        kind: "turn.end",
+        expertSlug: "bob",
+        turnId: "t2",
+        content: "hey",
+      },
+    );
+    const ui = render(<DebateApp events={events} />);
+    await flush();
+    const frame = stripAnsi(ui.lastFrame() ?? "");
+    expect(frame).toContain("[[1] Alice]");
+    expect(frame).toContain("[[2] Bob]");
+    ui.unmount();
+  });
+
+  it("renders [You] label for human participants with index prefix", async () => {
+    const events = stream(
+      {
+        kind: "panel.assembled",
+        experts: [
+          { slug: "alice", displayName: "Alice", model: "gpt-5" },
+          { slug: "user", displayName: "You", model: "", participantKind: "human" },
+        ],
+      },
+      { kind: "round.start", round: 0 },
+      { kind: "turn.start", expertSlug: "user", round: 0, seq: 0 },
+      { kind: "turn.delta", expertSlug: "user", text: "hi" },
+      {
+        kind: "turn.end",
+        expertSlug: "user",
+        turnId: "t1",
+        content: "hi",
+      },
+    );
+    const ui = render(<DebateApp events={events} />);
+    await flush();
+    const frame = stripAnsi(ui.lastFrame() ?? "");
+    expect(frame).toContain("[[You] [2] You]");
     ui.unmount();
   });
 });

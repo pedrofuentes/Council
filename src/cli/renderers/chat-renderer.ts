@@ -15,24 +15,19 @@ import chalk, { type ChalkInstance } from "chalk";
 
 import { stripControlChars } from "../strip-control-chars.js";
 
+import type { ExpertColor } from "./ink/colors.js";
+import { EXPERT_COLOR_PALETTE, formatExpertPrefix } from "./ink/colors.js";
 import type { Sink } from "./types.js";
 
 /**
- * Color palette for expert names. Mirrors the cyan accent used by
- * `PlainRenderer` and extends it with companion hues so multi-expert
- * panels remain distinguishable. Cycled modulo length when a panel
- * has more experts than colors.
+ * Color palette for expert names. Uses the shared unified palette from
+ * `ink/colors.ts` so both Ink and Chat renderers assign the same expert
+ * the same color. Cycled modulo length when a panel has more experts
+ * than colors.
  */
-const EXPERT_COLORS: readonly ChalkInstance[] = [
-  chalk.cyan,
-  chalk.magenta,
-  chalk.yellow,
-  chalk.green,
-  chalk.blue,
-  chalk.red,
-  chalk.cyanBright,
-  chalk.magentaBright,
-] as const;
+const EXPERT_COLORS: readonly ChalkInstance[] = EXPERT_COLOR_PALETTE.map(
+  (name: ExpertColor): ChalkInstance => chalk[name],
+);
 
 export interface ChatRendererOptions {
   readonly sink: Sink;
@@ -75,13 +70,16 @@ const PROMPT_PREFIX = "You > ";
 export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
   const { sink, experts } = options;
 
-  // Pre-compute slug → color from registration order so color assignment
-  // is deterministic across multiple renderer instances given the same map.
+  // Pre-compute slug → color and slug → index from registration order so
+  // color assignment is deterministic across multiple renderer instances
+  // given the same map.
   const colorBySlug = new Map<string, ChalkInstance>();
+  const indexBySlug = new Map<string, number>();
   let index = 0;
   for (const slug of experts.keys()) {
     const color = EXPERT_COLORS[index % EXPERT_COLORS.length];
     if (color) colorBySlug.set(slug, color);
+    indexBySlug.set(slug, index);
     index += 1;
   }
 
@@ -123,10 +121,19 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
     const existing = colorBySlug.get(slug);
     if (existing) return existing;
     // Unknown slug — assign next color in cycle so subsequent calls stay stable.
-    const next =
-      EXPERT_COLORS[colorBySlug.size % EXPERT_COLORS.length] ?? EXPERT_COLORS[0] ?? chalk.cyan;
+    const nextIdx = colorBySlug.size;
+    const next = EXPERT_COLORS[nextIdx % EXPERT_COLORS.length] ?? EXPERT_COLORS[0] ?? chalk.cyan;
     colorBySlug.set(slug, next);
+    indexBySlug.set(slug, nextIdx);
     return next;
+  };
+
+  const indexFor = (slug: string): number => {
+    const existing = indexBySlug.get(slug);
+    if (existing !== undefined) return existing;
+    // Force registration via colorFor side-effect
+    colorFor(slug);
+    return indexBySlug.get(slug) ?? 0;
   };
 
   return {
@@ -146,7 +153,8 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
       const rawName = experts.get(expertSlug) ?? expertSlug;
       const displayName = sanitizeSingleLine(rawName);
       const color = colorFor(expertSlug);
-      write(`${color(`${displayName} > `)}`);
+      const prefix = formatExpertPrefix(indexFor(expertSlug), displayName);
+      write(`${color(`${prefix} > `)}`);
     },
 
     streamChunk(text: string): void {
