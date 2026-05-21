@@ -210,8 +210,8 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
     "after",
     `
 Examples:
-  $ council resume my-panel                                   # show transcript
-  $ council resume my-panel --continue "What about costs?"    # continue debate
+  $ council resume my-panel                                          # show transcript
+  $ council resume my-panel --continue "What about costs?" --engine copilot    # continue debate
 `,
   );
 

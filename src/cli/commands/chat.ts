@@ -169,9 +169,9 @@ export function buildChatCommand(deps: ChatCommandDeps = {}): Command {
     "after",
     `
 Examples:
-  $ council chat security-auditor               # 1:1 with an expert
-  $ council chat architecture-review            # group chat with a panel
-  $ council chat --list                         # list all chat sessions
+  $ council chat security-auditor --engine copilot               # 1:1 with an expert
+  $ council chat architecture-review --engine copilot            # group chat with a panel
+  $ council chat --list                                          # list all chat sessions
 `,
   );
 

@@ -154,8 +154,8 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
     "after",
     `
 Examples:
-  $ council ask my-panel "What about the migration risk?"
-  $ council ask my-panel "Quick follow-up" --expert cto
+  $ council ask my-panel "What about the migration risk?" --engine copilot
+  $ council ask my-panel "Quick follow-up" --expert cto --engine copilot
 `,
   );
 
