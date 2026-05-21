@@ -182,6 +182,14 @@ Examples:
 // Pure helpers
 // ──────────────────────────────────────────────────────────────────────
 
+/**
+ * Check whether the terminal is interactive (has a TTY on stdin).
+ * Used to reject non-interactive invocations of `council chat` early.
+ */
+export function isInteractiveTerminal(isTTY: boolean | undefined): boolean {
+  return isTTY === true;
+}
+
 export interface BuildChatTurnPromptOptions {
   readonly history: readonly ChatTurn[];
   readonly userMessage: string;
@@ -753,6 +761,13 @@ async function runChat(
   write: Writer,
   writeError: Writer,
 ): Promise<void> {
+  // A11Y-11: Reject non-interactive terminals early (skip when test inputProvider is injected)
+  if (!deps.inputProvider && !isInteractiveTerminal(process.stdin.isTTY)) {
+    throw new CliUserError(
+      "council chat requires an interactive terminal. Use `council ask` for non-interactive queries.",
+    );
+  }
+
   const engineKind = raw.engine as EngineKind;
   const config = await loadConfig();
   const dataHome = getCouncilDataHome(config);

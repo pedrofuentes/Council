@@ -183,13 +183,13 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
       const sym = getSymbols();
       switch (level) {
         case "info":
-          write(`${chalk.blue(sym.info)} ${safe}\n`);
+          write(`[INFO] ${chalk.blue(sym.info)} ${safe}\n`);
           return;
         case "warn":
-          write(`${chalk.yellow(sym.warn)} ${safe}\n`);
+          write(`[WARN] ${chalk.yellow(sym.warn)} ${safe}\n`);
           return;
         case "error":
-          writeError(`${chalk.red(sym.error)} ${safe}\n`);
+          writeError(`[ERROR] ${chalk.red(sym.error)} ${safe}\n`);
           return;
       }
     },

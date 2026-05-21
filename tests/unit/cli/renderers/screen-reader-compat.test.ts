@@ -10,7 +10,7 @@
  * - A11Y-13: TERM=dumb auto-detection (covered by A11Y-10)
  * - A11Y-14: Ink fallback on render crash
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { selectRenderer } from "../../../../src/cli/renderers/select.js";
 import { PlainRenderer } from "../../../../src/cli/renderers/plain.js";
@@ -76,7 +76,7 @@ describe("A11Y-08: ChatRenderer severity text labels", () => {
 // ── A11Y-10 & A11Y-13: Force PlainRenderer for screen readers ──
 
 describe("A11Y-10: selectRenderer forces PlainRenderer for accessibility", () => {
-  const sink: Sink = { write: () => {} };
+  const sink: Sink = { write: () => { /* noop */ } };
   let origTerm: string | undefined;
   let origCI: string | undefined;
   let origA11y: string | undefined;
@@ -133,53 +133,81 @@ describe("A11Y-10: selectRenderer forces PlainRenderer for accessibility", () =>
 
 describe("A11Y-12: streaming cursor suppression", () => {
   let origNoColor: string | undefined;
+  let origAscii: string | undefined;
+  let origTerm: string | undefined;
 
   beforeEach(() => {
     origNoColor = process.env["NO_COLOR"];
+    origAscii = process.env["COUNCIL_ASCII"];
+    origTerm = process.env["TERM"];
   });
 
   afterEach(() => {
     if (origNoColor === undefined) delete process.env["NO_COLOR"];
     else process.env["NO_COLOR"] = origNoColor;
+    if (origAscii === undefined) delete process.env["COUNCIL_ASCII"];
+    else process.env["COUNCIL_ASCII"] = origAscii;
+    if (origTerm === undefined) delete process.env["TERM"];
+    else process.env["TERM"] = origTerm;
   });
 
-  it("StreamingText hides cursor when shouldSuppressCursor returns true", async () => {
-    // We test this via the shouldSuppressCursor export
+  it("shouldSuppressCursor returns true when NO_COLOR is set", async () => {
     const { shouldSuppressCursor } = await import(
       "../../../../src/cli/renderers/ink/InkRenderer.js"
     );
     process.env["NO_COLOR"] = "1";
+    delete process.env["COUNCIL_ASCII"];
+    delete process.env["TERM"];
     expect(shouldSuppressCursor()).toBe(true);
   });
 
-  it("shouldSuppressCursor returns false when NO_COLOR not set and TERM normal", async () => {
+  it("shouldSuppressCursor returns true when COUNCIL_ASCII=1", async () => {
+    const { shouldSuppressCursor } = await import(
+      "../../../../src/cli/renderers/ink/InkRenderer.js"
+    );
+    delete process.env["NO_COLOR"];
+    process.env["COUNCIL_ASCII"] = "1";
+    delete process.env["TERM"];
+    expect(shouldSuppressCursor()).toBe(true);
+  });
+
+  it("shouldSuppressCursor returns true when TERM=dumb", async () => {
     const { shouldSuppressCursor } = await import(
       "../../../../src/cli/renderers/ink/InkRenderer.js"
     );
     delete process.env["NO_COLOR"];
     delete process.env["COUNCIL_ASCII"];
-    // Ensure TERM is not dumb for this test
-    const origTerm = process.env["TERM"];
+    process.env["TERM"] = "dumb";
+    expect(shouldSuppressCursor()).toBe(true);
+  });
+
+  it("shouldSuppressCursor returns false when none of the env vars are set", async () => {
+    const { shouldSuppressCursor } = await import(
+      "../../../../src/cli/renderers/ink/InkRenderer.js"
+    );
+    delete process.env["NO_COLOR"];
+    delete process.env["COUNCIL_ASCII"];
     process.env["TERM"] = "xterm-256color";
-    try {
-      expect(shouldSuppressCursor()).toBe(false);
-    } finally {
-      if (origTerm === undefined) delete process.env["TERM"];
-      else process.env["TERM"] = origTerm;
-    }
+    expect(shouldSuppressCursor()).toBe(false);
   });
 });
 
 // ── A11Y-14: Ink fallback on render crash ──
+// The full fallback test with vi.mock lives in ink/ink-fallback.test.ts.
+// Here we verify the normal render path still works with the try/catch wrapper.
 
-describe("A11Y-14: InkRenderer fallback on crash", () => {
-  it("falls back to PlainRenderer when inkRender throws", async () => {
-    // We test via the InkRenderer class which should catch and fallback
-    const renderer = new InkRenderer({ isTTY: true });
-    // Create a broken event stream that will work with plain but might fail ink
-    // The actual crash scenario is tested by the fallback mechanism existing
-    // We verify the class has fallback capability by checking it renders successfully
-    // even if ink would normally have issues (non-TTY stdout)
+describe("A11Y-14: InkRenderer fallback mechanism (normal path)", () => {
+  it("renders successfully and does NOT emit fallback warning under normal conditions", async () => {
+    const { Writable } = await import("node:stream");
+    let stderrOutput = "";
+    const fakeStderr = new Writable({
+      write(chunk: Buffer, _enc: string, cb: (err?: Error | null) => void) {
+        stderrOutput += chunk.toString();
+        cb();
+      },
+    }) as unknown as NodeJS.WriteStream;
+
+    const renderer = new InkRenderer({ isTTY: true, stderr: fakeStderr });
     async function* events() {
       yield {
         kind: "panel.assembled" as const,
@@ -187,9 +215,10 @@ describe("A11Y-14: InkRenderer fallback on crash", () => {
       };
       yield { kind: "debate.end" as const, reason: "complete" as const };
     }
-    // Just verify it doesn't throw - the fallback catches ink failures
-    // This test validates the try/catch mechanism exists
     await expect(renderer.render(events())).resolves.toBeUndefined();
+    // Must NOT have triggered the fallback
+    expect(stderrOutput).not.toContain("[WARN]");
+    expect(stderrOutput).not.toContain("falling back to plain text");
   });
 });
 
@@ -208,5 +237,54 @@ describe("A11Y-11: chat command stdin.isTTY check", () => {
       "../../../../src/cli/commands/chat.js"
     );
     expect(isInteractiveTerminal(true)).toBe(true);
+  });
+
+  it("isInteractiveTerminal returns false when isTTY is undefined", async () => {
+    const { isInteractiveTerminal } = await import(
+      "../../../../src/cli/commands/chat.js"
+    );
+    expect(isInteractiveTerminal(undefined)).toBe(false);
+  });
+
+  it("buildChatCommand rejects with CliUserError when stdin is not a TTY", async () => {
+    const { buildChatCommand } = await import(
+      "../../../../src/cli/commands/chat.js"
+    );
+    const { CliUserError } = await import(
+      "../../../../src/cli/cli-user-error.js"
+    );
+
+    // Build command without inputProvider — the TTY guard should fire
+    const cmd = buildChatCommand({});
+
+    // Save and mock process.stdin.isTTY
+    const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+
+    try {
+      // Commander catches errors from .action() — we need to invoke the action
+      // by calling parseAsync. The command will throw CliUserError before any DB/engine work.
+      let caughtError: unknown;
+      cmd.exitOverride(); // prevent process.exit
+      try {
+        await cmd.parseAsync(["node", "chat", "some-expert", "--engine", "mock"], { from: "user" });
+      } catch (err: unknown) {
+        caughtError = err;
+      }
+
+      // Commander wraps errors — unwrap if needed
+      const actual = caughtError instanceof Error && "nestedError" in caughtError
+        ? (caughtError as { nestedError: unknown }).nestedError
+        : caughtError;
+      expect(actual).toBeInstanceOf(CliUserError);
+      expect((actual as Error).message).toContain("interactive terminal");
+      expect((actual as Error).message).toContain("council ask");
+    } finally {
+      if (originalIsTTY) {
+        Object.defineProperty(process.stdin, "isTTY", originalIsTTY);
+      } else {
+        delete (process.stdin as Record<string, unknown>)["isTTY"];
+      }
+    }
   });
 });

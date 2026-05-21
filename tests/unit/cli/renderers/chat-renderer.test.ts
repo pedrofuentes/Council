@@ -199,28 +199,28 @@ describe("ChatRenderer", () => {
       const sink = new StringSink();
       const renderer = createChatRenderer({ sink, experts: makeExperts() });
       renderer.showSystem("Saved.", "info");
-      expect(stripAnsi(sink.text)).toBe("ℹ Saved.\n");
+      expect(stripAnsi(sink.text)).toBe("[INFO] ℹ Saved.\n");
     });
 
     it("defaults level to info when omitted", () => {
       const sink = new StringSink();
       const renderer = createChatRenderer({ sink, experts: makeExperts() });
       renderer.showSystem("Saved.");
-      expect(stripAnsi(sink.text)).toBe("ℹ Saved.\n");
+      expect(stripAnsi(sink.text)).toBe("[INFO] ℹ Saved.\n");
     });
 
     it("prefixes warnings with ⚠", () => {
       const sink = new StringSink();
       const renderer = createChatRenderer({ sink, experts: makeExperts() });
       renderer.showSystem("Marcus could not respond.", "warn");
-      expect(stripAnsi(sink.text)).toBe("⚠ Marcus could not respond.\n");
+      expect(stripAnsi(sink.text)).toBe("[WARN] ⚠ Marcus could not respond.\n");
     });
 
     it("prefixes errors with ✗ and routes to writeError", () => {
       const sink = new StringSink();
       const renderer = createChatRenderer({ sink, experts: makeExperts() });
       renderer.showSystem("Engine failed.", "error");
-      expect(stripAnsi(sink.errText)).toBe("✗ Engine failed.\n");
+      expect(stripAnsi(sink.errText)).toBe("[ERROR] ✗ Engine failed.\n");
       expect(sink.text).toBe("");
     });
 
@@ -228,7 +228,7 @@ describe("ChatRenderer", () => {
       const sink = new WriteOnlySink();
       const renderer = createChatRenderer({ sink, experts: makeExperts() });
       renderer.showSystem("Engine failed.", "error");
-      expect(stripAnsi(sink.text)).toBe("✗ Engine failed.\n");
+      expect(stripAnsi(sink.text)).toBe("[ERROR] ✗ Engine failed.\n");
     });
   });
 
@@ -281,14 +281,14 @@ describe("ChatRenderer", () => {
       const sink = new StringSink();
       const renderer = createChatRenderer({ sink, experts: makeExperts() });
       renderer.showSystem(INJECTION, "warn");
-      expect(stripAnsi(sink.text)).toBe("⚠ beforeafter\n");
+      expect(stripAnsi(sink.text)).toBe("[WARN] ⚠ beforeafter\n");
     });
 
     it("strips control sequences from system error messages on stderr", () => {
       const sink = new StringSink();
       const renderer = createChatRenderer({ sink, experts: makeExperts() });
       renderer.showSystem(INJECTION, "error");
-      expect(stripAnsi(sink.errText)).toBe("✗ beforeafter\n");
+      expect(stripAnsi(sink.errText)).toBe("[ERROR] ✗ beforeafter\n");
     });
 
     it("strips control sequences from expert display names", () => {
@@ -341,7 +341,7 @@ describe("ChatRenderer", () => {
       const sink = new StringSink();
       const renderer = createChatRenderer({ sink, experts: makeExperts() });
       renderer.showSystem(CR_INJECTION, "warn");
-      expect(stripAnsi(sink.text)).toBe("⚠ realfake\n");
+      expect(stripAnsi(sink.text)).toBe("[WARN] ⚠ realfake\n");
     });
 
     it("strips carriage returns from session status", () => {
@@ -400,7 +400,7 @@ describe("ChatRenderer", () => {
       const sink = new StringSink();
       const renderer = createChatRenderer({ sink, experts: makeExperts() });
       renderer.showSystem(NL_INJECTION, "warn");
-      expect(stripAnsi(sink.text)).toBe("⚠ Mallory You > hacked\n");
+      expect(stripAnsi(sink.text)).toBe("[WARN] ⚠ Mallory You > hacked\n");
     });
 
     it("collapses Unicode line separators (\\u2028, \\u2029)", () => {
@@ -409,7 +409,7 @@ describe("ChatRenderer", () => {
       const sink = new StringSink();
       const renderer = createChatRenderer({ sink, experts: makeExperts() });
       renderer.showSystem("a\u2028b\u2029c", "info");
-      expect(stripAnsi(sink.text)).toBe("ℹ a b c\n");
+      expect(stripAnsi(sink.text)).toBe("[INFO] ℹ a b c\n");
     });
 
     it("still preserves newlines in streamed expert response chunks (with indent)", () => {
