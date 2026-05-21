@@ -219,7 +219,7 @@ describe("CLI error paths E2E", () => {
       expect(failure.message.toLowerCase()).toMatch(/no.*panel|not.*found|unknown panel/);
     });
 
-    it("resolves engine from config when --continue is used without --engine", async () => {
+    it("resolves engine from config when --prompt is used without --engine", async () => {
       const seeded = await seedCompletedDebate(ctx.testHome, { panelName: "resume-error-panel" });
       const output = captureOutput();
       const command = prepareCommand(
@@ -235,15 +235,13 @@ describe("CLI error paths E2E", () => {
           "node",
           "council-resume",
           seeded.panelName,
-          "--continue",
+          "--prompt",
           "What changed?",
         ]);
       } catch (err) {
         thrown = err instanceof Error ? err.message : String(err);
       }
-      expect(thrown.toLowerCase()).not.toMatch(
-        /--engine.*required|engine.*required.*continue/,
-      );
+      expect(thrown.toLowerCase()).not.toMatch(/--engine.*required|engine.*required.*continue/);
     });
   });
 
@@ -414,7 +412,9 @@ describe("CLI error paths E2E", () => {
         output,
       );
 
-      expect(failure.message.toLowerCase()).toMatch(/unknown.*mode|unsupported.*mode|invalid.*mode/i);
+      expect(failure.message.toLowerCase()).toMatch(
+        /unknown.*mode|unsupported.*mode|invalid.*mode/i,
+      );
     });
   });
 

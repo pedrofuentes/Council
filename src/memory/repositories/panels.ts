@@ -62,12 +62,20 @@ export class PanelRepository {
         updated_at: now,
       })
       .execute();
-    const row = await this.db.selectFrom("panels").selectAll().where("id", "=", id).executeTakeFirstOrThrow();
+    const row = await this.db
+      .selectFrom("panels")
+      .selectAll()
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
     return toDomain(row);
   }
 
   async findById(id: string): Promise<Panel | undefined> {
-    const row = await this.db.selectFrom("panels").selectAll().where("id", "=", id).executeTakeFirst();
+    const row = await this.db
+      .selectFrom("panels")
+      .selectAll()
+      .where("id", "=", id)
+      .executeTakeFirst();
     return row ? toDomain(row) : undefined;
   }
 
@@ -82,6 +90,48 @@ export class PanelRepository {
       .selectFrom("panels")
       .selectAll()
       .where("name", "=", name)
+      .orderBy("created_at", "desc")
+      .orderBy("id", "desc")
+      .executeTakeFirst();
+    return row ? toDomain(row) : undefined;
+  }
+
+  /**
+   * Find panels whose name starts with the given prefix (case-sensitive).
+   * Returns all matches ordered by created_at DESC so the most recent is first.
+   */
+  async findByNamePrefix(prefix: string): Promise<readonly Panel[]> {
+    const rows = await this.db
+      .selectFrom("panels")
+      .selectAll()
+      .where("name", "like", `${prefix}%`)
+      .orderBy("created_at", "desc")
+      .orderBy("id", "desc")
+      .execute();
+    return rows.map(toDomain);
+  }
+
+  /**
+   * Return the panel with the most recent debate activity (by debate started_at DESC).
+   * Falls back to most-recently-created panel if no debates exist.
+   */
+  async findMostRecentlyActive(): Promise<Panel | undefined> {
+    // Find the panel_id of the most recent debate
+    const latestDebate = await this.db
+      .selectFrom("debates")
+      .select("panel_id")
+      .orderBy("started_at", "desc")
+      .orderBy("id", "desc")
+      .executeTakeFirst();
+
+    if (latestDebate) {
+      return this.findById(latestDebate.panel_id);
+    }
+
+    // Fallback: no debates at all, return newest panel
+    const row = await this.db
+      .selectFrom("panels")
+      .selectAll()
       .orderBy("created_at", "desc")
       .orderBy("id", "desc")
       .executeTakeFirst();

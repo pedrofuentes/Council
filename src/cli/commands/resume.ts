@@ -1,12 +1,17 @@
 /**
- * `council resume <panel> [--continue "<prompt>"]` — reopens a panel
+ * `council resume <panel> [--prompt "<prompt>"]` — reopens a panel
  * that already has at least one persisted debate (ROADMAP §3.2).
  *
  * Two modes:
- *   1. Transcript mode (no --continue) — replays the most recent
+ *   1. Transcript mode (no --prompt) — replays the most recent
  *      debate's turns. No engine, no LLM.
- *   2. Continue mode (--continue) — runs a NEW debate against the
+ *   2. Continue mode (--prompt) — runs a NEW debate against the
  *      same panel/experts via the shared `runWithEngine()` helper.
+ *
+ * Panel resolution:
+ *   - Exact match first
+ *   - Prefix match if no exact match (auto-select if unique, error if ambiguous)
+ *   - `--latest` skips name lookup and resumes the most recent panel
  */
 import * as path from "node:path";
 
@@ -14,13 +19,16 @@ import { Command, Option } from "commander";
 
 import { DEFAULT_MODEL, getCouncilHome, loadConfig, resolveEngine } from "../../config/index.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
-import { createDatabase } from "../../memory/db.js";
+import { createDatabase, type CouncilDatabase } from "../../memory/db.js";
 import { applyRecalledMemory, recallMemory } from "../../memory/expert-memory.js";
 import {
   loadTranscript,
   synthesizeEvents,
   type TranscriptDocument,
 } from "../../memory/transcript.js";
+import { PanelRepository } from "../../memory/repositories/panels.js";
+
+import { CliUserError } from "../cli-user-error.js";
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 import { ENGINE_KINDS, type EngineKind, runWithEngine } from "../run-with-engine.js";
@@ -39,12 +47,13 @@ export interface ResumeCommandDeps {
 
 export interface ResumeOptions {
   readonly format: RendererFormat;
-  readonly continue?: string;
+  readonly prompt?: string;
   readonly engine?: EngineKind;
   readonly maxRounds: number;
   readonly maxWords: number;
   readonly strategy?: string;
   readonly heuristicMemory?: boolean;
+  readonly latest?: boolean;
 }
 
 export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
@@ -54,29 +63,27 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
   const cmd = new Command("resume");
   cmd
     .description("Reopen a panel: show transcript, or continue with a new prompt")
-    .argument("<panel>", "Panel name to resume (as shown by `council sessions`)")
+    .argument("[panel]", "Panel name to resume (as shown by `council sessions`)")
     .addOption(
       new Option("--format <kind>", "Output format").choices([...RENDERER_FORMATS]).default("auto"),
     )
-    .option("--continue <prompt>", "Run a new debate against the same panel with this prompt")
-    .addOption(
-      new Option("--engine <kind>", "Engine for --continue mode").choices([...ENGINE_KINDS]),
-    )
+    .option("--prompt <prompt>", "Run a new debate against the same panel with this prompt")
+    .addOption(new Option("--engine <kind>", "Engine for --prompt mode").choices([...ENGINE_KINDS]))
     .option(
       "--max-rounds <n>",
-      "Max rounds for --continue mode",
+      "Max rounds for --prompt mode",
       (v) => Number.parseInt(v, 10),
       DEFAULT_MAX_ROUNDS,
     )
     .option(
       "--max-words <n>",
-      "Soft per-response word cap for --continue mode",
+      "Soft per-response word cap for --prompt mode",
       (v) => Number.parseInt(v, 10),
       DEFAULT_MAX_WORDS,
     )
     .option(
       "--strategy <name>",
-      `Moderator strategy for --continue freeform mode (${STRATEGY_NAMES.join(" | ")}). ` +
+      `Moderator strategy for --prompt freeform mode (${STRATEGY_NAMES.join(" | ")}). ` +
         `devils-advocate accepts an optional ":<slug>" suffix.`,
       "round-robin",
     )
@@ -85,10 +92,11 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
       "Skip post-debate LLM extraction — for offline/air-gapped use. " +
         "Useful for offline tests and air-gapped environments.",
     )
-    .action(async (panelName: string, raw: ResumeOptions) => {
+    .option("--latest", "Resume the most recent panel session")
+    .action(async (panelArg: string | undefined, raw: ResumeOptions) => {
       let engineKind: EngineKind | undefined;
       let defaultModel: string | undefined;
-      if (raw.continue !== undefined) {
+      if (raw.prompt !== undefined) {
         const config = await loadConfig();
         engineKind = resolveEngine(raw.engine, config);
         defaultModel = config.defaults.model;
@@ -96,20 +104,23 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
 
       const opts: ResumeOptions = {
         format: parseFormat(raw.format),
-        ...(raw.continue !== undefined ? { continue: raw.continue } : {}),
+        ...(raw.prompt !== undefined ? { prompt: raw.prompt } : {}),
         ...(engineKind !== undefined ? { engine: engineKind } : {}),
         maxRounds: Number.isFinite(raw.maxRounds) ? raw.maxRounds : DEFAULT_MAX_ROUNDS,
         maxWords: Number.isFinite(raw.maxWords) ? raw.maxWords : DEFAULT_MAX_WORDS,
         ...(raw.strategy !== undefined ? { strategy: raw.strategy } : {}),
         heuristicMemory: raw.heuristicMemory === true,
+        latest: raw.latest === true,
       };
 
       const dbPath = path.join(getCouncilHome(), "council.db");
       const db = await createDatabase(dbPath);
       try {
+        // Resolve panel name: --latest, exact match, or prefix match
+        const panelName = await resolvePanelName(panelArg, opts.latest === true, db, writeError);
         const resolved = await loadTranscript(db, panelName);
 
-        if (opts.continue === undefined) {
+        if (opts.prompt === undefined) {
           // Transcript replay: "auto" degrades to plain (Ink would just
           // render a static dump — no streaming benefit).
           const transcriptFormat: "json" | "plain" = opts.format === "json" ? "json" : "plain";
@@ -120,7 +131,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
         const continueEngine = opts.engine ?? "mock";
         if (continueEngine === "mock") {
           writeError(
-            "\n!! [MOCK ENGINE] --continue running with deterministic offline mock — responses are NOT real.\n\n",
+            "\n!! [MOCK ENGINE] --prompt running with deterministic offline mock — responses are NOT real.\n\n",
           );
         }
 
@@ -165,7 +176,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
             mode: panelMode,
             ...(strategy !== undefined ? { strategy } : {}),
           },
-          prompt: opts.continue,
+          prompt: opts.prompt,
           panelId: resolved.panel.id,
           expertSlugToId,
           moderator:
@@ -176,7 +187,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
           db,
           preamble: () => {
             write(`\n# Continuing ${resolved.panel.name}\n`);
-            write(`Prompt: ${opts.continue}\n`);
+            write(`Prompt: ${opts.prompt}\n`);
             write(`Engine: ${continueEngine} | Max rounds: ${opts.maxRounds}\n\n`);
           },
           ...(opts.heuristicMemory === true
@@ -208,7 +219,9 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
     `
 Examples:
   $ council resume my-panel                                          # show transcript
-  $ council resume my-panel --continue "What about costs?" --engine copilot    # continue debate
+  $ council resume my-panel --prompt "What about costs?" --engine copilot  # continue debate
+  $ council resume --latest                                          # most recent panel
+  $ council resume arch                                              # prefix match
 `,
   );
 
@@ -253,7 +266,7 @@ async function renderTranscriptInline(
     }
     write(`--- end of transcript (${resolved.turns.length} turns) ---\n`);
     write(
-      `\nTo continue this debate: council resume ${resolved.panel.name} --continue "<new question>" --engine copilot\n`,
+      `\nTo continue this debate: council resume ${resolved.panel.name} --prompt "<new question>" --engine copilot\n`,
     );
     return;
   }
@@ -261,4 +274,59 @@ async function renderTranscriptInline(
   for (const e of synthesizeEvents(resolved)) {
     write(JSON.stringify(e) + "\n");
   }
+}
+
+/**
+ * Resolve a panel name from CLI input using:
+ *   1. --latest → most-recently-created panel
+ *   2. Exact match by name
+ *   3. Prefix match (auto-select if unique, error if ambiguous)
+ */
+async function resolvePanelName(
+  panelArg: string | undefined,
+  latest: boolean,
+  db: CouncilDatabase,
+  writeError: Writer,
+): Promise<string> {
+  const panelRepo = new PanelRepository(db);
+
+  if (latest) {
+    const panel = await panelRepo.findMostRecentlyActive();
+    if (!panel) {
+      writeError("No panels found. Run `council convene` to start one.\n");
+      throw new CliUserError("No panels found");
+    }
+    return panel.name;
+  }
+
+  if (!panelArg) {
+    writeError(
+      "Panel name is required. Use `council resume <name>` or `council resume --latest`.\n",
+    );
+    throw new CliUserError("Panel name is required");
+  }
+
+  // Try exact match first
+  const exact = await panelRepo.findByName(panelArg);
+  if (exact) return exact.name;
+
+  // Try prefix match
+  const prefixMatches = await panelRepo.findByNamePrefix(panelArg);
+  if (prefixMatches.length === 1) {
+    const match = prefixMatches[0];
+    if (match) return match.name;
+  }
+  if (prefixMatches.length > 1) {
+    const names = prefixMatches.map((p) => p.name);
+    writeError(`Multiple panels match "${panelArg}":\n`);
+    for (const n of names) {
+      writeError(`  • ${n}\n`);
+    }
+    throw new CliUserError(
+      `Ambiguous prefix "${panelArg}" matches ${prefixMatches.length} panels: ${names.join(", ")}`,
+    );
+  }
+
+  // No match at all — let loadTranscript produce the standard error
+  return panelArg;
 }
