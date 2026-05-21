@@ -32,6 +32,7 @@ import {
   getCouncilDataHome,
   getCouncilHome,
   loadConfig,
+  resolveEngine,
   DEFAULT_MODEL,
   type CouncilConfig,
 } from "../../config/index.js";
@@ -133,11 +134,13 @@ export function buildChatCommand(deps: ChatCommandDeps = {}): Command {
   cmd
     .description(
       "Persistent conversation with an expert or panel from the library. " +
-      "For structured debates use `council convene`."
+        "For structured debates use `council convene`.",
     )
     .argument("[target]", "Expert slug or panel name to chat with")
     .addOption(
-      new Option("--engine <kind>", "Engine (required for interactive chat)").choices([...ENGINE_KINDS]),
+      new Option("--engine <kind>", "Engine to use (default: from config)").choices([
+        ...ENGINE_KINDS,
+      ]),
     )
     .option("--new", "Archive the active conversation and start a fresh one")
     .option("--list", "List all chat conversations and exit")
@@ -157,12 +160,9 @@ export function buildChatCommand(deps: ChatCommandDeps = {}): Command {
       if (!target) {
         throw new Error("Missing required argument: <target> (expert slug or panel name)");
       }
-      if (!raw.engine) {
-        throw new Error(
-          `--engine is required for interactive chat. Expected one of: ${ENGINE_KINDS.join(", ")}`,
-        );
-      }
-      await runChat(target, raw, deps, write, writeError);
+      const config = await loadConfig();
+      const engineResolved = resolveEngine(raw.engine, config);
+      await runChat(target, { ...raw, engine: engineResolved }, deps, write, writeError);
     });
 
   cmd.addHelpText(
@@ -716,7 +716,9 @@ async function runHistory(target: string, write: Writer, writeError: Writer): Pr
             available.length > 0
               ? available.join(", ")
               : "(none — create one with `council expert create`)";
-          writeError(`"${target}" not found as expert or panel.${hint} Available experts: ${list}\n`);
+          writeError(
+            `"${target}" not found as expert or panel.${hint} Available experts: ${list}\n`,
+          );
           throw new CliUserError(`"${target}" not found`);
         }
         throw err;

@@ -5,6 +5,14 @@
  *
  *   import { loadConfig, getCouncilHome, ConfigSchema } from "../config/index.js";
  */
-export { ConfigSchema, DEFAULT_MODEL } from "./schema.js";
-export type { CouncilConfig } from "./schema.js";
-export { ensureDataDirectories, getCouncilDataHome, getCouncilHome, loadConfig } from "./loader.js";
+export { ConfigSchema, DEFAULT_MODEL, ENGINE_CHOICES } from "./schema.js";
+export type { CouncilConfig, EngineChoice } from "./schema.js";
+export {
+  ensureDataDirectories,
+  getCouncilDataHome,
+  getCouncilHome,
+  loadConfig,
+  loadConfigWithMeta,
+  resolveEngine,
+} from "./loader.js";
+export type { ConfigLoadResult } from "./loader.js";

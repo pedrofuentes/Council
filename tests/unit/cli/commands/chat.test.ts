@@ -288,16 +288,25 @@ describe("buildChatCommand", () => {
       await teardown(env);
     });
 
-    it("errors when --engine is missing", async () => {
+    it("resolves engine from config when --engine is omitted", async () => {
       await seedExpert(env);
-      let err = "";
+      // With engine default feature, omitting --engine no longer throws —
+      // it resolves from config (default: "copilot"). The test verifies it
+      // does NOT throw the old "--engine is required" error.
       const cmd = buildChatCommand({
         write: () => undefined,
-        writeError: (s) => (err += s),
+        writeError: () => undefined,
       });
-      await expect(cmd.parseAsync(["node", "council-chat", "dahlia-cto"])).rejects.toThrow(
-        /--engine is required/i,
-      );
+      // It will attempt to start an engine and likely fail with a different
+      // error (e.g. model not available in test env), but NOT the old
+      // "--engine is required" error.
+      let thrown = "";
+      try {
+        await cmd.parseAsync(["node", "council-chat", "dahlia-cto"]);
+      } catch (err) {
+        thrown = err instanceof Error ? err.message : String(err);
+      }
+      expect(thrown).not.toMatch(/--engine is required/i);
     });
 
     it("errors when --engine value is unknown", async () => {

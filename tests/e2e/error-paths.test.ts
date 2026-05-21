@@ -116,18 +116,22 @@ describe("CLI error paths E2E", () => {
   });
 
   describe("convene", () => {
-    it("requires --engine", async () => {
+    it("resolves engine from config when --engine omitted (no longer required)", async () => {
       const output = captureOutput();
       const command = prepareCommand(
         buildConveneCommand({ write: output.write, writeError: output.writeError }),
       );
 
-      const failure = await expectCommandFailure(
-        command.parseAsync(["node", "council-convene", "Topic", "--template", "code-review"]),
-        output,
-      );
-
-      expect(failure.message.toLowerCase()).toMatch(/--engine|required option/);
+      // With engine default feature, omitting --engine no longer throws.
+      // It resolves to config default. The command may fail for other reasons
+      // (e.g. template not found) but NOT because --engine is missing.
+      let thrown = "";
+      try {
+        await command.parseAsync(["node", "council-convene", "Topic", "--template", "code-review"]);
+      } catch (err) {
+        thrown = err instanceof Error ? err.message : String(err);
+      }
+      expect(thrown.toLowerCase()).not.toMatch(/--engine.*required|required option.*engine/);
     });
 
     it("rejects an unknown template", async () => {
@@ -215,25 +219,29 @@ describe("CLI error paths E2E", () => {
       expect(failure.message.toLowerCase()).toMatch(/no.*panel|not.*found|unknown panel/);
     });
 
-    it("requires --engine when --continue is used", async () => {
+    it("resolves engine from config when --continue is used without --engine", async () => {
       const seeded = await seedCompletedDebate(ctx.testHome, { panelName: "resume-error-panel" });
       const output = captureOutput();
       const command = prepareCommand(
         buildResumeCommand({ write: output.write, writeError: output.writeError }),
       );
 
-      const failure = await expectCommandFailure(
-        command.parseAsync([
+      // With engine default feature, --continue without --engine no longer
+      // throws. It resolves from config. May fail for other reasons but not
+      // because --engine is "required".
+      let thrown = "";
+      try {
+        await command.parseAsync([
           "node",
           "council-resume",
           seeded.panelName,
           "--continue",
           "What changed?",
-        ]),
-        output,
-      );
-
-      expect(failure.message.toLowerCase()).toMatch(
+        ]);
+      } catch (err) {
+        thrown = err instanceof Error ? err.message : String(err);
+      }
+      expect(thrown.toLowerCase()).not.toMatch(
         /--engine.*required|engine.*required.*continue/,
       );
     });

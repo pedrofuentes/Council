@@ -14,7 +14,7 @@ import * as fs from "node:fs/promises";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { ConfigSchema, type CouncilConfig, loadConfig } from "../../../src/config/index.js";
+import { ConfigSchema, loadConfig } from "../../../src/config/index.js";
 
 describe("ConfigSchema — defaults.engine field (CLI-02)", () => {
   it("defaults engine to 'copilot' when omitted", () => {
@@ -82,11 +82,7 @@ describe("loadConfigWithMeta() — first-run detection (CLI-04)", () => {
   it("returns isFirstRun=false when config.yaml already exists", async () => {
     const { loadConfigWithMeta } = await import("../../../src/config/loader.js");
     await fs.mkdir(testHome, { recursive: true });
-    await fs.writeFile(
-      path.join(testHome, "config.yaml"),
-      "defaults:\n  maxRounds: 4\n",
-      "utf-8",
-    );
+    await fs.writeFile(path.join(testHome, "config.yaml"), "defaults:\n  maxRounds: 4\n", "utf-8");
     const result = await loadConfigWithMeta();
     expect(result.isFirstRun).toBe(false);
   });
@@ -126,11 +122,80 @@ describe("formatEngineError() — doctor hint on auth errors (CLI-04)", () => {
   });
 });
 
-describe("non-TTY auto-confirm (DX-04)", () => {
+describe("non-TTY auto-compose requires --yes (DX-04)", () => {
+  let testHome: string;
+  let originalHome: string | undefined;
+
+  beforeEach(async () => {
+    testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-nontty-test-"));
+    originalHome = process.env["COUNCIL_HOME"];
+    process.env["COUNCIL_HOME"] = testHome;
+  });
+
+  afterEach(async () => {
+    if (originalHome === undefined) delete process.env["COUNCIL_HOME"];
+    else process.env["COUNCIL_HOME"] = originalHome;
+    try {
+      await fs.rm(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    } catch {
+      /* best effort */
+    }
+  });
+
   it("isNonInteractive() returns true when stdin is not a TTY", async () => {
     const { isNonInteractive } = await import("../../../src/cli/non-interactive.js");
-    // The test process itself likely has no TTY (piped stdin in CI)
-    // We test the function exists and returns a boolean
-    expect(typeof isNonInteractive()).toBe("boolean");
+    // In test/CI environments, stdin is piped (not a TTY)
+    expect(isNonInteractive()).toBe(true);
+  });
+
+  it("convene rejects auto-compose without --yes in non-interactive mode", async () => {
+    const { buildConveneCommand } = await import("../../../src/cli/commands/convene.js");
+    const { isNonInteractive } = await import("../../../src/cli/non-interactive.js");
+
+    // Confirm we are non-interactive (test process has piped stdin)
+    expect(isNonInteractive()).toBe(true);
+
+    const validPanelJson = JSON.stringify({
+      name: "nontty-panel",
+      description: "Test panel",
+      experts: [
+        { slug: "a", displayName: "A", role: "X", expertise: { weightedEvidence: ["x"], referenceCases: [], notExpertIn: [] }, epistemicStance: "s" },
+        { slug: "b", displayName: "B", role: "Y", expertise: { weightedEvidence: ["y"], referenceCases: [], notExpertIn: [] }, epistemicStance: "s" },
+      ],
+    });
+
+    // Minimal scripted engine that returns auto-compose JSON
+    const engineFactory = () => ({
+      async start() { /* noop */ },
+      async stop() { /* noop */ },
+      async addExpert() { /* noop */ },
+      async removeExpert() { /* noop */ },
+      async listModels() { return ["stub"] as const; },
+      send() {
+        return (async function* () {
+          yield { kind: "message.delta" as const, expertId: "x", text: validPanelJson };
+          yield { kind: "message.complete" as const, expertId: "x", response: { latencyMs: 1, tokensIn: 1, tokensOut: 1 } };
+        })();
+      },
+    });
+
+    // Build convene WITHOUT confirmProvider — triggers non-TTY detection
+    const cmd = buildConveneCommand({
+      engineFactory,
+      write: () => undefined,
+      writeError: () => undefined,
+      // NO confirmProvider — forces the non-TTY code path
+    });
+    cmd.exitOverride();
+
+    let thrown = "";
+    try {
+      await cmd.parseAsync([
+        "node", "council-convene", "topic", "--engine", "mock",
+      ]);
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    expect(thrown).toMatch(/non-interactive|--yes/i);
   });
 });

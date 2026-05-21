@@ -257,7 +257,7 @@ describe("buildResumeCommand", () => {
 
   // ── Sentinel pr165 #1 + #5 — added edge-case coverage ─────────────
 
-  it("--continue without --engine fails loudly (no silent mock default)", async () => {
+  it("--continue without --engine resolves from config default (no longer throws)", async () => {
     const seed = await seedPanelWithDebate(testHome);
     const cmd = buildResumeCommand({
       engineFactory: makeMockEngineFactory(),
@@ -265,6 +265,9 @@ describe("buildResumeCommand", () => {
     });
     cmd.exitOverride();
 
+    // With the engine default feature, --continue without --engine no longer
+    // throws — it resolves from config (default: "copilot"). Since the test
+    // uses a mock engine factory, it should proceed without error.
     let thrown = "";
     try {
       await cmd.parseAsync([
@@ -277,7 +280,8 @@ describe("buildResumeCommand", () => {
     } catch (err) {
       thrown = err instanceof Error ? err.message : String(err);
     }
-    expect(thrown.toLowerCase()).toMatch(/--engine.*required|engine.*required.*continue/);
+    // Should NOT throw about missing --engine anymore
+    expect(thrown.toLowerCase()).not.toMatch(/--engine.*required|engine.*required.*continue/);
   });
 
   it("--continue --engine garbage rejects with clear error", async () => {

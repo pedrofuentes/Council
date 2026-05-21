@@ -234,6 +234,36 @@ describe("buildConcludeCommand", () => {
     expect(thrown.toLowerCase()).toMatch(/no panel|not found/);
   });
 
+  it("resolves engine from config when --engine is omitted", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    // Write config with engine = mock so the command resolves it from config
+    const configPath = path.join(testHome, "config.yaml");
+    await fs.writeFile(configPath, "defaults:\n  engine: mock\n");
+
+    let errorOutput = "";
+    const cmd = buildConcludeCommand({
+      write: () => undefined,
+      writeError: (s) => { errorOutput += s; },
+      // NO engineFactory — exercises makeEngineFromKind(resolvedEngine)
+      synthesizerId: SYNTH_ID,
+    });
+    cmd.exitOverride();
+
+    // No --engine flag — should resolve "mock" from config and hit makeEngineFromKind
+    // MockEngine without configured responses will return non-JSON, causing a parse error.
+    // But the mock-engine warning banner IS emitted before that, proving resolution worked.
+    let thrown = "";
+    try {
+      await cmd.parseAsync(["node", "council-conclude", seed.panelName, "--format", "json"]);
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    // The MOCK ENGINE banner proves resolveEngine returned "mock" from config
+    expect(errorOutput).toMatch(/MOCK ENGINE/);
+    // The error is about JSON parsing (default mock response isn't valid JSON)
+    expect(thrown.toLowerCase()).toMatch(/json|parse|valid/);
+  });
+
   it("rejects unknown --engine value", async () => {
     const seed = await seedPanelWithDebate(testHome);
     const cmd = buildConcludeCommand({

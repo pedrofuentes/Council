@@ -118,7 +118,7 @@ describe("buildAskCommand", () => {
     expect(thrown.toLowerCase()).toMatch(/no expert|not found/);
   });
 
-  it("--engine is required (no silent mock default)", async () => {
+  it("resolves engine from config when --engine is omitted (no longer throws)", async () => {
     await seedPanel(testHome);
     const cmd = buildAskCommand({ write: () => undefined });
     cmd.exitOverride();
@@ -130,7 +130,8 @@ describe("buildAskCommand", () => {
     } catch (err) {
       thrown = err instanceof Error ? err.message : String(err);
     }
-    expect(thrown.toLowerCase()).toMatch(/--engine|engine.*required|required.*engine/);
+    // Should NOT throw about missing --engine anymore
+    expect(thrown.toLowerCase()).not.toMatch(/--engine.*required|required.*engine/);
   });
 
   it("e2e: runs a 1-expert 1-round debate, persists debate + turn rows", async () => {

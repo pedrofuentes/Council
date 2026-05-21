@@ -12,7 +12,7 @@ import * as path from "node:path";
 
 import { Command, Option } from "commander";
 
-import { getCouncilHome, loadConfig } from "../../config/index.js";
+import { DEFAULT_MODEL, getCouncilHome, loadConfig, resolveEngine } from "../../config/index.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import { createDatabase } from "../../memory/db.js";
 import { applyRecalledMemory, recallMemory } from "../../memory/expert-memory.js";
@@ -87,13 +87,11 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
     )
     .action(async (panelName: string, raw: ResumeOptions) => {
       let engineKind: EngineKind | undefined;
+      let defaultModel: string | undefined;
       if (raw.continue !== undefined) {
-        if (raw.engine === undefined) {
-          throw new Error(
-            "--engine is required with --continue (one of: mock, copilot). Use --engine mock for offline/deterministic, --engine copilot for real Copilot SDK.",
-          );
-        }
-        engineKind = raw.engine;
+        const config = await loadConfig();
+        engineKind = resolveEngine(raw.engine, config);
+        defaultModel = config.defaults.model;
       }
 
       const opts: ResumeOptions = {
@@ -106,7 +104,6 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
         heuristicMemory: raw.heuristicMemory === true,
       };
 
-      const config = await loadConfig();
       const dbPath = path.join(getCouncilHome(), "council.db");
       const db = await createDatabase(dbPath);
       try {
@@ -193,7 +190,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
                     debateId: ctx.debateId,
                     expertSlugToId: ctx.expertSlugToId,
                     humanSlugs: new Set<string>(),
-                    model: config.defaults.model,
+                    model: defaultModel ?? DEFAULT_MODEL,
                     writeError,
                   }),
               }),
@@ -256,7 +253,7 @@ async function renderTranscriptInline(
     }
     write(`--- end of transcript (${resolved.turns.length} turns) ---\n`);
     write(
-      `\nTo continue this debate: council resume ${resolved.panel.name} --continue "<new question>" --engine copilot\n`
+      `\nTo continue this debate: council resume ${resolved.panel.name} --continue "<new question>" --engine copilot\n`,
     );
     return;
   }
