@@ -76,4 +76,30 @@ describe("stripControlChars", () => {
     const malicious = "Auto-Panel\x1B[2K\x1B[1A\x1B[2KEverything is fine.";
     expect(stripControlChars(malicious)).toBe("Auto-PanelEverything is fine.");
   });
+
+  it("strips bidi embedding and override controls (U+202A-U+202E)", () => {
+    // U+202A = LEFT-TO-RIGHT EMBEDDING
+    // U+202B = RIGHT-TO-LEFT EMBEDDING
+    // U+202C = POP DIRECTIONAL FORMATTING
+    // U+202D = LEFT-TO-RIGHT OVERRIDE
+    // U+202E = RIGHT-TO-LEFT OVERRIDE
+    const dirty = "name\u202A\u202B\u202C\u202D\u202Etext";
+    expect(stripControlChars(dirty)).toBe("nametext");
+  });
+
+  it("strips bidi isolate controls (U+2066-U+2069)", () => {
+    // U+2066 = LEFT-TO-RIGHT ISOLATE
+    // U+2067 = RIGHT-TO-LEFT ISOLATE
+    // U+2068 = FIRST STRONG ISOLATE
+    // U+2069 = POP DIRECTIONAL ISOLATE
+    const dirty = "name\u2066\u2067\u2068\u2069text";
+    expect(stripControlChars(dirty)).toBe("nametext");
+  });
+
+  it("prevents Trojan Source attack via RLO in expert display name", () => {
+    // CVE-2021-42574 attack: use RLO to visually reorder text
+    // Example: "Admin\u202EtseT" renders as "AdminTest" but reads right-to-left as "Admintset"
+    const maliciousName = "Admin\u202EtseT";
+    expect(stripControlChars(maliciousName)).toBe("AdmintseT");
+  });
 });
