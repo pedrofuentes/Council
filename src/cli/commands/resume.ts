@@ -115,7 +115,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
       const db = await createDatabase(dbPath);
       try {
         // Resolve panel name: --latest, exact match, or prefix match
-        const panelName = await resolvePanelName(panelArg, opts.latest === true, db, write);
+        const panelName = await resolvePanelName(panelArg, opts.latest === true, db, writeError);
         const resolved = await loadTranscript(db, panelName);
 
         if (opts.prompt === undefined) {
@@ -284,12 +284,12 @@ async function resolvePanelName(
   panelArg: string | undefined,
   latest: boolean,
   db: CouncilDatabase,
-  write: Writer,
+  writeError: Writer,
 ): Promise<string> {
   const panelRepo = new PanelRepository(db);
 
   if (latest) {
-    const panel = await panelRepo.findLatest();
+    const panel = await panelRepo.findMostRecentlyActive();
     if (!panel) {
       throw new Error("No panels found. Run `council convene` to start one.");
     }
@@ -314,9 +314,9 @@ async function resolvePanelName(
   }
   if (prefixMatches.length > 1) {
     const names = prefixMatches.map((p) => p.name);
-    write(`Multiple panels match "${panelArg}":\n`);
+    writeError(`Multiple panels match "${panelArg}":\n`);
     for (const n of names) {
-      write(`  • ${n}\n`);
+      writeError(`  • ${n}\n`);
     }
     throw new Error(
       `Ambiguous prefix "${panelArg}" matches ${prefixMatches.length} panels: ${names.join(", ")}. ` +

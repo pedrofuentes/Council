@@ -194,16 +194,20 @@ describe("resume prefix match and --latest (DX-12)", () => {
     expect(captured).toContain("Content from architecture-review-2025");
   });
 
-  it("lists matches when prefix matches multiple panels", async () => {
+  it("rejects with ambiguity error when prefix matches multiple panels", async () => {
     await seedPanel("arch-review-a");
     await new Promise((r) => setTimeout(r, 5));
     await seedPanel("arch-review-b");
 
     let captured = "";
+    let stderr = "";
     const cmd = buildResumeCommand({
       engineFactory: makeMockEngineFactory(),
       write: (s) => {
         captured += s;
+      },
+      writeError: (s) => {
+        stderr += s;
       },
     });
     cmd.exitOverride();
@@ -214,10 +218,13 @@ describe("resume prefix match and --latest (DX-12)", () => {
     } catch (err) {
       thrown = err instanceof Error ? err.message : String(err);
     }
-    // Should mention both matches or indicate ambiguity
-    const combined = captured + thrown;
-    expect(combined).toMatch(/arch-review-a/);
-    expect(combined).toMatch(/arch-review-b/);
+    // Must throw an ambiguity error
+    expect(thrown).toMatch(/ambiguous/i);
+    // Listing goes to stderr, not stdout
+    expect(stderr).toMatch(/arch-review-a/);
+    expect(stderr).toMatch(/arch-review-b/);
+    // No transcript output produced
+    expect(captured).toBe("");
   });
 
   it("--latest resumes the most recent session", async () => {

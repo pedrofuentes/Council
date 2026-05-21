@@ -112,9 +112,23 @@ export class PanelRepository {
   }
 
   /**
-   * Return the most-recently-created panel (by created_at DESC).
+   * Return the panel with the most recent debate activity (by debate started_at DESC).
+   * Falls back to most-recently-created panel if no debates exist.
    */
-  async findLatest(): Promise<Panel | undefined> {
+  async findMostRecentlyActive(): Promise<Panel | undefined> {
+    // Find the panel_id of the most recent debate
+    const latestDebate = await this.db
+      .selectFrom("debates")
+      .select("panel_id")
+      .orderBy("started_at", "desc")
+      .orderBy("id", "desc")
+      .executeTakeFirst();
+
+    if (latestDebate) {
+      return this.findById(latestDebate.panel_id);
+    }
+
+    // Fallback: no debates at all, return newest panel
     const row = await this.db
       .selectFrom("panels")
       .selectAll()

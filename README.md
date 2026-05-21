@@ -109,7 +109,7 @@ council convene "..." --template code-review --engine copilot --format json | jq
 council resume <panel-name>
 
 # Continue a previous panel with a new prompt
-council resume <panel-name> --continue "What about the migration risk?" --engine copilot
+council resume <panel-name> --prompt "What about the migration risk?" --engine copilot
 
 # Export a panel transcript for sharing
 council export <panel-name>                         # markdown (default)
@@ -297,7 +297,9 @@ council convene <topic> --template <name> --engine copilot     # Use a built-in 
 council ask <panel> "<question>" --engine copilot              # One-shot to one expert (default: first; pin with --expert <slug>)
 council conclude [panel] --engine copilot                      # Decision matrix + recommendation
 council resume <panel>                                          # Replay transcript (no engine needed)
-council resume <panel> --continue "<prompt>" --engine copilot  # Continue the panel with a new round
+council resume <panel> --prompt "<prompt>" --engine copilot     # Continue the panel with a new round
+council resume --latest                                         # Resume most recently active panel
+council resume <prefix>                                         # Prefix match (auto-selects if unique)
 council export <panel> --format <fmt>                          # Export (markdown | json | adr)
 
 # Safety: every entry point (convene, ask, chat, in-REPL @convene) runs a warn-only
@@ -332,6 +334,7 @@ council panel docs unlink <name> --path <p> # Unlink a folder + clean up its FTS
 # Inspection & diagnostics
 council sessions                            # List all debate sessions
 council templates                           # List built-in panel templates
+council templates inspect <name>            # Show template details (experts, mode, rounds)
 council memory list                         # Show what experts remember
 council memory inspect <panel>              # Per-panel + per-expert memory detail
 council memory reset <panel> --yes          # Destructive: clear debate state
