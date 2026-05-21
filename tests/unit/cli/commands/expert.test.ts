@@ -944,9 +944,11 @@ fs.writeFileSync(p, body, 'utf-8');`,
         },
         { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
       );
+      cmd.exitOverride();
+      for (const sub of cmd.commands) sub.exitOverride();
       await expect(
         cmd.parseAsync(["node", "council-expert", "train", "boss", "--engine", "bogus"]),
-      ).rejects.toThrow(/engine/i);
+      ).rejects.toThrow(/engine|allowed choices/i);
     });
 
     it("reports not found when slug does not exist", async () => {

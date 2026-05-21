@@ -13,7 +13,7 @@
 import * as path from "node:path";
 import { ulid } from "ulid";
 
-import { Command } from "commander";
+import { Command, Option } from "commander";
 
 import { CliUserError } from "../cli-user-error.js";
 
@@ -127,14 +127,13 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       "--template <name>",
       "Use a built-in or custom panel template. **Omit to let Council auto-design an expert panel from your topic.**",
     )
-    .requiredOption(
-      "--engine <kind>",
-      "Engine (default: copilot). Use 'mock' for offline testing.",
+    .addOption(
+      new Option("--engine <kind>", "Engine to use").choices([...ENGINE_KINDS]).makeOptionMandatory(),
     )
-    .option(
-      "--format <kind>",
-      `Output format (default: auto — uses interactive UI on terminals, plain text when piped). Options: ${RENDERER_FORMATS.join(" | ")}`,
-      "auto",
+    .addOption(
+      new Option("--format <kind>", "Output format (auto picks Ink TUI on TTY, plain text otherwise)")
+        .choices([...RENDERER_FORMATS])
+        .default("auto"),
     )
     .option(
       "--max-rounds <n>",
@@ -142,7 +141,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       (v) => Number.parseInt(v, 10),
       DEFAULT_MAX_ROUNDS,
     )
-    .option("--mode <kind>", "Debate mode: freeform | structured", "freeform")
+    .addOption(new Option("--mode <kind>", "Debate mode").choices(["freeform", "structured"]).default("freeform"))
     .option(
       "--max-words <n>",
       "Soft per-response word cap",
@@ -182,12 +181,6 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
     )
     .option("--yes", "Skip the auto-compose confirmation prompt (non-interactive runs)")
     .action(async (topic: string, raw: ConveneOptions) => {
-      if (!ENGINE_KINDS.includes(raw.engine)) {
-        throw new Error(
-          `Unknown --engine value: ${raw.engine}. Expected one of: ${ENGINE_KINDS.join(", ")}`,
-        );
-      }
-
       const admission = checkTopicAdmission(topic);
       for (const warning of admission.warnings) {
         writeError(warning + "\n");

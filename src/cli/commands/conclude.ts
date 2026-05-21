@@ -27,7 +27,7 @@
  */
 import * as path from "node:path";
 
-import { Command } from "commander";
+import { Command, Option } from "commander";
 
 import { ulid } from "ulid";
 import { z } from "zod";
@@ -42,6 +42,7 @@ import { CliUserError } from "../cli-user-error.js";
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 import { ENGINE_KINDS, type EngineKind, makeEngineFromKind } from "../run-with-engine.js";
 import { formatEngineError } from "../error-mapper.js";
+import { exitCodeForEngineError } from "../exit-codes.js";
 
 export const CONCLUDE_FORMATS = ["plain", "json"] as const;
 export type ConcludeFormat = (typeof CONCLUDE_FORMATS)[number];
@@ -133,22 +134,13 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
       "For transcript-based ADR export, use `council export --format adr` instead."
     )
     .argument("[panel]", "Panel name to conclude (defaults to the most recently created panel)")
-    .requiredOption("--engine <kind>", `Engine kind: ${ENGINE_KINDS.join(" | ")}`)
-    .option("--format <kind>", `Output format: ${CONCLUDE_FORMATS.join(" | ")}`, "plain")
+    .addOption(
+      new Option("--engine <kind>", "Engine kind").choices([...ENGINE_KINDS]).makeOptionMandatory(),
+    )
+    .addOption(
+      new Option("--format <kind>", "Output format").choices([...CONCLUDE_FORMATS]).default("plain"),
+    )
     .action(async (panelArg: string | undefined, raw: ConcludeRawOptions) => {
-      if (!ENGINE_KINDS.includes(raw.engine)) {
-        throw new Error(
-          `Unknown --engine value: ${raw.engine}. Expected one of: ${ENGINE_KINDS.join(", ")}`,
-        );
-      }
-      if (
-        raw.format !== undefined &&
-        !(CONCLUDE_FORMATS as readonly string[]).includes(raw.format)
-      ) {
-        throw new Error(
-          `Unknown --format value: ${raw.format}. Expected one of: ${CONCLUDE_FORMATS.join(", ")}`,
-        );
-      }
       const format: ConcludeFormat = raw.format === "json" ? "json" : "plain";
 
       if (raw.engine === "mock") {
@@ -202,7 +194,9 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
           raw_response = await collectResponse(engine, synthesizerId, prompt);
         } catch (err: unknown) {
           writeError("\n" + formatEngineError(err as Error) + "\n\n");
-          throw new CliUserError(err instanceof Error ? err.message : String(err));
+          const cliErr = new CliUserError(err instanceof Error ? err.message : String(err));
+          cliErr.exitCode = exitCodeForEngineError((err as { code?: string }).code);
+          throw cliErr;
         } finally {
           await engine.stop().catch((err: unknown) => {
             const msg = err instanceof Error ? err.message : String(err);

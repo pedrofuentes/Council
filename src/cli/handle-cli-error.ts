@@ -7,7 +7,7 @@
  * Returns a semantic process exit code (see `exit-codes.ts`).
  */
 import { CliUserError } from "./cli-user-error.js";
-import { EXIT_INTERNAL_ERROR, EXIT_USER_ERROR } from "./exit-codes.js";
+import { EXIT_INTERNAL_ERROR, EXIT_USER_ERROR, exitCodeForEngineError } from "./exit-codes.js";
 
 type Writer = (s: string) => void;
 
@@ -16,6 +16,7 @@ type Writer = (s: string) => void;
  *
  * - `CliUserError` → silent (message was already written via `writeError`);
  *   uses `exitCode` if set, otherwise defaults to EXIT_USER_ERROR (1).
+ * - Engine-like errors (with a `code` property) → map via `exitCodeForEngineError`
  * - Any other `Error` → write `Error: <message>` (no stack trace), EXIT_INTERNAL_ERROR (4)
  * - Non-Error value → write stringified value, EXIT_INTERNAL_ERROR (4)
  */
@@ -24,6 +25,11 @@ export function handleCliError(err: unknown, writeError: Writer): number {
     return err.exitCode ?? EXIT_USER_ERROR;
   }
   if (err instanceof Error) {
+    const code = (err as { code?: string }).code;
+    if (code) {
+      writeError(`Error: ${err.message}\n`);
+      return exitCodeForEngineError(code);
+    }
     writeError(`Error: ${err.message}\n`);
     return EXIT_INTERNAL_ERROR;
   }

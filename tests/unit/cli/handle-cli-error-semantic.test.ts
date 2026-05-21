@@ -14,34 +14,34 @@ describe("handleCliError — semantic exit codes", () => {
   it("returns CliUserError.exitCode when present", () => {
     const err = new CliUserError("auth failed");
     err.exitCode = EXIT_AUTH_ERROR;
-    let stderr = "";
+    let _stderr = "";
     const result = handleCliError(err, (s) => {
-      stderr += s;
+      _stderr += s;
     });
     expect(result).toBe(EXIT_AUTH_ERROR);
   });
 
   it("defaults to EXIT_USER_ERROR (1) for CliUserError without exitCode", () => {
     const err = new CliUserError("bad input");
-    let stderr = "";
+    let _stderr = "";
     const result = handleCliError(err, (s) => {
-      stderr += s;
+      _stderr += s;
     });
     expect(result).toBe(EXIT_USER_ERROR);
   });
 
   it("returns EXIT_INTERNAL_ERROR (4) for unknown Error types", () => {
-    let stderr = "";
+    let _stderr = "";
     const result = handleCliError(new Error("boom"), (s) => {
-      stderr += s;
+      _stderr += s;
     });
     expect(result).toBe(EXIT_INTERNAL_ERROR);
   });
 
   it("returns EXIT_INTERNAL_ERROR (4) for non-Error values", () => {
-    let stderr = "";
+    let _stderr = "";
     const result = handleCliError("string error", (s) => {
-      stderr += s;
+      _stderr += s;
     });
     expect(result).toBe(EXIT_INTERNAL_ERROR);
   });
@@ -57,5 +57,25 @@ describe("CliUserError.exitCode field", () => {
     const err = new CliUserError("test");
     err.exitCode = 3;
     expect(err.exitCode).toBe(3);
+  });
+});
+
+describe("handleCliError — engine error code propagation", () => {
+  it("maps NOT_AUTHENTICATED Error to EXIT_AUTH_ERROR (2)", () => {
+    const err = Object.assign(new Error("auth required"), { code: "NOT_AUTHENTICATED" });
+    let _stderr = "";
+    const result = handleCliError(err, (s) => {
+      _stderr += s;
+    });
+    expect(result).toBe(EXIT_AUTH_ERROR);
+  });
+
+  it("maps NETWORK Error to EXIT_NETWORK_ERROR (3)", () => {
+    const err = Object.assign(new Error("timeout"), { code: "NETWORK" });
+    let _stderr = "";
+    const result = handleCliError(err, (s) => {
+      _stderr += s;
+    });
+    expect(result).toBe(3);
   });
 });

@@ -249,6 +249,6 @@ describe("buildAskCommand", () => {
     } catch (err) {
       thrown = err instanceof Error ? err.message : String(err);
     }
-    expect(thrown.toLowerCase()).toMatch(/unknown.*engine|expected.*mock.*copilot/);
+    expect(thrown.toLowerCase()).toMatch(/unknown.*engine|expected.*mock.*copilot|allowed choices/);
   });
 });
