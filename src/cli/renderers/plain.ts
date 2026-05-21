@@ -73,8 +73,10 @@ export class PlainRenderer implements Renderer {
         case "turn.end":
           this.write("\n");
           break;
-        case "round.end":
-          this.write(`\n${this.dim(sym.separator.repeat(40))}\n`);
+        case "round.end": {
+          const width = Math.min(process.stdout.columns ?? 80, 100);
+          this.write(`\n${this.dim(sym.separator.repeat(width))}\n`);
+        }
           break;
         case "cost.update":
           this.write(

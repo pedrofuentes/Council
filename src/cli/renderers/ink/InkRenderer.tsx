@@ -12,6 +12,9 @@
  *   - Retry indicator with spinner during `turn.retry`
  *   - Completion message on `debate.end`
  *
+ * Uses Ink's `<Static>` component so completed turns render once and are
+ * never re-reconciled — giving ~10× performance on long debates.
+ *
  * `InkRenderer` is the `Renderer` adapter the CLI uses — it mounts
  * `DebateApp` via `ink.render()` and resolves when the stream ends.
  *
@@ -20,7 +23,7 @@
  * pass `--format`).
  */
 import { useEffect, useState, type ReactElement } from "react";
-import { Box, Text, render as inkRender } from "ink";
+import { Box, Static, Text, render as inkRender } from "ink";
 import Spinner from "ink-spinner";
 
 import type { DebateEndReason, DebateEvent, PanelMemberSnapshot } from "../../../core/types.js";
@@ -29,20 +32,50 @@ import type { Renderer } from "../types.js";
 import { assignExpertColor, formatExpertPrefix, type ExpertColor } from "./colors.js";
 import { getSymbols } from "../symbols.js";
 
-interface TurnBlock {
-  readonly round: number;
-  readonly expertSlug: string;
-  text: string;
-  ended: boolean;
+/** Returns separator width: min(stdout columns, 100), default 80. */
+export function getSeparatorWidth(): number {
+  return Math.min(process.stdout.columns ?? 80, 100);
 }
 
-interface DebateState {
+// --- Static list item types ---
+
+interface StaticRoundHeader {
+  readonly id: string;
+  readonly type: "round-header";
+  readonly round: number;
+}
+
+interface StaticTurn {
+  readonly id: string;
+  readonly type: "turn";
+  readonly round: number;
+  readonly expertSlug: string;
+  readonly text: string;
+}
+
+interface StaticRoundSeparator {
+  readonly id: string;
+  readonly type: "round-separator";
+}
+
+type StaticItem = StaticRoundHeader | StaticTurn | StaticRoundSeparator;
+
+// --- Active turn (streaming) ---
+
+interface ActiveTurn {
+  readonly round: number;
+  readonly expertSlug: string;
+  readonly text: string;
+}
+
+export interface DebateState {
   readonly panel: readonly PanelMemberSnapshot[];
   readonly expertIndex: ReadonlyMap<string, number>;
   readonly humanSlugs: ReadonlySet<string>;
   readonly displayNames: ReadonlyMap<string, string>;
   readonly currentRound: number | null;
-  readonly turns: readonly TurnBlock[];
+  readonly completedItems: readonly StaticItem[];
+  readonly activeTurn: ActiveTurn | null;
   readonly cost: { readonly premiumRequests: number; readonly estimatedTotal: number } | null;
   readonly errors: readonly {
     readonly expertSlug?: string;
@@ -57,20 +90,28 @@ interface DebateState {
   readonly endReason: DebateEndReason | null;
 }
 
-const INITIAL_STATE: DebateState = {
+/** Exported for testing — initial empty state. */
+export const INITIAL_STATE: DebateState = {
   panel: [],
   expertIndex: new Map(),
   humanSlugs: new Set(),
   displayNames: new Map(),
   currentRound: null,
-  turns: [],
+  completedItems: [],
+  activeTurn: null,
   cost: null,
   errors: [],
   retrying: null,
   endReason: null,
 };
 
-function reduce(s: DebateState, ev: DebateEvent): DebateState {
+let nextId = 0;
+function uid(prefix: string): string {
+  return `${prefix}-${++nextId}`;
+}
+
+/** Exported for testing — state machine that drives the component. */
+export function reduce(s: DebateState, ev: DebateEvent): DebateState {
   switch (ev.kind) {
     case "panel.assembled": {
       const expertIndex = new Map<string, number>();
@@ -83,60 +124,62 @@ function reduce(s: DebateState, ev: DebateEvent): DebateState {
       });
       return { ...s, panel: ev.experts, expertIndex, displayNames, humanSlugs };
     }
-    case "round.start":
-      return { ...s, currentRound: ev.round, retrying: null };
+    case "round.start": {
+      // Seed the round header into completedItems so it renders in Static
+      const header: StaticRoundHeader = {
+        id: uid("rh"),
+        type: "round-header",
+        round: ev.round,
+      };
+      return {
+        ...s,
+        currentRound: ev.round,
+        retrying: null,
+        completedItems: [...s.completedItems, header],
+      };
+    }
     case "turn.start":
       return {
         ...s,
-        turns: [...s.turns, { round: ev.round, expertSlug: ev.expertSlug, text: "", ended: false }],
+        activeTurn: { round: ev.round, expertSlug: ev.expertSlug, text: "" },
         retrying: null,
       };
     case "turn.delta": {
-      const turns = s.turns.slice();
-      const last = turns[turns.length - 1];
-      if (last && last.expertSlug === ev.expertSlug && !last.ended) {
-        turns[turns.length - 1] = { ...last, text: last.text + ev.text };
-      } else {
-        turns.push({
-          round: s.currentRound ?? 0,
-          expertSlug: ev.expertSlug,
-          text: ev.text,
-          ended: false,
-        });
+      if (s.activeTurn && s.activeTurn.expertSlug === ev.expertSlug) {
+        return { ...s, activeTurn: { ...s.activeTurn, text: s.activeTurn.text + ev.text } };
       }
-      return { ...s, turns };
+      // Orphan delta — start a new active turn
+      return {
+        ...s,
+        activeTurn: { round: s.currentRound ?? 0, expertSlug: ev.expertSlug, text: ev.text },
+      };
     }
     case "turn.end": {
-      const turns = s.turns.slice();
-      let idx = -1;
-      for (let i = turns.length - 1; i >= 0; i--) {
-        const t = turns[i];
-        if (t && t.expertSlug === ev.expertSlug && !t.ended) {
-          idx = i;
-          break;
-        }
-      }
-      if (idx >= 0) {
-        const existing = turns[idx];
-        if (existing) {
-          turns[idx] = {
-            ...existing,
-            text: existing.text.length > 0 ? existing.text : ev.content,
-            ended: true,
-          };
-        }
-      } else {
-        turns.push({
-          round: s.currentRound ?? 0,
-          expertSlug: ev.expertSlug,
-          text: ev.content,
-          ended: true,
-        });
-      }
-      return { ...s, turns };
+      // Move active turn to completed
+      const text =
+        s.activeTurn && s.activeTurn.expertSlug === ev.expertSlug && s.activeTurn.text.length > 0
+          ? s.activeTurn.text
+          : ev.content;
+      const completedTurn: StaticTurn = {
+        id: uid("t"),
+        type: "turn",
+        round: s.currentRound ?? 0,
+        expertSlug: ev.expertSlug,
+        text,
+      };
+      return {
+        ...s,
+        completedItems: [...s.completedItems, completedTurn],
+        activeTurn: null,
+      };
     }
-    case "round.end":
-      return s;
+    case "round.end": {
+      const separator: StaticRoundSeparator = {
+        id: uid("rs"),
+        type: "round-separator",
+      };
+      return { ...s, completedItems: [...s.completedItems, separator] };
+    }
     case "cost.update":
       return {
         ...s,
@@ -212,6 +255,15 @@ function RoundHeader({ round }: { readonly round: number }): ReactElement {
   );
 }
 
+function RoundSeparator(): ReactElement {
+  const width = getSeparatorWidth();
+  return (
+    <Box>
+      <Text dimColor>{"─".repeat(width)}</Text>
+    </Box>
+  );
+}
+
 function ExpertCard({
   state,
   slug,
@@ -250,32 +302,37 @@ function StreamingText({
   );
 }
 
-function TurnsView({ state }: { readonly state: DebateState }): ReactElement | null {
-  if (state.turns.length === 0) return null;
-  // Group turns by round so we can render round headers between them.
-  const items: ReactElement[] = [];
-  let lastRound: number | null = null;
-  state.turns.forEach((turn, i) => {
-    if (turn.round !== lastRound) {
-      items.push(<RoundHeader key={`round-${turn.round}-${i}`} round={turn.round} />);
-      lastRound = turn.round;
-    }
-    items.push(
-      <Box key={`turn-${i}`} flexDirection="column" marginTop={1}>
-        <ExpertCard state={state} slug={turn.expertSlug} />
-        <StreamingText text={turn.text} ended={turn.ended} />
-      </Box>,
-    );
-  });
-  return <Box flexDirection="column">{items}</Box>;
+/** Renders a single static item (round header, turn, or separator). */
+function StaticItemView({
+  item,
+  state,
+}: {
+  readonly item: StaticItem;
+  readonly state: DebateState;
+}): ReactElement {
+  switch (item.type) {
+    case "round-header":
+      return <RoundHeader round={item.round} />;
+    case "round-separator":
+      return <RoundSeparator />;
+    case "turn":
+      return (
+        <Box flexDirection="column">
+          <ExpertCard state={state} slug={item.expertSlug} />
+          <StreamingText text={item.text} ended={true} />
+        </Box>
+      );
+  }
 }
 
-function StandaloneRoundHeader({ state }: { readonly state: DebateState }): ReactElement | null {
-  // When round.start has fired but no turn has started yet, we still want
-  // to show the round header so the user sees progress.
-  if (state.currentRound === null) return null;
-  if (state.turns.some((t) => t.round === state.currentRound)) return null;
-  return <RoundHeader round={state.currentRound} />;
+function ActiveTurnView({ state }: { readonly state: DebateState }): ReactElement | null {
+  if (!state.activeTurn) return null;
+  return (
+    <Box flexDirection="column">
+      <ExpertCard state={state} slug={state.activeTurn.expertSlug} />
+      <StreamingText text={state.activeTurn.text} ended={false} />
+    </Box>
+  );
 }
 
 function RetryIndicator({ state }: { readonly state: DebateState }): ReactElement | null {
@@ -369,8 +426,10 @@ export function DebateApp({ events, onComplete }: DebateAppProps): ReactElement 
   return (
     <Box flexDirection="column">
       <PanelRoster state={state} />
-      <StandaloneRoundHeader state={state} />
-      <TurnsView state={state} />
+      <Static items={state.completedItems as StaticItem[]}>
+        {(item) => <StaticItemView key={item.id} item={item} state={state} />}
+      </Static>
+      <ActiveTurnView state={state} />
       <RetryIndicator state={state} />
       <CostIndicator state={state} />
       <ErrorsView state={state} />

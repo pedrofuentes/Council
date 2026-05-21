@@ -238,7 +238,8 @@ describe("ChatRenderer", () => {
       const renderer = createChatRenderer({ sink, experts: makeExperts() });
       renderer.showSeparator();
       const stripped = stripAnsi(sink.text);
-      expect(stripped).toBe("─".repeat(40) + "\n");
+      const expectedWidth = Math.min(process.stdout.columns ?? 80, 100);
+      expect(stripped).toBe("─".repeat(expectedWidth) + "\n");
     });
   });
 
