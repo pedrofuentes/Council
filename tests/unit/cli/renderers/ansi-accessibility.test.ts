@@ -171,15 +171,4 @@ describe("ANSI accessibility", () => {
       expect(sink.text).not.toMatch(/\u001b\[37m/); // white absent
     });
   });
-
-  describe("Fix 5: InkRenderer streaming cursor should use cyan not dim", () => {
-    // Note: This is tested in ink-renderer.test.tsx with visual assertions.
-    // We verify the code change here by inspecting the component directly.
-    it("is verified by visual inspection in ink-renderer.test.tsx", () => {
-      // The bug: <Text dimColor> for cursor is invisible on light terminals.
-      // Fix: <Text color="cyan"> is visible on both light and dark.
-      // This test exists as a placeholder; real verification is in the Ink component test.
-      expect(true).toBe(true);
-    });
-  });
 });

@@ -113,6 +113,31 @@ describe("DebateApp", () => {
     ui.unmount();
   });
 
+  it("renders streaming cursor with cyan color (not dim)", async () => {
+    const events = stream(
+      {
+        kind: "panel.assembled",
+        experts: [{ slug: "alice", displayName: "Alice", model: "gpt-5" }],
+      },
+      { kind: "round.start", round: 0 },
+      { kind: "turn.start", expertSlug: "alice", round: 0, seq: 0 },
+      { kind: "turn.delta", expertSlug: "alice", text: "Hello" },
+      // turn.end NOT sent yet, so cursor should be visible
+    );
+    const ui = render(<DebateApp events={events} />);
+    await flush();
+    const rawFrame = ui.lastFrame() ?? "";
+    
+    // The cursor should be styled with cyan (ANSI code 36), not dim (ANSI code 2).
+    // Ink uses ANSI escape codes: \u001b[36m = cyan foreground
+    // eslint-disable-next-line no-control-regex
+    expect(rawFrame).toMatch(/\u001b\[36m.*▋/);
+    // Verify it's NOT using dim (SGR 2)
+    // eslint-disable-next-line no-control-regex
+    expect(rawFrame).not.toMatch(/\u001b\[2m.*▋/);
+    ui.unmount();
+  });
+
   it("shows the cost indicator", async () => {
     const events = stream({
       kind: "cost.update",
