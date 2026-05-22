@@ -799,3 +799,55 @@ describe("buildSystemPrompt() — sanitization of multi-line block fields (T-04)
     expect(section).not.toMatch(/\n\[6\] FORBIDDEN OVERRIDE/);
   });
 });
+
+describe("buildSystemPrompt() — anti-tool-seeking constraints (T-11)", () => {
+  it("includes explicit no-tool-access constraint in FORBIDDEN MOVES section", () => {
+    const def: ExpertDefinition = {
+      slug: "security",
+      displayName: "Security Auditor",
+      role: "Security expert",
+      expertise: {
+        weightedEvidence: ["OWASP guidelines"],
+        referenceCases: [],
+        notExpertIn: [],
+      },
+      epistemicStance: "Trust but verify.",
+      kind: "generic",
+    } as ExpertDefinition;
+
+    const prompt = buildSystemPrompt(def, undefined, "Analyze this design.");
+    const forbiddenSection = prompt.slice(
+      prompt.indexOf("[6] FORBIDDEN MOVES"),
+      prompt.indexOf("[7] MEMORY"),
+    );
+
+    // Must explicitly state no tool access
+    expect(forbiddenSection).toMatch(/no tool access|cannot read files|cannot execute/i);
+    // Must prohibit requesting information instead of answering
+    expect(forbiddenSection).toMatch(/request.*information|need to examine|must answer based/i);
+  });
+
+  it("prevents 'I need to examine X first' without analysis pattern", () => {
+    const def: ExpertDefinition = {
+      slug: "analyst",
+      displayName: "Code Analyst",
+      role: "Analyzes code quality",
+      expertise: {
+        weightedEvidence: ["Code metrics"],
+        referenceCases: [],
+        notExpertIn: [],
+      },
+      epistemicStance: "Data-driven.",
+      kind: "generic",
+    } as ExpertDefinition;
+
+    const prompt = buildSystemPrompt(def, undefined, "Review this approach.");
+    const forbiddenSection = prompt.slice(
+      prompt.indexOf("[6] FORBIDDEN MOVES"),
+      prompt.indexOf("[7] MEMORY"),
+    );
+
+    // Must explicitly forbid the "need to examine" pattern
+    expect(forbiddenSection).toMatch(/need to examine.*without providing|saying.*need to examine/i);
+  });
+});
