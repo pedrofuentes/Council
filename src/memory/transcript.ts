@@ -1,5 +1,5 @@
 /**
- * Transcript helper — loads a panel + most-recent debate + turns from
+ * Transcript helper — loads a panel + selected debate + turns from
  * SQLite into a `TranscriptDocument`, and synthesizes a stream of
  * `DebateEvent`s from it.
  *
@@ -25,12 +25,13 @@ import type { CouncilDatabase } from "./db.js";
 import type { Panel } from "./repositories/panels.js";
 import { PanelRepository } from "./repositories/panels.js";
 import { type Expert, ExpertRepository } from "./repositories/experts.js";
-import { DebateRepository, type DebateStatus } from "./repositories/debates.js";
+import { DebateRepository, type Debate, type DebateStatus } from "./repositories/debates.js";
 import { TurnRepository, type Turn } from "./repositories/turns.js";
 
 export interface TranscriptDocument {
   readonly panel: Panel;
   readonly experts: readonly Expert[];
+  readonly originalPrompt: string;
   readonly latestDebate: {
     readonly id: string;
     readonly prompt: string;
@@ -42,9 +43,10 @@ export interface TranscriptDocument {
 }
 
 /**
- * Resolve a panel by name and load its most-recently-created debate +
- * that debate's turns. Throws with a clear, user-actionable message
- * when the panel is missing or has no debates yet.
+ * Resolve a panel by name and load either an explicit debate or the
+ * panel's most substantive debate (highest turn count; latest wins ties)
+ * plus that debate's turns. Throws with a clear, user-actionable
+ * message when the panel is missing or has no debates yet.
  *
  * Name lookup uses `PanelRepository.findByName()` (most-recent wins on
  * collision; see Sentinel pr165 #4 for ambiguity-warning follow-up).
@@ -52,6 +54,7 @@ export interface TranscriptDocument {
 export async function loadTranscript(
   db: CouncilDatabase,
   panelName: string,
+  debateId?: string,
 ): Promise<TranscriptDocument> {
   const panelRepo = new PanelRepository(db);
   const expertRepo = new ExpertRepository(db);
@@ -71,17 +74,29 @@ export async function loadTranscript(
       `Panel '${panelName}' has no debates yet. Run \`council convene\` to start one.`,
     );
   }
-  // findByPanelId orders by startedAt ASC — most recent is last.
-  const latest = debates[debates.length - 1];
-  if (!latest) {
+
+  const originalDebate = debates[0];
+  if (!originalDebate) {
     throw new Error(
       `Panel '${panelName}' has no debates yet. Run \`council convene\` to start one.`,
     );
   }
+
+  const latest =
+    debateId === undefined
+      ? await selectMostSubstantiveDebate(db, debates)
+      : debates.find((debate) => debate.id === debateId);
+  if (!latest) {
+    throw new Error(
+      `No debate found with id '${debateId}' for panel '${panelName}'. Run \`council sessions\` to inspect available debates.`,
+    );
+  }
+
   const turns = await turnRepo.findByDebateId(latest.id);
   return {
     panel,
     experts,
+    originalPrompt: originalDebate.prompt,
     latestDebate: {
       id: latest.id,
       prompt: latest.prompt,
@@ -91,6 +106,44 @@ export async function loadTranscript(
     },
     turns,
   };
+}
+
+async function selectMostSubstantiveDebate(
+  db: CouncilDatabase,
+  debates: readonly Debate[],
+): Promise<Debate> {
+  const countRows = await db
+    .selectFrom("turns")
+    .select("debate_id")
+    .select((eb) => eb.fn.countAll<number>().as("turn_count"))
+    .where(
+      "debate_id",
+      "in",
+      debates.map((debate) => debate.id),
+    )
+    .groupBy("debate_id")
+    .execute();
+
+  const turnCountByDebateId = new Map<string, number>();
+  for (const row of countRows) {
+    turnCountByDebateId.set(row.debate_id, Number(row.turn_count));
+  }
+
+  let selected = debates[0];
+  if (!selected) {
+    throw new Error("selectMostSubstantiveDebate() requires at least one debate.");
+  }
+  let selectedTurnCount = turnCountByDebateId.get(selected.id) ?? 0;
+
+  for (const debate of debates.slice(1)) {
+    const turnCount = turnCountByDebateId.get(debate.id) ?? 0;
+    if (turnCount > selectedTurnCount || turnCount === selectedTurnCount) {
+      selected = debate;
+      selectedTurnCount = turnCount;
+    }
+  }
+
+  return selected;
 }
 
 /**
