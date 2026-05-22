@@ -19,6 +19,8 @@ import { Command } from "commander";
 
 import packageJson from "../../package.json" with { type: "json" };
 
+import { installSqliteExperimentalWarningFilter } from "./sqlite-warning-filter.js";
+
 import { buildAskCommand } from "../cli/commands/ask.js";
 import { buildChatCommand } from "../cli/commands/chat.js";
 import { buildConcludeCommand } from "../cli/commands/conclude.js";
@@ -35,6 +37,8 @@ import { buildTemplatesCommand } from "../cli/commands/templates.js";
 
 import { handleCliError } from "../cli/handle-cli-error.js";
 import { setQuiet } from "../cli/commands/writer.js";
+
+installSqliteExperimentalWarningFilter();
 
 // Command categories for grouped help output
 const COMMAND_CATEGORIES = {

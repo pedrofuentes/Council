@@ -552,7 +552,7 @@ function buildDeleteCommand(write: Writer, writeError: Writer): Command {
     .description("Delete an expert from the library")
     .argument("<slug>", "Expert slug to delete")
     .option("--force", "Delete even if the expert is a member of one or more panels")
-    .option("--yes", "Skip confirmation prompt (required with --force in non-interactive mode)")
+    .option("--yes", "Skip confirmation prompt (required in non-interactive mode)")
     .action(async (slug: string, opts: { force?: boolean; yes?: boolean }) => {
       await withExpertLibrary(async (library) => {
         const existing = await library.get(slug);
@@ -568,8 +568,10 @@ function buildDeleteCommand(write: Writer, writeError: Writer): Command {
           writeError(msg + "\n");
           throw new CliUserError(msg);
         }
-        if (panels.length > 0 && opts.force && !opts.yes && isNonInteractive()) {
-          const msg = `Non-interactive mode: --force requires --yes to confirm deletion of "${slug}" (used in ${panels.length} panel${panels.length === 1 ? "" : "s"}).`;
+        if (!opts.yes && isNonInteractive()) {
+          const msg = panels.length > 0 && opts.force
+            ? `Non-interactive mode: --force requires --yes to confirm deletion of "${slug}" (used in ${panels.length} panel${panels.length === 1 ? "" : "s"}).`
+            : `Non-interactive mode: deleting "${slug}" requires --yes to confirm.`;
           writeError(msg + "\n");
           throw new CliUserError(msg);
         }
