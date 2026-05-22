@@ -36,6 +36,8 @@ export interface AutoComposeOptions {
   readonly minExperts?: number;
   readonly maxExperts?: number;
   readonly defaultModel?: string;
+  /** Caller-controlled cancellation for the composer send. */
+  readonly signal?: AbortSignal;
   /**
    * Hard wall-clock cap on the composer send. If the engine has not produced
    * a terminal event by this point, the call is aborted and an error is
@@ -64,7 +66,10 @@ export async function autoComposePanel(
 
   await engine.addExpert(composer);
   let raw = "";
-  const signal = AbortSignal.timeout(timeoutMs);
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = options?.signal
+    ? AbortSignal.any([options.signal, timeoutSignal])
+    : timeoutSignal;
   try {
     const stream = engine.send({
       expertId: composer.id,
@@ -76,6 +81,11 @@ export async function autoComposePanel(
         raw += event.text;
       } else if (event.kind === "error") {
         if (event.error.code === "ABORTED" && signal.aborted) {
+          if (options?.signal?.aborted === true && timeoutSignal.aborted === false) {
+            throw new Error(
+              `Auto-compose was aborted while using model ${sanitizeModelForDisplay(model)}.`,
+            );
+          }
           throw new Error(
             `Auto-compose timed out after ${timeoutMs}ms for model ${sanitizeModelForDisplay(model)} — the engine did not respond in time.`,
           );
@@ -108,8 +118,10 @@ export async function autoComposePanel(
   const result = PanelDefinitionSchema.safeParse(parsed);
   if (!result.success) {
     const lines = result.error.issues.map((i) => {
-      const fieldPath = i.path.length > 0 ? i.path.join(".") : "(root)";
-      return `  - ${fieldPath}: ${i.message}`;
+      const fieldPath = sanitizeModelForDisplay(
+        i.path.length > 0 ? i.path.join(".") : "(root)",
+      );
+      return `  - ${fieldPath}: ${sanitizeModelForDisplay(i.message)}`;
     });
     throw new Error(`Auto-compose produced an invalid panel definition:\n${lines.join("\n")}`);
   }
