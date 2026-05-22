@@ -127,37 +127,21 @@ describe("Chat UX Improvements (T-08)", () => {
       const help = getStartupHelpText();
       expect(help).toContain("exit");
       expect(help).toContain("quit");
-      expect(help).toContain("/help");
     });
 
     it("includes command descriptions", () => {
       const help = getStartupHelpText();
-      expect(help.toLowerCase()).toMatch(/exit|quit|leave|stop/);
+      expect(help.toLowerCase()).toMatch(/exit|quit/);
     });
   });
 
-  describe("prompt indicator in chat sessions", () => {
+  describe("chat UX improvements in sessions", () => {
     let env: TestEnv;
     beforeEach(async () => {
       env = await makeEnv();
     });
     afterEach(async () => {
       await teardown(env);
-    });
-
-    it("shows prompt indicator before user input", async () => {
-      await seedExpert(env);
-      let out = "";
-      const cmd = buildChatCommand({
-        write: (s) => (out += s),
-        writeError: () => undefined,
-        engineFactory: () => new MockEngine(),
-        inputProvider: () => scriptedInput(["hello", "/quit"]),
-      });
-      await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
-
-      // Should see "You > " or "> " prompt indicator in output
-      expect(out).toMatch(/You\s*>/);
     });
 
     it("shows startup help text when chat begins", async () => {
@@ -171,8 +155,8 @@ describe("Chat UX Improvements (T-08)", () => {
       });
       await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
 
-      // Should see help text mentioning commands
-      expect(out.toLowerCase()).toMatch(/help|commands|exit|quit/);
+      // Should see help text mentioning exit/quit commands
+      expect(out.toLowerCase()).toMatch(/exit|quit/);
     });
   });
 

@@ -129,7 +129,7 @@ export function isExitCommand(input: string): boolean {
  * available commands to improve discoverability.
  */
 export function getStartupHelpText(): string {
-  return "Type /help for commands, or /exit to save and quit.";
+  return "Type /exit or /quit to save and end the conversation.";
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -771,7 +771,7 @@ export function defaultInputProvider(): ChatInputProvider {
   return {
     async readLine(): Promise<string | null> {
       try {
-        return await rl.question("> ");
+        return await rl.question("");
       } catch {
         return null;
       }
