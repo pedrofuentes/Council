@@ -11,7 +11,7 @@
  */
 import { z } from "zod";
 
-export const DEFAULT_MODEL = "claude-sonnet-4-20250514";
+export const DEFAULT_MODEL = "claude-sonnet-4.5";
 
 export const ENGINE_CHOICES = ["copilot", "mock"] as const;
 export type EngineChoice = (typeof ENGINE_CHOICES)[number];
@@ -20,7 +20,7 @@ export const ConfigSchema = z
   .object({
     defaults: z
       .object({
-        /** Provider-agnostic model id (e.g. "claude-sonnet-4-20250514"). */
+        /** Provider-agnostic model id (e.g. "claude-sonnet-4.5"). */
         model: z.string().min(1).default(DEFAULT_MODEL),
         /** Engine to use when --engine is not specified on the CLI. */
         engine: z.enum(ENGINE_CHOICES).default("copilot"),

@@ -60,6 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Model defaults and auto-compose sanitization** (T-01) — Council now defaults to `claude-sonnet-4.5`, auto-compose falls back to the shared default model, waits up to 120s before timing out, and strips control/format characters from displayed model names and engine error text before interpolating them into terminal-facing errors.
 - **Debate selection in conclude/export** (T-03) — transcript loading now prefers the most substantive debate for a panel (highest turn count, with latest winning ties) instead of blindly taking the newest debate. ADR export keeps `Context` anchored to the first debate prompt and now renders `Proposed` for thin completed debates (≤2 turns or all turns very short), reserving `Accepted` for more substantive completed discussions.
 - **Ink UX improvements** (TUI-03/04/05/14/15/20/22) — Ctrl+C now gracefully cancels debates and stops upstream processing; errors are capped to the last 3 with a hidden count; a loading spinner shows while waiting for first response in a round; streaming cursor is suppressed during retries to avoid flicker; completion banner now shows green-colored checkmark with the debate reason.
 
