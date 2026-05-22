@@ -210,13 +210,16 @@ describe("debate lifecycle e2e", () => {
       writeError: output.writeError,
     });
 
-    await expect(
-      cmd.parseAsync(["node", "council-convene", TOPIC, "--engine", "mock", "--yes"]),
-    ).rejects.toThrow(/auto-compose|panel|json|template/i);
+    // After the fix in T-05, mock engine with auto-compose now succeeds by
+    // returning a deterministic fallback panel instead of failing on JSON parse.
+    await cmd.parseAsync(["node", "council-convene", TOPIC, "--engine", "mock", "--yes"]);
 
     const db = await openTestDb(ctx.testHome);
     try {
-      expect(await new PanelRepository(db).findAll()).toHaveLength(0);
+      const panels = await new PanelRepository(db).findAll();
+      expect(panels).toHaveLength(1);
+      // Panel name gets an ISO timestamp suffix appended during creation
+      expect(panels[0]?.name).toMatch(/^mock-panel-/);
     } finally {
       await destroyTestDb(db);
     }
