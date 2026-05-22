@@ -491,4 +491,20 @@ describe("buildExportCommand", () => {
     expect(captured).toContain("CTO");
     expect(captured).toContain("PM");
   });
+
+  it("--format markdown: uses ASCII-safe separators without Unicode em-dash or mojibake", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    let captured = "";
+    const cmd = buildExportCommand({ write: (s) => { captured += s; } });
+    await cmd.parseAsync(["node", "council-export", seed.panelName]);
+
+    // Should NOT contain Unicode em-dash (U+2014)
+    expect(captured).not.toContain("\u2014");
+    // Should NOT contain common mojibake patterns for em-dash
+    expect(captured).not.toContain("ΓÇö");
+    expect(captured).not.toContain("\uFFFD"); // replacement character
+    // Should contain expert names with ASCII separator
+    expect(captured).toMatch(/CTO.*claude-sonnet-4/);
+    expect(captured).toMatch(/PM.*claude-sonnet-4/);
+  });
 });
