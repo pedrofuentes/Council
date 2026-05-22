@@ -84,6 +84,189 @@ async function seedPanelWithDebate(testHome: string): Promise<{ panelName: strin
   }
 }
 
+async function seedPanelWithMultipleDebates(testHome: string): Promise<{ panelName: string }> {
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    const panelRepo = new PanelRepository(db);
+    const expertRepo = new ExpertRepository(db);
+    const debateRepo = new DebateRepository(db);
+    const turnRepo = new TurnRepository(db);
+
+    const panel = await panelRepo.create({
+      name: "export-multi-debate",
+      topic: "Panel topic metadata",
+      copilotHome: path.join(testHome, "copilot"),
+      configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+    });
+    const cto = await expertRepo.create({
+      panelId: panel.id,
+      slug: "cto",
+      displayName: "CTO",
+      model: "claude-sonnet-4",
+      systemMessage: "You are a CTO.",
+    });
+    const pm = await expertRepo.create({
+      panelId: panel.id,
+      slug: "pm",
+      displayName: "PM",
+      model: "claude-sonnet-4",
+      systemMessage: "You are a PM.",
+    });
+
+    const firstDebate = await debateRepo.create({
+      panelId: panel.id,
+      prompt: "Original first debate prompt",
+      moderator: "round-robin",
+    });
+    await turnRepo.create({
+      debateId: firstDebate.id,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId: cto.id,
+      content: "First debate opening note.",
+    });
+    await debateRepo.update(firstDebate.id, {
+      status: "completed",
+      endedAt: new Date().toISOString(),
+    });
+
+    const substantiveDebate = await debateRepo.create({
+      panelId: panel.id,
+      prompt: "Substantive follow-up debate prompt",
+      moderator: "round-robin",
+    });
+    await turnRepo.create({
+      debateId: substantiveDebate.id,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId: cto.id,
+      content: "CTO analysis: shipping behind a feature flag balances risk.",
+    });
+    await turnRepo.create({
+      debateId: substantiveDebate.id,
+      round: 0,
+      seq: 1,
+      speakerKind: "expert",
+      expertId: pm.id,
+      content: "PM analysis: auth checklist must be complete first.",
+    });
+    await turnRepo.create({
+      debateId: substantiveDebate.id,
+      round: 1,
+      seq: 0,
+      speakerKind: "expert",
+      expertId: cto.id,
+      content: "CTO conclusion: ship behind a feature flag after checklist.",
+    });
+    await turnRepo.create({
+      debateId: substantiveDebate.id,
+      round: 1,
+      seq: 1,
+      speakerKind: "expert",
+      expertId: pm.id,
+      content: "PM conclusion: agree to phased launch after checklist.",
+    });
+    await debateRepo.update(substantiveDebate.id, {
+      status: "completed",
+      endedAt: new Date().toISOString(),
+    });
+
+    const latestShortDebate = await debateRepo.create({
+      panelId: panel.id,
+      prompt: "Latest but less substantive prompt",
+      moderator: "round-robin",
+    });
+    await turnRepo.create({
+      debateId: latestShortDebate.id,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId: pm.id,
+      content: "Latest short debate note.",
+    });
+    await debateRepo.update(latestShortDebate.id, {
+      status: "completed",
+      endedAt: new Date().toISOString(),
+    });
+
+    return { panelName: panel.name };
+  } finally {
+    await db.destroy();
+  }
+}
+
+async function seedPanelWithShortTurns(testHome: string): Promise<{ panelName: string }> {
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    const panel = await new PanelRepository(db).create({
+      name: "short-turn-panel",
+      topic: "Brief exchange",
+      copilotHome: path.join(testHome, "copilot"),
+      configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+    });
+    const cto = await new ExpertRepository(db).create({
+      panelId: panel.id,
+      slug: "cto",
+      displayName: "CTO",
+      model: "claude-sonnet-4",
+      systemMessage: "You are a CTO.",
+    });
+    const pm = await new ExpertRepository(db).create({
+      panelId: panel.id,
+      slug: "pm",
+      displayName: "PM",
+      model: "claude-sonnet-4",
+      systemMessage: "You are a PM.",
+    });
+    const debate = await new DebateRepository(db).create({
+      panelId: panel.id,
+      prompt: "Brief exchange prompt",
+      moderator: "round-robin",
+    });
+    await new TurnRepository(db).create({
+      debateId: debate.id,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId: cto.id,
+      content: "Yes.",
+    });
+    await new TurnRepository(db).create({
+      debateId: debate.id,
+      round: 0,
+      seq: 1,
+      speakerKind: "expert",
+      expertId: pm.id,
+      content: "No.",
+    });
+    await new TurnRepository(db).create({
+      debateId: debate.id,
+      round: 1,
+      seq: 0,
+      speakerKind: "expert",
+      expertId: cto.id,
+      content: "Maybe.",
+    });
+    await new TurnRepository(db).create({
+      debateId: debate.id,
+      round: 1,
+      seq: 1,
+      speakerKind: "expert",
+      expertId: pm.id,
+      content: "Okay.",
+    });
+    await new DebateRepository(db).update(debate.id, {
+      status: "completed",
+      endedAt: new Date().toISOString(),
+    });
+    return { panelName: panel.name };
+  } finally {
+    await db.destroy();
+  }
+}
+
 describe("buildExportCommand", () => {
   let testHome: string;
   let originalHome: string | undefined;
@@ -174,6 +357,28 @@ describe("buildExportCommand", () => {
     expect(captured).toContain("Should we ship the MVP?");
     // Final synthesis content should appear in Decision section
     expect(captured).toContain("launch behind a feature flag now");
+  });
+
+  it("--format adr: uses the first debate prompt for Context and the selected debate content for the body", async () => {
+    const seed = await seedPanelWithMultipleDebates(testHome);
+    let captured = "";
+    const cmd = buildExportCommand({ write: (s) => { captured += s; } });
+    await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "adr"]);
+
+    expect(captured).toContain("Original first debate prompt");
+    expect(captured).toContain("CTO conclusion: ship behind a feature flag after checklist.");
+    expect(captured).toContain("PM conclusion: agree to phased launch after checklist.");
+    expect(captured).not.toContain("Latest short debate note.");
+  });
+
+  it("--format adr: marks a completed debate with very short turns as Proposed", async () => {
+    const seed = await seedPanelWithShortTurns(testHome);
+    let captured = "";
+    const cmd = buildExportCommand({ write: (s) => { captured += s; } });
+    await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "adr"]);
+
+    expect(captured).toMatch(/## Status\s+\s*Proposed/m);
+    expect(captured).not.toContain("Accepted");
   });
 
   it("--output <path> writes to file instead of stdout", async () => {
@@ -280,6 +485,7 @@ describe("buildExportCommand", () => {
     // Should contain the single-round fallback message
     expect(captured.toLowerCase()).toContain("single round");
     expect(captured.toLowerCase()).toContain("no further discussion");
+    expect(captured).toMatch(/## Status\s+\s*Proposed/m);
     // Decision section should still render with expert positions
     expect(captured.toLowerCase()).toContain("decision");
     expect(captured).toContain("CTO");
