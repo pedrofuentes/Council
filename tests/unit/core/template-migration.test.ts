@@ -60,7 +60,7 @@ describe("template-migration", () => {
 
   afterEach(async () => {
     await db.destroy();
-    await fs.rm(dataHome, { recursive: true, force: true });
+    await fs.rm(dataHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   });
 
   describe("isMigrationNeeded()", () => {

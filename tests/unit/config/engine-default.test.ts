@@ -48,7 +48,7 @@ describe("ConfigSchema — defaults.engine field (CLI-02)", () => {
   it("is backward-compatible — old configs without engine still parse", () => {
     // Simulates an existing config.yaml that has no engine field
     const config = ConfigSchema.parse({
-      defaults: { model: "claude-sonnet-4-20250514", maxRounds: 4 },
+      defaults: { model: "claude-sonnet-4.5", maxRounds: 4 },
       telemetry: { enabled: false },
     });
     expect(config.defaults.engine).toBe("copilot");

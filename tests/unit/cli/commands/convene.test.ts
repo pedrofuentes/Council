@@ -265,16 +265,20 @@ describe("buildConveneCommand", () => {
     ).rejects.toThrow();
   });
 
-  it("requires explicit --engine flag (no silent fallback to mock)", async () => {
+  it("uses config.defaults.engine when --engine is omitted and shows the mock banner", async () => {
+    await fs.writeFile(path.join(testHome, "config.yaml"), "defaults:\n  engine: mock\n", "utf-8");
+    let stderrCaptured = "";
     const cmd = buildConveneCommand({
-      // No engineFactory passed — must require --engine on CLI.
+      engineFactory: makeMockEngineFactory(),
       write: () => undefined,
+      writeError: (chunk) => {
+        stderrCaptured += chunk;
+      },
     });
-    cmd.exitOverride();
 
-    await expect(
-      cmd.parseAsync(["node", "council-convene", "topic", "--template", "code-review"]),
-    ).rejects.toThrow();
+    await cmd.parseAsync(["node", "council-convene", "topic", "--template", "code-review"]);
+
+    expect(stderrCaptured).toContain("[MOCK ENGINE]");
   });
 
   it("--engine copilot returns a CopilotEngine instance (helper)", async () => {
