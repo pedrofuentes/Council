@@ -421,16 +421,37 @@ describe("buildExpertCommand", () => {
       await teardown(env);
     });
 
-    it("deletes an expert that is in no panels", async () => {
+    it("deletes an expert that is in no panels with --yes", async () => {
       await seedExpert(env, SAMPLE);
       let captured = "";
       const cmd = buildExpertCommand((s) => {
         captured += s;
       });
-      await cmd.parseAsync(["node", "council-expert", "delete", "dahlia-cto"]);
+      await cmd.parseAsync(["node", "council-expert", "delete", "dahlia-cto", "--yes"]);
       expect(captured).toMatch(/deleted/i);
       const yamlPath = path.join(env.dataHome, "experts", "dahlia-cto.yaml");
       await expect(fs.access(yamlPath)).rejects.toThrow();
+    });
+
+    it("requires --yes in non-interactive mode even without --force", async () => {
+      await seedExpert(env, SAMPLE);
+      const originalIsTTY = process.stdin.isTTY;
+      Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+
+      const cmd = buildExpertCommand(() => {
+        /* noop */
+      });
+
+      try {
+        await expect(
+          cmd.parseAsync(["node", "council-expert", "delete", "dahlia-cto"]),
+        ).rejects.toThrow(/--yes/i);
+      } finally {
+        Object.defineProperty(process.stdin, "isTTY", {
+          value: originalIsTTY,
+          configurable: true,
+        });
+      }
     });
 
     it("refuses without --force when expert is in panels", async () => {
@@ -504,6 +525,53 @@ describe("buildExpertCommand", () => {
       });
       await cmd.parseAsync(["node", "council-expert", "delete", "dahlia-cto", "--force", "--yes"]);
       expect(captured).toMatch(/deleted/i);
+    });
+
+    it("rejects --force without --yes in non-interactive mode", async () => {
+      await seedExpert(env, SAMPLE);
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const db = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        await db
+          .insertInto("panel_library")
+          .values({
+            name: "automation-panel",
+            yaml_path: path.join(env.dataHome, "panels", "automation-panel.yaml"),
+            yaml_checksum: "x",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .execute();
+        await db
+          .insertInto("panel_members")
+          .values({
+            panel_name: "automation-panel",
+            expert_slug: "dahlia-cto",
+            position: 0,
+            created_at: new Date().toISOString(),
+          })
+          .execute();
+      } finally {
+        await db.destroy();
+      }
+
+      const originalIsTTY = process.stdin.isTTY;
+      Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+
+      const cmd = buildExpertCommand(() => {
+        /* noop */
+      });
+
+      try {
+        await expect(
+          cmd.parseAsync(["node", "council-expert", "delete", "dahlia-cto", "--force"]),
+        ).rejects.toThrow(/--yes/i);
+      } finally {
+        Object.defineProperty(process.stdin, "isTTY", {
+          value: originalIsTTY,
+          configurable: true,
+        });
+      }
     });
 
     it("--force without --yes succeeds in interactive (TTY) mode", async () => {

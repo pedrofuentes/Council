@@ -325,7 +325,7 @@ fs.writeFileSync(file, body, "utf-8");`,
   it("expert delete removes an unreferenced expert from disk and DB", async () => {
     await runExpertCommand(expertCreateArgs("solo-expert"));
 
-    const deleted = await runExpertCommand(["delete", "solo-expert"]);
+    const deleted = await runExpertCommand(["delete", "solo-expert", "--yes"]);
     expect(deleted.stdout).toMatch(/deleted/i);
 
     const yamlPath = path.join(ctx.testDataHome, "experts", "solo-expert.yaml");
