@@ -458,7 +458,7 @@ experts:
 
   it("architecture-review template includes defaults.model", async () => {
     const panel = await loadPanel("architecture-review", dataHome);
-    expect(panel.defaults?.model).toBe("claude-sonnet-4-20250514");
+    expect(panel.defaults?.model).toBe("claude-sonnet-4.5");
   });
 
   it("loadPanel() throws when neither user nor built-in panel exists", async () => {

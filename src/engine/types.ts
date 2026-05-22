@@ -23,7 +23,7 @@ export type ReasoningEffort = "low" | "medium" | "high";
  * - `id`: stable ULID assigned by Council; used as the routing key in event streams
  * - `slug`: short human-readable identifier scoped to a panel (e.g. "cto", "skeptic")
  * - `displayName`: name shown in transcripts and renderers (e.g. "Dahlia Renner (CTO)")
- * - `model`: provider-agnostic model identifier (e.g. "claude-sonnet-4-20250514").
+ * - `model`: provider-agnostic model identifier (e.g. "claude-sonnet-4.5").
  *           Adapters translate to provider-native model names.
  * - `systemMessage`: the full 8-section system prompt produced by `core/prompt-builder`
  * - `reasoningEffort`: optional hint, see {@link ReasoningEffort}

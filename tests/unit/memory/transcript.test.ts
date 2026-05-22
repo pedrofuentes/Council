@@ -144,6 +144,163 @@ describe("loadTranscript", () => {
     }
   });
 
+  it("selects the debate with the most turns by default", async () => {
+    const seeded = await seed(dir, { withTurns: false });
+    let substantiveDebateId = "";
+    const setupDb = await createDatabase(path.join(dir, "council.db"));
+    try {
+      const debateRepo = new DebateRepository(setupDb);
+      const turnRepo = new TurnRepository(setupDb);
+
+      const firstDebate = await debateRepo.create({
+        panelId: seeded.panelId,
+        prompt: "Original first debate prompt",
+        moderator: "round-robin",
+      });
+      await turnRepo.create({
+        debateId: firstDebate.id,
+        round: 0,
+        seq: 0,
+        speakerKind: "expert",
+        expertId: seeded.ctoId,
+        content: "First debate opening",
+      });
+      await debateRepo.update(firstDebate.id, {
+        status: "completed",
+        endedAt: new Date().toISOString(),
+      });
+
+      const substantiveDebate = await debateRepo.create({
+        panelId: seeded.panelId,
+        prompt: "Most substantive debate prompt",
+        moderator: "round-robin",
+      });
+      substantiveDebateId = substantiveDebate.id;
+      await turnRepo.create({
+        debateId: substantiveDebate.id,
+        round: 0,
+        seq: 0,
+        speakerKind: "expert",
+        expertId: seeded.ctoId,
+        content: "Substantive CTO opening",
+      });
+      await turnRepo.create({
+        debateId: substantiveDebate.id,
+        round: 0,
+        seq: 1,
+        speakerKind: "expert",
+        expertId: seeded.pmId,
+        content: "Substantive PM opening",
+      });
+      await turnRepo.create({
+        debateId: substantiveDebate.id,
+        round: 1,
+        seq: 0,
+        speakerKind: "expert",
+        expertId: seeded.ctoId,
+        content: "Substantive CTO synthesis",
+      });
+      await turnRepo.create({
+        debateId: substantiveDebate.id,
+        round: 1,
+        seq: 1,
+        speakerKind: "expert",
+        expertId: seeded.pmId,
+        content: "Substantive PM synthesis",
+      });
+      await debateRepo.update(substantiveDebate.id, {
+        status: "completed",
+        endedAt: new Date().toISOString(),
+      });
+
+      const latestShortDebate = await debateRepo.create({
+        panelId: seeded.panelId,
+        prompt: "Latest short debate prompt",
+        moderator: "round-robin",
+      });
+      await turnRepo.create({
+        debateId: latestShortDebate.id,
+        round: 0,
+        seq: 0,
+        speakerKind: "expert",
+        expertId: seeded.ctoId,
+        content: "Latest short debate turn",
+      });
+      await debateRepo.update(latestShortDebate.id, {
+        status: "completed",
+        endedAt: new Date().toISOString(),
+      });
+    } finally {
+      await setupDb.destroy();
+    }
+
+    const fresh = await createDatabase(path.join(dir, "council.db"));
+    try {
+      const doc = await loadTranscript(fresh, seeded.panelName);
+      expect(doc.latestDebate.id).toBe(substantiveDebateId);
+      expect(doc.latestDebate.prompt).toBe("Most substantive debate prompt");
+      expect(doc.turns.map((turn) => turn.content)).toEqual([
+        "Substantive CTO opening",
+        "Substantive PM opening",
+        "Substantive CTO synthesis",
+        "Substantive PM synthesis",
+      ]);
+    } finally {
+      await fresh.destroy();
+    }
+  });
+
+  it("accepts an explicit debateId override", async () => {
+    const seeded = await seed(dir);
+    let explicitDebateId = "";
+    const setupDb = await createDatabase(path.join(dir, "council.db"));
+    try {
+      const debateRepo = new DebateRepository(setupDb);
+      const turnRepo = new TurnRepository(setupDb);
+      const explicitDebate = await debateRepo.create({
+        panelId: seeded.panelId,
+        prompt: "Explicitly selected debate",
+        moderator: "round-robin",
+      });
+      explicitDebateId = explicitDebate.id;
+      await turnRepo.create({
+        debateId: explicitDebate.id,
+        round: 0,
+        seq: 0,
+        speakerKind: "expert",
+        expertId: seeded.pmId,
+        content: "Explicit debate content",
+      });
+      await debateRepo.update(explicitDebate.id, {
+        status: "completed",
+        endedAt: new Date().toISOString(),
+      });
+    } finally {
+      await setupDb.destroy();
+    }
+
+    const fresh = await createDatabase(path.join(dir, "council.db"));
+    try {
+      const doc = await loadTranscript(fresh, seeded.panelName, explicitDebateId);
+      expect(doc.latestDebate.id).toBe(explicitDebateId);
+      expect(doc.turns.map((turn) => turn.content)).toEqual(["Explicit debate content"]);
+    } finally {
+      await fresh.destroy();
+    }
+  });
+
+  it("throws when an explicit debateId is unknown", async () => {
+    const seeded = await seed(dir);
+    const fresh = await createDatabase(path.join(dir, "council.db"));
+    try {
+      await expect(loadTranscript(fresh, seeded.panelName, "nonexistent-id")).rejects.toThrow(
+        /nonexistent-id|no debate/i,
+      );
+    } finally {
+      await fresh.destroy();
+    }
+  });
+
   it("throws when the panel name is unknown", async () => {
     const fresh = await createDatabase(path.join(dir, "council.db"));
     try {

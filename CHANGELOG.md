@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Copilot model discovery is now dynamic with cached fallback refresh** (T-02) — `CopilotEngine.listModels()` now queries the Copilot SDK once per engine instance and caches successful results for reuse. `KNOWN_MODELS` and `council doctor --models` were refreshed to the current Copilot fallback set (`claude-haiku-4.5`, `claude-sonnet-4.5`, `claude-sonnet-4.6`, `claude-opus-4.5`, `claude-opus-4.6`, `claude-opus-4.7`, `gpt-4.1`, `gpt-5-mini`, `gpt-5.2`, `gpt-5.4`, `gpt-5.5`, `gpt-5.4-mini`).
 - **chat.ts split into focused modules** (T-19) — the 87KB monolithic `chat.ts` has been refactored into `chat/` directory with 6 focused modules: `index.ts`, `expert-chat.ts`, `panel-chat.ts`, `list.ts`, `history.ts`, `shared.ts`.
 - **Unified 8-color expert palette** (TUI-01, TUI-13) — the expert color palette is now a single source of truth in `src/cli/renderers/ink/colors.ts`, shared by Ink, Chat, and Plain renderers. The palette uses 8 colors: `cyan`, `yellow`, `magenta`, `green`, `blue`, `cyanBright`, `magentaBright`, `yellowBright`. Red has been removed from the expert palette to avoid visual collision with error messages (which remain red).
 - **Per-expert colors in PlainRenderer** (TUI-12) — the Plain renderer now assigns distinct colors to each expert (previously all experts used uniform cyan).
@@ -59,6 +60,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Model defaults and auto-compose sanitization** (T-01) — Council now defaults to `claude-sonnet-4.5`, auto-compose falls back to the shared default model, waits up to 120s before timing out, and strips control/format characters from displayed model names and engine error text before interpolating them into terminal-facing errors.
+- **Debate selection in conclude/export** (T-03) — transcript loading now prefers the most substantive debate for a panel (highest turn count, with latest winning ties) instead of blindly taking the newest debate. ADR export keeps `Context` anchored to the first debate prompt and now renders `Proposed` for thin completed debates (≤2 turns or all turns very short), reserving `Accepted` for more substantive completed discussions.
 - **Ink UX improvements** (TUI-03/04/05/14/15/20/22) — Ctrl+C now gracefully cancels debates and stops upstream processing; errors are capped to the last 3 with a hidden count; a loading spinner shows while waiting for first response in a round; streaming cursor is suppressed during retries to avoid flicker; completion banner now shows green-colored checkmark with the debate reason.
 
 ### Added

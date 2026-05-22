@@ -48,7 +48,7 @@ describe("Config and Migration E2E", () => {
     expect(configContent).toContain("defaults:");
     expect(configContent).toContain("model:");
     expect(configContent).toContain("telemetry:");
-    expect(config.defaults.model).toBe("claude-sonnet-4-20250514");
+    expect(config.defaults.model).toBe("claude-sonnet-4.5");
   });
 
   it("partial config merges with defaults", async () => {
@@ -63,7 +63,7 @@ describe("Config and Migration E2E", () => {
     const config = await loadConfig();
 
     expect(config.defaults.maxRounds).toBe(2);
-    expect(config.defaults.model).toBe("claude-sonnet-4-20250514");
+    expect(config.defaults.model).toBe("claude-sonnet-4.5");
     expect(config.defaults.maxExperts).toBe(3);
     expect(config.defaults.maxWordsPerResponse).toBe(250);
     expect(config.telemetry.enabled).toBe(false);

@@ -14,6 +14,7 @@ import type {
   EngineEvent,
   ExpertSpec,
 } from "../../../../src/engine/index.js";
+import { KNOWN_MODELS } from "../../../../src/engine/models.js";
 
 // In-memory state the mock SDK manipulates so tests can introspect it.
 interface MockSession {
@@ -21,6 +22,12 @@ interface MockSession {
   readonly model: string;
   events: Record<string, unknown>[];
   disconnected: boolean;
+}
+
+interface MockModelInfo {
+  readonly id: string;
+  readonly name: string;
+  readonly capabilities: Record<string, never>;
 }
 
 interface MockClientState {
@@ -33,6 +40,9 @@ interface MockClientState {
   sendQueues: Map<string, { kind: string; data: Record<string, unknown> }[]>;
   /** Per-session: error to throw on `send()` (sync) */
   sendErrors: Map<string, Error>;
+  listModelsCalls: number;
+  listModelsResults: MockModelInfo[];
+  listModelsError: Error | undefined;
 }
 
 const mockState: MockClientState = {
@@ -42,6 +52,9 @@ const mockState: MockClientState = {
   sessionInstances: [],
   sendQueues: new Map(),
   sendErrors: new Map(),
+  listModelsCalls: 0,
+  listModelsResults: [],
+  listModelsError: undefined,
 };
 
 vi.mock("@github/copilot-sdk", () => {
@@ -112,6 +125,13 @@ vi.mock("@github/copilot-sdk", () => {
       mockState.sessionInstances.push(session);
       return session;
     }
+    async listModels(): Promise<MockModelInfo[]> {
+      mockState.listModelsCalls += 1;
+      if (mockState.listModelsError) {
+        throw mockState.listModelsError;
+      }
+      return mockState.listModelsResults;
+    }
   }
   const approveAll = async (): Promise<{ decision: "allow" }> => ({ decision: "allow" });
   return {
@@ -138,14 +158,25 @@ async function collect(stream: AsyncIterable<EngineEvent>): Promise<EngineEvent[
   return out;
 }
 
+function createMockModelInfo(id: string): MockModelInfo {
+  return { id, name: id, capabilities: {} };
+}
+
+function resetMockState(): void {
+  mockState.started = false;
+  mockState.stopped = false;
+  mockState.sessions = [];
+  mockState.sessionInstances = [];
+  mockState.sendQueues.clear();
+  mockState.sendErrors.clear();
+  mockState.listModelsCalls = 0;
+  mockState.listModelsResults = [];
+  mockState.listModelsError = undefined;
+}
+
 describe("CopilotEngine — implements CouncilEngine", () => {
   beforeEach(() => {
-    mockState.started = false;
-    mockState.stopped = false;
-    mockState.sessions = [];
-    mockState.sessionInstances = [];
-    mockState.sendQueues.clear();
-    mockState.sendErrors.clear();
+    resetMockState();
   });
 
   it("conforms to the CouncilEngine interface (satisfies check)", () => {
@@ -188,22 +219,43 @@ describe("CopilotEngine — implements CouncilEngine", () => {
     expect(mockState.stopped).toBe(true);
   });
 
-  it("listModels() returns the configured set of models", async () => {
+  it("listModels() falls back to KNOWN_MODELS before the client starts", async () => {
     const engine = new CopilotEngine();
-    const models = await engine.listModels();
-    expect(models.length).toBeGreaterThan(0);
-    expect(models).toContain("claude-sonnet-4-20250514");
+
+    await expect(engine.listModels()).resolves.toEqual(KNOWN_MODELS);
+    expect(mockState.listModelsCalls).toBe(0);
+  });
+
+  it("listModels() discovers models from the SDK once and caches successful results", async () => {
+    const engine = new CopilotEngine();
+    await engine.start();
+    mockState.listModelsResults = [
+      createMockModelInfo("claude-sonnet-4.6"),
+      createMockModelInfo("gpt-5.4-mini"),
+    ];
+
+    await expect(engine.listModels()).resolves.toEqual(["claude-sonnet-4.6", "gpt-5.4-mini"]);
+
+    mockState.listModelsResults = [createMockModelInfo("claude-opus-4.7")];
+    mockState.listModelsError = new Error("should not hit SDK twice");
+
+    await expect(engine.listModels()).resolves.toEqual(["claude-sonnet-4.6", "gpt-5.4-mini"]);
+    expect(mockState.listModelsCalls).toBe(1);
+  });
+
+  it("listModels() falls back to KNOWN_MODELS when SDK discovery fails", async () => {
+    const engine = new CopilotEngine();
+    await engine.start();
+    mockState.listModelsError = new Error("network unavailable");
+
+    await expect(engine.listModels()).resolves.toEqual(KNOWN_MODELS);
+    expect(mockState.listModelsCalls).toBe(1);
   });
 });
 
 describe("CopilotEngine — expert registration", () => {
   beforeEach(() => {
-    mockState.started = false;
-    mockState.stopped = false;
-    mockState.sessions = [];
-    mockState.sessionInstances = [];
-    mockState.sendQueues.clear();
-    mockState.sendErrors.clear();
+    resetMockState();
   });
 
   it("addExpert() creates a session keyed by expert id", async () => {
@@ -240,12 +292,7 @@ describe("CopilotEngine — expert registration", () => {
 
 describe("CopilotEngine — send() event translation", () => {
   beforeEach(() => {
-    mockState.started = false;
-    mockState.stopped = false;
-    mockState.sessions = [];
-    mockState.sessionInstances = [];
-    mockState.sendQueues.clear();
-    mockState.sendErrors.clear();
+    resetMockState();
   });
 
   it("translates SDK assistant.message_delta events to message.delta", async () => {
@@ -322,12 +369,7 @@ describe("CopilotEngine — send() event translation", () => {
 
 describe("CopilotEngine — cancellation", () => {
   beforeEach(() => {
-    mockState.started = false;
-    mockState.stopped = false;
-    mockState.sessions = [];
-    mockState.sessionInstances = [];
-    mockState.sendQueues.clear();
-    mockState.sendErrors.clear();
+    resetMockState();
   });
 
   it("pre-aborted signal yields terminal ABORTED error promptly", async () => {
@@ -353,12 +395,7 @@ describe("CopilotEngine — cancellation", () => {
 
 describe("CopilotEngine — listener cleanup (#479)", () => {
   beforeEach(() => {
-    mockState.started = false;
-    mockState.stopped = false;
-    mockState.sessions = [];
-    mockState.sessionInstances = [];
-    mockState.sendQueues.clear();
-    mockState.sendErrors.clear();
+    resetMockState();
   });
 
   it("unregisters per-send SDK listeners after each successful send", async () => {

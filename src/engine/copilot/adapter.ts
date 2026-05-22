@@ -80,6 +80,7 @@ export class CopilotEngine implements CouncilEngine {
   #started = false;
   #stopped = false;
   #lastStopErrors: Error[] = [];
+  #modelListCache: readonly string[] | undefined;
 
   /**
    * Errors collected during the most recent `stop()` invocation.
@@ -175,7 +176,21 @@ export class CopilotEngine implements CouncilEngine {
   }
 
   async listModels(): Promise<readonly string[]> {
-    return KNOWN_MODELS;
+    if (this.#modelListCache) {
+      return this.#modelListCache;
+    }
+    if (!this.#client || !this.#started || this.#stopped) {
+      return KNOWN_MODELS;
+    }
+    try {
+      const discoveredModels = Object.freeze(
+        (await this.#client.listModels()).map(({ id }) => id),
+      ) as readonly string[];
+      this.#modelListCache = discoveredModels;
+      return this.#modelListCache;
+    } catch {
+      return KNOWN_MODELS;
+    }
   }
 
   send(options: SendOptions): AsyncIterable<EngineEvent> {

@@ -20,8 +20,9 @@
  */
 import { ulid } from "ulid";
 
-import type { CouncilEngine, ExpertSpec } from "../engine/index.js";
 import { stripControlChars } from "../cli/strip-control-chars.js";
+import { DEFAULT_MODEL } from "../config/schema.js";
+import type { CouncilEngine, ExpertSpec } from "../engine/index.js";
 import { sanitizePromptField } from "./prompt-sanitize.js";
 
 import type { PanelDefinition, ResolvedPanelDefinition } from "./template-loader.js";
@@ -29,17 +30,18 @@ import { PanelDefinitionSchema } from "./template-loader.js";
 
 const DEFAULT_MIN_EXPERTS = 3;
 const DEFAULT_MAX_EXPERTS = 5;
-const DEFAULT_COMPOSER_MODEL = "claude-sonnet-4-20250514";
-const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_TIMEOUT_MS = 120_000;
 
 export interface AutoComposeOptions {
   readonly minExperts?: number;
   readonly maxExperts?: number;
   readonly defaultModel?: string;
+  /** Caller-controlled cancellation for the composer send. */
+  readonly signal?: AbortSignal;
   /**
    * Hard wall-clock cap on the composer send. If the engine has not produced
    * a terminal event by this point, the call is aborted and an error is
-   * thrown. Defaults to 30 seconds.
+   * thrown. Defaults to 120 seconds.
    */
   readonly timeoutMs?: number;
 }
@@ -51,7 +53,7 @@ export async function autoComposePanel(
 ): Promise<ResolvedPanelDefinition> {
   const minExperts = options?.minExperts ?? DEFAULT_MIN_EXPERTS;
   const maxExperts = options?.maxExperts ?? DEFAULT_MAX_EXPERTS;
-  const model = options?.defaultModel ?? DEFAULT_COMPOSER_MODEL;
+  const model = options?.defaultModel ?? DEFAULT_MODEL;
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   const composer: ExpertSpec = {
@@ -64,7 +66,10 @@ export async function autoComposePanel(
 
   await engine.addExpert(composer);
   let raw = "";
-  const signal = AbortSignal.timeout(timeoutMs);
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = options?.signal
+    ? AbortSignal.any([options.signal, timeoutSignal])
+    : timeoutSignal;
   try {
     const stream = engine.send({
       expertId: composer.id,
@@ -76,11 +81,18 @@ export async function autoComposePanel(
         raw += event.text;
       } else if (event.kind === "error") {
         if (event.error.code === "ABORTED" && signal.aborted) {
+          if (options?.signal?.aborted === true && timeoutSignal.aborted === false) {
+            throw new Error(
+              `Auto-compose was aborted while using model ${sanitizeModelForDisplay(model)}.`,
+            );
+          }
           throw new Error(
-            `Auto-compose timed out after ${timeoutMs}ms — the engine did not respond in time.`,
+            `Auto-compose timed out after ${timeoutMs}ms for model ${sanitizeModelForDisplay(model)} — the engine did not respond in time.`,
           );
         }
-        throw new Error(`Auto-compose engine error (${event.error.code}): ${event.error.message}`);
+        throw new Error(
+          `Auto-compose engine error (${event.error.code}) for model ${sanitizeModelForDisplay(model)}: ${sanitizeModelForDisplay(event.error.message)}`,
+        );
       }
     }
   } finally {
@@ -98,21 +110,34 @@ export async function autoComposePanel(
   } catch (err: unknown) {
     const cause = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `Auto-compose failed: could not parse composer JSON response (${stripControlChars(cause)}). ` +
-        `First 200 chars: ${stripControlChars(cleaned.slice(0, 200))}`,
+      `Auto-compose failed: could not parse composer JSON response (${sanitizeModelForDisplay(cause)}). ` +
+        `First 200 chars: ${sanitizeModelForDisplay(cleaned.slice(0, 200))}`,
     );
   }
 
   const result = PanelDefinitionSchema.safeParse(parsed);
   if (!result.success) {
     const lines = result.error.issues.map((i) => {
-      const fieldPath = i.path.length > 0 ? i.path.join(".") : "(root)";
-      return `  - ${fieldPath}: ${i.message}`;
+      const fieldPath = sanitizeModelForDisplay(
+        i.path.length > 0 ? i.path.join(".") : "(root)",
+      );
+      return `  - ${fieldPath}: ${sanitizeModelForDisplay(i.message)}`;
     });
     throw new Error(`Auto-compose produced an invalid panel definition:\n${lines.join("\n")}`);
   }
 
   return sanitizeComposedPanel(result.data, model);
+}
+
+/**
+ * Strip ALL characters unsafe for single-line terminal output:
+ * C0/C1 controls, bidi overrides, zero-width chars, Unicode line/paragraph separators.
+ */
+function sanitizeModelForDisplay(raw: string): string {
+  return raw.replace(
+    /[\p{Cc}\p{Cf}\u2028\u2029]/gu,
+    "",
+  );
 }
 
 /**
