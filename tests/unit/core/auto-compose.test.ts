@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_MODEL } from "../../../src/config/schema.js";
 import { autoComposePanel } from "../../../src/core/auto-compose.js";
+import { PanelDefinitionSchema } from "../../../src/core/template-loader.js";
 import type {
   CouncilEngine,
   EngineEvent,
@@ -253,18 +254,35 @@ describe("autoComposePanel", () => {
   });
 
   it("uses a 120000ms timeout when timeoutMs is omitted", async () => {
-    const timeoutSpy = vi
-      .spyOn(AbortSignal, "timeout")
-      .mockImplementation(() => new AbortController().signal);
-    const engine = new StubEngine({ response: JSON.stringify(validPanel) });
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockImplementation((timeoutMs) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 0);
+      expect(timeoutMs).toBe(120_000);
+      return controller.signal;
+    });
+    const engine = new StubEngine({ response: "", hang: true });
     await engine.start();
 
     try {
-      await autoComposePanel("topic", engine);
+      await expect(autoComposePanel("topic", engine)).rejects.toThrow(
+        `Auto-compose timed out after 120000ms for model ${DEFAULT_MODEL}`,
+      );
       expect(timeoutSpy).toHaveBeenCalledWith(120_000);
     } finally {
       timeoutSpy.mockRestore();
     }
+  });
+
+  it("surfaces caller-triggered aborts separately from timeouts", async () => {
+    const controller = new AbortController();
+    const engine = new StubEngine({ response: "", hang: true });
+    await engine.start();
+
+    setTimeout(() => controller.abort(), 0);
+
+    await expect(
+      autoComposePanel("topic", engine, { signal: controller.signal }),
+    ).rejects.toThrow(/aborted/i);
   });
 
   it("throws a descriptive error when the engine emits an error event mid-stream", async () => {
@@ -307,6 +325,23 @@ describe("autoComposePanel", () => {
     expect(message).not.toContain("\u202E");
     expect(message).not.toContain("\u200B");
     expect(message).not.toContain("\u2028");
+  });
+
+  it("sanitizes schema-validation error details before interpolation", async () => {
+    const safeParseSpy = vi.spyOn(PanelDefinitionSchema, "safeParse").mockReturnValue({
+      success: false,
+      error: {
+        issues: [{ path: ["experts\u202E"], message: "bad\u2028message" }],
+      },
+    } as unknown as ReturnType<(typeof PanelDefinitionSchema)["safeParse"]>);
+    const engine = new StubEngine({ response: JSON.stringify(validPanel) });
+    await engine.start();
+
+    try {
+      await expect(autoComposePanel("topic", engine)).rejects.toThrow(/experts: badmessage/);
+    } finally {
+      safeParseSpy.mockRestore();
+    }
   });
 
   it("cleans up the composer expert even when the engine errors", async () => {
@@ -443,7 +478,8 @@ describe("autoComposePanel", () => {
     // they must be stripped before being surfaced to the user's terminal —
     // otherwise a malicious composer could clear the screen, set the
     // terminal title, or spoof previous output via the error path.
-    const ansiGarbage = "\x1B[31mFAKE-ERROR\x1B[0m\x1B]0;evil-title\x07{ not json";
+    const ansiGarbage =
+      "\x1B[31mFAKE-ERROR\x1B[0m\x1B]0;evil-title\x07\u202E\u200B\u2028\u2029{ not json";
     const engine = new StubEngine({ response: ansiGarbage });
     await engine.start();
     let thrown: unknown;
@@ -461,6 +497,10 @@ describe("autoComposePanel", () => {
     expect(message).not.toMatch(/\x1B\]/);
     expect(message).not.toContain("\x1B");
     expect(message).not.toContain("\x07");
+    expect(message).not.toContain("\u202E");
+    expect(message).not.toContain("\u200B");
+    expect(message).not.toContain("\u2028");
+    expect(message).not.toContain("\u2029");
     // Printable token from the garbage should still appear so the user can
     // diagnose what came back.
     expect(message).toContain("FAKE-ERROR");
