@@ -132,6 +132,8 @@ function renderForbiddenMoves(def: ExpertDefinition): string {
   const profile = def.forbiddenMoves ?? [];
   const allMoves = [
     ...DEFAULT_FORBIDDEN_PHRASES.map((p) => `Begin or include the phrase: "${p}"`),
+    `Request information or tool access you do not have (you have NO tool access: cannot read files, execute code, or browse the web)`,
+    `Say "I need to examine X first" or similar without providing actual analysis based on the topic and your expertise`,
     ...profile,
   ];
   const lines = ["You will be considered to have failed the task if you:"];
