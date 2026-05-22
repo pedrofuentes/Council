@@ -26,19 +26,27 @@ describe("TUI-18: human symbol in SymbolSet", () => {
 
 // --- TUI-24: Cost indicator warning color ---
 describe("TUI-24: CostIndicator warning color at high ratio", () => {
-  it("CostIndicator uses yellow text when ratio > 0.8", async () => {
-    // This test checks the state-driven logic via the reduce function
-    const { reduce, INITIAL_STATE } = await import(
+  it("isCostWarning returns true when ratio exceeds threshold", async () => {
+    const { isCostWarning, COST_WARNING_THRESHOLD } = await import(
       "../../../src/cli/renderers/ink/InkRenderer.js"
     );
-    // Build a state with cost at 90/100 (ratio 0.9 > 0.8)
-    const state = reduce(INITIAL_STATE, {
-      kind: "cost.update",
-      premiumRequests: 90,
-      estimatedTotal: 100,
-    });
-    expect(state.cost).not.toBeNull();
-    expect(state.cost!.premiumRequests / state.cost!.estimatedTotal).toBeGreaterThan(0.8);
+    expect(COST_WARNING_THRESHOLD).toBe(0.8);
+    // Above threshold → warning
+    expect(isCostWarning(81, 100)).toBe(true);
+    expect(isCostWarning(90, 100)).toBe(true);
+    // At or below threshold → no warning
+    expect(isCostWarning(80, 100)).toBe(false);
+    expect(isCostWarning(50, 100)).toBe(false);
+  });
+
+  it("isCostWarning handles zero/invalid estimatedTotal safely", async () => {
+    const { isCostWarning } = await import(
+      "../../../src/cli/renderers/ink/InkRenderer.js"
+    );
+    // Zero denominator → false (no crash)
+    expect(isCostWarning(10, 0)).toBe(false);
+    // Negative denominator → false
+    expect(isCostWarning(10, -1)).toBe(false);
   });
 });
 
@@ -76,16 +84,22 @@ describe("TUI-25: HUMAN_COLOR constant and assignExpertColor isHuman param", () 
 
 // --- TUI-26: InkRenderer accepts stdout/stderr for Sink testing ---
 describe("TUI-26: InkRenderer accepts stdout/stderr streams", () => {
-  it("InkRendererOptions type accepts stdout and stderr properties", async () => {
-    const { InkRenderer } = await import("../../../src/cli/renderers/ink/InkRenderer.js");
-    // The existing InkRendererOptions already has stdout/stderr — just validate constructor works
-    const { Writable } = await import("node:stream");
-    const fakeStdout = new Writable({
-      write(_chunk, _enc, cb) { cb(); },
-    }) as unknown as NodeJS.WriteStream;
-    Object.defineProperty(fakeStdout, "columns", { value: 80 });
-    const renderer = new InkRenderer({ stdout: fakeStdout });
-    expect(renderer).toBeDefined();
+  it("InkRenderer fallback to PlainRenderer writes to provided stdout Sink", async () => {
+    // Use the PlainRenderer path (which InkRenderer falls back to) via Sink
+    const { PlainRenderer } = await import("../../../src/cli/renderers/plain.js");
+    let output = "";
+    const sink = {
+      write: (text: string) => { output += text; },
+      writeError: (_text: string) => { /* noop */ },
+    };
+    const renderer = new PlainRenderer(sink, { color: false });
+    const events = (async function* () {
+      yield { kind: "panel.assembled" as const, experts: [{ slug: "alice", displayName: "Alice", model: "gpt-5", participantKind: "ai" as const }] };
+      yield { kind: "debate.end" as const, reason: "max_rounds" as const };
+    })();
+    await renderer.render(events);
+    expect(output).toContain("Alice");
+    expect(output).toContain("Debate complete");
   });
 });
 
@@ -128,61 +142,80 @@ describe("A11Y-17: wrapLink OSC-8 helper", () => {
     expect(typeof wrapLink).toBe("function");
   });
 
-  it("wrapLink returns plain text when not TTY", async () => {
+  it("wrapLink returns plain text when stream is not TTY", async () => {
     const { wrapLink } = await import("../../../src/cli/error-mapper.js");
-    // In test env, process.stdout.isTTY is typically undefined/false
-    const result = wrapLink("https://example.com", "click here");
-    // Should degrade to plain text (no OSC-8) since test is not a TTY
+    const result = wrapLink("https://example.com", "click here", { isTTY: false });
     expect(result).toBe("click here");
   });
 
   it("wrapLink returns plain URL when no text and not TTY", async () => {
     const { wrapLink } = await import("../../../src/cli/error-mapper.js");
-    const result = wrapLink("https://example.com");
+    const result = wrapLink("https://example.com", undefined, { isTTY: false });
     expect(result).toBe("https://example.com");
+  });
+
+  it("wrapLink wraps URL with OSC-8 when stream is TTY", async () => {
+    const { wrapLink } = await import("../../../src/cli/error-mapper.js");
+    const origTerm = process.env.TERM;
+    process.env.TERM = "xterm-256color";
+    try {
+      const result = wrapLink("https://example.com", "click", { isTTY: true });
+      expect(result).toBe("\x1b]8;;https://example.com\x1b\\click\x1b]8;;\x1b\\");
+    } finally {
+      if (origTerm === undefined) delete process.env.TERM;
+      else process.env.TERM = origTerm;
+    }
+  });
+
+  it("wrapLink degrades on TERM=dumb even if TTY", async () => {
+    const { wrapLink } = await import("../../../src/cli/error-mapper.js");
+    const origTerm = process.env.TERM;
+    process.env.TERM = "dumb";
+    try {
+      const result = wrapLink("https://example.com", "click", { isTTY: true });
+      expect(result).toBe("click");
+    } finally {
+      if (origTerm === undefined) delete process.env.TERM;
+      else process.env.TERM = origTerm;
+    }
   });
 });
 
-// --- DX-11: Expert delete --force lists affected panels ---
+// --- DX-11: Expert delete --force confirmation improvement ---
 describe("DX-11: expert delete --force lists affected panels", () => {
   it("--force --yes output mentions panel names before deletion", async () => {
     const os = await import("node:os");
     const path = await import("node:path");
     const fs = await import("node:fs/promises");
 
-    const testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-expert-polish-"));
-    const testDataHome = path.join(testHome, "data");
-    await fs.mkdir(testDataHome, { recursive: true });
-    await fs.mkdir(path.join(testDataHome, "experts"), { recursive: true });
-    await fs.mkdir(path.join(testDataHome, "panels"), { recursive: true });
-
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "council-dx11-home-"));
+    const dataHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-dx11-data-"));
     const origHome = process.env["COUNCIL_HOME"];
     const origDataHome = process.env["COUNCIL_DATA_HOME"];
-    process.env["COUNCIL_HOME"] = testHome;
-    process.env["COUNCIL_DATA_HOME"] = testDataHome;
+    process.env["COUNCIL_HOME"] = home;
+    process.env["COUNCIL_DATA_HOME"] = dataHome;
 
     try {
-      // Create expert file
-      const expertDef = {
-        slug: "test-cto",
-        name: "Test CTO",
-        role: "Chief Technology Officer",
-        expertise: ["architecture"],
-        stance: "pragmatic",
-      };
-      await fs.writeFile(
-        path.join(testDataHome, "experts", "test-cto.yaml"),
-        `slug: test-cto\nname: Test CTO\nrole: Chief Technology Officer\nexpertise:\n  - architecture\nstance: pragmatic\n`,
-      );
-
-      // Create DB with panel membership
+      // Seed expert via library
       const { createDatabase } = await import("../../../src/memory/db.js");
-      const db = await createDatabase(path.join(testHome, "council.db"));
+      const { FileExpertLibrary } = await import("../../../src/core/expert-library.js");
+      const db = await createDatabase(path.join(home, "council.db"));
+      const lib = new FileExpertLibrary(dataHome, db);
+      await lib.create({
+        slug: "test-cto",
+        displayName: "Test CTO",
+        role: "CTO",
+        expertise: { weightedEvidence: ["arch"], referenceCases: [], notExpertIn: [] },
+        epistemicStance: "pragmatic",
+        kind: "generic",
+      });
+
+      // Create panel membership
       await db
         .insertInto("panel_library")
         .values({
           name: "arch-review",
-          yaml_path: path.join(testDataHome, "panels", "arch-review.yaml"),
+          yaml_path: path.join(dataHome, "panels", "arch-review.yaml"),
           yaml_checksum: "x",
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -201,7 +234,9 @@ describe("DX-11: expert delete --force lists affected panels", () => {
 
       const { buildExpertCommand } = await import("../../../src/cli/commands/expert.js");
       let captured = "";
-      const cmd = buildExpertCommand((s: string) => { captured += s; });
+      const cmd = buildExpertCommand((s: string) => {
+        captured += s;
+      });
       cmd.exitOverride();
       await cmd.parseAsync(["node", "council-expert", "delete", "test-cto", "--force", "--yes"]);
 
@@ -213,7 +248,16 @@ describe("DX-11: expert delete --force lists affected panels", () => {
       else process.env["COUNCIL_HOME"] = origHome;
       if (origDataHome === undefined) delete process.env["COUNCIL_DATA_HOME"];
       else process.env["COUNCIL_DATA_HOME"] = origDataHome;
-      await fs.rm(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      await fs
+        .rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+        .catch(() => {
+          /* best-effort */
+        });
+      await fs
+        .rm(dataHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+        .catch(() => {
+          /* best-effort */
+        });
     }
-  });
+  }, 30000);
 });

@@ -255,7 +255,8 @@ export function reduce(s: DebateState, ev: DebateEvent): DebateState {
 }
 
 function colorFor(state: DebateState, slug: string): ExpertColor {
-  return assignExpertColor(state.expertIndex.get(slug) ?? 0);
+  const isHuman = state.humanSlugs.has(slug);
+  return assignExpertColor(state.expertIndex.get(slug) ?? 0, { isHuman });
 }
 
 function nameFor(state: DebateState, slug: string): string {
@@ -399,13 +400,30 @@ function RetryIndicator({ state }: { readonly state: DebateState }): ReactElemen
   );
 }
 
+/** Threshold above which the cost indicator renders in warning color. */
+export const COST_WARNING_THRESHOLD = 0.8;
+
+/** Returns true when cost ratio exceeds the warning threshold. */
+export function isCostWarning(premiumRequests: number, estimatedTotal: number): boolean {
+  if (estimatedTotal <= 0) return false;
+  const ratio = premiumRequests / estimatedTotal;
+  return Number.isFinite(ratio) && ratio > COST_WARNING_THRESHOLD;
+}
+
 function CostIndicator({ state }: { readonly state: DebateState }): ReactElement | null {
   if (!state.cost) return null;
+  const isWarning = isCostWarning(state.cost.premiumRequests, state.cost.estimatedTotal);
   return (
     <Box marginTop={1}>
-      <Text dimColor>
-        {`[Cost: ${state.cost.premiumRequests}/${state.cost.estimatedTotal} premium requests]`}
-      </Text>
+      {isWarning ? (
+        <Text color="yellow">
+          {`[Cost: ${state.cost.premiumRequests}/${state.cost.estimatedTotal} premium requests]`}
+        </Text>
+      ) : (
+        <Text dimColor>
+          {`[Cost: ${state.cost.premiumRequests}/${state.cost.estimatedTotal} premium requests]`}
+        </Text>
+      )}
     </Box>
   );
 }
