@@ -765,4 +765,37 @@ describe("autoComposePanel", () => {
       expect(result.experts[0]?.epistemicStance).toBe("Stance A is built on careful reasoning.");
     });
   });
+
+  describe("mock engine fallback", () => {
+    it("returns a deterministic fallback panel when engine returns mock response format", async () => {
+      // MockEngine returns "[mock response from <expertId>]" which is not
+      // JSON. Auto-compose should detect this pattern and return a
+      // deterministic fallback panel instead of trying to parse it as JSON.
+      const engine = new StubEngine({ response: "[mock response from composer-123]" });
+      await engine.start();
+      const result = await autoComposePanel("Mock Panel Topic", engine);
+      
+      // Fallback panel should have a valid structure
+      expect(result.name).toBeTruthy();
+      expect(result.experts).toHaveLength(3);
+      expect(result.experts.every((e) => e.slug && e.displayName && e.role)).toBe(true);
+      expect(result.experts.every((e) => e.expertise.weightedEvidence.length > 0)).toBe(true);
+    });
+
+    it("uses DEFAULT_MODEL for all experts in mock fallback panel", async () => {
+      const engine = new StubEngine({ response: "[mock response from test-id]" });
+      await engine.start();
+      const result = await autoComposePanel("topic", engine, { defaultModel: "test-model" });
+      
+      for (const expert of result.experts) {
+        expect(expert.model).toBe("test-model");
+      }
+    });
+
+    it("still throws for genuinely malformed JSON (not mock response)", async () => {
+      const engine = new StubEngine({ response: "random garbage not json" });
+      await engine.start();
+      await expect(autoComposePanel("topic", engine)).rejects.toThrow(/JSON|parse/i);
+    });
+  });
 });

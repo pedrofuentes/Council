@@ -104,6 +104,14 @@ export async function autoComposePanel(
     throw new Error("Auto-compose failed: composer returned an empty response.");
   }
 
+  // Detect MockEngine response pattern and return a deterministic fallback
+  // panel. MockEngine returns "[mock response from <id>]" which is not valid
+  // JSON. This allows `council convene "topic" --engine mock` to work without
+  // requiring a --template argument.
+  if (/^\[mock response from /.test(cleaned)) {
+    return createMockFallbackPanel(model);
+  }
+
   let parsed: unknown;
   try {
     parsed = JSON.parse(cleaned);
@@ -127,6 +135,62 @@ export async function autoComposePanel(
   }
 
   return sanitizeComposedPanel(result.data, model);
+}
+
+/**
+ * Returns a deterministic fallback panel when MockEngine is detected.
+ * This allows `council convene "topic" --engine mock` to work without
+ * requiring a --template argument.
+ */
+function createMockFallbackPanel(model: string): ResolvedPanelDefinition {
+  return {
+    name: "mock-panel",
+    description: "Deterministic fallback panel for mock engine testing",
+    experts: [
+      {
+        slug: "mock-optimist",
+        displayName: "Morgan Chen (Optimist)",
+        role: "Identifies opportunities and positive outcomes",
+        model,
+        expertise: {
+          weightedEvidence: ["Growth metrics", "User feedback", "Market trends"],
+          referenceCases: ["Successful product launches"],
+          notExpertIn: ["Risk analysis", "Cost optimization"],
+        },
+        epistemicStance:
+          "Forms beliefs by prioritizing evidence of potential benefits and forward momentum.",
+        kind: "generic",
+      },
+      {
+        slug: "mock-skeptic",
+        displayName: "Taylor Kim (Skeptic)",
+        role: "Challenges assumptions and identifies risks",
+        model,
+        expertise: {
+          weightedEvidence: ["Historical failures", "Implementation complexity", "Hidden costs"],
+          referenceCases: ["Failed initiatives", "Rollback scenarios"],
+          notExpertIn: ["Marketing strategy", "User experience design"],
+        },
+        epistemicStance:
+          "Forms beliefs by examining evidence of potential pitfalls and questioning optimistic projections.",
+        kind: "generic",
+      },
+      {
+        slug: "mock-pragmatist",
+        displayName: "Jordan Lee (Pragmatist)",
+        role: "Balances trade-offs and focuses on implementation feasibility",
+        model,
+        expertise: {
+          weightedEvidence: ["Resource constraints", "Team capacity", "Technical debt"],
+          referenceCases: ["Incremental rollouts", "Phased approaches"],
+          notExpertIn: ["Long-term vision", "Competitive analysis"],
+        },
+        epistemicStance:
+          "Forms beliefs by weighing practical constraints against desired outcomes and prioritizing actionable next steps.",
+        kind: "generic",
+      },
+    ],
+  };
 }
 
 /**
