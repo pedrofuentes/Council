@@ -503,8 +503,8 @@ describe("buildExportCommand", () => {
     // Should NOT contain common mojibake patterns for em-dash
     expect(captured).not.toContain("ΓÇö");
     expect(captured).not.toContain("\uFFFD"); // replacement character
-    // Should contain expert names with ASCII separator
-    expect(captured).toMatch(/CTO.*claude-sonnet-4/);
-    expect(captured).toMatch(/PM.*claude-sonnet-4/);
+    // Should use exact ASCII hyphen separator (issue #737)
+    expect(captured).toContain("**CTO** (`cto`) - claude-sonnet-4");
+    expect(captured).toContain("**PM** (`pm`) - claude-sonnet-4");
   });
 });
