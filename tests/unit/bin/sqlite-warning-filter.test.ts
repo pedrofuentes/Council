@@ -3,18 +3,18 @@ import { describe, expect, it } from "vitest";
 import { installSqliteExperimentalWarningFilter } from "../../../src/bin/sqlite-warning-filter.js";
 
 interface FakeProcess {
-  emitWarning: (warning: string | Error, ...args: unknown[]) => void;
+  emitWarning: typeof process.emitWarning;
 }
 
 function createFakeProcess(): {
   readonly fakeProcess: FakeProcess;
   readonly calls: readonly [string | Error, ...unknown[]][];
 } {
-  const calls: Array<[string | Error, ...unknown[]]> = [];
+  const calls: [string | Error, ...unknown[]][] = [];
   const fakeProcess: FakeProcess = {
-    emitWarning: (warning: string | Error, ...args: unknown[]) => {
+    emitWarning: ((warning: string | Error, ...args: unknown[]) => {
       calls.push([warning, ...args]);
-    },
+    }) as typeof process.emitWarning,
   };
 
   return { fakeProcess, calls };

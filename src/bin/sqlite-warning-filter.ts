@@ -1,8 +1,10 @@
 const SQLITE_EXPERIMENTAL_WARNING_RE =
   /^SQLite is an experimental feature and might change at any time\.?$/i;
 
+type EmitWarning = typeof process.emitWarning;
+
 interface WarningEmitterProcess {
-  emitWarning: (warning: string | Error, ...args: unknown[]) => void;
+  emitWarning: EmitWarning;
 }
 
 const installedProcesses = new WeakSet<WarningEmitterProcess>();
@@ -25,19 +27,16 @@ export function installSqliteExperimentalWarningFilter(
   }
 
   const originalEmitWarning = warningProcess.emitWarning;
-  warningProcess.emitWarning = function filteredEmitWarning(
-    warning: string | Error,
-    ...args: unknown[]
-  ): void {
+  warningProcess.emitWarning = ((warning: string | Error, ...args: unknown[]): void => {
     if (isNodeSqliteExperimentalWarning(warning, args[0])) {
       return;
     }
 
-    Reflect.apply(originalEmitWarning as (...parameters: unknown[]) => void, warningProcess, [
+    Reflect.apply(originalEmitWarning as unknown as (...parameters: unknown[]) => void, warningProcess, [
       warning,
       ...args,
     ]);
-  };
+  }) as EmitWarning;
 
   installedProcesses.add(warningProcess);
 }
