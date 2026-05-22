@@ -123,15 +123,20 @@ describe("Chat UX Improvements (T-08)", () => {
   });
 
   describe("getStartupHelpText", () => {
-    it("returns help text with available commands", () => {
+    it("returns help text with exit commands", () => {
       const help = getStartupHelpText();
       expect(help).toContain("exit");
       expect(help).toContain("quit");
     });
 
-    it("includes command descriptions", () => {
+    it("does NOT advertise unsupported /help command", () => {
       const help = getStartupHelpText();
-      expect(help.toLowerCase()).toMatch(/exit|quit/);
+      expect(help).not.toContain("/help");
+    });
+
+    it("returns exact expected help text", () => {
+      const help = getStartupHelpText();
+      expect(help).toBe("Type /exit or /quit to save and end the conversation.");
     });
   });
 
