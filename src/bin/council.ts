@@ -34,6 +34,7 @@ import { buildSessionsCommand } from "../cli/commands/sessions.js";
 import { buildTemplatesCommand } from "../cli/commands/templates.js";
 
 import { handleCliError } from "../cli/handle-cli-error.js";
+import { setQuiet } from "../cli/commands/writer.js";
 
 // Command categories for grouped help output
 const COMMAND_CATEGORIES = {
@@ -50,7 +51,14 @@ export function buildProgram(): Command {
     .name("council")
     .description("Persistent AI expert panels for deliberation and decision-making")
     .version(packageJson.version)
+    .option("-q, --quiet", "Suppress informational stderr output")
     .showSuggestionAfterError(true);
+
+  // Wire --quiet: suppress informational stderr before any subcommand action runs
+  program.hook("preAction", (thisCommand) => {
+    const opts = thisCommand.optsWithGlobals() as { quiet?: boolean };
+    setQuiet(opts.quiet === true);
+  });
 
   // Register commands in category order
   program.addCommand(buildDoctorCommand());

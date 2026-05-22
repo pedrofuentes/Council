@@ -478,6 +478,46 @@ Examples:
 `,
   );
 
+  // CLI-05: Help tiering — separate common vs advanced flags
+  const COMMON_FLAGS = new Set(["--template", "--engine", "--format", "--max-rounds", "--yes"]);
+
+  cmd.configureHelp({
+    formatHelp: (command, helper) => {
+      const termWidth = helper.padWidth(command, helper);
+      const sections: string[] = [];
+
+      sections.push(`Usage: ${helper.commandUsage(command)}`);
+      sections.push("");
+      sections.push(helper.commandDescription(command));
+      sections.push("");
+
+      const commonOpts = command.options.filter((o) => COMMON_FLAGS.has(o.long ?? ""));
+      const advancedOpts = command.options.filter((o) => !COMMON_FLAGS.has(o.long ?? ""));
+
+      if (commonOpts.length > 0) {
+        sections.push("Common Options:");
+        for (const opt of commonOpts) {
+          sections.push(
+            `  ${helper.optionTerm(opt).padEnd(termWidth)}  ${helper.optionDescription(opt)}`,
+          );
+        }
+        sections.push("");
+      }
+
+      if (advancedOpts.length > 0) {
+        sections.push("Advanced Options:");
+        for (const opt of advancedOpts) {
+          sections.push(
+            `  ${helper.optionTerm(opt).padEnd(termWidth)}  ${helper.optionDescription(opt)}`,
+          );
+        }
+        sections.push("");
+      }
+
+      return sections.join("\n");
+    },
+  });
+
   return cmd;
 }
 

@@ -502,8 +502,56 @@ describe("buildExpertCommand", () => {
       const cmd = buildExpertCommand((s) => {
         captured += s;
       });
-      await cmd.parseAsync(["node", "council-expert", "delete", "dahlia-cto", "--force"]);
+      await cmd.parseAsync(["node", "council-expert", "delete", "dahlia-cto", "--force", "--yes"]);
       expect(captured).toMatch(/deleted/i);
+    });
+
+    it("--force without --yes succeeds in interactive (TTY) mode", async () => {
+      await seedExpert(env, SAMPLE);
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const db = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        await db
+          .insertInto("panel_library")
+          .values({
+            name: "tty-panel",
+            yaml_path: path.join(env.dataHome, "panels", "tty-panel.yaml"),
+            yaml_checksum: "x",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .execute();
+        await db
+          .insertInto("panel_members")
+          .values({
+            panel_name: "tty-panel",
+            expert_slug: "dahlia-cto",
+            position: 0,
+            created_at: new Date().toISOString(),
+          })
+          .execute();
+      } finally {
+        await db.destroy();
+      }
+
+      // Simulate interactive TTY mode
+      const originalIsTTY = process.stdin.isTTY;
+      Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+
+      let captured = "";
+      const cmd = buildExpertCommand((s) => {
+        captured += s;
+      });
+
+      try {
+        await cmd.parseAsync(["node", "council-expert", "delete", "dahlia-cto", "--force"]);
+        expect(captured).toMatch(/deleted/i);
+      } finally {
+        Object.defineProperty(process.stdin, "isTTY", {
+          value: originalIsTTY,
+          configurable: true,
+        });
+      }
     });
 
     it("reports not found", async () => {
@@ -1261,12 +1309,10 @@ fs.writeFileSync(p, body, 'utf-8');`,
       await writeDoc("boss", "intro.md", "First training document.");
 
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { DocumentRepository, ClearForRetrainError } = await import(
-        "../../../../src/memory/repositories/document-repository.js"
-      );
-      const { ProfileRepository } = await import(
-        "../../../../src/memory/repositories/profile-repository.js"
-      );
+      const { DocumentRepository, ClearForRetrainError } =
+        await import("../../../../src/memory/repositories/document-repository.js");
+      const { ProfileRepository } =
+        await import("../../../../src/memory/repositories/profile-repository.js");
 
       // Seed a baseline profile + a tracked doc so retrain has work to do.
       {
@@ -1303,14 +1349,11 @@ fs.writeFileSync(p, body, 'utf-8');`,
       // "state unknown" branch (#425).
       const originalClear = DocumentRepository.prototype.clearForRetrain;
       DocumentRepository.prototype.clearForRetrain = async function (): Promise<void> {
-        throw new ClearForRetrainError(
-          "simulated cleanup failure AND rollback failure",
-          {
-            cause: new Error("simulated cleanup failure"),
-            rollbackFailed: true,
-            rollbackError: new Error("simulated ROLLBACK failure"),
-          },
-        );
+        throw new ClearForRetrainError("simulated cleanup failure AND rollback failure", {
+          cause: new Error("simulated cleanup failure"),
+          rollbackFailed: true,
+          rollbackError: new Error("simulated ROLLBACK failure"),
+        });
       };
 
       let captured = "";

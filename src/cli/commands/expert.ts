@@ -39,6 +39,7 @@ import {
 import { ProfileRepository } from "../../memory/repositories/profile-repository.js";
 import { ENGINE_KINDS, type EngineKind, makeEngineFromKind } from "../run-with-engine.js";
 import { suggestMatch } from "../fuzzy-match.js";
+import { isNonInteractive } from "../non-interactive.js";
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
@@ -504,7 +505,8 @@ function buildDeleteCommand(write: Writer, writeError: Writer): Command {
     .description("Delete an expert from the library")
     .argument("<slug>", "Expert slug to delete")
     .option("--force", "Delete even if the expert is a member of one or more panels")
-    .action(async (slug: string, opts: { force?: boolean }) => {
+    .option("--yes", "Skip confirmation prompt (required with --force in non-interactive mode)")
+    .action(async (slug: string, opts: { force?: boolean; yes?: boolean }) => {
       await withExpertLibrary(async (library) => {
         const existing = await library.get(slug);
         if (!existing) {
@@ -516,6 +518,11 @@ function buildDeleteCommand(write: Writer, writeError: Writer): Command {
         const panels = await library.panelsFor(slug);
         if (panels.length > 0 && !opts.force) {
           const msg = `Expert "${slug}" is used in ${panels.length} panel${panels.length === 1 ? "" : "s"}: ${panels.join(", ")}\nUse --force to delete anyway.`;
+          writeError(msg + "\n");
+          throw new CliUserError(msg);
+        }
+        if (panels.length > 0 && opts.force && !opts.yes && isNonInteractive()) {
+          const msg = `Non-interactive mode: --force requires --yes to confirm deletion of "${slug}" (used in ${panels.length} panel${panels.length === 1 ? "" : "s"}).`;
           writeError(msg + "\n");
           throw new CliUserError(msg);
         }
