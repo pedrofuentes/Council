@@ -7,30 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **`--continue` renamed to `--prompt`** (CLI-21) — The `council resume --continue` flag has been renamed to `--prompt`. There is no alias — the old flag will error. Update scripts accordingly.
+
 ### Added
 
+- **`council config show|path|edit`** (T-13) — new subcommand for configuration management. `show` prints effective config values with source annotations, `path` prints the config file location, `edit` opens it in `$EDITOR`.
+- **`--engine` now optional, defaults to `copilot`** (T-12) — all commands that require an engine no longer mandate `--engine copilot` on every invocation. The default is read from config.
+- **First-run config auto-creation** (T-12) — on first invocation (no `~/.council/config.yaml`), Council auto-creates a default config file. `council doctor` validates the environment.
+- **`--quiet` global flag** (T-16) — suppresses informational stderr output across all commands.
+- **ASCII mode** (T-06) — `COUNCIL_ASCII=1`, `NO_COLOR`, or `TERM=dumb` auto-detection switches all Unicode symbols (🏛️ ━ ─ ✅ ❌ ▋) to ASCII equivalents via a unified `symbols.ts` registry.
+- **Help text grouping** (T-03) — commands are now organized into 5 categories (Getting Started, Deliberation, Conversation, Library, Inspection) in `--help` output.
+- **Usage examples on 6 commands** (T-02) — `convene`, `resume`, `conclude`, `chat`, `expert`, and `panel` now show concrete usage examples in their `--help`.
+- **`turn.retry` handling in PlainRenderer** (T-10) — retry events now display `[expert retrying… attempt N]` with reason in plain text output.
+- **`showThinking` indicator in chat** (T-10) — a thinking/reasoning indicator displays while the engine processes.
+- **Semantic exit codes** (T-14) — `0`=success, `1`=user error, `2`=auth, `3`=network/transient, `4`=internal. Mapped from `EngineErrorCode` in `exit-codes.ts`.
+- **Fuzzy-match "did you mean?" suggestions** (T-14) — mistyped commands and flags now suggest the closest match via Levenshtein distance (`fuzzy-match.ts`).
+- **Commander `.choices()` migration** (T-14) — enum flags (`--format`, `--mode`, `--strategy`) now use Commander's built-in `.choices()` for validation and help display.
+- **Ink `<Static>` performance optimization** (T-08) — completed turns are moved to Ink's `<Static>` container, preventing re-renders on every streaming delta.
+- **Ctrl+C graceful cancellation** (T-09) — interrupting a debate now gracefully stops upstream processing, persists partial state, and exits cleanly.
+- **Error cap to last 3 with auto-dismiss** (T-09) — only the 3 most recent errors are shown; older ones are hidden with a count badge.
+- **Loading spinner after panel assembly** (T-09) — a spinner displays while waiting for the first expert response in each round.
+- **Screen reader compatibility** (T-11) — `TERM=dumb` triggers Ink fallback to plain text; structured output is screen-reader friendly.
+- **`stdin.isTTY` check in chat** (T-11) — non-interactive environments are detected and handled gracefully with appropriate error messages.
+- **Next-step hints on all commands** (T-15) — every command now prints contextual "what to do next" hints after execution.
+- **Sessions enriched with status/turn count/expert count** (T-15) — `council sessions` output now includes debate status, number of turns, and expert count per session.
+- **`--long` flag on `panel list`** (T-15) — shows full panel details including expert roster and description.
+- **Flag help tiering in convene** (T-16) — common flags appear first; advanced flags (`--context-scope`, `--summarize-after`) are grouped under an "Advanced" section.
+- **`--timeout` on conclude** (T-16) — configurable synthesis timeout in milliseconds (default: 60000ms) to fail fast on hung engines.
+- **Human participant icon/color** (T-20) — human participants in debates now have a distinct icon and color for visual clarity.
+- **Cost warning at 80%** (T-20) — a warning is emitted when estimated cost reaches 80% of the configured budget.
+- **OSC-8 hyperlinks in error messages** (T-20) — error messages with URLs now use terminal hyperlinks for clickability in supported terminals.
+- **Doctor terminal info section** (T-20) — `council doctor` now reports terminal capabilities (color support, Unicode, dimensions).
 - **`--format json` for inspect commands** (IA-05) — `council expert inspect <slug> --format json` and `council panel inspect <name> --format json` now emit structured JSON output for automation/scripting.
 - **Debate metadata in conclude output** (IA-10) — `council conclude` now includes `debateId` and `startedAt` in both plain and JSON output.
 - **Synthesis turn styling** (IA-06) — synthesis-phase turns in PlainRenderer now display with yellow color and a 🎯/[Synthesis] prefix for visual distinction.
 - **`council templates inspect <name>`** (CLI-12) — shows template detail: description, expert slugs, debate mode, and max rounds.
 - **`council resume --latest`** (DX-12) — resumes the most recently active panel session (by latest debate activity).
 - **`council resume <prefix>`** (DX-12) — prefix matching for panel names. Auto-selects when unique; lists matches on stderr when ambiguous.
-
-### Changed
-
-- **`--continue` renamed to `--prompt`** (CLI-21) — **BREAKING**: The `council resume --continue` flag has been renamed to `--prompt`. There is no alias — the old flag will error. Update scripts accordingly.
-
-### Added
-
 - **Expert index prefixes for accessibility** (A11Y-01) — all renderers (Ink, Chat, Plain) now prefix expert names with a 1-based index (`[1] Alice`, `[2] Bob`), providing a redundant cue for color-blind users who previously had to rely solely on color to distinguish speakers.
 
 ### Changed
 
+- **chat.ts split into focused modules** (T-19) — the 87KB monolithic `chat.ts` has been refactored into `chat/` directory with 6 focused modules: `index.ts`, `expert-chat.ts`, `panel-chat.ts`, `list.ts`, `history.ts`, `shared.ts`.
+- **Unified 8-color expert palette** (TUI-01, TUI-13) — the expert color palette is now a single source of truth in `src/cli/renderers/ink/colors.ts`, shared by Ink, Chat, and Plain renderers. The palette uses 8 colors: `cyan`, `yellow`, `magenta`, `green`, `blue`, `cyanBright`, `magentaBright`, `yellowBright`. Red has been removed from the expert palette to avoid visual collision with error messages (which remain red).
+- **Per-expert colors in PlainRenderer** (TUI-12) — the Plain renderer now assigns distinct colors to each expert (previously all experts used uniform cyan).
 - **Conclude output order** (IA-08) — recommendation and confidence now appear before consensus/tensions/matrix in plain text output.
 - **Default panel selection** (DX-14) — `council conclude` without explicit panel now selects the panel with the most recent debate (previously picked alphabetically or by creation order).
 - **Edit backup safety** (DX-07) — `council expert edit` and `council panel edit` now create a `.yaml.backup` before launching the editor; path-containment is verified via `realpath()` + `path.relative()`.
-- **Unified 8-color expert palette** (TUI-01, TUI-13) — the expert color palette is now a single source of truth in `src/cli/renderers/ink/colors.ts`, shared by Ink, Chat, and Plain renderers. The palette uses 8 colors: `cyan`, `yellow`, `magenta`, `green`, `blue`, `cyanBright`, `magentaBright`, `yellowBright`. Red has been removed from the expert palette to avoid visual collision with error messages (which remain red).
-- **Per-expert colors in PlainRenderer** (TUI-12) — the Plain renderer now assigns distinct colors to each expert (previously all experts used uniform cyan).
 
 ### Fixed
 

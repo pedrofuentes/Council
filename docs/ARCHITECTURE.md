@@ -15,10 +15,17 @@ council/
 │   │   ├── commands/
 │   │   │   ├── convene.ts             ← council convene "<topic>"  (run a panel debate)
 │   │   │   ├── ask.ts                 ← council ask <panel> "<q>"  (one-shot single-expert)
-│   │   │   ├── chat.ts                ← council chat <target>      (persistent expert/panel chat)
+│   │   │   ├── chat/                  ← council chat <target>      (persistent expert/panel chat)
+│   │   │   │   ├── index.ts           ← Command builder, routing
+│   │   │   │   ├── expert-chat.ts     ← 1:1 expert REPL
+│   │   │   │   ├── panel-chat.ts      ← Panel group chat + inline debate
+│   │   │   │   ├── list.ts            ← --list handler
+│   │   │   │   ├── history.ts         ← --history handler
+│   │   │   │   └── shared.ts          ← Constants, interfaces, helpers
 │   │   │   ├── resume.ts              ← council resume <panel>     (replay or continue)
 │   │   │   ├── conclude.ts            ← council conclude [panel]   (decision-matrix synthesis)
 │   │   │   ├── export.ts              ← council export <panel>     (md/json/adr)
+│   │   │   ├── config.ts              ← council config show|path|edit
 │   │   │   ├── expert.ts              ← council expert create|list|inspect|edit|delete|docs|train
 │   │   │   ├── panel.ts               ← council panel create|list|inspect|edit|docs (link/unlink)
 │   │   │   ├── sessions.ts            ← council sessions           (list debate sessions from DB)
@@ -26,12 +33,15 @@ council/
 │   │   │   ├── memory.ts              ← council memory list|inspect|reset
 │   │   │   ├── doctor.ts              ← council doctor             (diagnostics)
 │   │   │   └── writer.ts              ← shared Writer injection (testable command output)
+│   │   ├── exit-codes.ts              ← Semantic exit code constants (0/1/2/3/4)
+│   │   ├── fuzzy-match.ts             ← Levenshtein distance "did you mean?" utility
 │   │   └── renderers/
 │   │       ├── ink/                   ← Rich TUI components (TTY)
 │   │       ├── chat-renderer.ts       ← Chat-specific surface (per-expert color, You> prompt,
 │   │       │                            ANSI/OSC/C0 stripping, Unicode line-separator collapse)
 │   │       ├── json.ts                ← NDJSON output (CI/scripts)
-│   │       └── plain.ts               ← Plain text fallback (non-TTY)
+│   │       ├── plain.ts               ← Plain text fallback (non-TTY)
+│   │       └── symbols.ts             ← Unicode/ASCII symbol registry (getSymbols)
 │   ├── core/
 │   │   ├── expert.ts                  ← Expert entity (identity, prompt generation)
 │   │   ├── debate.ts                  ← Debate orchestrator (AsyncIterable<DebateEvent>)
@@ -138,6 +148,7 @@ CLI Commands:
   council resume <panel>        — replay or continue a debate
   council conclude [panel]      — synthesize decision matrix
   council export <panel>        — export transcript (md/json/adr)
+  council config show|path|edit — configuration management
   council expert create|list|inspect|edit|delete  — expert library management
   council expert docs|train     — persona document management
   council panel create|list|inspect|edit  — panel library management

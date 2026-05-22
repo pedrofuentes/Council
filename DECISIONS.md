@@ -22,6 +22,66 @@
 
 <!-- Add new decisions below this line, most recent first -->
 
+### ADR-018: ASCII Symbol System
+**Date**: 2026-05-22
+**Status**: Accepted
+**Context**: Unicode symbols (🏛️ ━ ─ ✅ ❌ ▋) fail on legacy terminals (Windows cmd.exe, ConPTY in some configurations) and screen readers that announce emoji descriptions verbosely. Users in CI environments and piped contexts also encounter garbled output.
+**Decision**: `src/cli/renderers/symbols.ts` exports `getSymbols()` returning a Unicode or ASCII symbol set based on environment auto-detection. Detection triggers: `NO_COLOR` env var set, `TERM=dumb`, or `COUNCIL_ASCII=1`. All renderers (Ink, Plain, Chat) consume symbols exclusively through this registry.
+**Alternatives considered**:
+- **Always ASCII** — simplest but too plain for modern terminals; sacrifices visual quality for the majority.
+- **Detection library (`is-unicode-supported`)** — adds a dependency for something achievable with 3 env-var checks.
+- **User config only (`config.yaml` toggle)** — not auto-detected; fails for CI and screen readers unless manually configured.
+**Consequences**:
+- ✅ Zero new dependencies. Three env-var checks cover all known failure modes.
+- ✅ Screen readers get clean text instead of verbose emoji descriptions.
+- ✅ CI/pipe output is predictable and parseable.
+- ⚠️ Auto-detection may false-positive on exotic terminals that support Unicode but set `TERM=dumb` for other reasons. Explicit `COUNCIL_ASCII=1` overrides auto-detection for intentional ASCII use.
+
+### ADR-017: Engine Default & First-Run UX
+**Date**: 2026-05-21
+**Status**: Accepted
+**Context**: `--engine copilot` was required on every command that invokes the AI. 99% of users want copilot (the mock engine is for testing). Requiring the flag on every invocation adds friction and clutters examples.
+**Decision**: Default engine is `copilot`, read from config. First-run detection (no `~/.council/config.yaml` exists) auto-creates a default config file so subsequent commands work without manual setup. `council doctor` validates the environment and provides guidance.
+**Alternatives considered**:
+- **Hard-code `copilot` with no config** — prevents mock from being the default in test environments without passing `--engine mock` every time.
+- **Environment variable only (`COUNCIL_ENGINE`)** — less discoverable than config; doesn't solve first-run UX.
+- **Interactive setup wizard** — too heavy for a CLI tool; `council doctor` already validates the environment.
+**Consequences**:
+- ✅ Every example and common invocation drops `--engine copilot` — shorter, cleaner.
+- ✅ First-run users get a valid config automatically; `council doctor` provides guidance.
+- ✅ Test scripts can set `defaults.engine: mock` in config or pass `--engine mock` explicitly.
+- ⚠️ Breaking: scripts that relied on "no default" behavior to force explicit engine choice will now silently use copilot. Mitigated by the `--continue` → `--prompt` rename being the louder breaking change in the same release.
+
+### ADR-016: Unified Expert Color Palette
+**Date**: 2026-05-20
+**Status**: Accepted
+**Context**: The Ink renderer used 6 colors, the Chat renderer used 8, and the Plain renderer used a single uniform cyan. Red was in the expert palette, colliding visually with error messages. Color-blind users had no redundant cue to distinguish speakers.
+**Decision**: A shared 8-color palette (`cyan`, `yellow`, `magenta`, `green`, `blue`, `cyanBright`, `magentaBright`, `yellowBright`) lives in `src/cli/renderers/ink/colors.ts` and is consumed by all three renderers. Red is excluded to avoid error-message collision. Every renderer additionally prefixes expert names with `[N]` index numbers for color-blind redundancy.
+**Alternatives considered**:
+- **Role-based colors** (CTO always blue, PM always green) — too rigid; custom panels have arbitrary expert roles.
+- **Shape-only differentiation** (no color, just prefixes) — not enough visual distinction for panels with 4+ experts; discards a useful visual channel.
+- **Per-renderer independent palettes** — the status quo; inconsistent experience when switching between `--format plain` and TTY output.
+**Consequences**:
+- ✅ Consistent visual identity for experts across all output modes.
+- ✅ Color-blind users can distinguish speakers via `[N]` index alone.
+- ✅ Red is reserved for errors system-wide — no confusion between expert speech and error messages.
+- ⚠️ 8-color palette wraps for panels with 9+ experts (repeats from the beginning). Acceptable: most panels have 3–5 experts.
+
+### ADR-015: Semantic Exit Codes
+**Date**: 2026-05-19
+**Status**: Accepted
+**Context**: `handleCliError` returned exit code 1 for all errors. CI pipelines and scripts could not distinguish between "user passed bad flags" (fix your script), "auth expired" (re-login), "network timeout" (retry), and "internal bug" (file an issue). All were opaque failures requiring log inspection.
+**Decision**: Exit codes 0–4 mapped from `EngineErrorCode`: `0`=success, `1`=user/validation error, `2`=authentication failure, `3`=network/transient (retriable), `4`=internal/unexpected. Constants live in `src/cli/exit-codes.ts`. The mapping is applied in the top-level error handler.
+**Alternatives considered**:
+- **Single exit code (status quo)** — simplest but useless for automation.
+- **HTTP-style codes (200, 401, 500, etc.)** — familiar but non-standard for CLI tools; shells truncate to 0–255 and some reserve ranges (e.g., 126–128 for exec/signal).
+- **Signal-based differentiation** — non-portable across Windows/Unix; confuses "killed by signal" with "error type".
+**Consequences**:
+- ✅ CI scripts can `case $?` to decide retry vs. fail-fast vs. re-auth without parsing stderr.
+- ✅ Aligns with common CLI conventions (curl uses similar ranges; git uses 128 for fatal).
+- ✅ Small, stable set — adding a 5th code is future-safe without breaking existing consumers.
+- ⚠️ Existing scripts that check `!= 0` as "any failure" are unaffected; only scripts that switch on specific codes benefit.
+
 ### ADR-014: Versioning strategy — Release Please with conventional commits
 **Date**: 2026-05-17
 **Status**: Accepted
