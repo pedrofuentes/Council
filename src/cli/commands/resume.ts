@@ -36,7 +36,8 @@ import { runExtractMemoryHook } from "../extract-memory-hook.js";
 import { RENDERER_FORMATS, type RendererFormat } from "../renderers/select.js";
 import { resolveStrategy, STRATEGY_NAMES } from "../strategy-resolver.js";
 
-const DEFAULT_MAX_ROUNDS = 4;
+const DEFAULT_MAX_ROUNDS_CONTINUE = 1; // for resume --prompt (follow-up questions)
+const DEFAULT_MAX_ROUNDS_TRANSCRIPT = 4; // fallback (transcript mode doesn't use rounds)
 const DEFAULT_MAX_WORDS = 250;
 
 export interface ResumeCommandDeps {
@@ -71,9 +72,8 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
     .addOption(new Option("--engine <kind>", "Engine for --prompt mode").choices([...ENGINE_KINDS]))
     .option(
       "--max-rounds <n>",
-      "Max rounds for --prompt mode",
+      "Max rounds for --prompt mode (default: 1)",
       (v) => Number.parseInt(v, 10),
-      DEFAULT_MAX_ROUNDS,
     )
     .option(
       "--max-words <n>",
@@ -106,7 +106,11 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
         format: parseFormat(raw.format),
         ...(raw.prompt !== undefined ? { prompt: raw.prompt } : {}),
         ...(engineKind !== undefined ? { engine: engineKind } : {}),
-        maxRounds: Number.isFinite(raw.maxRounds) ? raw.maxRounds : DEFAULT_MAX_ROUNDS,
+        maxRounds: Number.isFinite(raw.maxRounds)
+          ? raw.maxRounds
+          : raw.prompt !== undefined
+            ? DEFAULT_MAX_ROUNDS_CONTINUE
+            : DEFAULT_MAX_ROUNDS_TRANSCRIPT,
         maxWords: Number.isFinite(raw.maxWords) ? raw.maxWords : DEFAULT_MAX_WORDS,
         ...(raw.strategy !== undefined ? { strategy: raw.strategy } : {}),
         heuristicMemory: raw.heuristicMemory === true,

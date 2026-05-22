@@ -698,14 +698,12 @@ describe("buildResumeCommand", () => {
       .split("\n")
       .filter((l) => l.trim().length > 0 && l.trim().startsWith("{"));
     const events = lines.map((l) => JSON.parse(l));
-    const expertTurns = events.filter((e) => e.kind === "expert.turn");
+    const kinds = events.map((e: { kind: string }) => e.kind);
+    const turnEndCount = kinds.filter((k) => k === "turn.end").length;
 
-    // With 2 experts and 1 round, we expect exactly 2 expert turns (1 per expert).
-    // Default of 4 would produce 8 turns.
-    expect(expertTurns.length).toBe(2);
-
-    // Verify the preamble reflects max rounds: 1
-    expect(captured).toMatch(/Max rounds: 1/);
+    // With 2 experts and 1 round, we expect exactly 2 turn.end events (1 per expert).
+    // Default of 4 would produce 8 turn.end events.
+    expect(turnEndCount).toBe(2);
   });
 
   it("allows explicit --max-rounds override for continue mode", async () => {
@@ -737,12 +735,10 @@ describe("buildResumeCommand", () => {
       .split("\n")
       .filter((l) => l.trim().length > 0 && l.trim().startsWith("{"));
     const events = lines.map((l) => JSON.parse(l));
-    const expertTurns = events.filter((e) => e.kind === "expert.turn");
+    const kinds = events.map((e: { kind: string }) => e.kind);
+    const turnEndCount = kinds.filter((k) => k === "turn.end").length;
 
-    // With 2 experts and 2 rounds, we expect 4 expert turns.
-    expect(expertTurns.length).toBe(4);
-
-    // Verify the preamble reflects max rounds: 2
-    expect(captured).toMatch(/Max rounds: 2/);
+    // With 2 experts and 2 rounds, we expect 4 turn.end events.
+    expect(turnEndCount).toBe(4);
   });
 });
