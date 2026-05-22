@@ -11,7 +11,7 @@
  */
 import { Chalk, type ChalkInstance } from "chalk";
 
-import type { DebateEvent, PanelMemberSnapshot } from "../../core/types.js";
+import type { DebateEvent, DebatePhase, PanelMemberSnapshot } from "../../core/types.js";
 
 import { friendlyReason } from "./friendly-reasons.js";
 import { assignExpertColor, formatExpertPrefix } from "./ink/colors.js";
@@ -41,6 +41,8 @@ export class PlainRenderer implements Renderer {
   readonly #humanSlugs = new Set<string>();
   /** Track expert → 0-based index for color and prefix assignment. */
   readonly #expertIndex = new Map<string, number>();
+  /** Current debate phase (for synthesis styling). */
+  #currentPhase: DebatePhase | undefined = undefined;
 
   constructor(sink: Sink, options: PlainRendererOptions = {}) {
     this.#sink = sink;
@@ -56,15 +58,24 @@ export class PlainRenderer implements Renderer {
           this.renderPanelAssembled(evt.experts, sym.panel, sym.bullet);
           break;
         case "round.start":
-          this.write(`\n${this.bold(`${sym.roundRule.repeat(3)} Round ${evt.round + 1} ${sym.roundRule.repeat(3)}`)}\n`);
+          this.#currentPhase = evt.phase;
+          this.write(
+            `\n${this.bold(`${sym.roundRule.repeat(3)} Round ${evt.round + 1} ${sym.roundRule.repeat(3)}`)}\n`,
+          );
           break;
         case "turn.start": {
           const name = this.#displayNames.get(evt.expertSlug) ?? evt.expertSlug;
           const isHuman = evt.speakerKind === "human" || this.#humanSlugs.has(evt.expertSlug);
+          const isSynthesis = this.#currentPhase === "synthesis";
           const idx = this.#expertIndex.get(evt.expertSlug) ?? 0;
           const prefix = formatExpertPrefix(idx, name);
-          const label = isHuman ? `[You] ${prefix}` : prefix;
-          this.write(`\n${this.colorForExpert(evt.expertSlug)(`[${label}]`)}\n`);
+          if (isSynthesis) {
+            const synthPrefix = `${sym.synthesis} [Synthesis] ${prefix}`;
+            this.write(`\n${this.yellow(synthPrefix)}\n`);
+          } else {
+            const label = isHuman ? `[You] ${prefix}` : prefix;
+            this.write(`\n${this.colorForExpert(evt.expertSlug)(`[${label}]`)}\n`);
+          }
           break;
         }
         case "turn.delta":
@@ -73,10 +84,11 @@ export class PlainRenderer implements Renderer {
         case "turn.end":
           this.write("\n");
           break;
-        case "round.end": {
-          const width = Math.min(process.stdout.columns ?? 80, 100);
-          this.write(`\n${this.dim(sym.separator.repeat(width))}\n`);
-        }
+        case "round.end":
+          {
+            const width = Math.min(process.stdout.columns ?? 80, 100);
+            this.write(`\n${this.dim(sym.separator.repeat(width))}\n`);
+          }
           break;
         case "cost.update":
           this.write(
@@ -158,5 +170,8 @@ export class PlainRenderer implements Renderer {
   }
   private red(text: string): string {
     return this.#chalk.red(text);
+  }
+  private yellow(text: string): string {
+    return this.#chalk.yellow(text);
   }
 }

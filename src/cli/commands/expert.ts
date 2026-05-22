@@ -357,7 +357,11 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
   cmd
     .description("Show full detail for a single expert")
     .argument("<slug>", "Expert slug to inspect")
-    .action(async (slug: string) => {
+    .option("--format <kind>", "Output format (plain or json)", "plain")
+    .action(async (slug: string, opts: { format?: string }) => {
+      if (opts.format !== "plain" && opts.format !== "json") {
+        throw new CliUserError(`Unknown format "${opts.format}" — use "plain" or "json"`);
+      }
       await withExpertLibrary(async (library, _config, dataHome) => {
         const expert = await library.get(slug);
         if (!expert) {
@@ -368,6 +372,26 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
         }
         const panels = await library.panelsFor(slug);
         const yamlPath = path.join(dataHome, "experts", `${slug}.yaml`);
+
+        if (opts.format === "json") {
+          const json = {
+            slug: expert.slug,
+            displayName: expert.displayName,
+            role: expert.role,
+            kind: expert.kind,
+            ...(expert.model ? { model: expert.model } : {}),
+            file: displayPath(yamlPath),
+            panels,
+            expertise: expert.expertise,
+            epistemicStance: expert.epistemicStance,
+            ...(expert.personality ? { personality: expert.personality } : {}),
+            ...(expert.kind === "persona" && expert.personaDescription
+              ? { personaDescription: expert.personaDescription }
+              : {}),
+          };
+          write(JSON.stringify(json, null, 2) + "\n");
+          return;
+        }
 
         write(`Expert: ${expert.slug}\n`);
         write(`Name:   ${expert.displayName}\n`);
@@ -426,6 +450,27 @@ function buildEditCommand(write: Writer, writeError: Writer): Command {
         const yamlPath = path.join(dataHome, "experts", `${slug}.yaml`);
         const editor = resolveEditor();
 
+        // DX-07: Create backup before editing (reject symlinks / path escape)
+        const backupPath = yamlPath + ".backup";
+        const realYamlPath = await fs.realpath(yamlPath);
+        const expertsDir = await fs.realpath(path.resolve(dataHome, "experts"));
+        const rel = path.relative(expertsDir, realYamlPath);
+        if (rel.startsWith("..") || path.isAbsolute(rel)) {
+          throw new CliUserError("Cannot edit expert file outside managed directory");
+        }
+        // Reject pre-existing backup symlinks to prevent write redirection
+        try {
+          const bstat = await fs.lstat(backupPath);
+          if (bstat.isSymbolicLink()) {
+            throw new CliUserError("Backup path is a symlink — remove it before editing");
+          }
+        } catch (e: unknown) {
+          if (e instanceof CliUserError) throw e;
+          const code = (e as NodeJS.ErrnoException).code;
+          if (code !== "ENOENT") throw e;
+        }
+        await fs.copyFile(realYamlPath, backupPath);
+
         await runEditor(editor, yamlPath);
 
         // Re-read and validate the edited file. We do this directly rather
@@ -440,6 +485,7 @@ function buildEditCommand(write: Writer, writeError: Writer): Command {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           writeError(`Validation failed after edit: ${message}\n`);
+          writeError(`Backup saved at: ${backupPath}\n`);
           throw err;
         }
 

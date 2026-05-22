@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`--format json` for inspect commands** (IA-05) — `council expert inspect <slug> --format json` and `council panel inspect <name> --format json` now emit structured JSON output for automation/scripting.
+- **Debate metadata in conclude output** (IA-10) — `council conclude` now includes `debateId` and `startedAt` in both plain and JSON output.
+- **Synthesis turn styling** (IA-06) — synthesis-phase turns in PlainRenderer now display with yellow color and a 🎯/[Synthesis] prefix for visual distinction.
 - **`council templates inspect <name>`** (CLI-12) — shows template detail: description, expert slugs, debate mode, and max rounds.
 - **`council resume --latest`** (DX-12) — resumes the most recently active panel session (by latest debate activity).
 - **`council resume <prefix>`** (DX-12) — prefix matching for panel names. Auto-selects when unique; lists matches on stderr when ambiguous.
@@ -23,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Conclude output order** (IA-08) — recommendation and confidence now appear before consensus/tensions/matrix in plain text output.
+- **Default panel selection** (DX-14) — `council conclude` without explicit panel now selects the panel with the most recent debate (previously picked alphabetically or by creation order).
+- **Edit backup safety** (DX-07) — `council expert edit` and `council panel edit` now create a `.yaml.backup` before launching the editor; path-containment is verified via `realpath()` + `path.relative()`.
 - **Unified 8-color expert palette** (TUI-01, TUI-13) — the expert color palette is now a single source of truth in `src/cli/renderers/ink/colors.ts`, shared by Ink, Chat, and Plain renderers. The palette uses 8 colors: `cyan`, `yellow`, `magenta`, `green`, `blue`, `cyanBright`, `magentaBright`, `yellowBright`. Red has been removed from the expert palette to avoid visual collision with error messages (which remain red).
 - **Per-expert colors in PlainRenderer** (TUI-12) — the Plain renderer now assigns distinct colors to each expert (previously all experts used uniform cyan).
 
