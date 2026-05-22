@@ -91,6 +91,15 @@ export class TurnRepository {
     return rows.map(toDomain);
   }
 
+  async countByDebateId(debateId: string): Promise<number> {
+    const row = await this.db
+      .selectFrom("turns")
+      .select((eb) => eb.fn.countAll<number>().as("count"))
+      .where("debate_id", "=", debateId)
+      .executeTakeFirstOrThrow();
+    return Number(row.count);
+  }
+
   /**
    * Full-text search across all turn content via the FTS5 mirror table.
    * `query` is interpreted by FTS5 (tokens implicitly AND-ed; quotes for phrases).

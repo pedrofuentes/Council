@@ -371,7 +371,7 @@ fs.writeFileSync(file, body, "utf-8");`,
       "Force-delete test panel",
     ]);
 
-    const deleted = await runExpertCommand(["delete", "cto", "--force"]);
+    const deleted = await runExpertCommand(["delete", "cto", "--force", "--yes"]);
     expect(deleted.stdout).toMatch(/deleted/i);
     expect(await readExpertLibraryRow(ctx, "cto")).toBeUndefined();
     expect(await readPanelMembers(ctx, "force-review")).toEqual([]);

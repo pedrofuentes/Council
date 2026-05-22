@@ -2,7 +2,7 @@
  * `council conclude [panel] --engine <kind> [--format json|plain]`
  * (ROADMAP §2.7)
  *
- * Reads the latest debate transcript for a panel and runs a single
+ * Reads the selected debate transcript for a panel and runs a single
  * synthesis prompt through the engine to produce a structured decision
  * framework.
  *
@@ -15,7 +15,7 @@
  * Flow:
  *   1. Resolve the target panel (positional arg, or default to most
  *      recent in the local DB).
- *   2. `loadTranscript()` to read the panel + experts + latest debate
+ *   2. `loadTranscript()` to read the panel + experts + selected debate
  *      + turns.
  *   3. Build a synthesis prompt that lists the topic and every expert
  *      turn, then ask the engine for JSON matching the
@@ -136,7 +136,7 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
   const cmd = new Command("conclude");
   cmd
     .description(
-      "Synthesize the latest debate of a panel into a structured decision framework. " +
+      "Synthesize a panel's most substantive debate into a structured decision framework. " +
         "For transcript-based ADR export, use `council export --format adr` instead.",
     )
     .argument("[panel]", "Panel name to conclude (defaults to the most recently created panel)")
@@ -186,7 +186,7 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
 
         if (doc.turns.length === 0) {
           throw new Error(
-            `Panel '${panelName}' has no turns in its latest debate — nothing to conclude. ` +
+            `Panel '${panelName}' has no turns in its selected debate — nothing to conclude. ` +
               `Run \`council convene "${doc.panel.topic ?? "<topic>"}" --template ${panelName} --engine copilot\` or ` +
               `\`council resume ${panelName} --prompt "<prompt>" --engine copilot\` first.`,
           );
@@ -195,7 +195,7 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
         const warnings: string[] = [];
         if (doc.latestDebate.status !== "completed") {
           warnings.push(
-            `latest debate has status '${doc.latestDebate.status}' (not 'completed'); conclusions may be partial`,
+            `selected debate has status '${doc.latestDebate.status}' (not 'completed'); conclusions may be partial`,
           );
         }
 
