@@ -17,11 +17,11 @@ describe("doctor diagnostics E2E", () => {
     await cleanupE2EContext(ctx);
   });
 
-  it("doctor basic checks pass", async () => {
+  it("doctor basic checks pass with --offline", async () => {
     const output = captureOutput();
     const cmd = buildDoctorCommand({ write: output.write });
 
-    await cmd.parseAsync(["node", "council-doctor"]);
+    await cmd.parseAsync(["node", "council-doctor", "--offline"]);
 
     const stdout = output.stdout();
     expect(stdout).toContain("Council Doctor");
@@ -58,9 +58,12 @@ describe("doctor diagnostics E2E", () => {
     expect(await homeExists()).toBe(false);
 
     const output = captureOutput();
-    const cmd = buildDoctorCommand({ write: output.write });
+    const cmd = buildDoctorCommand({
+      write: output.write,
+      onlineProbe: async () => ({ ok: true, detail: "OK" }),
+    });
 
-    await cmd.parseAsync(["node", "council-doctor"]);
+    await cmd.parseAsync(["node", "council-doctor", "--offline"]);
 
     const stdout = output.stdout();
     expect(stdout).toContain("Council home");
@@ -70,9 +73,12 @@ describe("doctor diagnostics E2E", () => {
 
   it("doctor --models lists known models", async () => {
     const output = captureOutput();
-    const cmd = buildDoctorCommand({ write: output.write });
+    const cmd = buildDoctorCommand({
+      write: output.write,
+      onlineProbe: async () => ({ ok: true, detail: "OK" }),
+    });
 
-    await cmd.parseAsync(["node", "council-doctor", "--models"]);
+    await cmd.parseAsync(["node", "council-doctor", "--models", "--offline"]);
 
     const stdout = output.stdout();
     expect(stdout).toContain("Known models:");
@@ -86,14 +92,14 @@ describe("doctor diagnostics E2E", () => {
     expect(stdout).toContain("Availability depends on your Copilot tier");
   });
 
-  it("doctor --online with mocked probe", async () => {
+  it("doctor runs online check by default with mocked probe", async () => {
     const output = captureOutput();
     const cmd = buildDoctorCommand({
       write: output.write,
       onlineProbe: async () => ({ ok: true, detail: "OK" }),
     });
 
-    await cmd.parseAsync(["node", "council-doctor", "--online"]);
+    await cmd.parseAsync(["node", "council-doctor"]);
 
     const stdout = output.stdout();
     expect(stdout).toContain("Default model access");
@@ -101,7 +107,7 @@ describe("doctor diagnostics E2E", () => {
     expect(stdout).toContain("All checks passed");
   });
 
-  it("doctor --online with failing probe", async () => {
+  it("doctor with failing probe by default", async () => {
     const output = captureOutput();
     const cmd = buildDoctorCommand({
       write: output.write,
@@ -109,7 +115,7 @@ describe("doctor diagnostics E2E", () => {
     });
 
     try {
-      await cmd.parseAsync(["node", "council-doctor", "--online"]);
+      await cmd.parseAsync(["node", "council-doctor"]);
       expect.fail("Expected doctor to throw when checks fail");
     } catch (err: unknown) {
       expect(err).toBeInstanceOf(Error);
@@ -120,5 +126,22 @@ describe("doctor diagnostics E2E", () => {
       expect(stdout).toContain("Auth failed");
       expect(stdout).toContain("Some checks failed");
     }
+  });
+
+  it("doctor --offline skips online check", async () => {
+    const output = captureOutput();
+    const cmd = buildDoctorCommand({
+      write: output.write,
+      onlineProbe: async () => {
+        throw new Error("Should not be called");
+      },
+    });
+
+    await cmd.parseAsync(["node", "council-doctor", "--offline"]);
+
+    const stdout = output.stdout();
+    expect(stdout).toContain("Council Doctor");
+    expect(stdout).not.toContain("Default model access");
+    expect(stdout).toContain("All checks passed");
   });
 });

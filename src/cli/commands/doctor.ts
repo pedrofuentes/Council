@@ -31,6 +31,7 @@ interface CheckResult {
 
 interface DoctorOptions {
   readonly online?: boolean;
+  readonly offline?: boolean;
   readonly models?: boolean;
 }
 
@@ -182,7 +183,7 @@ function writeKnownModels(write: Writer, models: readonly string[]): void {
   }
   write("\n");
   write(
-    "Note: Availability depends on your Copilot tier. Use --online to verify your default model is accessible.\n",
+    "Note: Availability depends on your Copilot tier. Use 'council doctor' to verify your default model is accessible.\n",
   );
 }
 
@@ -203,7 +204,8 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
   const cmd = new Command("doctor");
   cmd
     .description("Diagnose Council setup (Node, libsql, Copilot SDK, disk)")
-    .option("--online", "Probe Copilot for default model availability (requires auth)")
+    .option("--online", "No-op; online check now runs by default (backwards compatibility)")
+    .option("--offline", "Skip online model probe")
     .option("--models", "List known Copilot model identifiers")
     .action(async (options: DoctorOptions) => {
       const checks: (() => Promise<CheckResult>)[] = [
@@ -214,7 +216,8 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
         checkDiskSpace,
       ];
 
-      if (options.online) {
+      // Run online check by default unless --offline is specified
+      if (!options.offline) {
         checks.push(() => checkDefaultModelAccess(onlineProbe));
       }
 

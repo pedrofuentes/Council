@@ -48,7 +48,20 @@ describe("buildDoctorCommand", () => {
     await fs.rm(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
-  it("doctor --online with successful probe shows session creation success", async () => {
+  it("doctor runs online check by default", async () => {
+    const onlineProbe = vi.fn(async (model: string) => ({
+      ok: true,
+      detail: `probe ok for ${model}`,
+    }));
+
+    const output = await runDoctor([], { onlineProbe });
+
+    expect(onlineProbe).toHaveBeenCalledTimes(1);
+    expect(onlineProbe).toHaveBeenCalledWith("claude-sonnet-4.5");
+    expect(output).toContain("Default model (claude-sonnet-4.5) session created successfully");
+  });
+
+  it("doctor --online still works for backwards compatibility", async () => {
     const onlineProbe = vi.fn(async (model: string) => ({
       ok: true,
       detail: `probe ok for ${model}`,
@@ -61,10 +74,10 @@ describe("buildDoctorCommand", () => {
     expect(output).toContain("Default model (claude-sonnet-4.5) session created successfully");
   });
 
-  it("doctor --online with failed probe shows error", async () => {
+  it("doctor with failed probe shows error by default", async () => {
     const onlineProbe = vi.fn(async () => ({ ok: false, detail: "authentication required" }));
 
-    const output = await runDoctor(["--online"], { onlineProbe });
+    const output = await runDoctor([], { onlineProbe });
 
     expect(onlineProbe).toHaveBeenCalledTimes(1);
     expect(output).toContain("Default model (claude-sonnet-4.5)");
@@ -72,10 +85,10 @@ describe("buildDoctorCommand", () => {
     expect(output).toContain("Try changing defaults.model in");
   });
 
-  it("doctor without --online skips model probe", async () => {
+  it("doctor --offline skips model probe", async () => {
     const onlineProbe = vi.fn(async () => ({ ok: true, detail: "should not run" }));
 
-    const output = await runDoctor([], { onlineProbe });
+    const output = await runDoctor(["--offline"], { onlineProbe });
 
     expect(onlineProbe).not.toHaveBeenCalled();
     expect(output).toContain("Council Doctor");
@@ -83,7 +96,8 @@ describe("buildDoctorCommand", () => {
   });
 
   it("doctor --models lists known models", async () => {
-    const output = await runDoctor(["--models"]);
+    const onlineProbe = vi.fn(async () => ({ ok: true, detail: "OK" }));
+    const output = await runDoctor(["--models", "--offline"], { onlineProbe });
 
     expect(output).toContain("Known models:");
     expect(output).toContain(
@@ -93,13 +107,14 @@ describe("buildDoctorCommand", () => {
       "OpenAI   : gpt-4.1, gpt-5-mini, gpt-5.2, gpt-5.4, gpt-5.5, gpt-5.4-mini",
     );
     expect(output).not.toContain("Google");
-    expect(output).toContain("Use --online to verify your default model is accessible");
+    expect(output).toContain("Availability depends on your Copilot tier");
+    expect(onlineProbe).not.toHaveBeenCalled();
   });
 
-  it("doctor help describes the online probe as a default-model check", () => {
+  it("doctor help describes the offline flag", () => {
     const help = buildDoctorCommandWithDeps({}).helpInformation();
 
-    expect(help).toContain("Probe Copilot for default model availability (requires auth)");
+    expect(help).toContain("Skip online model probe");
   });
 
   it("doctor shows Configuration section with defaults", async () => {
