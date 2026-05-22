@@ -49,6 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`council resume <prefix>`** (DX-12) — prefix matching for panel names. Auto-selects when unique; lists matches on stderr when ambiguous.
 - **Expert index prefixes for accessibility** (A11Y-01) — all renderers (Ink, Chat, Plain) now prefix expert names with a 1-based index (`[1] Alice`, `[2] Bob`), providing a redundant cue for color-blind users who previously had to rely solely on color to distinguish speakers.
 
+### Fixed
+
+- **`council chat` now accepts convene-generated panel names with timestamps** (T-04) — panel names created by `council convene` include ISO timestamps (e.g., `code-review-2026-05-22T05:30:01`) which previously failed slug validation. The chat command now looks up panel names in the database before applying file-based slug validation, allowing users to group-chat with convene-generated panels.
+
 ### Changed
 
 - **Copilot model discovery is now dynamic with cached fallback refresh** (T-02) — `CopilotEngine.listModels()` now queries the Copilot SDK once per engine instance and caches successful results for reuse. `KNOWN_MODELS` and `council doctor --models` were refreshed to the current Copilot fallback set (`claude-haiku-4.5`, `claude-sonnet-4.5`, `claude-sonnet-4.6`, `claude-opus-4.5`, `claude-opus-4.6`, `claude-opus-4.7`, `gpt-4.1`, `gpt-5-mini`, `gpt-5.2`, `gpt-5.4`, `gpt-5.5`, `gpt-5.4-mini`).

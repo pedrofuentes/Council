@@ -4464,6 +4464,73 @@ describe("missing-YAML fallback (PRD §F4)", () => {
 });
 
 
+describe("panel chat with convene-generated timestamp names (T-04)", () => {
+  let env: TestEnv;
+  beforeEach(async () => {
+    env = await makeEnv();
+  });
+  afterEach(async () => {
+    await teardown(env);
+  });
+
+  async function seedTwoExperts(): Promise<void> {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+  }
+
+  it("accepts panel names with ISO timestamps (uppercase T and colons) from database", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "code-review", ["panel-a", "panel-b"]);
+
+    // Simulate what convene does: create a panel row in the DB with a
+    // timestamped name that violates the slug regex (uppercase T, colons).
+    const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
+    const setupDb = await createDatabase(path.join(env.home, "council.db"));
+    try {
+      const panelRepo = new PanelRepository(setupDb);
+      await panelRepo.create({
+        name: "code-review-2026-05-22T05:30:01",
+        topic: "Review security patches",
+        copilotHome: path.join(env.home, "copilot"),
+        configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+      });
+    } finally {
+      await setupDb.destroy();
+    }
+
+    // Now try to chat with this panel using its timestamped name.
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["hello panel", "/quit"]),
+    });
+    await cmd.parseAsync([
+      "node",
+      "council-chat",
+      "code-review-2026-05-22T05:30:01",
+      "--engine",
+      "mock",
+    ]);
+
+    // Chat should start successfully without throwing validation errors.
+    expect(out).toMatch(/Conversation saved/i);
+
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "code-review-2026-05-22T05:30:01");
+      expect(session).toBeDefined();
+      const turns = await repo.getTurns(session?.id ?? "");
+      // User turn + both experts replied
+      const userTurns = turns.filter((t) => t.role === "user");
+      const expertTurns = turns.filter((t) => t.role === "expert");
+      expect(userTurns.length).toBe(1);
+      expect(userTurns[0]?.content).toBe("hello panel");
+      expect(expertTurns.length).toBe(2);
+    });
+  });
+});
+
 describe("rewriteRotateError (#538) — CAS-miss user guidance", () => {
   it("passes through non-rotation errors unchanged (Error)", () => {
     const original = new Error("something else");
