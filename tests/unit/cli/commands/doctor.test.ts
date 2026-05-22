@@ -57,10 +57,8 @@ describe("buildDoctorCommand", () => {
     const output = await runDoctor(["--online"], { onlineProbe });
 
     expect(onlineProbe).toHaveBeenCalledTimes(1);
-    expect(onlineProbe).toHaveBeenCalledWith("claude-sonnet-4-20250514");
-    expect(output).toContain(
-      "Default model (claude-sonnet-4-20250514) session created successfully",
-    );
+    expect(onlineProbe).toHaveBeenCalledWith("claude-sonnet-4.5");
+    expect(output).toContain("Default model (claude-sonnet-4.5) session created successfully");
   });
 
   it("doctor --online with failed probe shows error", async () => {
@@ -69,7 +67,7 @@ describe("buildDoctorCommand", () => {
     const output = await runDoctor(["--online"], { onlineProbe });
 
     expect(onlineProbe).toHaveBeenCalledTimes(1);
-    expect(output).toContain("Default model (claude-sonnet-4-20250514)");
+    expect(output).toContain("Default model (claude-sonnet-4.5)");
     expect(output).toContain("authentication required");
     expect(output).toContain("Try changing defaults.model in");
   });

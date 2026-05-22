@@ -9,8 +9,9 @@
  *
  * RED at this commit: src/core/auto-compose.ts does not exist.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { DEFAULT_MODEL } from "../../../src/config/schema.js";
 import { autoComposePanel } from "../../../src/core/auto-compose.js";
 import type {
   CouncilEngine,
@@ -244,6 +245,28 @@ describe("autoComposePanel", () => {
     expect(engine.addedSpecs[0]?.model).toBe("gpt-test-model");
   });
 
+  it("uses DEFAULT_MODEL when defaultModel is omitted", async () => {
+    const engine = new StubEngine({ response: JSON.stringify(validPanel) });
+    await engine.start();
+    await autoComposePanel("topic", engine);
+    expect(engine.addedSpecs[0]?.model).toBe(DEFAULT_MODEL);
+  });
+
+  it("uses a 120000ms timeout when timeoutMs is omitted", async () => {
+    const timeoutSpy = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockImplementation(() => new AbortController().signal);
+    const engine = new StubEngine({ response: JSON.stringify(validPanel) });
+    await engine.start();
+
+    try {
+      await autoComposePanel("topic", engine);
+      expect(timeoutSpy).toHaveBeenCalledWith(120_000);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
+  });
+
   it("throws a descriptive error when the engine emits an error event mid-stream", async () => {
     const engine = new StubEngine({
       response: "",
@@ -251,8 +274,39 @@ describe("autoComposePanel", () => {
     });
     await engine.start();
     await expect(autoComposePanel("topic", engine)).rejects.toThrow(
-      /Auto-compose engine error \(INTERNAL\): engine broke/,
+      /Auto-compose engine error \(INTERNAL\).*engine broke/,
     );
+  });
+
+  it("sanitizes unsafe chars in model names and engine error messages", async () => {
+    const engine = new StubEngine({
+      response: "",
+      errorEvent: {
+        code: "MODEL_UNAVAILABLE",
+        message: "bad\r\n\t\u202E\u200B\u2028error",
+      },
+    });
+    await engine.start();
+
+    let thrown: unknown;
+    try {
+      await autoComposePanel("topic", engine, {
+        defaultModel: "claude\r\n\t\u202E\u200B\u2028sonnet-4.5",
+      });
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const message = (thrown as Error).message;
+    expect(message).toContain("claudesonnet-4.5");
+    expect(message).toContain("baderror");
+    expect(message).not.toContain("\r");
+    expect(message).not.toContain("\n");
+    expect(message).not.toContain("\t");
+    expect(message).not.toContain("\u202E");
+    expect(message).not.toContain("\u200B");
+    expect(message).not.toContain("\u2028");
   });
 
   it("cleans up the composer expert even when the engine errors", async () => {
