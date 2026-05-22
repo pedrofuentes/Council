@@ -1,3 +1,6 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Command } from "commander";
 
@@ -117,14 +120,16 @@ describe("CLI error paths E2E", () => {
 
   describe("convene", () => {
     it("resolves engine from config when --engine omitted (no longer required)", async () => {
+      await fs.writeFile(path.join(ctx.testHome, "config.yaml"), "defaults:\n  engine: mock\n", "utf-8");
       const output = captureOutput();
       const command = prepareCommand(
-        buildConveneCommand({ write: output.write, writeError: output.writeError }),
+        buildConveneCommand({
+          engineFactory: makeMockEngineFactory(),
+          write: output.write,
+          writeError: output.writeError,
+        }),
       );
 
-      // With engine default feature, omitting --engine no longer throws.
-      // It resolves to config default. The command may fail for other reasons
-      // (e.g. template not found) but NOT because --engine is missing.
       let thrown = "";
       try {
         await command.parseAsync(["node", "council-convene", "Topic", "--template", "code-review"]);
@@ -132,6 +137,7 @@ describe("CLI error paths E2E", () => {
         thrown = err instanceof Error ? err.message : String(err);
       }
       expect(thrown.toLowerCase()).not.toMatch(/--engine.*required|required option.*engine/);
+      expect(output.stderr()).toContain("[MOCK ENGINE]");
     });
 
     it("rejects an unknown template", async () => {
