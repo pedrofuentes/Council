@@ -667,4 +667,82 @@ describe("buildResumeCommand", () => {
     if (!synthSpec) return; // unreachable after expect above; satisfies lint
     expect(synthSpec.model).toBe("resume-test-model");
   });
+
+  // ── T-07: --max-rounds default for continue mode ───────────────────
+
+  it("defaults to maxRounds=1 for continue mode (--prompt) when --max-rounds not specified", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    let captured = "";
+    const cmd = buildResumeCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (s) => {
+        captured += s;
+      },
+    });
+
+    // Call resume --prompt WITHOUT --max-rounds
+    await cmd.parseAsync([
+      "node",
+      "council-resume",
+      seed.panelName,
+      "--prompt",
+      "Quick follow-up question",
+      "--engine",
+      "mock",
+      "--format",
+      "json",
+    ]);
+
+    // Parse NDJSON to count rounds
+    const lines = captured
+      .split("\n")
+      .filter((l) => l.trim().length > 0 && l.trim().startsWith("{"));
+    const events = lines.map((l) => JSON.parse(l));
+    const expertTurns = events.filter((e) => e.kind === "expert.turn");
+
+    // With 2 experts and 1 round, we expect exactly 2 expert turns (1 per expert).
+    // Default of 4 would produce 8 turns.
+    expect(expertTurns.length).toBe(2);
+
+    // Verify the preamble reflects max rounds: 1
+    expect(captured).toMatch(/Max rounds: 1/);
+  });
+
+  it("allows explicit --max-rounds override for continue mode", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    let captured = "";
+    const cmd = buildResumeCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (s) => {
+        captured += s;
+      },
+    });
+
+    // Explicitly request 2 rounds
+    await cmd.parseAsync([
+      "node",
+      "council-resume",
+      seed.panelName,
+      "--prompt",
+      "Another question",
+      "--engine",
+      "mock",
+      "--format",
+      "json",
+      "--max-rounds",
+      "2",
+    ]);
+
+    const lines = captured
+      .split("\n")
+      .filter((l) => l.trim().length > 0 && l.trim().startsWith("{"));
+    const events = lines.map((l) => JSON.parse(l));
+    const expertTurns = events.filter((e) => e.kind === "expert.turn");
+
+    // With 2 experts and 2 rounds, we expect 4 expert turns.
+    expect(expertTurns.length).toBe(4);
+
+    // Verify the preamble reflects max rounds: 2
+    expect(captured).toMatch(/Max rounds: 2/);
+  });
 });
