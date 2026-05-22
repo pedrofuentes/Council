@@ -76,9 +76,13 @@ describe("doctor diagnostics E2E", () => {
 
     const stdout = output.stdout();
     expect(stdout).toContain("Known models:");
-    expect(stdout).toContain("claude-");
-    expect(stdout).toContain("gpt-");
-    expect(stdout).toContain("gemini-");
+    expect(stdout).toContain(
+      "Anthropic: claude-haiku-4.5, claude-sonnet-4.5, claude-sonnet-4.6, claude-opus-4.5, claude-opus-4.6, claude-opus-4.7",
+    );
+    expect(stdout).toContain(
+      "OpenAI   : gpt-4.1, gpt-5-mini, gpt-5.2, gpt-5.4, gpt-5.5, gpt-5.4-mini",
+    );
+    expect(stdout).not.toContain("Google");
     expect(stdout).toContain("Availability depends on your Copilot tier");
   });
 
