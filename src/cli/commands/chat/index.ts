@@ -155,21 +155,48 @@ async function runChat(
     }
 
     let panel: PanelDefinition | undefined;
-    try {
-      panel = await loadPanel(target, dataHome);
-    } catch (err: unknown) {
-      if (err instanceof PanelNotFoundError) {
-        const available = (await library.list()).map((e) => e.slug);
-        const suggestions = suggestMatch(target, available);
-        const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
-        const list =
-          available.length > 0
-            ? available.join(", ")
-            : "(none — create one with `council expert create`)";
-        writeError(`"${target}" not found as expert or panel.${hint} Available experts: ${list}\n`);
-        throw new CliUserError(`"${target}" not found`);
+
+    // Check if target exists as a convene-generated panel in the DB first.
+    // Convene-generated panel names include timestamps (e.g., "code-review-2026-05-22T05:30:01")
+    // which violate the slug regex, so we look them up in the DB before attempting file-based lookup.
+    const { PanelRepository } = await import("../../../memory/repositories/panels.js");
+    const panelRepo = new PanelRepository(db);
+    const dbPanel = await panelRepo.findByName(target);
+
+    if (dbPanel) {
+      // Found a panel in the DB. Extract its template name and load that panel definition.
+      try {
+        const configParsed = JSON.parse(dbPanel.configJson) as { template?: string };
+        const templateName = configParsed.template;
+        if (!templateName) {
+          throw new Error(`Panel "${target}" has no template name in configJson`);
+        }
+        panel = await loadPanel(templateName, dataHome);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        writeError(
+          `!! Warning: panel "${target}" exists in database but failed to load its template: ${msg}\n`,
+        );
+        throw new CliUserError(`Failed to load panel template for "${target}"`);
       }
-      throw err;
+    } else {
+      // No panel in the DB, try loading from YAML files (user panels or built-in templates).
+      try {
+        panel = await loadPanel(target, dataHome);
+      } catch (err: unknown) {
+        if (err instanceof PanelNotFoundError) {
+          const available = (await library.list()).map((e) => e.slug);
+          const suggestions = suggestMatch(target, available);
+          const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
+          const list =
+            available.length > 0
+              ? available.join(", ")
+              : "(none — create one with `council expert create`)";
+          writeError(`"${target}" not found as expert or panel.${hint} Available experts: ${list}\n`);
+          throw new CliUserError(`"${target}" not found`);
+        }
+        throw err;
+      }
     }
 
     await runPanelChat({
