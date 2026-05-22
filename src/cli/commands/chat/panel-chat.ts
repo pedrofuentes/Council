@@ -5,7 +5,8 @@ import * as path from "node:path";
 
 import {
   PANEL_CHAT_TASK_DESCRIPTION,
-  EXIT_TOKENS,
+  isExitCommand,
+  getStartupHelpText,
   buildExpertSpec,
   buildPanelTurnPrompt,
   appendReferenceDocuments,
@@ -194,6 +195,9 @@ export async function runPanelChat(opts: PanelChatOptions): Promise<void> {
       throw new Error("internal: panel chat session resolution failed");
     }
 
+    // Show startup help text
+    renderer.showSystem(getStartupHelpText(), "info");
+
     await runPanelInteractiveLoop({
       engine,
       members,
@@ -305,7 +309,7 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
       }
       const trimmed = line.trim();
       if (trimmed.length === 0) continue;
-      if (EXIT_TOKENS.has(trimmed.toLowerCase())) {
+      if (isExitCommand(trimmed)) {
         renderer.showSystem("Conversation saved.", "info");
         return;
       }

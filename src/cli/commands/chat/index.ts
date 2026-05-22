@@ -43,6 +43,8 @@ export { safeGetContext } from "./shared.js";
 export { safeMaybeSummarize } from "./shared.js";
 export { createSummarizationGate } from "./shared.js";
 export { rewriteRotateError } from "./shared.js";
+export { isExitCommand } from "./shared.js";
+export { getStartupHelpText } from "./shared.js";
 export { SAFE_MAYBE_SUMMARIZE_TIMEOUT_MS } from "./shared.js";
 export { LONG_CONVERSATION_CHECK_DISABLED } from "./shared.js";
 export type {

@@ -3,7 +3,8 @@
  */
 import {
   CHAT_TASK_DESCRIPTION,
-  EXIT_TOKENS,
+  isExitCommand,
+  getStartupHelpText,
   buildChatTurnPrompt,
   appendReferenceDocuments,
   safeRetrieveSnippets,
@@ -139,6 +140,9 @@ export async function runExpertChat(opts: ExpertChatOptions): Promise<void> {
       throw new Error("internal: chat session resolution failed");
     }
 
+    // Show startup help text
+    renderer.showSystem(getStartupHelpText(), "info");
+
     await runInteractiveLoop({
       engine,
       expertSpec,
@@ -244,7 +248,7 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
       if (trimmed.length === 0) {
         continue;
       }
-      if (EXIT_TOKENS.has(trimmed.toLowerCase())) {
+      if (isExitCommand(trimmed)) {
         renderer.showSystem("Conversation saved.", "info");
         return;
       }
