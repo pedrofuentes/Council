@@ -16,7 +16,7 @@ import chalk, { type ChalkInstance } from "chalk";
 import { stripControlChars } from "../strip-control-chars.js";
 
 import type { ExpertColor } from "./ink/colors.js";
-import { EXPERT_COLOR_PALETTE, formatExpertPrefix } from "./ink/colors.js";
+import { assignExpertColor, EXPERT_COLOR_PALETTE, formatExpertPrefix } from "./ink/colors.js";
 import { getSymbols } from "./symbols.js";
 import type { Sink } from "./types.js";
 
@@ -34,6 +34,8 @@ export interface ChatRendererOptions {
   readonly sink: Sink;
   /** Map of expert slugs to their display names. Iteration order = color order. */
   readonly experts: ReadonlyMap<string, string>;
+  /** Slugs that are human participants — receive reserved HUMAN_COLOR. */
+  readonly humanSlugs?: ReadonlySet<string>;
 }
 
 export interface ChatRenderer {
@@ -72,7 +74,7 @@ const PROMPT_PREFIX = "You > ";
  * Colors are assigned by insertion order in the provided expert map.
  */
 export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
-  const { sink, experts } = options;
+  const { sink, experts, humanSlugs } = options;
 
   // Pre-compute slug → color and slug → index from registration order so
   // color assignment is deterministic across multiple renderer instances
@@ -81,7 +83,9 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
   const indexBySlug = new Map<string, number>();
   let index = 0;
   for (const slug of experts.keys()) {
-    const color = EXPERT_COLORS[index % EXPERT_COLORS.length];
+    const isHuman = humanSlugs?.has(slug) ?? false;
+    const colorName = assignExpertColor(index, { isHuman });
+    const color = chalk[colorName as keyof typeof chalk] as ChalkInstance;
     if (color) colorBySlug.set(slug, color);
     indexBySlug.set(slug, index);
     index += 1;

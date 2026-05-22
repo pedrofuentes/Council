@@ -154,7 +154,8 @@ export class PlainRenderer implements Renderer {
 
   private colorForExpert(slug: string): (text: string) => string {
     const idx = this.#expertIndex.get(slug) ?? 0;
-    const colorName = assignExpertColor(idx);
+    const isHuman = this.#humanSlugs.has(slug);
+    const colorName = assignExpertColor(idx, { isHuman });
     const fn = this.#chalk[colorName];
     return (text: string) => fn(text);
   }

@@ -29,6 +29,23 @@ interface ErrorLike {
 }
 
 /**
+ * Wrap a URL with OSC-8 escape sequences for clickable terminal hyperlinks.
+ * Degrades gracefully to plain text on non-TTY or dumb terminals.
+ *
+ * @param url - The URL to link to
+ * @param text - Display text (defaults to the URL itself)
+ * @param stream - The output stream to check for TTY (defaults to stderr for error context)
+ */
+export function wrapLink(
+  url: string,
+  text?: string,
+  stream: { isTTY?: boolean } = process.stderr,
+): string {
+  if (!stream.isTTY || process.env.TERM === "dumb") return text ?? url;
+  return `\x1b]8;;${url}\x1b\\${text ?? url}\x1b]8;;\x1b\\`;
+}
+
+/**
  * Render a user-facing CLI error for an engine failure.
  *
  * Always returns a multi-line string ending with a newline-free
@@ -121,7 +138,7 @@ function hintForCode(
     case "INTERNAL":
       return (
         "Internal Council error — this is a bug. " +
-        "Please file an issue at https://github.com/pedrofuentes/Council/issues with the message below."
+        `Please file an issue at ${wrapLink("https://github.com/pedrofuentes/Council/issues")} with the message below.`
       );
     case "PROVIDER_ERROR":
       return (

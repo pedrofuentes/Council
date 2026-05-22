@@ -22,10 +22,18 @@ export const EXPERT_COLOR_PALETTE = [
   "yellowBright",
 ] as const;
 
-export type ExpertColor = (typeof EXPERT_COLOR_PALETTE)[number];
+export type ExpertColor = (typeof EXPERT_COLOR_PALETTE)[number] | typeof HUMAN_COLOR;
 
-/** Returns a stable palette color for the given expert index. */
-export function assignExpertColor(index: number): ExpertColor {
+/** Reserved color for human participants — always distinct from AI experts. */
+export const HUMAN_COLOR = "whiteBright" as const;
+
+export interface AssignColorOptions {
+  readonly isHuman?: boolean;
+}
+
+/** Returns a stable palette color for the given expert index, or HUMAN_COLOR if isHuman. */
+export function assignExpertColor(index: number, options?: AssignColorOptions): ExpertColor {
+  if (options?.isHuman) return HUMAN_COLOR;
   const i =
     ((index % EXPERT_COLOR_PALETTE.length) + EXPERT_COLOR_PALETTE.length) %
     EXPERT_COLOR_PALETTE.length;

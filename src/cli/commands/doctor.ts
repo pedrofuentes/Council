@@ -11,6 +11,7 @@ import { getCouncilHome, loadConfig } from "../../config/index.js";
 import { pingProviderHealth } from "../../engine/copilot/health.js";
 import { KNOWN_MODELS } from "../../engine/models.js";
 import { getSymbols } from "../renderers/symbols.js";
+import { stripControlChars } from "../strip-control-chars.js";
 
 import { probeCopilotModel } from "./doctor-online-probe.js";
 import { defaultWriter, type Writer } from "./writer.js";
@@ -247,6 +248,18 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
         const sym2 = getSymbols();
         write(`${sym2.warn} Config\n   Could not load configuration\n`);
       }
+
+      // Terminal capability section (A11Y-16)
+      write("\n");
+      const safeEnv = (key: string): string =>
+        stripControlChars(process.env[key] ?? "(unset)").replace(/[\r\n]+/g, " ");
+      write(`${sym.info} Terminal\n`);
+      write(`   TERM: ${safeEnv("TERM")}\n`);
+      write(`   COLORTERM: ${safeEnv("COLORTERM")}\n`);
+      write(`   NO_COLOR: ${safeEnv("NO_COLOR")}\n`);
+      write(`   FORCE_COLOR: ${safeEnv("FORCE_COLOR")}\n`);
+      write(`   TTY: ${process.stdout.isTTY ? "yes" : "no"}\n`);
+      write(`   Columns: ${process.stdout.columns ?? "(unknown)"}\n`);
 
       if (options.models) {
         write("\n");

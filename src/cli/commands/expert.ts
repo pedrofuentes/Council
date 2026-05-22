@@ -38,6 +38,7 @@ import {
 } from "../../memory/repositories/document-repository.js";
 import { ProfileRepository } from "../../memory/repositories/profile-repository.js";
 import { ENGINE_KINDS, type EngineKind, makeEngineFromKind } from "../run-with-engine.js";
+import { stripControlChars } from "../strip-control-chars.js";
 import { suggestMatch } from "../fuzzy-match.js";
 import { isNonInteractive } from "../non-interactive.js";
 
@@ -572,8 +573,15 @@ function buildDeleteCommand(write: Writer, writeError: Writer): Command {
           writeError(msg + "\n");
           throw new CliUserError(msg);
         }
+        if (panels.length > 0 && opts.force) {
+          const safePanels = panels.map((p) => stripControlChars(p));
+          write(
+            `Expert "${stripControlChars(slug)}" is used in ${panels.length} panel${panels.length === 1 ? "" : "s"}: ${safePanels.join(", ")}\n` +
+              "Deleting will remove it from these panels.\n",
+          );
+        }
         await library.delete(slug, { force: opts.force === true });
-        write(`✓ Expert "${slug}" deleted.\n`);
+        write(`✓ Expert "${stripControlChars(slug)}" deleted.\n`);
         write("\x1b[2mRun 'council expert list' to verify.\x1b[0m\n");
       });
     });

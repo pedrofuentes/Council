@@ -26,6 +26,7 @@ export interface SymbolSet {
   readonly complete: string;
   readonly paused: string;
   readonly synthesis: string;
+  readonly human: string;
 }
 
 const UNICODE_SYMBOLS: SymbolSet = Object.freeze({
@@ -43,6 +44,7 @@ const UNICODE_SYMBOLS: SymbolSet = Object.freeze({
   complete: "✓",
   paused: "⏸",
   synthesis: "🎯",
+  human: "👤",
 });
 
 const ASCII_SYMBOLS: SymbolSet = Object.freeze({
@@ -60,6 +62,7 @@ const ASCII_SYMBOLS: SymbolSet = Object.freeze({
   complete: "[DONE]",
   paused: "[~]",
   synthesis: "[Synthesis]",
+  human: "[H]",
 });
 
 /** Detect whether ASCII mode should be used based on environment. */
