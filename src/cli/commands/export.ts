@@ -156,7 +156,7 @@ function renderMarkdown(doc: TranscriptDocument): string {
   if (doc.experts.length > 0) {
     lines.push("## Panel");
     for (const e of doc.experts) {
-      lines.push(`- **${e.displayName}** (\`${e.slug}\`) — ${e.model}`);
+      lines.push(`- **${e.displayName}** (\`${e.slug}\`) - ${e.model}`);
     }
     lines.push("");
   }
