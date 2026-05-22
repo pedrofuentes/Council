@@ -56,6 +56,8 @@ ChatGPT gives you **one perspective**. Council gives you **structured deliberati
 npm install -g @council/cli
 ```
 
+On first run, Council auto-creates a default configuration and offers setup guidance via `council doctor`.
+
 **Requirements:**
 
 - Node.js 20+
@@ -64,52 +66,63 @@ npm install -g @council/cli
 
 ## Quick Start
 
-> **Phases 1–7 complete.** The CLI implements `convene`, `ask`, `resume`, `conclude`, `export`, `sessions`, `templates`, `expert`, `panel`, `chat`, `memory`, and `doctor`. See [ROADMAP.md](./ROADMAP.md) for Phase 8 (Growth & Ecosystem) plans.
+> **Phases 1–7.5 complete.** The CLI implements `convene`, `ask`, `resume`, `conclude`, `export`, `sessions`, `templates`, `expert`, `panel`, `chat`, `memory`, `doctor`, and `config`. See [ROADMAP.md](./ROADMAP.md) for Phase 8 (Growth & Ecosystem) plans.
 
 ```bash
 # Verify your setup
 council doctor
 
+# View or edit your configuration
+council config show                # print effective config values with sources
+council config path                # print config file location
+council config edit                # open in $EDITOR
+
 # Auto-compose a panel from the topic (no --template needed — Council
 # designs an expert panel for you using a meta-prompt)
-council convene "Should we go public?" --engine copilot
+council convene "Should we go public?"
 
 # Run a panel debate against the real Copilot SDK (with an explicit template)
 council convene "Should we rewrite our billing system?" \
-  --template code-review --engine copilot --max-rounds 4
+  --template code-review --max-rounds 4
 
 # Or run offline with the deterministic mock engine (for testing/CI)
 council convene "Test prompt" --template code-review --engine mock
 
+# Suppress non-essential stderr output (informational messages)
+council convene "Topic" --quiet
+
+# Force ASCII symbols (environment-driven: COUNCIL_ASCII=1, NO_COLOR, or TERM=dumb)
+COUNCIL_ASCII=1 council convene "Topic"
+
 # Use structured 4-phase choreography (opening → cross-exam → rebuttal → synthesis)
 council convene "Should we ship the MVP?" --template architecture-review \
-  --engine copilot --mode structured
+  --mode structured
 
 # Choose a moderator strategy for freeform debates (default: round-robin)
-council convene "Ship now or wait?" --template code-review --engine copilot \
+council convene "Ship now or wait?" --template code-review \
   --strategy consensus-check
-council convene "Ship now or wait?" --template code-review --engine copilot \
+council convene "Ship now or wait?" --template code-review \
   --strategy devils-advocate:senior   # pin "senior" as the contrarian
 
-# Tame long debates with context-window management (§2.6)
+# Tame long debates with context-window management
 council convene "Long architectural debate" --template architecture-review \
-  --engine copilot --max-rounds 10 \
+  --max-rounds 10 \
   --context-scope recent          # only the most-recent turns are passed forward
 council convene "Long debate" --template architecture-review \
-  --engine copilot --max-rounds 10 \
+  --max-rounds 10 \
   --context-scope same-round      # each expert only sees its round-mates
 council convene "Long debate" --template architecture-review \
-  --engine copilot --max-rounds 10 \
+  --max-rounds 10 \
   --summarize-after 3             # prepend a rolling summary after round 3
 
 # Pipe NDJSON output to jq, logs, or scripts
-council convene "..." --template code-review --engine copilot --format json | jq .
+council convene "..." --template code-review --format json | jq .
 
 # Show the transcript of a previous debate
 council resume <panel-name>
 
 # Continue a previous panel with a new prompt
-council resume <panel-name> --prompt "What about the migration risk?" --engine copilot
+council resume <panel-name> --prompt "What about the migration risk?"
 
 # Export a panel transcript for sharing
 council export <panel-name>                         # markdown (default)
@@ -291,13 +304,14 @@ disk if the database is reset.
 ## Commands
 
 ```bash
-# Debate orchestration (most run a real engine — pass --engine copilot or --engine mock)
-council convene <topic> --engine copilot                       # Auto-compose a panel + start deliberation
-council convene <topic> --template <name> --engine copilot     # Use a built-in or library panel
-council ask <panel> "<question>" --engine copilot              # One-shot to one expert (default: first; pin with --expert <slug>)
-council conclude [panel] --engine copilot                      # Decision matrix + recommendation
+# Debate orchestration (engine defaults to copilot; pass --engine mock for offline/CI)
+council convene <topic>                                        # Auto-compose a panel + start deliberation
+council convene <topic> --template <name>                      # Use a built-in or library panel
+council ask <panel> "<question>"                               # One-shot to one expert (default: first; pin with --expert <slug>)
+council conclude [panel]                                       # Decision matrix + recommendation
+council conclude [panel] --timeout 90000                      # Custom synthesis timeout (ms)
 council resume <panel>                                          # Replay transcript (no engine needed)
-council resume <panel> --prompt "<prompt>" --engine copilot     # Continue the panel with a new round
+council resume <panel> --prompt "<prompt>"                      # Continue the panel with a new round
 council resume --latest                                         # Resume most recently active panel
 council resume <prefix>                                         # Prefix match (auto-selects if unique)
 council export <panel> --format <fmt>                          # Export (markdown | json | adr)
@@ -306,10 +320,10 @@ council export <panel> --format <fmt>                          # Export (markdow
 # topic-admission check first — sensitive topics emit "⚠ This topic touches sensitive
 # areas (…)" but are never blocked.
 
-# Persistent conversational chat (Phase 5) — interactive sessions require --engine
-council chat <expert-slug> --engine copilot      # 1:1 conversational REPL with an expert
-council chat <panel-name> --engine copilot       # Group chat with a panel (supports @mentions, @convene)
-council chat <target> --new --engine copilot     # Archive active session and start fresh
+# Persistent conversational chat (Phase 5) — engine defaults to copilot
+council chat <expert-slug>                       # 1:1 conversational REPL with an expert
+council chat <panel-name>                        # Group chat with a panel (supports @mentions, @convene)
+council chat <target> --new                      # Archive active session and start fresh
 council chat --list                              # List every chat session across all targets (no engine needed)
 council chat <target> --history                  # Show archived sessions read-only (no engine needed)
 
@@ -331,18 +345,30 @@ council panel docs <name>                   # List a panel's managed + linked do
 council panel docs link <name> --path <p>   # Link an external folder into a panel's RAG corpus
 council panel docs unlink <name> --path <p> # Unlink a folder + clean up its FTS entries
 
+# Configuration
+council config show                         # Print effective config values with sources
+council config path                         # Print config file path
+council config edit                         # Open config in $EDITOR
+
 # Inspection & diagnostics
-council sessions                            # List all debate sessions
+council sessions                            # List all debate sessions (with status/turns/experts)
 council templates                           # List built-in panel templates
 council templates inspect <name>            # Show template details (experts, mode, rounds)
 council memory list                         # Show what experts remember
 council memory inspect <panel>              # Per-panel + per-expert memory detail
 council memory reset <panel> --yes          # Destructive: clear debate state
-council doctor                              # Diagnose setup issues
+council doctor                              # Diagnose setup issues (incl. terminal capabilities)
+
+# Global flags available on all commands
+council <command> --quiet                   # Suppress informational stderr output
+
+# ASCII mode (environment-driven, not a flag)
+# Set COUNCIL_ASCII=1, NO_COLOR=1, or TERM=dumb to force ASCII symbols
+COUNCIL_ASCII=1 council convene "Topic"
 ```
 
 > Configuration lives in `~/.council/config.yaml` (auto-created on first run).
-> Edit it directly — there is no dedicated `council config` subcommand.
+> Manage it with `council config show|path|edit`.
 
 ## Roadmap
 

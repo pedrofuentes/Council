@@ -108,6 +108,19 @@
 
 ---
 
+## Phase 7.5: UX Polish ✅
+
+> CLI refinement driven by a comprehensive 15-expert cross-model UX audit (106 findings, 20 PRs).
+
+- ✅ **7.5.1 CLI Discoverability** — Help text grouping, usage examples, cross-references, doctor first-run hint
+- ✅ **7.5.2 Accessibility** — NO_COLOR/TERM=dumb support, ASCII mode, expert index prefixes, bidi-override security fix, screen reader compatibility, Ink fallback chain
+- ✅ **7.5.3 Renderer Quality** — Unified 8-color palette, Ink `<Static>` performance, Ctrl+C handler, error cap, loading spinner, round separators, dynamic width
+- ✅ **7.5.4 Developer Experience** — Semantic exit codes, fuzzy-match suggestions, `council config` command, `--engine` default, first-run UX, `--quiet` flag, `--timeout` on conclude
+- ✅ **7.5.5 Information Architecture** — Next-step hints, sessions enrichment, synthesis turn styling, conclude reorder, inspect JSON, edit backup/validation
+- ✅ **7.5.6 Code Quality** — chat.ts split (87KB → 6 modules), Commander `.choices()` migration, flag help tiering
+
+---
+
 ## Phase 8: Growth & Ecosystem ⬜
 
 > Meet users where they are — GitHub, CI, and beyond Copilot.
@@ -137,4 +150,5 @@
 | Persistent 1:1 and panel chat                          | 5     | ✅ Done               |
 | Document-driven persona experts                        | 6     | ✅ Done (6.5 deferred)|
 | Cross-panel expert awareness                           | 7     | ✅ Done               |
+| UX polish: 106 findings from cross-model audit         | 7.5   | ✅ Done               |
 | Published to npm as `@council/cli`                     | 8     | ⬜ Planned            |
