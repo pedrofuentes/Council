@@ -103,6 +103,35 @@ export const PANEL_CHAT_TASK_DESCRIPTION =
 
 export const EXIT_TOKENS = new Set(["exit", "/quit", "quit", "/exit"]);
 
+/**
+ * Check if a user message is an exit command. Returns true if the message
+ * (after trimming whitespace) is exactly an exit token OR starts with an
+ * exit token. This allows commands like "/exit thanks" to exit gracefully
+ * rather than being sent to the LLM.
+ */
+export function isExitCommand(input: string): boolean {
+  const trimmed = input.trim().toLowerCase();
+  if (trimmed.length === 0) return false;
+  
+  // Check exact match first
+  if (EXIT_TOKENS.has(trimmed)) return true;
+  
+  // Check if starts with any exit token
+  for (const token of EXIT_TOKENS) {
+    if (trimmed.startsWith(token + " ")) return true;
+  }
+  
+  return false;
+}
+
+/**
+ * Return startup help text shown when a chat session begins. Explains
+ * available commands to improve discoverability.
+ */
+export function getStartupHelpText(): string {
+  return "Type /help for commands, or /exit to save and quit.";
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // Interfaces
 // ──────────────────────────────────────────────────────────────────────
@@ -742,7 +771,7 @@ export function defaultInputProvider(): ChatInputProvider {
   return {
     async readLine(): Promise<string | null> {
       try {
-        return await rl.question("");
+        return await rl.question("> ");
       } catch {
         return null;
       }

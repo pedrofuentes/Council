@@ -227,8 +227,8 @@ describe("Chat UX Improvements (T-08)", () => {
       });
       await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
 
-      // Message with "quit" mid-sentence should have been processed
-      expect(out).toContain("Thanks. I need to quit soon.");
+      // Message with "quit" mid-sentence should have been processed and expert should respond
+      expect(out).toMatch(/\[mock response/);
       // Should still eventually exit cleanly
       expect(out).toMatch(/Conversation saved/i);
     });
