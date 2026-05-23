@@ -88,6 +88,7 @@ describe("FileExpertLibrary", () => {
       await lib.create(makeDef());
       const yamlPath = path.join(dataHome, "experts", "cto.yaml");
       await fs.unlink(yamlPath);
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
       expect(await lib.get("cto")).toBeNull();
       expect(await lib.list()).toEqual([]);
@@ -105,6 +106,57 @@ describe("FileExpertLibrary", () => {
 
       const row = await new ExpertLibraryRepository(db).findBySlug("cto");
       expect(row?.displayName).toBe("Fresh CTO");
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Recovering stale expert cache row for slug "cto"'),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it("rejects a concurrent ghost expert recreate after the replacement YAML is claimed", async () => {
+      await lib.create(makeDef());
+      const yamlPath = path.join(dataHome, "experts", "cto.yaml");
+      await fs.unlink(yamlPath);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const repo = (lib as any).repo as ExpertLibraryRepository;
+      const originalCreate = repo.create.bind(repo);
+      let callCount = 0;
+      let signalFirstCreate: (() => void) | undefined;
+      const firstCreateEntered = new Promise<void>((resolve) => {
+        signalFirstCreate = resolve;
+      });
+      let releaseFirstCreate: (() => void) | undefined;
+      const createSpy = vi.spyOn(repo, "create").mockImplementation(async (input) => {
+        callCount += 1;
+        if (callCount === 1) {
+          signalFirstCreate?.();
+          await new Promise<void>((resolve) => {
+            releaseFirstCreate = resolve;
+          });
+        }
+        return originalCreate(input);
+      });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+      try {
+        const first = lib.create(makeDef({ displayName: "Fresh CTO" }));
+        await firstCreateEntered;
+
+        await expect(lib.create(makeDef({ displayName: "Racing CTO" }))).rejects.toThrow(/already exists/i);
+        expect(createSpy).toHaveBeenCalledTimes(1);
+
+        releaseFirstCreate?.();
+        await first;
+
+        const recreated = await lib.get("cto");
+        expect(recreated?.displayName).toBe("Fresh CTO");
+        const content = await fs.readFile(yamlPath, "utf-8");
+        expect(content).toContain("displayName: Fresh CTO");
+      } finally {
+        releaseFirstCreate?.();
+        createSpy.mockRestore();
+        warnSpy.mockRestore();
+      }
     });
 
     it("rejects invalid slug (uppercase)", async () => {

@@ -11,7 +11,7 @@
  *
  * RED at this commit: src/cli/renderers/select.ts does not exist.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { selectRenderer } from "../../../../../src/cli/renderers/select.js";
 import { JsonRenderer } from "../../../../../src/cli/renderers/json.js";
@@ -26,6 +26,34 @@ const sink: Sink = {
 };
 
 describe("selectRenderer", () => {
+  const originalCi = process.env["CI"];
+  const originalAccessibility = process.env["ACCESSIBILITY"];
+  const originalTerm = process.env["TERM"];
+
+  beforeEach(() => {
+    delete process.env["CI"];
+    delete process.env["ACCESSIBILITY"];
+    delete process.env["TERM"];
+  });
+
+  afterEach(() => {
+    if (originalCi === undefined) {
+      delete process.env["CI"];
+    } else {
+      process.env["CI"] = originalCi;
+    }
+    if (originalAccessibility === undefined) {
+      delete process.env["ACCESSIBILITY"];
+    } else {
+      process.env["ACCESSIBILITY"] = originalAccessibility;
+    }
+    if (originalTerm === undefined) {
+      delete process.env["TERM"];
+    } else {
+      process.env["TERM"] = originalTerm;
+    }
+  });
+
   it("format=json returns JsonRenderer on TTY", () => {
     expect(selectRenderer({ format: "json", isTTY: true, sink })).toBeInstanceOf(JsonRenderer);
   });
@@ -42,8 +70,13 @@ describe("selectRenderer", () => {
     expect(selectRenderer({ format: "plain", isTTY: false, sink })).toBeInstanceOf(PlainRenderer);
   });
 
-  it("format=auto on TTY returns InkRenderer", () => {
+  it("format=auto on TTY returns InkRenderer when no plain-text override is active", () => {
     expect(selectRenderer({ format: "auto", isTTY: true, sink })).toBeInstanceOf(InkRenderer);
+  });
+
+  it("format=auto on TTY returns PlainRenderer in CI", () => {
+    process.env["CI"] = "1";
+    expect(selectRenderer({ format: "auto", isTTY: true, sink })).toBeInstanceOf(PlainRenderer);
   });
 
   it("format=auto off TTY returns PlainRenderer (graceful degrade)", () => {

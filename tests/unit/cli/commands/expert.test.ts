@@ -392,6 +392,7 @@ describe("buildExpertCommand", () => {
       await seedExpert(env, SAMPLE);
       const yamlPath = path.join(env.dataHome, "experts", "dahlia-cto.yaml");
       await fs.unlink(yamlPath);
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
       let listCaptured = "";
       await buildExpertCommand((s) => {
@@ -433,6 +434,10 @@ describe("buildExpertCommand", () => {
       const recreatedYaml = await fs.readFile(yamlPath, "utf-8");
       expect(recreatedYaml).toContain("displayName: Dahlia Recreated");
       expect(recreatedYaml).toContain("role: Recovered from stale cache");
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Recovering stale expert cache row for slug "dahlia-cto"'),
+      );
+      warnSpy.mockRestore();
     });
 
     it("rejects invalid slug", async () => {
