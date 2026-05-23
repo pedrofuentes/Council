@@ -9,7 +9,9 @@
 
 export type Writer = (s: string) => void;
 
-export const defaultWriter: Writer = (s) => process.stdout.write(s);
+const UTF8_OUTPUT_ENCODING: BufferEncoding = "utf8";
+
+export const defaultWriter: Writer = (s) => process.stdout.write(s, UTF8_OUTPUT_ENCODING);
 
 let quietMode = false;
 
@@ -24,11 +26,11 @@ export function isQuiet(): boolean {
 }
 
 /** Always writes to stderr — used for errors and diagnostics that must never be silenced. */
-export const defaultErrorWriter: Writer = (s) => process.stderr.write(s);
+export const defaultErrorWriter: Writer = (s) => process.stderr.write(s, UTF8_OUTPUT_ENCODING);
 
 /** Writes informational notices to stderr, suppressed by --quiet. */
 export const defaultNoticeWriter: Writer = (s) => {
   if (!quietMode) {
-    process.stderr.write(s);
+    process.stderr.write(s, UTF8_OUTPUT_ENCODING);
   }
 };
