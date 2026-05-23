@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Command aliases** — Added plural aliases for common commands: `council panels` (alias for `panel`), `council experts` (alias for `expert`), and `council history` (alias for `sessions`) for improved discoverability and natural usage.
 - **`--max-rounds` default for resume changed to 1** (T-07) — `council resume <panel> --prompt "..."` now defaults to 1 round instead of 4 for follow-up questions. Users expecting the previous 4-round behavior must explicitly pass `--max-rounds 4`.
 - **`council config show|path|edit`** (T-13) — new subcommand for configuration management. `show` prints effective config values with source annotations, `path` prints the config file location, `edit` opens it in `$EDITOR`.
 - **`--engine` now optional, defaults to `copilot`** (T-12) — all commands that require an engine no longer mandate `--engine copilot` on every invocation. The default is read from config.
