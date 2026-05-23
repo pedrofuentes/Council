@@ -245,6 +245,110 @@ describe("buildConveneCommand", () => {
     expect(phases).toEqual(["opening", "cross-examination", "rebuttal", "synthesis"]);
   });
 
+  describe("SIGINT interrupt handling (T6)", () => {
+    it("registers a SIGINT handler via subscribeInterrupt for the debate", async () => {
+      let subscribed = false;
+      let unsubscribed = false;
+      let capturedHandler: (() => void) | undefined;
+      const subscribeInterrupt = (handler: () => void): (() => void) => {
+        subscribed = true;
+        capturedHandler = handler;
+        return () => {
+          unsubscribed = true;
+        };
+      };
+
+      const cmd = buildConveneCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: () => undefined,
+        writeError: () => undefined,
+        subscribeInterrupt,
+      });
+
+      await cmd.parseAsync([
+        "node",
+        "council-convene",
+        "topic",
+        "--template",
+        "code-review",
+        "--max-rounds",
+        "1",
+        "--format",
+        "json",
+        "--engine",
+        "mock",
+      ]);
+
+      expect(subscribed).toBe(true);
+      expect(typeof capturedHandler).toBe("function");
+      expect(unsubscribed).toBe(true);
+    });
+
+    it("aborts the debate and writes an interrupted message when SIGINT fires", async () => {
+      let captured = "";
+      let errored = "";
+      // Fire the handler synchronously the moment it's registered — this
+      // simulates Ctrl+C arriving the instant the debate starts. The
+      // AbortController short-circuits debate.run before any turn runs.
+      const subscribeInterrupt = (handler: () => void): (() => void) => {
+        handler();
+        return () => undefined;
+      };
+
+      const cmd = buildConveneCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: (s) => {
+          captured += s;
+        },
+        writeError: (s) => {
+          errored += s;
+        },
+        subscribeInterrupt,
+      });
+
+      await cmd.parseAsync([
+        "node",
+        "council-convene",
+        "Should we ship the MVP?",
+        "--template",
+        "code-review",
+        "--max-rounds",
+        "1",
+        "--format",
+        "json",
+        "--engine",
+        "mock",
+      ]);
+
+      // Debate emitted debate.end with reason: "aborted" — partial
+      // results (the panel.assembled event + the debate row) are
+      // persisted; no turns ran.
+      const lines = captured
+        .split("\n")
+        .filter((l) => l.trim().length > 0 && l.trim().startsWith("{"))
+        .map((l) => JSON.parse(l) as { kind: string; reason?: string });
+      const end = lines.find((e) => e.kind === "debate.end");
+      expect(end).toBeDefined();
+      expect(end?.reason).toBe("aborted");
+
+      // User-facing message routed to stderr (so JSON stdout stays clean).
+      expect(errored).toMatch(/interrupted/i);
+      expect(errored).toMatch(/partial/i);
+
+      // Partial results saved: the panel row exists even though the
+      // debate was aborted before any turn ran.
+      const db = await createDatabase(path.join(testHome, "council.db"));
+      try {
+        const panels = await new PanelRepository(db).findAll();
+        expect(panels).toHaveLength(1);
+        const debates = await new DebateRepository(db).findByPanelId(panels[0]?.id ?? "");
+        expect(debates.length).toBeGreaterThanOrEqual(1);
+      } finally {
+        await db.destroy();
+      }
+    });
+  });
+
   it("rejects unknown templates with a non-zero exit", async () => {
     const cmd = buildConveneCommand({
       engineFactory: makeMockEngineFactory(),
