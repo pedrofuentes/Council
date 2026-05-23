@@ -10,6 +10,7 @@
  */
 import { spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
+import type { Stats } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline/promises";
@@ -735,6 +736,166 @@ function buildDocsCommand(write: Writer, writeError: Writer): Command {
 interface TrainOptions {
   readonly retrain?: boolean;
   readonly engine?: string;
+  readonly file?: readonly string[];
+  readonly url?: readonly string[];
+}
+
+/**
+ * Copy a user-provided file into the expert's docs directory so that
+ * the normal training pass picks it up. Validates the source exists
+ * and is a regular file, and refuses path-like names that would
+ * escape the destination directory.
+ */
+async function ingestFileIntoDocs(
+  srcPath: string,
+  docsPath: string,
+  write: Writer,
+): Promise<void> {
+  const abs = path.resolve(srcPath);
+  let stat: Stats;
+  try {
+    stat = await fs.stat(abs);
+  } catch {
+    throw new CliUserError(`File not found: ${srcPath}`);
+  }
+  if (!stat.isFile()) {
+    throw new CliUserError(`Not a regular file: ${srcPath}`);
+  }
+  const filename = path.basename(abs);
+  if (filename === "" || filename === "." || filename === ".." || /[\\/]/.test(filename)) {
+    throw new CliUserError(`Invalid filename derived from path: ${srcPath}`);
+  }
+  const dest = path.join(docsPath, filename);
+  write(`Copying ${filename} to expert docs...\n`);
+  await fs.copyFile(abs, dest);
+}
+
+/**
+ * Strip credentials and query/fragment from a URL before printing it
+ * to terminal/log streams. Presigned URLs and `user:pass@host` forms
+ * routinely embed secrets that must never appear in logs (Sentinel
+ * #2 on PR #761).
+ */
+function redactUrlForLog(parsed: URL): string {
+  const clone = new URL(parsed.toString());
+  if (clone.username !== "" || clone.password !== "") {
+    clone.username = "";
+    clone.password = "";
+  }
+  clone.search = "";
+  clone.hash = "";
+  return clone.toString();
+}
+
+/** Hard ceiling on a single `--url` download, in bytes. */
+const URL_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
+/** Hard ceiling on `--url` fetch latency, in milliseconds. */
+const URL_FETCH_TIMEOUT_MS = 30_000;
+
+/**
+ * Download an http(s) URL into the expert's docs directory using the
+ * filename derived from the URL's last path segment. The downloaded
+ * payload is written verbatim; the standard training extractor then
+ * processes it like any other file in the docs dir.
+ *
+ * Sentinel-required guardrails (PR #761): redact URL credentials in
+ * logs, time out idle fetches, and abort downloads that exceed the
+ * size cap (rejecting via Content-Length when present, otherwise
+ * tracking bytes as they stream and unlinking the partial file).
+ */
+async function ingestUrlIntoDocs(
+  rawUrl: string,
+  docsPath: string,
+  write: Writer,
+): Promise<void> {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new CliUserError(`Invalid URL: ${rawUrl}`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new CliUserError(
+      `Only http(s) URLs are supported (got ${parsed.protocol}): ${redactUrlForLog(parsed)}`,
+    );
+  }
+  const displayUrl = redactUrlForLog(parsed);
+  const segments = parsed.pathname.split("/").filter((s) => s.length > 0);
+  const last = segments[segments.length - 1];
+  if (last === undefined || last === "" || last === "." || last === "..") {
+    throw new CliUserError(
+      `Cannot derive filename from URL pathname (no last segment): ${displayUrl}`,
+    );
+  }
+  let filename: string;
+  try {
+    filename = decodeURIComponent(last);
+  } catch {
+    throw new CliUserError(`Invalid percent-encoding in URL filename: ${displayUrl}`);
+  }
+  if (filename === "" || filename === "." || filename === ".." || /[\\/]/.test(filename)) {
+    throw new CliUserError(`Invalid filename derived from URL: ${displayUrl}`);
+  }
+  write(`Downloading ${displayUrl} to ${filename}...\n`);
+  let resp: Response;
+  try {
+    resp = await fetch(rawUrl, { signal: AbortSignal.timeout(URL_FETCH_TIMEOUT_MS) });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new CliUserError(`Failed to download ${displayUrl}: ${detail}`);
+  }
+  if (!resp.ok) {
+    throw new CliUserError(
+      `Failed to download ${displayUrl}: HTTP ${resp.status}${resp.statusText ? ` ${resp.statusText}` : ""}`,
+    );
+  }
+  const contentLengthHeader = resp.headers.get("content-length");
+  if (contentLengthHeader !== null) {
+    const declared = Number(contentLengthHeader);
+    if (Number.isFinite(declared) && declared > URL_MAX_DOWNLOAD_BYTES) {
+      throw new CliUserError(
+        `Refusing to download ${displayUrl}: declared size ${declared} bytes ` +
+          `exceeds ${URL_MAX_DOWNLOAD_BYTES} byte limit.`,
+      );
+    }
+  }
+  const dest = path.join(docsPath, filename);
+  const body = resp.body;
+  if (body === null) {
+    // Server returned an empty body — write a zero-byte file so the
+    // processor can still classify it (and likely skip it).
+    await fs.writeFile(dest, Buffer.alloc(0));
+    return;
+  }
+  const handle = await fs.open(dest, "w");
+  let total = 0;
+  try {
+    const reader = body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value && value.byteLength > 0) {
+        total += value.byteLength;
+        if (total > URL_MAX_DOWNLOAD_BYTES) {
+          try {
+            await reader.cancel();
+          } catch {
+            /* best effort */
+          }
+          throw new CliUserError(
+            `Aborting download of ${displayUrl}: payload exceeds ` +
+              `${URL_MAX_DOWNLOAD_BYTES} byte limit (read ${total} bytes).`,
+          );
+        }
+        await handle.write(value);
+      }
+    }
+  } catch (err) {
+    await handle.close().catch(() => undefined);
+    await fs.unlink(dest).catch(() => undefined);
+    throw err;
+  }
+  await handle.close();
 }
 
 function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertCommandDeps): Command {
@@ -743,6 +904,14 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
     .description("Reprocess all documents for a persona expert and refresh its profile")
     .argument("<slug>", "Persona expert slug")
     .option("--retrain", "Clear the existing profile and rebuild from scratch")
+    .option(
+      "--file <path...>",
+      "Copy one or more files into the expert docs dir before training (repeatable)",
+    )
+    .option(
+      "--url <url...>",
+      "Download one or more http(s) URLs into the expert docs dir before training (repeatable)",
+    )
     .addOption(
       new Option("--engine <kind>", "Engine to use for profile analysis")
         .choices([...ENGINE_KINDS])
@@ -767,6 +936,24 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
 
         const docsPath = path.join(dataHome, "experts", slug, "docs");
         await fs.mkdir(docsPath, { recursive: true });
+
+        // Ingest --file and --url inputs into the docs dir BEFORE training
+        // so the existing processor picks them up as new documents. Any
+        // ingestion failure aborts the run before training starts so the
+        // user sees a clear, actionable error.
+        try {
+          for (const f of opts.file ?? []) {
+            await ingestFileIntoDocs(f, docsPath, write);
+          }
+          for (const u of opts.url ?? []) {
+            await ingestUrlIntoDocs(u, docsPath, write);
+          }
+        } catch (err) {
+          if (err instanceof CliUserError) {
+            writeError(err.message + "\n");
+          }
+          throw err;
+        }
 
         const documentRepo = new DocumentRepository(db);
         const profileRepo = new ProfileRepository(db);
