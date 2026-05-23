@@ -84,7 +84,9 @@ describe("resolveSession", () => {
         seenNames = matches.map((match) => match.name);
         seenTopics = matches.map((match) => match.topic);
         seenTimestamps = matches.map((match) => match.createdAt);
-        return matches.find((match) => match.name === "code-review-a") ?? matches[0]!;
+        const selected = matches.find((match) => match.name === "code-review-a");
+        if (selected) return selected;
+        throw new Error("Expected code-review-a to be present in picker matches.");
       },
     });
 
