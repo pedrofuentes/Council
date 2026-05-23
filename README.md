@@ -163,6 +163,9 @@ council expert list                                 # table view (also --format 
 council expert inspect <slug>                       # full detail + panel memberships
 council expert edit <slug>                          # open YAML in $EDITOR, re-validate on save
 council expert delete <slug>                        # refuses if in any panel (use --force to override)
+# Slug conflicts are keyed off <slug>.yaml. If the YAML was deleted but a stale
+# expert_library row remains, `council expert create --slug <slug> ...` recreates
+# the YAML and refreshes the cache automatically.
 
 # Chat 1:1 with a persona expert — drop reference docs in
 # ~/Council/experts/<slug>/docs/ (any combination of .md / .txt / .html).
@@ -349,7 +352,7 @@ council chat --list                              # List every chat session acros
 council chat <target> --history                  # Show archived sessions read-only (no engine needed)
 
 # Expert library (Phase 4)
-council expert create [--persona]           # Interactive wizard (or non-TTY via flags)
+council expert create [--persona]           # Interactive wizard; also recreates ghost experts when <slug>.yaml is missing
 council expert list [--format json]         # Browse the expert library
 council expert inspect <slug>               # Full detail + panel memberships
 council expert edit <slug>                  # Open YAML in $EDITOR; re-validates on save
