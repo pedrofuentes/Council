@@ -84,6 +84,40 @@ async function writeDefaultConfig(): Promise<CouncilConfig> {
   return defaults;
 }
 
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withConfigLock<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
+  const maxRetries = 50;
+  const retryDelay = 100;
+  let handle: import("node:fs/promises").FileHandle | undefined;
+
+  for (let index = 0; index < maxRetries; index += 1) {
+    try {
+      handle = await fs.open(lockPath, "wx");
+      break;
+    } catch (err: unknown) {
+      if (hasErrorCode(err, "EEXIST")) {
+        await sleep(retryDelay);
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  if (handle === undefined) {
+    throw new Error(`Could not acquire config lock after ${maxRetries} retries`);
+  }
+
+  try {
+    return await fn();
+  } finally {
+    await handle.close();
+    await fs.unlink(lockPath).catch(() => undefined);
+  }
+}
+
 function formatZodError(err: ZodError, source: string): Error {
   const lines = err.issues.map((i) => {
     const fieldPath = i.path.length > 0 ? i.path.join(".") : "(root)";
@@ -154,48 +188,51 @@ export async function updateConfigField(
 ): Promise<void> {
   await ensureHomeDirectory();
   const file = configPath();
+  const lockPath = `${file}.lock`;
 
-  let raw: string;
-  try {
-    raw = await fs.readFile(file, "utf-8");
-  } catch (err: unknown) {
-    if (isENOENT(err)) {
-      await writeDefaultConfig();
+  await withConfigLock(lockPath, async () => {
+    let raw: string;
+    try {
       raw = await fs.readFile(file, "utf-8");
-    } else {
-      throw err;
+    } catch (err: unknown) {
+      if (isENOENT(err)) {
+        await writeDefaultConfig();
+        raw = await fs.readFile(file, "utf-8");
+      } else {
+        throw err;
+      }
     }
-  }
 
-  const document = yaml.parseDocument(raw);
-  if (document.errors.length > 0) {
-    const cause = document.errors.map((err) => err.message).join("; ");
-    throw new Error(`Failed to parse Council config (${file}): ${cause}`);
-  }
+    const document = yaml.parseDocument(raw);
+    if (document.errors.length > 0) {
+      const cause = document.errors.map((err) => err.message).join("; ");
+      throw new Error(`Failed to parse Council config (${file}): ${cause}`);
+    }
 
-  if (document.contents === null) {
-    document.contents = yaml.parseDocument("{}").contents;
-  } else if (!yaml.isMap(document.contents)) {
-    throw new Error(
-      `Council config (${file}) has an invalid root structure. Expected a YAML mapping but found ${document.contents.constructor.name}. Please fix or delete the config file.`,
-    );
-  }
+    if (document.contents === null) {
+      document.contents = yaml.parseDocument("{}").contents;
+    } else if (!yaml.isMap(document.contents)) {
+      throw new Error(
+        `Council config (${file}) has an invalid root structure. Expected a YAML mapping but found ${document.contents.constructor.name}. Please fix or delete the config file.`,
+      );
+    }
 
-  document.setIn(key.split("."), value);
+    document.setIn(key.split("."), value);
 
-  const result = ConfigSchema.safeParse(document.toJS() ?? {});
-  if (!result.success) {
-    throw formatZodError(result.error, file);
-  }
+    const result = ConfigSchema.safeParse(document.toJS() ?? {});
+    if (!result.success) {
+      throw formatZodError(result.error, file);
+    }
 
-  const tmpFile = `${file}.tmp`;
-  await fs.writeFile(tmpFile, document.toString(), "utf-8");
-  try {
-    await fs.rename(tmpFile, file);
-  } catch (renameErr) {
-    await fs.unlink(tmpFile).catch(() => undefined);
-    throw renameErr;
-  }
+    const tmpFile = `${file}.${process.pid}.${Date.now()}.tmp`;
+    await fs.writeFile(tmpFile, document.toString(), "utf-8");
+    try {
+      await fs.rename(tmpFile, file);
+    } catch (renameErr) {
+      await fs.unlink(tmpFile).catch(() => undefined);
+      throw renameErr;
+    }
+  });
 }
 
 /**
@@ -210,11 +247,15 @@ export function resolveEngine(
   return config.defaults.engine;
 }
 
-function isENOENT(err: unknown): boolean {
+function hasErrorCode(err: unknown, code: string): boolean {
   return (
     typeof err === "object" &&
     err !== null &&
     "code" in err &&
-    (err as { code: unknown }).code === "ENOENT"
+    (err as { code: unknown }).code === code
   );
+}
+
+function isENOENT(err: unknown): boolean {
+  return hasErrorCode(err, "ENOENT");
 }
