@@ -13,6 +13,10 @@ import type { Writer } from "../../../../src/cli/commands/writer.js";
 interface DoctorDepsLike {
   readonly write?: Writer;
   readonly onlineProbe?: (model: string) => Promise<{ ok: boolean; detail: string }>;
+  readonly discoverModels?: () => Promise<{
+    models: readonly string[];
+    source: "live" | "static";
+  }>;
 }
 
 const buildDoctorCommandWithDeps = buildDoctorCommand as unknown as (
@@ -74,15 +78,30 @@ describe("buildDoctorCommand", () => {
     expect(output).toContain("Default model (claude-sonnet-4.5) session created successfully");
   });
 
-  it("doctor with failed probe shows error by default", async () => {
-    const onlineProbe = vi.fn(async () => ({ ok: false, detail: "authentication required" }));
+  it("doctor with failed probe shows alternatives and config set fix", async () => {
+    await fs.mkdir(testHome, { recursive: true });
+    await fs.writeFile(
+      path.join(testHome, "config.yaml"),
+      "defaults:\n  engine: copilot\n  model: claude-sonnet-4-20250514\n  maxRounds: 4\n",
+      "utf-8",
+    );
 
-    const output = await runDoctor([], { onlineProbe });
+    const onlineProbe = vi.fn(async () => ({ ok: false, detail: "model not found" }));
+    const discoverModels = vi.fn(async () => ({
+      models: ["claude-sonnet-4.5", "claude-sonnet-4.6", "gpt-5.4", "gpt-5.4-mini"],
+      source: "live" as const,
+    }));
+
+    const output = await runDoctor([], { onlineProbe, discoverModels });
 
     expect(onlineProbe).toHaveBeenCalledTimes(1);
-    expect(output).toContain("Default model (claude-sonnet-4.5)");
-    expect(output).toContain("authentication required");
-    expect(output).toContain("Try changing defaults.model in");
+    expect(discoverModels).toHaveBeenCalledTimes(1);
+    expect(output).toContain(
+      "Default model (claude-sonnet-4-20250514) is not accessible: model not found",
+    );
+    expect(output).toContain("Available alternatives:");
+    expect(output).toContain("claude-sonnet-4.5, claude-sonnet-4.6, gpt-5.4, gpt-5.4-mini");
+    expect(output).toContain("Fix: council config set defaults.model claude-sonnet-4.5");
   });
 
   it("doctor --offline skips model probe", async () => {
@@ -95,20 +114,37 @@ describe("buildDoctorCommand", () => {
     expect(output).not.toContain("Default model (");
   });
 
-  it("doctor --models lists known models", async () => {
+  it("doctor --models lists live discovered models", async () => {
     const onlineProbe = vi.fn(async () => ({ ok: true, detail: "OK" }));
-    const output = await runDoctor(["--models", "--offline"], { onlineProbe });
+    const discoverModels = vi.fn(async () => ({
+      models: ["claude-sonnet-4.6", "gpt-5.4", "gemini-2.5-pro"],
+      source: "live" as const,
+    }));
 
-    expect(output).toContain("Known models:");
-    expect(output).toContain(
-      "Anthropic: claude-haiku-4.5, claude-sonnet-4.5, claude-sonnet-4.6, claude-opus-4.5, claude-opus-4.6, claude-opus-4.7",
-    );
-    expect(output).toContain(
-      "OpenAI   : gpt-4.1, gpt-5-mini, gpt-5.2, gpt-5.4, gpt-5.5, gpt-5.4-mini",
-    );
-    expect(output).not.toContain("Google");
+    const output = await runDoctor(["--models", "--offline"], { onlineProbe, discoverModels });
+
+    expect(output).toContain("Available models:");
+    expect(output).toContain("Anthropic: claude-sonnet-4.6");
+    expect(output).toContain("OpenAI   : gpt-5.4");
+    expect(output).toContain("Google   : gemini-2.5-pro");
     expect(output).toContain("Availability depends on your Copilot tier");
     expect(onlineProbe).not.toHaveBeenCalled();
+    expect(discoverModels).toHaveBeenCalledTimes(1);
+  });
+
+  it("doctor --models labels static fallback when live discovery is unavailable", async () => {
+    const discoverModels = vi.fn(async () => ({
+      models: ["claude-haiku-4.5", "claude-sonnet-4.5", "gpt-5.4", "gpt-5.4-mini"],
+      source: "static" as const,
+    }));
+
+    const output = await runDoctor(["--models", "--offline"], { discoverModels });
+
+    expect(output).toContain("Known models (live discovery unavailable):");
+    expect(output).toContain("Anthropic: claude-haiku-4.5, claude-sonnet-4.5");
+    expect(output).toContain("OpenAI   : gpt-5.4, gpt-5.4-mini");
+    expect(output).not.toContain("Google");
+    expect(discoverModels).toHaveBeenCalledTimes(1);
   });
 
   it("doctor help describes the offline flag", () => {
