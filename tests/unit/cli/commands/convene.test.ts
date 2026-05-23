@@ -287,12 +287,15 @@ describe("buildConveneCommand", () => {
     it("aborts the debate and writes an interrupted message when SIGINT fires", async () => {
       let captured = "";
       let errored = "";
+      let unsubscribed = false;
       // Fire the handler synchronously the moment it's registered — this
       // simulates Ctrl+C arriving the instant the debate starts. The
       // AbortController short-circuits debate.run before any turn runs.
       const subscribeInterrupt = (handler: () => void): (() => void) => {
         handler();
-        return () => undefined;
+        return () => {
+          unsubscribed = true;
+        };
       };
 
       const cmd = buildConveneCommand({
@@ -335,14 +338,23 @@ describe("buildConveneCommand", () => {
       expect(errored).toMatch(/interrupted/i);
       expect(errored).toMatch(/partial/i);
 
-      // Partial results saved: the panel row exists even though the
-      // debate was aborted before any turn ran.
+      // Listener was unsubscribed even though debate was interrupted —
+      // covers both Sentinel pr769 finding 1 (no leaked listener on
+      // setup failure) and finding 2 (self-unsubscribe in handler).
+      expect(unsubscribed).toBe(true);
+
+      // Partial results saved: the panel row + the debate row exist,
+      // and the debate row is in a terminal `aborted` state (not stuck
+      // at `running`). DebatePersister maps reason "aborted" → status
+      // "aborted" — this assertion locks in that contract.
       const db = await createDatabase(path.join(testHome, "council.db"));
       try {
         const panels = await new PanelRepository(db).findAll();
         expect(panels).toHaveLength(1);
         const debates = await new DebateRepository(db).findByPanelId(panels[0]?.id ?? "");
-        expect(debates.length).toBeGreaterThanOrEqual(1);
+        expect(debates).toHaveLength(1);
+        expect(debates[0]?.status).toBe("aborted");
+        expect(debates[0]?.endedAt).toBeTruthy();
       } finally {
         await db.destroy();
       }

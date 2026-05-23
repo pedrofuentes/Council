@@ -397,44 +397,58 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         // which stops at the next turn boundary and emits a terminal
         // debate.end event with reason: "aborted". Partial results
         // (panel row + any completed turns) are preserved because the
-        // DebatePersister writes turns as they stream. The handler is
-        // unsubscribed in `finally` so a second Ctrl+C falls through
-        // to the default process-kill behavior.
+        // DebatePersister writes turns as they stream.
+        //
+        // Lifecycle invariants (Sentinel pr769 findings 1 & 2):
+        //   1. The handler is registered BEFORE any setup that can
+        //      throw (panel/expert row inserts) and unsubscribed in a
+        //      `finally` that wraps the entire setup-and-run block.
+        //      This prevents a stale process-level listener if setup
+        //      fails before runWithEngine starts.
+        //   2. The handler unsubscribes ITSELF first so a second Ctrl+C
+        //      hits Node's default SIGINT behavior (process kill)
+        //      immediately, even while the first abort is still
+        //      unwinding the debate loop.
         const debateController = new AbortController();
         let debateInterrupted = false;
+        // Holder so onInterrupt can capture the unsubscribe function
+        // that is assigned right below. `process.off` is idempotent,
+        // so it's safe if the outer `finally` also calls it.
+        let unsubscribeInterrupt: () => void = () => undefined;
         const onInterrupt = (): void => {
           debateInterrupted = true;
+          unsubscribeInterrupt();
           debateController.abort();
         };
         const subscribeInterrupt = deps.subscribeInterrupt ?? defaultSubscribeInterrupt;
-        const unsubscribeInterrupt = subscribeInterrupt(onInterrupt);
-
-        const panel = await panelRepo.create({
-          name: `${template.name}-${new Date().toISOString().slice(0, 19)}`,
-          topic,
-          copilotHome: path.join(getCouncilHome(), "copilot"),
-          configJson: JSON.stringify({
-            template: template.name,
-            mode: opts.mode,
-            maxRounds: opts.maxRounds,
-            maxWords: opts.maxWords,
-            engine: opts.engine,
-          }),
-        });
-
-        const expertSlugToId: Record<string, string> = {};
-        for (const e of allExperts) {
-          const row = await expertRepo.create({
-            panelId: panel.id,
-            slug: e.slug,
-            displayName: e.displayName,
-            model: e.model,
-            systemMessage: e.systemMessage,
-          });
-          expertSlugToId[e.slug] = row.id;
-        }
+        unsubscribeInterrupt = subscribeInterrupt(onInterrupt);
 
         try {
+          const panel = await panelRepo.create({
+            name: `${template.name}-${new Date().toISOString().slice(0, 19)}`,
+            topic,
+            copilotHome: path.join(getCouncilHome(), "copilot"),
+            configJson: JSON.stringify({
+              template: template.name,
+              mode: opts.mode,
+              maxRounds: opts.maxRounds,
+              maxWords: opts.maxWords,
+              engine: opts.engine,
+            }),
+          });
+
+          const expertSlugToId: Record<string, string> = {};
+          for (const e of allExperts) {
+            const row = await expertRepo.create({
+              panelId: panel.id,
+              slug: e.slug,
+              displayName: e.displayName,
+              model: e.model,
+              systemMessage: e.systemMessage,
+            });
+            expertSlugToId[e.slug] = row.id;
+          }
+
           await runWithEngine({
             engineKind: opts.engine,
             engineFactory: deps.engineFactory,
