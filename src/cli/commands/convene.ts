@@ -95,6 +95,7 @@ export interface ConveneOptions {
   readonly heuristicSummaries?: boolean;
   readonly heuristicMemory?: boolean;
   readonly yes?: boolean;
+  readonly model?: string;
 }
 
 /**
@@ -191,6 +192,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         "Useful for offline tests and air-gapped environments.",
     )
     .option("--yes", "Skip the auto-compose confirmation prompt (non-interactive runs)")
+    .option("--model <model>", "Model to use for experts (default: from config)")
     .action(async (topic: string, raw: ConveneOptions) => {
       const admission = checkTopicAdmission(topic);
       for (const warning of admission.warnings) {
@@ -198,7 +200,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       }
 
       const config = await loadConfig();
-      const defaultModel = config.defaults.model;
+      const defaultModel = raw.model ?? config.defaults.model;
       const resolvedEngine = resolveEngine(raw.engine, config);
       const humanNames: readonly string[] = raw.human ?? [];
 
