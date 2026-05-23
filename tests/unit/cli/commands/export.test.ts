@@ -308,10 +308,48 @@ describe("buildExportCommand", () => {
     expect(thrown.toLowerCase()).toMatch(/no panel|not found/);
   });
 
+  it("explains when a panel template exists but no debates have been created", async () => {
+    const panelsDir = path.join(testHome, "panels");
+    await fs.mkdir(panelsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(panelsDir, "empty-panel.yaml"),
+      [
+        "name: empty-panel",
+        "description: Empty panel template",
+        "experts:",
+        "  - slug: reviewer",
+        "    displayName: Reviewer",
+        "    role: Reviews code",
+        "    expertise:",
+        "      weightedEvidence:",
+        "        - Reads diffs carefully",
+        "      referenceCases: []",
+        "      notExpertIn: []",
+        "    epistemicStance: Cautious",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const cmd = buildExportCommand({ write: () => undefined });
+    cmd.exitOverride();
+    let thrown = "";
+    try {
+      await cmd.parseAsync(["node", "council-export", "empty-panel"]);
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    expect(thrown).toMatch(/exists but has no debates yet/i);
+    expect(thrown).toMatch(/convene --template empty-panel/i);
+  });
+
   it("--format markdown (default): includes topic, status, expert displayNames, content", async () => {
     const seed = await seedPanelWithDebate(testHome);
     let captured = "";
-    const cmd = buildExportCommand({ write: (s) => { captured += s; } });
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
     await cmd.parseAsync(["node", "council-export", seed.panelName]);
 
     expect(captured).toContain("Should we ship the MVP?"); // topic / prompt
@@ -330,7 +368,11 @@ describe("buildExportCommand", () => {
   it("--format json: emits NDJSON identical-shape to resume --format json", async () => {
     const seed = await seedPanelWithDebate(testHome);
     let captured = "";
-    const cmd = buildExportCommand({ write: (s) => { captured += s; } });
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
     await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "json"]);
 
     const lines = captured.split("\n").filter((l) => l.trim().startsWith("{"));
@@ -344,7 +386,11 @@ describe("buildExportCommand", () => {
   it("--format adr: emits ADR template with Status, Context, Options, Decision sections", async () => {
     const seed = await seedPanelWithDebate(testHome);
     let captured = "";
-    const cmd = buildExportCommand({ write: (s) => { captured += s; } });
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
     await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "adr"]);
 
     // ADR canonical headers
@@ -362,7 +408,11 @@ describe("buildExportCommand", () => {
   it("--format adr: uses the first debate prompt for Context and includes content from all debates", async () => {
     const seed = await seedPanelWithMultipleDebates(testHome);
     let captured = "";
-    const cmd = buildExportCommand({ write: (s) => { captured += s; } });
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
     await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "adr"]);
 
     // Context is always the FIRST debate's prompt (original question).
@@ -379,7 +429,11 @@ describe("buildExportCommand", () => {
   it("--format adr: marks a completed debate with very short turns as Proposed", async () => {
     const seed = await seedPanelWithShortTurns(testHome);
     let captured = "";
-    const cmd = buildExportCommand({ write: (s) => { captured += s; } });
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
     await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "adr"]);
 
     expect(captured).toMatch(/## Status\s+\s*Proposed/m);
@@ -390,7 +444,11 @@ describe("buildExportCommand", () => {
     const seed = await seedPanelWithDebate(testHome);
     const outPath = path.join(testHome, "transcript.md");
     let stdoutCaptured = "";
-    const cmd = buildExportCommand({ write: (s) => { stdoutCaptured += s; } });
+    const cmd = buildExportCommand({
+      write: (s) => {
+        stdoutCaptured += s;
+      },
+    });
     await cmd.parseAsync([
       "node",
       "council-export",
@@ -415,13 +473,7 @@ describe("buildExportCommand", () => {
     cmd.exitOverride();
     let thrown = "";
     try {
-      await cmd.parseAsync([
-        "node",
-        "council-export",
-        seed.panelName,
-        "--format",
-        "yaml",
-      ]);
+      await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "yaml"]);
     } catch (err) {
       thrown = err instanceof Error ? err.message : String(err);
     }
@@ -484,7 +536,11 @@ describe("buildExportCommand", () => {
     }
 
     let captured = "";
-    const cmd = buildExportCommand({ write: (s) => { captured += s; } });
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
     await cmd.parseAsync(["node", "council-export", panelName, "--format", "adr"]);
 
     // Should contain the single-round fallback message
@@ -500,7 +556,11 @@ describe("buildExportCommand", () => {
   it("matches a panel by unique name prefix (parity with `council resume`)", async () => {
     const seed = await seedPanelWithDebate(testHome); // name = "export-test"
     let captured = "";
-    const cmd = buildExportCommand({ write: (s) => { captured += s; } });
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
     // Use a short unambiguous prefix instead of the full name.
     await cmd.parseAsync(["node", "council-export", "export-te"]);
 
@@ -512,13 +572,15 @@ describe("buildExportCommand", () => {
 
   it("rejects ambiguous prefix and lists matching panels", async () => {
     // Two panels both starting with "export-".
-    await seedPanelWithDebate(testHome);              // "export-test"
-    await seedPanelWithMultipleDebates(testHome);     // "export-multi-debate"
+    await seedPanelWithDebate(testHome); // "export-test"
+    await seedPanelWithMultipleDebates(testHome); // "export-multi-debate"
 
     let errCaptured = "";
     const cmd = buildExportCommand({
       write: () => undefined,
-      writeError: (s) => { errCaptured += s; },
+      writeError: (s) => {
+        errCaptured += s;
+      },
     });
     cmd.exitOverride();
     let thrown = "";
@@ -572,7 +634,11 @@ describe("buildExportCommand", () => {
     }
 
     let captured = "";
-    const cmd = buildExportCommand({ write: (s) => { captured += s; } });
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
     // Exact name "export-test" must resolve to the export-test panel,
     // NOT trigger an ambiguous-prefix error against "export-test-extended".
     await cmd.parseAsync(["node", "council-export", "export-test"]);
@@ -584,7 +650,11 @@ describe("buildExportCommand", () => {
   it("--format markdown: includes turns from ALL debates of a resumed panel", async () => {
     const seed = await seedPanelWithMultipleDebates(testHome);
     let captured = "";
-    const cmd = buildExportCommand({ write: (s) => { captured += s; } });
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
     await cmd.parseAsync(["node", "council-export", seed.panelName]);
 
     // Every debate's content must appear.
@@ -599,7 +669,11 @@ describe("buildExportCommand", () => {
   it("--format json: NDJSON includes turn.end events from ALL debates of a resumed panel", async () => {
     const seed = await seedPanelWithMultipleDebates(testHome);
     let captured = "";
-    const cmd = buildExportCommand({ write: (s) => { captured += s; } });
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
     await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "json"]);
 
     const events = captured
@@ -618,7 +692,11 @@ describe("buildExportCommand", () => {
   it("--format markdown: uses ASCII-safe separators without Unicode em-dash or mojibake", async () => {
     const seed = await seedPanelWithDebate(testHome);
     let captured = "";
-    const cmd = buildExportCommand({ write: (s) => { captured += s; } });
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
     await cmd.parseAsync(["node", "council-export", seed.panelName]);
 
     // Should NOT contain Unicode em-dash (U+2014)
