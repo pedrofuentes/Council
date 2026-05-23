@@ -520,6 +520,9 @@ Examples:
   $ council convene "Should we adopt GraphQL?" --engine copilot
   $ council convene "Review this PR" --template code-review --engine copilot
   $ council convene "Ship now or wait?" --mode structured --engine copilot
+
+Note: Topics with special characters (like $, !, etc.) should be quoted:
+  $ council convene 'Is $450/hr reasonable?' --engine copilot
 `,
   );
 

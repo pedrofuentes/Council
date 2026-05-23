@@ -15,19 +15,25 @@ describe("expert create help text", () => {
     const cmd = buildExpertCommand();
     const createCmd = cmd.commands.find((c) => c.name() === "create");
     expect(createCmd).toBeDefined();
+    if (!createCmd) throw new Error("create command not found");
 
-    const stanceOpt = createCmd!.options.find((o) => o.long === "--stance");
+    const stanceOpt = createCmd.options.find((o) => o.long === "--stance");
     expect(stanceOpt).toBeDefined();
-    expect(stanceOpt!.description).not.toMatch(/epistemic/i);
-    expect(stanceOpt!.description).toMatch(/viewpoint/i);
+    if (!stanceOpt) throw new Error("stance option not found");
+    
+    expect(stanceOpt.description).not.toMatch(/epistemic/i);
+    expect(stanceOpt.description).toMatch(/viewpoint/i);
   });
 
   it("includes stance examples in help text", () => {
     const cmd = buildExpertCommand();
     const createCmd = cmd.commands.find((c) => c.name() === "create");
-    const stanceOpt = createCmd!.options.find((o) => o.long === "--stance");
+    if (!createCmd) throw new Error("create command not found");
+    
+    const stanceOpt = createCmd.options.find((o) => o.long === "--stance");
+    if (!stanceOpt) throw new Error("stance option not found");
 
-    const desc = stanceOpt!.description.toLowerCase();
+    const desc = stanceOpt.description.toLowerCase();
     // Should mention at least some example stances
     const hasExamples =
       desc.includes("skeptical") ||

@@ -142,7 +142,10 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
     .option("--name <displayName>", "Display name")
     .option("--role <role>", "One-line role descriptor")
     .option("--expertise <items>", "Comma-separated weighted-evidence types (at least one)")
-    .option("--stance <stance>", "Epistemic stance")
+    .option(
+      "--stance <stance>",
+      "Viewpoint or perspective (e.g., skeptical, optimistic, devil's advocate, conservative, neutral)",
+    )
     .option("--model <model>", "Model identifier (e.g. claude-haiku-4.5)")
     .option("--personality <flavor>", "Optional personality flavor")
     .option("--persona-description <text>", "Persona relationship description")
