@@ -126,6 +126,7 @@ interface ConcludeRawOptions {
   readonly engine?: EngineKind;
   readonly format?: string;
   readonly timeout?: number;
+  readonly model?: string;
 }
 
 export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
@@ -167,6 +168,7 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
       },
       SYNTHESIS_TIMEOUT_MS,
     )
+    .option("--model <model>", "Model to use for synthesis (default: from config)")
     .action(async (panelArg: string | undefined, raw: ConcludeRawOptions) => {
       const format: ConcludeFormat = raw.format === "json" ? "json" : "plain";
 
@@ -203,11 +205,12 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
           ? deps.engineFactory()
           : makeEngineFromKind(resolvedEngine);
         const synthesizerId = deps.synthesizerId ?? ulid();
+        const synthesizerModel = raw.model ?? config.defaults.model;
         const synthesizerSpec: ExpertSpec = {
           id: synthesizerId,
           slug: "synthesizer",
           displayName: "Council Synthesizer",
-          model: config.defaults.model,
+          model: synthesizerModel,
           systemMessage: SYNTHESIS_SYSTEM_PROMPT,
         };
 
