@@ -13,12 +13,15 @@
  *
  * RED at this commit: src/memory/* does not exist yet.
  */
+import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 
 import { sql } from "kysely";
+
+import { waitForDbRelease } from "../../e2e/helpers.js";
 
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
 import { PanelRepository, type NewPanel } from "../../../src/memory/repositories/panels.js";
@@ -40,6 +43,21 @@ function sampleExpert(panelId: string, slug = "cto"): NewExpert {
     model: "claude-sonnet-4",
     systemMessage: "You are a CTO.",
   };
+}
+
+async function cleanupFileBackedDatabaseDir(testHome: string): Promise<void> {
+  try {
+    await fs.access(path.join(testHome, "council.db"));
+    await waitForDbRelease(testHome);
+  } catch {
+    // Best-effort cleanup: some tests use in-memory DBs and never create the file.
+  }
+
+  try {
+    await fs.rm(testHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } catch {
+    /* best effort */
+  }
 }
 
 describe("createDatabase", () => {
@@ -79,6 +97,75 @@ describe("createDatabase", () => {
     const after = await db2.selectFrom("schema_version").selectAll().execute();
     await db2.destroy();
     expect(after.length).toBe(before.length); // no duplicate version rows
+  });
+
+  it("enables WAL mode and a 5000ms busy timeout on file-backed connections", async () => {
+    const testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-db-config-"));
+    const dbPath = path.join(testHome, "council.db");
+    const fileDb = await createDatabase(dbPath);
+
+    try {
+      const journalMode = await sql.raw("PRAGMA journal_mode;").execute(fileDb);
+      const busyTimeout = await sql.raw("PRAGMA busy_timeout;").execute(fileDb);
+
+      expect(journalMode.rows).toEqual([{ journal_mode: "wal" }]);
+      expect(busyTimeout.rows).toEqual([{ timeout: 5000 }]);
+    } finally {
+      await fileDb.destroy();
+      await cleanupFileBackedDatabaseDir(testHome);
+    }
+  });
+
+  it("waits for a concurrent writer instead of crashing with SQLITE_BUSY", async () => {
+    const testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-db-busy-timeout-"));
+    const dbPath = path.join(testHome, "council.db");
+    const db1 = await createDatabase(dbPath);
+    const db2 = await createDatabase(dbPath);
+    const holderStarted = Promise.withResolvers<void>();
+
+    try {
+      const holderPromise = db1.transaction().execute(async (trx) => {
+        await trx
+          .insertInto("panels")
+          .values({
+            id: "holder-panel",
+            name: "holder-panel",
+            topic: null,
+            copilot_home: path.join(testHome, "holder"),
+            config_json: "{}",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .execute();
+
+        holderStarted.resolve();
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      });
+
+      await holderStarted.promise;
+      const contenderStartedAt = Date.now();
+      const contenderPromise = db2
+        .insertInto("panels")
+        .values({
+          id: "waiting-panel",
+          name: "waiting-panel",
+          topic: null,
+          copilot_home: path.join(testHome, "waiting"),
+          config_json: "{}",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .execute();
+
+      await Promise.all([holderPromise, contenderPromise]);
+
+      expect(Date.now() - contenderStartedAt).toBeGreaterThanOrEqual(200);
+      await expect(db2.selectFrom("panels").select("name").orderBy("name").execute()).resolves
+        .toEqual([{ name: "holder-panel" }, { name: "waiting-panel" }]);
+    } finally {
+      await Promise.all([db1.destroy(), db2.destroy()]);
+      await cleanupFileBackedDatabaseDir(testHome);
+    }
   });
 
   it("applies migrations 001 through 011, creating the expected indexes", async () => {
