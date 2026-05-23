@@ -75,6 +75,44 @@ describe("buildProgram first-run hook", () => {
     expect(action).toHaveBeenCalledTimes(1);
   });
 
+  it("preserves --quiet while the first-run hook executes", async () => {
+    const loadConfigWithMeta = vi.fn(async () => ({
+      config: ConfigSchema.parse({}),
+      isFirstRun: false,
+    }));
+    const selectModelInteractively = vi.fn();
+    let capturedQuiet: boolean | undefined;
+    const program = createProbeProgram(
+      {
+        firstRunSetup: {
+          loadConfigWithMeta,
+          selectModelInteractively,
+          write: () => undefined,
+        },
+      },
+      () => {
+        capturedQuiet = program.optsWithGlobals()["quiet"] as boolean | undefined;
+      },
+    );
+
+    await program.parseAsync(["node", "council", "--quiet", "probe"]);
+
+    expect(loadConfigWithMeta).toHaveBeenCalledTimes(1);
+    expect(selectModelInteractively).not.toHaveBeenCalled();
+    expect(capturedQuiet).toBe(true);
+  });
+
+  it("keeps default buildProgram parsing synchronous for --quiet", () => {
+    let capturedQuiet: boolean | undefined;
+    const program = createProbeProgram(undefined, () => {
+      capturedQuiet = program.optsWithGlobals()["quiet"] as boolean | undefined;
+    });
+
+    program.parse(["node", "council", "--quiet", "probe"]);
+
+    expect(capturedQuiet).toBe(true);
+  });
+
   it("only performs first-run setup once per process", async () => {
     const loadConfigWithMeta = vi.fn(async () => ({
       config: ConfigSchema.parse({}),
