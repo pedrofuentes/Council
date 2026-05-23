@@ -136,7 +136,11 @@ describe("buildConcludeCommand — --model flag", () => {
     } else {
       delete process.env.COUNCIL_HOME;
     }
-    await fs.rm(testHome, { recursive: true, force: true });
+    try {
+      await fs.rm(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    } catch {
+      /* best effort */
+    }
   });
 
   it("passes --model value to synthesizer expert", async () => {
