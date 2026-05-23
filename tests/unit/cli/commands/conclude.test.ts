@@ -234,6 +234,24 @@ describe("buildConcludeCommand", () => {
     expect(thrown.toLowerCase()).toMatch(/no panel|not found/);
   });
 
+  it("matches a panel by unique name prefix", async () => {
+    const seed = await seedPanelWithDebate(testHome, "conclude-prefix-panel");
+    let captured = "";
+    const cmd = buildConcludeCommand({
+      write: (chunk) => {
+        captured += chunk;
+      },
+      writeError: () => undefined,
+      engineFactory: () => makeMockEngine(JSON.stringify(SAMPLE_OUTPUT)),
+      synthesizerId: SYNTH_ID,
+    });
+
+    await cmd.parseAsync(["node", "council-conclude", "conclude-prefix", "--engine", "mock"]);
+
+    expect(captured).toContain(seed.panelName);
+    expect(captured).toContain(SAMPLE_OUTPUT.recommendation);
+  });
+
   it("resolves engine from config when --engine is omitted", async () => {
     const seed = await seedPanelWithDebate(testHome);
     // Write config with engine = mock so the command resolves it from config
