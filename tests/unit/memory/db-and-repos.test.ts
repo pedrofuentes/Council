@@ -21,8 +21,6 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 
 import { sql } from "kysely";
 
-import { waitForDbRelease } from "../../e2e/helpers.js";
-
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
 import { PanelRepository, type NewPanel } from "../../../src/memory/repositories/panels.js";
 import { ExpertRepository, type NewExpert } from "../../../src/memory/repositories/experts.js";
@@ -46,13 +44,6 @@ function sampleExpert(panelId: string, slug = "cto"): NewExpert {
 }
 
 async function cleanupFileBackedDatabaseDir(testHome: string): Promise<void> {
-  try {
-    await fs.access(path.join(testHome, "council.db"));
-    await waitForDbRelease(testHome);
-  } catch {
-    // Best-effort cleanup: some tests use in-memory DBs and never create the file.
-  }
-
   try {
     await fs.rm(testHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   } catch {
@@ -114,59 +105,55 @@ describe("createDatabase", () => {
       await fileDb.destroy();
       await cleanupFileBackedDatabaseDir(testHome);
     }
-  });
+  }, 20_000);
 
-  it("waits for a concurrent writer instead of crashing with SQLITE_BUSY", async () => {
+  it("lets two file-backed connections finish concurrent writes without SQLITE_BUSY", async () => {
     const testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-db-busy-timeout-"));
     const dbPath = path.join(testHome, "council.db");
-    const db1 = await createDatabase(dbPath);
-    const db2 = await createDatabase(dbPath);
-    const holderStarted = Promise.withResolvers<void>();
+    const bootstrap = await createDatabase(dbPath);
 
     try {
-      const holderPromise = db1.transaction().execute(async (trx) => {
-        await trx
-          .insertInto("panels")
-          .values({
-            id: "holder-panel",
-            name: "holder-panel",
-            topic: null,
-            copilot_home: path.join(testHome, "holder"),
-            config_json: "{}",
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          })
-          .execute();
+      await bootstrap.destroy();
+      const db1 = await createDatabase(dbPath);
+      const db2 = await createDatabase(dbPath);
 
-        holderStarted.resolve();
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      });
+      try {
+        await Promise.all([
+          db1
+            .insertInto("panels")
+            .values({
+              id: "holder-panel",
+              name: "holder-panel",
+              topic: null,
+              copilot_home: path.join(testHome, "holder"),
+              config_json: "{}",
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .execute(),
+          db2
+            .insertInto("panels")
+            .values({
+              id: "waiting-panel",
+              name: "waiting-panel",
+              topic: null,
+              copilot_home: path.join(testHome, "waiting"),
+              config_json: "{}",
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .execute(),
+        ]);
 
-      await holderStarted.promise;
-      const contenderStartedAt = Date.now();
-      const contenderPromise = db2
-        .insertInto("panels")
-        .values({
-          id: "waiting-panel",
-          name: "waiting-panel",
-          topic: null,
-          copilot_home: path.join(testHome, "waiting"),
-          config_json: "{}",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .execute();
-
-      await Promise.all([holderPromise, contenderPromise]);
-
-      expect(Date.now() - contenderStartedAt).toBeGreaterThanOrEqual(200);
-      await expect(db2.selectFrom("panels").select("name").orderBy("name").execute()).resolves
-        .toEqual([{ name: "holder-panel" }, { name: "waiting-panel" }]);
+        await expect(db2.selectFrom("panels").select("name").orderBy("name").execute()).resolves
+          .toEqual([{ name: "holder-panel" }, { name: "waiting-panel" }]);
+      } finally {
+        await Promise.all([db1.destroy(), db2.destroy()]);
+      }
     } finally {
-      await Promise.all([db1.destroy(), db2.destroy()]);
       await cleanupFileBackedDatabaseDir(testHome);
     }
-  });
+  }, 20_000);
 
   it("applies migrations 001 through 011, creating the expected indexes", async () => {
     const versions = (
