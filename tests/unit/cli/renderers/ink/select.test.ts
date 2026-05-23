@@ -11,7 +11,7 @@
  *
  * RED at this commit: src/cli/renderers/select.ts does not exist.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { selectRenderer } from "../../../../../src/cli/renderers/select.js";
 import { JsonRenderer } from "../../../../../src/cli/renderers/json.js";
@@ -25,7 +25,27 @@ const sink: Sink = {
   },
 };
 
+let origTerm: string | undefined;
+let origCI: string | undefined;
+let origAccessibility: string | undefined;
+
 describe("selectRenderer", () => {
+  beforeEach(() => {
+    origTerm = process.env["TERM"];
+    origCI = process.env["CI"];
+    origAccessibility = process.env["ACCESSIBILITY"];
+  });
+
+  afterEach(() => {
+    if (origTerm === undefined) delete process.env["TERM"];
+    else process.env["TERM"] = origTerm;
+
+    if (origCI === undefined) delete process.env["CI"];
+    else process.env["CI"] = origCI;
+
+    if (origAccessibility === undefined) delete process.env["ACCESSIBILITY"];
+    else process.env["ACCESSIBILITY"] = origAccessibility;
+  });
   it("format=json returns JsonRenderer on TTY", () => {
     expect(selectRenderer({ format: "json", isTTY: true, sink })).toBeInstanceOf(JsonRenderer);
   });
@@ -42,7 +62,11 @@ describe("selectRenderer", () => {
     expect(selectRenderer({ format: "plain", isTTY: false, sink })).toBeInstanceOf(PlainRenderer);
   });
 
-  it("format=auto on TTY returns InkRenderer", () => {
+  it("format=auto on TTY returns InkRenderer when no plain-forcing env vars are set", () => {
+    delete process.env["TERM"];
+    delete process.env["CI"];
+    delete process.env["ACCESSIBILITY"];
+
     expect(selectRenderer({ format: "auto", isTTY: true, sink })).toBeInstanceOf(InkRenderer);
   });
 
