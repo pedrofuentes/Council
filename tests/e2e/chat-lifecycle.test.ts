@@ -10,7 +10,6 @@ import type { CouncilEngine } from "../../src/engine/index.js";
 import type { ChatSessionRow, ChatTurnRow } from "../../src/memory/db.js";
 import {
   captureOutput,
-  cleanupE2EContext,
   createE2EContext,
   destroyTestDb,
   makeMockEngineFactory,
@@ -21,6 +20,19 @@ import {
 interface CommandOutput {
   readonly stdout: string;
   readonly stderr: string;
+}
+
+async function cleanupContextBestEffort(ctx: E2EContext): Promise<void> {
+  if (ctx.originalHome === undefined) delete process.env["COUNCIL_HOME"];
+  else process.env["COUNCIL_HOME"] = ctx.originalHome;
+
+  if (ctx.originalDataHome === undefined) delete process.env["COUNCIL_DATA_HOME"];
+  else process.env["COUNCIL_DATA_HOME"] = ctx.originalDataHome;
+
+  await Promise.allSettled([
+    fs.rm(ctx.testHome, { recursive: true, force: true }),
+    fs.rm(ctx.testDataHome, { recursive: true, force: true }),
+  ]);
 }
 
 interface RunChatOptions {
@@ -173,7 +185,7 @@ describe("chat lifecycle e2e", () => {
   });
 
   afterEach(async () => {
-    await cleanupE2EContext(ctx);
+    await cleanupContextBestEffort(ctx);
   });
 
   it("1:1 chat: single turn persists the session and turns", async () => {
