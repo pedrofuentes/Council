@@ -15,6 +15,7 @@
  * `path` semantics:
  *   - ":memory:"          → in-memory DB (used by tests)
  *   - any other string    → treated as a filesystem path; libsql wraps it as `file:<path>`
+ *                            and the underlying filesystem must support SQLite WAL mode
  */
 import { type Client, createClient } from "@libsql/client";
 import { LibsqlDialect } from "@libsql/kysely-libsql";
@@ -612,9 +613,19 @@ async function applyMigrations(client: Client, db: CouncilDatabase): Promise<voi
 export async function createDatabase(dbPath: string): Promise<CouncilDatabase> {
   const url = dbPath === ":memory:" ? ":memory:" : `file:${dbPath}`;
   const client = createClient({ url });
-  await configureSqliteConnection(client, dbPath);
-  const dialect = new LibsqlDialect({ client });
-  const db = new Kysely<CouncilSchema>({ dialect });
-  await applyMigrations(client, db);
-  return db;
+  let db: CouncilDatabase | undefined;
+
+  try {
+    await configureSqliteConnection(client, dbPath);
+    const dialect = new LibsqlDialect({ client });
+    db = new Kysely<CouncilSchema>({ dialect });
+    await applyMigrations(client, db);
+    return db;
+  } catch (error) {
+    if (db !== undefined) {
+      await db.destroy().catch(() => undefined);
+    }
+    client.close();
+    throw error;
+  }
 }
