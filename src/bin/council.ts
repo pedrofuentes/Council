@@ -37,6 +37,7 @@ import { buildTemplatesCommand } from "../cli/commands/templates.js";
 
 import { handleCliError } from "../cli/handle-cli-error.js";
 import {
+  defaultErrorWriter,
   defaultWriter,
   setQuiet,
   type Writer,
@@ -44,6 +45,26 @@ import {
 import { selectModelInteractively } from "../cli/first-run-model-select.js";
 import { loadConfigWithMeta } from "../config/index.js";
 
+interface EncodingWritable {
+  setDefaultEncoding(encoding: BufferEncoding): void;
+}
+
+const UTF8_OUTPUT_ENCODING: BufferEncoding = "utf8";
+
+export function configureOutputEncoding(
+  platform: NodeJS.Platform = process.platform,
+  stdout: EncodingWritable = process.stdout,
+  stderr: EncodingWritable = process.stderr,
+): void {
+  if (platform !== "win32") {
+    return;
+  }
+
+  stdout.setDefaultEncoding(UTF8_OUTPUT_ENCODING);
+  stderr.setDefaultEncoding(UTF8_OUTPUT_ENCODING);
+}
+
+configureOutputEncoding();
 installSqliteExperimentalWarningFilter();
 
 // Command categories for grouped help output
@@ -195,6 +216,6 @@ if (isMainModule) {
   buildProgram({ firstRunSetup: {} })
     .parseAsync(process.argv)
     .catch((err: unknown) => {
-      process.exitCode = handleCliError(err, (s) => process.stderr.write(s));
+      process.exitCode = handleCliError(err, defaultErrorWriter);
     });
 }

@@ -87,7 +87,7 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
         const rendered = renderForExport(doc, opts.format);
 
         if (opts.output !== undefined) {
-          await fs.writeFile(opts.output, rendered, "utf-8");
+          await fs.writeFile(opts.output, rendered, { encoding: "utf8" });
           writeError(`Wrote ${opts.format} export to ${opts.output}\n`);
           if (opts.format !== "json") {
             write(
