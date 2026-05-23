@@ -1642,5 +1642,77 @@ fs.writeFileSync(p, body, 'utf-8');`,
       ).rejects.toThrow(/http|url/i);
       expect(erred.toLowerCase()).toMatch(/http|url/);
     });
+
+    it("--url redacts userinfo and query string from progress and error logs", async () => {
+      await seedExpert(env, PERSONA);
+      const sensitive = "https://user:secrettoken@example.com/reports/report.md?sig=abc123";
+      const fakeFetch = vi.fn(async () => new Response("nope", { status: 500 }));
+      vi.stubGlobal("fetch", fakeFetch);
+      try {
+        let captured = "";
+        let erred = "";
+        const cmd = buildExpertCommand(
+          (s) => {
+            captured += s;
+          },
+          (s) => {
+            erred += s;
+          },
+          { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+        );
+        await expect(
+          cmd.parseAsync(["node", "council-expert", "train", "boss", "--url", sensitive]),
+        ).rejects.toThrow();
+        const all = captured + erred;
+        expect(all).not.toContain("secrettoken");
+        expect(all).not.toContain("abc123");
+        expect(all).not.toContain("user:");
+        expect(all).toContain("example.com");
+        expect(all).toContain("report.md");
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("--url rejects responses whose Content-Length exceeds the size cap", async () => {
+      await seedExpert(env, PERSONA);
+      const tooBig = 100 * 1024 * 1024; // 100 MB
+      const fakeFetch = vi.fn(
+        async () =>
+          new Response("x", {
+            status: 200,
+            headers: { "content-length": String(tooBig) },
+          }),
+      );
+      vi.stubGlobal("fetch", fakeFetch);
+      try {
+        let erred = "";
+        const cmd = buildExpertCommand(
+          () => {
+            /* noop */
+          },
+          (s) => {
+            erred += s;
+          },
+          { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+        );
+        await expect(
+          cmd.parseAsync([
+            "node",
+            "council-expert",
+            "train",
+            "boss",
+            "--url",
+            "https://example.com/huge.md",
+          ]),
+        ).rejects.toThrow(/exceeds|too large|size/i);
+        expect(erred.toLowerCase()).toMatch(/exceeds|too large|size/);
+        // Destination file must not be left behind.
+        const dest = path.join(env.dataHome, "experts", "boss", "docs", "huge.md");
+        await expect(fs.access(dest)).rejects.toBeTruthy();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
   });
 });
