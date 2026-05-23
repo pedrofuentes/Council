@@ -99,14 +99,13 @@ function hintForCode(
       // Prefer the explicit model field; fall back to regex extraction.
       let model = ctx.model;
       if (!model) {
-        const modelMatch = ctx.message.match(
-          /[a-z][a-z0-9-]*-(?:opus|sonnet|haiku|gpt|gemini)[a-z0-9.-]*/i,
-        );
+        const modelMatch = ctx.message.match(/\b(?:claude|gpt|gemini)-[a-z0-9.-]+\b/i);
         model = modelMatch ? modelMatch[0] : "(unknown)";
       }
       return (
         `Model ${model} isn't available on your Copilot tier. ` +
-        "Check `council doctor` for the model list, or try a different `--model` flag on the expert."
+        "Fix: council config set defaults.model <available-model>\n" +
+        "Run 'council doctor --models' to see available models."
       );
     }
     case "NETWORK":
