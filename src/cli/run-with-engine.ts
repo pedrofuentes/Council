@@ -87,6 +87,15 @@ export interface RunWithEngineOpts {
   /** Open database handle — caller manages creation; this function does NOT destroy it. */
   readonly db: CouncilDatabase;
   /**
+   * Optional AbortSignal forwarded to {@link Debate.run}. When the
+   * signal aborts, the debate stops at the next turn boundary and
+   * emits a terminal `debate.end` event with `reason: "aborted"`. A
+   * pre-aborted signal short-circuits before any turn runs. Used by
+   * `convene` to wire Ctrl+C (SIGINT) to a graceful debate stop
+   * (issue #T6).
+   */
+  readonly signal?: AbortSignal | undefined;
+  /**
    * Optional preamble to write before the debate stream starts. Only
    * called when the chosen renderer is the plain-text renderer (Ink
    * and JSON manage their own framing).
@@ -200,7 +209,10 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
       opts.preamble?.();
     }
 
-    const stream = persister.persist(debate.run(opts.prompt), opts.prompt);
+    const stream = persister.persist(
+      debate.run(opts.prompt, opts.signal ? { signal: opts.signal } : {}),
+      opts.prompt,
+    );
     await renderer.render(stream);
 
     // Post-debate hook (e.g. LLM ExpertMemory extraction). Best-effort:

@@ -245,6 +245,176 @@ describe("buildConveneCommand", () => {
     expect(phases).toEqual(["opening", "cross-examination", "rebuttal", "synthesis"]);
   });
 
+  describe("SIGINT interrupt handling (T6)", () => {
+    it("registers a SIGINT handler via subscribeInterrupt for the debate", async () => {
+      let subscribed = false;
+      let unsubscribed = false;
+      let capturedHandler: (() => void) | undefined;
+      const subscribeInterrupt = (handler: () => void): (() => void) => {
+        subscribed = true;
+        capturedHandler = handler;
+        return () => {
+          unsubscribed = true;
+        };
+      };
+
+      const cmd = buildConveneCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: () => undefined,
+        writeError: () => undefined,
+        subscribeInterrupt,
+      });
+
+      await cmd.parseAsync([
+        "node",
+        "council-convene",
+        "topic",
+        "--template",
+        "code-review",
+        "--max-rounds",
+        "1",
+        "--format",
+        "json",
+        "--engine",
+        "mock",
+      ]);
+
+      expect(subscribed).toBe(true);
+      expect(typeof capturedHandler).toBe("function");
+      expect(unsubscribed).toBe(true);
+    });
+
+    it("aborts the debate and writes an interrupted message when SIGINT fires", async () => {
+      let captured = "";
+      let errored = "";
+      let unsubscribed = false;
+      // Fire the handler synchronously the moment it's registered — this
+      // simulates Ctrl+C arriving the instant the debate starts. The
+      // AbortController short-circuits debate.run before any turn runs.
+      const subscribeInterrupt = (handler: () => void): (() => void) => {
+        handler();
+        return () => {
+          unsubscribed = true;
+        };
+      };
+
+      const cmd = buildConveneCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: (s) => {
+          captured += s;
+        },
+        writeError: (s) => {
+          errored += s;
+        },
+        subscribeInterrupt,
+      });
+
+      await cmd.parseAsync([
+        "node",
+        "council-convene",
+        "Should we ship the MVP?",
+        "--template",
+        "code-review",
+        "--max-rounds",
+        "1",
+        "--format",
+        "json",
+        "--engine",
+        "mock",
+      ]);
+
+      // Debate emitted debate.end with reason: "aborted" — partial
+      // results (the panel.assembled event + the debate row) are
+      // persisted; no turns ran.
+      const lines = captured
+        .split("\n")
+        .filter((l) => l.trim().length > 0 && l.trim().startsWith("{"))
+        .map((l) => JSON.parse(l) as { kind: string; reason?: string });
+      const end = lines.find((e) => e.kind === "debate.end");
+      expect(end).toBeDefined();
+      expect(end?.reason).toBe("aborted");
+
+      // User-facing message routed to stderr (so JSON stdout stays clean).
+      expect(errored).toMatch(/interrupted/i);
+      expect(errored).toMatch(/partial/i);
+
+      // Listener was unsubscribed even though debate was interrupted —
+      // covers both Sentinel pr769 finding 1 (no leaked listener on
+      // setup failure) and finding 2 (self-unsubscribe in handler).
+      expect(unsubscribed).toBe(true);
+
+      // Partial results saved: the panel row + the debate row exist,
+      // and the debate row is in a terminal `aborted` state (not stuck
+      // at `running`). DebatePersister maps reason "aborted" → status
+      // "aborted" — this assertion locks in that contract.
+      const db = await createDatabase(path.join(testHome, "council.db"));
+      try {
+        const panels = await new PanelRepository(db).findAll();
+        expect(panels).toHaveLength(1);
+        const debates = await new DebateRepository(db).findByPanelId(panels[0]?.id ?? "");
+        expect(debates).toHaveLength(1);
+        expect(debates[0]?.status).toBe("aborted");
+        expect(debates[0]?.endedAt).toBeTruthy();
+      } finally {
+        await db.destroy();
+      }
+    });
+    it("unsubscribes the SIGINT handler even if setup throws before the debate runs", async () => {
+      // Regression for Sentinel pr769 finding 1: any throw on the
+      // setup path AFTER the SIGINT handler is subscribed must not
+      // leak the process-level listener. We trigger the literal
+      // finding-1 scenario — a throw from inside the expertRepo.create
+      // loop, which is now inside the protected `try { ... } finally
+      // { unsubscribeInterrupt() }` block (it was NOT in commit b07f02b,
+      // hence the original leak).
+      //
+      // Mechanism: two `--human` participants with the same display
+      // name slugify to the same slug. The first expertRepo.create
+      // for the human succeeds; the second violates UNIQUE(panel_id,
+      // slug) (see src/memory/migrations/001_init.sql) and throws
+      // inside the setup loop, well before `runWithEngine` is reached.
+      let subscribed = false;
+      let unsubscribed = false;
+      const subscribeInterrupt = (_handler: () => void): (() => void) => {
+        subscribed = true;
+        return () => {
+          unsubscribed = true;
+        };
+      };
+
+      const cmd = buildConveneCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: () => undefined,
+        writeError: () => undefined,
+        subscribeInterrupt,
+      });
+
+      await expect(
+        cmd.parseAsync([
+          "node",
+          "council-convene",
+          "topic",
+          "--template",
+          "code-review",
+          "--engine",
+          "mock",
+          "--human",
+          "Alex",
+          "--human",
+          "Alex",
+        ]),
+      ).rejects.toThrow();
+
+      expect(subscribed).toBe(true);
+      // The critical assertion: even though expertRepo.create threw
+      // mid-loop (before runWithEngine started), the finally block
+      // fired and the listener was removed. Against commit b07f02b
+      // (which put the subscribe INSIDE a narrower try wrapping only
+      // runWithEngine) this assertion is false — the listener leaks.
+      expect(unsubscribed).toBe(true);
+    });
+  });
+
   it("rejects unknown templates with a non-zero exit", async () => {
     const cmd = buildConveneCommand({
       engineFactory: makeMockEngineFactory(),
@@ -390,7 +560,9 @@ describe("buildConveneCommand", () => {
       } catch (err) {
         thrown = err instanceof Error ? err.message : String(err);
       }
-      expect(thrown.toLowerCase()).toMatch(/anthropic-direct|engine.*value|engine.*expected|allowed choices/);
+      expect(thrown.toLowerCase()).toMatch(
+        /anthropic-direct|engine.*value|engine.*expected|allowed choices/,
+      );
     });
   });
 

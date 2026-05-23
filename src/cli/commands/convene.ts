@@ -79,6 +79,13 @@ export interface ConveneCommandDeps {
    * used that reads from stdin/stdout.
    */
   readonly confirmProvider?: () => ConfirmProvider;
+  /**
+   * Subscribe to SIGINT (Ctrl+C). Returns an unsubscribe function.
+   * When omitted, a default implementation that calls `process.on`
+   * is used. Tests inject a stub to simulate interrupts deterministically
+   * without affecting the host process (issue #T6).
+   */
+  readonly subscribeInterrupt?: (handler: () => void) => () => void;
 }
 
 export interface ConveneOptions {
@@ -95,6 +102,7 @@ export interface ConveneOptions {
   readonly heuristicSummaries?: boolean;
   readonly heuristicMemory?: boolean;
   readonly yes?: boolean;
+  readonly model?: string;
 }
 
 /**
@@ -191,6 +199,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         "Useful for offline tests and air-gapped environments.",
     )
     .option("--yes", "Skip the auto-compose confirmation prompt (non-interactive runs)")
+    .option("--model <model>", "Model to use for experts (default: from config)")
     .action(async (topic: string, raw: ConveneOptions) => {
       const admission = checkTopicAdmission(topic);
       for (const warning of admission.warnings) {
@@ -198,7 +207,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       }
 
       const config = await loadConfig();
-      const defaultModel = config.defaults.model;
+      const defaultModel = raw.model ?? config.defaults.model;
       const resolvedEngine = resolveEngine(raw.engine, config);
       const humanNames: readonly string[] = raw.human ?? [];
 
@@ -383,78 +392,119 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
 
         const contextConfig = buildContextConfig(opts);
 
-        const panel = await panelRepo.create({
-          name: `${template.name}-${new Date().toISOString().slice(0, 19)}`,
-          topic,
-          copilotHome: path.join(getCouncilHome(), "copilot"),
-          configJson: JSON.stringify({
-            template: template.name,
-            mode: opts.mode,
-            maxRounds: opts.maxRounds,
-            maxWords: opts.maxWords,
-            engine: opts.engine,
-          }),
-        });
+        // T6: wire Ctrl+C (SIGINT) to gracefully abort the debate.
+        // The signal is forwarded through runWithEngine to Debate.run,
+        // which stops at the next turn boundary and emits a terminal
+        // debate.end event with reason: "aborted". Partial results
+        // (panel row + any completed turns) are preserved because the
+        // DebatePersister writes turns as they stream.
+        //
+        // Lifecycle invariants (Sentinel pr769 findings 1 & 2):
+        //   1. The handler is registered BEFORE any setup that can
+        //      throw (panel/expert row inserts) and unsubscribed in a
+        //      `finally` that wraps the entire setup-and-run block.
+        //      This prevents a stale process-level listener if setup
+        //      fails before runWithEngine starts.
+        //   2. The handler unsubscribes ITSELF first so a second Ctrl+C
+        //      hits Node's default SIGINT behavior (process kill)
+        //      immediately, even while the first abort is still
+        //      unwinding the debate loop.
+        const debateController = new AbortController();
+        let debateInterrupted = false;
+        // Holder so onInterrupt can capture the unsubscribe function
+        // that is assigned right below. `process.off` is idempotent,
+        // so it's safe if the outer `finally` also calls it.
+        let unsubscribeInterrupt: () => void = () => undefined;
+        const onInterrupt = (): void => {
+          debateInterrupted = true;
+          unsubscribeInterrupt();
+          debateController.abort();
+        };
+        const subscribeInterrupt = deps.subscribeInterrupt ?? defaultSubscribeInterrupt;
+        unsubscribeInterrupt = subscribeInterrupt(onInterrupt);
 
-        const expertSlugToId: Record<string, string> = {};
-        for (const e of allExperts) {
-          const row = await expertRepo.create({
-            panelId: panel.id,
-            slug: e.slug,
-            displayName: e.displayName,
-            model: e.model,
-            systemMessage: e.systemMessage,
+        try {
+          const panel = await panelRepo.create({
+            name: `${template.name}-${new Date().toISOString().slice(0, 19)}`,
+            topic,
+            copilotHome: path.join(getCouncilHome(), "copilot"),
+            configJson: JSON.stringify({
+              template: template.name,
+              mode: opts.mode,
+              maxRounds: opts.maxRounds,
+              maxWords: opts.maxWords,
+              engine: opts.engine,
+            }),
           });
-          expertSlugToId[e.slug] = row.id;
-        }
 
-        await runWithEngine({
-          engineKind: opts.engine,
-          engineFactory: deps.engineFactory,
-          experts: allExperts,
-          debateConfig: {
-            maxRounds: opts.maxRounds,
-            maxWordsPerResponse: opts.maxWords,
-            mode: opts.mode,
-            ...(strategy !== undefined ? { strategy } : {}),
-            ...(contextConfig !== undefined ? { contextConfig } : {}),
-          },
-          prompt: topic,
-          panelId: panel.id,
-          expertSlugToId,
-          moderator:
-            opts.mode === "structured" ? "structured-phases" : (strategy?.name ?? "round-robin"),
-          format: opts.format,
-          write,
-          writeError,
-          db,
-          humanSlugs: humanSlugs.size > 0 ? humanSlugs : undefined,
-          humanInput: humanSlugs.size > 0 ? deps.humanInputFactory?.() : undefined,
-          preamble: () => {
-            write(`\n# ${stripControlChars(template.name)}\n`);
-            write(`Topic: ${topic}\n`);
-            write(`Mode: ${opts.mode} | Max rounds: ${opts.maxRounds} | Engine: ${opts.engine}\n`);
-            if (humanNames.length > 0) {
-              write(`Human participants: ${humanNames.join(", ")}\n`);
-            }
-            write("\n");
-          },
-          ...(opts.heuristicMemory === true
-            ? {}
-            : {
-                onDebateComplete: async (ctx) =>
-                  runExtractMemoryHook({
-                    engine: ctx.engine,
-                    db: ctx.db,
-                    panelId: ctx.panelId,
-                    debateId: ctx.debateId,
-                    expertSlugToId: ctx.expertSlugToId,
-                    humanSlugs,
-                    model: defaultModel,
-                    writeError,
-                  }),
-              }),
-        });
+          const expertSlugToId: Record<string, string> = {};
+          for (const e of allExperts) {
+            const row = await expertRepo.create({
+              panelId: panel.id,
+              slug: e.slug,
+              displayName: e.displayName,
+              model: e.model,
+              systemMessage: e.systemMessage,
+            });
+            expertSlugToId[e.slug] = row.id;
+          }
+
+          await runWithEngine({
+            engineKind: opts.engine,
+            engineFactory: deps.engineFactory,
+            experts: allExperts,
+            debateConfig: {
+              maxRounds: opts.maxRounds,
+              maxWordsPerResponse: opts.maxWords,
+              mode: opts.mode,
+              ...(strategy !== undefined ? { strategy } : {}),
+              ...(contextConfig !== undefined ? { contextConfig } : {}),
+            },
+            prompt: topic,
+            panelId: panel.id,
+            expertSlugToId,
+            moderator:
+              opts.mode === "structured" ? "structured-phases" : (strategy?.name ?? "round-robin"),
+            format: opts.format,
+            write,
+            writeError,
+            db,
+            signal: debateController.signal,
+            humanSlugs: humanSlugs.size > 0 ? humanSlugs : undefined,
+            humanInput: humanSlugs.size > 0 ? deps.humanInputFactory?.() : undefined,
+            preamble: () => {
+              write(`\n# ${stripControlChars(template.name)}\n`);
+              write(`Topic: ${topic}\n`);
+              write(
+                `Mode: ${opts.mode} | Max rounds: ${opts.maxRounds} | Engine: ${opts.engine}\n`,
+              );
+              if (humanNames.length > 0) {
+                write(`Human participants: ${humanNames.join(", ")}\n`);
+              }
+              write("\n");
+            },
+            ...(opts.heuristicMemory === true
+              ? {}
+              : {
+                  onDebateComplete: async (ctx) =>
+                    runExtractMemoryHook({
+                      engine: ctx.engine,
+                      db: ctx.db,
+                      panelId: ctx.panelId,
+                      debateId: ctx.debateId,
+                      expertSlugToId: ctx.expertSlugToId,
+                      humanSlugs,
+                      model: defaultModel,
+                      writeError,
+                    }),
+                }),
+          });
+        } finally {
+          unsubscribeInterrupt();
+        }
+        if (debateInterrupted) {
+          writeError("\nDebate interrupted. Partial results saved.\n");
+        }
       } finally {
         await db.destroy().catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
@@ -591,4 +641,17 @@ function parseContextScope(raw: string): VisibilityConfig {
     );
   }
   return { scope: raw as (typeof VALID_CONTEXT_SCOPES)[number] };
+}
+
+/**
+ * Default {@link ConveneCommandDeps.subscribeInterrupt} implementation:
+ * register the handler on `process.on("SIGINT", ...)` and return an
+ * unsubscribe that removes it. Tests inject a custom subscriber so
+ * the host process's signal handlers are unaffected (#T6).
+ */
+function defaultSubscribeInterrupt(handler: () => void): () => void {
+  process.on("SIGINT", handler);
+  return () => {
+    process.off("SIGINT", handler);
+  };
 }
