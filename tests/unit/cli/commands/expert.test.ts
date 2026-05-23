@@ -11,7 +11,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildExpertCommand } from "../../../../src/cli/commands/expert.js";
 import { CliUserError } from "../../../../src/cli/cli-user-error.js";
@@ -1449,6 +1449,198 @@ fs.writeFileSync(p, body, 'utf-8');`,
       // CRITICAL: must NOT claim preservation when rollback failed.
       expect(combined).not.toMatch(/profile.*preserved/);
       expect(combined).not.toMatch(/tracking preserved/);
+    });
+
+    // ──────────────────────────────────────────────────────────────────
+    // --file / --url ingestion (T10)
+    // ──────────────────────────────────────────────────────────────────
+
+    it("--file copies the given file into the expert docs dir before training", async () => {
+      await seedExpert(env, PERSONA);
+      // Create a source file OUTSIDE the expert docs dir.
+      const srcDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-src-"));
+      const srcPath = path.join(srcDir, "external-notes.md");
+      await fs.writeFile(srcPath, "External notes for the boss.", "utf-8");
+
+      let captured = "";
+      const cmd = buildExpertCommand(
+        (s) => {
+          captured += s;
+        },
+        () => {
+          /* noop */
+        },
+        { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+      );
+      try {
+        await cmd.parseAsync([
+          "node",
+          "council-expert",
+          "train",
+          "boss",
+          "--file",
+          srcPath,
+        ]);
+        // File copied into docs dir.
+        const dest = path.join(env.dataHome, "experts", "boss", "docs", "external-notes.md");
+        const body = await fs.readFile(dest, "utf-8");
+        expect(body).toBe("External notes for the boss.");
+        // Progress message mentions copy.
+        expect(captured.toLowerCase()).toMatch(/copying|copied/);
+        expect(captured).toContain("external-notes.md");
+      } finally {
+        await fs.rm(srcDir, { recursive: true, force: true });
+      }
+    });
+
+    it("--file can be passed multiple times (variadic)", async () => {
+      await seedExpert(env, PERSONA);
+      const srcDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-src-"));
+      const a = path.join(srcDir, "a.md");
+      const b = path.join(srcDir, "b.md");
+      await fs.writeFile(a, "alpha", "utf-8");
+      await fs.writeFile(b, "beta", "utf-8");
+
+      const cmd = buildExpertCommand(
+        () => {
+          /* noop */
+        },
+        () => {
+          /* noop */
+        },
+        { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+      );
+      try {
+        await cmd.parseAsync([
+          "node",
+          "council-expert",
+          "train",
+          "boss",
+          "--file",
+          a,
+          "--file",
+          b,
+        ]);
+        const docsDir = path.join(env.dataHome, "experts", "boss", "docs");
+        expect(await fs.readFile(path.join(docsDir, "a.md"), "utf-8")).toBe("alpha");
+        expect(await fs.readFile(path.join(docsDir, "b.md"), "utf-8")).toBe("beta");
+      } finally {
+        await fs.rm(srcDir, { recursive: true, force: true });
+      }
+    });
+
+    it("--file errors clearly when the source file does not exist", async () => {
+      await seedExpert(env, PERSONA);
+      let erred = "";
+      const cmd = buildExpertCommand(
+        () => {
+          /* noop */
+        },
+        (s) => {
+          erred += s;
+        },
+        { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+      );
+      const missing = path.join(env.dataHome, "does-not-exist.md");
+      await expect(
+        cmd.parseAsync(["node", "council-expert", "train", "boss", "--file", missing]),
+      ).rejects.toThrow(/not found|no such file/i);
+      expect(erred.toLowerCase()).toMatch(/not found|no such file/);
+    });
+
+    it("--url downloads content into the expert docs dir before training", async () => {
+      await seedExpert(env, PERSONA);
+      const body = "Downloaded report contents.";
+      const fakeFetch = vi.fn(async (url: string | URL) => {
+        const u = typeof url === "string" ? url : url.toString();
+        expect(u).toBe("https://example.com/reports/report.md");
+        return new Response(body, { status: 200, headers: { "content-type": "text/markdown" } });
+      });
+      vi.stubGlobal("fetch", fakeFetch);
+      try {
+        let captured = "";
+        const cmd = buildExpertCommand(
+          (s) => {
+            captured += s;
+          },
+          () => {
+            /* noop */
+          },
+          { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+        );
+        await cmd.parseAsync([
+          "node",
+          "council-expert",
+          "train",
+          "boss",
+          "--url",
+          "https://example.com/reports/report.md",
+        ]);
+        expect(fakeFetch).toHaveBeenCalledTimes(1);
+        const dest = path.join(env.dataHome, "experts", "boss", "docs", "report.md");
+        expect(await fs.readFile(dest, "utf-8")).toBe(body);
+        expect(captured.toLowerCase()).toMatch(/download/);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("--url errors clearly when the fetch fails with a non-OK status", async () => {
+      await seedExpert(env, PERSONA);
+      const fakeFetch = vi.fn(
+        async () => new Response("nope", { status: 404, statusText: "Not Found" }),
+      );
+      vi.stubGlobal("fetch", fakeFetch);
+      try {
+        let erred = "";
+        const cmd = buildExpertCommand(
+          () => {
+            /* noop */
+          },
+          (s) => {
+            erred += s;
+          },
+          { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+        );
+        await expect(
+          cmd.parseAsync([
+            "node",
+            "council-expert",
+            "train",
+            "boss",
+            "--url",
+            "https://example.com/missing.md",
+          ]),
+        ).rejects.toThrow(/404|failed to (download|fetch)/i);
+        expect(erred.toLowerCase()).toMatch(/404|failed to (download|fetch)/);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("--url rejects non-http(s) URLs", async () => {
+      await seedExpert(env, PERSONA);
+      let erred = "";
+      const cmd = buildExpertCommand(
+        () => {
+          /* noop */
+        },
+        (s) => {
+          erred += s;
+        },
+        { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+      );
+      await expect(
+        cmd.parseAsync([
+          "node",
+          "council-expert",
+          "train",
+          "boss",
+          "--url",
+          "file:///etc/passwd",
+        ]),
+      ).rejects.toThrow(/http|url/i);
+      expect(erred.toLowerCase()).toMatch(/http|url/);
     });
   });
 });
