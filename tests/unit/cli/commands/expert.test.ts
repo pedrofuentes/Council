@@ -394,50 +394,53 @@ describe("buildExpertCommand", () => {
       await fs.unlink(yamlPath);
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
-      let listCaptured = "";
-      await buildExpertCommand((s) => {
-        listCaptured += s;
-      }).parseAsync(["node", "council-expert", "list"]);
-      expect(listCaptured).toContain("No experts found");
+      try {
+        let listCaptured = "";
+        await buildExpertCommand((s) => {
+          listCaptured += s;
+        }).parseAsync(["node", "council-expert", "list"]);
+        expect(listCaptured).toContain("No experts found");
 
-      await expect(
-        buildExpertCommand(() => {
-          /* noop */
-        }).parseAsync(["node", "council-expert", "inspect", "dahlia-cto"]),
-      ).rejects.toThrow(/not found/i);
-      await expect(
-        buildExpertCommand(() => {
-          /* noop */
-        }).parseAsync(["node", "council-expert", "delete", "dahlia-cto", "--yes"]),
-      ).rejects.toThrow(/not found/i);
+        await expect(
+          buildExpertCommand(() => {
+            /* noop */
+          }).parseAsync(["node", "council-expert", "inspect", "dahlia-cto"]),
+        ).rejects.toThrow(/not found/i);
+        await expect(
+          buildExpertCommand(() => {
+            /* noop */
+          }).parseAsync(["node", "council-expert", "delete", "dahlia-cto", "--yes"]),
+        ).rejects.toThrow(/not found/i);
 
-      let createCaptured = "";
-      await buildExpertCommand((s) => {
-        createCaptured += s;
-      }).parseAsync([
-        "node",
-        "council-expert",
-        "create",
-        "--slug",
-        "dahlia-cto",
-        "--name",
-        "Dahlia Recreated",
-        "--role",
-        "Recovered from stale cache",
-        "--expertise",
-        "incident reviews",
-        "--stance",
-        "Empirical",
-      ]);
+        let createCaptured = "";
+        await buildExpertCommand((s) => {
+          createCaptured += s;
+        }).parseAsync([
+          "node",
+          "council-expert",
+          "create",
+          "--slug",
+          "dahlia-cto",
+          "--name",
+          "Dahlia Recreated",
+          "--role",
+          "Recovered from stale cache",
+          "--expertise",
+          "incident reviews",
+          "--stance",
+          "Empirical",
+        ]);
 
-      expect(createCaptured).toMatch(/created/i);
-      const recreatedYaml = await fs.readFile(yamlPath, "utf-8");
-      expect(recreatedYaml).toContain("displayName: Dahlia Recreated");
-      expect(recreatedYaml).toContain("role: Recovered from stale cache");
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Recovering stale expert cache row for slug "dahlia-cto"'),
-      );
-      warnSpy.mockRestore();
+        expect(createCaptured).toMatch(/created/i);
+        const recreatedYaml = await fs.readFile(yamlPath, "utf-8");
+        expect(recreatedYaml).toContain("displayName: Dahlia Recreated");
+        expect(recreatedYaml).toContain("role: Recovered from stale cache");
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Recovering stale expert cache row for slug "dahlia-cto"'),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
     });
 
     it("rejects invalid slug", async () => {

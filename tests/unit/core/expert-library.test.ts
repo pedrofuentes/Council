@@ -90,26 +90,53 @@ describe("FileExpertLibrary", () => {
       await fs.unlink(yamlPath);
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
-      expect(await lib.get("cto")).toBeNull();
-      expect(await lib.list()).toEqual([]);
+      try {
+        expect(await lib.get("cto")).toBeNull();
+        expect(await lib.list()).toEqual([]);
 
-      await lib.create(
-        makeDef({
-          displayName: "Fresh CTO",
-          role: "Recreated from YAML source of truth",
-        }),
-      );
+        await lib.create(
+          makeDef({
+            displayName: "Fresh CTO",
+            role: "Recreated from YAML source of truth",
+          }),
+        );
 
-      const recreated = await lib.get("cto");
-      expect(recreated?.displayName).toBe("Fresh CTO");
-      expect(recreated?.role).toBe("Recreated from YAML source of truth");
+        const recreated = await lib.get("cto");
+        expect(recreated?.displayName).toBe("Fresh CTO");
+        expect(recreated?.role).toBe("Recreated from YAML source of truth");
 
-      const row = await new ExpertLibraryRepository(db).findBySlug("cto");
-      expect(row?.displayName).toBe("Fresh CTO");
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Recovering stale expert cache row for slug "cto"'),
-      );
-      warnSpy.mockRestore();
+        const row = await new ExpertLibraryRepository(db).findBySlug("cto");
+        expect(row?.displayName).toBe("Fresh CTO");
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Recovering stale expert cache row for slug "cto"'),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it("repairs a missing cache row when the YAML file already exists", async () => {
+      await lib.create(makeDef());
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const repo = new ExpertLibraryRepository(db);
+      await repo.delete("cto");
+
+      try {
+        expect(await repo.findBySlug("cto")).toBeUndefined();
+
+        await expect(lib.create(makeDef({ displayName: "Attempted Duplicate" }))).rejects.toThrow(
+          /already exists/i,
+        );
+
+        const repaired = await repo.findBySlug("cto");
+        expect(repaired?.displayName).toBe("Dahlia Renner (CTO)");
+        expect(await lib.get("cto")).not.toBeNull();
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Recovering missing expert cache row for slug "cto"'),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
     });
 
     it("rejects a concurrent ghost expert recreate after the replacement YAML is claimed", async () => {
