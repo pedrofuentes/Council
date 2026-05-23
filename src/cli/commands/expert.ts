@@ -10,6 +10,7 @@
  */
 import { spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
+import type { Stats } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline/promises";
@@ -735,6 +736,92 @@ function buildDocsCommand(write: Writer, writeError: Writer): Command {
 interface TrainOptions {
   readonly retrain?: boolean;
   readonly engine?: string;
+  readonly file?: readonly string[];
+  readonly url?: readonly string[];
+}
+
+/**
+ * Copy a user-provided file into the expert's docs directory so that
+ * the normal training pass picks it up. Validates the source exists
+ * and is a regular file, and refuses path-like names that would
+ * escape the destination directory.
+ */
+async function ingestFileIntoDocs(
+  srcPath: string,
+  docsPath: string,
+  write: Writer,
+): Promise<void> {
+  const abs = path.resolve(srcPath);
+  let stat: Stats;
+  try {
+    stat = await fs.stat(abs);
+  } catch {
+    throw new CliUserError(`File not found: ${srcPath}`);
+  }
+  if (!stat.isFile()) {
+    throw new CliUserError(`Not a regular file: ${srcPath}`);
+  }
+  const filename = path.basename(abs);
+  if (filename === "" || filename === "." || filename === ".." || /[\\/]/.test(filename)) {
+    throw new CliUserError(`Invalid filename derived from path: ${srcPath}`);
+  }
+  const dest = path.join(docsPath, filename);
+  write(`Copying ${filename} to expert docs...\n`);
+  await fs.copyFile(abs, dest);
+}
+
+/**
+ * Download an http(s) URL into the expert's docs directory using the
+ * filename derived from the URL's last path segment. The downloaded
+ * payload is written verbatim; the standard training extractor then
+ * processes it like any other file in the docs dir.
+ */
+async function ingestUrlIntoDocs(
+  rawUrl: string,
+  docsPath: string,
+  write: Writer,
+): Promise<void> {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new CliUserError(`Invalid URL: ${rawUrl}`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new CliUserError(`Only http(s) URLs are supported (got ${parsed.protocol}): ${rawUrl}`);
+  }
+  const segments = parsed.pathname.split("/").filter((s) => s.length > 0);
+  const last = segments[segments.length - 1];
+  if (last === undefined || last === "" || last === "." || last === "..") {
+    throw new CliUserError(
+      `Cannot derive filename from URL pathname (no last segment): ${rawUrl}`,
+    );
+  }
+  let filename: string;
+  try {
+    filename = decodeURIComponent(last);
+  } catch {
+    throw new CliUserError(`Invalid percent-encoding in URL filename: ${rawUrl}`);
+  }
+  if (filename === "" || filename === "." || filename === ".." || /[\\/]/.test(filename)) {
+    throw new CliUserError(`Invalid filename derived from URL: ${rawUrl}`);
+  }
+  write(`Downloading ${rawUrl} to ${filename}...\n`);
+  let resp: Response;
+  try {
+    resp = await fetch(rawUrl);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new CliUserError(`Failed to download ${rawUrl}: ${detail}`);
+  }
+  if (!resp.ok) {
+    throw new CliUserError(
+      `Failed to download ${rawUrl}: HTTP ${resp.status}${resp.statusText ? ` ${resp.statusText}` : ""}`,
+    );
+  }
+  const buf = Buffer.from(await resp.arrayBuffer());
+  const dest = path.join(docsPath, filename);
+  await fs.writeFile(dest, buf);
 }
 
 function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertCommandDeps): Command {
@@ -743,6 +830,14 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
     .description("Reprocess all documents for a persona expert and refresh its profile")
     .argument("<slug>", "Persona expert slug")
     .option("--retrain", "Clear the existing profile and rebuild from scratch")
+    .option(
+      "--file <path...>",
+      "Copy one or more files into the expert docs dir before training (repeatable)",
+    )
+    .option(
+      "--url <url...>",
+      "Download one or more http(s) URLs into the expert docs dir before training (repeatable)",
+    )
     .addOption(
       new Option("--engine <kind>", "Engine to use for profile analysis")
         .choices([...ENGINE_KINDS])
@@ -767,6 +862,24 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
 
         const docsPath = path.join(dataHome, "experts", slug, "docs");
         await fs.mkdir(docsPath, { recursive: true });
+
+        // Ingest --file and --url inputs into the docs dir BEFORE training
+        // so the existing processor picks them up as new documents. Any
+        // ingestion failure aborts the run before training starts so the
+        // user sees a clear, actionable error.
+        try {
+          for (const f of opts.file ?? []) {
+            await ingestFileIntoDocs(f, docsPath, write);
+          }
+          for (const u of opts.url ?? []) {
+            await ingestUrlIntoDocs(u, docsPath, write);
+          }
+        } catch (err) {
+          if (err instanceof CliUserError) {
+            writeError(err.message + "\n");
+          }
+          throw err;
+        }
 
         const documentRepo = new DocumentRepository(db);
         const profileRepo = new ProfileRepository(db);
