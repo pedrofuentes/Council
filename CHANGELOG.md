@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`council export` matches panel names by prefix** (T7) — `council export <prefix>` now resolves a unique-prefix match the same way `council resume` does. If the prefix is ambiguous, the matching names are listed and the command exits with a clear error. Exact-name lookup remains backward compatible.
+- **`council export` includes the full history of resumed sessions** (T7) — previously only the most substantive single debate was exported, so resumed panels lost their original rounds. Export now flattens every debate (original + each resumption) into one continuous transcript with globally renumbered rounds; markdown / json / adr formats are unchanged.
+
 ### Breaking Changes
 
 - **`--continue` renamed to `--prompt`** (CLI-21) — The `council resume --continue` flag has been renamed to `--prompt`. There is no alias — the old flag will error. Update scripts accordingly.

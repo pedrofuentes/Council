@@ -16,8 +16,13 @@
  *     populated from the panel's debate.
  *
  * Pure read path: no engine, no LLM, no persistence side effects.
- * Reuses `loadTranscript()` + `synthesizeEvents()` from
- * `src/memory/transcript.ts` (shared with `council resume`).
+ * Reuses `synthesizeEvents()` from `src/memory/transcript.ts` (shared
+ * with `council resume`). Unlike resume — which surfaces only the most
+ * substantive single debate — export flattens every debate (original +
+ * each resumption) into one continuous transcript so resumed sessions
+ * don't lose earlier rounds. Panel name resolution mirrors resume's
+ * exact-then-prefix fallback so `council export cfo` works when only
+ * one panel name starts with `cfo`.
  */
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -25,12 +30,14 @@ import * as path from "node:path";
 import { Command, Option } from "commander";
 
 import { getCouncilHome } from "../../config/index.js";
-import { createDatabase } from "../../memory/db.js";
-import {
-  loadTranscript,
-  synthesizeEvents,
-  type TranscriptDocument,
-} from "../../memory/transcript.js";
+import { createDatabase, type CouncilDatabase } from "../../memory/db.js";
+import { DebateRepository } from "../../memory/repositories/debates.js";
+import { ExpertRepository } from "../../memory/repositories/experts.js";
+import { PanelRepository } from "../../memory/repositories/panels.js";
+import { TurnRepository, type Turn } from "../../memory/repositories/turns.js";
+import { synthesizeEvents, type TranscriptDocument } from "../../memory/transcript.js";
+
+import { CliUserError } from "../cli-user-error.js";
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
@@ -70,7 +77,8 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
       const dbPath = path.join(getCouncilHome(), "council.db");
       const db = await createDatabase(dbPath);
       try {
-        const doc = await loadTranscript(db, panelName);
+        const resolvedName = await resolvePanelName(panelName, db, writeError);
+        const doc = await loadFullPanelTranscript(db, resolvedName);
         const rendered = renderForExport(doc, opts.format);
 
         if (opts.output !== undefined) {
@@ -78,7 +86,7 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
           writeError(`Wrote ${opts.format} export to ${opts.output}\n`);
           if (opts.format !== "json") {
             write(
-              `\x1b[2mNext: council conclude ${panelName} | council resume ${panelName}\x1b[0m\n`,
+              `\x1b[2mNext: council conclude ${resolvedName} | council resume ${resolvedName}\x1b[0m\n`,
             );
           }
           return;
@@ -86,7 +94,7 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
         write(rendered);
         if (opts.format !== "json") {
           write(
-            `\x1b[2mNext: council conclude ${panelName} | council resume ${panelName}\x1b[0m\n`,
+            `\x1b[2mNext: council conclude ${resolvedName} | council resume ${resolvedName}\x1b[0m\n`,
           );
         }
       } finally {
@@ -315,4 +323,113 @@ function deriveAdrStatus(doc: TranscriptDocument): string {
 
 function hasOnlyVeryShortTurns(turns: readonly { readonly content: string }[]): boolean {
   return turns.length > 0 && turns.every((turn) => turn.content.trim().length <= ADR_SHORT_TURN_MAX_CHARS);
+}
+
+/**
+ * Resolve a panel name from CLI input, mirroring `council resume`:
+ *   1. Exact match by name (backward compatible)
+ *   2. Prefix match — auto-select if unique, error if ambiguous
+ *   3. No match — return the input unchanged so the downstream loader
+ *      produces the standard "no panel found" error.
+ */
+async function resolvePanelName(
+  panelArg: string,
+  db: CouncilDatabase,
+  writeError: Writer,
+): Promise<string> {
+  const panelRepo = new PanelRepository(db);
+
+  const exact = await panelRepo.findByName(panelArg);
+  if (exact) return exact.name;
+
+  const prefixMatches = await panelRepo.findByNamePrefix(panelArg);
+  if (prefixMatches.length === 1) {
+    const match = prefixMatches[0];
+    if (match) return match.name;
+  }
+  if (prefixMatches.length > 1) {
+    const names = prefixMatches.map((p) => p.name);
+    writeError(`Multiple panels match "${panelArg}":\n`);
+    for (const n of names) {
+      writeError(`  - ${n}\n`);
+    }
+    writeError(`Re-run with the full panel name to disambiguate.\n`);
+    throw new CliUserError(
+      `Ambiguous prefix "${panelArg}" matches ${prefixMatches.length} panels: ${names.join(", ")}`,
+    );
+  }
+
+  return panelArg;
+}
+
+/**
+ * Load a panel's full conversational history for export — every debate
+ * (original + every resumption) flattened into a single TranscriptDocument.
+ *
+ * Differs from `loadTranscript()` (used by resume), which intentionally
+ * surfaces only the most-substantive single debate. Export needs the
+ * complete record so resumed sessions don't lose earlier rounds.
+ *
+ * Round numbers are renumbered to be globally monotonic across debates
+ * so the existing markdown/json/adr renderers produce a continuous
+ * "Round 1, 2, 3, ..." sequence without needing any format changes.
+ * `originalPrompt` is the first debate's prompt (the original question
+ * the panel was convened around); `latestDebate` reflects the most
+ * recent debate's status/timestamps.
+ */
+async function loadFullPanelTranscript(
+  db: CouncilDatabase,
+  panelName: string,
+): Promise<TranscriptDocument> {
+  const panelRepo = new PanelRepository(db);
+  const expertRepo = new ExpertRepository(db);
+  const debateRepo = new DebateRepository(db);
+  const turnRepo = new TurnRepository(db);
+
+  const panel = await panelRepo.findByName(panelName);
+  if (!panel) {
+    throw new Error(
+      `No panel found with name '${panelName}'. Run \`council sessions\` to list available panels.`,
+    );
+  }
+  const experts = await expertRepo.findByPanelId(panel.id);
+  const debates = await debateRepo.findByPanelId(panel.id);
+  if (debates.length === 0) {
+    throw new Error(
+      `Panel '${panelName}' has no debates yet. Run \`council convene\` to start one.`,
+    );
+  }
+
+  const originalDebate = debates[0];
+  const latestDebate = debates[debates.length - 1];
+  if (!originalDebate || !latestDebate) {
+    throw new Error(`Panel '${panelName}' has no debates yet. Run \`council convene\` to start one.`);
+  }
+
+  const flattenedTurns: Turn[] = [];
+  let roundOffset = 0;
+  for (const debate of debates) {
+    const debateTurns = await turnRepo.findByDebateId(debate.id);
+    if (debateTurns.length === 0) continue;
+    let maxRound = 0;
+    for (const t of debateTurns) {
+      flattenedTurns.push({ ...t, round: t.round + roundOffset });
+      if (t.round > maxRound) maxRound = t.round;
+    }
+    roundOffset += maxRound + 1;
+  }
+
+  return {
+    panel,
+    experts,
+    originalPrompt: originalDebate.prompt,
+    latestDebate: {
+      id: latestDebate.id,
+      prompt: latestDebate.prompt,
+      status: latestDebate.status,
+      startedAt: latestDebate.startedAt,
+      endedAt: latestDebate.endedAt,
+    },
+    turns: flattenedTurns,
+  };
 }
