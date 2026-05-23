@@ -173,13 +173,12 @@ export async function updateConfigField(
     throw new Error(`Failed to parse Council config (${file}): ${cause}`);
   }
 
-  const currentValue = document.toJS();
-  if (
-    currentValue === null ||
-    typeof currentValue !== "object" ||
-    Array.isArray(currentValue)
-  ) {
+  if (document.contents === null) {
     document.contents = yaml.parseDocument("{}").contents;
+  } else if (!yaml.isMap(document.contents)) {
+    throw new Error(
+      `Council config (${file}) has an invalid root structure. Expected a YAML mapping but found ${document.contents.constructor.name}. Please fix or delete the config file.`,
+    );
   }
 
   document.setIn(key.split("."), value);
