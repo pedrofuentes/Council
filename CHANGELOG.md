@@ -51,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Doctor model alternatives now filter unsafe/duplicate IDs** (T-15) — `council doctor` now sanitizes discovered model IDs before comparing them to the active default, rejects IDs containing shell metacharacters or whitespace, hides remediation guidance when no safe alternative remains, and labels `--models` as live discovery with static fallback.
 - **Expert delete confirmation + SQLite warning suppression** (T-09) — `council expert delete <slug>` now requires `--yes` in non-interactive environments, including `--force`, so automation must confirm deletions explicitly. Council also suppresses only Node's specific SQLite `ExperimentalWarning`, leaving unrelated experimental or SQLite-adjacent warnings visible.
 - **`council chat` now accepts convene-generated panel names with timestamps** (T-04) — panel names created by `council convene` include ISO timestamps (e.g., `code-review-2026-05-22T05:30:01`) which previously failed slug validation. The chat command now looks up panel names in the database before applying file-based slug validation, allowing users to group-chat with convene-generated panels.
 

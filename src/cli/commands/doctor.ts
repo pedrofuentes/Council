@@ -186,7 +186,13 @@ function statusIcon(status: CheckResult["status"]): string {
 }
 
 function sanitizeModelId(id: string): string {
-  return stripControlChars(id).replace(/[\r\n]+/g, " ").trim();
+  return stripControlChars(id)
+    .replace(/[\r\n]+/g, " ")
+    .trim();
+}
+
+function isValidModelId(id: string): boolean {
+  return /^[a-zA-Z0-9._-]+$/.test(id);
 }
 
 async function buildModelAccessFailureDetail(
@@ -196,10 +202,17 @@ async function buildModelAccessFailureDetail(
 ): Promise<string> {
   try {
     const discovery = await discoverModels();
-    const alternatives = discovery.models
-      .filter((candidate) => candidate !== model)
-      .map(sanitizeModelId)
-      .filter((candidate) => candidate.length > 0);
+    const sanitizedModel = sanitizeModelId(model);
+    const alternatives = [
+      ...new Set(
+        discovery.models
+          .map(sanitizeModelId)
+          .filter(
+            (candidate) =>
+              candidate.length > 0 && candidate !== sanitizedModel && isValidModelId(candidate),
+          ),
+      ),
+    ];
     if (alternatives.length === 0) {
       return failureDetail;
     }
@@ -230,9 +243,11 @@ function sortModelsForDisplay(models: readonly string[]): readonly string[] {
 
 function writeKnownModels(write: Writer, label: string, models: readonly string[]): void {
   write(`${label}\n`);
-  const orderedModels = sortModelsForDisplay(
-    models.map(sanitizeModelId).filter((model) => model.length > 0),
-  );
+  const orderedModels = sortModelsForDisplay([
+    ...new Set(
+      models.map(sanitizeModelId).filter((model) => model.length > 0 && isValidModelId(model)),
+    ),
+  ]);
   const labelWidth = Math.max(...MODEL_GROUPS.map((group) => group.label.length));
   for (const group of MODEL_GROUPS) {
     const groupedModels = orderedModels.filter((model) => model.startsWith(group.prefix));
@@ -267,7 +282,7 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
     .description("Diagnose Council setup (Node, libsql, Copilot SDK, disk)")
     .option("--online", "No-op; online check now runs by default (backwards compatibility)")
     .option("--offline", "Skip online model probe")
-    .option("--models", "List known Copilot model identifiers")
+    .option("--models", "List available Copilot models (live discovery with static fallback)")
     .action(async (options: DoctorOptions) => {
       const checks: (() => Promise<CheckResult>)[] = [
         checkNodeVersion,
