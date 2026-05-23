@@ -104,6 +104,40 @@ describe("buildDoctorCommand", () => {
     expect(output).toContain("Fix: council config set defaults.model claude-sonnet-4.5");
   });
 
+  it("doctor with thrown probe still shows alternatives", async () => {
+    const onlineProbe = vi.fn(async () => {
+      throw new Error("session creation failed");
+    });
+    const discoverModels = vi.fn(async () => ({
+      models: ["claude-sonnet-4.5", "gpt-5.4", "gpt-5.4-mini"],
+      source: "live" as const,
+    }));
+
+    const output = await runDoctor([], { onlineProbe, discoverModels });
+
+    expect(onlineProbe).toHaveBeenCalledTimes(1);
+    expect(discoverModels).toHaveBeenCalledTimes(1);
+    expect(output).toContain("Default model (claude-sonnet-4.5) probe failed: session creation failed");
+    expect(output).toContain("Available alternatives:");
+    expect(output).toContain("gpt-5.4, gpt-5.4-mini");
+    expect(output).toContain("Fix: council config set defaults.model gpt-5.4");
+  });
+
+  it("doctor with failed probe degrades gracefully when model discovery throws", async () => {
+    const onlineProbe = vi.fn(async () => ({ ok: false, detail: "model not found" }));
+    const discoverModels = vi.fn(async () => {
+      throw new Error("discovery unavailable");
+    });
+
+    const output = await runDoctor([], { onlineProbe, discoverModels });
+
+    expect(onlineProbe).toHaveBeenCalledTimes(1);
+    expect(discoverModels).toHaveBeenCalledTimes(1);
+    expect(output).toContain("Default model (claude-sonnet-4.5) is not accessible: model not found");
+    expect(output).not.toContain("Available alternatives:");
+    expect(output).not.toContain("discovery unavailable");
+  });
+
   it("doctor --offline skips model probe", async () => {
     const onlineProbe = vi.fn(async () => ({ ok: true, detail: "should not run" }));
 
@@ -144,6 +178,20 @@ describe("buildDoctorCommand", () => {
     expect(output).toContain("Anthropic: claude-haiku-4.5, claude-sonnet-4.5");
     expect(output).toContain("OpenAI   : gpt-5.4, gpt-5.4-mini");
     expect(output).not.toContain("Google");
+    expect(discoverModels).toHaveBeenCalledTimes(1);
+  });
+
+  it("doctor --models sorts scrambled discovered models before grouping", async () => {
+    const discoverModels = vi.fn(async () => ({
+      models: ["gpt-5.4", "claude-sonnet-4.5", "gpt-5.4-mini", "claude-haiku-4.5"],
+      source: "live" as const,
+    }));
+
+    const output = await runDoctor(["--models", "--offline"], { discoverModels });
+
+    expect(output).toContain("Available models:");
+    expect(output).toContain("Anthropic: claude-haiku-4.5, claude-sonnet-4.5");
+    expect(output).toContain("OpenAI   : gpt-5.4, gpt-5.4-mini");
     expect(discoverModels).toHaveBeenCalledTimes(1);
   });
 
