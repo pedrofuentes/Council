@@ -139,6 +139,7 @@ describe("ConfigSchema", () => {
 describe("loadConfig() / getCouncilHome() — file I/O", () => {
   let testHome: string;
   const originalCouncilHome = process.env["COUNCIL_HOME"];
+  const originalCouncilDataHome = process.env["COUNCIL_DATA_HOME"];
 
   beforeEach(async () => {
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-test-"));
@@ -151,6 +152,11 @@ describe("loadConfig() / getCouncilHome() — file I/O", () => {
     } else {
       process.env["COUNCIL_HOME"] = originalCouncilHome;
     }
+    if (originalCouncilDataHome === undefined) {
+      delete process.env["COUNCIL_DATA_HOME"];
+    } else {
+      process.env["COUNCIL_DATA_HOME"] = originalCouncilDataHome;
+    }
     await fs.rm(testHome, { recursive: true, force: true });
   });
 
@@ -158,8 +164,15 @@ describe("loadConfig() / getCouncilHome() — file I/O", () => {
     expect(getCouncilHome()).toBe(testHome);
   });
 
-  it("getCouncilHome() defaults to ~/.council when COUNCIL_HOME is unset", () => {
+  it("getCouncilHome() falls back to COUNCIL_DATA_HOME when COUNCIL_HOME is unset", () => {
     delete process.env["COUNCIL_HOME"];
+    process.env["COUNCIL_DATA_HOME"] = path.join(testHome, "data-home");
+    expect(getCouncilHome()).toBe(path.join(testHome, "data-home"));
+  });
+
+  it("getCouncilHome() defaults to ~/.council when both env vars are unset", () => {
+    delete process.env["COUNCIL_HOME"];
+    delete process.env["COUNCIL_DATA_HOME"];
     expect(getCouncilHome()).toBe(path.join(os.homedir(), ".council"));
   });
 
