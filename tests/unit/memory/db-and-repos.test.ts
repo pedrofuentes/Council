@@ -16,6 +16,8 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 
@@ -107,48 +109,58 @@ describe("createDatabase", () => {
     }
   }, 20_000);
 
-  it("lets two file-backed connections finish concurrent writes without SQLITE_BUSY", async () => {
+  it("lets a blocked writer wait for a held transaction instead of crashing with SQLITE_BUSY", async () => {
     const testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-db-busy-timeout-"));
     const dbPath = path.join(testHome, "council.db");
     const bootstrap = await createDatabase(dbPath);
+    const holderScript = [
+      'import { createClient } from "@libsql/client";',
+      `const client = createClient({ url: ${JSON.stringify(`file:${dbPath}`)} });`,
+      'try {',
+      '  await client.execute("BEGIN IMMEDIATE;");',
+      '  await client.execute("INSERT INTO panels (id, name, topic, copilot_home, config_json, created_at, updated_at) VALUES (\'holder-panel\', \'holder-panel\', NULL, \'holder-home\', \'{}\', \'2026-01-01T00:00:00.000Z\', \'2026-01-01T00:00:00.000Z\');");',
+      '  console.log("LOCKED");',
+      '  await new Promise((resolve) => setTimeout(resolve, 250));',
+      '  await client.execute("COMMIT;");',
+      '} finally {',
+      '  client.close();',
+      '}',
+    ].join("\n");
 
     try {
       await bootstrap.destroy();
-      const db1 = await createDatabase(dbPath);
-      const db2 = await createDatabase(dbPath);
+      const db = await createDatabase(dbPath);
+      const holder = spawn(process.execPath, ["--input-type=module", "-e", holderScript], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
 
       try {
-        await Promise.all([
-          db1
-            .insertInto("panels")
-            .values({
-              id: "holder-panel",
-              name: "holder-panel",
-              topic: null,
-              copilot_home: path.join(testHome, "holder"),
-              config_json: "{}",
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            })
-            .execute(),
-          db2
-            .insertInto("panels")
-            .values({
-              id: "waiting-panel",
-              name: "waiting-panel",
-              topic: null,
-              copilot_home: path.join(testHome, "waiting"),
-              config_json: "{}",
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            })
-            .execute(),
-        ]);
+        const [holderSignal] = await once(holder.stdout, "data");
+        expect(String(holderSignal).trim()).toBe("LOCKED");
 
-        await expect(db2.selectFrom("panels").select("name").orderBy("name").execute()).resolves
+        const contenderStartedAt = Date.now();
+        const contenderWrite = db
+          .insertInto("panels")
+          .values({
+            id: "waiting-panel",
+            name: "waiting-panel",
+            topic: null,
+            copilot_home: path.join(testHome, "waiting"),
+            config_json: "{}",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .execute();
+
+        const [exitCode] = await once(holder, "exit");
+        expect(exitCode).toBe(0);
+        await contenderWrite;
+        expect(Date.now() - contenderStartedAt).toBeGreaterThanOrEqual(200);
+        await expect(db.selectFrom("panels").select("name").orderBy("name").execute()).resolves
           .toEqual([{ name: "holder-panel" }, { name: "waiting-panel" }]);
       } finally {
-        await Promise.all([db1.destroy(), db2.destroy()]);
+        holder.kill();
+        await db.destroy();
       }
     } finally {
       await cleanupFileBackedDatabaseDir(testHome);
