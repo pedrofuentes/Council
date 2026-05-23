@@ -185,40 +185,47 @@ describe("buildDoctorCommand", () => {
     expect(discoverModels).toHaveBeenCalledTimes(1);
   });
 
-  it("doctor --models sorts scrambled discovered models before grouping", async () => {
+  it("doctor --models preserves discovered order within provider groups", async () => {
     const discoverModels = vi.fn(async () => ({
-      models: ["gpt-5.4", "claude-sonnet-4.5", "gpt-5.4-mini", "claude-haiku-4.5"],
+      models: ["gpt-5.4-mini", "claude-sonnet-4.5", "gpt-5.4", "claude-haiku-4.5"],
       source: "live" as const,
     }));
 
     const output = await runDoctor(["--models", "--offline"], { discoverModels });
 
     expect(output).toContain("Available models:");
-    expect(output).toContain("Anthropic: claude-haiku-4.5, claude-sonnet-4.5");
-    expect(output).toContain("OpenAI   : gpt-5.4, gpt-5.4-mini");
+    expect(output).toContain("Anthropic: claude-sonnet-4.5, claude-haiku-4.5");
+    expect(output).toContain("OpenAI   : gpt-5.4-mini, gpt-5.4");
     expect(discoverModels).toHaveBeenCalledTimes(1);
   });
 
-  it("doctor --models filters invalid discovered model IDs after sanitization", async () => {
+  it("doctor --models filters invalid discovered model IDs and deduplicates sanitized matches", async () => {
     const discoverModels = vi.fn(async () => ({
-      models: ["claude-\u001b[31msonnet-4.6\u001b[0m", "gpt-5.4\nmini", "gpt-5.4;rm -rf /"],
+      models: [
+        "claude-\u001b[31msonnet-4.6\u001b[0m",
+        "gpt-5.4",
+        "gpt-\u001b[31m5.4\u001b[0m",
+        "gpt-5.4\nmini",
+        "gpt-5.4;rm -rf /",
+      ],
       source: "live" as const,
     }));
 
     const output = await runDoctor(["--models", "--offline"], { discoverModels });
 
     expect(output).toContain("Anthropic: claude-sonnet-4.6");
-    expect(output).not.toContain("OpenAI   :");
+    expect(output).toContain("OpenAI   : gpt-5.4");
+    expect(output).not.toContain("gpt-5.4, gpt-5.4");
     expect(output).not.toContain("gpt-5.4 mini");
     expect(output).not.toContain("gpt-5.4;rm -rf /");
     expect(output).not.toContain("\u001b[31m");
     expect(output).not.toContain("gpt-5.4\nmini");
   });
 
-  it("doctor excludes shell metacharacters from remediation alternatives and fix commands", async () => {
+  it("doctor excludes shell metacharacters and option-like IDs from remediation alternatives", async () => {
     const onlineProbe = vi.fn(async () => ({ ok: false, detail: "model not found" }));
     const discoverModels = vi.fn(async () => ({
-      models: ["claude-sonnet-4.5", "gpt-5.4;rm -rf /", "gpt-\u001b[31m5.4\u001b[0m"],
+      models: ["claude-sonnet-4.5", "gpt-5.4", "gpt-\u001b[31m5.4\u001b[0m", "--help", "-x", "gpt-5.4;rm -rf /"],
       source: "live" as const,
     }));
 
@@ -227,6 +234,9 @@ describe("buildDoctorCommand", () => {
     expect(output).toContain("Available alternatives:");
     expect(output).toContain("     gpt-5.4");
     expect(output).toContain("Fix: council config set defaults.model gpt-5.4");
+    expect(output).not.toContain("gpt-5.4, gpt-5.4");
+    expect(output).not.toContain("--help");
+    expect(output).not.toContain("-x");
     expect(output).not.toContain("gpt-5.4;rm -rf /");
     expect(output).not.toContain("\u001b[31m");
   });
