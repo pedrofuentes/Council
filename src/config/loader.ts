@@ -14,6 +14,7 @@
  * throws on a missing home directory — creates it.
  */
 import * as fs from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -91,7 +92,7 @@ async function sleep(ms: number): Promise<void> {
 async function withConfigLock<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
   const maxRetries = 50;
   const retryDelay = 100;
-  let handle: import("node:fs/promises").FileHandle | undefined;
+  let handle: FileHandle | undefined;
 
   for (let index = 0; index < maxRetries; index += 1) {
     try {
