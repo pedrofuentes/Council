@@ -18,6 +18,17 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 import { loadConfig, updateConfigField } from "../../../src/config/index.js";
 
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+function isUniqueTempPath(filePath: unknown, expectedConfigPath: string): filePath is string {
+  return (
+    typeof filePath === "string" &&
+    filePath.startsWith(`${expectedConfigPath}.`) &&
+    filePath.endsWith(".tmp")
+  );
+}
+
 describe("updateConfigField", () => {
   let actualFs: typeof fs;
   let testHome: string;
@@ -71,6 +82,70 @@ describe("updateConfigField", () => {
     expect(updated).toContain("engine: mock");
   });
 
+  it("does not lose updates when concurrent writers modify different fields", async () => {
+    await fs.mkdir(testHome, { recursive: true });
+    await fs.writeFile(
+      configPath,
+      "defaults:\n  model: claude-sonnet-4.5\n  engine: mock\n  maxRounds: 4\n",
+      "utf-8",
+    );
+
+    let releaseFirstRename!: () => void;
+    const allowFirstRename = new Promise<void>((resolve) => {
+      releaseFirstRename = resolve;
+    });
+    let notifyFirstRenameStarted!: () => void;
+    const firstRenameStarted = new Promise<void>((resolve) => {
+      notifyFirstRenameStarted = resolve;
+    });
+    let didHoldFirstRename = false;
+
+    vi.mocked(fs.rename).mockImplementation(async (...args: Parameters<typeof fs.rename>) => {
+      const [fromPath, toPath] = args;
+      if (!didHoldFirstRename && toPath === configPath && isUniqueTempPath(fromPath, configPath)) {
+        didHoldFirstRename = true;
+        notifyFirstRenameStarted();
+        await allowFirstRename;
+      }
+      return actualFs.rename(...args);
+    });
+
+    const firstUpdate = updateConfigField("defaults.model", "gpt-5");
+    await firstRenameStarted;
+    const secondUpdate = updateConfigField("defaults.maxRounds", 8);
+    await sleep(200);
+    releaseFirstRename();
+
+    await expect(Promise.all([firstUpdate, secondUpdate])).resolves.toBeDefined();
+
+    const config = await loadConfig();
+    expect(config.defaults.model).toBe("gpt-5");
+    expect(config.defaults.maxRounds).toBe(8);
+  });
+
+  it("waits for an existing lock and succeeds after it is released", async () => {
+    await fs.mkdir(testHome, { recursive: true });
+    const original = "defaults:\n  model: claude-sonnet-4.5\n  engine: mock\n";
+    const lockPath = `${configPath}.lock`;
+    await fs.writeFile(configPath, original, "utf-8");
+    await fs.writeFile(lockPath, "locked", "utf-8");
+
+    let settled = false;
+    const updatePromise = updateConfigField("defaults.model", "gpt-5").finally(() => {
+      settled = true;
+    });
+
+    await sleep(200);
+    expect(settled).toBe(false);
+    await expect(fs.readFile(configPath, "utf-8")).resolves.toBe(original);
+
+    await fs.unlink(lockPath);
+    await expect(updatePromise).resolves.toBeUndefined();
+
+    const config = await loadConfig();
+    expect(config.defaults.model).toBe("gpt-5");
+  });
+
   it("does not modify the file when validation fails", async () => {
     await fs.mkdir(testHome, { recursive: true });
     const original = "defaults:\n  maxRounds: 4\n";
@@ -105,7 +180,6 @@ describe("updateConfigField", () => {
   it("preserves the original config when a write fails mid-update", async () => {
     await fs.mkdir(testHome, { recursive: true });
     const original = "defaults:\n  model: claude-sonnet-4.5\n  engine: mock\n";
-    const tmpPath = `${configPath}.tmp`;
     await fs.writeFile(configPath, original, "utf-8");
 
     const writeError = Object.assign(new Error("disk full"), { code: "ENOSPC" });
@@ -122,29 +196,35 @@ describe("updateConfigField", () => {
       code: "ENOSPC",
     });
     await expect(fs.readFile(configPath, "utf-8")).resolves.toBe(original);
-    expect(writeFileSpy).toHaveBeenCalledWith(tmpPath, expect.any(String), "utf-8");
+
+    const [tmpPath, writtenData, encoding] = writeFileSpy.mock.calls[0] ?? [];
+    expect(isUniqueTempPath(tmpPath, configPath)).toBe(true);
+    expect(writtenData).toEqual(expect.any(String));
+    expect(encoding).toBe("utf-8");
   });
 
   it("removes the temp file and preserves the config when rename fails", async () => {
     await fs.mkdir(testHome, { recursive: true });
     const original = "defaults:\n  model: claude-sonnet-4.5\n  engine: mock\n";
-    const tmpPath = `${configPath}.tmp`;
     await fs.writeFile(configPath, original, "utf-8");
 
     const renameError = new Error("rename failed");
+    let tmpPath: string | undefined;
     const renameSpy = vi.mocked(fs.rename).mockImplementation(
       async (...args: Parameters<typeof fs.rename>) => {
         const [fromPath, toPath] = args;
-        if (fromPath === tmpPath && toPath === configPath) {
+        if (toPath === configPath && isUniqueTempPath(fromPath, configPath)) {
+          tmpPath = fromPath;
           throw renameError;
         }
-        return Promise.resolve();
+        return actualFs.rename(...args);
       },
     );
 
     await expect(updateConfigField("defaults.model", "gpt-5")).rejects.toThrow("rename failed");
     await expect(fs.readFile(configPath, "utf-8")).resolves.toBe(original);
-    await expect(fs.access(tmpPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(tmpPath).toBeDefined();
+    await expect(fs.access(tmpPath as string)).rejects.toMatchObject({ code: "ENOENT" });
     expect(renameSpy).toHaveBeenCalledWith(tmpPath, configPath);
   });
 
