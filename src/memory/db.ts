@@ -512,10 +512,10 @@ UPDATE experts SET memory_derivation = NULL, memory_trust_score = NULL
 
 /**
  * Split a SQL migration file into individual statements while keeping
- * `BEGIN ... END` trigger bodies intact. Used to feed libsql's
- * `executeMultiple` is not strictly necessary (it accepts the whole script),
- * but the splitter is exported for testability and for future per-statement
- * progress reporting.
+ * `BEGIN ... END` trigger bodies intact. Migrations now run statement-by-
+ * statement inside an explicit `BEGIN IMMEDIATE` block so concurrent
+ * `createDatabase()` calls serialize cleanly around the `schema_version`
+ * gate without letting libsql auto-rollback the outer transaction.
  */
 export function splitSqlStatements(sqlText: string): readonly string[] {
   const cleaned = sqlText
@@ -546,9 +546,17 @@ export function splitSqlStatements(sqlText: string): readonly string[] {
   return statements;
 }
 
-async function configureSqliteConnection(client: Client): Promise<void> {
+async function configureSqliteConnection(client: Client, dbPath: string): Promise<void> {
   await client.execute(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS};`);
-  await client.execute("PRAGMA journal_mode = WAL;");
+  const journalModeResult = await client.execute("PRAGMA journal_mode = WAL;");
+  const journalMode = String(journalModeResult.rows[0]?.journal_mode ?? "");
+  const expectedJournalMode = dbPath === ":memory:" ? "memory" : "wal";
+
+  if (journalMode !== expectedJournalMode) {
+    throw new Error(
+      `Failed to enable SQLite journal mode ${expectedJournalMode.toUpperCase()}; got ${journalMode || "unknown"}`,
+    );
+  }
 }
 
 async function applyMigrations(client: Client, db: CouncilDatabase): Promise<void> {
@@ -604,7 +612,7 @@ async function applyMigrations(client: Client, db: CouncilDatabase): Promise<voi
 export async function createDatabase(dbPath: string): Promise<CouncilDatabase> {
   const url = dbPath === ":memory:" ? ":memory:" : `file:${dbPath}`;
   const client = createClient({ url });
-  await configureSqliteConnection(client);
+  await configureSqliteConnection(client, dbPath);
   const dialect = new LibsqlDialect({ client });
   const db = new Kysely<CouncilSchema>({ dialect });
   await applyMigrations(client, db);
