@@ -62,7 +62,7 @@ describe("selectRenderer", () => {
     expect(selectRenderer({ format: "plain", isTTY: false, sink })).toBeInstanceOf(PlainRenderer);
   });
 
-  it("format=auto on TTY returns InkRenderer", () => {
+  it("format=auto on TTY returns InkRenderer when no plain-forcing env vars are set", () => {
     delete process.env["TERM"];
     delete process.env["CI"];
     delete process.env["ACCESSIBILITY"];
