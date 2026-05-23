@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import type { Command } from "commander";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
