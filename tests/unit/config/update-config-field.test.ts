@@ -10,10 +10,12 @@ import { loadConfig, updateConfigField } from "../../../src/config/index.js";
 
 describe("updateConfigField", () => {
   let testHome: string;
+  let configPath: string;
   const originalCouncilHome = process.env["COUNCIL_HOME"];
 
   beforeEach(async () => {
     testHome = await fs.mkdtemp(path.join(process.cwd(), ".tmp-update-config-field-"));
+    configPath = path.join(testHome, "config.yaml");
     process.env["COUNCIL_HOME"] = testHome;
   });
 
@@ -36,7 +38,6 @@ describe("updateConfigField", () => {
   });
 
   it("preserves existing YAML comments while updating a field", async () => {
-    const configPath = path.join(testHome, "config.yaml");
     await fs.mkdir(testHome, { recursive: true });
     await fs.writeFile(
       configPath,
@@ -54,12 +55,44 @@ describe("updateConfigField", () => {
   });
 
   it("does not modify the file when validation fails", async () => {
-    const configPath = path.join(testHome, "config.yaml");
     await fs.mkdir(testHome, { recursive: true });
     const original = "defaults:\n  maxRounds: 4\n";
     await fs.writeFile(configPath, original, "utf-8");
 
     await expect(updateConfigField("defaults.maxRounds", 999)).rejects.toThrow(/maxRounds/i);
+    await expect(fs.readFile(configPath, "utf-8")).resolves.toBe(original);
+  });
+
+  it("throws and preserves the file when the YAML root is a scalar", async () => {
+    await fs.mkdir(testHome, { recursive: true });
+    const original = '"just a string"\n';
+    await fs.writeFile(configPath, original, "utf-8");
+
+    await expect(updateConfigField("defaults.model", "gpt-5")).rejects.toThrow(
+      /invalid root structure/i,
+    );
+    await expect(fs.readFile(configPath, "utf-8")).resolves.toBe(original);
+  });
+
+  it("throws and preserves the file when the YAML root is an array", async () => {
+    await fs.mkdir(testHome, { recursive: true });
+    const original = "- item1\n- item2\n";
+    await fs.writeFile(configPath, original, "utf-8");
+
+    await expect(updateConfigField("defaults.model", "gpt-5")).rejects.toThrow(
+      /invalid root structure/i,
+    );
+    await expect(fs.readFile(configPath, "utf-8")).resolves.toBe(original);
+  });
+
+  it("throws and preserves the file when the YAML is malformed", async () => {
+    await fs.mkdir(testHome, { recursive: true });
+    const original = ": invalid: yaml: [";
+    await fs.writeFile(configPath, original, "utf-8");
+
+    await expect(updateConfigField("defaults.model", "gpt-5")).rejects.toThrow(
+      /Failed to parse Council config/i,
+    );
     await expect(fs.readFile(configPath, "utf-8")).resolves.toBe(original);
   });
 });
