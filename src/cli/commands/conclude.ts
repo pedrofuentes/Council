@@ -35,15 +35,14 @@ import { z } from "zod";
 import { getCouncilHome, loadConfig, resolveEngine } from "../../config/index.js";
 import { type CouncilEngine, type EngineEvent, type ExpertSpec } from "../../engine/index.js";
 import { createDatabase } from "../../memory/db.js";
-import { DebateRepository } from "../../memory/repositories/debates.js";
-import { PanelRepository } from "../../memory/repositories/panels.js";
 import { loadTranscript, type TranscriptDocument } from "../../memory/transcript.js";
 
 import { CliUserError } from "../cli-user-error.js";
-import { defaultErrorWriter, defaultNoticeWriter, defaultWriter, type Writer } from "./writer.js";
-import { ENGINE_KINDS, type EngineKind, makeEngineFromKind } from "../run-with-engine.js";
 import { formatEngineError } from "../error-mapper.js";
 import { exitCodeForEngineError } from "../exit-codes.js";
+import { ENGINE_KINDS, type EngineKind, makeEngineFromKind } from "../run-with-engine.js";
+import { resolveSession } from "../session-resolver.js";
+import { defaultErrorWriter, defaultNoticeWriter, defaultWriter, type Writer } from "./writer.js";
 
 export const CONCLUDE_FORMATS = ["plain", "json"] as const;
 export type ConcludeFormat = (typeof CONCLUDE_FORMATS)[number];
@@ -180,10 +179,17 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
           "\n!! [MOCK ENGINE] conclude running with deterministic offline mock — synthesis is NOT real.\n\n",
         );
       }
-      const dbPath = path.join(getCouncilHome(), "council.db");
+      const councilHome = getCouncilHome();
+      const dbPath = path.join(councilHome, "council.db");
       const db = await createDatabase(dbPath);
       try {
-        const panelName = await resolvePanelName(db, panelArg, writeError);
+        const panelName = await resolveSession({
+          db,
+          dataHome: councilHome,
+          panelArg,
+          writeError,
+          missingPanelMode: "most-recently-debated",
+        });
         const doc = await loadTranscript(db, panelName);
 
         if (doc.turns.length === 0) {
@@ -266,46 +272,6 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
     });
 
   return cmd;
-}
-
-async function resolvePanelName(
-  db: Awaited<ReturnType<typeof createDatabase>>,
-  panelArg: string | undefined,
-  writeError: Writer,
-): Promise<string> {
-  if (panelArg !== undefined && panelArg.length > 0) return panelArg;
-
-  // DX-14: Select panel with the most recent debate (not most recently created)
-  const panelRepo = new PanelRepository(db);
-  const panels = await panelRepo.findAll();
-  if (panels.length === 0) {
-    throw new Error("No panels found in the local database. Run `council convene` first.");
-  }
-
-  const debateRepo = new DebateRepository(db);
-
-  let bestPanel: string | undefined;
-  let bestStartedAt: string | undefined;
-
-  for (const panel of panels) {
-    const debates = await debateRepo.findByPanelId(panel.id);
-    if (debates.length === 0) continue;
-    const latest = debates[debates.length - 1];
-    if (!latest) continue;
-    if (!bestStartedAt || latest.startedAt > bestStartedAt) {
-      bestStartedAt = latest.startedAt;
-      bestPanel = panel.name;
-    }
-  }
-
-  if (!bestPanel) {
-    throw new Error(
-      "No panels with debates found in the local database. Run `council convene` first.",
-    );
-  }
-
-  writeError(`Using panel: ${bestPanel}\n`);
-  return bestPanel;
 }
 
 export interface BuiltSynthesisPrompt {

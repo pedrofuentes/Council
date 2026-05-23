@@ -19,21 +19,18 @@ import { Command, Option } from "commander";
 
 import { DEFAULT_MODEL, getCouncilHome, loadConfig, resolveEngine } from "../../config/index.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
-import { createDatabase, type CouncilDatabase } from "../../memory/db.js";
+import { createDatabase } from "../../memory/db.js";
 import { applyRecalledMemory, recallMemory } from "../../memory/expert-memory.js";
 import {
   loadTranscript,
   synthesizeEvents,
   type TranscriptDocument,
 } from "../../memory/transcript.js";
-import { PanelRepository } from "../../memory/repositories/panels.js";
-
-import { CliUserError } from "../cli-user-error.js";
-
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
-import { ENGINE_KINDS, type EngineKind, runWithEngine } from "../run-with-engine.js";
 import { runExtractMemoryHook } from "../extract-memory-hook.js";
 import { RENDERER_FORMATS, type RendererFormat } from "../renderers/select.js";
+import { ENGINE_KINDS, type EngineKind, runWithEngine } from "../run-with-engine.js";
+import { resolveSession } from "../session-resolver.js";
 import { resolveStrategy, STRATEGY_NAMES } from "../strategy-resolver.js";
 
 const DEFAULT_MAX_ROUNDS_CONTINUE = 1; // for resume --prompt (follow-up questions)
@@ -70,10 +67,8 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
     )
     .option("--prompt <prompt>", "Run a new debate against the same panel with this prompt")
     .addOption(new Option("--engine <kind>", "Engine for --prompt mode").choices([...ENGINE_KINDS]))
-    .option(
-      "--max-rounds <n>",
-      "Max rounds for --prompt mode (default: 1)",
-      (v) => Number.parseInt(v, 10),
+    .option("--max-rounds <n>", "Max rounds for --prompt mode (default: 1)", (v) =>
+      Number.parseInt(v, 10),
     )
     .option(
       "--max-words <n>",
@@ -117,11 +112,19 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
         latest: raw.latest === true,
       };
 
-      const dbPath = path.join(getCouncilHome(), "council.db");
+      const councilHome = getCouncilHome();
+      const dbPath = path.join(councilHome, "council.db");
       const db = await createDatabase(dbPath);
       try {
-        // Resolve panel name: --latest, exact match, or prefix match
-        const panelName = await resolvePanelName(panelArg, opts.latest === true, db, writeError);
+        const panelName = await resolveSession({
+          db,
+          dataHome: councilHome,
+          panelArg,
+          latest: opts.latest === true,
+          writeError,
+          missingPanelMessage:
+            "Panel name is required. Use `council resume <name>` or `council resume --latest`.",
+        });
         const resolved = await loadTranscript(db, panelName);
 
         if (opts.prompt === undefined) {
@@ -278,59 +281,4 @@ async function renderTranscriptInline(
   for (const e of synthesizeEvents(resolved)) {
     write(JSON.stringify(e) + "\n");
   }
-}
-
-/**
- * Resolve a panel name from CLI input using:
- *   1. --latest → most-recently-created panel
- *   2. Exact match by name
- *   3. Prefix match (auto-select if unique, error if ambiguous)
- */
-async function resolvePanelName(
-  panelArg: string | undefined,
-  latest: boolean,
-  db: CouncilDatabase,
-  writeError: Writer,
-): Promise<string> {
-  const panelRepo = new PanelRepository(db);
-
-  if (latest) {
-    const panel = await panelRepo.findMostRecentlyActive();
-    if (!panel) {
-      writeError("No panels found. Run `council convene` to start one.\n");
-      throw new CliUserError("No panels found");
-    }
-    return panel.name;
-  }
-
-  if (!panelArg) {
-    writeError(
-      "Panel name is required. Use `council resume <name>` or `council resume --latest`.\n",
-    );
-    throw new CliUserError("Panel name is required");
-  }
-
-  // Try exact match first
-  const exact = await panelRepo.findByName(panelArg);
-  if (exact) return exact.name;
-
-  // Try prefix match
-  const prefixMatches = await panelRepo.findByNamePrefix(panelArg);
-  if (prefixMatches.length === 1) {
-    const match = prefixMatches[0];
-    if (match) return match.name;
-  }
-  if (prefixMatches.length > 1) {
-    const names = prefixMatches.map((p) => p.name);
-    writeError(`Multiple panels match "${panelArg}":\n`);
-    for (const n of names) {
-      writeError(`  • ${n}\n`);
-    }
-    throw new CliUserError(
-      `Ambiguous prefix "${panelArg}" matches ${prefixMatches.length} panels: ${names.join(", ")}`,
-    );
-  }
-
-  // No match at all — let loadTranscript produce the standard error
-  return panelArg;
 }
