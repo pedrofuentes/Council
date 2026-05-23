@@ -359,16 +359,21 @@ describe("buildExportCommand", () => {
     expect(captured).toContain("launch behind a feature flag now");
   });
 
-  it("--format adr: uses the first debate prompt for Context and the selected debate content for the body", async () => {
+  it("--format adr: uses the first debate prompt for Context and includes content from all debates", async () => {
     const seed = await seedPanelWithMultipleDebates(testHome);
     let captured = "";
     const cmd = buildExportCommand({ write: (s) => { captured += s; } });
     await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "adr"]);
 
+    // Context is always the FIRST debate's prompt (original question).
     expect(captured).toContain("Original first debate prompt");
+    // All resumed debate turns must appear in the Discussion section.
+    expect(captured).toContain("First debate opening note.");
+    expect(captured).toContain("CTO analysis: shipping behind a feature flag balances risk.");
     expect(captured).toContain("CTO conclusion: ship behind a feature flag after checklist.");
     expect(captured).toContain("PM conclusion: agree to phased launch after checklist.");
-    expect(captured).not.toContain("Latest short debate note.");
+    // The latest debate's turn must also be present now.
+    expect(captured).toContain("Latest short debate note.");
   });
 
   it("--format adr: marks a completed debate with very short turns as Proposed", async () => {
@@ -490,6 +495,124 @@ describe("buildExportCommand", () => {
     expect(captured.toLowerCase()).toContain("decision");
     expect(captured).toContain("CTO");
     expect(captured).toContain("PM");
+  });
+
+  it("matches a panel by unique name prefix (parity with `council resume`)", async () => {
+    const seed = await seedPanelWithDebate(testHome); // name = "export-test"
+    let captured = "";
+    const cmd = buildExportCommand({ write: (s) => { captured += s; } });
+    // Use a short unambiguous prefix instead of the full name.
+    await cmd.parseAsync(["node", "council-export", "export-te"]);
+
+    expect(captured).toContain("CTO");
+    expect(captured).toContain("ship now to get user feedback fast");
+    // Header should use the full resolved panel name.
+    expect(captured).toContain(`# ${seed.panelName}`);
+  });
+
+  it("rejects ambiguous prefix and lists matching panels", async () => {
+    // Two panels both starting with "export-".
+    await seedPanelWithDebate(testHome);              // "export-test"
+    await seedPanelWithMultipleDebates(testHome);     // "export-multi-debate"
+
+    let errCaptured = "";
+    const cmd = buildExportCommand({
+      write: () => undefined,
+      writeError: (s) => { errCaptured += s; },
+    });
+    cmd.exitOverride();
+    let thrown = "";
+    try {
+      await cmd.parseAsync(["node", "council-export", "export"]);
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    expect(thrown.toLowerCase()).toMatch(/ambiguous|multiple/);
+    expect(errCaptured).toContain("export-test");
+    expect(errCaptured).toContain("export-multi-debate");
+  });
+
+  it("exact name match still works when a longer name shares the same prefix (backward compatible)", async () => {
+    // Seed two panels: "export-test" and "export-test-extended".
+    await seedPanelWithDebate(testHome); // "export-test"
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const panel = await new PanelRepository(db).create({
+        name: "export-test-extended",
+        topic: "Different topic",
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+      });
+      const cto = await new ExpertRepository(db).create({
+        panelId: panel.id,
+        slug: "cto",
+        displayName: "CTO",
+        model: "claude-sonnet-4",
+        systemMessage: "You are a CTO.",
+      });
+      const debate = await new DebateRepository(db).create({
+        panelId: panel.id,
+        prompt: "Different prompt",
+        moderator: "round-robin",
+      });
+      await new TurnRepository(db).create({
+        debateId: debate.id,
+        round: 0,
+        seq: 0,
+        speakerKind: "expert",
+        expertId: cto.id,
+        content: "Extended panel content marker.",
+      });
+      await new DebateRepository(db).update(debate.id, {
+        status: "completed",
+        endedAt: new Date().toISOString(),
+      });
+    } finally {
+      await db.destroy();
+    }
+
+    let captured = "";
+    const cmd = buildExportCommand({ write: (s) => { captured += s; } });
+    // Exact name "export-test" must resolve to the export-test panel,
+    // NOT trigger an ambiguous-prefix error against "export-test-extended".
+    await cmd.parseAsync(["node", "council-export", "export-test"]);
+
+    expect(captured).toContain("ship now to get user feedback fast");
+    expect(captured).not.toContain("Extended panel content marker.");
+  });
+
+  it("--format markdown: includes turns from ALL debates of a resumed panel", async () => {
+    const seed = await seedPanelWithMultipleDebates(testHome);
+    let captured = "";
+    const cmd = buildExportCommand({ write: (s) => { captured += s; } });
+    await cmd.parseAsync(["node", "council-export", seed.panelName]);
+
+    // Every debate's content must appear.
+    expect(captured).toContain("First debate opening note.");
+    expect(captured).toContain("CTO analysis: shipping behind a feature flag balances risk.");
+    expect(captured).toContain("PM analysis: auth checklist must be complete first.");
+    expect(captured).toContain("CTO conclusion: ship behind a feature flag after checklist.");
+    expect(captured).toContain("PM conclusion: agree to phased launch after checklist.");
+    expect(captured).toContain("Latest short debate note.");
+  });
+
+  it("--format json: NDJSON includes turn.end events from ALL debates of a resumed panel", async () => {
+    const seed = await seedPanelWithMultipleDebates(testHome);
+    let captured = "";
+    const cmd = buildExportCommand({ write: (s) => { captured += s; } });
+    await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "json"]);
+
+    const events = captured
+      .split("\n")
+      .filter((l) => l.trim().startsWith("{"))
+      .map((l) => JSON.parse(l) as { kind: string; content?: string });
+    const turnEnds = events.filter((e) => e.kind === "turn.end");
+    // 1 + 4 + 1 = 6 turns across the three debates.
+    expect(turnEnds).toHaveLength(6);
+    const contents = turnEnds.map((e) => e.content);
+    expect(contents).toContain("First debate opening note.");
+    expect(contents).toContain("CTO conclusion: ship behind a feature flag after checklist.");
+    expect(contents).toContain("Latest short debate note.");
   });
 
   it("--format markdown: uses ASCII-safe separators without Unicode em-dash or mojibake", async () => {
