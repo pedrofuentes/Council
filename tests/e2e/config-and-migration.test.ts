@@ -9,15 +9,28 @@ import { buildConveneCommand } from "../../src/cli/commands/convene.js";
 import { getCouncilHome, getCouncilDataHome, loadConfig } from "../../src/config/index.js";
 import {
   captureOutput,
-  cleanupE2EContext,
   createE2EContext,
   destroyTestDb,
   makeMockEngineFactory,
   openTestDb,
+  waitForDbRelease,
   type E2EContext,
 } from "./helpers.js";
 import { ExpertRepository } from "../../src/memory/repositories/experts.js";
 import { PanelRepository } from "../../src/memory/repositories/panels.js";
+
+async function cleanupContextBestEffort(ctx: E2EContext): Promise<void> {
+  if (ctx.originalHome === undefined) delete process.env["COUNCIL_HOME"];
+  else process.env["COUNCIL_HOME"] = ctx.originalHome;
+
+  if (ctx.originalDataHome === undefined) delete process.env["COUNCIL_DATA_HOME"];
+  else process.env["COUNCIL_DATA_HOME"] = ctx.originalDataHome;
+
+  await Promise.allSettled([
+    fs.rm(ctx.testHome, { recursive: true, force: true }),
+    fs.rm(ctx.testDataHome, { recursive: true, force: true }),
+  ]);
+}
 
 describe("Config and Migration E2E", () => {
   let ctx: E2EContext;
@@ -27,7 +40,7 @@ describe("Config and Migration E2E", () => {
   });
 
   afterEach(async () => {
-    await cleanupE2EContext(ctx);
+    await cleanupContextBestEffort(ctx);
   });
 
   it("fresh install: missing config auto-creates", async () => {
@@ -179,6 +192,8 @@ describe("Config and Migration E2E", () => {
     } finally {
       await destroyTestDb(db);
     }
+
+    await waitForDbRelease(customDataHome);
   });
 
   it("template migration first convene", async () => {

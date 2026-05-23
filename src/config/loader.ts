@@ -27,11 +27,16 @@ const CONFIG_FILE = "config.yaml";
 
 /**
  * Resolve the directory that holds Council's runtime data.
- * Honors `COUNCIL_HOME` so tests can isolate without touching the user's $HOME.
+ * Honors `COUNCIL_HOME`, then falls back to `COUNCIL_DATA_HOME` so a single
+ * env-var override can relocate both runtime and library data together.
  */
 export function getCouncilHome(): string {
   const envHome = process.env["COUNCIL_HOME"];
   if (envHome && envHome.length > 0) return envHome;
+
+  const envDataHome = process.env["COUNCIL_DATA_HOME"];
+  if (envDataHome && envDataHome.length > 0) return envDataHome;
+
   return path.join(os.homedir(), ".council");
 }
 

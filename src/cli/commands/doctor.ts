@@ -7,7 +7,12 @@ import * as path from "node:path";
 
 import { Command } from "commander";
 
-import { getCouncilHome, loadConfig } from "../../config/index.js";
+import {
+  ensureDataDirectories,
+  getCouncilDataHome,
+  getCouncilHome,
+  loadConfig,
+} from "../../config/index.js";
 import {
   discoverAvailableModels,
   pingProviderHealth,
@@ -70,6 +75,29 @@ async function checkCouncilHome(): Promise<CheckResult> {
       name: "Council home",
       status: "fail",
       detail: `cannot create ${home}: ${formatError(err)}`,
+    };
+  }
+}
+
+async function resolveDoctorDataHome(): Promise<string> {
+  try {
+    const config = await loadConfig();
+    return getCouncilDataHome(config);
+  } catch {
+    return getCouncilDataHome();
+  }
+}
+
+async function checkCouncilDataHome(): Promise<CheckResult> {
+  const dataHome = await resolveDoctorDataHome();
+  try {
+    await ensureDataDirectories(dataHome);
+    return { name: "Council data home", status: "pass", detail: dataHome };
+  } catch (err: unknown) {
+    return {
+      name: "Council data home",
+      status: "fail",
+      detail: `cannot create ${dataHome}: ${formatError(err)}`,
     };
   }
 }
@@ -274,6 +302,7 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
       const checks: (() => Promise<CheckResult>)[] = [
         checkNodeVersion,
         checkCouncilHome,
+        checkCouncilDataHome,
         checkSqlite,
         checkCopilotSdk,
         checkDiskSpace,
@@ -304,10 +333,12 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
       try {
         const config = await loadConfig();
         const configFilePath = path.join(getCouncilHome(), CONFIG_FILE);
+        const dataHome = getCouncilDataHome(config);
         const sym2 = getSymbols();
         write(
           `${sym2.pass} Config\n` +
             `   Path: ${configFilePath}\n` +
+            `   Data home: ${dataHome}\n` +
             `   Engine: ${config.defaults.engine} | Model: ${config.defaults.model} | Rounds: ${config.defaults.maxRounds}\n`,
         );
       } catch {
