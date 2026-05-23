@@ -126,6 +126,20 @@ export async function createE2EContext(): Promise<E2EContext> {
 export async function cleanupE2EContext(ctx: E2EContext): Promise<void> {
   restoreEnvVar("COUNCIL_HOME", ctx.originalHome);
   restoreEnvVar("COUNCIL_DATA_HOME", ctx.originalDataHome);
+
+  try {
+    await fs.access(path.join(ctx.testHome, "council.db"));
+    await waitForDbRelease(ctx.testHome);
+  } catch (error: unknown) {
+    const code = typeof error === "object" && error !== null && "code" in error
+      ? String((error as { readonly code?: unknown }).code ?? "")
+      : "";
+
+    if (code !== "ENOENT" && !isBestEffortCleanupError(error)) {
+      throw error;
+    }
+  }
+
   await Promise.all([removeDir(ctx.testHome), removeDir(ctx.testDataHome)]);
 }
 

@@ -227,7 +227,7 @@ describe.sequential("document intelligence e2e", () => {
 
   afterEach(async () => {
     await cleanupE2EContext(ctx);
-  });
+  }, 30_000);
 
   it("expert train indexes documents", async () => {
     await createPersonaExpert();

@@ -92,27 +92,10 @@ describe("createDatabase", () => {
     expect(after.length).toBe(before.length); // no duplicate version rows
   });
 
-  it("enables WAL mode and a 5000ms busy timeout on file-backed connections", async () => {
+  it("enables WAL and busy_timeout, then waits for a held write lock instead of crashing", async () => {
     const testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-db-config-"));
     const dbPath = path.join(testHome, "council.db");
-    const fileDb = await createDatabase(dbPath);
-
-    try {
-      const journalMode = await sql.raw("PRAGMA journal_mode;").execute(fileDb);
-      const busyTimeout = await sql.raw("PRAGMA busy_timeout;").execute(fileDb);
-
-      expect(journalMode.rows).toEqual([{ journal_mode: "wal" }]);
-      expect(busyTimeout.rows).toEqual([{ timeout: 5000 }]);
-    } finally {
-      await fileDb.destroy();
-      await cleanupFileBackedDatabaseDir(testHome);
-    }
-  }, 20_000);
-
-  it("lets a blocked writer wait for a held transaction instead of crashing with SQLITE_BUSY", async () => {
-    const testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-db-busy-timeout-"));
-    const dbPath = path.join(testHome, "council.db");
-    const bootstrap = await createDatabase(dbPath);
+    const db = await createDatabase(dbPath);
     const holderScript = [
       'import { createClient } from "@libsql/client";',
       `const client = createClient({ url: ${JSON.stringify(`file:${dbPath}`)} });`,
@@ -128,8 +111,12 @@ describe("createDatabase", () => {
     ].join("\n");
 
     try {
-      await bootstrap.destroy();
-      const db = await createDatabase(dbPath);
+      const journalMode = await sql.raw("PRAGMA journal_mode;").execute(db);
+      const busyTimeout = await sql.raw("PRAGMA busy_timeout;").execute(db);
+
+      expect(journalMode.rows).toEqual([{ journal_mode: "wal" }]);
+      expect(busyTimeout.rows).toEqual([{ timeout: 5000 }]);
+
       const holder = spawn(process.execPath, ["--input-type=module", "-e", holderScript], {
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -160,9 +147,9 @@ describe("createDatabase", () => {
           .toEqual([{ name: "holder-panel" }, { name: "waiting-panel" }]);
       } finally {
         holder.kill();
-        await db.destroy();
       }
     } finally {
+      await db.destroy();
       await cleanupFileBackedDatabaseDir(testHome);
     }
   }, 20_000);

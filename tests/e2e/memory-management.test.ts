@@ -132,7 +132,7 @@ describe("memory management e2e", () => {
 
   afterEach(async () => {
     await cleanupE2EContext(ctx);
-  });
+  }, 30_000);
 
   it("memory list after convene shows persisted panel counts", async () => {
     await runConveneCommand(ctx, "Should we ship this pull request?");
