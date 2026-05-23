@@ -90,6 +90,7 @@ export interface ConveneCommandDeps {
 
 export interface ConveneOptions {
   readonly template?: string | undefined;
+  readonly panel?: string | undefined;
   readonly format: RendererFormat;
   readonly maxRounds: number;
   readonly mode: DebateMode;
@@ -134,8 +135,12 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
     )
     .argument("<topic>", "The topic / question for the panel to debate")
     .option(
+      "-p, --panel <name>",
+      "Use a built-in or custom panel template (alias: --template). **Omit to let Council auto-design an expert panel from your topic.**",
+    )
+    .option(
       "--template <name>",
-      "Use a built-in or custom panel template. **Omit to let Council auto-design an expert panel from your topic.**",
+      "Use a built-in or custom panel template (alias: --panel). **Omit to let Council auto-design an expert panel from your topic.**",
     )
     .addOption(
       new Option("--engine <kind>", "Engine to use (default: from config)").choices([
@@ -211,8 +216,11 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       const resolvedEngine = resolveEngine(raw.engine, config);
       const humanNames: readonly string[] = raw.human ?? [];
 
+      // Accept both --panel and --template (aliases)
+      const templateName = raw.panel ?? raw.template;
+
       const opts: ConveneOptions = {
-        template: raw.template,
+        template: templateName,
         format: parseFormat(raw.format),
         maxRounds: Number.isFinite(raw.maxRounds) ? raw.maxRounds : DEFAULT_MAX_ROUNDS,
         mode: raw.mode === "structured" ? "structured" : "freeform",

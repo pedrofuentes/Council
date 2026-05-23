@@ -29,7 +29,13 @@ export function buildTemplatesCommand(
     }
     write("Built-in templates:\n");
     for (const name of names) {
-      write(`  • ${name}\n`);
+      const panel = await loadTemplate(name);
+      const desc = panel.description ?? "";
+      if (desc) {
+        write(`  • ${name}\n    ${desc}\n`);
+      } else {
+        write(`  • ${name}\n`);
+      }
     }
     write("\nUse with: council convene --template <name>\n");
     write("\x1b[2mNext: council convene --template <name>\x1b[0m\n");
