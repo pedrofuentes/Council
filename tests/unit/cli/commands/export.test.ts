@@ -84,6 +84,53 @@ async function seedPanelWithDebate(testHome: string): Promise<{ panelName: strin
   }
 }
 
+async function seedPanelWithUnicodeDebate(
+  testHome: string,
+): Promise<{ panelName: string; readonly unicodeSnippet: string }> {
+  const unicodeSnippet = "Roadmap — ship 2× faster ≥ baseline 🎉";
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    const panelRepo = new PanelRepository(db);
+    const expertRepo = new ExpertRepository(db);
+    const debateRepo = new DebateRepository(db);
+    const turnRepo = new TurnRepository(db);
+
+    const panel = await panelRepo.create({
+      name: "export-unicode",
+      topic: unicodeSnippet,
+      copilotHome: path.join(testHome, "copilot"),
+      configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+    });
+    const cto = await expertRepo.create({
+      panelId: panel.id,
+      slug: "cto",
+      displayName: "CTO 🎯",
+      model: "claude-sonnet-4",
+      systemMessage: "You are a CTO.",
+    });
+    const debate = await debateRepo.create({
+      panelId: panel.id,
+      prompt: unicodeSnippet,
+      moderator: "round-robin",
+    });
+    await turnRepo.create({
+      debateId: debate.id,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId: cto.id,
+      content: `CTO position: ${unicodeSnippet}`,
+    });
+    await debateRepo.update(debate.id, {
+      status: "completed",
+      endedAt: new Date().toISOString(),
+    });
+    return { panelName: panel.name, unicodeSnippet };
+  } finally {
+    await db.destroy();
+  }
+}
+
 async function seedPanelWithMultipleDebates(testHome: string): Promise<{ panelName: string }> {
   const db = await createDatabase(path.join(testHome, "council.db"));
   try {
@@ -465,6 +512,26 @@ describe("buildExportCommand", () => {
     expect(fileContent).toContain("ship now to get user feedback fast");
     // stdout should NOT have the transcript content (only maybe a "Wrote..." confirmation).
     expect(stdoutCaptured).not.toContain("ship now to get user feedback fast");
+  });
+
+  it("--output <path> preserves UTF-8 punctuation and emoji in markdown exports", async () => {
+    const seed = await seedPanelWithUnicodeDebate(testHome);
+    const outPath = path.join(testHome, "transcript-unicode.md");
+    const cmd = buildExportCommand({ write: () => undefined });
+    await cmd.parseAsync([
+      "node",
+      "council-export",
+      seed.panelName,
+      "--format",
+      "markdown",
+      "--output",
+      outPath,
+    ]);
+
+    const fileBytes = await fs.readFile(outPath);
+    expect(fileBytes.includes(Buffer.from(seed.unicodeSnippet, "utf8"))).toBe(true);
+    expect(fileBytes.toString("utf8")).toContain(seed.unicodeSnippet);
+    expect(fileBytes.toString("utf8")).toContain("CTO 🎯");
   });
 
   it("--format garbage rejects with clear error", async () => {
