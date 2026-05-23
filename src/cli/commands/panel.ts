@@ -121,6 +121,7 @@ export function buildPanelCommand(
   confirmProvider?: ConfirmProvider,
 ): Command {
   const cmd = new Command("panel");
+  cmd.alias("panels");
   cmd.description("Manage Council panels (create, list, inspect, edit, delete)");
   cmd.addCommand(buildCreateCommand(write, writeError));
   cmd.addCommand(buildListCommand(write));

@@ -310,6 +310,16 @@ describe("loadTranscript", () => {
     }
   });
 
+  it("error message suggests 'council sessions', not 'council panels'", async () => {
+    const fresh = await createDatabase(path.join(dir, "council.db"));
+    try {
+      await expect(loadTranscript(fresh, "no-such-panel")).rejects.toThrow(/council sessions/i);
+      await expect(loadTranscript(fresh, "no-such-panel")).rejects.not.toThrow(/council panels/i);
+    } finally {
+      await fresh.destroy();
+    }
+  });
+
   it("throws when the panel exists but has no debates", async () => {
     // Seed a bare panel with no debate.
     const fresh = await createDatabase(path.join(dir, "council.db"));
