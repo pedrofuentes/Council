@@ -179,7 +179,7 @@ export async function updateConfigField(
     typeof currentValue !== "object" ||
     Array.isArray(currentValue)
   ) {
-    document.contents = yaml.createNode({});
+    document.contents = yaml.parseDocument("{}").contents;
   }
 
   document.setIn(key.split("."), value);
