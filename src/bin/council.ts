@@ -36,7 +36,13 @@ import { buildSessionsCommand } from "../cli/commands/sessions.js";
 import { buildTemplatesCommand } from "../cli/commands/templates.js";
 
 import { handleCliError } from "../cli/handle-cli-error.js";
-import { setQuiet } from "../cli/commands/writer.js";
+import {
+  defaultWriter,
+  setQuiet,
+  type Writer,
+} from "../cli/commands/writer.js";
+import { selectModelInteractively } from "../cli/first-run-model-select.js";
+import { loadConfigWithMeta } from "../config/index.js";
 
 installSqliteExperimentalWarningFilter();
 
@@ -49,7 +55,44 @@ const COMMAND_CATEGORIES = {
   Inspection: ["sessions", "memory", "export"],
 } as const;
 
-export function buildProgram(): Command {
+export interface FirstRunSetupOptions {
+  readonly loadConfigWithMeta?: typeof loadConfigWithMeta;
+  readonly selectModelInteractively?: typeof selectModelInteractively;
+  readonly write?: Writer;
+}
+
+export interface BuildProgramOptions {
+  readonly firstRunSetup?: FirstRunSetupOptions;
+}
+
+let hasRunFirstRunSetup = false;
+
+export async function runFirstRunSetupOnce(
+  options: FirstRunSetupOptions = {},
+): Promise<void> {
+  if (hasRunFirstRunSetup) {
+    return;
+  }
+
+  hasRunFirstRunSetup = true;
+
+  const loadConfig = options.loadConfigWithMeta ?? loadConfigWithMeta;
+  const selectModel = options.selectModelInteractively ?? selectModelInteractively;
+  const write = options.write ?? defaultWriter;
+  const { isFirstRun } = await loadConfig();
+
+  if (!isFirstRun) {
+    return;
+  }
+
+  await selectModel({ write });
+}
+
+export function resetFirstRunSetupForTests(): void {
+  hasRunFirstRunSetup = false;
+}
+
+export function buildProgram(options: BuildProgramOptions = {}): Command {
   const program = new Command();
   program
     .name("council")
@@ -58,10 +101,11 @@ export function buildProgram(): Command {
     .option("-q, --quiet", "Suppress informational stderr output")
     .showSuggestionAfterError(true);
 
-  // Wire --quiet: suppress informational stderr before any subcommand action runs
-  program.hook("preAction", (thisCommand) => {
+  // Wire --quiet and first-run setup before any subcommand action runs.
+  program.hook("preAction", async (thisCommand) => {
     const opts = thisCommand.optsWithGlobals() as { quiet?: boolean };
     setQuiet(opts.quiet === true);
+    await runFirstRunSetupOnce(options.firstRunSetup);
   });
 
   // Register commands in category order
