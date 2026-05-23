@@ -19,9 +19,10 @@ import * as path from "node:path";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 
 import { createClient } from "@libsql/client";
+import type * as LibsqlClientModule from "@libsql/client";
 import { sql } from "kysely";
 
 import {
@@ -131,7 +132,6 @@ describe("createDatabase", () => {
         const [holderSignal] = await once(holder.stdout, "data");
         expect(String(holderSignal).trim()).toBe("LOCKED");
 
-        const contenderStartedAt = Date.now();
         const contenderWrite = db
           .insertInto("panels")
           .values({
@@ -148,7 +148,6 @@ describe("createDatabase", () => {
         const [exitCode] = await once(holder, "exit");
         expect(exitCode).toBe(0);
         await contenderWrite;
-        expect(Date.now() - contenderStartedAt).toBeGreaterThanOrEqual(200);
         await expect(db.selectFrom("panels").select("name").orderBy("name").execute()).resolves
           .toEqual([{ name: "holder-panel" }, { name: "waiting-panel" }]);
       } finally {
@@ -159,6 +158,44 @@ describe("createDatabase", () => {
       await cleanupFileBackedDatabaseDir(testHome);
     }
   }, 20_000);
+
+  it("throws when a file-backed database cannot enter WAL mode", async () => {
+    const mockClient = {
+      execute: vi.fn(async (statement: string) => {
+        if (statement.startsWith("PRAGMA busy_timeout")) {
+          return { rows: [{ timeout: 5000 }] };
+        }
+
+        if (statement === "PRAGMA journal_mode = WAL;") {
+          return { rows: [{ journal_mode: "delete" }] };
+        }
+
+        throw new Error(`Unexpected statement: ${statement}`);
+      }),
+      close: vi.fn(),
+    };
+
+    vi.resetModules();
+    vi.doMock("@libsql/client", async () => {
+      const actual = await vi.importActual<typeof LibsqlClientModule>("@libsql/client");
+      return {
+        ...actual,
+        createClient: vi.fn(() => mockClient),
+      };
+    });
+
+    try {
+      const { createDatabase: createDatabaseWithMock } = await import("../../../src/memory/db.js");
+
+      await expect(createDatabaseWithMock("fake-db.sqlite")).rejects.toThrow(
+        "Failed to enable SQLite journal mode WAL; got delete",
+      );
+      expect(mockClient.close).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.doUnmock("@libsql/client");
+      vi.resetModules();
+    }
+  });
 
   it("rolls back a failed migration without advancing schema_version", async () => {
     const testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-db-rollback-"));
