@@ -117,8 +117,8 @@ describe("T-16: Flag consistency", () => {
       const { defaultWriter, defaultErrorWriter, defaultNoticeWriter, setQuiet } = await import(
         "../../../../src/cli/commands/writer.js"
       );
-      const stdoutCalls: Array<{ chunk: string; encoding: BufferEncoding | undefined }> = [];
-      const stderrCalls: Array<{ chunk: string; encoding: BufferEncoding | undefined }> = [];
+      const stdoutCalls: { chunk: string; encoding: BufferEncoding | undefined }[] = [];
+      const stderrCalls: { chunk: string; encoding: BufferEncoding | undefined }[] = [];
       const origStdoutWrite = process.stdout.write;
       const origStderrWrite = process.stderr.write;
       process.stdout.write = (((chunk: string | Uint8Array, encoding?: BufferEncoding | ((error?: Error | null) => void)) => {
