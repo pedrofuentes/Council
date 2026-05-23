@@ -121,6 +121,22 @@
 
 ---
 
+## Phase 7.6: PM-Driven QA Fixes ✅
+
+> Bug fixes and UX improvements driven by a comprehensive PM persona testing session (45 findings, 28 fixed).
+
+- ✅ **7.6.1 Context Isolation** — Fresh `convene` sessions no longer inherit memory from prior debates on the same panel; `resume` retains history as intended (T1)
+- ✅ **7.6.2 Panel Lifecycle** — `council panel delete` subcommand with confirmation prompt, cascade cleanup, and empty-panel warnings on expert delete (T2)
+- ✅ **7.6.3 CLI Discoverability (Round 2)** — Plural aliases (`panels`, `experts`, `history`), corrected error messages, template descriptions in `council templates` output (T3, T8)
+- ✅ **7.6.4 Mock Engine Completeness** — `council conclude --engine mock` returns valid JSON synthesis responses (T4)
+- ✅ **7.6.5 Per-Invocation Model Override** — `--model` flag on `convene` and `conclude` for model selection without config changes (T5)
+- ✅ **7.6.6 Graceful Interrupt** — Ctrl+C during `convene` debates aborts gracefully with partial transcript saved (T6)
+- ✅ **7.6.7 Export Completeness** — Prefix matching for session names and full multi-debate history in exports (T7)
+- ✅ **7.6.8 Help Text Clarity** — Stance renamed to "viewpoint" with examples, quoting guidance for special characters, `--panel` alias for `--template` (T8, T9)
+- ✅ **7.6.9 Document Ingestion UX** — `expert train --file` and `--url` flags for direct document ingestion during training (T10)
+
+---
+
 ## Phase 8: Growth & Ecosystem ⬜
 
 > Meet users where they are — GitHub, CI, and beyond Copilot.
@@ -151,4 +167,5 @@
 | Document-driven persona experts                        | 6     | ✅ Done (6.5 deferred)|
 | Cross-panel expert awareness                           | 7     | ✅ Done               |
 | UX polish: 106 findings from cross-model audit         | 7.5   | ✅ Done               |
+| PM-driven QA fixes (45 findings, 28 fixed)             | 7.6   | ✅ Done               |
 | Published to npm as `@council/cli`                     | 8     | ⬜ Planned            |
