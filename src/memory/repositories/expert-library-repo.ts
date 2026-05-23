@@ -53,6 +53,15 @@ export class ExpertLibraryRepository {
         created_at: now,
         updated_at: now,
       })
+      .onConflict((oc) =>
+        oc.column("slug").doUpdateSet({
+          kind: input.kind,
+          display_name: input.displayName,
+          yaml_path: input.yamlPath,
+          yaml_checksum: input.yamlChecksum,
+          updated_at: now,
+        }),
+      )
       .execute();
     const row = await this.db
       .selectFrom("expert_library")

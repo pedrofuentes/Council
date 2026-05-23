@@ -141,47 +141,43 @@ export class FileExpertLibrary implements ExpertLibrary {
     }
 
     const yamlPath = this.yamlPathFor(validated.slug);
-    try {
-      await fs.access(yamlPath);
-      throw new Error(`Expert "${validated.slug}" already exists at ${yamlPath}`);
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code !== "ENOENT") {
-        if ((err as Error).message?.includes("already exists")) throw err;
-        throw err;
-      }
-    }
-
     await fs.mkdir(this.expertsDir, { recursive: true });
     const content = serializeYaml(validated);
-    // YAML is the source of truth. If only a stale DB cache row remains,
-    // clear it first so the cache can be rebuilt from the recreated YAML.
+    try {
+      await fs.writeFile(yamlPath, content, { encoding: "utf-8", flag: "wx" });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+        throw new Error(`Expert "${validated.slug}" already exists at ${yamlPath}`);
+      }
+      throw err;
+    }
+
     const cached = await this.repo.findBySlug(validated.slug);
     if (cached) {
-      await this.repo.delete(validated.slug);
+      console.warn(
+        `[expert-library] Recovering stale expert cache row for slug "${validated.slug}" because ${yamlPath} was missing; rewriting metadata from YAML source of truth.`,
+      );
     }
-    // DB insert first so a YAML write failure can cleanly roll back the DB row.
-    await this.repo.create({
-      slug: validated.slug,
-      kind: validated.kind,
-      displayName: validated.displayName,
-      yamlPath,
-      yamlChecksum: sha256(content),
-    });
     try {
-      await fs.writeFile(yamlPath, content, "utf-8");
+      await this.repo.create({
+        slug: validated.slug,
+        kind: validated.kind,
+        displayName: validated.displayName,
+        yamlPath,
+        yamlChecksum: sha256(content),
+      });
     } catch (err) {
-      // Compensating action: undo the DB row so caller can retry without
-      // a phantom record. If the rollback itself fails, surface BOTH
-      // errors via AggregateError so callers know storage is inconsistent.
+      // Compensating action: remove the claimed YAML so caller can retry.
+      // If the rollback itself fails, surface BOTH errors via AggregateError
+      // so callers know storage is inconsistent.
       const restoreErrors: Error[] = [];
-      await this.repo
-        .delete(validated.slug)
+      await fs
+        .unlink(yamlPath)
         .catch((e: unknown) => restoreErrors.push(e instanceof Error ? e : new Error(String(e))));
       if (restoreErrors.length > 0) {
         throw new AggregateError(
           [err as Error, ...restoreErrors],
-          `Failed to write expert "${validated.slug}" YAML and DB rollback failed — storage may be inconsistent`,
+          `Failed to persist expert "${validated.slug}" metadata and YAML cleanup failed — storage may be inconsistent`,
         );
       }
       throw err;

@@ -355,26 +355,20 @@ describe("FileExpertLibrary", () => {
       expect(row).toBeUndefined();
     });
 
-    it("surfaces AggregateError when both YAML write and DB rollback fail on create()", async () => {
+    it("surfaces AggregateError when both metadata persist and YAML cleanup fail on create()", async () => {
       const yamlPath = path.join(dataHome, "experts", "cto.yaml");
       const fsSync = await import("node:fs");
 
       // Reach into the library's internal repo (TS private is compile-time
-      // only) so we can choreograph the rollback failure deterministically:
-      //  1) Let the real DB insert happen.
-      //  2) Swap the YAML target to a directory so writeFile fails (EISDIR).
-      //  3) Make the compensating delete throw too.
+      // only) so we can force the DB upsert failure after the YAML has been
+      // claimed, then replace the YAML file with a directory so cleanup fails.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const repo = (lib as any).repo;
-      const originalCreate = repo.create.bind(repo);
-      const createSpy = vi.spyOn(repo, "create").mockImplementationOnce(async (input: unknown) => {
-        await originalCreate(input);
-        await fs.mkdir(path.dirname(yamlPath), { recursive: true });
+      const createSpy = vi.spyOn(repo, "create").mockImplementationOnce(async () => {
+        await fs.unlink(yamlPath);
         fsSync.mkdirSync(yamlPath);
+        throw new Error("metadata write failed");
       });
-      const deleteSpy = vi
-        .spyOn(repo, "delete")
-        .mockImplementationOnce(() => Promise.reject(new Error("rollback delete failed")));
 
       const err = await lib.create(makeDef()).then(
         () => null,
@@ -382,9 +376,13 @@ describe("FileExpertLibrary", () => {
       );
       expect(err).toBeInstanceOf(AggregateError);
       expect((err as AggregateError).message).toMatch(/storage may be inconsistent/i);
-      expect((err as AggregateError).errors.length).toBeGreaterThanOrEqual(2);
+      expect((err as AggregateError).errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ message: "metadata write failed" }),
+          expect.objectContaining({ code: expect.stringMatching(/EPERM|EISDIR/) }),
+        ]),
+      );
       createSpy.mockRestore();
-      deleteSpy.mockRestore();
     });
 
     it("restores prior YAML when DB update fails on update()", async () => {
