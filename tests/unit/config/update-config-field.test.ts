@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  const actual = await importOriginal<typeof fs>();
   return {
     ...actual,
     writeFile: vi.fn(actual.writeFile),
@@ -19,13 +19,13 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 import { loadConfig, updateConfigField } from "../../../src/config/index.js";
 
 describe("updateConfigField", () => {
-  let actualFs: typeof import("node:fs/promises");
+  let actualFs: typeof fs;
   let testHome: string;
   let configPath: string;
   const originalCouncilHome = process.env["COUNCIL_HOME"];
 
   beforeEach(async () => {
-    actualFs = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    actualFs = await vi.importActual<typeof fs>("node:fs/promises");
     vi.mocked(fs.writeFile).mockImplementation(actualFs.writeFile);
     vi.mocked(fs.rename).mockImplementation(actualFs.rename);
     vi.mocked(fs.unlink).mockImplementation(actualFs.unlink);

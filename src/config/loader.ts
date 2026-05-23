@@ -193,7 +193,7 @@ export async function updateConfigField(
   try {
     await fs.rename(tmpFile, file);
   } catch (renameErr) {
-    await fs.unlink(tmpFile).catch(() => {});
+    await fs.unlink(tmpFile).catch(() => undefined);
     throw renameErr;
   }
 }
