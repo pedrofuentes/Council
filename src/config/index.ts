@@ -14,5 +14,6 @@ export {
   loadConfig,
   loadConfigWithMeta,
   resolveEngine,
+  updateConfigField,
 } from "./loader.js";
 export type { ConfigLoadResult } from "./loader.js";
