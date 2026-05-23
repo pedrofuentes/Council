@@ -42,9 +42,8 @@ import { resolveStrategy, STRATEGY_NAMES } from "../strategy-resolver.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import type { HumanInputProvider } from "../../core/human-input.js";
 import { createDatabase } from "../../memory/db.js";
-import { recallMemory } from "../../memory/expert-memory.js";
 import { ExpertRepository } from "../../memory/repositories/experts.js";
-import { PanelRepository, type Panel } from "../../memory/repositories/panels.js";
+import { PanelRepository } from "../../memory/repositories/panels.js";
 
 import { runExtractMemoryHook } from "../extract-memory-hook.js";
 
@@ -344,20 +343,16 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         const panelRepo = new PanelRepository(db);
         const expertRepo = new ExpertRepository(db);
 
-        // Recall memory from the most recent prior panel with the same
-        // template (if any) so experts continue learning across debates.
-        const priorPanel = await findMostRecentPanelForTemplate(panelRepo, template.name);
+        // T1 (context-bleed fix): a fresh `convene` invocation starts a
+        // brand-new debate and MUST NOT inject memory from any prior
+        // same-template panel. Loading prior memory into expert system
+        // prompts caused round 2+ of new debates to bleed content from
+        // earlier (unrelated) debates — the #1 trust-destroying bug.
+        //
+        // Memory is still EXTRACTED post-debate (see runExtractMemoryHook
+        // below) so it remains available to `resume`, which intentionally
+        // continues a prior debate's context.
         const memoryBySlug = new Map<string, ExpertMemory>();
-        if (priorPanel) {
-          const recalls = await Promise.all(
-            template.experts.map((def) =>
-              recallMemory(db, priorPanel.id, def.slug).then((mem) => [def.slug, mem] as const),
-            ),
-          );
-          for (const [slug, mem] of recalls) {
-            if (mem) memoryBySlug.set(slug, mem);
-          }
-        }
 
         const aiExperts = buildExpertSpecs(
           template,
@@ -548,41 +543,6 @@ function buildExpertSpecs(
       systemMessage,
     };
   });
-}
-
-/**
- * Find the most recently-created panel whose stored config has the same
- * `template` name. Used to bridge per-debate memory: each `convene` run
- * creates a new panel, but experts of the same template should remember
- * what was said before.
- *
- * Returns undefined when no prior panel is found or when configJson is
- * malformed for every candidate.
- */
-async function findMostRecentPanelForTemplate(
-  panelRepo: PanelRepository,
-  templateName: string,
-): Promise<Panel | undefined> {
-  const all = await panelRepo.findAll();
-  // Filter to same template AND non-mock engine. Mock-engine panels are
-  // explicitly excluded (Sentinel pr222 cycle 3 #1 🔴) — their turns are
-  // deterministic offline placeholders that would contaminate later real
-  // (--engine copilot) debates with fabricated "memory" if they were
-  // recalled. A panel without an engine field is treated as non-mock for
-  // backward compatibility with rows written before the engine field
-  // existed.
-  const matches = all.filter((p) => {
-    try {
-      const cfg = JSON.parse(p.configJson) as { template?: unknown; engine?: unknown };
-      return cfg.template === templateName && cfg.engine !== "mock";
-    } catch {
-      return false;
-    }
-  });
-  if (matches.length === 0) return undefined;
-  // Most-recent by createdAt (ISO-8601 — lexically sortable).
-  matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
-  return matches[0];
 }
 
 /** Convert a display name like "Product Lead" to a slug like "product-lead". */

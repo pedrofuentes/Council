@@ -394,12 +394,14 @@ describe("buildConveneCommand", () => {
     });
   });
 
-  // ── Sentinel pr222 cycle 3 — recall regression coverage ───────────
+  // ── T1 (context-bleed fix) — recall removed for fresh convene ─────
+  // Previously (Sentinel pr222 cycle 3) convene loaded prior-panel
+  // memory into the new expert's system prompt. That caused round 2+
+  // of new debates to bleed unrelated prior-debate content. The recall
+  // path is now removed for `convene`; `resume` is unaffected.
 
-  describe("memory recall (Sentinel pr222 #3)", () => {
-    it("recalls memory from a prior same-template panel into the new expert system prompt", async () => {
-      // Seed a prior panel for `code-review` with one debate + a
-      // distinctive turn for the `senior` expert.
+  describe("no context bleed across sequential convene runs (T1)", () => {
+    it("does NOT inject prior same-template panel turns into the new expert system prompt", async () => {
       const db = await createDatabase(path.join(testHome, "council.db"));
       try {
         const panel = await new PanelRepository(db).create({
@@ -452,8 +454,6 @@ describe("buildConveneCommand", () => {
         "mock",
       ]);
 
-      // The newly-created panel's `senior` expert should have the
-      // recalled snippet rendered into Section [7] MEMORY.
       const db2 = await createDatabase(path.join(testHome, "council.db"));
       try {
         const panels = await new PanelRepository(db2).findAll();
@@ -462,17 +462,15 @@ describe("buildConveneCommand", () => {
         const experts = await new ExpertRepository(db2).findByPanelId(newPanel?.id ?? "");
         const newSenior = experts.find((e) => e.slug === "senior");
         expect(newSenior).toBeDefined();
-        expect(newSenior?.systemMessage).toContain("[7] MEMORY");
-        expect(newSenior?.systemMessage).toContain("DISTINCTIVE_RECALL_MARKER_ALPHA");
+        // Prior-debate content must NOT bleed into the new expert prompt.
+        expect(newSenior?.systemMessage).not.toContain("DISTINCTIVE_RECALL_MARKER_ALPHA");
+        expect(newSenior?.systemMessage).not.toContain("microservices");
       } finally {
         await db2.destroy();
       }
     });
 
-    it("does NOT recall memory from prior MOCK-engine panels (mock content cannot contaminate real prompts)", async () => {
-      // Seed BOTH a mock-engine panel (with marker MOCK_ONLY) and a
-      // copilot-engine panel (with marker REAL_ONLY) for the same
-      // template. The recall must pick the copilot panel, not the mock.
+    it("does NOT bleed content from either mock or real prior panels of the same template", async () => {
       const db = await createDatabase(path.join(testHome, "council.db"));
       try {
         const panelRepo = new PanelRepository(db);
@@ -518,7 +516,6 @@ describe("buildConveneCommand", () => {
         }
 
         await seedPanel("real-prior", "copilot", "REAL_ONLY_MARKER");
-        // Tiny gap so the mock panel is the most-recent by startedAt.
         await new Promise((r) => setTimeout(r, 5));
         await seedPanel("mock-prior", "mock", "MOCK_ONLY_MARKER");
       } finally {
@@ -549,10 +546,9 @@ describe("buildConveneCommand", () => {
         const experts = await new ExpertRepository(db2).findByPanelId(newPanel?.id ?? "");
         const senior = experts.find((e) => e.slug === "senior");
         expect(senior).toBeDefined();
-        // Mock content must NOT have leaked into the new prompt.
+        // NEITHER prior marker may bleed into the new expert prompt.
         expect(senior?.systemMessage).not.toContain("MOCK_ONLY_MARKER");
-        // Real prior content SHOULD have been recalled.
-        expect(senior?.systemMessage).toContain("REAL_ONLY_MARKER");
+        expect(senior?.systemMessage).not.toContain("REAL_ONLY_MARKER");
       } finally {
         await db2.destroy();
       }
