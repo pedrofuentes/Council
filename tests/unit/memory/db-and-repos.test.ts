@@ -21,9 +21,15 @@ import { once } from "node:events";
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 
+import { createClient } from "@libsql/client";
 import { sql } from "kysely";
 
-import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
+import {
+  createDatabase,
+  loadMigrations,
+  splitSqlStatements,
+  type CouncilDatabase,
+} from "../../../src/memory/db.js";
 import { PanelRepository, type NewPanel } from "../../../src/memory/repositories/panels.js";
 import { ExpertRepository, type NewExpert } from "../../../src/memory/repositories/experts.js";
 import { TurnRepository, type NewTurn } from "../../../src/memory/repositories/turns.js";
@@ -153,6 +159,51 @@ describe("createDatabase", () => {
       await cleanupFileBackedDatabaseDir(testHome);
     }
   }, 20_000);
+
+  it("rolls back a failed migration without advancing schema_version", async () => {
+    const testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-db-rollback-"));
+    const dbPath = path.join(testHome, "council.db");
+    const setupClient = createClient({ url: `file:${dbPath}` });
+
+    try {
+      await setupClient.execute(
+        "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);",
+      );
+      for (const migration of loadMigrations().filter((candidate) => candidate.version < 11)) {
+        for (const statement of splitSqlStatements(migration.sql)) {
+          await setupClient.execute(statement);
+        }
+        await setupClient.execute({
+          sql: "INSERT INTO schema_version (version, applied_at) VALUES (?, ?);",
+          args: [migration.version, new Date().toISOString()],
+        });
+      }
+      await setupClient.execute("ALTER TABLE experts ADD COLUMN memory_source_debate_id TEXT;");
+    } finally {
+      setupClient.close();
+    }
+
+    await expect(createDatabase(dbPath)).rejects.toThrow(/memory_source_debate_id|duplicate column/i);
+
+    const verifyClient = createClient({ url: `file:${dbPath}` });
+    try {
+      const versions = (await verifyClient.execute("SELECT version FROM schema_version ORDER BY version;")).rows.map(
+        (row) => Number((row as { readonly version: number }).version),
+      );
+      const columnNames = (await verifyClient.execute("PRAGMA table_info(experts);")).rows.map((row) =>
+        String((row as { readonly name: string }).name),
+      );
+
+      expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+      expect(columnNames).toContain("memory_source_debate_id");
+      expect(columnNames).not.toContain("memory_derivation");
+      expect(columnNames).not.toContain("memory_trust_score");
+      expect(columnNames).not.toContain("memory_extracted_at");
+    } finally {
+      verifyClient.close();
+      await cleanupFileBackedDatabaseDir(testHome);
+    }
+  });
 
   it("applies migrations 001 through 011, creating the expected indexes", async () => {
     const versions = (
