@@ -283,4 +283,61 @@ describe("isRecoverable() helper", () => {
   });
 });
 
+describe("MockEngine — synthesizer responses", () => {
+  it("returns valid JSON for synthesizer expert (conclude command)", async () => {
+    const engine = new MockEngine();
+    const synthesizerSpec: ExpertSpec = {
+      id: "01HZ-synth",
+      slug: "synthesizer",
+      displayName: "Council Synthesizer",
+      model: "mock-model",
+      systemMessage: "You are a deliberation synthesizer.",
+    };
+
+    await engine.start();
+    await engine.addExpert(synthesizerSpec);
+
+    const events = await collect(
+      engine.send({ prompt: "Analyze this debate.", expertId: "01HZ-synth" }),
+    );
+
+    const deltas = events.filter((e) => e.kind === "message.delta");
+    expect(deltas.length).toBeGreaterThan(0);
+
+    const responseText = deltas.map((e) => (e.kind === "message.delta" ? e.text : "")).join("");
+    expect(responseText).toBeTruthy();
+
+    // Must be valid JSON
+    const parsed = JSON.parse(responseText);
+    expect(parsed).toHaveProperty("consensus");
+    expect(parsed).toHaveProperty("tensions");
+    expect(parsed).toHaveProperty("decisionMatrix");
+    expect(parsed).toHaveProperty("recommendation");
+    expect(parsed).toHaveProperty("confidence");
+
+    expect(Array.isArray(parsed.consensus)).toBe(true);
+    expect(Array.isArray(parsed.tensions)).toBe(true);
+    expect(Array.isArray(parsed.decisionMatrix)).toBe(true);
+    expect(typeof parsed.recommendation).toBe("string");
+    expect(["high", "medium", "low"]).toContain(parsed.confidence);
+
+    await engine.stop();
+  });
+
+  it("returns plain text for non-synthesizer experts", async () => {
+    const engine = new MockEngine();
+    await engine.start();
+    await engine.addExpert(expertSpec);
+
+    const events = await collect(engine.send({ prompt: "Hello", expertId: "01HZ-cto" }));
+
+    const deltas = events.filter((e) => e.kind === "message.delta");
+    const responseText = deltas.map((e) => (e.kind === "message.delta" ? e.text : "")).join("");
+
+    expect(responseText).toBe("[mock response from 01HZ-cto]");
+
+    await engine.stop();
+  });
+});
+
 
