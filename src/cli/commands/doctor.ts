@@ -13,6 +13,7 @@ import {
   pingProviderHealth,
   type ModelDiscoveryResult,
 } from "../../engine/copilot/health.js";
+import { KNOWN_MODELS } from "../../engine/models.js";
 import { getSymbols } from "../renderers/symbols.js";
 import { stripControlChars } from "../strip-control-chars.js";
 
@@ -208,11 +209,24 @@ async function buildModelAccessFailureDetail(
   }
 }
 
+function sortModelsForDisplay(models: readonly string[]): readonly string[] {
+  const knownModelOrder = new Map(KNOWN_MODELS.map((model, index) => [model, index]));
+  return [...models].sort((left, right) => {
+    const leftOrder = knownModelOrder.get(left) ?? Number.MAX_SAFE_INTEGER;
+    const rightOrder = knownModelOrder.get(right) ?? Number.MAX_SAFE_INTEGER;
+    if (leftOrder !== rightOrder) {
+      return leftOrder - rightOrder;
+    }
+    return left.localeCompare(right);
+  });
+}
+
 function writeKnownModels(write: Writer, label: string, models: readonly string[]): void {
   write(`${label}\n`);
+  const orderedModels = sortModelsForDisplay(models);
   const labelWidth = Math.max(...MODEL_GROUPS.map((group) => group.label.length));
   for (const group of MODEL_GROUPS) {
-    const groupedModels = models.filter((model) => model.startsWith(group.prefix));
+    const groupedModels = orderedModels.filter((model) => model.startsWith(group.prefix));
     if (groupedModels.length === 0) {
       continue;
     }
@@ -220,7 +234,7 @@ function writeKnownModels(write: Writer, label: string, models: readonly string[
   }
   write("\n");
   write(
-    "Note: Availability depends on your Copilot tier. Use 'council doctor' to verify your default model is accessible.\n",
+    "Note: Known models: Availability depends on your Copilot tier. Use 'council doctor' to verify your default model is accessible.\n",
   );
 }
 
