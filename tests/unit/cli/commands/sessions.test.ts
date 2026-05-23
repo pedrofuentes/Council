@@ -29,16 +29,20 @@ describe("buildSessionsCommand", () => {
   describe("action behavior (with isolated COUNCIL_HOME)", () => {
     let testHome: string;
     let originalHome: string | undefined;
+    let originalDataHome: string | undefined;
 
     beforeEach(async () => {
       testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-sessions-test-"));
       originalHome = process.env["COUNCIL_HOME"];
+      originalDataHome = process.env["COUNCIL_DATA_HOME"];
       process.env["COUNCIL_HOME"] = testHome;
     });
 
     afterEach(async () => {
       if (originalHome === undefined) delete process.env["COUNCIL_HOME"];
       else process.env["COUNCIL_HOME"] = originalHome;
+      if (originalDataHome === undefined) delete process.env["COUNCIL_DATA_HOME"];
+      else process.env["COUNCIL_DATA_HOME"] = originalDataHome;
       // Best-effort cleanup; libsql may briefly hold WAL handles on Windows
       // even after destroy(). The OS will reap %TEMP% eventually.
       try {
@@ -117,6 +121,35 @@ describe("buildSessionsCommand", () => {
       expect(lines).toHaveLength(1);
       const parsed = JSON.parse(lines[0] ?? "{}");
       expect(parsed.name).toBe("another-session");
+    });
+
+    it("uses COUNCIL_DATA_HOME when COUNCIL_HOME is unset", async () => {
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { PanelRepository } = await import(
+        "../../../../src/memory/repositories/panels.js"
+      );
+      const customDataHome = path.join(testHome, "data-home");
+      await fs.mkdir(customDataHome, { recursive: true });
+      delete process.env["COUNCIL_HOME"];
+      process.env["COUNCIL_DATA_HOME"] = customDataHome;
+
+      const db = await createDatabase(path.join(customDataHome, "council.db"));
+      const repo = new PanelRepository(db);
+      await repo.create({
+        name: "data-home-session",
+        topic: "env-var topic",
+        copilotHome: path.join(customDataHome, "copilot"),
+        configJson: "{}",
+      });
+      await db.destroy();
+
+      let captured = "";
+      const cmd = buildSessionsCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-sessions"]);
+      expect(captured).toContain("data-home-session");
+      expect(captured).toContain("env-var topic");
     });
   });
 

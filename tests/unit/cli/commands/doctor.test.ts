@@ -39,16 +39,20 @@ async function runDoctor(args: readonly string[], deps: DoctorDepsLike = {}): Pr
 describe("buildDoctorCommand", () => {
   let testHome: string;
   let originalHome: string | undefined;
+  let originalDataHome: string | undefined;
 
   beforeEach(async () => {
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-doctor-test-"));
     originalHome = process.env["COUNCIL_HOME"];
+    originalDataHome = process.env["COUNCIL_DATA_HOME"];
     process.env["COUNCIL_HOME"] = testHome;
   });
 
   afterEach(async () => {
     if (originalHome === undefined) delete process.env["COUNCIL_HOME"];
     else process.env["COUNCIL_HOME"] = originalHome;
+    if (originalDataHome === undefined) delete process.env["COUNCIL_DATA_HOME"];
+    else process.env["COUNCIL_DATA_HOME"] = originalDataHome;
     await fs.rm(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
@@ -150,6 +154,18 @@ describe("buildDoctorCommand", () => {
     expect(onlineProbe).not.toHaveBeenCalled();
     expect(output).toContain("Council Doctor");
     expect(output).not.toContain("Default model (");
+  });
+
+  it("doctor uses COUNCIL_DATA_HOME for visible paths when COUNCIL_HOME is unset", async () => {
+    const customDataHome = path.join(testHome, "custom-data-home");
+    delete process.env["COUNCIL_HOME"];
+    process.env["COUNCIL_DATA_HOME"] = customDataHome;
+
+    const output = await runDoctor(["--offline"]);
+
+    expect(output).toContain(`Council home\n   ${customDataHome}`);
+    expect(output).toContain(`Council data home\n   ${customDataHome}`);
+    expect(output).toContain(`Path: ${path.join(customDataHome, "config.yaml")}`);
   });
 
   it("doctor --models lists live discovered models", async () => {

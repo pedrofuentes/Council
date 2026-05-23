@@ -141,10 +141,12 @@ describe("Config and Migration E2E", () => {
     const customDataHome = path.join(ctx.testDataHome, "custom-data");
     await fs.mkdir(customDataHome, { recursive: true });
 
+    delete process.env["COUNCIL_HOME"];
     process.env["COUNCIL_DATA_HOME"] = customDataHome;
     const resolvedDataHome = getCouncilDataHome();
 
     expect(resolvedDataHome).toBe(customDataHome);
+    expect(getCouncilHome()).toBe(customDataHome);
 
     const output = captureOutput();
     const convene = buildConveneCommand({
@@ -169,6 +171,14 @@ describe("Config and Migration E2E", () => {
       .then(() => true)
       .catch(() => false);
     expect(expertsDirExists).toBe(true);
+
+    const db = await openTestDb(customDataHome);
+    try {
+      const panels = await new PanelRepository(db).findAll();
+      expect(panels.length).toBeGreaterThan(0);
+    } finally {
+      await destroyTestDb(db);
+    }
   });
 
   it("template migration first convene", async () => {
