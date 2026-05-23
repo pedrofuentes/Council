@@ -8,8 +8,11 @@ import * as path from "node:path";
 import { Command } from "commander";
 
 import { getCouncilHome, loadConfig } from "../../config/index.js";
-import { pingProviderHealth } from "../../engine/copilot/health.js";
-import { KNOWN_MODELS } from "../../engine/models.js";
+import {
+  discoverAvailableModels,
+  pingProviderHealth,
+  type ModelDiscoveryResult,
+} from "../../engine/copilot/health.js";
 import { getSymbols } from "../renderers/symbols.js";
 import { stripControlChars } from "../strip-control-chars.js";
 
@@ -38,6 +41,7 @@ interface DoctorOptions {
 export interface DoctorDeps {
   readonly write?: Writer;
   readonly onlineProbe?: (model: string) => Promise<{ ok: boolean; detail: string }>;
+  readonly discoverModels?: () => Promise<ModelDiscoveryResult>;
 }
 
 async function checkNodeVersion(): Promise<CheckResult> {
@@ -113,6 +117,7 @@ async function checkDiskSpace(): Promise<CheckResult> {
 
 async function checkDefaultModelAccess(
   onlineProbe: NonNullable<DoctorDeps["onlineProbe"]>,
+  discoverModels: NonNullable<DoctorDeps["discoverModels"]>,
 ): Promise<CheckResult> {
   const configPath = getConfigPath();
 
@@ -140,13 +145,21 @@ async function checkDefaultModelAccess(
     return {
       name: "Default model access",
       status: "fail",
-      detail: `Default model (${model}) is not accessible: ${probe.detail}. Try changing defaults.model in ${configPath}`,
+      detail: await buildModelAccessFailureDetail(
+        `Default model (${model}) is not accessible: ${probe.detail}`,
+        model,
+        discoverModels,
+      ),
     };
   } catch (err: unknown) {
     return {
       name: "Default model access",
       status: "fail",
-      detail: `Default model (${model}) probe failed: ${formatError(err)}. Try changing defaults.model in ${configPath}`,
+      detail: await buildModelAccessFailureDetail(
+        `Default model (${model}) probe failed: ${formatError(err)}`,
+        model,
+        discoverModels,
+      ),
     };
   }
 }
@@ -171,11 +184,60 @@ function statusIcon(status: CheckResult["status"]): string {
   }
 }
 
-function writeKnownModels(write: Writer, models: readonly string[]): void {
-  write("Known models:\n");
+function sanitizeModelId(id: string): string {
+  return stripControlChars(id)
+    .replace(/[\r\n]+/g, " ")
+    .trim();
+}
+
+function isValidModelId(id: string): boolean {
+  return /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(id);
+}
+
+async function buildModelAccessFailureDetail(
+  failureDetail: string,
+  model: string,
+  discoverModels: NonNullable<DoctorDeps["discoverModels"]>,
+): Promise<string> {
+  try {
+    const discovery = await discoverModels();
+    const sanitizedModel = sanitizeModelId(model);
+    const alternatives = [
+      ...new Set(
+        discovery.models
+          .map(sanitizeModelId)
+          .filter(
+            (candidate) =>
+              candidate.length > 0 && candidate !== sanitizedModel && isValidModelId(candidate),
+          ),
+      ),
+    ];
+    if (alternatives.length === 0) {
+      return failureDetail;
+    }
+    return (
+      `${failureDetail}\n` +
+      "   \n" +
+      "   Available alternatives:\n" +
+      `     ${alternatives.join(", ")}\n` +
+      "   \n" +
+      `   Fix: council config set defaults.model ${alternatives[0]}`
+    );
+  } catch {
+    return failureDetail;
+  }
+}
+
+function writeKnownModels(write: Writer, label: string, models: readonly string[]): void {
+  write(`${label}\n`);
+  const orderedModels = [
+    ...new Set(
+      models.map(sanitizeModelId).filter((model) => model.length > 0 && isValidModelId(model)),
+    ),
+  ];
   const labelWidth = Math.max(...MODEL_GROUPS.map((group) => group.label.length));
   for (const group of MODEL_GROUPS) {
-    const groupedModels = models.filter((model) => model.startsWith(group.prefix));
+    const groupedModels = orderedModels.filter((model) => model.startsWith(group.prefix));
     if (groupedModels.length === 0) {
       continue;
     }
@@ -183,7 +245,7 @@ function writeKnownModels(write: Writer, models: readonly string[]): void {
   }
   write("\n");
   write(
-    "Note: Availability depends on your Copilot tier. Use 'council doctor' to verify your default model is accessible.\n",
+    "Note: Known models: Availability depends on your Copilot tier. Use 'council doctor' to verify your default model is accessible.\n",
   );
 }
 
@@ -196,17 +258,18 @@ function resolveDoctorDeps(input: DoctorDeps | Writer): Required<DoctorDeps> {
   return {
     write: deps.write ?? defaultWriter,
     onlineProbe: deps.onlineProbe ?? probeCopilotModel,
+    discoverModels: deps.discoverModels ?? discoverAvailableModels,
   };
 }
 
 export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
-  const { write, onlineProbe } = resolveDoctorDeps(input);
+  const { write, onlineProbe, discoverModels } = resolveDoctorDeps(input);
   const cmd = new Command("doctor");
   cmd
     .description("Diagnose Council setup (Node, libsql, Copilot SDK, disk)")
     .option("--online", "No-op; online check now runs by default (backwards compatibility)")
     .option("--offline", "Skip online model probe")
-    .option("--models", "List known Copilot model identifiers")
+    .option("--models", "List available Copilot models (live discovery with static fallback)")
     .action(async (options: DoctorOptions) => {
       const checks: (() => Promise<CheckResult>)[] = [
         checkNodeVersion,
@@ -218,7 +281,7 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
 
       // Run online check by default unless --offline is specified
       if (!options.offline) {
-        checks.push(() => checkDefaultModelAccess(onlineProbe));
+        checks.push(() => checkDefaultModelAccess(onlineProbe, discoverModels));
       }
 
       write("Council Doctor\n");
@@ -265,8 +328,15 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
       write(`   Columns: ${process.stdout.columns ?? "(unknown)"}\n`);
 
       if (options.models) {
+        const modelDiscovery = await discoverModels();
         write("\n");
-        writeKnownModels(write, KNOWN_MODELS);
+        writeKnownModels(
+          write,
+          modelDiscovery.source === "live"
+            ? "Available models:"
+            : "Known models (live discovery unavailable):",
+          modelDiscovery.models,
+        );
       }
 
       write("\n");

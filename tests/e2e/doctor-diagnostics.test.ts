@@ -71,24 +71,23 @@ describe("doctor diagnostics E2E", () => {
     expect(await homeExists()).toBe(true);
   });
 
-  it("doctor --models lists known models", async () => {
+  it("doctor --models lists available models from live discovery", async () => {
     const output = captureOutput();
     const cmd = buildDoctorCommand({
       write: output.write,
       onlineProbe: async () => ({ ok: true, detail: "OK" }),
+      discoverModels: async () => ({
+        models: ["claude-sonnet-4.5", "claude-haiku-4.5", "gpt-5.4", "gpt-5.4-mini"],
+        source: "live",
+      }),
     });
 
     await cmd.parseAsync(["node", "council-doctor", "--models", "--offline"]);
 
     const stdout = output.stdout();
-    expect(stdout).toContain("Known models:");
-    expect(stdout).toContain(
-      "Anthropic: claude-haiku-4.5, claude-sonnet-4.5, claude-sonnet-4.6, claude-opus-4.5, claude-opus-4.6, claude-opus-4.7",
-    );
-    expect(stdout).toContain(
-      "OpenAI   : gpt-4.1, gpt-5-mini, gpt-5.2, gpt-5.4, gpt-5.5, gpt-5.4-mini",
-    );
-    expect(stdout).not.toContain("Google");
+    expect(stdout).toContain("Available models:");
+    expect(stdout).toContain("Anthropic: claude-sonnet-4.5, claude-haiku-4.5");
+    expect(stdout).toContain("OpenAI   : gpt-5.4, gpt-5.4-mini");
     expect(stdout).toContain("Availability depends on your Copilot tier");
   });
 

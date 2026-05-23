@@ -22,13 +22,15 @@ describe("formatEngineError", () => {
     void err;
   });
 
-  it("MODEL_UNAVAILABLE → mentions the model and tier guidance", () => {
+  it("MODEL_UNAVAILABLE → suggests config set and doctor --models", () => {
     const out = formatEngineError({
       code: "MODEL_UNAVAILABLE",
       message: "model claude-opus-4.7 not reachable",
     });
     expect(out.toLowerCase()).toMatch(/model|tier|available/);
     expect(out).toContain("claude-opus-4.7");
+    expect(out).toContain("Fix: council config set defaults.model <available-model>");
+    expect(out).toContain("Run 'council doctor --models' to see available models.");
   });
 
   it("NETWORK → suggests checking connection", () => {
@@ -117,7 +119,8 @@ describe("formatEngineError", () => {
       message: "model gpt-5.2 is not available for your tier",
     });
     expect(out).toContain("gpt-5.2");
-    expect(out.toLowerCase()).toContain("tier");
+    expect(out).toContain("Fix: council config set defaults.model <available-model>");
+    expect(out).toContain("Run 'council doctor --models' to see available models.");
   });
 
   it("MODEL_UNAVAILABLE with no parseable model shows (unknown)", () => {
