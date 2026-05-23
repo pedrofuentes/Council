@@ -76,16 +76,18 @@ describe("doctor diagnostics E2E", () => {
     const cmd = buildDoctorCommand({
       write: output.write,
       onlineProbe: async () => ({ ok: true, detail: "OK" }),
+      discoverModels: async () => ({
+        models: ["claude-sonnet-4.5", "claude-haiku-4.5", "gpt-5.4", "gpt-5.4-mini"],
+        source: "live",
+      }),
     });
 
     await cmd.parseAsync(["node", "council-doctor", "--models", "--offline"]);
 
     const stdout = output.stdout();
     expect(stdout).toContain("Available models:");
-    expect(stdout).toContain("Anthropic:");
-    expect(stdout).toContain("OpenAI   :");
-    expect(stdout).toContain("claude-sonnet-4.5");
-    expect(stdout).toContain("gpt-5.4");
+    expect(stdout).toContain("Anthropic: claude-sonnet-4.5, claude-haiku-4.5");
+    expect(stdout).toContain("OpenAI   : gpt-5.4, gpt-5.4-mini");
     expect(stdout).toContain("Availability depends on your Copilot tier");
   });
 
