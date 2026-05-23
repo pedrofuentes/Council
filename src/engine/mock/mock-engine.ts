@@ -96,7 +96,39 @@ export interface MockEngineOptions {
 
 const SENTENCE_SPLIT = /([.!?]\s+)/;
 
-function defaultResponse(expertId: string): string {
+function defaultResponse(expertId: string, expertSpec?: ExpertSpec): string {
+  // If this is a synthesizer expert (used by conclude command), return valid JSON
+  if (expertSpec?.slug === "synthesizer") {
+    return JSON.stringify({
+      consensus: [
+        "All experts agree on the fundamental importance of the issue",
+        "There is general agreement on the need for immediate action",
+      ],
+      tensions: [
+        "Disagreement on the optimal implementation timeline",
+        "Different perspectives on resource allocation priorities",
+      ],
+      decisionMatrix: [
+        {
+          dimension: "Risk vs Innovation",
+          positions: [
+            { expert: "conservative", stance: "Prioritize stability and proven approaches" },
+            { expert: "progressive", stance: "Embrace cutting-edge solutions despite risks" },
+          ],
+        },
+        {
+          dimension: "Speed vs Quality",
+          positions: [
+            { expert: "pragmatic", stance: "Ship quickly and iterate based on feedback" },
+            { expert: "perfectionist", stance: "Take time to get it right the first time" },
+          ],
+        },
+      ],
+      recommendation:
+        "Proceed with a phased approach that balances innovation with risk management, starting with a limited pilot before full-scale rollout",
+      confidence: "medium",
+    });
+  }
   return `[mock response from ${expertId}]`;
 }
 
@@ -343,7 +375,9 @@ export class MockEngine implements CouncilEngine {
     }
 
     const failure = this.#options.failures[options.expertId] ?? dynamicFailure;
-    const text = this.#options.responses[options.expertId] ?? defaultResponse(options.expertId);
+    const expertSpec = this.#experts.get(options.expertId);
+    const text =
+      this.#options.responses[options.expertId] ?? defaultResponse(options.expertId, expertSpec);
     const deltaDelayMs = this.#options.deltaDelayMs;
 
     return this.#stream(inFlight, options.expertId, text, deltaDelayMs, failure, removeCallerSignalListener);
