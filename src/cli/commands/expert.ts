@@ -36,6 +36,7 @@ import {
   ClearForRetrainError,
   DocumentRepository,
 } from "../../memory/repositories/document-repository.js";
+import { PanelLibraryRepository } from "../../memory/repositories/panel-library-repo.js";
 import { ProfileRepository } from "../../memory/repositories/profile-repository.js";
 import { ENGINE_KINDS, type EngineKind, makeEngineFromKind } from "../run-with-engine.js";
 import { stripControlChars } from "../strip-control-chars.js";
@@ -554,7 +555,7 @@ function buildDeleteCommand(write: Writer, writeError: Writer): Command {
     .option("--force", "Delete even if the expert is a member of one or more panels")
     .option("--yes", "Skip confirmation prompt (required in non-interactive mode)")
     .action(async (slug: string, opts: { force?: boolean; yes?: boolean }) => {
-      await withExpertLibrary(async (library) => {
+      await withExpertLibrary(async (library, _config, _dataHome, db) => {
         const existing = await library.get(slug);
         if (!existing) {
           const all = (await library.list()).map((e) => e.slug);
@@ -582,7 +583,34 @@ function buildDeleteCommand(write: Writer, writeError: Writer): Command {
               "Deleting will remove it from these panels.\n",
           );
         }
-        await library.delete(slug, { force: opts.force === true });
+        const { affectedPanels } = await library.delete(slug, { force: opts.force === true });
+
+        // Empty-panel warning is strictly advisory: a failure here must
+        // NOT mask the successful expert delete (would mislead scripts
+        // into retrying a no-op). All errors are reported via writeError
+        // but the action still succeeds.
+        if (affectedPanels.length > 0) {
+          try {
+            const panelRepo = new PanelLibraryRepository(db);
+            for (const panelName of affectedPanels) {
+              const remaining = await panelRepo.getMembers(panelName);
+              if (remaining.length === 0) {
+                const safe = stripControlChars(panelName);
+                write(
+                  `⚠ Panel "${safe}" now has 0 members and may not function correctly. ` +
+                    `Consider deleting it with \`council panel delete ${safe}\`.\n`,
+                );
+              }
+            }
+          } catch (warnErr) {
+            writeError(
+              `warning: empty-panel check failed after deleting "${stripControlChars(slug)}": ${
+                warnErr instanceof Error ? warnErr.message : String(warnErr)
+              }\n`,
+            );
+          }
+        }
+
         write(`✓ Expert "${stripControlChars(slug)}" deleted.\n`);
         write("\x1b[2mRun 'council expert list' to verify.\x1b[0m\n");
       });

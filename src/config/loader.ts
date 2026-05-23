@@ -14,6 +14,7 @@
  * throws on a missing home directory — creates it.
  */
 import * as fs from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -84,6 +85,40 @@ async function writeDefaultConfig(): Promise<CouncilConfig> {
   return defaults;
 }
 
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withConfigLock<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
+  const maxRetries = 50;
+  const retryDelay = 100;
+  let handle: FileHandle | undefined;
+
+  for (let index = 0; index < maxRetries; index += 1) {
+    try {
+      handle = await fs.open(lockPath, "wx");
+      break;
+    } catch (err: unknown) {
+      if (hasErrorCode(err, "EEXIST")) {
+        await sleep(retryDelay);
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  if (handle === undefined) {
+    throw new Error(`Could not acquire config lock after ${maxRetries} retries`);
+  }
+
+  try {
+    return await fn();
+  } finally {
+    await handle.close();
+    await fs.unlink(lockPath).catch(() => undefined);
+  }
+}
+
 function formatZodError(err: ZodError, source: string): Error {
   const lines = err.issues.map((i) => {
     const fieldPath = i.path.length > 0 ? i.path.join(".") : "(root)";
@@ -145,6 +180,63 @@ export async function loadConfigWithMeta(): Promise<ConfigLoadResult> {
 }
 
 /**
+ * Update a single dot-notation field inside config.yaml, validating the full
+ * document before writing any changes back to disk.
+ */
+export async function updateConfigField(
+  key: string,
+  value: string | number | boolean,
+): Promise<void> {
+  await ensureHomeDirectory();
+  const file = configPath();
+  const lockPath = `${file}.lock`;
+
+  await withConfigLock(lockPath, async () => {
+    let raw: string;
+    try {
+      raw = await fs.readFile(file, "utf-8");
+    } catch (err: unknown) {
+      if (isENOENT(err)) {
+        await writeDefaultConfig();
+        raw = await fs.readFile(file, "utf-8");
+      } else {
+        throw err;
+      }
+    }
+
+    const document = yaml.parseDocument(raw);
+    if (document.errors.length > 0) {
+      const cause = document.errors.map((err) => err.message).join("; ");
+      throw new Error(`Failed to parse Council config (${file}): ${cause}`);
+    }
+
+    if (document.contents === null) {
+      document.contents = yaml.parseDocument("{}").contents;
+    } else if (!yaml.isMap(document.contents)) {
+      throw new Error(
+        `Council config (${file}) has an invalid root structure. Expected a YAML mapping but found ${document.contents.constructor.name}. Please fix or delete the config file.`,
+      );
+    }
+
+    document.setIn(key.split("."), value);
+
+    const result = ConfigSchema.safeParse(document.toJS() ?? {});
+    if (!result.success) {
+      throw formatZodError(result.error, file);
+    }
+
+    const tmpFile = `${file}.${process.pid}.${Date.now()}.tmp`;
+    await fs.writeFile(tmpFile, document.toString(), "utf-8");
+    try {
+      await fs.rename(tmpFile, file);
+    } catch (renameErr) {
+      await fs.unlink(tmpFile).catch(() => undefined);
+      throw renameErr;
+    }
+  });
+}
+
+/**
  * Resolve the engine to use given an optional CLI flag and a loaded config.
  * Resolution order: CLI flag → config file → default "copilot".
  */
@@ -156,11 +248,15 @@ export function resolveEngine(
   return config.defaults.engine;
 }
 
-function isENOENT(err: unknown): boolean {
+function hasErrorCode(err: unknown, code: string): boolean {
   return (
     typeof err === "object" &&
     err !== null &&
     "code" in err &&
-    (err as { code: unknown }).code === "ENOENT"
+    (err as { code: unknown }).code === code
   );
+}
+
+function isENOENT(err: unknown): boolean {
+  return hasErrorCode(err, "ENOENT");
 }

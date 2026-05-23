@@ -64,6 +64,39 @@ export function pingProviderHealth(): ProviderHealth {
   }
 }
 
+export interface ModelDiscoveryResult {
+  readonly models: readonly string[];
+  readonly source: "live" | "static";
+}
+
+const STATIC_MODEL_LIST = (Object.isFrozen(KNOWN_MODELS)
+  ? KNOWN_MODELS
+  : Object.freeze(KNOWN_MODELS)) as readonly string[];
+
+function freezeDiscoveredModels(models: readonly { readonly id: string }[]): readonly string[] {
+  return Object.freeze(models.map(({ id }) => id)) as readonly string[];
+}
+
+export async function discoverAvailableModels(): Promise<ModelDiscoveryResult> {
+  let client: CopilotClient | undefined;
+  try {
+    client = new CopilotClient();
+    await client.start();
+    return {
+      models: freezeDiscoveredModels(await client.listModels()),
+      source: "live",
+    };
+  } catch {
+    return { models: STATIC_MODEL_LIST, source: "static" };
+  } finally {
+    try {
+      await client?.stop();
+    } catch {
+      /* best effort cleanup */
+    }
+  }
+}
+
 interface ExpertRecord {
   readonly spec: ExpertSpec;
   readonly session: CopilotSession;
@@ -180,16 +213,14 @@ export class CopilotEngine implements CouncilEngine {
       return this.#modelListCache;
     }
     if (!this.#client || !this.#started || this.#stopped) {
-      return KNOWN_MODELS;
+      return STATIC_MODEL_LIST;
     }
     try {
-      const discoveredModels = Object.freeze(
-        (await this.#client.listModels()).map(({ id }) => id),
-      ) as readonly string[];
+      const discoveredModels = freezeDiscoveredModels(await this.#client.listModels());
       this.#modelListCache = discoveredModels;
       return this.#modelListCache;
     } catch {
-      return KNOWN_MODELS;
+      return STATIC_MODEL_LIST;
     }
   }
 

@@ -121,12 +121,119 @@ export function buildPanelCommand(
   confirmProvider?: ConfirmProvider,
 ): Command {
   const cmd = new Command("panel");
-  cmd.description("Manage Council panels (create, list, inspect, edit)");
+  cmd.description("Manage Council panels (create, list, inspect, edit, delete)");
   cmd.addCommand(buildCreateCommand(write, writeError));
   cmd.addCommand(buildListCommand(write));
   cmd.addCommand(buildInspectCommand(write, writeError));
   cmd.addCommand(buildEditCommand(write, writeError));
+  cmd.addCommand(buildDeleteCommand(write, writeError, confirmProvider));
   cmd.addCommand(buildDocsCommand(write, writeError, confirmProvider));
+  return cmd;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// delete (T2)
+// ──────────────────────────────────────────────────────────────────────
+
+function buildDeleteCommand(
+  write: Writer,
+  writeError: Writer,
+  confirmProvider?: ConfirmProvider,
+): Command {
+  const cmd = new Command("delete");
+  cmd
+    .description("Delete a panel (YAML file, docs directory, and DB rows)")
+    .argument("<name>", "Panel name to delete")
+    .option("--force", "Skip the confirmation prompt (non-interactive runs)")
+    .action(async (name: string, opts: { force?: boolean }) => {
+      // Defense in depth: re-validate the panel name on every fs.rm/unlink
+      // path. Create-time validation cannot be relied upon because the
+      // `panel_library.name` column could be populated via migration,
+      // import, or direct DB edit; any such channel that bypassed
+      // `PANEL_NAME_RE` would otherwise let `fs.rm({recursive,force})`
+      // wipe arbitrary directories.
+      validatePanelName(name);
+
+      await withPanelContext(async (ctx) => {
+        const existing = await ctx.panelRepo.findByName(name);
+        if (!existing) {
+          const all = (await ctx.panelRepo.findAll()).map((p) => p.name);
+          const msg = formatPanelNotFound(name, all);
+          writeError(msg + "\n");
+          throw new CliUserError(msg);
+        }
+
+        if (opts.force !== true) {
+          const provider = confirmProvider ?? createReadlineConfirmProvider();
+          const ok = await provider.confirm(
+            `Delete panel "${name}"? This cannot be undone. (y/N) `,
+          );
+          if (!ok) {
+            const msg = `Aborted: panel "${name}" not deleted.`;
+            writeError(msg + "\n");
+            throw new CliUserError(msg);
+          }
+        }
+
+        // Defense in depth: assert resolved paths stay under
+        // <dataHome>/panels/ even if validatePanelName ever weakens.
+        const panelsRoot = path.resolve(path.join(ctx.dataHome, "panels"));
+        const yamlPath = panelYamlPath(ctx.dataHome, name);
+        const panelDir = path.join(ctx.dataHome, "panels", name);
+        const resolvedYaml = path.resolve(yamlPath);
+        const resolvedDir = path.resolve(panelDir);
+        const rootPrefix = panelsRoot + path.sep;
+        if (!resolvedYaml.startsWith(rootPrefix) || !resolvedDir.startsWith(rootPrefix)) {
+          const msg = `Refusing to delete: resolved path escapes panels directory (name="${name}")`;
+          writeError(msg + "\n");
+          throw new CliUserError(msg);
+        }
+
+        // Order matters: filesystem first, DB row last. If unlink fails
+        // (EBUSY on Windows when the YAML is open in an editor, EPERM,
+        // EIO, …) the DB row remains authoritative so the operator can
+        // close the file and re-run `panel delete` to clean up. A
+        // DB-first ordering would silently destroy panel_members rows
+        // before the on-disk failure surfaced, trapping the user with
+        // an orphan YAML that the CLI could no longer reach.
+        try {
+          await fs.unlink(yamlPath);
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code !== "ENOENT") {
+            writeError(
+              `Failed to delete YAML at ${displayPath(yamlPath)}: ${
+                err instanceof Error ? err.message : String(err)
+              }\nDB rows preserved; re-run \`council panel delete ${name}\` after fixing.\n`,
+            );
+            throw err;
+          }
+        }
+
+        // Per spec the docs live at <dataHome>/panels/<name>/docs — but
+        // the parent <dataHome>/panels/<name> directory may also hold
+        // other generated artifacts. Remove the whole panel-scoped
+        // directory tree to avoid orphaned files. fs.rm with force:true
+        // already tolerates ENOENT, so a missing dir is not a failure.
+        try {
+          await fs.rm(panelDir, { recursive: true, force: true });
+        } catch (err) {
+          writeError(
+            `Warning: failed to clean up ${displayPath(panelDir)}: ${
+              err instanceof Error ? err.message : String(err)
+            }\nDB rows preserved; re-run \`council panel delete ${name}\` after fixing.\n`,
+          );
+          throw err;
+        }
+
+        // Filesystem cleanup succeeded — now safe to drop the DB row
+        // (ON DELETE CASCADE wipes panel_members atomically).
+        await ctx.panelRepo.delete(name);
+
+        write(`✓ Panel "${name}" deleted.\n`);
+        write("\x1b[2mRun 'council panel list' to verify.\x1b[0m\n");
+      });
+    });
   return cmd;
 }
 

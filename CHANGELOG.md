@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`council panel delete <name>`** (T2) — new subcommand to remove a panel completely: deletes the YAML file at `<dataHome>/panels/<name>.yaml`, the docs directory at `<dataHome>/panels/<name>/`, and the `panel_library` row (FK cascades to `panel_members`). Prompts `Delete panel "<name>"? This cannot be undone. (y/N)` by default; `--force` skips the confirmation for non-interactive runs. Filesystem cleanup runs **before** the DB delete, so an EBUSY/EPERM failure (e.g. Windows YAML open in editor) leaves the DB row intact and the operation retryable.
+- **Empty-panel warning on `council expert delete --force`** (T2) — when force-deleting an expert that was the last member of a panel, prints `⚠ Panel "X" now has 0 members and may not function correctly. Consider deleting it with \`council panel delete X\`.`. The warning is strictly advisory: any failure of the post-delete member-count probe is surfaced to stderr but does not fail the expert delete.
 - **`--max-rounds` default for resume changed to 1** (T-07) — `council resume <panel> --prompt "..."` now defaults to 1 round instead of 4 for follow-up questions. Users expecting the previous 4-round behavior must explicitly pass `--max-rounds 4`.
 - **`council config show|path|edit`** (T-13) — new subcommand for configuration management. `show` prints effective config values with source annotations, `path` prints the config file location, `edit` opens it in `$EDITOR`.
 - **`--engine` now optional, defaults to `copilot`** (T-12) — all commands that require an engine no longer mandate `--engine copilot` on every invocation. The default is read from config.
@@ -51,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Doctor model alternatives now filter unsafe/duplicate IDs** (T-15) — `council doctor` now sanitizes discovered model IDs before comparing them to the active default, rejects IDs containing shell metacharacters, whitespace, or leading-dash option forms, hides remediation guidance when no safe alternative remains, preserves live discovery order within each provider group, and labels `--models` as live discovery with static fallback.
 - **Expert delete confirmation + SQLite warning suppression** (T-09) — `council expert delete <slug>` now requires `--yes` in non-interactive environments, including `--force`, so automation must confirm deletions explicitly. Council also suppresses only Node's specific SQLite `ExperimentalWarning`, leaving unrelated experimental or SQLite-adjacent warnings visible.
 - **`council chat` now accepts convene-generated panel names with timestamps** (T-04) — panel names created by `council convene` include ISO timestamps (e.g., `code-review-2026-05-22T05:30:01`) which previously failed slug validation. The chat command now looks up panel names in the database before applying file-based slug validation, allowing users to group-chat with convene-generated panels.
 
