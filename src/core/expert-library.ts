@@ -104,6 +104,30 @@ export class FileExpertLibrary implements ExpertLibrary {
     return path.join(this.expertsDir, `${slug}.yaml`);
   }
 
+  private async repairMissingCacheRowFromYaml(slug: string, yamlPath: string): Promise<void> {
+    const cached = await this.repo.findBySlug(slug);
+    if (cached) {
+      return;
+    }
+    const content = await fs.readFile(yamlPath, "utf-8");
+    const parsed = parseYaml(content, yamlPath);
+    if (parsed.slug !== slug) {
+      throw new Error(
+        `Expert YAML at ${yamlPath} declares slug "${parsed.slug}" but was expected at slug "${slug}"`,
+      );
+    }
+    console.warn(
+      `[expert-library] Recovering missing expert cache row for slug "${slug}" from existing YAML source of truth at ${yamlPath}.`,
+    );
+    await this.repo.create({
+      slug: parsed.slug,
+      kind: parsed.kind,
+      displayName: parsed.displayName,
+      yamlPath,
+      yamlChecksum: sha256(content),
+    });
+  }
+
   async list(): Promise<readonly ExpertDefinition[]> {
     const rows = await this.repo.findAll();
     const out: ExpertDefinition[] = [];
@@ -147,6 +171,7 @@ export class FileExpertLibrary implements ExpertLibrary {
       await fs.writeFile(yamlPath, content, { encoding: "utf-8", flag: "wx" });
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+        await this.repairMissingCacheRowFromYaml(validated.slug, yamlPath);
         throw new Error(`Expert "${validated.slug}" already exists at ${yamlPath}`);
       }
       throw err;
