@@ -79,6 +79,13 @@ export interface ConveneCommandDeps {
    * used that reads from stdin/stdout.
    */
   readonly confirmProvider?: () => ConfirmProvider;
+  /**
+   * Subscribe to SIGINT (Ctrl+C). Returns an unsubscribe function.
+   * When omitted, a default implementation that calls `process.on`
+   * is used. Tests inject a stub to simulate interrupts deterministically
+   * without affecting the host process (issue #T6).
+   */
+  readonly subscribeInterrupt?: (handler: () => void) => () => void;
 }
 
 export interface ConveneOptions {
@@ -385,6 +392,23 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
 
         const contextConfig = buildContextConfig(opts);
 
+        // T6: wire Ctrl+C (SIGINT) to gracefully abort the debate.
+        // The signal is forwarded through runWithEngine to Debate.run,
+        // which stops at the next turn boundary and emits a terminal
+        // debate.end event with reason: "aborted". Partial results
+        // (panel row + any completed turns) are preserved because the
+        // DebatePersister writes turns as they stream. The handler is
+        // unsubscribed in `finally` so a second Ctrl+C falls through
+        // to the default process-kill behavior.
+        const debateController = new AbortController();
+        let debateInterrupted = false;
+        const onInterrupt = (): void => {
+          debateInterrupted = true;
+          debateController.abort();
+        };
+        const subscribeInterrupt = deps.subscribeInterrupt ?? defaultSubscribeInterrupt;
+        const unsubscribeInterrupt = subscribeInterrupt(onInterrupt);
+
         const panel = await panelRepo.create({
           name: `${template.name}-${new Date().toISOString().slice(0, 19)}`,
           topic,
@@ -410,53 +434,63 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           expertSlugToId[e.slug] = row.id;
         }
 
-        await runWithEngine({
-          engineKind: opts.engine,
-          engineFactory: deps.engineFactory,
-          experts: allExperts,
-          debateConfig: {
-            maxRounds: opts.maxRounds,
-            maxWordsPerResponse: opts.maxWords,
-            mode: opts.mode,
-            ...(strategy !== undefined ? { strategy } : {}),
-            ...(contextConfig !== undefined ? { contextConfig } : {}),
-          },
-          prompt: topic,
-          panelId: panel.id,
-          expertSlugToId,
-          moderator:
-            opts.mode === "structured" ? "structured-phases" : (strategy?.name ?? "round-robin"),
-          format: opts.format,
-          write,
-          writeError,
-          db,
-          humanSlugs: humanSlugs.size > 0 ? humanSlugs : undefined,
-          humanInput: humanSlugs.size > 0 ? deps.humanInputFactory?.() : undefined,
-          preamble: () => {
-            write(`\n# ${stripControlChars(template.name)}\n`);
-            write(`Topic: ${topic}\n`);
-            write(`Mode: ${opts.mode} | Max rounds: ${opts.maxRounds} | Engine: ${opts.engine}\n`);
-            if (humanNames.length > 0) {
-              write(`Human participants: ${humanNames.join(", ")}\n`);
-            }
-            write("\n");
-          },
-          ...(opts.heuristicMemory === true
-            ? {}
-            : {
-                onDebateComplete: async (ctx) =>
-                  runExtractMemoryHook({
-                    engine: ctx.engine,
-                    db: ctx.db,
-                    panelId: ctx.panelId,
-                    debateId: ctx.debateId,
-                    expertSlugToId: ctx.expertSlugToId,
-                    humanSlugs,
-                    model: defaultModel,
-                    writeError,
-                  }),
-              }),
-        });
+        try {
+          await runWithEngine({
+            engineKind: opts.engine,
+            engineFactory: deps.engineFactory,
+            experts: allExperts,
+            debateConfig: {
+              maxRounds: opts.maxRounds,
+              maxWordsPerResponse: opts.maxWords,
+              mode: opts.mode,
+              ...(strategy !== undefined ? { strategy } : {}),
+              ...(contextConfig !== undefined ? { contextConfig } : {}),
+            },
+            prompt: topic,
+            panelId: panel.id,
+            expertSlugToId,
+            moderator:
+              opts.mode === "structured" ? "structured-phases" : (strategy?.name ?? "round-robin"),
+            format: opts.format,
+            write,
+            writeError,
+            db,
+            signal: debateController.signal,
+            humanSlugs: humanSlugs.size > 0 ? humanSlugs : undefined,
+            humanInput: humanSlugs.size > 0 ? deps.humanInputFactory?.() : undefined,
+            preamble: () => {
+              write(`\n# ${stripControlChars(template.name)}\n`);
+              write(`Topic: ${topic}\n`);
+              write(
+                `Mode: ${opts.mode} | Max rounds: ${opts.maxRounds} | Engine: ${opts.engine}\n`,
+              );
+              if (humanNames.length > 0) {
+                write(`Human participants: ${humanNames.join(", ")}\n`);
+              }
+              write("\n");
+            },
+            ...(opts.heuristicMemory === true
+              ? {}
+              : {
+                  onDebateComplete: async (ctx) =>
+                    runExtractMemoryHook({
+                      engine: ctx.engine,
+                      db: ctx.db,
+                      panelId: ctx.panelId,
+                      debateId: ctx.debateId,
+                      expertSlugToId: ctx.expertSlugToId,
+                      humanSlugs,
+                      model: defaultModel,
+                      writeError,
+                    }),
+                }),
+          });
+        } finally {
+          unsubscribeInterrupt();
+        }
+        if (debateInterrupted) {
+          writeError("\nDebate interrupted. Partial results saved.\n");
+        }
       } finally {
         await db.destroy().catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
@@ -593,4 +627,17 @@ function parseContextScope(raw: string): VisibilityConfig {
     );
   }
   return { scope: raw as (typeof VALID_CONTEXT_SCOPES)[number] };
+}
+
+/**
+ * Default {@link ConveneCommandDeps.subscribeInterrupt} implementation:
+ * register the handler on `process.on("SIGINT", ...)` and return an
+ * unsubscribe that removes it. Tests inject a custom subscriber so
+ * the host process's signal handlers are unaffected (#T6).
+ */
+function defaultSubscribeInterrupt(handler: () => void): () => void {
+  process.on("SIGINT", handler);
+  return () => {
+    process.off("SIGINT", handler);
+  };
 }
