@@ -554,7 +554,7 @@ function buildDeleteCommand(write: Writer, writeError: Writer): Command {
     .option("--force", "Delete even if the expert is a member of one or more panels")
     .option("--yes", "Skip confirmation prompt (required in non-interactive mode)")
     .action(async (slug: string, opts: { force?: boolean; yes?: boolean }) => {
-      await withExpertLibrary(async (library) => {
+      await withExpertLibrary(async (library, _config, _dataHome, db) => {
         const existing = await library.get(slug);
         if (!existing) {
           const all = (await library.list()).map((e) => e.slug);
@@ -582,7 +582,28 @@ function buildDeleteCommand(write: Writer, writeError: Writer): Command {
               "Deleting will remove it from these panels.\n",
           );
         }
-        await library.delete(slug, { force: opts.force === true });
+        const { affectedPanels } = await library.delete(slug, { force: opts.force === true });
+
+        // Warn about panels that are now empty so the operator knows to
+        // clean them up. Querying member counts post-delete is cheap and
+        // avoids any race with the cascade.
+        if (affectedPanels.length > 0) {
+          const { PanelLibraryRepository } = await import(
+            "../../memory/repositories/panel-library-repo.js"
+          );
+          const panelRepo = new PanelLibraryRepository(db);
+          for (const panelName of affectedPanels) {
+            const remaining = await panelRepo.getMembers(panelName);
+            if (remaining.length === 0) {
+              const safe = stripControlChars(panelName);
+              write(
+                `⚠ Panel "${safe}" now has 0 members and may not function correctly. ` +
+                  `Consider deleting it with \`council panel delete ${safe}\`.\n`,
+              );
+            }
+          }
+        }
+
         write(`✓ Expert "${stripControlChars(slug)}" deleted.\n`);
         write("\x1b[2mRun 'council expert list' to verify.\x1b[0m\n");
       });

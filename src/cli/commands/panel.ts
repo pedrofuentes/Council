@@ -121,12 +121,92 @@ export function buildPanelCommand(
   confirmProvider?: ConfirmProvider,
 ): Command {
   const cmd = new Command("panel");
-  cmd.description("Manage Council panels (create, list, inspect, edit)");
+  cmd.description("Manage Council panels (create, list, inspect, edit, delete)");
   cmd.addCommand(buildCreateCommand(write, writeError));
   cmd.addCommand(buildListCommand(write));
   cmd.addCommand(buildInspectCommand(write, writeError));
   cmd.addCommand(buildEditCommand(write, writeError));
+  cmd.addCommand(buildDeleteCommand(write, writeError, confirmProvider));
   cmd.addCommand(buildDocsCommand(write, writeError, confirmProvider));
+  return cmd;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// delete (T2)
+// ──────────────────────────────────────────────────────────────────────
+
+function buildDeleteCommand(
+  write: Writer,
+  writeError: Writer,
+  confirmProvider?: ConfirmProvider,
+): Command {
+  const cmd = new Command("delete");
+  cmd
+    .description("Delete a panel (YAML file, docs directory, and DB rows)")
+    .argument("<name>", "Panel name to delete")
+    .option("--force", "Skip the confirmation prompt (non-interactive runs)")
+    .action(async (name: string, opts: { force?: boolean }) => {
+      await withPanelContext(async (ctx) => {
+        const existing = await ctx.panelRepo.findByName(name);
+        if (!existing) {
+          const all = (await ctx.panelRepo.findAll()).map((p) => p.name);
+          const msg = formatPanelNotFound(name, all);
+          writeError(msg + "\n");
+          throw new CliUserError(msg);
+        }
+
+        if (opts.force !== true) {
+          const provider = confirmProvider ?? createReadlineConfirmProvider();
+          const ok = await provider.confirm(
+            `Delete panel "${name}"? This cannot be undone. (y/N) `,
+          );
+          if (!ok) {
+            const msg = `Aborted: panel "${name}" not deleted.`;
+            writeError(msg + "\n");
+            throw new CliUserError(msg);
+          }
+        }
+
+        // DB row first (ON DELETE CASCADE wipes panel_members), then
+        // best-effort filesystem cleanup. We tolerate a missing YAML or
+        // docs dir on disk (ENOENT) so a partially-cleaned panel can
+        // still be removed; any other filesystem error is surfaced.
+        await ctx.panelRepo.delete(name);
+
+        const yamlPath = panelYamlPath(ctx.dataHome, name);
+        try {
+          await fs.unlink(yamlPath);
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code !== "ENOENT") {
+            writeError(
+              `Removed DB rows for "${name}" but failed to delete YAML at ${displayPath(yamlPath)}: ${
+                err instanceof Error ? err.message : String(err)
+              }\n`,
+            );
+            throw err;
+          }
+        }
+
+        // Per spec the docs live at <dataHome>/panels/<name>/docs — but
+        // the parent <dataHome>/panels/<name> directory may also hold
+        // other generated artifacts. Remove the whole panel-scoped
+        // directory tree to avoid orphaned files.
+        const panelDir = path.join(ctx.dataHome, "panels", name);
+        try {
+          await fs.rm(panelDir, { recursive: true, force: true });
+        } catch (err) {
+          writeError(
+            `Warning: removed panel "${name}" but failed to clean up ${displayPath(panelDir)}: ${
+              err instanceof Error ? err.message : String(err)
+            }\n`,
+          );
+        }
+
+        write(`✓ Panel "${name}" deleted.\n`);
+        write("\x1b[2mRun 'council panel list' to verify.\x1b[0m\n");
+      });
+    });
   return cmd;
 }
 
