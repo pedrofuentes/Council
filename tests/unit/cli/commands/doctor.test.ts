@@ -225,7 +225,14 @@ describe("buildDoctorCommand", () => {
   it("doctor excludes shell metacharacters and option-like IDs from remediation alternatives", async () => {
     const onlineProbe = vi.fn(async () => ({ ok: false, detail: "model not found" }));
     const discoverModels = vi.fn(async () => ({
-      models: ["claude-sonnet-4.5", "gpt-5.4", "gpt-\u001b[31m5.4\u001b[0m", "--help", "-x", "gpt-5.4;rm -rf /"],
+      models: [
+        "claude-sonnet-4.5",
+        "gpt-5.4",
+        "gpt-\u001b[31m5.4\u001b[0m",
+        "--help",
+        "-x",
+        "gpt-5.4;rm -rf /",
+      ],
       source: "live" as const,
     }));
 
