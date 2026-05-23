@@ -241,8 +241,11 @@ describe("buildConcludeCommand", () => {
     await fs.writeFile(configPath, "defaults:\n  engine: mock\n");
 
     let errorOutput = "";
+    let stdOutput = "";
     const cmd = buildConcludeCommand({
-      write: () => undefined,
+      write: (s) => {
+        stdOutput += s;
+      },
       writeError: (s) => {
         errorOutput += s;
       },
@@ -255,18 +258,16 @@ describe("buildConcludeCommand", () => {
     cmd.exitOverride();
 
     // No --engine flag — should resolve "mock" from config and hit makeEngineFromKind
-    // MockEngine without configured responses will return non-JSON, causing a parse error.
-    // But the mock-engine warning banner IS emitted before that, proving resolution worked.
-    let thrown = "";
-    try {
-      await cmd.parseAsync(["node", "council-conclude", seed.panelName, "--format", "json"]);
-    } catch (err) {
-      thrown = err instanceof Error ? err.message : String(err);
-    }
+    // MockEngine now returns valid JSON for synthesizer, so the command should succeed
+    await cmd.parseAsync(["node", "council-conclude", seed.panelName, "--format", "json"]);
+
     // The MOCK ENGINE banner proves resolveEngine returned "mock" from config
     expect(errorOutput).toMatch(/MOCK ENGINE/);
-    // The error is about JSON parsing (default mock response isn't valid JSON)
-    expect(thrown.toLowerCase()).toMatch(/json|parse|valid/);
+    // The output should be valid JSON
+    expect(() => JSON.parse(stdOutput)).not.toThrow();
+    const output = JSON.parse(stdOutput);
+    expect(output).toHaveProperty("consensus");
+    expect(output).toHaveProperty("recommendation");
   });
 
   it("rejects unknown --engine value", async () => {
