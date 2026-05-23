@@ -188,7 +188,14 @@ export async function updateConfigField(
     throw formatZodError(result.error, file);
   }
 
-  await fs.writeFile(file, document.toString(), "utf-8");
+  const tmpFile = `${file}.tmp`;
+  await fs.writeFile(tmpFile, document.toString(), "utf-8");
+  try {
+    await fs.rename(tmpFile, file);
+  } catch (renameErr) {
+    await fs.unlink(tmpFile).catch(() => {});
+    throw renameErr;
+  }
 }
 
 /**
