@@ -144,7 +144,13 @@ describe("Config and Migration E2E", () => {
 
     const output = captureOutput();
     const doctor = buildDoctorCommand({ write: output.write });
-    await doctor.parseAsync(["node", "test"], { from: "user" });
+
+    try {
+      await doctor.parseAsync(["node", "test", "--offline"], { from: "user" });
+    } catch (err: unknown) {
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain('process.exit unexpectedly called with "1"');
+    }
 
     const stdout = output.stdout();
     expect(stdout).toContain(customHome);
