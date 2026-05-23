@@ -185,6 +185,10 @@ function statusIcon(status: CheckResult["status"]): string {
   }
 }
 
+function sanitizeModelId(id: string): string {
+  return stripControlChars(id).replace(/[\r\n]+/g, " ").trim();
+}
+
 async function buildModelAccessFailureDetail(
   failureDetail: string,
   model: string,
@@ -192,7 +196,10 @@ async function buildModelAccessFailureDetail(
 ): Promise<string> {
   try {
     const discovery = await discoverModels();
-    const alternatives = discovery.models.filter((candidate) => candidate !== model);
+    const alternatives = discovery.models
+      .filter((candidate) => candidate !== model)
+      .map(sanitizeModelId)
+      .filter((candidate) => candidate.length > 0);
     if (alternatives.length === 0) {
       return failureDetail;
     }
@@ -223,7 +230,9 @@ function sortModelsForDisplay(models: readonly string[]): readonly string[] {
 
 function writeKnownModels(write: Writer, label: string, models: readonly string[]): void {
   write(`${label}\n`);
-  const orderedModels = sortModelsForDisplay(models);
+  const orderedModels = sortModelsForDisplay(
+    models.map(sanitizeModelId).filter((model) => model.length > 0),
+  );
   const labelWidth = Math.max(...MODEL_GROUPS.map((group) => group.label.length));
   for (const group of MODEL_GROUPS) {
     const groupedModels = orderedModels.filter((model) => model.startsWith(group.prefix));
