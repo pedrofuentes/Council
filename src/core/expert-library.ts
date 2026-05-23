@@ -140,10 +140,6 @@ export class FileExpertLibrary implements ExpertLibrary {
       throw new Error(`Expert definition validation failed for slug "${def.slug}": ${error}`);
     }
 
-    const existing = await this.repo.findBySlug(validated.slug);
-    if (existing) {
-      throw new Error(`Expert "${validated.slug}" already exists`);
-    }
     const yamlPath = this.yamlPathFor(validated.slug);
     try {
       await fs.access(yamlPath);
@@ -152,12 +148,18 @@ export class FileExpertLibrary implements ExpertLibrary {
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== "ENOENT") {
         if ((err as Error).message?.includes("already exists")) throw err;
-        // fall through — best-effort
+        throw err;
       }
     }
 
     await fs.mkdir(this.expertsDir, { recursive: true });
     const content = serializeYaml(validated);
+    // YAML is the source of truth. If only a stale DB cache row remains,
+    // clear it first so the cache can be rebuilt from the recreated YAML.
+    const cached = await this.repo.findBySlug(validated.slug);
+    if (cached) {
+      await this.repo.delete(validated.slug);
+    }
     // DB insert first so a YAML write failure can cleanly roll back the DB row.
     await this.repo.create({
       slug: validated.slug,
