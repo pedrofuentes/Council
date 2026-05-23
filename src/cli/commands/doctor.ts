@@ -13,7 +13,6 @@ import {
   pingProviderHealth,
   type ModelDiscoveryResult,
 } from "../../engine/copilot/health.js";
-import { KNOWN_MODELS } from "../../engine/models.js";
 import { getSymbols } from "../renderers/symbols.js";
 import { stripControlChars } from "../strip-control-chars.js";
 
@@ -192,7 +191,7 @@ function sanitizeModelId(id: string): string {
 }
 
 function isValidModelId(id: string): boolean {
-  return /^[a-zA-Z0-9._-]+$/.test(id);
+  return /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(id);
 }
 
 async function buildModelAccessFailureDetail(
@@ -229,25 +228,13 @@ async function buildModelAccessFailureDetail(
   }
 }
 
-function sortModelsForDisplay(models: readonly string[]): readonly string[] {
-  const knownModelOrder = new Map(KNOWN_MODELS.map((model, index) => [model, index]));
-  return [...models].sort((left, right) => {
-    const leftOrder = knownModelOrder.get(left) ?? Number.MAX_SAFE_INTEGER;
-    const rightOrder = knownModelOrder.get(right) ?? Number.MAX_SAFE_INTEGER;
-    if (leftOrder !== rightOrder) {
-      return leftOrder - rightOrder;
-    }
-    return left.localeCompare(right);
-  });
-}
-
 function writeKnownModels(write: Writer, label: string, models: readonly string[]): void {
   write(`${label}\n`);
-  const orderedModels = sortModelsForDisplay([
+  const orderedModels = [
     ...new Set(
       models.map(sanitizeModelId).filter((model) => model.length > 0 && isValidModelId(model)),
     ),
-  ]);
+  ];
   const labelWidth = Math.max(...MODEL_GROUPS.map((group) => group.label.length));
   for (const group of MODEL_GROUPS) {
     const groupedModels = orderedModels.filter((model) => model.startsWith(group.prefix));
