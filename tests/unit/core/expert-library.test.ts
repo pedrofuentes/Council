@@ -84,6 +84,29 @@ describe("FileExpertLibrary", () => {
       await expect(lib.create(makeDef())).rejects.toThrow(/already exists/i);
     });
 
+    it("recreates a ghost expert when only the DB cache row remains", async () => {
+      await lib.create(makeDef());
+      const yamlPath = path.join(dataHome, "experts", "cto.yaml");
+      await fs.unlink(yamlPath);
+
+      expect(await lib.get("cto")).toBeNull();
+      expect(await lib.list()).toEqual([]);
+
+      await lib.create(
+        makeDef({
+          displayName: "Fresh CTO",
+          role: "Recreated from YAML source of truth",
+        }),
+      );
+
+      const recreated = await lib.get("cto");
+      expect(recreated?.displayName).toBe("Fresh CTO");
+      expect(recreated?.role).toBe("Recreated from YAML source of truth");
+
+      const row = await new ExpertLibraryRepository(db).findBySlug("cto");
+      expect(row?.displayName).toBe("Fresh CTO");
+    });
+
     it("rejects invalid slug (uppercase)", async () => {
       await expect(lib.create(makeDef({ slug: "BadSlug" }))).rejects.toThrow(/slug/i);
     });
