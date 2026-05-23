@@ -359,6 +359,60 @@ describe("buildConveneCommand", () => {
         await db.destroy();
       }
     });
+    it("unsubscribes the SIGINT handler even if setup throws before the debate runs", async () => {
+      // Regression for Sentinel pr769 finding 1: any throw on the
+      // setup path AFTER the SIGINT handler is subscribed must not
+      // leak the process-level listener. We trigger the literal
+      // finding-1 scenario — a throw from inside the expertRepo.create
+      // loop, which is now inside the protected `try { ... } finally
+      // { unsubscribeInterrupt() }` block (it was NOT in commit b07f02b,
+      // hence the original leak).
+      //
+      // Mechanism: two `--human` participants with the same display
+      // name slugify to the same slug. The first expertRepo.create
+      // for the human succeeds; the second violates UNIQUE(panel_id,
+      // slug) (see src/memory/migrations/001_init.sql) and throws
+      // inside the setup loop, well before `runWithEngine` is reached.
+      let subscribed = false;
+      let unsubscribed = false;
+      const subscribeInterrupt = (_handler: () => void): (() => void) => {
+        subscribed = true;
+        return () => {
+          unsubscribed = true;
+        };
+      };
+
+      const cmd = buildConveneCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: () => undefined,
+        writeError: () => undefined,
+        subscribeInterrupt,
+      });
+
+      await expect(
+        cmd.parseAsync([
+          "node",
+          "council-convene",
+          "topic",
+          "--template",
+          "code-review",
+          "--engine",
+          "mock",
+          "--human",
+          "Alex",
+          "--human",
+          "Alex",
+        ]),
+      ).rejects.toThrow();
+
+      expect(subscribed).toBe(true);
+      // The critical assertion: even though expertRepo.create threw
+      // mid-loop (before runWithEngine started), the finally block
+      // fired and the listener was removed. Against commit b07f02b
+      // (which put the subscribe INSIDE a narrower try wrapping only
+      // runWithEngine) this assertion is false — the listener leaks.
+      expect(unsubscribed).toBe(true);
+    });
   });
 
   it("rejects unknown templates with a non-zero exit", async () => {
