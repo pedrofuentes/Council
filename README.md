@@ -81,9 +81,22 @@ council config edit                # open in $EDITOR
 # designs an expert panel for you using a meta-prompt)
 council convene "Should we go public?"
 
+# Override the default model for a single debate (no config edit needed)
+council convene "Should we go public?" --model gpt-4.1
+
 # Run a panel debate against the real Copilot SDK (with an explicit template)
 council convene "Should we rewrite our billing system?" \
   --template code-review --max-rounds 4
+
+# --panel is a shorthand alias for --template
+council convene "Review our API" --panel code-review
+
+# Tip: single-quote topics containing $, backticks, or other shell metacharacters
+council convene 'What is the $cost of `make build`?'
+
+# Press Ctrl+C at any time during a debate to abort gracefully — the partial
+# transcript is saved and you can `council resume` later. A second Ctrl+C
+# force-kills the process.
 
 # Or run offline with the deterministic mock engine (for testing/CI)
 council convene "Test prompt" --template code-review --engine mock
@@ -124,7 +137,12 @@ council resume <panel-name>
 # Continue a previous panel with a new prompt
 council resume <panel-name> --prompt "What about the migration risk?"
 
-# Export a panel transcript for sharing
+# Export a panel transcript for sharing — includes the full multi-debate
+# history of the panel (every original + resumed debate, with globally
+# renumbered rounds), not just a single debate.
+council export <prefix>                             # prefix match (auto-selects if unique;
+                                                    # ambiguous prefixes list matches and exit non-zero —
+                                                    # use a longer prefix or the full name)
 council export <panel-name>                         # markdown (default)
 council export <panel-name> --format adr            # Architecture Decision Record
 council export <panel-name> --format json --output transcript.ndjson
@@ -292,6 +310,7 @@ disk if the database is reset.
 2. **Deliberation** happens in rounds — experts respond, challenge each other, and build on disagreements
 3. **Memory** persists across sessions — your panel remembers previous discussions
 4. **Synthesis** produces actionable output with areas of agreement and unresolved tensions
+5. **Interruptible** — press Ctrl+C during a debate to abort gracefully; the partial transcript is persisted and can be resumed later
 
 ### What Makes Council Different
 
@@ -310,6 +329,8 @@ council convene <topic> --template <name>                      # Use a built-in 
 council ask <panel> "<question>"                               # One-shot to one expert (default: first; pin with --expert <slug>)
 council conclude [panel]                                       # Decision matrix + recommendation
 council conclude [panel] --timeout 90000                      # Custom synthesis timeout (ms)
+council conclude [panel] --model gpt-4.1                       # Override the synthesis model for this run
+council convene <topic> --model <model-id>                     # Override the per-debate model
 council resume <panel>                                          # Replay transcript (no engine needed)
 council resume <panel> --prompt "<prompt>"                      # Continue the panel with a new round
 council resume --latest                                         # Resume most recently active panel
@@ -334,7 +355,7 @@ council expert inspect <slug>               # Full detail + panel memberships
 council expert edit <slug>                  # Open YAML in $EDITOR; re-validates on save
 council expert delete <slug> [--force]      # Refuses if expert is in any panel
 council expert docs <slug>                  # Manage a persona expert's reference-docs folder
-council expert train <slug> [--retrain]     # (Re-)run the persona profile analyzer
+council expert train <slug> [--retrain] [--file <path>...] [--url <url>...]   # (Re-)run the persona profile analyzer; --file/--url ingest documents directly
 
 # Panel library (Phase 4)
 council panel create <name>                 # Interactive wizard: pick experts, set description + mode
@@ -353,7 +374,7 @@ council config edit                         # Open config in $EDITOR
 
 # Inspection & diagnostics
 council sessions                            # List all debate sessions (with status/turns/experts)
-council templates                           # List built-in panel templates
+council templates                           # List built-in panel templates with descriptions
 council templates inspect <name>            # Show template details (experts, mode, rounds)
 council memory list                         # Show what experts remember
 council memory inspect <panel>              # Per-panel + per-expert memory detail
@@ -370,6 +391,10 @@ COUNCIL_ASCII=1 council convene "Topic"
 
 > Configuration lives in `~/.council/config.yaml` (auto-created on first run).
 > Manage it with `council config show|path|edit`.
+
+> **Plural aliases**: `council panels`, `council experts`, and `council history` work as
+> aliases for `council panel`, `council expert`, and `council sessions` respectively —
+> use whichever feels more natural.
 
 ## Roadmap
 
