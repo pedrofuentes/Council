@@ -771,10 +771,37 @@ async function ingestFileIntoDocs(
 }
 
 /**
+ * Strip credentials and query/fragment from a URL before printing it
+ * to terminal/log streams. Presigned URLs and `user:pass@host` forms
+ * routinely embed secrets that must never appear in logs (Sentinel
+ * #2 on PR #761).
+ */
+function redactUrlForLog(parsed: URL): string {
+  const clone = new URL(parsed.toString());
+  if (clone.username !== "" || clone.password !== "") {
+    clone.username = "";
+    clone.password = "";
+  }
+  clone.search = "";
+  clone.hash = "";
+  return clone.toString();
+}
+
+/** Hard ceiling on a single `--url` download, in bytes. */
+const URL_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
+/** Hard ceiling on `--url` fetch latency, in milliseconds. */
+const URL_FETCH_TIMEOUT_MS = 30_000;
+
+/**
  * Download an http(s) URL into the expert's docs directory using the
  * filename derived from the URL's last path segment. The downloaded
  * payload is written verbatim; the standard training extractor then
  * processes it like any other file in the docs dir.
+ *
+ * Sentinel-required guardrails (PR #761): redact URL credentials in
+ * logs, time out idle fetches, and abort downloads that exceed the
+ * size cap (rejecting via Content-Length when present, otherwise
+ * tracking bytes as they stream and unlinking the partial file).
  */
 async function ingestUrlIntoDocs(
   rawUrl: string,
@@ -788,40 +815,87 @@ async function ingestUrlIntoDocs(
     throw new CliUserError(`Invalid URL: ${rawUrl}`);
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new CliUserError(`Only http(s) URLs are supported (got ${parsed.protocol}): ${rawUrl}`);
+    throw new CliUserError(
+      `Only http(s) URLs are supported (got ${parsed.protocol}): ${redactUrlForLog(parsed)}`,
+    );
   }
+  const displayUrl = redactUrlForLog(parsed);
   const segments = parsed.pathname.split("/").filter((s) => s.length > 0);
   const last = segments[segments.length - 1];
   if (last === undefined || last === "" || last === "." || last === "..") {
     throw new CliUserError(
-      `Cannot derive filename from URL pathname (no last segment): ${rawUrl}`,
+      `Cannot derive filename from URL pathname (no last segment): ${displayUrl}`,
     );
   }
   let filename: string;
   try {
     filename = decodeURIComponent(last);
   } catch {
-    throw new CliUserError(`Invalid percent-encoding in URL filename: ${rawUrl}`);
+    throw new CliUserError(`Invalid percent-encoding in URL filename: ${displayUrl}`);
   }
   if (filename === "" || filename === "." || filename === ".." || /[\\/]/.test(filename)) {
-    throw new CliUserError(`Invalid filename derived from URL: ${rawUrl}`);
+    throw new CliUserError(`Invalid filename derived from URL: ${displayUrl}`);
   }
-  write(`Downloading ${rawUrl} to ${filename}...\n`);
+  write(`Downloading ${displayUrl} to ${filename}...\n`);
   let resp: Response;
   try {
-    resp = await fetch(rawUrl);
+    resp = await fetch(rawUrl, { signal: AbortSignal.timeout(URL_FETCH_TIMEOUT_MS) });
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    throw new CliUserError(`Failed to download ${rawUrl}: ${detail}`);
+    throw new CliUserError(`Failed to download ${displayUrl}: ${detail}`);
   }
   if (!resp.ok) {
     throw new CliUserError(
-      `Failed to download ${rawUrl}: HTTP ${resp.status}${resp.statusText ? ` ${resp.statusText}` : ""}`,
+      `Failed to download ${displayUrl}: HTTP ${resp.status}${resp.statusText ? ` ${resp.statusText}` : ""}`,
     );
   }
-  const buf = Buffer.from(await resp.arrayBuffer());
+  const contentLengthHeader = resp.headers.get("content-length");
+  if (contentLengthHeader !== null) {
+    const declared = Number(contentLengthHeader);
+    if (Number.isFinite(declared) && declared > URL_MAX_DOWNLOAD_BYTES) {
+      throw new CliUserError(
+        `Refusing to download ${displayUrl}: declared size ${declared} bytes ` +
+          `exceeds ${URL_MAX_DOWNLOAD_BYTES} byte limit.`,
+      );
+    }
+  }
   const dest = path.join(docsPath, filename);
-  await fs.writeFile(dest, buf);
+  const body = resp.body;
+  if (body === null) {
+    // Server returned an empty body — write a zero-byte file so the
+    // processor can still classify it (and likely skip it).
+    await fs.writeFile(dest, Buffer.alloc(0));
+    return;
+  }
+  const handle = await fs.open(dest, "w");
+  let total = 0;
+  try {
+    const reader = body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value && value.byteLength > 0) {
+        total += value.byteLength;
+        if (total > URL_MAX_DOWNLOAD_BYTES) {
+          try {
+            await reader.cancel();
+          } catch {
+            /* best effort */
+          }
+          throw new CliUserError(
+            `Aborting download of ${displayUrl}: payload exceeds ` +
+              `${URL_MAX_DOWNLOAD_BYTES} byte limit (read ${total} bytes).`,
+          );
+        }
+        await handle.write(value);
+      }
+    }
+  } catch (err) {
+    await handle.close().catch(() => undefined);
+    await fs.unlink(dest).catch(() => undefined);
+    throw err;
+  }
+  await handle.close();
 }
 
 function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertCommandDeps): Command {
