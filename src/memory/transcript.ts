@@ -64,7 +64,7 @@ export async function loadTranscript(
   const panel = await panelRepo.findByName(panelName);
   if (!panel) {
     throw new Error(
-      `No panel found with name '${panelName}'. Run \`council panels\` to list available panels.`,
+      `No panel found with name '${panelName}'. Run \`council sessions\` to list available panels.`,
     );
   }
   const experts = await expertRepo.findByPanelId(panel.id);

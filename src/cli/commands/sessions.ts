@@ -38,6 +38,7 @@ function statusIcon(status: DebateStatus | undefined): string {
 
 export function buildSessionsCommand(write: Writer = defaultWriter): Command {
   const cmd = new Command("sessions");
+  cmd.alias("history");
   cmd
     .description("List debate sessions (past runs). For panel templates, use `council panel list`.")
     .option("--format <kind>", "Output format: json (NDJSON) or plain (human-readable)", "plain")

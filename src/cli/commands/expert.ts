@@ -92,6 +92,7 @@ export function buildExpertCommand(
   deps: ExpertCommandDeps = {},
 ): Command {
   const cmd = new Command("expert");
+  cmd.alias("experts");
   cmd.description("Manage Council's expert library (create, list, inspect, edit, delete)");
   cmd.addCommand(buildCreateCommand(write, writeError));
   cmd.addCommand(buildListCommand(write));
