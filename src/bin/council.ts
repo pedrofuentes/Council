@@ -101,12 +101,22 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
     .option("-q, --quiet", "Suppress informational stderr output")
     .showSuggestionAfterError(true);
 
-  // Wire --quiet and first-run setup before any subcommand action runs.
-  program.hook("preAction", async (thisCommand) => {
-    const opts = thisCommand.optsWithGlobals() as { quiet?: boolean };
-    setQuiet(opts.quiet === true);
-    await runFirstRunSetupOnce(options.firstRunSetup);
-  });
+  const firstRunSetupOptions = options.firstRunSetup;
+
+  // Keep the default builder synchronous for tests and programmatic callers.
+  // The CLI entrypoint opts into first-run setup explicitly when it parses asynchronously.
+  if (firstRunSetupOptions !== undefined) {
+    program.hook("preAction", async (thisCommand) => {
+      const opts = thisCommand.optsWithGlobals() as { quiet?: boolean };
+      setQuiet(opts.quiet === true);
+      await runFirstRunSetupOnce(firstRunSetupOptions);
+    });
+  } else {
+    program.hook("preAction", (thisCommand) => {
+      const opts = thisCommand.optsWithGlobals() as { quiet?: boolean };
+      setQuiet(opts.quiet === true);
+    });
+  }
 
   // Register commands in category order
   program.addCommand(buildDoctorCommand());
@@ -182,7 +192,7 @@ const isMainModule =
   import.meta.url.endsWith("/bin/council.js");
 
 if (isMainModule) {
-  buildProgram()
+  buildProgram({ firstRunSetup: {} })
     .parseAsync(process.argv)
     .catch((err: unknown) => {
       process.exitCode = handleCliError(err, (s) => process.stderr.write(s));
