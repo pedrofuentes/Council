@@ -38,7 +38,7 @@ describe("templates list with descriptions", () => {
 
     // Should still list the template names even if some lack descriptions
     expect(output).toContain("Built-in templates:");
-    expect(output).toMatch(/\•.*architecture-review/);
-    expect(output).toMatch(/\•.*code-review/);
+    expect(output).toMatch(/•.*architecture-review/);
+    expect(output).toMatch(/•.*code-review/);
   });
 });
