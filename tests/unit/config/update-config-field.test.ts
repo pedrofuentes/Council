@@ -197,7 +197,12 @@ describe("updateConfigField", () => {
     });
     await expect(fs.readFile(configPath, "utf-8")).resolves.toBe(original);
 
-    const [tmpPath, writtenData, encoding] = writeFileSpy.mock.calls[0] ?? [];
+    const tempWriteCall = writeFileSpy.mock.calls.find(([filePath]) =>
+      isUniqueTempPath(filePath, configPath),
+    );
+
+    expect(tempWriteCall).toBeDefined();
+    const [tmpPath, writtenData, encoding] = tempWriteCall ?? [];
     expect(isUniqueTempPath(tmpPath, configPath)).toBe(true);
     expect(writtenData).toEqual(expect.any(String));
     expect(encoding).toBe("utf-8");
