@@ -137,8 +137,12 @@ council resume <panel-name>
 # Continue a previous panel with a new prompt
 council resume <panel-name> --prompt "What about the migration risk?"
 
-# Export a panel transcript for sharing
-council export <prefix>                             # prefix match (auto-selects if unique)
+# Export a panel transcript for sharing — includes the full multi-debate
+# history of the panel (every original + resumed debate, with globally
+# renumbered rounds), not just a single debate.
+council export <prefix>                             # prefix match (auto-selects if unique;
+                                                    # ambiguous prefixes list matches and exit non-zero —
+                                                    # use a longer prefix or the full name)
 council export <panel-name>                         # markdown (default)
 council export <panel-name> --format adr            # Architecture Decision Record
 council export <panel-name> --format json --output transcript.ndjson
