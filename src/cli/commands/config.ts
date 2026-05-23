@@ -8,12 +8,26 @@ import * as path from "node:path";
 import { Command } from "commander";
 import * as yaml from "yaml";
 
-import { ConfigSchema, getCouncilHome, loadConfig } from "../../config/index.js";
+import {
+  ConfigSchema,
+  getCouncilHome,
+  loadConfig,
+  updateConfigField,
+} from "../../config/index.js";
 import { CliUserError } from "../cli-user-error.js";
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
 const CONFIG_FILE = "config.yaml";
+const SETTABLE_CONFIG_KEYS = [
+  "defaults.model",
+  "defaults.engine",
+  "defaults.maxRounds",
+  "defaults.maxExperts",
+  "defaults.maxWordsPerResponse",
+] as const;
+
+type SettableConfigKey = (typeof SETTABLE_CONFIG_KEYS)[number];
 
 function getConfigFilePath(): string {
   return path.join(getCouncilHome(), CONFIG_FILE);
@@ -186,6 +200,61 @@ function buildEditCommand(write: Writer, writeError: Writer, editorRunner?: Edit
   return cmd;
 }
 
+function isSettableConfigKey(key: string): key is SettableConfigKey {
+  return SETTABLE_CONFIG_KEYS.includes(key as SettableConfigKey);
+}
+
+function coerceConfigValue(key: SettableConfigKey, rawValue: string): string | number {
+  switch (key) {
+    case "defaults.maxRounds":
+    case "defaults.maxExperts":
+    case "defaults.maxWordsPerResponse": {
+      const parsed = Number(rawValue);
+      if (!Number.isInteger(parsed)) {
+        throw new CliUserError(`Config value for ${key} must be an integer.`);
+      }
+      return parsed;
+    }
+    default:
+      return rawValue;
+  }
+}
+
+function buildSetCommand(write: Writer, writeError: Writer): Command {
+  const cmd = new Command("set");
+  cmd
+    .description("Set a supported config value")
+    .argument("<key>", "Dot-notation config key")
+    .argument("<value>", "Value to write")
+    .action(async (key: string, rawValue: string) => {
+      if (!isSettableConfigKey(key)) {
+        const msg = `Unsupported config key "${key}". Valid keys:\n  - ${SETTABLE_CONFIG_KEYS.join("\n  - ")}`;
+        writeError(`${msg}\n`);
+        throw new CliUserError(msg);
+      }
+
+      let value: string | number;
+      try {
+        value = coerceConfigValue(key, rawValue);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        writeError(`${msg}\n`);
+        throw err instanceof CliUserError ? err : new CliUserError(msg);
+      }
+
+      try {
+        await updateConfigField(key, value);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        writeError(`${msg}\n`);
+        throw new CliUserError(msg);
+      }
+
+      write(`Set ${key} = ${String(value)}\n`);
+    });
+  return cmd;
+}
+
 export function buildConfigCommand(
   write: Writer = defaultWriter,
   writeError: Writer = defaultErrorWriter,
@@ -196,5 +265,6 @@ export function buildConfigCommand(
   cmd.addCommand(buildShowCommand(write));
   cmd.addCommand(buildPathCommand(write));
   cmd.addCommand(buildEditCommand(write, writeError, editorRunner));
+  cmd.addCommand(buildSetCommand(write, writeError));
   return cmd;
 }

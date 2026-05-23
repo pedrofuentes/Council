@@ -145,6 +145,54 @@ export async function loadConfigWithMeta(): Promise<ConfigLoadResult> {
 }
 
 /**
+ * Update a single dot-notation field inside config.yaml, validating the full
+ * document before writing any changes back to disk.
+ */
+export async function updateConfigField(
+  key: string,
+  value: string | number | boolean,
+): Promise<void> {
+  await ensureHomeDirectory();
+  const file = configPath();
+
+  let raw: string;
+  try {
+    raw = await fs.readFile(file, "utf-8");
+  } catch (err: unknown) {
+    if (isENOENT(err)) {
+      await writeDefaultConfig();
+      raw = await fs.readFile(file, "utf-8");
+    } else {
+      throw err;
+    }
+  }
+
+  const document = yaml.parseDocument(raw);
+  if (document.errors.length > 0) {
+    const cause = document.errors.map((err) => err.message).join("; ");
+    throw new Error(`Failed to parse Council config (${file}): ${cause}`);
+  }
+
+  const currentValue = document.toJS();
+  if (
+    currentValue === null ||
+    typeof currentValue !== "object" ||
+    Array.isArray(currentValue)
+  ) {
+    document.contents = yaml.createNode({});
+  }
+
+  document.setIn(key.split("."), value);
+
+  const result = ConfigSchema.safeParse(document.toJS() ?? {});
+  if (!result.success) {
+    throw formatZodError(result.error, file);
+  }
+
+  await fs.writeFile(file, document.toString(), "utf-8");
+}
+
+/**
  * Resolve the engine to use given an optional CLI flag and a loaded config.
  * Resolution order: CLI flag → config file → default "copilot".
  */
