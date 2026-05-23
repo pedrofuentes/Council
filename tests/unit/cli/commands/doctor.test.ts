@@ -195,6 +195,36 @@ describe("buildDoctorCommand", () => {
     expect(discoverModels).toHaveBeenCalledTimes(1);
   });
 
+  it("doctor --models sanitizes discovered model IDs before display", async () => {
+    const discoverModels = vi.fn(async () => ({
+      models: ["claude-\u001b[31msonnet-4.6\u001b[0m", "gpt-5.4\nmini"],
+      source: "live" as const,
+    }));
+
+    const output = await runDoctor(["--models", "--offline"], { discoverModels });
+
+    expect(output).toContain("Anthropic: claude-sonnet-4.6");
+    expect(output).toContain("OpenAI   : gpt-5.4 mini");
+    expect(output).not.toContain("\u001b[31m");
+    expect(output).not.toContain("gpt-5.4\nmini");
+  });
+
+  it("doctor sanitizes discovered model alternatives before remediation output", async () => {
+    const onlineProbe = vi.fn(async () => ({ ok: false, detail: "model not found" }));
+    const discoverModels = vi.fn(async () => ({
+      models: ["claude-sonnet-4.5", "gpt-\u001b[31m5.4\u001b[0m", "gpt-5.4\nmini"],
+      source: "live" as const,
+    }));
+
+    const output = await runDoctor([], { onlineProbe, discoverModels });
+
+    expect(output).toContain("Available alternatives:");
+    expect(output).toContain("gpt-5.4, gpt-5.4 mini");
+    expect(output).toContain("Fix: council config set defaults.model gpt-5.4");
+    expect(output).not.toContain("\u001b[31m");
+    expect(output).not.toContain("gpt-5.4\nmini");
+  });
+
   it("doctor help describes the offline flag", () => {
     const help = buildDoctorCommandWithDeps({}).helpInformation();
 
