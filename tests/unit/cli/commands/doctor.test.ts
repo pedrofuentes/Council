@@ -117,7 +117,9 @@ describe("buildDoctorCommand", () => {
 
     expect(onlineProbe).toHaveBeenCalledTimes(1);
     expect(discoverModels).toHaveBeenCalledTimes(1);
-    expect(output).toContain("Default model (claude-sonnet-4.5) probe failed: session creation failed");
+    expect(output).toContain(
+      "Default model (claude-sonnet-4.5) probe failed: session creation failed",
+    );
     expect(output).toContain("Available alternatives:");
     expect(output).toContain("gpt-5.4, gpt-5.4-mini");
     expect(output).toContain("Fix: council config set defaults.model gpt-5.4");
@@ -133,7 +135,9 @@ describe("buildDoctorCommand", () => {
 
     expect(onlineProbe).toHaveBeenCalledTimes(1);
     expect(discoverModels).toHaveBeenCalledTimes(1);
-    expect(output).toContain("Default model (claude-sonnet-4.5) is not accessible: model not found");
+    expect(output).toContain(
+      "Default model (claude-sonnet-4.5) is not accessible: model not found",
+    );
     expect(output).not.toContain("Available alternatives:");
     expect(output).not.toContain("discovery unavailable");
   });
@@ -251,7 +255,9 @@ describe("buildDoctorCommand", () => {
 
     const output = await runDoctor([], { onlineProbe, discoverModels });
 
-    expect(output).toContain("Default model (claude-sonnet-4.5) is not accessible: model not found");
+    expect(output).toContain(
+      "Default model (claude-sonnet-4.5) is not accessible: model not found",
+    );
     expect(output).not.toContain("Available alternatives:");
     expect(output).not.toContain("Fix: council config set defaults.model");
   });
@@ -260,7 +266,7 @@ describe("buildDoctorCommand", () => {
     const help = buildDoctorCommandWithDeps({}).helpInformation();
 
     expect(help).toContain("Skip online model probe");
-    expect(help).toContain("List available Copilot models (live discovery with static fallback)");
+    expect(help).toMatch(/List available Copilot models \(live discovery with static\s+fallback\)/);
   });
 
   it("doctor shows Configuration section with defaults", async () => {
