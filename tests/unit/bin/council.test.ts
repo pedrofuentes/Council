@@ -1,8 +1,46 @@
 import { describe, expect, it } from "vitest";
 
-import { buildProgram } from "../../../src/bin/council.js";
+import { buildProgram, configureOutputEncoding } from "../../../src/bin/council.js";
 
 describe("buildProgram", () => {
+  describe("Windows UTF-8 output", () => {
+    it("configures stdout and stderr for UTF-8 on Windows", () => {
+      const calls: string[] = [];
+      const stdout = {
+        setDefaultEncoding: (encoding: BufferEncoding) => {
+          calls.push(`stdout:${encoding}`);
+        },
+      };
+      const stderr = {
+        setDefaultEncoding: (encoding: BufferEncoding) => {
+          calls.push(`stderr:${encoding}`);
+        },
+      };
+
+      configureOutputEncoding("win32", stdout, stderr);
+
+      expect(calls).toEqual(["stdout:utf8", "stderr:utf8"]);
+    });
+
+    it("skips output encoding changes on non-Windows platforms", () => {
+      const calls: string[] = [];
+      const stdout = {
+        setDefaultEncoding: (encoding: BufferEncoding) => {
+          calls.push(`stdout:${encoding}`);
+        },
+      };
+      const stderr = {
+        setDefaultEncoding: (encoding: BufferEncoding) => {
+          calls.push(`stderr:${encoding}`);
+        },
+      };
+
+      configureOutputEncoding("linux", stdout, stderr);
+
+      expect(calls).toEqual([]);
+    });
+  });
+
   describe("help output grouping", () => {
     it("includes Getting Started section header", () => {
       const program = buildProgram();
