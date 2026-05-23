@@ -244,6 +244,101 @@ describe("buildPanelCommand: delete subcommand (T2)", () => {
       const yamlPath = path.join(env.dataHome, "panels", "no-prompt.yaml");
       await expect(fs.access(yamlPath)).rejects.toThrow();
     });
+
+    it("rejects panel names that fail kebab-case validation (defense in depth)", async () => {
+      let errored = "";
+      const cmd = buildPanelCommand(
+        () => {
+          /* noop */
+        },
+        (s) => {
+          errored += s;
+        },
+      );
+      // `..` would be catastrophic if it reached fs.rm; validatePanelName
+      // must catch it before any DB or FS work.
+      await expect(
+        cmd.parseAsync(["node", "council-panel", "delete", "../etc", "--force"]),
+      ).rejects.toThrow(/kebab|invalid/i);
+      // Bonus: name with a path separator must also be rejected.
+      await expect(
+        cmd.parseAsync(["node", "council-panel", "delete", "foo/bar", "--force"]),
+      ).rejects.toThrow(/kebab|invalid/i);
+      // The errors do NOT need to come from writeError — Commander may
+      // surface them directly — but they MUST never trigger a delete.
+      void errored;
+    });
+
+    it("tolerates a missing YAML on disk and still removes the DB row", async () => {
+      await seedExpert(env, expertDef("cto"));
+      await createPanel(env, "half-cleaned", ["cto"]);
+      const yamlPath = path.join(env.dataHome, "panels", "half-cleaned.yaml");
+      await fs.unlink(yamlPath); // simulate prior partial cleanup
+
+      let captured = "";
+      const cmd = buildPanelCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-panel", "delete", "half-cleaned", "--force"]);
+      expect(captured).toMatch(/deleted/i);
+
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { PanelLibraryRepository } = await import(
+        "../../../../src/memory/repositories/panel-library-repo.js"
+      );
+      const db = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        const repo = new PanelLibraryRepository(db);
+        expect(await repo.findByName("half-cleaned")).toBeUndefined();
+      } finally {
+        await db.destroy();
+      }
+    });
+
+    it("surfaces a non-ENOENT unlink failure and preserves the DB row for retry", async () => {
+      await seedExpert(env, expertDef("cto"));
+      await createPanel(env, "busy-yaml", ["cto"]);
+
+      // Replace the YAML file with a directory of the same name. Both
+      // POSIX (EISDIR) and Windows (EPERM) will reject fs.unlink on a
+      // directory — a portable non-ENOENT failure that exercises the
+      // error branch without ESM-incompatible vi.spyOn on node:fs.
+      const yamlPath = path.join(env.dataHome, "panels", "busy-yaml.yaml");
+      await fs.unlink(yamlPath);
+      await fs.mkdir(yamlPath);
+
+      let errored = "";
+      const cmd = buildPanelCommand(
+        () => {
+          /* noop */
+        },
+        (s) => {
+          errored += s;
+        },
+      );
+      await expect(
+        cmd.parseAsync(["node", "council-panel", "delete", "busy-yaml", "--force"]),
+      ).rejects.toThrow(/EISDIR|EPERM|illegal|directory|permitted/i);
+      expect(errored).toMatch(/busy-yaml\.yaml/);
+      expect(errored).toMatch(/DB rows preserved/i);
+
+      // DB row must still be present so the user can retry after
+      // clearing the obstructing directory.
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { PanelLibraryRepository } = await import(
+        "../../../../src/memory/repositories/panel-library-repo.js"
+      );
+      const db = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        const repo = new PanelLibraryRepository(db);
+        expect(await repo.findByName("busy-yaml")).toBeDefined();
+      } finally {
+        await db.destroy();
+      }
+
+      // Cleanup the obstructing directory before teardown.
+      await fs.rm(yamlPath, { recursive: true, force: true });
+    });
   });
 });
 
@@ -273,8 +368,12 @@ describe("expert delete cascade warning (T2)", () => {
       "--yes",
     ]);
 
+    // Lock the full contract: panel name + "0 members" + "may not
+    // function" + remediation hint with the exact panel name.
     expect(captured).toMatch(/solo-panel/);
-    expect(captured).toMatch(/0 members|may not function|council panel delete/i);
+    expect(captured).toMatch(/0 members/);
+    expect(captured).toMatch(/may not function/i);
+    expect(captured).toMatch(/council panel delete solo-panel/);
   });
 
   it("does not warn when removing one of several members", async () => {
@@ -288,6 +387,8 @@ describe("expert delete cascade warning (T2)", () => {
     });
     await cmd.parseAsync(["node", "council-expert", "delete", "alpha", "--force", "--yes"]);
 
-    expect(captured).not.toMatch(/0 members|may not function/i);
+    expect(captured).not.toMatch(/0 members/);
+    expect(captured).not.toMatch(/may not function/i);
+    expect(captured).not.toMatch(/council panel delete/);
   });
 });

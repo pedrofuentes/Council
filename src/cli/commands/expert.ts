@@ -36,6 +36,7 @@ import {
   ClearForRetrainError,
   DocumentRepository,
 } from "../../memory/repositories/document-repository.js";
+import { PanelLibraryRepository } from "../../memory/repositories/panel-library-repo.js";
 import { ProfileRepository } from "../../memory/repositories/profile-repository.js";
 import { ENGINE_KINDS, type EngineKind, makeEngineFromKind } from "../run-with-engine.js";
 import { stripControlChars } from "../strip-control-chars.js";
@@ -584,23 +585,29 @@ function buildDeleteCommand(write: Writer, writeError: Writer): Command {
         }
         const { affectedPanels } = await library.delete(slug, { force: opts.force === true });
 
-        // Warn about panels that are now empty so the operator knows to
-        // clean them up. Querying member counts post-delete is cheap and
-        // avoids any race with the cascade.
+        // Empty-panel warning is strictly advisory: a failure here must
+        // NOT mask the successful expert delete (would mislead scripts
+        // into retrying a no-op). All errors are reported via writeError
+        // but the action still succeeds.
         if (affectedPanels.length > 0) {
-          const { PanelLibraryRepository } = await import(
-            "../../memory/repositories/panel-library-repo.js"
-          );
-          const panelRepo = new PanelLibraryRepository(db);
-          for (const panelName of affectedPanels) {
-            const remaining = await panelRepo.getMembers(panelName);
-            if (remaining.length === 0) {
-              const safe = stripControlChars(panelName);
-              write(
-                `⚠ Panel "${safe}" now has 0 members and may not function correctly. ` +
-                  `Consider deleting it with \`council panel delete ${safe}\`.\n`,
-              );
+          try {
+            const panelRepo = new PanelLibraryRepository(db);
+            for (const panelName of affectedPanels) {
+              const remaining = await panelRepo.getMembers(panelName);
+              if (remaining.length === 0) {
+                const safe = stripControlChars(panelName);
+                write(
+                  `⚠ Panel "${safe}" now has 0 members and may not function correctly. ` +
+                    `Consider deleting it with \`council panel delete ${safe}\`.\n`,
+                );
+              }
             }
+          } catch (warnErr) {
+            writeError(
+              `warning: empty-panel check failed after deleting "${stripControlChars(slug)}": ${
+                warnErr instanceof Error ? warnErr.message : String(warnErr)
+              }\n`,
+            );
           }
         }
 

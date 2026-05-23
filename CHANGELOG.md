@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`council panel delete <name>`** (T2) — new subcommand to remove a panel completely: deletes the YAML file at `<dataHome>/panels/<name>.yaml`, the docs directory at `<dataHome>/panels/<name>/`, and the `panel_library` row (FK cascades to `panel_members`). Prompts `Delete panel "<name>"? This cannot be undone. (y/N)` by default; `--force` skips the confirmation for non-interactive runs. Filesystem cleanup runs **before** the DB delete, so an EBUSY/EPERM failure (e.g. Windows YAML open in editor) leaves the DB row intact and the operation retryable.
+- **Empty-panel warning on `council expert delete --force`** (T2) — when force-deleting an expert that was the last member of a panel, prints `⚠ Panel "X" now has 0 members and may not function correctly. Consider deleting it with \`council panel delete X\`.`. The warning is strictly advisory: any failure of the post-delete member-count probe is surfaced to stderr but does not fail the expert delete.
 - **`--max-rounds` default for resume changed to 1** (T-07) — `council resume <panel> --prompt "..."` now defaults to 1 round instead of 4 for follow-up questions. Users expecting the previous 4-round behavior must explicitly pass `--max-rounds 4`.
 - **`council config show|path|edit`** (T-13) — new subcommand for configuration management. `show` prints effective config values with source annotations, `path` prints the config file location, `edit` opens it in `$EDITOR`.
 - **`--engine` now optional, defaults to `copilot`** (T-12) — all commands that require an engine no longer mandate `--engine copilot` on every invocation. The default is read from config.
