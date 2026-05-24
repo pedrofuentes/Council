@@ -157,6 +157,7 @@ export class DebatePersister {
 
     let terminalUpdateAttempted = false;
     let sourceError: unknown;
+    let interruptedFinalizationError: unknown;
     try {
       for await (const evt of source) {
         switch (evt.kind) {
@@ -204,34 +205,41 @@ export class DebatePersister {
       }
     } catch (error: unknown) {
       sourceError = error;
-      throw error;
-    } finally {
-      if (!terminalUpdateAttempted) {
-        // Source threw before debate.end OR consumer broke the loop —
-        // finalize so session-resume can distinguish abandoned from running.
-        if (this.#isInterruptedSignal()) {
-          try {
-            await this.#finalizeAbruptExit(debate.id);
-          } catch (error: unknown) {
-            if (sourceError !== undefined) {
-              throw new AggregateError(
-                [sourceError, error],
-                `DebatePersister: finalizeAbruptExit failed for debateId='${debate.id}'`,
-              );
-            }
-            throw error;
-          }
-        } else {
-          try {
-            await this.#finalizeAbruptExit(debate.id);
-          } catch (error: unknown) {
-            const message = error instanceof Error ? error.message : String(error);
-            this.deps.logger?.warn(
-              `DebatePersister: finalizeAbruptExit failed for debateId='${debate.id}': ${message}`,
-            );
-          }
+    }
+
+    if (!terminalUpdateAttempted) {
+      // Source threw before debate.end OR consumer broke the loop —
+      // finalize so session-resume can distinguish abandoned from running.
+      if (this.#isInterruptedSignal()) {
+        try {
+          await this.#finalizeAbruptExit(debate.id);
+        } catch (error: unknown) {
+          interruptedFinalizationError = error;
+        }
+      } else {
+        try {
+          await this.#finalizeAbruptExit(debate.id);
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.deps.logger?.warn(
+            `DebatePersister: finalizeAbruptExit failed for debateId='${debate.id}': ${message}`,
+          );
         }
       }
+    }
+
+    if (interruptedFinalizationError !== undefined) {
+      if (sourceError !== undefined) {
+        throw new AggregateError(
+          [sourceError, interruptedFinalizationError],
+          `DebatePersister: finalizeAbruptExit failed for debateId='${debate.id}'`,
+        );
+      }
+      throw interruptedFinalizationError;
+    }
+
+    if (sourceError !== undefined) {
+      throw sourceError;
     }
   }
 
