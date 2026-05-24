@@ -84,6 +84,35 @@ describe("buildConfigCommand", () => {
       expect(stdout).toContain("(config file)");
       expect(stdout).toContain("(default)");
     });
+
+    it("displays Council home directory path", async () => {
+      const { stdout } = await runConfig(["show"]);
+      expect(stdout).toContain("Council home:");
+      expect(stdout).toContain(testHome);
+    });
+
+    it("displays data home directory path", async () => {
+      const { stdout } = await runConfig(["show"]);
+      expect(stdout).toContain("Data home:");
+    });
+
+    it("displays experts directory path", async () => {
+      const { stdout } = await runConfig(["show"]);
+      expect(stdout).toContain("Experts directory:");
+      expect(stdout).toContain("experts");
+    });
+
+    it("displays panels directory path", async () => {
+      const { stdout } = await runConfig(["show"]);
+      expect(stdout).toContain("Panels directory:");
+      expect(stdout).toContain("panels");
+    });
+
+    it("displays database file path", async () => {
+      const { stdout } = await runConfig(["show"]);
+      expect(stdout).toContain("Database:");
+      expect(stdout).toContain("council.db");
+    });
   });
 
   describe("config edit", () => {

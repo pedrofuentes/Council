@@ -178,6 +178,61 @@ describe("buildSessionsCommand", () => {
       expect(captured).toContain("data-home-session");
       expect(captured).toContain("env-var topic");
     });
+
+    it("truncates long topics at ~80 chars in plain format", async () => {
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { PanelRepository } = await import(
+        "../../../../src/memory/repositories/panels.js"
+      );
+      const db = await createDatabase(path.join(testHome, "council.db"));
+      const repo = new PanelRepository(db);
+      const longTopic =
+        "This is a very long topic that should be truncated at approximately 80 characters to fit nicely in the terminal display without wrapping";
+      await repo.create({
+        name: "long-topic-session",
+        topic: longTopic,
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: "{}",
+      });
+      await db.destroy();
+
+      let captured = "";
+      const cmd = buildSessionsCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-sessions"]);
+      expect(captured).toContain("long-topic-session");
+      expect(captured).toContain("...");
+      expect(captured).not.toContain(longTopic);
+    });
+
+    it("preserves full topic in JSON format", async () => {
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { PanelRepository } = await import(
+        "../../../../src/memory/repositories/panels.js"
+      );
+      const db = await createDatabase(path.join(testHome, "council.db"));
+      const repo = new PanelRepository(db);
+      const longTopic =
+        "This is a very long topic that should be truncated at approximately 80 characters to fit nicely in the terminal display without wrapping";
+      await repo.create({
+        name: "json-long-topic",
+        topic: longTopic,
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: "{}",
+      });
+      await db.destroy();
+
+      let captured = "";
+      const cmd = buildSessionsCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-sessions", "--format", "json"]);
+      const lines = captured.split("\n").filter((l) => l.trim().length > 0);
+      expect(lines).toHaveLength(1);
+      const parsed = JSON.parse(lines[0] ?? "{}");
+      expect(parsed.topic).toBe(longTopic);
+    });
   });
 
   describe("CLI registration in buildProgram()", () => {

@@ -10,6 +10,7 @@ import * as yaml from "yaml";
 
 import {
   ConfigSchema,
+  getCouncilDataHome,
   getCouncilHome,
   loadConfig,
   updateConfigField,
@@ -107,7 +108,18 @@ function buildShowCommand(write: Writer): Command {
     const config = await loadConfig();
     const sources = await getFieldSources(configFilePath);
 
-    write(`Config path: ${configFilePath}\n\n`);
+    const councilHome = getCouncilHome();
+    const dataHome = getCouncilDataHome(config);
+    const expertsDir = path.join(dataHome, "experts");
+    const panelsDir = path.join(dataHome, "panels");
+    const dbPath = path.join(councilHome, "council.db");
+
+    write(`Config path: ${configFilePath}\n`);
+    write(`Council home: ${councilHome}\n`);
+    write(`Data home: ${dataHome}\n`);
+    write(`Experts directory: ${expertsDir}\n`);
+    write(`Panels directory: ${panelsDir}\n`);
+    write(`Database: ${dbPath}\n\n`);
     write("Effective values:\n");
 
     const entries: [string, unknown, string][] = [

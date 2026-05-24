@@ -48,7 +48,7 @@ import { PanelRepository } from "../../memory/repositories/panels.js";
 import { runExtractMemoryHook } from "../extract-memory-hook.js";
 
 import { stripControlChars } from "../strip-control-chars.js";
-import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
+import { defaultErrorWriter, defaultWriter, isQuiet, type Writer } from "./writer.js";
 import {
   ENGINE_KINDS,
   type EngineKind,
@@ -103,6 +103,7 @@ export interface ConveneOptions {
   readonly heuristicSummaries?: boolean;
   readonly heuristicMemory?: boolean;
   readonly yes?: boolean;
+  readonly verbose?: boolean;
   readonly model?: string;
 }
 
@@ -204,6 +205,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         "Useful for offline tests and air-gapped environments.",
     )
     .option("--yes", "Skip the auto-compose confirmation prompt (non-interactive runs)")
+    .option("--verbose", "Show migration summaries even when no items changed")
     .option("--model <model>", "Model to use for experts (default: from config)")
     .action(async (topic: string, raw: ConveneOptions) => {
       const admission = checkTopicAdmission(topic);
@@ -215,6 +217,22 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       const defaultModel = raw.model ?? config.defaults.model;
       const resolvedEngine = resolveEngine(raw.engine, config);
       const humanNames: readonly string[] = raw.human ?? [];
+      const writeInformationalNotice = (message: string): void => {
+        if (!isQuiet()) {
+          writeError(message);
+        }
+      };
+      let mockWarningEmitted = false;
+      const emitMockWarning = (): void => {
+        if (mockWarningEmitted || resolvedEngine !== "mock" || isQuiet()) {
+          return;
+        }
+        mockWarningEmitted = true;
+        writeError(
+          "\n!! [MOCK ENGINE] Running with deterministic offline mock — responses are NOT real.\n" +
+            "   This debate will be persisted to the local DB tagged engine='mock'.\n\n",
+        );
+      };
 
       // Accept both --panel and --template (aliases)
       const templateName = raw.panel ?? raw.template;
@@ -230,19 +248,13 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         yes: raw.yes === true,
         heuristicSummaries: raw.heuristicSummaries === true,
         heuristicMemory: raw.heuristicMemory === true,
+        verbose: raw.verbose === true,
         ...(raw.strategy !== undefined ? { strategy: raw.strategy } : {}),
         ...(raw.contextScope !== undefined ? { contextScope: raw.contextScope } : {}),
         ...(raw.summarizeAfter !== undefined && Number.isFinite(raw.summarizeAfter)
           ? { summarizeAfter: raw.summarizeAfter }
           : {}),
       };
-
-      if (opts.engine === "mock") {
-        writeError(
-          "\n!! [MOCK ENGINE] Running with deterministic offline mock — responses are NOT real.\n" +
-            "   This debate will be persisted to the local DB tagged engine='mock'.\n\n",
-        );
-      }
 
       let template: ResolvedPanelDefinition;
       if (opts.template) {
@@ -259,9 +271,17 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         // slug, plus (re-)register library DB rows. Idempotent.
         const migDb = await createDatabase(libDbPath);
         try {
-          if (await isMigrationNeeded(dataHome, migDb)) {
+          const shouldRunMigration =
+            opts.verbose === true || (await isMigrationNeeded(dataHome, migDb));
+          if (shouldRunMigration) {
             const migLib = new FileExpertLibrary(dataHome, migDb);
-            await migrateBuiltInTemplates(dataHome, migLib, migDb);
+            await migrateBuiltInTemplates(dataHome, migLib, migDb, {
+              quiet: isQuiet(),
+              verbose: opts.verbose === true,
+              writeNotice: (message) => {
+                writeError(message);
+              },
+            });
           }
         } finally {
           await migDb.destroy();
@@ -296,6 +316,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         // §2.5 auto-compose: spin up a temporary engine session, ask the
         // composer to design the panel, then tear it down. The real debate
         // gets its own engine instance via runWithEngine() below.
+        emitMockWarning();
         const composeEngine = deps.engineFactory
           ? deps.engineFactory()
           : makeEngineFromKind(opts.engine);
@@ -317,13 +338,13 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             writeError(`!! engine.stop() failed during auto-compose cleanup: ${msg}\n`);
           });
         }
-        writeError(`\n🏛️  Auto-composed panel: ${stripControlChars(template.name)}\n`);
+        writeInformationalNotice(`\n🏛️  Auto-composed panel: ${stripControlChars(template.name)}\n`);
         for (const expert of template.experts) {
-          writeError(
+          writeInformationalNotice(
             `  • ${stripControlChars(expert.displayName)} — ${stripControlChars(expert.role)}\n`,
           );
         }
-        writeError("\n");
+        writeInformationalNotice("\n");
 
         // Confirmation gate — auto-composed panels are LLM-generated and may
         // not match user intent. Three branches:
@@ -480,6 +501,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             signal: debateController.signal,
             humanSlugs: humanSlugs.size > 0 ? humanSlugs : undefined,
             humanInput: humanSlugs.size > 0 ? deps.humanInputFactory?.() : undefined,
+            beforeRender: emitMockWarning,
             preamble: () => {
               write(`\n# ${stripControlChars(template.name)}\n`);
               write(`Topic: ${topic}\n`);

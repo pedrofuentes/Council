@@ -101,6 +101,11 @@ export interface RunWithEngineOpts {
    * and JSON manage their own framing).
    */
   readonly preamble?: (() => void) | undefined;
+  /**
+   * Optional hook invoked after renderer selection but before any debate output is written.
+   * Use this for stderr notices that must appear before JSON/plain debate streaming starts.
+   */
+  readonly beforeRender?: (() => void) | undefined;
   /** Slugs of human participants — skipped for engine registration. */
   readonly humanSlugs?: ReadonlySet<string> | undefined;
   /** Provider for collecting human input during debate. */
@@ -207,6 +212,8 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
     const sink: Sink = { write: opts.write, writeError: opts.writeError };
     const isTTY = opts.isTTY ?? Boolean(process.stdout.isTTY);
     const renderer = selectRenderer({ format: opts.format, isTTY, sink });
+
+    opts.beforeRender?.();
 
     // Preambles are plain-text headers; only emit them when the chosen
     // renderer is the plain renderer (Ink owns its own framing; JSON
