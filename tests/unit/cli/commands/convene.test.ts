@@ -20,9 +20,10 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildConveneCommand } from "../../../../src/cli/commands/convene.js";
+import { setQuiet } from "../../../../src/cli/commands/writer.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
 import type { CouncilEngine, ExpertSpec } from "../../../../src/engine/index.js";
 import { createDatabase } from "../../../../src/memory/db.js";
@@ -42,6 +43,8 @@ describe("buildConveneCommand", () => {
   });
 
   afterEach(async () => {
+    setQuiet(false);
+    vi.restoreAllMocks();
     if (originalHome === undefined) delete process.env["COUNCIL_HOME"];
     else process.env["COUNCIL_HOME"] = originalHome;
     try {
@@ -449,6 +452,168 @@ describe("buildConveneCommand", () => {
     await cmd.parseAsync(["node", "council-convene", "topic", "--template", "code-review"]);
 
     expect(stderrCaptured).toContain("[MOCK ENGINE]");
+  });
+
+  it("suppresses the mock banner when quiet mode is enabled", async () => {
+    setQuiet(true);
+    let stderrCaptured = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (chunk) => {
+        stderrCaptured += chunk;
+      },
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "topic",
+      "--template",
+      "code-review",
+      "--engine",
+      "mock",
+      "--format",
+      "json",
+    ]);
+
+    expect(stderrCaptured).not.toContain("[MOCK ENGINE]");
+  });
+
+  it("suppresses auto-compose informational messages when quiet mode is enabled", async () => {
+    setQuiet(true);
+    let stdoutCaptured = "";
+    let stderrCaptured = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (chunk) => {
+        stdoutCaptured += chunk;
+      },
+      writeError: (chunk) => {
+        stderrCaptured += chunk;
+      },
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "topic",
+      "--engine",
+      "mock",
+      "--format",
+      "json",
+      "--max-rounds",
+      "1",
+      "--yes",
+      "--heuristic-memory",
+    ]);
+
+    expect(stderrCaptured).not.toContain("Auto-composed panel:");
+    expect(stderrCaptured).not.toContain("[MOCK ENGINE]");
+    expect(stdoutCaptured).toContain('"kind":"debate.end"');
+  });
+
+  it("suppresses migration messages when quiet mode is enabled", async () => {
+    setQuiet(true);
+    let stderrCaptured = "";
+    const migrationLogs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((message?: unknown) => {
+      migrationLogs.push(String(message ?? ""));
+    });
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (chunk) => {
+        stderrCaptured += chunk;
+      },
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "topic",
+      "--template",
+      "code-review",
+      "--engine",
+      "mock",
+      "--format",
+      "json",
+    ]);
+
+    expect(stderrCaptured).not.toContain("Migrated");
+    expect(migrationLogs.join("\n")).not.toContain("Migrated");
+  });
+
+  it("suppresses zero-change migration messages unless --verbose is passed", async () => {
+    const firstRun = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: () => undefined,
+    });
+    await firstRun.parseAsync([
+      "node",
+      "council-convene",
+      "topic one",
+      "--template",
+      "code-review",
+      "--engine",
+      "mock",
+      "--format",
+      "json",
+    ]);
+
+    let stderrCaptured = "";
+    const migrationLogs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((message?: unknown) => {
+      migrationLogs.push(String(message ?? ""));
+    });
+
+    const secondRun = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (chunk) => {
+        stderrCaptured += chunk;
+      },
+    });
+    await secondRun.parseAsync([
+      "node",
+      "council-convene",
+      "topic two",
+      "--template",
+      "code-review",
+      "--engine",
+      "mock",
+      "--format",
+      "json",
+    ]);
+
+    expect(stderrCaptured).not.toContain("Migrated 0 panels and 0 experts");
+    expect(migrationLogs.join("\n")).not.toContain("Migrated 0 panels and 0 experts");
+
+    stderrCaptured = "";
+    migrationLogs.length = 0;
+    const verboseRun = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (chunk) => {
+        stderrCaptured += chunk;
+      },
+    });
+    await verboseRun.parseAsync([
+      "node",
+      "council-convene",
+      "topic three",
+      "--template",
+      "code-review",
+      "--engine",
+      "mock",
+      "--format",
+      "json",
+      "--verbose",
+    ]);
+
+    const combinedNotices = [stderrCaptured, migrationLogs.join("\n")].join("\n");
+    expect(combinedNotices).toContain("Migrated 0 panels and 0 experts");
   });
 
   it("--engine copilot returns a CopilotEngine instance (helper)", async () => {
