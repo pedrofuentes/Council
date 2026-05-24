@@ -246,6 +246,13 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
       }
     }
   } catch (err: unknown) {
+    // #810: when the caller's signal is aborted, the error is a
+    // side-effect of the intentional interrupt — suppress the
+    // user-facing diagnostic and don't re-throw so callers'
+    // `if (debateInterrupted)` check can show the friendly message.
+    if (opts.signal?.aborted) {
+      return;
+    }
     opts.writeError("\n" + formatEngineError(err as Error) + "\n\n");
     throw err;
   } finally {

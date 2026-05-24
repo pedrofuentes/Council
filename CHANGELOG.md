@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Abort path no longer shows raw engine errors** (#810) — when a debate is interrupted via Ctrl+C, `runWithEngine` now suppresses confusing `formatEngineError` diagnostic output and returns normally, allowing callers to show the user-friendly "Debate interrupted. Partial results saved." message regardless of where in the lifecycle the abort occurred.
+- **Config lock handles Windows NTFS contention** (#820) — `withConfigLock` now retries on `EPERM` and `EACCES` in addition to `EEXIST`, fixing intermittent crashes when concurrent processes update config simultaneously on Windows. Temp directories in config tests moved from `process.cwd()` to `os.tmpdir()` to prevent orphaned dirs in the workspace.
+
 - **Expert creation now trusts `<slug>.yaml` over stale cache rows** (T2) — `council expert create --slug <slug> ...` now treats the YAML file as the source of truth for slug conflicts. If the YAML is missing but a stale `expert_library` row remains, Council recreates the YAML, refreshes the cached metadata row, and emits a warning that stale cache recovery occurred.
 - **`council export` matches panel names by prefix** (T7) — `council export <prefix>` now resolves a unique-prefix match the same way `council resume` does. If the prefix is ambiguous, the matching names are listed and the command exits with a clear error. Exact-name lookup remains backward compatible.
 - **`council export` includes the full history of resumed sessions** (T7) — previously only the most substantive single debate was exported, so resumed panels lost their original rounds. Export now flattens every debate (original + each resumption) into one continuous transcript with globally renumbered rounds; markdown / json / adr formats are unchanged.
