@@ -284,6 +284,44 @@ describe("DebatePersister", () => {
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
+  it("marks the debate interrupted even when abrupt-exit partial flush fails", async () => {
+    const controller = new AbortController();
+    const persister = new DebatePersister({
+      debates: debateRepo,
+      turns: turnRepo,
+      panelId,
+      expertSlugToId,
+      moderator: "round-robin",
+      signal: controller.signal,
+    });
+    vi.spyOn(turnRepo, "create").mockRejectedValue(new Error("disk full"));
+
+    async function* brokenSource(): AsyncIterable<DebateEvent> {
+      yield { kind: "panel.assembled", experts: [] };
+      yield { kind: "round.start", round: 0 };
+      yield { kind: "turn.start", expertSlug: cto.slug, round: 0, seq: 0 };
+      yield { kind: "turn.delta", expertSlug: cto.slug, text: "Partial answer. " };
+      controller.abort();
+      throw new Error("source failed");
+    }
+
+    let caught: unknown;
+    try {
+      await collect(persister.persist(brokenSource(), "topic"));
+    } catch (error: unknown) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(AggregateError);
+    const errors = (caught as AggregateError).errors as unknown[];
+    expect((errors[0] as Error).message).toBe("source failed");
+    expect((errors[1] as Error).message).toBe("disk full");
+
+    const debate = await debateRepo.findById(persister.debateId ?? "");
+    expect(debate?.status).toBe("interrupted");
+    expect(debate?.endedAt).not.toBeNull();
+  });
+
   it("preserves speakerKind='human' when flushing an interrupted partial turn", async () => {
     const controller = new AbortController();
     const persister = new DebatePersister({
