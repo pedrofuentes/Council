@@ -34,6 +34,9 @@ describe("selectRenderer", () => {
     originalTerm = process.env["TERM"];
     originalCi = process.env["CI"];
     originalAccessibility = process.env["ACCESSIBILITY"];
+    delete process.env["TERM"];
+    delete process.env["CI"];
+    delete process.env["ACCESSIBILITY"];
   });
 
   afterEach(() => {
@@ -46,6 +49,7 @@ describe("selectRenderer", () => {
     if (originalAccessibility === undefined) delete process.env["ACCESSIBILITY"];
     else process.env["ACCESSIBILITY"] = originalAccessibility;
   });
+
   it("format=json returns JsonRenderer on TTY", () => {
     expect(selectRenderer({ format: "json", isTTY: true, sink })).toBeInstanceOf(JsonRenderer);
   });
@@ -62,12 +66,13 @@ describe("selectRenderer", () => {
     expect(selectRenderer({ format: "plain", isTTY: false, sink })).toBeInstanceOf(PlainRenderer);
   });
 
-  it("format=auto on TTY returns InkRenderer", () => {
-    delete process.env["TERM"];
-    delete process.env["CI"];
-    delete process.env["ACCESSIBILITY"];
-
+  it("format=auto on TTY returns InkRenderer when no plain-text override is active", () => {
     expect(selectRenderer({ format: "auto", isTTY: true, sink })).toBeInstanceOf(InkRenderer);
+  });
+
+  it("format=auto on TTY returns PlainRenderer in CI", () => {
+    process.env["CI"] = "1";
+    expect(selectRenderer({ format: "auto", isTTY: true, sink })).toBeInstanceOf(PlainRenderer);
   });
 
   it("format=auto off TTY returns PlainRenderer (graceful degrade)", () => {

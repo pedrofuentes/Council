@@ -388,6 +388,61 @@ describe("buildExpertCommand", () => {
       expect(errored).toMatch(/council expert edit/i);
     });
 
+    it("recreates a ghost expert when the YAML file is gone but the DB row remains", async () => {
+      await seedExpert(env, SAMPLE);
+      const yamlPath = path.join(env.dataHome, "experts", "dahlia-cto.yaml");
+      await fs.unlink(yamlPath);
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+      try {
+        let listCaptured = "";
+        await buildExpertCommand((s) => {
+          listCaptured += s;
+        }).parseAsync(["node", "council-expert", "list"]);
+        expect(listCaptured).toContain("No experts found");
+
+        await expect(
+          buildExpertCommand(() => {
+            /* noop */
+          }).parseAsync(["node", "council-expert", "inspect", "dahlia-cto"]),
+        ).rejects.toThrow(/not found/i);
+        await expect(
+          buildExpertCommand(() => {
+            /* noop */
+          }).parseAsync(["node", "council-expert", "delete", "dahlia-cto", "--yes"]),
+        ).rejects.toThrow(/not found/i);
+
+        let createCaptured = "";
+        await buildExpertCommand((s) => {
+          createCaptured += s;
+        }).parseAsync([
+          "node",
+          "council-expert",
+          "create",
+          "--slug",
+          "dahlia-cto",
+          "--name",
+          "Dahlia Recreated",
+          "--role",
+          "Recovered from stale cache",
+          "--expertise",
+          "incident reviews",
+          "--stance",
+          "Empirical",
+        ]);
+
+        expect(createCaptured).toMatch(/created/i);
+        const recreatedYaml = await fs.readFile(yamlPath, "utf-8");
+        expect(recreatedYaml).toContain("displayName: Dahlia Recreated");
+        expect(recreatedYaml).toContain("role: Recovered from stale cache");
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Recovering stale expert cache row for slug "dahlia-cto"'),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
     it("rejects invalid slug", async () => {
       const cmd = buildExpertCommand(() => {
         /* noop */

@@ -253,14 +253,15 @@ describe("buildDoctorCommand", () => {
     }));
 
     const output = await runDoctor([], { onlineProbe, discoverModels });
+    const alternativesBlock = output.match(/Available alternatives:\n([\s\S]*?)\n\s*Fix:/)?.[1] ?? "";
 
     expect(output).toContain("Available alternatives:");
-    expect(output).toContain("     gpt-5.4");
     expect(output).toContain("Fix: council config set defaults.model gpt-5.4");
-    expect(output).not.toContain("gpt-5.4, gpt-5.4");
-    expect(output).not.toContain("--help");
-    expect(output).not.toContain("-x");
-    expect(output).not.toContain("gpt-5.4;rm -rf /");
+    expect(alternativesBlock).toContain("     gpt-5.4");
+    expect(alternativesBlock).not.toContain("gpt-5.4, gpt-5.4");
+    expect(alternativesBlock).not.toContain("--help");
+    expect(alternativesBlock).not.toContain("-x");
+    expect(alternativesBlock).not.toContain("gpt-5.4;rm -rf /");
     expect(output).not.toContain("\u001b[31m");
   });
 

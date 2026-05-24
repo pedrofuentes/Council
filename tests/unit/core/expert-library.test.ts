@@ -84,6 +84,129 @@ describe("FileExpertLibrary", () => {
       await expect(lib.create(makeDef())).rejects.toThrow(/already exists/i);
     });
 
+    it("recreates a ghost expert when only the DB cache row remains", async () => {
+      await lib.create(makeDef());
+      const yamlPath = path.join(dataHome, "experts", "cto.yaml");
+      await fs.unlink(yamlPath);
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+      try {
+        expect(await lib.get("cto")).toBeNull();
+        expect(await lib.list()).toEqual([]);
+
+        await lib.create(
+          makeDef({
+            displayName: "Fresh CTO",
+            role: "Recreated from YAML source of truth",
+          }),
+        );
+
+        const recreated = await lib.get("cto");
+        expect(recreated?.displayName).toBe("Fresh CTO");
+        expect(recreated?.role).toBe("Recreated from YAML source of truth");
+
+        const row = await new ExpertLibraryRepository(db).findBySlug("cto");
+        expect(row?.displayName).toBe("Fresh CTO");
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Recovering stale expert cache row for slug "cto"'),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it("repairs a missing cache row when the YAML file already exists", async () => {
+      await lib.create(makeDef());
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const repo = new ExpertLibraryRepository(db);
+      await repo.delete("cto");
+
+      try {
+        expect(await repo.findBySlug("cto")).toBeUndefined();
+
+        await expect(lib.create(makeDef({ displayName: "Attempted Duplicate" }))).rejects.toThrow(
+          /already exists/i,
+        );
+
+        const repaired = await repo.findBySlug("cto");
+        expect(repaired?.displayName).toBe("Dahlia Renner (CTO)");
+        expect(await lib.get("cto")).not.toBeNull();
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Recovering missing expert cache row for slug "cto"'),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it("preserves the duplicate-slug error when cache repair cannot parse the existing YAML", async () => {
+      await lib.create(makeDef());
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const repo = new ExpertLibraryRepository(db);
+      const yamlPath = path.join(dataHome, "experts", "cto.yaml");
+      await repo.delete("cto");
+      await fs.writeFile(yamlPath, "slug: cto\n", "utf-8");
+
+      try {
+        await expect(lib.create(makeDef({ displayName: "Attempted Duplicate" }))).rejects.toThrow(
+          /already exists/i,
+        );
+        expect(await repo.findBySlug("cto")).toBeUndefined();
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Failed to repair missing expert cache row for slug "cto"'),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it("rejects a concurrent ghost expert recreate after the replacement YAML is claimed", async () => {
+      await lib.create(makeDef());
+      const yamlPath = path.join(dataHome, "experts", "cto.yaml");
+      await fs.unlink(yamlPath);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const repo = (lib as any).repo as ExpertLibraryRepository;
+      const originalCreate = repo.create.bind(repo);
+      let callCount = 0;
+      let signalFirstCreate: (() => void) | undefined;
+      const firstCreateEntered = new Promise<void>((resolve) => {
+        signalFirstCreate = resolve;
+      });
+      let releaseFirstCreate: (() => void) | undefined;
+      const createSpy = vi.spyOn(repo, "create").mockImplementation(async (input) => {
+        callCount += 1;
+        if (callCount === 1) {
+          signalFirstCreate?.();
+          await new Promise<void>((resolve) => {
+            releaseFirstCreate = resolve;
+          });
+        }
+        return originalCreate(input);
+      });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+      try {
+        const first = lib.create(makeDef({ displayName: "Fresh CTO" }));
+        await firstCreateEntered;
+
+        await expect(lib.create(makeDef({ displayName: "Racing CTO" }))).rejects.toThrow(/already exists/i);
+        expect(createSpy).toHaveBeenCalledTimes(1);
+
+        releaseFirstCreate?.();
+        await first;
+
+        const recreated = await lib.get("cto");
+        expect(recreated?.displayName).toBe("Fresh CTO");
+        const content = await fs.readFile(yamlPath, "utf-8");
+        expect(content).toContain("displayName: Fresh CTO");
+      } finally {
+        releaseFirstCreate?.();
+        createSpy.mockRestore();
+        warnSpy.mockRestore();
+      }
+    });
+
     it("rejects invalid slug (uppercase)", async () => {
       await expect(lib.create(makeDef({ slug: "BadSlug" }))).rejects.toThrow(/slug/i);
     });
@@ -280,26 +403,20 @@ describe("FileExpertLibrary", () => {
       expect(row).toBeUndefined();
     });
 
-    it("surfaces AggregateError when both YAML write and DB rollback fail on create()", async () => {
+    it("surfaces AggregateError when both metadata persist and YAML cleanup fail on create()", async () => {
       const yamlPath = path.join(dataHome, "experts", "cto.yaml");
       const fsSync = await import("node:fs");
 
       // Reach into the library's internal repo (TS private is compile-time
-      // only) so we can choreograph the rollback failure deterministically:
-      //  1) Let the real DB insert happen.
-      //  2) Swap the YAML target to a directory so writeFile fails (EISDIR).
-      //  3) Make the compensating delete throw too.
+      // only) so we can force the DB upsert failure after the YAML has been
+      // claimed, then replace the YAML file with a directory so cleanup fails.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const repo = (lib as any).repo;
-      const originalCreate = repo.create.bind(repo);
-      const createSpy = vi.spyOn(repo, "create").mockImplementationOnce(async (input: unknown) => {
-        await originalCreate(input);
-        await fs.mkdir(path.dirname(yamlPath), { recursive: true });
+      const createSpy = vi.spyOn(repo, "create").mockImplementationOnce(async () => {
+        await fs.unlink(yamlPath);
         fsSync.mkdirSync(yamlPath);
+        throw new Error("metadata write failed");
       });
-      const deleteSpy = vi
-        .spyOn(repo, "delete")
-        .mockImplementationOnce(() => Promise.reject(new Error("rollback delete failed")));
 
       const err = await lib.create(makeDef()).then(
         () => null,
@@ -307,9 +424,13 @@ describe("FileExpertLibrary", () => {
       );
       expect(err).toBeInstanceOf(AggregateError);
       expect((err as AggregateError).message).toMatch(/storage may be inconsistent/i);
-      expect((err as AggregateError).errors.length).toBeGreaterThanOrEqual(2);
+      expect((err as AggregateError).errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ message: "metadata write failed" }),
+          expect.objectContaining({ code: expect.stringMatching(/EPERM|EISDIR/) }),
+        ]),
+      );
       createSpy.mockRestore();
-      deleteSpy.mockRestore();
     });
 
     it("restores prior YAML when DB update fails on update()", async () => {
