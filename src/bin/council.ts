@@ -152,6 +152,20 @@ export function resetFirstRunSetupForTests(): void {
   hasRunFirstRunSetup = false;
 }
 
+// Commands that should NOT trigger the first-run model selection prompt.
+// `doctor` is the diagnostic/recovery path and must remain usable when the
+// model is unset or broken. `config` is the field-level configuration command
+// (the recovery tool) and likewise must not be gated behind setup.
+const FIRST_RUN_SETUP_SKIP_COMMANDS: ReadonlySet<string> = new Set(["doctor", "config"]);
+
+function getTopLevelCommandName(actionCommand: Command): string {
+  let current: Command = actionCommand;
+  while (current.parent !== null && current.parent.parent !== null) {
+    current = current.parent;
+  }
+  return current.name();
+}
+
 export function buildProgram(options: BuildProgramOptions = {}): Command {
   const program = new Command();
   program
@@ -166,9 +180,13 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
   // Keep the default builder synchronous for tests and programmatic callers.
   // The CLI entrypoint opts into first-run setup explicitly when it parses asynchronously.
   if (firstRunSetupOptions !== undefined) {
-    program.hook("preAction", async (thisCommand) => {
+    program.hook("preAction", async (thisCommand, actionCommand) => {
       const opts = thisCommand.optsWithGlobals() as { quiet?: boolean };
       setQuiet(opts.quiet === true);
+      const topLevelName = getTopLevelCommandName(actionCommand);
+      if (FIRST_RUN_SETUP_SKIP_COMMANDS.has(topLevelName)) {
+        return;
+      }
       await runFirstRunSetupOnce(firstRunSetupOptions);
     });
   } else {
