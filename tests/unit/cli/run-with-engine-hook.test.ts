@@ -19,10 +19,12 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { runWithEngine } from "../../../src/cli/run-with-engine.js";
+import type { DebateEvent } from "../../../src/core/types.js";
 import type { CouncilEngine, ExpertSpec } from "../../../src/engine/index.js";
+import { DebatePersister } from "../../../src/memory/persister.js";
 import { MockEngine } from "../../../src/engine/mock/mock-engine.js";
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
 import { PanelRepository } from "../../../src/memory/repositories/panels.js";
@@ -62,6 +64,7 @@ describe("runWithEngine — onDebateComplete post-debate hook", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await db.destroy();
     try {
       await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
@@ -144,5 +147,42 @@ describe("runWithEngine — onDebateComplete post-debate hook", () => {
       }),
     ).resolves.toBeUndefined();
     expect(stopped).toBe(true);
+  });
+
+  it("injects a DebatePersister logger that writes warnings to stderr", async () => {
+    let errored = "";
+    let capturedLogger: { warn(message: string): void } | undefined;
+    const persistSpy = vi
+      .spyOn(DebatePersister.prototype, "persist")
+      .mockImplementation(function (this: DebatePersister): AsyncIterable<DebateEvent> {
+        capturedLogger = (this as unknown as { deps: { logger?: { warn(message: string): void } } }).deps
+          .logger;
+        return (async function* (): AsyncGenerator<DebateEvent, void, void> {
+          yield { kind: "panel.assembled", experts: [] };
+          yield { kind: "debate.end", reason: "completed" };
+        })();
+      });
+
+    await runWithEngine({
+      engineKind: "mock",
+      engineFactory: () => new MockEngine(),
+      experts: [{ ...expert, id: (expertSlugToId[expert.slug] ?? "") }],
+      debateConfig: { maxRounds: 1, maxWordsPerResponse: 50, mode: "freeform" },
+      prompt: "Topic",
+      panelId,
+      expertSlugToId,
+      moderator: "round-robin",
+      format: "json",
+      write: () => undefined,
+      writeError: (s) => {
+        errored += s;
+      },
+      db,
+    });
+
+    expect(persistSpy).toHaveBeenCalledTimes(1);
+    expect(capturedLogger).toBeDefined();
+    capturedLogger?.warn("finalize failed");
+    expect(errored).toContain("finalize failed");
   });
 });

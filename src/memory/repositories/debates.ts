@@ -2,7 +2,7 @@
  * Debate repository — typed CRUD over the `debates` table.
  *
  * A "debate" is one run of a panel against a topic. Status transitions:
- *   running → completed | aborted | failed
+ *   running → completed | interrupted | aborted | failed
  *
  * The schema (see src/memory/db.ts) declares `panel_id` as a FK to
  * `panels.id`; create() will throw if the referenced panel does not exist.
@@ -15,7 +15,7 @@ import { ulid } from "ulid";
 import type { CouncilDatabase, DebateRow } from "../db.js";
 
 /** Lifecycle status of a debate row. */
-export type DebateStatus = "running" | "completed" | "aborted" | "failed";
+export type DebateStatus = "running" | "completed" | "interrupted" | "aborted" | "failed";
 
 export interface Debate {
   readonly id: string;

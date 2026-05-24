@@ -138,6 +138,21 @@ describe("buildExpertCommand", () => {
     expect(subs).toEqual(["create", "delete", "docs", "edit", "inspect", "list", "train"].sort());
   });
 
+  it("defaults bare expert to the list action", async () => {
+    const env = await makeEnv();
+    try {
+      let captured = "";
+      const cmd = buildExpertCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-expert"]);
+      expect(captured).toContain('No experts found. Create one with "council expert create".');
+      expect(captured).not.toContain("Usage:");
+    } finally {
+      await teardown(env);
+    }
+  });
+
   describe("expert list", () => {
     let env: TestEnv;
     beforeEach(async () => {
@@ -353,6 +368,13 @@ describe("buildExpertCommand", () => {
       const stat = await fs.stat(docsDir);
       expect(stat.isDirectory()).toBe(true);
       expect(captured).toMatch(/docs/);
+    });
+
+    it("documents persona training in create help", () => {
+      const create = buildExpertCommand().commands.find((command) => command.name() === "create");
+      const help = create?.helpInformation() ?? "";
+      expect(help).toMatch(/--persona/);
+      expect(help).toMatch(/document-based training/i);
     });
 
     it("rejects duplicate slug with a helpful message", async () => {
