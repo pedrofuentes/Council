@@ -246,6 +246,7 @@ function buildDeleteCommand(
 // ──────────────────────────────────────────────────────────────────────
 
 interface CreateOptions {
+  readonly slug?: string;
   readonly experts?: string;
   readonly mode?: string;
   readonly maxRounds?: string;
@@ -259,13 +260,29 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
     .description(
       "Create a new panel with library experts. If `council convene` runs without `--template`, Council auto-composes a panel for you.",
     )
-    .argument("<name>", "Panel name (kebab-case)")
+    .argument("[name]", "Panel name (kebab-case). Alias: --slug")
+    .option("--slug <slug>", "Panel name (kebab-case). Alias for the positional <name> argument.")
     .option("--experts <slugs>", "Comma-separated expert slugs from the library")
     .option("--mode <mode>", `Debate mode: ${DEBATE_MODES.join(" | ")}`)
     .option("--max-rounds <n>", "Maximum debate rounds (1-20)")
     .option("--model <model>", "Default model for all experts in this panel")
     .option("--description <text>", "One-line description")
-    .action(async (name: string, opts: CreateOptions) => {
+    .action(async (positionalName: string | undefined, opts: CreateOptions) => {
+      if (positionalName !== undefined && opts.slug !== undefined) {
+        writeError(
+          "Cannot use both positional <name> and --slug. Pass one or the other.\n",
+        );
+        throw new CliUserError(
+          "panel create: both positional <name> and --slug were provided; pass only one.",
+        );
+      }
+      const name = positionalName ?? opts.slug;
+      if (name === undefined || name.length === 0) {
+        writeError(
+          "Panel name is required. Pass it as the positional argument or with --slug.\n",
+        );
+        throw new CliUserError("panel create: missing panel name (positional <name> or --slug).");
+      }
       validatePanelName(name);
 
       await withPanelContext(async (ctx) => {

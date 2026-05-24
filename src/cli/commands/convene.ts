@@ -91,6 +91,7 @@ export interface ConveneCommandDeps {
 export interface ConveneOptions {
   readonly template?: string | undefined;
   readonly panel?: string | undefined;
+  readonly experts?: string | undefined;
   readonly format: RendererFormat;
   readonly maxRounds: number;
   readonly mode: DebateMode;
@@ -142,6 +143,10 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
     .option(
       "--template <name>",
       "Use a built-in or custom panel template (alias: --panel). **Omit to let Council auto-design an expert panel from your topic.**",
+    )
+    .option(
+      "--experts <slugs>",
+      "Comma-separated expert slugs from the library. Bypasses both --template and auto-compose.",
     )
     .addOption(
       new Option("--engine <kind>", "Engine to use (default: from config)").choices([
@@ -237,8 +242,15 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       // Accept both --panel and --template (aliases)
       const templateName = raw.panel ?? raw.template;
 
+      if (raw.experts !== undefined && templateName !== undefined) {
+        throw new CliUserError(
+          "Cannot use --experts together with --template/--panel. Pass one or the other.",
+        );
+      }
+
       const opts: ConveneOptions = {
         template: templateName,
+        ...(raw.experts !== undefined ? { experts: raw.experts } : {}),
         format: parseFormat(raw.format),
         maxRounds: Number.isFinite(raw.maxRounds) ? raw.maxRounds : DEFAULT_MAX_ROUNDS,
         mode: raw.mode === "structured" ? "structured" : "freeform",
@@ -311,6 +323,36 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           } finally {
             await libDb.destroy();
           }
+        }
+      } else if (opts.experts !== undefined) {
+        // F31: --experts loads expert slugs directly from the library,
+        // skipping both template loading and auto-compose.
+        const dataHome = getCouncilDataHome();
+        const libDbPath = path.join(getCouncilHome(), "council.db");
+        const expertSlugs = opts.experts
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+        if (expertSlugs.length === 0) {
+          throw new CliUserError("--experts requires at least one expert slug.");
+        }
+        const libDb = await createDatabase(libDbPath);
+        try {
+          const library = new FileExpertLibrary(dataHome, libDb);
+          const { resolved, missing } = await resolveExperts(expertSlugs, library);
+          if (missing.length > 0) {
+            throw new CliUserError(
+              `--experts references experts not in the library: ${missing
+                .map((s) => stripControlChars(s))
+                .join(", ")}. Add them with 'council expert create'.`,
+            );
+          }
+          template = {
+            name: "ad-hoc",
+            experts: resolved,
+          };
+        } finally {
+          await libDb.destroy();
         }
       } else {
         // §2.5 auto-compose: spin up a temporary engine session, ask the
