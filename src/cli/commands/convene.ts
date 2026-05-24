@@ -316,11 +316,15 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       const opts: ResolvedConveneOptions = {
         template: templateName,
         format: parseFormat(raw.format),
-        maxRounds: Number.isFinite(raw.maxRounds)
-          ? raw.maxRounds
-          : (template.defaults?.maxRounds ?? DEFAULT_MAX_ROUNDS),
+        maxRounds:
+          typeof raw.maxRounds === "number" && Number.isFinite(raw.maxRounds)
+            ? raw.maxRounds
+            : (template.defaults?.maxRounds ?? DEFAULT_MAX_ROUNDS),
         mode: raw.mode ?? template.defaults?.mode ?? "freeform",
-        maxWords: Number.isFinite(raw.maxWords) ? raw.maxWords : DEFAULT_MAX_WORDS,
+        maxWords:
+          typeof raw.maxWords === "number" && Number.isFinite(raw.maxWords)
+            ? raw.maxWords
+            : DEFAULT_MAX_WORDS,
         engine: resolvedEngine,
         human: humanNames,
         yes: raw.yes === true,
