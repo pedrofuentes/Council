@@ -186,3 +186,142 @@ describe("runWithEngine — onDebateComplete post-debate hook", () => {
     expect(errored).toContain("finalize failed");
   });
 });
+
+describe("runWithEngine — abort normalization (#810)", () => {
+  let dir: string;
+  let db: CouncilDatabase;
+  let panelId: string;
+  let expertSlugToId: Record<string, string>;
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "council-abort-"));
+    db = await createDatabase(path.join(dir, "council.db"));
+    const panel = await new PanelRepository(db).create({
+      name: "abort-test",
+      copilotHome: path.join(dir, "copilot"),
+      configJson: "{}",
+    });
+    panelId = panel.id;
+    const e = await new ExpertRepository(db).create({
+      panelId,
+      slug: expert.slug,
+      displayName: expert.displayName,
+      model: expert.model,
+      systemMessage: expert.systemMessage,
+    });
+    expertSlugToId = { [expert.slug]: e.id };
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await db.destroy();
+    try {
+      await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    } catch {
+      /* best effort */
+    }
+  });
+
+  /** Engine factory whose start() always throws — simulates an error path. */
+  function makeFailingEngine(): CouncilEngine {
+    return {
+      start: async () => {
+        throw new Error("engine init failed during abort");
+      },
+      stop: async () => undefined,
+      addExpert: async () => undefined,
+      removeExpert: async () => undefined,
+      listModels: async () => [],
+      send: () => {
+        throw new Error("should not be called");
+      },
+    };
+  }
+
+  it("does not throw when signal is aborted — returns normally so callers see the friendly message", async () => {
+    const controller = new AbortController();
+    controller.abort(); // pre-abort
+    let errOutput = "";
+
+    // runWithEngine should NOT throw when signal.aborted is true
+    await expect(
+      runWithEngine({
+        engineKind: "mock",
+        engineFactory: makeFailingEngine,
+        experts: [{ ...expert, id: expertSlugToId[expert.slug] ?? "" }],
+        debateConfig: { maxRounds: 1, maxWordsPerResponse: 50, mode: "freeform" },
+        prompt: "Topic",
+        panelId,
+        expertSlugToId,
+        moderator: "round-robin",
+        format: "plain",
+        write: () => undefined,
+        writeError: (s: string) => {
+          errOutput += s;
+        },
+        db,
+        signal: controller.signal,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("does not write formatEngineError output when signal is aborted", async () => {
+    const controller = new AbortController();
+    controller.abort(); // pre-abort
+    let errOutput = "";
+
+    try {
+      await runWithEngine({
+        engineKind: "mock",
+        engineFactory: makeFailingEngine,
+        experts: [{ ...expert, id: expertSlugToId[expert.slug] ?? "" }],
+        debateConfig: { maxRounds: 1, maxWordsPerResponse: 50, mode: "freeform" },
+        prompt: "Topic",
+        panelId,
+        expertSlugToId,
+        moderator: "round-robin",
+        format: "plain",
+        write: () => undefined,
+        writeError: (s: string) => {
+          errOutput += s;
+        },
+        db,
+        signal: controller.signal,
+      });
+    } catch {
+      // May throw in current impl — that's the bug we're fixing
+    }
+
+    // The engine error diagnostic should NOT be shown when abort is intentional
+    expect(errOutput).not.toContain("Engine error");
+    expect(errOutput).not.toContain("Underlying:");
+    expect(errOutput).not.toContain("engine init failed");
+  });
+
+  it("still throws and writes error when signal is NOT aborted (real engine failures)", async () => {
+    let errOutput = "";
+
+    await expect(
+      runWithEngine({
+        engineKind: "mock",
+        engineFactory: makeFailingEngine,
+        experts: [{ ...expert, id: expertSlugToId[expert.slug] ?? "" }],
+        debateConfig: { maxRounds: 1, maxWordsPerResponse: 50, mode: "freeform" },
+        prompt: "Topic",
+        panelId,
+        expertSlugToId,
+        moderator: "round-robin",
+        format: "plain",
+        write: () => undefined,
+        writeError: (s: string) => {
+          errOutput += s;
+        },
+        db,
+        // No signal — not an abort scenario
+      }),
+    ).rejects.toThrow("engine init failed");
+
+    expect(errOutput).toContain("Underlying:");
+    expect(errOutput).toContain("engine init failed");
+  });
+});
