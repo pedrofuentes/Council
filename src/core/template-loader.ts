@@ -103,6 +103,81 @@ export class PanelNotFoundError extends Error {
 }
 
 /**
+ * Compute Levenshtein edit distance between two strings. Used to surface
+ * "did you mean ..." suggestions when a user mistypes a template/panel name.
+ * Implemented inline (no external dependency) — O(m*n) time, O(min(m,n)) space.
+ */
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  // Ensure `a` is the shorter string so the row array is small.
+  if (a.length > b.length) {
+    [a, b] = [b, a];
+  }
+  let previous: number[] = new Array<number>(a.length + 1);
+  let current: number[] = new Array<number>(a.length + 1);
+  for (let i = 0; i <= a.length; i++) previous[i] = i;
+  for (let j = 1; j <= b.length; j++) {
+    current[0] = j;
+    for (let i = 1; i <= a.length; i++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      current[i] = Math.min(
+        (current[i - 1] ?? 0) + 1, // insertion
+        (previous[i] ?? 0) + 1, // deletion
+        (previous[i - 1] ?? 0) + cost, // substitution
+      );
+    }
+    [previous, current] = [current, previous];
+  }
+  return previous[a.length] ?? 0;
+}
+
+/**
+ * Find the closest match to `name` among `candidates`. Returns the best
+ * candidate when its Levenshtein distance is within a small threshold
+ * proportional to `name.length`; otherwise undefined.
+ */
+function suggestClosest(
+  name: string,
+  candidates: readonly string[],
+): string | undefined {
+  if (candidates.length === 0) return undefined;
+  // Threshold: up to 1/3 of the input length, minimum 1, maximum 3. This
+  // catches typical typos ("securty" → "security-review") without offering
+  // wildly unrelated suggestions for short or empty inputs.
+  const threshold = Math.max(1, Math.min(3, Math.floor(name.length / 3)));
+  let best: { readonly name: string; readonly distance: number } | undefined;
+  for (const candidate of candidates) {
+    const distance = levenshtein(name, candidate);
+    if (distance <= threshold && (best === undefined || distance < best.distance)) {
+      best = { name: candidate, distance };
+    }
+  }
+  return best?.name;
+}
+
+/**
+ * Build a user-facing "panel not found" message that lists available names
+ * and includes a did-you-mean suggestion when the input looks like a typo.
+ * Internal filesystem paths are deliberately omitted (F05).
+ */
+function formatPanelNotFoundMessage(
+  kind: "Panel template" | "User panel",
+  requested: string,
+  available: readonly string[],
+): string {
+  const suggestion = suggestClosest(requested, available);
+  const head = `${kind} "${requested}" not found.`;
+  const hint = suggestion ? ` Did you mean "${suggestion}"?` : "";
+  const list =
+    available.length > 0
+      ? ` Available: ${[...available].sort().join(", ")}.`
+      : " No panels are available.";
+  return `${head}${hint}${list}`;
+}
+
+/**
  * Resolve the panels directory by probing candidate paths in order.
  *
  * Council ships `panels/*.yaml` at the package root (per package.json#files).
@@ -187,7 +262,9 @@ export async function loadTemplate(name: string): Promise<ResolvedPanelDefinitio
       if (!isENOENT(err)) throw err;
     }
   }
-  throw new PanelNotFoundError(`Panel template "${name}" not found in ${PANELS_DIR}`);
+  throw new PanelNotFoundError(
+    formatPanelNotFoundMessage("Panel template", name, await listTemplates()),
+  );
 }
 
 /**
@@ -310,7 +387,9 @@ export async function loadUserPanel(name: string, dataHome: string): Promise<Pan
       if (!isENOENT(err)) throw err;
     }
   }
-  throw new PanelNotFoundError(`User panel "${name}" not found in ${userPanelsDir}`);
+  throw new PanelNotFoundError(
+    formatPanelNotFoundMessage("User panel", name, await listUserPanels(dataHome)),
+  );
 }
 
 /**

@@ -40,3 +40,10 @@ export function installSqliteExperimentalWarningFilter(
 
   installedProcesses.add(warningProcess);
 }
+
+// Self-install on the current process as a module-load side effect so the
+// filter is active before any sibling import (e.g. `@libsql/client`,
+// `node:sqlite`) can emit Node's SQLite ExperimentalWarning. Idempotent via
+// the `installedProcesses` WeakSet above — an explicit call from the entry
+// point becomes a no-op. F02.
+installSqliteExperimentalWarningFilter();
