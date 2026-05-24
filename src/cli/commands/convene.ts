@@ -256,6 +256,9 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
 
       let template: ResolvedPanelDefinition;
       if (requestedExpertSlugs !== undefined) {
+        if (templateName === undefined) {
+          await migratePanelsIfNeeded(dataHome, libraryDbPath, writeError, raw.verbose === true);
+        }
         const panel =
           templateName !== undefined
             ? await loadConvenePanelTemplate(
