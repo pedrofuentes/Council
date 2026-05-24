@@ -982,6 +982,26 @@ describe("buildConveneCommand — user panels with slug references", () => {
     ).rejects.toThrow(/library-missing|not in the library|expert/i);
   });
 
+  it("errors when --experts is empty or whitespace only", async () => {
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+    });
+    cmd.exitOverride();
+
+    await expect(
+      cmd.parseAsync([
+        "node",
+        "council-convene",
+        "topic",
+        "--experts",
+        " ,  ",
+        "--engine",
+        "mock",
+      ]),
+    ).rejects.toThrow(/at least one expert slug is required|--experts/i);
+  });
+
   it("panel defaults.model is used when expert has no model override", async () => {
     await fs.writeFile(path.join(testHome, "config.yaml"), "defaults:\n  model: global-model\n");
     await writeUserPanel(

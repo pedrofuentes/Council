@@ -193,6 +193,23 @@ describe("buildPanelCommand", () => {
       expect(errored).toMatch(/both.*slug|positional.*slug|conflict/i);
     });
 
+    it("requires a panel name when neither positional nor --slug is provided", async () => {
+      let errored = "";
+      const cmd = buildPanelCommand(
+        () => {
+          /* noop */
+        },
+        (s) => {
+          errored += s;
+        },
+      );
+
+      await expect(
+        cmd.parseAsync(["node", "council-panel", "create", "--experts", "cto"]),
+      ).rejects.toThrow(/panel name is required|--slug/i);
+      expect(errored).toMatch(/panel name is required|--slug/i);
+    });
+
     it("panel create --model sets defaults.model in YAML", async () => {
       await seedExpert(env, expertDef("cto"));
       await seedExpert(env, expertDef("staff"));
