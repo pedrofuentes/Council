@@ -62,7 +62,7 @@ describe.sequential("output formats e2e", () => {
 
   afterEach(async () => {
     await cleanupE2EContext(ctx);
-  });
+  }, 30_000);
 
   it("convene JSON output is valid NDJSON", async () => {
     const output = captureOutput();

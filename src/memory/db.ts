@@ -15,6 +15,7 @@
  * `path` semantics:
  *   - ":memory:"          → in-memory DB (used by tests)
  *   - any other string    → treated as a filesystem path; libsql wraps it as `file:<path>`
+ *                            and the underlying filesystem must support SQLite WAL mode
  */
 import { type Client, createClient } from "@libsql/client";
 import { LibsqlDialect } from "@libsql/kysely-libsql";
@@ -193,6 +194,8 @@ export interface CouncilSchema {
 }
 
 export type CouncilDatabase = Kysely<CouncilSchema>;
+
+const SQLITE_BUSY_TIMEOUT_MS = 5000;
 
 // ---------- Migration runner ----------
 
@@ -510,10 +513,10 @@ UPDATE experts SET memory_derivation = NULL, memory_trust_score = NULL
 
 /**
  * Split a SQL migration file into individual statements while keeping
- * `BEGIN ... END` trigger bodies intact. Used to feed libsql's
- * `executeMultiple` is not strictly necessary (it accepts the whole script),
- * but the splitter is exported for testability and for future per-statement
- * progress reporting.
+ * `BEGIN ... END` trigger bodies intact. Migrations now run statement-by-
+ * statement inside an explicit `BEGIN IMMEDIATE` block so concurrent
+ * `createDatabase()` calls serialize cleanly around the `schema_version`
+ * gate without letting libsql auto-rollback the outer transaction.
  */
 export function splitSqlStatements(sqlText: string): readonly string[] {
   const cleaned = sqlText
@@ -544,31 +547,64 @@ export function splitSqlStatements(sqlText: string): readonly string[] {
   return statements;
 }
 
+async function configureSqliteConnection(client: Client, dbPath: string): Promise<void> {
+  await client.execute(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS};`);
+  const journalModeResult = await client.execute("PRAGMA journal_mode = WAL;");
+  const journalMode = String(journalModeResult.rows[0]?.journal_mode ?? "");
+  const expectedJournalMode = dbPath === ":memory:" ? "memory" : "wal";
+
+  if (journalMode !== expectedJournalMode) {
+    throw new Error(
+      `Failed to enable SQLite journal mode ${expectedJournalMode.toUpperCase()}; got ${journalMode || "unknown"}`,
+    );
+  }
+}
+
 async function applyMigrations(client: Client, db: CouncilDatabase): Promise<void> {
   // Ensure schema_version exists so we can gate migrations before re-running them.
   // (The 001 migration also creates it via CREATE TABLE IF NOT EXISTS, so this is safe.)
-  await client.executeMultiple(
+  await client.execute(
     "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);",
   );
   const migrations = loadMigrations();
   for (const migration of migrations) {
-    const existing = await db
-      .selectFrom("schema_version")
-      .select("version")
-      .where("version", "=", migration.version)
-      .executeTakeFirst();
-    if (existing) continue;
-    // Use the underlying libsql client's executeMultiple — it handles
-    // multi-statement scripts including CREATE TRIGGER BEGIN/END blocks
-    // that Kysely's sql.raw cannot.
-    await client.executeMultiple(migration.sql);
-    await db
-      .insertInto("schema_version")
-      .values({
-        version: migration.version,
-        applied_at: new Date().toISOString(),
-      })
-      .execute();
+    let transactionOpen = false;
+    try {
+      await client.execute("BEGIN IMMEDIATE;");
+      transactionOpen = true;
+      const existing = await db
+        .selectFrom("schema_version")
+        .select("version")
+        .where("version", "=", migration.version)
+        .executeTakeFirst();
+      if (existing) {
+        await client.execute("COMMIT;");
+        transactionOpen = false;
+        continue;
+      }
+      for (const statement of splitSqlStatements(migration.sql)) {
+        await client.execute(statement);
+      }
+      await db
+        .insertInto("schema_version")
+        .values({
+          version: migration.version,
+          applied_at: new Date().toISOString(),
+        })
+        .onConflict((oc) => oc.column("version").doNothing())
+        .execute();
+      await client.execute("COMMIT;");
+      transactionOpen = false;
+    } catch (error) {
+      if (transactionOpen) {
+        try {
+          await client.execute("ROLLBACK;");
+        } catch {
+          // Best-effort rollback; preserve the original migration failure.
+        }
+      }
+      throw error;
+    }
   }
 }
 
@@ -577,8 +613,19 @@ async function applyMigrations(client: Client, db: CouncilDatabase): Promise<voi
 export async function createDatabase(dbPath: string): Promise<CouncilDatabase> {
   const url = dbPath === ":memory:" ? ":memory:" : `file:${dbPath}`;
   const client = createClient({ url });
-  const dialect = new LibsqlDialect({ client });
-  const db = new Kysely<CouncilSchema>({ dialect });
-  await applyMigrations(client, db);
-  return db;
+  let db: CouncilDatabase | undefined;
+
+  try {
+    await configureSqliteConnection(client, dbPath);
+    const dialect = new LibsqlDialect({ client });
+    db = new Kysely<CouncilSchema>({ dialect });
+    await applyMigrations(client, db);
+    return db;
+  } catch (error) {
+    if (db !== undefined) {
+      await db.destroy().catch(() => undefined);
+    }
+    client.close();
+    throw error;
+  }
 }

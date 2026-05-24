@@ -240,7 +240,7 @@ describe("expert/panel CRUD E2E", () => {
 
   afterEach(async () => {
     await cleanupE2EContext(ctx);
-  });
+  }, 30_000);
 
   it("expert create -> list -> inspect persists YAML and DB metadata", async () => {
     const created = await runExpertCommand(

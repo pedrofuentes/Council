@@ -13,14 +13,24 @@
  *
  * RED at this commit: src/memory/* does not exist yet.
  */
+import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 
+import { createClient } from "@libsql/client";
+import type * as LibsqlClientModule from "@libsql/client";
 import { sql } from "kysely";
 
-import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
+import {
+  createDatabase,
+  loadMigrations,
+  splitSqlStatements,
+  type CouncilDatabase,
+} from "../../../src/memory/db.js";
 import { PanelRepository, type NewPanel } from "../../../src/memory/repositories/panels.js";
 import { ExpertRepository, type NewExpert } from "../../../src/memory/repositories/experts.js";
 import { TurnRepository, type NewTurn } from "../../../src/memory/repositories/turns.js";
@@ -40,6 +50,14 @@ function sampleExpert(panelId: string, slug = "cto"): NewExpert {
     model: "claude-sonnet-4",
     systemMessage: "You are a CTO.",
   };
+}
+
+async function cleanupFileBackedDatabaseDir(testHome: string): Promise<void> {
+  try {
+    await fs.rm(testHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } catch {
+    /* best effort */
+  }
 }
 
 describe("createDatabase", () => {
@@ -79,6 +97,149 @@ describe("createDatabase", () => {
     const after = await db2.selectFrom("schema_version").selectAll().execute();
     await db2.destroy();
     expect(after.length).toBe(before.length); // no duplicate version rows
+  });
+
+  it("enables WAL and busy_timeout, then waits for a held write lock instead of crashing", async () => {
+    const testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-db-config-"));
+    const dbPath = path.join(testHome, "council.db");
+    const db = await createDatabase(dbPath);
+    const holderScript = [
+      'import { createClient } from "@libsql/client";',
+      `const client = createClient({ url: ${JSON.stringify(`file:${dbPath}`)} });`,
+      'try {',
+      '  await client.execute("BEGIN IMMEDIATE;");',
+      '  await client.execute("INSERT INTO panels (id, name, topic, copilot_home, config_json, created_at, updated_at) VALUES (\'holder-panel\', \'holder-panel\', NULL, \'holder-home\', \'{}\', \'2026-01-01T00:00:00.000Z\', \'2026-01-01T00:00:00.000Z\');");',
+      '  console.log("LOCKED");',
+      '  await new Promise((resolve) => setTimeout(resolve, 250));',
+      '  await client.execute("COMMIT;");',
+      '} finally {',
+      '  client.close();',
+      '}',
+    ].join("\n");
+
+    try {
+      const journalMode = await sql.raw("PRAGMA journal_mode;").execute(db);
+      const busyTimeout = await sql.raw("PRAGMA busy_timeout;").execute(db);
+
+      expect(journalMode.rows).toEqual([{ journal_mode: "wal" }]);
+      expect(busyTimeout.rows).toEqual([{ timeout: 5000 }]);
+
+      const holder = spawn(process.execPath, ["--input-type=module", "-e", holderScript], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+
+      try {
+        const [holderSignal] = await once(holder.stdout, "data");
+        expect(String(holderSignal).trim()).toBe("LOCKED");
+
+        const contenderWrite = db
+          .insertInto("panels")
+          .values({
+            id: "waiting-panel",
+            name: "waiting-panel",
+            topic: null,
+            copilot_home: path.join(testHome, "waiting"),
+            config_json: "{}",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .execute();
+
+        const [exitCode] = await once(holder, "exit");
+        expect(exitCode).toBe(0);
+        await contenderWrite;
+        await expect(db.selectFrom("panels").select("name").orderBy("name").execute()).resolves
+          .toEqual([{ name: "holder-panel" }, { name: "waiting-panel" }]);
+      } finally {
+        holder.kill();
+      }
+    } finally {
+      await db.destroy();
+      await cleanupFileBackedDatabaseDir(testHome);
+    }
+  }, 20_000);
+
+  it("throws when a file-backed database cannot enter WAL mode", async () => {
+    const mockClient = {
+      execute: vi.fn(async (statement: string) => {
+        if (statement.startsWith("PRAGMA busy_timeout")) {
+          return { rows: [{ timeout: 5000 }] };
+        }
+
+        if (statement === "PRAGMA journal_mode = WAL;") {
+          return { rows: [{ journal_mode: "delete" }] };
+        }
+
+        throw new Error(`Unexpected statement: ${statement}`);
+      }),
+      close: vi.fn(),
+    };
+
+    vi.resetModules();
+    vi.doMock("@libsql/client", async () => {
+      const actual = await vi.importActual<typeof LibsqlClientModule>("@libsql/client");
+      return {
+        ...actual,
+        createClient: vi.fn(() => mockClient),
+      };
+    });
+
+    try {
+      const { createDatabase: createDatabaseWithMock } = await import("../../../src/memory/db.js");
+
+      await expect(createDatabaseWithMock("fake-db.sqlite")).rejects.toThrow(
+        "Failed to enable SQLite journal mode WAL; got delete",
+      );
+      expect(mockClient.close).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.doUnmock("@libsql/client");
+      vi.resetModules();
+    }
+  });
+
+  it("rolls back a failed migration without advancing schema_version", async () => {
+    const testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-db-rollback-"));
+    const dbPath = path.join(testHome, "council.db");
+    const setupClient = createClient({ url: `file:${dbPath}` });
+
+    try {
+      await setupClient.execute(
+        "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);",
+      );
+      for (const migration of loadMigrations().filter((candidate) => candidate.version < 11)) {
+        for (const statement of splitSqlStatements(migration.sql)) {
+          await setupClient.execute(statement);
+        }
+        await setupClient.execute({
+          sql: "INSERT INTO schema_version (version, applied_at) VALUES (?, ?);",
+          args: [migration.version, new Date().toISOString()],
+        });
+      }
+      await setupClient.execute("ALTER TABLE experts ADD COLUMN memory_source_debate_id TEXT;");
+    } finally {
+      setupClient.close();
+    }
+
+    await expect(createDatabase(dbPath)).rejects.toThrow(/memory_source_debate_id|duplicate column/i);
+
+    const verifyClient = createClient({ url: `file:${dbPath}` });
+    try {
+      const versions = (await verifyClient.execute("SELECT version FROM schema_version ORDER BY version;")).rows.map(
+        (row) => Number((row as { readonly version: number }).version),
+      );
+      const columnNames = (await verifyClient.execute("PRAGMA table_info(experts);")).rows.map((row) =>
+        String((row as { readonly name: string }).name),
+      );
+
+      expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+      expect(columnNames).toContain("memory_source_debate_id");
+      expect(columnNames).not.toContain("memory_derivation");
+      expect(columnNames).not.toContain("memory_trust_score");
+      expect(columnNames).not.toContain("memory_extracted_at");
+    } finally {
+      verifyClient.close();
+      await cleanupFileBackedDatabaseDir(testHome);
+    }
   });
 
   it("applies migrations 001 through 011, creating the expected indexes", async () => {
