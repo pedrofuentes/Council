@@ -193,6 +193,34 @@ describe("buildPanelCommand", () => {
       expect(errored).toMatch(/both.*slug|positional.*slug|conflict/i);
     });
 
+    it("sanitizes conflicting panel names before writing the error", async () => {
+      let errored = "";
+      const cmd = buildPanelCommand(
+        () => {
+          /* noop */
+        },
+        (s) => {
+          errored += s;
+        },
+      );
+
+      await expect(
+        cmd.parseAsync([
+          "node",
+          "council-panel",
+          "create",
+          "arch-\u001b[31mreview",
+          "--slug",
+          "other-\u001b[32mreview",
+          "--experts",
+          "cto",
+        ]),
+      ).rejects.toThrow(/conflict/i);
+      expect(errored).toContain("arch-review");
+      expect(errored).toContain("other-review");
+      expect(errored).not.toContain("\u001b");
+    });
+
     it("requires a panel name when neither positional nor --slug is provided", async () => {
       let errored = "";
       const cmd = buildPanelCommand(

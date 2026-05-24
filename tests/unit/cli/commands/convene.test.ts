@@ -963,9 +963,13 @@ describe("buildConveneCommand — user panels with slug references", () => {
   it("errors when --experts references a slug that is not in the library", async () => {
     await seedLibraryExpert("library-known", "Known");
 
+    let stderr = "";
     const cmd = buildConveneCommand({
       engineFactory: makeMockEngineFactory(),
       write: () => undefined,
+      writeError: (chunk) => {
+        stderr += chunk;
+      },
     });
     cmd.exitOverride();
 
@@ -980,12 +984,24 @@ describe("buildConveneCommand — user panels with slug references", () => {
         "mock",
       ]),
     ).rejects.toThrow(/library-missing|not in the library|expert/i);
+    expect(stderr).toMatch(/library-missing|not in the library|expert/i);
+
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      expect(await new PanelRepository(db).findAll()).toHaveLength(0);
+    } finally {
+      await db.destroy();
+    }
   });
 
   it("errors when --experts is empty or whitespace only", async () => {
+    let stderr = "";
     const cmd = buildConveneCommand({
       engineFactory: makeMockEngineFactory(),
       write: () => undefined,
+      writeError: (chunk) => {
+        stderr += chunk;
+      },
     });
     cmd.exitOverride();
 
@@ -1000,6 +1016,95 @@ describe("buildConveneCommand — user panels with slug references", () => {
         "mock",
       ]),
     ).rejects.toThrow(/at least one expert slug is required|--experts/i);
+    expect(stderr).toMatch(/at least one expert slug is required|--experts/i);
+
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      expect(await new PanelRepository(db).findAll()).toHaveLength(0);
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it("rejects duplicate --experts slugs before persisting a panel", async () => {
+    await seedLibraryExpert("dup-alpha", "DupAlpha");
+
+    let stderr = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (chunk) => {
+        stderr += chunk;
+      },
+    });
+    cmd.exitOverride();
+
+    await expect(
+      cmd.parseAsync([
+        "node",
+        "council-convene",
+        "topic",
+        "--experts",
+        "dup-alpha,dup-alpha",
+        "--engine",
+        "mock",
+      ]),
+    ).rejects.toThrow(/duplicate expert slug|unique|constraint/i);
+    expect(stderr).toMatch(/duplicate expert slug|unique|constraint/i);
+
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      expect(await new PanelRepository(db).findAll()).toHaveLength(0);
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it("rejects --experts lists longer than eight members before persistence", async () => {
+    const expertSlugs = [
+      "expert-one",
+      "expert-two",
+      "expert-three",
+      "expert-four",
+      "expert-five",
+      "expert-six",
+      "expert-seven",
+      "expert-eight",
+      "expert-nine",
+    ] as const;
+    for (const slug of expertSlugs) {
+      await seedLibraryExpert(slug, slug);
+    }
+
+    let stderr = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (chunk) => {
+        stderr += chunk;
+      },
+    });
+    cmd.exitOverride();
+
+    await expect(
+      cmd.parseAsync([
+        "node",
+        "council-convene",
+        "topic",
+        "--experts",
+        expertSlugs.join(","),
+        "--engine",
+        "mock",
+      ]),
+    ).rejects.toThrow(/at most 8|8 experts|max/i);
+    expect(stderr).toMatch(/at most 8|8 experts|max/i);
+
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      expect(await new PanelRepository(db).findAll()).toHaveLength(0);
+    } finally {
+      await db.destroy();
+    }
   });
 
   it("panel defaults.model is used when expert has no model override", async () => {
