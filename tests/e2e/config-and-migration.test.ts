@@ -130,7 +130,10 @@ describe("Config and Migration E2E", () => {
     expect(resolvedHome).toBe(customHome);
 
     const output = captureOutput();
-    const doctor = buildDoctorCommand({ write: output.write });
+    const doctor = buildDoctorCommand({
+      write: output.write,
+      onlineProbe: async () => ({ ok: true, detail: "OK" }),
+    });
     await doctor.parseAsync(["node", "test"], { from: "user" });
 
     const stdout = output.stdout();
