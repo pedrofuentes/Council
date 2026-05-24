@@ -104,7 +104,14 @@ async function withConfigLock<T>(lockPath: string, fn: () => Promise<T>): Promis
       handle = await fs.open(lockPath, "wx");
       break;
     } catch (err: unknown) {
-      if (hasErrorCode(err, "EEXIST")) {
+      // EEXIST: lock held by another caller.
+      // EPERM / EACCES: transient Windows NTFS contention during
+      // concurrent open/close/unlink of the lock file (#820).
+      if (
+        hasErrorCode(err, "EEXIST") ||
+        hasErrorCode(err, "EPERM") ||
+        hasErrorCode(err, "EACCES")
+      ) {
         await sleep(retryDelay);
         continue;
       }
