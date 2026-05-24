@@ -51,6 +51,8 @@ export type PanelLoader = (name: string) => Promise<ResolvedPanelDefinition>;
 
 export interface MigrationOptions {
   readonly quiet?: boolean;
+  readonly verbose?: boolean;
+  readonly writeNotice?: (message: string) => void;
   /** Override the list of template names to migrate (default: all built-ins). */
   readonly panelNames?: readonly string[];
   /** Override the template loader (default: {@link loadTemplate}). */
@@ -283,10 +285,9 @@ async function runMigration(
     panelsMigrated++;
   }
 
-  if (!options.quiet) {
-    console.log(
-      `ℹ Migrated ${panelsMigrated} panels and ${expertsExtracted} experts to the new library format.`,
-    );
+  if (!options.quiet && (options.verbose === true || panelsMigrated > 0 || expertsExtracted > 0)) {
+    const writeNotice = options.writeNotice ?? console.log;
+    writeNotice(`ℹ Migrated ${panelsMigrated} panels and ${expertsExtracted} experts to the new library format.`);
   }
 
   return { panelsMigrated, expertsExtracted, duplicatesUnified, skipped };
