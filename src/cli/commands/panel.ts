@@ -123,6 +123,9 @@ export function buildPanelCommand(
   const cmd = new Command("panel");
   cmd.alias("panels");
   cmd.description("Manage Council panels (create, list, inspect, edit, delete)");
+  cmd.action(async () => {
+    await runPanelList(write, "table", false);
+  });
   cmd.addCommand(buildCreateCommand(write, writeError));
   cmd.addCommand(buildListCommand(write));
   cmd.addCommand(buildInspectCommand(write, writeError));
@@ -253,7 +256,9 @@ interface CreateOptions {
 function buildCreateCommand(write: Writer, writeError: Writer): Command {
   const cmd = new Command("create");
   cmd
-    .description("Create a new panel with library experts")
+    .description(
+      "Create a new panel with library experts. If `council convene` runs without `--template`, Council auto-composes a panel for you.",
+    )
     .argument("<name>", "Panel name (kebab-case)")
     .option("--experts <slugs>", "Comma-separated expert slugs from the library")
     .option("--mode <mode>", `Debate mode: ${DEBATE_MODES.join(" | ")}`)
@@ -503,6 +508,52 @@ function resolveSelection(raw: string, available: readonly ExpertDefinition[]): 
 // list
 // ──────────────────────────────────────────────────────────────────────
 
+async function runPanelList(
+  write: Writer,
+  format: "table" | "json",
+  useLong: boolean,
+): Promise<void> {
+  await withPanelContext(async (ctx) => {
+    const panels = await ctx.panelRepo.findAll();
+
+    if (format === "json") {
+      const enriched = await Promise.all(
+        panels.map(async (p) => ({
+          ...p,
+          experts: await ctx.panelRepo.getMembers(p.name),
+        })),
+      );
+      write(JSON.stringify(enriched, null, 2) + "\n");
+      return;
+    }
+
+    if (panels.length === 0) {
+      write('No panels found. Create one with "council panel create <name>".\n');
+      return;
+    }
+
+    const rows: readonly (readonly string[])[] = await Promise.all(
+      panels.map(async (p) => {
+        const members = await ctx.panelRepo.getMembers(p.name);
+        const desc = p.description ?? "";
+        const displayed = useLong ? desc : desc.length > 60 ? desc.slice(0, 57) + "..." : desc;
+        return [p.name, String(members.length), displayed] as const;
+      }),
+    );
+    const header = ["name", "experts", "description"] as const;
+    const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)));
+    const pad = (s: string, w: number): string => s + " ".repeat(Math.max(0, w - s.length));
+    write(header.map((h, i) => pad(h, widths[i] ?? 0)).join("  ") + "\n");
+    write(widths.map((w) => "-".repeat(w)).join("  ") + "\n");
+    for (const row of rows) {
+      write(row.map((c, i) => pad(c, widths[i] ?? 0)).join("  ") + "\n");
+    }
+    write(
+      "\x1b[2mNext: council panel inspect <name> | council convene --template <name>\x1b[0m\n",
+    );
+  });
+}
+
 function buildListCommand(write: Writer): Command {
   const cmd = new Command("list");
   cmd
@@ -513,50 +564,7 @@ function buildListCommand(write: Writer): Command {
       if (raw.format !== undefined && raw.format !== "table" && raw.format !== "json") {
         throw new Error(`Unknown --format value: ${raw.format}. Expected one of: table, json`);
       }
-      const format: "table" | "json" = raw.format === "json" ? "json" : "table";
-
-      await withPanelContext(async (ctx) => {
-        const panels = await ctx.panelRepo.findAll();
-
-        if (format === "json") {
-          const enriched = await Promise.all(
-            panels.map(async (p) => ({
-              ...p,
-              experts: await ctx.panelRepo.getMembers(p.name),
-            })),
-          );
-          write(JSON.stringify(enriched, null, 2) + "\n");
-          return;
-        }
-
-        if (panels.length === 0) {
-          write('No panels found. Create one with "council panel create <name>".\n');
-          return;
-        }
-
-        const useLong = raw.long === true;
-        const rows: readonly (readonly string[])[] = await Promise.all(
-          panels.map(async (p) => {
-            const members = await ctx.panelRepo.getMembers(p.name);
-            const desc = p.description ?? "";
-            const displayed = useLong ? desc : desc.length > 60 ? desc.slice(0, 57) + "..." : desc;
-            return [p.name, String(members.length), displayed] as const;
-          }),
-        );
-        const header = ["name", "experts", "description"] as const;
-        const widths = header.map((h, i) =>
-          Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)),
-        );
-        const pad = (s: string, w: number): string => s + " ".repeat(Math.max(0, w - s.length));
-        write(header.map((h, i) => pad(h, widths[i] ?? 0)).join("  ") + "\n");
-        write(widths.map((w) => "-".repeat(w)).join("  ") + "\n");
-        for (const row of rows) {
-          write(row.map((c, i) => pad(c, widths[i] ?? 0)).join("  ") + "\n");
-        }
-        write(
-          "\x1b[2mNext: council panel inspect <name> | council convene --template <name>\x1b[0m\n",
-        );
-      });
+      await runPanelList(write, raw.format === "json" ? "json" : "table", raw.long === true);
     });
   return cmd;
 }

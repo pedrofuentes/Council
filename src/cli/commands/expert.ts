@@ -96,6 +96,9 @@ export function buildExpertCommand(
   const cmd = new Command("expert");
   cmd.alias("experts");
   cmd.description("Manage Council's expert library (create, list, inspect, edit, delete)");
+  cmd.action(async () => {
+    await runExpertList(write, "table");
+  });
   cmd.addCommand(buildCreateCommand(write, writeError));
   cmd.addCommand(buildListCommand(write));
   cmd.addCommand(buildInspectCommand(write, writeError));
@@ -137,7 +140,10 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
   const cmd = new Command("create");
   cmd
     .description("Create a new expert in the library (or recreate one whose YAML was deleted)")
-    .option("--persona", "Create a persona expert (real person)")
+    .option(
+      "--persona",
+      "Create a persona expert (real person) and enable document-based training from their docs folder",
+    )
     .option("--slug <slug>", "URL-safe slug (lowercase, alphanumeric + hyphens)")
     .option("--name <displayName>", "Display name")
     .option("--role <role>", "One-line role descriptor")
@@ -303,6 +309,44 @@ function validateSlug(slug: string): void {
 // list
 // ──────────────────────────────────────────────────────────────────────
 
+async function runExpertList(write: Writer, format: "table" | "json"): Promise<void> {
+  await withExpertLibrary(async (library) => {
+    const experts = await library.list();
+
+    if (format === "json") {
+      const enriched = await Promise.all(
+        experts.map(async (e) => ({
+          ...e,
+          panels: await library.panelsFor(e.slug),
+        })),
+      );
+      write(JSON.stringify(enriched, null, 2) + "\n");
+      return;
+    }
+
+    if (experts.length === 0) {
+      write('No experts found. Create one with "council expert create".\n');
+      return;
+    }
+
+    const rows: readonly (readonly string[])[] = await Promise.all(
+      experts.map(async (e) => {
+        const panels = await library.panelsFor(e.slug);
+        return [e.slug, e.displayName, e.role, e.kind, String(panels.length)] as const;
+      }),
+    );
+    const header = ["slug", "display name", "role", "kind", "panels"] as const;
+    const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)));
+    const pad = (s: string, w: number): string => s + " ".repeat(Math.max(0, w - s.length));
+    write(header.map((h, i) => pad(h, widths[i] ?? 0)).join("  ") + "\n");
+    write(widths.map((w) => "-".repeat(w)).join("  ") + "\n");
+    for (const row of rows) {
+      write(row.map((c, i) => pad(c, widths[i] ?? 0)).join("  ") + "\n");
+    }
+    write("\x1b[2mNext: council expert inspect <slug> | council chat <slug>\x1b[0m\n");
+  });
+}
+
 function buildListCommand(write: Writer): Command {
   const cmd = new Command("list");
   cmd
@@ -312,45 +356,7 @@ function buildListCommand(write: Writer): Command {
       if (raw.format !== undefined && raw.format !== "table" && raw.format !== "json") {
         throw new Error(`Unknown --format value: ${raw.format}. Expected one of: table, json`);
       }
-      const format: "table" | "json" = raw.format === "json" ? "json" : "table";
-
-      await withExpertLibrary(async (library) => {
-        const experts = await library.list();
-
-        if (format === "json") {
-          const enriched = await Promise.all(
-            experts.map(async (e) => ({
-              ...e,
-              panels: await library.panelsFor(e.slug),
-            })),
-          );
-          write(JSON.stringify(enriched, null, 2) + "\n");
-          return;
-        }
-
-        if (experts.length === 0) {
-          write('No experts found. Create one with "council expert create".\n');
-          return;
-        }
-
-        const rows: readonly (readonly string[])[] = await Promise.all(
-          experts.map(async (e) => {
-            const panels = await library.panelsFor(e.slug);
-            return [e.slug, e.displayName, e.role, e.kind, String(panels.length)] as const;
-          }),
-        );
-        const header = ["slug", "display name", "role", "kind", "panels"] as const;
-        const widths = header.map((h, i) =>
-          Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)),
-        );
-        const pad = (s: string, w: number): string => s + " ".repeat(Math.max(0, w - s.length));
-        write(header.map((h, i) => pad(h, widths[i] ?? 0)).join("  ") + "\n");
-        write(widths.map((w) => "-".repeat(w)).join("  ") + "\n");
-        for (const row of rows) {
-          write(row.map((c, i) => pad(c, widths[i] ?? 0)).join("  ") + "\n");
-        }
-        write("\x1b[2mNext: council expert inspect <slug> | council chat <slug>\x1b[0m\n");
-      });
+      await runExpertList(write, raw.format === "json" ? "json" : "table");
     });
   return cmd;
 }
