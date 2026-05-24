@@ -350,7 +350,6 @@ describe("buildResumeCommand", () => {
   });
 
   it("transcript mode maps debate.status='running' to debate.end.reason='aborted'", async () => {
-    // Seed a panel with an UN-finalized debate (status='running').
     const db = await createDatabase(path.join(testHome, "council.db"));
     let panelName = "";
     try {
@@ -361,7 +360,6 @@ describe("buildResumeCommand", () => {
         configJson: "{}",
       });
       panelName = panel.name;
-      // Create a debate but DON'T update its status — stays at 'running'.
       await new DebateRepository(db).create({
         panelId: panel.id,
         prompt: "prompt",
@@ -393,7 +391,8 @@ describe("buildResumeCommand", () => {
     let panelName = "";
     let panelId = "";
     let completedDebateId = "";
-    let interruptedDebateId = "";
+    let olderInterruptedDebateId = "";
+    let latestInterruptedDebateId = "";
     try {
       const panelRepo = new PanelRepository(db);
       const expertRepo = new ExpertRepository(db);
@@ -452,21 +451,42 @@ describe("buildResumeCommand", () => {
 
       await new Promise((resolve) => setTimeout(resolve, 5));
 
-      const interrupted = await debateRepo.create({
+      const olderInterrupted = await debateRepo.create({
         panelId: panel.id,
-        prompt: "Resume this interrupted prompt",
+        prompt: "Older interrupted prompt",
         moderator: "round-robin",
       });
-      interruptedDebateId = interrupted.id;
+      olderInterruptedDebateId = olderInterrupted.id;
       await turnRepo.create({
-        debateId: interrupted.id,
+        debateId: olderInterrupted.id,
         round: 0,
         seq: 0,
         speakerKind: "expert",
         expertId: cto.id,
-        content: "Partial interrupted turn.",
+        content: "Older interrupted turn.",
       });
-      await debateRepo.update(interrupted.id, {
+      await debateRepo.update(olderInterrupted.id, {
+        status: "interrupted",
+        endedAt: new Date().toISOString(),
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      const latestInterrupted = await debateRepo.create({
+        panelId: panel.id,
+        prompt: "Resume this interrupted prompt",
+        moderator: "round-robin",
+      });
+      latestInterruptedDebateId = latestInterrupted.id;
+      await turnRepo.create({
+        debateId: latestInterrupted.id,
+        round: 0,
+        seq: 0,
+        speakerKind: "expert",
+        expertId: cto.id,
+        content: "Latest interrupted turn.",
+      });
+      await debateRepo.update(latestInterrupted.id, {
         status: "interrupted",
         endedAt: new Date().toISOString(),
       });
@@ -498,14 +518,20 @@ describe("buildResumeCommand", () => {
     const verifyDb = await createDatabase(path.join(testHome, "council.db"));
     try {
       const debates = await new DebateRepository(verifyDb).findByPanelId(panelId);
-      expect(debates).toHaveLength(3);
+      expect(debates).toHaveLength(4);
       const autoResumed = debates.find(
-        (debate) => debate.id !== completedDebateId && debate.id !== interruptedDebateId,
+        (debate) =>
+          debate.id !== completedDebateId &&
+          debate.id !== olderInterruptedDebateId &&
+          debate.id !== latestInterruptedDebateId,
       );
       expect(autoResumed).toBeDefined();
       expect(autoResumed?.prompt).toBe("Resume this interrupted prompt");
       expect(autoResumed?.status).toBe("completed");
-      expect(debates.find((debate) => debate.id === interruptedDebateId)?.status).toBe(
+      expect(debates.find((debate) => debate.id === olderInterruptedDebateId)?.status).toBe(
+        "interrupted",
+      );
+      expect(debates.find((debate) => debate.id === latestInterruptedDebateId)?.status).toBe(
         "interrupted",
       );
     } finally {
