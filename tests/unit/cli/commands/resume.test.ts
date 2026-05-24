@@ -539,6 +539,155 @@ describe("buildResumeCommand", () => {
     }
   });
 
+  it("registers and honors SIGINT handling for auto-resumed debates", async () => {
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    let panelName = "";
+    let panelId = "";
+    let interruptedDebateId = "";
+    try {
+      const panelRepo = new PanelRepository(db);
+      const expertRepo = new ExpertRepository(db);
+      const debateRepo = new DebateRepository(db);
+      const turnRepo = new TurnRepository(db);
+
+      const panel = await panelRepo.create({
+        name: "resume-interrupt-panel",
+        topic: "resume me",
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+      });
+      panelName = panel.name;
+      panelId = panel.id;
+      const cto = await expertRepo.create({
+        panelId: panel.id,
+        slug: "cto",
+        displayName: "CTO",
+        model: "claude-sonnet-4",
+        systemMessage: "[1] IDENTITY...",
+      });
+      await expertRepo.create({
+        panelId: panel.id,
+        slug: "pm",
+        displayName: "PM",
+        model: "claude-sonnet-4",
+        systemMessage: "[1] IDENTITY...",
+      });
+
+      const interrupted = await debateRepo.create({
+        panelId: panel.id,
+        prompt: "Resume this interrupted prompt",
+        moderator: "round-robin",
+      });
+      interruptedDebateId = interrupted.id;
+      await turnRepo.create({
+        debateId: interrupted.id,
+        round: 0,
+        seq: 0,
+        speakerKind: "expert",
+        expertId: cto.id,
+        content: "Old interrupted turn.",
+      });
+      await debateRepo.update(interrupted.id, {
+        status: "interrupted",
+        endedAt: new Date().toISOString(),
+      });
+    } finally {
+      await db.destroy();
+    }
+
+    let captured = "";
+    let errored = "";
+    let unsubscribed = false;
+    let fireInterrupt: (() => void) | undefined;
+    const registeredExperts = new Set<string>();
+    const subscribeInterrupt = (handler: () => void): (() => void) => {
+      fireInterrupt = handler;
+      return () => {
+        unsubscribed = true;
+      };
+    };
+    const engineFactory = (): CouncilEngine => ({
+      start: async () => undefined,
+      stop: async () => undefined,
+      addExpert: async (spec: ExpertSpec) => {
+        registeredExperts.add(spec.id);
+      },
+      removeExpert: async (expertId: string) => {
+        registeredExperts.delete(expertId);
+      },
+      listModels: async () => ["test-model"],
+      send: ({ expertId, signal }) => {
+        if (!registeredExperts.has(expertId)) {
+          throw new Error(`Expert ${expertId} is not registered`);
+        }
+        return (async function* () {
+          yield { kind: "message.delta", expertId, text: "Partial response. " };
+          fireInterrupt?.();
+          await Promise.resolve();
+          if (signal?.aborted) {
+            yield {
+              kind: "error",
+              expertId,
+              error: {
+                code: "ABORTED",
+                message: "Send was aborted mid-stream",
+                provider: "test",
+              },
+              recoverable: false,
+            };
+            return;
+          }
+          yield { kind: "message.delta", expertId, text: "This should not be persisted." };
+          yield {
+            kind: "message.complete",
+            expertId,
+            response: { latencyMs: 1, tokensIn: 1, tokensOut: 1 },
+          };
+        })();
+      },
+    });
+
+    const cmd = buildResumeCommand({
+      engineFactory,
+      write: (s) => {
+        captured += s;
+      },
+      writeError: (s) => {
+        errored += s;
+      },
+      subscribeInterrupt,
+    } as Parameters<typeof buildResumeCommand>[0]);
+
+    await cmd.parseAsync(["node", "council-resume", panelName, "--format", "json"]);
+
+    const lines = captured
+      .split("\n")
+      .filter((l) => l.trim().length > 0 && l.trim().startsWith("{"))
+      .map((l) => JSON.parse(l) as { kind: string; reason?: string });
+    const end = lines.find((event) => event.kind === "debate.end");
+    expect(end?.reason).toBe("aborted");
+    expect(errored).toMatch(/resuming interrupted debate/i);
+    expect(errored).toMatch(/interrupted/i);
+    expect(errored).toMatch(/partial/i);
+    expect(unsubscribed).toBe(true);
+
+    const verifyDb = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const debates = await new DebateRepository(verifyDb).findByPanelId(panelId);
+      expect(debates).toHaveLength(2);
+      expect(debates.find((debate) => debate.id === interruptedDebateId)?.status).toBe(
+        "interrupted",
+      );
+      const resumedDebate = debates.find((debate) => debate.id !== interruptedDebateId);
+      expect(resumedDebate?.status).toBe("interrupted");
+      const turns = await new TurnRepository(verifyDb).findByDebateId(resumedDebate?.id ?? "");
+      expect(turns).toHaveLength(1);
+      expect(turns[0]?.content).toBe("Partial response. ");
+    } finally {
+      await verifyDb.destroy();
+    }
+  });
+
   it("findByName resolves to the most-recently-created panel when names collide", async () => {
     // Seed two panels with the SAME name; resume should pick the newer one.
     const db = await createDatabase(path.join(testHome, "council.db"));

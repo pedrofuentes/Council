@@ -251,6 +251,33 @@ describe("DebatePersister", () => {
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("update failed"));
   });
 
+  it("preserves speakerKind='human' when flushing an interrupted partial turn", async () => {
+    const controller = new AbortController();
+    const persister = new DebatePersister({
+      debates: debateRepo,
+      turns: turnRepo,
+      panelId,
+      expertSlugToId,
+      moderator: "round-robin",
+      signal: controller.signal,
+    });
+
+    async function* partialSource(): AsyncIterable<DebateEvent> {
+      yield { kind: "panel.assembled", experts: [] };
+      yield { kind: "round.start", round: 0 };
+      yield { kind: "turn.start", expertSlug: cto.slug, round: 0, seq: 0, speakerKind: "human" };
+      yield { kind: "turn.delta", expertSlug: cto.slug, text: "Human partial.", speakerKind: "human" };
+      controller.abort();
+      yield { kind: "debate.end", reason: "aborted" };
+    }
+
+    await collect(persister.persist(partialSource(), "topic"));
+
+    const turns = await turnRepo.findByDebateId(persister.debateId ?? "");
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.speakerKind).toBe("human");
+  });
+
   it("inserts one turn row per turn.end event", async () => {
     const { debateId } = await runDebate();
     const turns = await turnRepo.findByDebateId(debateId);
