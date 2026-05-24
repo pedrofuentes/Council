@@ -11,6 +11,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof fs>();
   return {
     ...actual,
+    open: vi.fn(actual.open),
     writeFile: vi.fn(actual.writeFile),
     rename: vi.fn(actual.rename),
     unlink: vi.fn(actual.unlink),
@@ -38,6 +39,7 @@ describe("updateConfigField", () => {
 
   beforeEach(async () => {
     actualFs = await vi.importActual<typeof fs>("node:fs/promises");
+    vi.mocked(fs.open).mockImplementation(actualFs.open);
     vi.mocked(fs.writeFile).mockImplementation(actualFs.writeFile);
     vi.mocked(fs.rename).mockImplementation(actualFs.rename);
     vi.mocked(fs.unlink).mockImplementation(actualFs.unlink);
@@ -243,5 +245,34 @@ describe("updateConfigField", () => {
       /Failed to parse Council config/i,
     );
     await expect(fs.readFile(configPath, "utf-8")).resolves.toBe(original);
+  });
+
+  it("retries on EPERM from fs.open (Windows NTFS lock contention)", async () => {
+    await fs.mkdir(testHome, { recursive: true });
+    await fs.writeFile(
+      configPath,
+      "defaults:\n  model: claude-sonnet-4.5\n  engine: mock\n",
+      "utf-8",
+    );
+
+    let exclusiveOpenCount = 0;
+    vi.mocked(fs.open).mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+      const flags = String(args[1]);
+      if (flags.includes("x")) {
+        exclusiveOpenCount += 1;
+        if (exclusiveOpenCount === 1) {
+          const err = new Error("EPERM: operation not permitted") as NodeJS.ErrnoException;
+          err.code = "EPERM";
+          throw err;
+        }
+      }
+      return actualFs.open(...args);
+    });
+
+    await updateConfigField("defaults.model", "gpt-5");
+
+    const config = await loadConfig();
+    expect(config.defaults.model).toBe("gpt-5");
+    expect(exclusiveOpenCount).toBeGreaterThan(1);
   });
 });
