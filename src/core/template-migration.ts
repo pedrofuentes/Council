@@ -49,8 +49,12 @@ export interface MigrationResult {
  */
 export type PanelLoader = (name: string) => Promise<ResolvedPanelDefinition>;
 
+export type MigrationNoticeWriter = (message: string) => void;
+
 export interface MigrationOptions {
   readonly quiet?: boolean;
+  readonly verbose?: boolean;
+  readonly writeNotice?: MigrationNoticeWriter;
   /** Override the list of template names to migrate (default: all built-ins). */
   readonly panelNames?: readonly string[];
   /** Override the template loader (default: {@link loadTemplate}). */
@@ -283,9 +287,17 @@ async function runMigration(
     panelsMigrated++;
   }
 
-  if (!options.quiet) {
-    console.log(
-      `ℹ Migrated ${panelsMigrated} panels and ${expertsExtracted} experts to the new library format.`,
+  const shouldWriteNotice =
+    options.quiet !== true &&
+    (options.verbose === true || panelsMigrated > 0 || expertsExtracted > 0);
+  if (shouldWriteNotice) {
+    const writeNotice =
+      options.writeNotice ??
+      ((message: string) => {
+        process.stderr.write(message, "utf8");
+      });
+    writeNotice(
+      `ℹ Migrated ${panelsMigrated} panels and ${expertsExtracted} experts to the new library format.\n`,
     );
   }
 
