@@ -139,6 +139,27 @@ describe("FileExpertLibrary", () => {
       }
     });
 
+    it("preserves the duplicate-slug error when cache repair cannot parse the existing YAML", async () => {
+      await lib.create(makeDef());
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const repo = new ExpertLibraryRepository(db);
+      const yamlPath = path.join(dataHome, "experts", "cto.yaml");
+      await repo.delete("cto");
+      await fs.writeFile(yamlPath, "slug: cto\n", "utf-8");
+
+      try {
+        await expect(lib.create(makeDef({ displayName: "Attempted Duplicate" }))).rejects.toThrow(
+          /already exists/i,
+        );
+        expect(await repo.findBySlug("cto")).toBeUndefined();
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Failed to repair missing expert cache row for slug "cto"'),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
     it("rejects a concurrent ghost expert recreate after the replacement YAML is claimed", async () => {
       await lib.create(makeDef());
       const yamlPath = path.join(dataHome, "experts", "cto.yaml");
