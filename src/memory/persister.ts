@@ -205,9 +205,16 @@ export class DebatePersister {
       if (!terminalUpdateAttempted) {
         // Source threw before debate.end OR consumer broke the loop —
         // finalize so session-resume can distinguish abandoned from running.
-        // Best-effort: we're already in a failure path, so swallow any
-        // DB error here rather than masking the original throw.
-        await this.#finalizeAbruptExit(debate.id).catch(() => undefined);
+        // Best-effort: preserve the original failure, but surface any
+        // finalization problem so interrupted debates are debuggable.
+        try {
+          await this.#finalizeAbruptExit(debate.id);
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.deps.logger?.warn(
+            `DebatePersister: finalizeAbruptExit failed for debateId='${debate.id}': ${message}`,
+          );
+        }
       }
     }
   }
@@ -235,13 +242,13 @@ export class DebatePersister {
 
   async #flushPendingTurns(): Promise<void> {
     const pendingTurns = [...this.#pendingTurns.entries()];
-    this.#pendingTurns.clear();
     for (const [expertSlug, pending] of pendingTurns) {
       // We reuse the normal turns table and let the interrupted debate status
       // carry the "incomplete" meaning for the final persisted partial turn.
       if (pending.content.length > 0) {
         await this.#persistPendingTurn(expertSlug, pending, pending.content, pending.speakerKind);
       }
+      this.#pendingTurns.delete(expertSlug);
     }
   }
 
