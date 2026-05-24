@@ -513,6 +513,39 @@ describe("buildConveneCommand", () => {
     expect(stdoutCaptured).toContain('"kind":"debate.end"');
   });
 
+  it("prints auto-compose informational messages when quiet mode is disabled", async () => {
+    let stdoutCaptured = "";
+    let stderrCaptured = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (chunk) => {
+        stdoutCaptured += chunk;
+      },
+      writeError: (chunk) => {
+        stderrCaptured += chunk;
+      },
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "topic",
+      "--engine",
+      "mock",
+      "--format",
+      "json",
+      "--max-rounds",
+      "1",
+      "--yes",
+      "--heuristic-memory",
+    ]);
+
+    expect(stderrCaptured).toContain("Auto-composed panel:");
+    expect(stderrCaptured).toContain("Morgan Chen");
+    expect(stderrCaptured).toContain("[MOCK ENGINE]");
+    expect(stdoutCaptured).toContain('"kind":"debate.end"');
+  });
+
   it("suppresses migration messages when quiet mode is enabled", async () => {
     setQuiet(true);
     let stderrCaptured = "";
