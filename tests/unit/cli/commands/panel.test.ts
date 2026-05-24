@@ -271,6 +271,31 @@ describe("buildPanelCommand", () => {
       ).rejects.toThrow(/name|kebab/i);
     });
 
+    it("sanitizes invalid --slug values in validation errors", async () => {
+      const cmd = buildPanelCommand(() => {
+        /* noop */
+      });
+
+      let thrown: unknown;
+      try {
+        await cmd.parseAsync([
+          "node",
+          "council-panel",
+          "create",
+          "--slug",
+          "bad-\u001b[31mname",
+          "--experts",
+          "cto",
+        ]);
+      } catch (err) {
+        thrown = err;
+      }
+
+      expect(thrown).toBeInstanceOf(Error);
+      expect((thrown as Error).message).toContain("bad-name");
+      expect((thrown as Error).message).not.toContain("\u001b");
+    });
+
     it("rejects duplicate panel name", async () => {
       await seedExpert(env, expertDef("cto"));
       const cmd1 = buildPanelCommand(() => {
