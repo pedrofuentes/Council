@@ -862,6 +862,126 @@ describe("buildConveneCommand — user panels with slug references", () => {
     expect(firstEvent.kind).toBe("panel.assembled");
   });
 
+  it("builds an ad-hoc panel from --experts without invoking auto-compose confirmation", async () => {
+    await seedLibraryExpert("library-alpha", "LibraryAlpha");
+    await seedLibraryExpert("library-beta", "LibraryBeta");
+
+    let confirmCalled = false;
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      confirmProvider: () => ({
+        confirm: async () => {
+          confirmCalled = true;
+          return false;
+        },
+      }),
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "Ad-hoc experts topic",
+      "--experts",
+      "library-alpha,library-beta",
+      "--max-rounds",
+      "1",
+      "--engine",
+      "mock",
+    ]);
+
+    expect(confirmCalled).toBe(false);
+
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const panels = await new PanelRepository(db).findAll();
+      expect(panels).toHaveLength(1);
+      const experts = await new ExpertRepository(db).findByPanelId(panels[0]?.id ?? "");
+      expect(experts.map((e) => e.slug).sort()).toEqual(["library-alpha", "library-beta"]);
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it("uses template defaults while overriding template members with --experts", async () => {
+    await seedLibraryExpert("override-alpha", "OverrideAlpha");
+    await seedLibraryExpert("override-beta", "OverrideBeta");
+    await writeUserPanel(
+      "structured-template",
+      [
+        "name: structured-template",
+        "defaults:",
+        "  mode: structured",
+        "  maxRounds: 4",
+        "experts:",
+        "  - template-missing",
+        "",
+      ].join("\n"),
+    );
+
+    let captured = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (s) => {
+        captured += s;
+      },
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "Template override topic",
+      "--template",
+      "structured-template",
+      "--experts",
+      "override-alpha,override-beta",
+      "--format",
+      "json",
+      "--engine",
+      "mock",
+    ]);
+
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const panels = await new PanelRepository(db).findAll();
+      expect(panels).toHaveLength(1);
+      const experts = await new ExpertRepository(db).findByPanelId(panels[0]?.id ?? "");
+      expect(experts.map((e) => e.slug).sort()).toEqual(["override-alpha", "override-beta"]);
+    } finally {
+      await db.destroy();
+    }
+
+    const phases = captured
+      .split("\n")
+      .filter((line) => line.trim().startsWith("{"))
+      .map((line) => JSON.parse(line) as { kind: string; phase?: string })
+      .filter((event) => event.kind === "round.start")
+      .map((event) => event.phase);
+    expect(phases).toEqual(["opening", "cross-examination", "rebuttal", "synthesis"]);
+  });
+
+  it("errors when --experts references a slug that is not in the library", async () => {
+    await seedLibraryExpert("library-known", "Known");
+
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+    });
+    cmd.exitOverride();
+
+    await expect(
+      cmd.parseAsync([
+        "node",
+        "council-convene",
+        "topic",
+        "--experts",
+        "library-known,library-missing",
+        "--engine",
+        "mock",
+      ]),
+    ).rejects.toThrow(/library-missing|not in the library|expert/i);
+  });
+
   it("panel defaults.model is used when expert has no model override", async () => {
     await fs.writeFile(path.join(testHome, "config.yaml"), "defaults:\n  model: global-model\n");
     await writeUserPanel(

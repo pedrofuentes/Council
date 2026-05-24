@@ -141,6 +141,58 @@ describe("buildPanelCommand", () => {
       }
     });
 
+    it("accepts --slug as an alternative to the positional panel name", async () => {
+      await seedExpert(env, expertDef("cto"));
+      await seedExpert(env, expertDef("staff"));
+
+      let captured = "";
+      const cmd = buildPanelCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync([
+        "node",
+        "council-panel",
+        "create",
+        "--slug",
+        "flag-review",
+        "--experts",
+        "cto,staff",
+      ]);
+
+      expect(captured).toContain("flag-review");
+      const yamlPath = path.join(env.dataHome, "panels", "flag-review.yaml");
+      const content = await fs.readFile(yamlPath, "utf-8");
+      expect(content).toContain("name: flag-review");
+    });
+
+    it("rejects conflicting positional and --slug panel names", async () => {
+      await seedExpert(env, expertDef("cto"));
+
+      let errored = "";
+      const cmd = buildPanelCommand(
+        () => {
+          /* noop */
+        },
+        (s) => {
+          errored += s;
+        },
+      );
+
+      await expect(
+        cmd.parseAsync([
+          "node",
+          "council-panel",
+          "create",
+          "arch-review",
+          "--slug",
+          "other-review",
+          "--experts",
+          "cto",
+        ]),
+      ).rejects.toThrow(/both.*slug|positional.*slug|conflict/i);
+      expect(errored).toMatch(/both.*slug|positional.*slug|conflict/i);
+    });
+
     it("panel create --model sets defaults.model in YAML", async () => {
       await seedExpert(env, expertDef("cto"));
       await seedExpert(env, expertDef("staff"));
