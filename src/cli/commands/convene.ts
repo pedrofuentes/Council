@@ -28,6 +28,7 @@ import {
 import type { ContextConfig } from "../../core/debate.js";
 import type { VisibilityConfig } from "../../core/context/visibility.js";
 import { FileExpertLibrary } from "../../core/expert-library.js";
+import type { ExpertDefinition } from "../../core/expert.js";
 import { isMigrationNeeded, migrateBuiltInTemplates } from "../../core/template-migration.js";
 import { resolveModel } from "../../core/model-resolver.js";
 import type { DebateMode } from "../../core/template-loader.js";
@@ -35,6 +36,7 @@ import {
   assertAllInline,
   loadPanel,
   resolveExperts,
+  type PanelDefinition,
   type ResolvedPanelDefinition,
 } from "../../core/template-loader.js";
 import { buildSystemPrompt, type ExpertMemory } from "../../core/prompt-builder.js";
@@ -91,6 +93,24 @@ export interface ConveneCommandDeps {
 export interface ConveneOptions {
   readonly template?: string | undefined;
   readonly panel?: string | undefined;
+  readonly experts?: string | undefined;
+  readonly format?: string;
+  readonly maxRounds?: number;
+  readonly mode?: DebateMode;
+  readonly maxWords?: number;
+  readonly engine?: EngineKind;
+  readonly human?: readonly string[];
+  readonly strategy?: string;
+  readonly contextScope?: string;
+  readonly summarizeAfter?: number;
+  readonly heuristicSummaries?: boolean;
+  readonly heuristicMemory?: boolean;
+  readonly yes?: boolean;
+  readonly model?: string;
+}
+
+interface ResolvedConveneOptions {
+  readonly template?: string | undefined;
   readonly format: RendererFormat;
   readonly maxRounds: number;
   readonly mode: DebateMode;
@@ -103,7 +123,6 @@ export interface ConveneOptions {
   readonly heuristicSummaries?: boolean;
   readonly heuristicMemory?: boolean;
   readonly yes?: boolean;
-  readonly model?: string;
 }
 
 /**
@@ -155,17 +174,9 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         .choices([...RENDERER_FORMATS])
         .default("auto"),
     )
-    .option(
-      "--max-rounds <n>",
-      "Max rounds (freeform mode only)",
-      (v) => Number.parseInt(v, 10),
-      DEFAULT_MAX_ROUNDS,
-    )
-    .addOption(
-      new Option("--mode <kind>", "Debate mode")
-        .choices(["freeform", "structured"])
-        .default("freeform"),
-    )
+    .option("--experts <slugs>", "Comma-separated expert slugs from the library")
+    .option("--max-rounds <n>", "Max rounds (freeform mode only)", (v) => Number.parseInt(v, 10))
+    .addOption(new Option("--mode <kind>", "Debate mode").choices(["freeform", "structured"]))
     .option(
       "--max-words <n>",
       "Soft per-response word cap",
@@ -212,93 +223,41 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       }
 
       const config = await loadConfig();
+      const dataHome = getCouncilDataHome(config);
+      const libraryDbPath = path.join(getCouncilHome(), "council.db");
       const defaultModel = raw.model ?? config.defaults.model;
       const resolvedEngine = resolveEngine(raw.engine, config);
       const humanNames: readonly string[] = raw.human ?? [];
-
-      // Accept both --panel and --template (aliases)
       const templateName = raw.panel ?? raw.template;
-
-      const opts: ConveneOptions = {
-        template: templateName,
-        format: parseFormat(raw.format),
-        maxRounds: Number.isFinite(raw.maxRounds) ? raw.maxRounds : DEFAULT_MAX_ROUNDS,
-        mode: raw.mode === "structured" ? "structured" : "freeform",
-        maxWords: Number.isFinite(raw.maxWords) ? raw.maxWords : DEFAULT_MAX_WORDS,
-        engine: resolvedEngine,
-        human: humanNames,
-        yes: raw.yes === true,
-        heuristicSummaries: raw.heuristicSummaries === true,
-        heuristicMemory: raw.heuristicMemory === true,
-        ...(raw.strategy !== undefined ? { strategy: raw.strategy } : {}),
-        ...(raw.contextScope !== undefined ? { contextScope: raw.contextScope } : {}),
-        ...(raw.summarizeAfter !== undefined && Number.isFinite(raw.summarizeAfter)
-          ? { summarizeAfter: raw.summarizeAfter }
-          : {}),
-      };
-
-      if (opts.engine === "mock") {
-        writeError(
-          "\n!! [MOCK ENGINE] Running with deterministic offline mock — responses are NOT real.\n" +
-            "   This debate will be persisted to the local DB tagged engine='mock'.\n\n",
-        );
-      }
+      const requestedExpertSlugs =
+        raw.experts !== undefined ? parseExpertSlugList(raw.experts) : undefined;
 
       let template: ResolvedPanelDefinition;
-      if (opts.template) {
-        // User panels in <dataHome>/panels/ override built-in templates.
-        // If the chosen panel references library experts by slug, resolve
-        // them via the expert library before handing off to the engine.
-        const dataHome = getCouncilDataHome();
-        const libDbPath = path.join(getCouncilHome(), "council.db");
-
-        // First-run (and DB-reset) hook: if the user has never migrated —
-        // or the DB has been reset but on-disk YAMLs remain — extract the
-        // built-in panels' inline experts into <dataHome>/experts/ and
-        // rewrite the panels in <dataHome>/panels/ to reference them by
-        // slug, plus (re-)register library DB rows. Idempotent.
-        const migDb = await createDatabase(libDbPath);
-        try {
-          if (await isMigrationNeeded(dataHome, migDb)) {
-            const migLib = new FileExpertLibrary(dataHome, migDb);
-            await migrateBuiltInTemplates(dataHome, migLib, migDb);
-          }
-        } finally {
-          await migDb.destroy();
-        }
-
-        const panel = await loadPanel(opts.template, dataHome);
-        const hasSlugRefs = panel.experts.some((e) => typeof e === "string");
-        if (!hasSlugRefs) {
-          template = assertAllInline(panel, opts.template);
+      if (requestedExpertSlugs !== undefined) {
+        const experts = await resolveLibraryExperts(dataHome, libraryDbPath, requestedExpertSlugs);
+        if (templateName !== undefined) {
+          const panel = await loadConvenePanelTemplate(templateName, dataHome, libraryDbPath);
+          template = {
+            name: panel.name,
+            ...(panel.description !== undefined ? { description: panel.description } : {}),
+            ...(panel.defaults !== undefined ? { defaults: panel.defaults } : {}),
+            experts,
+          };
         } else {
-          const libDb = await createDatabase(libDbPath);
-          try {
-            const library = new FileExpertLibrary(dataHome, libDb);
-            const { resolved, missing } = await resolveExperts(panel.experts, library);
-            if (missing.length > 0) {
-              throw new Error(
-                `Panel "${stripControlChars(opts.template)}" references experts not in the library: ${missing.map((s) => stripControlChars(s)).join(", ")}. ` +
-                  `Add them with 'council expert create' or use inline expert definitions.`,
-              );
-            }
-            template = {
-              name: panel.name,
-              ...(panel.description !== undefined ? { description: panel.description } : {}),
-              ...(panel.defaults !== undefined ? { defaults: panel.defaults } : {}),
-              experts: resolved,
-            };
-          } finally {
-            await libDb.destroy();
-          }
+          template = {
+            name: "ad-hoc-panel",
+            experts,
+          };
         }
+      } else if (templateName !== undefined) {
+        template = await resolveConvenePanelTemplate(templateName, dataHome, libraryDbPath);
       } else {
         // §2.5 auto-compose: spin up a temporary engine session, ask the
         // composer to design the panel, then tear it down. The real debate
         // gets its own engine instance via runWithEngine() below.
         const composeEngine = deps.engineFactory
           ? deps.engineFactory()
-          : makeEngineFromKind(opts.engine);
+          : makeEngineFromKind(resolvedEngine);
         try {
           await composeEngine.start();
           try {
@@ -330,7 +289,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         //   1. Custom confirmProvider (tests/plugins) — always call it.
         //   2. Non-TTY (CI/piped) — error, require --yes to proceed.
         //   3. Interactive TTY — readline prompt, abort if declined.
-        if (opts.yes !== true) {
+        if (raw.yes !== true) {
           if (deps.confirmProvider) {
             // Custom provider injected (tests or plugins) — always use it.
             const provider = deps.confirmProvider();
@@ -352,6 +311,33 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             }
           }
         }
+      }
+
+      const opts: ResolvedConveneOptions = {
+        template: templateName,
+        format: parseFormat(raw.format),
+        maxRounds: Number.isFinite(raw.maxRounds)
+          ? raw.maxRounds
+          : (template.defaults?.maxRounds ?? DEFAULT_MAX_ROUNDS),
+        mode: raw.mode ?? template.defaults?.mode ?? "freeform",
+        maxWords: Number.isFinite(raw.maxWords) ? raw.maxWords : DEFAULT_MAX_WORDS,
+        engine: resolvedEngine,
+        human: humanNames,
+        yes: raw.yes === true,
+        heuristicSummaries: raw.heuristicSummaries === true,
+        heuristicMemory: raw.heuristicMemory === true,
+        ...(raw.strategy !== undefined ? { strategy: raw.strategy } : {}),
+        ...(raw.contextScope !== undefined ? { contextScope: raw.contextScope } : {}),
+        ...(raw.summarizeAfter !== undefined && Number.isFinite(raw.summarizeAfter)
+          ? { summarizeAfter: raw.summarizeAfter }
+          : {}),
+      };
+
+      if (opts.engine === "mock") {
+        writeError(
+          "\n!! [MOCK ENGINE] Running with deterministic offline mock — responses are NOT real.\n" +
+            "   This debate will be persisted to the local DB tagged engine='mock'.\n\n",
+        );
       }
 
       const dbPath = path.join(getCouncilHome(), "council.db");
@@ -535,7 +521,14 @@ Note: Topics with special characters (like $, !, etc.) should be quoted:
   );
 
   // CLI-05: Help tiering — separate common vs advanced flags
-  const COMMON_FLAGS = new Set(["--template", "--engine", "--format", "--max-rounds", "--yes"]);
+  const COMMON_FLAGS = new Set([
+    "--template",
+    "--experts",
+    "--engine",
+    "--format",
+    "--max-rounds",
+    "--yes",
+  ]);
 
   cmd.configureHelp({
     formatHelp: (command, helper) => {
@@ -575,6 +568,98 @@ Note: Topics with special characters (like $, !, etc.) should be quoted:
   });
 
   return cmd;
+}
+
+function parseExpertSlugList(raw: string): readonly string[] {
+  const slugs = raw
+    .split(",")
+    .map((slug) => slug.trim())
+    .filter((slug) => slug.length > 0);
+  if (slugs.length === 0) {
+    throw new CliUserError("At least one expert slug is required (use --experts <slug1>,<slug2>)");
+  }
+  return slugs;
+}
+
+async function migratePanelsIfNeeded(dataHome: string, dbPath: string): Promise<void> {
+  const migrationDb = await createDatabase(dbPath);
+  try {
+    if (await isMigrationNeeded(dataHome, migrationDb)) {
+      const library = new FileExpertLibrary(dataHome, migrationDb);
+      await migrateBuiltInTemplates(dataHome, library, migrationDb);
+    }
+  } finally {
+    await migrationDb.destroy();
+  }
+}
+
+async function loadConvenePanelTemplate(
+  templateName: string,
+  dataHome: string,
+  dbPath: string,
+): Promise<PanelDefinition> {
+  await migratePanelsIfNeeded(dataHome, dbPath);
+  return loadPanel(templateName, dataHome);
+}
+
+function inlineResolvedPanel(
+  panel: PanelDefinition,
+  experts: readonly ExpertDefinition[],
+): ResolvedPanelDefinition {
+  return {
+    name: panel.name,
+    ...(panel.description !== undefined ? { description: panel.description } : {}),
+    ...(panel.defaults !== undefined ? { defaults: panel.defaults } : {}),
+    experts,
+  };
+}
+
+async function resolveLibraryExperts(
+  dataHome: string,
+  dbPath: string,
+  expertSlugs: readonly string[],
+): Promise<readonly ExpertDefinition[]> {
+  const libraryDb = await createDatabase(dbPath);
+  try {
+    const library = new FileExpertLibrary(dataHome, libraryDb);
+    const { resolved, missing } = await library.resolvePanel(expertSlugs);
+    if (missing.length > 0) {
+      throw new CliUserError(
+        `Named expert slug${missing.length === 1 ? "" : "s"} not in the library: ${missing.map((slug) => stripControlChars(slug)).join(", ")}. ` +
+          `Add ${missing.length === 1 ? "it" : "them"} with 'council expert create' or choose from 'council expert list'.`,
+      );
+    }
+    return resolved;
+  } finally {
+    await libraryDb.destroy();
+  }
+}
+
+async function resolveConvenePanelTemplate(
+  templateName: string,
+  dataHome: string,
+  dbPath: string,
+): Promise<ResolvedPanelDefinition> {
+  const panel = await loadConvenePanelTemplate(templateName, dataHome, dbPath);
+  const hasSlugRefs = panel.experts.some((entry) => typeof entry === "string");
+  if (!hasSlugRefs) {
+    return assertAllInline(panel, templateName);
+  }
+
+  const libraryDb = await createDatabase(dbPath);
+  try {
+    const library = new FileExpertLibrary(dataHome, libraryDb);
+    const { resolved, missing } = await resolveExperts(panel.experts, library);
+    if (missing.length > 0) {
+      throw new CliUserError(
+        `Panel "${stripControlChars(templateName)}" references experts not in the library: ${missing.map((slug) => stripControlChars(slug)).join(", ")}. ` +
+          `Add them with 'council expert create' or use inline expert definitions.`,
+      );
+    }
+    return inlineResolvedPanel(panel, resolved);
+  } finally {
+    await libraryDb.destroy();
+  }
 }
 
 function parseFormat(raw: string | undefined): RendererFormat {

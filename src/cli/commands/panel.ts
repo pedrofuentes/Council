@@ -243,6 +243,7 @@ function buildDeleteCommand(
 // ──────────────────────────────────────────────────────────────────────
 
 interface CreateOptions {
+  readonly slug?: string;
   readonly experts?: string;
   readonly mode?: string;
   readonly maxRounds?: string;
@@ -250,29 +251,51 @@ interface CreateOptions {
   readonly description?: string;
 }
 
+function resolveCreateName(
+  positionalName: string | undefined,
+  optionSlug: string | undefined,
+  writeError: Writer,
+): string {
+  if (positionalName !== undefined && optionSlug !== undefined && positionalName !== optionSlug) {
+    const msg = `Conflicting panel names: positional argument "${positionalName}" and --slug "${optionSlug}" must match.`;
+    writeError(msg + "\n");
+    throw new CliUserError(msg);
+  }
+  const resolvedName = optionSlug ?? positionalName;
+  if (resolvedName === undefined) {
+    const msg =
+      "Panel name is required. Provide it as a positional argument or with --slug <name>.";
+    writeError(msg + "\n");
+    throw new CliUserError(msg);
+  }
+  return resolvedName;
+}
+
 function buildCreateCommand(write: Writer, writeError: Writer): Command {
   const cmd = new Command("create");
   cmd
     .description("Create a new panel with library experts")
-    .argument("<name>", "Panel name (kebab-case)")
+    .argument("[name]", "Panel name (kebab-case)")
+    .option("--slug <name>", "Panel slug (alias for the positional panel name)")
     .option("--experts <slugs>", "Comma-separated expert slugs from the library")
     .option("--mode <mode>", `Debate mode: ${DEBATE_MODES.join(" | ")}`)
     .option("--max-rounds <n>", "Maximum debate rounds (1-20)")
     .option("--model <model>", "Default model for all experts in this panel")
     .option("--description <text>", "One-line description")
-    .action(async (name: string, opts: CreateOptions) => {
-      validatePanelName(name);
+    .action(async (name: string | undefined, opts: CreateOptions) => {
+      const panelName = resolveCreateName(name, opts.slug, writeError);
+      validatePanelName(panelName);
 
       await withPanelContext(async (ctx) => {
-        const existingRow = await ctx.panelRepo.findByName(name);
+        const existingRow = await ctx.panelRepo.findByName(panelName);
         if (existingRow) {
           writeError(
-            `Panel "${name}" already exists. Use "council panel edit ${name}" to modify or choose a different name.\n`,
+            `Panel "${panelName}" already exists. Use "council panel edit ${panelName}" to modify or choose a different name.\n`,
           );
-          throw new CliUserError(`Panel "${name}" already exists`);
+          throw new CliUserError(`Panel "${panelName}" already exists`);
         }
 
-        const yamlPath = panelYamlPath(ctx.dataHome, name);
+        const yamlPath = panelYamlPath(ctx.dataHome, panelName);
         // Existence is enforced atomically below via O_EXCL ('wx') at write
         // time — no fs.access pre-check, which would be racy (issue #307).
 
@@ -284,7 +307,7 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
         if (opts.model !== undefined) defaults.model = opts.model;
 
         const panel: PanelDefinition = PanelDefinitionSchema.parse({
-          name,
+          name: panelName,
           ...(fields.description ? { description: fields.description } : {}),
           defaults,
           experts: fields.expertSlugs,
@@ -295,7 +318,7 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
 
         // DB row first so a YAML write failure can roll back cleanly.
         await ctx.panelRepo.create({
-          name,
+          name: panelName,
           description: fields.description ?? null,
           yamlPath,
           yamlChecksum: checksum,
@@ -312,7 +335,7 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
           } catch (openErr) {
             if ((openErr as NodeJS.ErrnoException).code === "EEXIST") {
               writeError(`Panel YAML already exists at ${displayPath(yamlPath)}\n`);
-              throw new CliUserError(`Panel "${name}" already exists at ${yamlPath}`);
+              throw new CliUserError(`Panel "${panelName}" already exists at ${yamlPath}`);
             }
             throw openErr;
           }
@@ -331,12 +354,12 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
             throw writeErr;
           }
           await handle.close();
-          await ctx.panelRepo.setMembers(name, fields.expertSlugs);
-          await fs.mkdir(panelDocsDir(ctx.dataHome, name), { recursive: true });
+          await ctx.panelRepo.setMembers(panelName, fields.expertSlugs);
+          await fs.mkdir(panelDocsDir(ctx.dataHome, panelName), { recursive: true });
         } catch (err) {
           const rollbackErrors: unknown[] = [];
           try {
-            await ctx.panelRepo.delete(name);
+            await ctx.panelRepo.delete(panelName);
           } catch (deleteErr) {
             rollbackErrors.push(deleteErr);
           }
@@ -353,13 +376,13 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
           if (rollbackErrors.length > 0) {
             throw new AggregateError(
               [err, ...rollbackErrors],
-              `Failed to create panel "${name}" and rollback also failed — storage may be inconsistent`,
+              `Failed to create panel "${panelName}" and rollback also failed — storage may be inconsistent`,
             );
           }
           throw err;
         }
 
-        write(`✓ Panel "${name}" created at ${displayPath(yamlPath)}\n`);
+        write(`✓ Panel "${panelName}" created at ${displayPath(yamlPath)}\n`);
         write(`  Experts: ${fields.expertSlugs.join(", ")}\n`);
       });
     });
@@ -454,11 +477,7 @@ async function assertExpertsExist(
   library: ExpertLibrary,
   writeError?: Writer,
 ): Promise<void> {
-  const missing: string[] = [];
-  for (const slug of slugs) {
-    const expert = await library.get(slug);
-    if (!expert) missing.push(slug);
-  }
+  const { missing } = await library.resolvePanel(slugs);
   if (missing.length > 0) {
     const msg = `Unknown expert slug${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}. Create with "council expert create" or pick from "council expert list".`;
     if (writeError) writeError(msg + "\n");
