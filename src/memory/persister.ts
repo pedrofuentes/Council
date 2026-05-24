@@ -156,6 +156,7 @@ export class DebatePersister {
     this.#debateId = debate.id;
 
     let terminalUpdateAttempted = false;
+    let sourceError: unknown;
     try {
       for await (const evt of source) {
         switch (evt.kind) {
@@ -201,19 +202,34 @@ export class DebatePersister {
         }
         yield evt;
       }
+    } catch (error: unknown) {
+      sourceError = error;
+      throw error;
     } finally {
       if (!terminalUpdateAttempted) {
         // Source threw before debate.end OR consumer broke the loop —
         // finalize so session-resume can distinguish abandoned from running.
-        // Best-effort: preserve the original failure, but surface any
-        // finalization problem so interrupted debates are debuggable.
-        try {
-          await this.#finalizeAbruptExit(debate.id);
-        } catch (error: unknown) {
-          const message = error instanceof Error ? error.message : String(error);
-          this.deps.logger?.warn(
-            `DebatePersister: finalizeAbruptExit failed for debateId='${debate.id}': ${message}`,
-          );
+        if (this.#isInterruptedSignal()) {
+          try {
+            await this.#finalizeAbruptExit(debate.id);
+          } catch (error: unknown) {
+            if (sourceError !== undefined) {
+              throw new AggregateError(
+                [sourceError, error],
+                `DebatePersister: finalizeAbruptExit failed for debateId='${debate.id}'`,
+              );
+            }
+            throw error;
+          }
+        } else {
+          try {
+            await this.#finalizeAbruptExit(debate.id);
+          } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.deps.logger?.warn(
+              `DebatePersister: finalizeAbruptExit failed for debateId='${debate.id}': ${message}`,
+            );
+          }
         }
       }
     }
