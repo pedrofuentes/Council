@@ -1235,6 +1235,36 @@ describe("buildConveneCommand — user panels with slug references", () => {
     }
   });
 
+  it("migrates built-in experts before resolving --experts on first run", async () => {
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: () => undefined,
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "Built-in ad-hoc experts topic",
+      "--experts",
+      "senior,security",
+      "--format",
+      "json",
+      "--engine",
+      "mock",
+    ]);
+
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const panels = await new PanelRepository(db).findAll();
+      expect(panels).toHaveLength(1);
+      const experts = await new ExpertRepository(db).findByPanelId(panels[0]?.id ?? "");
+      expect(experts.map((e) => e.slug).sort()).toEqual(["security", "senior"]);
+    } finally {
+      await db.destroy();
+    }
+  });
+
   it("errors when --experts references a slug that is not in the library", async () => {
     await seedLibraryExpert("library-known", "Known");
 
