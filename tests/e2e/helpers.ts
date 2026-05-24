@@ -124,19 +124,39 @@ export async function createE2EContext(): Promise<E2EContext> {
 }
 
 export async function cleanupE2EContext(ctx: E2EContext): Promise<void> {
+  const activeHomes = [
+    process.env["COUNCIL_HOME"],
+    process.env["COUNCIL_DATA_HOME"],
+    ctx.testHome,
+    ctx.testDataHome,
+  ];
+  const seenHomes = new Set<string>();
+
   restoreEnvVar("COUNCIL_HOME", ctx.originalHome);
   restoreEnvVar("COUNCIL_DATA_HOME", ctx.originalDataHome);
 
-  try {
-    await fs.access(path.join(ctx.testHome, "council.db"));
-    await waitForDbRelease(ctx.testHome);
-  } catch (error: unknown) {
-    const code = typeof error === "object" && error !== null && "code" in error
-      ? String((error as { readonly code?: unknown }).code ?? "")
-      : "";
+  for (const home of activeHomes) {
+    if (home === undefined) {
+      continue;
+    }
 
-    if (code !== "ENOENT" && !isBestEffortCleanupError(error)) {
-      throw error;
+    const normalizedHome = normalizeTempPath(home);
+    if (seenHomes.has(normalizedHome)) {
+      continue;
+    }
+    seenHomes.add(normalizedHome);
+
+    try {
+      await fs.access(path.join(home, "council.db"));
+      await waitForDbRelease(home);
+    } catch (error: unknown) {
+      const code = typeof error === "object" && error !== null && "code" in error
+        ? String((error as { readonly code?: unknown }).code ?? "")
+        : "";
+
+      if (code !== "ENOENT" && !isBestEffortCleanupError(error)) {
+        throw error;
+      }
     }
   }
 
