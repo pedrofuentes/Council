@@ -5,7 +5,7 @@ import { buildProgram, configureOutputEncoding } from "../../../src/bin/council.
 describe("buildProgram", () => {
   describe("Windows UTF-8 output", () => {
     it("wraps stdout and stderr writes with UTF-8 on Windows", () => {
-      const calls: Array<{ target: string; chunk: string; encoding: BufferEncoding | undefined }> = [];
+      const calls: { target: string; chunk: string; encoding: BufferEncoding | undefined }[] = [];
       const stdout = {
         setDefaultEncoding: (_encoding: BufferEncoding) => undefined,
         write: (
@@ -56,7 +56,7 @@ describe("buildProgram", () => {
     });
 
     it("skips output write wrapping on non-Windows platforms", () => {
-      const calls: Array<{ target: string; chunk: string; encoding: BufferEncoding | undefined }> = [];
+      const calls: { target: string; chunk: string; encoding: BufferEncoding | undefined }[] = [];
       const stdout = {
         setDefaultEncoding: (_encoding: BufferEncoding) => undefined,
         write: (chunk: string | Uint8Array, encoding?: BufferEncoding | ((error?: Error | null) => void)) => {

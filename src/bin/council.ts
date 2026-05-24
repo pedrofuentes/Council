@@ -45,11 +45,50 @@ import {
 import { selectModelInteractively } from "../cli/first-run-model-select.js";
 import { loadConfigWithMeta } from "../config/index.js";
 
+type WriteCallback = (error?: Error | null) => void;
+
 interface EncodingWritable {
-  setDefaultEncoding(encoding: BufferEncoding): void;
+  write(
+    chunk: string | Uint8Array,
+    encoding?: BufferEncoding | WriteCallback,
+    cb?: WriteCallback,
+  ): boolean;
 }
 
 const UTF8_OUTPUT_ENCODING: BufferEncoding = "utf8";
+const wrappedOutputStreams = new WeakSet<EncodingWritable>();
+
+function wrapUtf8Writes(stream: EncodingWritable): void {
+  if (wrappedOutputStreams.has(stream)) {
+    return;
+  }
+
+  const originalWrite = stream.write.bind(stream);
+  stream.write = (
+    chunk: string | Uint8Array,
+    encoding?: BufferEncoding | WriteCallback,
+    cb?: WriteCallback,
+  ): boolean => {
+    if (typeof chunk !== "string") {
+      return originalWrite(chunk, encoding, cb);
+    }
+
+    if (typeof encoding === "string") {
+      return originalWrite(chunk, encoding, cb);
+    }
+
+    if (typeof encoding === "function") {
+      return originalWrite(chunk, UTF8_OUTPUT_ENCODING, encoding);
+    }
+
+    if (cb !== undefined) {
+      return originalWrite(chunk, UTF8_OUTPUT_ENCODING, cb);
+    }
+
+    return originalWrite(chunk, UTF8_OUTPUT_ENCODING);
+  };
+  wrappedOutputStreams.add(stream);
+}
 
 export function configureOutputEncoding(
   platform: NodeJS.Platform = process.platform,
@@ -60,8 +99,8 @@ export function configureOutputEncoding(
     return;
   }
 
-  stdout.setDefaultEncoding(UTF8_OUTPUT_ENCODING);
-  stderr.setDefaultEncoding(UTF8_OUTPUT_ENCODING);
+  wrapUtf8Writes(stdout);
+  wrapUtf8Writes(stderr);
 }
 
 configureOutputEncoding();
