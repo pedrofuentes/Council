@@ -51,7 +51,7 @@ import { PanelRepository } from "../../memory/repositories/panels.js";
 import { runExtractMemoryHook } from "../extract-memory-hook.js";
 
 import { stripControlChars } from "../strip-control-chars.js";
-import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
+import { defaultErrorWriter, defaultWriter, isQuiet, type Writer } from "./writer.js";
 import {
   ENGINE_KINDS,
   type EngineKind,
@@ -107,6 +107,7 @@ export interface ConveneOptions {
   readonly heuristicSummaries?: boolean;
   readonly heuristicMemory?: boolean;
   readonly yes?: boolean;
+  readonly verbose?: boolean;
   readonly model?: string;
 }
 
@@ -124,6 +125,7 @@ interface ResolvedConveneOptions {
   readonly heuristicSummaries?: boolean;
   readonly heuristicMemory?: boolean;
   readonly yes?: boolean;
+  readonly verbose?: boolean;
 }
 
 /**
@@ -216,6 +218,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         "Useful for offline tests and air-gapped environments.",
     )
     .option("--yes", "Skip the auto-compose confirmation prompt (non-interactive runs)")
+    .option("--verbose", "Show migration summaries even when no items changed")
     .option("--model <model>", "Model to use for experts (default: from config)")
     .action(async (topic: string, raw: ConveneOptions) => {
       const admission = checkTopicAdmission(topic);
@@ -229,6 +232,22 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       const defaultModel = raw.model ?? config.defaults.model;
       const resolvedEngine = resolveEngine(raw.engine, config);
       const humanNames: readonly string[] = raw.human ?? [];
+      const writeInformationalNotice = (message: string): void => {
+        if (!isQuiet()) {
+          writeError(message);
+        }
+      };
+      let mockWarningEmitted = false;
+      const emitMockWarning = (): void => {
+        if (mockWarningEmitted || resolvedEngine !== "mock" || isQuiet()) {
+          return;
+        }
+        mockWarningEmitted = true;
+        writeError(
+          "\n!! [MOCK ENGINE] Running with deterministic offline mock — responses are NOT real.\n" +
+            "   This debate will be persisted to the local DB tagged engine='mock'.\n\n",
+        );
+      };
       const templateName = raw.panel ?? raw.template;
       const requestedExpertSlugs =
         raw.experts !== undefined
@@ -244,7 +263,13 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           writeError,
         );
         if (templateName !== undefined) {
-          const panel = await loadConvenePanelTemplate(templateName, dataHome, libraryDbPath);
+          const panel = await loadConvenePanelTemplate(
+            templateName,
+            dataHome,
+            libraryDbPath,
+            writeError,
+            raw.verbose === true,
+          );
           template = {
             name: panel.name,
             ...(panel.description !== undefined ? { description: panel.description } : {}),
@@ -258,11 +283,18 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           };
         }
       } else if (templateName !== undefined) {
-        template = await resolveConvenePanelTemplate(templateName, dataHome, libraryDbPath, writeError);
+        template = await resolveConvenePanelTemplate(
+          templateName,
+          dataHome,
+          libraryDbPath,
+          writeError,
+          raw.verbose === true,
+        );
       } else {
         // §2.5 auto-compose: spin up a temporary engine session, ask the
         // composer to design the panel, then tear it down. The real debate
         // gets its own engine instance via runWithEngine() below.
+        emitMockWarning();
         const composeEngine = deps.engineFactory
           ? deps.engineFactory()
           : makeEngineFromKind(resolvedEngine);
@@ -284,13 +316,13 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             writeError(`!! engine.stop() failed during auto-compose cleanup: ${msg}\n`);
           });
         }
-        writeError(`\n🏛️  Auto-composed panel: ${stripControlChars(template.name)}\n`);
+        writeInformationalNotice(`\n🏛️  Auto-composed panel: ${stripControlChars(template.name)}\n`);
         for (const expert of template.experts) {
-          writeError(
+          writeInformationalNotice(
             `  • ${stripControlChars(expert.displayName)} — ${stripControlChars(expert.role)}\n`,
           );
         }
-        writeError("\n");
+        writeInformationalNotice("\n");
 
         // Confirmation gate — auto-composed panels are LLM-generated and may
         // not match user intent. Three branches:
@@ -338,6 +370,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         yes: raw.yes === true,
         heuristicSummaries: raw.heuristicSummaries === true,
         heuristicMemory: raw.heuristicMemory === true,
+        ...(raw.verbose === true ? { verbose: true } : {}),
         ...(raw.strategy !== undefined ? { strategy: raw.strategy } : {}),
         ...(raw.contextScope !== undefined ? { contextScope: raw.contextScope } : {}),
         ...(raw.summarizeAfter !== undefined && Number.isFinite(raw.summarizeAfter)
@@ -346,10 +379,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       };
 
       if (opts.engine === "mock") {
-        writeError(
-          "\n!! [MOCK ENGINE] Running with deterministic offline mock — responses are NOT real.\n" +
-            "   This debate will be persisted to the local DB tagged engine='mock'.\n\n",
-        );
+        emitMockWarning();
       }
 
       const dbPath = path.join(getCouncilHome(), "council.db");
@@ -623,15 +653,30 @@ function validateRequestedExpertSlugs(
   failConveneUserError(writeError, message);
 }
 
-async function migratePanelsIfNeeded(dataHome: string, dbPath: string): Promise<void> {
+async function migratePanelsIfNeeded(
+  dataHome: string,
+  dbPath: string,
+  writeError: Writer,
+  verbose: boolean,
+): Promise<void> {
   const migrationDb = await createDatabase(dbPath);
   try {
-    if (await isMigrationNeeded(dataHome, migrationDb)) {
+    const shouldRunMigration = verbose || (await isMigrationNeeded(dataHome, migrationDb));
+    if (shouldRunMigration) {
       const library = new FileExpertLibrary(dataHome, migrationDb);
-      await migrateBuiltInTemplates(dataHome, library, migrationDb);
+      await migrateBuiltInTemplates(dataHome, library, migrationDb, {
+        quiet: isQuiet(),
+        verbose,
+        writeNotice: (message) => {
+          writeError(message);
+        },
+      });
     }
   } finally {
-    await migrationDb.destroy();
+    await migrationDb.destroy().catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      writeError(`!! migration db.destroy() failed during cleanup: ${message}\n`);
+    });
   }
 }
 
@@ -639,8 +684,10 @@ async function loadConvenePanelTemplate(
   templateName: string,
   dataHome: string,
   dbPath: string,
+  writeError: Writer,
+  verbose: boolean,
 ): Promise<PanelDefinition> {
-  await migratePanelsIfNeeded(dataHome, dbPath);
+  await migratePanelsIfNeeded(dataHome, dbPath, writeError, verbose);
   return loadPanel(templateName, dataHome);
 }
 
@@ -675,7 +722,10 @@ async function resolveLibraryExperts(
     }
     return resolved;
   } finally {
-    await libraryDb.destroy();
+    await libraryDb.destroy().catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      writeError(`!! expert library db.destroy() failed during cleanup: ${message}\n`);
+    });
   }
 }
 
@@ -684,8 +734,9 @@ async function resolveConvenePanelTemplate(
   dataHome: string,
   dbPath: string,
   writeError: Writer,
+  verbose: boolean,
 ): Promise<ResolvedPanelDefinition> {
-  const panel = await loadConvenePanelTemplate(templateName, dataHome, dbPath);
+  const panel = await loadConvenePanelTemplate(templateName, dataHome, dbPath, writeError, verbose);
   const hasSlugRefs = panel.experts.some((entry) => typeof entry === "string");
   if (!hasSlugRefs) {
     return assertAllInline(panel, templateName);
@@ -704,7 +755,10 @@ async function resolveConvenePanelTemplate(
     }
     return inlineResolvedPanel(panel, resolved);
   } finally {
-    await libraryDb.destroy();
+    await libraryDb.destroy().catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      writeError(`!! template expert db.destroy() failed during cleanup: ${message}\n`);
+    });
   }
 }
 
