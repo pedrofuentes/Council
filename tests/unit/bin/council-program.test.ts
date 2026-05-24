@@ -14,6 +14,20 @@ function createProbeProgram(
   return program;
 }
 
+function buildProgramWithStubbedAction(
+  commandName: string,
+  options: BuildProgramOptions,
+  onAction: () => void = () => undefined,
+): Command {
+  const program = buildProgram(options);
+  const cmd = program.commands.find((c) => c.name() === commandName);
+  if (cmd === undefined) {
+    throw new Error(`Subcommand ${commandName} not registered`);
+  }
+  cmd.action(onAction);
+  return program;
+}
+
 describe("buildProgram first-run hook", () => {
   beforeEach(() => {
     resetFirstRunSetupForTests();
@@ -140,5 +154,60 @@ describe("buildProgram first-run hook", () => {
 
     expect(loadConfigWithMeta).toHaveBeenCalledTimes(1);
     expect(selectModelInteractively).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips first-run setup for the doctor command", async () => {
+    const loadConfigWithMeta = vi.fn(async () => ({
+      config: ConfigSchema.parse({}),
+      isFirstRun: true,
+    }));
+    const selectModelInteractively = vi.fn(async () => "claude-sonnet-4.5");
+    const action = vi.fn();
+
+    const program = buildProgramWithStubbedAction(
+      "doctor",
+      {
+        firstRunSetup: {
+          loadConfigWithMeta,
+          selectModelInteractively,
+          write: () => undefined,
+        },
+      },
+      action,
+    );
+
+    await program.parseAsync(["node", "council", "doctor"]);
+
+    expect(action).toHaveBeenCalledTimes(1);
+    expect(loadConfigWithMeta).not.toHaveBeenCalled();
+    expect(selectModelInteractively).not.toHaveBeenCalled();
+  });
+
+  it("skips first-run setup for the config command (including subcommands)", async () => {
+    const loadConfigWithMeta = vi.fn(async () => ({
+      config: ConfigSchema.parse({}),
+      isFirstRun: true,
+    }));
+    const selectModelInteractively = vi.fn(async () => "claude-sonnet-4.5");
+    const action = vi.fn();
+
+    const program = buildProgram({
+      firstRunSetup: {
+        loadConfigWithMeta,
+        selectModelInteractively,
+        write: () => undefined,
+      },
+    });
+    const configCmd = program.commands.find((c) => c.name() === "config");
+    if (configCmd === undefined) throw new Error("config command not registered");
+    const showCmd = configCmd.commands.find((c) => c.name() === "show");
+    if (showCmd === undefined) throw new Error("config show subcommand not registered");
+    showCmd.action(action);
+
+    await program.parseAsync(["node", "council", "config", "show"]);
+
+    expect(action).toHaveBeenCalledTimes(1);
+    expect(loadConfigWithMeta).not.toHaveBeenCalled();
+    expect(selectModelInteractively).not.toHaveBeenCalled();
   });
 });
