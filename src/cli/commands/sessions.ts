@@ -36,6 +36,12 @@ function statusIcon(status: DebateStatus | undefined): string {
   }
 }
 
+function truncateTopic(topic: string | null, maxLength: number): string {
+  if (topic === null) return "(no topic)";
+  if (topic.length <= maxLength) return topic;
+  return topic.slice(0, maxLength - 3) + "...";
+}
+
 export function buildSessionsCommand(write: Writer = defaultWriter): Command {
   const cmd = new Command("sessions");
   cmd.alias("history");
@@ -65,7 +71,7 @@ export function buildSessionsCommand(write: Writer = defaultWriter): Command {
         const turnRepo = new TurnRepository(db);
 
         for (const session of sessions) {
-          const topic = session.topic ?? "(no topic)";
+          const topic = truncateTopic(session.topic, 80);
           const debates = await debateRepo.findByPanelId(session.id);
           const experts = await expertRepo.findByPanelId(session.id);
           const latest = debates.length > 0 ? debates[debates.length - 1] : undefined;
