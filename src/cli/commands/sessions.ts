@@ -26,6 +26,8 @@ function statusIcon(status: DebateStatus | undefined): string {
   switch (status) {
     case "completed":
       return symbols.complete;
+    case "interrupted":
+      return symbols.warn;
     case "failed":
     case "aborted":
       return symbols.error;
@@ -78,6 +80,7 @@ export function buildSessionsCommand(write: Writer = defaultWriter): Command {
           write(`  ${icon} ${session.name} — ${topic}\n`);
           write(`    panel: ${session.name}\n`);
           write(`    id: ${session.id}\n`);
+          write(`    status: ${latest?.status ?? "none"}\n`);
           write(`    experts: ${experts.length}, turns: ${turnCount}\n`);
           write(`    created: ${session.createdAt}\n`);
         }

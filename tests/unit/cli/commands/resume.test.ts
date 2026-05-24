@@ -505,7 +505,9 @@ describe("buildResumeCommand", () => {
       expect(autoResumed).toBeDefined();
       expect(autoResumed?.prompt).toBe("Resume this interrupted prompt");
       expect(autoResumed?.status).toBe("completed");
-      expect(debates.find((debate) => debate.id === interruptedDebateId)?.status).toBe("interrupted");
+      expect(debates.find((debate) => debate.id === interruptedDebateId)?.status).toBe(
+        "interrupted",
+      );
     } finally {
       await verifyDb.destroy();
     }

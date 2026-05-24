@@ -150,14 +150,15 @@ async function selectMostSubstantiveDebate(
  * Map persisted `DebateStatus` to the `DebateEndReason` the renderer
  * expects on the terminal `debate.end` event.
  *
- * `running` (debate was abandoned mid-stream — no terminal event ever
- * fired) maps to `aborted` so consumers can distinguish from cleanly
- * completed debates without inventing a new event variant.
+ * `running` and `interrupted` map to `aborted` because `DebateEndReason`
+ * has no dedicated interrupted variant; the persisted debate status still
+ * preserves the more specific lifecycle state for callers that need it.
  */
 function reasonFromStatus(status: DebateStatus): DebateEndReason {
   switch (status) {
     case "completed":
       return "completed";
+    case "interrupted":
     case "aborted":
       return "aborted";
     case "failed":

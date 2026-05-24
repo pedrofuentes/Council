@@ -403,9 +403,9 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         // T6: wire Ctrl+C (SIGINT) to gracefully abort the debate.
         // The signal is forwarded through runWithEngine to Debate.run,
         // which stops at the next turn boundary and emits a terminal
-        // debate.end event with reason: "aborted". Partial results
-        // (panel row + any completed turns) are preserved because the
-        // DebatePersister writes turns as they stream.
+        // debate.end event with reason: "aborted". DebatePersister then
+        // flushes any buffered deltas as a partial turn and marks the
+        // persisted debate row `interrupted`, so resume can auto-continue.
         //
         // Lifecycle invariants (Sentinel pr769 findings 1 & 2):
         //   1. The handler is registered BEFORE any setup that can

@@ -3,10 +3,11 @@
  * that already has at least one persisted debate (ROADMAP §3.2).
  *
  * Two modes:
- *   1. Transcript mode (no --prompt) — replays the most recent
- *      debate's turns. No engine, no LLM.
- *   2. Continue mode (--prompt) — runs a NEW debate against the
- *      same panel/experts via the shared `runWithEngine()` helper.
+ *   1. Transcript mode (no --prompt) — replays the selected debate's
+ *      turns. No engine, no LLM.
+ *   2. Continue mode (--prompt, or auto-resume from an interrupted
+ *      latest debate) — runs a NEW debate against the same panel/
+ *      experts via the shared `runWithEngine()` helper.
  *
  * Panel resolution:
  *   - Exact match first
@@ -20,6 +21,7 @@ import { Command, Option } from "commander";
 import { DEFAULT_MODEL, getCouncilHome, loadConfig, resolveEngine } from "../../config/index.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import { createDatabase } from "../../memory/db.js";
+import { DebateRepository } from "../../memory/repositories/debates.js";
 import { applyRecalledMemory, recallMemory } from "../../memory/expert-memory.js";
 import {
   loadTranscript,
@@ -66,7 +68,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
       new Option("--format <kind>", "Output format").choices([...RENDERER_FORMATS]).default("auto"),
     )
     .option("--prompt <prompt>", "Run a new debate against the same panel with this prompt")
-    .addOption(new Option("--engine <kind>", "Engine for --prompt mode").choices([...ENGINE_KINDS]))
+    .addOption(new Option("--engine <kind>", "Engine for continue mode").choices([...ENGINE_KINDS]))
     .option("--max-rounds <n>", "Max rounds for --prompt mode (default: 1)", (v) =>
       Number.parseInt(v, 10),
     )
@@ -89,29 +91,6 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
     )
     .option("--latest", "Resume the most recent panel session")
     .action(async (panelArg: string | undefined, raw: ResumeOptions) => {
-      let engineKind: EngineKind | undefined;
-      let defaultModel: string | undefined;
-      if (raw.prompt !== undefined) {
-        const config = await loadConfig();
-        engineKind = resolveEngine(raw.engine, config);
-        defaultModel = config.defaults.model;
-      }
-
-      const opts: ResumeOptions = {
-        format: parseFormat(raw.format),
-        ...(raw.prompt !== undefined ? { prompt: raw.prompt } : {}),
-        ...(engineKind !== undefined ? { engine: engineKind } : {}),
-        maxRounds: Number.isFinite(raw.maxRounds)
-          ? raw.maxRounds
-          : raw.prompt !== undefined
-            ? DEFAULT_MAX_ROUNDS_CONTINUE
-            : DEFAULT_MAX_ROUNDS_TRANSCRIPT,
-        maxWords: Number.isFinite(raw.maxWords) ? raw.maxWords : DEFAULT_MAX_WORDS,
-        ...(raw.strategy !== undefined ? { strategy: raw.strategy } : {}),
-        heuristicMemory: raw.heuristicMemory === true,
-        latest: raw.latest === true,
-      };
-
       const councilHome = getCouncilHome();
       const dbPath = path.join(councilHome, "council.db");
       const db = await createDatabase(dbPath);
@@ -120,12 +99,43 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
           db,
           dataHome: councilHome,
           panelArg,
-          latest: opts.latest === true,
+          latest: raw.latest === true,
           writeError,
           missingPanelMessage:
             "Panel name is required. Use `council resume <name>` or `council resume --latest`.",
         });
         const resolved = await loadTranscript(db, panelName);
+        const debates = await new DebateRepository(db).findByPanelId(resolved.panel.id);
+        const latestDebate = debates[debates.length - 1];
+        const autoResumePrompt =
+          raw.prompt === undefined && latestDebate?.status === "interrupted"
+            ? latestDebate.prompt
+            : undefined;
+        const continuePrompt = raw.prompt ?? autoResumePrompt;
+        const isContinueMode = continuePrompt !== undefined;
+
+        let engineKind: EngineKind | undefined;
+        let defaultModel: string | undefined;
+        if (isContinueMode) {
+          const config = await loadConfig();
+          engineKind = resolveEngine(raw.engine, config);
+          defaultModel = config.defaults.model;
+        }
+
+        const opts: ResumeOptions = {
+          format: parseFormat(raw.format),
+          ...(continuePrompt !== undefined ? { prompt: continuePrompt } : {}),
+          ...(engineKind !== undefined ? { engine: engineKind } : {}),
+          maxRounds: Number.isFinite(raw.maxRounds)
+            ? raw.maxRounds
+            : isContinueMode
+              ? DEFAULT_MAX_ROUNDS_CONTINUE
+              : DEFAULT_MAX_ROUNDS_TRANSCRIPT,
+          maxWords: Number.isFinite(raw.maxWords) ? raw.maxWords : DEFAULT_MAX_WORDS,
+          ...(raw.strategy !== undefined ? { strategy: raw.strategy } : {}),
+          heuristicMemory: raw.heuristicMemory === true,
+          latest: raw.latest === true,
+        };
 
         if (opts.prompt === undefined) {
           // Transcript replay: "auto" degrades to plain (Ink would just
@@ -135,10 +145,14 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
           return;
         }
 
+        if (autoResumePrompt !== undefined) {
+          writeError("Resuming interrupted debate...\n");
+        }
+
         const continueEngine = opts.engine ?? "mock";
         if (continueEngine === "mock") {
           writeError(
-            "\n!! [MOCK ENGINE] --prompt running with deterministic offline mock — responses are NOT real.\n\n",
+            "\n!! [MOCK ENGINE] resume continue mode running with deterministic offline mock — responses are NOT real.\n\n",
           );
         }
 
@@ -227,6 +241,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
 Examples:
   $ council resume my-panel                                          # show transcript
   $ council resume my-panel --prompt "What about costs?" --engine copilot  # continue debate
+  $ council resume my-panel                                          # auto-continues if latest debate was interrupted
   $ council resume --latest                                          # most recent panel
   $ council resume arch                                              # prefix match
 `,

@@ -196,6 +196,7 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
       panelId: opts.panelId,
       expertSlugToId: opts.expertSlugToId,
       moderator: opts.moderator,
+      ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
     });
 
     const sink: Sink = { write: opts.write, writeError: opts.writeError };

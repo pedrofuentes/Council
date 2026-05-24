@@ -17,15 +17,17 @@
  *   - On `persist()` entry (BEFORE the first event is yielded): one
  *     `debates` row with status='running', the user prompt, and the
  *     moderator strategy name.
- *   - On `turn.start`: the persister tracks (round, seq) so the matching
- *     `turn.end` can write a turn row with the correct ordering.
+ *   - On `turn.start`: the persister tracks (round, seq) and buffers any
+ *     subsequent `turn.delta` chunks so the matching `turn.end` can write a
+ *     turn row with the correct ordering, or SIGINT can flush a partial turn.
  *   - On `turn.end`: one `turns` row with debate_id, round, seq,
  *     speaker_kind='expert', expert_id (looked up via expertSlugToId).
  *     Unmapped slugs are silently skipped — the persister logs nothing.
  *     The orchestrator still tracks the turn; only the persisted side
  *     effect is dropped.
  *   - On `debate.end`: updates the debate row with status='completed'
- *     (or 'aborted'/'failed' depending on the reason) and ended_at.
+ *     (or 'interrupted'/'aborted'/'failed' depending on the reason and
+ *     signal state) and ended_at.
  *
  * **Observability** (#119): a `turn.end` event with no matching prior
  * `turn.start` indicates an orchestrator protocol violation that should
@@ -75,15 +77,23 @@ export interface DebatePersisterDeps {
   /** Moderator strategy name written verbatim to `debates.moderator`. */
   readonly moderator: string;
   /**
+   * AbortSignal from the CLI's SIGINT handler. When aborted mid-turn,
+   * the persister flushes buffered deltas as a partial turn and marks
+   * the debate row `interrupted` instead of generic `aborted`.
+   */
+  readonly signal?: AbortSignal;
+  /**
    * Optional logger for orchestrator protocol-violation warnings (#119).
    * When omitted, violations are silently swallowed (legacy behavior).
    */
   readonly logger?: DebatePersisterLogger;
 }
 
-interface TurnPosition {
-  readonly round: number;
-  readonly seq: number;
+interface PendingTurn {
+  round: number;
+  seq: number;
+  speakerKind: "expert" | "human";
+  content: string;
 }
 
 function reasonToStatus(reason: DebateEndReason): DebateStatus {
@@ -101,9 +111,10 @@ function reasonToStatus(reason: DebateEndReason): DebateStatus {
 
 export class DebatePersister {
   #debateId: string | undefined;
-  // Tracks the (round, seq) for the currently-streaming turn per expert
-  // so turn.end (which lacks round/seq) can write the correct row.
-  readonly #pendingTurnPosition = new Map<string, TurnPosition>();
+  // Tracks the currently-streaming turn per expert so turn.end can write the
+  // correct row, and so a SIGINT-aborted turn can flush buffered deltas as a
+  // partial final turn before the debate is marked interrupted.
+  readonly #pendingTurns = new Map<string, PendingTurn>();
 
   constructor(private readonly deps: DebatePersisterDeps) {}
 
@@ -118,22 +129,17 @@ export class DebatePersister {
    *
    * #117: on abnormal exit BEFORE any debate.end (source throws OR
    * consumer breaks the for-await loop), the wrapped iterator's `finally`
-   * marks the debate row as `status='aborted'` with `endedAt` set. Without
-   * this, the row would stay at `status='running'` forever, breaking the
-   * resumable/abandoned distinction §3.2 session-resume needs.
+   * marks the debate row as terminal. Without this, the row would stay at
+   * `status='running'` forever, breaking resume semantics.
    *
    * #150: once the terminal `debate.end` update is ATTEMPTED (success or
    * failure), the `finally` block must NOT touch the row. If the terminal
-   * update succeeded, the row is final ('completed'/'aborted'/etc.). If
-   * it failed, the row stays at its pre-attempt state ('running') and the
-   * thrown error bubbles to the caller — that is the truthful state.
-   * Previously the finally would silently overwrite the row to 'aborted'
-   * AND swallow the second error via .catch(), masking the original
-   * failure as if the debate had been aborted.
+   * update succeeded, the row is final. If it failed, the row stays at its
+   * pre-attempt state ('running') and the thrown error bubbles to the caller.
    */
   async *persist(source: AsyncIterable<DebateEvent>, prompt: string): AsyncIterable<DebateEvent> {
     // #120: enforce single-use. A second persist() call on the same
-    // instance would silently overwrite #debateId and let pendingTurn
+    // instance would silently overwrite #debateId and let pending-turn
     // state from the first debate leak into the second. Construct a
     // fresh persister per debate; this throws if reuse is attempted.
     if (this.#debateId !== undefined) {
@@ -154,28 +160,43 @@ export class DebatePersister {
       for await (const evt of source) {
         switch (evt.kind) {
           case "turn.start": {
-            this.#pendingTurnPosition.set(evt.expertSlug, { round: evt.round, seq: evt.seq });
+            this.#pendingTurns.set(evt.expertSlug, {
+              round: evt.round,
+              seq: evt.seq,
+              speakerKind: evt.speakerKind ?? "expert",
+              content: "",
+            });
+            break;
+          }
+          case "turn.delta": {
+            const pending = this.#pendingTurns.get(evt.expertSlug);
+            if (pending) {
+              pending.content += evt.text;
+              pending.speakerKind = evt.speakerKind ?? pending.speakerKind;
+            }
             break;
           }
           case "turn.end": {
             await this.#persistTurn(evt.expertSlug, evt.content, evt.speakerKind ?? "expert");
-            this.#pendingTurnPosition.delete(evt.expertSlug);
+            this.#pendingTurns.delete(evt.expertSlug);
             break;
           }
           case "debate.end": {
+            if (evt.reason === "aborted" && this.#isInterruptedSignal()) {
+              await this.#flushPendingTurns();
+            }
             // #150: mark the attempt BEFORE the await so a thrown
             // update doesn't trigger the finally's abort-overwrite.
             terminalUpdateAttempted = true;
             await this.deps.debates.update(debate.id, {
-              status: reasonToStatus(evt.reason),
+              status: this.#terminalStatus(evt.reason),
               endedAt: new Date().toISOString(),
             });
             break;
           }
           default:
-            // panel.assembled, round.start/end, turn.delta, cost.update,
-            // error — passthrough only, no persistence side effect at the
-            // debate/turn level. (Per-event logging lands in §3.6 export.)
+            // panel.assembled, round.start/end, cost.update, error, turn.retry —
+            // passthrough only, no persistence side effect at the debate/turn level.
             break;
         }
         yield evt;
@@ -186,21 +207,51 @@ export class DebatePersister {
         // finalize so session-resume can distinguish abandoned from running.
         // Best-effort: we're already in a failure path, so swallow any
         // DB error here rather than masking the original throw.
-        await this.deps.debates
-          .update(debate.id, {
-            status: "aborted",
-            endedAt: new Date().toISOString(),
-          })
-          .catch(() => undefined);
+        await this.#finalizeAbruptExit(debate.id).catch(() => undefined);
       }
     }
   }
 
-  async #persistTurn(expertSlug: string, content: string, speakerKind: "expert" | "human" = "expert"): Promise<void> {
-    const expertId = this.deps.expertSlugToId[expertSlug];
-    if (!expertId || !this.#debateId) return;
-    const pos = this.#pendingTurnPosition.get(expertSlug);
-    if (!pos) {
+  #isInterruptedSignal(): boolean {
+    return this.deps.signal?.aborted === true;
+  }
+
+  #terminalStatus(reason: DebateEndReason): DebateStatus {
+    if (reason === "aborted" && this.#isInterruptedSignal()) {
+      return "interrupted";
+    }
+    return reasonToStatus(reason);
+  }
+
+  async #finalizeAbruptExit(debateId: string): Promise<void> {
+    if (this.#isInterruptedSignal()) {
+      await this.#flushPendingTurns();
+    }
+    await this.deps.debates.update(debateId, {
+      status: this.#isInterruptedSignal() ? "interrupted" : "aborted",
+      endedAt: new Date().toISOString(),
+    });
+  }
+
+  async #flushPendingTurns(): Promise<void> {
+    const pendingTurns = [...this.#pendingTurns.entries()];
+    this.#pendingTurns.clear();
+    for (const [expertSlug, pending] of pendingTurns) {
+      // We reuse the normal turns table and let the interrupted debate status
+      // carry the "incomplete" meaning for the final persisted partial turn.
+      if (pending.content.length > 0) {
+        await this.#persistPendingTurn(expertSlug, pending, pending.content, pending.speakerKind);
+      }
+    }
+  }
+
+  async #persistTurn(
+    expertSlug: string,
+    content: string,
+    speakerKind: "expert" | "human" = "expert",
+  ): Promise<void> {
+    const pending = this.#pendingTurns.get(expertSlug);
+    if (!pending) {
       // #119: turn.end without a matching turn.start signals an
       // orchestrator protocol violation. Warn (when a logger is
       // configured) so regressions are detectable; otherwise drop
@@ -210,10 +261,21 @@ export class DebatePersister {
       );
       return;
     }
+    await this.#persistPendingTurn(expertSlug, pending, content, speakerKind);
+  }
+
+  async #persistPendingTurn(
+    expertSlug: string,
+    pending: PendingTurn,
+    content: string,
+    speakerKind: "expert" | "human",
+  ): Promise<void> {
+    const expertId = this.deps.expertSlugToId[expertSlug];
+    if (!expertId || !this.#debateId) return;
     await this.deps.turns.create({
       debateId: this.#debateId,
-      round: pos.round,
-      seq: pos.seq,
+      round: pending.round,
+      seq: pending.seq,
       speakerKind,
       expertId,
       content,

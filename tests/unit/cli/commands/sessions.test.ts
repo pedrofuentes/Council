@@ -75,9 +75,7 @@ describe("buildSessionsCommand", () => {
     it("lists a seeded session in plain format", async () => {
       // Seed a panel row directly via the repo so we don't depend on `convene`
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { PanelRepository } = await import(
-        "../../../../src/memory/repositories/panels.js"
-      );
+      const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
       const db = await createDatabase(path.join(testHome, "council.db"));
       const repo = new PanelRepository(db);
       await repo.create({
@@ -99,12 +97,8 @@ describe("buildSessionsCommand", () => {
 
     it("shows interrupted debate status distinctly in plain output", async () => {
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { PanelRepository } = await import(
-        "../../../../src/memory/repositories/panels.js"
-      );
-      const { DebateRepository } = await import(
-        "../../../../src/memory/repositories/debates.js"
-      );
+      const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
+      const { DebateRepository } = await import("../../../../src/memory/repositories/debates.js");
       const db = await createDatabase(path.join(testHome, "council.db"));
       const panelRepo = new PanelRepository(db);
       const debateRepo = new DebateRepository(db);
@@ -136,9 +130,7 @@ describe("buildSessionsCommand", () => {
 
     it("lists a seeded session as NDJSON when format=json", async () => {
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { PanelRepository } = await import(
-        "../../../../src/memory/repositories/panels.js"
-      );
+      const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
       const db = await createDatabase(path.join(testHome, "council.db"));
       const repo = new PanelRepository(db);
       await repo.create({
@@ -162,9 +154,7 @@ describe("buildSessionsCommand", () => {
 
     it("uses COUNCIL_DATA_HOME when COUNCIL_HOME is unset", async () => {
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { PanelRepository } = await import(
-        "../../../../src/memory/repositories/panels.js"
-      );
+      const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
       const customDataHome = path.join(testHome, "data-home");
       await fs.mkdir(customDataHome, { recursive: true });
       delete process.env["COUNCIL_HOME"];
