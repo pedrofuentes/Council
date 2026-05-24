@@ -1125,6 +1125,51 @@ describe("buildConveneCommand — user panels with slug references", () => {
     expect(phases).toEqual(["opening", "cross-examination", "rebuttal", "synthesis"]);
   });
 
+  it("uses template maxRounds defaults with --experts in freeform mode", async () => {
+    await seedLibraryExpert("round-alpha", "RoundAlpha");
+    await seedLibraryExpert("round-beta", "RoundBeta");
+    await writeUserPanel(
+      "freeform-rounds-template",
+      [
+        "name: freeform-rounds-template",
+        "defaults:",
+        "  maxRounds: 3",
+        "experts:",
+        "  - template-missing",
+        "",
+      ].join("\n"),
+    );
+
+    let captured = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (s) => {
+        captured += s;
+      },
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "Freeform template defaults topic",
+      "--template",
+      "freeform-rounds-template",
+      "--experts",
+      "round-alpha,round-beta",
+      "--format",
+      "json",
+      "--engine",
+      "mock",
+    ]);
+
+    const roundStarts = captured
+      .split("\n")
+      .filter((line) => line.trim().startsWith("{"))
+      .map((line) => JSON.parse(line) as { kind: string })
+      .filter((event) => event.kind === "round.start");
+    expect(roundStarts).toHaveLength(3);
+  });
+
   it("errors when --experts references a slug that is not in the library", async () => {
     await seedLibraryExpert("library-known", "Known");
 
