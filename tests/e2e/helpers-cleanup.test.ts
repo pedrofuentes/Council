@@ -4,6 +4,7 @@ import * as path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type * as MemoryDbModule from "../../src/memory/db.js";
 import type { E2EContext } from "./helpers.js";
 
 interface HelpersModule {
@@ -73,16 +74,14 @@ describe("E2E cleanup helpers", () => {
     const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-e2e-cleanup-home-"));
     const tempDataHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-e2e-cleanup-data-"));
     const customDataHome = path.join(tempDataHome, "custom-data-home");
-    const destroyMock = vi.fn(async (): Promise<void> => {});
+    const destroyMock = vi.fn(async (): Promise<void> => undefined);
     const createDatabaseMock = vi.fn(async () => ({ destroy: destroyMock }));
 
     await fs.mkdir(customDataHome, { recursive: true });
     await fs.writeFile(path.join(customDataHome, "council.db"), "", "utf-8");
 
     vi.doMock("../../src/memory/db.js", async () => {
-      const actual = await vi.importActual<typeof import("../../src/memory/db.js")>(
-        "../../src/memory/db.js",
-      );
+      const actual = await vi.importActual<typeof MemoryDbModule>("../../src/memory/db.js");
       return {
         ...actual,
         createDatabase: createDatabaseMock,
