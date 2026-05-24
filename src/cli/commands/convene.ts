@@ -256,20 +256,23 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
 
       let template: ResolvedPanelDefinition;
       if (requestedExpertSlugs !== undefined) {
+        const panel =
+          templateName !== undefined
+            ? await loadConvenePanelTemplate(
+                templateName,
+                dataHome,
+                libraryDbPath,
+                writeError,
+                raw.verbose === true,
+              )
+            : undefined;
         const experts = await resolveLibraryExperts(
           dataHome,
           libraryDbPath,
           requestedExpertSlugs,
           writeError,
         );
-        if (templateName !== undefined) {
-          const panel = await loadConvenePanelTemplate(
-            templateName,
-            dataHome,
-            libraryDbPath,
-            writeError,
-            raw.verbose === true,
-          );
+        if (panel !== undefined) {
           template = {
             name: panel.name,
             ...(panel.description !== undefined ? { description: panel.description } : {}),

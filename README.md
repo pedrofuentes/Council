@@ -329,6 +329,8 @@ disk if the database is reset.
 # Debate orchestration (engine defaults to copilot; pass --engine mock for offline/CI)
 council convene <topic>                                        # Auto-compose a panel + start deliberation
 council convene <topic> --template <name>                      # Use a built-in or library panel
+council convene <topic> --experts <slug1,slug2>                # Build an ad-hoc panel from library experts
+council convene <topic> --template <name> --experts <slugs>    # Use template defaults while overriding panel members
 council ask <panel> "<question>"                               # One-shot to one expert (default: first; pin with --expert <slug>)
 council conclude [panel]                                       # Decision matrix + recommendation
 council conclude [panel] --timeout 90000                      # Custom synthesis timeout (ms)
@@ -362,6 +364,8 @@ council expert train <slug> [--retrain] [--file <path>...] [--url <url>...]   # 
 
 # Panel library (Phase 4)
 council panel create <name>                 # Interactive wizard: pick experts, set description + mode
+council panel create --slug <name>          # Non-interactive alias for the positional panel name
+council panel create [<name>] --slug <name> # Positional + flag forms must agree when both are present
 council panel list [--format json]          # Browse panels in the library
 council panel inspect <name>                # Panel metadata + resolved expert roster
 council panel edit <name>                   # Open YAML in $EDITOR; re-validates on save
