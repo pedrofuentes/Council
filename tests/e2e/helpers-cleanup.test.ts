@@ -4,6 +4,7 @@ import * as path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type * as MemoryDbModule from "../../src/memory/db.js";
 import type { E2EContext } from "./helpers.js";
 
 interface HelpersModule {
@@ -64,6 +65,52 @@ describe("E2E cleanup helpers", () => {
     } finally {
       vi.doUnmock("node:fs/promises");
       vi.resetModules();
+    }
+  });
+
+  it("waits for the active COUNCIL_DATA_HOME database before cleanup", async () => {
+    const originalHome = process.env["COUNCIL_HOME"];
+    const originalDataHome = process.env["COUNCIL_DATA_HOME"];
+    const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-e2e-cleanup-home-"));
+    const tempDataHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-e2e-cleanup-data-"));
+    const customDataHome = path.join(tempDataHome, "custom-data-home");
+    const destroyMock = vi.fn(async (): Promise<void> => undefined);
+    const createDatabaseMock = vi.fn(async () => ({ destroy: destroyMock }));
+
+    await fs.mkdir(customDataHome, { recursive: true });
+    await fs.writeFile(path.join(customDataHome, "council.db"), "", "utf-8");
+
+    vi.doMock("../../src/memory/db.js", async () => {
+      const actual = await vi.importActual<typeof MemoryDbModule>("../../src/memory/db.js");
+      return {
+        ...actual,
+        createDatabase: createDatabaseMock,
+      };
+    });
+
+    process.env["COUNCIL_HOME"] = tempHome;
+    process.env["COUNCIL_DATA_HOME"] = customDataHome;
+
+    try {
+      const { cleanupE2EContext } = await importHelpers();
+      await cleanupE2EContext({
+        testHome: tempHome,
+        testDataHome: tempDataHome,
+        originalHome,
+        originalDataHome,
+      });
+
+      expect(createDatabaseMock).toHaveBeenCalledWith(path.join(customDataHome, "council.db"));
+      expect(destroyMock).toHaveBeenCalled();
+    } finally {
+      if (originalHome === undefined) delete process.env["COUNCIL_HOME"];
+      else process.env["COUNCIL_HOME"] = originalHome;
+
+      if (originalDataHome === undefined) delete process.env["COUNCIL_DATA_HOME"];
+      else process.env["COUNCIL_DATA_HOME"] = originalDataHome;
+
+      await fs.rm(tempHome, { recursive: true, force: true });
+      await fs.rm(tempDataHome, { recursive: true, force: true });
     }
   });
 

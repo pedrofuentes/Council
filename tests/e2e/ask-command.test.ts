@@ -31,7 +31,7 @@ describe.sequential("ask command e2e", () => {
 
   afterEach(async () => {
     await cleanupE2EContext(ctx);
-  });
+  }, 30_000);
 
   it("ask default expert — runs 1-round 1-expert debate, persists to DB, outputs turn events", async () => {
     const { panelName, panelId } = await seedPanelWithExperts(ctx.testHome);

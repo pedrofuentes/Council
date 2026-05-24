@@ -136,7 +136,7 @@ interface CreateOptions {
 function buildCreateCommand(write: Writer, writeError: Writer): Command {
   const cmd = new Command("create");
   cmd
-    .description("Create a new expert in the library")
+    .description("Create a new expert in the library (or recreate one whose YAML was deleted)")
     .option("--persona", "Create a persona expert (real person)")
     .option("--slug <slug>", "URL-safe slug (lowercase, alphanumeric + hyphens)")
     .option("--name <displayName>", "Display name")
