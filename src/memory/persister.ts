@@ -93,7 +93,7 @@ interface PendingTurn {
   round: number;
   seq: number;
   speakerKind: "expert" | "human";
-  content: string;
+  chunks: string[];
 }
 
 function reasonToStatus(reason: DebateEndReason): DebateStatus {
@@ -166,14 +166,14 @@ export class DebatePersister {
               round: evt.round,
               seq: evt.seq,
               speakerKind: evt.speakerKind ?? "expert",
-              content: "",
+              chunks: [],
             });
             break;
           }
           case "turn.delta": {
             const pending = this.#pendingTurns.get(evt.expertSlug);
             if (pending) {
-              pending.content += evt.text;
+              pending.chunks.push(evt.text);
               pending.speakerKind = evt.speakerKind ?? pending.speakerKind;
             }
             break;
@@ -255,13 +255,37 @@ export class DebatePersister {
   }
 
   async #finalizeAbruptExit(debateId: string): Promise<void> {
+    let flushError: unknown;
     if (this.#isInterruptedSignal()) {
-      await this.#flushPendingTurns();
+      try {
+        await this.#flushPendingTurns();
+      } catch (error: unknown) {
+        flushError = error;
+      }
     }
-    await this.deps.debates.update(debateId, {
-      status: this.#isInterruptedSignal() ? "interrupted" : "aborted",
-      endedAt: new Date().toISOString(),
-    });
+
+    let updateError: unknown;
+    try {
+      await this.deps.debates.update(debateId, {
+        status: this.#isInterruptedSignal() ? "interrupted" : "aborted",
+        endedAt: new Date().toISOString(),
+      });
+    } catch (error: unknown) {
+      updateError = error;
+    }
+
+    if (flushError !== undefined && updateError !== undefined) {
+      throw new AggregateError(
+        [flushError, updateError],
+        `DebatePersister: finalizeAbruptExit failed for debateId='${debateId}'`,
+      );
+    }
+    if (flushError !== undefined) {
+      throw flushError;
+    }
+    if (updateError !== undefined) {
+      throw updateError;
+    }
   }
 
   async #flushPendingTurns(): Promise<void> {
@@ -269,8 +293,13 @@ export class DebatePersister {
     for (const [expertSlug, pending] of pendingTurns) {
       // We reuse the normal turns table and let the interrupted debate status
       // carry the "incomplete" meaning for the final persisted partial turn.
-      if (pending.content.length > 0) {
-        await this.#persistPendingTurn(expertSlug, pending, pending.content, pending.speakerKind);
+      if (pending.chunks.length > 0) {
+        await this.#persistPendingTurn(
+          expertSlug,
+          pending,
+          pending.chunks.join(""),
+          pending.speakerKind,
+        );
       }
       this.#pendingTurns.delete(expertSlug);
     }
