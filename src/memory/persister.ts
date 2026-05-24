@@ -205,25 +205,25 @@ export class DebatePersister {
       }
     } catch (error: unknown) {
       sourceError = error;
-    }
-
-    if (!terminalUpdateAttempted) {
-      // Source threw before debate.end OR consumer broke the loop —
-      // finalize so session-resume can distinguish abandoned from running.
-      if (this.#isInterruptedSignal()) {
-        try {
-          await this.#finalizeAbruptExit(debate.id);
-        } catch (error: unknown) {
-          interruptedFinalizationError = error;
-        }
-      } else {
-        try {
-          await this.#finalizeAbruptExit(debate.id);
-        } catch (error: unknown) {
-          const message = error instanceof Error ? error.message : String(error);
-          this.deps.logger?.warn(
-            `DebatePersister: finalizeAbruptExit failed for debateId='${debate.id}': ${message}`,
-          );
+    } finally {
+      if (!terminalUpdateAttempted) {
+        // Source threw before debate.end OR consumer broke the loop —
+        // finalize so session-resume can distinguish abandoned from running.
+        if (this.#isInterruptedSignal()) {
+          try {
+            await this.#finalizeAbruptExit(debate.id);
+          } catch (error: unknown) {
+            interruptedFinalizationError = error;
+          }
+        } else {
+          try {
+            await this.#finalizeAbruptExit(debate.id);
+          } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.deps.logger?.warn(
+              `DebatePersister: finalizeAbruptExit failed for debateId='${debate.id}': ${message}`,
+            );
+          }
         }
       }
     }
