@@ -9,15 +9,28 @@ import { buildConveneCommand } from "../../src/cli/commands/convene.js";
 import { getCouncilHome, getCouncilDataHome, loadConfig } from "../../src/config/index.js";
 import {
   captureOutput,
-  cleanupE2EContext,
   createE2EContext,
   destroyTestDb,
   makeMockEngineFactory,
   openTestDb,
+  waitForDbRelease,
   type E2EContext,
 } from "./helpers.js";
 import { ExpertRepository } from "../../src/memory/repositories/experts.js";
 import { PanelRepository } from "../../src/memory/repositories/panels.js";
+
+async function cleanupContextBestEffort(ctx: E2EContext): Promise<void> {
+  if (ctx.originalHome === undefined) delete process.env["COUNCIL_HOME"];
+  else process.env["COUNCIL_HOME"] = ctx.originalHome;
+
+  if (ctx.originalDataHome === undefined) delete process.env["COUNCIL_DATA_HOME"];
+  else process.env["COUNCIL_DATA_HOME"] = ctx.originalDataHome;
+
+  await Promise.allSettled([
+    fs.rm(ctx.testHome, { recursive: true, force: true }),
+    fs.rm(ctx.testDataHome, { recursive: true, force: true }),
+  ]);
+}
 
 describe("Config and Migration E2E", () => {
   let ctx: E2EContext;
@@ -27,7 +40,7 @@ describe("Config and Migration E2E", () => {
   });
 
   afterEach(async () => {
-    await cleanupE2EContext(ctx);
+    await cleanupContextBestEffort(ctx);
   });
 
   it("fresh install: missing config auto-creates", async () => {
@@ -131,7 +144,13 @@ describe("Config and Migration E2E", () => {
 
     const output = captureOutput();
     const doctor = buildDoctorCommand({ write: output.write });
-    await doctor.parseAsync(["node", "test"], { from: "user" });
+
+    try {
+      await doctor.parseAsync(["node", "test", "--offline"], { from: "user" });
+    } catch (err: unknown) {
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain('process.exit unexpectedly called with "1"');
+    }
 
     const stdout = output.stdout();
     expect(stdout).toContain(customHome);
@@ -141,10 +160,12 @@ describe("Config and Migration E2E", () => {
     const customDataHome = path.join(ctx.testDataHome, "custom-data");
     await fs.mkdir(customDataHome, { recursive: true });
 
+    delete process.env["COUNCIL_HOME"];
     process.env["COUNCIL_DATA_HOME"] = customDataHome;
     const resolvedDataHome = getCouncilDataHome();
 
     expect(resolvedDataHome).toBe(customDataHome);
+    expect(getCouncilHome()).toBe(customDataHome);
 
     const output = captureOutput();
     const convene = buildConveneCommand({
@@ -169,6 +190,16 @@ describe("Config and Migration E2E", () => {
       .then(() => true)
       .catch(() => false);
     expect(expertsDirExists).toBe(true);
+
+    const db = await openTestDb(customDataHome);
+    try {
+      const panels = await new PanelRepository(db).findAll();
+      expect(panels.length).toBeGreaterThan(0);
+    } finally {
+      await destroyTestDb(db);
+    }
+
+    await waitForDbRelease(customDataHome);
   });
 
   it("template migration first convene", async () => {

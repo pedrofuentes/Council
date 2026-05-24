@@ -25,33 +25,29 @@ const sink: Sink = {
   },
 };
 
-describe("selectRenderer", () => {
-  const originalCi = process.env["CI"];
-  const originalAccessibility = process.env["ACCESSIBILITY"];
-  const originalTerm = process.env["TERM"];
+let originalTerm: string | undefined;
+let originalCi: string | undefined;
+let originalAccessibility: string | undefined;
 
+describe("selectRenderer", () => {
   beforeEach(() => {
+    originalTerm = process.env["TERM"];
+    originalCi = process.env["CI"];
+    originalAccessibility = process.env["ACCESSIBILITY"];
+    delete process.env["TERM"];
     delete process.env["CI"];
     delete process.env["ACCESSIBILITY"];
-    delete process.env["TERM"];
   });
 
   afterEach(() => {
-    if (originalCi === undefined) {
-      delete process.env["CI"];
-    } else {
-      process.env["CI"] = originalCi;
-    }
-    if (originalAccessibility === undefined) {
-      delete process.env["ACCESSIBILITY"];
-    } else {
-      process.env["ACCESSIBILITY"] = originalAccessibility;
-    }
-    if (originalTerm === undefined) {
-      delete process.env["TERM"];
-    } else {
-      process.env["TERM"] = originalTerm;
-    }
+    if (originalTerm === undefined) delete process.env["TERM"];
+    else process.env["TERM"] = originalTerm;
+
+    if (originalCi === undefined) delete process.env["CI"];
+    else process.env["CI"] = originalCi;
+
+    if (originalAccessibility === undefined) delete process.env["ACCESSIBILITY"];
+    else process.env["ACCESSIBILITY"] = originalAccessibility;
   });
 
   it("format=json returns JsonRenderer on TTY", () => {

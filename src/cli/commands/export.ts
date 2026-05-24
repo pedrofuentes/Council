@@ -37,8 +37,7 @@ import { PanelRepository } from "../../memory/repositories/panels.js";
 import { TurnRepository, type Turn } from "../../memory/repositories/turns.js";
 import { synthesizeEvents, type TranscriptDocument } from "../../memory/transcript.js";
 
-import { CliUserError } from "../cli-user-error.js";
-
+import { resolveSession } from "../session-resolver.js";
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
 export const EXPORT_FORMATS = ["markdown", "json", "adr"] as const;
@@ -74,10 +73,16 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
         ...(raw.output !== undefined ? { output: raw.output } : {}),
       };
 
-      const dbPath = path.join(getCouncilHome(), "council.db");
+      const councilHome = getCouncilHome();
+      const dbPath = path.join(councilHome, "council.db");
       const db = await createDatabase(dbPath);
       try {
-        const resolvedName = await resolvePanelName(panelName, db, writeError);
+        const resolvedName = await resolveSession({
+          db,
+          dataHome: councilHome,
+          panelArg: panelName,
+          writeError,
+        });
         const doc = await loadFullPanelTranscript(db, resolvedName);
         const rendered = renderForExport(doc, opts.format);
 
@@ -322,44 +327,10 @@ function deriveAdrStatus(doc: TranscriptDocument): string {
 }
 
 function hasOnlyVeryShortTurns(turns: readonly { readonly content: string }[]): boolean {
-  return turns.length > 0 && turns.every((turn) => turn.content.trim().length <= ADR_SHORT_TURN_MAX_CHARS);
-}
-
-/**
- * Resolve a panel name from CLI input, mirroring `council resume`:
- *   1. Exact match by name (backward compatible)
- *   2. Prefix match — auto-select if unique, error if ambiguous
- *   3. No match — return the input unchanged so the downstream loader
- *      produces the standard "no panel found" error.
- */
-async function resolvePanelName(
-  panelArg: string,
-  db: CouncilDatabase,
-  writeError: Writer,
-): Promise<string> {
-  const panelRepo = new PanelRepository(db);
-
-  const exact = await panelRepo.findByName(panelArg);
-  if (exact) return exact.name;
-
-  const prefixMatches = await panelRepo.findByNamePrefix(panelArg);
-  if (prefixMatches.length === 1) {
-    const match = prefixMatches[0];
-    if (match) return match.name;
-  }
-  if (prefixMatches.length > 1) {
-    const names = prefixMatches.map((p) => p.name);
-    writeError(`Multiple panels match "${panelArg}":\n`);
-    for (const n of names) {
-      writeError(`  - ${n}\n`);
-    }
-    writeError(`Re-run with the full panel name to disambiguate.\n`);
-    throw new CliUserError(
-      `Ambiguous prefix "${panelArg}" matches ${prefixMatches.length} panels: ${names.join(", ")}`,
-    );
-  }
-
-  return panelArg;
+  return (
+    turns.length > 0 &&
+    turns.every((turn) => turn.content.trim().length <= ADR_SHORT_TURN_MAX_CHARS)
+  );
 }
 
 /**
@@ -403,7 +374,9 @@ async function loadFullPanelTranscript(
   const originalDebate = debates[0];
   const latestDebate = debates[debates.length - 1];
   if (!originalDebate || !latestDebate) {
-    throw new Error(`Panel '${panelName}' has no debates yet. Run \`council convene\` to start one.`);
+    throw new Error(
+      `Panel '${panelName}' has no debates yet. Run \`council convene\` to start one.`,
+    );
   }
 
   const flattenedTurns: Turn[] = [];
