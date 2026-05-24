@@ -146,7 +146,8 @@ describe("buildExpertCommand", () => {
         captured += s;
       });
       await cmd.parseAsync(["node", "council-expert"]);
-      expect(captured.toLowerCase()).toMatch(/no experts|council expert create/);
+      expect(captured).toContain('No experts found. Create one with "council expert create".');
+      expect(captured).not.toContain("Usage:");
     } finally {
       await teardown(env);
     }

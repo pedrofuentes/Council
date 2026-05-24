@@ -90,7 +90,8 @@ describe("buildPanelCommand", () => {
         captured += s;
       });
       await cmd.parseAsync(["node", "council-panel"]);
-      expect(captured.toLowerCase()).toMatch(/no panels|council panel create/);
+      expect(captured).toContain('No panels found. Create one with "council panel create <name>".');
+      expect(captured).not.toContain("Usage:");
     } finally {
       await teardown(env);
     }
