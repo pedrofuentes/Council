@@ -148,4 +148,21 @@ describe("panel create --slug", () => {
     ).rejects.toThrow(/both|either|conflict|slug|positional/i);
     expect(errored.length).toBeGreaterThan(0);
   });
+
+  it("errors when neither positional <name> nor --slug is provided", async () => {
+    await seedExpert(env, expertDef("cto"));
+    let errored = "";
+    const cmd = buildPanelCommand(
+      () => {
+        /* noop */
+      },
+      (s) => {
+        errored += s;
+      },
+    );
+    await expect(
+      cmd.parseAsync(["node", "council-panel", "create", "--experts", "cto"]),
+    ).rejects.toThrow(/name|required|slug/i);
+    expect(errored).toMatch(/name|required|slug/i);
+  });
 });

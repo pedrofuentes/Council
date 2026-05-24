@@ -179,4 +179,25 @@ describe("convene --experts", () => {
       ]),
     ).rejects.toThrow(/ghost|not found|unknown|missing/i);
   });
+
+  it("with --experts containing only whitespace/commas: errors", async () => {
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: () => undefined,
+    });
+    await expect(
+      cmd.parseAsync([
+        "node",
+        "council-convene",
+        "Topic",
+        "--experts",
+        " , ",
+        "--max-rounds",
+        "1",
+        "--engine",
+        "mock",
+      ]),
+    ).rejects.toThrow(/at least one|requires|empty|expert/i);
+  });
 });
