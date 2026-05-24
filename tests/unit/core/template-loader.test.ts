@@ -498,6 +498,93 @@ describe("PanelNotFoundError", () => {
       PanelNotFoundError,
     );
   });
+
+  it("omits internal filesystem paths from loadTemplate error message", async () => {
+    let captured: Error | undefined;
+    try {
+      await loadTemplate("nonexistent-tpl-xyz");
+    } catch (err) {
+      captured = err as Error;
+    }
+    expect(captured).toBeInstanceOf(PanelNotFoundError);
+    const msg = captured?.message ?? "";
+    expect(msg).toContain("nonexistent-tpl-xyz");
+    // No absolute paths, drive letters, or path separators leaked
+    expect(msg).not.toMatch(/[A-Za-z]:\\/);
+    expect(msg).not.toContain("/panels");
+    expect(msg).not.toContain("\\panels");
+  });
+
+  it("includes available templates in loadTemplate error message", async () => {
+    let captured: Error | undefined;
+    try {
+      await loadTemplate("nonexistent-tpl-xyz");
+    } catch (err) {
+      captured = err as Error;
+    }
+    const msg = captured?.message ?? "";
+    expect(msg).toMatch(/Available:/i);
+    // At least one shipped template name should be listed
+    expect(msg).toContain("code-review");
+  });
+
+  it("suggests a close match (did-you-mean) for typos in loadTemplate", async () => {
+    // "code-reviw" is one character off from "code-review"
+    let captured: Error | undefined;
+    try {
+      await loadTemplate("code-reviw");
+    } catch (err) {
+      captured = err as Error;
+    }
+    const msg = captured?.message ?? "";
+    expect(msg).toMatch(/did you mean/i);
+    expect(msg).toContain("code-review");
+  });
+
+  it("omits internal filesystem paths from loadUserPanel error message", async () => {
+    const dataHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-pnf-userpath-"));
+    try {
+      await fs.mkdir(path.join(dataHome, "panels"), { recursive: true });
+      let captured: Error | undefined;
+      try {
+        await loadUserPanel("ghost", dataHome);
+      } catch (err) {
+        captured = err as Error;
+      }
+      expect(captured).toBeInstanceOf(PanelNotFoundError);
+      const msg = captured?.message ?? "";
+      expect(msg).toContain("ghost");
+      // No absolute paths leaked from the user data home
+      expect(msg).not.toContain(dataHome);
+      expect(msg).not.toMatch(/[A-Za-z]:\\/);
+    } finally {
+      await fs.rm(dataHome, { recursive: true, force: true });
+    }
+  });
+
+  it("includes available user panels in loadUserPanel error when some exist", async () => {
+    const dataHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-pnf-userlist-"));
+    try {
+      const panelsDir = path.join(dataHome, "panels");
+      await fs.mkdir(panelsDir, { recursive: true });
+      await fs.writeFile(
+        path.join(panelsDir, "my-panel.yaml"),
+        "name: My Panel\nexperts:\n  - slug: e1\n    name: E1\n    role: r\n    expertise:\n      domain: d\n",
+        "utf8",
+      );
+      let captured: Error | undefined;
+      try {
+        await loadUserPanel("ghost", dataHome);
+      } catch (err) {
+        captured = err as Error;
+      }
+      const msg = captured?.message ?? "";
+      expect(msg).toMatch(/Available:/i);
+      expect(msg).toContain("my-panel");
+    } finally {
+      await fs.rm(dataHome, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("assertAllInline()", () => {
