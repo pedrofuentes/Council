@@ -222,7 +222,31 @@ describe("DebatePersister", () => {
     expect(turns[0]?.content).toBe("Partial answer. ");
   });
 
-  it("warns when interrupted abrupt-exit finalization fails", async () => {
+  it("warns when non-interrupted abrupt-exit finalization fails", async () => {
+    const logger = { warn: vi.fn() };
+    const persister = new DebatePersister({
+      debates: debateRepo,
+      turns: turnRepo,
+      panelId,
+      expertSlugToId,
+      moderator: "round-robin",
+      logger,
+    });
+    vi.spyOn(debateRepo, "update").mockRejectedValue(new Error("update failed"));
+
+    async function* brokenSource(): AsyncIterable<DebateEvent> {
+      yield { kind: "panel.assembled", experts: [] };
+      yield { kind: "round.start", round: 0 };
+      throw new Error("source failed");
+    }
+
+    await expect(collect(persister.persist(brokenSource(), "topic"))).rejects.toThrow("source failed");
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("finalizeAbruptExit failed"));
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("update failed"));
+  });
+
+  it("surfaces interrupted abrupt-exit finalization failures without swallowing the source error", async () => {
     const controller = new AbortController();
     const logger = { warn: vi.fn() };
     const persister = new DebatePersister({
@@ -245,10 +269,19 @@ describe("DebatePersister", () => {
       throw new Error("source failed");
     }
 
-    await expect(collect(persister.persist(brokenSource(), "topic"))).rejects.toThrow("source failed");
-    expect(logger.warn).toHaveBeenCalledTimes(1);
-    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("finalizeAbruptExit failed"));
-    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("update failed"));
+    let caught: unknown;
+    try {
+      await collect(persister.persist(brokenSource(), "topic"));
+    } catch (error: unknown) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(AggregateError);
+    const errors = (caught as AggregateError).errors as unknown[];
+    expect(errors).toHaveLength(2);
+    expect((errors[0] as Error).message).toBe("source failed");
+    expect((errors[1] as Error).message).toBe("update failed");
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 
   it("preserves speakerKind='human' when flushing an interrupted partial turn", async () => {
@@ -275,7 +308,12 @@ describe("DebatePersister", () => {
 
     const turns = await turnRepo.findByDebateId(persister.debateId ?? "");
     expect(turns).toHaveLength(1);
-    expect(turns[0]?.speakerKind).toBe("human");
+    expect(turns[0]).toMatchObject({
+      round: 0,
+      seq: 0,
+      content: "Human partial.",
+      speakerKind: "human",
+    });
   });
 
   it("inserts one turn row per turn.end event", async () => {
