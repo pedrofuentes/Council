@@ -106,8 +106,9 @@ function panelDocsDir(dataHome: string, name: string): string {
 
 function validatePanelName(name: string): void {
   if (!PANEL_NAME_RE.test(name)) {
+    const safeName = stripControlChars(name);
     throw new Error(
-      `Invalid panel name "${name}": must be kebab-case (lowercase letters, digits, hyphens; must start with a letter)`,
+      `Invalid panel name "${safeName}": must be kebab-case (lowercase letters, digits, hyphens; must start with a letter)`,
     );
   }
 }
