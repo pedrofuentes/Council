@@ -43,6 +43,7 @@ export interface ResumeCommandDeps {
   readonly engineFactory?: () => CouncilEngine;
   readonly write?: Writer;
   readonly writeError?: Writer;
+  readonly subscribeInterrupt?: (handler: () => void) => () => void;
 }
 
 export interface ResumeOptions {
@@ -145,88 +146,109 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
           return;
         }
 
-        if (autoResumePrompt !== undefined) {
-          writeError("Resuming interrupted debate...\n");
-        }
+        const debateController = new AbortController();
+        let debateInterrupted = false;
+        let unsubscribeInterrupt: () => void = () => undefined;
+        const onInterrupt = (): void => {
+          debateInterrupted = true;
+          unsubscribeInterrupt();
+          debateController.abort();
+        };
+        const subscribeInterrupt = deps.subscribeInterrupt ?? defaultSubscribeInterrupt;
+        unsubscribeInterrupt = subscribeInterrupt(onInterrupt);
 
-        const continueEngine = opts.engine ?? "mock";
-        if (continueEngine === "mock") {
-          writeError(
-            "\n!! [MOCK ENGINE] resume continue mode running with deterministic offline mock — responses are NOT real.\n\n",
-          );
-        }
-
-        const recalls = await Promise.all(
-          resolved.experts.map((e) => recallMemory(db, resolved.panel.id, e.slug)),
-        );
-        const expertSpecs: ExpertSpec[] = resolved.experts.map((e, i) => ({
-          id: e.id,
-          slug: e.slug,
-          displayName: e.displayName,
-          model: e.model,
-          systemMessage: applyRecalledMemory(e.systemMessage, recalls[i]),
-        }));
-
-        const expertSlugToId: Record<string, string> = {};
-        for (const e of resolved.experts) expertSlugToId[e.slug] = e.id;
-
-        let panelMode: "freeform" | "structured" = "freeform";
         try {
-          const cfg = JSON.parse(resolved.panel.configJson) as { mode?: string };
-          if (cfg.mode === "structured") panelMode = "structured";
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err);
-          writeError(
-            `!! Warning: could not parse panel config for "${resolved.panel.name}" — ` +
-              `malformed configJson (${msg}); falling back to freeform mode.\n`,
+          if (autoResumePrompt !== undefined) {
+            writeError("Resuming interrupted debate...\n");
+          }
+
+          const continueEngine = opts.engine ?? "mock";
+          if (continueEngine === "mock") {
+            writeError(
+              "\n!! [MOCK ENGINE] resume continue mode running with deterministic offline mock — responses are NOT real.\n\n",
+            );
+          }
+
+          const recalls = await Promise.all(
+            resolved.experts.map((e) => recallMemory(db, resolved.panel.id, e.slug)),
           );
+          const expertSpecs: ExpertSpec[] = resolved.experts.map((e, i) => ({
+            id: e.id,
+            slug: e.slug,
+            displayName: e.displayName,
+            model: e.model,
+            systemMessage: applyRecalledMemory(e.systemMessage, recalls[i]),
+          }));
+
+          const expertSlugToId: Record<string, string> = {};
+          for (const e of resolved.experts) expertSlugToId[e.slug] = e.id;
+
+          let panelMode: "freeform" | "structured" = "freeform";
+          try {
+            const cfg = JSON.parse(resolved.panel.configJson) as { mode?: string };
+            if (cfg.mode === "structured") panelMode = "structured";
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            writeError(
+              `!! Warning: could not parse panel config for "${resolved.panel.name}" — ` +
+                `malformed configJson (${msg}); falling back to freeform mode.\n`,
+            );
+          }
+
+          const strategy =
+            panelMode === "freeform" && opts.strategy !== undefined
+              ? resolveStrategy({ raw: opts.strategy, experts: expertSpecs })
+              : undefined;
+
+          await runWithEngine({
+            engineKind: continueEngine,
+            engineFactory: deps.engineFactory,
+            experts: expertSpecs,
+            debateConfig: {
+              maxRounds: opts.maxRounds,
+              maxWordsPerResponse: opts.maxWords,
+              mode: panelMode,
+              ...(strategy !== undefined ? { strategy } : {}),
+            },
+            prompt: opts.prompt,
+            panelId: resolved.panel.id,
+            expertSlugToId,
+            moderator:
+              panelMode === "structured"
+                ? "structured-phases"
+                : (strategy?.name ?? "round-robin"),
+            format: opts.format,
+            write,
+            writeError,
+            db,
+            signal: debateController.signal,
+            preamble: () => {
+              write(`\n# Continuing ${resolved.panel.name}\n`);
+              write(`Prompt: ${opts.prompt}\n`);
+              write(`Engine: ${continueEngine} | Max rounds: ${opts.maxRounds}\n\n`);
+            },
+            ...(opts.heuristicMemory === true
+              ? {}
+              : {
+                  onDebateComplete: async (ctx) =>
+                    runExtractMemoryHook({
+                      engine: ctx.engine,
+                      db: ctx.db,
+                      panelId: ctx.panelId,
+                      debateId: ctx.debateId,
+                      expertSlugToId: ctx.expertSlugToId,
+                      humanSlugs: new Set<string>(),
+                      model: defaultModel ?? DEFAULT_MODEL,
+                      writeError,
+                    }),
+                }),
+          });
+        } finally {
+          unsubscribeInterrupt();
         }
-
-        const strategy =
-          panelMode === "freeform" && opts.strategy !== undefined
-            ? resolveStrategy({ raw: opts.strategy, experts: expertSpecs })
-            : undefined;
-
-        await runWithEngine({
-          engineKind: continueEngine,
-          engineFactory: deps.engineFactory,
-          experts: expertSpecs,
-          debateConfig: {
-            maxRounds: opts.maxRounds,
-            maxWordsPerResponse: opts.maxWords,
-            mode: panelMode,
-            ...(strategy !== undefined ? { strategy } : {}),
-          },
-          prompt: opts.prompt,
-          panelId: resolved.panel.id,
-          expertSlugToId,
-          moderator:
-            panelMode === "structured" ? "structured-phases" : (strategy?.name ?? "round-robin"),
-          format: opts.format,
-          write,
-          writeError,
-          db,
-          preamble: () => {
-            write(`\n# Continuing ${resolved.panel.name}\n`);
-            write(`Prompt: ${opts.prompt}\n`);
-            write(`Engine: ${continueEngine} | Max rounds: ${opts.maxRounds}\n\n`);
-          },
-          ...(opts.heuristicMemory === true
-            ? {}
-            : {
-                onDebateComplete: async (ctx) =>
-                  runExtractMemoryHook({
-                    engine: ctx.engine,
-                    db: ctx.db,
-                    panelId: ctx.panelId,
-                    debateId: ctx.debateId,
-                    expertSlugToId: ctx.expertSlugToId,
-                    humanSlugs: new Set<string>(),
-                    model: defaultModel ?? DEFAULT_MODEL,
-                    writeError,
-                  }),
-              }),
-        });
+        if (debateInterrupted) {
+          writeError("\nDebate interrupted. Partial results saved.\n");
+        }
       } finally {
         await db.destroy().catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
@@ -258,6 +280,13 @@ function parseFormat(raw: string | undefined): RendererFormat {
   throw new Error(
     `Unknown --format value: ${raw}. Expected one of: ${RENDERER_FORMATS.join(", ")}`,
   );
+}
+
+function defaultSubscribeInterrupt(handler: () => void): () => void {
+  process.on("SIGINT", handler);
+  return () => {
+    process.off("SIGINT", handler);
+  };
 }
 
 /**
