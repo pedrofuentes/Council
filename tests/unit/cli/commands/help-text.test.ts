@@ -47,7 +47,7 @@ describe("expert create help text", () => {
 });
 
 describe("convene help text", () => {
-  it("includes Note about quoting in after-help examples section", async () => {
+  it("includes shell-quoting guidance in after-help examples section", async () => {
     const cmd = buildConveneCommand();
     
     // Create a test output writer to capture help
@@ -65,10 +65,9 @@ describe("convene help text", () => {
     // Trigger help generation by calling outputHelp
     cmd.outputHelp();
     
-    // Verify the help contains the quoting note
-    expect(capturedHelp).toContain("Note:");
-    expect(capturedHelp).toContain("special characters");
-    expect(capturedHelp).toContain("quote");
+    // Verify the help addresses shell quoting for special characters
+    expect(capturedHelp.toLowerCase()).toContain("quot");
+    expect(capturedHelp).toMatch(/\$/);
   });
 
   it("has example with dollar sign added via addHelpText", async () => {

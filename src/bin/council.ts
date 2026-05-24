@@ -15,6 +15,13 @@
  *   - `memory`     inspect and curate Council's local SQLite state
  *   - `doctor`     diagnose Council setup
  */
+// SQLite ExperimentalWarning filter — MUST be the first import in this
+// entry point. Importing this module installs `process.emitWarning` patch
+// as a side effect, before any sibling import can transitively load
+// `node:sqlite` (via `@libsql/client`) and emit Node's
+// `SQLite is an experimental feature` warning. See F02 in T12.
+import "./sqlite-warning-filter.js";
+
 import { Command } from "commander";
 
 import packageJson from "../../package.json" with { type: "json" };
