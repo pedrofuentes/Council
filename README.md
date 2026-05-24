@@ -364,7 +364,7 @@ council expert train <slug> [--retrain] [--file <path>...] [--url <url>...]   # 
 
 # Panel library (Phase 4)
 council panel create <name>                 # Interactive wizard: pick experts, set description + mode
-council panel create --slug <name>          # Non-interactive alias for the positional panel name
+council panel create --slug <name>          # Alias for the positional panel name (still interactive unless you also pass --experts)
 council panel create [<name>] --slug <name> # Positional + flag forms must agree when both are present
 council panel list [--format json]          # Browse panels in the library
 council panel inspect <name>                # Panel metadata + resolved expert roster
