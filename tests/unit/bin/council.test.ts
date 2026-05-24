@@ -1,8 +1,96 @@
 import { describe, expect, it } from "vitest";
 
-import { buildProgram } from "../../../src/bin/council.js";
+import { buildProgram, configureOutputEncoding } from "../../../src/bin/council.js";
 
 describe("buildProgram", () => {
+  describe("Windows UTF-8 output", () => {
+    it("wraps stdout and stderr writes with UTF-8 on Windows", () => {
+      const calls: { target: string; chunk: string; encoding: BufferEncoding | undefined }[] = [];
+      const stdout = {
+        setDefaultEncoding: (_encoding: BufferEncoding) => undefined,
+        write: (
+          chunk: string | Uint8Array,
+          encoding?: BufferEncoding | ((error?: Error | null) => void),
+          cb?: (error?: Error | null) => void,
+        ) => {
+          calls.push({
+            target: "stdout",
+            chunk: typeof chunk === "string" ? chunk : chunk.toString("utf8"),
+            encoding: typeof encoding === "string" ? encoding : undefined,
+          });
+          if (typeof encoding === "function") {
+            encoding(null);
+          }
+          cb?.(null);
+          return true;
+        },
+      };
+      const stderr = {
+        setDefaultEncoding: (_encoding: BufferEncoding) => undefined,
+        write: (
+          chunk: string | Uint8Array,
+          encoding?: BufferEncoding | ((error?: Error | null) => void),
+          cb?: (error?: Error | null) => void,
+        ) => {
+          calls.push({
+            target: "stderr",
+            chunk: typeof chunk === "string" ? chunk : chunk.toString("utf8"),
+            encoding: typeof encoding === "string" ? encoding : undefined,
+          });
+          if (typeof encoding === "function") {
+            encoding(null);
+          }
+          cb?.(null);
+          return true;
+        },
+      };
+
+      configureOutputEncoding("win32", stdout, stderr);
+      stdout.write("stdout — 2× ≥ 🎉");
+      stderr.write("stderr — 2× ≥ 🎉");
+
+      expect(calls).toEqual([
+        { target: "stdout", chunk: "stdout — 2× ≥ 🎉", encoding: "utf8" },
+        { target: "stderr", chunk: "stderr — 2× ≥ 🎉", encoding: "utf8" },
+      ]);
+    });
+
+    it("skips output write wrapping on non-Windows platforms", () => {
+      const calls: { target: string; chunk: string; encoding: BufferEncoding | undefined }[] = [];
+      const stdout = {
+        setDefaultEncoding: (_encoding: BufferEncoding) => undefined,
+        write: (chunk: string | Uint8Array, encoding?: BufferEncoding | ((error?: Error | null) => void)) => {
+          calls.push({
+            target: "stdout",
+            chunk: typeof chunk === "string" ? chunk : chunk.toString("utf8"),
+            encoding: typeof encoding === "string" ? encoding : undefined,
+          });
+          return true;
+        },
+      };
+      const stderr = {
+        setDefaultEncoding: (_encoding: BufferEncoding) => undefined,
+        write: (chunk: string | Uint8Array, encoding?: BufferEncoding | ((error?: Error | null) => void)) => {
+          calls.push({
+            target: "stderr",
+            chunk: typeof chunk === "string" ? chunk : chunk.toString("utf8"),
+            encoding: typeof encoding === "string" ? encoding : undefined,
+          });
+          return true;
+        },
+      };
+
+      configureOutputEncoding("linux", stdout, stderr);
+      stdout.write("stdout — 2× ≥ 🎉");
+      stderr.write("stderr — 2× ≥ 🎉");
+
+      expect(calls).toEqual([
+        { target: "stdout", chunk: "stdout — 2× ≥ 🎉", encoding: undefined },
+        { target: "stderr", chunk: "stderr — 2× ≥ 🎉", encoding: undefined },
+      ]);
+    });
+  });
+
   describe("help output grouping", () => {
     it("includes Getting Started section header", () => {
       const program = buildProgram();
