@@ -13,7 +13,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Debate, type DebateConfig } from "../../../src/core/debate.js";
 import type { DebateEvent } from "../../../src/core/types.js";
@@ -98,6 +98,7 @@ describe("DebatePersister", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await db.destroy();
     try {
       await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
@@ -145,6 +146,212 @@ describe("DebatePersister", () => {
     const debate = await debateRepo.findById(debateId);
     expect(debate?.status).toBe("completed");
     expect(debate?.endedAt).not.toBeNull();
+  });
+
+  it("flushes partial streamed content and marks the debate interrupted when the signal aborts mid-turn", async () => {
+    const controller = new AbortController();
+    const persister = new DebatePersister({
+      debates: debateRepo,
+      turns: turnRepo,
+      panelId,
+      expertSlugToId,
+      moderator: "round-robin",
+      signal: controller.signal,
+    });
+
+    async function* partialSource(): AsyncIterable<DebateEvent> {
+      yield { kind: "panel.assembled", experts: [] };
+      yield { kind: "round.start", round: 0 };
+      yield { kind: "turn.start", expertSlug: cto.slug, round: 0, seq: 0 };
+      yield { kind: "turn.delta", expertSlug: cto.slug, text: "Partial answer. " };
+      controller.abort();
+      yield { kind: "debate.end", reason: "aborted" };
+    }
+
+    await collect(persister.persist(partialSource(), "topic"));
+
+    const debate = await debateRepo.findById(persister.debateId ?? "");
+    expect(debate?.status).toBe("interrupted");
+    expect(debate?.endedAt).not.toBeNull();
+
+    const turns = await turnRepo.findByDebateId(persister.debateId ?? "");
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({
+      round: 0,
+      seq: 0,
+      expertId: expertSlugToId[cto.slug],
+      content: "Partial answer. ",
+      speakerKind: "expert",
+    });
+  });
+
+  it("retries interrupted partial-turn persistence during abrupt-exit finalization when the first flush write fails", async () => {
+    const controller = new AbortController();
+    const persister = new DebatePersister({
+      debates: debateRepo,
+      turns: turnRepo,
+      panelId,
+      expertSlugToId,
+      moderator: "round-robin",
+      signal: controller.signal,
+    });
+    const originalCreate = turnRepo.create.bind(turnRepo);
+    const createSpy = vi
+      .spyOn(turnRepo, "create")
+      .mockImplementationOnce(async () => {
+        throw new Error("disk full");
+      })
+      .mockImplementation(async (turn: Parameters<TurnRepository["create"]>[0]) => originalCreate(turn));
+
+    async function* partialSource(): AsyncIterable<DebateEvent> {
+      yield { kind: "panel.assembled", experts: [] };
+      yield { kind: "round.start", round: 0 };
+      yield { kind: "turn.start", expertSlug: cto.slug, round: 0, seq: 0 };
+      yield { kind: "turn.delta", expertSlug: cto.slug, text: "Partial answer. " };
+      controller.abort();
+      yield { kind: "debate.end", reason: "aborted" };
+    }
+
+    await expect(collect(persister.persist(partialSource(), "topic"))).rejects.toThrow("disk full");
+    expect(createSpy).toHaveBeenCalledTimes(2);
+
+    const debate = await debateRepo.findById(persister.debateId ?? "");
+    expect(debate?.status).toBe("interrupted");
+    const turns = await turnRepo.findByDebateId(persister.debateId ?? "");
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.content).toBe("Partial answer. ");
+  });
+
+  it("warns when non-interrupted abrupt-exit finalization fails", async () => {
+    const logger = { warn: vi.fn() };
+    const persister = new DebatePersister({
+      debates: debateRepo,
+      turns: turnRepo,
+      panelId,
+      expertSlugToId,
+      moderator: "round-robin",
+      logger,
+    });
+    vi.spyOn(debateRepo, "update").mockRejectedValue(new Error("update failed"));
+
+    async function* brokenSource(): AsyncIterable<DebateEvent> {
+      yield { kind: "panel.assembled", experts: [] };
+      yield { kind: "round.start", round: 0 };
+      throw new Error("source failed");
+    }
+
+    await expect(collect(persister.persist(brokenSource(), "topic"))).rejects.toThrow("source failed");
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("finalizeAbruptExit failed"));
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("update failed"));
+  });
+
+  it("surfaces interrupted abrupt-exit finalization failures without swallowing the source error", async () => {
+    const controller = new AbortController();
+    const logger = { warn: vi.fn() };
+    const persister = new DebatePersister({
+      debates: debateRepo,
+      turns: turnRepo,
+      panelId,
+      expertSlugToId,
+      moderator: "round-robin",
+      signal: controller.signal,
+      logger,
+    });
+    vi.spyOn(debateRepo, "update").mockRejectedValue(new Error("update failed"));
+
+    async function* brokenSource(): AsyncIterable<DebateEvent> {
+      yield { kind: "panel.assembled", experts: [] };
+      yield { kind: "round.start", round: 0 };
+      yield { kind: "turn.start", expertSlug: cto.slug, round: 0, seq: 0 };
+      yield { kind: "turn.delta", expertSlug: cto.slug, text: "Partial answer. " };
+      controller.abort();
+      throw new Error("source failed");
+    }
+
+    let caught: unknown;
+    try {
+      await collect(persister.persist(brokenSource(), "topic"));
+    } catch (error: unknown) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(AggregateError);
+    const errors = (caught as AggregateError).errors as unknown[];
+    expect(errors).toHaveLength(2);
+    expect((errors[0] as Error).message).toBe("source failed");
+    expect((errors[1] as Error).message).toBe("update failed");
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("marks the debate interrupted even when abrupt-exit partial flush fails", async () => {
+    const controller = new AbortController();
+    const persister = new DebatePersister({
+      debates: debateRepo,
+      turns: turnRepo,
+      panelId,
+      expertSlugToId,
+      moderator: "round-robin",
+      signal: controller.signal,
+    });
+    vi.spyOn(turnRepo, "create").mockRejectedValue(new Error("disk full"));
+
+    async function* brokenSource(): AsyncIterable<DebateEvent> {
+      yield { kind: "panel.assembled", experts: [] };
+      yield { kind: "round.start", round: 0 };
+      yield { kind: "turn.start", expertSlug: cto.slug, round: 0, seq: 0 };
+      yield { kind: "turn.delta", expertSlug: cto.slug, text: "Partial answer. " };
+      controller.abort();
+      throw new Error("source failed");
+    }
+
+    let caught: unknown;
+    try {
+      await collect(persister.persist(brokenSource(), "topic"));
+    } catch (error: unknown) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(AggregateError);
+    const errors = (caught as AggregateError).errors as unknown[];
+    expect((errors[0] as Error).message).toBe("source failed");
+    expect((errors[1] as Error).message).toBe("disk full");
+
+    const debate = await debateRepo.findById(persister.debateId ?? "");
+    expect(debate?.status).toBe("interrupted");
+    expect(debate?.endedAt).not.toBeNull();
+  });
+
+  it("preserves speakerKind='human' when flushing an interrupted partial turn", async () => {
+    const controller = new AbortController();
+    const persister = new DebatePersister({
+      debates: debateRepo,
+      turns: turnRepo,
+      panelId,
+      expertSlugToId,
+      moderator: "round-robin",
+      signal: controller.signal,
+    });
+
+    async function* partialSource(): AsyncIterable<DebateEvent> {
+      yield { kind: "panel.assembled", experts: [] };
+      yield { kind: "round.start", round: 0 };
+      yield { kind: "turn.start", expertSlug: cto.slug, round: 0, seq: 0, speakerKind: "human" };
+      yield { kind: "turn.delta", expertSlug: cto.slug, text: "Human partial.", speakerKind: "human" };
+      controller.abort();
+      yield { kind: "debate.end", reason: "aborted" };
+    }
+
+    await collect(persister.persist(partialSource(), "topic"));
+
+    const turns = await turnRepo.findByDebateId(persister.debateId ?? "");
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({
+      round: 0,
+      seq: 0,
+      content: "Human partial.",
+      speakerKind: "human",
+    });
   });
 
   it("inserts one turn row per turn.end event", async () => {

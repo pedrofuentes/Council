@@ -24,8 +24,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildConveneCommand } from "../../../../src/cli/commands/convene.js";
 import { setQuiet } from "../../../../src/cli/commands/writer.js";
+import type { CouncilEngine, EngineEvent, ExpertSpec } from "../../../../src/engine/index.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
-import type { CouncilEngine, ExpertSpec } from "../../../../src/engine/index.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
 import { DebateRepository } from "../../../../src/memory/repositories/debates.js";
@@ -347,21 +347,125 @@ describe("buildConveneCommand", () => {
       expect(unsubscribed).toBe(true);
 
       // Partial results saved: the panel row + the debate row exist,
-      // and the debate row is in a terminal `aborted` state (not stuck
-      // at `running`). DebatePersister maps reason "aborted" → status
-      // "aborted" — this assertion locks in that contract.
+      // and the debate row is in a terminal `interrupted` state (not stuck
+      // at `running`). The DebateEvent remains `reason: "aborted"`; the
+      // persisted status distinguishes a user interrupt from other aborts.
       const db = await createDatabase(path.join(testHome, "council.db"));
       try {
         const panels = await new PanelRepository(db).findAll();
         expect(panels).toHaveLength(1);
         const debates = await new DebateRepository(db).findByPanelId(panels[0]?.id ?? "");
         expect(debates).toHaveLength(1);
-        expect(debates[0]?.status).toBe("aborted");
+        expect(debates[0]?.status).toBe("interrupted");
         expect(debates[0]?.endedAt).toBeTruthy();
       } finally {
         await db.destroy();
       }
     });
+
+    it("persists a partial turn and marks the debate interrupted when SIGINT fires mid-stream", async () => {
+      let captured = "";
+      let errored = "";
+      let unsubscribed = false;
+      let fireInterrupt: (() => void) | undefined;
+      const registeredExperts = new Set<string>();
+      const subscribeInterrupt = (handler: () => void): (() => void) => {
+        fireInterrupt = handler;
+        return () => {
+          unsubscribed = true;
+        };
+      };
+      const engineFactory = (): CouncilEngine => ({
+        start: async () => undefined,
+        stop: async () => undefined,
+        addExpert: async (spec: ExpertSpec) => {
+          registeredExperts.add(spec.id);
+        },
+        removeExpert: async (expertId: string) => {
+          registeredExperts.delete(expertId);
+        },
+        listModels: async () => ["test-model"],
+        send: ({ expertId, signal }) => {
+          if (!registeredExperts.has(expertId)) {
+            throw new Error(`Expert ${expertId} is not registered`);
+          }
+          return (async function* (): AsyncGenerator<EngineEvent, void, void> {
+            yield { kind: "message.delta", expertId, text: "Partial response. " };
+            fireInterrupt?.();
+            await Promise.resolve();
+            if (signal?.aborted) {
+              yield {
+                kind: "error",
+                expertId,
+                error: {
+                  code: "ABORTED",
+                  message: "Send was aborted mid-stream",
+                  provider: "test",
+                },
+                recoverable: false,
+              };
+              return;
+            }
+            yield { kind: "message.delta", expertId, text: "This should not be persisted." };
+            yield {
+              kind: "message.complete",
+              expertId,
+              response: { latencyMs: 1, tokensIn: 1, tokensOut: 1 },
+            };
+          })();
+        },
+      });
+
+      const cmd = buildConveneCommand({
+        engineFactory,
+        write: (s) => {
+          captured += s;
+        },
+        writeError: (s) => {
+          errored += s;
+        },
+        subscribeInterrupt,
+      });
+
+      await cmd.parseAsync([
+        "node",
+        "council-convene",
+        "Should we ship the MVP?",
+        "--template",
+        "code-review",
+        "--max-rounds",
+        "1",
+        "--format",
+        "json",
+        "--engine",
+        "mock",
+      ]);
+
+      const lines = captured
+        .split("\n")
+        .filter((l) => l.trim().length > 0 && l.trim().startsWith("{"))
+        .map((l) => JSON.parse(l) as { kind: string; reason?: string });
+      const end = lines.find((e) => e.kind === "debate.end");
+      expect(end?.reason).toBe("aborted");
+      expect(errored).toMatch(/interrupted/i);
+      expect(errored).toMatch(/partial/i);
+      expect(unsubscribed).toBe(true);
+
+      const db = await createDatabase(path.join(testHome, "council.db"));
+      try {
+        const panels = await new PanelRepository(db).findAll();
+        expect(panels).toHaveLength(1);
+        const debates = await new DebateRepository(db).findByPanelId(panels[0]?.id ?? "");
+        expect(debates).toHaveLength(1);
+        expect(debates[0]?.status).toBe("interrupted");
+        const turns = await new TurnRepository(db).findByDebateId(debates[0]?.id ?? "");
+        expect(turns).toHaveLength(1);
+        expect(turns[0]?.content).toBe("Partial response. ");
+      } finally {
+        await db.destroy();
+      }
+    });
+
     it("unsubscribes the SIGINT handler even if setup throws before the debate runs", async () => {
       // Regression for Sentinel pr769 finding 1: any throw on the
       // setup path AFTER the SIGINT handler is subscribed must not

@@ -201,6 +201,12 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
       panelId: opts.panelId,
       expertSlugToId: opts.expertSlugToId,
       moderator: opts.moderator,
+      logger: {
+        warn: (message) => {
+          opts.writeError(`!! ${message}\n`);
+        },
+      },
+      ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
     });
 
     const sink: Sink = { write: opts.write, writeError: opts.writeError };
