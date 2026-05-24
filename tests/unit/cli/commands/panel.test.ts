@@ -82,6 +82,21 @@ describe("buildPanelCommand", () => {
     expect(subs).toEqual(["create", "delete", "docs", "edit", "inspect", "list"].sort());
   });
 
+  it("defaults bare panel to the list action", async () => {
+    const env = await makeEnv();
+    try {
+      let captured = "";
+      const cmd = buildPanelCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-panel"]);
+      expect(captured).toContain('No panels found. Create one with "council panel create <name>".');
+      expect(captured).not.toContain("Usage:");
+    } finally {
+      await teardown(env);
+    }
+  });
+
   describe("panel create (non-interactive)", () => {
     let env: TestEnv;
     beforeEach(async () => {
@@ -163,6 +178,14 @@ describe("buildPanelCommand", () => {
       const content = await fs.readFile(yamlPath, "utf-8");
       const parsed = yaml.parse(content) as { defaults?: { model?: string } };
       expect(parsed.defaults?.model).toBe("claude-haiku-4.5");
+    });
+
+    it("documents the auto-compose convene hint in create help", () => {
+      const create = buildPanelCommand().commands.find((command) => command.name() === "create");
+      const help = create?.helpInformation() ?? "";
+      expect(help).toMatch(/auto-compose|auto-composed/i);
+      expect(help).toMatch(/council convene/i);
+      expect(help).toMatch(/template/i);
     });
 
     it("rejects invalid (non-kebab-case) panel names", async () => {
