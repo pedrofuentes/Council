@@ -147,6 +147,43 @@ describe("DebatePersister", () => {
     expect(debate?.endedAt).not.toBeNull();
   });
 
+  it("flushes partial streamed content and marks the debate interrupted when the signal aborts mid-turn", async () => {
+    const controller = new AbortController();
+    const persister = new DebatePersister({
+      debates: debateRepo,
+      turns: turnRepo,
+      panelId,
+      expertSlugToId,
+      moderator: "round-robin",
+      signal: controller.signal,
+    });
+
+    async function* partialSource(): AsyncIterable<DebateEvent> {
+      yield { kind: "panel.assembled", experts: [] };
+      yield { kind: "round.start", round: 0 };
+      yield { kind: "turn.start", expertSlug: cto.slug, round: 0, seq: 0 };
+      yield { kind: "turn.delta", expertSlug: cto.slug, text: "Partial answer. " };
+      controller.abort();
+      yield { kind: "debate.end", reason: "aborted" };
+    }
+
+    await collect(persister.persist(partialSource(), "topic"));
+
+    const debate = await debateRepo.findById(persister.debateId ?? "");
+    expect(debate?.status).toBe("interrupted");
+    expect(debate?.endedAt).not.toBeNull();
+
+    const turns = await turnRepo.findByDebateId(persister.debateId ?? "");
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({
+      round: 0,
+      seq: 0,
+      expertId: expertSlugToId[cto.slug],
+      content: "Partial answer. ",
+      speakerKind: "expert",
+    });
+  });
+
   it("inserts one turn row per turn.end event", async () => {
     const { debateId } = await runDebate();
     const turns = await turnRepo.findByDebateId(debateId);

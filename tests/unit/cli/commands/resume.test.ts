@@ -388,6 +388,129 @@ describe("buildResumeCommand", () => {
     expect(last.reason).toBe("aborted");
   });
 
+  it("auto-continues the latest interrupted debate without requiring --prompt", async () => {
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    let panelName = "";
+    let panelId = "";
+    let completedDebateId = "";
+    let interruptedDebateId = "";
+    try {
+      const panelRepo = new PanelRepository(db);
+      const expertRepo = new ExpertRepository(db);
+      const debateRepo = new DebateRepository(db);
+      const turnRepo = new TurnRepository(db);
+
+      const panel = await panelRepo.create({
+        name: "interrupted-panel",
+        topic: "resume me",
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+      });
+      panelName = panel.name;
+      panelId = panel.id;
+      const cto = await expertRepo.create({
+        panelId: panel.id,
+        slug: "cto",
+        displayName: "CTO",
+        model: "claude-sonnet-4",
+        systemMessage: "[1] IDENTITY...",
+      });
+      const pm = await expertRepo.create({
+        panelId: panel.id,
+        slug: "pm",
+        displayName: "PM",
+        model: "claude-sonnet-4",
+        systemMessage: "[1] IDENTITY...",
+      });
+
+      const completed = await debateRepo.create({
+        panelId: panel.id,
+        prompt: "Older completed prompt",
+        moderator: "round-robin",
+      });
+      completedDebateId = completed.id;
+      await turnRepo.create({
+        debateId: completed.id,
+        round: 0,
+        seq: 0,
+        speakerKind: "expert",
+        expertId: cto.id,
+        content: "Completed CTO turn.",
+      });
+      await turnRepo.create({
+        debateId: completed.id,
+        round: 0,
+        seq: 1,
+        speakerKind: "expert",
+        expertId: pm.id,
+        content: "Completed PM turn.",
+      });
+      await debateRepo.update(completed.id, {
+        status: "completed",
+        endedAt: new Date().toISOString(),
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      const interrupted = await debateRepo.create({
+        panelId: panel.id,
+        prompt: "Resume this interrupted prompt",
+        moderator: "round-robin",
+      });
+      interruptedDebateId = interrupted.id;
+      await turnRepo.create({
+        debateId: interrupted.id,
+        round: 0,
+        seq: 0,
+        speakerKind: "expert",
+        expertId: cto.id,
+        content: "Partial interrupted turn.",
+      });
+      await debateRepo.update(interrupted.id, {
+        status: "interrupted",
+        endedAt: new Date().toISOString(),
+      });
+    } finally {
+      await db.destroy();
+    }
+
+    let captured = "";
+    let errored = "";
+    const cmd = buildResumeCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (s) => {
+        captured += s;
+      },
+      writeError: (s) => {
+        errored += s;
+      },
+    });
+
+    await cmd.parseAsync(["node", "council-resume", panelName, "--format", "json"]);
+
+    expect(errored).toMatch(/resuming interrupted debate/i);
+
+    const lines = captured.split("\n").filter((l) => l.trim().startsWith("{"));
+    const events = lines.map((l) => JSON.parse(l) as { kind: string });
+    expect(events[0]?.kind).toBe("panel.assembled");
+    expect(events[events.length - 1]?.kind).toBe("debate.end");
+
+    const verifyDb = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const debates = await new DebateRepository(verifyDb).findByPanelId(panelId);
+      expect(debates).toHaveLength(3);
+      const autoResumed = debates.find(
+        (debate) => debate.id !== completedDebateId && debate.id !== interruptedDebateId,
+      );
+      expect(autoResumed).toBeDefined();
+      expect(autoResumed?.prompt).toBe("Resume this interrupted prompt");
+      expect(autoResumed?.status).toBe("completed");
+      expect(debates.find((debate) => debate.id === interruptedDebateId)?.status).toBe("interrupted");
+    } finally {
+      await verifyDb.destroy();
+    }
+  });
+
   it("findByName resolves to the most-recently-created panel when names collide", async () => {
     // Seed two panels with the SAME name; resume should pick the newer one.
     const db = await createDatabase(path.join(testHome, "council.db"));

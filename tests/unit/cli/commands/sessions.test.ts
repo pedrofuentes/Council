@@ -97,6 +97,43 @@ describe("buildSessionsCommand", () => {
       expect(captured).toContain("test topic");
     });
 
+    it("shows interrupted debate status distinctly in plain output", async () => {
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { PanelRepository } = await import(
+        "../../../../src/memory/repositories/panels.js"
+      );
+      const { DebateRepository } = await import(
+        "../../../../src/memory/repositories/debates.js"
+      );
+      const db = await createDatabase(path.join(testHome, "council.db"));
+      const panelRepo = new PanelRepository(db);
+      const debateRepo = new DebateRepository(db);
+      const panel = await panelRepo.create({
+        name: "interrupted-session",
+        topic: "partial debate",
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: "{}",
+      });
+      const debate = await debateRepo.create({
+        panelId: panel.id,
+        prompt: "prompt",
+        moderator: "round-robin",
+      });
+      await debateRepo.update(debate.id, {
+        status: "interrupted",
+        endedAt: new Date().toISOString(),
+      });
+      await db.destroy();
+
+      let captured = "";
+      const cmd = buildSessionsCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-sessions"]);
+      expect(captured.toLowerCase()).toMatch(/status:\s*interrupted/);
+      expect(captured.toLowerCase()).not.toMatch(/status:\s*(completed|running)/);
+    });
+
     it("lists a seeded session as NDJSON when format=json", async () => {
       const { createDatabase } = await import("../../../../src/memory/db.js");
       const { PanelRepository } = await import(
