@@ -2,6 +2,7 @@
  * Tests for updateConfigField().
  */
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -41,7 +42,7 @@ describe("updateConfigField", () => {
     vi.mocked(fs.rename).mockImplementation(actualFs.rename);
     vi.mocked(fs.unlink).mockImplementation(actualFs.unlink);
 
-    testHome = await fs.mkdtemp(path.join(process.cwd(), ".tmp-update-config-field-"));
+    testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-update-config-field-"));
     configPath = path.join(testHome, "config.yaml");
     process.env["COUNCIL_HOME"] = testHome;
   });

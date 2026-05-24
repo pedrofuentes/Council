@@ -241,8 +241,6 @@ describe("runWithEngine — abort normalization (#810)", () => {
   it("does not throw when signal is aborted — returns normally so callers see the friendly message", async () => {
     const controller = new AbortController();
     controller.abort(); // pre-abort
-    let errOutput = "";
-
     // runWithEngine should NOT throw when signal.aborted is true
     await expect(
       runWithEngine({
@@ -256,9 +254,7 @@ describe("runWithEngine — abort normalization (#810)", () => {
         moderator: "round-robin",
         format: "plain",
         write: () => undefined,
-        writeError: (s: string) => {
-          errOutput += s;
-        },
+        writeError: () => undefined,
         db,
         signal: controller.signal,
       }),
