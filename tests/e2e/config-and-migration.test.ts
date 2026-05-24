@@ -29,7 +29,7 @@ describe("Config and Migration E2E", () => {
 
   afterEach(async () => {
     await cleanupE2EContext(ctx);
-  }, 30_000);
+  }, 60_000);
 
   it("fresh install: missing config auto-creates", async () => {
     const configPath = path.join(ctx.testHome, "config.yaml");

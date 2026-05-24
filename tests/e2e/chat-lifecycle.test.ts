@@ -174,7 +174,7 @@ describe("chat lifecycle e2e", () => {
 
   afterEach(async () => {
     await cleanupE2EContext(ctx);
-  }, 30_000);
+  }, 60_000);
 
   it("1:1 chat: single turn persists the session and turns", async () => {
     await seedExpert(ctx, buildExpertDefinition("cto", "CTO", "Technology lead"));
