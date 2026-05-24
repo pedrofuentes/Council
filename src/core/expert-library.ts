@@ -171,7 +171,14 @@ export class FileExpertLibrary implements ExpertLibrary {
       await fs.writeFile(yamlPath, content, { encoding: "utf-8", flag: "wx" });
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "EEXIST") {
-        await this.repairMissingCacheRowFromYaml(validated.slug, yamlPath);
+        try {
+          await this.repairMissingCacheRowFromYaml(validated.slug, yamlPath);
+        } catch (repairError) {
+          const detail = repairError instanceof Error ? repairError.message : String(repairError);
+          console.warn(
+            `[expert-library] Failed to repair missing expert cache row for slug "${validated.slug}" from ${yamlPath}: ${detail}`,
+          );
+        }
         throw new Error(`Expert "${validated.slug}" already exists at ${yamlPath}`);
       }
       throw err;
