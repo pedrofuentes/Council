@@ -35,6 +35,7 @@ import type { DebateMode } from "../../core/template-loader.js";
 import {
   assertAllInline,
   loadPanel,
+  PanelDefinitionSchema,
   resolveExperts,
   type PanelDefinition,
   type ResolvedPanelDefinition,
@@ -230,11 +231,18 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       const humanNames: readonly string[] = raw.human ?? [];
       const templateName = raw.panel ?? raw.template;
       const requestedExpertSlugs =
-        raw.experts !== undefined ? parseExpertSlugList(raw.experts) : undefined;
+        raw.experts !== undefined
+          ? validateRequestedExpertSlugs(parseExpertSlugList(raw.experts, writeError), templateName, writeError)
+          : undefined;
 
       let template: ResolvedPanelDefinition;
       if (requestedExpertSlugs !== undefined) {
-        const experts = await resolveLibraryExperts(dataHome, libraryDbPath, requestedExpertSlugs);
+        const experts = await resolveLibraryExperts(
+          dataHome,
+          libraryDbPath,
+          requestedExpertSlugs,
+          writeError,
+        );
         if (templateName !== undefined) {
           const panel = await loadConvenePanelTemplate(templateName, dataHome, libraryDbPath);
           template = {
@@ -250,7 +258,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           };
         }
       } else if (templateName !== undefined) {
-        template = await resolveConvenePanelTemplate(templateName, dataHome, libraryDbPath);
+        template = await resolveConvenePanelTemplate(templateName, dataHome, libraryDbPath, writeError);
       } else {
         // §2.5 auto-compose: spin up a temporary engine session, ask the
         // composer to design the panel, then tear it down. The real debate
@@ -574,15 +582,45 @@ Note: Topics with special characters (like $, !, etc.) should be quoted:
   return cmd;
 }
 
-function parseExpertSlugList(raw: string): readonly string[] {
+function failConveneUserError(writeError: Writer, message: string): never {
+  const sanitized = stripControlChars(message);
+  writeError(sanitized + "\n");
+  throw new CliUserError(sanitized);
+}
+
+function parseExpertSlugList(raw: string, writeError: Writer): readonly string[] {
   const slugs = raw
     .split(",")
     .map((slug) => slug.trim())
     .filter((slug) => slug.length > 0);
   if (slugs.length === 0) {
-    throw new CliUserError("At least one expert slug is required (use --experts <slug1>,<slug2>)");
+    failConveneUserError(
+      writeError,
+      "At least one expert slug is required (use --experts <slug1>,<slug2>)",
+    );
   }
   return slugs;
+}
+
+function validateRequestedExpertSlugs(
+  expertSlugs: readonly string[],
+  templateName: string | undefined,
+  writeError: Writer,
+): readonly string[] {
+  const result = PanelDefinitionSchema.safeParse({
+    name: templateName ?? "ad-hoc-panel",
+    experts: expertSlugs,
+  });
+  if (result.success) {
+    return expertSlugs;
+  }
+
+  const issue = result.error.issues[0];
+  const message =
+    issue?.path[0] === "experts" && issue.code === "too_big" && issue.maximum !== undefined
+      ? `At most ${issue.maximum} expert slugs are allowed with --experts.`
+      : (issue?.message ?? "Invalid --experts value.");
+  failConveneUserError(writeError, message);
 }
 
 async function migratePanelsIfNeeded(dataHome: string, dbPath: string): Promise<void> {
@@ -622,13 +660,15 @@ async function resolveLibraryExperts(
   dataHome: string,
   dbPath: string,
   expertSlugs: readonly string[],
+  writeError: Writer,
 ): Promise<readonly ExpertDefinition[]> {
   const libraryDb = await createDatabase(dbPath);
   try {
     const library = new FileExpertLibrary(dataHome, libraryDb);
     const { resolved, missing } = await library.resolvePanel(expertSlugs);
     if (missing.length > 0) {
-      throw new CliUserError(
+      failConveneUserError(
+        writeError,
         `Named expert slug${missing.length === 1 ? "" : "s"} not in the library: ${missing.map((slug) => stripControlChars(slug)).join(", ")}. ` +
           `Add ${missing.length === 1 ? "it" : "them"} with 'council expert create' or choose from 'council expert list'.`,
       );
@@ -643,6 +683,7 @@ async function resolveConvenePanelTemplate(
   templateName: string,
   dataHome: string,
   dbPath: string,
+  writeError: Writer,
 ): Promise<ResolvedPanelDefinition> {
   const panel = await loadConvenePanelTemplate(templateName, dataHome, dbPath);
   const hasSlugRefs = panel.experts.some((entry) => typeof entry === "string");
@@ -655,7 +696,8 @@ async function resolveConvenePanelTemplate(
     const library = new FileExpertLibrary(dataHome, libraryDb);
     const { resolved, missing } = await resolveExperts(panel.experts, library);
     if (missing.length > 0) {
-      throw new CliUserError(
+      failConveneUserError(
+        writeError,
         `Panel "${stripControlChars(templateName)}" references experts not in the library: ${missing.map((slug) => stripControlChars(slug)).join(", ")}. ` +
           `Add them with 'council expert create' or use inline expert definitions.`,
       );

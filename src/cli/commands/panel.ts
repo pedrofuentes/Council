@@ -49,6 +49,7 @@ import {
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
 import { suggestMatch } from "../fuzzy-match.js";
+import { stripControlChars } from "../strip-control-chars.js";
 
 const PANEL_NAME_RE = /^[a-z][a-z0-9-]*$/;
 
@@ -257,7 +258,9 @@ function resolveCreateName(
   writeError: Writer,
 ): string {
   if (positionalName !== undefined && optionSlug !== undefined && positionalName !== optionSlug) {
-    const msg = `Conflicting panel names: positional argument "${positionalName}" and --slug "${optionSlug}" must match.`;
+    const safePositionalName = stripControlChars(positionalName);
+    const safeOptionSlug = stripControlChars(optionSlug);
+    const msg = `Conflicting panel names: positional argument "${safePositionalName}" and --slug "${safeOptionSlug}" must match.`;
     writeError(msg + "\n");
     throw new CliUserError(msg);
   }
