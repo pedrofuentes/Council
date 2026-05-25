@@ -106,6 +106,7 @@ export interface ConveneOptions {
   readonly yes?: boolean;
   readonly verbose?: boolean;
   readonly model?: string;
+  readonly maxExperts?: number;
 }
 
 /**
@@ -212,6 +213,11 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
     .option("--yes", "Skip the auto-compose confirmation prompt (non-interactive runs)")
     .option("--verbose", "Show template migration notices and zero-change summaries")
     .option("--model <model>", "Model to use for experts (default: from config)")
+    .option(
+      "--max-experts <n>",
+      "Maximum number of experts for auto-compose",
+      (v) => Number.parseInt(v, 10),
+    )
     .action(async (topic: string, raw: ConveneOptions) => {
       const admission = checkTopicAdmission(topic);
       for (const warning of admission.warnings) {
@@ -367,6 +373,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           try {
             template = await autoComposePanel(topic, composeEngine, {
               defaultModel,
+              ...(opts.maxExperts !== undefined && { maxExperts: opts.maxExperts }),
             });
           } catch (err: unknown) {
             const cause = err instanceof Error ? err.message : String(err);
