@@ -15,14 +15,24 @@ import { type Panel, PanelRepository } from "../../memory/repositories/panels.js
 import { TurnRepository } from "../../memory/repositories/turns.js";
 import { getSymbols } from "../renderers/symbols.js";
 
+import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
 import { defaultWriter, type Writer } from "./writer.js";
 
 export interface SessionsCommandOptions {
   readonly format: "json" | "plain";
 }
 
+export interface SessionsCommandDeps {
+  readonly write?: Writer;
+  readonly confirmProvider?: () => ConfirmProvider;
+}
+
 interface CancelSessionsOptions {
   readonly all?: boolean;
+}
+
+interface DeleteSessionOptions {
+  readonly yes?: boolean;
 }
 
 const STUCK_RUNNING_DEBATE_THRESHOLD_MS = 60 * 60 * 1000;
@@ -86,7 +96,29 @@ async function findPanelByNameOrPrefix(
   return undefined;
 }
 
-export function buildSessionsCommand(write: Writer = defaultWriter): Command {
+function hasRunningDebate(panelDebates: readonly { status: DebateStatus }[]): boolean {
+  return panelDebates.some((debate) => debate.status === "running");
+}
+
+function resolveSessionsCommandDeps(depsOrWrite: SessionsCommandDeps | Writer | undefined): {
+  write: Writer;
+  confirmProvider: () => ConfirmProvider;
+} {
+  if (typeof depsOrWrite === "function") {
+    return {
+      write: depsOrWrite,
+      confirmProvider: createReadlineConfirmProvider,
+    };
+  }
+
+  return {
+    write: depsOrWrite?.write ?? defaultWriter,
+    confirmProvider: depsOrWrite?.confirmProvider ?? createReadlineConfirmProvider,
+  };
+}
+
+export function buildSessionsCommand(depsOrWrite?: SessionsCommandDeps | Writer): Command {
+  const { write, confirmProvider } = resolveSessionsCommandDeps(depsOrWrite);
   const cmd = new Command("sessions");
   cmd.alias("history");
   cmd
@@ -185,6 +217,46 @@ export function buildSessionsCommand(write: Writer = defaultWriter): Command {
         }
 
         write(`Cancelled running debate for panel '${panel.name}'.\n`);
+      } finally {
+        await db.destroy();
+      }
+    });
+
+  cmd
+    .command("delete")
+    .description("Delete a completed or interrupted session")
+    .argument("<name>", "Session name to delete (supports unique prefix matching)")
+    .option("--yes", "Skip confirmation prompt")
+    .action(async (name: string, options: DeleteSessionOptions) => {
+      const requestedName = name.trim();
+      const dbPath = path.join(getCouncilHome(), "council.db");
+      const db = await createDatabase(dbPath);
+      try {
+        const panelRepo = new PanelRepository(db);
+        const debateRepo = new DebateRepository(db);
+        const panel = await findPanelByNameOrPrefix(panelRepo, requestedName);
+        if (!panel) {
+          write(`No session found matching '${requestedName}'.\n`);
+          return;
+        }
+
+        const debates = await debateRepo.findByPanelId(panel.id);
+        if (hasRunningDebate(debates)) {
+          throw new Error("Cannot delete a running session. Cancel it first.");
+        }
+
+        if (options.yes !== true) {
+          const confirmed = await confirmProvider().confirm(
+            `Delete session ${panel.name}? This cannot be undone. (y/N) `,
+          );
+          if (!confirmed) {
+            write("Deletion aborted.\n");
+            return;
+          }
+        }
+
+        await panelRepo.delete(panel.id);
+        write(`Deleted session '${panel.name}'.\n`);
       } finally {
         await db.destroy();
       }
