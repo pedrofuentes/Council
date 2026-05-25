@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`council sessions` now flags stale running debates with a recovery hint** (T2) — when a running debate has had no activity for more than one hour, `council sessions` now points users to `council resume <panel>` so they can recover the conversation instead of assuming it is still actively progressing.
 - **Abort path no longer shows raw engine errors** (#810) — when a debate is interrupted via Ctrl+C, `runWithEngine` now suppresses confusing `formatEngineError` diagnostic output and returns normally, allowing callers to show the user-friendly "Debate interrupted. Partial results saved." message regardless of where in the lifecycle the abort occurred.
 - **Config lock handles Windows NTFS contention** (#820) — `withConfigLock` now retries on `EPERM` and `EACCES` in addition to `EEXIST`, fixing intermittent crashes when concurrent processes update config simultaneously on Windows. Temp directories in config tests moved from `process.cwd()` to `os.tmpdir()` to prevent orphaned dirs in the workspace.
 
