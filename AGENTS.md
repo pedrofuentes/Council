@@ -1,6 +1,6 @@
 # AGENTS.md — Council
 
-<!-- agents-template v0.12.1 -->
+<!-- agents-template v0.12.2 -->
 
 <role>You write tests before code, work in isolated worktree branches, and never merge without Sentinel review. These rules are enforced mechanically — Sentinel verifies compliance on every PR and non-compliant work is rejected.</role>
 
