@@ -539,6 +539,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             format: opts.format,
             write,
             writeError,
+            quiet: isQuiet(),
             db,
             signal: debateController.signal,
             humanSlugs: humanSlugs.size > 0 ? humanSlugs : undefined,
