@@ -9,7 +9,14 @@ import * as path from "node:path";
 
 import { Command, Option } from "commander";
 
-import { getCouncilHome, loadConfig, resolveEngine } from "../../config/index.js";
+import {
+  getCouncilDataHome,
+  getCouncilHome,
+  loadConfig,
+  resolveEngine,
+  type CouncilConfig,
+} from "../../config/index.js";
+import { PanelNotFoundError, TEMPLATE_NAME_PATTERN, loadPanel } from "../../core/template-loader.js";
 import { checkTopicAdmission } from "../../core/topic-admission.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import { createDatabase } from "../../memory/db.js";
@@ -75,7 +82,12 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
           writeError(warning + "\n");
         }
 
-        const resolvedEngine = raw.engine ?? resolveEngine(undefined, await loadConfig());
+        let loadedConfig: CouncilConfig | undefined;
+        const getConfig = async (): Promise<CouncilConfig> => {
+          loadedConfig ??= await loadConfig();
+          return loadedConfig;
+        };
+        const resolvedEngine = raw.engine ?? resolveEngine(undefined, await getConfig());
         const format: RendererFormat = parseFormat(raw.format);
         const maxWords = Number.isFinite(raw.maxWords)
           ? (raw.maxWords ?? DEFAULT_MAX_WORDS)
@@ -92,8 +104,13 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
         try {
           const panel = await new PanelRepository(db).findByName(panelName);
           if (!panel) {
+            const dataHome = process.env["COUNCIL_DATA_HOME"]?.length
+              ? getCouncilDataHome()
+              : getCouncilDataHome(loadedConfig ?? await getConfig());
+            const templateOnlyMessage = await buildTemplateOnlyMessage(panelName, dataHome);
             throw new Error(
-              `No panel found with name '${panelName}'. Run \`council sessions\` to list available panels.`,
+              templateOnlyMessage ??
+                `No panel found with name '${panelName}'. Run \`council sessions\` to list available panels.`,
             );
           }
           const allExperts = await new ExpertRepository(db).findByPanelId(panel.id);
@@ -163,6 +180,25 @@ Examples:
   );
 
   return cmd;
+}
+
+async function buildTemplateOnlyMessage(
+  panelName: string,
+  dataHome: string,
+): Promise<string | undefined> {
+  if (!TEMPLATE_NAME_PATTERN.test(panelName)) return undefined;
+
+  try {
+    await loadPanel(panelName, dataHome);
+    return (
+      `Panel '${panelName}' matches a library template, not an active session. ` +
+      `Use \`council chat ${panelName}\` to talk with it directly, or ` +
+      `\`council convene --template ${panelName}\` to start a new panel.`
+    );
+  } catch (err: unknown) {
+    if (err instanceof PanelNotFoundError) return undefined;
+    throw err;
+  }
 }
 
 function parseFormat(raw: string | undefined): RendererFormat {

@@ -15,7 +15,7 @@
  *     Context, Options Considered, Discussion, Decision sections
  *     populated from the panel's debate.
  *
- * Pure read path: no engine, no LLM, no persistence side effects.
+ * Pure read path: no engine, no LLM, and no debate-persistence side effects.
  * Reuses `synthesizeEvents()` from `src/memory/transcript.ts` (shared
  * with `council resume`). Unlike resume — which surfaces only the most
  * substantive single debate — export flattens every debate (original +
@@ -29,7 +29,7 @@ import * as path from "node:path";
 
 import { Command, Option } from "commander";
 
-import { getCouncilHome } from "../../config/index.js";
+import { getCouncilDataHome, getCouncilHome, loadConfig } from "../../config/index.js";
 import { createDatabase, type CouncilDatabase } from "../../memory/db.js";
 import { DebateRepository } from "../../memory/repositories/debates.js";
 import { ExpertRepository } from "../../memory/repositories/experts.js";
@@ -37,6 +37,7 @@ import { PanelRepository } from "../../memory/repositories/panels.js";
 import { TurnRepository, type Turn } from "../../memory/repositories/turns.js";
 import { synthesizeEvents, type TranscriptDocument } from "../../memory/transcript.js";
 
+import { CliUserError } from "../cli-user-error.js";
 import { resolveSession } from "../session-resolver.js";
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
@@ -74,15 +75,48 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
       };
 
       const councilHome = getCouncilHome();
+      const dataHome = getCouncilDataHome();
       const dbPath = path.join(councilHome, "council.db");
       const db = await createDatabase(dbPath);
       try {
-        const resolvedName = await resolveSession({
-          db,
-          dataHome: councilHome,
-          panelArg: panelName,
-          writeError,
-        });
+        let resolvedName: string;
+        // Buffer stderr from the first attempt so we can discard it if we
+        // retry with a different data home — emitting it eagerly would
+        // print a contradictory "No panel found matching ..." line right
+        // before the real "exists but has no debates yet ..." diagnostic.
+        let firstAttemptStderr = "";
+        const bufferedWriteError: Writer = (chunk: string) => {
+          firstAttemptStderr += chunk;
+        };
+        try {
+          resolvedName = await resolveSession({
+            db,
+            dataHome,
+            panelArg: panelName,
+            writeError: bufferedWriteError,
+          });
+        } catch (err: unknown) {
+          const shouldRetryWithConfig =
+            err instanceof CliUserError &&
+            err.message.startsWith("No panel found matching") &&
+            !(process.env["COUNCIL_DATA_HOME"]?.length);
+          if (!shouldRetryWithConfig) {
+            writeError(firstAttemptStderr);
+            throw err;
+          }
+
+          const configuredDataHome = getCouncilDataHome(await loadConfig());
+          if (configuredDataHome === dataHome) {
+            writeError(firstAttemptStderr);
+            throw err;
+          }
+          resolvedName = await resolveSession({
+            db,
+            dataHome: configuredDataHome,
+            panelArg: panelName,
+            writeError,
+          });
+        }
         const doc = await loadFullPanelTranscript(db, resolvedName);
         const rendered = renderForExport(doc, opts.format);
 
