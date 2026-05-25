@@ -13,31 +13,37 @@
 <!-- TODO: Add terminal recording (VHS/asciinema) -->
 
 ```bash
-$ council convene "Should we migrate from monolith to microservices?"
+$ council convene "Should we build our own analytics platform or buy a third-party solution?"
 
-🏛️ Panel assembled: 3 experts
-  • Dahlia Renner (CTO) — claude-sonnet-4
-  • Marcus Chen (PM) — gpt-5
-  • The Adversary — claude-sonnet-4
+🏛️ Auto-composing expert panel...
+✓ Panel assembled: 3 experts
+  • Priya Mehta (CTO) — claude-sonnet-4
+  • James Whitfield (CFO) — claude-sonnet-4
+  • Lisa Park (VP Product) — claude-sonnet-4
 
 ━━━ Round 1 ━━━
 
-[Dahlia Renner — CTO]
-Your team is 18 engineers. Every microservices migration I've seen at this
-scale has the same failure mode: you split before you can operate...
+[Priya Mehta — CTO]
+Building in-house gives us full control over the data pipeline, but we need
+to be honest about the cost: a team of 3 engineers for 6+ months, ongoing
+maintenance, and we still won't match the feature set of Amplitude or Mixpanel
+on day one...
 
-[Marcus Chen — PM]
-I disagree with Dahlia's framing. The question isn't team size — it's
-time-to-learning. A monolith means every experiment touches everything...
+[James Whitfield — CFO]
+Priya's estimate undersells the true cost. Three engineers at $180K fully
+loaded is $270K just in salary for the build phase. A vendor at $3K/month is
+$36K/year. Even over 3 years, the buy option is 60% cheaper — and that's
+before we account for opportunity cost of those engineers not shipping product...
 
-[The Adversary]
-Both of you are assuming the migration is binary. The real question neither
-has addressed: what specific coupling in your monolith is actually blocking
-you today?
+[Lisa Park — VP Product]
+Both of you are optimizing for cost, but the real question is speed to insight.
+We're making pricing decisions next quarter with no data. A vendor gets us
+dashboards in 2 weeks. Building means we're flying blind for 6 months...
 
 ━━━ Synthesis ━━━
-The panel disagrees on timing but agrees on one thing: identify the specific
-pain points before choosing an architecture...
+The panel splits on build vs. buy but converges on one point: the 6-month
+data gap is the real risk. Start with a vendor, ring-fence the build option
+for year two if data ownership becomes a competitive advantage...
 ```
 
 ## Why Council?
@@ -46,6 +52,8 @@ ChatGPT gives you **one perspective**. Council gives you **structured deliberati
 
 | You ask...                        | Single AI says...      | Council deliberates...                                                                                                          |
 | --------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| "Build or buy analytics?"         | Generic pros/cons list | CTO estimates build cost, CFO models 3-year TCO, VP Product argues speed to insight — synthesis names the real risk             |
+| "Should we add a freemium tier?"  | Balanced advice        | VP Growth projects conversion funnels, CFO flags margin erosion, Head of CS warns about support load — genuine disagreement     |
 | "Should we use microservices?"    | Generic pros/cons list | CTO argues operational risk, PM argues time-to-learning, Adversary challenges both — then synthesis names the crux              |
 | "Review this auth middleware"     | Unified feedback       | Security auditor flags JWT expiry, performance engineer finds N+1, future maintainer asks "will I understand this in 6 months?" |
 | "Should I take the manager role?" | Balanced advice        | IC mentor argues stay, manager argues switch, career coach provides a decision framework                                        |
