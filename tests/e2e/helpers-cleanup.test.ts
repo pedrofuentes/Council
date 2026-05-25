@@ -68,7 +68,7 @@ describe("E2E cleanup helpers", () => {
     }
   });
 
-  it("waits for the active COUNCIL_DATA_HOME database before cleanup", async () => {
+  it("does not open the database during cleanup (decoupled from DB readiness)", async () => {
     const originalHome = process.env["COUNCIL_HOME"];
     const originalDataHome = process.env["COUNCIL_DATA_HOME"];
     const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-e2e-cleanup-home-"));
@@ -100,8 +100,11 @@ describe("E2E cleanup helpers", () => {
         originalDataHome,
       });
 
-      expect(createDatabaseMock).toHaveBeenCalledWith(path.join(customDataHome, "council.db"));
-      expect(destroyMock).toHaveBeenCalled();
+      // Cleanup must NOT open the database — that would block on leaked
+      // handles and is unnecessary because removeDir's retry loop already
+      // absorbs Windows EBUSY/EPERM during file deletion.
+      expect(createDatabaseMock).not.toHaveBeenCalled();
+      expect(destroyMock).not.toHaveBeenCalled();
     } finally {
       if (originalHome === undefined) delete process.env["COUNCIL_HOME"];
       else process.env["COUNCIL_HOME"] = originalHome;
