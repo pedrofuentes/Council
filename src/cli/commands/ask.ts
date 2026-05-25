@@ -23,7 +23,7 @@ import { createDatabase } from "../../memory/db.js";
 import { ExpertRepository } from "../../memory/repositories/experts.js";
 import { PanelRepository } from "../../memory/repositories/panels.js";
 
-import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
+import { defaultErrorWriter, defaultWriter, isQuiet, type Writer } from "./writer.js";
 import { ENGINE_KINDS, type EngineKind, runWithEngine } from "../run-with-engine.js";
 import { RENDERER_FORMATS, type RendererFormat } from "../renderers/select.js";
 
@@ -154,6 +154,7 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
             format,
             write,
             writeError,
+            quiet: isQuiet(),
             db,
             preamble: () => {
               write(`\n# Asking ${selectedExpert.displayName} (${selectedExpert.slug})\n`);

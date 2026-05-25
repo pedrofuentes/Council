@@ -211,3 +211,21 @@ describe("buildProgram first-run hook", () => {
     expect(selectModelInteractively).not.toHaveBeenCalled();
   });
 });
+
+describe("unknown option handling", () => {
+  it("rejects unknown global flags", async () => {
+    const program = createProbeProgram();
+    program.exitOverride();
+    await expect(program.parseAsync(["node", "council", "--foobar", "probe"])).rejects.toThrow(/unknown option/);
+  });
+
+  it("rejects unknown subcommand flags", async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    // exitOverride must propagate to subcommands
+    program.commands.forEach((cmd) => cmd.exitOverride());
+    await expect(program.parseAsync(["node", "council", "doctor", "--unknown-flag"])).rejects.toThrow(
+      /unknown option/,
+    );
+  });
+});

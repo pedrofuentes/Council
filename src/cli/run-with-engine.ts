@@ -84,6 +84,8 @@ export interface RunWithEngineOpts {
    * Only consulted when `format === "auto"`.
    */
   readonly isTTY?: boolean;
+  /** Suppress informational output like cost counters. Defaults to false. */
+  readonly quiet?: boolean;
   /** Open database handle — caller manages creation; this function does NOT destroy it. */
   readonly db: CouncilDatabase;
   /**
@@ -211,7 +213,12 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
 
     const sink: Sink = { write: opts.write, writeError: opts.writeError };
     const isTTY = opts.isTTY ?? Boolean(process.stdout.isTTY);
-    const renderer = selectRenderer({ format: opts.format, isTTY, sink });
+    const renderer = selectRenderer({
+      format: opts.format,
+      isTTY,
+      sink,
+      ...(opts.quiet !== undefined ? { quiet: opts.quiet } : {}),
+    });
 
     opts.beforeRender?.();
 

@@ -23,6 +23,7 @@ export interface SelectRendererOpts {
   readonly format: RendererFormat;
   readonly isTTY: boolean;
   readonly sink: Sink;
+  readonly quiet?: boolean;
 }
 
 /** Detect environments where PlainRenderer should be forced for accessibility. */
@@ -38,12 +39,18 @@ export function selectRenderer(opts: SelectRendererOpts): Renderer {
     case "json":
       return new JsonRenderer(opts.sink);
     case "plain":
-      return new PlainRenderer(opts.sink);
+      return new PlainRenderer(opts.sink, { ...(opts.quiet !== undefined ? { quiet: opts.quiet } : {}) });
     case "auto":
       if (!opts.isTTY || shouldForcePlain()) {
-        return new PlainRenderer(opts.sink, { color: false });
+        return new PlainRenderer(opts.sink, {
+          color: false,
+          ...(opts.quiet !== undefined ? { quiet: opts.quiet } : {}),
+        });
       }
-      return new InkRenderer({ isTTY: true });
+      return new InkRenderer({
+        isTTY: true,
+        ...(opts.quiet !== undefined ? { quiet: opts.quiet } : {}),
+      });
     default: {
       const _exhaustive: never = opts.format;
       throw new Error(`Unknown renderer format: ${String(_exhaustive)}`);

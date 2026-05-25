@@ -28,7 +28,7 @@ import {
   synthesizeEvents,
   type TranscriptDocument,
 } from "../../memory/transcript.js";
-import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
+import { defaultErrorWriter, defaultWriter, isQuiet, type Writer } from "./writer.js";
 import { runExtractMemoryHook } from "../extract-memory-hook.js";
 import { RENDERER_FORMATS, type RendererFormat } from "../renderers/select.js";
 import { ENGINE_KINDS, type EngineKind, runWithEngine } from "../run-with-engine.js";
@@ -220,6 +220,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
             format: opts.format,
             write,
             writeError,
+            quiet: isQuiet(),
             db,
             signal: debateController.signal,
             preamble: () => {

@@ -22,11 +22,14 @@ import { stripControlChars } from "../strip-control-chars.js";
 export interface PlainRendererOptions {
   /** Whether to emit ANSI color codes. Defaults to true; tests pass false. */
   readonly color?: boolean;
+  /** Whether to suppress informational output like cost counters. Defaults to false. */
+  readonly quiet?: boolean;
 }
 
 export class PlainRenderer implements Renderer {
   readonly #sink: Sink;
   readonly #color: boolean;
+  readonly #quiet: boolean;
   /**
    * Forced chalk instance — `level: 1` (basic 16-color) explicitly overrides
    * chalk's TTY auto-detection, which would otherwise return level 0 (no
@@ -47,6 +50,7 @@ export class PlainRenderer implements Renderer {
   constructor(sink: Sink, options: PlainRendererOptions = {}) {
     this.#sink = sink;
     this.#color = options.color ?? true;
+    this.#quiet = options.quiet ?? false;
     this.#chalk = new Chalk({ level: this.#color && !process.env.NO_COLOR ? 1 : 0 });
   }
 
@@ -91,9 +95,11 @@ export class PlainRenderer implements Renderer {
           }
           break;
         case "cost.update":
-          this.write(
-            `${this.gray(`[Cost: ${evt.premiumRequests}/${evt.estimatedTotal} premium requests]`)}\n`,
-          );
+          if (!this.#quiet) {
+            this.write(
+              `${this.gray(`[Cost: ${evt.premiumRequests}/${evt.estimatedTotal} premium requests]`)}\n`,
+            );
+          }
           break;
         case "debate.end":
           this.write(`\n${this.bold(`--- Debate complete (${evt.reason}) ---`)}\n`);
