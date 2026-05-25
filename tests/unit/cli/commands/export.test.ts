@@ -483,6 +483,59 @@ describe("buildExportCommand", () => {
     }
   });
 
+  it("does not emit the contradictory 'No panel found matching' diagnostic on the config-dataHome retry path", async () => {
+    const dataHomeBeforeOverride = process.env["COUNCIL_DATA_HOME"];
+    const libraryHome = path.join(testHome, "config-data-home-silent");
+    const panelsDir = path.join(libraryHome, "panels");
+    await fs.mkdir(panelsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(panelsDir, "silent-probe-template.yaml"),
+      [
+        "name: silent-probe-template",
+        "description: Template stored only in config.paths.dataHome",
+        "experts:",
+        "  - slug: reviewer",
+        "    displayName: Reviewer",
+        "    role: Reviews code",
+        "    expertise:",
+        "      weightedEvidence:",
+        "        - Reads diffs carefully",
+        "      referenceCases: []",
+        "      notExpertIn: []",
+        "    epistemicStance: Cautious",
+      ].join("\n"),
+      "utf-8",
+    );
+    delete process.env["COUNCIL_DATA_HOME"];
+    await fs.writeFile(
+      path.join(testHome, "config.yaml"),
+      `paths:\n  dataHome: "${libraryHome.replace(/\\/g, "/")}"\n`,
+      "utf-8",
+    );
+
+    try {
+      let stderr = "";
+      const cmd = buildExportCommand({
+        write: () => undefined,
+        writeError: (s) => {
+          stderr += s;
+        },
+      });
+      cmd.exitOverride();
+      try {
+        await cmd.parseAsync(["node", "council-export", "silent-probe-template"]);
+      } catch {
+        /* expected */
+      }
+      expect(stderr).toMatch(/exists but has no debates yet/i);
+      expect(stderr).toMatch(/convene --template silent-probe-template/i);
+      expect(stderr).not.toMatch(/No panel found matching/i);
+    } finally {
+      if (dataHomeBeforeOverride === undefined) delete process.env["COUNCIL_DATA_HOME"];
+      else process.env["COUNCIL_DATA_HOME"] = dataHomeBeforeOverride;
+    }
+  });
+
   it("--format markdown (default): includes topic, status, expert displayNames, content", async () => {
     const seed = await seedPanelWithDebate(testHome);
     let captured = "";
