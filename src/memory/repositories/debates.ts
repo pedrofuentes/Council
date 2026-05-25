@@ -100,6 +100,48 @@ export class DebateRepository {
     return rows.map(toDomain);
   }
 
+  async cancelRunning(panelId: string, endedAt: string = new Date().toISOString()): Promise<Debate | undefined> {
+    const row = await this.db
+      .selectFrom("debates")
+      .selectAll()
+      .where("panel_id", "=", panelId)
+      .where("status", "=", "running")
+      .orderBy("started_at", "desc")
+      .orderBy("id", "desc")
+      .executeTakeFirst();
+    if (!row) {
+      return undefined;
+    }
+
+    const [result] = await this.db
+      .updateTable("debates")
+      .set({
+        status: "interrupted",
+        ended_at: endedAt,
+      })
+      .where("id", "=", row.id)
+      .where("status", "=", "running")
+      .execute();
+    if (Number(result?.numUpdatedRows ?? 0) === 0) {
+      return undefined;
+    }
+
+    return this.findById(row.id);
+  }
+
+  async cancelAllRunning(endedAt: string = new Date().toISOString()): Promise<number> {
+    const [result] = await this.db
+      .updateTable("debates")
+      .set({
+        status: "interrupted",
+        ended_at: endedAt,
+      })
+      .where("status", "=", "running")
+      .execute();
+
+    return Number(result?.numUpdatedRows ?? 0);
+  }
+
   async update(id: string, patch: DebateUpdate): Promise<Debate | undefined> {
     const updates: Record<string, unknown> = {};
     if (patch.status !== undefined) updates["status"] = patch.status;

@@ -11,7 +11,7 @@ import { getCouncilHome } from "../../config/index.js";
 import { createDatabase } from "../../memory/db.js";
 import { DebateRepository, type DebateStatus } from "../../memory/repositories/debates.js";
 import { ExpertRepository } from "../../memory/repositories/experts.js";
-import { PanelRepository } from "../../memory/repositories/panels.js";
+import { type Panel, PanelRepository } from "../../memory/repositories/panels.js";
 import { TurnRepository } from "../../memory/repositories/turns.js";
 import { getSymbols } from "../renderers/symbols.js";
 
@@ -19,6 +19,10 @@ import { defaultWriter, type Writer } from "./writer.js";
 
 export interface SessionsCommandOptions {
   readonly format: "json" | "plain";
+}
+
+interface CancelSessionsOptions {
+  readonly all?: boolean;
 }
 
 function statusIcon(status: DebateStatus | undefined): string {
@@ -42,6 +46,26 @@ function truncateTopic(topic: string | null, maxLength: number): string {
   if (topic === null) return "(no topic)";
   if (topic.length <= maxLength) return topic;
   return topic.slice(0, maxLength - 3) + "...";
+}
+
+async function findPanelByNameOrPrefix(
+  panelRepo: PanelRepository,
+  requestedName: string,
+): Promise<Panel | undefined> {
+  const exactMatch = await panelRepo.findByName(requestedName);
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  const prefixMatches = await panelRepo.findByNamePrefix(requestedName);
+  if (prefixMatches.length === 1) {
+    return prefixMatches[0];
+  }
+  if (prefixMatches.length > 1) {
+    throw new Error(`Ambiguous prefix '${requestedName}' matches ${prefixMatches.length} panels.`);
+  }
+
+  return undefined;
 }
 
 export function buildSessionsCommand(write: Writer = defaultWriter): Command {
@@ -99,5 +123,50 @@ export function buildSessionsCommand(write: Writer = defaultWriter): Command {
         await db.destroy();
       }
     });
+
+  cmd
+    .command("cancel")
+    .description("Mark stale running debates as interrupted")
+    .argument("[name]", "Panel name to cancel (supports unique prefix matching)")
+    .option("--all", "Cancel all running debates")
+    .action(async (name: string | undefined, options: CancelSessionsOptions) => {
+      const dbPath = path.join(getCouncilHome(), "council.db");
+      const db = await createDatabase(dbPath);
+      try {
+        const debateRepo = new DebateRepository(db);
+        if (options.all === true) {
+          const cancelled = await debateRepo.cancelAllRunning();
+          if (cancelled === 0) {
+            write("No running debates found.\n");
+            return;
+          }
+          write(`Cancelled ${cancelled} running debate${cancelled === 1 ? "" : "s"}.\n`);
+          return;
+        }
+
+        const requestedName = name?.trim();
+        if (!requestedName) {
+          throw new Error("Panel name is required unless --all is set.");
+        }
+
+        const panelRepo = new PanelRepository(db);
+        const panel = await findPanelByNameOrPrefix(panelRepo, requestedName);
+        if (!panel) {
+          write(`No panel found matching '${requestedName}'.\n`);
+          return;
+        }
+
+        const cancelled = await debateRepo.cancelRunning(panel.id);
+        if (!cancelled) {
+          write(`No running debates found for panel '${panel.name}'.\n`);
+          return;
+        }
+
+        write(`Cancelled running debate for panel '${panel.name}'.\n`);
+      } finally {
+        await db.destroy();
+      }
+    });
+
   return cmd;
 }
