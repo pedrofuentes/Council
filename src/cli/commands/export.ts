@@ -80,22 +80,36 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
       const db = await createDatabase(dbPath);
       try {
         let resolvedName: string;
+        // Buffer stderr from the first attempt so we can discard it if we
+        // retry with a different data home — emitting it eagerly would
+        // print a contradictory "No panel found matching ..." line right
+        // before the real "exists but has no debates yet ..." diagnostic.
+        let firstAttemptStderr = "";
+        const bufferedWriteError: Writer = (chunk: string) => {
+          firstAttemptStderr += chunk;
+        };
         try {
           resolvedName = await resolveSession({
             db,
             dataHome,
             panelArg: panelName,
-            writeError,
+            writeError: bufferedWriteError,
           });
         } catch (err: unknown) {
           const shouldRetryWithConfig =
             err instanceof CliUserError &&
             err.message.startsWith("No panel found matching") &&
             !(process.env["COUNCIL_DATA_HOME"]?.length);
-          if (!shouldRetryWithConfig) throw err;
+          if (!shouldRetryWithConfig) {
+            writeError(firstAttemptStderr);
+            throw err;
+          }
 
           const configuredDataHome = getCouncilDataHome(await loadConfig());
-          if (configuredDataHome === dataHome) throw err;
+          if (configuredDataHome === dataHome) {
+            writeError(firstAttemptStderr);
+            throw err;
+          }
           resolvedName = await resolveSession({
             db,
             dataHome: configuredDataHome,
