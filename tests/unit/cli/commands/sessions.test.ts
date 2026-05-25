@@ -20,6 +20,12 @@ interface SeededPanelDebates {
   readonly debateIds: readonly string[];
 }
 
+interface SeededRunningDebate {
+  readonly panelId: string;
+  readonly panelName: string;
+  readonly debateId: string;
+}
+
 async function seedPanelWithDebates(
   testHome: string,
   panelName: string,
@@ -80,6 +86,84 @@ async function listDebatesForPanel(
       status: debate.status,
       endedAt: debate.endedAt,
     }));
+  } finally {
+    await db.destroy();
+  }
+}
+
+async function seedRunningDebateWithTurn(
+  testHome: string,
+  panelName: string,
+): Promise<SeededRunningDebate> {
+  const { createDatabase } = await import("../../../../src/memory/db.js");
+  const { DebateRepository } = await import("../../../../src/memory/repositories/debates.js");
+  const { ExpertRepository } = await import("../../../../src/memory/repositories/experts.js");
+  const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
+  const { TurnRepository } = await import("../../../../src/memory/repositories/turns.js");
+
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    const panelRepo = new PanelRepository(db);
+    const expertRepo = new ExpertRepository(db);
+    const debateRepo = new DebateRepository(db);
+    const turnRepo = new TurnRepository(db);
+    const panel = await panelRepo.create({
+      name: panelName,
+      topic: `${panelName} topic`,
+      copilotHome: path.join(testHome, "copilot"),
+      configJson: "{}",
+    });
+    const expert = await expertRepo.create({
+      panelId: panel.id,
+      slug: "cto",
+      displayName: "CTO",
+      model: "claude-sonnet-4",
+      systemMessage: "You are a CTO.",
+    });
+    const debate = await debateRepo.create({
+      panelId: panel.id,
+      prompt: `${panelName} prompt`,
+      moderator: "round-robin",
+    });
+    await turnRepo.create({
+      debateId: debate.id,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId: expert.id,
+      content: "Still thinking...",
+    });
+    return { panelId: panel.id, panelName: panel.name, debateId: debate.id };
+  } finally {
+    await db.destroy();
+  }
+}
+
+async function setDebateStartedAt(testHome: string, debateId: string, startedAt: string): Promise<void> {
+  const { createDatabase } = await import("../../../../src/memory/db.js");
+
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    await db.updateTable("debates").set({ started_at: startedAt }).where("id", "=", debateId).execute();
+  } finally {
+    await db.destroy();
+  }
+}
+
+async function setDebateLatestTurnCreatedAt(
+  testHome: string,
+  debateId: string,
+  createdAt: string,
+): Promise<void> {
+  const { createDatabase } = await import("../../../../src/memory/db.js");
+
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    await db
+      .updateTable("turns")
+      .set({ created_at: createdAt })
+      .where("debate_id", "=", debateId)
+      .execute();
   } finally {
     await db.destroy();
   }
@@ -203,6 +287,71 @@ describe("buildSessionsCommand", () => {
       await cmd.parseAsync(["node", "council-sessions"]);
       expect(captured.toLowerCase()).toMatch(/status:\s*interrupted/);
       expect(captured.toLowerCase()).not.toMatch(/status:\s*(completed|running)/);
+    });
+
+    it("shows a resume hint for running debates with no activity for more than an hour", async () => {
+      const seeded = await seedPanelWithDebates(testHome, "stuck-session", ["running"]);
+      await setDebateStartedAt(
+        testHome,
+        seeded.debateIds[0] ?? "",
+        new Date(Date.now() - 61 * 60 * 1000).toISOString(),
+      );
+
+      let captured = "";
+      const cmd = buildSessionsCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-sessions"]);
+
+      expect(captured).toContain("status: running");
+      expect(captured).toContain("⚠ May be stuck — try: council resume stuck-session");
+    });
+
+    it("uses the ASCII warning symbol in stuck-session hints when COUNCIL_ASCII=1", async () => {
+      const seeded = await seedPanelWithDebates(testHome, "ascii-stuck-session", ["running"]);
+      await setDebateStartedAt(
+        testHome,
+        seeded.debateIds[0] ?? "",
+        new Date(Date.now() - 61 * 60 * 1000).toISOString(),
+      );
+
+      const originalAscii = process.env["COUNCIL_ASCII"];
+      process.env["COUNCIL_ASCII"] = "1";
+
+      try {
+        let captured = "";
+        const cmd = buildSessionsCommand((s) => {
+          captured += s;
+        });
+        await cmd.parseAsync(["node", "council-sessions"]);
+
+        expect(captured).toContain("status: running");
+        expect(captured).toContain("[WARN] May be stuck — try: council resume ascii-stuck-session");
+        expect(captured).not.toContain("⚠ May be stuck — try: council resume ascii-stuck-session");
+      } finally {
+        if (originalAscii === undefined) delete process.env["COUNCIL_ASCII"];
+        else process.env["COUNCIL_ASCII"] = originalAscii;
+      }
+    });
+
+    it("does not show the stuck hint when a running debate has recent turn activity", async () => {
+      const seeded = await seedRunningDebateWithTurn(testHome, "active-session");
+      await setDebateStartedAt(
+        testHome,
+        seeded.debateId,
+        new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+      );
+      await setDebateLatestTurnCreatedAt(testHome, seeded.debateId, new Date().toISOString());
+
+      let captured = "";
+      const cmd = buildSessionsCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-sessions"]);
+
+      expect(captured).toContain("status: running");
+      expect(captured).not.toContain("May be stuck");
+      expect(captured).not.toContain(`council resume ${seeded.panelName}`);
     });
 
     it("lists a seeded session as NDJSON when format=json", async () => {

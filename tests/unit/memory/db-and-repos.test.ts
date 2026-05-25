@@ -805,6 +805,88 @@ describe("TurnRepository", () => {
     ]);
   });
 
+  it("findLatestByDebateId() returns undefined when the debate has no turns", async () => {
+    await expect(turnRepo.findLatestByDebateId(debateId)).resolves.toBeUndefined();
+  });
+
+  it("findLatestByDebateId() returns the turn with the latest createdAt", async () => {
+    await db
+      .insertInto("turns")
+      .values([
+        {
+          id: "01HZ-turn-early",
+          debate_id: debateId,
+          round: 0,
+          seq: 0,
+          speaker_kind: "expert",
+          expert_id: expertId,
+          content: "Early turn.",
+          tokens_in: null,
+          tokens_out: null,
+          latency_ms: null,
+          created_at: "2026-01-01T10:00:00.000Z",
+        },
+        {
+          id: "01HZ-turn-late",
+          debate_id: debateId,
+          round: 0,
+          seq: 1,
+          speaker_kind: "expert",
+          expert_id: expertId,
+          content: "Late turn.",
+          tokens_in: null,
+          tokens_out: null,
+          latency_ms: null,
+          created_at: "2026-01-01T11:00:00.000Z",
+        },
+      ])
+      .execute();
+
+    await expect(turnRepo.findLatestByDebateId(debateId)).resolves.toMatchObject({
+      id: "01HZ-turn-late",
+      content: "Late turn.",
+    });
+  });
+
+  it("findLatestByDebateId() breaks createdAt ties by descending id", async () => {
+    await db
+      .insertInto("turns")
+      .values([
+        {
+          id: "01HZ-turn-a",
+          debate_id: debateId,
+          round: 0,
+          seq: 0,
+          speaker_kind: "expert",
+          expert_id: expertId,
+          content: "First matching timestamp.",
+          tokens_in: null,
+          tokens_out: null,
+          latency_ms: null,
+          created_at: "2026-01-01T10:00:00.000Z",
+        },
+        {
+          id: "01HZ-turn-z",
+          debate_id: debateId,
+          round: 0,
+          seq: 1,
+          speaker_kind: "expert",
+          expert_id: expertId,
+          content: "Later id with same timestamp.",
+          tokens_in: null,
+          tokens_out: null,
+          latency_ms: null,
+          created_at: "2026-01-01T10:00:00.000Z",
+        },
+      ])
+      .execute();
+
+    await expect(turnRepo.findLatestByDebateId(debateId)).resolves.toMatchObject({
+      id: "01HZ-turn-z",
+      content: "Later id with same timestamp.",
+    });
+  });
+
   it("search() finds turns via FTS5 substring match", async () => {
     await turnRepo.create({
       debateId,

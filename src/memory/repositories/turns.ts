@@ -91,6 +91,17 @@ export class TurnRepository {
     return rows.map(toDomain);
   }
 
+  async findLatestByDebateId(debateId: string): Promise<Turn | undefined> {
+    const row = await this.db
+      .selectFrom("turns")
+      .selectAll()
+      .where("debate_id", "=", debateId)
+      .orderBy("created_at", "desc")
+      .orderBy("id", "desc")
+      .executeTakeFirst();
+    return row ? toDomain(row) : undefined;
+  }
+
   async countByDebateId(debateId: string): Promise<number> {
     const row = await this.db
       .selectFrom("turns")

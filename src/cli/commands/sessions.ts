@@ -25,6 +25,8 @@ interface CancelSessionsOptions {
   readonly all?: boolean;
 }
 
+const STUCK_RUNNING_DEBATE_THRESHOLD_MS = 60 * 60 * 1000;
+
 function statusIcon(status: DebateStatus | undefined): string {
   const symbols = getSymbols();
   switch (status) {
@@ -46,6 +48,22 @@ function truncateTopic(topic: string | null, maxLength: number): string {
   if (topic === null) return "(no topic)";
   if (topic.length <= maxLength) return topic;
   return topic.slice(0, maxLength - 3) + "...";
+}
+
+function isPossiblyStuckRunningDebate(
+  status: DebateStatus | undefined,
+  lastActivityAt: string | undefined,
+): boolean {
+  if (status !== "running" || lastActivityAt === undefined) {
+    return false;
+  }
+
+  const lastActivityMs = Date.parse(lastActivityAt);
+  return Number.isFinite(lastActivityMs) && Date.now() - lastActivityMs > STUCK_RUNNING_DEBATE_THRESHOLD_MS;
+}
+
+function formatStuckSessionHint(panelName: string): string {
+  return `${getSymbols().warn} May be stuck — try: council resume ${panelName}`;
 }
 
 async function findPanelByNameOrPrefix(
@@ -103,14 +121,18 @@ export function buildSessionsCommand(write: Writer = defaultWriter): Command {
           const latest = debates.length > 0 ? debates[debates.length - 1] : undefined;
           let turnCount = 0;
           for (const d of debates) {
-            const turns = await turnRepo.findByDebateId(d.id);
-            turnCount += turns.length;
+            turnCount += await turnRepo.countByDebateId(d.id);
           }
+          const latestTurn = latest ? await turnRepo.findLatestByDebateId(latest.id) : undefined;
+          const latestActivityAt = latestTurn?.createdAt ?? latest?.startedAt;
           const icon = statusIcon(latest?.status);
           write(`  ${icon} ${session.name} — ${topic}\n`);
           write(`    panel: ${session.name}\n`);
           write(`    id: ${session.id}\n`);
           write(`    status: ${latest?.status ?? "none"}\n`);
+          if (isPossiblyStuckRunningDebate(latest?.status, latestActivityAt)) {
+            write(`    ${formatStuckSessionHint(session.name)}\n`);
+          }
           write(`    experts: ${experts.length}, turns: ${turnCount}\n`);
           write(`    created: ${session.createdAt}\n`);
         }
