@@ -18,7 +18,7 @@ import * as path from "node:path";
 import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 
-import { Command } from "commander";
+import { Command, Option } from "commander";
 
 import { CliUserError } from "../cli-user-error.js";
 import * as yaml from "yaml";
@@ -148,8 +148,9 @@ function buildDeleteCommand(
   cmd
     .description("Delete a panel (YAML file, docs directory, and DB rows)")
     .argument("<name>", "Panel name to delete")
-    .option("--force", "Skip the confirmation prompt (non-interactive runs)")
-    .action(async (name: string, opts: { force?: boolean }) => {
+    .option("--yes", "Skip the confirmation prompt (non-interactive runs)")
+    .addOption(new Option("--force", "Skip the confirmation prompt (non-interactive runs)").hideHelp())
+    .action(async (name: string, opts: { force?: boolean; yes?: boolean }) => {
       // Defense in depth: re-validate the panel name on every fs.rm/unlink
       // path. Create-time validation cannot be relied upon because the
       // `panel_library.name` column could be populated via migration,
@@ -167,7 +168,7 @@ function buildDeleteCommand(
           throw new CliUserError(msg);
         }
 
-        if (opts.force !== true) {
+        if (opts.yes !== true && opts.force !== true) {
           const provider = confirmProvider ?? createReadlineConfirmProvider();
           const ok = await provider.confirm(
             `Delete panel "${name}"? This cannot be undone. (y/N) `,
