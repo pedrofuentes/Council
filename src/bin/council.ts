@@ -22,6 +22,8 @@
 // `SQLite is an experimental feature` warning. See F02 in T12.
 import "./sqlite-warning-filter.js";
 
+import * as childProcess from "node:child_process";
+
 import { Command } from "commander";
 
 import packageJson from "../../package.json" with { type: "json" };
@@ -55,6 +57,7 @@ import { loadConfigWithMeta } from "../config/index.js";
 type WriteCallback = (error?: Error | null) => void;
 
 interface EncodingWritable {
+  readonly isTTY?: boolean;
   write(
     chunk: string | Uint8Array,
     encoding?: BufferEncoding | WriteCallback,
@@ -63,7 +66,27 @@ interface EncodingWritable {
 }
 
 const UTF8_OUTPUT_ENCODING: BufferEncoding = "utf8";
+const WINDOWS_UTF8_CODE_PAGE = "65001";
+const WINDOWS_CODE_PAGE_COMMAND = "chcp.com";
+const configuredConsoleCodePageStreams = new WeakSet<EncodingWritable>();
 const wrappedOutputStreams = new WeakSet<EncodingWritable>();
+
+function configureWindowsConsoleCodePage(stdout: EncodingWritable): void {
+  if (!stdout.isTTY || configuredConsoleCodePageStreams.has(stdout)) {
+    return;
+  }
+
+  try {
+    childProcess.execFileSync(WINDOWS_CODE_PAGE_COMMAND, [WINDOWS_UTF8_CODE_PAGE], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+  } catch {
+    // Best effort: keep CLI output flowing even if the host console rejects chcp.
+  } finally {
+    configuredConsoleCodePageStreams.add(stdout);
+  }
+}
 
 function wrapUtf8Writes(stream: EncodingWritable): void {
   if (wrappedOutputStreams.has(stream)) {
@@ -102,10 +125,11 @@ export function configureOutputEncoding(
   stdout: EncodingWritable = process.stdout,
   stderr: EncodingWritable = process.stderr,
 ): void {
-  if (platform !== "win32") {
+  if (platform !== "win32" || !stdout.isTTY) {
     return;
   }
 
+  configureWindowsConsoleCodePage(stdout);
   wrapUtf8Writes(stdout);
   wrapUtf8Writes(stderr);
 }
