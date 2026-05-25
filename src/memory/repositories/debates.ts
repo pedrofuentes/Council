@@ -113,30 +113,24 @@ export class DebateRepository {
       return undefined;
     }
 
-    await this.db
+    const [result] = await this.db
       .updateTable("debates")
       .set({
         status: "interrupted",
         ended_at: endedAt,
       })
       .where("id", "=", row.id)
+      .where("status", "=", "running")
       .execute();
+    if (Number(result?.numUpdatedRows ?? 0) === 0) {
+      return undefined;
+    }
 
     return this.findById(row.id);
   }
 
   async cancelAllRunning(endedAt: string = new Date().toISOString()): Promise<number> {
-    const countRow = await this.db
-      .selectFrom("debates")
-      .select((eb) => eb.fn.countAll<number>().as("count"))
-      .where("status", "=", "running")
-      .executeTakeFirst();
-    const count = Number(countRow?.count ?? 0);
-    if (count === 0) {
-      return 0;
-    }
-
-    await this.db
+    const [result] = await this.db
       .updateTable("debates")
       .set({
         status: "interrupted",
@@ -145,7 +139,7 @@ export class DebateRepository {
       .where("status", "=", "running")
       .execute();
 
-    return count;
+    return Number(result?.numUpdatedRows ?? 0);
   }
 
   async update(id: string, patch: DebateUpdate): Promise<Debate | undefined> {
