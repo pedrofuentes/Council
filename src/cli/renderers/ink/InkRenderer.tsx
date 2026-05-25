@@ -410,7 +410,14 @@ export function isCostWarning(premiumRequests: number, estimatedTotal: number): 
   return Number.isFinite(ratio) && ratio > COST_WARNING_THRESHOLD;
 }
 
-function CostIndicator({ state }: { readonly state: DebateState }): ReactElement | null {
+function CostIndicator({
+  state,
+  quiet,
+}: {
+  readonly state: DebateState;
+  readonly quiet: boolean;
+}): ReactElement | null {
+  if (quiet) return null;
   if (!state.cost) return null;
   const isWarning = isCostWarning(state.cost.premiumRequests, state.cost.estimatedTotal);
   return (
@@ -479,9 +486,14 @@ function LoadingIndicator({ state }: { readonly state: DebateState }): ReactElem
 export interface DebateAppProps {
   readonly events: AsyncIterable<DebateEvent>;
   readonly onComplete?: (err?: unknown) => void;
+  /**
+   * When true, suppress informational output such as the cost indicator.
+   * Mirrors `PlainRendererOptions.quiet`. Defaults to false.
+   */
+  readonly quiet?: boolean;
 }
 
-export function DebateApp({ events, onComplete }: DebateAppProps): ReactElement {
+export function DebateApp({ events, onComplete, quiet = false }: DebateAppProps): ReactElement {
   const [state, setState] = useState<DebateState>(INITIAL_STATE);
   const [iteratorRef] = useState<{ current: AsyncIterator<DebateEvent> | null }>({ current: null });
 
@@ -536,7 +548,7 @@ export function DebateApp({ events, onComplete }: DebateAppProps): ReactElement 
       <ActiveTurnView state={state} />
       <LoadingIndicator state={state} />
       <RetryIndicator state={state} />
-      <CostIndicator state={state} />
+      <CostIndicator state={state} quiet={quiet} />
       <ErrorsView state={state} />
       <CompletionMessage state={state} />
     </Box>
@@ -552,6 +564,11 @@ export interface InkRendererOptions {
    * a TTY, so this is informational only.
    */
   readonly isTTY?: boolean;
+  /**
+   * When true, suppress informational output such as the cost indicator.
+   * Mirrors `PlainRendererOptions.quiet`. Defaults to false.
+   */
+  readonly quiet?: boolean;
 }
 
 /** Sentinel error class to distinguish Ink initialization failures from stream errors. */
@@ -566,10 +583,12 @@ class InkRenderError extends Error {
 export class InkRenderer implements Renderer {
   readonly #stdout: NodeJS.WriteStream;
   readonly #stderr: NodeJS.WriteStream;
+  readonly #quiet: boolean;
 
   constructor(opts: InkRendererOptions = {}) {
     this.#stdout = opts.stdout ?? process.stdout;
     this.#stderr = opts.stderr ?? process.stderr;
+    this.#quiet = opts.quiet ?? false;
   }
 
   async render(events: AsyncIterable<DebateEvent>): Promise<void> {
@@ -585,7 +604,7 @@ export class InkRenderer implements Renderer {
           write: (text: string) => this.#stdout.write(text),
           writeError: (text: string) => this.#stderr.write(text),
         };
-        const plain = new PlainRenderer(sink, { color: false });
+        const plain = new PlainRenderer(sink, { color: false, quiet: this.#quiet });
         await plain.render(events);
       } else {
         throw err;
@@ -610,7 +629,7 @@ export class InkRenderer implements Renderer {
       };
       try {
         instance = inkRender(
-          <DebateApp events={events} onComplete={(err) => finish(err)} />,
+          <DebateApp events={events} onComplete={(err) => finish(err)} quiet={this.#quiet} />,
           {
             stdout: this.#stdout,
             stderr: this.#stderr,

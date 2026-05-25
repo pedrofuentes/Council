@@ -47,7 +47,10 @@ export function selectRenderer(opts: SelectRendererOpts): Renderer {
           ...(opts.quiet !== undefined ? { quiet: opts.quiet } : {}),
         });
       }
-      return new InkRenderer({ isTTY: true });
+      return new InkRenderer({
+        isTTY: true,
+        ...(opts.quiet !== undefined ? { quiet: opts.quiet } : {}),
+      });
     default: {
       const _exhaustive: never = opts.format;
       throw new Error(`Unknown renderer format: ${String(_exhaustive)}`);
