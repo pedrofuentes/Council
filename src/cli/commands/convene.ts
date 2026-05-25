@@ -106,6 +106,7 @@ export interface ConveneOptions {
   readonly yes?: boolean;
   readonly verbose?: boolean;
   readonly model?: string;
+  readonly maxExperts?: number;
 }
 
 /**
@@ -212,6 +213,17 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
     .option("--yes", "Skip the auto-compose confirmation prompt (non-interactive runs)")
     .option("--verbose", "Show template migration notices and zero-change summaries")
     .option("--model <model>", "Model to use for experts (default: from config)")
+    .option(
+      "--max-experts <n>",
+      "Maximum number of experts for auto-compose",
+      (v) => {
+        const parsed = Number(v);
+        if (!Number.isInteger(parsed)) {
+          throw new Error(`--max-experts must be an integer (got: ${v})`);
+        }
+        return parsed;
+      },
+    )
     .action(async (topic: string, raw: ConveneOptions) => {
       const admission = checkTopicAdmission(topic);
       for (const warning of admission.warnings) {
@@ -248,6 +260,15 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         );
       }
 
+      // Validate --max-experts if provided
+      if (raw.maxExperts !== undefined) {
+        if (!Number.isFinite(raw.maxExperts) || raw.maxExperts < 1) {
+          throw new CliUserError(
+            `--max-experts must be a positive integer (got: ${raw.maxExperts})`,
+          );
+        }
+      }
+
       const opts: ConveneOptions = {
         template: templateName,
         ...(raw.experts !== undefined ? { experts: raw.experts } : {}),
@@ -265,6 +286,9 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         ...(raw.contextScope !== undefined ? { contextScope: raw.contextScope } : {}),
         ...(raw.summarizeAfter !== undefined && Number.isFinite(raw.summarizeAfter)
           ? { summarizeAfter: raw.summarizeAfter }
+          : {}),
+        ...(raw.maxExperts !== undefined && Number.isFinite(raw.maxExperts)
+          ? { maxExperts: raw.maxExperts }
           : {}),
       };
 
@@ -365,9 +389,20 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         try {
           await composeEngine.start();
           try {
-            template = await autoComposePanel(topic, composeEngine, {
-              defaultModel,
-            });
+            const autoComposeOptions: {
+              defaultModel: string;
+              maxExperts?: number;
+              minExperts?: number;
+            } = { defaultModel };
+            
+            // When --max-experts is provided, also set minExperts to avoid impossible ranges
+            if (opts.maxExperts !== undefined) {
+              autoComposeOptions.maxExperts = opts.maxExperts;
+              // Ensure min ≤ max: if maxExperts is less than default minimum (3), clamp min
+              autoComposeOptions.minExperts = Math.min(3, opts.maxExperts);
+            }
+            
+            template = await autoComposePanel(topic, composeEngine, autoComposeOptions);
           } catch (err: unknown) {
             const cause = err instanceof Error ? err.message : String(err);
             throw new Error(
