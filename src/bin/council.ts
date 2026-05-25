@@ -71,8 +71,8 @@ const WINDOWS_CODE_PAGE_COMMAND = "chcp.com";
 const configuredConsoleCodePageStreams = new WeakSet<EncodingWritable>();
 const wrappedOutputStreams = new WeakSet<EncodingWritable>();
 
-function configureWindowsConsoleCodePage(stdout: EncodingWritable): void {
-  if (!stdout.isTTY || configuredConsoleCodePageStreams.has(stdout)) {
+function configureWindowsConsoleCodePage(stream: EncodingWritable): void {
+  if (!stream.isTTY || configuredConsoleCodePageStreams.has(stream)) {
     return;
   }
 
@@ -84,7 +84,7 @@ function configureWindowsConsoleCodePage(stdout: EncodingWritable): void {
   } catch {
     // Best effort: keep CLI output flowing even if the host console rejects chcp.
   } finally {
-    configuredConsoleCodePageStreams.add(stdout);
+    configuredConsoleCodePageStreams.add(stream);
   }
 }
 
@@ -129,8 +129,13 @@ export function configureOutputEncoding(
     return;
   }
 
+  const consoleStream = stdout.isTTY ? stdout : stderr;
+
+  if (consoleStream.isTTY) {
+    configureWindowsConsoleCodePage(consoleStream);
+  }
+
   if (stdout.isTTY) {
-    configureWindowsConsoleCodePage(stdout);
     wrapUtf8Writes(stdout);
   }
 
