@@ -10,6 +10,7 @@ import * as fs from "node:fs/promises";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import type { ConfirmProvider } from "../../../../src/cli/commands/confirm.js";
 import { buildSessionsCommand } from "../../../../src/cli/commands/sessions.js";
 import { buildProgram } from "../../../../src/bin/council.js";
 import type { DebateStatus } from "../../../../src/memory/repositories/debates.js";
@@ -169,6 +170,71 @@ async function setDebateLatestTurnCreatedAt(
   }
 }
 
+async function seedTurnForDebate(testHome: string, debateId: string): Promise<void> {
+  const { createDatabase } = await import("../../../../src/memory/db.js");
+  const { TurnRepository } = await import("../../../../src/memory/repositories/turns.js");
+
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    await new TurnRepository(db).create({
+      debateId,
+      round: 0,
+      seq: 0,
+      speakerKind: "user",
+      content: "hello",
+    });
+  } finally {
+    await db.destroy();
+  }
+}
+
+async function loadSessionDeletionState(
+  testHome: string,
+  panelId: string,
+  debateIds: readonly string[],
+): Promise<{
+  panelExists: boolean;
+  debateCount: number;
+  turnCounts: readonly number[];
+}> {
+  const { createDatabase } = await import("../../../../src/memory/db.js");
+  const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
+  const { DebateRepository } = await import("../../../../src/memory/repositories/debates.js");
+  const { TurnRepository } = await import("../../../../src/memory/repositories/turns.js");
+
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    const panelRepo = new PanelRepository(db);
+    const debateRepo = new DebateRepository(db);
+    const turnRepo = new TurnRepository(db);
+    const panel = await panelRepo.findById(panelId);
+    const debates = await debateRepo.findByPanelId(panelId);
+    const turnCounts = await Promise.all(
+      debateIds.map(async (debateId) => (await turnRepo.findByDebateId(debateId)).length),
+    );
+    return {
+      panelExists: panel !== undefined,
+      debateCount: debates.length,
+      turnCounts,
+    };
+  } finally {
+    await db.destroy();
+  }
+}
+
+function makeConfirmProvider(answer: boolean): ConfirmProvider & { calls: number; prompts: string[] } {
+  const provider = {
+    calls: 0,
+    prompts: [] as string[],
+    async confirm(message: string): Promise<boolean> {
+      provider.calls += 1;
+      provider.prompts.push(message);
+      return answer;
+    },
+  };
+  return provider;
+}
+
 describe("buildSessionsCommand", () => {
   it("registers a 'sessions' command with description", () => {
     const cmd = buildSessionsCommand();
@@ -185,6 +251,20 @@ describe("buildSessionsCommand", () => {
   it("registers a 'cancel' subcommand", () => {
     const cmd = buildSessionsCommand();
     expect(cmd.commands.map((subcommand) => subcommand.name())).toContain("cancel");
+  });
+
+  it("registers a 'delete' subcommand", () => {
+    const cmd = buildSessionsCommand();
+    expect(cmd.commands.map((subcommand) => subcommand.name())).toContain("delete");
+  });
+
+  it("documents sessions delete usage in help", () => {
+    const cmd = buildSessionsCommand();
+    const deleteCommand = cmd.commands.find((subcommand) => subcommand.name() === "delete");
+    const help = deleteCommand?.helpInformation() ?? "";
+    expect(help).toContain("Usage: sessions delete");
+    expect(help).toContain("--yes");
+    expect(help).toContain("supports unique prefix matching");
   });
 
   describe("action behavior (with isolated COUNCIL_HOME)", () => {
@@ -542,6 +622,90 @@ describe("buildSessionsCommand", () => {
       expect(panelOneDebates[1]).toMatchObject({ status: "completed" });
       expect(panelTwoDebates[0]).toMatchObject({ status: "interrupted" });
       expect(panelTwoDebates[0]?.endedAt).not.toBeNull();
+    });
+
+    it("delete removes a completed session after confirmation", async () => {
+      const seeded = await seedPanelWithDebates(testHome, "delete-target", ["completed"]);
+      await seedTurnForDebate(testHome, seeded.debateIds[0] ?? "");
+      const confirm = makeConfirmProvider(true);
+      let captured = "";
+      const cmd = buildSessionsCommand({
+        write: (s) => {
+          captured += s;
+        },
+        confirmProvider: () => confirm,
+      });
+
+      await cmd.parseAsync(["node", "council-sessions", "delete", "delete-target"]);
+
+      const state = await loadSessionDeletionState(testHome, seeded.panelId, seeded.debateIds);
+      expect(confirm.calls).toBe(1);
+      expect(confirm.prompts).toEqual([
+        "Delete session delete-target? This cannot be undone. (y/N) ",
+      ]);
+      expect(captured).toContain("Deleted session 'delete-target'.");
+      expect(state).toEqual({
+        panelExists: false,
+        debateCount: 0,
+        turnCounts: [0],
+      });
+    });
+
+    it("delete resolves a session by unique prefix and skips confirmation with --yes", async () => {
+      const seeded = await seedPanelWithDebates(testHome, "prefix-delete", ["interrupted"]);
+      const confirm = makeConfirmProvider(true);
+      let captured = "";
+      const cmd = buildSessionsCommand({
+        write: (s) => {
+          captured += s;
+        },
+        confirmProvider: () => confirm,
+      });
+
+      await cmd.parseAsync(["node", "council-sessions", "delete", "prefix-del", "--yes"]);
+
+      const state = await loadSessionDeletionState(testHome, seeded.panelId, seeded.debateIds);
+      expect(confirm.calls).toBe(0);
+      expect(captured).toContain("Deleted session 'prefix-delete'.");
+      expect(state.panelExists).toBe(false);
+      expect(state.debateCount).toBe(0);
+    });
+
+    it("delete leaves the session intact when the user declines confirmation", async () => {
+      const seeded = await seedPanelWithDebates(testHome, "decline-delete", ["completed"]);
+      const confirm = makeConfirmProvider(false);
+      let captured = "";
+      const cmd = buildSessionsCommand({
+        write: (s) => {
+          captured += s;
+        },
+        confirmProvider: () => confirm,
+      });
+
+      await cmd.parseAsync(["node", "council-sessions", "delete", "decline-delete"]);
+
+      const state = await loadSessionDeletionState(testHome, seeded.panelId, seeded.debateIds);
+      expect(confirm.calls).toBe(1);
+      expect(captured).toContain("Deletion aborted.");
+      expect(state.panelExists).toBe(true);
+      expect(state.debateCount).toBe(1);
+    });
+
+    it("delete rejects running sessions with a clear error", async () => {
+      const seeded = await seedPanelWithDebates(testHome, "running-delete", ["running"]);
+      const confirm = makeConfirmProvider(true);
+      const cmd = buildSessionsCommand({
+        confirmProvider: () => confirm,
+      });
+
+      await expect(
+        cmd.parseAsync(["node", "council-sessions", "delete", "running-delete", "--yes"]),
+      ).rejects.toThrow("Cannot delete a running session. Cancel it first.");
+
+      const state = await loadSessionDeletionState(testHome, seeded.panelId, seeded.debateIds);
+      expect(confirm.calls).toBe(0);
+      expect(state.panelExists).toBe(true);
+      expect(state.debateCount).toBe(1);
     });
   });
 
