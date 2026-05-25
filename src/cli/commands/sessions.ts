@@ -79,18 +79,22 @@ function formatStuckSessionHint(panelName: string): string {
 async function findPanelByNameOrPrefix(
   panelRepo: PanelRepository,
   requestedName: string,
+  ambiguousLabel = "panels",
 ): Promise<Panel | undefined> {
-  const exactMatch = await panelRepo.findByName(requestedName);
-  if (exactMatch) {
-    return exactMatch;
-  }
-
   const prefixMatches = await panelRepo.findByNamePrefix(requestedName);
+  const exactMatches = prefixMatches.filter((panel) => panel.name === requestedName);
+
+  if (exactMatches.length === 1) {
+    return exactMatches[0];
+  }
+  if (exactMatches.length > 1) {
+    throw new Error(`Ambiguous name '${requestedName}' matches ${exactMatches.length} ${ambiguousLabel}.`);
+  }
   if (prefixMatches.length === 1) {
     return prefixMatches[0];
   }
   if (prefixMatches.length > 1) {
-    throw new Error(`Ambiguous prefix '${requestedName}' matches ${prefixMatches.length} panels.`);
+    throw new Error(`Ambiguous prefix '${requestedName}' matches ${prefixMatches.length} ${ambiguousLabel}.`);
   }
 
   return undefined;
@@ -234,7 +238,7 @@ export function buildSessionsCommand(depsOrWrite?: SessionsCommandDeps | Writer)
       try {
         const panelRepo = new PanelRepository(db);
         const debateRepo = new DebateRepository(db);
-        const panel = await findPanelByNameOrPrefix(panelRepo, requestedName);
+        const panel = await findPanelByNameOrPrefix(panelRepo, requestedName, "sessions");
         if (!panel) {
           write(`No session found matching '${requestedName}'.\n`);
           return;
