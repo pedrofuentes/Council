@@ -307,6 +307,33 @@ describe("buildSessionsCommand", () => {
       expect(captured).toContain("⚠ May be stuck — try: council resume stuck-session");
     });
 
+    it("uses the ASCII warning symbol in stuck-session hints when COUNCIL_ASCII=1", async () => {
+      const seeded = await seedPanelWithDebates(testHome, "ascii-stuck-session", ["running"]);
+      await setDebateStartedAt(
+        testHome,
+        seeded.debateIds[0] ?? "",
+        new Date(Date.now() - 61 * 60 * 1000).toISOString(),
+      );
+
+      const originalAscii = process.env["COUNCIL_ASCII"];
+      process.env["COUNCIL_ASCII"] = "1";
+
+      try {
+        let captured = "";
+        const cmd = buildSessionsCommand((s) => {
+          captured += s;
+        });
+        await cmd.parseAsync(["node", "council-sessions"]);
+
+        expect(captured).toContain("status: running");
+        expect(captured).toContain("[WARN] May be stuck — try: council resume ascii-stuck-session");
+        expect(captured).not.toContain("⚠ May be stuck — try: council resume ascii-stuck-session");
+      } finally {
+        if (originalAscii === undefined) delete process.env["COUNCIL_ASCII"];
+        else process.env["COUNCIL_ASCII"] = originalAscii;
+      }
+    });
+
     it("does not show the stuck hint when a running debate has recent turn activity", async () => {
       const seeded = await seedRunningDebateWithTurn(testHome, "active-session");
       await setDebateStartedAt(
