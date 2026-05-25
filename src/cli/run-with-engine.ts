@@ -213,7 +213,12 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
 
     const sink: Sink = { write: opts.write, writeError: opts.writeError };
     const isTTY = opts.isTTY ?? Boolean(process.stdout.isTTY);
-    const renderer = selectRenderer({ format: opts.format, isTTY, sink, quiet: opts.quiet });
+    const renderer = selectRenderer({
+      format: opts.format,
+      isTTY,
+      sink,
+      ...(opts.quiet !== undefined ? { quiet: opts.quiet } : {}),
+    });
 
     opts.beforeRender?.();
 
