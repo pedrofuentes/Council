@@ -373,7 +373,7 @@ council panel create <name>                 # Interactive wizard: pick experts, 
 council panel list [--format json]          # Browse panels in the library
 council panel inspect <name>                # Panel metadata + resolved expert roster
 council panel edit <name>                   # Open YAML in $EDITOR; re-validates on save
-council panel delete <name> [--force]       # Remove panel YAML + docs dir + DB rows (--force skips prompt)
+council panel delete <name> [--yes]         # Remove panel YAML + docs dir + DB rows (--yes skips prompt; hidden --force alias still works)
 council panel docs <name>                   # List a panel's managed + linked doc folders
 council panel docs link <name> --path <p>   # Link an external folder into a panel's RAG corpus
 council panel docs unlink <name> --path <p> # Unlink a folder + clean up its FTS entries
