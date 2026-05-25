@@ -22,7 +22,8 @@ import type {
 } from "../../../src/engine/index.js";
 
 interface StubEngineOptions {
-  readonly response: string;
+  readonly response?: string;
+  readonly responses?: readonly string[];
   readonly errorEvent?: {
     readonly code:
       | "NOT_AUTHENTICATED"
@@ -44,12 +45,15 @@ class StubEngine implements CouncilEngine {
   readonly sendSignals: (AbortSignal | undefined)[] = [];
   startCalls = 0;
   stopCalls = 0;
-  readonly #response: string;
+  readonly #responses: string[];
+  readonly #fallbackResponse: string;
   readonly #errorEvent: StubEngineOptions["errorEvent"];
   readonly #hang: boolean;
 
   constructor(opts: StubEngineOptions & { readonly hang?: boolean }) {
-    this.#response = opts.response;
+    const responses = opts.responses ?? [opts.response ?? ""];
+    this.#responses = [...responses];
+    this.#fallbackResponse = responses.at(-1) ?? "";
     this.#errorEvent = opts.errorEvent;
     this.#hang = opts.hang ?? false;
   }
@@ -88,7 +92,8 @@ class StubEngine implements CouncilEngine {
     }
     this.sentPrompts.push({ expertId: options.expertId, prompt: options.prompt });
     this.sendSignals.push(options.signal);
-    return this.#stream(options.expertId, this.#response, options.signal);
+    const response = this.#responses.shift() ?? this.#fallbackResponse;
+    return this.#stream(options.expertId, response, options.signal);
   }
 
   async *#stream(
@@ -204,12 +209,62 @@ describe("autoComposePanel", () => {
     await expect(autoComposePanel("topic", engine)).rejects.toThrow(/experts|valid/i);
   });
 
+  it("extracts the first JSON object when prose appears before valid JSON", async () => {
+    const response =
+      "I'll design a panel with experts who can debate this topic from different angles.\n\n" +
+      JSON.stringify(validPanel);
+    const engine = new StubEngine({ response });
+    await engine.start();
+    const result = await autoComposePanel("topic", engine);
+    expect(result.name).toBe("test-panel");
+  });
+
+  it("extracts JSON after multiple paragraphs of prose", async () => {
+    const response =
+      "First, I'll consider the strategic tension.\n\n" +
+      "Next, I'll make sure the panel includes dissent.\n\n" +
+      JSON.stringify(validPanel);
+    const engine = new StubEngine({ response });
+    await engine.start();
+    const result = await autoComposePanel("topic", engine);
+    expect(result.name).toBe("test-panel");
+  });
+
+  it("extracts JSON when prose and markdown code fences both surround the object", async () => {
+    const response =
+      "Here is the panel definition.\n\n```json\n" + JSON.stringify(validPanel) + "\n```";
+    const engine = new StubEngine({ response });
+    await engine.start();
+    const result = await autoComposePanel("topic", engine);
+    expect(result.name).toBe("test-panel");
+  });
+
   it("strips markdown code fences if the model wraps JSON in them", async () => {
     const fenced = "```json\n" + JSON.stringify(validPanel) + "\n```";
     const engine = new StubEngine({ response: fenced });
     await engine.start();
     const result = await autoComposePanel("topic", engine);
     expect(result.name).toBe("test-panel");
+  });
+
+  it("retries once with a stricter prompt when the first response contains no JSON object", async () => {
+    const engine = new StubEngine({
+      responses: ["I'll think through the panel out loud first.", JSON.stringify(validPanel)],
+    });
+    await engine.start();
+    const result = await autoComposePanel("topic", engine);
+    expect(result.name).toBe("test-panel");
+    expect(engine.sentPrompts).toHaveLength(2);
+    expect(engine.sentPrompts[1]?.prompt).toContain("MUST respond with ONLY a JSON object");
+  });
+
+  it("throws a clear error when neither attempt returns a JSON object", async () => {
+    const engine = new StubEngine({
+      responses: ["I'll describe the panel in prose only.", "Still prose only, no JSON object."],
+    });
+    await engine.start();
+    await expect(autoComposePanel("topic", engine)).rejects.toThrow(/JSON object/i);
+    expect(engine.sentPrompts).toHaveLength(2);
   });
 
   it("includes the topic in the prompt sent to the composer", async () => {
@@ -220,14 +275,15 @@ describe("autoComposePanel", () => {
     expect(engine.sentPrompts[0]?.prompt).toContain("Should we deprecate Python 2?");
   });
 
-  it("primes the composer expert with a meta-prompt mentioning panel composition", async () => {
+  it("primes the composer expert with a strict JSON-only meta-prompt", async () => {
     const engine = new StubEngine({ response: JSON.stringify(validPanel) });
     await engine.start();
     await autoComposePanel("topic", engine);
     expect(engine.addedSpecs).toHaveLength(1);
     const composer = engine.addedSpecs[0];
     expect(composer?.systemMessage).toMatch(/panel composition|panel of/i);
-    expect(composer?.systemMessage).toMatch(/JSON/);
+    expect(composer?.systemMessage).toMatch(/IMPORTANT: Output ONLY the JSON object/i);
+    expect(composer?.systemMessage).toMatch(/Do not include any text before or after the JSON/i);
   });
 
   it("respects minExperts and maxExperts options in the meta-prompt", async () => {
@@ -368,7 +424,7 @@ describe("autoComposePanel", () => {
     ).resolves.not.toThrow();
   });
 
-  it("throws a descriptive error when the composer returns an empty response", async () => {
+  it("throws a clear error when the composer returns an empty response", async () => {
     const engine = new StubEngine({ response: "" });
     await engine.start();
     await expect(autoComposePanel("topic", engine)).rejects.toThrow(
