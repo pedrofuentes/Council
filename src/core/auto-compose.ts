@@ -9,8 +9,8 @@
  *   1. Register a temporary composer expert primed with the meta-prompt
  *   2. Send the topic via `engine.send()` and accumulate `message.delta`
  *      events into the full response text
- *   3. Strip optional Markdown code fences (defense-in-depth: the prompt
- *      tells the model NOT to emit them, but real models often do anyway)
+ *   3. Strip optional Markdown code fences and extract the first JSON object
+ *      if the model prefixes it with prose
  *   4. Parse as JSON
  *   5. Validate against `PanelDefinitionSchema`
  *   6. Remove the composer expert (cleanup)
@@ -31,6 +31,8 @@ import { PanelDefinitionSchema } from "./template-loader.js";
 const DEFAULT_MIN_EXPERTS = 3;
 const DEFAULT_MAX_EXPERTS = 5;
 const DEFAULT_TIMEOUT_MS = 120_000;
+const COMPOSER_RETRY_INSTRUCTION =
+  "You MUST respond with ONLY a JSON object. No explanation, no preamble.";
 
 export interface AutoComposeOptions {
   readonly minExperts?: number;
@@ -65,62 +67,57 @@ export async function autoComposePanel(
   };
 
   await engine.addExpert(composer);
-  let raw = "";
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const signal = options?.signal
     ? AbortSignal.any([options.signal, timeoutSignal])
     : timeoutSignal;
-  try {
-    const stream = engine.send({
-      expertId: composer.id,
-      prompt: `Design an expert panel to debate: "${topic}"`,
-      signal,
-    });
-    for await (const event of stream) {
-      if (event.kind === "message.delta") {
-        raw += event.text;
-      } else if (event.kind === "error") {
-        if (event.error.code === "ABORTED" && signal.aborted) {
-          if (options?.signal?.aborted === true && timeoutSignal.aborted === false) {
-            throw new Error(
-              `Auto-compose was aborted while using model ${sanitizeModelForDisplay(model)}.`,
-            );
-          }
-          throw new Error(
-            `Auto-compose timed out after ${timeoutMs}ms for model ${sanitizeModelForDisplay(model)} — the engine did not respond in time.`,
-          );
-        }
-        throw new Error(
-          `Auto-compose engine error (${event.error.code}) for model ${sanitizeModelForDisplay(model)}: ${sanitizeModelForDisplay(event.error.message)}`,
-        );
-      }
-    }
-  } finally {
-    await engine.removeExpert(composer.id);
-  }
-
-  const cleaned = stripCodeFences(raw).trim();
-  if (cleaned.length === 0) {
-    throw new Error("Auto-compose failed: composer returned an empty response.");
-  }
-
-  // Detect MockEngine response pattern and return a deterministic fallback
-  // panel. MockEngine returns "[mock response from <id>]" which is not valid
-  // JSON. This allows `council convene "topic" --engine mock` to work without
-  // requiring a --template argument.
-  if (/^\[mock response from /.test(cleaned)) {
-    return createMockFallbackPanel(model);
-  }
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(cleaned);
-  } catch (err: unknown) {
-    const cause = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `Auto-compose failed: could not parse composer JSON response (${sanitizeModelForDisplay(cause)}). ` +
-        `First 200 chars: ${sanitizeModelForDisplay(cleaned.slice(0, 200))}`,
+    let response = await collectComposerResponse(
+      engine,
+      composer.id,
+      buildComposerUserPrompt(topic),
+      signal,
+      timeoutSignal,
+      options?.signal,
+      model,
+      timeoutMs,
     );
+    let parseResult = parseComposerResponse(response);
+
+    if (parseResult.kind === "mock") {
+      return createMockFallbackPanel(model);
+    }
+
+    if (parseResult.kind === "empty" || parseResult.kind === "no-json") {
+      response = await collectComposerResponse(
+        engine,
+        composer.id,
+        buildComposerUserPrompt(topic, { strictJsonOnly: true }),
+        signal,
+        timeoutSignal,
+        options?.signal,
+        model,
+        timeoutMs,
+      );
+      parseResult = parseComposerResponse(response);
+      if (parseResult.kind === "mock") {
+        return createMockFallbackPanel(model);
+      }
+    }
+
+    if (parseResult.kind === "empty") {
+      throw createEmptyComposerResponseError();
+    }
+
+    if (parseResult.kind === "no-json") {
+      throw createMissingJsonObjectError(parseResult.preview);
+    }
+
+    parsed = parseResult.value;
+  } finally {
+    await engine.removeExpert(composer.id);
   }
 
   const result = PanelDefinitionSchema.safeParse(parsed);
@@ -135,6 +132,196 @@ export async function autoComposePanel(
   }
 
   return sanitizeComposedPanel(result.data, model);
+}
+
+interface ParsedComposerResponse {
+  readonly kind: "parsed";
+  readonly value: unknown;
+}
+
+interface EmptyComposerResponse {
+  readonly kind: "empty";
+}
+
+interface MissingJsonComposerResponse {
+  readonly kind: "no-json";
+  readonly preview: string;
+}
+
+interface MockComposerResponse {
+  readonly kind: "mock";
+}
+
+type ComposerResponseParseResult =
+  | ParsedComposerResponse
+  | EmptyComposerResponse
+  | MissingJsonComposerResponse
+  | MockComposerResponse;
+
+interface ComposerPromptOptions {
+  readonly strictJsonOnly?: boolean;
+}
+
+async function collectComposerResponse(
+  engine: CouncilEngine,
+  expertId: string,
+  prompt: string,
+  signal: AbortSignal,
+  timeoutSignal: AbortSignal,
+  callerSignal: AbortSignal | undefined,
+  model: string,
+  timeoutMs: number,
+): Promise<string> {
+  let raw = "";
+  const stream = engine.send({ expertId, prompt, signal });
+  for await (const event of stream) {
+    if (event.kind === "message.delta") {
+      raw += event.text;
+    } else if (event.kind === "error") {
+      if (event.error.code === "ABORTED" && signal.aborted) {
+        if (callerSignal?.aborted === true && timeoutSignal.aborted === false) {
+          throw new Error(
+            `Auto-compose was aborted while using model ${sanitizeModelForDisplay(model)}.`,
+          );
+        }
+        throw new Error(
+          `Auto-compose timed out after ${timeoutMs}ms for model ${sanitizeModelForDisplay(model)} — the engine did not respond in time.`,
+        );
+      }
+      throw new Error(
+        `Auto-compose engine error (${event.error.code}) for model ${sanitizeModelForDisplay(model)}: ${sanitizeModelForDisplay(event.error.message)}`,
+      );
+    }
+  }
+  return raw;
+}
+
+function buildComposerUserPrompt(topic: string, options?: ComposerPromptOptions): string {
+  if (options?.strictJsonOnly === true) {
+    return `${COMPOSER_RETRY_INSTRUCTION} No markdown code fences. Design an expert panel to debate: "${topic}"`;
+  }
+  return `Design an expert panel to debate: "${topic}"`;
+}
+
+function parseComposerResponse(raw: string): ComposerResponseParseResult {
+  const cleaned = stripCodeFences(raw).trim();
+  if (cleaned.length === 0) {
+    return { kind: "empty" };
+  }
+
+  if (isMockComposerResponse(cleaned)) {
+    return { kind: "mock" };
+  }
+
+  const directParse = tryParseJsonObject(cleaned);
+  if (directParse !== undefined) {
+    return { kind: "parsed", value: directParse };
+  }
+
+  const extracted = extractFirstJsonObject(raw);
+  if (extracted === undefined) {
+    return {
+      kind: "no-json",
+      preview: sanitizeModelForDisplay(cleaned.slice(0, 200)),
+    };
+  }
+
+  const extractedParse = tryParseJsonObject(extracted);
+  if (extractedParse !== undefined) {
+    return { kind: "parsed", value: extractedParse };
+  }
+
+  return {
+    kind: "no-json",
+    preview: sanitizeModelForDisplay(cleaned.slice(0, 200)),
+  };
+}
+
+function tryParseJsonObject(text: string): unknown | undefined {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+function extractFirstJsonObject(text: string): string | undefined {
+  for (let startIndex = text.indexOf("{"); startIndex !== -1; startIndex = text.indexOf("{", startIndex + 1)) {
+    const candidate = extractBalancedJsonObject(text, startIndex);
+    if (candidate === undefined) {
+      continue;
+    }
+    if (tryParseJsonObject(candidate) !== undefined) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function extractBalancedJsonObject(text: string, startIndex: number): string | undefined {
+  let depth = 0;
+  let inString = false;
+  let isEscaping = false;
+
+  for (let index = startIndex; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === undefined) {
+      return undefined;
+    }
+
+    if (inString) {
+      if (isEscaping) {
+        isEscaping = false;
+        continue;
+      }
+      if (char === "\\") {
+        isEscaping = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (char !== "}") {
+      continue;
+    }
+
+    depth -= 1;
+    if (depth === 0) {
+      return text.slice(startIndex, index + 1);
+    }
+    if (depth < 0) {
+      return undefined;
+    }
+  }
+
+  return undefined;
+}
+
+function isMockComposerResponse(text: string): boolean {
+  return /^\[mock response from /.test(text);
+}
+
+function createEmptyComposerResponseError(): Error {
+  return new Error("Auto-compose failed: composer returned an empty response.");
+}
+
+function createMissingJsonObjectError(preview: string): Error {
+  return new Error(
+    `Auto-compose failed: composer did not return a JSON object. First 200 chars: ${preview}`,
+  );
 }
 
 /**
@@ -294,7 +481,8 @@ Output valid JSON matching this exact schema:
   "experts": [<array of expert definitions>]
 }
 
-Output ONLY the JSON, no markdown code fences, no explanation.`;
+IMPORTANT: Output ONLY the JSON object. Do not include any text before or after the JSON.
+Do not include markdown code fences. Do not explain your reasoning.`;
 }
 
 const FENCE_PATTERN = /^```(?:json)?\s*\n?([\s\S]*?)\n?```\s*$/;
