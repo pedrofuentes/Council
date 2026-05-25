@@ -187,4 +187,12 @@ describe("buildConveneCommand — --model flag", () => {
     expect(engine.expertModels[2]).toBe("default-model"); // beta
     expect(engine.expertModels[3]).toBe("default-model"); // gamma
   });
+
+  it("help text points users to doctor for available models", () => {
+    const cmd = buildConveneCommand();
+    const help = cmd.helpInformation();
+
+    expect(help).toContain("--model <model>");
+    expect(help).toContain("council doctor --models");
+  });
 });
