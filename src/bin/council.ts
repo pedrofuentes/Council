@@ -125,13 +125,18 @@ export function configureOutputEncoding(
   stdout: EncodingWritable = process.stdout,
   stderr: EncodingWritable = process.stderr,
 ): void {
-  if (platform !== "win32" || !stdout.isTTY) {
+  if (platform !== "win32") {
     return;
   }
 
-  configureWindowsConsoleCodePage(stdout);
-  wrapUtf8Writes(stdout);
-  wrapUtf8Writes(stderr);
+  if (stdout.isTTY) {
+    configureWindowsConsoleCodePage(stdout);
+    wrapUtf8Writes(stdout);
+  }
+
+  if (stderr.isTTY) {
+    wrapUtf8Writes(stderr);
+  }
 }
 
 configureOutputEncoding();
