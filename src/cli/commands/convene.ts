@@ -254,6 +254,15 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         );
       }
 
+      // Validate --max-experts if provided
+      if (raw.maxExperts !== undefined) {
+        if (!Number.isFinite(raw.maxExperts) || raw.maxExperts < 1) {
+          throw new CliUserError(
+            `--max-experts must be a positive integer (got: ${raw.maxExperts})`,
+          );
+        }
+      }
+
       const opts: ConveneOptions = {
         template: templateName,
         ...(raw.experts !== undefined ? { experts: raw.experts } : {}),
@@ -374,10 +383,20 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         try {
           await composeEngine.start();
           try {
-            template = await autoComposePanel(topic, composeEngine, {
-              defaultModel,
-              ...(opts.maxExperts !== undefined && { maxExperts: opts.maxExperts }),
-            });
+            const autoComposeOptions: {
+              defaultModel: string;
+              maxExperts?: number;
+              minExperts?: number;
+            } = { defaultModel };
+            
+            // When --max-experts is provided, also set minExperts to avoid impossible ranges
+            if (opts.maxExperts !== undefined) {
+              autoComposeOptions.maxExperts = opts.maxExperts;
+              // Ensure min ≤ max: if maxExperts is less than default minimum (3), clamp min
+              autoComposeOptions.minExperts = Math.min(3, opts.maxExperts);
+            }
+            
+            template = await autoComposePanel(topic, composeEngine, autoComposeOptions);
           } catch (err: unknown) {
             const cause = err instanceof Error ? err.message : String(err);
             throw new Error(

@@ -135,12 +135,11 @@ describe("buildConveneCommand — --max-experts flag", () => {
     // Verify no error about unknown option
     expect(errors.some((e) => e.includes("unknown option"))).toBe(false);
 
-    // Verify the composer expert (first addExpert call) received a system prompt with maxExperts=2
+    // Verify the composer expert (first addExpert call) received a system prompt with correct range
     expect(engine.expertSystemMessages.length).toBeGreaterThan(0);
     const composerSystemMessage = engine.expertSystemMessages[0];
-    // The composer prompt should contain "panel of X-2 AI experts" when maxExperts is 2
-    // This verifies the value was actually threaded to buildComposerSystemPrompt
-    expect(composerSystemMessage).toMatch(/panel of \d+-2 AI experts/);
+    // When maxExperts=2, minExperts should be clamped to min(3, 2) = 2, giving "panel of 2-2 AI experts"
+    expect(composerSystemMessage).toContain("panel of 2-2 AI experts");
   });
 
   it("should use default maxExperts when flag is not provided", async () => {
@@ -254,5 +253,24 @@ describe("buildConveneCommand — --max-experts flag", () => {
     });
 
     expect(errors.some((e) => e.includes("unknown option"))).toBe(false);
+  });
+
+  it("should reject invalid --max-experts values", async () => {
+    const cmd = buildConveneCommand({
+      engineFactory: () => new ScriptedEngine([smallPanelJson, "round1-alpha", "round1-beta"]),
+    });
+
+    // Should throw for non-positive values
+    await expect(
+      cmd.parseAsync(["node", "council", "convene", "topic", "--max-experts", "0", "--yes"], {
+        from: "user",
+      }),
+    ).rejects.toThrow("--max-experts must be a positive integer");
+
+    await expect(
+      cmd.parseAsync(["node", "council", "convene", "topic", "--max-experts", "-1", "--yes"], {
+        from: "user",
+      }),
+    ).rejects.toThrow("--max-experts must be a positive integer");
   });
 });
