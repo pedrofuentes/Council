@@ -1,12 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-type CouncilModule = typeof import("../../../src/bin/council.js");
-
-type WriteCall = {
+interface WriteCall {
   readonly target: string;
   readonly chunk: string;
   readonly encoding: BufferEncoding | undefined;
-};
+}
 
 interface TestWritable {
   readonly isTTY?: boolean;
@@ -17,7 +15,7 @@ interface TestWritable {
   ): boolean;
 }
 
-async function loadCouncilModule(): Promise<CouncilModule> {
+async function loadCouncilModule() {
   return import("../../../src/bin/council.js");
 }
 
