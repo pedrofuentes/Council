@@ -671,6 +671,27 @@ describe("buildSessionsCommand", () => {
       expect(state.debateCount).toBe(0);
     });
 
+    it("delete rejects exact-name collisions before deleting anything", async () => {
+      const first = await seedPanelWithDebates(testHome, "duplicate-delete", ["completed"]);
+      const second = await seedPanelWithDebates(testHome, "duplicate-delete", ["interrupted"]);
+      const confirm = makeConfirmProvider(true);
+      const cmd = buildSessionsCommand({
+        confirmProvider: () => confirm,
+      });
+
+      await expect(
+        cmd.parseAsync(["node", "council-sessions", "delete", "duplicate-delete", "--yes"]),
+      ).rejects.toThrow("Ambiguous name 'duplicate-delete' matches 2 sessions.");
+
+      const firstState = await loadSessionDeletionState(testHome, first.panelId, first.debateIds);
+      const secondState = await loadSessionDeletionState(testHome, second.panelId, second.debateIds);
+      expect(confirm.calls).toBe(0);
+      expect(firstState.panelExists).toBe(true);
+      expect(firstState.debateCount).toBe(1);
+      expect(secondState.panelExists).toBe(true);
+      expect(secondState.debateCount).toBe(1);
+    });
+
     it("delete leaves the session intact when the user declines confirmation", async () => {
       const seeded = await seedPanelWithDebates(testHome, "decline-delete", ["completed"]);
       const confirm = makeConfirmProvider(false);
