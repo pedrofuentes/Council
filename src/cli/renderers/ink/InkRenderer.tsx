@@ -582,6 +582,30 @@ export interface InkRendererOptions {
   readonly quiet?: boolean;
 }
 
+function tapEvents(
+  events: AsyncIterable<DebateEvent>,
+  onEvent: (event: DebateEvent) => void,
+): AsyncIterable<DebateEvent> {
+  return {
+    async *[Symbol.asyncIterator](): AsyncIterator<DebateEvent> {
+      for await (const event of events) {
+        onEvent(event);
+        yield event;
+      }
+    },
+  };
+}
+
+function replayEvents(events: readonly DebateEvent[]): AsyncIterable<DebateEvent> {
+  return {
+    async *[Symbol.asyncIterator](): AsyncIterator<DebateEvent> {
+      for (const event of events) {
+        yield event;
+      }
+    },
+  };
+}
+
 /** Sentinel error class to distinguish Ink initialization failures from stream errors. */
 class InkRenderError extends Error {
   override readonly cause: unknown;
@@ -596,17 +620,25 @@ export class InkRenderer implements Renderer {
   readonly #stderr: NodeJS.WriteStream;
   readonly #quiet: boolean;
   readonly #showCost: boolean;
+  readonly #isTTY: boolean;
 
   constructor(opts: InkRendererOptions = {}) {
     this.#stdout = opts.stdout ?? process.stdout;
     this.#stderr = opts.stderr ?? process.stderr;
     this.#quiet = opts.quiet ?? false;
     this.#showCost = opts.showCost ?? true;
+    this.#isTTY = opts.isTTY ?? this.#stdout.isTTY ?? false;
   }
 
   async render(events: AsyncIterable<DebateEvent>): Promise<void> {
+    const recordedEvents: DebateEvent[] = [];
+    const tappedEvents = tapEvents(events, (event) => {
+      recordedEvents.push(event);
+    });
+
     try {
-      await this.#renderWithInk(events);
+      await this.#renderWithInk(tappedEvents);
+      await this.#writeFinalTranscript(recordedEvents);
     } catch (err: unknown) {
       // A11Y-14: If Ink itself failed to initialize (ConPTY, MinTTY, etc.),
       // fall back to PlainRenderer. Stream errors are re-thrown as-is.
@@ -627,6 +659,23 @@ export class InkRenderer implements Renderer {
         throw err;
       }
     }
+  }
+
+  async #writeFinalTranscript(events: readonly DebateEvent[]): Promise<void> {
+    if (!this.#isTTY || !events.some((event) => event.kind === "debate.end")) {
+      return;
+    }
+
+    const sink: Sink = {
+      write: (text: string) => this.#stdout.write(text),
+      writeError: (text: string) => this.#stderr.write(text),
+    };
+    const plain = new PlainRenderer(sink, {
+      color: this.#isTTY,
+      quiet: this.#quiet,
+      showCost: this.#showCost,
+    });
+    await plain.render(replayEvents(events));
   }
 
   #renderWithInk(events: AsyncIterable<DebateEvent>): Promise<void> {
