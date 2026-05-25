@@ -210,7 +210,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         "Useful for offline tests and air-gapped environments.",
     )
     .option("--yes", "Skip the auto-compose confirmation prompt (non-interactive runs)")
-    .option("--verbose", "Show migration summaries even when no items changed")
+    .option("--verbose", "Show template migration notices and zero-change summaries")
     .option("--model <model>", "Model to use for experts (default: from config)")
     .action(async (topic: string, raw: ConveneOptions) => {
       const admission = checkTopicAdmission(topic);
