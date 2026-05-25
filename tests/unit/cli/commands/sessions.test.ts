@@ -586,6 +586,24 @@ describe("buildSessionsCommand", () => {
       expect(debates[0]?.endedAt).not.toBeNull();
     });
 
+    it("cancel keeps exact-name matching for duplicate session names", async () => {
+      const first = await seedPanelWithDebates(testHome, "duplicate-cancel", ["running"]);
+      const second = await seedPanelWithDebates(testHome, "duplicate-cancel", ["running"]);
+      let captured = "";
+      const cmd = buildSessionsCommand((s) => {
+        captured += s;
+      });
+
+      await cmd.parseAsync(["node", "council-sessions", "cancel", "duplicate-cancel"]);
+
+      const firstDebates = await listDebatesForPanel(testHome, first.panelId);
+      const secondDebates = await listDebatesForPanel(testHome, second.panelId);
+      expect(captured).toContain("Cancelled running debate for panel 'duplicate-cancel'.");
+      expect(firstDebates[0]).toMatchObject({ status: "running", endedAt: null });
+      expect(secondDebates[0]).toMatchObject({ status: "interrupted" });
+      expect(secondDebates[0]?.endedAt).not.toBeNull();
+    });
+
     it("cancel throws when a prefix matches multiple panels", async () => {
       await seedPanelWithDebates(testHome, "prefix-alpha", ["running"]);
       await seedPanelWithDebates(testHome, "prefix-beta", ["running"]);
