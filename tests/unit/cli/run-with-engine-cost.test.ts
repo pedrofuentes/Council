@@ -84,6 +84,6 @@ describe("runWithEngine cost visibility", () => {
   it("still shows the cost counter for non-mock engines", async () => {
     const output = await renderDebate("copilot");
 
-    expect(output).toMatch(/\[Cost: \d+\/\d+ premium requests\]/);
+    expect(output).toContain("[Cost: 1/1 premium requests]");
   });
 });
