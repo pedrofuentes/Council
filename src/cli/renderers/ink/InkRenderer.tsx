@@ -570,9 +570,9 @@ export interface InkRendererOptions {
   /** Whether to show the running cost counter. Defaults to true. */
   readonly showCost?: boolean;
   /**
-   * Hint used for diagnostics; does not change behavior. The selector
-   * (`select.ts`) only constructs an `InkRenderer` when the output is
-   * a TTY, so this is informational only.
+   * Controls whether Ink should treat the output as terminal-backed.
+   * Defaults to `stdout.isTTY`. When false, the post-unmount scrollback
+   * transcript is skipped entirely.
    */
   readonly isTTY?: boolean;
   /**
