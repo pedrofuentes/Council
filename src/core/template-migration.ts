@@ -287,9 +287,7 @@ async function runMigration(
     panelsMigrated++;
   }
 
-  const shouldWriteNotice =
-    options.quiet !== true &&
-    (options.verbose === true || panelsMigrated > 0 || expertsExtracted > 0);
+  const shouldWriteNotice = options.quiet !== true && options.verbose === true;
   if (shouldWriteNotice) {
     const writeNotice =
       options.writeNotice ??
