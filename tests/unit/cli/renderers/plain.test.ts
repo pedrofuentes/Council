@@ -114,9 +114,7 @@ describe("PlainRenderer", () => {
   it("prints debate.end with the reason", async () => {
     const sink = new StringSink();
     const renderer = new PlainRenderer(sink, { color: false });
-    await renderer.render(
-      events({ kind: "debate.end", reason: "completed" }),
-    );
+    await renderer.render(events({ kind: "debate.end", reason: "completed" }));
     const text = stripAnsi(sink.text);
     expect(text.toLowerCase()).toMatch(/debate.*complete|complete.*debate/);
   });
@@ -124,10 +122,16 @@ describe("PlainRenderer", () => {
   it("prints cost.update on its own line with the running count", async () => {
     const sink = new StringSink();
     const renderer = new PlainRenderer(sink, { color: false });
-    await renderer.render(
-      events({ kind: "cost.update", premiumRequests: 4, estimatedTotal: 16 }),
-    );
+    await renderer.render(events({ kind: "cost.update", premiumRequests: 4, estimatedTotal: 16 }));
     const text = stripAnsi(sink.text);
     expect(text).toMatch(/4.*16|cost/i);
+  });
+
+  it("suppresses cost.update when cost display is disabled", async () => {
+    const sink = new StringSink();
+    const options = { color: false, showCost: false };
+    const renderer = new PlainRenderer(sink, options);
+    await renderer.render(events({ kind: "cost.update", premiumRequests: 4, estimatedTotal: 16 }));
+    expect(stripAnsi(sink.text)).toBe("");
   });
 });

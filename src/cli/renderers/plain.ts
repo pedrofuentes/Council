@@ -24,12 +24,15 @@ export interface PlainRendererOptions {
   readonly color?: boolean;
   /** Whether to suppress informational output like cost counters. Defaults to false. */
   readonly quiet?: boolean;
+  /** Whether to show the running cost counter. Defaults to true. */
+  readonly showCost?: boolean;
 }
 
 export class PlainRenderer implements Renderer {
   readonly #sink: Sink;
   readonly #color: boolean;
   readonly #quiet: boolean;
+  readonly #showCost: boolean;
   /**
    * Forced chalk instance — `level: 1` (basic 16-color) explicitly overrides
    * chalk's TTY auto-detection, which would otherwise return level 0 (no
@@ -51,6 +54,7 @@ export class PlainRenderer implements Renderer {
     this.#sink = sink;
     this.#color = options.color ?? true;
     this.#quiet = options.quiet ?? false;
+    this.#showCost = options.showCost ?? true;
     this.#chalk = new Chalk({ level: this.#color && !process.env.NO_COLOR ? 1 : 0 });
   }
 
@@ -95,7 +99,7 @@ export class PlainRenderer implements Renderer {
           }
           break;
         case "cost.update":
-          if (!this.#quiet) {
+          if (!this.#quiet && this.#showCost) {
             this.write(
               `${this.gray(`[Cost: ${evt.premiumRequests}/${evt.estimatedTotal} premium requests]`)}\n`,
             );

@@ -107,6 +107,7 @@ export interface DebateState {
   readonly currentRound: number | null;
   readonly completedItems: readonly StaticItem[];
   readonly activeTurn: ActiveTurn | null;
+  readonly showCost: boolean;
   readonly cost: { readonly premiumRequests: number; readonly estimatedTotal: number } | null;
   readonly errors: readonly {
     readonly expertSlug?: string;
@@ -131,6 +132,7 @@ export const INITIAL_STATE: DebateState = {
   currentRound: null,
   completedItems: [],
   activeTurn: null,
+  showCost: true,
   cost: null,
   errors: [],
   retrying: null,
@@ -215,6 +217,7 @@ export function reduce(s: DebateState, ev: DebateEvent): DebateState {
       return { ...s, completedItems: [...s.completedItems, separator] };
     }
     case "cost.update":
+      if (!s.showCost) return s;
       return {
         ...s,
         cost: {
@@ -374,7 +377,11 @@ function ActiveTurnView({ state }: { readonly state: DebateState }): ReactElemen
   return (
     <Box flexDirection="column">
       <ExpertCard state={state} slug={state.activeTurn.expertSlug} />
-      <StreamingText text={state.activeTurn.text} ended={false} retrying={state.retrying !== null} />
+      <StreamingText
+        text={state.activeTurn.text}
+        ended={false}
+        retrying={state.retrying !== null}
+      />
     </Box>
   );
 }
@@ -442,9 +449,7 @@ function ErrorsView({ state }: { readonly state: DebateState }): ReactElement | 
   const visible = state.errors.slice(-MAX_DISPLAYED);
   return (
     <Box flexDirection="column" marginTop={1}>
-      {hidden > 0 && (
-        <Text dimColor>{`(${hidden} previous hidden)`}</Text>
-      )}
+      {hidden > 0 && <Text dimColor>{`(${hidden} previous hidden)`}</Text>}
       {visible.map((err, i) => (
         <Text key={`err-${i}`} color="red">
           {`[error${err.expertSlug ? ` from ${err.expertSlug}` : ""}]: ${err.message}`}
@@ -491,10 +496,16 @@ export interface DebateAppProps {
    * Mirrors `PlainRendererOptions.quiet`. Defaults to false.
    */
   readonly quiet?: boolean;
+  readonly showCost?: boolean;
 }
 
-export function DebateApp({ events, onComplete, quiet = false }: DebateAppProps): ReactElement {
-  const [state, setState] = useState<DebateState>(INITIAL_STATE);
+export function DebateApp({
+  events,
+  onComplete,
+  quiet = false,
+  showCost = true,
+}: DebateAppProps): ReactElement {
+  const [state, setState] = useState<DebateState>({ ...INITIAL_STATE, showCost });
   const [iteratorRef] = useState<{ current: AsyncIterator<DebateEvent> | null }>({ current: null });
 
   const { isRawModeSupported } = useStdin();
@@ -538,9 +549,7 @@ export function DebateApp({ events, onComplete, quiet = false }: DebateAppProps)
 
   return (
     <Box flexDirection="column">
-      {isRawModeSupported && !state.userCancelled && (
-        <CtrlCHandler onCancel={handleCancel} />
-      )}
+      {isRawModeSupported && !state.userCancelled && <CtrlCHandler onCancel={handleCancel} />}
       <PanelRoster state={state} />
       <Static items={state.completedItems as StaticItem[]}>
         {(item) => <StaticItemView key={item.id} item={item} state={state} />}
@@ -558,6 +567,8 @@ export function DebateApp({ events, onComplete, quiet = false }: DebateAppProps)
 export interface InkRendererOptions {
   readonly stdout?: NodeJS.WriteStream;
   readonly stderr?: NodeJS.WriteStream;
+  /** Whether to show the running cost counter. Defaults to true. */
+  readonly showCost?: boolean;
   /**
    * Hint used for diagnostics; does not change behavior. The selector
    * (`select.ts`) only constructs an `InkRenderer` when the output is
@@ -584,11 +595,13 @@ export class InkRenderer implements Renderer {
   readonly #stdout: NodeJS.WriteStream;
   readonly #stderr: NodeJS.WriteStream;
   readonly #quiet: boolean;
+  readonly #showCost: boolean;
 
   constructor(opts: InkRendererOptions = {}) {
     this.#stdout = opts.stdout ?? process.stdout;
     this.#stderr = opts.stderr ?? process.stderr;
     this.#quiet = opts.quiet ?? false;
+    this.#showCost = opts.showCost ?? true;
   }
 
   async render(events: AsyncIterable<DebateEvent>): Promise<void> {
@@ -604,7 +617,11 @@ export class InkRenderer implements Renderer {
           write: (text: string) => this.#stdout.write(text),
           writeError: (text: string) => this.#stderr.write(text),
         };
-        const plain = new PlainRenderer(sink, { color: false, quiet: this.#quiet });
+        const plain = new PlainRenderer(sink, {
+          color: false,
+          quiet: this.#quiet,
+          showCost: this.#showCost,
+        });
         await plain.render(events);
       } else {
         throw err;
@@ -629,7 +646,12 @@ export class InkRenderer implements Renderer {
       };
       try {
         instance = inkRender(
-          <DebateApp events={events} onComplete={(err) => finish(err)} quiet={this.#quiet} />,
+          <DebateApp
+            events={events}
+            onComplete={(err) => finish(err)}
+            quiet={this.#quiet}
+            showCost={this.#showCost}
+          />,
           {
             stdout: this.#stdout,
             stderr: this.#stderr,

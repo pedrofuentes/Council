@@ -24,6 +24,7 @@ export interface SelectRendererOpts {
   readonly isTTY: boolean;
   readonly sink: Sink;
   readonly quiet?: boolean;
+  readonly showCost?: boolean;
 }
 
 /** Detect environments where PlainRenderer should be forced for accessibility. */
@@ -35,20 +36,27 @@ function shouldForcePlain(): boolean {
 }
 
 export function selectRenderer(opts: SelectRendererOpts): Renderer {
+  const showCost = opts.showCost ?? true;
+
   switch (opts.format) {
     case "json":
       return new JsonRenderer(opts.sink);
     case "plain":
-      return new PlainRenderer(opts.sink, { ...(opts.quiet !== undefined ? { quiet: opts.quiet } : {}) });
+      return new PlainRenderer(opts.sink, {
+        showCost,
+        ...(opts.quiet !== undefined ? { quiet: opts.quiet } : {}),
+      });
     case "auto":
       if (!opts.isTTY || shouldForcePlain()) {
         return new PlainRenderer(opts.sink, {
           color: false,
+          showCost,
           ...(opts.quiet !== undefined ? { quiet: opts.quiet } : {}),
         });
       }
       return new InkRenderer({
         isTTY: true,
+        showCost,
         ...(opts.quiet !== undefined ? { quiet: opts.quiet } : {}),
       });
     default: {

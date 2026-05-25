@@ -217,6 +217,7 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
       format: opts.format,
       isTTY,
       sink,
+      showCost: opts.engineKind !== "mock",
       ...(opts.quiet !== undefined ? { quiet: opts.quiet } : {}),
     });
 
