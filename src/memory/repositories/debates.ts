@@ -100,6 +100,54 @@ export class DebateRepository {
     return rows.map(toDomain);
   }
 
+  async cancelRunning(panelId: string, endedAt: string = new Date().toISOString()): Promise<Debate | undefined> {
+    const row = await this.db
+      .selectFrom("debates")
+      .selectAll()
+      .where("panel_id", "=", panelId)
+      .where("status", "=", "running")
+      .orderBy("started_at", "desc")
+      .orderBy("id", "desc")
+      .executeTakeFirst();
+    if (!row) {
+      return undefined;
+    }
+
+    await this.db
+      .updateTable("debates")
+      .set({
+        status: "interrupted",
+        ended_at: endedAt,
+      })
+      .where("id", "=", row.id)
+      .execute();
+
+    return this.findById(row.id);
+  }
+
+  async cancelAllRunning(endedAt: string = new Date().toISOString()): Promise<number> {
+    const countRow = await this.db
+      .selectFrom("debates")
+      .select((eb) => eb.fn.countAll<number>().as("count"))
+      .where("status", "=", "running")
+      .executeTakeFirst();
+    const count = Number(countRow?.count ?? 0);
+    if (count === 0) {
+      return 0;
+    }
+
+    await this.db
+      .updateTable("debates")
+      .set({
+        status: "interrupted",
+        ended_at: endedAt,
+      })
+      .where("status", "=", "running")
+      .execute();
+
+    return count;
+  }
+
   async update(id: string, patch: DebateUpdate): Promise<Debate | undefined> {
     const updates: Record<string, unknown> = {};
     if (patch.status !== undefined) updates["status"] = patch.status;
