@@ -357,6 +357,24 @@ describe("buildSessionsCommand", () => {
       expect(debates[0]?.endedAt).not.toBeNull();
     });
 
+    it("cancel throws when a prefix matches multiple panels", async () => {
+      await seedPanelWithDebates(testHome, "prefix-alpha", ["running"]);
+      await seedPanelWithDebates(testHome, "prefix-beta", ["running"]);
+      const cmd = buildSessionsCommand();
+
+      await expect(cmd.parseAsync(["node", "council-sessions", "cancel", "prefix-"])).rejects.toThrow(
+        "Ambiguous prefix 'prefix-' matches 2 panels.",
+      );
+    });
+
+    it("cancel throws when name is omitted without --all", async () => {
+      const cmd = buildSessionsCommand();
+
+      await expect(cmd.parseAsync(["node", "council-sessions", "cancel"])).rejects.toThrow(
+        "Panel name is required unless --all is set.",
+      );
+    });
+
     it("cancel --all interrupts every running debate", async () => {
       const panelOne = await seedPanelWithDebates(testHome, "all-one", ["running", "completed"]);
       const panelTwo = await seedPanelWithDebates(testHome, "all-two", ["running"]);
