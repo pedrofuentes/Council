@@ -1,7 +1,8 @@
 /**
  * Tests for `council panel delete` (T2) and the related expert-delete
  * cascade warning. Covers:
- *   - panel delete with --force removes YAML, docs dir, and DB row
+ *   - panel delete with --yes removes YAML, docs dir, and DB row
+ *   - panel delete keeps hidden --force backward compatibility
  *   - panel delete prompts for confirmation by default
  *   - panel delete aborts when confirmation is declined
  *   - panel delete errors on unknown panel name
@@ -98,6 +99,14 @@ describe("buildPanelCommand: delete subcommand (T2)", () => {
     expect(subs).toContain("delete");
   });
 
+  it("documents --yes and hides the legacy --force alias in help", () => {
+    const del = buildPanelCommand().commands.find((command) => command.name() === "delete");
+    const help = del?.helpInformation() ?? "";
+
+    expect(help).toMatch(/--yes/);
+    expect(help).not.toMatch(/--force/);
+  });
+
   describe("panel delete behavior", () => {
     let env: TestEnv;
     beforeEach(async () => {
@@ -107,7 +116,7 @@ describe("buildPanelCommand: delete subcommand (T2)", () => {
       await teardown(env);
     });
 
-    it("with --force removes the YAML, docs directory, and DB rows", async () => {
+    it("with --yes removes the YAML, docs directory, and DB rows", async () => {
       await seedExpert(env, expertDef("cto"));
       await createPanel(env, "arch-review", ["cto"]);
       const yamlPath = path.join(env.dataHome, "panels", "arch-review.yaml");
@@ -120,7 +129,7 @@ describe("buildPanelCommand: delete subcommand (T2)", () => {
       const cmd = buildPanelCommand((s) => {
         captured += s;
       });
-      await cmd.parseAsync(["node", "council-panel", "delete", "arch-review", "--force"]);
+      await cmd.parseAsync(["node", "council-panel", "delete", "arch-review", "--yes"]);
 
       expect(captured).toMatch(/deleted/i);
       await expect(fs.access(yamlPath)).rejects.toThrow();
@@ -151,7 +160,7 @@ describe("buildPanelCommand: delete subcommand (T2)", () => {
         },
       );
       await expect(
-        cmd.parseAsync(["node", "council-panel", "delete", "missing-panel", "--force"]),
+        cmd.parseAsync(["node", "council-panel", "delete", "missing-panel", "--yes"]),
       ).rejects.toThrow(/not found/i);
       expect(errored).toMatch(/not found/i);
     });
@@ -220,7 +229,7 @@ describe("buildPanelCommand: delete subcommand (T2)", () => {
       await expect(fs.access(yamlPath)).rejects.toThrow();
     });
 
-    it("--force skips the confirmation prompt entirely", async () => {
+    it("--yes skips the confirmation prompt entirely", async () => {
       await seedExpert(env, expertDef("cto"));
       await createPanel(env, "no-prompt", ["cto"]);
 
@@ -239,9 +248,34 @@ describe("buildPanelCommand: delete subcommand (T2)", () => {
           },
         },
       );
-      await cmd.parseAsync(["node", "council-panel", "delete", "no-prompt", "--force"]);
+      await cmd.parseAsync(["node", "council-panel", "delete", "no-prompt", "--yes"]);
       expect(confirmCalled).toBe(false);
       const yamlPath = path.join(env.dataHome, "panels", "no-prompt.yaml");
+      await expect(fs.access(yamlPath)).rejects.toThrow();
+    });
+
+    it("keeps --force as a hidden alias for skipping confirmation", async () => {
+      await seedExpert(env, expertDef("cto"));
+      await createPanel(env, "legacy-force", ["cto"]);
+
+      let confirmCalled = false;
+      const cmd = buildPanelCommand(
+        () => {
+          /* noop */
+        },
+        () => {
+          /* noop */
+        },
+        {
+          confirm: async () => {
+            confirmCalled = true;
+            return false;
+          },
+        },
+      );
+      await cmd.parseAsync(["node", "council-panel", "delete", "legacy-force", "--force"]);
+      expect(confirmCalled).toBe(false);
+      const yamlPath = path.join(env.dataHome, "panels", "legacy-force.yaml");
       await expect(fs.access(yamlPath)).rejects.toThrow();
     });
 
@@ -258,11 +292,11 @@ describe("buildPanelCommand: delete subcommand (T2)", () => {
       // `..` would be catastrophic if it reached fs.rm; validatePanelName
       // must catch it before any DB or FS work.
       await expect(
-        cmd.parseAsync(["node", "council-panel", "delete", "../etc", "--force"]),
+        cmd.parseAsync(["node", "council-panel", "delete", "../etc", "--yes"]),
       ).rejects.toThrow(/kebab|invalid/i);
       // Bonus: name with a path separator must also be rejected.
       await expect(
-        cmd.parseAsync(["node", "council-panel", "delete", "foo/bar", "--force"]),
+        cmd.parseAsync(["node", "council-panel", "delete", "foo/bar", "--yes"]),
       ).rejects.toThrow(/kebab|invalid/i);
       // The errors do NOT need to come from writeError — Commander may
       // surface them directly — but they MUST never trigger a delete.
@@ -279,7 +313,7 @@ describe("buildPanelCommand: delete subcommand (T2)", () => {
       const cmd = buildPanelCommand((s) => {
         captured += s;
       });
-      await cmd.parseAsync(["node", "council-panel", "delete", "half-cleaned", "--force"]);
+      await cmd.parseAsync(["node", "council-panel", "delete", "half-cleaned", "--yes"]);
       expect(captured).toMatch(/deleted/i);
 
       const { createDatabase } = await import("../../../../src/memory/db.js");
@@ -317,7 +351,7 @@ describe("buildPanelCommand: delete subcommand (T2)", () => {
         },
       );
       await expect(
-        cmd.parseAsync(["node", "council-panel", "delete", "busy-yaml", "--force"]),
+        cmd.parseAsync(["node", "council-panel", "delete", "busy-yaml", "--yes"]),
       ).rejects.toThrow(/EISDIR|EPERM|illegal|directory|permitted/i);
       expect(errored).toMatch(/busy-yaml\.yaml/);
       expect(errored).toMatch(/DB rows preserved/i);
