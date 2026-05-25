@@ -272,6 +272,9 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         ...(raw.summarizeAfter !== undefined && Number.isFinite(raw.summarizeAfter)
           ? { summarizeAfter: raw.summarizeAfter }
           : {}),
+        ...(raw.maxExperts !== undefined && Number.isFinite(raw.maxExperts)
+          ? { maxExperts: raw.maxExperts }
+          : {}),
       };
 
       let template: ResolvedPanelDefinition;

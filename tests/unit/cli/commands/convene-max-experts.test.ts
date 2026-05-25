@@ -47,6 +47,8 @@ class ScriptedEngine implements CouncilEngine {
   readonly #experts = new Map<string, ExpertSpec>();
   readonly responses: string[];
   callIndex = 0;
+  /** Track system messages for verification */
+  readonly expertSystemMessages: string[] = [];
 
   constructor(responses: string[]) {
     this.responses = responses;
@@ -60,6 +62,7 @@ class ScriptedEngine implements CouncilEngine {
   }
   async addExpert(spec: ExpertSpec): Promise<void> {
     this.#experts.set(spec.id, spec);
+    this.expertSystemMessages.push(spec.systemMessage);
   }
   async removeExpert(expertId: string): Promise<void> {
     this.#experts.delete(expertId);
@@ -102,12 +105,17 @@ describe("buildConveneCommand — --max-experts flag", () => {
     } else {
       delete process.env["COUNCIL_HOME"];
     }
-    await fs.rm(testHome, { recursive: true, force: true });
+    try {
+      await fs.rm(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    } catch {
+      /* best effort */
+    }
   });
 
   it("should accept --max-experts flag and thread it to autoComposePanel", async () => {
     const outputs: string[] = [];
     const errors: string[] = [];
+    const engine = new ScriptedEngine([smallPanelJson, "round1-alpha", "round1-beta"]);
 
     const cmd = buildConveneCommand({
       write: (s) => {
@@ -116,17 +124,82 @@ describe("buildConveneCommand — --max-experts flag", () => {
       writeError: (s) => {
         errors.push(s);
       },
-      engineFactory: () => new ScriptedEngine([smallPanelJson, "round1-alpha", "round1-beta"]),
+      engineFactory: () => engine,
     });
 
-    // This should NOT throw - the flag should be recognized
     await cmd.parseAsync(
       ["node", "council", "convene", "topic", "--max-experts", "2", "--yes"],
       { from: "user" },
     );
 
-    // If the flag is properly threaded, auto-compose should work without error
+    // Verify no error about unknown option
     expect(errors.some((e) => e.includes("unknown option"))).toBe(false);
+
+    // Verify the composer expert (first addExpert call) received a system prompt with maxExperts=2
+    expect(engine.expertSystemMessages.length).toBeGreaterThan(0);
+    const composerSystemMessage = engine.expertSystemMessages[0];
+    // The composer prompt should mention "2" or "at most 2" when maxExperts is 2
+    expect(composerSystemMessage).toContain("2");
+  });
+
+  it("should use default maxExperts when flag is not provided", async () => {
+    const outputs: string[] = [];
+    const errors: string[] = [];
+    const engine = new ScriptedEngine([
+      JSON.stringify({
+        name: "default-auto-panel",
+        description: "Auto-composed panel with default size",
+        experts: [
+          {
+            slug: "alpha",
+            displayName: "Alpha",
+            role: "Expert",
+            expertise: { weightedEvidence: ["evidence"], referenceCases: [], notExpertIn: [] },
+            epistemicStance: "Alpha stance",
+          },
+          {
+            slug: "beta",
+            displayName: "Beta",
+            role: "Expert",
+            expertise: { weightedEvidence: ["evidence"], referenceCases: [], notExpertIn: [] },
+            epistemicStance: "Beta stance",
+          },
+          {
+            slug: "gamma",
+            displayName: "Gamma",
+            role: "Expert",
+            expertise: { weightedEvidence: ["evidence"], referenceCases: [], notExpertIn: [] },
+            epistemicStance: "Gamma stance",
+          },
+        ],
+      }),
+      "r1-a",
+      "r1-b",
+      "r1-c",
+    ]);
+
+    const cmd = buildConveneCommand({
+      write: (s) => {
+        outputs.push(s);
+      },
+      writeError: (s) => {
+        errors.push(s);
+      },
+      engineFactory: () => engine,
+    });
+
+    await cmd.parseAsync(["node", "council", "convene", "topic", "--yes"], {
+      from: "user",
+    });
+
+    // Verify no error
+    expect(errors.some((e) => e.includes("unknown option"))).toBe(false);
+
+    // Verify the composer was created (system message exists)
+    expect(engine.expertSystemMessages.length).toBeGreaterThan(0);
+    const composerSystemMessage = engine.expertSystemMessages[0];
+    // The default is 3-5, so the prompt should mention "5" as the max
+    expect(composerSystemMessage).toMatch(/[35]/); // Should contain either 3 or 5
   });
 
   it("should show --max-experts in help output", () => {
