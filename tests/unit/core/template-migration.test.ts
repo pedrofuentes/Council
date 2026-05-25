@@ -636,6 +636,34 @@ describe("template-migration", () => {
       expect(typeof result.duplicatesUnified).toBe("number");
     });
 
+    it("does not emit migration notices in normal mode", async () => {
+      const notices: string[] = [];
+
+      const result = await migrateBuiltInTemplates(dataHome, lib, db, {
+        writeNotice: (message) => {
+          notices.push(message);
+        },
+      });
+
+      expect(result.panelsMigrated + result.expertsExtracted).toBeGreaterThan(0);
+      expect(notices).toEqual([]);
+    });
+
+    it("emits migration notices in verbose mode", async () => {
+      const notices: string[] = [];
+
+      const result = await migrateBuiltInTemplates(dataHome, lib, db, {
+        verbose: true,
+        writeNotice: (message) => {
+          notices.push(message);
+        },
+      });
+
+      expect(notices).toEqual([
+        `ℹ Migrated ${result.panelsMigrated} panels and ${result.expertsExtracted} experts to the new library format.\n`,
+      ]);
+    });
+
     it("unifies identical experts shared across two panels (duplicatesUnified > 0)", async () => {
       // Use an injected loader so we can guarantee two panels share an
       // identical inline definition — the production built-ins don't.
