@@ -138,8 +138,9 @@ describe("buildConveneCommand — --max-experts flag", () => {
     // Verify the composer expert (first addExpert call) received a system prompt with maxExperts=2
     expect(engine.expertSystemMessages.length).toBeGreaterThan(0);
     const composerSystemMessage = engine.expertSystemMessages[0];
-    // The composer prompt should mention "2" or "at most 2" when maxExperts is 2
-    expect(composerSystemMessage).toContain("2");
+    // The composer prompt should contain "panel of X-2 AI experts" when maxExperts is 2
+    // This verifies the value was actually threaded to buildComposerSystemPrompt
+    expect(composerSystemMessage).toMatch(/panel of \d+-2 AI experts/);
   });
 
   it("should use default maxExperts when flag is not provided", async () => {
@@ -198,8 +199,8 @@ describe("buildConveneCommand — --max-experts flag", () => {
     // Verify the composer was created (system message exists)
     expect(engine.expertSystemMessages.length).toBeGreaterThan(0);
     const composerSystemMessage = engine.expertSystemMessages[0];
-    // The default is 3-5, so the prompt should mention "5" as the max
-    expect(composerSystemMessage).toMatch(/[35]/); // Should contain either 3 or 5
+    // The default is 3-5, so the prompt should contain "panel of 3-5 AI experts"
+    expect(composerSystemMessage).toContain("panel of 3-5 AI experts");
   });
 
   it("should show --max-experts in help output", () => {
