@@ -66,8 +66,10 @@ describe("Expert persona onboarding UX (T7)", () => {
       expect(createCmd).toBeDefined();
       const helpText = createCmd?.helpInformation() ?? "";
       
-      // The --persona flag description should mention training/trainable
-      expect(helpText.toLowerCase()).toMatch(/persona.*train/);
+      // The --persona flag description should mention "trainable" (not in old text)
+      // and "document-based training" (in both, but validates basic content)
+      expect(helpText.toLowerCase()).toMatch(/trainable/);
+      expect(helpText.toLowerCase()).toMatch(/document-based training/);
     });
 
     it("includes examples showing persona creation and training workflow", async () => {
