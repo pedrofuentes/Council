@@ -99,4 +99,19 @@ describe("InkRenderer scrollback preservation", () => {
     expect(transcript).toContain("Hello world");
     expect(transcript).toContain("Debate complete (completed)");
   });
+
+  it("skips the final transcript when Ink is writing to a non-TTY sink", async () => {
+    const stdout = createClearingStream();
+    const stderr = createClearingStream();
+    const renderer = new InkRenderer({
+      stdout: stdout.stream,
+      stderr: stderr.stream,
+      isTTY: false,
+      showCost: false,
+    });
+
+    await renderer.render(events());
+
+    expect(stdout.read()).toBe("");
+  });
 });
