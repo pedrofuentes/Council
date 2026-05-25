@@ -81,7 +81,7 @@ describe("buildProgram", () => {
       ]);
     });
 
-    it("still wraps stderr when Windows stdout is piped but stderr is a TTY", async () => {
+    it("switches the Windows console code page when stdout is piped but stderr is a TTY", async () => {
       const execFileSync = vi.fn().mockReturnValue(Buffer.alloc(0));
       vi.doMock("node:child_process", () => ({ execFileSync }));
 
@@ -96,7 +96,12 @@ describe("buildProgram", () => {
       stdout.write("stdout — 2× ≥ 🎉");
       stderr.write("stderr — 2× ≥ 🎉");
 
-      expect(execFileSync).not.toHaveBeenCalled();
+      expect(execFileSync).toHaveBeenCalledOnce();
+      expect(execFileSync).toHaveBeenCalledWith(
+        "chcp.com",
+        ["65001"],
+        expect.objectContaining({ stdio: "ignore", windowsHide: true }),
+      );
       expect(calls).toEqual([
         { target: "stdout", chunk: "stdout — 2× ≥ 🎉", encoding: undefined },
         { target: "stderr", chunk: "stderr — 2× ≥ 🎉", encoding: "utf8" },
