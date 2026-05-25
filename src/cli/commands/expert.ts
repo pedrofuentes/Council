@@ -142,7 +142,7 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
     .description("Create a new expert in the library (or recreate one whose YAML was deleted)")
     .option(
       "--persona",
-      "Create a persona expert (real person) and enable document-based training from their docs folder",
+      "Create a trainable persona expert with document-based training via 'council expert train'",
     )
     .option("--slug <slug>", "URL-safe slug (lowercase, alphanumeric + hyphens)")
     .option("--name <displayName>", "Display name")
@@ -206,6 +206,19 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
         }
       });
     });
+  cmd.addHelpText(
+    "after",
+    `
+Examples:
+  $ council expert create                                           # interactive wizard
+  $ council expert create --persona --name "My Boss" \\
+      --slug my-boss --role "VP Engineering" \\
+      --expertise "team decisions,priorities" \\
+      --stance "outcome-driven" \\
+      --persona-description "VP of Engineering"                    # create trainable persona
+  $ council expert train my-boss --file notes.md --file email.txt  # train with documents
+`,
+  );
   return cmd;
 }
 
@@ -938,7 +951,9 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
           throw new CliUserError(msg);
         }
         if (expert.kind !== "persona") {
-          const msg = `Expert "${slug}" is not a persona expert — only persona experts can be trained.`;
+          const msg =
+            `Expert "${slug}" is not a persona expert — only persona experts can be trained. ` +
+            `Create a trainable expert with: council expert create --name <name> --persona`;
           writeError(msg + "\n");
           throw new CliUserError(msg);
         }

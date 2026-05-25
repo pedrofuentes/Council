@@ -70,16 +70,28 @@ describe("Expert persona onboarding UX (T7)", () => {
       expect(helpText.toLowerCase()).toMatch(/persona.*train/);
     });
 
-    it("includes examples showing persona creation and training workflow", () => {
-      const cmd = buildExpertCommand();
-      const createCmd = cmd.commands.find((c) => c.name() === "create");
-      expect(createCmd).toBeDefined();
-      const helpText = createCmd?.helpInformation() ?? "";
+    it("includes examples showing persona creation and training workflow", async () => {
+      // Commander.js's helpInformation() doesn't include addHelpText sections,
+      // but we can verify the examples exist by spawning the CLI process
+      const { spawn } = await import("node:child_process");
+      const proc = spawn(process.execPath, [
+        "dist/bin/council.js",
+        "expert",
+        "create",
+        "--help",
+      ], { cwd: process.cwd() });
+      
+      let output = "";
+      proc.stdout.on("data", (data) => { output += data.toString(); });
+      
+      await new Promise((resolve) => {
+        proc.on("close", resolve);
+      });
       
       // Should have examples showing the persona workflow
-      expect(helpText).toMatch(/examples:/i);
-      expect(helpText.toLowerCase()).toMatch(/persona/);
-      expect(helpText.toLowerCase()).toMatch(/train/);
+      expect(output).toMatch(/examples:/i);
+      expect(output.toLowerCase()).toMatch(/persona/);
+      expect(output.toLowerCase()).toMatch(/train/);
     });
   });
 
