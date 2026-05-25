@@ -99,6 +99,107 @@ describe("buildAskCommand", () => {
     expect(thrown.toLowerCase()).toMatch(/no panel|not found/);
   });
 
+  it("suggests chat or convene when the name matches a library template in the data home", async () => {
+    const originalDataHome = process.env["COUNCIL_DATA_HOME"];
+    const libraryHome = path.join(testHome, "library-home");
+    const panelsDir = path.join(libraryHome, "panels");
+    await fs.mkdir(panelsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(panelsDir, "template-only-panel.yaml"),
+      [
+        "name: template-only-panel",
+        "description: Template-only panel",
+        "experts:",
+        "  - slug: reviewer",
+        "    displayName: Reviewer",
+        "    role: Reviews code",
+        "    expertise:",
+        "      weightedEvidence:",
+        "        - Reads diffs carefully",
+        "      referenceCases: []",
+        "      notExpertIn: []",
+        "    epistemicStance: Cautious",
+      ].join("\n"),
+      "utf-8",
+    );
+    process.env["COUNCIL_DATA_HOME"] = libraryHome;
+
+    try {
+      const cmd = buildAskCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: () => undefined,
+      });
+      cmd.exitOverride();
+      let thrown = "";
+      try {
+        await cmd.parseAsync([
+          "node", "council-ask", "template-only-panel", "What?", "--engine", "mock",
+        ]);
+      } catch (err) {
+        thrown = err instanceof Error ? err.message : String(err);
+      }
+      expect(thrown).toMatch(/template-only-panel/);
+      expect(thrown).toMatch(/chat .*template-only-panel/i);
+      expect(thrown).toMatch(/convene --template template-only-panel/i);
+    } finally {
+      if (originalDataHome === undefined) delete process.env["COUNCIL_DATA_HOME"];
+      else process.env["COUNCIL_DATA_HOME"] = originalDataHome;
+    }
+  });
+
+  it("uses config.paths.dataHome for template-aware guidance when --engine is provided", async () => {
+    const originalDataHome = process.env["COUNCIL_DATA_HOME"];
+    const libraryHome = path.join(testHome, "config-data-home");
+    const panelsDir = path.join(libraryHome, "panels");
+    await fs.mkdir(panelsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(panelsDir, "config-template-panel.yaml"),
+      [
+        "name: config-template-panel",
+        "description: Template-only panel from config.paths.dataHome",
+        "experts:",
+        "  - slug: reviewer",
+        "    displayName: Reviewer",
+        "    role: Reviews code",
+        "    expertise:",
+        "      weightedEvidence:",
+        "        - Reads diffs carefully",
+        "      referenceCases: []",
+        "      notExpertIn: []",
+        "    epistemicStance: Cautious",
+      ].join("\n"),
+      "utf-8",
+    );
+    delete process.env["COUNCIL_DATA_HOME"];
+    await fs.writeFile(
+      path.join(testHome, "config.yaml"),
+      `paths:\n  dataHome: "${libraryHome.replace(/\\/g, "/")}"\n`,
+      "utf-8",
+    );
+
+    try {
+      const cmd = buildAskCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: () => undefined,
+      });
+      cmd.exitOverride();
+      let thrown = "";
+      try {
+        await cmd.parseAsync([
+          "node", "council-ask", "config-template-panel", "What?", "--engine", "mock",
+        ]);
+      } catch (err) {
+        thrown = err instanceof Error ? err.message : String(err);
+      }
+      expect(thrown).toMatch(/config-template-panel/);
+      expect(thrown).toMatch(/chat .*config-template-panel/i);
+      expect(thrown).toMatch(/convene --template config-template-panel/i);
+    } finally {
+      if (originalDataHome === undefined) delete process.env["COUNCIL_DATA_HOME"];
+      else process.env["COUNCIL_DATA_HOME"] = originalDataHome;
+    }
+  });
+
   it("rejects unknown --expert slug", async () => {
     await seedPanel(testHome);
     const cmd = buildAskCommand({

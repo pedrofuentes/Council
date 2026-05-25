@@ -317,16 +317,21 @@ async function seedPanelWithShortTurns(testHome: string): Promise<{ panelName: s
 describe("buildExportCommand", () => {
   let testHome: string;
   let originalHome: string | undefined;
+  let originalDataHome: string | undefined;
 
   beforeEach(async () => {
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-export-test-"));
     originalHome = process.env["COUNCIL_HOME"];
+    originalDataHome = process.env["COUNCIL_DATA_HOME"];
     process.env["COUNCIL_HOME"] = testHome;
+    process.env["COUNCIL_DATA_HOME"] = testHome;
   });
 
   afterEach(async () => {
     if (originalHome === undefined) delete process.env["COUNCIL_HOME"];
     else process.env["COUNCIL_HOME"] = originalHome;
+    if (originalDataHome === undefined) delete process.env["COUNCIL_DATA_HOME"];
+    else process.env["COUNCIL_DATA_HOME"] = originalDataHome;
     try {
       await fs.rm(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     } catch {
@@ -387,6 +392,95 @@ describe("buildExportCommand", () => {
     }
     expect(thrown).toMatch(/exists but has no debates yet/i);
     expect(thrown).toMatch(/convene --template empty-panel/i);
+  });
+
+  it("checks the separate data home before reporting a template-only panel as missing", async () => {
+    const dataHomeBeforeOverride = process.env["COUNCIL_DATA_HOME"];
+    const libraryHome = path.join(testHome, "library-home");
+    const panelsDir = path.join(libraryHome, "panels");
+    await fs.mkdir(panelsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(panelsDir, "data-home-template.yaml"),
+      [
+        "name: data-home-template",
+        "description: Template stored in the separate data home",
+        "experts:",
+        "  - slug: reviewer",
+        "    displayName: Reviewer",
+        "    role: Reviews code",
+        "    expertise:",
+        "      weightedEvidence:",
+        "        - Reads diffs carefully",
+        "      referenceCases: []",
+        "      notExpertIn: []",
+        "    epistemicStance: Cautious",
+      ].join("\n"),
+      "utf-8",
+    );
+    process.env["COUNCIL_DATA_HOME"] = libraryHome;
+
+    try {
+      const cmd = buildExportCommand({ write: () => undefined });
+      cmd.exitOverride();
+      let thrown = "";
+      try {
+        await cmd.parseAsync(["node", "council-export", "data-home-template"]);
+      } catch (err) {
+        thrown = err instanceof Error ? err.message : String(err);
+      }
+      expect(thrown).toMatch(/exists but has no debates yet/i);
+      expect(thrown).toMatch(/convene --template data-home-template/i);
+    } finally {
+      if (dataHomeBeforeOverride === undefined) delete process.env["COUNCIL_DATA_HOME"];
+      else process.env["COUNCIL_DATA_HOME"] = dataHomeBeforeOverride;
+    }
+  });
+
+  it("uses config.paths.dataHome when resolving template-only panel errors", async () => {
+    const dataHomeBeforeOverride = process.env["COUNCIL_DATA_HOME"];
+    const libraryHome = path.join(testHome, "config-data-home");
+    const panelsDir = path.join(libraryHome, "panels");
+    await fs.mkdir(panelsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(panelsDir, "config-export-template.yaml"),
+      [
+        "name: config-export-template",
+        "description: Template stored in config.paths.dataHome",
+        "experts:",
+        "  - slug: reviewer",
+        "    displayName: Reviewer",
+        "    role: Reviews code",
+        "    expertise:",
+        "      weightedEvidence:",
+        "        - Reads diffs carefully",
+        "      referenceCases: []",
+        "      notExpertIn: []",
+        "    epistemicStance: Cautious",
+      ].join("\n"),
+      "utf-8",
+    );
+    delete process.env["COUNCIL_DATA_HOME"];
+    await fs.writeFile(
+      path.join(testHome, "config.yaml"),
+      `paths:\n  dataHome: "${libraryHome.replace(/\\/g, "/")}"\n`,
+      "utf-8",
+    );
+
+    try {
+      const cmd = buildExportCommand({ write: () => undefined });
+      cmd.exitOverride();
+      let thrown = "";
+      try {
+        await cmd.parseAsync(["node", "council-export", "config-export-template"]);
+      } catch (err) {
+        thrown = err instanceof Error ? err.message : String(err);
+      }
+      expect(thrown).toMatch(/exists but has no debates yet/i);
+      expect(thrown).toMatch(/convene --template config-export-template/i);
+    } finally {
+      if (dataHomeBeforeOverride === undefined) delete process.env["COUNCIL_DATA_HOME"];
+      else process.env["COUNCIL_DATA_HOME"] = dataHomeBeforeOverride;
+    }
   });
 
   it("--format markdown (default): includes topic, status, expert displayNames, content", async () => {
