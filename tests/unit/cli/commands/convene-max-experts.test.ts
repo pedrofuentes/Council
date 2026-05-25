@@ -272,5 +272,18 @@ describe("buildConveneCommand — --max-experts flag", () => {
         from: "user",
       }),
     ).rejects.toThrow("--max-experts must be a positive integer");
+
+    // Should throw for malformed numeric input (not strict integers)
+    await expect(
+      cmd.parseAsync(["node", "council", "convene", "topic", "--max-experts", "1.5", "--yes"], {
+        from: "user",
+      }),
+    ).rejects.toThrow("--max-experts must be an integer");
+
+    await expect(
+      cmd.parseAsync(["node", "council", "convene", "topic", "--max-experts", "2abc", "--yes"], {
+        from: "user",
+      }),
+    ).rejects.toThrow("--max-experts must be an integer");
   });
 });

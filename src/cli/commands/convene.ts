@@ -216,7 +216,13 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
     .option(
       "--max-experts <n>",
       "Maximum number of experts for auto-compose",
-      (v) => Number.parseInt(v, 10),
+      (v) => {
+        const parsed = Number(v);
+        if (!Number.isInteger(parsed)) {
+          throw new Error(`--max-experts must be an integer (got: ${v})`);
+        }
+        return parsed;
+      },
     )
     .action(async (topic: string, raw: ConveneOptions) => {
       const admission = checkTopicAdmission(topic);
