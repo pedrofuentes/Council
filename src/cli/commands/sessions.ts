@@ -63,7 +63,7 @@ function isPossiblyStuckRunningDebate(
 }
 
 function formatStuckSessionHint(panelName: string): string {
-  return `⚠ May be stuck — try: council resume ${panelName}`;
+  return `${getSymbols().warn} May be stuck — try: council resume ${panelName}`;
 }
 
 async function findPanelByNameOrPrefix(
