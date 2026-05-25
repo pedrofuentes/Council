@@ -1,6 +1,27 @@
 import { describe, expect, it } from "vitest";
 
-import { installSqliteExperimentalWarningFilter } from "../../../src/bin/sqlite-warning-filter.js";
+import {
+  installSqliteExperimentalWarningFilter,
+  installSqliteExperimentalWarningStderrFilter,
+} from "../../../src/bin/sqlite-warning-filter.js";
+
+interface FakeStderr {
+  write: (chunk: string | Uint8Array, encoding?: unknown, cb?: unknown) => boolean;
+}
+
+function createFakeStderr(): {
+  readonly fakeStderr: FakeStderr;
+  readonly writes: readonly string[];
+} {
+  const writes: string[] = [];
+  const fakeStderr: FakeStderr = {
+    write: (chunk: string | Uint8Array): boolean => {
+      writes.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+      return true;
+    },
+  };
+  return { fakeStderr, writes };
+}
 
 interface FakeProcess {
   emitWarning: typeof process.emitWarning;
@@ -54,5 +75,117 @@ describe("installSqliteExperimentalWarningFilter", () => {
     fakeProcess.emitWarning("sqlite connection fell back to a cached handle", "Warning");
 
     expect(calls).toEqual([["sqlite connection fell back to a cached handle", "Warning"]]);
+  });
+});
+
+describe("installSqliteExperimentalWarningStderrFilter", () => {
+  it("suppresses the SQLite ExperimentalWarning line forwarded with the `[CLI subprocess]` prefix from @github/copilot-sdk", () => {
+    const { fakeStderr, writes } = createFakeStderr();
+    installSqliteExperimentalWarningStderrFilter(fakeStderr);
+
+    fakeStderr.write(
+      "[CLI subprocess] (node:63972) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n",
+    );
+    fakeStderr.write(
+      "[CLI subprocess] (Use `node --trace-warnings ...` to show where the warning was created)\n",
+    );
+
+    expect(writes).toEqual([]);
+  });
+
+  it("suppresses the same warning without the `[CLI subprocess]` prefix (bare Node format)", () => {
+    const { fakeStderr, writes } = createFakeStderr();
+    installSqliteExperimentalWarningStderrFilter(fakeStderr);
+
+    fakeStderr.write(
+      "(node:12345) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n",
+    );
+    fakeStderr.write(
+      "(Use `node --trace-warnings ...` to show where the warning was created)\n",
+    );
+
+    expect(writes).toEqual([]);
+  });
+
+  it("suppresses both the warning and its trailing trace-warnings hint when delivered in a single chunk", () => {
+    const { fakeStderr, writes } = createFakeStderr();
+    installSqliteExperimentalWarningStderrFilter(fakeStderr);
+
+    fakeStderr.write(
+      "[CLI subprocess] (node:1) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n" +
+        "[CLI subprocess] (Use `node --trace-warnings ...` to show where the warning was created)\n",
+    );
+
+    expect(writes).toEqual([]);
+  });
+
+  it("passes unrelated stderr content through unchanged", () => {
+    const { fakeStderr, writes } = createFakeStderr();
+    installSqliteExperimentalWarningStderrFilter(fakeStderr);
+
+    fakeStderr.write("[CLI subprocess] server listening on port 4242\n");
+    fakeStderr.write("regular stderr line\n");
+
+    expect(writes).toEqual([
+      "[CLI subprocess] server listening on port 4242\n",
+      "regular stderr line\n",
+    ]);
+  });
+
+  it("does not drop the trace-warnings hint when it follows a non-SQLite ExperimentalWarning", () => {
+    const { fakeStderr, writes } = createFakeStderr();
+    installSqliteExperimentalWarningStderrFilter(fakeStderr);
+
+    const fetchLine =
+      "(node:1) ExperimentalWarning: Fetch is an experimental feature and might change at any time\n";
+    const hintLine =
+      "(Use `node --trace-warnings ...` to show where the warning was created)\n";
+
+    fakeStderr.write(fetchLine);
+    fakeStderr.write(hintLine);
+
+    expect(writes).toEqual([fetchLine, hintLine]);
+  });
+
+  it("preserves an unrelated line mixed in the same chunk as the SQLite warning", () => {
+    const { fakeStderr, writes } = createFakeStderr();
+    installSqliteExperimentalWarningStderrFilter(fakeStderr);
+
+    fakeStderr.write(
+      "[CLI subprocess] starting up\n" +
+        "[CLI subprocess] (node:1) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n" +
+        "[CLI subprocess] (Use `node --trace-warnings ...` to show where the warning was created)\n" +
+        "[CLI subprocess] ready\n",
+    );
+
+    expect(writes.join("")).toBe(
+      "[CLI subprocess] starting up\n[CLI subprocess] ready\n",
+    );
+  });
+
+  it("is idempotent when called twice on the same stream", () => {
+    const { fakeStderr, writes } = createFakeStderr();
+    installSqliteExperimentalWarningStderrFilter(fakeStderr);
+    const wrappedOnce = fakeStderr.write;
+    installSqliteExperimentalWarningStderrFilter(fakeStderr);
+    expect(fakeStderr.write).toBe(wrappedOnce);
+
+    fakeStderr.write(
+      "[CLI subprocess] (node:1) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n",
+    );
+    expect(writes).toEqual([]);
+  });
+
+  it("is installed by installSqliteExperimentalWarningFilter on the provided stderr stream", () => {
+    const { fakeProcess, calls } = createFakeProcess();
+    const { fakeStderr, writes } = createFakeStderr();
+    installSqliteExperimentalWarningFilter(fakeProcess, fakeStderr);
+
+    fakeStderr.write(
+      "[CLI subprocess] (node:1) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n",
+    );
+
+    expect(writes).toEqual([]);
+    expect(calls).toEqual([]);
   });
 });
