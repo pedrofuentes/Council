@@ -76,7 +76,24 @@ function isBestEffortCleanupError(error: unknown): boolean {
   );
 }
 
-async function removeDir(dirPath: string): Promise<void> {
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Removes a temp directory with exponential-backoff retries for Windows
+ * SQLite handle-release latency, capped by a wallclock budget.
+ *
+ * `fs.rm`'s built-in `maxRetries`/`retryDelay` can stall for many seconds
+ * when a SQLite/libsql handle hasn't drained, or when the panel's copilot
+ * subdir holds OS-locked files. We bound the total time spent so an
+ * `afterEach` hook can never exceed its timeout — residual leaks are
+ * tolerable (the OS reclaims tmpdir), a thrown hook is not.
+ *
+ * @param dirPath - Directory to remove; must live under `os.tmpdir()`.
+ * @param budgetMs - Maximum wallclock time to spend retrying.
+ */
+async function removeDir(dirPath: string, budgetMs = 5_000): Promise<void> {
   const tempRoot = normalizeTempPath(os.tmpdir());
   const candidatePath = normalizeTempPath(dirPath);
   const tempPrefix = `${tempRoot}${path.sep}`;
@@ -85,15 +102,33 @@ async function removeDir(dirPath: string): Promise<void> {
     throw new Error(`Refusing to delete non-temp path: ${dirPath}`);
   }
 
-  try {
-    await fs.rm(dirPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-  } catch (error: unknown) {
-    if (!isBestEffortCleanupError(error)) {
-      throw error;
-    }
+  const deadline = Date.now() + budgetMs;
+  const backoffsMs: readonly number[] = [100, 250, 500, 1000];
+  let attempt = 0;
+  let lastError: unknown;
 
-    // best-effort: Windows may hold SQLite file handles after db.destroy()
+  while (Date.now() < deadline) {
+    try {
+      await fs.rm(dirPath, { recursive: true, force: true, maxRetries: 1, retryDelay: 50 });
+      return;
+    } catch (error: unknown) {
+      lastError = error;
+      if (!isBestEffortCleanupError(error)) {
+        throw error;
+      }
+      const delay = backoffsMs[Math.min(attempt, backoffsMs.length - 1)] ?? 1000;
+      attempt += 1;
+      if (Date.now() + delay >= deadline) {
+        break;
+      }
+      await sleep(delay);
+    }
   }
+
+  // Budget exhausted on a best-effort error; intentionally swallow to
+  // avoid failing the test hook. The temp dir leaks but the OS will
+  // eventually reclaim it (tmpdir is process- or boot-scoped).
+  void lastError;
 }
 
 export async function createE2EContext(): Promise<E2EContext> {
@@ -124,42 +159,13 @@ export async function createE2EContext(): Promise<E2EContext> {
 }
 
 export async function cleanupE2EContext(ctx: E2EContext): Promise<void> {
-  const activeHomes = [
-    process.env["COUNCIL_HOME"],
-    process.env["COUNCIL_DATA_HOME"],
-    ctx.testHome,
-    ctx.testDataHome,
-  ];
-  const seenHomes = new Set<string>();
-
   restoreEnvVar("COUNCIL_HOME", ctx.originalHome);
   restoreEnvVar("COUNCIL_DATA_HOME", ctx.originalDataHome);
 
-  for (const home of activeHomes) {
-    if (home === undefined) {
-      continue;
-    }
-
-    const normalizedHome = normalizeTempPath(home);
-    if (seenHomes.has(normalizedHome)) {
-      continue;
-    }
-    seenHomes.add(normalizedHome);
-
-    try {
-      await fs.access(path.join(home, "council.db"));
-      await waitForDbRelease(home);
-    } catch (error: unknown) {
-      const code = typeof error === "object" && error !== null && "code" in error
-        ? String((error as { readonly code?: unknown }).code ?? "")
-        : "";
-
-      if (code !== "ENOENT" && !isBestEffortCleanupError(error)) {
-        throw error;
-      }
-    }
-  }
-
+  // We do not call `waitForDbRelease` here: it only confirms a new
+  // connection can be opened, it does not force a leaked connection to
+  // release its file handle. `removeDir`'s exponential backoff is the
+  // actual mechanism that absorbs Windows EBUSY/EPERM during teardown.
   await Promise.all([removeDir(ctx.testHome), removeDir(ctx.testDataHome)]);
 }
 
@@ -229,16 +235,22 @@ export async function waitForDbRelease(testHome: string): Promise<void> {
   const { expect } = await import("vitest");
 
   async function isDbReleased(): Promise<boolean> {
+    let db: CouncilDatabase | undefined;
     try {
-      const db = await openTestDb(testHome);
-      await db.destroy();
+      db = await openTestDb(testHome);
       return true;
-    } catch (error: unknown) {
-      if (!isBestEffortCleanupError(error)) {
-        throw error;
-      }
-
+    } catch {
+      // Any open failure (lock, transient libsql error, etc.) means
+      // not-yet-released; keep polling until the outer timeout fires.
       return false;
+    } finally {
+      if (db !== undefined) {
+        try {
+          await db.destroy();
+        } catch {
+          // best-effort: handle may still be unwinding
+        }
+      }
     }
   }
 
