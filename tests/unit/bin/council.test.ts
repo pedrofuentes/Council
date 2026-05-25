@@ -81,7 +81,7 @@ describe("buildProgram", () => {
       ]);
     });
 
-    it("does nothing when Windows stdout is piped instead of attached to a TTY", async () => {
+    it("still wraps stderr when Windows stdout is piped but stderr is a TTY", async () => {
       const execFileSync = vi.fn().mockReturnValue(Buffer.alloc(0));
       vi.doMock("node:child_process", () => ({ execFileSync }));
 
@@ -99,7 +99,54 @@ describe("buildProgram", () => {
       expect(execFileSync).not.toHaveBeenCalled();
       expect(calls).toEqual([
         { target: "stdout", chunk: "stdout — 2× ≥ 🎉", encoding: undefined },
-        { target: "stderr", chunk: "stderr — 2× ≥ 🎉", encoding: undefined },
+        { target: "stderr", chunk: "stderr — 2× ≥ 🎉", encoding: "utf8" },
+      ]);
+    });
+
+    it("only switches the Windows console code page once for the same stdout stream", async () => {
+      const execFileSync = vi.fn().mockReturnValue(Buffer.alloc(0));
+      vi.doMock("node:child_process", () => ({ execFileSync }));
+
+      const { configureOutputEncoding } = await loadCouncilModule();
+      execFileSync.mockClear();
+
+      const calls: WriteCall[] = [];
+      const stdout = createWritable("stdout", calls, true);
+      const stderr = createWritable("stderr", calls, true);
+
+      configureOutputEncoding("win32", stdout, stderr);
+      configureOutputEncoding("win32", stdout, stderr);
+      stdout.write("stdout — 2× ≥ 🎉");
+      stderr.write("stderr — 2× ≥ 🎉");
+
+      expect(execFileSync).toHaveBeenCalledOnce();
+      expect(calls).toEqual([
+        { target: "stdout", chunk: "stdout — 2× ≥ 🎉", encoding: "utf8" },
+        { target: "stderr", chunk: "stderr — 2× ≥ 🎉", encoding: "utf8" },
+      ]);
+    });
+
+    it("degrades gracefully when switching the Windows console code page fails", async () => {
+      const execFileSync = vi.fn().mockImplementation(() => {
+        throw new Error("chcp failed");
+      });
+      vi.doMock("node:child_process", () => ({ execFileSync }));
+
+      const { configureOutputEncoding } = await loadCouncilModule();
+      execFileSync.mockClear();
+
+      const calls: WriteCall[] = [];
+      const stdout = createWritable("stdout", calls, true);
+      const stderr = createWritable("stderr", calls, true);
+
+      expect(() => configureOutputEncoding("win32", stdout, stderr)).not.toThrow();
+      stdout.write("stdout — 2× ≥ 🎉");
+      stderr.write("stderr — 2× ≥ 🎉");
+
+      expect(execFileSync).toHaveBeenCalledOnce();
+      expect(calls).toEqual([
+        { target: "stdout", chunk: "stdout — 2× ≥ 🎉", encoding: "utf8" },
+        { target: "stderr", chunk: "stderr — 2× ≥ 🎉", encoding: "utf8" },
       ]);
     });
 
