@@ -58,7 +58,7 @@ describe("DebatePersister #150 — terminal update failure does not mask as abor
     turnRepo = new TurnRepository(db);
     const panel = await panelRepo.create({
       name: "p",
-      copilotHome: "/tmp/copilot",
+      copilotHome: "test-copilot-home",
       configJson: "{}",
     });
     panelId = panel.id;

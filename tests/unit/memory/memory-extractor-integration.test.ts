@@ -34,7 +34,7 @@ async function makeFixture(): Promise<Fixture> {
   const db = await createDatabase(":memory:");
   const panel = await new PanelRepository(db).create({
     name: "test-panel",
-    copilotHome: "/tmp/copilot",
+    copilotHome: "test-copilot-home",
     configJson: "{}",
   });
   const expert = await new ExpertRepository(db).create({

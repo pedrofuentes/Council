@@ -239,7 +239,11 @@ export async function waitForDbRelease(testHome: string): Promise<void> {
     let client: ReturnType<typeof createClient> | undefined;
     try {
       client = createClient({ url: `file:${path.join(testHome, "council.db")}` });
-      await client.execute("SELECT 1");
+      // Use a write-side probe: BEGIN IMMEDIATE acquires a RESERVED lock,
+      // confirming the previous test has fully released its write handle.
+      // A read-only SELECT 1 would succeed even with a pending writer.
+      await client.execute("BEGIN IMMEDIATE");
+      await client.execute("ROLLBACK");
       return true;
     } catch {
       // Any open/probe failure (lock, transient libsql error, etc.) means

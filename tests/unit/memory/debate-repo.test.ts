@@ -18,7 +18,7 @@ describe("DebateRepository", () => {
     db = await createDatabase(":memory:");
     const panel = await new PanelRepository(db).create({
       name: "test-panel",
-      copilotHome: "/tmp/copilot",
+      copilotHome: "test-copilot-home",
       configJson: "{}",
     });
     panelId = panel.id;

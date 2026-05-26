@@ -68,7 +68,7 @@ describe("DebatePersister", () => {
 
     const panel = await panelRepo.create({
       name: "test-panel",
-      copilotHome: "/tmp/copilot",
+      copilotHome: "test-copilot-home",
       configJson: "{}",
     });
     panelId = panel.id;

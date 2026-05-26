@@ -62,7 +62,7 @@ async function makeFixture(): Promise<PersisterFixture> {
   const db = await createDatabase(":memory:");
   const panel = await new PanelRepository(db).create({
     name: "p",
-    copilotHome: "/tmp/copilot",
+    copilotHome: "test-copilot-home",
     configJson: "{}",
   });
   const expert = await new ExpertRepository(db).create({

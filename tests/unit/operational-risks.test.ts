@@ -172,7 +172,7 @@ describe("DebatePersister #117 — self-finalize on abnormal exit", () => {
     turnRepo = new TurnRepository(db);
     const panel = await panelRepo.create({
       name: "p",
-      copilotHome: "/tmp/copilot",
+      copilotHome: "test-copilot-home",
       configJson: "{}",
     });
     panelId = panel.id;
