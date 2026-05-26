@@ -1,7 +1,41 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import type * as ConfigModule from "../../../../src/config/index.js";
+import type * as WriterModule from "../../../../src/cli/commands/writer.js";
+
+const testState = {
+  councilHome: "",
+  councilDataHome: "",
+  quiet: false,
+};
+
+vi.mock("../../../../src/config/index.js", async () => {
+  const actual = await vi.importActual<typeof ConfigModule>("../../../../src/config/index.js");
+
+  return {
+    ...actual,
+    getCouncilHome: (): string => testState.councilHome,
+    getCouncilDataHome: (): string => testState.councilDataHome,
+    loadConfig: async () => actual.ConfigSchema.parse({ paths: { dataHome: testState.councilDataHome } }),
+  };
+});
+
+vi.mock("../../../../src/cli/commands/writer.js", async () => {
+  const actual = await vi.importActual<typeof WriterModule>(
+    "../../../../src/cli/commands/writer.js",
+  );
+
+  return {
+    ...actual,
+    isQuiet: (): boolean => testState.quiet,
+    setQuiet: (enabled: boolean): void => {
+      testState.quiet = enabled;
+    },
+  };
+});
 
 import { buildAskCommand } from "../../../../src/cli/commands/ask.js";
 import { buildConveneCommand } from "../../../../src/cli/commands/convene.js";
@@ -60,22 +94,20 @@ function renderAskHelp(): string {
 
 describe("post-debate discovery hints", () => {
   let testHome: string;
-  let originalHome: string | undefined;
 
   beforeEach(async () => {
     testHome = await fs.mkdtemp(path.join(process.cwd(), ".post-debate-hints-test-"));
-    originalHome = process.env["COUNCIL_HOME"];
-    process.env["COUNCIL_HOME"] = testHome;
+    testState.councilHome = testHome;
+    testState.councilDataHome = path.join(testHome, "data");
+    await fs.mkdir(testState.councilDataHome, { recursive: true });
     setQuiet(false);
   });
 
   afterEach(async () => {
     setQuiet(false);
-    if (originalHome === undefined) {
-      delete process.env["COUNCIL_HOME"];
-    } else {
-      process.env["COUNCIL_HOME"] = originalHome;
-    }
+    vi.restoreAllMocks();
+    testState.councilHome = "";
+    testState.councilDataHome = "";
     try {
       await fs.rm(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     } catch {
