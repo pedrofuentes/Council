@@ -248,6 +248,33 @@ describe("post-debate discovery hints", () => {
     expect(captured).not.toContain(ASK_DISCOVERY_HINT);
   });
 
+  it("ask does not print the discovery hint in quiet mode", async () => {
+    setQuiet(true);
+
+    const panelName = await seedPanel(testHome);
+    let captured = "";
+    const cmd = buildAskCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (chunk) => {
+        captured += chunk;
+      },
+      writeError: () => undefined,
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-ask",
+      panelName,
+      "What should we ship next?",
+      "--engine",
+      "mock",
+      "--format",
+      "plain",
+    ]);
+
+    expect(captured).not.toContain(ASK_DISCOVERY_HINT);
+  });
+
   it("ask help text includes shell quoting guidance", () => {
     const helpText = renderAskHelp();
 
