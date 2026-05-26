@@ -212,7 +212,10 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
     )
     .option("--yes", "Skip the auto-compose confirmation prompt (non-interactive runs)")
     .option("--verbose", "Show template migration notices and zero-change summaries")
-    .option("--model <model>", "Model to use for experts (default: from config)")
+    .option(
+      "--model <model>",
+      "Model to use for experts (default: from config; run 'council doctor --models' to list available models)",
+    )
     .option(
       "--max-experts <n>",
       "Maximum number of experts for auto-compose",
