@@ -6,23 +6,34 @@
 import * as path from "node:path";
 
 import { Command } from "commander";
+import { sql } from "kysely";
 
 import { getCouncilHome } from "../../config/index.js";
-import { createDatabase } from "../../memory/db.js";
+import { createDatabase, type CouncilDatabase } from "../../memory/db.js";
 import { DebateRepository, type DebateStatus } from "../../memory/repositories/debates.js";
 import { ExpertRepository } from "../../memory/repositories/experts.js";
 import { type Panel, PanelRepository } from "../../memory/repositories/panels.js";
 import { TurnRepository } from "../../memory/repositories/turns.js";
 import { getSymbols } from "../renderers/symbols.js";
 
+import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
 import { defaultWriter, type Writer } from "./writer.js";
 
 export interface SessionsCommandOptions {
   readonly format: "json" | "plain";
 }
 
+export interface SessionsCommandDeps {
+  readonly write?: Writer;
+  readonly confirmProvider?: () => ConfirmProvider;
+}
+
 interface CancelSessionsOptions {
   readonly all?: boolean;
+}
+
+interface DeleteSessionOptions {
+  readonly yes?: boolean;
 }
 
 const STUCK_RUNNING_DEBATE_THRESHOLD_MS = 60 * 60 * 1000;
@@ -69,24 +80,86 @@ function formatStuckSessionHint(panelName: string): string {
 async function findPanelByNameOrPrefix(
   panelRepo: PanelRepository,
   requestedName: string,
+  options?: {
+    readonly ambiguousLabel?: string;
+    readonly rejectExactCollisions?: boolean;
+  },
 ): Promise<Panel | undefined> {
-  const exactMatch = await panelRepo.findByName(requestedName);
-  if (exactMatch) {
-    return exactMatch;
-  }
-
   const prefixMatches = await panelRepo.findByNamePrefix(requestedName);
+  const exactMatches = prefixMatches.filter((panel) => panel.name === requestedName);
+
+  if (exactMatches.length === 1) {
+    return exactMatches[0];
+  }
+  if (exactMatches.length > 1) {
+    if (options?.rejectExactCollisions === true) {
+      const ambiguousLabel = options.ambiguousLabel ?? "panels";
+      throw new Error(`Ambiguous name '${requestedName}' matches ${exactMatches.length} ${ambiguousLabel}.`);
+    }
+    return exactMatches[0];
+  }
   if (prefixMatches.length === 1) {
     return prefixMatches[0];
   }
   if (prefixMatches.length > 1) {
-    throw new Error(`Ambiguous prefix '${requestedName}' matches ${prefixMatches.length} panels.`);
+    const ambiguousLabel = options?.ambiguousLabel ?? "panels";
+    throw new Error(`Ambiguous prefix '${requestedName}' matches ${prefixMatches.length} ${ambiguousLabel}.`);
   }
 
   return undefined;
 }
 
-export function buildSessionsCommand(write: Writer = defaultWriter): Command {
+function hasRunningDebate(panelDebates: readonly { status: DebateStatus }[]): boolean {
+  return panelDebates.some((debate) => debate.status === "running");
+}
+
+async function deletePanelIfNoRunningDebates(
+  db: CouncilDatabase,
+  panelRepo: PanelRepository,
+  debateRepo: DebateRepository,
+  panelId: string,
+): Promise<void> {
+  let committed = false;
+  await sql`BEGIN IMMEDIATE`.execute(db);
+  try {
+    const debates = await debateRepo.findByPanelId(panelId);
+    if (hasRunningDebate(debates)) {
+      throw new Error("Cannot delete a running session. Cancel it first.");
+    }
+    await panelRepo.delete(panelId);
+    await sql`COMMIT`.execute(db);
+    committed = true;
+  } catch (error) {
+    if (!committed) {
+      try {
+        await sql`ROLLBACK`.execute(db);
+      } catch {
+        // Best-effort rollback; the original error is more useful to callers.
+      }
+    }
+    throw error;
+  }
+}
+
+function resolveSessionsCommandDeps(depsOrWrite: SessionsCommandDeps | Writer | undefined): {
+  write: Writer;
+  confirmProvider: () => ConfirmProvider;
+} {
+  if (typeof depsOrWrite === "function") {
+    return {
+      write: depsOrWrite,
+      confirmProvider: createReadlineConfirmProvider,
+    };
+  }
+
+  return {
+    write: depsOrWrite?.write ?? defaultWriter,
+    confirmProvider: depsOrWrite?.confirmProvider ?? createReadlineConfirmProvider,
+  };
+}
+
+export function buildSessionsCommand(depsOrWrite?: SessionsCommandDeps | Writer): Command {
+  const { write, confirmProvider } = resolveSessionsCommandDeps(depsOrWrite);
   const cmd = new Command("sessions");
   cmd.alias("history");
   cmd
@@ -185,6 +258,49 @@ export function buildSessionsCommand(write: Writer = defaultWriter): Command {
         }
 
         write(`Cancelled running debate for panel '${panel.name}'.\n`);
+      } finally {
+        await db.destroy();
+      }
+    });
+
+  cmd
+    .command("delete")
+    .description("Delete a completed or interrupted session")
+    .argument("<name>", "Session name to delete (supports unique prefix matching)")
+    .option("--yes", "Skip confirmation prompt")
+    .action(async (name: string, options: DeleteSessionOptions) => {
+      const requestedName = name.trim();
+      const dbPath = path.join(getCouncilHome(), "council.db");
+      const db = await createDatabase(dbPath);
+      try {
+        const panelRepo = new PanelRepository(db);
+        const debateRepo = new DebateRepository(db);
+        const panel = await findPanelByNameOrPrefix(panelRepo, requestedName, {
+          ambiguousLabel: "sessions",
+          rejectExactCollisions: true,
+        });
+        if (!panel) {
+          write(`No session found matching '${requestedName}'.\n`);
+          return;
+        }
+
+        const debates = await debateRepo.findByPanelId(panel.id);
+        if (hasRunningDebate(debates)) {
+          throw new Error("Cannot delete a running session. Cancel it first.");
+        }
+
+        if (options.yes !== true) {
+          const confirmed = await confirmProvider().confirm(
+            `Delete session ${panel.name}? This cannot be undone. (y/N) `,
+          );
+          if (!confirmed) {
+            write("Deletion aborted.\n");
+            return;
+          }
+        }
+
+        await deletePanelIfNoRunningDebates(db, panelRepo, debateRepo, panel.id);
+        write(`Deleted session '${panel.name}'.\n`);
       } finally {
         await db.destroy();
       }
