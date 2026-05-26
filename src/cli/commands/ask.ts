@@ -162,6 +162,11 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
               write(`Question: ${question}\n\n`);
             },
           });
+          if (format !== "json" && !isQuiet()) {
+            write(
+              "Tip: Use `council convene --template <panel>` for a full debate, or `council chat <panel>` for conversation.\n",
+            );
+          }
         } finally {
           await db.destroy().catch((err: unknown) => {
             const msg = err instanceof Error ? err.message : String(err);
@@ -177,6 +182,11 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
 Examples:
   $ council ask my-panel "What about the migration risk?" --engine copilot
   $ council ask my-panel "Quick follow-up" --expert cto --engine copilot
+
+Shell quoting: bash and PowerShell both expand $variables inside double quotes.
+Wrap questions containing $, !, or backticks in SINGLE quotes to keep them literal:
+  bash       $ council ask my-panel 'Is the $450 cost justified?' --engine copilot
+  PowerShell > council ask my-panel 'Is the $450 cost justified?' --engine copilot
 `,
   );
 
