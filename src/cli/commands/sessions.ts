@@ -6,9 +6,10 @@
 import * as path from "node:path";
 
 import { Command } from "commander";
+import { sql } from "kysely";
 
 import { getCouncilHome } from "../../config/index.js";
-import { createDatabase } from "../../memory/db.js";
+import { createDatabase, type CouncilDatabase } from "../../memory/db.js";
 import { DebateRepository, type DebateStatus } from "../../memory/repositories/debates.js";
 import { ExpertRepository } from "../../memory/repositories/experts.js";
 import { type Panel, PanelRepository } from "../../memory/repositories/panels.js";
@@ -110,6 +111,34 @@ async function findPanelByNameOrPrefix(
 
 function hasRunningDebate(panelDebates: readonly { status: DebateStatus }[]): boolean {
   return panelDebates.some((debate) => debate.status === "running");
+}
+
+async function deletePanelIfNoRunningDebates(
+  db: CouncilDatabase,
+  panelRepo: PanelRepository,
+  debateRepo: DebateRepository,
+  panelId: string,
+): Promise<void> {
+  let committed = false;
+  await sql`BEGIN IMMEDIATE`.execute(db);
+  try {
+    const debates = await debateRepo.findByPanelId(panelId);
+    if (hasRunningDebate(debates)) {
+      throw new Error("Cannot delete a running session. Cancel it first.");
+    }
+    await panelRepo.delete(panelId);
+    await sql`COMMIT`.execute(db);
+    committed = true;
+  } catch (error) {
+    if (!committed) {
+      try {
+        await sql`ROLLBACK`.execute(db);
+      } catch {
+        // Best-effort rollback; the original error is more useful to callers.
+      }
+    }
+    throw error;
+  }
 }
 
 function resolveSessionsCommandDeps(depsOrWrite: SessionsCommandDeps | Writer | undefined): {
@@ -270,7 +299,7 @@ export function buildSessionsCommand(depsOrWrite?: SessionsCommandDeps | Writer)
           }
         }
 
-        await panelRepo.delete(panel.id);
+        await deletePanelIfNoRunningDebates(db, panelRepo, debateRepo, panel.id);
         write(`Deleted session '${panel.name}'.\n`);
       } finally {
         await db.destroy();
