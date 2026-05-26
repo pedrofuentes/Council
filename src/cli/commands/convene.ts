@@ -616,6 +616,11 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         if (debateInterrupted) {
           writeError("\nDebate interrupted. Partial results saved.\n");
         }
+        if (opts.format !== "json" && !isQuiet()) {
+          write(
+            "Tip: Try `council ask <panel> \"<question>\"` for follow-ups, or `council sessions` to review past debates.\n",
+          );
+        }
       } finally {
         await db.destroy().catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
