@@ -188,6 +188,23 @@ async function seedTurnForDebate(testHome: string, debateId: string): Promise<vo
   }
 }
 
+async function createRunningDebateForPanel(testHome: string, panelId: string, prompt: string): Promise<string> {
+  const { createDatabase } = await import("../../../../src/memory/db.js");
+  const { DebateRepository } = await import("../../../../src/memory/repositories/debates.js");
+
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    const debate = await new DebateRepository(db).create({
+      panelId,
+      prompt,
+      moderator: "round-robin",
+    });
+     return debate.id;
+  } finally {
+    await db.destroy();
+  }
+}
+
 async function loadSessionDeletionState(
   testHome: string,
   panelId: string,
@@ -708,6 +725,39 @@ describe("buildSessionsCommand", () => {
       expect(firstState.debateCount).toBe(1);
       expect(secondState.panelExists).toBe(true);
       expect(secondState.debateCount).toBe(1);
+    });
+
+    it("delete rechecks running status after confirmation before deleting", async () => {
+      const seeded = await seedPanelWithDebates(testHome, "race-delete", ["completed"]);
+      const confirm = {
+        calls: 0,
+        prompts: [] as string[],
+        async confirm(message: string): Promise<boolean> {
+          confirm.calls += 1;
+          confirm.prompts.push(message);
+          await createRunningDebateForPanel(testHome, seeded.panelId, "resumed during confirmation");
+          return true;
+        },
+      } satisfies ConfirmProvider & { calls: number; prompts: string[] };
+      let captured = "";
+      const cmd = buildSessionsCommand({
+        write: (s) => {
+          captured += s;
+        },
+        confirmProvider: () => confirm,
+      });
+
+      await expect(cmd.parseAsync(["node", "council-sessions", "delete", "race-delete"])).rejects.toThrow(
+        "Cannot delete a running session. Cancel it first.",
+      );
+
+      const debates = await listDebatesForPanel(testHome, seeded.panelId);
+      const state = await loadSessionDeletionState(testHome, seeded.panelId, seeded.debateIds);
+      expect(confirm.calls).toBe(1);
+      expect(captured).not.toContain("Deleted session 'race-delete'.");
+      expect(state.panelExists).toBe(true);
+      expect(state.debateCount).toBe(2);
+      expect(debates.map((debate) => debate.status)).toEqual(["completed", "running"]);
     });
 
     it("delete leaves the session intact when the user declines confirmation", async () => {
