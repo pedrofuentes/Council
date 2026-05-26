@@ -45,7 +45,6 @@ const cto: ExpertSpec = {
 // ────────────────────────────────────────────────────────────────────────
 
 describe("DebatePersister #150 — terminal update failure does not mask as aborted", () => {
-  let dir: string;
   let db: CouncilDatabase;
   let panelRepo: PanelRepository;
   let debateRepo: DebateRepository;
@@ -53,14 +52,13 @@ describe("DebatePersister #150 — terminal update failure does not mask as abor
   let panelId: string;
 
   beforeEach(async () => {
-    dir = await fs.mkdtemp(path.join(os.tmpdir(), "council-pr150-"));
-    db = await createDatabase(path.join(dir, "council.db"));
+    db = await createDatabase(":memory:");
     panelRepo = new PanelRepository(db);
     debateRepo = new DebateRepository(db);
     turnRepo = new TurnRepository(db);
     const panel = await panelRepo.create({
       name: "p",
-      copilotHome: path.join(dir, "copilot"),
+      copilotHome: "/tmp/copilot",
       configJson: "{}",
     });
     panelId = panel.id;
@@ -68,11 +66,6 @@ describe("DebatePersister #150 — terminal update failure does not mask as abor
 
   afterEach(async () => {
     await db.destroy();
-    try {
-      await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-    } catch {
-      /* best effort */
-    }
   });
 
   it("when debate.end terminal update throws, row stays at 'running' (not silently 'aborted')", async () => {

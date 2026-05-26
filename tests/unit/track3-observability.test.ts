@@ -51,7 +51,6 @@ const cto: ExpertSpec = {
 // ────────────────────────────────────────────────────────────────────────
 
 interface PersisterFixture {
-  dir: string;
   db: CouncilDatabase;
   panelId: string;
   expertId: string;
@@ -60,11 +59,10 @@ interface PersisterFixture {
 }
 
 async function makeFixture(): Promise<PersisterFixture> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "council-track3-"));
-  const db = await createDatabase(path.join(dir, "council.db"));
+  const db = await createDatabase(":memory:");
   const panel = await new PanelRepository(db).create({
     name: "p",
-    copilotHome: path.join(dir, "copilot"),
+    copilotHome: "/tmp/copilot",
     configJson: "{}",
   });
   const expert = await new ExpertRepository(db).create({
@@ -75,7 +73,6 @@ async function makeFixture(): Promise<PersisterFixture> {
     systemMessage: cto.systemMessage,
   });
   return {
-    dir,
     db,
     panelId: panel.id,
     expertId: expert.id,
@@ -86,11 +83,6 @@ async function makeFixture(): Promise<PersisterFixture> {
 
 async function teardownFixture(f: PersisterFixture): Promise<void> {
   await f.db.destroy();
-  try {
-    await fs.rm(f.dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-  } catch {
-    /* best effort */
-  }
 }
 
 // ────────────────────────────────────────────────────────────────────────

@@ -233,20 +233,22 @@ export async function destroyTestDb(db: CouncilDatabase): Promise<void> {
  */
 export async function waitForDbRelease(testHome: string): Promise<void> {
   const { expect } = await import("vitest");
+  const { createClient } = await import("@libsql/client");
 
   async function isDbReleased(): Promise<boolean> {
-    let db: CouncilDatabase | undefined;
+    let client: ReturnType<typeof createClient> | undefined;
     try {
-      db = await openTestDb(testHome);
+      client = createClient({ url: `file:${path.join(testHome, "council.db")}` });
+      await client.execute("SELECT 1");
       return true;
     } catch {
-      // Any open failure (lock, transient libsql error, etc.) means
+      // Any open/probe failure (lock, transient libsql error, etc.) means
       // not-yet-released; keep polling until the outer timeout fires.
       return false;
     } finally {
-      if (db !== undefined) {
+      if (client !== undefined) {
         try {
-          await db.destroy();
+          client.close();
         } catch {
           // best-effort: handle may still be unwinding
         }

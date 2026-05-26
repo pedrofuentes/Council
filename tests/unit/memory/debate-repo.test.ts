@@ -3,10 +3,6 @@
  *
  * RED at this commit: src/memory/repositories/debates.ts does not exist.
  */
-import * as fs from "node:fs/promises";
-import * as os from "node:os";
-import * as path from "node:path";
-
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
@@ -14,17 +10,15 @@ import { PanelRepository } from "../../../src/memory/repositories/panels.js";
 import { DebateRepository } from "../../../src/memory/repositories/debates.js";
 
 describe("DebateRepository", () => {
-  let dir: string;
   let db: CouncilDatabase;
   let panelId: string;
   let repo: DebateRepository;
 
   beforeEach(async () => {
-    dir = await fs.mkdtemp(path.join(os.tmpdir(), "council-debaterepo-"));
-    db = await createDatabase(path.join(dir, "council.db"));
+    db = await createDatabase(":memory:");
     const panel = await new PanelRepository(db).create({
       name: "test-panel",
-      copilotHome: path.join(dir, "copilot"),
+      copilotHome: "/tmp/copilot",
       configJson: "{}",
     });
     panelId = panel.id;
@@ -33,11 +27,6 @@ describe("DebateRepository", () => {
 
   afterEach(async () => {
     await db.destroy();
-    try {
-      await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-    } catch {
-      /* best effort */
-    }
   });
 
   it("create() inserts a debate with status='running' and startedAt set", async () => {

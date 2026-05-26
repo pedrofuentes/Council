@@ -157,7 +157,6 @@ describe("convene #142 — leak-safe parallel addExpert", () => {
 // ────────────────────────────────────────────────────────────────────────
 
 describe("DebatePersister #117 — self-finalize on abnormal exit", () => {
-  let dir: string;
   let db: CouncilDatabase;
   let panelRepo: PanelRepository;
   let expertRepo: ExpertRepository;
@@ -166,15 +165,14 @@ describe("DebatePersister #117 — self-finalize on abnormal exit", () => {
   let panelId: string;
 
   beforeEach(async () => {
-    dir = await fs.mkdtemp(path.join(os.tmpdir(), "council-persister-abort-"));
-    db = await createDatabase(path.join(dir, "council.db"));
+    db = await createDatabase(":memory:");
     panelRepo = new PanelRepository(db);
     expertRepo = new ExpertRepository(db);
     debateRepo = new DebateRepository(db);
     turnRepo = new TurnRepository(db);
     const panel = await panelRepo.create({
       name: "p",
-      copilotHome: path.join(dir, "copilot"),
+      copilotHome: "/tmp/copilot",
       configJson: "{}",
     });
     panelId = panel.id;
@@ -189,11 +187,6 @@ describe("DebatePersister #117 — self-finalize on abnormal exit", () => {
 
   afterEach(async () => {
     await db.destroy();
-    try {
-      await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-    } catch {
-      /* best effort */
-    }
   });
 
   function makePersister(): DebatePersister {

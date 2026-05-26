@@ -9,10 +9,6 @@
  *
  * RED at this commit: src/memory/persister.ts does not exist.
  */
-import * as fs from "node:fs/promises";
-import * as os from "node:os";
-import * as path from "node:path";
-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Debate, type DebateConfig } from "../../../src/core/debate.js";
@@ -55,7 +51,6 @@ async function collect(stream: AsyncIterable<DebateEvent>): Promise<DebateEvent[
 }
 
 describe("DebatePersister", () => {
-  let dir: string;
   let db: CouncilDatabase;
   let panelRepo: PanelRepository;
   let expertRepo: ExpertRepository;
@@ -65,8 +60,7 @@ describe("DebatePersister", () => {
   let expertSlugToId: Record<string, string>;
 
   beforeEach(async () => {
-    dir = await fs.mkdtemp(path.join(os.tmpdir(), "council-persister-"));
-    db = await createDatabase(path.join(dir, "council.db"));
+    db = await createDatabase(":memory:");
     panelRepo = new PanelRepository(db);
     expertRepo = new ExpertRepository(db);
     debateRepo = new DebateRepository(db);
@@ -74,7 +68,7 @@ describe("DebatePersister", () => {
 
     const panel = await panelRepo.create({
       name: "test-panel",
-      copilotHome: path.join(dir, "copilot"),
+      copilotHome: "/tmp/copilot",
       configJson: "{}",
     });
     panelId = panel.id;
@@ -100,11 +94,6 @@ describe("DebatePersister", () => {
   afterEach(async () => {
     vi.restoreAllMocks();
     await db.destroy();
-    try {
-      await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-    } catch {
-      /* best effort */
-    }
   });
 
   async function runDebate(prompt = "topic"): Promise<{ events: DebateEvent[]; debateId: string }> {
