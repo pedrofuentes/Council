@@ -129,6 +129,35 @@ function defaultResponse(expertId: string, expertSpec?: ExpertSpec): string {
       confidence: "medium",
     });
   }
+  // Profile analyzer (src/core/documents/profile-analyzer.ts) registers
+  // a transient expert with a slug prefixed `__profile-analyzer-` and
+  // parses the response as JSON matching the PersonaProfile schema.
+  // Without a matching case, training with `--engine mock` fails with
+  // "Profile analyzer returned unparsable JSON after retry".
+  if (expertSpec?.slug.startsWith("__profile-analyzer-") === true) {
+    return JSON.stringify({
+      communicationStyle:
+        "Direct and structured, favoring concise declarative sentences with concrete examples over abstract framing.",
+      decisionPatterns: [
+        "Weighs trade-offs explicitly before committing",
+        "Prefers reversible decisions when evidence is thin",
+        "Anchors choices to measurable outcomes",
+      ],
+      biases: [
+        "Optimism about iterative improvement",
+        "Skepticism of unvalidated claims",
+      ],
+      vocabulary: [
+        "trade-off",
+        "iterate",
+        "signal",
+        "tension",
+        "concretely",
+      ],
+      epistemicStance:
+        "Forms beliefs by triangulating evidence from multiple sources and updates readily when new data contradicts prior assumptions.",
+    });
+  }
   return `[mock response from ${expertId}]`;
 }
 
