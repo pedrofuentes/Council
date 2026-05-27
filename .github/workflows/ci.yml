@@ -88,7 +88,7 @@ jobs:
   # instead of every individual shard, so changing shard count doesn't
   # break required-checks configuration.
   ci-pass:
-    name: CI
+    name: Typecheck, Lint & Test
     if: always()
     needs: [lint, unit-tests, other-tests]
     runs-on: ubuntu-latest
