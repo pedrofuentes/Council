@@ -258,17 +258,18 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       const templateName = raw.panel ?? raw.template;
 
       if (raw.experts !== undefined && templateName !== undefined) {
-        throw new CliUserError(
-          "Cannot use --experts together with --template/--panel. Pass one or the other.",
-        );
+        const msg =
+          "Cannot use --experts together with --template/--panel. Pass one or the other.";
+        writeError(`${msg}\n`);
+        throw new CliUserError(msg);
       }
 
       // Validate --max-experts if provided
       if (raw.maxExperts !== undefined) {
         if (!Number.isFinite(raw.maxExperts) || raw.maxExperts < 1) {
-          throw new CliUserError(
-            `--max-experts must be a positive integer (got: ${raw.maxExperts})`,
-          );
+          const msg = `--max-experts must be a positive integer (got: ${raw.maxExperts})`;
+          writeError(`${msg}\n`);
+          throw new CliUserError(msg);
         }
       }
 
@@ -361,18 +362,20 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           .map((s) => s.trim())
           .filter((s) => s.length > 0);
         if (expertSlugs.length === 0) {
-          throw new CliUserError("--experts requires at least one expert slug.");
+          const msg = "--experts requires at least one expert slug.";
+          writeError(`${msg}\n`);
+          throw new CliUserError(msg);
         }
         const libDb = await createDatabase(libDbPath);
         try {
           const library = new FileExpertLibrary(dataHome, libDb);
           const { resolved, missing } = await resolveExperts(expertSlugs, library);
           if (missing.length > 0) {
-            throw new CliUserError(
-              `--experts references experts not in the library: ${missing
-                .map((s) => stripControlChars(s))
-                .join(", ")}. Add them with 'council expert create'.`,
-            );
+            const msg = `--experts references experts not in the library: ${missing
+              .map((s) => stripControlChars(s))
+              .join(", ")}. Add them with 'council expert create'.`;
+            writeError(`${msg}\n`);
+            throw new CliUserError(msg);
           }
           template = {
             name: "ad-hoc",
@@ -441,9 +444,10 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
               throw new CliUserError("Aborted: auto-composed panel was not confirmed.");
             }
           } else if (isNonInteractive()) {
-            throw new CliUserError(
-              "Non-interactive shell detected. Auto-compose requires --yes in non-interactive mode.",
-            );
+            const msg =
+              "Non-interactive shell detected. Auto-compose requires --yes in non-interactive mode.";
+            writeError(`${msg}\n`);
+            throw new CliUserError(msg);
           } else {
             const provider = createReadlineConfirmProvider();
             const ok = await provider.confirm("Proceed with this panel? [y/N] ");
