@@ -74,6 +74,29 @@ describe("Expert persona onboarding UX (T7)", () => {
       expect(helpText.toLowerCase()).toMatch(/document-based training/);
     });
 
+    it("includes an explanatory note distinguishing generic vs persona experts", () => {
+      const cmd = buildExpertCommand();
+      const createCmd = cmd.commands.find((c) => c.name() === "create");
+      if (!createCmd) {
+        expect.unreachable("create subcommand not found");
+      }
+
+      let output = "";
+      createCmd.configureOutput({
+        writeOut: (str) => {
+          output += str;
+        },
+      });
+      createCmd.outputHelp();
+
+      const lower = output.toLowerCase();
+      // Note must distinguish the two kinds and tell PMs when to pick --persona.
+      expect(lower).toMatch(/generic expert/);
+      expect(lower).toMatch(/persona expert/);
+      expect(lower).toMatch(/role, expertise.*stance|role.*expertise.*stance/);
+      expect(lower).toMatch(/--persona.*train|train.*--persona/);
+    });
+
     it("includes examples showing persona creation and training workflow", () => {
       // Commander's outputHelp() renders the full help including addHelpText
       // sections, unlike helpInformation() which omits them.
