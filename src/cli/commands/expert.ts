@@ -209,6 +209,15 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
   cmd.addHelpText(
     "after",
     `
+Generic vs persona experts:
+  • Generic expert (default): defined by role, expertise, and stance. Fast to set up,
+    used in deliberation immediately.
+  • Persona expert (--persona): everything a generic expert has, plus document-based
+    training via 'council expert train' (notes, emails, transcripts) to mimic a specific
+    person's voice and judgment.
+  • If you plan to train an expert with documents, pass --persona at creation time —
+    generic experts cannot be converted later.
+
 Examples:
   $ council expert create                                           # interactive wizard
   $ council expert create --persona --name "My Boss" \\
