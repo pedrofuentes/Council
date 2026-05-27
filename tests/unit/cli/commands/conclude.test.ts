@@ -21,6 +21,7 @@ import { buildProgram } from "../../../../src/bin/council.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
 import type { ExpertSpec } from "../../../../src/engine/index.js";
 import { createDatabase } from "../../../../src/memory/db.js";
+import { copyTemplateDb } from "../../../helpers/template-db.js";
 import { DebateRepository } from "../../../../src/memory/repositories/debates.js";
 import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
 import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
@@ -196,6 +197,7 @@ describe("buildConcludeCommand", () => {
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-conclude-test-"));
     originalHome = process.env["COUNCIL_HOME"];
     process.env["COUNCIL_HOME"] = testHome;
+    await copyTemplateDb(path.join(testHome, "council.db"));
   });
 
   afterEach(async () => {

@@ -13,6 +13,7 @@ import * as path from "node:path";
 import { buildExpertCommand } from "../../../src/cli/commands/expert.js";
 import { buildConcludeCommand } from "../../../src/cli/commands/conclude.js";
 import { buildExportCommand } from "../../../src/cli/commands/export.js";
+import { copyTemplateDb } from "../../helpers/template-db.js";
 
 describe("DX-19: Commander .choices() on --engine", () => {
   it("conclude command rejects invalid --engine with Commander choices error", async () => {
@@ -54,6 +55,7 @@ describe("DX-03: fuzzy-match in expert lookup", () => {
     };
     process.env["COUNCIL_HOME"] = home;
     process.env["COUNCIL_DATA_HOME"] = dataHome;
+    await copyTemplateDb(path.join(home, "council.db"));
 
     // Seed an expert named "dahlia-cto"
     const { createDatabase } = await import("../../../src/memory/db.js");

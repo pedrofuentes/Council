@@ -21,6 +21,7 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { copyTemplateDb } from "../../helpers/template-db.js";
 import { runWithEngine } from "../../../src/cli/run-with-engine.js";
 import type { DebateEvent } from "../../../src/core/types.js";
 import type { CouncilEngine, ExpertSpec } from "../../../src/engine/index.js";
@@ -46,6 +47,7 @@ describe("runWithEngine — onDebateComplete post-debate hook", () => {
 
   beforeEach(async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "council-hook-"));
+    await copyTemplateDb(path.join(dir, "council.db"));
     db = await createDatabase(path.join(dir, "council.db"));
     const panel = await new PanelRepository(db).create({
       name: "p",
@@ -195,6 +197,7 @@ describe("runWithEngine — abort normalization (#810)", () => {
 
   beforeEach(async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "council-abort-"));
+    await copyTemplateDb(path.join(dir, "council.db"));
     db = await createDatabase(path.join(dir, "council.db"));
     const panel = await new PanelRepository(db).create({
       name: "abort-test",

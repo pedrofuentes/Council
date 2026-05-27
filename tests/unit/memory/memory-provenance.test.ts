@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sql } from "kysely";
 import { createClient } from "@libsql/client";
 
+import { copyTemplateDb } from "../../helpers/template-db.js";
 import { buildMemoryCommand } from "../../../src/cli/commands/memory.js";
 import { createDatabase, loadMigrations, type CouncilDatabase } from "../../../src/memory/db.js";
 import {
@@ -43,6 +44,7 @@ interface Fixture {
 async function makeFixture(): Promise<Fixture> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "council-provenance-"));
   const dbPath = path.join(dir, "council.db");
+  await copyTemplateDb(dbPath);
   const db = await createDatabase(dbPath);
   const panel = await new PanelRepository(db).create({
     name: "provenance-panel",

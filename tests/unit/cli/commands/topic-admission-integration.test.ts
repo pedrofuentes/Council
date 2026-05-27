@@ -23,6 +23,7 @@ import { ChatRepository } from "../../../../src/memory/repositories/chat-reposit
 import { DebateRepository } from "../../../../src/memory/repositories/debates.js";
 import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
 import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
+import { copyTemplateDb } from "../../../helpers/template-db.js";
 
 function makeMockEngineFactory(): () => CouncilEngine {
   return () => new MockEngine({ responses: {} });
@@ -58,6 +59,7 @@ describe("topic admission integration", () => {
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-admission-test-"));
     originalHome = process.env["COUNCIL_HOME"];
     process.env["COUNCIL_HOME"] = testHome;
+    await copyTemplateDb(path.join(testHome, "council.db"));
   });
 
   afterEach(async () => {
@@ -202,6 +204,7 @@ async function makeChatEnv(): Promise<ChatEnv> {
   const originalDataHome = process.env["COUNCIL_DATA_HOME"];
   process.env["COUNCIL_HOME"] = home;
   process.env["COUNCIL_DATA_HOME"] = dataHome;
+  await copyTemplateDb(path.join(home, "council.db"));
   return { home, dataHome, originalHome, originalDataHome };
 }
 

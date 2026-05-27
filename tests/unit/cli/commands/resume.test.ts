@@ -31,6 +31,7 @@ import { DebateRepository } from "../../../../src/memory/repositories/debates.js
 import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
 import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
 import { TurnRepository } from "../../../../src/memory/repositories/turns.js";
+import { copyTemplateDb } from "../../../helpers/template-db.js";
 
 interface SeedResult {
   panelName: string;
@@ -112,6 +113,7 @@ describe("buildResumeCommand", () => {
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-resume-test-"));
     originalHome = process.env["COUNCIL_HOME"];
     process.env["COUNCIL_HOME"] = testHome;
+    await copyTemplateDb(path.join(testHome, "council.db"));
   });
 
   afterEach(async () => {

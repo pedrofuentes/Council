@@ -18,6 +18,7 @@ import { DebateRepository } from "../../../../src/memory/repositories/debates.js
 import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
 import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
 import { TurnRepository } from "../../../../src/memory/repositories/turns.js";
+import { copyTemplateDb } from "../../../helpers/template-db.js";
 
 async function seedPanel(testHome: string): Promise<{ panelName: string; panelId: string }> {
   const db = await createDatabase(path.join(testHome, "council.db"));
@@ -56,6 +57,7 @@ describe("buildAskCommand", () => {
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-ask-test-"));
     originalHome = process.env["COUNCIL_HOME"];
     process.env["COUNCIL_HOME"] = testHome;
+    await copyTemplateDb(path.join(testHome, "council.db"));
   });
 
   afterEach(async () => {

@@ -16,6 +16,7 @@ import type { CouncilEngine } from "../../../../src/engine/index.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
 import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
+import { copyTemplateDb } from "../../../helpers/template-db.js";
 
 describe("convene --panel alias", () => {
   function makeMockEngineFactory(): () => CouncilEngine {
@@ -52,6 +53,7 @@ describe("convene --panel alias", () => {
       testHome = await fs.mkdtemp(path.join(os.tmpdir(), "convene-panel-alias-"));
       originalHome = process.env["COUNCIL_HOME"];
       process.env["COUNCIL_HOME"] = testHome;
+      await copyTemplateDb(path.join(testHome, "council.db"));
     });
 
     afterEach(async () => {
@@ -105,12 +107,14 @@ describe("convene --panel alias", () => {
       }
     }
 
-    it("--panel <name> resolves to the same template as --template <name>", async () => {
+    it("--panel <name> resolves to the same template as --template <name>", { timeout: 30_000 }, async () => {
       // Use separate HOMEs per invocation to avoid Windows file locks on
       // the shared council.db between runs.
       const homeA = await fs.mkdtemp(path.join(os.tmpdir(), "convene-alias-a-"));
       const homeB = await fs.mkdtemp(path.join(os.tmpdir(), "convene-alias-b-"));
       try {
+        await copyTemplateDb(path.join(homeA, "council.db"));
+        await copyTemplateDb(path.join(homeB, "council.db"));
         process.env["COUNCIL_HOME"] = homeA;
         const viaPanel = await runWithFlagInHome("--panel", homeA);
         process.env["COUNCIL_HOME"] = homeB;

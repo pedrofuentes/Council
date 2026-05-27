@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { sql } from "kysely";
 
+import { copyTemplateDb } from "../../helpers/template-db.js";
 import { runExtractMemoryHook } from "../../../src/cli/extract-memory-hook.js";
 import type { CouncilEngine, EngineEvent, ExpertSpec } from "../../../src/engine/index.js";
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
@@ -64,6 +65,7 @@ describe("runExtractMemoryHook â€” cross-debate gathering (Sentinel pr273 #1 ðŸ”
 
   beforeEach(async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "council-hook-x-"));
+    await copyTemplateDb(path.join(dir, "council.db"));
     db = await createDatabase(path.join(dir, "council.db"));
     const panel = await new PanelRepository(db).create({
       name: "p",

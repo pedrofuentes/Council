@@ -16,6 +16,7 @@ import { DebateRepository } from "../../../../src/memory/repositories/debates.js
 import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
 import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
 import { TurnRepository } from "../../../../src/memory/repositories/turns.js";
+import { copyTemplateDb } from "../../../helpers/template-db.js";
 
 async function seedPanelWithDebate(testHome: string): Promise<{ panelName: string }> {
   const db = await createDatabase(path.join(testHome, "council.db"));
@@ -325,6 +326,7 @@ describe("buildExportCommand", () => {
     originalDataHome = process.env["COUNCIL_DATA_HOME"];
     process.env["COUNCIL_HOME"] = testHome;
     process.env["COUNCIL_DATA_HOME"] = testHome;
+    await copyTemplateDb(path.join(testHome, "council.db"));
   });
 
   afterEach(async () => {

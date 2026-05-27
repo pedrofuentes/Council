@@ -22,6 +22,7 @@ import { PlainRenderer } from "../../../src/cli/renderers/plain.js";
 import type { DebateEvent } from "../../../src/core/types.js";
 import type { ExpertDefinition } from "../../../src/core/expert.js";
 import { MockEngine } from "../../../src/engine/mock/mock-engine.js";
+import { copyTemplateDb } from "../../helpers/template-db.js";
 import { createDatabase } from "../../../src/memory/db.js";
 import { DebateRepository } from "../../../src/memory/repositories/debates.js";
 import { ExpertRepository } from "../../../src/memory/repositories/experts.js";
@@ -46,6 +47,7 @@ async function makeEnv(): Promise<TestEnv> {
   const originalDataHome = process.env["COUNCIL_DATA_HOME"];
   process.env["COUNCIL_HOME"] = home;
   process.env["COUNCIL_DATA_HOME"] = dataHome;
+  await copyTemplateDb(path.join(home, "council.db"));
   return { home, dataHome, originalHome, originalDataHome };
 }
 
@@ -245,6 +247,7 @@ describe("IA-08: Reorder conclude output — recommendation first", () => {
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-ia08-"));
     originalHome = process.env["COUNCIL_HOME"];
     process.env["COUNCIL_HOME"] = testHome;
+    await copyTemplateDb(path.join(testHome, "council.db"));
   });
   afterEach(async () => {
     if (originalHome === undefined) delete process.env["COUNCIL_HOME"];
@@ -329,6 +332,7 @@ describe("IA-10: Include debate ID in conclude output", () => {
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-ia10-"));
     originalHome = process.env["COUNCIL_HOME"];
     process.env["COUNCIL_HOME"] = testHome;
+    await copyTemplateDb(path.join(testHome, "council.db"));
   });
   afterEach(async () => {
     if (originalHome === undefined) delete process.env["COUNCIL_HOME"];
@@ -470,6 +474,7 @@ describe("DX-14: conclude defaults to most-recently-debated panel", () => {
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-dx14-"));
     originalHome = process.env["COUNCIL_HOME"];
     process.env["COUNCIL_HOME"] = testHome;
+    await copyTemplateDb(path.join(testHome, "council.db"));
   });
   afterEach(async () => {
     if (originalHome === undefined) delete process.env["COUNCIL_HOME"];
@@ -643,6 +648,7 @@ describe("IA-05: --format validation", () => {
     const dataHome = path.join(tmpDir, "data");
     await fs.mkdir(path.join(dataHome, "experts"), { recursive: true });
     const dbPath = path.join(tmpDir, "council.db");
+    await copyTemplateDb(dbPath);
     const db = await createDatabase(dbPath);
     const { FileExpertLibrary } = await import("../../../src/core/expert-library.js");
     const lib = new FileExpertLibrary(dataHome, db);
@@ -682,6 +688,7 @@ describe("IA-05: --format validation", () => {
     await fs.mkdir(path.join(dataHome, "experts"), { recursive: true });
     await fs.mkdir(path.join(dataHome, "panels"), { recursive: true });
     const dbPath = path.join(tmpDir, "council.db");
+    await copyTemplateDb(dbPath);
     const db = await createDatabase(dbPath);
     const { FileExpertLibrary } = await import("../../../src/core/expert-library.js");
     const lib = new FileExpertLibrary(dataHome, db);

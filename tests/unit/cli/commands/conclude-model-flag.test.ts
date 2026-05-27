@@ -20,6 +20,7 @@ import { ExpertRepository } from "../../../../src/memory/repositories/experts.js
 import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
 import { TurnRepository } from "../../../../src/memory/repositories/turns.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
+import { copyTemplateDb } from "../../../helpers/template-db.js";
 
 const SAMPLE_OUTPUT: Omit<ConcludeOutput, "panelName" | "topic"> = {
   consensus: ["Both experts agree the monolith has real coupling pain points"],
@@ -117,6 +118,7 @@ describe("buildConcludeCommand — --model flag", () => {
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), "conclude-model-flag-"));
     originalHome = process.env.COUNCIL_HOME;
     process.env.COUNCIL_HOME = testHome;
+    await copyTemplateDb(path.join(testHome, "council.db"));
 
     // Write minimal config
     await fs.writeFile(

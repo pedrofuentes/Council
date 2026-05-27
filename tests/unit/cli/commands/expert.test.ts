@@ -22,6 +22,7 @@ import type {
   ExpertSpec,
   SendOptions,
 } from "../../../../src/engine/index.js";
+import { copyTemplateDb } from "../../../helpers/template-db.js";
 
 // Stub engine used by `expert train` tests — mirrors the one in
 // tests/unit/core/documents/processor.test.ts. It returns a canned
@@ -88,6 +89,7 @@ async function makeEnv(): Promise<TestEnv> {
   const originalDataHome = process.env["COUNCIL_DATA_HOME"];
   process.env["COUNCIL_HOME"] = home;
   process.env["COUNCIL_DATA_HOME"] = dataHome;
+  await copyTemplateDb(path.join(home, "council.db"));
   return { home, dataHome, originalHome, originalDataHome };
 }
 

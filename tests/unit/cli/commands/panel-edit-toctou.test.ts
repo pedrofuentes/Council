@@ -59,6 +59,7 @@ import { buildPanelCommand } from "../../../../src/cli/commands/panel.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import { PanelLibraryRepository } from "../../../../src/memory/repositories/panel-library-repo.js";
 import type { ExpertDefinition } from "../../../../src/core/expert.js";
+import { copyTemplateDb } from "../../../helpers/template-db.js";
 
 interface TestEnv {
   readonly home: string;
@@ -103,6 +104,7 @@ async function makeEnv(): Promise<TestEnv> {
   process.env["COUNCIL_HOME"] = home;
   process.env["COUNCIL_DATA_HOME"] = dataHome;
   process.env["EDITOR"] = `node -e ""`;
+  await copyTemplateDb(path.join(home, "council.db"));
   return { home, dataHome, originalHome, originalDataHome, originalEditor };
 }
 
