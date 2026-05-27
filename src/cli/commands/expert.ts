@@ -124,7 +124,7 @@ Examples:
 // create
 // ──────────────────────────────────────────────────────────────────────
 
-interface CreateOptions {
+export interface CreateOptions {
   readonly persona?: boolean;
   readonly slug?: string;
   readonly name?: string;
@@ -134,6 +134,32 @@ interface CreateOptions {
   readonly model?: string;
   readonly personality?: string;
   readonly personaDescription?: string;
+}
+
+/**
+ * Format the "✓ field: value" block shown at the top of the interactive
+ * `expert create` wizard when one or more required fields have already been
+ * supplied via CLI flags. Provides visible feedback that the user's flags
+ * were recognized before the wizard prompts for the remaining fields.
+ *
+ * Returns the empty string when no fields are pre-filled, so the caller can
+ * unconditionally write the result without checking.
+ */
+export function formatPrefilledLines(opts: CreateOptions): string {
+  const entries: readonly (readonly [string, string | undefined])[] = [
+    ["slug", opts.slug],
+    ["displayName", opts.name],
+    ["role", opts.role],
+    ["expertise", opts.expertise],
+    ["stance", opts.stance],
+    ["personality", opts.personality],
+    ["personaDescription", opts.personaDescription],
+  ];
+  const provided = entries.filter(
+    (e): e is readonly [string, string] => e[1] !== undefined,
+  );
+  if (provided.length === 0) return "";
+  return provided.map(([label, value]) => `  ✓ ${label}: ${value}\n`).join("") + "\n";
 }
 
 function buildCreateCommand(write: Writer, writeError: Writer): Command {
@@ -283,6 +309,7 @@ async function gatherCreateFields(opts: CreateOptions, write: Writer): Promise<G
     };
 
     write("Creating a new expert. Press Ctrl+C to abort.\n\n");
+    write(formatPrefilledLines(opts));
     const slug = await promptFor("slug (lowercase alphanumeric + hyphens)", opts.slug, true);
     const name = await promptFor('displayName (e.g. "Dahlia Renner (CTO)")', opts.name, true);
     const role = await promptFor("role (one-line)", opts.role, true);
