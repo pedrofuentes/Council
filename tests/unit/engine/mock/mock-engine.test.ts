@@ -340,4 +340,57 @@ describe("MockEngine — synthesizer responses", () => {
   });
 });
 
+describe("MockEngine — profile analyzer responses", () => {
+  it("returns parseable persona-profile JSON for profile analyzer experts", async () => {
+    // Mirrors the registration done by `analyzeDocuments` in
+    // src/core/documents/profile-analyzer.ts: the transient expert is
+    // registered with a slug prefixed `__profile-analyzer-` so the
+    // mock engine must recognise that and return JSON matching the
+    // schema the analyzer parses.
+    const engine = new MockEngine();
+    const analyzerSpec: ExpertSpec = {
+      id: "01HZ-analyzer",
+      slug: "__profile-analyzer-01HZ-analyzer",
+      displayName: "Profile Analyzer",
+      model: "mock-model",
+      systemMessage: "You are a persona profile analyzer.",
+    };
+
+    await engine.start();
+    await engine.addExpert(analyzerSpec);
+
+    const events = await collect(
+      engine.send({ prompt: "Analyze these documents.", expertId: "01HZ-analyzer" }),
+    );
+
+    const deltas = events.filter((e) => e.kind === "message.delta");
+    expect(deltas.length).toBeGreaterThan(0);
+
+    const responseText = deltas
+      .map((e) => (e.kind === "message.delta" ? e.text : ""))
+      .join("");
+    expect(responseText).toBeTruthy();
+
+    // Must parse and satisfy the profile-analyzer schema: the analyzer
+    // rejects responses whose `communicationStyle` or `epistemicStance`
+    // are empty, which would trigger the "unparsable JSON after retry"
+    // failure that this fix targets.
+    const parsed: unknown = JSON.parse(responseText);
+    expect(parsed).not.toBeNull();
+    expect(typeof parsed).toBe("object");
+    const obj = parsed as Record<string, unknown>;
+
+    expect(typeof obj["communicationStyle"]).toBe("string");
+    expect((obj["communicationStyle"] as string).length).toBeGreaterThan(0);
+    expect(typeof obj["epistemicStance"]).toBe("string");
+    expect((obj["epistemicStance"] as string).length).toBeGreaterThan(0);
+
+    expect(Array.isArray(obj["decisionPatterns"])).toBe(true);
+    expect(Array.isArray(obj["biases"])).toBe(true);
+    expect(Array.isArray(obj["vocabulary"])).toBe(true);
+
+    await engine.stop();
+  });
+});
+
 
