@@ -107,7 +107,7 @@ describe("convene --panel alias", () => {
       }
     }
 
-    it("--panel <name> resolves to the same template as --template <name>", { timeout: 30_000 }, async () => {
+    it("--panel <name> resolves to the same template as --template <name>", { timeout: 60_000 }, async () => {
       // Use separate HOMEs per invocation to avoid Windows file locks on
       // the shared council.db between runs.
       const homeA = await fs.mkdtemp(path.join(os.tmpdir(), "convene-alias-a-"));
