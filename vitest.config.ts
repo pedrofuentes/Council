@@ -11,7 +11,7 @@ export default defineConfig({
 
     // Build a pre-migrated template DB once before any worker starts.
     // Workers copy this template (via `copyTemplateDb()`) instead of
-    // running 11 sequential migrations per `createDatabase()` call.
+    // running the migration per `createDatabase()` call.
     globalSetup: ["./tests/global-setup.ts"],
 
     // Use forked child processes (not worker threads). @libsql/client loads a
@@ -21,11 +21,13 @@ export default defineConfig({
     // explicit so a future Vitest default change cannot silently break us.
     pool: "forks",
 
-    // Cap parallelism. On Windows CI, too many concurrent forks thrash
-    // os.tmpdir() (SQLite file creation, rm -rf, handle release) which is the
-    // dominant source of EBUSY/EPERM flakes. Locally "50%" keeps developer
-    // machines responsive; CI gets a hard cap of 2.
-    maxWorkers: isCI ? 2 : "50%",
+    // Cap parallelism. On Windows, too many concurrent forks thrash
+    // os.tmpdir() (SQLite file creation, rm -rf, handle release) — the
+    // dominant source of EBUSY/EPERM flakes and "Worker exited unexpectedly"
+    // crashes. A 16-core machine at "50%" spawns 8 workers; empirically,
+    // 4 is the sweet spot that keeps throughput high without triggering
+    // NTFS handle contention. CI gets 2 (sharding handles parallelism).
+    maxWorkers: isCI ? 2 : 4,
 
     // Isolate every test file in its own fork. This is the default for
     // pool: "forks", but is stated explicitly so the guarantee — no shared
@@ -33,13 +35,12 @@ export default defineConfig({
     // anyone reading this config.
     isolate: true,
 
-    // 15s accommodates Windows fork startup + libsql native binding load +
-    // migration runs (~5s for 11 migrations) on a cold worker, plus the CLI
-    // command tests that spawn child processes (~1.5–2s each). Per-test
-    // timeouts in tests/unit/memory/db-and-repos.test.ts override this for
-    // tests that spawn a child process AND contend on a SQLite write lock.
-    testTimeout: 15000,
-    hookTimeout: 15000,
+    // Timeouts sized for full-suite contention on Windows. Hooks (beforeEach)
+    // do DB setup and are most affected by disk I/O contention, so they get
+    // a wider window than test bodies. Per-test overrides exist for tests
+    // that spawn child processes or contend on SQLite write locks.
+    testTimeout: 20_000,
+    hookTimeout: 30_000,
 
     // Per-process test isolation: tests/setup.ts redirects COUNCIL_HOME
     // to a per-process temp dir so commands that touch the filesystem
