@@ -1,9 +1,9 @@
 /**
  * Test helper — copy the pre-migrated template database.
  *
- * Instead of running 11 sequential SQLite migrations per test (~5 s on
- * Windows), this copies a pre-built template (~5 ms) so that subsequent
- * `createDatabase(destPath)` calls find all migrations already applied.
+ * Instead of running the unified migration per test, this copies a
+ * pre-built template (~5 ms) so that subsequent `createDatabase(destPath)`
+ * calls find all migrations already applied.
  *
  * Usage (in test files):
  * ```ts

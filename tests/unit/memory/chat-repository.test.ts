@@ -31,23 +31,20 @@ describe("ChatRepository", () => {
 
   // -------- migration --------
 
-  it("migration 005 is applied (schema_version contains 5)", async () => {
+  it("unified migration is applied (schema_version contains 1)", async () => {
     const row = await db
       .selectFrom("schema_version")
       .select("version")
-      .where("version", "=", 5)
+      .where("version", "=", 1)
       .executeTakeFirst();
-    expect(row?.version).toBe(5);
+    expect(row?.version).toBe(1);
   });
 
   it("creating the database twice is idempotent (migration re-run is a no-op)", async () => {
-    // Re-running createDatabase against the same in-memory client would
-    // not share state, so instead simulate idempotency by inserting a
-    // session, then inspecting that migration 005 doesn't double-register.
     const versions = await db
       .selectFrom("schema_version")
       .select("version")
-      .where("version", "=", 5)
+      .where("version", "=", 1)
       .execute();
     expect(versions).toHaveLength(1);
   });

@@ -214,12 +214,14 @@ export function loadMigrations(): readonly Migration[] {
   return [
     {
       version: 1,
-      name: "001_init",
+      name: "001_unified",
       sql: `\
 CREATE TABLE IF NOT EXISTS schema_version (
   version    INTEGER PRIMARY KEY,
   applied_at TEXT NOT NULL
 );
+
+-- Core tables
 
 CREATE TABLE IF NOT EXISTS panels (
   id           TEXT PRIMARY KEY,
@@ -232,14 +234,19 @@ CREATE TABLE IF NOT EXISTS panels (
 );
 
 CREATE TABLE IF NOT EXISTS experts (
-  id                  TEXT PRIMARY KEY,
-  panel_id            TEXT NOT NULL REFERENCES panels(id) ON DELETE CASCADE,
-  slug                TEXT NOT NULL,
-  display_name        TEXT NOT NULL,
-  model               TEXT NOT NULL,
-  system_message      TEXT NOT NULL,
-  copilot_session_id  TEXT,
-  created_at          TEXT NOT NULL,
+  id                      TEXT PRIMARY KEY,
+  panel_id                TEXT NOT NULL REFERENCES panels(id) ON DELETE CASCADE,
+  slug                    TEXT NOT NULL,
+  display_name            TEXT NOT NULL,
+  model                   TEXT NOT NULL,
+  system_message          TEXT NOT NULL,
+  copilot_session_id      TEXT,
+  created_at              TEXT NOT NULL,
+  extracted_memory_json   TEXT,
+  memory_source_debate_id TEXT,
+  memory_derivation       TEXT,
+  memory_trust_score      REAL,
+  memory_extracted_at     TEXT,
   UNIQUE (panel_id, slug)
 );
 
@@ -268,45 +275,8 @@ CREATE TABLE IF NOT EXISTS turns (
   created_at   TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_turns_debate_round_seq
-  ON turns (debate_id, round, seq);
+-- Library tables
 
-CREATE INDEX IF NOT EXISTS idx_experts_panel_id
-  ON experts (panel_id);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS turns_fts USING fts5(
-  content,
-  content='turns',
-  content_rowid='rowid'
-);
-
-CREATE TRIGGER IF NOT EXISTS turns_ai AFTER INSERT ON turns BEGIN
-  INSERT INTO turns_fts(rowid, content) VALUES (new.rowid, new.content);
-END;
-CREATE TRIGGER IF NOT EXISTS turns_ad AFTER DELETE ON turns BEGIN
-  INSERT INTO turns_fts(turns_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
-END;
-CREATE TRIGGER IF NOT EXISTS turns_au AFTER UPDATE ON turns BEGIN
-  INSERT INTO turns_fts(turns_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
-  INSERT INTO turns_fts(rowid, content) VALUES (new.rowid, new.content);
-END;`,
-    },
-    {
-      version: 2,
-      name: "002_add_indexes",
-      sql: `\
-CREATE INDEX IF NOT EXISTS idx_panels_name ON panels(name);
-CREATE INDEX IF NOT EXISTS idx_debates_panel_id ON debates(panel_id);`,
-    },
-    {
-      version: 3,
-      name: "003_expert_extracted_memory",
-      sql: `ALTER TABLE experts ADD COLUMN extracted_memory_json TEXT;`,
-    },
-    {
-      version: 4,
-      name: "004_expert_library",
-      sql: `\
 CREATE TABLE IF NOT EXISTS expert_library (
   slug          TEXT PRIMARY KEY,
   kind          TEXT NOT NULL DEFAULT 'generic',
@@ -334,13 +304,8 @@ CREATE TABLE IF NOT EXISTS panel_members (
   PRIMARY KEY (panel_name, expert_slug)
 );
 
-CREATE INDEX IF NOT EXISTS idx_panel_members_expert
-  ON panel_members (expert_slug);`,
-    },
-    {
-      version: 5,
-      name: "005_chat",
-      sql: `\
+-- Chat tables
+
 CREATE TABLE IF NOT EXISTS chat_sessions (
   id                  TEXT PRIMARY KEY,
   target_type         TEXT NOT NULL,
@@ -351,9 +316,6 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
   created_at          TEXT NOT NULL,
   updated_at          TEXT NOT NULL
 );
-
-CREATE INDEX IF NOT EXISTS idx_chat_sessions_target
-  ON chat_sessions (target_type, target_slug, status);
 
 CREATE TABLE IF NOT EXISTS chat_turns (
   id           TEXT PRIMARY KEY,
@@ -369,27 +331,8 @@ CREATE TABLE IF NOT EXISTS chat_turns (
   UNIQUE (chat_id, seq)
 );
 
-CREATE INDEX IF NOT EXISTS idx_chat_turns_chat_seq
-  ON chat_turns (chat_id, seq);
+-- Document tables
 
-CREATE VIRTUAL TABLE IF NOT EXISTS chat_turns_fts USING fts5(
-  content,
-  content='chat_turns',
-  content_rowid='rowid'
-);
-
-CREATE TRIGGER IF NOT EXISTS chat_turns_ai AFTER INSERT ON chat_turns BEGIN
-  INSERT INTO chat_turns_fts(rowid, content) VALUES (new.rowid, new.content);
-END;
-
-CREATE TRIGGER IF NOT EXISTS chat_turns_ad AFTER DELETE ON chat_turns BEGIN
-  INSERT INTO chat_turns_fts(chat_turns_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
-END;`,
-    },
-    {
-      version: 6,
-      name: "006_documents",
-      sql: `\
 CREATE TABLE IF NOT EXISTS expert_documents (
   id            TEXT PRIMARY KEY,
   expert_slug   TEXT NOT NULL REFERENCES expert_library(slug) ON DELETE CASCADE,
@@ -404,25 +347,6 @@ CREATE TABLE IF NOT EXISTS expert_documents (
   UNIQUE (expert_slug, file_path)
 );
 
-CREATE INDEX IF NOT EXISTS idx_expert_documents_slug
-  ON expert_documents (expert_slug, status);`,
-    },
-    {
-      version: 7,
-      name: "007_document_index",
-      sql: `\
-CREATE VIRTUAL TABLE IF NOT EXISTS document_index USING fts5(
-  content,
-  source_type,
-  source_slug,
-  file_path,
-  tokenize='porter unicode61'
-);`,
-    },
-    {
-      version: 8,
-      name: "008_persona_profiles",
-      sql: `\
 CREATE TABLE IF NOT EXISTS persona_profiles (
   expert_slug         TEXT PRIMARY KEY REFERENCES expert_library(slug) ON DELETE CASCADE,
   communication_style TEXT NOT NULL,
@@ -434,12 +358,8 @@ CREATE TABLE IF NOT EXISTS persona_profiles (
   total_words         INTEGER NOT NULL DEFAULT 0,
   created_at          TEXT NOT NULL,
   updated_at          TEXT NOT NULL
-);`,
-    },
-    {
-      version: 9,
-      name: "009_panel_documents",
-      sql: `\
+);
+
 CREATE TABLE IF NOT EXISTS panel_linked_folders (
   id           TEXT PRIMARY KEY,
   panel_name   TEXT NOT NULL REFERENCES panel_library(name) ON DELETE CASCADE,
@@ -463,50 +383,79 @@ CREATE TABLE IF NOT EXISTS panel_documents (
   UNIQUE (panel_name, file_path)
 );
 
+-- Indexes
+
+CREATE INDEX IF NOT EXISTS idx_turns_debate_round_seq
+  ON turns (debate_id, round, seq);
+
+CREATE INDEX IF NOT EXISTS idx_experts_panel_id
+  ON experts (panel_id);
+
+CREATE INDEX IF NOT EXISTS idx_panels_name ON panels(name);
+
+CREATE INDEX IF NOT EXISTS idx_debates_panel_id ON debates(panel_id);
+
+CREATE INDEX IF NOT EXISTS idx_panel_members_expert
+  ON panel_members (expert_slug);
+
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_target
+  ON chat_sessions (target_type, target_slug, status);
+
+CREATE INDEX IF NOT EXISTS idx_chat_turns_chat_seq
+  ON chat_turns (chat_id, seq);
+
+CREATE INDEX IF NOT EXISTS idx_expert_documents_slug
+  ON expert_documents (expert_slug, status);
+
 CREATE INDEX IF NOT EXISTS idx_panel_documents_panel
-  ON panel_documents (panel_name, status);`,
-    },
-    {
-      version: 10,
-      name: "010_chat_active_unique",
-      sql: `\
-UPDATE chat_sessions
-SET status = 'archived',
-    updated_at = COALESCE(updated_at, created_at)
-WHERE status = 'active'
-  AND id NOT IN (
-    SELECT id FROM (
-      SELECT id,
-             ROW_NUMBER() OVER (
-               PARTITION BY target_type, target_slug
-               ORDER BY created_at DESC, id DESC
-             ) AS rn
-      FROM chat_sessions
-      WHERE status = 'active'
-    )
-    WHERE rn = 1
-  );
+  ON panel_documents (panel_name, status);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_sessions_active_unique
   ON chat_sessions (target_type, target_slug)
-  WHERE status = 'active';`,
-    },
-    {
-      version: 11,
-      name: "011_memory_provenance",
-      sql: `\
-ALTER TABLE experts ADD COLUMN memory_source_debate_id TEXT;
-ALTER TABLE experts ADD COLUMN memory_derivation TEXT DEFAULT 'llm_summary';
-ALTER TABLE experts ADD COLUMN memory_trust_score REAL DEFAULT 0.5;
-ALTER TABLE experts ADD COLUMN memory_extracted_at TEXT;
--- Sentinel pr614 #1 🔴: SQLite's ALTER TABLE ADD COLUMN backfills
--- the DEFAULT into pre-existing rows, which would fabricate
--- 'llm_summary' / 0.5 provenance for any expert that already had
--- extracted_memory_json from a pre-v11 install. Null those out so
--- legacy caches surface as having no provenance (recall layer also
--- guards on memory_source_debate_id IS NULL for defense-in-depth).
-UPDATE experts SET memory_derivation = NULL, memory_trust_score = NULL
-  WHERE memory_source_debate_id IS NULL;`,
+  WHERE status = 'active';
+
+-- FTS5 virtual tables
+
+CREATE VIRTUAL TABLE IF NOT EXISTS turns_fts USING fts5(
+  content,
+  content='turns',
+  content_rowid='rowid'
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS chat_turns_fts USING fts5(
+  content,
+  content='chat_turns',
+  content_rowid='rowid'
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS document_index USING fts5(
+  content,
+  source_type,
+  source_slug,
+  file_path,
+  tokenize='porter unicode61'
+);
+
+-- Triggers
+
+CREATE TRIGGER IF NOT EXISTS turns_ai AFTER INSERT ON turns BEGIN
+  INSERT INTO turns_fts(rowid, content) VALUES (new.rowid, new.content);
+END;
+CREATE TRIGGER IF NOT EXISTS turns_ad AFTER DELETE ON turns BEGIN
+  INSERT INTO turns_fts(turns_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+END;
+CREATE TRIGGER IF NOT EXISTS turns_au AFTER UPDATE ON turns BEGIN
+  INSERT INTO turns_fts(turns_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+  INSERT INTO turns_fts(rowid, content) VALUES (new.rowid, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS chat_turns_ai AFTER INSERT ON chat_turns BEGIN
+  INSERT INTO chat_turns_fts(rowid, content) VALUES (new.rowid, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS chat_turns_ad AFTER DELETE ON chat_turns BEGIN
+  INSERT INTO chat_turns_fts(chat_turns_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+END;`,
     },
   ];
 }
