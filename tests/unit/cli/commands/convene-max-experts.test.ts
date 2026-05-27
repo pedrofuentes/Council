@@ -198,8 +198,9 @@ describe("buildConveneCommand — --max-experts flag", () => {
     // Verify the composer was created (system message exists)
     expect(engine.expertSystemMessages.length).toBeGreaterThan(0);
     const composerSystemMessage = engine.expertSystemMessages[0];
-    // The default is 3-5, so the prompt should contain "panel of 3-5 AI experts"
-    expect(composerSystemMessage).toContain("panel of 3-5 AI experts");
+    // No config override and no CLI flag: config schema default for maxExperts is 3,
+    // which now flows through (T3). minExperts is clamped to min(3, 3) = 3 → "3-3".
+    expect(composerSystemMessage).toContain("panel of 3-3 AI experts");
   });
 
   it("should show --max-experts in help output", () => {
