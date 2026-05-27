@@ -3,11 +3,10 @@
  *
  * Creates a single, fully-migrated SQLite database file before any test
  * worker starts.  Workers copy this template (via `copyTemplateDb()` in
- * `tests/helpers/template-db.ts`) instead of running 11 sequential
- * migrations per `createDatabase()` call.
+ * `tests/helpers/template-db.ts`) instead of running the migration per
+ * `createDatabase()` call.
  *
- * Impact: each DB creation drops from ~5 s (11 migrations + file I/O on
- * Windows) to ~5 ms (`fs.copyFile` of a ~50 KB template).
+ * Impact: each DB creation is ~5 ms (`fs.copyFile` of a ~50 KB template).
  */
 import * as fs from "node:fs";
 import * as os from "node:os";

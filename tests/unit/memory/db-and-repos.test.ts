@@ -27,8 +27,6 @@ import { sql } from "kysely";
 
 import {
   createDatabase,
-  loadMigrations,
-  splitSqlStatements,
   type CouncilDatabase,
 } from "../../../src/memory/db.js";
 import { PanelRepository, type NewPanel } from "../../../src/memory/repositories/panels.js";
@@ -203,50 +201,36 @@ describe("createDatabase", () => {
     const setupClient = createClient({ url: `file:${dbPath}` });
 
     try {
+      // Pre-create a malformed `panels` table (missing `name` column) so the
+      // unified migration's CREATE INDEX idx_panels_name ON panels(name) fails.
       await setupClient.execute(
         "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);",
       );
-      for (const migration of loadMigrations().filter((candidate) => candidate.version < 11)) {
-        for (const statement of splitSqlStatements(migration.sql)) {
-          await setupClient.execute(statement);
-        }
-        await setupClient.execute({
-          sql: "INSERT INTO schema_version (version, applied_at) VALUES (?, ?);",
-          args: [migration.version, new Date().toISOString()],
-        });
-      }
-      await setupClient.execute("ALTER TABLE experts ADD COLUMN memory_source_debate_id TEXT;");
+      await setupClient.execute("CREATE TABLE panels (id TEXT PRIMARY KEY);");
     } finally {
       setupClient.close();
     }
 
-    await expect(createDatabase(dbPath)).rejects.toThrow(/memory_source_debate_id|duplicate column/i);
+    await expect(createDatabase(dbPath)).rejects.toThrow();
 
     const verifyClient = createClient({ url: `file:${dbPath}` });
     try {
       const versions = (await verifyClient.execute("SELECT version FROM schema_version ORDER BY version;")).rows.map(
         (row) => Number((row as { readonly version: number }).version),
       );
-      const columnNames = (await verifyClient.execute("PRAGMA table_info(experts);")).rows.map((row) =>
-        String((row as { readonly name: string }).name),
-      );
-
-      expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-      expect(columnNames).toContain("memory_source_debate_id");
-      expect(columnNames).not.toContain("memory_derivation");
-      expect(columnNames).not.toContain("memory_trust_score");
-      expect(columnNames).not.toContain("memory_extracted_at");
+      // Migration rolled back — no version rows recorded
+      expect(versions).toEqual([]);
     } finally {
       verifyClient.close();
       await cleanupFileBackedDatabaseDir(testHome);
     }
   }, 30_000);
 
-  it("applies migrations 001 through 011, creating the expected indexes", async () => {
+  it("applies the unified migration, creating the expected indexes", async () => {
     const versions = (
       await db.selectFrom("schema_version").select("version").orderBy("version").execute()
     ).map((r) => r.version);
-    expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(versions).toEqual([1]);
 
     const indexes = (
       await sql<{
@@ -460,7 +444,7 @@ describe("Migration 004 — expert library tables", () => {
       (r) => r.version,
     );
     await db2.destroy();
-    expect(versions.filter((v) => v === 4).length).toBe(1);
+    expect(versions.filter((v) => v === 1).length).toBe(1);
   });
 });
 
@@ -494,11 +478,11 @@ describe("Migration 006 — expert_documents table", () => {
     expect(indexes).toContain("idx_expert_documents_slug");
   });
 
-  it("records schema_version row for migration 006", async () => {
+  it("records schema_version row for the unified migration", async () => {
     const versions = (await db.selectFrom("schema_version").select("version").execute()).map(
       (r) => r.version,
     );
-    expect(versions).toContain(6);
+    expect(versions).toContain(1);
   });
 });
 
@@ -561,11 +545,11 @@ describe("Inlined migrations regression (issue #476)", () => {
     expect(rows.length).toBeGreaterThanOrEqual(EXPECTED_TABLES.length);
   });
 
-  it("records a schema_version row for every inlined migration (1..11)", async () => {
+  it("records a schema_version row for the unified inlined migration", async () => {
     const versions = (
       await db.selectFrom("schema_version").select("version").orderBy("version").execute()
     ).map((r) => r.version);
-    expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(versions).toEqual([1]);
   });
 
   it("each expected table is queryable via Kysely without throwing", async () => {
