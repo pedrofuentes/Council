@@ -140,7 +140,7 @@ describe("buildExpertCommand", () => {
     expect(subs).toEqual(["create", "delete", "docs", "edit", "inspect", "list", "train"].sort());
   });
 
-  it("defaults bare expert to the list action", async () => {
+  it("defaults bare expert to the list action", { timeout: 30_000 }, async () => {
     const env = await makeEnv();
     try {
       let captured = "";

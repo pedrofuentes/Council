@@ -5,8 +5,15 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
 import { copyTemplateDb } from "../../helpers/template-db.js";
 
+import { buildExpertCommand } from "../../../src/cli/commands/expert.js";
+import { createDatabase } from "../../../src/memory/db.js";
+import { FileExpertLibrary } from "../../../src/core/expert-library.js";
 import { getSymbols } from "../../../src/cli/renderers/symbols.js";
 import {
   isCostWarning,
@@ -174,10 +181,6 @@ describe("A11Y-17: wrapLink OSC-8 helper", () => {
 // --- DX-11: Expert delete --force confirmation improvement ---
 describe("DX-11: expert delete --force lists affected panels", () => {
   it("--force --yes output mentions panel names before deletion", async () => {
-    const os = await import("node:os");
-    const path = await import("node:path");
-    const fs = await import("node:fs/promises");
-
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "council-dx11-home-"));
     const dataHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-dx11-data-"));
     const origHome = process.env["COUNCIL_HOME"];
@@ -186,9 +189,6 @@ describe("DX-11: expert delete --force lists affected panels", () => {
     process.env["COUNCIL_DATA_HOME"] = dataHome;
 
     try {
-      // Seed expert via library
-      const { createDatabase } = await import("../../../src/memory/db.js");
-      const { FileExpertLibrary } = await import("../../../src/core/expert-library.js");
       await copyTemplateDb(path.join(home, "council.db"));
       const db = await createDatabase(path.join(home, "council.db"));
       const lib = new FileExpertLibrary(dataHome, db);
@@ -201,7 +201,6 @@ describe("DX-11: expert delete --force lists affected panels", () => {
         kind: "generic",
       });
 
-      // Create panel membership
       await db
         .insertInto("panel_library")
         .values({
@@ -223,7 +222,6 @@ describe("DX-11: expert delete --force lists affected panels", () => {
         .execute();
       await db.destroy();
 
-      const { buildExpertCommand } = await import("../../../src/cli/commands/expert.js");
       let captured = "";
       const cmd = buildExpertCommand((s: string) => {
         captured += s;
@@ -231,7 +229,6 @@ describe("DX-11: expert delete --force lists affected panels", () => {
       cmd.exitOverride();
       await cmd.parseAsync(["node", "council-expert", "delete", "test-cto", "--force", "--yes"]);
 
-      // Should list the panel before deleting
       expect(captured).toMatch(/arch-review/);
       expect(captured).toMatch(/deleted/i);
     } finally {
@@ -250,5 +247,5 @@ describe("DX-11: expert delete --force lists affected panels", () => {
           /* best-effort */
         });
     }
-  }, 30000);
+  }, 30_000);
 });
