@@ -89,7 +89,13 @@ interface StaticRoundSeparator {
   readonly type: "round-separator";
 }
 
-type StaticItem = StaticRoundHeader | StaticTurn | StaticRoundSeparator;
+interface StaticPanel {
+  readonly id: string;
+  readonly type: "panel";
+  readonly experts: readonly PanelMemberSnapshot[];
+}
+
+type StaticItem = StaticRoundHeader | StaticTurn | StaticRoundSeparator | StaticPanel;
 
 // --- Active turn (streaming) ---
 
@@ -157,7 +163,19 @@ export function reduce(s: DebateState, ev: DebateEvent): DebateState {
         displayNames.set(e.slug, e.displayName);
         if (e.participantKind === "human") humanSlugs.add(e.slug);
       });
-      return { ...s, panel: ev.experts, expertIndex, displayNames, humanSlugs };
+      const panelItem: StaticPanel = {
+        id: uid("panel"),
+        type: "panel",
+        experts: ev.experts,
+      };
+      return {
+        ...s,
+        panel: ev.experts,
+        expertIndex,
+        displayNames,
+        humanSlugs,
+        completedItems: [...s.completedItems, panelItem],
+      };
     }
     case "round.start": {
       // Seed the round header into completedItems so it renders in Static
@@ -257,6 +275,40 @@ export function reduce(s: DebateState, ev: DebateEvent): DebateState {
   }
 }
 
+/**
+ * Merges consecutive `turn.delta` events from the same expert into a single
+ * combined delta. Non-delta events and deltas from different experts are
+ * preserved in order. This reduces the number of `setState` calls (and therefore
+ * Ink re-renders) when many small deltas arrive in a burst.
+ *
+ * Exported for testing.
+ */
+export function coalesceDeltas(events: readonly DebateEvent[]): readonly DebateEvent[] {
+  const out: DebateEvent[] = [];
+  for (const ev of events) {
+    const last = out[out.length - 1];
+    if (
+      ev.kind === "turn.delta" &&
+      last !== undefined &&
+      last.kind === "turn.delta" &&
+      last.expertSlug === ev.expertSlug
+    ) {
+      out[out.length - 1] = { ...last, text: last.text + ev.text };
+    } else {
+      out.push(ev);
+    }
+  }
+  return out;
+}
+
+/**
+ * Delay (ms) before flushing buffered `turn.delta` events to React state.
+ * Non-delta events flush immediately, so this only throttles streaming text.
+ * 16 ms ≈ one animation frame — small enough to feel live, large enough to
+ * coalesce bursts of micro-deltas from the SDK.
+ */
+export const DELTA_FLUSH_INTERVAL_MS = 16;
+
 function colorFor(state: DebateState, slug: string): ExpertColor {
   const isHuman = state.humanSlugs.has(slug);
   return assignExpertColor(state.expertIndex.get(slug) ?? 0, { isHuman });
@@ -289,7 +341,6 @@ function PanelRoster({ state }: { readonly state: DebateState }): ReactElement |
     </Box>
   );
 }
-
 function RoundHeader({ round }: { readonly round: number }): ReactElement {
   const sym = getSymbols();
   return (
@@ -349,7 +400,7 @@ function StreamingText({
   );
 }
 
-/** Renders a single static item (round header, turn, or separator). */
+/** Renders a single static item (round header, turn, separator, or panel). */
 function StaticItemView({
   item,
   state,
@@ -362,6 +413,8 @@ function StaticItemView({
       return <RoundHeader round={item.round} />;
     case "round-separator":
       return <RoundSeparator />;
+    case "panel":
+      return <PanelRoster state={state} />;
     case "turn":
       return (
         <Box flexDirection="column">
@@ -523,26 +576,57 @@ export function DebateApp({
     let cancelled = false;
     const iterator = events[Symbol.asyncIterator]();
     iteratorRef.current = iterator;
+
+    let pendingDeltas: DebateEvent[] = [];
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const flushPendingDeltas = (): void => {
+      if (flushTimer !== null) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      if (pendingDeltas.length === 0) return;
+      const batch = coalesceDeltas(pendingDeltas);
+      pendingDeltas = [];
+      setState((prev) => batch.reduce(reduce, prev));
+    };
+
     void (async () => {
       let streamError: unknown;
       try {
         for await (const ev of { [Symbol.asyncIterator]: () => iterator }) {
           if (cancelled) break;
-          setState((prev) => reduce(prev, ev));
+          if (ev.kind === "turn.delta") {
+            pendingDeltas.push(ev);
+            if (flushTimer === null) {
+              flushTimer = setTimeout(flushPendingDeltas, DELTA_FLUSH_INTERVAL_MS);
+            }
+          } else {
+            // Apply any buffered deltas before the next non-delta event so
+            // ordering is preserved exactly as the stream emitted it.
+            flushPendingDeltas();
+            setState((prev) => reduce(prev, ev));
+          }
         }
       } catch (err) {
         streamError = err;
         const message = err instanceof Error ? err.message : String(err);
+        flushPendingDeltas();
         setState((prev) => ({
           ...prev,
           errors: [...prev.errors, { message, recoverable: false }],
         }));
       } finally {
+        flushPendingDeltas();
         if (!cancelled) onComplete?.(streamError);
       }
     })();
     return () => {
       cancelled = true;
+      if (flushTimer !== null) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
       iteratorRef.current = null;
     };
   }, [events, onComplete, iteratorRef]);
@@ -550,7 +634,6 @@ export function DebateApp({
   return (
     <Box flexDirection="column">
       {isRawModeSupported && !state.userCancelled && <CtrlCHandler onCancel={handleCancel} />}
-      <PanelRoster state={state} />
       <Static items={state.completedItems as StaticItem[]}>
         {(item) => <StaticItemView key={item.id} item={item} state={state} />}
       </Static>
