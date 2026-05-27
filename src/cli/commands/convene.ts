@@ -401,11 +401,14 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
               minExperts?: number;
             } = { defaultModel };
             
-            // When --max-experts is provided, also set minExperts to avoid impossible ranges
-            if (opts.maxExperts !== undefined) {
-              autoComposeOptions.maxExperts = opts.maxExperts;
+            // Precedence: --max-experts CLI flag > config.defaults.maxExperts >
+            // auto-compose hardcoded default. When either source provides a value,
+            // also set minExperts to avoid impossible ranges.
+            const resolvedMaxExperts = opts.maxExperts ?? config.defaults.maxExperts;
+            if (resolvedMaxExperts !== undefined) {
+              autoComposeOptions.maxExperts = resolvedMaxExperts;
               // Ensure min ≤ max: if maxExperts is less than default minimum (3), clamp min
-              autoComposeOptions.minExperts = Math.min(3, opts.maxExperts);
+              autoComposeOptions.minExperts = Math.min(3, resolvedMaxExperts);
             }
             
             template = await autoComposePanel(topic, composeEngine, autoComposeOptions);
