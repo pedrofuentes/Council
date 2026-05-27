@@ -18,6 +18,7 @@ import { ExpertRepository } from "../../../../src/memory/repositories/experts.js
 import { DebateRepository } from "../../../../src/memory/repositories/debates.js";
 import { TurnRepository } from "../../../../src/memory/repositories/turns.js";
 import { getSymbols } from "../../../../src/cli/renderers/symbols.js";
+import { copyTemplateDb } from "../../../helpers/template-db.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -28,6 +29,7 @@ beforeEach(async () => {
   testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-hints-test-"));
   originalHome = process.env["COUNCIL_HOME"];
   process.env["COUNCIL_HOME"] = testHome;
+  await copyTemplateDb(path.join(testHome, "council.db"));
 });
 
 afterEach(async () => {

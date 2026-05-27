@@ -20,6 +20,7 @@ import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
 import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
+import { copyTemplateDb } from "../../../helpers/template-db.js";
 
 interface TestEnv {
   readonly home: string;
@@ -35,6 +36,7 @@ async function makeEnv(): Promise<TestEnv> {
   const originalDataHome = process.env["COUNCIL_DATA_HOME"];
   process.env["COUNCIL_HOME"] = home;
   process.env["COUNCIL_DATA_HOME"] = dataHome;
+  await copyTemplateDb(path.join(home, "council.db"));
   return { home, dataHome, originalHome, originalDataHome };
 }
 

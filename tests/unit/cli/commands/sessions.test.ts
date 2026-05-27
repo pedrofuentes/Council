@@ -14,6 +14,7 @@ import type { ConfirmProvider } from "../../../../src/cli/commands/confirm.js";
 import { buildSessionsCommand } from "../../../../src/cli/commands/sessions.js";
 import { buildProgram } from "../../../../src/bin/council.js";
 import type { DebateStatus } from "../../../../src/memory/repositories/debates.js";
+import { copyTemplateDb } from "../../../helpers/template-db.js";
 
 interface SeededPanelDebates {
   readonly panelId: string;
@@ -294,6 +295,7 @@ describe("buildSessionsCommand", () => {
       originalHome = process.env["COUNCIL_HOME"];
       originalDataHome = process.env["COUNCIL_DATA_HOME"];
       process.env["COUNCIL_HOME"] = testHome;
+      await copyTemplateDb(path.join(testHome, "council.db"));
     });
 
     afterEach(async () => {

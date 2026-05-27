@@ -13,6 +13,7 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { copyTemplateDb } from "../../helpers/template-db.js";
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
 import {
   loadTranscript,
@@ -115,6 +116,7 @@ describe("loadTranscript", () => {
 
   beforeEach(async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "council-transcript-"));
+    await copyTemplateDb(path.join(dir, "council.db"));
     db = await createDatabase(path.join(dir, "council.db"));
     await db.destroy();
   });
@@ -348,6 +350,7 @@ describe("synthesizeEvents", () => {
 
   beforeEach(async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "council-synth-"));
+    await copyTemplateDb(path.join(dir, "council.db"));
   });
   afterEach(async () => {
     try {

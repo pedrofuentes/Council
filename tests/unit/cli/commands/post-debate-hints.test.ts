@@ -45,6 +45,7 @@ import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
 import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
+import { copyTemplateDb } from "../../../helpers/template-db.js";
 
 const CONVENE_DISCOVERY_HINT =
   'Tip: Try `council ask <panel> "<question>"` for follow-ups, or `council sessions` to review past debates.';
@@ -101,6 +102,7 @@ describe("post-debate discovery hints", () => {
     testState.councilDataHome = path.join(testHome, "data");
     await fs.mkdir(testState.councilDataHome, { recursive: true });
     setQuiet(false);
+    await copyTemplateDb(path.join(testHome, "council.db"));
   });
 
   afterEach(async () => {

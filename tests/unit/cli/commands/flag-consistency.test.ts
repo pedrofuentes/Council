@@ -22,6 +22,7 @@ import {
 import { buildExpertCommand } from "../../../../src/cli/commands/expert.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
 import { createDatabase } from "../../../../src/memory/db.js";
+import { copyTemplateDb } from "../../../helpers/template-db.js";
 import { DebateRepository } from "../../../../src/memory/repositories/debates.js";
 import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
 import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
@@ -246,6 +247,7 @@ describe("T-16: Flag consistency", () => {
       process.env["COUNCIL_HOME"] = testHome;
       process.env["COUNCIL_DATA_HOME"] = path.join(testHome, "data");
       await fs.mkdir(path.join(testHome, "data", "experts"), { recursive: true });
+      await copyTemplateDb(path.join(testHome, "council.db"));
     });
 
     afterEach(async () => {
@@ -344,6 +346,7 @@ describe("T-16: Flag consistency", () => {
       testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-timeout-test-"));
       originalHome = process.env["COUNCIL_HOME"];
       process.env["COUNCIL_HOME"] = testHome;
+      await copyTemplateDb(path.join(testHome, "council.db"));
     });
 
     afterEach(async () => {

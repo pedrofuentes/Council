@@ -4,6 +4,7 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { copyTemplateDb } from "../../helpers/template-db.js";
 import { CliUserError } from "../../../src/cli/cli-user-error.js";
 import { resolveSession } from "../../../src/cli/session-resolver.js";
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
@@ -15,6 +16,7 @@ describe("resolveSession", () => {
 
   beforeEach(async () => {
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-session-resolver-"));
+    await copyTemplateDb(path.join(testHome, "council.db"));
     db = await createDatabase(path.join(testHome, "council.db"));
   });
 

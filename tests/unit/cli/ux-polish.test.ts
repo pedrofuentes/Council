@@ -5,6 +5,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { copyTemplateDb } from "../../helpers/template-db.js";
+
 import { getSymbols } from "../../../src/cli/renderers/symbols.js";
 import {
   isCostWarning,
@@ -187,6 +189,7 @@ describe("DX-11: expert delete --force lists affected panels", () => {
       // Seed expert via library
       const { createDatabase } = await import("../../../src/memory/db.js");
       const { FileExpertLibrary } = await import("../../../src/core/expert-library.js");
+      await copyTemplateDb(path.join(home, "council.db"));
       const db = await createDatabase(path.join(home, "council.db"));
       const lib = new FileExpertLibrary(dataHome, db);
       await lib.create({

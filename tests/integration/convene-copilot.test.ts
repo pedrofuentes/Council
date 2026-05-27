@@ -23,6 +23,7 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { copyTemplateDb } from "../helpers/template-db.js";
 import { buildConveneCommand } from "../../src/cli/commands/convene.js";
 import { createDatabase } from "../../src/memory/db.js";
 import { DebateRepository } from "../../src/memory/repositories/debates.js";
@@ -39,6 +40,7 @@ describe.runIf(INTEGRATION)("council convene --engine copilot (integration)", ()
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-integration-"));
     originalHome = process.env["COUNCIL_HOME"];
     process.env["COUNCIL_HOME"] = testHome;
+    await copyTemplateDb(path.join(testHome, "council.db"));
   });
 
   afterEach(async () => {

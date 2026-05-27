@@ -7,6 +7,11 @@ export default defineConfig({
     environment: "node",
     globals: false,
 
+    // Build a pre-migrated template DB once before any worker starts.
+    // Workers copy this template (via `copyTemplateDb()`) instead of
+    // running 11 sequential migrations per `createDatabase()` call.
+    globalSetup: ["./tests/global-setup.ts"],
+
     // Use forked child processes (not worker threads). @libsql/client loads a
     // native binding that is not safe to share across worker_threads, and the
     // SQLite file handles it owns must be owned by a single OS process for

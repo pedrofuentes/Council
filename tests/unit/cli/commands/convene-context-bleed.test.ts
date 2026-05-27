@@ -27,6 +27,7 @@ import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
 import { DebateRepository } from "../../../../src/memory/repositories/debates.js";
 import { TurnRepository } from "../../../../src/memory/repositories/turns.js";
 import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
+import { copyTemplateDb } from "../../../helpers/template-db.js";
 
 describe("convene — no context bleed across sequential debates (T1)", () => {
   let testHome: string;
@@ -36,6 +37,7 @@ describe("convene — no context bleed across sequential debates (T1)", () => {
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-bleed-test-"));
     originalHome = process.env["COUNCIL_HOME"];
     process.env["COUNCIL_HOME"] = testHome;
+    await copyTemplateDb(path.join(testHome, "council.db"));
   });
 
   afterEach(async () => {

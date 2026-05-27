@@ -36,6 +36,7 @@ import { ExpertRepository } from "../../../../src/memory/repositories/experts.js
 import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
 import { ProfileRepository } from "../../../../src/memory/repositories/profile-repository.js";
 import { TurnRepository } from "../../../../src/memory/repositories/turns.js";
+import { copyTemplateDb } from "../../../helpers/template-db.js";
 
 interface SeededPanel {
   name: string;
@@ -112,6 +113,7 @@ describe("buildMemoryCommand", () => {
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-memory-test-"));
     originalHome = process.env["COUNCIL_HOME"];
     process.env["COUNCIL_HOME"] = testHome;
+    await copyTemplateDb(path.join(testHome, "council.db"));
   });
 
   afterEach(async () => {

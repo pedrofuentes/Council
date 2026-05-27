@@ -31,6 +31,7 @@ import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
 import { DebateRepository } from "../../../../src/memory/repositories/debates.js";
 import { TurnRepository } from "../../../../src/memory/repositories/turns.js";
 import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
+import { copyTemplateDb } from "../../../helpers/template-db.js";
 
 describe("buildConveneCommand", () => {
   let testHome: string;
@@ -40,6 +41,7 @@ describe("buildConveneCommand", () => {
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-convene-test-"));
     originalHome = process.env["COUNCIL_HOME"];
     process.env["COUNCIL_HOME"] = testHome;
+    await copyTemplateDb(path.join(testHome, "council.db"));
   });
 
   afterEach(async () => {
@@ -1056,6 +1058,7 @@ describe("buildConveneCommand — user panels with slug references", () => {
     originalDataHome = process.env["COUNCIL_DATA_HOME"];
     process.env["COUNCIL_HOME"] = testHome;
     process.env["COUNCIL_DATA_HOME"] = testDataHome;
+    await copyTemplateDb(path.join(testHome, "council.db"));
   });
 
   afterEach(async () => {

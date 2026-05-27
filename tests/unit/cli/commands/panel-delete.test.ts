@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildPanelCommand } from "../../../../src/cli/commands/panel.js";
 import { buildExpertCommand } from "../../../../src/cli/commands/expert.js";
 import type { ExpertDefinition } from "../../../../src/core/expert.js";
+import { copyTemplateDb } from "../../../helpers/template-db.js";
 
 interface TestEnv {
   readonly home: string;
@@ -32,6 +33,7 @@ async function makeEnv(): Promise<TestEnv> {
   const originalDataHome = process.env["COUNCIL_DATA_HOME"];
   process.env["COUNCIL_HOME"] = home;
   process.env["COUNCIL_DATA_HOME"] = dataHome;
+  await copyTemplateDb(path.join(home, "council.db"));
   return { home, dataHome, originalHome, originalDataHome };
 }
 
