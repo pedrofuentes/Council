@@ -5,10 +5,6 @@
  *
  * RED at this commit: src/memory/expert-memory.ts does not exist.
  */
-import * as fs from "node:fs/promises";
-import * as os from "node:os";
-import * as path from "node:path";
-
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
@@ -32,11 +28,10 @@ interface Fixture {
 }
 
 async function makeFixture(): Promise<Fixture> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "council-memrecall-"));
-  const db = await createDatabase(path.join(dir, "council.db"));
+  const db = await createDatabase(":memory:");
   const panel = await new PanelRepository(db).create({
     name: "test-panel",
-    copilotHome: path.join(dir, "copilot"),
+    copilotHome: "test-copilot-home",
     configJson: "{}",
   });
   const expert = await new ExpertRepository(db).create({
@@ -59,11 +54,6 @@ async function makeFixture(): Promise<Fixture> {
     turns: new TurnRepository(db),
     cleanup: async () => {
       await db.destroy();
-      try {
-        await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-      } catch {
-        /* best effort — Windows can hold the libsql file briefly after destroy() */
-      }
     },
   };
 }

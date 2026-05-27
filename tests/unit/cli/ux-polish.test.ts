@@ -5,10 +5,23 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { getSymbols } from "../../../src/cli/renderers/symbols.js";
+import {
+  isCostWarning,
+  COST_WARNING_THRESHOLD,
+} from "../../../src/cli/renderers/ink/InkRenderer.js";
+import {
+  HUMAN_COLOR,
+  assignExpertColor,
+  EXPERT_COLOR_PALETTE,
+} from "../../../src/cli/renderers/ink/colors.js";
+import { PlainRenderer } from "../../../src/cli/renderers/plain.js";
+import { buildDoctorCommand } from "../../../src/cli/commands/doctor.js";
+import { wrapLink } from "../../../src/cli/error-mapper.js";
+
 // --- TUI-18: Human symbol in SymbolSet ---
 describe("TUI-18: human symbol in SymbolSet", () => {
-  it("getSymbols() includes a 'human' property in unicode mode", async () => {
-    const { getSymbols } = await import("../../../src/cli/renderers/symbols.js");
+  it("getSymbols() includes a 'human' property in unicode mode", () => {
     delete process.env.NO_COLOR;
     delete process.env.TERM;
     delete process.env.COUNCIL_ASCII;
@@ -17,8 +30,7 @@ describe("TUI-18: human symbol in SymbolSet", () => {
     expect(s.human).toBe("👤");
   });
 
-  it("getSymbols() includes '[H]' for human in ASCII mode", async () => {
-    const { getSymbols } = await import("../../../src/cli/renderers/symbols.js");
+  it("getSymbols() includes '[H]' for human in ASCII mode", () => {
     const s = getSymbols(true);
     expect(s.human).toBe("[H]");
   });
@@ -26,10 +38,7 @@ describe("TUI-18: human symbol in SymbolSet", () => {
 
 // --- TUI-24: Cost indicator warning color ---
 describe("TUI-24: CostIndicator warning color at high ratio", () => {
-  it("isCostWarning returns true when ratio exceeds threshold", async () => {
-    const { isCostWarning, COST_WARNING_THRESHOLD } = await import(
-      "../../../src/cli/renderers/ink/InkRenderer.js"
-    );
+  it("isCostWarning returns true when ratio exceeds threshold", () => {
     expect(COST_WARNING_THRESHOLD).toBe(0.8);
     // Above threshold → warning
     expect(isCostWarning(81, 100)).toBe(true);
@@ -39,10 +48,7 @@ describe("TUI-24: CostIndicator warning color at high ratio", () => {
     expect(isCostWarning(50, 100)).toBe(false);
   });
 
-  it("isCostWarning handles zero/invalid estimatedTotal safely", async () => {
-    const { isCostWarning } = await import(
-      "../../../src/cli/renderers/ink/InkRenderer.js"
-    );
+  it("isCostWarning handles zero/invalid estimatedTotal safely", () => {
     // Zero denominator → false (no crash)
     expect(isCostWarning(10, 0)).toBe(false);
     // Negative denominator → false
@@ -52,31 +58,21 @@ describe("TUI-24: CostIndicator warning color at high ratio", () => {
 
 // --- TUI-25: Reserved HUMAN_COLOR ---
 describe("TUI-25: HUMAN_COLOR constant and assignExpertColor isHuman param", () => {
-  it("exports HUMAN_COLOR from colors.ts", async () => {
-    const { HUMAN_COLOR } = await import("../../../src/cli/renderers/ink/colors.js");
+  it("exports HUMAN_COLOR from colors.ts", () => {
     expect(HUMAN_COLOR).toBe("whiteBright");
   });
 
-  it("assignExpertColor returns HUMAN_COLOR when isHuman is true", async () => {
-    const { assignExpertColor, HUMAN_COLOR } = await import(
-      "../../../src/cli/renderers/ink/colors.js"
-    );
+  it("assignExpertColor returns HUMAN_COLOR when isHuman is true", () => {
     const color = assignExpertColor(0, { isHuman: true });
     expect(color).toBe(HUMAN_COLOR);
   });
 
-  it("assignExpertColor returns palette color when isHuman is false", async () => {
-    const { assignExpertColor, EXPERT_COLOR_PALETTE } = await import(
-      "../../../src/cli/renderers/ink/colors.js"
-    );
+  it("assignExpertColor returns palette color when isHuman is false", () => {
     const color = assignExpertColor(0, { isHuman: false });
     expect(color).toBe(EXPERT_COLOR_PALETTE[0]);
   });
 
-  it("assignExpertColor without options preserves old behavior", async () => {
-    const { assignExpertColor, EXPERT_COLOR_PALETTE } = await import(
-      "../../../src/cli/renderers/ink/colors.js"
-    );
+  it("assignExpertColor without options preserves old behavior", () => {
     const color = assignExpertColor(2);
     expect(color).toBe(EXPERT_COLOR_PALETTE[2]);
   });
@@ -85,8 +81,6 @@ describe("TUI-25: HUMAN_COLOR constant and assignExpertColor isHuman param", () 
 // --- TUI-26: InkRenderer accepts stdout/stderr for Sink testing ---
 describe("TUI-26: InkRenderer accepts stdout/stderr streams", () => {
   it("InkRenderer fallback to PlainRenderer writes to provided stdout Sink", async () => {
-    // Use the PlainRenderer path (which InkRenderer falls back to) via Sink
-    const { PlainRenderer } = await import("../../../src/cli/renderers/plain.js");
     let output = "";
     const sink = {
       write: (text: string) => { output += text; },
@@ -121,7 +115,6 @@ describe("A11Y-16: doctor terminal capability info", () => {
     delete process.env.NO_COLOR;
     delete process.env.FORCE_COLOR;
 
-    const { buildDoctorCommand } = await import("../../../src/cli/commands/doctor.js");
     let captured = "";
     const cmd = buildDoctorCommand({
       write: (s: string) => { captured += s; },
@@ -137,25 +130,21 @@ describe("A11Y-16: doctor terminal capability info", () => {
 
 // --- A11Y-17: OSC-8 hyperlinks ---
 describe("A11Y-17: wrapLink OSC-8 helper", () => {
-  it("exports wrapLink function from error-mapper", async () => {
-    const { wrapLink } = await import("../../../src/cli/error-mapper.js");
+  it("exports wrapLink function from error-mapper", () => {
     expect(typeof wrapLink).toBe("function");
   });
 
-  it("wrapLink returns plain text when stream is not TTY", async () => {
-    const { wrapLink } = await import("../../../src/cli/error-mapper.js");
+  it("wrapLink returns plain text when stream is not TTY", () => {
     const result = wrapLink("https://example.com", "click here", { isTTY: false });
     expect(result).toBe("click here");
   });
 
-  it("wrapLink returns plain URL when no text and not TTY", async () => {
-    const { wrapLink } = await import("../../../src/cli/error-mapper.js");
+  it("wrapLink returns plain URL when no text and not TTY", () => {
     const result = wrapLink("https://example.com", undefined, { isTTY: false });
     expect(result).toBe("https://example.com");
   });
 
-  it("wrapLink wraps URL with OSC-8 when stream is TTY", async () => {
-    const { wrapLink } = await import("../../../src/cli/error-mapper.js");
+  it("wrapLink wraps URL with OSC-8 when stream is TTY", () => {
     const origTerm = process.env.TERM;
     process.env.TERM = "xterm-256color";
     try {
@@ -167,8 +156,7 @@ describe("A11Y-17: wrapLink OSC-8 helper", () => {
     }
   });
 
-  it("wrapLink degrades on TERM=dumb even if TTY", async () => {
-    const { wrapLink } = await import("../../../src/cli/error-mapper.js");
+  it("wrapLink degrades on TERM=dumb even if TTY", () => {
     const origTerm = process.env.TERM;
     process.env.TERM = "dumb";
     try {

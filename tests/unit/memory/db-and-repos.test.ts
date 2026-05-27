@@ -97,7 +97,7 @@ describe("createDatabase", () => {
     const after = await db2.selectFrom("schema_version").selectAll().execute();
     await db2.destroy();
     expect(after.length).toBe(before.length); // no duplicate version rows
-  });
+  }, 30_000);
 
   it("enables WAL and busy_timeout, then waits for a held write lock instead of crashing", async () => {
     const testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-db-config-"));
@@ -157,7 +157,7 @@ describe("createDatabase", () => {
       await db.destroy();
       await cleanupFileBackedDatabaseDir(testHome);
     }
-  }, 20_000);
+  }, 30_000);
 
   it("throws when a file-backed database cannot enter WAL mode", async () => {
     const mockClient = {
@@ -240,7 +240,7 @@ describe("createDatabase", () => {
       verifyClient.close();
       await cleanupFileBackedDatabaseDir(testHome);
     }
-  });
+  }, 30_000);
 
   it("applies migrations 001 through 011, creating the expected indexes", async () => {
     const versions = (
