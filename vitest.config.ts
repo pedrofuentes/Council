@@ -1,5 +1,7 @@
 import { defineConfig } from "vitest/config";
 
+const isCI = !!process.env.CI;
+
 export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts", "tests/**/*.test.tsx", "src/**/*.test.ts", "src/**/*.test.tsx"],
@@ -23,7 +25,7 @@ export default defineConfig({
     // os.tmpdir() (SQLite file creation, rm -rf, handle release) which is the
     // dominant source of EBUSY/EPERM flakes. Locally "50%" keeps developer
     // machines responsive; CI gets a hard cap of 2.
-    maxWorkers: process.env.CI ? 2 : "50%",
+    maxWorkers: isCI ? 2 : "50%",
 
     // Isolate every test file in its own fork. This is the default for
     // pool: "forks", but is stated explicitly so the guarantee — no shared
@@ -43,6 +45,27 @@ export default defineConfig({
     // to a per-process temp dir so commands that touch the filesystem
     // cannot pollute the user's real ~/.council/ directory.
     setupFiles: ["./tests/setup.ts"],
+
+    // --- Performance tuning ---
+
+    // Cache transformed modules on the filesystem. On reruns (iterative
+    // dev), Vitest skips re-transforming unchanged files — measured at ~79%
+    // transform reduction and ~57% import reduction in Vitest benchmarks.
+    // Requires Vitest 4.0.11+ (we run 4.1.6).
+    experimental: {
+      fsModuleCache: true,
+    },
+
+    // In CI, stop on the first test failure within a shard — the aggregate
+    // gate will mark the run as failed regardless, so there's no value in
+    // running the remaining tests. Locally, run everything so the developer
+    // sees all failures at once.
+    bail: isCI ? 1 : 0,
+
+    // In CI, use the dot reporter for lighter output overhead.
+    // Locally, use the default reporter for readable test names.
+    reporters: isCI ? ["dot"] : ["default"],
+
     coverage: {
       provider: "v8",
       reporter: ["text", "html", "lcov"],
