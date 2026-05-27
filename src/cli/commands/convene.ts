@@ -48,7 +48,7 @@ import { PanelRepository } from "../../memory/repositories/panels.js";
 import { runExtractMemoryHook } from "../extract-memory-hook.js";
 
 import { stripControlChars } from "../strip-control-chars.js";
-import { defaultErrorWriter, defaultWriter, isQuiet, type Writer } from "./writer.js";
+import { defaultErrorWriter, defaultWriter, isQuiet, setQuiet, type Writer } from "./writer.js";
 import {
   ENGINE_KINDS,
   type EngineKind,
@@ -105,6 +105,7 @@ export interface ConveneOptions {
   readonly heuristicMemory?: boolean;
   readonly yes?: boolean;
   readonly verbose?: boolean;
+  readonly quiet?: boolean;
   readonly model?: string;
   readonly maxExperts?: number;
 }
@@ -212,6 +213,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
     )
     .option("--yes", "Skip the auto-compose confirmation prompt (non-interactive runs)")
     .option("--verbose", "Show template migration notices and zero-change summaries")
+    .option("-q, --quiet", "Suppress informational output")
     .option(
       "--model <model>",
       "Model to use for experts (default: from config; run 'council doctor --models' to list available models)",
@@ -228,6 +230,9 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       },
     )
     .action(async (topic: string, raw: ConveneOptions) => {
+      if (raw.quiet === true) {
+        setQuiet(true);
+      }
       const admission = checkTopicAdmission(topic);
       for (const warning of admission.warnings) {
         writeError(warning + "\n");
