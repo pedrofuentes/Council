@@ -202,4 +202,88 @@ describe("convene --experts", () => {
       ]),
     ).rejects.toThrow(/at least one|requires|empty|expert/i);
   });
+
+  it("with --experts '' (empty string): writes error message to stderr before throwing", async () => {
+    const stderr: string[] = [];
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (s: string) => {
+        stderr.push(s);
+      },
+    });
+    await expect(
+      cmd.parseAsync([
+        "node",
+        "council-convene",
+        "Topic",
+        "--experts",
+        "",
+        "--max-rounds",
+        "1",
+        "--engine",
+        "mock",
+      ]),
+    ).rejects.toThrow(/at least one|requires|empty|expert/i);
+    const combined = stderr.join("");
+    expect(combined).toMatch(/--experts/);
+    expect(combined).toMatch(/at least one|requires|empty/i);
+  });
+
+  it("with --experts AND --template: writes error to stderr before throwing", async () => {
+    await seedExpert(env, expertDef("alpha"));
+    const stderr: string[] = [];
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (s: string) => {
+        stderr.push(s);
+      },
+    });
+    await expect(
+      cmd.parseAsync([
+        "node",
+        "council-convene",
+        "Topic",
+        "--experts",
+        "alpha",
+        "--template",
+        "code-review",
+        "--max-rounds",
+        "1",
+        "--engine",
+        "mock",
+      ]),
+    ).rejects.toThrow(/experts.*template|template.*experts|both|mutually/i);
+    const combined = stderr.join("");
+    expect(combined).toMatch(/--experts/);
+    expect(combined).toMatch(/template|panel/i);
+  });
+
+  it("with --experts referencing unknown slug: writes error to stderr before throwing", async () => {
+    await seedExpert(env, expertDef("alpha"));
+    const stderr: string[] = [];
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (s: string) => {
+        stderr.push(s);
+      },
+    });
+    await expect(
+      cmd.parseAsync([
+        "node",
+        "council-convene",
+        "Topic",
+        "--experts",
+        "alpha,ghost",
+        "--max-rounds",
+        "1",
+        "--engine",
+        "mock",
+      ]),
+    ).rejects.toThrow(/ghost|not found|unknown|missing/i);
+    const combined = stderr.join("");
+    expect(combined).toMatch(/ghost/);
+  });
 });
