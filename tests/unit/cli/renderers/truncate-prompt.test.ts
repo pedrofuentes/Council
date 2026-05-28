@@ -66,4 +66,56 @@ describe("truncatePrompt", () => {
       "\u{1F600}\u{1F601}\u{1F602}...",
     );
   });
+
+  it("counts a ZWJ family emoji as a single grapheme cluster", () => {
+    // "👨‍👩‍👧" is U+1F468 ZWJ U+1F469 ZWJ U+1F467 — 5 code points, 1 grapheme.
+    // Padding three ASCII chars + the family = 4 graphemes. With maxLength=4
+    // the whole string should fit unchanged; with maxLength=3 only "aaa..."
+    // should be returned (the family must not be split mid-cluster).
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+    expect(truncatePrompt("aaa" + family, { maxLength: 4 })).toBe(
+      "aaa" + family,
+    );
+    expect(truncatePrompt("aaa" + family, { maxLength: 3 })).toBe("aaa...");
+  });
+
+  it("does not split a ZWJ family emoji that straddles the truncation boundary", () => {
+    // With code-point slicing this would cut the family between the man and
+    // the first ZWJ, leaving an orphaned ZWJ + woman + ZWJ + girl tail.
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+    const input = "ab" + family + "cd";
+    const out = truncatePrompt(input, { maxLength: 2 });
+    expect(out).toBe("ab...");
+    // Output must not begin a ZWJ sequence mid-cluster.
+    expect(out).not.toContain("\u200D");
+  });
+
+  it("counts a regional-indicator flag as a single grapheme cluster", () => {
+    // "🇺🇸" = U+1F1FA U+1F1F8 — 2 code points, 1 grapheme.
+    const flag = "\u{1F1FA}\u{1F1F8}";
+    expect(truncatePrompt("ab" + flag + "cd", { maxLength: 3 })).toBe(
+      "ab" + flag + "...",
+    );
+  });
+
+  it("does not split a regional-indicator flag across the truncation boundary", () => {
+    const flag = "\u{1F1FA}\u{1F1F8}";
+    const out = truncatePrompt("ab" + flag + "cd", { maxLength: 2 });
+    expect(out).toBe("ab...");
+    // No lone regional indicator should appear in the output.
+    expect(out).not.toMatch(/[\u{1F1E6}-\u{1F1FF}]/u);
+  });
+
+  it("keeps a base character and its combining mark together as one grapheme", () => {
+    // "e" + U+0301 (combining acute) = "é" — 2 code points, 1 grapheme.
+    const eAcute = "e\u0301";
+    expect(truncatePrompt("ab" + eAcute + "cd", { maxLength: 3 })).toBe(
+      "ab" + eAcute + "...",
+    );
+    // Truncating just before the cluster must drop it whole, not leave a
+    // dangling combining mark at the start of the next cluster.
+    const out = truncatePrompt("ab" + eAcute + "cd", { maxLength: 2 });
+    expect(out).toBe("ab...");
+    expect(out).not.toContain("\u0301");
+  });
 });
