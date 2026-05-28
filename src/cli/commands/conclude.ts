@@ -224,10 +224,22 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
         try {
           await engine.start();
           await engine.addExpert(synthesizerSpec);
-          const { prompt, truncated } = buildSynthesisPrompt(doc);
+          const {
+            prompt,
+            truncated,
+            truncatedByTurns,
+            truncatedByChars,
+            originalTurnCount,
+            finalTurnCount,
+          } = buildSynthesisPrompt(doc);
           if (truncated) {
             warnings.push(
-              `transcript truncated to last ${MAX_TRANSCRIPT_TURNS} turns / ${MAX_TRANSCRIPT_CHARS} chars to fit synthesis budget`,
+              formatTruncationWarning({
+                truncatedByTurns,
+                truncatedByChars,
+                originalTurnCount,
+                finalTurnCount,
+              }),
             );
           }
           raw_response = await collectResponse(engine, synthesizerId, prompt, raw.timeout);
@@ -277,6 +289,14 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
 export interface BuiltSynthesisPrompt {
   readonly prompt: string;
   readonly truncated: boolean;
+  /** True if the original turn count exceeded {@link MAX_TRANSCRIPT_TURNS}. */
+  readonly truncatedByTurns: boolean;
+  /** True if dropping oldest turns was required to fit {@link MAX_TRANSCRIPT_CHARS}. */
+  readonly truncatedByChars: boolean;
+  /** Number of turns in the source transcript before any truncation. */
+  readonly originalTurnCount: number;
+  /** Number of turns actually included in the emitted prompt. */
+  readonly finalTurnCount: number;
 }
 
 export function buildSynthesisPrompt(doc: TranscriptDocument): BuiltSynthesisPrompt {
@@ -284,13 +304,14 @@ export function buildSynthesisPrompt(doc: TranscriptDocument): BuiltSynthesisPro
   for (const e of doc.experts) nameById.set(e.id, e.displayName);
 
   const allTurns = doc.turns;
+  const originalTurnCount = allTurns.length;
   // Keep the most recent MAX_TRANSCRIPT_TURNS turns so the model still sees
   // the conclusions of the debate when the transcript is long.
   let turns = allTurns;
-  let truncated = false;
+  let truncatedByTurns = false;
   if (turns.length > MAX_TRANSCRIPT_TURNS) {
     turns = turns.slice(turns.length - MAX_TRANSCRIPT_TURNS);
-    truncated = true;
+    truncatedByTurns = true;
   }
 
   // Build transcript body, enforcing a character budget. Drop oldest turns
@@ -301,11 +322,15 @@ export function buildSynthesisPrompt(doc: TranscriptDocument): BuiltSynthesisPro
     turnBlocks.push(`[${speaker}] (round ${t.round}, seq ${t.seq}):\n${t.content}\n`);
   }
   let body = turnBlocks.join("\n");
+  let truncatedByChars = false;
   while (body.length > MAX_TRANSCRIPT_CHARS && turnBlocks.length > 1) {
     turnBlocks.shift();
     body = turnBlocks.join("\n");
-    truncated = true;
+    truncatedByChars = true;
   }
+
+  const finalTurnCount = turnBlocks.length;
+  const truncated = truncatedByTurns || truncatedByChars;
 
   const topic = doc.panel.topic ?? doc.latestDebate.prompt;
   const lines: string[] = [];
@@ -318,7 +343,7 @@ export function buildSynthesisPrompt(doc: TranscriptDocument): BuiltSynthesisPro
   lines.push("");
   if (truncated) {
     lines.push(
-      `Note: transcript was truncated to fit synthesis budget (showing ${turnBlocks.length} of ${allTurns.length} turns).`,
+      `Note: transcript was truncated to fit synthesis budget (showing ${finalTurnCount} of ${originalTurnCount} turns).`,
     );
     lines.push("");
   }
@@ -332,7 +357,33 @@ export function buildSynthesisPrompt(doc: TranscriptDocument): BuiltSynthesisPro
   lines.push(
     "Now produce the JSON synthesis as instructed in your system message. Output only JSON.",
   );
-  return { prompt: lines.join("\n"), truncated };
+  return {
+    prompt: lines.join("\n"),
+    truncated,
+    truncatedByTurns,
+    truncatedByChars,
+    originalTurnCount,
+    finalTurnCount,
+  };
+}
+
+interface TruncationFacts {
+  readonly truncatedByTurns: boolean;
+  readonly truncatedByChars: boolean;
+  readonly originalTurnCount: number;
+  readonly finalTurnCount: number;
+}
+
+export function formatTruncationWarning(facts: TruncationFacts): string {
+  const { truncatedByTurns, truncatedByChars, originalTurnCount, finalTurnCount } = facts;
+  const prefix = `transcript truncated from ${originalTurnCount} to ${finalTurnCount} turns`;
+  if (truncatedByTurns && truncatedByChars) {
+    return `${prefix} to fit synthesis budget (turn limit ${MAX_TRANSCRIPT_TURNS} and ${MAX_TRANSCRIPT_CHARS} char limit both exceeded)`;
+  }
+  if (truncatedByTurns) {
+    return `${prefix} to fit turn limit (${MAX_TRANSCRIPT_TURNS})`;
+  }
+  return `${prefix} to fit ${MAX_TRANSCRIPT_CHARS} char limit`;
 }
 
 async function collectResponse(
