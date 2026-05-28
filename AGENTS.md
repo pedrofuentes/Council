@@ -84,7 +84,7 @@ Pre-Merge Checklist:
 - [ ] Sentinel Report ID: ___
 - [ ] Verdict: APPROVED / CONDITIONAL
 - [ ] Reviewed SHA == HEAD: ___
-- [ ] Mode: standard / degraded (if degraded → user approval required)
+- [ ] Mode: standard / standard (fast-path) / degraded (if degraded → user approval required)
 - [ ] Sentinel invoked by non-author (invoker and reviewer are independent of code author): ___
 ```
 
