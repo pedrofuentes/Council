@@ -205,4 +205,41 @@ describe("buildConveneCommand — debate header truncation", () => {
     if (headerMatch === null) return;
     expect(headerMatch[1].endsWith("...")).toBe(false);
   });
+
+  it("strips ANSI escape sequences and control characters from topic in the header", async () => {
+    const topicWithAnsi = "\x1B[31mRed text\x1B[0m and \x1B[1mbold\x1B[0m topic";
+    const cleanTopic = "Red text and bold topic";
+    const engine = new CapturePromptEngine([
+      validPanelJson,
+      "Alpha response",
+      "Beta response",
+      "Gamma response",
+    ]);
+
+    let stdout = "";
+    const cmd = buildConveneCommand({
+      engineFactory: () => engine,
+      write: (s) => {
+        stdout += s;
+      },
+      writeError: () => undefined,
+      confirmProvider: () => ({ confirm: async () => true }),
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      topicWithAnsi,
+      "--yes",
+      "--max-rounds",
+      "1",
+    ]);
+
+    // The header must NOT contain the raw ANSI escape sequences.
+    expect(stdout).not.toContain("\x1B[31m");
+    expect(stdout).not.toContain("\x1B[0m");
+    expect(stdout).not.toContain("\x1B[1m");
+    // The header must contain the clean text.
+    expect(stdout).toContain(`Topic: ${cleanTopic}\n`);
+  });
 });
