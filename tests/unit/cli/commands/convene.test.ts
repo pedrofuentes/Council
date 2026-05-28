@@ -86,6 +86,38 @@ describe("buildConveneCommand", () => {
     expect(longs).toContain("--max-words");
   });
 
+  describe("numeric option validation at parse time", () => {
+    const numericFlags = [
+      { flag: "--max-rounds", label: "--max-rounds" },
+      { flag: "--max-words", label: "--max-words" },
+      { flag: "--summarize-after", label: "--summarize-after" },
+    ] as const;
+
+    for (const { flag, label } of numericFlags) {
+      it(`rejects non-numeric ${flag} with a clear error`, async () => {
+        const cmd = buildConveneCommand({
+          engineFactory: makeMockEngineFactory(),
+          write: () => {
+            /* swallow */
+          },
+        });
+        await expect(
+          cmd.parseAsync([
+            "node",
+            "council-convene",
+            "Some topic",
+            "--template",
+            "code-review",
+            "--engine",
+            "mock",
+            flag,
+            "abc",
+          ]),
+        ).rejects.toThrow(new RegExp(`${label}.*integer.*abc`));
+      });
+    }
+  });
+
   it("end-to-end: creates panel, experts, debate row, and turn rows from a built-in template", async () => {
     let captured = "";
     const cmd = buildConveneCommand({
