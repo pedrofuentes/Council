@@ -160,8 +160,8 @@ describe("buildConveneCommand — debate header truncation", () => {
     expect(headerMatch).not.toBeNull();
     if (headerMatch === null) return;
     const displayed = headerMatch[1];
-    expect(displayed.length).toBeLessThanOrEqual(203); // 200 + "..."
-    expect(displayed.endsWith("...")).toBe(true);
+    const expectedTruncated = longTopic.slice(0, 200) + "...";
+    expect(displayed).toBe(expectedTruncated);
     // The full topic must NOT appear verbatim in stdout.
     expect(stdout).not.toContain(longTopic);
 
