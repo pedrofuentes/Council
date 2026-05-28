@@ -17,14 +17,20 @@ export interface TruncatePromptOptions {
 }
 
 /**
- * Returns `prompt` unchanged when its length is at or below the
- * configured maximum; otherwise returns the first `maxLength`
- * characters followed by an ellipsis (`...`).
+ * Returns `prompt` unchanged when its length (in Unicode code points)
+ * is at or below the configured maximum; otherwise returns the first
+ * `maxLength` code points followed by an ellipsis (`...`).
+ *
+ * Truncation operates on code points (via `Array.from`) rather than
+ * UTF-16 code units so that surrogate-pair characters such as emoji
+ * straddling the boundary are kept intact or dropped whole, never
+ * split into invalid lone surrogates.
  */
 export function truncatePrompt(prompt: string, options: TruncatePromptOptions = {}): string {
   const maxLength = options.maxLength ?? DEFAULT_PROMPT_DISPLAY_MAX;
-  if (prompt.length <= maxLength) {
+  const codePoints = Array.from(prompt);
+  if (codePoints.length <= maxLength) {
     return prompt;
   }
-  return prompt.slice(0, maxLength) + "...";
+  return codePoints.slice(0, maxLength).join("") + "...";
 }
