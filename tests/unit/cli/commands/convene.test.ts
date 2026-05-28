@@ -118,6 +118,41 @@ describe("buildConveneCommand", () => {
     }
   });
 
+  describe("--model validation at parse time", () => {
+    it("rejects an unknown --model with a clear error listing the invalid value and valid options", async () => {
+      const cmd = buildConveneCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: () => {
+          /* swallow */
+        },
+      });
+      await expect(
+        cmd.parseAsync([
+          "node",
+          "council-convene",
+          "Some topic",
+          "--template",
+          "code-review",
+          "--engine",
+          "mock",
+          "--model",
+          "bogus-model-xyz",
+        ]),
+      ).rejects.toThrow(/--model.*bogus-model-xyz.*claude-/s);
+    });
+
+    it("accepts a known --model value (e.g. claude-sonnet-4.5)", () => {
+      const cmd = buildConveneCommand({ engineFactory: makeMockEngineFactory() });
+      const modelOpt = cmd.options.find((o) => o.long === "--model");
+      expect(modelOpt).toBeDefined();
+      // The custom parser, if present, must accept registry values unchanged.
+      const parser = modelOpt?.parseArg as ((v: string, prev: unknown) => unknown) | undefined;
+      if (parser) {
+        expect(parser("claude-sonnet-4.5", undefined)).toBe("claude-sonnet-4.5");
+      }
+    });
+  });
+
   it("end-to-end: creates panel, experts, debate row, and turn rows from a built-in template", async () => {
     let captured = "";
     const cmd = buildConveneCommand({
