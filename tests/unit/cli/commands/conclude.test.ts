@@ -14,8 +14,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   buildConcludeCommand,
+  buildSynthesisPrompt,
+  MAX_TRANSCRIPT_CHARS,
+  MAX_TRANSCRIPT_TURNS,
   type ConcludeOutput,
 } from "../../../../src/cli/commands/conclude.js";
+import type { TranscriptDocument } from "../../../../src/memory/transcript.js";
+import type { Turn } from "../../../../src/memory/repositories/turns.js";
 import { CliUserError } from "../../../../src/cli/cli-user-error.js";
 import { buildProgram } from "../../../../src/bin/council.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
@@ -697,5 +702,241 @@ describe("buildConcludeCommand", () => {
     const program = buildProgram();
     const names = program.commands.map((c) => c.name());
     expect(names).toContain("conclude");
+  });
+});
+
+function makeTranscriptDoc(turns: readonly Turn[]): TranscriptDocument {
+  return {
+    panel: {
+      id: "p1",
+      name: "test-panel",
+      topic: "Test topic",
+      copilotHome: "/tmp/copilot",
+      configJson: "{}",
+      createdAt: "2025-01-01T00:00:00Z",
+      updatedAt: "2025-01-01T00:00:00Z",
+    },
+    experts: [
+      {
+        id: "e1",
+        panelId: "p1",
+        slug: "cto",
+        displayName: "CTO",
+        model: "m",
+        systemMessage: "",
+        copilotSessionId: null,
+        createdAt: "2025-01-01T00:00:00Z",
+        extractedMemoryJson: null,
+        memorySourceDebateId: null,
+        memoryDerivation: null,
+        memoryTrustScore: null,
+        memoryExtractedAt: null,
+      },
+    ],
+    originalPrompt: "Test topic",
+    latestDebate: {
+      id: "d1",
+      prompt: "Test topic",
+      status: "completed",
+      startedAt: "2025-01-01T00:00:00Z",
+      endedAt: "2025-01-01T01:00:00Z",
+    },
+    turns,
+  };
+}
+
+function makeTurn(seq: number, content: string): Turn {
+  return {
+    id: `t${seq}`,
+    debateId: "d1",
+    round: 0,
+    seq,
+    speakerKind: "expert",
+    expertId: "e1",
+    content,
+    tokensIn: null,
+    tokensOut: null,
+    latencyMs: null,
+    createdAt: "2025-01-01T00:00:00Z",
+  };
+}
+
+describe("buildSynthesisPrompt — truncation reporting", () => {
+  it("reports no truncation when turns and chars are under limits", () => {
+    const turns = Array.from({ length: 5 }, (_, i) => makeTurn(i, "short content"));
+    const result = buildSynthesisPrompt(makeTranscriptDoc(turns));
+    expect(result.truncated).toBe(false);
+    expect(result.truncatedByTurns).toBe(false);
+    expect(result.truncatedByChars).toBe(false);
+    expect(result.originalTurnCount).toBe(5);
+    expect(result.finalTurnCount).toBe(5);
+  });
+
+  it("flags truncatedByTurns only when many short turns exceed turn limit", () => {
+    const total = MAX_TRANSCRIPT_TURNS + 10;
+    const turns = Array.from({ length: total }, (_, i) => makeTurn(i, "x"));
+    const result = buildSynthesisPrompt(makeTranscriptDoc(turns));
+    expect(result.truncated).toBe(true);
+    expect(result.truncatedByTurns).toBe(true);
+    expect(result.truncatedByChars).toBe(false);
+    expect(result.originalTurnCount).toBe(total);
+    expect(result.finalTurnCount).toBe(MAX_TRANSCRIPT_TURNS);
+  });
+
+  it("flags truncatedByChars only when few large turns exceed char budget", () => {
+    // 16 turns of ~6000 chars each ≈ 96000 chars > 50000, but 16 < 50 turns
+    const big = "a".repeat(6000);
+    const turns = Array.from({ length: 16 }, (_, i) => makeTurn(i, big));
+    const result = buildSynthesisPrompt(makeTranscriptDoc(turns));
+    expect(result.truncated).toBe(true);
+    expect(result.truncatedByTurns).toBe(false);
+    expect(result.truncatedByChars).toBe(true);
+    expect(result.originalTurnCount).toBe(16);
+    expect(result.finalTurnCount).toBeLessThan(16);
+    expect(result.finalTurnCount).toBeGreaterThan(0);
+  });
+
+  it("flags both truncatedByTurns and truncatedByChars when both limits exceeded", () => {
+    const big = "b".repeat(2000);
+    const turns = Array.from({ length: MAX_TRANSCRIPT_TURNS + 20 }, (_, i) => makeTurn(i, big));
+    const result = buildSynthesisPrompt(makeTranscriptDoc(turns));
+    expect(result.truncated).toBe(true);
+    expect(result.truncatedByTurns).toBe(true);
+    expect(result.truncatedByChars).toBe(true);
+    expect(result.originalTurnCount).toBe(MAX_TRANSCRIPT_TURNS + 20);
+    expect(result.finalTurnCount).toBeLessThan(MAX_TRANSCRIPT_TURNS);
+  });
+
+  it("does NOT mention 'last 50 turns' in warning for 16-turn, char-bound debate", async () => {
+    const big = "c".repeat(6000);
+    const turns = Array.from({ length: 16 }, (_, i) => makeTurn(i, big));
+    const result = buildSynthesisPrompt(makeTranscriptDoc(turns));
+    // Sanity check that this is the char-only scenario; warning rendering itself is
+    // exercised by the integration-level conclude tests below.
+    expect(result.truncatedByChars).toBe(true);
+    expect(result.truncatedByTurns).toBe(false);
+    expect(MAX_TRANSCRIPT_CHARS).toBe(50_000);
+  });
+});
+
+describe("conclude — truncation warning rendering", () => {
+  let testHome: string;
+  let originalHome: string | undefined;
+
+  beforeEach(async () => {
+    testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-conclude-trunc-"));
+    originalHome = process.env["COUNCIL_HOME"];
+    process.env["COUNCIL_HOME"] = testHome;
+    await copyTemplateDb(path.join(testHome, "council.db"));
+  });
+
+  afterEach(async () => {
+    if (originalHome === undefined) delete process.env["COUNCIL_HOME"];
+    else process.env["COUNCIL_HOME"] = originalHome;
+    try {
+      await fs.rm(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    } catch {
+      /* best effort */
+    }
+  });
+
+  async function seedPanelWithLargeTurns(
+    name: string,
+    turnCount: number,
+    perTurnChars: number,
+  ): Promise<string> {
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const panel = await new PanelRepository(db).create({
+        name,
+        topic: "Big debate",
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+      });
+      const cto = await new ExpertRepository(db).create({
+        panelId: panel.id,
+        slug: "cto",
+        displayName: "CTO",
+        model: "claude-sonnet-4",
+        systemMessage: "You are a CTO.",
+      });
+      const debate = await new DebateRepository(db).create({
+        panelId: panel.id,
+        prompt: "Big debate",
+        moderator: "round-robin",
+      });
+      const turnRepo = new TurnRepository(db);
+      const blob = "x".repeat(perTurnChars);
+      for (let i = 0; i < turnCount; i++) {
+        await turnRepo.create({
+          debateId: debate.id,
+          round: 0,
+          seq: i,
+          speakerKind: "expert",
+          expertId: cto.id,
+          content: blob,
+        });
+      }
+      await new DebateRepository(db).update(debate.id, {
+        status: "completed",
+        endedAt: new Date().toISOString(),
+      });
+      return panel.name;
+    } finally {
+      await db.destroy();
+    }
+  }
+
+  it("does NOT show 'last 50 turns' warning for 16-turn / 80KB debate", async () => {
+    const panelName = await seedPanelWithLargeTurns("conclude-16-turn-big", 16, 5500);
+    let captured = "";
+    const cmd = buildConcludeCommand({
+      write: (chunk) => {
+        captured += chunk;
+      },
+      writeError: () => undefined,
+      engineFactory: () => makeMockEngine(JSON.stringify(SAMPLE_OUTPUT)),
+      synthesizerId: SYNTH_ID,
+    });
+    await cmd.parseAsync(["node", "council-conclude", panelName, "--engine", "mock"]);
+    expect(captured).not.toMatch(/last 50 turns/);
+    // Should still warn — but about the char budget, mentioning the real 16
+    expect(captured).toMatch(/warning: transcript truncated/);
+    expect(captured).toMatch(/16/);
+    expect(captured).toMatch(/50000/);
+  });
+
+  it("shows turn-count truncation warning for 60-turn / small-content debate", async () => {
+    const panelName = await seedPanelWithLargeTurns("conclude-60-turn-small", 60, 50);
+    let captured = "";
+    const cmd = buildConcludeCommand({
+      write: (chunk) => {
+        captured += chunk;
+      },
+      writeError: () => undefined,
+      engineFactory: () => makeMockEngine(JSON.stringify(SAMPLE_OUTPUT)),
+      synthesizerId: SYNTH_ID,
+    });
+    await cmd.parseAsync(["node", "council-conclude", panelName, "--engine", "mock"]);
+    expect(captured).toMatch(/warning: transcript truncated/);
+    expect(captured).toMatch(/60/);
+    expect(captured).toMatch(/50/);
+    // Char limit not breached — message should not blame the char budget
+    expect(captured).not.toMatch(/50000 char/);
+  });
+
+  it("emits NO truncation warning for small in-budget debate", async () => {
+    const panelName = await seedPanelWithLargeTurns("conclude-small", 5, 100);
+    let captured = "";
+    const cmd = buildConcludeCommand({
+      write: (chunk) => {
+        captured += chunk;
+      },
+      writeError: () => undefined,
+      engineFactory: () => makeMockEngine(JSON.stringify(SAMPLE_OUTPUT)),
+      synthesizerId: SYNTH_ID,
+    });
+    await cmd.parseAsync(["node", "council-conclude", panelName, "--engine", "mock"]);
+    expect(captured).not.toMatch(/transcript truncated/);
   });
 });
