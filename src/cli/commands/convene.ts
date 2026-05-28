@@ -166,7 +166,13 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
     .option(
       "--max-rounds <n>",
       "Max rounds (freeform mode only)",
-      (v) => Number.parseInt(v, 10),
+      (v) => {
+        const parsed = Number(v);
+        if (!Number.isInteger(parsed)) {
+          throw new Error(`--max-rounds must be an integer (got: ${v})`);
+        }
+        return parsed;
+      },
       DEFAULT_MAX_ROUNDS,
     )
     .addOption(
@@ -177,7 +183,13 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
     .option(
       "--max-words <n>",
       "Soft per-response word cap",
-      (v) => Number.parseInt(v, 10),
+      (v) => {
+        const parsed = Number(v);
+        if (!Number.isInteger(parsed)) {
+          throw new Error(`--max-words must be an integer (got: ${v})`);
+        }
+        return parsed;
+      },
       DEFAULT_MAX_WORDS,
     )
     .option(
@@ -200,7 +212,13 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
     .option(
       "--summarize-after <n>",
       "Start rolling-summary after N rounds. Omit to disable.",
-      (v) => Number.parseInt(v, 10),
+      (v) => {
+        const parsed = Number(v);
+        if (!Number.isInteger(parsed)) {
+          throw new Error(`--summarize-after must be an integer (got: ${v})`);
+        }
+        return parsed;
+      },
     )
     .option(
       "--heuristic-summaries",
