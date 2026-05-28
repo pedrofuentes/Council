@@ -112,4 +112,75 @@ describe("checkTopicAdmission", () => {
       expect(result.warnings[0]).toContain("violence/weapons");
     });
   });
+
+  /**
+   * Shell-expansion heuristics.
+   *
+   * Motivation: when a user runs `council convene "$180K runway"` in a POSIX
+   * shell or PowerShell, `$180` is expanded BEFORE Council sees it, leaving
+   * a fragment like `K runway` (or sometimes a single trailing unit suffix
+   * like `K`). Council can never see what was lost; we can only flag
+   * patterns that hint the user's quoting may have misfired and suggest
+   * single quotes as a remedy. Warnings are advisory only — they never
+   * block the debate.
+   */
+  describe("possible shell expansion (literal $VAR pattern)", () => {
+    it.each([
+      "Literal $foo handling",
+      "Using $PATH in scripts",
+      "What does $1 mean in bash",
+      "$variable expansion semantics",
+    ])("warns about %s", (topic) => {
+      const result = checkTopicAdmission(topic);
+      expect(result.admitted).toBe(true);
+      const joined = result.warnings.join(" | ");
+      expect(joined).toMatch(/shell expansion/i);
+      expect(joined).toMatch(/single quotes/i);
+    });
+
+    it("does not warn on a bare $ with no following identifier char", () => {
+      const result = checkTopicAdmission("Pricing in $ vs €");
+      expect(result.warnings).toEqual([]);
+    });
+
+    it("does not warn on $ followed by whitespace", () => {
+      const result = checkTopicAdmission("Cost $ analysis");
+      expect(result.warnings).toEqual([]);
+    });
+  });
+
+  describe("possible shell expansion (suspiciously short fragment)", () => {
+    it.each(["K", "M", "B", "G", "x", "1"])(
+      "warns when the entire topic is a single character: %s",
+      (topic) => {
+        const result = checkTopicAdmission(topic);
+        expect(result.admitted).toBe(true);
+        const joined = result.warnings.join(" | ");
+        expect(joined).toMatch(/shell expansion/i);
+        expect(joined).toMatch(/single quotes/i);
+      },
+    );
+
+    it("does not flag two-character acronyms like AI as expansion artifacts", () => {
+      const result = checkTopicAdmission("AI");
+      expect(result.warnings).toEqual([]);
+    });
+
+    it("does not flag three-character topics", () => {
+      const result = checkTopicAdmission("LLM");
+      expect(result.warnings).toEqual([]);
+    });
+
+    it("does not flag normal sentence topics", () => {
+      const result = checkTopicAdmission("Should we adopt Rust?");
+      expect(result.warnings).toEqual([]);
+    });
+  });
+
+  describe("possible shell expansion (warn-only invariant)", () => {
+    it.each(["K", "$FOO bar"])("never blocks: admitted is always true for %s", (topic) => {
+      const result = checkTopicAdmission(topic);
+      expect(result.admitted).toBe(true);
+    });
+  });
 });
