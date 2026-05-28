@@ -8,10 +8,11 @@ debate it from different angles, and you get a structured recommendation you can
 act on and share.
 
 ```
-Your Question → Expert Panel → Debate → Conclusion → Export
-                  ▲                                      │
-                  │          (resume anytime)             │
-                  └──────────────────────────────────────-┘
+Your Question → Expert Panel ─┬─ Debate → Conclusion → Export
+                  ▲            │                          │
+                  │            └─ Chat (ongoing) ─────────┘
+                  │          (resume anytime)              │
+                  └───────────────────────────────────────-┘
 ```
 
 ## How to use this guide
@@ -22,6 +23,7 @@ Your Question → Expert Panel → Debate → Conclusion → Export
 | Use a built-in template                   | [Part 2: Using Built-in Templates](#part-2)       |
 | Build a reusable expert panel             | [Part 3: Building Your Expert Panel](#part-3)     |
 | Find a recipe for a specific task         | [Part 4: How-to Guides](#part-4)                  |
+| Chat with experts or review documents     | [Part 4: Chat Mode](#chat-with-a-panel)           |
 | Train an expert on your documents         | [Part 5: Creating a Persona Expert](#part-5)      |
 | Script Council or use it in CI/CD         | [Part 6: Power User Patterns](#part-6)            |
 | Look up a command, flag, or config option | [Part 7: Quick Reference](#part-7)                |
@@ -32,7 +34,7 @@ Your Question → Expert Panel → Debate → Conclusion → Export
 | -------------------------------------- | ------------------- | ---------------------------------------------------------- |
 | Get multiple expert perspectives       | `council convene`   | `council convene "Should we adopt GraphQL?"`               |
 | Quick answer from one expert           | `council ask`       | `council ask strategy-review "Explain CQRS"`               |
-| Ongoing 1:1 conversation               | `council chat`      | `council chat cto`                                         |
+| Ongoing conversation (1:1 or panel)    | `council chat`      | `council chat strategy-review`                             |
 | Continue a previous debate             | `council resume`    | `council resume strategy-review`                           |
 | Get a structured decision framework    | `council conclude`  | `council conclude strategy-review`                         |
 | Export results to share                 | `council export`    | `council export strategy-review --format adr`              |
@@ -394,8 +396,13 @@ you exactly what to fix.
 
 Goal-oriented recipes for common tasks. Jump to whichever you need.
 
+- [Chat with a panel](#chat-with-a-panel)
+- [Direct a message to specific experts](#mention-specific-experts)
+- [Trigger an inline deliberation](#inline-deliberation)
+- [Manage chat sessions](#manage-chat-sessions)
+- [Chat with a single expert (1:1)](#one-on-one-expert-chat)
+- [Review documents in chat](#review-documents-in-chat)
 - [Ask a quick question](#ask-a-quick-question)
-- [Have an ongoing conversation](#have-an-ongoing-conversation)
 - [Continue a previous debate](#continue-a-previous-debate)
 - [Export as an Architecture Decision Record](#export-as-an-adr)
 - [Use moderator strategies](#use-moderator-strategies)
@@ -425,17 +432,298 @@ This is faster than `convene` when you don't need multiple perspectives.
 
 <a id="have-an-ongoing-conversation"></a>
 
-### Have an ongoing conversation
+<a id="chat-with-a-panel"></a>
 
-Use `council chat` for a back-and-forth conversation with a specific expert:
+### Chat with a panel
+
+Use `council chat` with a panel name for an ongoing group conversation where all
+experts participate:
+
+```bash
+council chat strategy-review
+```
+
+Council resolves the panel's experts, indexes any documents in the panel's docs
+folder, and drops you into an interactive REPL:
+
+```
+📋 Starting group chat with strategy-review (3 experts: Sarah Chen, Marcus Cole, Priya Mehta) — use @name to address specific experts
+ℹ Type /exit or /quit to save and end the conversation.
+
+You> What should our Q4 priorities be given the competitive landscape?
+
+[Sarah Chen — VP Strategy]
+Given the recent moves by our top two competitors, I'd focus on three things...
+
+[Marcus Cole — Devil's Advocate]
+Before we lock in priorities, let's challenge the assumption that we need to
+react to competitors at all...
+
+[Priya Mehta — Customer Research]
+I'd reframe this around what our customers are actually asking for...
+
+You>
+```
+
+Every expert responds to each message. The conversation persists — exit with
+`/exit` or `/quit` and pick up where you left off next time you run the same
+command.
+
+> **💡 Tip**: Press **Ctrl+C** to abort an expert mid-response. The partial
+> output is saved and you return to the `You>` prompt.
+
+<a id="mention-specific-experts"></a>
+
+### Direct a message to specific experts
+
+In panel chat, prefix your message with `@slug` to route it to one or more
+specific experts:
+
+```
+You> @strategist What's our biggest competitive moat?
+
+[Sarah Chen — VP Strategy]
+Our data network effects are the primary moat...
+```
+
+You can mention multiple experts:
+
+```
+You> @strategist @devils-advocate Is our pricing strategy sustainable?
+
+[Sarah Chen — VP Strategy]
+The current pricing model aligns with our value metric...
+
+[Marcus Cole — Devil's Advocate]
+I'd push back on that. Three of our five largest accounts have asked for
+volume discounts...
+```
+
+Only the mentioned experts respond — others stay silent for that turn.
+
+> **📝 Note**: Mentions must appear at the **start** of your message.
+> `@strategist What do you think?` works. `What do you think @strategist?`
+> is treated as a general message to everyone.
+
+> **💡 Tip**: If you mention a slug that isn't in the panel, Council shows an
+> error listing the available experts — no guessing required.
+
+<a id="inline-deliberation"></a>
+
+### Trigger an inline deliberation
+
+When a chat topic needs formal debate treatment, use `@convene` to trigger a
+structured 4-phase deliberation without leaving the chat:
+
+```
+You> @convene Should we raise prices by 20%?
+
+⚙ Starting structured deliberation: "Should we raise prices by 20%?"...
+
+━━━ Opening Statements ━━━
+[Sarah Chen — VP Strategy]
+A 20% increase signals confidence in our value...
+
+[Marcus Cole — Devil's Advocate]
+That's aggressive given current churn rates...
+
+━━━ Cross-Examination ━━━
+...
+
+━━━ Rebuttals ━━━
+...
+
+━━━ Synthesis ━━━
+The panel agrees that a price increase is warranted but splits on magnitude...
+
+You>
+```
+
+The deliberation runs through opening statements, cross-examination, rebuttals,
+and synthesis — then returns you to the chat prompt. The entire deliberation is
+saved in your chat history.
+
+> **📝 Note**: `@convene` requires a topic. `@convene` alone (with no topic)
+> shows a usage hint.
+
+<a id="manage-chat-sessions"></a>
+
+### Manage chat sessions
+
+Council persists your conversations automatically. Here's how to manage them:
+
+**Start fresh** — archive the current conversation and begin a new one:
+
+```bash
+council chat strategy-review --new
+```
+
+**List all conversations** — see every chat session across all experts and panels:
+
+```bash
+council chat --list
+```
+
+**View archived conversations** — see past conversations for a specific target:
+
+```bash
+council chat strategy-review --history
+```
+
+**End a conversation** — type `/exit` or `/quit` in the chat prompt. Your
+conversation is saved and you can resume it anytime by running the same
+`council chat` command.
+
+<a id="one-on-one-expert-chat"></a>
+
+### Chat with a single expert (1:1)
+
+For a focused conversation with one expert, pass an expert slug instead of a
+panel name:
 
 ```bash
 council chat cto
 ```
 
-This starts an interactive session where you can ask follow-up questions. The
-conversation persists — you can return to it later. This is especially
-powerful with [persona experts](#part-5) trained on your documents.
+This starts a direct 1:1 conversation. There are no `@mentions` or `@convene`
+in 1:1 mode — every message goes to your expert and every response comes from
+them.
+
+1:1 chat is especially powerful with [persona experts](#part-5) trained on your
+documents. The expert draws on its reference material to give document-informed
+responses.
+
+```bash
+council chat cfo
+```
+
+```
+You> What's our payback period on the new data platform?
+
+[Sarah Chen — CFO]
+Based on the financial projections in our Q3 analysis, the payback period
+is approximately 14 months, assuming we hit the adoption targets in the
+rollout plan...
+```
+
+> **💡 Tip**: The same session management flags work for 1:1 chat —
+> `--new`, `--list`, and `--history` all apply.
+
+<a id="review-documents-in-chat"></a>
+
+### Review documents in chat
+
+Council can pull relevant content from your documents into chat conversations
+using RAG (retrieval-augmented generation). This lets you ask experts to review,
+critique, or build on your existing work.
+
+#### Step 1: Place documents in the docs folder
+
+For **panel chat**, place files in the panel's docs folder:
+
+```
+~/Council/panels/strategy-review/docs/
+  ├── market-analysis.md
+  ├── product-brief.txt
+  └── competitive-landscape.html
+```
+
+You can also link external folders:
+
+```bash
+council panel docs link strategy-review --path ./research/
+```
+
+For **1:1 expert chat**, place files in the expert's docs folder:
+
+```
+~/Council/experts/cfo/docs/
+  ├── q3-financials.md
+  └── budget-proposal.txt
+```
+
+Supported formats: `.md`, `.txt`, `.html`
+
+#### Step 2: Start a chat
+
+Council indexes new and changed documents automatically when you start a chat:
+
+```bash
+council chat strategy-review
+```
+
+```
+ℹ Indexed 3 panel document(s) (0 unchanged, 0 failed).
+📋 Starting group chat with strategy-review (3 experts)...
+```
+
+#### Step 3: Ask for a review
+
+Reference your documents naturally — Council retrieves relevant snippets
+automatically:
+
+```
+You> Review the product brief and tell me what's weak.
+
+[Sarah Chen — VP Strategy]
+The brief covers the target market well, but I see three gaps. First,
+the competitive positioning section on page 2 doesn't address the pricing
+pressure from FreshDesk's new tier...
+```
+
+You can ask for rewrites too:
+
+```
+You> Rewrite the executive summary to be more compelling for our board.
+
+[Sarah Chen — VP Strategy]
+Here's a revised executive summary:
+
+"In Q3, our platform processed 2.4M transactions — a 47% increase that
+outpaced the market by 3x. This growth validates our bet on..."
+```
+
+> **📝 Note**: Experts produce rewritten text **in the chat response**. They
+> cannot write files back to disk. Copy the output manually or use
+> `council export` to capture the full conversation.
+> See [issue #900](https://github.com/pedrofuentes/Council/issues/900) for
+> the planned file-writing feature.
+
+#### Step 4: Synthesize across multiple documents
+
+When you have several related documents, ask questions that require connecting
+insights across them:
+
+```
+You> Based on the market analysis and the product brief, what's missing
+from our go-to-market plan?
+
+[Marcus Cole — Devil's Advocate]
+The market analysis identifies three underserved segments, but the product
+brief only targets one of them. The go-to-market plan doesn't explain why
+we're leaving the other two on the table...
+```
+
+#### Step 5: Keep documents current
+
+When you update a document in the docs folder, Council re-indexes automatically
+the next time you start a chat:
+
+```bash
+council chat strategy-review
+```
+
+```
+ℹ Indexed 1 panel document(s) (2 unchanged, 0 failed).
+```
+
+Council detects changed files by checksum — only modified documents are
+reprocessed. You don't need `--new` just to pick up document changes; use
+`--new` only when you want to archive the current conversation and start fresh.
+
+> **💡 Tip**: If you have multiple versions of the same document in the docs
+> folder, consider removing outdated versions to keep retrieval focused on
+> the latest content.
 
 <a id="continue-a-previous-debate"></a>
 
@@ -711,6 +999,11 @@ council chat cfo
 Ask questions related to the documents you provided. The expert should respond
 using the frameworks, vocabulary, and decision patterns from the reference material.
 
+You can also ask the expert to review or critique documents. Place a draft in the
+expert's docs folder and ask for feedback — the expert's responses draw on both
+its persona profile and the document content. See
+[Review documents in chat](#review-documents-in-chat) for the full workflow.
+
 Try an off-topic question to test fidelity. A well-trained CFO persona asked
 "Should we use Rust or Go?" should answer through a financial lens — comparing
 hiring costs, training investment, and opportunity cost — rather than giving a
@@ -979,7 +1272,7 @@ council panel docs unlink strategy-review --path ./research/    # unlink
 | -------------------------- | ------------------------------------------------ |
 | `council convene`          | Start a new expert debate                        |
 | `council ask`              | Quick one-shot question to a single expert       |
-| `council chat`             | Ongoing 1:1 conversation with an expert          |
+| `council chat`             | Ongoing conversation with an expert or panel     |
 | `council resume`           | View or continue a previous debate               |
 | `council conclude`         | Generate a structured decision framework         |
 | `council export`           | Export debate transcript (markdown or ADR)        |
@@ -1029,6 +1322,24 @@ council panel docs unlink strategy-review --path ./research/    # unlink
 | `--experts`           | Comma-separated expert slugs (bypass template) | (none)           |
 | `--human`             | Add a human participant (repeatable)           | (none)           |
 
+### `council chat` options
+
+| Flag         | Description                                    | Default          |
+| ------------ | ---------------------------------------------- | ---------------- |
+| `--engine`   | Engine to use (`copilot` or `mock`)            | (from config)    |
+| `--new`      | Archive active conversation, start fresh       | `false`          |
+| `--list`     | List all chat conversations and exit           | `false`          |
+| `--history`  | Show archived conversations for the target     | `false`          |
+
+**In-chat directives** (type these at the `You>` prompt during panel chat):
+
+| Directive              | Effect                                             |
+| ---------------------- | -------------------------------------------------- |
+| `@slug message`        | Route message to specific expert(s)                |
+| `@convene topic`       | Trigger inline structured 4-phase deliberation     |
+| `/exit` or `/quit`     | Save conversation and exit                         |
+| **Ctrl+C**             | Abort current expert response, return to prompt    |
+
 <a id="configuration-reference"></a>
 
 ### Configuration options
@@ -1070,6 +1381,10 @@ Set these with `council config set <key> <value>`:
 | **Mock engine**     | A deterministic, offline engine for testing and demos (`--engine mock`)                      |
 | **Fidelity**        | How accurately a persona expert reflects its reference documents                             |
 | **Strategy**        | The moderator pattern used during debate (round-robin, consensus-check, devils-advocate)      |
+| **Panel chat**      | Group conversation with all experts in a panel — supports `@mentions` and `@convene`          |
+| **@mention**        | Prefix (`@slug`) that routes a message to specific expert(s) in panel chat                    |
+| **@convene**        | Directive that triggers an inline structured 4-phase deliberation within panel chat            |
+| **RAG**             | Retrieval-augmented generation — automatic surfacing of relevant document snippets in chat     |
 
 ### Troubleshooting
 
@@ -1115,6 +1430,7 @@ council expert train cfo --retrain
 
 - **Explore templates**: Run `council templates` and try each one
 - **Build your library**: Create experts that reflect your team's perspectives
+- **Chat with your panel**: Use `council chat` for ongoing conversations and document review
 - **Train personas**: Add reference documents and train persona experts for deeper fidelity
 - **Integrate into your workflow**: Export decisions as ADRs and commit them with your code
 - **Automate**: Use Council in CI/CD for automated architecture reviews
