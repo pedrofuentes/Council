@@ -23,6 +23,20 @@ export interface ConfirmProvider {
 export function createReadlineConfirmProvider(): ConfirmProvider {
   return {
     async confirm(message: string): Promise<boolean> {
+      // When stdin is not a TTY (piped input, detached terminal, CI),
+      // `readline.question` cannot prompt the user — and if stdin has
+      // already closed (EOF), its callback never fires. The previous
+      // implementation hung; once Node's event loop drained, the
+      // process exited silently with status 0, masking the cancellation
+      // (#f25). Detect non-interactive stdin up-front and resolve to
+      // the safe default (false) so callers can surface a clear
+      // "Aborted" message and exit non-zero.
+      if (process.stdin.isTTY !== true) {
+        // Echo the prompt to stderr so the user sees what was skipped.
+        process.stderr.write(message);
+        process.stderr.write("\n");
+        return false;
+      }
       const readline = await import("node:readline");
       const rl = readline.createInterface({
         input: process.stdin,
@@ -30,6 +44,10 @@ export function createReadlineConfirmProvider(): ConfirmProvider {
       });
       try {
         const answer = await new Promise<string>((resolve) => {
+          // Belt-and-braces: if the TTY closes mid-prompt (e.g. the
+          // user hits Ctrl-D), `question`'s callback is not invoked.
+          // Resolving on `close` keeps the promise from hanging.
+          rl.once("close", () => resolve(""));
           rl.question(message, (a) => resolve(a));
         });
         const normalized = answer.trim().toLowerCase();
