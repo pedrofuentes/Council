@@ -458,4 +458,92 @@ describe("debate lifecycle e2e", () => {
     expect(exportOutput.stdout()).toContain(`# ${state.panel.name}`);
     expect(exportOutput.stdout()).toContain(firstTurnContent);
   });
+
+  it("export includes turns from BOTH the original debate and the resume follow-up", async () => {
+    // Convene a panel (creates debate #1 with the initial prompt).
+    await runConvene([
+      TOPIC,
+      "--template",
+      "code-review",
+      "--max-rounds",
+      "1",
+      "--format",
+      "json",
+      "--engine",
+      "mock",
+    ]);
+
+    const stateAfterConvene = await loadPersistedState(ctx);
+    const panelName = stateAfterConvene.panel.name;
+    const originalTurnContents = stateAfterConvene.turns.map((t) => t.content);
+    expect(originalTurnContents.length).toBeGreaterThan(0);
+
+    // Resume with --prompt to add debate #2 (the follow-up).
+    const followUpPrompt = "What about the security implications?";
+    await runResume([
+      panelName,
+      "--prompt",
+      followUpPrompt,
+      "--engine",
+      "mock",
+      "--max-rounds",
+      "1",
+      "--format",
+      "json",
+      "--heuristic-memory",
+    ]);
+
+    // Sanity: the panel now has two debates persisted on the same panel_id.
+    const db = await openTestDb(ctx.testHome);
+    let followUpTurnContents: string[];
+    try {
+      const debates = await new DebateRepository(db).findByPanelId(stateAfterConvene.panel.id);
+      expect(debates).toHaveLength(2);
+      const followUpDebate = debates.at(-1);
+      if (!followUpDebate) throw new Error("expected a follow-up debate");
+      followUpTurnContents = (await new TurnRepository(db).findByDebateId(followUpDebate.id)).map(
+        (t) => t.content,
+      );
+      expect(followUpTurnContents.length).toBeGreaterThan(0);
+    } finally {
+      await destroyTestDb(db);
+    }
+
+    // --- markdown export must contain content from BOTH debates ---
+    const mdOutput = await runExport([panelName, "--format", "markdown"]);
+    for (const content of originalTurnContents) {
+      expect(mdOutput.stdout()).toContain(content);
+    }
+    for (const content of followUpTurnContents) {
+      expect(mdOutput.stdout()).toContain(content);
+    }
+
+    // Round numbering should be sequential — no duplicate `### Round N` headers.
+    const roundHeaders = mdOutput.stdout().match(/^### Round \d+$/gm) ?? [];
+    const uniqueRoundHeaders = new Set(roundHeaders);
+    expect(roundHeaders.length).toBe(uniqueRoundHeaders.size);
+    expect(roundHeaders.length).toBeGreaterThanOrEqual(2);
+
+    // --- json export must include turn.end events from BOTH debates ---
+    const jsonOutput = await runExport([panelName, "--format", "json"]);
+    const events = parseJsonLines<{ kind: string; content?: string }>(jsonOutput.stdout());
+    const turnEndContents = events
+      .filter((e) => e.kind === "turn.end")
+      .map((e) => e.content ?? "");
+    for (const content of originalTurnContents) {
+      expect(turnEndContents).toContain(content);
+    }
+    for (const content of followUpTurnContents) {
+      expect(turnEndContents).toContain(content);
+    }
+
+    // --- adr export must include content from BOTH debates in the Discussion ---
+    const adrOutput = await runExport([panelName, "--format", "adr"]);
+    for (const content of originalTurnContents) {
+      expect(adrOutput.stdout()).toContain(content);
+    }
+    for (const content of followUpTurnContents) {
+      expect(adrOutput.stdout()).toContain(content);
+    }
+  });
 });
