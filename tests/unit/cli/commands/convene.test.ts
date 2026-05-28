@@ -147,9 +147,10 @@ describe("buildConveneCommand", () => {
       expect(modelOpt).toBeDefined();
       // The custom parser, if present, must accept registry values unchanged.
       const parser = modelOpt?.parseArg as ((v: string, prev: unknown) => unknown) | undefined;
-      if (parser) {
-        expect(parser("claude-sonnet-4.5", undefined)).toBe("claude-sonnet-4.5");
-      }
+      expect(parser).toBeDefined();
+      expect((parser as (v: string, prev: unknown) => unknown)("claude-sonnet-4.5", undefined)).toBe(
+        "claude-sonnet-4.5",
+      );
     });
   });
 
