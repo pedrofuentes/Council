@@ -49,6 +49,7 @@ import { PanelRepository } from "../../memory/repositories/panels.js";
 import { runExtractMemoryHook } from "../extract-memory-hook.js";
 
 import { stripControlChars } from "../strip-control-chars.js";
+import { truncatePrompt } from "../renderers/truncate-prompt.js";
 import { defaultErrorWriter, defaultWriter, isQuiet, setQuiet, type Writer } from "./writer.js";
 import {
   ENGINE_KINDS,
@@ -624,7 +625,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             beforeRender: emitMockWarning,
             preamble: () => {
               write(`\n# ${stripControlChars(template.name)}\n`);
-              write(`Topic: ${topic}\n`);
+              write(`Topic: ${truncatePrompt(topic)}\n`);
               write(
                 `Mode: ${opts.mode} | Max rounds: ${opts.maxRounds} | Engine: ${opts.engine}\n`,
               );
