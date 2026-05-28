@@ -229,3 +229,47 @@ describe("unknown option handling", () => {
     );
   });
 });
+
+describe("missing required argument help hint", () => {
+  function captureErrorOutput(program: Command): { readonly output: string[] } {
+    const output: string[] = [];
+    program.exitOverride();
+    program.configureOutput({
+      writeOut: (str) => output.push(str),
+      writeErr: (str) => output.push(str),
+    });
+    program.commands.forEach((cmd) => {
+      cmd.exitOverride();
+      cmd.configureOutput({
+        writeOut: (str) => output.push(str),
+        writeErr: (str) => output.push(str),
+      });
+    });
+    return { output };
+  }
+
+  it("appends a --help hint when convene is missing the topic argument", async () => {
+    const program = buildProgram();
+    const { output } = captureErrorOutput(program);
+
+    await expect(program.parseAsync(["node", "council", "convene"])).rejects.toThrow(
+      /missing required argument/,
+    );
+
+    const combined = output.join("");
+    expect(combined).toMatch(/missing required argument/);
+    expect(combined).toMatch(/--help/);
+  });
+
+  it("does not interfere with the unknown-command suggestion behaviour", async () => {
+    const program = buildProgram();
+    const { output } = captureErrorOutput(program);
+
+    await expect(program.parseAsync(["node", "council", "convne"])).rejects.toThrow();
+
+    const combined = output.join("");
+    expect(combined).toMatch(/unknown command/i);
+    // Commander's "Did you mean ...?" suggestion must still appear
+    expect(combined).toMatch(/did you mean/i);
+  });
+});

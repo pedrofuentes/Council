@@ -214,7 +214,8 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
     .description("Persistent AI expert panels for deliberation and decision-making")
     .version(packageJson.version)
     .option("-q, --quiet", "Suppress informational stderr output")
-    .showSuggestionAfterError(true);
+    .showSuggestionAfterError(true)
+    .showHelpAfterError("(run `council <command> --help` for usage)");
 
   const firstRunSetupOptions = options.firstRunSetup;
 
@@ -251,6 +252,16 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
   program.addCommand(buildSessionsCommand());
   program.addCommand(buildMemoryCommand());
   program.addCommand(buildExportCommand());
+
+  // Apply the same "(run --help for usage)" hint to every (sub)command so that
+  // errors like "missing required argument" point users at help. Commander's
+  // showHelpAfterError() is per-command and does not propagate to children.
+  const helpHint = "(run `council <command> --help` for usage)";
+  const applyHelpHintRecursively = (cmd: Command): void => {
+    cmd.showHelpAfterError(helpHint);
+    cmd.commands.forEach(applyHelpHintRecursively);
+  };
+  applyHelpHintRecursively(program);
 
   // Custom help formatter with command grouping
   program.configureHelp({
