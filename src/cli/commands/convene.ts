@@ -625,7 +625,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             beforeRender: emitMockWarning,
             preamble: () => {
               write(`\n# ${stripControlChars(template.name)}\n`);
-              write(`Topic: ${truncatePrompt(topic)}\n`);
+              write(`Topic: ${truncatePrompt(stripControlChars(topic))}\n`);
               write(
                 `Mode: ${opts.mode} | Max rounds: ${opts.maxRounds} | Engine: ${opts.engine}\n`,
               );
