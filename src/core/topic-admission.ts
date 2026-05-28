@@ -59,6 +59,42 @@ const CATEGORIES: readonly PatternCategory[] = [
   },
 ];
 
+/**
+ * Matches a `$` followed by an ASCII identifier start (letter or `_`) —
+ * the literal text a user would type when they want a `$VAR`-like token
+ * in their topic. If we see it, the user either (a) used single quotes
+ * correctly and meant the literal, or (b) used double quotes and the
+ * shell silently expanded a different `$VAR` away. Either way, surfacing
+ * a hint about quoting is harmless and high-signal.
+ *
+ * Deliberately does NOT match bare `$` (e.g., "Pricing in $ vs €") to
+ * avoid noise on currency mentions.
+ */
+const SHELL_VAR_PATTERN = /\$[A-Za-z0-9_]/;
+
+/**
+ * Heuristic for shell-expansion *artifacts*: when `$180K` is passed
+ * inside double quotes, POSIX sh and PowerShell both expand `$180` to
+ * the empty string, leaving Council with the lone trailing unit suffix
+ * (`K`). A trimmed topic of exactly one character is almost never a
+ * real Council topic and is a strong signal that quoting misfired.
+ *
+ * Two characters (e.g., "AI", "LLM") are common legitimate topics, so
+ * we deliberately stop at length 1 to keep false positives at zero.
+ */
+function looksLikeExpansionArtifact(normalized: string): boolean {
+  return normalized.length === 1;
+}
+
+function shellExpansionWarning(): string {
+  return (
+    "⚠ Topic looks like it may have been affected by shell expansion " +
+    "(possible shell expansion). If you intended a literal `$` or used a value " +
+    "like `$180K`, wrap the topic in single quotes (e.g., 'literal $180K') so " +
+    "the shell does not expand it before Council sees it."
+  );
+}
+
 function warningMessage(categories: readonly string[]): string {
   return `⚠ This topic touches sensitive areas (${categories.join(", ")}). Proceeding — experts will follow safety guidelines.`;
 }
@@ -71,11 +107,9 @@ export function checkTopicAdmission(topic: string): TopicAdmissionResult {
       matched.push(category.label);
     }
   }
-  if (matched.length === 0) {
-    return { admitted: true, warnings: [] };
+  const warnings: string[] = matched.map((label) => warningMessage([label]));
+  if (SHELL_VAR_PATTERN.test(normalized) || looksLikeExpansionArtifact(normalized)) {
+    warnings.push(shellExpansionWarning());
   }
-  return {
-    admitted: true,
-    warnings: matched.map((label) => warningMessage([label])),
-  };
+  return { admitted: true, warnings };
 }
