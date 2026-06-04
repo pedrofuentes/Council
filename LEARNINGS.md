@@ -19,6 +19,15 @@
 
 <!-- Add new learnings below this line, most recent first -->
 
+### [2026-06-04] Vitest full-suite hangs when git worktrees contain test files despite exclude config
+**Context**: During post-merge verification of 4 Sentinel-filed fixes (PRs #917–#920), `pnpm test` appeared to hang indefinitely (10+ minutes with no output). Targeted test runs (`npx vitest run tests/unit`) completed successfully (2070 tests, ~15 min). The root cause was the pipe behavior: `pnpm test 2>&1 | Select-Object -Last N` on Windows PowerShell buffers ALL output before selecting, and with a ~18-minute test suite producing thousands of lines, this created the appearance of a hang. Meanwhile, active git worktrees (`.worktrees/fix-grapheme-truncation`, `.worktrees/fix-model-test`) contained test files from unmerged branches.
+**Learning**:
+1. **`vitest.config.ts` excludes `.worktrees` (line 8), and it works.** The exclude config correctly prevents vitest from scanning worktree directories. The apparent "worktree bleed" failures seen earlier (grapheme tests failing on main) were actually from the worktree's branch commits being visible in `git log` — the test files themselves were NOT picked up by vitest from worktrees.
+2. **PowerShell pipe buffering causes apparent hangs with long test suites.** `pnpm test 2>&1 | Select-Object -Last N` buffers the entire output stream before selecting. For an 18-minute, 2000+ test suite, this means zero output for the full duration. Use `Out-File` to a temp file + `Get-Content -Tail N` instead, or run with `npx vitest run` directly to see streaming progress.
+3. **Clean up worktrees promptly after PR merge.** Even though the exclude config works, stale worktrees add confusion during debugging. The fleet merge protocol should include worktree cleanup as a mandatory step immediately after each merge, not deferred to end-of-wave.
+4. **Full test suite takes ~18 minutes on Windows (4 workers, 2180+ tests).** This is the expected baseline for `pnpm test` on this codebase. Individual test directories are faster: `tests/unit` ~15min, `tests/e2e` ~3min.
+**Impact**: When debugging apparent test hangs on Windows, first check pipe buffering. Use `Out-File` + `Get-Content -Tail` or `npx vitest run --reporter=verbose` for streaming output. Always clean up worktrees immediately after merging their PRs. For post-merge verification, consider running `tests/unit` and `tests/e2e` separately for faster feedback.
+
 ### [2025-11-28] File-backed SQLite in unit tests causes wall-clock starvation flakes on Windows
 **Context**: Three tests (`db-and-repos`, `convene-panel-alias`, `ux-polish`) flaked regularly in full-suite runs but passed in isolation. Deep research revealed the root cause was **wall-clock starvation**, not concurrency state corruption.
 **Learning**:
