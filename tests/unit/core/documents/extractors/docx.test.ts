@@ -235,6 +235,22 @@ describe("docx extractor", () => {
     });
   });
 
+  it("throws ExtractionError(zip-bomb-detected) when an entry's compression ratio is suspiciously high", async () => {
+    const { extractor } = await loadDocxExtractor();
+    // 10 MiB of zeros deflates to a few KB → ratio ~thousands:1, well above the 100:1 limit.
+    const huge = Buffer.alloc(10 * 1024 * 1024, 0);
+    const buf = buildZip([
+      { name: "[Content_Types].xml", data: Buffer.from(CONTENT_TYPES, "utf-8") },
+      { name: "_rels/.rels", data: Buffer.from(ROOT_RELS, "utf-8") },
+      { name: "word/document.xml", data: huge },
+    ]);
+    await expect(extractor(ctx(buf, "bomb.docx"))).rejects.toMatchObject({
+      name: "ExtractionError",
+      kind: "zip-bomb-detected",
+      filePath: "bomb.docx",
+    });
+  });
+
   it("throws ExtractionError(corrupt-document) for a ZIP missing word/document.xml", async () => {
     const { extractor } = await loadDocxExtractor();
     const buf = buildZip([
