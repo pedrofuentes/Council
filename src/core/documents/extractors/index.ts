@@ -14,6 +14,7 @@ import "./plaintext.js";
 import "./pdf.js";
 import "./csv.js";
 import "./rtf.js";
+import "./docx.js";
 
 export type {
   ContentExtractor,
