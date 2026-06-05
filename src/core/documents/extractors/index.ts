@@ -1,11 +1,17 @@
 /**
- * Barrel for the modular document extraction system (T2).
+ * Barrel for the modular document extraction system.
  *
  * Re-exports public types, the error taxonomy, and the registry API.
- * Subsequent format-specific extractor modules (markdown, html, pdf,
- * …) will be imported here for their side-effect registration; none
- * exist yet at this point in the roadmap.
+ * Side-effect imports below trigger each format-specific extractor
+ * module to self-register with the registry on first import of this
+ * barrel — `extractor.ts` and any other consumer that imports this
+ * file will see the built-in extractors (markdown, html, plaintext)
+ * already present.
  */
+import "./markdown.js";
+import "./html.js";
+import "./plaintext.js";
+
 export type {
   ContentExtractor,
   DocumentMetadata,
