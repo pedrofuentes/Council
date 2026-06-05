@@ -389,6 +389,61 @@ describe("pptx extractor", () => {
     );
   });
 
+  it("rejects an entry whose declared uncompressed size exceeds the 20 MB per-entry cap", async () => {
+    const { extractor, errors } = await loadPptxExtractor();
+    // Declare a single slide entry with a 21 MB uncompressed size in the
+    // ZIP headers without actually allocating that buffer. The extractor
+    // must refuse the entry up-front (before opening the read stream) to
+    // bound peak memory.
+    const buf = buildZip([
+      {
+        name: "ppt/slides/slide1.xml",
+        data: Buffer.from("<p:sld/>", "utf-8"),
+        fakeUncompressedSize: 21 * 1024 * 1024,
+        fakeCompressedSize: 21 * 1024 * 1024,
+      },
+    ]);
+    let caught: unknown;
+    try {
+      await extractor(ctx(buf));
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(errors.ExtractionError);
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe(
+      "zip-bomb-detected",
+    );
+  });
+
+  it("aborts a read stream that delivers more bytes than the declared uncompressed size", async () => {
+    const { extractor, errors } = await loadPptxExtractor();
+    // Lie in the local file header: declare a tiny uncompressed size
+    // (well under the 20 MB per-entry cap) while the deflated stream
+    // actually decodes to 1 MB. The extractor must abort mid-stream once
+    // the byte count exceeds the declared size (defense-in-depth against
+    // headers that lie about uncompressed size to bypass the up-front
+    // entry cap).
+    const real = Buffer.alloc(1024 * 1024, 0x20);
+    const buf = buildZip([
+      {
+        name: "ppt/slides/slide1.xml",
+        data: real,
+        method: "deflate",
+        fakeUncompressedSize: 8,
+      },
+    ]);
+    let caught: unknown;
+    try {
+      await extractor(ctx(buf));
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(errors.ExtractionError);
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe(
+      "zip-bomb-detected",
+    );
+  });
+
   it("does not resolve external XML entities (XXE / billion-laughs)", async () => {
     const { extractor } = await loadPptxExtractor();
     const malicious = `<?xml version="1.0"?>
