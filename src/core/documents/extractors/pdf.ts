@@ -153,14 +153,9 @@ const pdfExtractor: ContentExtractor = async (
     verbosity: 0,
   });
 
-  let pdf: PdfDocument;
+  let pdf: PdfDocument | undefined;
   try {
     pdf = await loadingTask.promise;
-  } catch (err) {
-    throw classifyPdfError(err, ctx.filename);
-  }
-
-  try {
     const pageCount = pdf.numPages;
     if (pageCount > MAX_PAGES) {
       throw new ExtractionError({
@@ -219,7 +214,8 @@ const pdfExtractor: ContentExtractor = async (
     }
     throw classifyPdfError(err, ctx.filename);
   } finally {
-    await pdf.destroy().catch(() => undefined);
+    if (pdf !== undefined) await pdf.destroy().catch(() => undefined);
+    await loadingTask.destroy().catch(() => undefined);
   }
 };
 
