@@ -12,6 +12,8 @@ import "./markdown.js";
 import "./html.js";
 import "./plaintext.js";
 import "./pdf.js";
+import "./csv.js";
+import "./rtf.js";
 
 export type {
   ContentExtractor,
