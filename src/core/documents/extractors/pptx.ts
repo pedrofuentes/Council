@@ -9,7 +9,9 @@
  *
  * Security:
  *   - ZIP-bomb defenses cap entry count (1000), total uncompressed size
- *     (200 MB), and per-entry compression ratio (100:1).
+ *     (200 MB), per-entry uncompressed size (20 MB), and per-entry
+ *     compression ratio (100:1). The per-entry stream is also aborted
+ *     if it decodes more bytes than its declared uncompressed size.
  *   - The XML parser runs with entity processing disabled to prevent
  *     XXE and billion-laughs attacks.
  *
@@ -28,6 +30,7 @@ import type {
 
 const MAX_ENTRIES = 1000;
 const MAX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024;
+const MAX_ENTRY_BYTES = 20 * 1024 * 1024;
 const MAX_COMPRESSION_RATIO = 100;
 
 const SLIDE_PATH = /^ppt\/slides\/slide(\d+)\.xml$/;
@@ -52,7 +55,11 @@ function openZip(buffer: Buffer): Promise<ZipFile> {
   });
 }
 
-function readEntryBuffer(zip: ZipFile, entry: Entry): Promise<Buffer> {
+function readEntryBuffer(
+  zip: ZipFile,
+  entry: Entry,
+  filename: string,
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     zip.openReadStream(entry, (err, stream) => {
       if (err !== null || stream === undefined) {
@@ -60,9 +67,46 @@ function readEntryBuffer(zip: ZipFile, entry: Entry): Promise<Buffer> {
         return;
       }
       const chunks: Buffer[] = [];
-      stream.on("data", (chunk: Buffer) => chunks.push(chunk));
-      stream.on("end", () => resolve(Buffer.concat(chunks)));
-      stream.on("error", (streamErr) => reject(streamErr));
+      let received = 0;
+      let aborted = false;
+      stream.on("data", (chunk: Buffer) => {
+        if (aborted) return;
+        received += chunk.length;
+        if (received > entry.uncompressedSize) {
+          aborted = true;
+          stream.destroy();
+          reject(
+            bombError(
+              filename,
+              `Entry "${entry.fileName}" decoded to more bytes than its declared uncompressed size (${String(entry.uncompressedSize)}).`,
+            ),
+          );
+          return;
+        }
+        chunks.push(chunk);
+      });
+      stream.on("end", () => {
+        if (!aborted) resolve(Buffer.concat(chunks));
+      });
+      stream.on("error", (streamErr) => {
+        if (aborted) return;
+        // yauzl validates the decoded stream length against the
+        // declared uncompressed size and emits "too many bytes in the
+        // stream" when a deflate-compressed entry expands past its
+        // header-declared size. Treat this as a zip-bomb signal (a
+        // lying header trying to bypass the up-front per-entry cap).
+        if (/too many bytes/i.test(streamErr.message)) {
+          aborted = true;
+          reject(
+            bombError(
+              filename,
+              `Entry "${entry.fileName}" decoded to more bytes than its declared uncompressed size (${String(entry.uncompressedSize)}).`,
+            ),
+          );
+          return;
+        }
+        reject(streamErr);
+      });
     });
   });
 }
@@ -122,6 +166,12 @@ async function readZipEntries(
               `PPTX archive contains more than ${String(MAX_ENTRIES)} entries.`,
             );
           }
+          if (entry.uncompressedSize > MAX_ENTRY_BYTES) {
+            throw bombError(
+              filename,
+              `ZIP entry "${entry.fileName}" uncompressed size ${String(entry.uncompressedSize)} exceeds per-entry limit ${String(MAX_ENTRY_BYTES)}.`,
+            );
+          }
           if (
             entry.compressedSize > 0 &&
             entry.uncompressedSize / entry.compressedSize >
@@ -143,7 +193,7 @@ async function readZipEntries(
             SLIDE_PATH.test(entry.fileName) ||
             NOTES_PATH.test(entry.fileName)
           ) {
-            const data = await readEntryBuffer(zip, entry);
+            const data = await readEntryBuffer(zip, entry, filename);
             collected.set(entry.fileName, data);
           }
           if (!settled) {
