@@ -226,7 +226,7 @@ describe("pdf extractor", () => {
   });
 
   it("aborts extraction when ctx.signal is already aborted", async () => {
-    const { extractor } = await loadPdfExtractor();
+    const { extractor, errors } = await loadPdfExtractor();
     const buf = makePdf(["Hello"]);
     const ac = new AbortController();
     ac.abort();
@@ -236,6 +236,8 @@ describe("pdf extractor", () => {
     } catch (err) {
       caught = err;
     }
-    expect(caught).toBeDefined();
+    expect(caught).toBeInstanceOf(errors.ExtractionError);
+    const e = caught as InstanceType<typeof errors.ExtractionError>;
+    expect(e.kind).toBe("extraction-timeout");
   });
 });
