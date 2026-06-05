@@ -1,31 +1,40 @@
 /**
  * Document content extraction and normalization (Roadmap 6.1, hardened
- * for 6.4).
+ * for 6.4, refactored for T3).
  *
- * Reads a document file, normalizes its text content per format, and
- * returns the plain-text body, word count, SHA-256 checksum of the raw
- * bytes, and size. The normalizer is intentionally simple (regex-based);
- * it strips formatting but does not aim to be a full parser.
- *
- * Security (Roadmap 6.4): the extractor takes an optional
- * `confinementRoot` and, when set, performs a TOCTOU-safe sequence:
+ * Reads a document file via a TOCTOU-safe file-handle sequence and
+ * delegates content normalization to the format-specific extractor
+ * registered under the file's extension (or, as a fallback, detected
+ * from the buffer's magic bytes). The TOCTOU sequence is unchanged:
  *   1. Open the file handle (`fs.open`) — kernel resolves any symlink
  *      and binds the fd to a specific inode at this instant.
  *   2. Validate via the fd: `fh.stat()` must report a regular file.
- *   3. Resolve the canonical realpath of the input AFTER opening, then
+ *   3. Enforce `maxFileSizeBytes` against the fd-bound size.
+ *   4. Resolve the canonical realpath of the input AFTER opening, then
  *      compare the canonical's inode (`fs.lstat`) to the fd's inode —
  *      a mismatch means an attacker swapped the symlink between open
  *      and realpath; reject.
- *   4. Verify the canonical path is inside `confinementRoot` (also
+ *   5. Verify the canonical path is inside `confinementRoot` (also
  *      canonicalized) — rejects symlinks pointing outside and any path
  *      traversal attempts.
- *   5. Read via the file handle (`fh.readFile`), NOT via the path, so
+ *   6. Read via the file handle (`fh.readFile`), NOT via the path, so
  *      the bytes returned come from the inode bound in step 1.
- *   6. Always close the handle in a `finally` block.
+ *   7. Re-stat through the fd to detect torn reads (size/mtime/ctime
+ *      drift, or short reads).
+ *   8. Dispatch the buffer to the registry-resolved extractor.
+ *   9. Always close the handle in a `finally` block.
  */
 import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+
+import {
+  ExtractionError,
+  detectFormatByMagicBytes,
+  getExtractor,
+  getSupportedExtensions,
+} from "./extractors/index.js";
+import type { ContentExtractor } from "./extractors/index.js";
 
 export interface DocumentContent {
   readonly path: string;
@@ -59,6 +68,14 @@ export interface ExtractDocumentOptions {
    */
   readonly _rootIsCanonical?: boolean;
   /**
+   * Maximum file size in bytes. Files larger than this are rejected
+   * with `ExtractionError(oversize-file)` BEFORE any read takes place,
+   * preventing memory exhaustion on hostile input. Defaults to 50 MiB
+   * (50 * 1024 * 1024). Callers (e.g. processor) pass a configured
+   * value derived from `documents.maxFileSizeMB`.
+   */
+  readonly maxFileSizeBytes?: number;
+  /**
    * Test seam — replace `fs.realpath` for the duration of a single
    * call. Used by the unit tests to simulate a post-resolve inode swap
    * without racing the filesystem. Production callers leave this
@@ -74,51 +91,7 @@ export interface ExtractDocumentOptions {
   readonly _readFileOverride?: (fh: fs.FileHandle) => Promise<Buffer>;
 }
 
-const HTML_ENTITIES: Readonly<Record<string, string>> = {
-  "&amp;": "&",
-  "&lt;": "<",
-  "&gt;": ">",
-  "&quot;": '"',
-  "&apos;": "'",
-  "&#39;": "'",
-  "&nbsp;": " ",
-};
-
-function decodeHtmlEntities(input: string): string {
-  return input.replace(/&(?:amp|lt|gt|quot|apos|#39|nbsp);/g, (m) => HTML_ENTITIES[m] ?? m);
-}
-
-function normalizeMarkdown(raw: string): string {
-  let s = raw;
-  s = s.replace(/```[\s\S]*?```/g, "");
-  s = s.replace(/`([^`]*)`/g, "$1");
-  s = s.replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1");
-  s = s.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
-  s = s.replace(/^\s{0,3}#{1,6}\s+/gm, "");
-  s = s.replace(/\*\*([^*]+)\*\*/g, "$1");
-  s = s.replace(/__([^_]+)__/g, "$1");
-  s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1$2");
-  s = s.replace(/(^|[^_])_([^_\n]+)_/g, "$1$2");
-  s = s.replace(/^\s{0,3}>\s?/gm, "");
-  s = s.replace(/^\s{0,3}[-*+]\s+/gm, "");
-  s = s.replace(/^\s{0,3}\d+\.\s+/gm, "");
-  return s.trim();
-}
-
-function normalizeHtml(raw: string): string {
-  let s = raw;
-  s = s.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
-  s = s.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "");
-  s = s.replace(/<[^>]+>/g, " ");
-  s = decodeHtmlEntities(s);
-  s = s.replace(/[ \t]+/g, " ").replace(/\s*\n\s*/g, "\n");
-  return s.trim();
-}
-
-function countWords(text: string): number {
-  const tokens = text.split(/\s+/).filter((t) => t.length > 0);
-  return tokens.length;
-}
+const DEFAULT_MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 
 function isPathInside(child: string, parent: string): boolean {
   const rel = path.relative(parent, child);
@@ -129,11 +102,35 @@ function isPathInside(child: string, parent: string): boolean {
   return true;
 }
 
+async function resolveExtractor(
+  ext: string,
+  buf: Buffer,
+  filePath: string,
+): Promise<ContentExtractor> {
+  let extractor = await getExtractor(ext).catch(() => null);
+  if (extractor === null) {
+    const detected = detectFormatByMagicBytes(buf);
+    if (detected !== null) {
+      extractor = await getExtractor(detected).catch(() => null);
+    }
+  }
+  if (extractor === null) {
+    throw new ExtractionError({
+      kind: "unsupported-format",
+      filePath,
+      message: `extractDocument: no extractor registered for '${ext}'`,
+      suggestion: `Supported extensions: ${getSupportedExtensions().join(", ")}`,
+    });
+  }
+  return extractor;
+}
+
 export async function extractDocument(
   filePath: string,
   options: ExtractDocumentOptions = {},
 ): Promise<DocumentContent> {
   const realpath = options._realpathOverride ?? fs.realpath;
+  const maxBytes = options.maxFileSizeBytes ?? DEFAULT_MAX_FILE_SIZE_BYTES;
 
   // 1. Open via fd FIRST. The kernel resolves any symlink at this
   //    instant and binds the handle to a specific inode — once bound,
@@ -149,7 +146,18 @@ export async function extractDocument(
       throw new Error(`extractDocument: ${filePath} is not a regular file`);
     }
 
-    // 3. Resolve the canonical path now that the fd is bound, then
+    // 3. Size guard BEFORE reading. The fd-bound size cannot be lied
+    //    about by a post-open path swap, so this is a coherent ceiling.
+    if (fdStat.size > maxBytes) {
+      throw new ExtractionError({
+        kind: "oversize-file",
+        filePath,
+        message: `extractDocument: ${filePath} is ${fdStat.size} bytes, exceeds limit ${maxBytes}`,
+        suggestion: `Increase documents.maxFileSizeMB or exclude this file.`,
+      });
+    }
+
+    // 4. Resolve the canonical path now that the fd is bound, then
     //    verify the canonical path's inode matches the fd's inode. If
     //    an attacker swapped a symlink between our open() and this
     //    realpath, the canonical will point at the new target whose
@@ -163,7 +171,7 @@ export async function extractDocument(
       );
     }
 
-    // 4. Confinement: canonical must lie inside the docs root. Symlinks
+    // 5. Confinement: canonical must lie inside the docs root. Symlinks
     //    pointing outside are rejected here.
     if (options.confinementRoot !== undefined) {
       const rootCanonical =
@@ -177,15 +185,13 @@ export async function extractDocument(
       }
     }
 
-    // 5. Read via the file handle (NOT path) so the read targets the
+    // 6. Read via the file handle (NOT path) so the read targets the
     //    inode bound at step 1, immune to any post-open path swap.
     const readFile = options._readFileOverride ?? ((fh: fs.FileHandle) => fh.readFile());
     const buf = await readFile(fh);
-    const raw = buf.toString("utf-8");
     const checksum = createHash("sha256").update(buf).digest("hex");
-    const ext = path.extname(filePath).toLowerCase();
 
-    // 6. Re-stat through the same fd AFTER the read so `modifiedAt` is
+    // 7. Re-stat through the same fd AFTER the read so `modifiedAt` is
     //    bound to the bytes we actually returned (issue #376). The
     //    staleness token includes (size, mtimeMs, ctimeMs) — issue #444:
     //    a same-size rewrite whose mtime is restored via utimes() would
@@ -214,16 +220,24 @@ export async function extractDocument(
       );
     }
 
-    let content: string;
-    if (ext === ".md" || ext === ".markdown") content = normalizeMarkdown(raw);
-    else if (ext === ".html" || ext === ".htm") content = normalizeHtml(raw);
-    else content = raw.trim();
+    // 8. Dispatch to the registered extractor for this format. The
+    //    registry decodes the buffer as needed; extractor.ts itself
+    //    is format-agnostic and never decodes to a string.
+    const ext = path.extname(filePath).toLowerCase();
+    const filename = path.basename(filePath);
+    const extractor = await resolveExtractor(ext, buf, filePath);
+    const extracted = await extractor({
+      buffer: buf,
+      filename,
+      extension: ext,
+      sizeBytes: buf.byteLength,
+    });
 
     return {
       path: filePath,
-      filename: path.basename(filePath),
-      content,
-      wordCount: countWords(content),
+      filename,
+      content: extracted.content,
+      wordCount: extracted.wordCount,
       checksum,
       sizeBytes: buf.byteLength,
       // postStat.mtime equals fdStat.mtime here (we just verified) and
