@@ -80,6 +80,34 @@ describe("rtf extractor", () => {
     expect(out.content).not.toContain("generator");
   });
 
+  it("strips nested destination groups like {\\*\\a{\\*\\b ...}}", async () => {
+    const { extractor } = await loadRtfExtractor();
+    const rtf = "{\\rtf1\\ansi{\\*\\a{\\*\\b nested}}Visible}";
+    const out = await extractor(ctx(Buffer.from(rtf, "utf-8")));
+    expect(out.content).toContain("Visible");
+    expect(out.content).not.toContain("nested");
+    expect(out.content).not.toContain("\\");
+    expect(out.content).not.toContain("{");
+    expect(out.content).not.toContain("}");
+  });
+
+  it("strips deeply nested destination groups in linear time", async () => {
+    const { extractor } = await loadRtfExtractor();
+    // Construct a deeply nested chain of destination groups. The naive
+    // peel-loop implementation is O(n²) in nesting depth; this guards
+    // against regressions by setting a generous but bounded budget.
+    const depth = 2000;
+    const open = "{\\*\\x ".repeat(depth);
+    const close = "}".repeat(depth);
+    const rtf = `{\\rtf1\\ansi${open}hidden${close}Visible}`;
+    const start = Date.now();
+    const out = await extractor(ctx(Buffer.from(rtf, "utf-8")));
+    const elapsedMs = Date.now() - start;
+    expect(out.content).toContain("Visible");
+    expect(out.content).not.toContain("hidden");
+    expect(elapsedMs).toBeLessThan(2000);
+  });
+
   it("returns empty content for an RTF document with no text", async () => {
     const { extractor } = await loadRtfExtractor();
     const rtf = "{\\rtf1\\ansi}";
