@@ -128,6 +128,28 @@ function countWords(text: string): number {
   return text.split(/\s+/).filter((t) => t.length > 0).length;
 }
 
+// DoS guards. `.xlsx` is a ZIP container parsed entirely by exceljs, so
+// we cannot inspect the archive ahead of time. Instead we cap totals
+// observed during traversal and bail out the moment any cap is
+// exceeded — this bounds CPU/heap exhaustion from adversarial
+// "zip-bomb"–style workbooks (huge sheet/row/cell counts or
+// pathologically large cell payloads).
+const MAX_SHEETS = 100;
+const MAX_ROWS = 100_000;
+const MAX_CELLS = 1_000_000;
+const MAX_CONTENT_BYTES = 10 * 1024 * 1024;
+const OVERSIZE_SUGGESTION =
+  "Reduce the number of sheets/rows or split into smaller files.";
+
+function oversizeError(filename: string, detail: string): ExtractionError {
+  return new ExtractionError({
+    kind: "oversize-file",
+    filePath: filename,
+    message: `XLSX exceeds maximum ${detail}: ${filename}`,
+    suggestion: OVERSIZE_SUGGESTION,
+  });
+}
+
 const xlsxExtractor: ContentExtractor = async (
   ctx: ExtractionContext,
 ): Promise<ExtractedContent> => {
@@ -135,11 +157,18 @@ const xlsxExtractor: ContentExtractor = async (
   const workbook = new ExcelJS.default.Workbook();
 
   try {
-    await workbook.xlsx.load(
-      ctx.buffer.buffer.slice(
-        ctx.buffer.byteOffset,
-        ctx.buffer.byteOffset + ctx.buffer.byteLength,
-      ) as ArrayBuffer,
+    // exceljs accepts Buffer | ArrayBuffer | Uint8Array at runtime, but
+    // its .d.ts narrows the param to a stale Buffer type that is not
+    // assignable from the current @types/node Buffer<ArrayBufferLike>.
+    // Build a zero-copy Uint8Array view over the existing memory and
+    // hand it off through an explicit cast.
+    const view = new Uint8Array(
+      ctx.buffer.buffer,
+      ctx.buffer.byteOffset,
+      ctx.buffer.byteLength,
+    );
+    await (workbook.xlsx.load as unknown as (b: Uint8Array) => Promise<unknown>)(
+      view,
     );
   } catch (error: unknown) {
     if (isEncryptedError(error)) {
@@ -167,21 +196,45 @@ const xlsxExtractor: ContentExtractor = async (
 
   const sheetNames: string[] = [];
   const sections: string[] = [];
+  let sheetCount = 0;
+  let totalRows = 0;
+  let totalCells = 0;
+  let totalContentLength = 0;
 
   workbook.eachSheet((worksheet) => {
+    sheetCount++;
+    if (sheetCount > MAX_SHEETS) {
+      throw oversizeError(ctx.filename, `sheet count (${MAX_SHEETS})`);
+    }
     sheetNames.push(worksheet.name);
 
     const rows: string[][] = [];
     worksheet.eachRow({ includeEmpty: false }, (row) => {
+      totalRows++;
+      if (totalRows > MAX_ROWS) {
+        throw oversizeError(ctx.filename, `row count (${MAX_ROWS})`);
+      }
       const cells: string[] = [];
       row.eachCell({ includeEmpty: true }, (cell) => {
+        totalCells++;
+        if (totalCells > MAX_CELLS) {
+          throw oversizeError(ctx.filename, `cell count (${MAX_CELLS})`);
+        }
         cells.push(escapeCell(cellToString(cell.value)));
       });
       rows.push(cells);
     });
 
     if (rows.length === 0) {
-      sections.push(`## ${worksheet.name}\n\n(empty sheet)`);
+      const placeholder = `## ${worksheet.name}\n\n(empty sheet)`;
+      sections.push(placeholder);
+      totalContentLength += placeholder.length;
+      if (totalContentLength > MAX_CONTENT_BYTES) {
+        throw oversizeError(
+          ctx.filename,
+          `output size (${MAX_CONTENT_BYTES} bytes)`,
+        );
+      }
       return;
     }
 
@@ -198,7 +251,15 @@ const xlsxExtractor: ContentExtractor = async (
       table += `| ${row.join(" | ")} |\n`;
     }
 
-    sections.push(table.trimEnd());
+    const trimmed = table.trimEnd();
+    sections.push(trimmed);
+    totalContentLength += trimmed.length;
+    if (totalContentLength > MAX_CONTENT_BYTES) {
+      throw oversizeError(
+        ctx.filename,
+        `output size (${MAX_CONTENT_BYTES} bytes)`,
+      );
+    }
   });
 
   const content = sections.join("\n\n").trim();
