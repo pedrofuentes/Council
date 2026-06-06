@@ -11,6 +11,7 @@
 import "./markdown.js";
 import "./html.js";
 import "./plaintext.js";
+import "./pdf.js";
 
 export type {
   ContentExtractor,
