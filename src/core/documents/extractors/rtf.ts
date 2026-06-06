@@ -17,18 +17,65 @@ import type {
   ExtractionContext,
 } from "./types.js";
 
-function stripRtf(raw: string): string {
-  let s = raw;
+/**
+ * Strip RTF destination groups like `{\*\generator ...}` in a single
+ * O(n) pass. Tracks brace depth and, when entering a `{\*` group at
+ * the current depth, marks a "skip region" that ends when we close
+ * back below the entry depth. Handles arbitrary nesting without the
+ * quadratic blow-up of an iterative innermost-regex peel loop.
+ *
+ * Returns the input with each destination group replaced by a single
+ * space (preserving the delimiter that would otherwise terminate an
+ * adjacent control word).
+ */
+function stripDestinationGroups(input: string): string {
+  const out: string[] = [];
+  let depth = 0;
+  let skipDepth = -1;
+  let i = 0;
 
-  // Remove destination groups like {\*\generator ...}. Replace with a
-  // space to preserve the delimiter that originally terminated any
-  // adjacent control word. Apply repeatedly to peel off non-nested
-  // layers from the outside in.
-  let prev: string;
-  do {
-    prev = s;
-    s = s.replace(/\{\\\*[^{}]*\}/g, " ");
-  } while (s !== prev);
+  while (i < input.length) {
+    const ch = input[i] as string;
+
+    if (ch === "{") {
+      if (
+        skipDepth < 0 &&
+        i + 2 < input.length &&
+        input[i + 1] === "\\" &&
+        input[i + 2] === "*"
+      ) {
+        skipDepth = depth;
+        depth++;
+        i += 3;
+        continue;
+      }
+      depth++;
+      if (skipDepth < 0) out.push(ch);
+      i++;
+      continue;
+    }
+
+    if (ch === "}") {
+      depth--;
+      if (skipDepth >= 0 && depth <= skipDepth) {
+        skipDepth = -1;
+        out.push(" ");
+      } else if (skipDepth < 0) {
+        out.push(ch);
+      }
+      i++;
+      continue;
+    }
+
+    if (skipDepth < 0) out.push(ch);
+    i++;
+  }
+
+  return out.join("");
+}
+
+function stripRtf(raw: string): string {
+  let s = stripDestinationGroups(raw);
 
   // Decode hex escape sequences (\'XX) using the byte value as a
   // codepoint — adequate for the Latin-1 / Windows-1252 range that
