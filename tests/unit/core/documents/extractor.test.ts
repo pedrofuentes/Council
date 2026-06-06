@@ -439,17 +439,25 @@ describe("extractDocument", () => {
     });
 
     it("falls back to magic-byte detection when extension is unknown but bytes match a known signature", async () => {
-      // No PDF extractor is registered yet (T3 ships only md/html/txt),
-      // so a %PDF buffer with an unknown extension should still resolve
-      // via magic bytes — and then fail with unsupported-format because
-      // .pdf has no registered extractor. Either way, the fallback path
-      // is exercised: no registered .pdf → unsupported-format thrown
-      // referencing the PDF format from the magic-byte detection.
+      // T6 registers a PDF extractor. A %PDF buffer with an unknown
+      // extension (.bin) should be detected via magic bytes and
+      // dispatched to the PDF extractor — which rejects the fake body
+      // as corrupt (not unsupported-format, because the format IS
+      // supported now).
       const filePath = path.join(dir, "mystery.bin");
       await fs.writeFile(filePath, "%PDF-1.7\nfake pdf body");
-      await expect(extractDocument(filePath)).rejects.toThrow(
-        /unsupported-format|No extractor/i,
+      const errors = await import(
+        "../../../../src/core/documents/extractors/errors.js"
       );
+      let caught: unknown;
+      try {
+        await extractDocument(filePath);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(errors.ExtractionError);
+      const e = caught as InstanceType<typeof errors.ExtractionError>;
+      expect(e.kind).toBe("corrupt-document");
     });
   });
 });
