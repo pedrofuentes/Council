@@ -12,6 +12,9 @@
  *     (200 MB), per-entry uncompressed size (20 MB), and per-entry
  *     compression ratio (100:1). The per-entry stream is also aborted
  *     if it decodes more bytes than its declared uncompressed size.
+ *   - Post-inflate extracted content is capped at 10 MB to bound
+ *     downstream memory use even when individual ZIP entries stay
+ *     within their per-entry limits.
  *   - The XML parser runs with entity processing disabled to prevent
  *     XXE and billion-laughs attacks.
  *
@@ -32,6 +35,7 @@ const MAX_ENTRIES = 1000;
 const MAX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024;
 const MAX_ENTRY_BYTES = 20 * 1024 * 1024;
 const MAX_COMPRESSION_RATIO = 100;
+const MAX_CONTENT_BYTES = 10 * 1024 * 1024;
 
 const SLIDE_PATH = /^ppt\/slides\/slide(\d+)\.xml$/;
 const NOTES_PATH = /^ppt\/notesSlides\/notesSlide(\d+)\.xml$/;
@@ -289,7 +293,30 @@ function extractTextFromXml(xml: string): string {
 }
 
 function countWords(text: string): number {
-  return text.split(/\s+/).filter((t) => t.length > 0).length;
+  // O(n) time, O(1) space — avoids allocating an O(n) substring array
+  // (which `text.split(/\s+/)` would). Matches the same notion of
+  // "word" used previously: any maximal run of non-whitespace
+  // characters counts as one word. Whitespace classes follow the
+  // ECMAScript `\s` definition (covering Unicode whitespace such as
+  // NBSP and the Ogham space mark) so behavior is preserved.
+  let count = 0;
+  let inWord = false;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    // Fast path: ASCII whitespace (space, tab, LF, VT, FF, CR).
+    const isAsciiWs =
+      code === 0x20 || (code >= 0x09 && code <= 0x0d);
+    const isWhitespace =
+      isAsciiWs ||
+      (code > 0x7f && /\s/.test(text.charAt(i)));
+    if (isWhitespace) {
+      inWord = false;
+    } else if (!inWord) {
+      inWord = true;
+      count++;
+    }
+  }
+  return count;
 }
 
 interface SlidePart {
@@ -300,8 +327,22 @@ interface SlidePart {
 function buildMarkdown(
   slides: readonly SlidePart[],
   notes: ReadonlyMap<number, Buffer>,
+  filename: string,
 ): string {
   const sections: string[] = [];
+  let runningBytes = 0;
+  const enforceCap = (addition: string): void => {
+    runningBytes += Buffer.byteLength(addition, "utf-8");
+    if (runningBytes > MAX_CONTENT_BYTES) {
+      throw new ExtractionError({
+        kind: "oversize-file",
+        filePath: filename,
+        message: `Extracted PPTX content exceeds ${String(MAX_CONTENT_BYTES)} bytes.`,
+        suggestion:
+          "Split the presentation into smaller decks or remove oversized text content.",
+      });
+    }
+  };
   for (const slide of slides) {
     const body = extractTextFromXml(slide.xml.toString("utf-8"));
     const lines: string[] = [`## Slide ${String(slide.index)}`, ""];
@@ -314,7 +355,9 @@ function buildMarkdown(
         lines.push("", `> **Speaker Notes:** ${flattened}`);
       }
     }
-    sections.push(lines.join("\n"));
+    const section = lines.join("\n");
+    enforceCap(section);
+    sections.push(section);
   }
   return sections.join("\n\n").trim();
 }
@@ -339,7 +382,7 @@ const pptxExtractor: ContentExtractor = async (
   }
   slides.sort((a, b) => a.index - b.index);
 
-  const content = buildMarkdown(slides, notes);
+  const content = buildMarkdown(slides, notes, ctx.filename);
   return {
     content,
     wordCount: countWords(content),
