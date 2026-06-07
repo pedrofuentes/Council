@@ -264,10 +264,21 @@ const xlsxExtractor: ContentExtractor = async (
 ): Promise<ExtractedContent> => {
   const isXls = ctx.extension.toLowerCase() === ".xls";
 
-  // Skip the ZIP preflight for `.xls` (BIFF8 binary, not a ZIP) — let
-  // exceljs surface the format mismatch so the existing re-save
-  // suggestion path runs.
-  if (!isXls) {
+  // Gate the ZIP preflight on magic-byte detection rather than the
+  // file extension. An attacker can rename a ZIP-bomb XLSX to e.g.
+  // `bomb.xls` to defeat an extension-based skip, but the underlying
+  // buffer still starts with the local-file-header signature
+  // (`PK\x03\x04`). Genuine BIFF8 `.xls` files start with the OLE
+  // compound document magic (`D0 CF 11 E0 ...`) and fall through to
+  // exceljs, which surfaces the existing re-save suggestion.
+  const isZipShaped =
+    ctx.buffer.length >= 4 &&
+    ctx.buffer[0] === 0x50 &&
+    ctx.buffer[1] === 0x4b &&
+    ctx.buffer[2] === 0x03 &&
+    ctx.buffer[3] === 0x04;
+
+  if (isZipShaped) {
     await preflightZip(ctx.buffer, ctx.filename);
   }
 
