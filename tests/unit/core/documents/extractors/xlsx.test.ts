@@ -605,4 +605,22 @@ describe("xlsx extractor - zip-bomb preflight", () => {
       kind: "corrupt-document",
     });
   });
+
+  it("runs ZIP preflight on ZIP-shaped buffers even when extension is .xls (attacker rename)", async () => {
+    // An attacker renames a ZIP-bomb XLSX to bomb.xls hoping the .xls
+    // branch skips the preflight. Magic-byte detection must catch it.
+    const entries: ZipEntry[] = [];
+    for (let i = 0; i < 1100; i++) {
+      entries.push({
+        name: `xl/sheet${String(i)}.xml`,
+        data: Buffer.from(`<s${String(i)}/>`, "utf-8"),
+      });
+    }
+    const buf = buildZip(entries);
+    const { extractor } = await loadXlsxExtractor(".xls");
+    await expect(extractor(ctx(buf, ".xls"))).rejects.toMatchObject({
+      name: "ExtractionError",
+      kind: "zip-bomb-detected",
+    });
+  });
 });
