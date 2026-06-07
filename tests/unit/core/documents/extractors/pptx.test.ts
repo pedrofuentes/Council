@@ -444,10 +444,16 @@ describe("pptx extractor", () => {
     );
   });
 
-  it("does not resolve external XML entities (XXE / billion-laughs)", async () => {
+  it("does not expand internal XML entities (XXE / billion-laughs)", async () => {
     const { extractor } = await loadPptxExtractor();
+    // Use an in-document ENTITY definition with a deterministic literal
+    // payload. If the parser were to expand entities, "INJECTED_CONTENT"
+    // would surface in the extracted text. This regression-catches
+    // entity expansion without depending on platform-specific files
+    // (the previous file:///etc/passwd probe was a no-op on Windows
+    // because the URI does not resolve).
     const malicious = `<?xml version="1.0"?>
-<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+<!DOCTYPE foo [<!ENTITY xxe "INJECTED_CONTENT">]>
 <p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
        xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
   <p:cSld><p:spTree><p:sp><p:txBody>
@@ -461,12 +467,38 @@ describe("pptx extractor", () => {
       },
     ]);
     const out = await extractor(ctx(buf));
-    // The literal entity reference must NOT be expanded to file contents.
-    expect(out.content).not.toMatch(/root:|\/bin\/(ba)?sh/);
-    // Entity expansion is disabled, so the raw "&xxe;" token is left in
-    // place (the parser does not silently expand it).
+    // The entity must NOT be expanded to its literal value.
+    expect(out.content).not.toContain("INJECTED_CONTENT");
+    // Surrounding literal text from the same <a:t> is still preserved.
     expect(out.content).toContain("safe");
     expect(out.content).toContain("tail");
+  });
+
+  it("rejects extracted content larger than the per-document cap with oversize-file", async () => {
+    const { extractor, errors } = await loadPptxExtractor();
+    // Each slide carries ~600 KB of body text; 20 slides → ~12 MB of
+    // extracted content, exceeding the 10 MB MAX_CONTENT_BYTES cap.
+    // Each individual slide XML stays well under the 20 MB per-entry
+    // ZIP cap, and the total uncompressed archive size is under the
+    // 200 MB aggregate cap — so this test specifically exercises the
+    // post-inflate content-size guard rather than any pre-existing
+    // ZIP-bomb defense.
+    const chunk = "x ".repeat(300 * 1024); // ~600 KB per slide
+    const slides: SlideSpec[] = [];
+    for (let i = 0; i < 20; i++) {
+      slides.push({ body: chunk });
+    }
+    const buf = makePptx(slides);
+    let caught: unknown;
+    try {
+      await extractor(ctx(buf));
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(errors.ExtractionError);
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe(
+      "oversize-file",
+    );
   });
 
   it("registers itself for .pptx", async () => {
