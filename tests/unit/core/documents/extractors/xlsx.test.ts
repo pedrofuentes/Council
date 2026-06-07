@@ -8,6 +8,8 @@
  * not natively supported by exceljs; loading one should yield a
  * `corrupt-document` ExtractionError with a re-save suggestion.
  */
+import { deflateRawSync } from "node:zlib";
+
 import ExcelJS from "exceljs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -15,6 +17,102 @@ import type {
   ContentExtractor,
   ExtractionContext,
 } from "../../../../../src/core/documents/extractors/types.js";
+
+interface ZipEntry {
+  readonly name: string;
+  readonly data: Buffer;
+}
+
+function crc32(buf: Buffer): number {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) {
+      c = (c & 1) === 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    table[n] = c >>> 0;
+  }
+  let crc = 0xffffffff;
+  for (const byte of buf) {
+    const idx = (crc ^ byte) & 0xff;
+    crc = ((table[idx] ?? 0) ^ (crc >>> 8)) >>> 0;
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function buildZip(entries: readonly ZipEntry[]): Buffer {
+  const localChunks: Buffer[] = [];
+  const centralChunks: Buffer[] = [];
+  const offsets: number[] = [];
+  let offset = 0;
+
+  for (const entry of entries) {
+    const nameBuf = Buffer.from(entry.name, "utf-8");
+    const uncompressed = entry.data;
+    const compressed = deflateRawSync(uncompressed);
+    const crc = crc32(uncompressed);
+    const method = 8;
+
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0, 6);
+    local.writeUInt16LE(method, 8);
+    local.writeUInt16LE(0, 10);
+    local.writeUInt16LE(0, 12);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(compressed.length, 18);
+    local.writeUInt32LE(uncompressed.length, 22);
+    local.writeUInt16LE(nameBuf.length, 26);
+    local.writeUInt16LE(0, 28);
+
+    localChunks.push(local, nameBuf, compressed);
+    offsets.push(offset);
+    offset += local.length + nameBuf.length + compressed.length;
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0, 8);
+    central.writeUInt16LE(method, 10);
+    central.writeUInt16LE(0, 12);
+    central.writeUInt16LE(0, 14);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(compressed.length, 20);
+    central.writeUInt32LE(uncompressed.length, 24);
+    central.writeUInt16LE(nameBuf.length, 28);
+    central.writeUInt16LE(0, 30);
+    central.writeUInt16LE(0, 32);
+    central.writeUInt16LE(0, 34);
+    central.writeUInt16LE(0, 36);
+    central.writeUInt32LE(0, 38);
+    central.writeUInt32LE(offsets[offsets.length - 1] ?? 0, 42);
+    centralChunks.push(central, nameBuf);
+  }
+
+  const localPart = Buffer.concat(localChunks);
+  const centralPart = Buffer.concat(centralChunks);
+
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(0, 4);
+  eocd.writeUInt16LE(0, 6);
+  eocd.writeUInt16LE(entries.length, 8);
+  eocd.writeUInt16LE(entries.length, 10);
+  eocd.writeUInt32LE(centralPart.length, 12);
+  eocd.writeUInt32LE(localPart.length, 16);
+  eocd.writeUInt16LE(0, 20);
+
+  return Buffer.concat([localPart, centralPart, eocd]);
+}
+
+function tinyValidXlsxZip(): Buffer {
+  return buildZip([
+    { name: "[Content_Types].xml", data: Buffer.from("<x/>", "utf-8") },
+    { name: "xl/workbook.xml", data: Buffer.from("<x/>", "utf-8") },
+  ]);
+}
 
 interface SheetSpec {
   readonly name: string;
@@ -363,7 +461,7 @@ describe("xlsx extractor - encrypted documents (mocked)", () => {
     mockExcelJs({ loadError: new Error("File is password-protected") });
     const extractor = await loadMockedExtractor();
     await expect(
-      extractor(ctx(Buffer.from([0, 1, 2]))),
+      extractor(ctx(tinyValidXlsxZip())),
     ).rejects.toMatchObject({
       name: "ExtractionError",
       kind: "encrypted-document",
@@ -376,7 +474,7 @@ describe("xlsx extractor - encrypted documents (mocked)", () => {
     mockExcelJs({ loadError: new Error("workbook is encrypted") });
     const extractor = await loadMockedExtractor();
     await expect(
-      extractor(ctx(Buffer.from([0, 1, 2]))),
+      extractor(ctx(tinyValidXlsxZip())),
     ).rejects.toMatchObject({ kind: "encrypted-document" });
   });
 });
@@ -392,7 +490,7 @@ describe("xlsx extractor - DoS limits (mocked)", () => {
     mockExcelJs({ sheetCount: 101 });
     const extractor = await loadMockedExtractor();
     await expect(
-      extractor(ctx(Buffer.from([0]))),
+      extractor(ctx(tinyValidXlsxZip())),
     ).rejects.toMatchObject({
       name: "ExtractionError",
       kind: "oversize-file",
@@ -405,7 +503,7 @@ describe("xlsx extractor - DoS limits (mocked)", () => {
     mockExcelJs({ rowsPerSheet: 100_001 });
     const extractor = await loadMockedExtractor();
     await expect(
-      extractor(ctx(Buffer.from([0]))),
+      extractor(ctx(tinyValidXlsxZip())),
     ).rejects.toMatchObject({
       name: "ExtractionError",
       kind: "oversize-file",
@@ -417,7 +515,7 @@ describe("xlsx extractor - DoS limits (mocked)", () => {
     mockExcelJs({ rowsPerSheet: 1, cellsPerRow: 1_000_001 });
     const extractor = await loadMockedExtractor();
     await expect(
-      extractor(ctx(Buffer.from([0]))),
+      extractor(ctx(tinyValidXlsxZip())),
     ).rejects.toMatchObject({
       name: "ExtractionError",
       kind: "oversize-file",
@@ -435,10 +533,76 @@ describe("xlsx extractor - DoS limits (mocked)", () => {
     });
     const extractor = await loadMockedExtractor();
     await expect(
-      extractor(ctx(Buffer.from([0]))),
+      extractor(ctx(tinyValidXlsxZip())),
     ).rejects.toMatchObject({
       name: "ExtractionError",
       kind: "oversize-file",
     });
   }, 30_000);
+});
+
+describe("xlsx extractor - zip-bomb preflight", () => {
+  it("throws ExtractionError(zip-bomb-detected) when an entry's compression ratio is suspiciously high", async () => {
+    const huge = Buffer.alloc(10 * 1024 * 1024, 0);
+    const buf = buildZip([
+      { name: "[Content_Types].xml", data: Buffer.from("<x/>", "utf-8") },
+      { name: "xl/sharedStrings.xml", data: huge },
+    ]);
+    const { extractor } = await loadXlsxExtractor();
+    await expect(extractor(ctx(buf))).rejects.toMatchObject({
+      name: "ExtractionError",
+      kind: "zip-bomb-detected",
+      filePath: "doc.xlsx",
+    });
+  });
+
+  it("throws ExtractionError(zip-bomb-detected) when archive has too many entries", async () => {
+    const entries: ZipEntry[] = [];
+    for (let i = 0; i < 1100; i++) {
+      entries.push({
+        name: `xl/sheet${String(i)}.xml`,
+        data: Buffer.from(`<s${String(i)}/>`, "utf-8"),
+      });
+    }
+    const buf = buildZip(entries);
+    const { extractor } = await loadXlsxExtractor();
+    await expect(extractor(ctx(buf))).rejects.toMatchObject({
+      name: "ExtractionError",
+      kind: "zip-bomb-detected",
+    });
+  });
+
+  it("throws ExtractionError(zip-bomb-detected) when total uncompressed size exceeds the cap", async () => {
+    // Build many entries that each fit under the per-entry ratio limit
+    // but together exceed the 200 MiB total uncompressed cap. Random
+    // bytes don't deflate well, so each entry's individual ratio stays
+    // around 1:1 — only the running total trips the guard.
+    const entries: ZipEntry[] = [];
+    const chunkSize = 1024 * 1024; // 1 MiB
+    const chunk = Buffer.alloc(chunkSize);
+    for (let i = 0; i < chunkSize; i++) {
+      chunk[i] = (i * 1103515245 + 12345) & 0xff;
+    }
+    for (let i = 0; i < 220; i++) {
+      entries.push({ name: `xl/blob${String(i)}.bin`, data: chunk });
+    }
+    const buf = buildZip(entries);
+    const { extractor } = await loadXlsxExtractor();
+    // The 1000-entry limit fires first if entries exceed that — keep
+    // entry count under MAX_ENTRIES so the uncompressed-total guard is
+    // exercised. 220 × 1 MiB = 220 MiB > 200 MiB cap.
+    await expect(extractor(ctx(buf))).rejects.toMatchObject({
+      name: "ExtractionError",
+      kind: "zip-bomb-detected",
+    });
+  }, 30_000);
+
+  it("throws ExtractionError(corrupt-document) when the buffer is not a valid ZIP", async () => {
+    const garbage = Buffer.from("this is not a zip archive at all", "utf-8");
+    const { extractor } = await loadXlsxExtractor();
+    await expect(extractor(ctx(garbage))).rejects.toMatchObject({
+      name: "ExtractionError",
+      kind: "corrupt-document",
+    });
+  });
 });
