@@ -14,6 +14,8 @@
  *
  * Self-registers for `.xlsx` and `.xls`.
  */
+import * as yauzl from "yauzl";
+
 import { registerExtractor } from "./registry.js";
 import { ExtractionError } from "./errors.js";
 import type {
@@ -128,18 +130,125 @@ function countWords(text: string): number {
   return text.split(/\s+/).filter((t) => t.length > 0).length;
 }
 
-// DoS guards. `.xlsx` is a ZIP container parsed entirely by exceljs, so
-// we cannot inspect the archive ahead of time. Instead we cap totals
-// observed during traversal and bail out the moment any cap is
-// exceeded — this bounds CPU/heap exhaustion from adversarial
-// "zip-bomb"–style workbooks (huge sheet/row/cell counts or
-// pathologically large cell payloads).
+// DoS guards. `.xlsx` is a ZIP container; we run a yauzl-based
+// preflight over the central directory before handing bytes to exceljs
+// so we can reject decompression-bomb archives (huge entry counts,
+// pathological compression ratios, or oversized uncompressed totals)
+// up front. After the preflight succeeds we still cap CPU/heap totals
+// observed during traversal — exceljs can synthesize cells from
+// SharedStrings / styles / formulas in ways that aren't visible from
+// the ZIP central directory alone, so the post-load caps remain a
+// necessary second line of defense.
+const MAX_ENTRIES = 1000;
+const MAX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024; // 200 MiB
+const MAX_RATIO = 100;
 const MAX_SHEETS = 100;
 const MAX_ROWS = 100_000;
 const MAX_CELLS = 1_000_000;
 const MAX_CONTENT_BYTES = 10 * 1024 * 1024;
 const OVERSIZE_SUGGESTION =
   "Reduce the number of sheets/rows or split into smaller files.";
+
+function openZipBuffer(buffer: Buffer): Promise<yauzl.ZipFile> {
+  return new Promise((resolve, reject) => {
+    yauzl.fromBuffer(buffer, { lazyEntries: true }, (err, zipFile) => {
+      if (err !== null && err !== undefined) {
+        reject(err);
+        return;
+      }
+      if (zipFile === undefined) {
+        reject(new Error("yauzl returned no zip file"));
+        return;
+      }
+      resolve(zipFile);
+    });
+  });
+}
+
+async function preflightZip(buffer: Buffer, filename: string): Promise<void> {
+  let zipFile: yauzl.ZipFile;
+  try {
+    zipFile = await openZipBuffer(buffer);
+  } catch (error: unknown) {
+    throw new ExtractionError({
+      kind: "corrupt-document",
+      filePath: filename,
+      message: `Failed to parse XLSX archive: ${filename}`,
+      suggestion: "The file may be corrupted — try re-saving from Excel as .xlsx.",
+      cause: error,
+    });
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    let entryCount = 0;
+    let totalUncompressed = 0;
+
+    zipFile.on("entry", (entry: yauzl.Entry) => {
+      entryCount++;
+      if (entryCount > MAX_ENTRIES) {
+        reject(
+          new ExtractionError({
+            kind: "zip-bomb-detected",
+            filePath: filename,
+            message: `XLSX archive has more than ${String(MAX_ENTRIES)} entries`,
+            suggestion: "File has suspicious structure.",
+          }),
+        );
+        return;
+      }
+
+      totalUncompressed += entry.uncompressedSize;
+      if (totalUncompressed > MAX_UNCOMPRESSED_BYTES) {
+        reject(
+          new ExtractionError({
+            kind: "zip-bomb-detected",
+            filePath: filename,
+            message: `XLSX archive uncompressed total exceeds ${String(MAX_UNCOMPRESSED_BYTES)} bytes`,
+            suggestion: "File has suspicious compression characteristics.",
+          }),
+        );
+        return;
+      }
+
+      if (
+        entry.compressedSize > 0 &&
+        entry.uncompressedSize / entry.compressedSize > MAX_RATIO
+      ) {
+        const ratio = (entry.uncompressedSize / entry.compressedSize).toFixed(0);
+        reject(
+          new ExtractionError({
+            kind: "zip-bomb-detected",
+            filePath: filename,
+            message: `XLSX entry compression ratio ${ratio}:1 exceeds limit ${String(MAX_RATIO)}:1`,
+            suggestion: "File has suspicious compression characteristics.",
+          }),
+        );
+        return;
+      }
+
+      zipFile.readEntry();
+    });
+
+    zipFile.on("end", () => {
+      resolve();
+    });
+
+    zipFile.on("error", (err: Error) => {
+      reject(
+        new ExtractionError({
+          kind: "corrupt-document",
+          filePath: filename,
+          message: `Failed to read XLSX archive entries: ${filename}`,
+          suggestion:
+            "The file may be corrupted — try re-saving from Excel as .xlsx.",
+          cause: err,
+        }),
+      );
+    });
+
+    zipFile.readEntry();
+  });
+}
 
 function oversizeError(filename: string, detail: string): ExtractionError {
   return new ExtractionError({
@@ -153,6 +262,15 @@ function oversizeError(filename: string, detail: string): ExtractionError {
 const xlsxExtractor: ContentExtractor = async (
   ctx: ExtractionContext,
 ): Promise<ExtractedContent> => {
+  const isXls = ctx.extension.toLowerCase() === ".xls";
+
+  // Skip the ZIP preflight for `.xls` (BIFF8 binary, not a ZIP) — let
+  // exceljs surface the format mismatch so the existing re-save
+  // suggestion path runs.
+  if (!isXls) {
+    await preflightZip(ctx.buffer, ctx.filename);
+  }
+
   const ExcelJS = await import("exceljs");
   const workbook = new ExcelJS.default.Workbook();
 
@@ -180,7 +298,6 @@ const xlsxExtractor: ContentExtractor = async (
         cause: error,
       });
     }
-    const isXls = ctx.extension.toLowerCase() === ".xls";
     throw new ExtractionError({
       kind: "corrupt-document",
       filePath: ctx.filename,
