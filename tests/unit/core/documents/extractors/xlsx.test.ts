@@ -623,4 +623,56 @@ describe("xlsx extractor - zip-bomb preflight", () => {
       kind: "zip-bomb-detected",
     });
   });
+
+  it("runs ZIP preflight on stub-prefixed ZIPs that bypass an offset-0 magic check", async () => {
+    // exceljs/JSZip and yauzl both locate the central directory by
+    // scanning for EOCD from the end of the buffer, so prepending a
+    // single junk byte yields a payload that still parses as a ZIP but
+    // no longer starts with the local-file-header signature at
+    // offset 0. A preflight gated on `PK\x03\x04` at offset 0 would
+    // skip the check and let the bomb reach exceljs unchecked. Gating
+    // on the negative OLE/BIFF8 signature instead forces the preflight
+    // to run for this stub-prefixed bomb.
+    const entries: ZipEntry[] = [];
+    for (let i = 0; i < 1100; i++) {
+      entries.push({
+        name: `xl/sheet${String(i)}.xml`,
+        data: Buffer.from(`<s${String(i)}/>`, "utf-8"),
+      });
+    }
+    const zipBomb = buildZip(entries);
+    const stubbed = Buffer.concat([Buffer.from([0x00]), zipBomb]);
+    const { extractor } = await loadXlsxExtractor();
+    // Must throw an ExtractionError — either `zip-bomb-detected` from
+    // the preflight noticing the 1100 entries, or `corrupt-document`
+    // from yauzl rejecting the offset-shifted central directory. The
+    // critical property is that the buffer never reaches exceljs
+    // unchecked (current allow-list code silently parses it as an
+    // empty workbook).
+    await expect(extractor(ctx(stubbed))).rejects.toMatchObject({
+      name: "ExtractionError",
+      kind: expect.stringMatching(/^(zip-bomb-detected|corrupt-document)$/),
+    });
+  });
+
+  it("skips ZIP preflight when buffer starts with OLE/BIFF8 magic bytes", async () => {
+    // A genuine legacy .xls file starts with the OLE compound document
+    // signature `D0 CF 11 E0 A1 B1 1A E1`. The preflight must skip
+    // these buffers so they fall through to exceljs, which surfaces the
+    // existing "re-save as .xlsx" corrupt-document error. If the gate
+    // ever flipped to running preflight on OLE input, yauzl would
+    // reject the buffer and the user would see a generic ZIP error
+    // instead of the actionable re-save suggestion — and the failure
+    // would never be reported as `zip-bomb-detected`.
+    const oleHeader = Buffer.from([
+      0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1,
+    ]);
+    const buf = Buffer.concat([oleHeader, Buffer.alloc(512)]);
+    const { extractor } = await loadXlsxExtractor(".xls");
+    await expect(extractor(ctx(buf, ".xls"))).rejects.toMatchObject({
+      name: "ExtractionError",
+      kind: "corrupt-document",
+      suggestion: expect.stringMatching(/xlsx/i),
+    });
+  });
 });
