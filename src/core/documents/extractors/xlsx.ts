@@ -264,21 +264,32 @@ const xlsxExtractor: ContentExtractor = async (
 ): Promise<ExtractedContent> => {
   const isXls = ctx.extension.toLowerCase() === ".xls";
 
-  // Gate the ZIP preflight on magic-byte detection rather than the
-  // file extension. An attacker can rename a ZIP-bomb XLSX to e.g.
-  // `bomb.xls` to defeat an extension-based skip, but the underlying
-  // buffer still starts with the local-file-header signature
-  // (`PK\x03\x04`). Genuine BIFF8 `.xls` files start with the OLE
-  // compound document magic (`D0 CF 11 E0 ...`) and fall through to
-  // exceljs, which surfaces the existing re-save suggestion.
-  const isZipShaped =
-    ctx.buffer.length >= 4 &&
-    ctx.buffer[0] === 0x50 &&
-    ctx.buffer[1] === 0x4b &&
-    ctx.buffer[2] === 0x03 &&
-    ctx.buffer[3] === 0x04;
+  // Gate the ZIP preflight as a deny-list on the OLE/BIFF8 signature
+  // rather than an allow-list on the ZIP local-file-header signature.
+  // exceljs/JSZip and yauzl both locate the central directory by
+  // scanning for the EOCD record from the end of the buffer, so any
+  // ZIP with prepended junk bytes (even a single `0x00`) no longer
+  // starts with `PK\x03\x04` at offset 0 yet still parses as a ZIP.
+  // Allow-listing offset-0 ZIP magic would let such stub-prefixed
+  // bombs bypass the preflight entirely. Deny-listing the OLE compound
+  // document magic (`D0 CF 11 E0 A1 B1 1A E1`) instead means the
+  // preflight runs for everything except genuine BIFF8 `.xls` files —
+  // which fall through to exceljs and surface the existing re-save
+  // suggestion. For truly non-ZIP, non-OLE input (random garbage),
+  // yauzl rejects the buffer and we wrap that as a `corrupt-document`
+  // error, which is the correct outcome.
+  const isOle =
+    ctx.buffer.length >= 8 &&
+    ctx.buffer[0] === 0xd0 &&
+    ctx.buffer[1] === 0xcf &&
+    ctx.buffer[2] === 0x11 &&
+    ctx.buffer[3] === 0xe0 &&
+    ctx.buffer[4] === 0xa1 &&
+    ctx.buffer[5] === 0xb1 &&
+    ctx.buffer[6] === 0x1a &&
+    ctx.buffer[7] === 0xe1;
 
-  if (isZipShaped) {
+  if (!isOle) {
     await preflightZip(ctx.buffer, ctx.filename);
   }
 
