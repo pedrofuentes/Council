@@ -67,12 +67,7 @@ export const ConfigSchema = z
             ".pptx",
             ".xlsx",
             ".xls",
-            ".odt",
-            ".ods",
-            ".odp",
           ]),
-        /** Maximum file size (MB) accepted by the document extractor. */
-        maxFileSizeMB: z.number().min(1).max(500).default(50),
       })
       .default({
         backgroundProcessing: false,
@@ -89,16 +84,14 @@ export const ConfigSchema = z
           ".pptx",
           ".xlsx",
           ".xls",
-          ".odt",
-          ".ods",
-          ".odp",
         ],
-        maxFileSizeMB: 50,
       }),
     /**
      * Document-extraction settings: govern when (if ever) Council falls
      * back to AI-based text extraction for unknown or unsupported file
-     * formats. Default is `off` — conservative, no surprise AI calls.
+     * formats, and the maximum file size accepted by the extractor.
+     * Defaults are conservative — `aiExtraction` is `off`, so no
+     * surprise AI calls on first run.
      */
     documents: z
       .object({
@@ -115,10 +108,18 @@ export const ConfigSchema = z
          * `aiExtraction` is `ask` or `auto`.
          */
         aiExtractionAllowedExtensions: z.array(z.string()).default([]),
+        /**
+         * Maximum file size (MB) accepted by the document extractor.
+         * Files exceeding this ceiling are rejected with
+         * `oversize-file` before any read takes place. 1..500 inclusive,
+         * default 50.
+         */
+        maxFileSizeMB: z.number().min(1).max(500).default(50),
       })
       .default({
         aiExtraction: "off",
         aiExtractionAllowedExtensions: [],
+        maxFileSizeMB: 50,
       }),
     /**
      * Chat-mode tuning: how much recent context to keep verbatim, how
@@ -170,15 +171,12 @@ export const ConfigSchema = z
         ".pptx",
         ".xlsx",
         ".xls",
-        ".odt",
-        ".ods",
-        ".odp",
       ],
-      maxFileSizeMB: 50,
     },
     documents: {
       aiExtraction: "off",
       aiExtractionAllowedExtensions: [],
+      maxFileSizeMB: 50,
     },
     chat: {
       recentTurnCount: 10,

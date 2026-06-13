@@ -136,6 +136,7 @@ export async function runPanelChat(opts: PanelChatOptions): Promise<void> {
         managedDocsDir,
         db,
         supportedFormats: config.expert.supportedFormats,
+        maxFileSizeBytes: config.documents.maxFileSizeMB * 1024 * 1024,
       });
       if (result.indexed > 0) {
         renderer.showSystem(
