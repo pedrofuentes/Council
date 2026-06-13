@@ -16,6 +16,7 @@ import "./csv.js";
 import "./rtf.js";
 import "./docx.js";
 import "./pptx.js";
+import "./xlsx.js";
 
 export type {
   ContentExtractor,
