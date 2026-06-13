@@ -17,6 +17,9 @@ import "./rtf.js";
 import "./docx.js";
 import "./pptx.js";
 import "./xlsx.js";
+import "./odt.js";
+import "./ods.js";
+import "./odp.js";
 
 export type {
   ContentExtractor,
