@@ -655,15 +655,14 @@ describe("xlsx extractor - zip-bomb preflight", () => {
     });
   });
 
-  it("skips ZIP preflight when buffer starts with OLE/BIFF8 magic bytes", async () => {
+  it("falls back to exceljs for genuine BIFF8 .xls when ZIP preflight finds no EOCD", async () => {
     // A genuine legacy .xls file starts with the OLE compound document
-    // signature `D0 CF 11 E0 A1 B1 1A E1`. The preflight must skip
-    // these buffers so they fall through to exceljs, which surfaces the
-    // existing "re-save as .xlsx" corrupt-document error. If the gate
-    // ever flipped to running preflight on OLE input, yauzl would
-    // reject the buffer and the user would see a generic ZIP error
-    // instead of the actionable re-save suggestion — and the failure
-    // would never be reported as `zip-bomb-detected`.
+    // signature `D0 CF 11 E0 A1 B1 1A E1` and contains no ZIP EOCD
+    // record. The preflight always runs but recognises the "EOCD not
+    // found" yauzl error as "not a ZIP at all" and returns gracefully
+    // so exceljs can surface the actionable "re-save as .xlsx"
+    // corrupt-document error. This is the safe fallback path that
+    // makes always-on preflighting workable for legacy binary inputs.
     const oleHeader = Buffer.from([
       0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1,
     ]);
@@ -673,6 +672,44 @@ describe("xlsx extractor - zip-bomb preflight", () => {
       name: "ExtractionError",
       kind: "corrupt-document",
       suggestion: expect.stringMatching(/xlsx/i),
+    });
+  });
+
+  it("rejects OLE-prefixed ZIP-bomb polyglots that bypass an OLE deny-list gate", async () => {
+    // An attacker prepends the OLE2 compound document signature
+    // `D0 CF 11 E0 A1 B1 1A E1` to a valid ZIP bomb. exceljs/JSZip
+    // locates the EOCD by scanning backwards from the end of the
+    // buffer and tolerates the shifted central directory offset, so
+    // it silently parses the polyglot as a workbook with zero sheets
+    // — letting the bomb past any extension- or offset-0-magic-byte
+    // gate (e.g. an OLE deny-list). An always-on preflight catches
+    // this because yauzl, unlike JSZip, validates the central
+    // directory file header signature at the stored offset and
+    // refuses to scan entries when the bytes don't match. The
+    // resulting "invalid CD signature" error surfaces as a
+    // corrupt-document ExtractionError rather than silent success.
+    const entries: ZipEntry[] = [];
+    for (let i = 0; i < 1100; i++) {
+      entries.push({
+        name: `xl/sheet${String(i)}.xml`,
+        data: Buffer.from(`<s${String(i)}/>`, "utf-8"),
+      });
+    }
+    const zipBomb = buildZip(entries);
+    const oleHeader = Buffer.from([
+      0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1,
+    ]);
+    const polyglot = Buffer.concat([oleHeader, zipBomb]);
+
+    const { extractor } = await loadXlsxExtractor();
+    // Either `zip-bomb-detected` (if yauzl somehow scanned the
+    // entries) or `corrupt-document` (yauzl's CD signature check
+    // failing) is an acceptable outcome — the critical property is
+    // that the polyglot never silently succeeds via exceljs's more
+    // lenient JSZip backend.
+    await expect(extractor(ctx(polyglot))).rejects.toMatchObject({
+      name: "ExtractionError",
+      kind: expect.stringMatching(/^(zip-bomb-detected|corrupt-document)$/),
     });
   });
 });
