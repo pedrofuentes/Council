@@ -190,13 +190,49 @@ async function readContentXmlBuffer(
   });
 }
 
-function sanitizeXml(xml: string): string {
+function sanitizeXml(xml: string, filename: string): string {
   // Strip DOCTYPE declarations (incl. internal subsets with ENTITY
   // definitions) and non-standard entity references that would
   // otherwise be expanded or rejected by the parser. With
   // `processEntities: false` set on the parser, this leaves any XXE
   // payload entirely inert.
-  let s = xml.replace(/<!DOCTYPE[^>[]*(\[[\s\S]*?\])?[^>]*>/gi, "");
+  //
+  // We use a bounded forward scan rather than a regex to defeat ReDoS:
+  // a previous regex (`/<!DOCTYPE[^>[]*(\[[\s\S]*?\])?[^>]*>/gi`) had
+  // overlapping greedy character classes and backtracked catastrophically
+  // (O(N²)) on inputs containing `<!DOCTYPE` with no following `>`.
+  // DOCTYPE may only legally appear in the XML prolog (before the root
+  // element), so we only inspect the first window of the document.
+  const MAX_DOCTYPE_WINDOW = 64 * 1024;
+  const prolog = xml.slice(0, MAX_DOCTYPE_WINDOW);
+  const doctypeStart = prolog.search(/<!DOCTYPE/i);
+  let s = xml;
+  if (doctypeStart !== -1) {
+    const scanLimit = Math.min(xml.length, doctypeStart + MAX_DOCTYPE_WINDOW);
+    let depth = 0;
+    let endIdx = -1;
+    // Skip past the literal "<!DOCTYPE" (9 chars) before scanning.
+    for (let i = doctypeStart + 9; i < scanLimit; i++) {
+      const ch = xml.charCodeAt(i);
+      if (ch === 0x5b /* '[' */) depth++;
+      else if (ch === 0x5d /* ']' */) {
+        if (depth > 0) depth--;
+      } else if (ch === 0x3e /* '>' */ && depth === 0) {
+        endIdx = i;
+        break;
+      }
+    }
+    if (endIdx === -1) {
+      throw new ExtractionError({
+        kind: "corrupt-document",
+        filePath: filename,
+        message: `Malformed DOCTYPE declaration — no closing '>' found within ${String(MAX_DOCTYPE_WINDOW)} bytes of '<!DOCTYPE'.`,
+        suggestion:
+          "The file may be corrupted or crafted to cause excessive processing.",
+      });
+    }
+    s = xml.slice(0, doctypeStart) + xml.slice(endIdx + 1);
+  }
   s = s.replace(/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)[a-zA-Z][a-zA-Z0-9]*;/g, "");
   return s;
 }
@@ -215,8 +251,9 @@ export async function readOdfContent(
   if (contentBuf === null) {
     return null;
   }
+  const sanitized = sanitizeXml(contentBuf.toString("utf-8"), filename);
   try {
-    return xmlParser.parse(sanitizeXml(contentBuf.toString("utf-8")));
+    return xmlParser.parse(sanitized);
   } catch {
     return null;
   }
