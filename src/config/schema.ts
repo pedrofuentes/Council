@@ -53,12 +53,72 @@ export const ConfigSchema = z
       .object({
         backgroundProcessing: z.boolean().default(false),
         recencyHalfLifeDays: z.number().int().min(1).max(365).default(90),
-        supportedFormats: z.array(z.string()).default([".md", ".txt", ".html"]),
+        supportedFormats: z
+          .array(z.string())
+          .default([
+            ".md",
+            ".txt",
+            ".html",
+            ".pdf",
+            ".csv",
+            ".tsv",
+            ".rtf",
+            ".docx",
+            ".pptx",
+            ".xlsx",
+            ".xls",
+            ".odt",
+            ".ods",
+            ".odp",
+          ]),
+        /** Maximum file size (MB) accepted by the document extractor. */
+        maxFileSizeMB: z.number().min(1).max(500).default(50),
       })
       .default({
         backgroundProcessing: false,
         recencyHalfLifeDays: 90,
-        supportedFormats: [".md", ".txt", ".html"],
+        supportedFormats: [
+          ".md",
+          ".txt",
+          ".html",
+          ".pdf",
+          ".csv",
+          ".tsv",
+          ".rtf",
+          ".docx",
+          ".pptx",
+          ".xlsx",
+          ".xls",
+          ".odt",
+          ".ods",
+          ".odp",
+        ],
+        maxFileSizeMB: 50,
+      }),
+    /**
+     * Document-extraction settings: govern when (if ever) Council falls
+     * back to AI-based text extraction for unknown or unsupported file
+     * formats. Default is `off` — conservative, no surprise AI calls.
+     */
+    documents: z
+      .object({
+        /**
+         * AI-extraction fallback mode:
+         *   - `off`  — never use AI extraction (default).
+         *   - `ask`  — prompt the user before AI extraction.
+         *   - `auto` — automatically use AI extraction for unknown formats.
+         */
+        aiExtraction: z.enum(["off", "ask", "auto"]).default("off"),
+        /**
+         * Whitelist of file extensions eligible for AI extraction. An
+         * empty array means "all extensions are eligible" when
+         * `aiExtraction` is `ask` or `auto`.
+         */
+        aiExtractionAllowedExtensions: z.array(z.string()).default([]),
+      })
+      .default({
+        aiExtraction: "off",
+        aiExtractionAllowedExtensions: [],
       }),
     /**
      * Chat-mode tuning: how much recent context to keep verbatim, how
@@ -98,7 +158,27 @@ export const ConfigSchema = z
     expert: {
       backgroundProcessing: false,
       recencyHalfLifeDays: 90,
-      supportedFormats: [".md", ".txt", ".html"],
+      supportedFormats: [
+        ".md",
+        ".txt",
+        ".html",
+        ".pdf",
+        ".csv",
+        ".tsv",
+        ".rtf",
+        ".docx",
+        ".pptx",
+        ".xlsx",
+        ".xls",
+        ".odt",
+        ".ods",
+        ".odp",
+      ],
+      maxFileSizeMB: 50,
+    },
+    documents: {
+      aiExtraction: "off",
+      aiExtractionAllowedExtensions: [],
     },
     chat: {
       recentTurnCount: 10,
