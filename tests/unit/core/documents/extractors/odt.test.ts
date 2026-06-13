@@ -267,6 +267,42 @@ describe("odt extractor", () => {
     expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("oversize-file");
   });
 
+  it("does not catastrophically backtrack on a malformed DOCTYPE without closing '>' (ReDoS regression)", async () => {
+    const { extractor, errors } = await loadOdtExtractor();
+    // Construct a content.xml whose payload is "<!DOCTYPE" followed by
+    // a long run of characters with no closing '>'. The previous
+    // DOCTYPE-strip regex (with overlapping `[^>[]*` and `[^>]*` classes)
+    // backtracks catastrophically on this input — O(N²) — taking many
+    // seconds for even modest N. The fix replaces the regex with a
+    // bounded forward scan that either rejects with `corrupt-document`
+    // or completes in well under 1s on the same input.
+    const malicious = "<!DOCTYPE" + "A".repeat(100_000);
+    const buf = buildZip([
+      {
+        name: "content.xml",
+        data: Buffer.from(malicious, "utf-8"),
+      },
+    ]);
+    const start = Date.now();
+    let caught: unknown;
+    let result: unknown;
+    try {
+      result = await extractor(ctx(buf));
+    } catch (err) {
+      caught = err;
+    }
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(2000);
+    if (caught !== undefined) {
+      expect(caught).toBeInstanceOf(errors.ExtractionError);
+      expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe(
+        "corrupt-document",
+      );
+    } else {
+      expect(result).toBeDefined();
+    }
+  }, 3000);
+
   it("registers itself for .odt", async () => {
     vi.resetModules();
     await import("../../../../../src/core/documents/extractors/odt.js");
