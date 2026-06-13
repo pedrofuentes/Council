@@ -170,6 +170,22 @@ async function preflightZip(buffer: Buffer, filename: string): Promise<void> {
   try {
     zipFile = await openZipBuffer(buffer);
   } catch (error: unknown) {
+    // yauzl scans backwards for the End-of-Central-Directory signature
+    // before doing anything else. If it can't find one, the buffer is
+    // not a ZIP at all — most commonly a genuine BIFF8 `.xls` (OLE2
+    // compound document), random binary, or text. Return so that
+    // exceljs can take over and surface the correct format-specific
+    // error (the legacy `.xls` branch produces an actionable "re-save
+    // as .xlsx" suggestion). This is the ONLY yauzl failure mode we
+    // tolerate: any other error (truncated EOCD, multi-disk, etc.)
+    // indicates a ZIP-shaped-but-broken input — including
+    // OLE/PDF/junk-prefixed polyglots whose shifted central directory
+    // offset trips yauzl but is silently absorbed by JSZip — and must
+    // be surfaced rather than handed off to a more lenient parser.
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes("End of central directory record signature not found")) {
+      return;
+    }
     throw new ExtractionError({
       kind: "corrupt-document",
       filePath: filename,
@@ -264,34 +280,23 @@ const xlsxExtractor: ContentExtractor = async (
 ): Promise<ExtractedContent> => {
   const isXls = ctx.extension.toLowerCase() === ".xls";
 
-  // Gate the ZIP preflight as a deny-list on the OLE/BIFF8 signature
-  // rather than an allow-list on the ZIP local-file-header signature.
-  // exceljs/JSZip and yauzl both locate the central directory by
-  // scanning for the EOCD record from the end of the buffer, so any
-  // ZIP with prepended junk bytes (even a single `0x00`) no longer
-  // starts with `PK\x03\x04` at offset 0 yet still parses as a ZIP.
-  // Allow-listing offset-0 ZIP magic would let such stub-prefixed
-  // bombs bypass the preflight entirely. Deny-listing the OLE compound
-  // document magic (`D0 CF 11 E0 A1 B1 1A E1`) instead means the
-  // preflight runs for everything except genuine BIFF8 `.xls` files —
-  // which fall through to exceljs and surface the existing re-save
-  // suggestion. For truly non-ZIP, non-OLE input (random garbage),
-  // yauzl rejects the buffer and we wrap that as a `corrupt-document`
-  // error, which is the correct outcome.
-  const isOle =
-    ctx.buffer.length >= 8 &&
-    ctx.buffer[0] === 0xd0 &&
-    ctx.buffer[1] === 0xcf &&
-    ctx.buffer[2] === 0x11 &&
-    ctx.buffer[3] === 0xe0 &&
-    ctx.buffer[4] === 0xa1 &&
-    ctx.buffer[5] === 0xb1 &&
-    ctx.buffer[6] === 0x1a &&
-    ctx.buffer[7] === 0xe1;
-
-  if (!isOle) {
-    await preflightZip(ctx.buffer, ctx.filename);
-  }
+  // Always preflight every buffer through yauzl — no extension- or
+  // magic-byte-based gate. Prior gating attempts (allow-list on `PK`
+  // at offset 0, deny-list on the OLE/BIFF8 signature, extension
+  // checks) were each bypassed: stub-prefixed ZIPs evade an offset-0
+  // PK check, attacker-renamed `.xls` evades extension checks, and
+  // OLE-prefixed ZIP polyglots evade an OLE deny-list because
+  // exceljs/JSZip tolerates the shifted central directory. An
+  // always-on preflight eliminates the whole class. `preflightZip`
+  // returns gracefully only when yauzl reports
+  // "End of central directory record signature not found" — i.e.
+  // when the buffer is genuinely not a ZIP (e.g., real BIFF8 `.xls`)
+  // and there is no bomb risk to gate against. Any other yauzl
+  // failure (truncated EOCD, multi-disk, invalid central directory
+  // signature from a shifted offset) is surfaced as a
+  // `corrupt-document` ExtractionError to keep polyglot inputs from
+  // reaching the more lenient JSZip backend underneath exceljs.
+  await preflightZip(ctx.buffer, ctx.filename);
 
   const ExcelJS = await import("exceljs");
   const workbook = new ExcelJS.default.Workbook();
