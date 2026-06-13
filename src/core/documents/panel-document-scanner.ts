@@ -50,6 +50,13 @@ export interface ScanPanelDocumentsOptions {
   readonly managedDocsDir: string;
   readonly db: CouncilDatabase;
   readonly supportedFormats: readonly string[];
+  /**
+   * Optional ceiling (in bytes) forwarded to `extractDocument` as
+   * `maxFileSizeBytes`. When omitted the extractor falls back to its
+   * built-in 50 MiB default. Callers derive this from
+   * `config.documents.maxFileSizeMB * 1024 * 1024`.
+   */
+  readonly maxFileSizeBytes?: number;
   /** Optional progress callback — invoked once per file outcome. */
   readonly onProgress?: (event: PanelScanProgress) => void;
   /** Optional warning sink for per-file recoverable errors (#448). */
@@ -89,6 +96,7 @@ export async function scanAndIndexPanelDocuments(
   options: ScanPanelDocumentsOptions,
 ): Promise<PanelScanResult> {
   const { panelName, managedDocsDir, db, supportedFormats, onProgress, onWarning } = options;
+  const maxFileSizeBytes = options.maxFileSizeBytes;
   const docsRepo = new PanelDocumentRepository(db);
   const indexer = createDocumentIndexer(db);
 
@@ -232,6 +240,7 @@ export async function scanAndIndexPanelDocuments(
         const extracted = await extractorModule.extractDocument(file.path, {
           confinementRoot: canonical,
           _rootIsCanonical: true,
+          ...(maxFileSizeBytes !== undefined ? { maxFileSizeBytes } : {}),
         });
         // For `linked` sources, the (link-membership re-check + FTS
         // DELETE+INSERT + panel_documents UPSERT) sequence MUST run as

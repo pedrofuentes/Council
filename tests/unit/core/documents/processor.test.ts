@@ -299,6 +299,33 @@ describe("createDocumentProcessor", () => {
       expect(engine.sends.length).toBe(0);
     });
 
+    it("threads config.maxFileSizeBytes through to extractDocument, rejecting oversize files", async () => {
+      // Wire-through test: when the processor is configured with a
+      // `maxFileSizeBytes` ceiling, a file exceeding the ceiling must
+      // be reported as failed (extractor.ts raises oversize-file). If
+      // the ceiling is NOT threaded through, extractor.ts falls back
+      // to its 50 MiB default and the small ceiling has no effect.
+      const dir = await makeDocsDir(env, "alice");
+      // 200-byte file with a 100-byte ceiling => oversize.
+      await fs.writeFile(path.join(dir, "big.md"), "a".repeat(200));
+      const engine = new StubEngine([VALID_PROFILE_JSON]);
+      const proc = createDocumentProcessor({
+        engine,
+        documentRepo: env.docRepo,
+        profileRepo: env.profileRepo,
+        indexer: env.indexer,
+        config: { ...CONFIG, maxFileSizeBytes: 100 },
+      });
+      const progress: { filename: string; status: string; error?: string }[] = [];
+      const result = await proc.process("alice", dir, (p) => {
+        progress.push({ filename: p.filename, status: p.status, error: p.error });
+      });
+      expect(result.filesFailed).toBe(1);
+      expect(result.filesProcessed).toBe(0);
+      const failed = progress.find((p) => p.status === "failed");
+      expect(failed?.error ?? "").toMatch(/oversize|exceeds|limit/i);
+    });
+
     it("rejects path traversal: docsPath outside the user's data directory is OK only if files are inside it", async () => {
       // Confinement is per-call: every extracted file must canonicalize
       // inside docsPath. We exercise this with a symlink that escapes

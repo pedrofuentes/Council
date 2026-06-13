@@ -698,6 +698,7 @@ export async function maybeProcessPersonaDocs(
     config: {
       supportedFormats: config.expert.supportedFormats,
       recencyHalfLifeDays: config.expert.recencyHalfLifeDays,
+      maxFileSizeBytes: config.documents.maxFileSizeMB * 1024 * 1024,
     },
   });
 

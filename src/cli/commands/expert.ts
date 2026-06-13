@@ -1075,6 +1075,7 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
           config: {
             supportedFormats: config.expert.supportedFormats,
             recencyHalfLifeDays: config.expert.recencyHalfLifeDays,
+            maxFileSizeBytes: config.documents.maxFileSizeMB * 1024 * 1024,
           },
         });
 

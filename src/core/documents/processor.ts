@@ -82,6 +82,13 @@ export interface DocumentProcessorOptions {
   readonly config: {
     readonly supportedFormats: readonly string[];
     readonly recencyHalfLifeDays: number;
+    /**
+     * Optional ceiling (in bytes) forwarded to `extractDocument` as
+     * `maxFileSizeBytes`. When omitted the extractor falls back to its
+     * built-in 50 MiB default. Callers derive this from
+     * `config.documents.maxFileSizeMB * 1024 * 1024`.
+     */
+    readonly maxFileSizeBytes?: number;
   };
   /**
    * Test-only seam: forwarded to the detector as `_lstatOverride`.
@@ -233,6 +240,9 @@ export function createDocumentProcessor(
           const extracted = await extractDocument(file.path, {
             confinementRoot: rootCanonical ?? docsPath,
             _rootIsCanonical: rootCanonical !== null,
+            ...(config.maxFileSizeBytes !== undefined
+              ? { maxFileSizeBytes: config.maxFileSizeBytes }
+              : {}),
           });
 
           await indexer.index({

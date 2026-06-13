@@ -86,7 +86,19 @@ describe("ConfigSchema", () => {
     const config = ConfigSchema.parse({});
     expect(config.expert.backgroundProcessing).toBe(false);
     expect(config.expert.recencyHalfLifeDays).toBe(90);
-    expect(config.expert.supportedFormats).toEqual([".md", ".txt", ".html"]);
+    expect(config.expert.supportedFormats).toEqual([
+      ".md",
+      ".txt",
+      ".html",
+      ".pdf",
+      ".csv",
+      ".tsv",
+      ".rtf",
+      ".docx",
+      ".pptx",
+      ".xlsx",
+      ".xls",
+    ]);
     expect(config.chat.recentTurnCount).toBe(10);
     expect(config.chat.summaryMaxWords).toBe(500);
     expect(config.chat.longConversationWarning).toBe(500);
