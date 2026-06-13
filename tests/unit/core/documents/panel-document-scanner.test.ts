@@ -161,6 +161,24 @@ describe("scanAndIndexPanelDocuments", () => {
     expect(second.unchanged).toBe(2);
   });
 
+  it("threads maxFileSizeBytes through to extractDocument, counting oversize files as failed", async () => {
+    // Wire-through test: when the scanner is given a `maxFileSizeBytes`
+    // ceiling, files exceeding it must be reported as `failed` (the
+    // extractor raises oversize-file). Without the wire-through, the
+    // extractor falls back to its 50 MiB default and the small ceiling
+    // has no effect. The fixture seeds spec.md (~22 bytes) and
+    // external.md (~28 bytes); a 10-byte ceiling rejects both.
+    const result = await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+      maxFileSizeBytes: 10,
+    });
+    expect(result.indexed).toBe(0);
+    expect(result.failed).toBe(2);
+  });
+
   it("re-indexes when a tracked file's checksum changes", async () => {
     await scanAndIndexPanelDocuments({
       panelName: "arch-review",

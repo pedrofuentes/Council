@@ -98,9 +98,6 @@ describe("ConfigSchema", () => {
       ".pptx",
       ".xlsx",
       ".xls",
-      ".odt",
-      ".ods",
-      ".odp",
     ]);
     expect(config.chat.recentTurnCount).toBe(10);
     expect(config.chat.summaryMaxWords).toBe(500);

@@ -1,19 +1,22 @@
 /**
  * Tests for ConfigSchema document-extraction settings:
- *   - expanded `expert.supportedFormats` default list
- *   - new `expert.maxFileSizeMB` field with bounds
- *   - new top-level `documents` section (aiExtraction + allowed extensions)
+ *   - `expert.supportedFormats` default list (only extensions whose
+ *     extractor is registered on `main` — ODF formats are excluded
+ *     until the ODF extractors land)
+ *   - `documents.maxFileSizeMB` field with bounds (lives in the
+ *     `documents` section because it governs document extraction,
+ *     not per-expert behavior; also matches what `extractor.ts`
+ *     already references in its docs and error suggestion text)
+ *   - `documents.aiExtraction` + `aiExtractionAllowedExtensions`
  *
  * These tests exercise schema parsing only — no file I/O.
- *
- * RED at the test commit: the schema does not yet expose these fields/defaults.
  */
 import { describe, expect, it } from "vitest";
 
 import { ConfigSchema } from "../../../src/config/index.js";
 
 describe("ConfigSchema — document extraction defaults", () => {
-  it("expert.supportedFormats default includes all document formats", () => {
+  it("expert.supportedFormats default lists only registered extractor extensions (no ODF)", () => {
     const config = ConfigSchema.parse({});
     expect(config.expert.supportedFormats).toEqual([
       ".md",
@@ -27,10 +30,12 @@ describe("ConfigSchema — document extraction defaults", () => {
       ".pptx",
       ".xlsx",
       ".xls",
-      ".odt",
-      ".ods",
-      ".odp",
     ]);
+    // Defensive: ODF extensions must not be advertised until their
+    // extractors are registered (T10, separate PR).
+    expect(config.expert.supportedFormats).not.toContain(".odt");
+    expect(config.expert.supportedFormats).not.toContain(".ods");
+    expect(config.expert.supportedFormats).not.toContain(".odp");
   });
 
   it("expert.supportedFormats accepts a string array override", () => {
@@ -46,34 +51,42 @@ describe("ConfigSchema — document extraction defaults", () => {
   });
 });
 
-describe("ConfigSchema — expert.maxFileSizeMB", () => {
+describe("ConfigSchema — documents.maxFileSizeMB", () => {
   it("defaults to 50", () => {
     const config = ConfigSchema.parse({});
-    expect(config.expert.maxFileSizeMB).toBe(50);
+    expect(config.documents.maxFileSizeMB).toBe(50);
   });
 
   it("accepts the lower bound of 1", () => {
-    const config = ConfigSchema.parse({ expert: { maxFileSizeMB: 1 } });
-    expect(config.expert.maxFileSizeMB).toBe(1);
+    const config = ConfigSchema.parse({ documents: { maxFileSizeMB: 1 } });
+    expect(config.documents.maxFileSizeMB).toBe(1);
   });
 
   it("accepts the upper bound of 500", () => {
-    const config = ConfigSchema.parse({ expert: { maxFileSizeMB: 500 } });
-    expect(config.expert.maxFileSizeMB).toBe(500);
+    const config = ConfigSchema.parse({ documents: { maxFileSizeMB: 500 } });
+    expect(config.documents.maxFileSizeMB).toBe(500);
   });
 
   it("rejects values below the minimum", () => {
-    expect(() => ConfigSchema.parse({ expert: { maxFileSizeMB: 0 } })).toThrow();
-    expect(() => ConfigSchema.parse({ expert: { maxFileSizeMB: -10 } })).toThrow();
+    expect(() => ConfigSchema.parse({ documents: { maxFileSizeMB: 0 } })).toThrow();
+    expect(() => ConfigSchema.parse({ documents: { maxFileSizeMB: -10 } })).toThrow();
   });
 
   it("rejects values above the maximum", () => {
-    expect(() => ConfigSchema.parse({ expert: { maxFileSizeMB: 501 } })).toThrow();
-    expect(() => ConfigSchema.parse({ expert: { maxFileSizeMB: 10000 } })).toThrow();
+    expect(() => ConfigSchema.parse({ documents: { maxFileSizeMB: 501 } })).toThrow();
+    expect(() => ConfigSchema.parse({ documents: { maxFileSizeMB: 10000 } })).toThrow();
   });
 
   it("rejects non-numeric values", () => {
-    expect(() => ConfigSchema.parse({ expert: { maxFileSizeMB: "50" } })).toThrow();
+    expect(() => ConfigSchema.parse({ documents: { maxFileSizeMB: "50" } })).toThrow();
+  });
+
+  it("is exposed on the documents section, not on expert", () => {
+    const config = ConfigSchema.parse({});
+    // The field belongs in `documents` (matches extractor.ts JSDoc and
+    // error suggestion text). It must NOT also appear on expert.
+    expect(config.documents).toHaveProperty("maxFileSizeMB");
+    expect(config.expert).not.toHaveProperty("maxFileSizeMB");
   });
 });
 
