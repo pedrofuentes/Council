@@ -35,6 +35,12 @@ import {
   getSupportedExtensions,
 } from "./extractors/index.js";
 import type { ContentExtractor, DocumentMetadata } from "./extractors/index.js";
+import { attemptAiFallback } from "./extractors/ai-fallback.js";
+import type {
+  AiFallbackConfig,
+  AiFallbackContent,
+  AiFallbackLogger,
+} from "./extractors/ai-fallback.js";
 
 export interface DocumentContent {
   readonly path: string;
@@ -59,6 +65,23 @@ export interface DocumentContent {
    * unset; consumers must treat it as best-effort.
    */
   readonly metadata?: DocumentMetadata;
+}
+
+/**
+ * AI-fallback configuration accepted by {@link extractDocument}. Extends
+ * the fallback's own {@link AiFallbackConfig} (`mode` +
+ * `allowedExtensions`) with the optional injected dependencies the
+ * extractor forwards verbatim to {@link attemptAiFallback}. Supplying
+ * this option with a `mode` other than `"off"` is the ONLY way to make
+ * the AI fallback reachable; all of its safety logic (blocklist,
+ * magic-byte signature gate, allowlist, audit logging) lives inside
+ * `attemptAiFallback` and is never reimplemented here.
+ */
+export interface AiFallbackOption extends AiFallbackConfig {
+  /** Shared cache keyed by buffer SHA-256, forwarded to the fallback. */
+  readonly cache?: Map<string, AiFallbackContent>;
+  /** Observability logger forwarded to the fallback. */
+  readonly logger?: AiFallbackLogger;
 }
 
 export interface ExtractDocumentOptions {
@@ -97,6 +120,17 @@ export interface ExtractDocumentOptions {
    * this undefined.
    */
   readonly _readFileOverride?: (fh: fs.FileHandle) => Promise<Buffer>;
+  /**
+   * Opt-in AI fallback for files that no native extractor can handle.
+   * When omitted (or `mode === "off"`) an unsupported format throws
+   * `ExtractionError(unsupported-format)` exactly as before. When set to
+   * `auto` / `ask`, {@link attemptAiFallback} runs ONLY after every
+   * TOCTOU / confinement / torn-read guard has passed and ONLY when
+   * `resolveExtractor` finds no native extractor (see
+   * {@link extractDocument}). The fallback is strictly downstream of the
+   * security sequence — it can never weaken or bypass it.
+   */
+  readonly aiFallback?: AiFallbackOption;
 }
 
 const DEFAULT_MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
@@ -110,25 +144,35 @@ function isPathInside(child: string, parent: string): boolean {
   return true;
 }
 
-async function resolveExtractor(
-  ext: string,
-  buf: Buffer,
-  filePath: string,
-): Promise<ContentExtractor> {
+/**
+ * Build the canonical `unsupported-format` error. Extracted so the
+ * native-resolution-failed path and the AI-fallback-declined path raise
+ * an identical error (same kind, message, and suggestion).
+ */
+function unsupportedFormatError(ext: string, filePath: string): ExtractionError {
+  return new ExtractionError({
+    kind: "unsupported-format",
+    filePath,
+    message: `extractDocument: no extractor registered for '${ext}'`,
+    suggestion: `Supported extensions: ${getSupportedExtensions().join(", ")}`,
+  });
+}
+
+/**
+ * Resolve a native extractor for the file, first by extension and then
+ * by magic-byte detection. Returns `null` when neither resolves one — the
+ * caller decides whether to attempt the AI fallback or raise
+ * `unsupported-format`. (Previously this threw directly; the throw moved
+ * up into `extractDocument` so the AI fallback can intercept the failure
+ * at the security boundary without changing the no-fallback behavior.)
+ */
+async function resolveExtractor(ext: string, buf: Buffer): Promise<ContentExtractor | null> {
   let extractor = await getExtractor(ext).catch(() => null);
   if (extractor === null) {
     const detected = detectFormatByMagicBytes(buf);
     if (detected !== null) {
       extractor = await getExtractor(detected).catch(() => null);
     }
-  }
-  if (extractor === null) {
-    throw new ExtractionError({
-      kind: "unsupported-format",
-      filePath,
-      message: `extractDocument: no extractor registered for '${ext}'`,
-      suggestion: `Supported extensions: ${getSupportedExtensions().join(", ")}`,
-    });
   }
   return extractor;
 }
@@ -233,27 +277,86 @@ export async function extractDocument(
     //    is format-agnostic and never decodes to a string.
     const ext = path.extname(filePath).toLowerCase();
     const filename = path.basename(filePath);
-    const extractor = await resolveExtractor(ext, buf, filePath);
-    const extracted = await extractor({
-      buffer: buf,
-      filename,
-      extension: ext,
-      sizeBytes: buf.byteLength,
-    });
+    // postStat.mtime equals fdStat.mtime here (we just verified) and
+    // bounds the moment at which the inode was last written to be
+    // ≤ the moment we finished reading — modifiedAt is coherent with
+    // `content`/`checksum`. Shared by the native and AI-fallback returns.
+    const modifiedAt = postStat.mtime.toISOString();
+    const extractor = await resolveExtractor(ext, buf);
+
+    // 8a. Native resolution succeeded → normalize and return as before.
+    if (extractor !== null) {
+      const extracted = await extractor({
+        buffer: buf,
+        filename,
+        extension: ext,
+        sizeBytes: buf.byteLength,
+      });
+
+      return {
+        path: filePath,
+        filename,
+        content: extracted.content,
+        wordCount: extracted.wordCount,
+        checksum,
+        sizeBytes: buf.byteLength,
+        modifiedAt,
+        ...(extracted.metadata !== undefined ? { metadata: extracted.metadata } : {}),
+      };
+    }
+
+    // 8b. No native extractor (neither the extension nor magic-byte
+    //     detection resolved one). This is the ONLY place the AI fallback
+    //     may run, and ONLY now — strictly downstream of every TOCTOU /
+    //     confinement / torn-read guard above (which we never weaken or
+    //     relocate). `buf`, `checksum`, and `modifiedAt` are all bound to
+    //     the inode we opened in step 1.
+    const aiOption = options.aiFallback;
+    if (aiOption === undefined || aiOption.mode === "off") {
+      // Fallback absent or disabled → preserve the original hard failure.
+      throw unsupportedFormatError(ext, filePath);
+    }
+
+    // Invoke the fallback. All of its security guard-rails (extension
+    // blocklist, magic-byte signature gate, allowedExtensions whitelist,
+    // audit logging, never logging raw bytes) live INSIDE this call; we
+    // only forward the post-guard buffer plus the injected cache/logger.
+    const fallback = await attemptAiFallback(
+      { buffer: buf, filename, extension: ext, sizeBytes: buf.byteLength },
+      { mode: aiOption.mode, allowedExtensions: aiOption.allowedExtensions },
+      {
+        ...(aiOption.cache !== undefined ? { cache: aiOption.cache } : {}),
+        ...(aiOption.logger !== undefined ? { logger: aiOption.logger } : {}),
+      },
+    );
+
+    // null ⇒ the fallback's own guards (blocklist / signature gate /
+    // allowlist) rejected the file. Surface the hard failure rather than
+    // returning empty or attacker-influenced content.
+    if (fallback === null) {
+      throw unsupportedFormatError(ext, filePath);
+    }
+
+    // Build a DocumentContent callers can distinguish from (a) a native
+    // extraction (metadata.aiFallback === true) and, in `ask` mode, from
+    // (b) ordinary indexable content (metadata.askUser === true marks a
+    // review-required result that MUST NOT be indexed without consent).
+    const aiMetadata: DocumentMetadata = {
+      aiFallback: true,
+      detectedFormat: fallback.metadata.detectedFormat,
+      suggestedAction: fallback.metadata.suggestedAction,
+      ...(fallback.metadata.askUser === true ? { askUser: true } : {}),
+    };
 
     return {
       path: filePath,
       filename,
-      content: extracted.content,
-      wordCount: extracted.wordCount,
+      content: fallback.content,
+      wordCount: fallback.wordCount,
       checksum,
       sizeBytes: buf.byteLength,
-      // postStat.mtime equals fdStat.mtime here (we just verified) and
-      // bounds the moment at which the inode was last written to be
-      // ≤ the moment we finished reading — modifiedAt is coherent with
-      // `content`/`checksum`.
-      modifiedAt: postStat.mtime.toISOString(),
-      ...(extracted.metadata !== undefined ? { metadata: extracted.metadata } : {}),
+      modifiedAt,
+      metadata: aiMetadata,
     };
   } finally {
     await fh.close().catch(() => {
