@@ -145,5 +145,19 @@ describe("buildDocsCommand", () => {
       expect(stdout).toContain(".epub");
       expect(stdout).toContain(".mobi");
     });
+
+    it("strips control characters from config-sourced values in output", async () => {
+      // A malicious config could embed ANSI escapes or control chars
+      // in aiExtractionAllowedExtensions. The output must sanitize them.
+      await fs.writeFile(
+        path.join(testHome, "config.yaml"),
+        'documents:\n  aiExtraction: ask\n  aiExtractionAllowedExtensions: [".ok", "\\x1b[31mhacked\\x1b[0m"]\n',
+        "utf8",
+      );
+      const { stdout } = await runDocs(["formats"]);
+      // The raw ANSI escape sequence must not appear in output
+      expect(stdout).not.toContain("\x1b[31m");
+      expect(stdout).not.toContain("\x1b[0m");
+    });
   });
 });
