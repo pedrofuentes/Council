@@ -339,11 +339,6 @@ describe("formatScanSummary", () => {
   });
 
   it("produces multi-line output where each line survives sanitizeSingleLine independently", () => {
-     // Regression test for 🔴: the chat renderer's showSystem uses
-     // sanitizeSingleLine which collapses \n to spaces. The formatter
-     // must produce output where each \n-separated line is meaningful
-     // on its own, AND the call site must split lines before passing
-     // to showSystem. This test verifies the formatter side.
      const result: ScanResult = {
        indexed: 1,
        modified: 0,
@@ -368,5 +363,92 @@ describe("formatScanSummary", () => {
        // No line should contain embedded newlines (already split)
        expect(line).not.toContain("\n");
      }
+  });
+});
+
+describe("renderScanLines — per-line rendering (🔴 regression)", () => {
+  it("calls showSystem once per non-empty line of a multi-line summary", async () => {
+    const { renderScanLines } = await import(
+      "../../../../src/cli/formatters/scan-summary.js"
+    );
+    const calls: Array<{ message: string; level: string }> = [];
+    const fakeRenderer = {
+      showSystem(message: string, level: "info" | "warn" | "error" = "info"): void {
+        calls.push({ message, level });
+      },
+    };
+    const result: ScanResult = {
+      indexed: 1,
+      modified: 0,
+      unchanged: 2,
+      failed: 1,
+      files: [
+        detail({ filename: "report.pdf", extension: ".pdf", status: "indexed", wordCount: 500, metadata: { pageCount: 10 } }),
+        detail({ filename: "old1.md", status: "unchanged" }),
+        detail({ filename: "old2.md", status: "unchanged" }),
+        detail({ filename: "broken.docx", extension: ".docx", status: "failed", errorKind: "corrupt-document" }),
+      ],
+    };
+    renderScanLines(fakeRenderer, result);
+
+    // Must produce multiple showSystem calls — one per non-empty line
+    expect(calls.length).toBeGreaterThan(1);
+    // Each call should be a single line (no embedded newlines)
+    for (const call of calls) {
+      expect(call.message).not.toContain("\n");
+      expect(call.message.length).toBeGreaterThan(0);
+      expect(call.level).toBe("info");
+    }
+  });
+
+  it("does not call showSystem for 'No documents found' result", async () => {
+    const { renderScanLines } = await import(
+      "../../../../src/cli/formatters/scan-summary.js"
+    );
+    const calls: Array<{ message: string; level: string }> = [];
+    const fakeRenderer = {
+      showSystem(message: string, level: "info" | "warn" | "error" = "info"): void {
+        calls.push({ message, level });
+      },
+    };
+    const result: ScanResult = {
+      indexed: 0,
+      modified: 0,
+      unchanged: 0,
+      failed: 0,
+      files: [],
+    };
+    renderScanLines(fakeRenderer, result);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("preserves all content lines from formatScanSummary", async () => {
+    const { renderScanLines } = await import(
+      "../../../../src/cli/formatters/scan-summary.js"
+    );
+    const calls: Array<{ message: string; level: string }> = [];
+    const fakeRenderer = {
+      showSystem(message: string, level: "info" | "warn" | "error" = "info"): void {
+        calls.push({ message, level });
+      },
+    };
+    const result: ScanResult = {
+      indexed: 1,
+      modified: 0,
+      unchanged: 1,
+      failed: 0,
+      files: [
+        detail({ filename: "a.md", status: "indexed", wordCount: 100 }),
+        detail({ filename: "b.md", status: "unchanged" }),
+      ],
+    };
+    renderScanLines(fakeRenderer, result);
+
+    const summary = formatScanSummary(result);
+    const expectedLines = summary.split("\n").filter((l) => l.length > 0);
+    expect(calls.length).toBe(expectedLines.length);
+    for (let i = 0; i < expectedLines.length; i++) {
+      expect(calls[i].message).toBe(expectedLines[i]);
+    }
   });
 });
