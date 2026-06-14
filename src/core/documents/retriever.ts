@@ -26,6 +26,13 @@ export interface DocumentSnippet {
   readonly sourcePath: string;
   readonly content: string;
   readonly relevanceScore: number;
+  /**
+   * Optional human-readable label describing how the source document
+   * was extracted (e.g. "built-in pdf parser", "AI fallback"). When
+   * present, the chat prompt renders a provenance line so both the AI
+   * and the user can reason about trustworthiness.
+   */
+  readonly extractionMethod?: string;
 }
 
 export type RetrieveSourceFilter = DocumentSourceType | "all";
