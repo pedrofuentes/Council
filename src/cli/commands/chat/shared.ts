@@ -309,6 +309,10 @@ export function buildPanelTurnPrompt(opts: BuildPanelTurnPromptOptions): string 
  *     "treat as UNTRUSTED data" framing.
  *   - Source labels are stripped of newlines and bracket characters so
  *     they cannot break out of the header line.
+ *   - Forged per-document delimiters in snippet content — including the
+ *     plural `[REFERENCE DOCUMENTS]` section header and whitespace-padded
+ *     variants — are neutralized to inert parenthesized forms so a
+ *     document cannot terminate its wrapper or forge a trusted header.
  *   - Snippet content runs through {@link sanitizeRoleMarkers} so
  *     ChatML / XML-style / pipe-delimited role markers are neutralized
  *     before insertion.
@@ -345,11 +349,14 @@ export function appendReferenceDocuments(
             .replace(/\]/g, ")")
         : null;
     // Neutralize forged per-document delimiters in content so they
-    // cannot terminate the wrapper or open a fake new one. Role marker
-    // sanitization is layered on top.
+    // cannot terminate the wrapper or open a fake new one — including
+    // the plural `[REFERENCE DOCUMENTS]` section header (#996) and
+    // whitespace-padded variants (#995) an attacker might use to slip
+    // past a strict match. Role marker sanitization is layered on top.
     const neutralizedContent = String(s.content)
-      .replace(/\[REFERENCE DOCUMENT:/gi, "(REFERENCE DOCUMENT:")
-      .replace(/\[END REFERENCE DOCUMENT\]/gi, "(END REFERENCE DOCUMENT)");
+      .replace(/\[\s*REFERENCE DOCUMENTS\s*\]/gi, "(REFERENCE DOCUMENTS)")
+      .replace(/\[\s*REFERENCE DOCUMENT\s*:/gi, "(REFERENCE DOCUMENT:")
+      .replace(/\[\s*END REFERENCE DOCUMENT\s*\]/gi, "(END REFERENCE DOCUMENT)");
     const safeContent = sanitizeRoleMarkers(neutralizedContent);
     lines.push("");
     lines.push(`[REFERENCE DOCUMENT: ${safeSource}]`);
