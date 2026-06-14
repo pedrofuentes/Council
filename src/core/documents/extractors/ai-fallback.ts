@@ -161,13 +161,14 @@ function normalizeExtension(ext: string): string {
 }
 
 /**
- * Strip control characters (U+0000–U+001F, U+007F–U+009F) and cap
- * length so untrusted filenames cannot inject newlines, tabs, or
- * prompt-fragment text into the structured output.
+ * Strip control characters (U+0000–U+001F, U+007F–U+009F) and Unicode
+ * line/paragraph separators (U+2028, U+2029) then cap length so
+ * untrusted filenames cannot inject newlines, tabs, or prompt-fragment
+ * text into the structured output.
  */
 function sanitizeFilename(raw: string): string {
   // eslint-disable-next-line no-control-regex
-  const cleaned = raw.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
+  const cleaned = raw.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]/g, "");
   if (cleaned.length <= MAX_FILENAME_LENGTH) return cleaned;
   return cleaned.slice(0, MAX_FILENAME_LENGTH) + "…";
 }
