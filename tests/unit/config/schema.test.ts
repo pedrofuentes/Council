@@ -1,8 +1,7 @@
 /**
  * Tests for ConfigSchema document-extraction settings:
- *   - `expert.supportedFormats` default list (only extensions whose
- *     extractor is registered on `main` — ODF formats are excluded
- *     until the ODF extractors land)
+ *   - `expert.supportedFormats` default list (all extensions with
+ *     registered extractors, including ODF formats)
  *   - `documents.maxFileSizeMB` field with bounds (lives in the
  *     `documents` section because it governs document extraction,
  *     not per-expert behavior; also matches what `extractor.ts`
@@ -16,7 +15,7 @@ import { describe, expect, it } from "vitest";
 import { ConfigSchema } from "../../../src/config/index.js";
 
 describe("ConfigSchema — document extraction defaults", () => {
-  it("expert.supportedFormats default lists only registered extractor extensions (no ODF)", () => {
+  it("expert.supportedFormats default includes all registered extractor extensions", () => {
     const config = ConfigSchema.parse({});
     expect(config.expert.supportedFormats).toEqual([
       ".md",
@@ -30,12 +29,10 @@ describe("ConfigSchema — document extraction defaults", () => {
       ".pptx",
       ".xlsx",
       ".xls",
+      ".odt",
+      ".ods",
+      ".odp",
     ]);
-    // Defensive: ODF extensions must not be advertised until their
-    // extractors are registered (T10, separate PR).
-    expect(config.expert.supportedFormats).not.toContain(".odt");
-    expect(config.expert.supportedFormats).not.toContain(".ods");
-    expect(config.expert.supportedFormats).not.toContain(".odp");
   });
 
   it("expert.supportedFormats accepts a string array override", () => {
