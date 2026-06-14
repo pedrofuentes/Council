@@ -371,7 +371,7 @@ describe("renderScanLines — per-line rendering (🔴 regression)", () => {
     const { renderScanLines } = await import(
       "../../../../src/cli/formatters/scan-summary.js"
     );
-    const calls: Array<{ message: string; level: string }> = [];
+    const calls: { message: string; level: string }[] = [];
     const fakeRenderer = {
       showSystem(message: string, level: "info" | "warn" | "error" = "info"): void {
         calls.push({ message, level });
@@ -405,7 +405,7 @@ describe("renderScanLines — per-line rendering (🔴 regression)", () => {
     const { renderScanLines } = await import(
       "../../../../src/cli/formatters/scan-summary.js"
     );
-    const calls: Array<{ message: string; level: string }> = [];
+    const calls: { message: string; level: string }[] = [];
     const fakeRenderer = {
       showSystem(message: string, level: "info" | "warn" | "error" = "info"): void {
         calls.push({ message, level });
@@ -426,7 +426,7 @@ describe("renderScanLines — per-line rendering (🔴 regression)", () => {
     const { renderScanLines } = await import(
       "../../../../src/cli/formatters/scan-summary.js"
     );
-    const calls: Array<{ message: string; level: string }> = [];
+    const calls: { message: string; level: string }[] = [];
     const fakeRenderer = {
       showSystem(message: string, level: "info" | "warn" | "error" = "info"): void {
         calls.push({ message, level });

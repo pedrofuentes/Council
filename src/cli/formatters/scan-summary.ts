@@ -134,3 +134,21 @@ export function formatScanSummary(result: ScanResult): string {
 
   return lines.join("\n");
 }
+
+/**
+ * Render a scan summary to a renderer, emitting one showSystem call per
+ * non-empty line. This avoids the sanitizeSingleLine newline collapse
+ * that occurs when a multi-line string is passed as a single message.
+ */
+export function renderScanLines(
+  renderer: { showSystem(message: string, level: "info" | "warn" | "error"): void },
+  result: ScanResult,
+): void {
+  const summary = formatScanSummary(result);
+  if (summary.length === 0 || summary === "No documents found.") return;
+  for (const line of summary.split("\n")) {
+    if (line.length > 0) {
+      renderer.showSystem(line, "info");
+    }
+  }
+}

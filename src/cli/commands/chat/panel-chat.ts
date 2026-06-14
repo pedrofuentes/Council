@@ -130,7 +130,7 @@ export async function runPanelChat(opts: PanelChatOptions): Promise<void> {
     try {
       const { scanAndIndexPanelDocuments, formatAllFailedWarning } =
         await import("../../../core/documents/panel-document-scanner.js");
-      const { formatScanSummary } = await import(
+      const { renderScanLines } = await import(
         "../../../cli/formatters/scan-summary.js"
       );
       const managedDocsDir = path.join(dataHome, "panels", target, "docs");
@@ -142,7 +142,7 @@ export async function runPanelChat(opts: PanelChatOptions): Promise<void> {
         maxFileSizeBytes: config.documents.maxFileSizeMB * 1024 * 1024,
       });
       if (result.indexed > 0 || result.failed > 0 || result.unchanged > 0) {
-        const summary = formatScanSummary({
+        renderScanLines(renderer, {
           indexed: result.indexed,
           modified: 0,
           unchanged: result.unchanged,
@@ -150,13 +150,6 @@ export async function runPanelChat(opts: PanelChatOptions): Promise<void> {
           files: result.files,
           maxFileSizeMB: config.documents.maxFileSizeMB,
         });
-        if (summary.length > 0 && summary !== "No documents found.") {
-          for (const line of summary.split("\n")) {
-            if (line.length > 0) {
-              renderer.showSystem(line, "info");
-            }
-          }
-        }
       }
       const allFailedWarning = formatAllFailedWarning(result);
       if (allFailedWarning !== null) {
