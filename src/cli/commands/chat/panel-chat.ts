@@ -151,7 +151,11 @@ export async function runPanelChat(opts: PanelChatOptions): Promise<void> {
           maxFileSizeMB: config.documents.maxFileSizeMB,
         });
         if (summary.length > 0 && summary !== "No documents found.") {
-          renderer.showSystem(summary, "info");
+          for (const line of summary.split("\n")) {
+            if (line.length > 0) {
+              renderer.showSystem(line, "info");
+            }
+          }
         }
       }
       const allFailedWarning = formatAllFailedWarning(result);
