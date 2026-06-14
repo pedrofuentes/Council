@@ -1,21 +1,46 @@
 /**
- * `council docs formats` — list the document formats Council can ingest.
+ * Top-level `council docs` command (T13 + T14).
  *
- * Reads the live extractor registry plus user configuration so the
- * output reflects exactly what the running build supports rather than a
- * static list. Categorizes registered extensions into:
- *   - Native (text-based, no conversion needed)
- *   - Rich Documents (binary/structured formats converted to text)
- *   - AI Extraction (configurable fallback for unknown formats)
+ * Subcommands:
+ *   - `formats` — lists supported file types, AI extraction status and
+ *     file size limit, sourced from the live extractor registry and
+ *     user config.
+ *   - `review <panel>` — lists files in a panel's docs corpus that
+ *     couldn't be auto-processed (failed extraction, unsupported
+ *     format) and flags AI-extraction-eligible ones when enabled.
+ *     Exits non-zero when there is something pending review so CI /
+ *     scripts can detect a degraded corpus.
+ *   - `doctor <panel>` — diagnostic health summary for a panel: total
+ *     indexed documents + word count, pending review count, corrupt
+ *     count, configured AI-extraction mode and file size limit.
  *
- * Discoverability hint: surfaces the `council config set` keys so users
- * can adjust `documents.aiExtraction` and `documents.maxFileSizeMB`
- * without leaving the help flow.
+ * `review` and `doctor` share a `DocsCommandDeps` injection seam so
+ * unit tests can stub the panel-scan and config-load steps without
+ * spinning up a real database or filesystem corpus. The default
+ * `scanPanel` opens the council database, verifies the panel exists in
+ * the library and runs `scanAndIndexPanelDocuments` against the
+ * panel's managed docs folder.
  */
+import * as path from "node:path";
+
 import { Command } from "commander";
 
-import { loadConfig } from "../../config/index.js";
+import { CliUserError } from "../cli-user-error.js";
+import {
+  ensureDataDirectories,
+  getCouncilDataHome,
+  getCouncilHome,
+  loadConfig,
+  type CouncilConfig,
+} from "../../config/index.js";
 import { getSupportedExtensions } from "../../core/documents/extractors/index.js";
+import {
+  scanAndIndexPanelDocuments,
+  type PanelScanResult,
+} from "../../core/documents/panel-document-scanner.js";
+import { describeScanError } from "../formatters/scan-summary.js";
+import { createDatabase } from "../../memory/db.js";
+import { PanelLibraryRepository } from "../../memory/repositories/panel-library-repo.js";
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
@@ -95,10 +120,13 @@ function maxExtensionWidth(extensions: readonly string[]): number {
 export function buildDocsCommand(
   write: Writer = defaultWriter,
   writeError: Writer = defaultErrorWriter,
+  deps: DocsCommandDeps = {},
 ): Command {
   const cmd = new Command("docs");
   cmd.description("Document format reference and discoverability helpers");
   cmd.addCommand(buildFormatsCommand(write, writeError));
+  cmd.addCommand(buildReviewCommand(write, writeError, deps));
+  cmd.addCommand(buildDoctorCommand(write, writeError, deps));
   return cmd;
 }
 
@@ -146,6 +174,215 @@ function buildFormatsCommand(write: Writer, _writeError: Writer): Command {
       write(
         `File size limit: ${limitMb} MB (configure: council config set documents.maxFileSizeMB <value>)\n`,
       );
+    });
+  return cmd;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// docs review / docs doctor (T14)
+// ──────────────────────────────────────────────────────────────────────
+
+/**
+ * Result of looking up a panel and scanning its docs corpus. The
+ * "not-found" arm lets callers render a friendly error instead of
+ * surfacing a raw `findByName` null check.
+ */
+export type PanelScanLookupResult =
+  | { readonly kind: "not-found" }
+  | { readonly kind: "scanned"; readonly result: PanelScanResult };
+
+export interface DocsCommandDeps {
+  /** Override the panel scan step (used by tests to avoid DB + FS). */
+  readonly scanPanel?: (panelName: string) => Promise<PanelScanLookupResult>;
+  /** Override config loading (used by tests). */
+  readonly loadConfigFn?: () => Promise<CouncilConfig>;
+}
+
+async function defaultScanPanel(panelName: string): Promise<PanelScanLookupResult> {
+  const config = await loadConfig();
+  const dataHome = getCouncilDataHome(config);
+  await ensureDataDirectories(dataHome);
+  const dbPath = path.join(getCouncilHome(), "council.db");
+  const db = await createDatabase(dbPath);
+  try {
+    const panelRepo = new PanelLibraryRepository(db);
+    const panel = await panelRepo.findByName(panelName);
+    if (!panel) {
+      return { kind: "not-found" };
+    }
+    const managedDocsDir = path.join(dataHome, "panels", panelName, "docs");
+    const result = await scanAndIndexPanelDocuments({
+      panelName,
+      managedDocsDir,
+      db,
+      supportedFormats: config.expert.supportedFormats,
+      maxFileSizeBytes: config.documents.maxFileSizeMB * 1024 * 1024,
+    });
+    return { kind: "scanned", result };
+  } finally {
+    await db.destroy();
+  }
+}
+
+function isAiExtractionEligible(
+  file: ScanFileDetailLike,
+  aiMode: "off" | "ask" | "auto",
+  allowedExtensions: readonly string[],
+): boolean {
+  if (aiMode === "off") return false;
+  if (file.errorKind !== "unsupported-format") return false;
+  if (allowedExtensions.length === 0) return true;
+  return allowedExtensions.includes(file.extension);
+}
+
+/**
+ * Subset of `ScanFileDetail` used by review/doctor renderers. Kept
+ * narrow so unit tests can construct fixtures without supplying every
+ * optional field.
+ */
+interface ScanFileDetailLike {
+  readonly filename: string;
+  readonly extension: string;
+  readonly errorKind?: string;
+}
+
+function formatNumber(n: number): string {
+  return n.toLocaleString("en-US");
+}
+
+function buildReviewCommand(
+  write: Writer,
+  writeError: Writer,
+  deps: DocsCommandDeps,
+): Command {
+  const cmd = new Command("review");
+  cmd
+    .description("Review files in a panel's docs corpus that couldn't be auto-processed")
+    .argument("<panel>", "Panel name")
+    .action(async (panel: string) => {
+      const scanFn = deps.scanPanel ?? defaultScanPanel;
+      const configFn = deps.loadConfigFn ?? loadConfig;
+
+      const [lookup, config] = await Promise.all([scanFn(panel), configFn()]);
+
+      if (lookup.kind === "not-found") {
+        writeError(`Panel "${panel}" not found.\n`);
+        const err = new CliUserError(`Panel "${panel}" not found.`);
+        err.exitCode = 1;
+        throw err;
+      }
+
+      const failed = lookup.result.files.filter((f) => f.status === "failed");
+      if (failed.length === 0) {
+        write(`Panel "${panel}": no files need review — all files are indexed.\n`);
+        return;
+      }
+
+      const aiMode = config.documents.aiExtraction;
+      const allowed = config.documents.aiExtractionAllowedExtensions;
+
+      write(
+        `Panel "${panel}" has ${failed.length} ${failed.length === 1 ? "file" : "files"} that couldn't be auto-processed:\n\n`,
+      );
+      let suggestFormats = false;
+      for (const file of failed) {
+        const kind = file.errorKind ?? "extraction-failed";
+        const reason = describeScanError(kind, {
+          maxFileSizeMB: config.documents.maxFileSizeMB,
+        });
+        const eligible = isAiExtractionEligible(file, aiMode, allowed);
+        const tag = eligible ? "  — AI extraction available" : "";
+        const marker = kind === "unsupported-format" ? "✘" : "⚠";
+        write(`  ${marker} ${file.filename} — ${reason}${tag}\n`);
+        if (kind === "unsupported-format") suggestFormats = true;
+      }
+      if (suggestFormats) {
+        write(`\nRun \`council docs formats\` to see supported file types.\n`);
+      }
+      if (aiMode === "off") {
+        write(
+          `Enable AI extraction with: council config set documents.aiExtraction ask\n`,
+        );
+      }
+      const err = new CliUserError(
+        `Panel "${panel}" has ${failed.length} file(s) pending review.`,
+      );
+      err.exitCode = 1;
+      throw err;
+    });
+  return cmd;
+}
+
+function buildDoctorCommand(
+  write: Writer,
+  writeError: Writer,
+  deps: DocsCommandDeps,
+): Command {
+  const cmd = new Command("doctor");
+  cmd
+    .description("Diagnostic health check for a panel's document pipeline")
+    .argument("<panel>", "Panel name")
+    .action(async (panel: string) => {
+      const scanFn = deps.scanPanel ?? defaultScanPanel;
+      const configFn = deps.loadConfigFn ?? loadConfig;
+
+      const [lookup, config] = await Promise.all([scanFn(panel), configFn()]);
+
+      if (lookup.kind === "not-found") {
+        writeError(`Panel "${panel}" not found.\n`);
+        const err = new CliUserError(`Panel "${panel}" not found.`);
+        err.exitCode = 1;
+        throw err;
+      }
+
+      const result = lookup.result;
+      const indexedFiles = result.files.filter(
+        (f) => f.status === "indexed" || f.status === "modified",
+      );
+      // Prefer the aggregate counts (which include unchanged-but-tracked
+      // files) over the length of `files` for the headline number; sum
+      // word counts from the file array since the aggregates don't
+      // track that.
+      const indexedCount = result.indexed + result.unchanged;
+      const totalWords = indexedFiles.reduce(
+        (acc, f) => acc + (f.wordCount ?? 0),
+        0,
+      );
+      const failed = result.files.filter((f) => f.status === "failed");
+      const corrupt = failed.filter((f) => f.errorKind === "corrupt-document");
+
+      write(`Panel "${panel}" document health:\n`);
+      write(
+        `  ✓ ${formatNumber(indexedCount)} ${indexedCount === 1 ? "document" : "documents"} indexed (${formatNumber(totalWords)} ${totalWords === 1 ? "word" : "words"})\n`,
+      );
+      const pendingMarker = failed.length === 0 ? "✓" : "⚠";
+      write(
+        `  ${pendingMarker} ${failed.length} ${failed.length === 1 ? "file" : "files"} pending review`,
+      );
+      if (failed.length > 0) {
+        write(` (run 'council docs review ${panel}')`);
+      }
+      write(`\n`);
+      if (corrupt.length > 0) {
+        const names = corrupt.map((f) => f.filename).join(", ");
+        write(
+          `  ✘ ${corrupt.length} ${corrupt.length === 1 ? "file" : "files"} corrupt (${names})\n`,
+        );
+      }
+      if (result.managedFolderFailed) {
+        write(
+          `  ✘ The managed docs folder could not be scanned — check permissions and that the path exists.\n`,
+        );
+      }
+      const linkedFailed =
+        result.foldersFailed - (result.managedFolderFailed ? 1 : 0);
+      if (linkedFailed > 0) {
+        write(
+          `  ✘ ${linkedFailed} linked ${linkedFailed === 1 ? "folder" : "folders"} could not be scanned.\n`,
+        );
+      }
+      write(`  ℹ AI extraction: ${config.documents.aiExtraction}\n`);
+      write(`  ℹ File size limit: ${config.documents.maxFileSizeMB} MB\n`);
     });
   return cmd;
 }
