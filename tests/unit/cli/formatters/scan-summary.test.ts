@@ -246,7 +246,7 @@ describe("formatScanSummary", () => {
   });
 
   it("renders each error kind with its human-friendly message", () => {
-    const kinds: Array<[ScanFileDetail["errorKind"], string]> = [
+    const kinds: [ScanFileDetail["errorKind"], string][] = [
       ["unsupported-format", "Format not supported"],
       ["corrupt-document", "File appears corrupted"],
       ["encrypted-document", "Password-protected file"],

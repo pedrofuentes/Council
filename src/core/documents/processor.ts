@@ -37,6 +37,10 @@ import {
   type PersonaProfile,
 } from "./profile-analyzer.js";
 import type { DocumentIndexer } from "./indexer.js";
+import {
+  classifyExtractionError,
+  type ScanFileDetail,
+} from "./scan-types.js";
 import type { DocumentRepository } from "../../memory/repositories/document-repository.js";
 import type { ProfileRepository } from "../../memory/repositories/profile-repository.js";
 import type { CouncilEngine } from "../../engine/index.js";
@@ -54,6 +58,14 @@ export interface ProcessingResult {
    * succeeded or wasn't attempted.
    */
   readonly profileError: string | null;
+  /**
+   * Per-file processing details (Task T12). Mirrors the scanner's
+   * `files` field: one entry per discovered document with status,
+   * extension, word count, format metadata, and classified failure
+   * kind. Used by `formatScanSummary` to render expert-document
+   * processing output.
+   */
+  readonly files: readonly ScanFileDetail[];
 }
 
 export interface ProcessingProgress {
@@ -189,6 +201,7 @@ export function createDocumentProcessor(
             );
 
       const toProcess = [...detection.newFiles, ...detection.modifiedFiles];
+      const newSet = new Set(detection.newFiles.map((f) => f.path));
       const skipped = detection.unchangedFiles.length;
 
       let processed = 0;
@@ -196,6 +209,16 @@ export function createDocumentProcessor(
       let removed = 0;
       let totalWords = 0;
       const successfullyExtracted: AnalyzerDoc[] = [];
+      const files: ScanFileDetail[] = [];
+
+      for (const u of detection.unchangedFiles) {
+        files.push({
+          path: u.path,
+          filename: path.basename(u.path),
+          extension: path.extname(u.path).toLowerCase(),
+          status: "unchanged",
+        });
+      }
 
       // Reconcile deletions: any tracked file that did not appear in the
       // current scan (and wasn't merely rejected by confinement) is
@@ -232,6 +255,14 @@ export function createDocumentProcessor(
           wordCount: 0,
           status: "failed",
           error: "rejected: outside confinement root or TOCTOU mismatch",
+        });
+        files.push({
+          path: rejected,
+          filename: path.basename(rejected),
+          extension: path.extname(rejected).toLowerCase(),
+          status: "failed",
+          errorKind: "confinement-violation",
+          errorMessage: "rejected: outside confinement root or TOCTOU mismatch",
         });
       }
 
@@ -295,6 +326,14 @@ export function createDocumentProcessor(
             wordCount: extracted.wordCount,
             status: "success",
           });
+          files.push({
+            path: file.path,
+            filename: file.filename,
+            extension: path.extname(file.path).toLowerCase(),
+            status: newSet.has(file.path) ? "indexed" : "modified",
+            wordCount: extracted.wordCount,
+            ...(extracted.metadata !== undefined ? { metadata: extracted.metadata } : {}),
+          });
         } catch (err: unknown) {
           failed += 1;
           const msg = err instanceof Error ? err.message : String(err);
@@ -303,6 +342,15 @@ export function createDocumentProcessor(
             wordCount: 0,
             status: "failed",
             error: msg,
+          });
+          const classified = classifyExtractionError(err);
+          files.push({
+            path: file.path,
+            filename: file.filename,
+            extension: path.extname(file.path).toLowerCase(),
+            status: "failed",
+            errorKind: classified.kind,
+            errorMessage: classified.message,
           });
         }
       }
@@ -345,6 +393,7 @@ export function createDocumentProcessor(
         totalWords,
         profileUpdated,
         profileError,
+        files,
       };
     },
   };

@@ -39,6 +39,10 @@ import { sql } from "kysely";
 import { detectDocumentChanges, type DocumentFile } from "./detector.js";
 import * as extractorModule from "./extractor.js";
 import { createDocumentIndexer } from "./indexer.js";
+import {
+  classifyExtractionError,
+  type ScanFileDetail,
+} from "./scan-types.js";
 import type { CouncilDatabase } from "../../memory/db.js";
 import {
   PanelDocumentRepository,
@@ -85,6 +89,14 @@ export interface PanelScanResult {
   readonly pruned: number;
   readonly foldersFailed: number;
   readonly managedFolderFailed: boolean;
+  /**
+   * Per-file scan details (Task T12). Populated for every file the
+   * scanner saw — indexed, unchanged, failed, or rejected by
+   * confinement. Consumers (e.g. `formatScanSummary`) use this to
+   * render rich, actionable feedback. The aggregate counts above are
+   * preserved for backward compatibility.
+   */
+  readonly files: readonly ScanFileDetail[];
 }
 
 interface FolderToScan {
@@ -119,6 +131,7 @@ export async function scanAndIndexPanelDocuments(
   let pruned = 0;
   let foldersFailed = 0;
   let managedFolderFailed = false;
+  const files: ScanFileDetail[] = [];
 
   // Track folders we successfully scanned (canonical paths). Pruning is
   // only safe under these — if a folder failed to scan, its tracked
@@ -209,7 +222,15 @@ export async function scanAndIndexPanelDocuments(
     }
 
     unchanged += detection.unchangedFiles.length;
-    for (const u of detection.unchangedFiles) seenPaths.add(u.path);
+    for (const u of detection.unchangedFiles) {
+      seenPaths.add(u.path);
+      files.push({
+        path: u.path,
+        filename: path.basename(u.path),
+        extension: path.extname(u.path).toLowerCase(),
+        status: "unchanged",
+      });
+    }
     // Transient per-file detector failures (lstat/read errors that did
     // NOT confirm a hard rejection — #342) must be preserved across
     // deletion reconciliation: a tracked file that the detector
@@ -220,14 +241,33 @@ export async function scanAndIndexPanelDocuments(
     // to seenPaths to match DocumentProcessor behavior (#447): rejected
     // files suppress pruning so a file whose confinement status changed
     // doesn't get its persisted state deleted automatically.
-    for (const rejected of detection.rejectedFiles) seenPaths.add(rejected);
+    for (const rejected of detection.rejectedFiles) {
+      seenPaths.add(rejected);
+      // Surface confinement rejections as failed entries in the file
+      // detail list so operators can see them in the scan summary
+      // (Task T12). These are intentionally NOT counted in `failed` —
+      // the existing aggregate semantics treat rejected files as
+      // skipped-but-tracked, not as processing failures.
+      files.push({
+        path: rejected,
+        filename: path.basename(rejected),
+        extension: path.extname(rejected).toLowerCase(),
+        status: "failed",
+        errorKind: "confinement-violation",
+        errorMessage: "rejected: outside confinement root or TOCTOU mismatch",
+      });
+    }
     scannedFolders.push(canonical);
 
+    const newSet = new Set(detection.newFiles.map((f) => f.path));
     const targets: readonly DocumentFile[] = [
       ...detection.newFiles,
       ...detection.modifiedFiles,
     ];
     for (const file of targets) {
+      const fileStatusOnSuccess: "indexed" | "modified" = newSet.has(file.path)
+        ? "indexed"
+        : "modified";
       seenPaths.add(file.path);
       try {
         // Pass `confinementRoot` so extractDocument re-validates that
@@ -309,6 +349,12 @@ export async function scanAndIndexPanelDocuments(
               source: folder.source,
               status: "unchanged",
             });
+            files.push({
+              path: file.path,
+              filename: file.filename,
+              extension: path.extname(file.path).toLowerCase(),
+              status: "unchanged",
+            });
             continue;
           }
         } else {
@@ -330,6 +376,14 @@ export async function scanAndIndexPanelDocuments(
         }
         indexed += 1;
         onProgress?.({ filename: file.filename, source: folder.source, status: "indexed" });
+        files.push({
+          path: file.path,
+          filename: file.filename,
+          extension: path.extname(file.path).toLowerCase(),
+          status: fileStatusOnSuccess,
+          wordCount: extracted.wordCount,
+          ...(extracted.metadata !== undefined ? { metadata: extracted.metadata } : {}),
+        });
       } catch (err: unknown) {
         failed += 1;
         const msg = err instanceof Error ? err.message : String(err);
@@ -338,6 +392,15 @@ export async function scanAndIndexPanelDocuments(
           source: folder.source,
           status: "failed",
           error: msg,
+        });
+        const classified = classifyExtractionError(err);
+        files.push({
+          path: file.path,
+          filename: file.filename,
+          extension: path.extname(file.path).toLowerCase(),
+          status: "failed",
+          errorKind: classified.kind,
+          errorMessage: classified.message,
         });
       }
     }
@@ -379,7 +442,15 @@ export async function scanAndIndexPanelDocuments(
     pruned += 1;
   }
 
-  return { indexed, unchanged, failed, pruned, foldersFailed, managedFolderFailed };
+  return {
+    indexed,
+    unchanged,
+    failed,
+    pruned,
+    foldersFailed,
+    managedFolderFailed,
+    files,
+  };
 }
 
 function isUnderFolder(filePath: string, folderPath: string): boolean {
