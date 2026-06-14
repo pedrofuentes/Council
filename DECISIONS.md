@@ -22,6 +22,21 @@
 
 <!-- Add new decisions below this line, most recent first -->
 
+### ADR-019: Custom in-process TypeScript extractors, not Microsoft MarkItDown
+**Date**: 2026-06-14
+**Status**: Accepted
+**Context**: The document-extraction feature expanded support from 3 text formats (`.md`, `.txt`, `.html`) to 13+ binary/structured formats (PDF, DOCX, PPTX, XLSX, CSV/TSV, RTF, ODT/ODS/ODP). This raised a natural build-vs-buy question: why not adopt Microsoft's [MarkItDown](https://github.com/microsoft/markitdown), a popular, well-maintained file→Markdown converter that already covers PDF/DOCX/PPTX/XLSX/HTML/CSV and more? The choice to build was never recorded, so the question keeps resurfacing.
+**Decision**: Implement a custom in-process extractor registry in TypeScript (`src/core/documents/extractors/`) built on npm-native libraries (`pdfjs-dist`, `mammoth`, `exceljs`, `yauzl`, `fast-xml-parser`). Do not depend on MarkItDown. This fulfills the path ADR-009 explicitly forecast — real parsers landing in new, format-dispatched modules rather than replacing the regex text normalisers.
+**Alternatives considered**:
+- **MarkItDown via subprocess** — MarkItDown is a Python 3.10+ package with no Node binding. Shelling out forces every end user to install Python + `pip install markitdown[all]`, which breaks Council's "just works" npm-global UX — the exact problem this feature set out to fix. Bundling a Python runtime (tens of MB, per-OS packaging, code signing) or running a sidecar service is disproportionate for an offline single-user CLI.
+- **MarkItDown as a hosted/sidecar service** — adds a network/process dependency and deployment surface unjustified for local use.
+- **`textract` / other Node libraries** — none match the per-format coverage assembled here, and most are unmaintained.
+**Consequences**:
+- ✅ Zero extra runtime: `npm i -g council` still works with no toolchain; extractors lazy-load per format (factory thunks resolved on first use), so CLI startup cost stays zero.
+- ✅ We own the security boundary. MarkItDown explicitly delegates input safety to the caller ("Do not pass untrusted input directly… it must be validated and restricted before calling") and its `convert()` will fetch remote URIs (an SSRF surface). Council's threat model is "untrusted file dropped by a user," so we built a TOCTOU-safe read boundary, ZIP-bomb preflight, ReDoS-bounded XML scanning, magic-byte blocklists, filename sanitization, and prompt-injection delimiters (ADR-012) — hardening we would have needed as a MarkItDown wrapper regardless.
+- ⚠️ Narrower format breadth: MarkItDown also handles image OCR, audio transcription, EPub, and YouTube. We deliberately skip these. If demand arises, revisit MarkItDown or Azure Document Intelligence as an **optional, user-opted** enhancement to the AI-fallback path — never a hard dependency.
+- ⚠️ We maintain per-parser hardening ourselves; new format bugs are ours to fix (tracked via `sentinel:*` issues).
+
 ### ADR-018: ASCII Symbol System
 **Date**: 2026-05-22
 **Status**: Accepted
