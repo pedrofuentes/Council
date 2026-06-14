@@ -154,9 +154,22 @@ const BLOCKLIST: ReadonlySet<string> = new Set<string>([
 
 const MAGIC_BYTES_LENGTH = 8;
 const SHA_LOG_PREFIX_LENGTH = 8;
+const MAX_FILENAME_LENGTH = 255;
 
 function normalizeExtension(ext: string): string {
   return ext.toLowerCase();
+}
+
+/**
+ * Strip control characters (U+0000–U+001F, U+007F–U+009F) and cap
+ * length so untrusted filenames cannot inject newlines, tabs, or
+ * prompt-fragment text into the structured output.
+ */
+function sanitizeFilename(raw: string): string {
+  // eslint-disable-next-line no-control-regex
+  const cleaned = raw.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
+  if (cleaned.length <= MAX_FILENAME_LENGTH) return cleaned;
+  return cleaned.slice(0, MAX_FILENAME_LENGTH) + "…";
 }
 
 /**
@@ -205,6 +218,19 @@ function detectKnownSignature(buffer: Buffer): string | null {
   return null;
 }
 
+/**
+ * Signatures that must ALWAYS be blocked regardless of file extension.
+ * Mirrors the extension blocklist categories: executables and media.
+ * This prevents renamed executables/images from reaching the AI surface.
+ */
+const SIGNATURE_BLOCKLIST: ReadonlySet<string> = new Set<string>([
+  "Windows executable (MZ)",
+  "ELF executable",
+  "PNG image",
+  "JPEG image",
+  "GIF image",
+]);
+
 function describeFormat(extension: string, buffer: Buffer): string {
   const known = detectKnownSignature(buffer);
   if (known === null) {
@@ -223,8 +249,9 @@ function buildSummary(
   signature: string,
   mode: "ask" | "auto",
 ): string {
+  const safeName = sanitizeFilename(ctx.filename);
   const lines: string[] = [
-    `File ${ctx.filename} (${ctx.sizeBytes} bytes, extension ${ctx.extension}) was not handled by any native extractor.`,
+    `File ${safeName} (${ctx.sizeBytes} bytes, extension ${ctx.extension}) was not handled by any native extractor.`,
     `Detected format: ${detectedFormat}.`,
     `Magic-byte signature: ${signature}.`,
   ];
@@ -270,6 +297,16 @@ export async function attemptAiFallback(
 
   if (BLOCKLIST.has(ext)) {
     logger?.info(`ai-fallback: skipped (blocklisted) extension=${ext} size=${ctx.sizeBytes}`);
+    return null;
+  }
+
+  // Magic-byte signature gate: detect renamed executables/media that
+  // bypass the extension blocklist.
+  const signatureHint = detectKnownSignature(ctx.buffer);
+  if (signatureHint !== null && SIGNATURE_BLOCKLIST.has(signatureHint)) {
+    logger?.info(
+      `ai-fallback: skipped (blocklisted signature) detected=${signatureHint} extension=${ext} size=${ctx.sizeBytes}`,
+    );
     return null;
   }
 
