@@ -2,13 +2,25 @@
  * Role-marker sanitization for extracted document content.
  *
  * Strips or neutralizes sequences in untrusted document text that
- * resemble LLM role markers (system / user / assistant / human /
- * ChatML / pipe-delimited). Neutralization wraps the matched sequence
- * in `[role-marker: ...]` brackets so the text is no longer
- * interpretable as a role boundary while remaining forensically
- * visible — important when investigating whether a document was a
- * deliberate injection attempt or merely a legitimate document about
- * AI systems.
+ * resemble LLM role markers. Coverage spans the conventions of the
+ * major model families a document might try to impersonate:
+ *
+ *   - OpenAI ChatML — `<|im_start|>`, `<|im_end|>`
+ *   - Pipe-delimited role tags — `<|system|>`, `<|user|>`,
+ *     `<|assistant|>`, `<|tool|>`
+ *   - Llama-2 — `[INST]` / `[/INST]`, `<<SYS>>` / `<</SYS>>`
+ *   - Llama-3 — `<|begin_of_text|>`, `<|start_header_id|>`,
+ *     `<|end_header_id|>`, `<|eot_id|>`
+ *   - XML-style tags — `<system>`/`</system>`, `<user>`/`</user>`,
+ *     `<assistant>`/`</assistant>`
+ *   - Anthropic / transcript-style line-start labels — `Human:`,
+ *     `Assistant:`, `System:`, `User:`
+ *
+ * Neutralization wraps the matched sequence in `[role-marker: ...]`
+ * brackets so the text is no longer interpretable as a role boundary
+ * while remaining forensically visible — important when investigating
+ * whether a document was a deliberate injection attempt or merely a
+ * legitimate document about AI systems.
  *
  * This is a defense-in-depth measure layered on top of per-document
  * delimiter wrapping. It does not — and cannot — fully prevent
@@ -40,26 +52,44 @@ export interface SanitizeRoleMarkersOptions {
 /*
  * Each pattern is intentionally narrow — we want to neutralize
  * obvious role boundary markers without mangling legitimate prose. In
- * particular `Human:` / `Assistant:` are matched only at the start of
- * a line (multiline flag) so a sentence like "the Human: condition…"
- * is preserved.
+ * particular the line-start labels (`Human:` / `Assistant:` /
+ * `System:` / `User:`) are matched only at the start of a line
+ * (multiline flag) so a sentence like "the Human: condition…" is
+ * preserved.
  *
  * Casing: XML-style tags use the `i` flag so `<SYSTEM>` is also
- * neutralized. ChatML and pipe-delimited variants are conventionally
- * lower-case and we match them literally to avoid pathological false
- * positives.
+ * neutralized. ChatML, pipe-delimited and Llama special tokens are
+ * conventionally fixed-case and we match them literally to avoid
+ * pathological false positives.
  */
 const ROLE_MARKER_PATTERNS: readonly RegExp[] = [
+  // OpenAI ChatML.
   /<\|im_start\|>/g,
   /<\|im_end\|>/g,
+  // Pipe-delimited role tags.
   /<\|user\|>/g,
   /<\|assistant\|>/g,
   /<\|system\|>/g,
+  /<\|tool\|>/g,
+  // Llama-3 header / sequence tokens.
+  /<\|begin_of_text\|>/g,
+  /<\|eot_id\|>/g,
+  /<\|start_header_id\|>/g,
+  /<\|end_header_id\|>/g,
+  // Llama-2 instruction / system markers.
+  /\[INST\]/g,
+  /\[\/INST\]/g,
+  /<<SYS>>/g,
+  /<<\/SYS>>/g,
+  // XML-style role tags.
   /<\/?system>/gi,
   /<\/?user>/gi,
   /<\/?assistant>/gi,
+  // Transcript-style line-start labels.
   /^Human:/gm,
   /^Assistant:/gm,
+  /^System:/gm,
+  /^User:/gm,
 ];
 
 /**
