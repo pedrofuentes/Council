@@ -19,6 +19,16 @@ import { getSupportedExtensions } from "../../core/documents/extractors/index.js
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
+/**
+ * Strip C0/C1 control characters (including ANSI escapes) from
+ * untrusted config values before printing to the terminal.
+ */
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\x00-\x1f\x7f-\x9f]/g;
+function sanitize(s: string): string {
+  return s.replace(CONTROL_CHARS, "");
+}
+
 const NATIVE_EXTENSIONS: ReadonlySet<string> = new Set([
   ".md",
   ".markdown",
@@ -120,8 +130,8 @@ function buildFormatsCommand(write: Writer, _writeError: Writer): Command {
       }
       write("\n");
 
-      const aiMode = config.documents.aiExtraction;
-      const allowed = config.documents.aiExtractionAllowedExtensions;
+      const aiMode = sanitize(config.documents.aiExtraction);
+      const allowed = config.documents.aiExtractionAllowedExtensions.map(sanitize);
       write("AI Extraction (experimental):\n");
       write(`  Status: ${aiMode}\n`);
       if (allowed.length > 0) {
