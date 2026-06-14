@@ -67,6 +67,9 @@ export const ConfigSchema = z
             ".pptx",
             ".xlsx",
             ".xls",
+            ".odt",
+            ".ods",
+            ".odp",
           ]),
       })
       .default({
@@ -84,6 +87,9 @@ export const ConfigSchema = z
           ".pptx",
           ".xlsx",
           ".xls",
+          ".odt",
+          ".ods",
+          ".odp",
         ],
       }),
     /**
@@ -171,6 +177,9 @@ export const ConfigSchema = z
         ".pptx",
         ".xlsx",
         ".xls",
+        ".odt",
+        ".ods",
+        ".odp",
       ],
     },
     documents: {
