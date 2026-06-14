@@ -34,7 +34,7 @@ import {
   getExtractor,
   getSupportedExtensions,
 } from "./extractors/index.js";
-import type { ContentExtractor } from "./extractors/index.js";
+import type { ContentExtractor, DocumentMetadata } from "./extractors/index.js";
 
 export interface DocumentContent {
   readonly path: string;
@@ -51,6 +51,14 @@ export interface DocumentContent {
    * content actually read (issue #376).
    */
   readonly modifiedAt: string;
+  /**
+   * Format-specific metadata surfaced by the underlying extractor
+   * (e.g. PDF page count, XLSX sheet names, PPTX slide count). Used by
+   * scan-summary UX to show actionable detail per indexed file. The
+   * field is optional — extractors that produce no metadata leave it
+   * unset; consumers must treat it as best-effort.
+   */
+  readonly metadata?: DocumentMetadata;
 }
 
 export interface ExtractDocumentOptions {
@@ -245,6 +253,7 @@ export async function extractDocument(
       // ≤ the moment we finished reading — modifiedAt is coherent with
       // `content`/`checksum`.
       modifiedAt: postStat.mtime.toISOString(),
+      ...(extracted.metadata !== undefined ? { metadata: extracted.metadata } : {}),
     };
   } finally {
     await fh.close().catch(() => {

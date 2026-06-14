@@ -130,6 +130,9 @@ export async function runPanelChat(opts: PanelChatOptions): Promise<void> {
     try {
       const { scanAndIndexPanelDocuments, formatAllFailedWarning } =
         await import("../../../core/documents/panel-document-scanner.js");
+      const { renderScanLines } = await import(
+        "../../../cli/formatters/scan-summary.js"
+      );
       const managedDocsDir = path.join(dataHome, "panels", target, "docs");
       const result = await scanAndIndexPanelDocuments({
         panelName: target,
@@ -138,11 +141,15 @@ export async function runPanelChat(opts: PanelChatOptions): Promise<void> {
         supportedFormats: config.expert.supportedFormats,
         maxFileSizeBytes: config.documents.maxFileSizeMB * 1024 * 1024,
       });
-      if (result.indexed > 0) {
-        renderer.showSystem(
-          `Indexed ${result.indexed} panel document(s) (${result.unchanged} unchanged, ${result.failed} failed).`,
-          "info",
-        );
+      if (result.indexed > 0 || result.failed > 0 || result.unchanged > 0) {
+        renderScanLines(renderer, {
+          indexed: result.indexed,
+          modified: 0,
+          unchanged: result.unchanged,
+          failed: result.failed,
+          files: result.files,
+          maxFileSizeMB: config.documents.maxFileSizeMB,
+        });
       }
       const allFailedWarning = formatAllFailedWarning(result);
       if (allFailedWarning !== null) {
