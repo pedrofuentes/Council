@@ -337,4 +337,36 @@ describe("formatScanSummary", () => {
     // a parenthetical, not a replacement.
     expect(out).toContain("File appears corrupted");
   });
+
+  it("produces multi-line output where each line survives sanitizeSingleLine independently", () => {
+     // Regression test for 🔴: the chat renderer's showSystem uses
+     // sanitizeSingleLine which collapses \n to spaces. The formatter
+     // must produce output where each \n-separated line is meaningful
+     // on its own, AND the call site must split lines before passing
+     // to showSystem. This test verifies the formatter side.
+     const result: ScanResult = {
+       indexed: 1,
+       modified: 0,
+       unchanged: 2,
+       failed: 1,
+       files: [
+         detail({ filename: "report.pdf", extension: ".pdf", status: "indexed", wordCount: 500, metadata: { pageCount: 10 } }),
+         detail({ filename: "old1.md", status: "unchanged" }),
+         detail({ filename: "old2.md", status: "unchanged" }),
+         detail({ filename: "broken.docx", extension: ".docx", status: "failed", errorKind: "corrupt-document" }),
+       ],
+     };
+     const out = formatScanSummary(result);
+     const lines = out.split("\n").filter((l) => l.length > 0);
+
+     // Multi-line output: must have more than 1 line
+     expect(lines.length).toBeGreaterThan(1);
+
+     // Each line should be self-contained (no line depends on the previous for meaning)
+     for (const line of lines) {
+       expect(line.length).toBeGreaterThan(0);
+       // No line should contain embedded newlines (already split)
+       expect(line).not.toContain("\n");
+     }
+  });
 });

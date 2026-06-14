@@ -403,6 +403,27 @@ describe("ChatRenderer", () => {
       expect(stripAnsi(sink.text)).toBe("[WARN] ⚠ Mallory You > hacked\n");
     });
 
+    it("renders multiple showSystem calls as separate lines (multi-line summary fix)", () => {
+      // Regression guard: callers must split multi-line content and call
+      // showSystem per line to preserve line structure, since showSystem
+      // collapses newlines within a single call. This test verifies the
+      // per-line rendering approach works correctly.
+      const sink = new StringSink();
+      const renderer = createChatRenderer({ sink, experts: makeExperts() });
+      const multiLineSummary = "2 files unchanged\n✓ Indexed report.pdf (12 pages)\n✗ broken.pdf: File appears corrupted";
+      for (const line of multiLineSummary.split("\n")) {
+        if (line.length > 0) {
+          renderer.showSystem(line, "info");
+        }
+      }
+      const stripped = stripAnsi(sink.text);
+      const outputLines = stripped.split("\n").filter((l) => l.length > 0);
+      expect(outputLines).toHaveLength(3);
+      expect(outputLines[0]).toBe("[INFO] ℹ 2 files unchanged");
+      expect(outputLines[1]).toBe("[INFO] ℹ ✓ Indexed report.pdf (12 pages)");
+      expect(outputLines[2]).toBe("[INFO] ℹ ✗ broken.pdf: File appears corrupted");
+    });
+
     it("collapses Unicode line separators (\\u2028, \\u2029)", () => {
       // Note: \v and \f are removed entirely by stripControlChars (they're
       // C0 controls), which is even safer than collapsing to a space.
