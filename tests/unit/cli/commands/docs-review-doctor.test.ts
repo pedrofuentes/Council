@@ -90,13 +90,13 @@ function makeConfig(overrides: {
 }
 
 function fileDetail(overrides: Partial<ScanFileDetail> & { filename: string }): ScanFileDetail {
+  const inferredExt = (() => {
+    const dot = overrides.filename.lastIndexOf(".");
+    return dot >= 0 ? overrides.filename.slice(dot).toLowerCase() : "";
+  })();
   return {
     path: `/tmp/panel/${overrides.filename}`,
-    extension:
-      overrides.extension ??
-      (overrides.filename.includes(".")
-        ? "." + overrides.filename.split(".").pop()!.toLowerCase()
-        : ""),
+    extension: overrides.extension ?? inferredExt,
     status: "indexed",
     ...overrides,
   };
