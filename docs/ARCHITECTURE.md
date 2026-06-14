@@ -263,3 +263,42 @@ The Zod `ExpertDefinitionSchema` in `src/config/schema.ts` carries a `superRefin
 - Test coverage: `tests/security/` (red-team payloads, see [TESTING-STRATEGY.md](./TESTING-STRATEGY.md#security-tests))
 - Discovered hazards: see [LEARNINGS.md](../LEARNINGS.md) for the sanitisation pipeline ordering (`stripControlChars` → `sanitizePromptField`), `epistemicStance` newline-collapse rationale, and fence-attribute escaping requirements.
 - Academic context: Greshake et al. "Not what you've signed up for" (indirect prompt injection); Willison "Prompt injection" series; Lakera and Microsoft Prompt Shields documentation. External ML classifiers (Lakera Guard, Prompt Guard 2 ONNX) are deferred to Phase 4 per ADR-012.
+
+
+## Document Trust Model
+
+Council's RAG pipeline reads arbitrary user-supplied files (PDF, DOCX, XLSX, ODT, RTF, plain text, etc.) and surfaces extracted snippets to expert agents. Every byte of extracted content is **untrusted**: a document author can embed text designed to subvert the model — fake system messages, role boundaries, "ignore previous instructions" payloads, exfiltration prompts.
+
+### Trust Boundary
+
+The trust boundary sits between extracted document content and the prompt itself. Everything Council writes into the prompt (system prompt, persona definitions, panel charter, prior summary, debate scaffolding) is **trusted**. Everything Council reads from a user document is **untrusted** and MUST traverse the layered defenses in `Security: Prompt Injection Defense` above plus the document-specific layers below before reaching an LLM.
+
+### Document-Specific Layers (T16)
+
+1. **Per-document delimiter wrapping** (`appendReferenceDocuments` in `src/cli/commands/chat/shared.ts`). Each retrieved snippet is surrounded by an explicit `[REFERENCE DOCUMENT: <source>]` / `[END REFERENCE DOCUMENT]` pair with inline framing that names the content "UNTRUSTED reference data" and instructs the model to treat it as data only, never as instructions, system messages, or role changes. The source label is stripped of newlines and bracket characters so it cannot break out of the header line. Forged `[REFERENCE DOCUMENT:` / `[END REFERENCE DOCUMENT]` sequences inside content are rewritten with parentheses so they cannot terminate or open additional wrappers.
+
+2. **Role-marker sanitization** (`sanitizeRoleMarkers` in `src/core/documents/sanitizers/role-markers.ts`). Sequences that resemble LLM role boundaries — ChatML (`<|im_start|>`, `<|im_end|>`), XML-style (`<system>`, `</system>`, `<user>`, `</user>`, `<assistant>`, `</assistant>`), pipe-delimited (`<|user|>`, `<|assistant|>`, `<|system|>`), and Anthropic-style (`Human:`, `Assistant:` at line start) — are wrapped in `[role-marker: ...]` brackets. Wrapping (rather than deletion) preserves forensic visibility: an auditor can tell whether a document attempted an injection.
+
+3. **Content provenance** (`DocumentSnippet.extractionMethod`). When the retriever knows how a snippet was extracted (e.g. built-in PDF parser vs AI fallback), a `[from: <source>, extracted via: <method>]` line is rendered inside the wrapper. This helps both the model and the user reason about trustworthiness — AI-extracted content from a third-party document is more suspect than text typed directly into a Markdown file.
+
+### What These Defenses Cover
+
+- **Casual / accidental injection.** A document author who copies model-conditioning examples from a blog post, or who innocently uses `<system>` tags for an unrelated purpose, will have those sequences neutralized without confusing the model about role boundaries.
+- **Opportunistic injection.** Common copy-paste injection payloads (`Ignore previous instructions`, `<|im_start|>system`, `Human:` boundary forgery) are surrounded by explicit "this is untrusted data" framing and have their syntactic markers neutralized.
+- **Delimiter forgery.** A document cannot terminate its own wrapper or fabricate a sibling wrapper to exfiltrate the system prompt — the wrapper grammar is sanitized in both the header and the body.
+
+### What These Defenses Do NOT Cover
+
+- **Sophisticated targeted attacks.** Adversaries who know the wrapper grammar and the model can still craft semantic payloads that persuade the model in natural language — no purely syntactic defense can fully prevent this. Indirect prompt injection remains an **open research problem**; see Greshake et al. and ADR-012.
+- **Tool / agent compromise after injection.** If a sufficiently capable expert is granted tool access (file write, shell, network) and is then persuaded by an injection, the wrapper does not retroactively undo the tool call. Per-expert tool gating (see `engine/copilot/adapter.ts` and the Council-specific NEVER rule in `AGENTS.md`) is the mitigation here.
+- **Content the model summarizes or quotes back.** Even if a marker is neutralized in the wrapper, the model might paraphrase the underlying instruction in its response. Downstream chains that re-ingest model output must treat it as untrusted in turn.
+
+### Recommendation
+
+Exercise caution when feeding untrusted third-party documents into sensitive deliberations. The defenses above raise the bar against casual and opportunistic injection but are not a substitute for human review when the stakes are high (e.g. legal, financial, security-critical decisions).
+
+### Cross-references
+
+- Spec: `docs/superpowers/specs/2026-05-28-document-extraction-design.md` §5 "Prompt Injection Defenses".
+- Implementation: `src/cli/commands/chat/shared.ts` (`appendReferenceDocuments`), `src/core/documents/sanitizers/role-markers.ts`, `src/core/documents/retriever.ts` (`DocumentSnippet.extractionMethod`).
+- Tests: `tests/unit/cli/commands/chat-advanced.test.ts` (per-document wrapping suite), `tests/unit/core/documents/sanitizers/role-markers.test.ts`.
