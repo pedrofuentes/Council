@@ -28,6 +28,7 @@ const SETTABLE_CONFIG_KEYS = [
   "defaults.maxWordsPerResponse",
   "documents.aiExtraction",
   "documents.maxFileSizeMB",
+  "conclude.maxTranscriptChars",
 ] as const;
 
 type SettableConfigKey = (typeof SETTABLE_CONFIG_KEYS)[number];
@@ -243,6 +244,15 @@ function coerceConfigValue(key: SettableConfigKey, rawValue: string): string | n
       if (!Number.isFinite(parsed) || parsed < 1 || parsed > 500) {
         throw new CliUserError(
           `Config value for ${key} must be a number between 1 and 500.`,
+        );
+      }
+      return parsed;
+    }
+    case "conclude.maxTranscriptChars": {
+      const parsed = Number(rawValue);
+      if (!Number.isFinite(parsed) || parsed < 1000 || parsed > 1000000) {
+        throw new CliUserError(
+          `Config value for ${key} must be a number between 1000 and 1000000.`,
         );
       }
       return parsed;
