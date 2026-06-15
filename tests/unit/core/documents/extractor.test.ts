@@ -10,6 +10,10 @@ import * as path from "node:path";
 import { createHash } from "node:crypto";
 
 import { extractDocument } from "../../../../src/core/documents/extractor.js";
+import type {
+  AiFallbackContent,
+  AiFallbackLogger,
+} from "../../../../src/core/documents/extractors/ai-fallback.js";
 
 function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
@@ -458,6 +462,161 @@ describe("extractDocument", () => {
       expect(caught).toBeInstanceOf(errors.ExtractionError);
       const e = caught as InstanceType<typeof errors.ExtractionError>;
       expect(e.kind).toBe("corrupt-document");
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // T-AIWIRE: the AI fallback is reachable ONLY at the unsupported-format
+  // boundary — after every TOCTOU / confinement / torn-read guard above
+  // has passed and ONLY when resolveExtractor finds no native extractor.
+  // ──────────────────────────────────────────────────────────────────
+  describe("AI fallback wiring (T-AIWIRE)", () => {
+    // Write a file with an unsupported extension and innocuous text body so
+    // neither extension lookup nor magic-byte detection resolves an
+    // extractor — i.e. resolveExtractor fails and the AI-fallback decision
+    // point is reached.
+    async function writeUnsupported(name: string, body: string): Promise<string> {
+      const filePath = path.join(dir, name);
+      await fs.writeFile(filePath, body);
+      return filePath;
+    }
+
+    it("throws unsupported-format when aiFallback mode is 'off' (unchanged)", async () => {
+      const filePath = await writeUnsupported("off.xyz", "plain content");
+      const errors = await import("../../../../src/core/documents/extractors/errors.js");
+      let caught: unknown;
+      try {
+        await extractDocument(filePath, {
+          aiFallback: { mode: "off", allowedExtensions: [] },
+        });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(errors.ExtractionError);
+      const e = caught as InstanceType<typeof errors.ExtractionError>;
+      expect(e.kind).toBe("unsupported-format");
+    });
+
+    it("throws unsupported-format when aiFallback is absent (default unchanged)", async () => {
+      const filePath = await writeUnsupported("absent.xyz", "plain content");
+      await expect(extractDocument(filePath)).rejects.toMatchObject({
+        kind: "unsupported-format",
+      });
+    });
+
+    it("auto mode returns AI-fallback content for an unsupported extension", async () => {
+      const body = "totally proprietary format body";
+      const filePath = await writeUnsupported("report.xyz", body);
+      const result = await extractDocument(filePath, {
+        aiFallback: { mode: "auto", allowedExtensions: [] },
+      });
+      // Marked distinctly as an AI-fallback result, not a native extraction.
+      expect(result.metadata?.aiFallback).toBe(true);
+      expect(result.metadata?.askUser).toBeUndefined();
+      expect(typeof result.metadata?.detectedFormat).toBe("string");
+      expect(result.content).toContain("report.xyz");
+      expect(result.wordCount).toBeGreaterThan(0);
+      // checksum / size / modifiedAt stay bound to the actually-read bytes.
+      expect(result.checksum).toBe(sha256(body));
+      expect(result.sizeBytes).toBe(Buffer.byteLength(body, "utf-8"));
+      expect(result.filename).toBe("report.xyz");
+      expect(typeof result.modifiedAt).toBe("string");
+    });
+
+    it("auto mode STILL throws unsupported-format for a blocklisted extension (.exe)", async () => {
+      // The blocklist inside attemptAiFallback ALWAYS wins, even when the
+      // extension is explicitly allow-listed.
+      const filePath = await writeUnsupported("malware.exe", "not really an exe");
+      const errors = await import("../../../../src/core/documents/extractors/errors.js");
+      let caught: unknown;
+      try {
+        await extractDocument(filePath, {
+          aiFallback: { mode: "auto", allowedExtensions: [".exe"] },
+        });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(errors.ExtractionError);
+      const e = caught as InstanceType<typeof errors.ExtractionError>;
+      expect(e.kind).toBe("unsupported-format");
+    });
+
+    it("auto mode throws unsupported-format when a non-empty allowlist excludes the extension", async () => {
+      const filePath = await writeUnsupported("data.xyz", "content");
+      await expect(
+        extractDocument(filePath, {
+          aiFallback: { mode: "auto", allowedExtensions: [".abc", ".def"] },
+        }),
+      ).rejects.toMatchObject({ kind: "unsupported-format" });
+    });
+
+    it("auto mode returns content when a non-empty allowlist includes the extension", async () => {
+      const filePath = await writeUnsupported("ok.xyz", "content here");
+      const result = await extractDocument(filePath, {
+        aiFallback: { mode: "auto", allowedExtensions: [".xyz"] },
+      });
+      expect(result.metadata?.aiFallback).toBe(true);
+    });
+
+    it("ask mode surfaces a DISTINCT review-required outcome (askUser), never plain indexed content", async () => {
+      const filePath = await writeUnsupported("review.xyz", "needs review body");
+      const result = await extractDocument(filePath, {
+        aiFallback: { mode: "ask", allowedExtensions: [] },
+      });
+      // Distinct from a native extraction: the aiFallback marker is set.
+      expect(result.metadata?.aiFallback).toBe(true);
+      // Distinct from a hard failure: it RESOLVED — but askUser=true means
+      // callers must obtain confirmation before indexing it as real content.
+      expect(result.metadata?.askUser).toBe(true);
+      expect(result.content.length).toBeGreaterThan(0);
+    });
+
+    it("does NOT invoke the AI fallback when a native extractor handles the file", async () => {
+      const filePath = path.join(dir, "native.txt");
+      await fs.writeFile(filePath, "hello native");
+      const result = await extractDocument(filePath, {
+        aiFallback: { mode: "auto", allowedExtensions: [] },
+      });
+      expect(result.content).toBe("hello native");
+      expect(result.metadata?.aiFallback).toBeUndefined();
+    });
+
+    it("passes the injected cache through to the fallback (cache hit returns cached content)", async () => {
+      const body = "cacheable body";
+      const filePath = await writeUnsupported("cached.xyz", body);
+      const sentinel: AiFallbackContent = {
+        content: "PRECOMPUTED-FALLBACK-DESCRIPTION",
+        wordCount: 2,
+        metadata: {
+          detectedFormat: "precomputed format",
+          suggestedAction: "convert it",
+          mode: "auto",
+        },
+      };
+      const cache = new Map<string, AiFallbackContent>([[sha256(body), sentinel]]);
+      const result = await extractDocument(filePath, {
+        aiFallback: { mode: "auto", allowedExtensions: [], cache },
+      });
+      expect(result.content).toBe("PRECOMPUTED-FALLBACK-DESCRIPTION");
+      expect(result.metadata?.aiFallback).toBe(true);
+      expect(result.metadata?.detectedFormat).toBe("precomputed format");
+    });
+
+    it("passes the injected logger through to the fallback", async () => {
+      const filePath = await writeUnsupported("logged.xyz", "log me");
+      const messages: string[] = [];
+      const logger: AiFallbackLogger = {
+        info: (m: string): void => {
+          messages.push(m);
+        },
+        warn: (m: string): void => {
+          messages.push(m);
+        },
+      };
+      await extractDocument(filePath, {
+        aiFallback: { mode: "auto", allowedExtensions: [], logger },
+      });
+      expect(messages.some((m) => m.includes("ai-fallback"))).toBe(true);
     });
   });
 });
