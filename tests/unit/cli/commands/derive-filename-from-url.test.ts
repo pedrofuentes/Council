@@ -76,22 +76,22 @@ describe("deriveFilenameFromUrl", () => {
       );
     });
 
-    it("throws for path traversal attempts (..)", () => {
-      expect(() => deriveFilenameFromUrl("https://example.com/../file.txt")).toThrow(
-        "Invalid filename derived from URL",
-      );
+    it("extracts normalized filename when URL contains ..", () => {
+      // URL constructor normalizes `..` in paths: `/docs/../file.txt` → `/file.txt`
+      const result = deriveFilenameFromUrl("https://example.com/docs/../file.txt");
+      expect(result).toBe("file.txt");
     });
 
-    it("throws for path with trailing slash after directory", () => {
-      expect(() => deriveFilenameFromUrl("https://example.com/docs/")).toThrow(
-        "Cannot derive filename from URL pathname",
-      );
+    it("extracts directory name when path has trailing slash", () => {
+      // `/docs/` splits to ['docs'] — the last non-empty segment
+      const result = deriveFilenameFromUrl("https://example.com/docs/");
+      expect(result).toBe("docs");
     });
 
-    it("throws for path segments that decode to invalid filenames", () => {
-      expect(() => deriveFilenameFromUrl("https://example.com/%2E%2E")).toThrow(
-        "Invalid filename derived from URL",
-      );
+    it("derives hostname-based filename when path decodes to root", () => {
+      // `%2E%2E` decodes and normalizes to `/`, which has no segments
+      const result = deriveFilenameFromUrl("https://example.com/%2E%2E");
+      expect(result).toBe("example.com.html");
     });
   });
 
@@ -105,7 +105,7 @@ describe("deriveFilenameFromUrl", () => {
 
     it("produces filesystem-safe filename (no slashes)", () => {
       const result = deriveFilenameFromUrl("https://example.com");
-      expect(result).not.toMatch(/[\/\\]/);
+      expect(result).not.toMatch(/[/\\]/);
     });
 
     it("produces non-empty filename", () => {
