@@ -31,6 +31,8 @@ import {
   createContextManager,
   formatEngineError,
   makeEngineFromKind,
+  collectSendWithEmptyRetry,
+  isEmptyResponse,
   checkTopicAdmission,
   Debate,
   PersistTurnPairError,
@@ -445,27 +447,32 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
         let failed = false;
         let recoverable = false;
         let lastError = "";
+        // T14: true when the response was still empty after the helper's one
+        // automatic retry, so the empty warning can say a retry was tried.
+        let emptyAfterRetry = false;
         const attempt = async (): Promise<void> => {
           assembled = "";
           failed = false;
           recoverable = false;
           lastError = "";
+          emptyAfterRetry = false;
           const controller = new AbortController();
           state = { kind: "streaming", controller };
           try {
-            for await (const evt of engine.send({
+            // collectSendWithEmptyRetry reissues the same send ONCE when the
+            // first response completes empty/whitespace-only and was not
+            // failed/aborted. The single AbortController covers both the
+            // initial send and the retry, so an interrupt cancels either.
+            const outcome = await collectSendWithEmptyRetry(engine, {
               prompt,
               expertId: spec.id,
               signal: controller.signal,
-            })) {
-              if (evt.kind === "message.delta") {
-                assembled += evt.text;
-              } else if (evt.kind === "error") {
-                failed = true;
-                recoverable = evt.recoverable;
-                lastError = evt.error.message;
-              }
-            }
+            });
+            assembled = outcome.content;
+            failed = outcome.failed;
+            recoverable = outcome.recoverable;
+            lastError = outcome.errorMessage;
+            emptyAfterRetry = outcome.emptyAfterRetry;
           } catch (err: unknown) {
             failed = true;
             recoverable = false;
@@ -500,7 +507,7 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
           continue;
         }
 
-        if (!failed && assembled.length > 0) {
+        if (!failed && !isEmptyResponse(assembled)) {
           renderer.startExpertResponse(expert.slug);
           renderer.streamChunk(assembled);
           renderer.endExpertResponse();
@@ -529,7 +536,12 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
         }
 
         emptyExperts.push(expert.displayName);
-        renderer.showSystem(`${expert.displayName} returned an empty response.`, "warn");
+        renderer.showSystem(
+          emptyAfterRetry
+            ? `${expert.displayName} returned an empty response after a retry.`
+            : `${expert.displayName} returned an empty response.`,
+          "warn",
+        );
       }
 
       if (interruptedThisTurn) {

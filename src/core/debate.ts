@@ -29,7 +29,7 @@
  */
 import { ulid } from "ulid";
 
-import type { CouncilEngine, ExpertSpec } from "../engine/index.js";
+import { type CouncilEngine, type ExpertSpec, sendWithEmptyRetry } from "../engine/index.js";
 import type { HumanInputProvider } from "./human-input.js";
 
 import { generateCanary, checkCanaryLeak } from "./canary.js";
@@ -666,6 +666,10 @@ export class Debate {
     let lastErrorRecoverable = false;
     let lastErrorMessage = "";
     let lastErrorAborted = false;
+    // True when the final (non-failed) attempt was still empty after the
+    // helper's one automatic retry — surfaced as an error below instead of
+    // persisting a blank turn (T14).
+    let emptyAfterRetry = false;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       // Reset per-attempt state — partial deltas from a failed attempt
@@ -679,44 +683,66 @@ export class Debate {
       lastErrorRecoverable = false;
       lastErrorMessage = "";
       lastErrorAborted = false;
+      emptyAfterRetry = false;
 
       try {
-        for await (const evt of this.engine.send({ prompt: finalPrompt, expertId: expert.id, ...(signal ? { signal } : {}) })) {
-          switch (evt.kind) {
-            case "message.delta": {
-              content += evt.text;
-              yield { kind: "turn.delta", expertSlug: expert.slug, text: evt.text, speakerKind: "expert" };
-              // Canary leak detection (T-09). Check accumulated content
-              // (not just this chunk) so a canary split across delta
-              // boundaries is still caught. Warn at most once per
-              // turn-attempt to avoid log spam on long responses; the
-              // flag is local to #runAiTurn so subsequent turns from
-              // the same expert can warn again.
-              const canary = this.#canaries.get(expert.id);
-              if (
-                canary !== undefined &&
-                !attemptLeakWarned &&
-                checkCanaryLeak(content, canary)
-              ) {
-                attemptLeakWarned = true;
-                console.warn(
-                  `[canary] leak detected in response from expert ${expert.id} (slug=${expert.slug}) — system prompt may have been exfiltrated`,
-                );
-              }
-              break;
+        // T14: sendWithEmptyRetry consumes one send and, if it completes
+        // empty/whitespace-only (and not failed/aborted), reissues the same
+        // send ONCE. It yields text deltas plus a single `empty-retry`
+        // boundary marker, then returns the aggregate outcome.
+        const stream = sendWithEmptyRetry(this.engine, {
+          prompt: finalPrompt,
+          expertId: expert.id,
+          ...(signal ? { signal } : {}),
+        });
+        let step = await stream.next();
+        while (!step.done) {
+          const ev = step.value;
+          if (ev.kind === "delta") {
+            content += ev.text;
+            yield { kind: "turn.delta", expertSlug: expert.slug, text: ev.text, speakerKind: "expert" };
+            // Canary leak detection (T-09). Check accumulated content
+            // (not just this chunk) so a canary split across delta
+            // boundaries is still caught. Warn at most once per
+            // turn-attempt to avoid log spam on long responses; the
+            // flag is local to #runAiTurn so subsequent turns from
+            // the same expert can warn again.
+            const canary = this.#canaries.get(expert.id);
+            if (
+              canary !== undefined &&
+              !attemptLeakWarned &&
+              checkCanaryLeak(content, canary)
+            ) {
+              attemptLeakWarned = true;
+              console.warn(
+                `[canary] leak detected in response from expert ${expert.id} (slug=${expert.slug}) — system prompt may have been exfiltrated`,
+              );
             }
-            case "message.complete": {
-              // turn.end is yielded after the loop with accumulated content.
-              break;
-            }
-            case "error": {
-              attemptFailed = true;
-              lastErrorRecoverable = evt.recoverable;
-              lastErrorMessage = evt.error.message;
-              lastErrorAborted = evt.error.code === "ABORTED";
-              break;
-            }
+          } else {
+            // `empty-retry` boundary: the first send completed empty and a
+            // fresh send is firing now. Surface it as a turn retry and reset
+            // the per-attempt accumulation so canary detection and the
+            // eventual content reflect only the retried response.
+            yield {
+              kind: "turn.retry",
+              expertSlug: expert.slug,
+              attempt: 1,
+              reason: "empty response — retrying once",
+            };
+            content = "";
+            attemptLeakWarned = false;
           }
+          step = await stream.next();
+        }
+
+        const outcome = step.value;
+        content = outcome.content;
+        emptyAfterRetry = outcome.emptyAfterRetry;
+        if (outcome.failed) {
+          attemptFailed = true;
+          lastErrorRecoverable = outcome.recoverable;
+          lastErrorMessage = outcome.errorMessage;
+          lastErrorAborted = outcome.errorCode === "ABORTED";
         }
       } catch (err: unknown) {
         // Synchronous validation failures (e.g. unregistered expert)
@@ -777,6 +803,19 @@ export class Debate {
         };
       }
       break;
+    }
+
+    // T14: a non-failed turn that is STILL empty after the helper's one
+    // retry is surfaced as a clear error rather than persisted as a blank
+    // turn.end. The debate continues with the remaining experts.
+    if (!turnFailed && emptyAfterRetry) {
+      yield {
+        kind: "error",
+        expertSlug: expert.slug,
+        message: `${expert.displayName} returned an empty response after a retry.`,
+        recoverable: false,
+      };
+      turnFailed = true;
     }
 
     if (!turnFailed) {

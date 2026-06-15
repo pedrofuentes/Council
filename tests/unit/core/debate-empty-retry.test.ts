@@ -54,7 +54,7 @@ async function collect(stream: AsyncIterable<DebateEvent>): Promise<DebateEvent[
 function only<K extends DebateEvent["kind"]>(
   events: readonly DebateEvent[],
   kind: K,
-): Array<Extract<DebateEvent, { kind: K }>> {
+): Extract<DebateEvent, { kind: K }>[] {
   return events.filter((e): e is Extract<DebateEvent, { kind: K }> => e.kind === kind);
 }
 
