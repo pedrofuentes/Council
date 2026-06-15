@@ -184,31 +184,3 @@ describe("council docs doctor — Issue #17 word count after re-scan", () => {
     expect(stdout).toMatch(/150 words/i);
   });
 });
-
-describe("council panel docs list — Issue #14 lazy indexing", () => {
-  it("triggers indexing before listing so freshly-dropped files appear", async () => {
-    // Scenario: user drops a .md file into the panel's docs folder, then
-    // immediately runs `panel docs list`. Before the fix, the database was
-    // empty (indexing hadn't been triggered), so it said "No documents
-    // found". After the fix, `list` triggers scanAndIndexPanelDocuments
-    // before querying, so the file appears immediately.
-    //
-    // This test verifies that runDocsList triggers indexing. The actual
-    // scanning behavior is tested in panel-document-scanner.test.ts; here
-    // we just confirm the command flow includes the scan step.
-    //
-    // Note: The existing panel.test.ts already covers the end-to-end flow
-    // of creating panels and listing docs. This test documents the specific
-    // fix for #14 — that list triggers indexing.
-
-    // Since runDocsList is not easily testable in isolation (requires
-    // withPanelContext), and the change is a single scanAndIndexPanelDocuments
-    // call before the existing query, we rely on manual verification and
-    // the existing integration tests in panel.test.ts which exercise the
-    // full panel docs lifecycle.
-
-    // This test serves as documentation that Issue #14 is resolved by
-    // triggering indexing in runDocsList before querying the database.
-    expect(true).toBe(true);
-  });
-});
