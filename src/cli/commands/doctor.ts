@@ -22,14 +22,10 @@ import { getSymbols } from "../renderers/symbols.js";
 import { stripControlChars } from "../strip-control-chars.js";
 
 import { probeCopilotModel } from "./doctor-online-probe.js";
+import { formatAvailableModels } from "./models.js";
 import { defaultWriter, type Writer } from "./writer.js";
 
 const CONFIG_FILE = "config.yaml";
-const MODEL_GROUPS = [
-  { label: "Anthropic", prefix: "claude-" },
-  { label: "OpenAI", prefix: "gpt-" },
-  { label: "Google", prefix: "gemini-" },
-] as const;
 
 interface CheckResult {
   readonly name: string;
@@ -256,27 +252,6 @@ async function buildModelAccessFailureDetail(
   }
 }
 
-function writeKnownModels(write: Writer, label: string, models: readonly string[]): void {
-  write(`${label}\n`);
-  const orderedModels = [
-    ...new Set(
-      models.map(sanitizeModelId).filter((model) => model.length > 0 && isValidModelId(model)),
-    ),
-  ];
-  const labelWidth = Math.max(...MODEL_GROUPS.map((group) => group.label.length));
-  for (const group of MODEL_GROUPS) {
-    const groupedModels = orderedModels.filter((model) => model.startsWith(group.prefix));
-    if (groupedModels.length === 0) {
-      continue;
-    }
-    write(`  ${group.label.padEnd(labelWidth, " ")}: ${groupedModels.join(", ")}\n`);
-  }
-  write("\n");
-  write(
-    "Note: Known models: Availability depends on your Copilot tier. Use 'council doctor' to verify your default model is accessible.\n",
-  );
-}
-
 function isWriter(input: DoctorDeps | Writer): input is Writer {
   return typeof input === "function";
 }
@@ -361,13 +336,7 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
       if (options.models) {
         const modelDiscovery = await discoverModels();
         write("\n");
-        writeKnownModels(
-          write,
-          modelDiscovery.source === "live"
-            ? "Available models:"
-            : "Known models (live discovery unavailable):",
-          modelDiscovery.models,
-        );
+        write(formatAvailableModels(modelDiscovery.models, modelDiscovery.source));
       }
 
       write("\n");

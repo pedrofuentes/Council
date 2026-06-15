@@ -40,6 +40,7 @@ import { buildDoctorCommand } from "../cli/commands/doctor.js";
 import { buildExpertCommand } from "../cli/commands/expert.js";
 import { buildExportCommand } from "../cli/commands/export.js";
 import { buildMemoryCommand } from "../cli/commands/memory.js";
+import { buildModelsCommand } from "../cli/commands/models.js";
 import { buildPanelCommand } from "../cli/commands/panel.js";
 import { buildResumeCommand } from "../cli/commands/resume.js";
 import { buildSessionsCommand } from "../cli/commands/sessions.js";
@@ -254,6 +255,7 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
   program.addCommand(buildSessionsCommand());
   program.addCommand(buildMemoryCommand());
   program.addCommand(buildExportCommand());
+  program.addCommand(buildModelsCommand());
 
   // Apply the same "(run --help for usage)" hint to every (sub)command so that
   // errors like "missing required argument" point users at help. Commander's
