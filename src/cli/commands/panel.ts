@@ -419,7 +419,7 @@ async function gatherCreateFields(
   const available = await library.list();
   if (available.length === 0) {
     throw new Error(
-      'No experts found in the library. Create one first with "council expert create".',
+      'No experts found in the library. Create one first with "council expert create", or use "council convene "<topic>"" to auto-compose a panel.',
     );
   }
 
