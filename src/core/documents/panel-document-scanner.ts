@@ -38,6 +38,7 @@ import { sql } from "kysely";
 
 import { detectDocumentChanges, type DocumentFile } from "./detector.js";
 import * as extractorModule from "./extractor.js";
+import type { AiFallbackOption } from "./extractor.js";
 import { createDocumentIndexer } from "./indexer.js";
 import {
   classifyExtractionError,
@@ -61,6 +62,15 @@ export interface ScanPanelDocumentsOptions {
    * `config.documents.maxFileSizeMB * 1024 * 1024`.
    */
   readonly maxFileSizeBytes?: number;
+  /**
+   * Opt-in AI fallback forwarded verbatim to `extractDocument`. Built
+   * from `documents.aiExtraction` (mode) +
+   * `documents.aiExtractionAllowedExtensions`. When omitted or
+   * `mode: "off"`, unsupported formats fail exactly as before. `auto`
+   * indexes AI-extracted content (flagged `aiExtracted`); `ask` holds the
+   * file as needs-review without indexing.
+   */
+  readonly aiFallback?: AiFallbackOption;
   /** Optional progress callback — invoked once per file outcome. */
   readonly onProgress?: (event: PanelScanProgress) => void;
   /** Optional warning sink for per-file recoverable errors (#448). */
@@ -77,7 +87,7 @@ export interface ScanPanelDocumentsOptions {
 export interface PanelScanProgress {
   readonly filename: string;
   readonly source: PanelDocumentSource;
-  readonly status: "indexed" | "unchanged" | "failed" | "folder-failed";
+  readonly status: "indexed" | "unchanged" | "failed" | "folder-failed" | "needs-review";
   readonly error?: string;
 }
 
@@ -85,6 +95,12 @@ export interface PanelScanResult {
   readonly indexed: number;
   readonly unchanged: number;
   readonly failed: number;
+  /**
+   * Count of files held for manual review (AI fallback `ask` mode):
+   * detected as AI-extractable but NOT indexed into FTS and NOT tracked,
+   * pending explicit user approval. Surfaced by scan UX as needs-review.
+   */
+  readonly needsReview: number;
   /** Number of previously-tracked documents pruned (file removed from disk). */
   readonly pruned: number;
   readonly foldersFailed: number;
@@ -109,6 +125,7 @@ export async function scanAndIndexPanelDocuments(
 ): Promise<PanelScanResult> {
   const { panelName, managedDocsDir, db, supportedFormats, onProgress, onWarning } = options;
   const maxFileSizeBytes = options.maxFileSizeBytes;
+  const aiFallback = options.aiFallback;
   const docsRepo = new PanelDocumentRepository(db);
   const indexer = createDocumentIndexer(db);
 
@@ -128,6 +145,7 @@ export async function scanAndIndexPanelDocuments(
   let indexed = 0;
   let unchanged = 0;
   let failed = 0;
+  let needsReview = 0;
   let pruned = 0;
   let foldersFailed = 0;
   let managedFolderFailed = false;
@@ -281,7 +299,35 @@ export async function scanAndIndexPanelDocuments(
           confinementRoot: canonical,
           _rootIsCanonical: true,
           ...(maxFileSizeBytes !== undefined ? { maxFileSizeBytes } : {}),
+          ...(aiFallback !== undefined ? { aiFallback } : {}),
         });
+
+        // AI fallback, `ask` mode: recognized as AI-extractable but
+        // requires explicit user approval. Hold for review — do NOT
+        // index into FTS and do NOT track in `panel_documents` (so it
+        // keeps surfacing). `seenPaths` already contains this path, which
+        // suppresses pruning of any prior entry while review is pending —
+        // matching the expert processor's treatment of modified files.
+        if (extracted.metadata?.askUser === true) {
+          needsReview += 1;
+          onProgress?.({
+            filename: file.filename,
+            source: folder.source,
+            status: "needs-review",
+          });
+          files.push({
+            path: file.path,
+            filename: file.filename,
+            extension: path.extname(file.path).toLowerCase(),
+            status: "needs-review",
+            wordCount: extracted.wordCount,
+            aiExtracted: true,
+            ...(extracted.metadata.detectedFormat !== undefined
+              ? { detectedFormat: extracted.metadata.detectedFormat }
+              : {}),
+          });
+          continue;
+        }
         // For `linked` sources, the (link-membership re-check + FTS
         // DELETE+INSERT + panel_documents UPSERT) sequence MUST run as
         // a single atomic unit (issue #424). Without the transaction
@@ -376,6 +422,7 @@ export async function scanAndIndexPanelDocuments(
         }
         indexed += 1;
         onProgress?.({ filename: file.filename, source: folder.source, status: "indexed" });
+        const aiExtracted = extracted.metadata?.aiFallback === true;
         files.push({
           path: file.path,
           filename: file.filename,
@@ -383,6 +430,10 @@ export async function scanAndIndexPanelDocuments(
           status: fileStatusOnSuccess,
           wordCount: extracted.wordCount,
           ...(extracted.metadata !== undefined ? { metadata: extracted.metadata } : {}),
+          ...(aiExtracted ? { aiExtracted: true } : {}),
+          ...(aiExtracted && extracted.metadata?.detectedFormat !== undefined
+            ? { detectedFormat: extracted.metadata.detectedFormat }
+            : {}),
         });
       } catch (err: unknown) {
         failed += 1;
@@ -446,6 +497,7 @@ export async function scanAndIndexPanelDocuments(
     indexed,
     unchanged,
     failed,
+    needsReview,
     pruned,
     foldersFailed,
     managedFolderFailed,
@@ -496,5 +548,6 @@ async function resolveMissingPath(p: string): Promise<string> {
 export function formatAllFailedWarning(result: PanelScanResult): string | null {
   if (result.failed === 0) return null;
   if (result.indexed > 0 || result.unchanged > 0) return null;
+  if (result.needsReview > 0) return null;
   return `⚠ All ${result.failed} documents failed to process. Check file formats and permissions.`;
 }

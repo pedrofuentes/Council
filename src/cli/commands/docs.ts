@@ -39,6 +39,7 @@ import {
   type PanelScanResult,
 } from "../../core/documents/panel-document-scanner.js";
 import { describeScanError } from "../formatters/scan-summary.js";
+import { stripControlChars } from "../strip-control-chars.js";
 import { createDatabase } from "../../memory/db.js";
 import { PanelLibraryRepository } from "../../memory/repositories/panel-library-repo.js";
 
@@ -52,6 +53,18 @@ import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 const CONTROL_CHARS = /[\x00-\x1f\x7f-\x9f]/g;
 function sanitize(s: string): string {
   return s.replace(CONTROL_CHARS, "");
+}
+
+/**
+ * Sanitize AI-fallback-derived text (e.g. `detectedFormat`) for terminal
+ * display via the shared `stripControlChars` (ANSI/OSC + C0/C1 + bidi),
+ * collapsing residual newlines/tabs so one value cannot leak onto extra
+ * lines. Used for needs-review output — never print AI text unsanitized.
+ */
+function sanitizeAiText(s: string): string {
+  return stripControlChars(s)
+    .replace(/[\r\n\t]+/g, " ")
+    .trim();
 }
 
 const NATIVE_EXTENSIONS: ReadonlySet<string> = new Set([
@@ -217,6 +230,10 @@ async function defaultScanPanel(panelName: string): Promise<PanelScanLookupResul
       db,
       supportedFormats: config.expert.supportedFormats,
       maxFileSizeBytes: config.documents.maxFileSizeMB * 1024 * 1024,
+      aiFallback: {
+        mode: config.documents.aiExtraction,
+        allowedExtensions: config.documents.aiExtractionAllowedExtensions,
+      },
     });
     return { kind: "scanned", result };
   } finally {
@@ -273,16 +290,20 @@ function buildReviewCommand(
       }
 
       const failed = lookup.result.files.filter((f) => f.status === "failed");
-      if (failed.length === 0) {
+      const needsReview = lookup.result.files.filter(
+        (f) => f.status === "needs-review",
+      );
+      if (failed.length === 0 && needsReview.length === 0) {
         write(`Panel "${panel}": no files need review — all files are indexed.\n`);
         return;
       }
 
       const aiMode = config.documents.aiExtraction;
       const allowed = config.documents.aiExtractionAllowedExtensions;
+      const pending = failed.length + needsReview.length;
 
       write(
-        `Panel "${panel}" has ${failed.length} ${failed.length === 1 ? "file" : "files"} that couldn't be auto-processed:\n\n`,
+        `Panel "${panel}" has ${pending} ${pending === 1 ? "file" : "files"} that need review:\n\n`,
       );
       let suggestFormats = false;
       for (const file of failed) {
@@ -296,6 +317,14 @@ function buildReviewCommand(
         write(`  ${marker} ${file.filename} — ${reason}${tag}\n`);
         if (kind === "unsupported-format") suggestFormats = true;
       }
+      for (const file of needsReview) {
+        const detected =
+          file.detectedFormat !== undefined
+            ? sanitizeAiText(file.detectedFormat)
+            : "";
+        const suffix = detected.length > 0 ? ` — ${detected}` : "";
+        write(`  ⚠ ${file.filename} — awaiting AI-extraction review${suffix}\n`);
+      }
       if (suggestFormats) {
         write(`\nRun \`council docs formats\` to see supported file types.\n`);
       }
@@ -305,7 +334,7 @@ function buildReviewCommand(
         );
       }
       const err = new CliUserError(
-        `Panel "${panel}" has ${failed.length} file(s) pending review.`,
+        `Panel "${panel}" has ${pending} file(s) pending review.`,
       );
       err.exitCode = 1;
       throw err;
@@ -349,20 +378,27 @@ function buildDoctorCommand(
         0,
       );
       const failed = result.files.filter((f) => f.status === "failed");
+      const needsReview = result.files.filter((f) => f.status === "needs-review");
       const corrupt = failed.filter((f) => f.errorKind === "corrupt-document");
+      const pending = failed.length + needsReview.length;
 
       write(`Panel "${panel}" document health:\n`);
       write(
         `  ✓ ${formatNumber(indexedCount)} ${indexedCount === 1 ? "document" : "documents"} indexed (${formatNumber(totalWords)} ${totalWords === 1 ? "word" : "words"})\n`,
       );
-      const pendingMarker = failed.length === 0 ? "✓" : "⚠";
+      const pendingMarker = pending === 0 ? "✓" : "⚠";
       write(
-        `  ${pendingMarker} ${failed.length} ${failed.length === 1 ? "file" : "files"} pending review`,
+        `  ${pendingMarker} ${pending} ${pending === 1 ? "file" : "files"} pending review`,
       );
-      if (failed.length > 0) {
+      if (pending > 0) {
         write(` (run 'council docs review ${panel}')`);
       }
       write(`\n`);
+      if (needsReview.length > 0) {
+        write(
+          `  ⚠ ${needsReview.length} ${needsReview.length === 1 ? "file" : "files"} awaiting AI-extraction review\n`,
+        );
+      }
       if (corrupt.length > 0) {
         const names = corrupt.map((f) => f.filename).join(", ");
         write(

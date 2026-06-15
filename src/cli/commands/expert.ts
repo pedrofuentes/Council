@@ -1076,6 +1076,10 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
             supportedFormats: config.expert.supportedFormats,
             recencyHalfLifeDays: config.expert.recencyHalfLifeDays,
             maxFileSizeBytes: config.documents.maxFileSizeMB * 1024 * 1024,
+            aiFallback: {
+              mode: config.documents.aiExtraction,
+              allowedExtensions: config.documents.aiExtractionAllowedExtensions,
+            },
           },
         });
 
@@ -1085,13 +1089,18 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
           const result = await processor.process(slug, docsPath, (p) => {
             if (p.status === "failed") {
               write(`  ${p.filename}: failed (${p.error ?? "unknown"})\n`);
+            } else if (p.status === "needs-review") {
+              write(
+                `  ${p.filename}: needs review (AI extraction available — run \`council docs review\`)\n`,
+              );
             } else {
               write(`  ${p.filename}: ${p.wordCount} words\n`);
             }
           });
           write(
             `✓ Processed ${result.filesProcessed} document(s) ` +
-              `(${result.filesSkipped} unchanged, ${result.filesFailed} failed, ${result.filesRemoved} removed, ${result.totalWords} total words).\n`,
+              `(${result.filesSkipped} unchanged, ${result.filesFailed} failed, ` +
+              `${result.filesNeedingReview} needs review, ${result.filesRemoved} removed, ${result.totalWords} total words).\n`,
           );
           if (result.profileError !== null) {
             writeError(`Persona profile refresh failed: ${result.profileError}\n`);

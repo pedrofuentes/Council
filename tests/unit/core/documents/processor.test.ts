@@ -710,3 +710,137 @@ describe("createDocumentProcessor", () => {
     });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// AI-fallback config wiring (T-AIPIPE).
+//
+// `.xyz` has no native extractor, so a `.xyz` file listed in
+// supportedFormats reaches extractDocument with no resolved extractor —
+// the only path on which the AI fallback runs. These tests prove the
+// processor threads `config.aiFallback` into extractDocument and handles
+// the three result shapes (off → failed/unsupported, auto → indexed +
+// AI-extracted, ask → needs-review + NOT indexed).
+// ─────────────────────────────────────────────────────────────────────
+describe("createDocumentProcessor — AI fallback wiring (T-AIPIPE)", () => {
+  let env: Env;
+
+  beforeEach(async () => {
+    env = await makeEnv();
+  });
+  afterEach(async () => {
+    await teardown(env);
+  });
+
+  const AI_FORMATS: readonly string[] = [".md", ".txt", ".xyz"];
+
+  async function ftsCount(slug: string): Promise<number> {
+    const rows = await sql<{
+      c: number;
+    }>`SELECT COUNT(*) AS c FROM document_index WHERE source_slug = ${slug}`.execute(env.db);
+    return rows.rows[0]?.c ?? 0;
+  }
+
+  it("off mode: an unsupported file (no native extractor) is reported as failed and NOT indexed", async () => {
+    const dir = await makeDocsDir(env, "alice");
+    await fs.writeFile(path.join(dir, "notes.xyz"), "plain text body for xyz", "utf-8");
+    const proc = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: {
+        supportedFormats: AI_FORMATS,
+        recencyHalfLifeDays: 90,
+        aiFallback: { mode: "off", allowedExtensions: [] },
+      },
+    });
+    const result = await proc.process("alice", dir);
+
+    expect(result.filesProcessed).toBe(0);
+    expect(result.filesFailed).toBe(1);
+    expect(result.filesNeedingReview).toBe(0);
+    const f = result.files.find((x) => x.filename === "notes.xyz");
+    expect(f?.status).toBe("failed");
+    expect(f?.errorKind).toBe("unsupported-format");
+    expect(await ftsCount("alice")).toBe(0);
+  });
+
+  it("auto mode: indexes the AI-fallback content and represents it as AI-extracted", async () => {
+    const dir = await makeDocsDir(env, "alice");
+    await fs.writeFile(path.join(dir, "notes.xyz"), "plain text body for xyz", "utf-8");
+    const proc = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: {
+        supportedFormats: AI_FORMATS,
+        recencyHalfLifeDays: 90,
+        aiFallback: { mode: "auto", allowedExtensions: [] },
+      },
+    });
+    const result = await proc.process("alice", dir);
+
+    expect(result.filesProcessed).toBe(1);
+    expect(result.filesFailed).toBe(0);
+    expect(result.filesNeedingReview).toBe(0);
+    const f = result.files.find((x) => x.filename === "notes.xyz");
+    expect(f?.status).toBe("indexed");
+    expect(f?.aiExtracted).toBe(true);
+    // Indexed into FTS and tracked as processed.
+    expect(await ftsCount("alice")).toBe(1);
+    const tracked = await env.docRepo.findByExpert("alice");
+    expect(tracked.length).toBe(1);
+    expect(tracked[0]?.status).toBe("processed");
+  });
+
+  it("ask mode: records needs-review, does NOT index into FTS, and does NOT track the file", async () => {
+    const dir = await makeDocsDir(env, "alice");
+    await fs.writeFile(path.join(dir, "notes.xyz"), "plain text body for xyz", "utf-8");
+    const proc = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: {
+        supportedFormats: AI_FORMATS,
+        recencyHalfLifeDays: 90,
+        aiFallback: { mode: "ask", allowedExtensions: [] },
+      },
+    });
+    const result = await proc.process("alice", dir);
+
+    expect(result.filesProcessed).toBe(0);
+    expect(result.filesFailed).toBe(0);
+    expect(result.filesNeedingReview).toBe(1);
+    const f = result.files.find((x) => x.filename === "notes.xyz");
+    expect(f?.status).toBe("needs-review");
+    // NOT indexed into FTS, NOT tracked (so it keeps surfacing for review).
+    expect(await ftsCount("alice")).toBe(0);
+    const tracked = await env.docRepo.findByExpert("alice");
+    expect(tracked.length).toBe(0);
+  });
+
+  it("ask mode emits a needs-review progress event for the file", async () => {
+    const dir = await makeDocsDir(env, "alice");
+    await fs.writeFile(path.join(dir, "notes.xyz"), "plain text body for xyz", "utf-8");
+    const proc = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: {
+        supportedFormats: AI_FORMATS,
+        recencyHalfLifeDays: 90,
+        aiFallback: { mode: "ask", allowedExtensions: [] },
+      },
+    });
+    const progress: { filename: string; status: string }[] = [];
+    await proc.process("alice", dir, (p) => {
+      progress.push({ filename: p.filename, status: p.status });
+    });
+    expect(
+      progress.some((p) => p.filename === "notes.xyz" && p.status === "needs-review"),
+    ).toBe(true);
+  });
+});
