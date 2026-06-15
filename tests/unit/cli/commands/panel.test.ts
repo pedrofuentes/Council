@@ -714,6 +714,31 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
       expect(captured.toLowerCase()).toMatch(/no documents|empty/);
     });
 
+    it("`panel docs list` indexes and shows freshly-dropped files (#14)", async () => {
+      await createPanel();
+      // Drop a Markdown file straight into the panel's managed docs dir,
+      // simulating a user adding a file without running an explicit re-scan.
+      const docsDir = path.join(env.dataHome, "panels", "arch-review", "docs");
+      await fs.mkdir(docsDir, { recursive: true });
+      await fs.writeFile(
+        path.join(docsDir, "fresh-note.md"),
+        "# Fresh Note\nThis document was dropped in just now.",
+        "utf-8",
+      );
+
+      let captured = "";
+      const cmd = buildPanelCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-panel", "docs", "list", "arch-review"]);
+
+      // `list` must trigger indexing before querying the database, so the
+      // freshly-dropped file appears immediately instead of the misleading
+      // "No documents found" empty-state path (#14).
+      expect(captured).toContain("fresh-note.md");
+      expect(captured.toLowerCase()).not.toMatch(/no documents found/);
+    });
+
     it("`panel docs <name>` errors when the panel does not exist", async () => {
       let errored = "";
       const cmd = buildPanelCommand(

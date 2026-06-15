@@ -39,6 +39,7 @@ import {
   type PanelDefinition,
   type PanelExpertEntry,
 } from "../../core/template-loader.js";
+import { scanAndIndexPanelDocuments } from "../../core/documents/panel-document-scanner.js";
 import { createDatabase, type CouncilDatabase } from "../../memory/db.js";
 import { PanelLibraryRepository } from "../../memory/repositories/panel-library-repo.js";
 import { PanelRepository } from "../../memory/repositories/panels.js";
@@ -903,6 +904,23 @@ async function runDocsList(name: string, write: Writer, writeError: Writer): Pro
       writeError(`Panel "${name}" not found.\n`);
       throw new CliUserError(`Panel "${name}" not found.`);
     }
+
+    // Trigger indexing before listing so freshly-dropped files appear
+    // (fixes #14 — lazy indexing was misleading). This makes `list`
+    // consistent with other docs commands that show current disk state.
+    const managedDocsDir = panelDocsDir(ctx.dataHome, name);
+    await scanAndIndexPanelDocuments({
+      panelName: name,
+      managedDocsDir,
+      db: ctx.db,
+      supportedFormats: ctx.config.expert.supportedFormats,
+      maxFileSizeBytes: ctx.config.documents.maxFileSizeMB * 1024 * 1024,
+      aiFallback: {
+        mode: ctx.config.documents.aiExtraction,
+        allowedExtensions: ctx.config.documents.aiExtractionAllowedExtensions,
+      },
+    });
+
     const docs = await ctx.docsRepo.listDocuments(name);
     const folders = await ctx.docsRepo.getLinkedFolders(name);
 

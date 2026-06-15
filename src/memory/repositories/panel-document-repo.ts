@@ -145,6 +145,18 @@ export class PanelDocumentRepository {
     return map;
   }
 
+  async getWordCountMap(panelName: string): Promise<ReadonlyMap<string, number>> {
+    const rows = await this.db
+      .selectFrom("panel_documents")
+      .select(["file_path", "word_count"])
+      .where("panel_name", "=", panelName)
+      .where("status", "!=", "removed")
+      .execute();
+    const map = new Map<string, number>();
+    for (const r of rows) map.set(r.file_path, r.word_count);
+    return map;
+  }
+
   async listDocuments(panelName: string): Promise<readonly PanelDocument[]> {
     const rows = await this.db
       .selectFrom("panel_documents")

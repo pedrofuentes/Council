@@ -367,7 +367,7 @@ function buildDoctorCommand(
 
       const result = lookup.result;
       const indexedFiles = result.files.filter(
-        (f) => f.status === "indexed" || f.status === "modified",
+        (f) => f.status === "indexed" || f.status === "modified" || f.status === "unchanged",
       );
       // Prefer the aggregate counts (which include unchanged-but-tracked
       // files) over the length of `files` for the headline number; sum
