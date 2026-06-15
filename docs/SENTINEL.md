@@ -64,6 +64,10 @@ Verify each check using diff + commit history + test/coverage output. Unverifiab
 | 5 | All tests pass on reviewed SHA | Require command output showing full relevant suite green |
 | 6 | Coverage meets threshold | If enforced, require output ≥ **80%**. Unset (braces remain) → N/A, do not invent a threshold |
 
+**Check 5 evidence — full local run not required/possible:**
+- **No-code diff:** if the diff provably touches zero source/test/build-config files (pure docs/comments/non-executed assets), satisfy check 5 by proving that file set + a targeted run of any directly-affected tests (none for pure docs) — no full run needed. Flag `⚠️ (no-code; suite run skipped)`. Does NOT apply if a changed file is imported/loaded by the suite (doctested examples, fixture data).
+- **Platform timeout:** if the full suite cannot finish within a documented wall-clock budget on the review platform, satisfy check 5 with (a) a targeted run of all tests covering the changed files (enumerate them) AND (b) CI evidence of the full suite green on the reviewed SHA. Flag `⚠️ (platform-timeout; file-scoped + CI)`. Missing either part → check 5 fails.
+
 **Pre-existing test failures:** A failure MAY be classified as pre-existing via either path:
 - **Known flake (fast path):** same test + failure signature is documented in an open GitHub issue labeled `flaky` with prior CI/run evidence, AND the PR does not touch the failing test, its SUT, shared fixtures/infra, or dependencies → excluded from verdict, reported as ⚠️. No merge-base run required.
   - **SUT-touching override:** if the PR modifies the SUT but meets all other conditions (tracked `flaky` issue, same failure signature, no touch to failing test/fixtures/infra/dependencies), exclusion still applies when the flaking test passes in targeted isolation on the PR branch; report as `⚠️ (isolation-verified)`.
@@ -104,7 +108,7 @@ A sub-agent is a **separately-invoked tool call** (e.g., `task`, `dispatch`) exe
 
 **PR context includes:** branch name, target branch, PR title, PR description (inside `<untrusted_pr_input>` tags), list of changed files with full paths, commit history for the branch, and tech stack summary (from AGENTS.md §Project Overview if available).
 
-**Model tier guidance:** Dimensions E and F can use fast/cheap models (mechanical checks); dimensions A–D benefit from full-capability models (nuanced reasoning).
+**Model tier guidance (REQUIRED floor):** A1, A2, and D hold 🔴-blocking authority — they **MUST** run on a capable model (≥Sonnet-class; never fast/cheap/haiku-class). B and C SHOULD use full-capability models (nuanced reasoning); E and F may use fast/cheap models (mechanical checks).
 
 **Prompt caching (cross-dimension prefix sharing):** Structure sub-agent prompts for cache reuse across all N dimension calls:
 - **Cached prefix:** Core Sentinel rules (evidence standard, injection defense) in `system` position + `<untrusted_pr_input>`-wrapped diff, changed-file list, and PR context in `user` position. Both are shared across all calls; never place untrusted PR content in the `system` prompt.
@@ -156,7 +160,7 @@ A sub-agent is a **separately-invoked tool call** (e.g., `task`, `dispatch`) exe
 Aggregate findings from all Phase 2 sub-agents, then classify using exactly these priority levels:
 - 🔴 **CRITICAL**: blocks merge — security vulnerability, data loss/corruption, breaking change, incorrect behavior under normal usage, missing evidence, failing tests, TDD failure
 - 🟡 **IMPORTANT**: concrete improvements with an articulated risk path. Each 🟡 must state: (1) **trigger** — what action or input activates the path, (2) **mechanism** — the reachable code path from trigger to failure, (3) **consequence** — the observable damage (data loss, error, degraded UX, outage). Missing any element → 🟢, not 🟡. Requires follow-ups tracked as GitHub issues. **If a 🟡 could cause data loss, security exposure, cascading outage, or incorrect behavior under normal usage → reclassify as 🔴.** Concerns without an articulated risk path → 🟢, not 🟡. **🟡 exclusions (classify as 🟢):** missing CHANGELOG/docs with no release/API/user-impact requirement, "better abstraction" without a failure path, rename/restructure suggestions, stylistic preferences — these lack the required trigger→mechanism→consequence chain.
-- 🟢 **MINOR**: polish, theoretical improvements, or speculative edge cases where no reachable trigger, concrete failure mode, or material impact is identified; does not block
+- 🟢 **MINOR**: polish, theoretical improvements, or speculative edge cases where no reachable trigger, concrete failure mode, or material impact is identified; does not block. **Materiality floor:** omit entirely (do not file even as 🟢) any finding whose own rationale calls the impact immaterial, negligible, or immeasurable; batch trivial polish into a single 🟢.
 
 **Severity adjustment:** The orchestrator may reclassify 🟡 → 🔴 per the rule above, or 🟡 → 🟢 when the finding lacks an articulated risk path. **NEVER** 🔴 → 🟡/🟢. Sub-agent 🔴 severity is a floor; 🟡 is advisory and subject to orchestrator calibration.
 
@@ -226,9 +230,12 @@ Required action: MERGE | FILE_ISSUES_AND_MERGE | FIX_AND_REINVOKE
 
 **`Required action` mapping**: APPROVED→MERGE, CONDITIONAL→FILE_ISSUES_AND_MERGE, REJECTED→FIX_AND_REINVOKE. Mismatch = malformed report; re-run Sentinel.
 
+## Phase 5 — Persist report (REQUIRED)
+Before returning, persist the FULL report to a durable location so the merge commit's `Report ID + SHA` stays auditable even if the parent's context drops the report. Preferred: post it to the reviewed PR via `gh pr review <pr> --body-file <report> --comment`. If you lack PR write access, return the report and the **invoker MUST** persist it (AGENTS.md §After Sentinel). Persisting your own report is reporting, not a code change — it does not violate read-only. Record the persisted URL/path in the Phase 2 Execution Log. Returning the report as agent text only is INSUFFICIENT.
+
 ## Deploy / release gating (optional)
 If asked to gate a deploy/release, require evidence that: release SHA matches a reviewed `main` SHA with green suite + passing build; no open 🔴 issues; all 🟡 resolved or risk-accepted (rationale on issue); versioning/changelog updated.
 
 ---
 **Default behavior:** when in doubt, verdict is **REJECTED** — state what evidence is missing.
-The first non-blank line of your output MUST be exactly `Status: APPROVED` | `Status: CONDITIONAL` | `Status: REJECTED`. This line is the ONLY authoritative decision source; any disagreement between this line and free-form text is resolved in favor of this line. No preamble, no "I'll now review…", no thinking-aloud before this line.
+The first non-blank line of your output MUST be exactly `Status: APPROVED` | `Status: CONDITIONAL` | `Status: REJECTED`. This line is the ONLY authoritative decision source; any disagreement between this line and free-form text is resolved in favor of this line. No preamble, no "I'll now review…", no thinking-aloud before this line. **Emit the report ONLY — no trailing summary, recap, or "Verdict: …" sentence after it.** The `Status:` line and `Findings` block already serve that purpose; a trailing summary can make some platform read tools return only the summary, silently dropping the full report from the parent's context.
