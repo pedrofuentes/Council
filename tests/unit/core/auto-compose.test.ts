@@ -854,4 +854,55 @@ describe("autoComposePanel", () => {
       await expect(autoComposePanel("topic", engine)).rejects.toThrow(/JSON|parse/i);
     });
   });
+
+  // T11: `--max-experts N` must cap the *designed* panel that autoComposePanel
+  // returns, because that single panel feeds BOTH the "Auto-composed panel"
+  // banner (convene.ts) AND the assembled debate ("Panel assembled"). The
+  // panel schema permits up to 8 experts, so a composer asked for N can still
+  // return more; without a hard cap the two lists diverge (banner shows the
+  // proposed set, the cap is never applied). These tests exercise the real
+  // selection path — parse/sanitize for JSON panels and the deterministic
+  // mock fallback — so the cap cannot be gamed by asserting on a stub.
+  describe("caps the designed panel to maxExperts", () => {
+    const oversizedPanel = {
+      name: "oversized-panel",
+      description: "Composer proposed more experts than requested",
+      experts: [0, 1, 2, 3, 4].map((i) => ({
+        slug: `expert-${i}`,
+        displayName: `Expert ${i}`,
+        role: `Role ${i}`,
+        expertise: { weightedEvidence: [`Evidence ${i}`], referenceCases: [], notExpertIn: [] },
+        epistemicStance: `Stance ${i} is grounded in a distinct objective function.`,
+      })),
+    };
+
+    it("caps a parsed panel to maxExperts, keeping the first N in order", async () => {
+      const engine = new StubEngine({ response: JSON.stringify(oversizedPanel) });
+      await engine.start();
+      const result = await autoComposePanel("topic", engine, { minExperts: 2, maxExperts: 2 });
+      // The composer proposed 5; --max-experts 2 must win so the displayed and
+      // assembled lists (both derived from this panel) list exactly 2 experts.
+      expect(result.experts).toHaveLength(2);
+      expect(result.experts.map((e) => e.slug)).toEqual(["expert-0", "expert-1"]);
+    });
+
+    it("caps the deterministic mock fallback panel to maxExperts", async () => {
+      const engine = new StubEngine({ response: "[mock response from composer-1]" });
+      await engine.start();
+      const result = await autoComposePanel("topic", engine, { minExperts: 2, maxExperts: 2 });
+      // The mock fallback always proposes 3 experts; the cap must apply to it
+      // too so `--engine mock --max-experts 2` shows 2 in both lists.
+      expect(result.experts).toHaveLength(2);
+    });
+
+    it("does not cap when the composer returns at or under maxExperts", async () => {
+      const engine = new StubEngine({ response: JSON.stringify(validPanel) });
+      await engine.start();
+      const result = await autoComposePanel("topic", engine, { maxExperts: 5 });
+      // validPanel has 3 experts; a higher cap leaves the set unchanged so the
+      // common (no `--max-experts`) path keeps its existing behavior.
+      expect(result.experts).toHaveLength(3);
+      expect(result.experts.map((e) => e.slug)).toEqual(["expert-a", "expert-b", "expert-c"]);
+    });
+  });
 });
