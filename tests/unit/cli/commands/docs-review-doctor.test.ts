@@ -337,6 +337,32 @@ describe("council docs review", () => {
     expect((error as { exitCode?: number }).exitCode).toBe(1);
   });
 
+  it("clarifies that ask mode means review, not auto-extraction, when needs-review files exist (T4)", async () => {
+    const { stdout } = await runDocs(
+      ["review", "finance"],
+      depsFor(
+        {
+          kind: "scanned",
+          result: scanResult({
+            needsReview: 1,
+            files: [
+              fileDetail({
+                filename: "deck.key",
+                status: "needs-review",
+              }),
+            ],
+          }),
+        },
+        makeConfig({ aiExtraction: "ask" }),
+      ),
+    );
+
+    // The message must make clear nothing was auto-extracted / indexed —
+    // `ask` flags files for review rather than silently extracting them.
+    expect(stdout).toMatch(/not (be )?auto-?extracted|review/i);
+    expect(stdout).toMatch(/auto-?extract|indexed/i);
+  });
+
   it("does not report a clean panel when only needs-review files exist (T-AIPIPE)", async () => {
     const { stdout } = await runDocs(
       ["review", "finance"],

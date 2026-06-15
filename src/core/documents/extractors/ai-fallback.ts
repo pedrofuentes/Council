@@ -274,6 +274,41 @@ function buildSuggestion(mode: "ask" | "auto", extension: string): string {
 }
 
 /**
+ * Pure, extension-only eligibility check for the AI fallback's *review*
+ * surfacing. Returns `true` when a file with the given `extension` would
+ * be eligible for AI extraction under `config` — i.e. the mode is not
+ * `off`, the extension is not blocklisted, and (when a non-empty
+ * allowlist is configured) the extension is allowlisted.
+ *
+ * This is deliberately a SUBSET of the gates in {@link attemptAiFallback}:
+ * it operates WITHOUT reading the file, so it omits the magic-byte
+ * signature blocklist (which can only run once the bytes are in hand). It
+ * exists so producers (the expert processor, the panel scanner) can flag
+ * unsupported-EXTENSION files — which the detector drops before extraction
+ * and therefore never have a buffer — as "awaiting AI-extraction review"
+ * in `ask` mode WITHOUT performing, or implying, any extraction. The full
+ * signature gate still applies later if/when the file is actually read and
+ * extracted after explicit user confirmation.
+ *
+ * `BLOCKLIST` and `allowedExtensions` are the single source of truth here,
+ * shared with {@link attemptAiFallback}, so the two paths can never drift.
+ */
+export function isExtensionAiEligible(extension: string, config: AiFallbackConfig): boolean {
+  if (config.mode === "off") {
+    return false;
+  }
+  const ext = normalizeExtension(extension);
+  if (BLOCKLIST.has(ext)) {
+    return false;
+  }
+  if (config.allowedExtensions.length > 0) {
+    const allowed = new Set(config.allowedExtensions.map(normalizeExtension));
+    return allowed.has(ext);
+  }
+  return true;
+}
+
+/**
  * Attempt the AI fallback. Returns `null` when the fallback is
  * disabled, the extension is blocklisted, or the extension is not in
  * the allowedExtensions whitelist. Otherwise returns an

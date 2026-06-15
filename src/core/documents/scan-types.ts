@@ -11,6 +11,8 @@
 
 import { ExtractionError } from "./extractors/index.js";
 import type { ExtractionErrorKind } from "./extractors/errors.js";
+import { isExtensionAiEligible } from "./extractors/ai-fallback.js";
+import type { AiFallbackConfig } from "./extractors/ai-fallback.js";
 
 import * as path from "node:path";
 
@@ -159,4 +161,45 @@ export function unsupportedFileDetail(filePath: string): ScanFileDetail {
     errorKind: "unsupported-format",
     errorMessage,
   };
+}
+
+/**
+ * Classify a file the detector rejected for an unsupported extension,
+ * taking the active AI-fallback policy into account.
+ *
+ * In `ask` mode, when the extension is eligible for AI extraction (per
+ * {@link isExtensionAiEligible}: not blocklisted, and allowlisted when an
+ * allowlist is configured), the file is held as a `needs-review`
+ * ("awaiting AI-extraction review") outcome rather than reported as an
+ * unsupported failure — `ask` means review, so the user must see that AI
+ * extraction is available for the file, pending their approval. The file
+ * is NOT read, extracted, or indexed here: it is only flagged. The
+ * `aiExtracted` flag follows the `ScanFileDetail` contract for a file
+ * "held for review (ask mode)".
+ *
+ * In every other case — `aiFallback` absent, `off` mode, `auto` mode
+ * (auto extraction of detector-dropped formats is not yet wired), a
+ * blocklisted extension, or an extension absent from a configured
+ * allowlist — the file is reported as a plain `unsupported` failure
+ * exactly as {@link unsupportedFileDetail} does (T2 behavior unchanged).
+ */
+export function classifyUnsupportedFile(
+  filePath: string,
+  aiFallback?: AiFallbackConfig,
+): ScanFileDetail {
+  const extension = path.extname(filePath).toLowerCase();
+  if (
+    aiFallback !== undefined &&
+    aiFallback.mode === "ask" &&
+    isExtensionAiEligible(extension, aiFallback)
+  ) {
+    return {
+      path: filePath,
+      filename: path.basename(filePath),
+      extension,
+      status: "needs-review",
+      aiExtracted: true,
+    };
+  }
+  return unsupportedFileDetail(filePath);
 }

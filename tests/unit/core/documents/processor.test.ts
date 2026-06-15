@@ -970,3 +970,150 @@ describe("createDocumentProcessor — unsupported-extension files (T2)", () => {
     expect(evt?.error).toMatch(/unsupported/i);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// `ask` mode surfaces eligible unsupported-extension files for review (T4).
+//
+// A file whose extension is NOT in `supportedFormats` (e.g. `.key`) is
+// dropped by the detector before extraction — so the AI fallback inside
+// extractDocument never runs on it. With `aiExtraction: ask`, such an
+// eligible (non-blocklisted) file must NOT be reported as a dead-end
+// unsupported failure: it must surface as an "awaiting AI-extraction
+// review" / needs-review outcome, WITHOUT being indexed or tracked. With
+// `aiExtraction: off`, the same file stays unsupported (T2 regression
+// guard). Blocklisted extensions (e.g. `.png`) stay unsupported even in
+// ask mode.
+// ─────────────────────────────────────────────────────────────────────
+describe("createDocumentProcessor — ask-mode review for unsupported extensions (T4)", () => {
+  let env: Env;
+
+  beforeEach(async () => {
+    env = await makeEnv();
+  });
+  afterEach(async () => {
+    await teardown(env);
+  });
+
+  async function ftsCount(slug: string): Promise<number> {
+    const rows = await sql<{
+      c: number;
+    }>`SELECT COUNT(*) AS c FROM document_index WHERE source_slug = ${slug}`.execute(env.db);
+    return rows.rows[0]?.c ?? 0;
+  }
+
+  it("ask mode: an eligible unsupported-extension file becomes needs-review, NOT indexed or tracked", async () => {
+    const dir = await makeDocsDir(env, "alice");
+    await fs.writeFile(path.join(dir, "deck.key"), "x", "utf-8");
+    const proc = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: {
+        supportedFormats: [".md", ".txt"],
+        recencyHalfLifeDays: 90,
+        aiFallback: { mode: "ask", allowedExtensions: [] },
+      },
+    });
+
+    const result = await proc.process("alice", dir);
+
+    expect(result.filesNeedingReview).toBe(1);
+    // Held for review — NOT counted as failed/unsupported.
+    expect(result.filesFailed).toBe(0);
+    expect(result.filesUnsupported).toBe(0);
+    const f = result.files.find((x) => x.filename === "deck.key");
+    expect(f?.status).toBe("needs-review");
+    expect(f?.errorKind).toBeUndefined();
+    // Never indexed into FTS, never tracked (so it keeps surfacing).
+    expect(await ftsCount("alice")).toBe(0);
+    const tracked = await env.docRepo.findByExpert("alice");
+    expect(tracked.length).toBe(0);
+  });
+
+  it("ask mode emits a needs-review progress event for the unsupported-extension file", async () => {
+    const dir = await makeDocsDir(env, "alice");
+    await fs.writeFile(path.join(dir, "deck.key"), "x", "utf-8");
+    const proc = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: {
+        supportedFormats: [".md", ".txt"],
+        recencyHalfLifeDays: 90,
+        aiFallback: { mode: "ask", allowedExtensions: [] },
+      },
+    });
+
+    const progress: { filename: string; status: string }[] = [];
+    await proc.process("alice", dir, (p) => {
+      progress.push({ filename: p.filename, status: p.status });
+    });
+    expect(
+      progress.some((p) => p.filename === "deck.key" && p.status === "needs-review"),
+    ).toBe(true);
+  });
+
+  it("off mode: the same unsupported-extension file stays unsupported (T2 regression guard)", async () => {
+    const dir = await makeDocsDir(env, "alice");
+    await fs.writeFile(path.join(dir, "deck.key"), "x", "utf-8");
+    const proc = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: {
+        supportedFormats: [".md", ".txt"],
+        recencyHalfLifeDays: 90,
+        aiFallback: { mode: "off", allowedExtensions: [] },
+      },
+    });
+
+    const result = await proc.process("alice", dir);
+
+    expect(result.filesNeedingReview).toBe(0);
+    expect(result.filesUnsupported).toBe(1);
+    expect(result.filesFailed).toBe(1);
+    const f = result.files.find((x) => x.filename === "deck.key");
+    expect(f?.status).toBe("failed");
+    expect(f?.errorKind).toBe("unsupported-format");
+  });
+
+  it("ask mode: a blocklisted extension (.png) stays unsupported, an eligible one (.key) becomes needs-review; counts add up", async () => {
+    const dir = await makeDocsDir(env, "alice");
+    await fs.writeFile(path.join(dir, "notes.md"), "# Notes\nhi\n", "utf-8");
+    await fs.writeFile(path.join(dir, "deck.key"), "x", "utf-8");
+    await fs.writeFile(path.join(dir, "shot.png"), "x", "utf-8");
+    const proc = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: {
+        supportedFormats: [".md", ".txt"],
+        recencyHalfLifeDays: 90,
+        aiFallback: { mode: "ask", allowedExtensions: [] },
+      },
+    });
+
+    const result = await proc.process("alice", dir);
+
+    expect(result.filesProcessed).toBe(1); // notes.md
+    expect(result.filesNeedingReview).toBe(1); // deck.key
+    expect(result.filesUnsupported).toBe(1); // shot.png (blocklisted)
+    expect(result.filesFailed).toBe(1); // shot.png
+    const key = result.files.find((x) => x.filename === "deck.key");
+    expect(key?.status).toBe("needs-review");
+    const png = result.files.find((x) => x.filename === "shot.png");
+    expect(png?.status).toBe("failed");
+    expect(png?.errorKind).toBe("unsupported-format");
+    // Every discovered file is accounted for — none disappear.
+    const accounted =
+      result.filesProcessed +
+      result.filesSkipped +
+      result.filesFailed +
+      result.filesNeedingReview;
+    expect(accounted).toBe(3);
+  });
+});

@@ -42,7 +42,7 @@ import type { AiFallbackOption } from "./extractor.js";
 import { createDocumentIndexer } from "./indexer.js";
 import {
   classifyExtractionError,
-  unsupportedFileDetail,
+  classifyUnsupportedFile,
   type ScanFileDetail,
 } from "./scan-types.js";
 import type { CouncilDatabase } from "../../memory/db.js";
@@ -297,11 +297,28 @@ export async function scanAndIndexPanelDocuments(
     // indexed/unchanged/failed/needsReview, so an unsupported-only scan
     // must register here to be reported. `seenPaths` keeps them out of
     // the prune pass.
+    //
+    // When `aiExtraction` is `ask`, an eligible (non-blocklisted,
+    // allowlisted) extension is held as a `needs-review` outcome instead
+    // (`classifyUnsupportedFile`): `ask` means review, so it surfaces as
+    // "awaiting AI-extraction review" — NOT indexed, NOT tracked, NOT a
+    // failure. No extraction is performed; the file is only flagged. The
+    // needs-review count still fires the render gate above.
     for (const unsupportedPath of detection.unsupportedFiles) {
       seenPaths.add(unsupportedPath);
-      failed += 1;
-      unsupported += 1;
-      files.push(unsupportedFileDetail(unsupportedPath));
+      const detail = classifyUnsupportedFile(unsupportedPath, aiFallback);
+      if (detail.status === "needs-review") {
+        needsReview += 1;
+        onProgress?.({
+          filename: detail.filename,
+          source: folder.source,
+          status: "needs-review",
+        });
+      } else {
+        failed += 1;
+        unsupported += 1;
+      }
+      files.push(detail);
     }
     scannedFolders.push(canonical);
 
