@@ -26,6 +26,8 @@ const SETTABLE_CONFIG_KEYS = [
   "defaults.maxRounds",
   "defaults.maxExperts",
   "defaults.maxWordsPerResponse",
+  "documents.aiExtraction",
+  "documents.maxFileSizeMB",
 ] as const;
 
 type SettableConfigKey = (typeof SETTABLE_CONFIG_KEYS)[number];
@@ -224,6 +226,24 @@ function coerceConfigValue(key: SettableConfigKey, rawValue: string): string | n
       const parsed = Number(rawValue);
       if (!Number.isInteger(parsed)) {
         throw new CliUserError(`Config value for ${key} must be an integer.`);
+      }
+      return parsed;
+    }
+    case "documents.aiExtraction": {
+      const validValues = ["off", "ask", "auto"] as const;
+      if (!validValues.includes(rawValue as (typeof validValues)[number])) {
+        throw new CliUserError(
+          `Config value for ${key} must be one of: ${validValues.join(", ")}`,
+        );
+      }
+      return rawValue;
+    }
+    case "documents.maxFileSizeMB": {
+      const parsed = Number(rawValue);
+      if (!Number.isFinite(parsed) || parsed < 1 || parsed > 500) {
+        throw new CliUserError(
+          `Config value for ${key} must be a number between 1 and 500.`,
+        );
       }
       return parsed;
     }
