@@ -231,7 +231,8 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
             truncatedByChars,
             originalTurnCount,
             finalTurnCount,
-          } = buildSynthesisPrompt(doc);
+            appliedCharLimit,
+          } = buildSynthesisPrompt(doc, config.conclude.maxTranscriptChars);
           if (truncated) {
             warnings.push(
               formatTruncationWarning({
@@ -239,6 +240,7 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
                 truncatedByChars,
                 originalTurnCount,
                 finalTurnCount,
+                appliedCharLimit,
               }),
             );
           }
@@ -291,15 +293,20 @@ export interface BuiltSynthesisPrompt {
   readonly truncated: boolean;
   /** True if the original turn count exceeded {@link MAX_TRANSCRIPT_TURNS}. */
   readonly truncatedByTurns: boolean;
-  /** True if dropping oldest turns was required to fit {@link MAX_TRANSCRIPT_CHARS}. */
+  /** True if dropping oldest turns was required to fit the configured char limit. */
   readonly truncatedByChars: boolean;
   /** Number of turns in the source transcript before any truncation. */
   readonly originalTurnCount: number;
   /** Number of turns actually included in the emitted prompt. */
   readonly finalTurnCount: number;
+  /** The character limit that was applied during prompt construction. */
+  readonly appliedCharLimit: number;
 }
 
-export function buildSynthesisPrompt(doc: TranscriptDocument): BuiltSynthesisPrompt {
+export function buildSynthesisPrompt(
+  doc: TranscriptDocument,
+  maxTranscriptChars: number = MAX_TRANSCRIPT_CHARS,
+): BuiltSynthesisPrompt {
   const nameById = new Map<string, string>();
   for (const e of doc.experts) nameById.set(e.id, e.displayName);
 
@@ -323,7 +330,7 @@ export function buildSynthesisPrompt(doc: TranscriptDocument): BuiltSynthesisPro
   }
   let body = turnBlocks.join("\n");
   let truncatedByChars = false;
-  while (body.length > MAX_TRANSCRIPT_CHARS && turnBlocks.length > 1) {
+  while (body.length > maxTranscriptChars && turnBlocks.length > 1) {
     turnBlocks.shift();
     body = turnBlocks.join("\n");
     truncatedByChars = true;
@@ -364,6 +371,7 @@ export function buildSynthesisPrompt(doc: TranscriptDocument): BuiltSynthesisPro
     truncatedByChars,
     originalTurnCount,
     finalTurnCount,
+    appliedCharLimit: maxTranscriptChars,
   };
 }
 
@@ -372,18 +380,19 @@ interface TruncationFacts {
   readonly truncatedByChars: boolean;
   readonly originalTurnCount: number;
   readonly finalTurnCount: number;
+  readonly appliedCharLimit: number;
 }
 
 export function formatTruncationWarning(facts: TruncationFacts): string {
-  const { truncatedByTurns, truncatedByChars, originalTurnCount, finalTurnCount } = facts;
+  const { truncatedByTurns, truncatedByChars, originalTurnCount, finalTurnCount, appliedCharLimit } = facts;
   const prefix = `transcript truncated from ${originalTurnCount} to ${finalTurnCount} turns`;
   if (truncatedByTurns && truncatedByChars) {
-    return `${prefix} to fit synthesis budget (turn limit ${MAX_TRANSCRIPT_TURNS} and ${MAX_TRANSCRIPT_CHARS} char limit both exceeded)`;
+    return `${prefix} to fit synthesis budget (turn limit ${MAX_TRANSCRIPT_TURNS} and ${appliedCharLimit} char limit both exceeded)`;
   }
   if (truncatedByTurns) {
     return `${prefix} to fit turn limit (${MAX_TRANSCRIPT_TURNS})`;
   }
-  return `${prefix} to fit ${MAX_TRANSCRIPT_CHARS} char limit`;
+  return `${prefix} to fit ${appliedCharLimit} char limit`;
 }
 
 async function collectResponse(

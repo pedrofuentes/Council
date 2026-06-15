@@ -144,6 +144,23 @@ export const ConfigSchema = z
         longConversationWarning: 500,
       }),
     /**
+     * Conclude synthesis settings: control the maximum transcript
+     * character budget for the synthesis prompt to balance context
+     * completeness with token costs.
+     */
+    conclude: z
+      .object({
+        /**
+         * Maximum total character budget for transcript content in the
+         * synthesis prompt. Older turns are dropped if the transcript
+         * exceeds this limit. 1000..1000000 inclusive, default 50000.
+         */
+        maxTranscriptChars: z.number().int().min(1000).max(1000000).default(50000),
+      })
+      .default({
+        maxTranscriptChars: 50000,
+      }),
+    /**
      * User-facing data directory paths. `dataHome` holds expert and panel
      * YAML files (separate from the hidden `~/.council/` runtime dir).
      */
@@ -191,6 +208,9 @@ export const ConfigSchema = z
       recentTurnCount: 10,
       summaryMaxWords: 500,
       longConversationWarning: 500,
+    },
+    conclude: {
+      maxTranscriptChars: 50000,
     },
     paths: { dataHome: "~/Council" },
   });
