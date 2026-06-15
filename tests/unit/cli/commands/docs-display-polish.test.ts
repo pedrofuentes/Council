@@ -23,7 +23,6 @@ import {
 import type { CouncilConfig } from "../../../../src/config/index.js";
 import type { PanelScanResult } from "../../../../src/core/documents/panel-document-scanner.js";
 import type { ScanFileDetail } from "../../../../src/core/documents/scan-types.js";
-import type { PanelDocument } from "../../../../src/memory/repositories/panel-document-repo.js";
 
 interface RunOutcome {
   readonly stdout: string;

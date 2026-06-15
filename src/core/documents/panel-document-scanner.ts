@@ -147,6 +147,7 @@ export async function scanAndIndexPanelDocuments(
   ];
 
   const known = await docsRepo.getChecksumMap(panelName);
+  const wordCounts = await docsRepo.getWordCountMap(panelName);
   // Track which previously-known paths we observed on disk this scan.
   // Anything left over after iterating all folders has been deleted and
   // must be pruned from both `panel_documents` and `document_index` so
@@ -254,11 +255,13 @@ export async function scanAndIndexPanelDocuments(
     unchanged += detection.unchangedFiles.length;
     for (const u of detection.unchangedFiles) {
       seenPaths.add(u.path);
+      const wordCount = wordCounts.get(u.path);
       files.push({
         path: u.path,
         filename: path.basename(u.path),
         extension: path.extname(u.path).toLowerCase(),
         status: "unchanged",
+        ...(wordCount !== undefined ? { wordCount } : {}),
       });
     }
     // Transient per-file detector failures (lstat/read errors that did
