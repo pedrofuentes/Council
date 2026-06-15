@@ -41,6 +41,8 @@ import {
 } from "../../core/template-loader.js";
 import { createDatabase, type CouncilDatabase } from "../../memory/db.js";
 import { PanelLibraryRepository } from "../../memory/repositories/panel-library-repo.js";
+import { PanelRepository } from "../../memory/repositories/panels.js";
+import { DebateRepository } from "../../memory/repositories/debates.js";
 import {
   PanelDocumentRepository,
   type PanelDocument,
@@ -58,10 +60,28 @@ function formatPanelNotFound(name: string, available: readonly string[]): string
   return `Panel "${name}" not found.${hint}`;
 }
 
+/**
+ * Build the confirmation message for panel deletion, optionally including
+ * the count of debate sessions that will be permanently deleted.
+ *
+ * @param panelName - The name of the panel to delete
+ * @param debateCount - Number of debate sessions associated with the panel
+ * @returns Confirmation prompt string
+ */
+export function buildDeleteConfirmationMessage(panelName: string, debateCount: number): string {
+  const debateClause =
+    debateCount > 0
+      ? ` This will also permanently delete ${debateCount} debate session${debateCount === 1 ? "" : "s"}.`
+      : "";
+  return `Delete panel "${panelName}"?${debateClause} This cannot be undone. (y/N) `;
+}
+
 interface PanelContext {
   readonly library: ExpertLibrary;
   readonly panelRepo: PanelLibraryRepository;
   readonly docsRepo: PanelDocumentRepository;
+  readonly runtimePanelRepo: PanelRepository;
+  readonly debateRepo: DebateRepository;
   readonly config: CouncilConfig;
   readonly dataHome: string;
   readonly db: CouncilDatabase;
@@ -76,8 +96,10 @@ async function withPanelContext<T>(fn: (ctx: PanelContext) => Promise<T>): Promi
   const library = new FileExpertLibrary(dataHome, db);
   const panelRepo = new PanelLibraryRepository(db);
   const docsRepo = new PanelDocumentRepository(db);
+  const runtimePanelRepo = new PanelRepository(db);
+  const debateRepo = new DebateRepository(db);
   try {
-    return await fn({ library, panelRepo, docsRepo, config, dataHome, db });
+    return await fn({ library, panelRepo, docsRepo, runtimePanelRepo, debateRepo, config, dataHome, db });
   } finally {
     await db.destroy();
   }
@@ -168,11 +190,22 @@ function buildDeleteCommand(
           throw new CliUserError(msg);
         }
 
+        // Count debates associated with this panel name across all runtime panel instances.
+        // The panels table holds runtime instances (created when debates start); a panel_library
+        // entry may have multiple runtime panel rows with the same name. Debates CASCADE-delete
+        // when their parent panel is removed, so we count all debates for all runtime panels
+        // matching this name.
+        const runtimePanels = await ctx.runtimePanelRepo.findByNamePrefix(name);
+        const exactMatches = runtimePanels.filter((p) => p.name === name);
+        let debateCount = 0;
+        for (const panel of exactMatches) {
+          debateCount += (await ctx.debateRepo.findByPanelId(panel.id)).length;
+        }
+
         if (opts.yes !== true && opts.force !== true) {
           const provider = confirmProvider ?? createReadlineConfirmProvider();
-          const ok = await provider.confirm(
-            `Delete panel "${name}"? This cannot be undone. (y/N) `,
-          );
+          const confirmMessage = buildDeleteConfirmationMessage(name, debateCount);
+          const ok = await provider.confirm(confirmMessage);
           if (!ok) {
             const msg = `Aborted: panel "${name}" not deleted.`;
             writeError(msg + "\n");

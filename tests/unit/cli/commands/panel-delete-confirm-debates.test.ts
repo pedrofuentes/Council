@@ -100,9 +100,16 @@ async function createDebateSession(env: TestEnv, panelName: string): Promise<str
     const panelRepo = new PanelRepository(db);
     const debateRepo = new DebateRepository(db);
 
-    const panel = await panelRepo.findByName(panelName);
+    // First, find or create a runtime panel instance matching the panel_library name
+    let panel = await panelRepo.findByName(panelName);
     if (!panel) {
-      throw new Error(`Panel "${panelName}" not found`);
+      // Create a runtime panel entry (normally created by the debate orchestrator)
+      panel = await panelRepo.create({
+        name: panelName,
+        topic: null,
+        copilotHome: env.home,
+        configJson: "{}",
+      });
     }
 
     const debate = await debateRepo.create({
