@@ -1,0 +1,332 @@
+/**
+ * T9 — `council panel save <session> [name]` promotes a convened session
+ * into a reusable LIBRARY panel + its experts, read from the
+ * `ResolvedPanelDefinition` that convene stored in the session's
+ * `config_json`. Afterwards `council panels` lists it and `council chat
+ * <name>` resolves it (proxied here by `loadPanel`, which is exactly what
+ * chat uses to resolve a library panel).
+ *
+ * Collision policy (documented in DECISIONS.md ADR + command output):
+ * suffix `-2`, `-3`, … when a promoted panel name or expert slug already
+ * exists in the library — promotion never clobbers or silently reuses
+ * existing artifacts.
+ *
+ * RED at this commit: `panel save` does not exist yet.
+ */
+import * as os from "node:os";
+import * as path from "node:path";
+import * as fs from "node:fs/promises";
+
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { buildPanelCommand } from "../../../../src/cli/commands/panel.js";
+import type { ExpertDefinition } from "../../../../src/core/expert.js";
+import type { ResolvedPanelDefinition } from "../../../../src/core/template-loader.js";
+import { loadPanel } from "../../../../src/core/template-loader.js";
+import { createDatabase } from "../../../../src/memory/db.js";
+import { FileExpertLibrary } from "../../../../src/core/expert-library.js";
+import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
+import { PanelLibraryRepository } from "../../../../src/memory/repositories/panel-library-repo.js";
+import { ExpertLibraryRepository } from "../../../../src/memory/repositories/expert-library-repo.js";
+import { CliUserError } from "../../../../src/cli/cli-user-error.js";
+import { copyTemplateDb } from "../../../helpers/template-db.js";
+
+interface TestEnv {
+  readonly home: string;
+  readonly dataHome: string;
+  readonly originalHome: string | undefined;
+  readonly originalDataHome: string | undefined;
+}
+
+async function makeEnv(): Promise<TestEnv> {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "council-panelsave-home-"));
+  const dataHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-panelsave-data-"));
+  const originalHome = process.env["COUNCIL_HOME"];
+  const originalDataHome = process.env["COUNCIL_DATA_HOME"];
+  process.env["COUNCIL_HOME"] = home;
+  process.env["COUNCIL_DATA_HOME"] = dataHome;
+  await copyTemplateDb(path.join(home, "council.db"));
+  return { home, dataHome, originalHome, originalDataHome };
+}
+
+async function teardown(env: TestEnv): Promise<void> {
+  if (env.originalHome === undefined) delete process.env["COUNCIL_HOME"];
+  else process.env["COUNCIL_HOME"] = env.originalHome;
+  if (env.originalDataHome === undefined) delete process.env["COUNCIL_DATA_HOME"];
+  else process.env["COUNCIL_DATA_HOME"] = env.originalDataHome;
+  for (const dir of [env.home, env.dataHome]) {
+    try {
+      await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function expertDef(slug: string, overrides: Partial<ExpertDefinition> = {}): ExpertDefinition {
+  return {
+    slug,
+    displayName: `${slug} (Role)`,
+    role: `${slug} role`,
+    model: "test-model",
+    expertise: {
+      weightedEvidence: [`${slug}-evidence`],
+      referenceCases: [],
+      notExpertIn: [],
+    },
+    epistemicStance: `${slug} forms beliefs empirically.`,
+    kind: "generic",
+    ...overrides,
+  };
+}
+
+function autoDefinition(slugs: readonly string[]): ResolvedPanelDefinition {
+  return {
+    name: "auto-panel",
+    description: "Auto-composed panel for the topic",
+    experts: slugs.map((s) => expertDef(s)),
+  };
+}
+
+/** Seed a convened SESSION row carrying a stored ResolvedPanelDefinition. */
+async function seedSession(
+  env: TestEnv,
+  opts: {
+    readonly name: string;
+    readonly definition?: ResolvedPanelDefinition;
+    readonly mode?: string;
+    readonly omitDefinition?: boolean;
+  },
+): Promise<string> {
+  const db = await createDatabase(path.join(env.home, "council.db"));
+  try {
+    const repo = new PanelRepository(db);
+    const config: Record<string, unknown> = {
+      template: opts.definition?.name ?? "legacy",
+      mode: opts.mode ?? "freeform",
+      engine: "mock",
+    };
+    if (opts.omitDefinition !== true) {
+      config["definition"] = opts.definition ?? autoDefinition(["alpha", "beta", "gamma"]);
+    }
+    const panel = await repo.create({
+      name: opts.name,
+      topic: "Should we adopt event sourcing?",
+      copilotHome: path.join(env.home, "copilot"),
+      configJson: JSON.stringify(config),
+    });
+    return panel.name;
+  } finally {
+    await db.destroy();
+  }
+}
+
+async function seedLibraryExpert(env: TestEnv, def: ExpertDefinition): Promise<void> {
+  const db = await createDatabase(path.join(env.home, "council.db"));
+  try {
+    const lib = new FileExpertLibrary(env.dataHome, db);
+    await lib.create(def);
+  } finally {
+    await db.destroy();
+  }
+}
+
+async function fileExists(p: string): Promise<boolean> {
+  try {
+    await fs.stat(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+describe("panel save (T9)", () => {
+  let env: TestEnv;
+  beforeEach(async () => {
+    env = await makeEnv();
+  });
+  afterEach(async () => {
+    await teardown(env);
+  });
+
+  it("registers a `save` subcommand on the panel command", () => {
+    const cmd = buildPanelCommand();
+    const subs = cmd.commands.map((c) => c.name());
+    expect(subs).toContain("save");
+  });
+
+  it("promotes a session into a library panel + experts that chat/list can resolve", async () => {
+    const sessionName = await seedSession(env, {
+      name: "auto-panel-2026-06-15T12:00:00",
+      definition: autoDefinition(["alpha", "beta", "gamma"]),
+    });
+
+    let stdout = "";
+    const cmd = buildPanelCommand(
+      (s) => {
+        stdout += s;
+      },
+      () => undefined,
+    );
+    await cmd.parseAsync(["node", "council-panel", "save", sessionName, "mypanel"]);
+
+    // panel_library row exists.
+    const db = await createDatabase(path.join(env.home, "council.db"));
+    try {
+      const panelRepo = new PanelLibraryRepository(db);
+      const saved = await panelRepo.findByName("mypanel");
+      expect(saved).toBeDefined();
+
+      // panel_members carries the ordered expert slugs.
+      const members = await panelRepo.getMembers("mypanel");
+      expect([...members]).toEqual(["alpha", "beta", "gamma"]);
+
+      // expert_library rows exist for each promoted expert.
+      const expertRepo = new ExpertLibraryRepository(db);
+      for (const slug of ["alpha", "beta", "gamma"]) {
+        expect(await expertRepo.findBySlug(slug)).toBeDefined();
+      }
+    } finally {
+      await db.destroy();
+    }
+
+    // YAML artifact written under <dataHome>/panels/.
+    expect(await fileExists(path.join(env.dataHome, "panels", "mypanel.yaml"))).toBe(true);
+
+    // chat resolves a library panel via loadPanel — assert it loads.
+    const loaded = await loadPanel("mypanel", env.dataHome);
+    expect(loaded.name).toBe("mypanel");
+
+    // `council panels` (list) shows it.
+    let listOut = "";
+    const listCmd = buildPanelCommand((s) => {
+      listOut += s;
+    });
+    await listCmd.parseAsync(["node", "council-panel", "list"]);
+    expect(listOut).toContain("mypanel");
+
+    // Success output confirms the save + how to chat with it.
+    expect(stdout).toContain("mypanel");
+    expect(stdout).toMatch(/council chat mypanel/);
+  });
+
+  it("defaults the panel name to the composed definition name when omitted", async () => {
+    const sessionName = await seedSession(env, {
+      name: "auto-panel-2026-06-15T12:30:00",
+      definition: autoDefinition(["alpha", "beta"]),
+    });
+    const cmd = buildPanelCommand(
+      () => undefined,
+      () => undefined,
+    );
+    await cmd.parseAsync(["node", "council-panel", "save", sessionName]);
+
+    const db = await createDatabase(path.join(env.home, "council.db"));
+    try {
+      const saved = await new PanelLibraryRepository(db).findByName("auto-panel");
+      expect(saved).toBeDefined();
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it("suffixes panel name and expert slugs on collision (non-destructive)", async () => {
+    // Pre-existing library expert + panel that will collide.
+    await seedLibraryExpert(env, expertDef("alpha", { displayName: "Existing Alpha" }));
+    const createCmd = buildPanelCommand(
+      () => undefined,
+      () => undefined,
+    );
+    await createCmd.parseAsync(["node", "council-panel", "create", "mypanel", "--experts", "alpha"]);
+
+    const sessionName = await seedSession(env, {
+      name: "auto-panel-2026-06-15T13:00:00",
+      definition: autoDefinition(["alpha", "gamma"]),
+    });
+
+    let stdout = "";
+    const cmd = buildPanelCommand(
+      (s) => {
+        stdout += s;
+      },
+      () => undefined,
+    );
+    await cmd.parseAsync(["node", "council-panel", "save", sessionName, "mypanel"]);
+
+    const db = await createDatabase(path.join(env.home, "council.db"));
+    try {
+      const panelRepo = new PanelLibraryRepository(db);
+      // Original panel untouched; promoted panel suffixed.
+      expect(await panelRepo.findByName("mypanel")).toBeDefined();
+      expect(await panelRepo.findByName("mypanel-2")).toBeDefined();
+      const members = await panelRepo.getMembers("mypanel-2");
+      expect([...members]).toEqual(["alpha-2", "gamma"]);
+
+      // Original "mypanel" still has its original single member.
+      expect([...(await panelRepo.getMembers("mypanel"))]).toEqual(["alpha"]);
+
+      // Original expert "alpha" is untouched; a suffixed copy was created.
+      const expertRepo = new ExpertLibraryRepository(db);
+      const original = await expertRepo.findBySlug("alpha");
+      expect(original?.displayName).toBe("Existing Alpha");
+      expect(await expertRepo.findBySlug("alpha-2")).toBeDefined();
+      expect(await expertRepo.findBySlug("gamma")).toBeDefined();
+    } finally {
+      await db.destroy();
+    }
+
+    // The renames are surfaced to the user.
+    expect(stdout).toContain("mypanel-2");
+    expect(stdout).toContain("alpha-2");
+  });
+
+  it("supports --latest to promote the most recent session", async () => {
+    await seedSession(env, {
+      name: "auto-panel-2026-06-15T14:00:00",
+      definition: autoDefinition(["alpha", "beta"]),
+    });
+    const cmd = buildPanelCommand(
+      () => undefined,
+      () => undefined,
+    );
+    await cmd.parseAsync(["node", "council-panel", "save", "--latest", "latestpanel"]);
+
+    const db = await createDatabase(path.join(env.home, "council.db"));
+    try {
+      expect(await new PanelLibraryRepository(db).findByName("latestpanel")).toBeDefined();
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it("errors clearly when the session does not exist", async () => {
+    const cmd = buildPanelCommand(
+      () => undefined,
+      () => undefined,
+    );
+    cmd.exitOverride();
+    await expect(
+      cmd.parseAsync(["node", "council-panel", "save", "no-such-session", "foo"]),
+    ).rejects.toBeInstanceOf(CliUserError);
+  });
+
+  it("errors clearly when the session predates the enabler (no stored definition)", async () => {
+    const sessionName = await seedSession(env, {
+      name: "legacy-2026-01-01T00:00:00",
+      omitDefinition: true,
+    });
+
+    let stderr = "";
+    const cmd = buildPanelCommand(
+      () => undefined,
+      (s) => {
+        stderr += s;
+      },
+    );
+    cmd.exitOverride();
+    await expect(
+      cmd.parseAsync(["node", "council-panel", "save", sessionName, "foo"]),
+    ).rejects.toBeInstanceOf(CliUserError);
+    expect(stderr).toMatch(/no stored panel definition|does not have a saved panel|predates/i);
+  });
+});

@@ -81,7 +81,7 @@ describe("buildPanelCommand", () => {
     const cmd = buildPanelCommand();
     expect(cmd.name()).toBe("panel");
     const subs = cmd.commands.map((c) => c.name()).sort();
-    expect(subs).toEqual(["create", "delete", "docs", "edit", "inspect", "list"].sort());
+    expect(subs).toEqual(["create", "delete", "docs", "edit", "inspect", "list", "save"].sort());
   });
 
   it("defaults bare panel to the list action", async () => {
@@ -701,7 +701,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
     it("registers a `docs` subcommand on the panel command", () => {
       const cmd = buildPanelCommand();
       const subs = cmd.commands.map((c) => c.name()).sort();
-      expect(subs).toEqual(["create", "delete", "docs", "edit", "inspect", "list"].sort());
+      expect(subs).toEqual(["create", "delete", "docs", "edit", "inspect", "list", "save"].sort());
     });
 
     it("`panel docs <name>` shows an empty-state hint when no documents exist", async () => {
