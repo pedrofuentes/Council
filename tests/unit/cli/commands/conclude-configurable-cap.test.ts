@@ -130,14 +130,11 @@ describe("conclude with configurable transcript cap", () => {
     const panelName = await seedPanelWithLongTranscript(testHome, 100, 1000);
 
     let captured = "";
-    let capturedNotice = "";
     const cmd = buildConcludeCommand({
       write: (chunk) => {
         captured += chunk;
       },
-      writeNotice: (chunk) => {
-        capturedNotice += chunk;
-      },
+      writeNotice: () => undefined,
       writeError: () => undefined,
       engineFactory: () => makeMockEngine(JSON.stringify(SAMPLE_OUTPUT)),
       synthesizerId: SYNTH_ID,
@@ -204,14 +201,16 @@ describe("conclude with configurable transcript cap", () => {
       latestDebate: { id: "d1", status: "completed", prompt: "Test", startedAt: "2024-01-01T00:00:00.000Z" },
       experts: [{ id: "e1", slug: "expert", displayName: "Expert", model: "claude-sonnet-4" }],
       turns: [
-        { round: 0, seq: 0, speakerKind: "expert", expertId: "e1", content: "x".repeat(60000) },
+        { round: 0, seq: 0, speakerKind: "expert", expertId: "e1", content: "x".repeat(30000) },
+        { round: 0, seq: 1, speakerKind: "expert", expertId: "e1", content: "y".repeat(30000) },
       ],
     };
 
     const result = buildSynthesisPrompt(doc);
 
-    // With default 50000 cap, the 60k content should be truncated
+    // With default 50000 cap, the 60k total content should be truncated
     expect(result.truncated).toBe(true);
     expect(result.truncatedByChars).toBe(true);
+    expect(result.appliedCharLimit).toBe(50000);
   });
 });
