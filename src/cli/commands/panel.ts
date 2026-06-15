@@ -41,6 +41,8 @@ import {
 } from "../../core/template-loader.js";
 import { createDatabase, type CouncilDatabase } from "../../memory/db.js";
 import { PanelLibraryRepository } from "../../memory/repositories/panel-library-repo.js";
+import { PanelRepository } from "../../memory/repositories/panels.js";
+import { DebateRepository } from "../../memory/repositories/debates.js";
 import {
   PanelDocumentRepository,
   type PanelDocument,
@@ -58,10 +60,37 @@ function formatPanelNotFound(name: string, available: readonly string[]): string
   return `Panel "${name}" not found.${hint}`;
 }
 
+/**
+ * Build the confirmation message for panel deletion.
+ *
+ * `panel delete` removes ONLY the panel template — the `panel_library` row,
+ * its `panel_members`, the YAML file, and the panel docs directory. It does
+ * NOT delete debate sessions: those live in the runtime `panels`/`debates`
+ * tables, which have no foreign key to `panel_library`. When the panel has
+ * past debate sessions, the message surfaces the count framed as RETAINED —
+ * they stay available via `council sessions`.
+ *
+ * @param panelName - The name of the panel to delete
+ * @param debateCount - Number of past debate sessions for this panel (kept, not deleted)
+ * @returns Confirmation prompt string
+ */
+export function buildDeleteConfirmationMessage(panelName: string, debateCount: number): string {
+  let debateClause = "";
+  if (debateCount > 0) {
+    const noun = debateCount === 1 ? "session" : "sessions";
+    const verb = debateCount === 1 ? "is" : "are";
+    const stay = debateCount === 1 ? "stays" : "stay";
+    debateClause = ` (Its ${debateCount} past debate ${noun} ${verb} kept and ${stay} available via 'council sessions'.)`;
+  }
+  return `Delete panel "${panelName}" and its documents?${debateClause} This cannot be undone. (y/N) `;
+}
+
 interface PanelContext {
   readonly library: ExpertLibrary;
   readonly panelRepo: PanelLibraryRepository;
   readonly docsRepo: PanelDocumentRepository;
+  readonly runtimePanelRepo: PanelRepository;
+  readonly debateRepo: DebateRepository;
   readonly config: CouncilConfig;
   readonly dataHome: string;
   readonly db: CouncilDatabase;
@@ -76,8 +105,19 @@ async function withPanelContext<T>(fn: (ctx: PanelContext) => Promise<T>): Promi
   const library = new FileExpertLibrary(dataHome, db);
   const panelRepo = new PanelLibraryRepository(db);
   const docsRepo = new PanelDocumentRepository(db);
+  const runtimePanelRepo = new PanelRepository(db);
+  const debateRepo = new DebateRepository(db);
   try {
-    return await fn({ library, panelRepo, docsRepo, config, dataHome, db });
+    return await fn({
+      library,
+      panelRepo,
+      docsRepo,
+      runtimePanelRepo,
+      debateRepo,
+      config,
+      dataHome,
+      db,
+    });
   } finally {
     await db.destroy();
   }
@@ -149,7 +189,9 @@ function buildDeleteCommand(
     .description("Delete a panel (YAML file, docs directory, and DB rows)")
     .argument("<name>", "Panel name to delete")
     .option("--yes", "Skip the confirmation prompt (non-interactive runs)")
-    .addOption(new Option("--force", "Skip the confirmation prompt (non-interactive runs)").hideHelp())
+    .addOption(
+      new Option("--force", "Skip the confirmation prompt (non-interactive runs)").hideHelp(),
+    )
     .action(async (name: string, opts: { force?: boolean; yes?: boolean }) => {
       // Defense in depth: re-validate the panel name on every fs.rm/unlink
       // path. Create-time validation cannot be relied upon because the
@@ -168,11 +210,24 @@ function buildDeleteCommand(
           throw new CliUserError(msg);
         }
 
+        // Count the panel's past debate sessions so the confirmation can state how many are
+        // KEPT. The panels table holds runtime instances (created when debates start); a
+        // panel_library entry may have multiple runtime panel rows with the same name. These
+        // debates are NOT deleted by `panel delete`: debates CASCADE off the runtime
+        // panels(id), which this command never touches (it only removes the panel_library row,
+        // panel_members, the YAML, and the docs dir). They remain available via `council
+        // sessions`.
+        const runtimePanels = await ctx.runtimePanelRepo.findByNamePrefix(name);
+        const exactMatches = runtimePanels.filter((p) => p.name === name);
+        let debateCount = 0;
+        for (const panel of exactMatches) {
+          debateCount += (await ctx.debateRepo.findByPanelId(panel.id)).length;
+        }
+
         if (opts.yes !== true && opts.force !== true) {
           const provider = confirmProvider ?? createReadlineConfirmProvider();
-          const ok = await provider.confirm(
-            `Delete panel "${name}"? This cannot be undone. (y/N) `,
-          );
+          const confirmMessage = buildDeleteConfirmationMessage(name, debateCount);
+          const ok = await provider.confirm(confirmMessage);
           if (!ok) {
             const msg = `Aborted: panel "${name}" not deleted.`;
             writeError(msg + "\n");
@@ -270,18 +325,14 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
     .option("--description <text>", "One-line description")
     .action(async (positionalName: string | undefined, opts: CreateOptions) => {
       if (positionalName !== undefined && opts.slug !== undefined) {
-        writeError(
-          "Cannot use both positional <name> and --slug. Pass one or the other.\n",
-        );
+        writeError("Cannot use both positional <name> and --slug. Pass one or the other.\n");
         throw new CliUserError(
           "panel create: both positional <name> and --slug were provided; pass only one.",
         );
       }
       const name = positionalName ?? opts.slug;
       if (name === undefined || name.length === 0) {
-        writeError(
-          "Panel name is required. Pass it as the positional argument or with --slug.\n",
-        );
+        writeError("Panel name is required. Pass it as the positional argument or with --slug.\n");
         throw new CliUserError("panel create: missing panel name (positional <name> or --slug).");
       }
       validatePanelName(name);
@@ -559,16 +610,16 @@ async function runPanelList(
       }),
     );
     const header = ["name", "experts", "description"] as const;
-    const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)));
+    const widths = header.map((h, i) =>
+      Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)),
+    );
     const pad = (s: string, w: number): string => s + " ".repeat(Math.max(0, w - s.length));
     write(header.map((h, i) => pad(h, widths[i] ?? 0)).join("  ") + "\n");
     write(widths.map((w) => "-".repeat(w)).join("  ") + "\n");
     for (const row of rows) {
       write(row.map((c, i) => pad(c, widths[i] ?? 0)).join("  ") + "\n");
     }
-    write(
-      "\x1b[2mNext: council panel inspect <name> | council convene --template <name>\x1b[0m\n",
-    );
+    write("\x1b[2mNext: council panel inspect <name> | council convene --template <name>\x1b[0m\n");
   });
 }
 
