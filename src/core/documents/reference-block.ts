@@ -149,3 +149,41 @@ export function appendReferenceDocuments(
   lines.push("If these excerpts are relevant to the discussion, cite them.");
   return lines.join("\n");
 }
+
+/**
+ * Default character budget for injected reference text in the
+ * `convene`/`Debate` path. Retrieved snippets are capped to this many
+ * characters (best-first) before injection so a large set of documents
+ * cannot blow up every expert turn's prompt. ~4000 chars ≈ 1000 tokens.
+ */
+export const REFERENCE_DOCS_CHAR_CAP = 4000;
+
+/**
+ * Trim a best-first list of snippets so their combined `content` length
+ * stays within `maxChars`, dropping the least-relevant (trailing)
+ * snippets first. The single most-relevant snippet is ALWAYS kept even
+ * when it alone exceeds the budget — an over-budget excerpt is more
+ * useful than none. Returns the input array unchanged (same reference)
+ * when it already fits, so callers can cheaply detect the no-op case.
+ *
+ * Pure: no I/O, no mutation of the input.
+ */
+export function capSnippetsByChars(
+  snippets: readonly DocumentSnippet[],
+  maxChars: number,
+): readonly DocumentSnippet[] {
+  let total = 0;
+  let cut = -1;
+  for (let i = 0; i < snippets.length; i += 1) {
+    const len = snippets[i]?.content.length ?? 0;
+    // Always keep the first (most-relevant) snippet; only later snippets
+    // can push the running total over the cap.
+    if (i > 0 && total + len > maxChars) {
+      cut = i;
+      break;
+    }
+    total += len;
+  }
+  if (cut === -1) return snippets;
+  return snippets.slice(0, cut);
+}

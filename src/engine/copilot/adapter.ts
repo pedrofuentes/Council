@@ -192,6 +192,12 @@ export class CopilotEngine implements CouncilEngine {
       model: spec.model,
       systemMessage: { content: spec.systemMessage },
       onPermissionRequest: sdkDenyAll,
+      // Council experts answer from their system prompt + injected
+      // [REFERENCE DOCUMENTS]; they are never offered SDK tools. An empty
+      // allow-list removes the default toolset entirely, so the model no
+      // longer narrates "I have no tools" or "let me check your working
+      // directory" (denying at call time still left the tools advertised).
+      availableTools: [],
     });
     this.#experts.set(spec.id, { spec, session, inFlight: new Set() });
   }

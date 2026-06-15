@@ -10,6 +10,8 @@ import {
   buildExpertSpec,
   buildPanelTurnPrompt,
   appendReferenceDocuments,
+  capSnippetsByChars,
+  REFERENCE_DOCS_CHAR_CAP,
   safeRetrieveSnippets,
   safeGetContext,
   seedLongConversationCount,
@@ -48,6 +50,7 @@ import {
   type PanelDefinition,
   type ChatRenderer,
   type ParsedInput,
+  type DocumentSnippet,
 } from "./shared.js";
 import type { FileExpertLibrary } from "./shared.js";
 
@@ -347,6 +350,19 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
         for (const warning of admission.warnings) {
           renderer.showSystem(warning, "warn");
         }
+        // T1 RAG: surface the panel's indexed documents to the inline
+        // structured debate too, mirroring the per-turn panel-chat retrieval
+        // below. Best-effort and capped to the shared char budget.
+        const conveneSnippets = await safeRetrieveSnippets(
+          retriever,
+          parsed.content,
+          { panelName, maxResults: 5 },
+          (msg) => renderer.showSystem(msg, "warn"),
+        );
+        const conveneReferenceDocs = capSnippetsByChars(
+          conveneSnippets,
+          REFERENCE_DOCS_CHAR_CAP,
+        );
         const debateController = new AbortController();
         state = { kind: "debate", controller: debateController };
         try {
@@ -359,6 +375,9 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
             topic: parsed.content,
             writeError,
             signal: debateController.signal,
+            ...(conveneReferenceDocs.length > 0
+              ? { referenceDocuments: conveneReferenceDocs }
+              : {}),
           });
         } finally {
           state = { kind: "idle" };
@@ -569,6 +588,12 @@ interface InlineDebateOptions {
   readonly topic: string;
   readonly writeError: Writer;
   readonly signal?: AbortSignal;
+  /**
+   * T1 RAG: retrieved panel documents to inject into every expert turn of
+   * the inline structured debate via the shared [REFERENCE DOCUMENTS]
+   * block. Omitted/empty leaves the debate prompts untouched.
+   */
+  readonly referenceDocuments?: readonly DocumentSnippet[];
 }
 
 async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
@@ -588,6 +613,9 @@ async function runInlineDebate(opts: InlineDebateOptions): Promise<void> {
       maxRounds: 1,
       maxWordsPerResponse: 0,
       mode: "structured",
+      ...(opts.referenceDocuments !== undefined && opts.referenceDocuments.length > 0
+        ? { referenceDocuments: opts.referenceDocuments }
+        : {}),
     },
   );
 

@@ -132,7 +132,7 @@ function renderForbiddenMoves(def: ExpertDefinition): string {
   const profile = def.forbiddenMoves ?? [];
   const allMoves = [
     ...DEFAULT_FORBIDDEN_PHRASES.map((p) => `Begin or include the phrase: "${p}"`),
-    `Request information or tool access you do not have (you have NO tool access: cannot read files, execute code, or browse the web)`,
+    `Ask for tools, file access, or web access — you have none; when documents are relevant their text is provided inline under a [REFERENCE DOCUMENTS] heading, so rely on that and your own expertise instead of requesting external access`,
     `Say "I need to examine X first" or similar without providing actual analysis based on the topic and your expertise`,
     ...profile,
   ];

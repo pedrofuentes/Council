@@ -76,7 +76,7 @@ export { FileExpertLibrary } from "../../../core/expert-library.js";
 export { ExpertLibraryRepository } from "../../../memory/repositories/expert-library-repo.js";
 export { PanelNotFoundError, loadPanel, resolveExperts } from "../../../core/template-loader.js";
 export { createChatRenderer } from "../../renderers/chat-renderer.js";
-export { createDocumentRetriever } from "../../../core/documents/retriever.js";
+export { createDocumentRetriever, buildExpertRetrievalScopes } from "../../../core/documents/retriever.js";
 export { createContextManager } from "../../../core/chat/context-manager.js";
 export { formatEngineError } from "../../error-mapper.js";
 export { makeEngineFromKind, ENGINE_KINDS } from "../../run-with-engine.js";
@@ -87,7 +87,11 @@ export { getExpertPanelMemberships } from "../../../core/panel-membership-query.
 export { resolveEngine } from "../../../config/index.js";
 export { defaultErrorWriter, defaultWriter } from "../writer.js";
 export { Debate } from "../../../core/debate.js";
-export { appendReferenceDocuments } from "../../../core/documents/reference-block.js";
+export {
+  appendReferenceDocuments,
+  capSnippetsByChars,
+  REFERENCE_DOCS_CHAR_CAP,
+} from "../../../core/documents/reference-block.js";
 export type { InjectionDetectedInfo } from "../../../core/documents/reference-block.js";
 
 // ──────────────────────────────────────────────────────────────────────

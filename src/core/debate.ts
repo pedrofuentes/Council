@@ -48,6 +48,12 @@ import type {
   ModeratorStrategy,
   PriorTurnRecord,
 } from "./moderator/strategy.js";
+import {
+  appendReferenceDocuments,
+  capSnippetsByChars,
+  REFERENCE_DOCS_CHAR_CAP,
+} from "./documents/reference-block.js";
+import type { DocumentSnippet } from "./documents/retriever.js";
 import type { DebateEvent, DebatePhase } from "./types.js";
 
 export type DebateMode = "freeform" | "structured";
@@ -100,6 +106,16 @@ export interface DebateConfig {
    * with no summary or truncation — the historical behaviour.
    */
   readonly contextConfig?: ContextConfig;
+
+  /**
+   * Retrieved document snippets (T1 RAG) to surface to every AI expert
+   * turn. When non-empty, the shared `[REFERENCE DOCUMENTS]` block (the
+   * exact formatter used by chat) is appended to each moderator-built
+   * prompt so panel/expert documents actually reach the model. The list
+   * is capped to {@link REFERENCE_DOCS_CHAR_CAP} characters (best-first)
+   * in the constructor. Human turns are never augmented.
+   */
+  readonly referenceDocuments?: readonly DocumentSnippet[];
 }
 
 /** Default retry backoff per ROADMAP §3.7 — 250ms, then 1s. */
@@ -147,6 +163,14 @@ export class Debate {
    */
   readonly #experts: readonly ExpertSpec[];
 
+  /**
+   * Retrieved document snippets injected into every AI expert prompt
+   * (T1 RAG), capped to {@link REFERENCE_DOCS_CHAR_CAP} characters in
+   * the constructor. Empty when the debate was configured without
+   * `referenceDocuments`, in which case prompts are left untouched.
+   */
+  readonly #referenceDocuments: readonly DocumentSnippet[];
+
   constructor(
     private readonly engine: CouncilEngine,
     experts: readonly ExpertSpec[],
@@ -172,6 +196,10 @@ export class Debate {
     }
     this.#canaries = canaries;
     this.#experts = augmented;
+    this.#referenceDocuments = capSnippetsByChars(
+      config.referenceDocuments ?? [],
+      REFERENCE_DOCS_CHAR_CAP,
+    );
   }
 
   /**
@@ -625,6 +653,14 @@ export class Debate {
     const backoffMs = this.config.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS;
     const maxRetries = backoffMs.length;
 
+    // T1 RAG: append the shared [REFERENCE DOCUMENTS] block once (before the
+    // retry loop) so every attempt sends the same augmented prompt. No-op
+    // when the debate was configured without referenceDocuments.
+    const finalPrompt =
+      this.#referenceDocuments.length > 0
+        ? appendReferenceDocuments(prompt, this.#referenceDocuments)
+        : prompt;
+
     let content = "";
     let turnFailed = false;
     let lastErrorRecoverable = false;
@@ -645,7 +681,7 @@ export class Debate {
       lastErrorAborted = false;
 
       try {
-        for await (const evt of this.engine.send({ prompt, expertId: expert.id, ...(signal ? { signal } : {}) })) {
+        for await (const evt of this.engine.send({ prompt: finalPrompt, expertId: expert.id, ...(signal ? { signal } : {}) })) {
           switch (evt.kind) {
             case "message.delta": {
               content += evt.text;
