@@ -212,9 +212,11 @@ with `council expert create --persona --slug <slug>` — Council provisions
 
 1. **Detect** new, modified, and deleted files by SHA-256 checksum
    against the `expert_documents` table (migration 006).
-2. **Extract** content from `.md`, `.txt`, and `.html` files (regex-based
-   normalisation — see ADR-009) using a TOCTOU-safe fd-bound read that
-   verifies inode equality and confines reads to the docs root.
+2. **Extract** content from any of the 16 registered formats via the
+   modular extractor registry (`src/core/documents/extractors/`) —
+   a TOCTOU-safe fd-bound read dispatches to the format-specific
+   extractor registered for the file's extension (or detected from its
+   magic bytes). Run `council docs formats` for the full list.
 3. **Index** the normalised text into FTS5 (`document_index`,
    migration 007) for retrieval-augmented prompts.
 4. **Analyze** the corpus into a structured `PersonaProfile`
@@ -249,6 +251,56 @@ Generic experts (`kind` unset or `"generic"`) skip the entire pipeline
 and behave exactly as before — `personaProfile` arguments to
 `buildSystemPrompt()` are ignored unless the expert is a persona
 (Roadmap 7.1).
+
+## Supported Document Formats
+
+Council's built-in extractor registry covers 16 file types. Native text-based formats
+need no conversion; rich-document formats are converted to plain text before indexing.
+
+**Native (no conversion needed):**
+
+| Extension | Format |
+|-----------|--------|
+| `.md`, `.markdown` | Markdown |
+| `.txt` | Plain text |
+| `.html`, `.htm` | HTML |
+
+**Rich documents (converted to text):**
+
+| Extension | Format |
+|-----------|--------|
+| `.pdf` | PDF |
+| `.docx` | Word document |
+| `.pptx` | PowerPoint presentation |
+| `.xlsx` | Excel spreadsheet |
+| `.xls` | Legacy Excel (re-save as `.xlsx` recommended) |
+| `.csv` | Comma-separated values |
+| `.tsv` | Tab-separated values |
+| `.rtf` | Rich Text Format |
+| `.odt` | OpenDocument Text |
+| `.ods` | OpenDocument Spreadsheet |
+| `.odp` | OpenDocument Presentation |
+
+### Document commands
+
+```bash
+council docs formats               # list supported formats, AI-extraction status, and size limit
+council docs review <panel>        # list files that failed extraction or use unsupported formats
+                                   #   (exits non-zero when any are present — CI-friendly)
+council docs doctor <panel>        # document-health diagnostics: indexed count, word count,
+                                   #   pending review, corrupt files, AI-extraction mode
+```
+
+### Document configuration
+
+| Key | Values | Default | Description |
+|-----|--------|---------|-------------|
+| `documents.maxFileSizeMB` | 1–500 | `50` | Maximum file size the extractor will read |
+| `documents.aiExtraction` | `off` \| `ask` \| `auto` | `off` | AI-based fallback for unsupported formats |
+| `documents.aiExtractionAllowedExtensions` | list of extensions | `[]` (all eligible) | Restrict AI extraction to specific extensions |
+| `expert.supportedFormats` | list of extensions | all 16 above | Formats a panel's document scanner will accept |
+
+Configure with `council config set <key> <value>` or open `~/.council/config.yaml` with `council config edit`.
 
 ## Built-in Panels
 
@@ -391,6 +443,12 @@ council memory list                         # Show what experts remember
 council memory inspect <panel>              # Per-panel + per-expert memory detail
 council memory reset <panel> --yes          # Destructive: clear debate state
 council doctor                              # Diagnose setup issues (incl. terminal capabilities)
+
+# Document formats and health
+council docs formats                        # List supported formats, AI-extraction status, size limit
+council docs review <panel>                 # List files that failed extraction or are unsupported
+                                            #   (exits non-zero when any are present — CI-friendly)
+council docs doctor <panel>                 # Document-health diagnostics for a panel
 
 # Global flags available on all commands
 council <command> --quiet                   # Suppress informational stderr output
