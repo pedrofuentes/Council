@@ -1,8 +1,14 @@
 /**
- * Test for T16 — panel delete confirmation should state debate session count.
+ * Tests for T16 — `council panel delete` confirmation must accurately
+ * describe what is removed.
  *
- * Verifies that the confirmation message for `council panel delete <name>`
- * includes the count of debate sessions that will be permanently deleted.
+ * `panel delete` removes ONLY the panel template: the `panel_library` row,
+ * its `panel_members`, the YAML file, and the panel docs directory. It does
+ * NOT delete debate sessions — those live in the runtime `panels`/`debates`
+ * tables, which have no foreign key to `panel_library`. The confirmation
+ * message must therefore frame any existing debate sessions as KEPT (still
+ * available via `council sessions`), and the destructive (confirm → true)
+ * path must leave those sessions intact.
  */
 import * as os from "node:os";
 import * as path from "node:path";
@@ -10,8 +16,11 @@ import * as fs from "node:fs/promises";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { buildPanelCommand } from "../../../../src/cli/commands/panel.js";
-import { buildDeleteConfirmationMessage } from "../../../../src/cli/commands/panel.js";
+import {
+  buildDeleteConfirmationMessage,
+  buildPanelCommand,
+} from "../../../../src/cli/commands/panel.js";
+import type { CouncilDatabase } from "../../../../src/memory/db.js";
 import type { ExpertDefinition } from "../../../../src/core/expert.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
 
@@ -22,9 +31,13 @@ interface TestEnv {
   readonly originalDataHome: string | undefined;
 }
 
+function noop(): void {
+  /* swallow command output */
+}
+
 async function makeEnv(): Promise<TestEnv> {
-  const home = await fs.mkdtemp(path.join(os.tmpdir(), "council-panel-del-count-home-"));
-  const dataHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-panel-del-count-data-"));
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "council-panel-del-keep-home-"));
+  const dataHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-panel-del-keep-data-"));
   const originalHome = process.env["COUNCIL_HOME"];
   const originalDataHome = process.env["COUNCIL_DATA_HOME"];
   process.env["COUNCIL_HOME"] = home;
@@ -44,6 +57,16 @@ async function teardown(env: TestEnv): Promise<void> {
     } catch {
       /* ignore */
     }
+  }
+}
+
+async function withDb<T>(env: TestEnv, fn: (db: CouncilDatabase) => Promise<T>): Promise<T> {
+  const { createDatabase } = await import("../../../../src/memory/db.js");
+  const db = await createDatabase(path.join(env.home, "council.db"));
+  try {
+    return await fn(db);
+  } finally {
+    await db.destroy();
   }
 }
 
@@ -75,9 +98,7 @@ async function seedExpert(env: TestEnv, def: ExpertDefinition): Promise<void> {
 }
 
 async function createPanel(env: TestEnv, name: string, experts: readonly string[]): Promise<void> {
-  const cmd = buildPanelCommand(() => {
-    /* noop */
-  });
+  const cmd = buildPanelCommand(noop, noop);
   await cmd.parseAsync([
     "node",
     "council-panel",
@@ -91,22 +112,19 @@ async function createPanel(env: TestEnv, name: string, experts: readonly string[
 }
 
 async function createDebateSession(env: TestEnv, panelName: string): Promise<string> {
-  const { createDatabase } = await import("../../../../src/memory/db.js");
-  const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
-  const { DebateRepository } = await import("../../../../src/memory/repositories/debates.js");
+  return withDb(env, async (db) => {
+    const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
+    const { DebateRepository } = await import("../../../../src/memory/repositories/debates.js");
 
-  const db = await createDatabase(path.join(env.home, "council.db"));
-  try {
     const panelRepo = new PanelRepository(db);
     const debateRepo = new DebateRepository(db);
 
-    // First, find or create a runtime panel instance matching the panel_library name
+    // Find or create the runtime panel instance that owns debate sessions
+    // (normally created by the debate orchestrator when a debate starts).
     let panel = await panelRepo.findByName(panelName);
     if (!panel) {
-      // Create a runtime panel entry (normally created by the debate orchestrator)
       panel = await panelRepo.create({
         name: panelName,
-        topic: null,
         copilotHome: env.home,
         configJson: "{}",
       });
@@ -119,40 +137,43 @@ async function createDebateSession(env: TestEnv, panelName: string): Promise<str
     });
 
     return debate.id;
-  } finally {
-    await db.destroy();
-  }
+  });
 }
 
 describe("buildDeleteConfirmationMessage (T16)", () => {
-  it("returns a message with debate count when N > 0", () => {
+  it("frames debate sessions as kept (not deleted) when N > 0", () => {
     const msg = buildDeleteConfirmationMessage("my-panel", 3);
-    expect(msg).toMatch(/my-panel/);
-    expect(msg).toMatch(/3 debate session/);
+    expect(msg).toMatch(/^Delete panel "my-panel" and its documents\?/);
+    expect(msg).toMatch(/3 past debate sessions are kept/);
+    expect(msg).toMatch(/stay available via 'council sessions'/);
     expect(msg).toMatch(/cannot be undone/i);
+    // Must NOT claim the debate sessions are deleted (the rejected bug).
+    expect(msg).not.toMatch(/permanently/i);
+    expect(msg).not.toMatch(/also.*delete/i);
   });
 
-  it("returns a message without debate count clause when N = 0", () => {
+  it("omits the debate clause entirely when N = 0", () => {
     const msg = buildDeleteConfirmationMessage("my-panel", 0);
-    expect(msg).toMatch(/my-panel/);
-    expect(msg).not.toMatch(/0 debate/);
-    expect(msg).not.toMatch(/session/);
+    expect(msg).toMatch(/^Delete panel "my-panel" and its documents\?/);
     expect(msg).toMatch(/cannot be undone/i);
+    expect(msg).not.toMatch(/debate/i);
+    expect(msg).not.toMatch(/session/i);
+    expect(msg).not.toMatch(/kept/i);
   });
 
-  it("uses singular 'session' for N = 1", () => {
+  it("uses singular noun and verbs for N = 1", () => {
     const msg = buildDeleteConfirmationMessage("my-panel", 1);
-    expect(msg).toMatch(/1 debate session/);
-    expect(msg).not.toMatch(/sessions/);
+    expect(msg).toMatch(/1 past debate session is kept and stays available/);
+    expect(msg).not.toMatch(/debate sessions/);
   });
 
-  it("uses plural 'sessions' for N > 1", () => {
+  it("uses plural noun and verbs for N > 1", () => {
     const msg = buildDeleteConfirmationMessage("my-panel", 2);
-    expect(msg).toMatch(/2 debate sessions/);
+    expect(msg).toMatch(/2 past debate sessions are kept and stay available/);
   });
 });
 
-describe("panel delete confirmation with debate count (T16 integration)", () => {
+describe("panel delete confirmation accuracy (T16 integration)", () => {
   let env: TestEnv;
   beforeEach(async () => {
     env = await makeEnv();
@@ -161,7 +182,7 @@ describe("panel delete confirmation with debate count (T16 integration)", () => 
     await teardown(env);
   });
 
-  it("confirmation message includes debate count when panel has N > 0 debates", async () => {
+  it("frames existing debate sessions as kept when N > 0 (declined)", async () => {
     await seedExpert(env, expertDef("cto"));
     await createPanel(env, "active-panel", ["cto"]);
     await createDebateSession(env, "active-panel");
@@ -169,58 +190,93 @@ describe("panel delete confirmation with debate count (T16 integration)", () => 
     await createDebateSession(env, "active-panel");
 
     let confirmMessage = "";
-    const cmd = buildPanelCommand(
-      () => {
-        /* noop */
+    const cmd = buildPanelCommand(noop, noop, {
+      confirm: async (msg) => {
+        confirmMessage = msg;
+        return false;
       },
-      () => {
-        /* noop */
-      },
-      {
-        confirm: async (msg) => {
-          confirmMessage = msg;
-          return false;
-        },
-      },
-    );
+    });
 
     await expect(
       cmd.parseAsync(["node", "council-panel", "delete", "active-panel"]),
     ).rejects.toThrow();
 
     expect(confirmMessage).toMatch(/active-panel/);
-    expect(confirmMessage).toMatch(/3 debate session/);
-    expect(confirmMessage).toMatch(/permanently delete/);
+    expect(confirmMessage).toMatch(/and its documents/);
+    expect(confirmMessage).toMatch(/3 past debate sessions are kept/);
+    expect(confirmMessage).toMatch(/council sessions/);
     expect(confirmMessage).toMatch(/cannot be undone/i);
+    expect(confirmMessage).not.toMatch(/permanently/i);
   });
 
-  it("confirmation message omits debate clause when panel has 0 debates", async () => {
+  it("omits the debate clause when the panel has 0 debate sessions (declined)", async () => {
     await seedExpert(env, expertDef("cto"));
     await createPanel(env, "empty-panel", ["cto"]);
 
     let confirmMessage = "";
-    const cmd = buildPanelCommand(
-      () => {
-        /* noop */
+    const cmd = buildPanelCommand(noop, noop, {
+      confirm: async (msg) => {
+        confirmMessage = msg;
+        return false;
       },
-      () => {
-        /* noop */
-      },
-      {
-        confirm: async (msg) => {
-          confirmMessage = msg;
-          return false;
-        },
-      },
-    );
+    });
 
     await expect(
       cmd.parseAsync(["node", "council-panel", "delete", "empty-panel"]),
     ).rejects.toThrow();
 
     expect(confirmMessage).toMatch(/empty-panel/);
-    expect(confirmMessage).not.toMatch(/0 debate/);
-    expect(confirmMessage).not.toMatch(/session/);
+    expect(confirmMessage).toMatch(/and its documents/);
+    expect(confirmMessage).not.toMatch(/debate/i);
+    expect(confirmMessage).not.toMatch(/kept/i);
     expect(confirmMessage).toMatch(/cannot be undone/i);
+  });
+
+  it("keeps debate sessions intact when the panel is actually deleted (confirm → true)", async () => {
+    await seedExpert(env, expertDef("cto"));
+    await createPanel(env, "active-panel", ["cto"]);
+    await createDebateSession(env, "active-panel");
+    await createDebateSession(env, "active-panel");
+    await createDebateSession(env, "active-panel");
+
+    // Capture the runtime panel id that owns the debate sessions.
+    const panelId = await withDb(env, async (db) => {
+      const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
+      const runtime = await new PanelRepository(db).findByName("active-panel");
+      return runtime?.id;
+    });
+    expect(panelId).toBeDefined();
+
+    let confirmMessage = "";
+    const cmd = buildPanelCommand(noop, noop, {
+      confirm: async (msg) => {
+        confirmMessage = msg;
+        return true;
+      },
+    });
+
+    // Confirm → true: the panel template is actually deleted.
+    await cmd.parseAsync(["node", "council-panel", "delete", "active-panel"]);
+
+    // The message that authorized the deletion must not have lied.
+    expect(confirmMessage).toMatch(/kept/i);
+    expect(confirmMessage).not.toMatch(/permanently/i);
+
+    await withDb(env, async (db) => {
+      const { PanelLibraryRepository } =
+        await import("../../../../src/memory/repositories/panel-library-repo.js");
+      const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
+      const { DebateRepository } = await import("../../../../src/memory/repositories/debates.js");
+
+      // (a) The panel template (library row) is removed.
+      const libraryPanel = await new PanelLibraryRepository(db).findByName("active-panel");
+      expect(libraryPanel).toBeUndefined();
+
+      // (b) The runtime session and its debate sessions REMAIN (kept, not deleted).
+      const runtime = await new PanelRepository(db).findByName("active-panel");
+      expect(runtime).toBeDefined();
+      const debates = await new DebateRepository(db).findByPanelId(panelId as string);
+      expect(debates).toHaveLength(3);
+    });
   });
 });
