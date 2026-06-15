@@ -60,17 +60,26 @@ const CATEGORIES: readonly PatternCategory[] = [
 ];
 
 /**
- * Matches a `$` followed by an ASCII identifier start (letter or `_`) —
- * the literal text a user would type when they want a `$VAR`-like token
- * in their topic. If we see it, the user either (a) used single quotes
- * correctly and meant the literal, or (b) used double quotes and the
- * shell silently expanded a different `$VAR` away. Either way, surfacing
- * a hint about quoting is harmless and high-signal.
+ * Matches a `$` followed by a letter or underscore (typical shell variable
+ * start characters). This pattern indicates a potential shell variable like
+ * `$VAR`, `$PATH`, `$foo`, but excludes currency literals like `$450`,
+ * `$180K` where the `$` is followed by a digit.
  *
  * Deliberately does NOT match bare `$` (e.g., "Pricing in $ vs €") to
  * avoid noise on currency mentions.
  */
-const SHELL_VAR_PATTERN = /\$[A-Za-z0-9_]/;
+const SHELL_VAR_PATTERN = /\$[A-Za-z_]/;
+
+/**
+ * Matches shell positional parameters like `$0`, `$1`, `$2`, etc.
+ * Only matches single-digit parameters (0-9) since these are the most
+ * common and unambiguous shell special variables.
+ *
+ * Does NOT match `$10`, `$50`, `$99`, etc., which are more likely to be
+ * currency amounts in practice (especially when appearing with context
+ * like "Compare $50 vs $45" or "$50/month").
+ */
+const SHELL_POSITIONAL_PATTERN = /\$\d\b/;
 
 /**
  * Heuristic for shell-expansion *artifacts*: when `$180K` is passed
@@ -84,6 +93,38 @@ const SHELL_VAR_PATTERN = /\$[A-Za-z0-9_]/;
  */
 function looksLikeExpansionArtifact(normalized: string): boolean {
   return normalized.length === 1;
+}
+
+/**
+ * Exported detection function for shell expansion warning heuristic.
+ * Returns `true` if the topic shows evidence of potential shell expansion
+ * issues that warrant a warning to the user.
+ *
+ * Detection signals:
+ * 1. Contains a `$VAR`-style pattern ($ followed by letter/underscore) —
+ *    indicates the user may have intended a literal `$PATH` or similar
+ *    but used double quotes, OR correctly single-quoted and the literal
+ *    survived (warning is advisory in either case).
+ * 2. Contains shell positional parameters like `$0`, `$1`, `$2` (single digit
+ *    after `$` followed by word boundary) — distinct from currency amounts
+ *    like `$50`, `$180K` which have 2+ digits or additional context.
+ * 3. Topic is exactly one character after normalization — strong signal
+ *    that a currency literal like `$180K` was mangled by the shell,
+ *    leaving only the trailing unit suffix `K`.
+ *
+ * Does NOT warn on intact currency/number literals like `$50`, `$450/mo`,
+ * `$180K`, `$2M` where the `$` is followed by 2+ digits or has
+ * additional non-boundary context. These are intact values that survived
+ * shell expansion (user correctly used single quotes or the shell had
+ * no variable to expand).
+ */
+export function detectShellExpansion(topic: string): boolean {
+  const normalized = topic.trim().normalize("NFKC");
+  return (
+    SHELL_VAR_PATTERN.test(normalized) ||
+    SHELL_POSITIONAL_PATTERN.test(normalized) ||
+    looksLikeExpansionArtifact(normalized)
+  );
 }
 
 function shellExpansionWarning(): string {
@@ -108,7 +149,7 @@ export function checkTopicAdmission(topic: string): TopicAdmissionResult {
     }
   }
   const warnings: string[] = matched.map((label) => warningMessage([label]));
-  if (SHELL_VAR_PATTERN.test(normalized) || looksLikeExpansionArtifact(normalized)) {
+  if (detectShellExpansion(topic)) {
     warnings.push(shellExpansionWarning());
   }
   return { admitted: true, warnings };
