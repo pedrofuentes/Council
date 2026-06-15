@@ -87,7 +87,7 @@ export async function autoComposePanel(
     let parseResult = parseComposerResponse(response);
 
     if (parseResult.kind === "mock") {
-      return createMockFallbackPanel(model);
+      return capPanelExperts(createMockFallbackPanel(model), maxExperts);
     }
 
     if (parseResult.kind === "empty" || parseResult.kind === "no-json") {
@@ -103,7 +103,7 @@ export async function autoComposePanel(
       );
       parseResult = parseComposerResponse(response);
       if (parseResult.kind === "mock") {
-        return createMockFallbackPanel(model);
+        return capPanelExperts(createMockFallbackPanel(model), maxExperts);
       }
     }
 
@@ -131,7 +131,7 @@ export async function autoComposePanel(
     throw new Error(`Auto-compose produced an invalid panel definition:\n${lines.join("\n")}`);
   }
 
-  return sanitizeComposedPanel(result.data, model);
+  return capPanelExperts(sanitizeComposedPanel(result.data, model), maxExperts);
 }
 
 interface ParsedComposerResponse {
@@ -454,6 +454,29 @@ function sanitizeComposedPanel(
         : {}),
     })),
   };
+}
+
+/**
+ * Cap the panel to at most `maxExperts` experts, keeping the first N in the
+ * order the composer proposed them.
+ *
+ * The composer is *asked* for `minExperts`-`maxExperts` experts via the system
+ * prompt, but the panel schema permits up to 8 and an LLM (or the
+ * deterministic mock fallback) can return more than requested. This is the
+ * single point that enforces the cap on the returned panel — the same panel
+ * feeds both the "Auto-composed panel" banner (convene.ts) and the assembled
+ * debate ("Panel assembled"), so capping here keeps those two lists identical
+ * under `--max-experts`. Panels already at or under the cap are returned
+ * unchanged, preserving behavior when no tighter limit applies.
+ */
+function capPanelExperts(
+  panel: ResolvedPanelDefinition,
+  maxExperts: number,
+): ResolvedPanelDefinition {
+  if (panel.experts.length <= maxExperts) {
+    return panel;
+  }
+  return { ...panel, experts: panel.experts.slice(0, maxExperts) };
 }
 
 function buildComposerSystemPrompt(minExperts: number, maxExperts: number): string {
