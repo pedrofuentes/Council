@@ -851,6 +851,58 @@ const URL_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
 const URL_FETCH_TIMEOUT_MS = 30_000;
 
 /**
+ * Derive a filesystem-safe filename from an http(s) URL.
+ *
+ * For URLs with a path (e.g., https://example.com/doc.pdf), returns the
+ * last path segment (decoded). For path-less URLs (e.g., https://example.com),
+ * derives a filename from the hostname (T8 fix).
+ *
+ * @param rawUrl - The URL string to derive a filename from
+ * @returns A valid, filesystem-safe filename
+ * @throws {CliUserError} If the URL is invalid, uses an unsupported protocol,
+ *   has invalid encoding, or would produce an invalid filename
+ */
+export function deriveFilenameFromUrl(rawUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new CliUserError(`Invalid URL: ${rawUrl}`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new CliUserError(
+      `Only http(s) URLs are supported (got ${parsed.protocol}): ${redactUrlForLog(parsed)}`,
+    );
+  }
+  const displayUrl = redactUrlForLog(parsed);
+  const segments = parsed.pathname.split("/").filter((s) => s.length > 0);
+  const last = segments[segments.length - 1];
+
+  // T8 fix: if no path segment exists, derive filename from hostname
+  if (last === undefined || last === "" || last === "." || last === "..") {
+    // Strip port from hostname for cleaner filenames (localhost:8080 → localhost)
+    const hostnameWithoutPort = parsed.hostname;
+    if (hostnameWithoutPort === "") {
+      throw new CliUserError(
+        `Cannot derive filename from URL pathname (no last segment): ${displayUrl}`,
+      );
+    }
+    return `${hostnameWithoutPort}.html`;
+  }
+
+  let filename: string;
+  try {
+    filename = decodeURIComponent(last);
+  } catch {
+    throw new CliUserError(`Invalid percent-encoding in URL filename: ${displayUrl}`);
+  }
+  if (filename === "" || filename === "." || filename === ".." || /[\\/]/.test(filename)) {
+    throw new CliUserError(`Invalid filename derived from URL: ${displayUrl}`);
+  }
+  return filename;
+}
+
+/**
  * Download an http(s) URL into the expert's docs directory using the
  * filename derived from the URL's last path segment. The downloaded
  * payload is written verbatim; the standard training extractor then
@@ -866,34 +918,8 @@ async function ingestUrlIntoDocs(
   docsPath: string,
   write: Writer,
 ): Promise<void> {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    throw new CliUserError(`Invalid URL: ${rawUrl}`);
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new CliUserError(
-      `Only http(s) URLs are supported (got ${parsed.protocol}): ${redactUrlForLog(parsed)}`,
-    );
-  }
-  const displayUrl = redactUrlForLog(parsed);
-  const segments = parsed.pathname.split("/").filter((s) => s.length > 0);
-  const last = segments[segments.length - 1];
-  if (last === undefined || last === "" || last === "." || last === "..") {
-    throw new CliUserError(
-      `Cannot derive filename from URL pathname (no last segment): ${displayUrl}`,
-    );
-  }
-  let filename: string;
-  try {
-    filename = decodeURIComponent(last);
-  } catch {
-    throw new CliUserError(`Invalid percent-encoding in URL filename: ${displayUrl}`);
-  }
-  if (filename === "" || filename === "." || filename === ".." || /[\\/]/.test(filename)) {
-    throw new CliUserError(`Invalid filename derived from URL: ${displayUrl}`);
-  }
+  const filename = deriveFilenameFromUrl(rawUrl);
+  const displayUrl = redactUrlForLog(new URL(rawUrl));
   write(`Downloading ${displayUrl} to ${filename}...\n`);
   let resp: Response;
   try {
