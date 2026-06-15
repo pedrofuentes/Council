@@ -339,6 +339,11 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           : {}),
       };
 
+      // Tracks whether the panel was LLM-composed at convene time (no
+      // `--template`/`--experts`). Only auto-composed panels are
+      // run-scoped library orphans, so only they get the "save this panel"
+      // next-step hint after the debate.
+      let autoComposed = false;
       let template: ResolvedPanelDefinition;
       if (opts.template) {
         // User panels in <dataHome>/panels/ override built-in templates.
@@ -428,6 +433,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         // §2.5 auto-compose: spin up a temporary engine session, ask the
         // composer to design the panel, then tear it down. The real debate
         // gets its own engine instance via runWithEngine() below.
+        autoComposed = true;
         emitMockWarning();
         const composeEngine = deps.engineFactory
           ? deps.engineFactory()
@@ -464,7 +470,10 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             writeError(`!! engine.stop() failed during auto-compose cleanup: ${msg}\n`);
           });
         }
-        writeInformationalNotice(`\n🏛️  Auto-composed panel: ${stripControlChars(template.name)}\n`);
+        writeInformationalNotice(
+          `\n🏛️  Auto-composed panel for this run: ${stripControlChars(template.name)}\n` +
+            "   (Not saved to your library — it exists only for this debate.)\n",
+        );
         for (const expert of template.experts) {
           writeInformationalNotice(
             `  • ${stripControlChars(expert.displayName)} — ${stripControlChars(expert.role)}\n`,
@@ -579,6 +588,10 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         const subscribeInterrupt = deps.subscribeInterrupt ?? defaultSubscribeInterrupt;
         unsubscribeInterrupt = subscribeInterrupt(onInterrupt);
 
+        // Captured after the session row is created so the post-debate
+        // next-step hint can reference the real (timestamped) session name.
+        let sessionName: string | undefined;
+
         try {
           const panel = await panelRepo.create({
             name: `${template.name}-${new Date().toISOString().slice(0, 19)}`,
@@ -590,8 +603,14 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
               maxRounds: opts.maxRounds,
               maxWords: opts.maxWords,
               engine: opts.engine,
+              // T9: persist the FULL resolved panel definition so a session
+              // can later be promoted to a reusable library panel via
+              // `council panel save`. Additive — existing readers key off
+              // `template`/`mode`/`engine` and are unaffected.
+              definition: template,
             }),
           });
+          sessionName = panel.name;
 
           const expertSlugToId: Record<string, string> = {};
           for (const e of allExperts) {
@@ -688,6 +707,11 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           writeError("\nDebate interrupted. Partial results saved.\n");
         }
         if (opts.format !== "json" && !isQuiet()) {
+          if (autoComposed && sessionName !== undefined) {
+            write(
+              `Tip: Liked this panel? Save it to your library to reuse it: council panel save ${sessionName} [name]\n`,
+            );
+          }
           write(
             "Tip: Try `council ask <panel> \"<question>\"` for follow-ups, or `council sessions` to review past debates.\n",
           );

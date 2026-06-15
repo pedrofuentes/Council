@@ -100,12 +100,12 @@ interface StoredConfig {
   readonly mode?: string;
   readonly definition?: {
     readonly name: string;
-    readonly experts: ReadonlyArray<{
+    readonly experts: readonly {
       readonly slug: string;
       readonly role: string;
       readonly epistemicStance: string;
       readonly expertise: { readonly weightedEvidence: readonly string[] };
-    }>;
+    }[];
   };
 }
 

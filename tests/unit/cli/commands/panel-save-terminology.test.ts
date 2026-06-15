@@ -69,7 +69,17 @@ describe("T9 terminology — sessions footer", () => {
 
 describe("T9 terminology — chat help", () => {
   it("chat help explains panels come from the library and how to save one", () => {
-    const help = buildChatCommand().helpInformation();
-    expect(help).toContain("council panel save");
+    // Commander's outputHelp() renders the full help including addHelpText
+    // sections, unlike helpInformation() which omits them (see
+    // expert-persona-ux.test.ts for the same distinction).
+    const cmd = buildChatCommand();
+    let output = "";
+    cmd.configureOutput({
+      writeOut: (str) => {
+        output += str;
+      },
+    });
+    cmd.outputHelp();
+    expect(output).toContain("council panel save");
   });
 });
