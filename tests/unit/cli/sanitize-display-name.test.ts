@@ -111,4 +111,52 @@ describe("sanitizeDisplayName", () => {
     const exactly80 = "A".repeat(80);
     expect(sanitizeDisplayName(exactly80)).toBe(exactly80);
   });
+
+  // --- Regression (PR #1035 R1): complete Unicode Bidi_Control + default-ignorable coverage ---
+
+  it("strips the remaining Unicode Bidi_Control marks (ALM, LRM, RLM)", () => {
+    // U+061C ARABIC LETTER MARK, U+200E LEFT-TO-RIGHT MARK, U+200F RIGHT-TO-LEFT MARK.
+    // These complete Bidi_Control coverage beyond the overrides/isolates already
+    // stripped by stripControlChars, closing the rest of the Trojan Source vector.
+    const dirty = "Admin\u061C\u200E\u200FName";
+    expect(sanitizeDisplayName(dirty)).toBe("AdminName");
+  });
+
+  it("strips every Unicode Bidi_Control code point", () => {
+    // Full Bidi_Control set: ALM + LRM/RLM + embeddings/overrides + isolates.
+    const dirty =
+      "a\u061Cb\u200Ec\u200Fd\u202Ae\u202Bf\u202Cg\u202Dh\u202Ei\u2066j\u2067k\u2068l\u2069m";
+    expect(sanitizeDisplayName(dirty)).toBe("abcdefghijklm");
+  });
+
+  it("strips default-ignorable invisible format characters", () => {
+    // U+00AD SOFT HYPHEN, U+2060 WORD JOINER, U+2063 INVISIBLE SEPARATOR.
+    const dirty = "Soft\u00ADHyphen\u2060Word\u2063Sep";
+    expect(sanitizeDisplayName(dirty)).toBe("SoftHyphenWordSep");
+  });
+
+  it("strips Hangul filler characters", () => {
+    // U+115F, U+1160, U+3164, U+FFA0 — invisible/blank Hangul fillers.
+    const dirty = "Name\u115F\u1160\u3164\uFFA0Test";
+    expect(sanitizeDisplayName(dirty)).toBe("NameTest");
+  });
+
+  it("strips Unicode TAG characters (U+E0000–U+E007F)", () => {
+    // Tag chars are invisible and can smuggle hidden ASCII-like payloads.
+    const dirty = "Hidden\u{E0041}\u{E0042}\u{E007F}Tag";
+    expect(sanitizeDisplayName(dirty)).toBe("HiddenTag");
+  });
+
+  it("preserves emoji that depend on variation selector U+FE0F", () => {
+    // ❤️ = U+2764 HEAVY BLACK HEART + U+FE0F VARIATION SELECTOR-16. Stripping
+    // VS16 would corrupt the emoji, so the variation-selector block must survive.
+    expect(sanitizeDisplayName("I \u2764\uFE0F Council")).toBe("I \u2764\uFE0F Council");
+    expect(sanitizeDisplayName("\u2699\uFE0F Settings")).toBe("\u2699\uFE0F Settings");
+  });
+
+  it("strips hidden marks while preserving emoji in the same input", () => {
+    // Keep 🚀 and ❤️(VS16); strip leading ALM, a word joiner, and a tag char.
+    const dirty = "\u061C🚀 Team \u2764\uFE0F\u2060\u{E0041}";
+    expect(sanitizeDisplayName(dirty)).toBe("🚀 Team \u2764\uFE0F");
+  });
 });
