@@ -20,6 +20,7 @@ import { KNOWN_MODELS } from "../../../../src/engine/models.js";
 interface MockSession {
   readonly id: string;
   readonly model: string;
+  readonly availableTools?: readonly string[];
   events: Record<string, unknown>[];
   disconnected: boolean;
 }
@@ -113,12 +114,14 @@ vi.mock("@github/copilot-sdk", () => {
       model: string;
       systemMessage?: { content: string };
       onPermissionRequest: unknown;
+      availableTools?: string[];
     }): Promise<MockCopilotSession> {
       const id = `session-${mockState.sessions.length}`;
       const session = new MockCopilotSession(id, opts.model);
       mockState.sessions.push({
         id,
         model: opts.model,
+        ...(opts.availableTools !== undefined ? { availableTools: opts.availableTools } : {}),
         events: [],
         disconnected: false,
       });
@@ -264,6 +267,16 @@ describe("CopilotEngine — expert registration", () => {
     await engine.addExpert(expertA);
     expect(mockState.sessions).toHaveLength(1);
     expect(mockState.sessions[0]?.model).toBe(expertA.model);
+  });
+
+  it("addExpert() creates the session with an empty tool allow-list (no phantom tools)", async () => {
+    const engine = new CopilotEngine();
+    await engine.start();
+    await engine.addExpert(expertA);
+    // Council experts must not be offered any SDK tools — document content is
+    // injected directly into the prompt, so an empty allow-list prevents the
+    // "I have no tools / let me check your working directory" failure mode.
+    expect(mockState.sessions[0]?.availableTools).toEqual([]);
   });
 
   it("addExpert() throws on duplicate id", async () => {

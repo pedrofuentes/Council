@@ -8,7 +8,10 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 
 import { createDatabase, type CouncilDatabase } from "../../../../src/memory/db.js";
 import { createDocumentIndexer } from "../../../../src/core/documents/indexer.js";
-import { createDocumentRetriever } from "../../../../src/core/documents/retriever.js";
+import {
+  buildExpertRetrievalScopes,
+  createDocumentRetriever,
+} from "../../../../src/core/documents/retriever.js";
 
 async function seedCorpus(db: CouncilDatabase): Promise<void> {
   const indexer = createDocumentIndexer(db);
@@ -160,5 +163,90 @@ describe("createDocumentRetriever", () => {
     for (const r of results) {
       expect(r.content.length).toBeGreaterThan(0);
     }
+  });
+
+  // ── T1 RAG fix: AND→OR fallback ──────────────────────────────────────
+  it("falls back to OR semantics when strict-AND yields zero results", async () => {
+    const retriever = createDocumentRetriever(db);
+    // "philosophy" lives only in bio.md; "rollout" lives only in cto/notes.md.
+    // A strict-AND match (the legacy behaviour) returns nothing because no
+    // single document contains BOTH tokens. The OR fallback must surface the
+    // two documents that match either token.
+    const results = await retriever.retrieve("philosophy rollout");
+    const sources = results.map((r) => r.source);
+    expect(results.length).toBeGreaterThanOrEqual(2);
+    expect(sources).toContain("bio.md");
+    expect(sources).toContain("notes.md");
+  });
+
+  it("does NOT fall back to OR when strict-AND already matched", async () => {
+    const retriever = createDocumentRetriever(db);
+    // Both tokens occur together only in bio.md ("leadership philosophy").
+    // The strict-AND result is non-empty, so the OR fallback must NOT widen
+    // the set to include documents that match just one token.
+    const results = await retriever.retrieve("leadership philosophy");
+    const sources = results.map((r) => r.source);
+    expect(sources).toContain("bio.md");
+    expect(sources).not.toContain("notes.md");
+    expect(sources).not.toContain("charter.md");
+  });
+
+  // ── T1 RAG fix: larger snippet window keeps planted figures ──────────
+  it("returns a snippet window large enough to include a figure ~44 tokens in", async () => {
+    const indexer = createDocumentIndexer(db);
+    // Query term at the very start; the planted figure sits ~44 tokens in —
+    // beyond the legacy 32-token window but within the widened window.
+    const filler = [
+      "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu",
+      "nu xi omicron pi rho sigma tau upsilon phi chi psi omega",
+      "one two three four five six seven eight nine ten eleven twelve thirteen",
+    ].join(" ");
+    await indexer.index({
+      content: `Finance summary ${filler} the planted revenue figure is 73471 dollars exactly.`,
+      sourceType: "expert",
+      sourceSlug: "cfo",
+      filePath: "/docs/experts/cfo/finance.md",
+    });
+
+    const retriever = createDocumentRetriever(db);
+    const results = await retriever.retrieve("Finance", { expertSlug: "cfo" });
+    expect(results.length).toBeGreaterThanOrEqual(1);
+    const joined = results.map((r) => r.content).join("\n");
+    expect(joined).toContain("73471");
+  });
+
+  // ── T1 RAG fix: multi-scope OR retrieval (expert + panel) ────────────
+  it("retrieves across multiple scopes (expert OR panel) and excludes other sources", async () => {
+    const retriever = createDocumentRetriever(db);
+    // Unscoped, "leadership" matches bio.md (ceo), notes.md (cto), and
+    // charter.md (exec-team panel). Scoping to the ceo expert OR the
+    // exec-team panel must keep bio.md + charter.md and drop the cto doc.
+    const results = await retriever.retrieve("leadership", {
+      scopes: [
+        { sourceType: "expert", slug: "ceo" },
+        { sourceType: "panel", slug: "exec-team" },
+      ],
+    });
+    const sources = results.map((r) => r.source);
+    expect(results).toHaveLength(2);
+    expect(sources).toContain("bio.md");
+    expect(sources).toContain("charter.md");
+    expect(sources).not.toContain("notes.md");
+  });
+});
+
+describe("buildExpertRetrievalScopes", () => {
+  it("returns the expert scope first, then one panel scope per membership", () => {
+    expect(buildExpertRetrievalScopes("ceo", ["exec-team", "growth"])).toEqual([
+      { sourceType: "expert", slug: "ceo" },
+      { sourceType: "panel", slug: "exec-team" },
+      { sourceType: "panel", slug: "growth" },
+    ]);
+  });
+
+  it("returns just the expert scope when the expert belongs to no panels", () => {
+    expect(buildExpertRetrievalScopes("ceo", [])).toEqual([
+      { sourceType: "expert", slug: "ceo" },
+    ]);
   });
 });

@@ -821,8 +821,9 @@ describe("buildSystemPrompt() — anti-tool-seeking constraints (T-11)", () => {
       prompt.indexOf("[7] MEMORY"),
     );
 
-    // Must explicitly state no tool access
-    expect(forbiddenSection).toMatch(/no tool access|cannot read files|cannot execute/i);
+    // Must steer experts to rely on the injected reference-document block
+    // instead of requesting file/web/tool access they cannot use.
+    expect(forbiddenSection).toMatch(/reference documents/i);
     // Must prohibit requesting information instead of answering
     expect(forbiddenSection).toMatch(/request.*information|need to examine|must answer based/i);
   });
