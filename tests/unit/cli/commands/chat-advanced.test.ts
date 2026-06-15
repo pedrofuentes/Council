@@ -30,6 +30,7 @@ import {
   PersistTurnPairError,
   RotateActiveSessionError,
 } from "../../../../src/memory/repositories/chat-repository.js";
+import { PanelLibraryRepository } from "../../../../src/memory/repositories/panel-library-repo.js";
 import { Debate } from "../../../../src/core/debate.js";
 import type { DebateEvent } from "../../../../src/core/debate.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
@@ -309,6 +310,22 @@ describe("RAG retrieval wiring", () => {
     }
   }
 
+  async function seedPanelInDb(panelName: string, members: readonly string[]): Promise<void> {
+    const db = await createDatabase(path.join(env.home, "council.db"));
+    try {
+      const repo = new PanelLibraryRepository(db);
+      await repo.create({
+        name: panelName,
+        description: "Panel for cross-scope RAG test",
+        yamlPath: path.join(env.dataHome, "panels", `${panelName}.yaml`),
+        yamlChecksum: "deadbeef",
+      });
+      await repo.setMembers(panelName, members);
+    } finally {
+      await db.destroy();
+    }
+  }
+
   it("1:1 chat injects [REFERENCE DOCUMENTS] into the prompt when matching docs are indexed", async () => {
     await seedExpert(env);
     await indexExpertDoc(
@@ -347,6 +364,36 @@ describe("RAG retrieval wiring", () => {
     const userPrompts = engine.sentPrompts.filter((p) => p.prompt.includes("any question at all"));
     expect(userPrompts.length).toBe(1);
     expect(userPrompts[0]?.prompt).not.toContain("[REFERENCE DOCUMENTS]");
+  });
+
+  it("1:1 chat ALSO injects the expert's PANEL docs (cross-scope), not just expert-scoped docs", async () => {
+    await seedExpert(env); // dahlia-cto
+    await seedPanelInDb("strategy-board", ["dahlia-cto"]);
+    // Document belongs to the PANEL, not the expert. Legacy 1:1 retrieval
+    // scoped to { expertSlug } only, so this panel doc never surfaced when
+    // talking to a member expert one-on-one.
+    await indexPanelDoc(
+      "strategy-board",
+      "/panels/strategy-board/docs/forecast.md",
+      "the strategy board forecast projects 91273 enterprise seats next year",
+    );
+
+    const engine = new MockEngine();
+    const cmd = buildChatCommand({
+      write: () => undefined,
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () => scriptedInput(["strategy board forecast seats?", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+
+    const userPrompts = engine.sentPrompts.filter((p) =>
+      p.prompt.includes("strategy board forecast seats"),
+    );
+    expect(userPrompts.length).toBe(1);
+    expect(userPrompts[0]?.prompt).toContain("[REFERENCE DOCUMENTS]");
+    expect(userPrompts[0]?.prompt).toContain("forecast.md");
+    expect(userPrompts[0]?.prompt).toContain("91273");
   });
 
   it("panel chat injects [REFERENCE DOCUMENTS] into prompts when matching panel docs are indexed", async () => {

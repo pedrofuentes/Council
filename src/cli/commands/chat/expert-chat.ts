@@ -23,6 +23,7 @@ import {
   ChatRepository,
   createChatRenderer,
   createDocumentRetriever,
+  buildExpertRetrievalScopes,
   createContextManager,
   formatEngineError,
   makeEngineFromKind,
@@ -155,6 +156,7 @@ export async function runExpertChat(opts: ExpertChatOptions): Promise<void> {
       writeError,
       db,
       target,
+      panelMemberships,
       subscribeInterrupt: deps.subscribeInterrupt ?? defaultSubscribeInterrupt,
     });
   } catch (err: unknown) {
@@ -181,6 +183,7 @@ interface InteractiveLoopOptions {
   readonly writeError: Writer;
   readonly db: CouncilDatabase;
   readonly target: string;
+  readonly panelMemberships: readonly PanelMembership[];
   readonly subscribeInterrupt: (handler: () => void) => () => void;
 }
 
@@ -196,6 +199,7 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
     config,
     writeError,
     target,
+    panelMemberships,
     subscribeInterrupt,
   } = opts;
 
@@ -278,7 +282,16 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
       const snippets = await safeRetrieveSnippets(
         retriever,
         trimmed,
-        { expertSlug: expert.slug, maxResults: 5 },
+        {
+          // T1 RAG: an expert in a 1:1 chat also sees the documents of every
+          // panel it belongs to — not just its own expert-scoped docs — so
+          // panel knowledge surfaces when talking to a member directly.
+          scopes: buildExpertRetrievalScopes(
+            expert.slug,
+            panelMemberships.map((m) => m.panelName),
+          ),
+          maxResults: 5,
+        },
         (msg) => renderer.showSystem(msg, "warn"),
       );
       const userMessageWithRefs = appendReferenceDocuments(trimmed, snippets, (info) =>

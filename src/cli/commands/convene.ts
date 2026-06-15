@@ -38,6 +38,14 @@ import {
   type ResolvedPanelDefinition,
 } from "../../core/template-loader.js";
 import { buildSystemPrompt, type ExpertMemory } from "../../core/prompt-builder.js";
+import {
+  createDocumentRetriever,
+  type DocumentSnippet,
+} from "../../core/documents/retriever.js";
+import {
+  capSnippetsByChars,
+  REFERENCE_DOCS_CHAR_CAP,
+} from "../../core/documents/reference-block.js";
 import { resolveStrategy, STRATEGY_NAMES } from "../strategy-resolver.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import { KNOWN_MODELS } from "../../engine/models.js";
@@ -598,6 +606,29 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             expertSlugToId[e.slug] = row.id;
           }
 
+          // T1 RAG: retrieve documents relevant to the topic and inject them
+          // as a shared [REFERENCE DOCUMENTS] block into every expert turn
+          // (see Debate.#runAiTurn). Known library panels (--template/--panel)
+          // scope to that panel's indexed docs; ad-hoc (--experts) and
+          // auto-composed panels have no stable panel slug, so they fall back
+          // to searching all indexed documents. Best-effort: a retrieval
+          // failure must never block the debate.
+          let referenceDocuments: readonly DocumentSnippet[] = [];
+          try {
+            const retriever = createDocumentRetriever(db);
+            const retrieveOptions =
+              opts.template !== undefined
+                ? { panelName: template.name, maxResults: 5 }
+                : { sources: "all" as const, maxResults: 5 };
+            const snippets = await retriever.retrieve(topic, retrieveOptions);
+            referenceDocuments = capSnippetsByChars(snippets, REFERENCE_DOCS_CHAR_CAP);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            writeError(
+              `!! document retrieval failed (continuing without reference docs): ${msg}\n`,
+            );
+          }
+
           await runWithEngine({
             engineKind: opts.engine,
             engineFactory: deps.engineFactory,
@@ -608,6 +639,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
               mode: opts.mode,
               ...(strategy !== undefined ? { strategy } : {}),
               ...(contextConfig !== undefined ? { contextConfig } : {}),
+              ...(referenceDocuments.length > 0 ? { referenceDocuments } : {}),
             },
             prompt: topic,
             panelId: panel.id,
