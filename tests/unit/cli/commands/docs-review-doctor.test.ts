@@ -107,6 +107,7 @@ function scanResult(overrides: Partial<PanelScanResult> = {}): PanelScanResult {
     indexed: overrides.indexed ?? 0,
     unchanged: overrides.unchanged ?? 0,
     failed: overrides.failed ?? 0,
+    needsReview: overrides.needsReview ?? 0,
     pruned: overrides.pruned ?? 0,
     foldersFailed: overrides.foldersFailed ?? 0,
     managedFolderFailed: overrides.managedFolderFailed ?? false,
@@ -281,6 +282,84 @@ describe("council docs review", () => {
     const { error } = await runDocs(["review"]);
     expect(error).toBeDefined();
   });
+
+  it("lists needs-review (ask-mode) files and exits non-zero (T-AIPIPE)", async () => {
+    const { stdout, error } = await runDocs(
+      ["review", "finance"],
+      depsFor(
+        {
+          kind: "scanned",
+          result: scanResult({
+            indexed: 1,
+            needsReview: 1,
+            files: [
+              fileDetail({ filename: "ok.md", status: "indexed", wordCount: 10 }),
+              fileDetail({
+                filename: "manual.xyz",
+                status: "needs-review",
+                detectedFormat: "unknown (extension .xyz)",
+              }),
+            ],
+          }),
+        },
+        makeConfig({ aiExtraction: "ask" }),
+      ),
+    );
+
+    expect(stdout).toContain("manual.xyz");
+    expect(stdout).toMatch(/needs? review|awaiting/i);
+    expect(error).toBeDefined();
+    expect((error as { exitCode?: number }).exitCode).toBe(1);
+  });
+
+  it("does not report a clean panel when only needs-review files exist (T-AIPIPE)", async () => {
+    const { stdout } = await runDocs(
+      ["review", "finance"],
+      depsFor(
+        {
+          kind: "scanned",
+          result: scanResult({
+            needsReview: 1,
+            files: [
+              fileDetail({
+                filename: "manual.xyz",
+                status: "needs-review",
+                detectedFormat: "unknown (extension .xyz)",
+              }),
+            ],
+          }),
+        },
+        makeConfig({ aiExtraction: "ask" }),
+      ),
+    );
+
+    expect(stdout).not.toMatch(/no files need review/i);
+    expect(stdout).toContain("manual.xyz");
+  });
+
+  it("sanitizes needs-review detectedFormat before printing (T-AIPIPE)", async () => {
+    const { stdout } = await runDocs(
+      ["review", "finance"],
+      depsFor(
+        {
+          kind: "scanned",
+          result: scanResult({
+            needsReview: 1,
+            files: [
+              fileDetail({
+                filename: "evil.xyz",
+                status: "needs-review",
+                detectedFormat: "unknown\u001b[31m (extension .xyz)",
+              }),
+            ],
+          }),
+        },
+        makeConfig({ aiExtraction: "ask" }),
+      ),
+    );
+
+    expect(stdout).not.toContain("\u001b");
+  });
 });
 
 describe("council docs doctor", () => {
@@ -395,5 +474,46 @@ describe("council docs doctor", () => {
     );
 
     expect(stdout).toMatch(/managed docs folder.*could not be scanned|failed to scan/i);
+  });
+
+  it("counts needs-review files in the pending total and breaks them out (T-AIPIPE)", async () => {
+    const { stdout } = await runDocs(
+      ["doctor", "finance"],
+      depsFor(
+        {
+          kind: "scanned",
+          result: scanResult({
+            indexed: 2,
+            failed: 1,
+            needsReview: 2,
+            files: [
+              fileDetail({ filename: "a.md", status: "indexed", wordCount: 100 }),
+              fileDetail({
+                filename: "broken.xlsx",
+                status: "failed",
+                errorKind: "corrupt-document",
+                errorMessage: "bad zip",
+              }),
+              fileDetail({
+                filename: "one.xyz",
+                status: "needs-review",
+                detectedFormat: "unknown (extension .xyz)",
+              }),
+              fileDetail({
+                filename: "two.xyz",
+                status: "needs-review",
+                detectedFormat: "unknown (extension .xyz)",
+              }),
+            ],
+          }),
+        },
+        makeConfig({ aiExtraction: "ask" }),
+      ),
+    );
+
+    // pending = failed (1) + needsReview (2) = 3
+    expect(stdout).toMatch(/3 files pending review/i);
+    // A distinct AI-review breakdown line.
+    expect(stdout).toMatch(/2 files.*review|awaiting/i);
   });
 });

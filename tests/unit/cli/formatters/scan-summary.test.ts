@@ -452,3 +452,113 @@ describe("renderScanLines — per-line rendering (🔴 regression)", () => {
     }
   });
 });
+
+describe("formatScanSummary — AI fallback + needs-review (T-AIPIPE)", () => {
+  it("marks an auto-mode AI-extracted file distinctly from a native extraction", () => {
+    const result: ScanResult = {
+      indexed: 1,
+      modified: 0,
+      unchanged: 0,
+      failed: 0,
+      files: [
+        detail({
+          filename: "weird.xyz",
+          extension: ".xyz",
+          status: "indexed",
+          wordCount: 20,
+          aiExtracted: true,
+        }),
+      ],
+    };
+    const out = formatScanSummary(result);
+    expect(out).toContain("weird.xyz");
+    // The indexed line must signal AI extraction so it is not mistaken
+    // for a high-fidelity native parse.
+    expect(out).toMatch(/AI[ -]?extract/i);
+  });
+
+  it("does not tag native (non-AI) extractions as AI-extracted", () => {
+    const result: ScanResult = {
+      indexed: 1,
+      modified: 0,
+      unchanged: 0,
+      failed: 0,
+      files: [detail({ filename: "native.md", status: "indexed", wordCount: 50 })],
+    };
+    const out = formatScanSummary(result);
+    expect(out).toContain("native.md");
+    expect(out).not.toMatch(/AI[ -]?extract/i);
+  });
+
+  it("renders needs-review files and an actionable `council docs review` hint", () => {
+    const result: ScanResult = {
+      indexed: 0,
+      modified: 0,
+      unchanged: 0,
+      failed: 0,
+      needsReview: 1,
+      files: [
+        detail({
+          filename: "manual.xyz",
+          extension: ".xyz",
+          status: "needs-review",
+          wordCount: 12,
+          detectedFormat: "unknown (extension .xyz)",
+        }),
+      ],
+    };
+    const out = formatScanSummary(result);
+    expect(out).toContain("manual.xyz");
+    expect(out).toMatch(/needs? review/i);
+    expect(out).toContain("council docs review");
+  });
+
+  it("never indexes needs-review files into the success/indexed lines", () => {
+    const result: ScanResult = {
+      indexed: 1,
+      modified: 0,
+      unchanged: 0,
+      failed: 0,
+      needsReview: 1,
+      files: [
+        detail({ filename: "ok.md", status: "indexed", wordCount: 30 }),
+        detail({
+          filename: "pending.xyz",
+          extension: ".xyz",
+          status: "needs-review",
+          detectedFormat: "unknown (extension .xyz)",
+        }),
+      ],
+    };
+    const out = formatScanSummary(result);
+    // The needs-review file must not be rendered as "Indexed"/"Updated".
+    expect(out).not.toMatch(/(Indexed|Updated) pending\.xyz/);
+  });
+
+  it("sanitizes AI-fallback-derived detectedFormat before display (no terminal-escape vector)", () => {
+    const result: ScanResult = {
+      indexed: 0,
+      modified: 0,
+      unchanged: 0,
+      failed: 0,
+      needsReview: 1,
+      files: [
+        detail({
+          filename: "evil.xyz",
+          extension: ".xyz",
+          status: "needs-review",
+          // Embedded ANSI CSI + newline must be stripped/collapsed.
+          detectedFormat: "unknown\u001b[31m (extension\n.xyz)",
+        }),
+      ],
+    };
+    const out = formatScanSummary(result);
+    expect(out).not.toContain("\u001b");
+    // The newline inside the AI text must not leak an extra line.
+    const reviewLine = out
+      .split("\n")
+      .find((l) => l.includes("evil.xyz"));
+    expect(reviewLine).toBeDefined();
+    expect(reviewLine).not.toContain(".xyz)\n");
+  });
+});

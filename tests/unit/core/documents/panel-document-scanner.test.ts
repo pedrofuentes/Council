@@ -945,6 +945,101 @@ describe("scanAndIndexPanelDocuments", () => {
     const externalEvents = progress.filter((p) => p.filename === "external.md");
     expect(externalEvents.length).toBeGreaterThan(0);
   });
+
+  // ───────────────────────────────────────────────────────────────────
+  // AI-fallback config wiring (T-AIPIPE).
+  //
+  // `.xyz` has no native extractor, so a `.xyz` file in supportedFormats
+  // reaches extractDocument with no resolved extractor — the only path
+  // on which the AI fallback runs. The beforeEach seeds spec.md (managed)
+  // and external.md (linked); each test adds a managed `.xyz` file.
+  // ───────────────────────────────────────────────────────────────────
+  describe("AI fallback wiring (T-AIPIPE)", () => {
+    async function panelFtsCount(database: CouncilDatabase): Promise<number> {
+      const rows = await sql<{
+        c: number;
+      }>`SELECT COUNT(*) AS c FROM document_index WHERE source_type = 'panel'`.execute(database);
+      return rows.rows[0]?.c ?? 0;
+    }
+
+    it("off mode: a `.xyz` file with no native extractor is failed and NOT indexed", async () => {
+      await fs.writeFile(path.join(managedDir, "notes.xyz"), "plain text for xyz", "utf-8");
+      const result = await scanAndIndexPanelDocuments({
+        panelName: "arch-review",
+        managedDocsDir: managedDir,
+        db,
+        supportedFormats: [".md", ".txt", ".xyz"],
+        aiFallback: { mode: "off", allowedExtensions: [] },
+      });
+      // spec.md + external.md indexed; notes.xyz failed.
+      expect(result.indexed).toBe(2);
+      expect(result.failed).toBe(1);
+      expect(result.needsReview).toBe(0);
+      const f = result.files.find((x) => x.filename === "notes.xyz");
+      expect(f?.status).toBe("failed");
+      expect(f?.errorKind).toBe("unsupported-format");
+      expect(await panelFtsCount(db)).toBe(2);
+    });
+
+    it("auto mode: indexes the AI fallback content and marks it AI-extracted", async () => {
+      await fs.writeFile(path.join(managedDir, "notes.xyz"), "plain text for xyz", "utf-8");
+      const result = await scanAndIndexPanelDocuments({
+        panelName: "arch-review",
+        managedDocsDir: managedDir,
+        db,
+        supportedFormats: [".md", ".txt", ".xyz"],
+        aiFallback: { mode: "auto", allowedExtensions: [] },
+      });
+      expect(result.indexed).toBe(3);
+      expect(result.needsReview).toBe(0);
+      const f = result.files.find((x) => x.filename === "notes.xyz");
+      expect(f?.status).toBe("indexed");
+      expect(f?.aiExtracted).toBe(true);
+      // All three files are searchable.
+      expect(await panelFtsCount(db)).toBe(3);
+      const docsRepo = new PanelDocumentRepository(db);
+      const tracked = await docsRepo.listDocuments("arch-review");
+      expect(tracked).toHaveLength(3);
+    });
+
+    it("ask mode: records needs-review, does NOT index into FTS, and does NOT track", async () => {
+      await fs.writeFile(path.join(managedDir, "notes.xyz"), "plain text for xyz", "utf-8");
+      const result = await scanAndIndexPanelDocuments({
+        panelName: "arch-review",
+        managedDocsDir: managedDir,
+        db,
+        supportedFormats: [".md", ".txt", ".xyz"],
+        aiFallback: { mode: "ask", allowedExtensions: [] },
+      });
+      // spec.md + external.md indexed; notes.xyz held for review.
+      expect(result.indexed).toBe(2);
+      expect(result.needsReview).toBe(1);
+      const f = result.files.find((x) => x.filename === "notes.xyz");
+      expect(f?.status).toBe("needs-review");
+      // NOT searchable and NOT tracked.
+      expect(await panelFtsCount(db)).toBe(2);
+      const docsRepo = new PanelDocumentRepository(db);
+      const tracked = await docsRepo.listDocuments("arch-review");
+      expect(tracked).toHaveLength(2);
+      expect(tracked.some((t) => t.filename === "notes.xyz")).toBe(false);
+    });
+
+    it("ask mode emits a needs-review progress event for the held file", async () => {
+      await fs.writeFile(path.join(managedDir, "notes.xyz"), "plain text for xyz", "utf-8");
+      const progress: { filename: string; status: string }[] = [];
+      await scanAndIndexPanelDocuments({
+        panelName: "arch-review",
+        managedDocsDir: managedDir,
+        db,
+        supportedFormats: [".md", ".txt", ".xyz"],
+        aiFallback: { mode: "ask", allowedExtensions: [] },
+        onProgress: (p) => progress.push({ filename: p.filename, status: p.status }),
+      });
+      expect(
+        progress.some((p) => p.filename === "notes.xyz" && p.status === "needs-review"),
+      ).toBe(true);
+    });
+  });
 });
 
 describe("formatAllFailedWarning", () => {
