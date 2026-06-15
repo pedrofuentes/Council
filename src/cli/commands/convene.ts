@@ -16,6 +16,7 @@ import { ulid } from "ulid";
 import { Command, Option } from "commander";
 
 import { CliUserError } from "../cli-user-error.js";
+import { parseExpertSlugs, warnOnStrayExpertArgs } from "./expert-args.js";
 
 import { autoComposePanel } from "../../core/auto-compose.js";
 import { checkTopicAdmission } from "../../core/topic-admission.js";
@@ -101,7 +102,7 @@ export interface ConveneCommandDeps {
 export interface ConveneOptions {
   readonly template?: string | undefined;
   readonly panel?: string | undefined;
-  readonly experts?: string | undefined;
+  readonly experts?: string | readonly string[] | undefined;
   readonly format: RendererFormat;
   readonly maxRounds: number;
   readonly mode: DebateMode;
@@ -157,8 +158,8 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       "Use a built-in or custom panel template (alias: --panel). **Omit to let Council auto-design an expert panel from your topic.**",
     )
     .option(
-      "--experts <slugs>",
-      "Comma-separated expert slugs from the library. Bypasses both --template and auto-compose.",
+      "--experts <slugs...>",
+      "Expert slugs from the library (space- or comma-separated, repeatable). Bypasses both --template and auto-compose.",
     )
     .addOption(
       new Option("--engine <kind>", "Engine to use (default: from config)").choices([
@@ -265,10 +266,11 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         return parsed;
       },
     )
-    .action(async (topic: string, raw: ConveneOptions) => {
+    .action(async (topic: string, raw: ConveneOptions, command: Command) => {
       if (raw.quiet === true) {
         setQuiet(true);
       }
+      warnOnStrayExpertArgs(command, writeError);
       const admission = checkTopicAdmission(topic);
       for (const warning of admission.warnings) {
         writeError(warning + "\n");
@@ -398,10 +400,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         // skipping both template loading and auto-compose.
         const dataHome = getCouncilDataHome();
         const libDbPath = path.join(getCouncilHome(), "council.db");
-        const expertSlugs = opts.experts
-          .split(",")
-          .map((s) => s.trim())
-          .filter((s) => s.length > 0);
+        const expertSlugs = parseExpertSlugs(opts.experts);
         if (expertSlugs.length === 0) {
           const msg = "--experts requires at least one expert slug.";
           writeError(`${msg}\n`);

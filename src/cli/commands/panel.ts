@@ -21,6 +21,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { Command, Option } from "commander";
 
 import { CliUserError } from "../cli-user-error.js";
+import { parseExpertSlugs, warnOnStrayExpertArgs } from "./expert-args.js";
 import * as yaml from "yaml";
 
 import {
@@ -303,7 +304,7 @@ function buildDeleteCommand(
 
 interface CreateOptions {
   readonly slug?: string;
-  readonly experts?: string;
+  readonly experts?: string | readonly string[];
   readonly mode?: string;
   readonly maxRounds?: string;
   readonly model?: string;
@@ -318,12 +319,16 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
     )
     .argument("[name]", "Panel name (kebab-case). Alias: --slug")
     .option("--slug <slug>", "Panel name (kebab-case). Alias for the positional <name> argument.")
-    .option("--experts <slugs>", "Comma-separated expert slugs from the library")
+    .option(
+      "--experts <slugs...>",
+      "Expert slugs from the library (space- or comma-separated, repeatable)",
+    )
     .option("--mode <mode>", `Debate mode: ${DEBATE_MODES.join(" | ")}`)
     .option("--max-rounds <n>", "Maximum debate rounds (1-20)")
     .option("--model <model>", "Default model for all experts in this panel")
     .option("--description <text>", "One-line description")
-    .action(async (positionalName: string | undefined, opts: CreateOptions) => {
+    .action(async (positionalName: string | undefined, opts: CreateOptions, command: Command) => {
+      warnOnStrayExpertArgs(command, writeError);
       if (positionalName !== undefined && opts.slug !== undefined) {
         writeError("Cannot use both positional <name> and --slug. Pass one or the other.\n");
         throw new CliUserError(
@@ -512,11 +517,8 @@ async function gatherCreateFields(
   }
 }
 
-function parseExpertList(raw: string): readonly string[] {
-  const slugs = raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+function parseExpertList(raw: string | readonly string[]): readonly string[] {
+  const slugs = parseExpertSlugs(raw);
   if (slugs.length === 0) {
     throw new Error("At least one expert slug is required (use --experts <slug1>,<slug2>)");
   }
