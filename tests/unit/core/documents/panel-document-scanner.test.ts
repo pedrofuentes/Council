@@ -1187,3 +1187,136 @@ describe("scanAndIndexPanelDocuments — unsupported-extension files (T2)", () =
     expect(result.indexed + result.unchanged + result.failed).toBe(3);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// `ask` mode surfaces eligible unsupported-extension files for review (T4).
+//
+// A file whose extension is NOT in `supportedFormats` (e.g. `.key`) is
+// dropped by the detector before extraction, so the AI fallback never
+// runs on it. With `aiExtraction: ask`, an eligible (non-blocklisted)
+// file must surface as a `needs-review` ("awaiting AI-extraction review")
+// outcome — NOT indexed, NOT tracked, NOT a dead-end unsupported failure.
+// With `aiExtraction: off` the same file stays unsupported (T2 regression
+// guard); a blocklisted extension (`.png`) stays unsupported even in ask
+// mode.
+// ─────────────────────────────────────────────────────────────────────
+describe("scanAndIndexPanelDocuments — ask-mode review for unsupported extensions (T4)", () => {
+  let db: CouncilDatabase;
+  let managedDir: string;
+  let cleanupDirs: string[] = [];
+
+  async function panelFtsCount(database: CouncilDatabase): Promise<number> {
+    const rows = await sql<{
+      c: number;
+    }>`SELECT COUNT(*) AS c FROM document_index WHERE source_type = 'panel'`.execute(database);
+    return rows.rows[0]?.c ?? 0;
+  }
+
+  beforeEach(async () => {
+    db = await createDatabase(":memory:");
+    const panelRepo = new PanelLibraryRepository(db);
+    await panelRepo.create({
+      name: "ask-panel",
+      description: null,
+      yamlPath: "/tmp/ask-panel.yaml",
+      yamlChecksum: "a1",
+    });
+    managedDir = await makeTempDir("council-ask-review-");
+    cleanupDirs = [managedDir];
+  });
+
+  afterEach(async () => {
+    await db.destroy();
+    for (const dir of cleanupDirs) {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("ask mode: an eligible unsupported-extension file becomes needs-review, NOT indexed", async () => {
+    await fs.writeFile(path.join(managedDir, "deck.key"), "x", "utf-8");
+
+    const result = await scanAndIndexPanelDocuments({
+      panelName: "ask-panel",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt"],
+      aiFallback: { mode: "ask", allowedExtensions: [] },
+    });
+
+    expect(result.needsReview).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(result.unsupported).toBe(0);
+    const f = result.files.find((x) => x.filename === "deck.key");
+    expect(f?.status).toBe("needs-review");
+    expect(f?.errorKind).toBeUndefined();
+    // Not searchable, not tracked.
+    expect(await panelFtsCount(db)).toBe(0);
+    const docsRepo = new PanelDocumentRepository(db);
+    const tracked = await docsRepo.listDocuments("ask-panel");
+    expect(tracked).toHaveLength(0);
+  });
+
+  it("ask mode emits a needs-review progress event for the unsupported-extension file", async () => {
+    await fs.writeFile(path.join(managedDir, "deck.key"), "x", "utf-8");
+    const progress: { filename: string; status: string }[] = [];
+
+    await scanAndIndexPanelDocuments({
+      panelName: "ask-panel",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt"],
+      aiFallback: { mode: "ask", allowedExtensions: [] },
+      onProgress: (p) => progress.push({ filename: p.filename, status: p.status }),
+    });
+
+    expect(
+      progress.some((p) => p.filename === "deck.key" && p.status === "needs-review"),
+    ).toBe(true);
+  });
+
+  it("off mode: the same unsupported-extension file stays unsupported (T2 regression guard)", async () => {
+    await fs.writeFile(path.join(managedDir, "deck.key"), "x", "utf-8");
+
+    const result = await scanAndIndexPanelDocuments({
+      panelName: "ask-panel",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt"],
+      aiFallback: { mode: "off", allowedExtensions: [] },
+    });
+
+    expect(result.needsReview).toBe(0);
+    expect(result.unsupported).toBe(1);
+    expect(result.failed).toBe(1);
+    const f = result.files.find((x) => x.filename === "deck.key");
+    expect(f?.status).toBe("failed");
+    expect(f?.errorKind).toBe("unsupported-format");
+  });
+
+  it("ask mode: a blocklisted .png stays unsupported while an eligible .key becomes needs-review", async () => {
+    await fs.writeFile(path.join(managedDir, "deck.key"), "x", "utf-8");
+    await fs.writeFile(path.join(managedDir, "shot.png"), "x", "utf-8");
+
+    const result = await scanAndIndexPanelDocuments({
+      panelName: "ask-panel",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt"],
+      aiFallback: { mode: "ask", allowedExtensions: [] },
+    });
+
+    expect(result.needsReview).toBe(1);
+    expect(result.unsupported).toBe(1);
+    expect(result.failed).toBe(1);
+    const key = result.files.find((x) => x.filename === "deck.key");
+    expect(key?.status).toBe("needs-review");
+    const png = result.files.find((x) => x.filename === "shot.png");
+    expect(png?.status).toBe("failed");
+    expect(png?.errorKind).toBe("unsupported-format");
+    // Both files are accounted for in the per-file detail list.
+    expect(result.files.map((f) => f.filename).sort()).toEqual([
+      "deck.key",
+      "shot.png",
+    ]);
+  });
+});

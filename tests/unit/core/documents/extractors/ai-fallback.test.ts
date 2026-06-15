@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   attemptAiFallback,
+  isExtensionAiEligible,
   type AiFallbackConfig,
   type AiFallbackContent,
   type AiFallbackLogger,
@@ -170,6 +171,53 @@ describe("attemptAiFallback — allowedExtensions whitelist", () => {
       allowedExtensions: [".exe"],
     });
     expect(result).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// isExtensionAiEligible (Task T4).
+//
+// A pure, extension-only eligibility predicate that mirrors the mode +
+// blocklist + allowedExtensions policy of `attemptAiFallback` WITHOUT
+// reading the file's bytes. Producers use it to flag unsupported-extension
+// files (which never reach extraction and therefore have no buffer) as
+// "awaiting AI-extraction review" in `ask` mode. It deliberately omits the
+// magic-byte signature gate, which only applies once a file is actually
+// read for extraction.
+// ─────────────────────────────────────────────────────────────────────
+describe("isExtensionAiEligible (T4)", () => {
+  it("returns false when mode is 'off' regardless of extension", () => {
+    expect(isExtensionAiEligible(".key", OFF)).toBe(false);
+  });
+
+  it("returns true for a non-blocklisted extension in ask mode (empty allowlist)", () => {
+    expect(isExtensionAiEligible(".key", ASK_ANY)).toBe(true);
+  });
+
+  it("returns true for a non-blocklisted extension in auto mode (empty allowlist)", () => {
+    expect(isExtensionAiEligible(".key", AUTO_ANY)).toBe(true);
+  });
+
+  it("returns false for a blocklisted extension even in ask/auto mode", () => {
+    expect(isExtensionAiEligible(".png", ASK_ANY)).toBe(false);
+    expect(isExtensionAiEligible(".zip", AUTO_ANY)).toBe(false);
+    expect(isExtensionAiEligible(".exe", ASK_ANY)).toBe(false);
+  });
+
+  it("normalizes extension casing", () => {
+    expect(isExtensionAiEligible(".KEY", ASK_ANY)).toBe(true);
+    expect(isExtensionAiEligible(".PNG", ASK_ANY)).toBe(false);
+  });
+
+  it("honors a non-empty allowlist", () => {
+    const cfg: AiFallbackConfig = { mode: "ask", allowedExtensions: [".epub"] };
+    expect(isExtensionAiEligible(".epub", cfg)).toBe(true);
+    expect(isExtensionAiEligible(".key", cfg)).toBe(false);
+  });
+
+  it("blocklist takes precedence over a non-empty allowlist", () => {
+    const cfg: AiFallbackConfig = { mode: "ask", allowedExtensions: [".png"] };
+    expect(isExtensionAiEligible(".png", cfg)).toBe(false);
   });
 });
 
