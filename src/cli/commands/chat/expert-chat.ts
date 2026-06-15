@@ -281,7 +281,14 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
         { expertSlug: expert.slug, maxResults: 5 },
         (msg) => renderer.showSystem(msg, "warn"),
       );
-      const userMessageWithRefs = appendReferenceDocuments(trimmed, snippets);
+      const userMessageWithRefs = appendReferenceDocuments(trimmed, snippets, (info) =>
+        renderer.showSystem(
+          `Neutralized ${info.count} potential prompt-injection marker${
+            info.count === 1 ? "" : "s"
+          } in reference document "${info.source}".`,
+          "warn",
+        ),
+      );
 
       const prompt = buildChatTurnPrompt({
         history,

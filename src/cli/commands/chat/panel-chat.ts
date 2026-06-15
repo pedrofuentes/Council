@@ -389,7 +389,14 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
         { panelName, maxResults: 5 },
         (msg) => renderer.showSystem(msg, "warn"),
       );
-      const userMessageWithRefs = appendReferenceDocuments(parsed.content, snippets);
+      const userMessageWithRefs = appendReferenceDocuments(parsed.content, snippets, (info) =>
+        renderer.showSystem(
+          `Neutralized ${info.count} potential prompt-injection marker${
+            info.count === 1 ? "" : "s"
+          } in reference document "${info.source}".`,
+          "warn",
+        ),
+      );
 
       const errorExperts: string[] = [];
       const emptyExperts: string[] = [];
