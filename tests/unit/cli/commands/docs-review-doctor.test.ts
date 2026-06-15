@@ -108,6 +108,7 @@ function scanResult(overrides: Partial<PanelScanResult> = {}): PanelScanResult {
     unchanged: overrides.unchanged ?? 0,
     failed: overrides.failed ?? 0,
     needsReview: overrides.needsReview ?? 0,
+    unsupported: overrides.unsupported ?? 0,
     pruned: overrides.pruned ?? 0,
     foldersFailed: overrides.foldersFailed ?? 0,
     managedFolderFailed: overrides.managedFolderFailed ?? false,
@@ -201,6 +202,30 @@ describe("council docs review", () => {
     expect(stdout).toContain("archive.rar");
     expect(stdout).toMatch(/unsupported|not supported/i);
     expect(stdout).toContain("council docs formats");
+  });
+
+  it("names the extension in the reason for an unsupported file (T2)", async () => {
+    const { stdout } = await runDocs(
+      ["review", "finance"],
+      depsFor({
+        kind: "scanned",
+        result: scanResult({
+          failed: 1,
+          unsupported: 1,
+          files: [
+            fileDetail({
+              filename: "screenshot.png",
+              status: "failed",
+              errorKind: "unsupported-format",
+              errorMessage: "Unsupported format (.png)",
+            }),
+          ],
+        }),
+      }),
+    );
+
+    expect(stdout).toContain("screenshot.png");
+    expect(stdout).toContain("Unsupported format (.png)");
   });
 
   it("flags AI-extraction-eligible files when aiExtraction is enabled", async () => {
@@ -424,6 +449,39 @@ describe("council docs doctor", () => {
     expect(stdout).toContain("council docs review");
     expect(stdout).toMatch(/1 file corrupt/i);
     expect(stdout).toContain("broken.xlsx");
+  });
+
+  it("reports the count and names of unsupported files (T2)", async () => {
+    const { stdout } = await runDocs(
+      ["doctor", "finance"],
+      depsFor({
+        kind: "scanned",
+        result: scanResult({
+          indexed: 1,
+          failed: 2,
+          unsupported: 2,
+          files: [
+            fileDetail({ filename: "a.md", status: "indexed", wordCount: 100 }),
+            fileDetail({
+              filename: "screenshot.png",
+              status: "failed",
+              errorKind: "unsupported-format",
+              errorMessage: "Unsupported format (.png)",
+            }),
+            fileDetail({
+              filename: "archive.zip",
+              status: "failed",
+              errorKind: "unsupported-format",
+              errorMessage: "Unsupported format (.zip)",
+            }),
+          ],
+        }),
+      }),
+    );
+
+    expect(stdout).toMatch(/2 files unsupported/i);
+    expect(stdout).toContain("screenshot.png");
+    expect(stdout).toContain("archive.zip");
   });
 
   it("reflects the configured AI extraction mode", async () => {

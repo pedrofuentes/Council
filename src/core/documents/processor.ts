@@ -39,6 +39,7 @@ import {
 import type { DocumentIndexer } from "./indexer.js";
 import {
   classifyExtractionError,
+  unsupportedFileDetail,
   type ScanFileDetail,
 } from "./scan-types.js";
 import type { DocumentRepository } from "../../memory/repositories/document-repository.js";
@@ -50,6 +51,16 @@ export interface ProcessingResult {
   readonly filesSkipped: number;
   readonly filesFailed: number;
   readonly filesRemoved: number;
+  /**
+   * Count of files dropped because their extension is not in
+   * `config.supportedFormats` (e.g. `.png`, `.zip`). The detector filters
+   * these out before extraction; the processor surfaces them as a
+   * distinct outcome instead of dropping them silently. Also counted in
+   * `filesFailed` (and present in `files` as `status: "failed"` /
+   * `errorKind: "unsupported-format"`) so failure-driven surfaces such as
+   * `expert train` reflect them.
+   */
+  readonly filesUnsupported: number;
   /**
    * Count of files held for manual review (AI fallback `ask` mode):
    * detected as AI-extractable but NOT indexed into FTS and NOT tracked,
@@ -172,6 +183,12 @@ export function createDocumentProcessor(
       if (detection.newFiles.length > 0 || detection.modifiedFiles.length > 0) {
         return true;
       }
+      // Unsupported-extension files never reach extraction, but the user
+      // still needs to be told they were skipped — so chat startup must
+      // run the scan (which reports them) when any are present.
+      if (detection.unsupportedFiles.length > 0) {
+        return true;
+      }
       const present = new Set<string>([
         ...detection.newFiles.map((f) => f.path),
         ...detection.modifiedFiles.map((f) => f.path),
@@ -223,6 +240,7 @@ export function createDocumentProcessor(
       let failed = 0;
       let removed = 0;
       let needsReview = 0;
+      let unsupported = 0;
       let totalWords = 0;
       const successfullyExtracted: AnalyzerDoc[] = [];
       const files: ScanFileDetail[] = [];
@@ -250,6 +268,10 @@ export function createDocumentProcessor(
         // also suppress prune so a flaky filesystem moment doesn't
         // delete persisted state.
         ...detection.unknownStateFiles,
+        // Unsupported-extension files are still present on disk; keep
+        // them out of the prune set so a previously-tracked file that
+        // became unsupported (config change) isn't silently deleted.
+        ...detection.unsupportedFiles,
       ]);
       for (const trackedPath of known.keys()) {
         if (seenPaths.has(trackedPath)) continue;
@@ -280,6 +302,26 @@ export function createDocumentProcessor(
           errorKind: "confinement-violation",
           errorMessage: "rejected: outside confinement root or TOCTOU mismatch",
         });
+      }
+
+      // Unsupported-extension files (e.g. `.png`, `.zip`) are filtered by
+      // the detector before extraction. Historically they were dropped
+      // silently; surface them as a distinct `unsupported` outcome —
+      // counted in `filesFailed` too — and report each via the progress
+      // stream so `expert train` reflects them without special-casing.
+      for (const unsupportedPath of detection.unsupportedFiles) {
+        failed += 1;
+        unsupported += 1;
+        const detail = unsupportedFileDetail(unsupportedPath);
+        onProgress?.({
+          filename: detail.filename,
+          wordCount: 0,
+          status: "failed",
+          ...(detail.errorMessage !== undefined
+            ? { error: detail.errorMessage }
+            : {}),
+        });
+        files.push(detail);
       }
 
       for (const file of toProcess) {
@@ -395,6 +437,13 @@ export function createDocumentProcessor(
             error: msg,
           });
           const classified = classifyExtractionError(err);
+          if (classified.kind === "unsupported-format") {
+            // Scenario where the extension IS in supportedFormats but no
+            // native extractor exists (and AI fallback is off/declined):
+            // keep `filesUnsupported` consistent across both unsupported
+            // paths so it equals the total unsupported-format outcomes.
+            unsupported += 1;
+          }
           files.push({
             path: file.path,
             filename: file.filename,
@@ -442,6 +491,7 @@ export function createDocumentProcessor(
         filesFailed: failed,
         filesRemoved: removed,
         filesNeedingReview: needsReview,
+        filesUnsupported: unsupported,
         totalWords,
         profileUpdated,
         profileError,

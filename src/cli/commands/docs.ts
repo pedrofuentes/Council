@@ -310,6 +310,7 @@ function buildReviewCommand(
         const kind = file.errorKind ?? "extraction-failed";
         const reason = describeScanError(kind, {
           maxFileSizeMB: config.documents.maxFileSizeMB,
+          ...(file.extension.length > 0 ? { extension: file.extension } : {}),
         });
         const eligible = isAiExtractionEligible(file, aiMode, allowed);
         const tag = eligible ? "  — AI extraction available" : "";
@@ -380,6 +381,9 @@ function buildDoctorCommand(
       const failed = result.files.filter((f) => f.status === "failed");
       const needsReview = result.files.filter((f) => f.status === "needs-review");
       const corrupt = failed.filter((f) => f.errorKind === "corrupt-document");
+      const unsupported = failed.filter(
+        (f) => f.errorKind === "unsupported-format",
+      );
       const pending = failed.length + needsReview.length;
 
       write(`Panel "${panel}" document health:\n`);
@@ -403,6 +407,12 @@ function buildDoctorCommand(
         const names = corrupt.map((f) => f.filename).join(", ");
         write(
           `  ✘ ${corrupt.length} ${corrupt.length === 1 ? "file" : "files"} corrupt (${names})\n`,
+        );
+      }
+      if (unsupported.length > 0) {
+        const names = unsupported.map((f) => f.filename).join(", ");
+        write(
+          `  ✘ ${unsupported.length} ${unsupported.length === 1 ? "file" : "files"} unsupported (${names})\n`,
         );
       }
       if (result.managedFolderFailed) {

@@ -1097,3 +1097,93 @@ describe("formatAllFailedWarning", () => {
     ).toBeNull();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// Unsupported-extension files (Task T2).
+//
+// A file whose extension is NOT in `supportedFormats` (e.g. `.png`,
+// `.zip`) is filtered by the detector before extraction and historically
+// dropped silently from every surface. The panel scanner must surface it
+// as a distinct `unsupported` outcome: counted in `unsupported` AND
+// `failed` (so the chat-startup render gate fires), and present in
+// `files` with `errorKind: "unsupported-format"` so `docs review` /
+// `docs doctor` can enumerate it.
+//
+// This block uses its own panel with ONLY a managed folder (no linked
+// folder) so the aggregate counts are unambiguous.
+// ─────────────────────────────────────────────────────────────────────
+describe("scanAndIndexPanelDocuments — unsupported-extension files (T2)", () => {
+  let db: CouncilDatabase;
+  let managedDir: string;
+  let cleanupDirs: string[] = [];
+
+  beforeEach(async () => {
+    db = await createDatabase(":memory:");
+    const panelRepo = new PanelLibraryRepository(db);
+    await panelRepo.create({
+      name: "unsupported-panel",
+      description: null,
+      yamlPath: "/tmp/unsupported-panel.yaml",
+      yamlChecksum: "u1",
+    });
+    managedDir = await makeTempDir("council-unsupported-");
+    cleanupDirs = [managedDir];
+  });
+
+  afterEach(async () => {
+    await db.destroy();
+    for (const dir of cleanupDirs) {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces unsupported-extension files as a distinct unsupported outcome", async () => {
+    await fs.writeFile(path.join(managedDir, "spec.md"), "# Spec\nhi\n", "utf-8");
+    await fs.writeFile(path.join(managedDir, "screenshot.png"), "x", "utf-8");
+    await fs.writeFile(path.join(managedDir, "archive.zip"), "x", "utf-8");
+
+    const result = await scanAndIndexPanelDocuments({
+      panelName: "unsupported-panel",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt"],
+    });
+
+    expect(result.indexed).toBe(1);
+    expect(result.unsupported).toBe(2);
+    // Counted as failures too, so the chat-startup render gate fires for
+    // an otherwise unsupported-only scan.
+    expect(result.failed).toBe(2);
+
+    const png = result.files.find((f) => f.filename === "screenshot.png");
+    expect(png?.status).toBe("failed");
+    expect(png?.errorKind).toBe("unsupported-format");
+    expect(png?.extension).toBe(".png");
+
+    const zip = result.files.find((f) => f.filename === "archive.zip");
+    expect(zip?.errorKind).toBe("unsupported-format");
+    expect(zip?.extension).toBe(".zip");
+  });
+
+  it("does not silently drop unsupported files — every dropped file is accounted for", async () => {
+    await fs.writeFile(path.join(managedDir, "spec.md"), "# Spec\nhi\n", "utf-8");
+    await fs.writeFile(path.join(managedDir, "screenshot.png"), "x", "utf-8");
+    await fs.writeFile(path.join(managedDir, "archive.zip"), "x", "utf-8");
+
+    const result = await scanAndIndexPanelDocuments({
+      panelName: "unsupported-panel",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt"],
+    });
+
+    expect(result.files.map((f) => f.filename).sort()).toEqual([
+      "archive.zip",
+      "screenshot.png",
+      "spec.md",
+    ]);
+    // indexed + unchanged + failed accounts for every discovered file
+    // (unsupported ⊆ failed).
+    expect(result.indexed + result.unchanged + result.failed).toBe(3);
+  });
+});

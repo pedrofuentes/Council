@@ -42,6 +42,7 @@ import type { AiFallbackOption } from "./extractor.js";
 import { createDocumentIndexer } from "./indexer.js";
 import {
   classifyExtractionError,
+  unsupportedFileDetail,
   type ScanFileDetail,
 } from "./scan-types.js";
 import type { CouncilDatabase } from "../../memory/db.js";
@@ -101,6 +102,16 @@ export interface PanelScanResult {
    * pending explicit user approval. Surfaced by scan UX as needs-review.
    */
   readonly needsReview: number;
+  /**
+   * Count of files dropped because their extension is not in
+   * `supportedFormats` (e.g. `.png`, `.zip`). The detector filters these
+   * out before extraction; the scanner surfaces them as a distinct
+   * outcome instead of dropping them silently. Also counted in `failed`
+   * (and present in `files` as `status: "failed"` /
+   * `errorKind: "unsupported-format"`) so the chat-startup render gate
+   * fires and `docs review` / `docs doctor` can enumerate them.
+   */
+  readonly unsupported: number;
   /** Number of previously-tracked documents pruned (file removed from disk). */
   readonly pruned: number;
   readonly foldersFailed: number;
@@ -146,6 +157,7 @@ export async function scanAndIndexPanelDocuments(
   let unchanged = 0;
   let failed = 0;
   let needsReview = 0;
+  let unsupported = 0;
   let pruned = 0;
   let foldersFailed = 0;
   let managedFolderFailed = false;
@@ -274,6 +286,19 @@ export async function scanAndIndexPanelDocuments(
         errorKind: "confinement-violation",
         errorMessage: "rejected: outside confinement root or TOCTOU mismatch",
       });
+    }
+    // Unsupported-extension files (e.g. `.png`, `.zip`) are filtered by
+    // the detector before extraction. Historically dropped silently;
+    // surface them as a distinct `unsupported` outcome and count them in
+    // `failed` too — the chat-startup render gate only fires on
+    // indexed/unchanged/failed/needsReview, so an unsupported-only scan
+    // must register here to be reported. `seenPaths` keeps them out of
+    // the prune pass.
+    for (const unsupportedPath of detection.unsupportedFiles) {
+      seenPaths.add(unsupportedPath);
+      failed += 1;
+      unsupported += 1;
+      files.push(unsupportedFileDetail(unsupportedPath));
     }
     scannedFolders.push(canonical);
 
@@ -445,6 +470,12 @@ export async function scanAndIndexPanelDocuments(
           error: msg,
         });
         const classified = classifyExtractionError(err);
+        if (classified.kind === "unsupported-format") {
+          // Extension IS in supportedFormats but no native extractor
+          // exists (AI fallback off/declined): keep `unsupported`
+          // consistent with the detector-filtered path above.
+          unsupported += 1;
+        }
         files.push({
           path: file.path,
           filename: file.filename,
@@ -498,6 +529,7 @@ export async function scanAndIndexPanelDocuments(
     unchanged,
     failed,
     needsReview,
+    unsupported,
     pruned,
     foldersFailed,
     managedFolderFailed,

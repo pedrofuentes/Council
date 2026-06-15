@@ -58,6 +58,12 @@ const ERROR_MESSAGES: Readonly<Record<ScanErrorKind, string>> = {
 
 export interface DescribeScanErrorOptions {
   readonly maxFileSizeMB?: number;
+  /**
+   * Lowercase file extension (including the leading dot, e.g. ".png").
+   * When provided for an `unsupported-format` failure, the message names
+   * the offending extension so users know which file type was skipped.
+   */
+  readonly extension?: string;
 }
 
 export function describeScanError(
@@ -66,6 +72,13 @@ export function describeScanError(
 ): string {
   if (kind === "oversize-file" && options.maxFileSizeMB !== undefined) {
     return `File too large (limit: ${options.maxFileSizeMB} MB)`;
+  }
+  if (
+    kind === "unsupported-format" &&
+    options.extension !== undefined &&
+    options.extension.length > 0
+  ) {
+    return `Unsupported format (${options.extension})`;
   }
   return ERROR_MESSAGES[kind];
 }
@@ -108,10 +121,10 @@ function formatFailureLine(
   maxFileSizeMB: number | undefined,
 ): string {
   const kind = file.errorKind ?? "extraction-failed";
-  const human = describeScanError(
-    kind,
-    maxFileSizeMB !== undefined ? { maxFileSizeMB } : {},
-  );
+  const human = describeScanError(kind, {
+    ...(maxFileSizeMB !== undefined ? { maxFileSizeMB } : {}),
+    ...(file.extension.length > 0 ? { extension: file.extension } : {}),
+  });
   return `✗ ${file.filename}: ${human}`;
 }
 

@@ -45,6 +45,18 @@ describe("describeScanError", () => {
   it("falls back to a generic message when no size limit is provided for oversize-file", () => {
     expect(describeScanError("oversize-file")).toBe("File too large");
   });
+
+  it("names the extension for unsupported-format when one is provided (T2)", () => {
+    expect(
+      describeScanError("unsupported-format", { extension: ".png" }),
+    ).toBe("Unsupported format (.png)");
+  });
+
+  it("falls back to the generic unsupported message when no extension is provided (T2)", () => {
+    expect(describeScanError("unsupported-format", { extension: "" })).toBe(
+      "Format not supported",
+    );
+  });
 });
 
 describe("formatScanSummary", () => {
@@ -247,7 +259,7 @@ describe("formatScanSummary", () => {
 
   it("renders each error kind with its human-friendly message", () => {
     const kinds: [ScanFileDetail["errorKind"], string][] = [
-      ["unsupported-format", "Format not supported"],
+      ["unsupported-format", "Unsupported format"],
       ["corrupt-document", "File appears corrupted"],
       ["encrypted-document", "Password-protected file"],
       ["zip-bomb-detected", "Suspicious archive structure"],
@@ -293,6 +305,27 @@ describe("formatScanSummary", () => {
     const out = formatScanSummary(result);
     expect(out).toContain("huge.pdf");
     expect(out).toContain("File too large (limit: 25 MB)");
+  });
+
+  it("names the extension when listing an unsupported-format file (T2)", () => {
+    const result: ScanResult = {
+      indexed: 0,
+      modified: 0,
+      unchanged: 0,
+      failed: 1,
+      unsupported: 1,
+      files: [
+        detail({
+          filename: "screenshot.png",
+          extension: ".png",
+          status: "failed",
+          errorKind: "unsupported-format",
+        }),
+      ],
+    };
+    const out = formatScanSummary(result);
+    expect(out).toContain("screenshot.png");
+    expect(out).toContain("Unsupported format (.png)");
   });
 
   it("falls back to a generic 'Extraction failed' for unknown error kinds", () => {

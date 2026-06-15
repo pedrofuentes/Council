@@ -12,6 +12,8 @@
 import { ExtractionError } from "./extractors/index.js";
 import type { ExtractionErrorKind } from "./extractors/errors.js";
 
+import * as path from "node:path";
+
 /**
  * Superset of `ExtractionErrorKind` covering failure modes that arise
  * outside the format-specific extractors:
@@ -89,6 +91,17 @@ export interface ScanResult {
    * with producers that predate the AI fallback.
    */
   readonly needsReview?: number;
+  /**
+   * Count of files dropped because their extension is not in
+   * `supportedFormats` (e.g. `.png`, `.zip`). These never reach
+   * extraction; the detector filters them out up front. Surfaced as a
+   * distinct category so counts add up and users learn their file was
+   * skipped. Optional for backward compatibility. Such files are also
+   * represented in `files` as `status: "failed"` /
+   * `errorKind: "unsupported-format"`, so they are additionally included
+   * in `failed`.
+   */
+  readonly unsupported?: number;
 }
 
 /**
@@ -115,4 +128,35 @@ export function classifyExtractionError(err: unknown): {
     return { kind: "confinement-violation", message };
   }
   return { kind: "extraction-failed", message };
+}
+
+/**
+ * Build the `ScanFileDetail` for a file the detector rejected because its
+ * extension is not in `supportedFormats`. This is the single place that
+ * classifies an unsupported path, so the expert processor and panel
+ * scanner — and therefore every display surface (`docs doctor`,
+ * `docs review`, the chat-startup scan summary, and `expert train`) —
+ * report unsupported files identically.
+ *
+ * Represented as `status: "failed"` with `errorKind: "unsupported-format"`
+ * so it flows through the existing failure-rendering paths. The
+ * `errorMessage` is a diagnostic naming the offending extension; the
+ * primary user-facing string is produced by `describeScanError` at the
+ * display boundary. `path.basename`/`path.extname` are filesystem-derived
+ * (not AI-derived), so no control-character sanitization is required here.
+ */
+export function unsupportedFileDetail(filePath: string): ScanFileDetail {
+  const extension = path.extname(filePath).toLowerCase();
+  const errorMessage =
+    extension.length > 0
+      ? `Unsupported format (${extension})`
+      : "Unsupported format";
+  return {
+    path: filePath,
+    filename: path.basename(filePath),
+    extension,
+    status: "failed",
+    errorKind: "unsupported-format",
+    errorMessage,
+  };
 }
