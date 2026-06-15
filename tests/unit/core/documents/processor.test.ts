@@ -168,7 +168,7 @@ describe("createDocumentProcessor", () => {
       expect(await proc.needsProcessing("nope", "/no/such/path")).toBe(false);
     });
 
-    it("returns false when no supported documents exist", async () => {
+    it("returns true when only unsupported-extension files exist (so the scan reports them)", async () => {
       const dir = await makeDocsDir(env, "alice");
       await fs.writeFile(path.join(dir, "ignored.bin"), "x");
       const proc = createDocumentProcessor({
@@ -178,7 +178,11 @@ describe("createDocumentProcessor", () => {
         indexer: env.indexer,
         config: CONFIG,
       });
-      expect(await proc.needsProcessing("alice", dir)).toBe(false);
+      // `.bin` is not in supportedFormats. Historically this returned
+      // false (nothing to index) and the file vanished from every
+      // surface. It now returns true so chat startup runs the scan and
+      // reports the unsupported file (Task T2).
+      expect(await proc.needsProcessing("alice", dir)).toBe(true);
     });
 
     it("returns true when a new document is present", async () => {
@@ -842,5 +846,127 @@ describe("createDocumentProcessor — AI fallback wiring (T-AIPIPE)", () => {
     expect(
       progress.some((p) => p.filename === "notes.xyz" && p.status === "needs-review"),
     ).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Unsupported-extension files (Task T2).
+//
+// A file whose extension is NOT in `supportedFormats` (e.g. `.png`,
+// `.zip`) is rejected by the detector before extraction and historically
+// dropped silently. The processor must surface it as a distinct
+// `unsupported` outcome: counted in `filesUnsupported` AND `filesFailed`,
+// present in `files` with `errorKind: "unsupported-format"`, and reported
+// via the progress stream so `expert train` reflects it.
+// ─────────────────────────────────────────────────────────────────────
+describe("createDocumentProcessor — unsupported-extension files (T2)", () => {
+  let env: Env;
+
+  beforeEach(async () => {
+    env = await makeEnv();
+  });
+  afterEach(async () => {
+    await teardown(env);
+  });
+
+  it("classifies an unsupported-extension file as a distinct unsupported outcome", async () => {
+    const dir = await makeDocsDir(env, "alice");
+    await fs.writeFile(path.join(dir, "notes.md"), "# Notes\nhello\n", "utf-8");
+    await fs.writeFile(path.join(dir, "screenshot.png"), "binary-ish", "utf-8");
+    const proc = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: CONFIG,
+    });
+
+    const result = await proc.process("alice", dir);
+
+    expect(result.filesProcessed).toBe(1);
+    expect(result.filesUnsupported).toBe(1);
+    // Unsupported files are also counted as failures so existing
+    // failure-driven surfaces (e.g. expert train aggregate) reflect them.
+    expect(result.filesFailed).toBe(1);
+    const png = result.files.find((x) => x.filename === "screenshot.png");
+    expect(png?.status).toBe("failed");
+    expect(png?.errorKind).toBe("unsupported-format");
+    expect(png?.extension).toBe(".png");
+  });
+
+  it("reports an unsupported-only folder instead of silently dropping it", async () => {
+    const dir = await makeDocsDir(env, "alice");
+    await fs.writeFile(path.join(dir, "diagram.png"), "x", "utf-8");
+    const proc = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: CONFIG,
+    });
+
+    const result = await proc.process("alice", dir);
+
+    expect(result.filesUnsupported).toBe(1);
+    expect(result.filesFailed).toBe(1);
+    const png = result.files.find((x) => x.filename === "diagram.png");
+    expect(png?.status).toBe("failed");
+    expect(png?.errorKind).toBe("unsupported-format");
+  });
+
+  it("accounts for every file dropped in (counts add up, no disappearance)", async () => {
+    const dir = await makeDocsDir(env, "alice");
+    await fs.writeFile(path.join(dir, "notes.md"), "# Notes\nhello\n", "utf-8");
+    await fs.writeFile(path.join(dir, "screenshot.png"), "x", "utf-8");
+    await fs.writeFile(path.join(dir, "archive.zip"), "x", "utf-8");
+    const proc = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: CONFIG,
+    });
+
+    const result = await proc.process("alice", dir);
+
+    // Every file on disk appears in the per-file detail list — none vanish.
+    expect(result.files.map((f) => f.filename).sort()).toEqual([
+      "archive.zip",
+      "notes.md",
+      "screenshot.png",
+    ]);
+    expect(result.filesUnsupported).toBe(2);
+    // indexed + skipped + failed + needs-review covers all discovered files.
+    const accounted =
+      result.filesProcessed +
+      result.filesSkipped +
+      result.filesFailed +
+      result.filesNeedingReview;
+    expect(accounted).toBe(3);
+  });
+
+  it("emits a failed progress event for the unsupported file (surfaces in expert train)", async () => {
+    const dir = await makeDocsDir(env, "alice");
+    await fs.writeFile(path.join(dir, "screenshot.png"), "x", "utf-8");
+    const proc = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: CONFIG,
+    });
+
+    const progress: { filename: string; status: string; error?: string }[] = [];
+    await proc.process("alice", dir, (p) => {
+      progress.push({
+        filename: p.filename,
+        status: p.status,
+        ...(p.error !== undefined ? { error: p.error } : {}),
+      });
+    });
+
+    const evt = progress.find((p) => p.filename === "screenshot.png");
+    expect(evt?.status).toBe("failed");
+    expect(evt?.error).toMatch(/unsupported/i);
   });
 });
