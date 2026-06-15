@@ -41,6 +41,7 @@ import { PanelLibraryRepository } from "../../memory/repositories/panel-library-
 import { ProfileRepository } from "../../memory/repositories/profile-repository.js";
 import { ENGINE_KINDS, type EngineKind, makeEngineFromKind } from "../run-with-engine.js";
 import { stripControlChars } from "../strip-control-chars.js";
+import { sanitizeDisplayName } from "../sanitize-display-name.js";
 import { suggestMatch } from "../fuzzy-match.js";
 import { isNonInteractive } from "../non-interactive.js";
 
@@ -280,7 +281,7 @@ async function gatherCreateFields(opts: CreateOptions, write: Writer): Promise<G
   ) {
     return {
       slug: opts.slug,
-      name: opts.name,
+      name: sanitizeDisplayName(opts.name),
       role: opts.role,
       expertise: opts.expertise,
       stance: opts.stance,
@@ -311,7 +312,8 @@ async function gatherCreateFields(opts: CreateOptions, write: Writer): Promise<G
     write("Creating a new expert. Press Ctrl+C to abort.\n\n");
     write(formatPrefilledLines(opts));
     const slug = await promptFor("slug (lowercase alphanumeric + hyphens)", opts.slug, true);
-    const name = await promptFor('displayName (e.g. "Dahlia Renner (CTO)")', opts.name, true);
+    const rawName = await promptFor('displayName (e.g. "Dahlia Renner (CTO)")', opts.name, true);
+    const name = sanitizeDisplayName(rawName);
     const role = await promptFor("role (one-line)", opts.role, true);
     const expertise = await promptFor(
       "expertise / weighted evidence (comma-separated)",
