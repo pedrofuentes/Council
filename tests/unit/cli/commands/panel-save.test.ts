@@ -17,7 +17,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildPanelCommand } from "../../../../src/cli/commands/panel.js";
 import type { ExpertDefinition } from "../../../../src/core/expert.js";
@@ -146,6 +146,7 @@ describe("panel save (T9)", () => {
     env = await makeEnv();
   });
   afterEach(async () => {
+    vi.restoreAllMocks();
     await teardown(env);
   });
 
@@ -328,5 +329,83 @@ describe("panel save (T9)", () => {
       cmd.parseAsync(["node", "council-panel", "save", sessionName, "foo"]),
     ).rejects.toBeInstanceOf(CliUserError);
     expect(stderr).toMatch(/no stored panel definition|does not have a saved panel|predates/i);
+  });
+
+  // 🔴 SENT-1062 #1 (Dim A1): the success-line echo of the session name must
+  // be passed through stripControlChars, matching the convention already
+  // applied to the auto-compose banner. A convened session name embeds the
+  // AI-derived panel name, so it is untrusted at the terminal write sink.
+  it("strips control chars from echoed session/panel names in save output", async () => {
+    const evilName = "evil\u001b[31m\u0007-2026-06-15T16:00:00";
+    const sessionName = await seedSession(env, {
+      name: evilName,
+      definition: autoDefinition(["alpha", "beta"]),
+    });
+
+    let stdout = "";
+    const cmd = buildPanelCommand(
+      (s) => {
+        stdout += s;
+      },
+      () => undefined,
+    );
+    await cmd.parseAsync(["node", "council-panel", "save", sessionName, "goodpanel"]);
+
+    expect(stdout).toContain("goodpanel");
+    // Control sequences from the untrusted session name must be stripped.
+    expect(stdout).not.toMatch(/\u001b\[/);
+    expect(stdout).not.toContain("\u0007");
+    // Printable characters are preserved.
+    expect(stdout).toContain("evil");
+  });
+
+  // 🔴 SENT-1062 #4 (Dim A2/B): when persistence fails AFTER at least one
+  // library expert was created, the experts created during THIS operation
+  // must be rolled back — otherwise they are orphaned and a retry produces
+  // -2/-3 duplicate suffixes.
+  it("rolls back experts created in this operation when a later create fails (no orphans)", async () => {
+    const sessionName = await seedSession(env, {
+      name: "auto-panel-2026-06-15T15:00:00",
+      definition: autoDefinition(["alpha", "beta"]),
+    });
+
+    // Fail the SECOND library.create so the first expert ("alpha") is left
+    // created and the operation aborts mid-way through promotion.
+    const realCreate = FileExpertLibrary.prototype.create;
+    let createCalls = 0;
+    const spy = vi
+      .spyOn(FileExpertLibrary.prototype, "create")
+      .mockImplementation(async function (this: FileExpertLibrary, def: ExpertDefinition) {
+        createCalls += 1;
+        if (createCalls >= 2) {
+          throw new Error("simulated persistence failure after first expert created");
+        }
+        await realCreate.call(this, def);
+      });
+
+    const cmd = buildPanelCommand(
+      () => undefined,
+      () => undefined,
+    );
+    cmd.exitOverride();
+    try {
+      await expect(
+        cmd.parseAsync(["node", "council-panel", "save", sessionName, "mypanel"]),
+      ).rejects.toThrow();
+    } finally {
+      spy.mockRestore();
+    }
+
+    const db = await createDatabase(path.join(env.home, "council.db"));
+    try {
+      const lib = new FileExpertLibrary(env.dataHome, db);
+      // The expert created during this failed save must NOT be orphaned.
+      expect(await lib.get("alpha")).toBeNull();
+      expect(await lib.get("beta")).toBeNull();
+      // The panel itself was not persisted.
+      expect(await new PanelLibraryRepository(db).findByName("mypanel")).toBeUndefined();
+    } finally {
+      await db.destroy();
+    }
   });
 });
