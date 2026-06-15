@@ -80,6 +80,7 @@ export { createDocumentRetriever, buildExpertRetrievalScopes } from "../../../co
 export { createContextManager } from "../../../core/chat/context-manager.js";
 export { formatEngineError } from "../../error-mapper.js";
 export { makeEngineFromKind, ENGINE_KINDS } from "../../run-with-engine.js";
+export { collectSendWithEmptyRetry, isEmptyResponse } from "../../../engine/index.js";
 export { suggestMatch } from "../../fuzzy-match.js";
 export { checkTopicAdmission } from "../../../core/topic-admission.js";
 export { parseUserInput } from "../../../core/chat/mention-parser.js";

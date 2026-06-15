@@ -778,6 +778,149 @@ describe("panel chat mode", () => {
     expect(combined).not.toMatch(/engine error/i);
   });
 
+  it("retries a panel expert's empty response once and renders the retried content (T14)", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "retry-empty", ["panel-a", "panel-b"]);
+
+    // panel-a returns an empty completion on its FIRST send, then real
+    // content on the retry; panel-b is steady. The empty response must be
+    // retried (not silently surfaced as empty) so the content wins.
+    let registered = 0;
+    const flakyEmptyIds = new Set<string>();
+    const sendCalls = new Map<string, number>();
+    const engine: CouncilEngine = {
+      async start(): Promise<void> {
+        /* ok */
+      },
+      async stop(): Promise<void> {
+        /* ok */
+      },
+      async addExpert(spec): Promise<void> {
+        if (registered === 0) flakyEmptyIds.add(spec.id);
+        registered += 1;
+      },
+      async removeExpert(): Promise<void> {
+        /* ok */
+      },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock"];
+      },
+      send(opts) {
+        const expertId = opts.expertId;
+        const n = (sendCalls.get(expertId) ?? 0) + 1;
+        sendCalls.set(expertId, n);
+        const emptyFirst = flakyEmptyIds.has(expertId) && n === 1;
+        return {
+          async *[Symbol.asyncIterator]() {
+            if (emptyFirst) {
+              yield { kind: "message.complete" as const, expertId, response: { latencyMs: 1 } };
+              return;
+            }
+            const text = flakyEmptyIds.has(expertId) ? "RETRIED-OK" : "STEADY-OK";
+            yield { kind: "message.delta" as const, expertId, text };
+            yield { kind: "message.complete" as const, expertId, response: { latencyMs: 1 } };
+          },
+        };
+      },
+    };
+
+    let out = "";
+    let err = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: (s) => (err += s),
+      engineFactory: () => engine,
+      inputProvider: () => scriptedInput(["hi", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "retry-empty", "--engine", "mock"]);
+
+    const combined = out + err;
+    // The retried content is rendered and no empty warning is surfaced.
+    expect(out).toContain("RETRIED-OK");
+    expect(out).toContain("STEADY-OK");
+    expect(combined).not.toMatch(/empty response/i);
+
+    // The empty expert was retried exactly once (2 sends); the steady one once.
+    const callCounts = Array.from(sendCalls.values()).sort();
+    expect(callCounts).toEqual([1, 2]);
+
+    // The retried content is persisted (not the empty first attempt).
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "retry-empty");
+      const turns = await repo.getTurns(session?.id ?? "");
+      const expertTurns = turns.filter((t) => t.role === "expert");
+      expect(expertTurns.length).toBe(2);
+      const retried = expertTurns.find((t) => t.content.includes("RETRIED-OK"));
+      expect(retried?.content).toBe("RETRIED-OK");
+    });
+  });
+
+  it("surfaces an 'after a retry' reason when a panel expert stays empty, keeping the N of M tally (T14)", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "empty-twice", ["panel-a", "panel-b"]);
+
+    // panel-a returns empty on EVERY send (so the retry is also empty);
+    // panel-b succeeds. The empty expert must be surfaced with a reason
+    // that mentions the retry, and the "N of M" tally must still hold.
+    let registered = 0;
+    const emptyIds = new Set<string>();
+    const sendCalls = new Map<string, number>();
+    const engine: CouncilEngine = {
+      async start(): Promise<void> {
+        /* ok */
+      },
+      async stop(): Promise<void> {
+        /* ok */
+      },
+      async addExpert(spec): Promise<void> {
+        if (registered === 0) emptyIds.add(spec.id);
+        registered += 1;
+      },
+      async removeExpert(): Promise<void> {
+        /* ok */
+      },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock"];
+      },
+      send(opts) {
+        const expertId = opts.expertId;
+        sendCalls.set(expertId, (sendCalls.get(expertId) ?? 0) + 1);
+        const isEmpty = emptyIds.has(expertId);
+        return {
+          async *[Symbol.asyncIterator]() {
+            if (isEmpty) {
+              yield { kind: "message.complete" as const, expertId, response: { latencyMs: 1 } };
+              return;
+            }
+            yield { kind: "message.delta" as const, expertId, text: "STEADY-OK" };
+            yield { kind: "message.complete" as const, expertId, response: { latencyMs: 1 } };
+          },
+        };
+      },
+    };
+
+    let out = "";
+    let err = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: (s) => (err += s),
+      engineFactory: () => engine,
+      inputProvider: () => scriptedInput(["hi", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "empty-twice", "--engine", "mock"]);
+
+    const combined = out + err;
+    // Clear, honest wording that a retry was attempted.
+    expect(combined).toMatch(/empty response after a retry/i);
+    // Partial results preserved and the aggregate tally is intact.
+    expect(out).toContain("STEADY-OK");
+    expect(combined).toMatch(/1 of 2 experts responded/i);
+
+    // The empty expert was retried once (2 sends); the steady one once.
+    const callCounts = Array.from(sendCalls.values()).sort();
+    expect(callCounts).toEqual([1, 2]);
+  });
+
   it("--history filters archived sessions by resolved target type (expert vs panel collision)", async () => {
     // An expert and a panel both named "shared". `council chat shared
     // --history` must NOT mix the archived panel session into the
