@@ -655,6 +655,32 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
     });
   });
 
+  describe("panel create — empty expert library error", () => {
+    let env: TestEnv;
+    beforeEach(async () => {
+      env = await makeEnv();
+    });
+    afterEach(async () => {
+      await teardown(env);
+    });
+
+    it("panel create with no library experts includes convene auto-compose hint", async () => {
+      const cmd = buildPanelCommand(() => {
+        /* noop */
+      });
+      let caughtError: Error | undefined;
+      try {
+        await cmd.parseAsync(["node", "council-panel", "create", "my-panel"]);
+      } catch (e) {
+        caughtError = e as Error;
+      }
+      expect(caughtError).toBeDefined();
+      expect(caughtError?.message).toContain("No experts found in the library");
+      expect(caughtError?.message).toContain('council expert create');
+      expect(caughtError?.message).toContain('council convene');
+    });
+  });
+
   describe("panel docs", () => {
     let env: TestEnv;
     beforeEach(async () => {
