@@ -326,6 +326,13 @@ function buildReviewCommand(
         const suffix = detected.length > 0 ? ` — ${detected}` : "";
         write(`  ⚠ ${file.filename} — awaiting AI-extraction review${suffix}\n`);
       }
+      if (needsReview.length > 0) {
+        // Make the `ask` contract explicit: these files were flagged, not
+        // silently AI-extracted. `ask` means review — nothing was indexed.
+        write(
+          `\n'ask' mode flags AI-extractable files for review — none were auto-extracted or indexed.\n`,
+        );
+      }
       if (suggestFormats) {
         write(`\nRun \`council docs formats\` to see supported file types.\n`);
       }

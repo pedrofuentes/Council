@@ -39,7 +39,7 @@ import {
 import type { DocumentIndexer } from "./indexer.js";
 import {
   classifyExtractionError,
-  unsupportedFileDetail,
+  classifyUnsupportedFile,
   type ScanFileDetail,
 } from "./scan-types.js";
 import type { DocumentRepository } from "../../memory/repositories/document-repository.js";
@@ -309,18 +309,33 @@ export function createDocumentProcessor(
       // silently; surface them as a distinct `unsupported` outcome —
       // counted in `filesFailed` too — and report each via the progress
       // stream so `expert train` reflects them without special-casing.
+      //
+      // When `aiExtraction` is `ask`, an eligible (non-blocklisted,
+      // allowlisted) extension is held as a `needs-review` outcome instead
+      // (`classifyUnsupportedFile`): `ask` means review, so the file is
+      // flagged as "awaiting AI-extraction review" — NOT indexed, NOT
+      // tracked, NOT counted as a failure. No extraction is performed here.
       for (const unsupportedPath of detection.unsupportedFiles) {
-        failed += 1;
-        unsupported += 1;
-        const detail = unsupportedFileDetail(unsupportedPath);
-        onProgress?.({
-          filename: detail.filename,
-          wordCount: 0,
-          status: "failed",
-          ...(detail.errorMessage !== undefined
-            ? { error: detail.errorMessage }
-            : {}),
-        });
+        const detail = classifyUnsupportedFile(unsupportedPath, config.aiFallback);
+        if (detail.status === "needs-review") {
+          needsReview += 1;
+          onProgress?.({
+            filename: detail.filename,
+            wordCount: 0,
+            status: "needs-review",
+          });
+        } else {
+          failed += 1;
+          unsupported += 1;
+          onProgress?.({
+            filename: detail.filename,
+            wordCount: 0,
+            status: "failed",
+            ...(detail.errorMessage !== undefined
+              ? { error: detail.errorMessage }
+              : {}),
+          });
+        }
         files.push(detail);
       }
 
