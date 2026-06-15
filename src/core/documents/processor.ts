@@ -30,7 +30,7 @@ import type { Stats } from "node:fs";
 import * as path from "node:path";
 
 import { detectDocumentChanges } from "./detector.js";
-import { extractDocument } from "./extractor.js";
+import { extractDocument, type AiFallbackOption } from "./extractor.js";
 import {
   analyzeDocuments,
   type DocumentContent as AnalyzerDoc,
@@ -50,6 +50,12 @@ export interface ProcessingResult {
   readonly filesSkipped: number;
   readonly filesFailed: number;
   readonly filesRemoved: number;
+  /**
+   * Count of files held for manual review (AI fallback `ask` mode):
+   * detected as AI-extractable but NOT indexed into FTS and NOT tracked,
+   * pending explicit user approval. Surfaced by scan UX as needs-review.
+   */
+  readonly filesNeedingReview: number;
   readonly totalWords: number;
   readonly profileUpdated: boolean;
   /**
@@ -71,7 +77,7 @@ export interface ProcessingResult {
 export interface ProcessingProgress {
   readonly filename: string;
   readonly wordCount: number;
-  readonly status: "success" | "failed";
+  readonly status: "success" | "failed" | "needs-review";
   readonly error?: string;
 }
 
@@ -101,6 +107,15 @@ export interface DocumentProcessorOptions {
      * `config.documents.maxFileSizeMB * 1024 * 1024`.
      */
     readonly maxFileSizeBytes?: number;
+    /**
+     * Opt-in AI fallback forwarded verbatim to `extractDocument`. Built
+     * from `documents.aiExtraction` (mode) +
+     * `documents.aiExtractionAllowedExtensions`. When omitted or
+     * `mode: "off"`, unsupported formats fail exactly as before. `auto`
+     * indexes AI-extracted content (flagged `aiExtracted`); `ask` holds
+     * the file as needs-review without indexing.
+     */
+    readonly aiFallback?: AiFallbackOption;
   };
   /**
    * Test-only seam: forwarded to the detector as `_lstatOverride`.
@@ -207,6 +222,7 @@ export function createDocumentProcessor(
       let processed = 0;
       let failed = 0;
       let removed = 0;
+      let needsReview = 0;
       let totalWords = 0;
       const successfullyExtracted: AnalyzerDoc[] = [];
       const files: ScanFileDetail[] = [];
@@ -274,7 +290,37 @@ export function createDocumentProcessor(
             ...(config.maxFileSizeBytes !== undefined
               ? { maxFileSizeBytes: config.maxFileSizeBytes }
               : {}),
+            ...(config.aiFallback !== undefined
+              ? { aiFallback: config.aiFallback }
+              : {}),
           });
+
+          // AI fallback, `ask` mode: the file was recognized as
+          // AI-extractable but requires explicit user approval. Hold it
+          // for review — do NOT index into FTS, do NOT track in
+          // `expert_documents` (so it keeps surfacing), and do NOT feed it
+          // to the persona analyzer. Recorded as a distinct needs-review
+          // outcome for scan UX.
+          if (extracted.metadata?.askUser === true) {
+            needsReview += 1;
+            onProgress?.({
+              filename: file.filename,
+              wordCount: extracted.wordCount,
+              status: "needs-review",
+            });
+            files.push({
+              path: file.path,
+              filename: file.filename,
+              extension: path.extname(file.path).toLowerCase(),
+              status: "needs-review",
+              wordCount: extracted.wordCount,
+              aiExtracted: true,
+              ...(extracted.metadata.detectedFormat !== undefined
+                ? { detectedFormat: extracted.metadata.detectedFormat }
+                : {}),
+            });
+            continue;
+          }
 
           await indexer.index({
             content: extracted.content,
@@ -326,6 +372,7 @@ export function createDocumentProcessor(
             wordCount: extracted.wordCount,
             status: "success",
           });
+          const aiExtracted = extracted.metadata?.aiFallback === true;
           files.push({
             path: file.path,
             filename: file.filename,
@@ -333,6 +380,10 @@ export function createDocumentProcessor(
             status: newSet.has(file.path) ? "indexed" : "modified",
             wordCount: extracted.wordCount,
             ...(extracted.metadata !== undefined ? { metadata: extracted.metadata } : {}),
+            ...(aiExtracted ? { aiExtracted: true } : {}),
+            ...(aiExtracted && extracted.metadata?.detectedFormat !== undefined
+              ? { detectedFormat: extracted.metadata.detectedFormat }
+              : {}),
           });
         } catch (err: unknown) {
           failed += 1;
@@ -390,6 +441,7 @@ export function createDocumentProcessor(
         filesSkipped: skipped,
         filesFailed: failed,
         filesRemoved: removed,
+        filesNeedingReview: needsReview,
         totalWords,
         profileUpdated,
         profileError,

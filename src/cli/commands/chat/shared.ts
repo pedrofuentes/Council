@@ -740,6 +740,10 @@ export async function maybeProcessPersonaDocs(
       supportedFormats: config.expert.supportedFormats,
       recencyHalfLifeDays: config.expert.recencyHalfLifeDays,
       maxFileSizeBytes: config.documents.maxFileSizeMB * 1024 * 1024,
+      aiFallback: {
+        mode: config.documents.aiExtraction,
+        allowedExtensions: config.documents.aiExtractionAllowedExtensions,
+      },
     },
   });
 
@@ -750,13 +754,19 @@ export async function maybeProcessPersonaDocs(
       const result = await processor.process(expert.slug, docsPath, (p) => {
         if (p.status === "failed") {
           renderer.showSystem(`  ${p.filename}: failed (${p.error ?? "unknown"})`, "warn");
+        } else if (p.status === "needs-review") {
+          renderer.showSystem(
+            `  ${p.filename}: needs review (AI extraction available — run \`council docs review\`)`,
+            "warn",
+          );
         } else {
           renderer.showSystem(`  ${p.filename}: ${p.wordCount} words`, "info");
         }
       });
       renderer.showSystem(
         `Processed ${result.filesProcessed} new/changed document(s) ` +
-          `(${result.filesSkipped} unchanged, ${result.filesFailed} failed, ${result.filesRemoved} removed).`,
+          `(${result.filesSkipped} unchanged, ${result.filesFailed} failed, ` +
+          `${result.filesNeedingReview} needs review, ${result.filesRemoved} removed).`,
         "info",
       );
       if (result.profileError !== null) {

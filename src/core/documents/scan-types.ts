@@ -27,7 +27,12 @@ export type ScanErrorKind =
   | "extraction-failed"
   | "confinement-violation";
 
-export type ScanFileStatus = "indexed" | "modified" | "unchanged" | "failed";
+export type ScanFileStatus =
+  | "indexed"
+  | "modified"
+  | "unchanged"
+  | "failed"
+  | "needs-review";
 
 export interface ScanFileMetadata {
   /** PDF page count (populated by the PDF extractor). */
@@ -52,6 +57,17 @@ export interface ScanFileDetail {
   readonly wordCount?: number;
   /** Format-specific extraction metadata (page count, sheet names, slide count). */
   readonly metadata?: ScanFileMetadata;
+  /**
+   * True when the content was produced by the AI fallback (auto mode) or
+   * held for review (ask mode) rather than a native extractor. Lets scan
+   * UX distinguish AI-extracted files from high-fidelity native parses.
+   */
+  readonly aiExtracted?: boolean;
+  /**
+   * AI fallback: friendly description of the detected format, surfaced in
+   * needs-review output. Sanitize at the display boundary before printing.
+   */
+  readonly detectedFormat?: string;
 }
 
 export interface ScanResult {
@@ -66,6 +82,13 @@ export interface ScanResult {
    * what threshold their file exceeded.
    */
   readonly maxFileSizeMB?: number;
+  /**
+   * Count of files held for manual review (AI fallback `ask` mode) —
+   * detected as AI-extractable but deliberately NOT indexed into FTS,
+   * pending explicit user approval. Optional for backward compatibility
+   * with producers that predate the AI fallback.
+   */
+  readonly needsReview?: number;
 }
 
 /**

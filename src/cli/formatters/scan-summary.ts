@@ -32,6 +32,8 @@ import type {
   ScanResult,
 } from "../../core/documents/scan-types.js";
 
+import { stripControlChars } from "../strip-control-chars.js";
+
 export type {
   ScanErrorKind,
   ScanFileDetail,
@@ -92,6 +94,9 @@ function formatSuccessLine(file: ScanFileDetail): string {
   const meta = formatMetadata(file.metadata);
   let line = `✓ ${verb} ${file.filename}`;
   if (meta !== null) line += ` (${meta})`;
+  if (file.aiExtracted === true) {
+    line += " — ℹ AI-extracted (lower fidelity than a native parse)";
+  }
   if (file.wordCount === 0) {
     line += " — ⚠ Extracted but no text content found";
   }
@@ -110,6 +115,28 @@ function formatFailureLine(
   return `✗ ${file.filename}: ${human}`;
 }
 
+/**
+ * Sanitize AI-fallback-derived text (e.g. `detectedFormat`) for terminal
+ * display: strip C0/C1 controls and ANSI/OSC escapes via the shared
+ * `stripControlChars`, then collapse residual newlines/tabs to single
+ * spaces so one detail never leaks onto extra lines (no terminal-escape
+ * vector and no broken layout).
+ */
+function sanitizeFormatHint(text: string): string {
+  return stripControlChars(text)
+    .replace(/[\r\n\t]+/g, " ")
+    .trim();
+}
+
+function formatNeedsReviewLine(file: ScanFileDetail): string {
+  let line = `⚠ ${file.filename} — needs review (AI extraction available)`;
+  if (file.detectedFormat !== undefined) {
+    const hint = sanitizeFormatHint(file.detectedFormat);
+    if (hint.length > 0) line += `: ${hint}`;
+  }
+  return line;
+}
+
 export function formatScanSummary(result: ScanResult): string {
   const totalActivity =
     result.indexed + result.modified + result.unchanged + result.failed;
@@ -123,13 +150,24 @@ export function formatScanSummary(result: ScanResult): string {
     lines.push(`${result.unchanged} ${pluralize(result.unchanged, "file")} unchanged`);
   }
 
+  let needsReviewShown = 0;
   for (const file of result.files) {
     if (file.status === "unchanged") continue;
     if (file.status === "indexed" || file.status === "modified") {
       lines.push(formatSuccessLine(file));
     } else if (file.status === "failed") {
       lines.push(formatFailureLine(file, result.maxFileSizeMB));
+    } else if (file.status === "needs-review") {
+      lines.push(formatNeedsReviewLine(file));
+      needsReviewShown += 1;
     }
+  }
+
+  if (needsReviewShown > 0) {
+    const noun = needsReviewShown === 1 ? "file needs" : "files need";
+    lines.push(
+      `${needsReviewShown} ${noun} review — run \`council docs review\` to act on them.`,
+    );
   }
 
   return lines.join("\n");

@@ -140,13 +140,23 @@ export async function runPanelChat(opts: PanelChatOptions): Promise<void> {
         db,
         supportedFormats: config.expert.supportedFormats,
         maxFileSizeBytes: config.documents.maxFileSizeMB * 1024 * 1024,
+        aiFallback: {
+          mode: config.documents.aiExtraction,
+          allowedExtensions: config.documents.aiExtractionAllowedExtensions,
+        },
       });
-      if (result.indexed > 0 || result.failed > 0 || result.unchanged > 0) {
+      if (
+        result.indexed > 0 ||
+        result.failed > 0 ||
+        result.unchanged > 0 ||
+        result.needsReview > 0
+      ) {
         renderScanLines(renderer, {
           indexed: result.indexed,
           modified: 0,
           unchanged: result.unchanged,
           failed: result.failed,
+          needsReview: result.needsReview,
           files: result.files,
           maxFileSizeMB: config.documents.maxFileSizeMB,
         });
