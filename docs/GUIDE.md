@@ -642,7 +642,7 @@ For **1:1 expert chat**, place files in the expert's docs folder:
   └── budget-proposal.txt
 ```
 
-Supported formats: `.md`, `.txt`, `.html`
+Supported formats (default): `.md`, `.txt`, `.html`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.xls`, `.csv`, `.tsv`, `.rtf`, `.odt`, `.ods`, `.odp`. Run `council docs formats` for the full list.
 
 #### Step 2: Start a chat
 
@@ -955,7 +955,7 @@ Place reference documents in the expert's docs folder:
   └── risk-assessment-template.html
 ```
 
-Supported formats: `.md`, `.txt`, `.html`
+Supported formats (default): `.md`, `.txt`, `.html`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.xls`, `.csv`, `.tsv`, `.rtf`, `.odt`, `.ods`, `.odp`. Run `council docs formats` for the full list.
 
 These documents shape how the persona thinks and communicates. Good reference
 material includes:
@@ -1355,7 +1355,7 @@ Set these with `council config set <key> <value>`:
 | `defaults.maxWordsPerResponse`   | Default max words per response       | `250`            |
 | `expert.backgroundProcessing`    | Process docs in background           | (see docs)       |
 | `expert.recencyHalfLifeDays`     | Document recency half-life           | `90`             |
-| `expert.supportedFormats`        | Supported doc formats                | `md, txt, html`  |
+| `expert.supportedFormats`        | Supported doc formats                | 14 extensions (`md, txt, html, pdf, csv, tsv, rtf, docx, pptx, xlsx, xls, odt, ods, odp`) |
 | `chat.recentTurnCount`           | Recent turns to include              | (see docs)       |
 | `chat.summaryMaxWords`           | Summary length limit                 | (see docs)       |
 | `chat.longConversationWarning`   | Warn on long conversations           | (see docs)       |

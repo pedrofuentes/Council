@@ -176,7 +176,7 @@ council expert delete <slug>                        # refuses if in any panel (u
 # the YAML and refreshes the cache automatically.
 
 # Chat 1:1 with a persona expert — drop reference docs in
-# ~/Council/experts/<slug>/docs/ (any combination of .md / .txt / .html).
+# ~/Council/experts/<slug>/docs/ (any supported format — run "council docs formats").
 # On every `council chat <slug>` invocation, Council auto-detects new,
 # changed, or deleted documents, re-extracts and re-indexes them
 # (deletions prune the FTS index and mark the DB row as removed),
@@ -298,7 +298,7 @@ council docs doctor <panel>        # document-health diagnostics: indexed count,
 | `documents.maxFileSizeMB` | 1–500 | `50` | Maximum file size the extractor will read |
 | `documents.aiExtraction` | `off` \| `ask` \| `auto` | `off` | AI-based fallback for unsupported formats |
 | `documents.aiExtractionAllowedExtensions` | list of extensions | `[]` (all eligible) | Restrict AI extraction to specific extensions |
-| `expert.supportedFormats` | list of extensions | all 16 above | Formats a panel's document scanner will accept |
+| `expert.supportedFormats` | list of extensions | 14 extensions (all above **except** `.markdown` and `.htm`) | Formats a panel's document scanner will accept |
 
 Configure with `council config set <key> <value>` or open `~/.council/config.yaml` with `council config edit`.
 
