@@ -56,7 +56,15 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Unit tests (shard ${{ matrix.shard }}/4)
-        run: pnpm test:unit -- --shard=${{ matrix.shard }}/4
+        # Invoke vitest directly via `pnpm exec` instead of the
+        # `pnpm test:unit -- --shard=…` script indirection. Under bash (CI),
+        # `pnpm run <script> -- <args>` forwards a literal `--` into the
+        # script's argv (`vitest run tests/unit "--" "--shard=N/4"`). Vitest's
+        # parser treats `--` as end-of-options, so `--shard` is consumed as a
+        # positional filter rather than the shard flag — every shard then runs
+        # the full suite (200 files) instead of its ~50-file slice. Calling
+        # vitest directly passes `--shard` through cleanly.
+        run: pnpm exec vitest run tests/unit --shard=${{ matrix.shard }}/4
 
   other-tests:
     name: E2E, Integration & Security Tests
