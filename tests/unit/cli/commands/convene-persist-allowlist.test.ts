@@ -65,7 +65,7 @@ describe("formatPanelSaveHint (T9 SENT-1062 #1)", () => {
   it("strips control chars from the session name in the save hint", () => {
     const hint = formatPanelSaveHint("auto-panel\u001b[31m\u0007-2026-06-15T12:00:00");
 
-    expect(hint).not.toMatch(/\u001b\[/);
+    expect(hint).not.toContain("\u001b[");
     expect(hint).not.toContain("\u0007");
     expect(hint).toContain("council panel save");
     // Printable characters preserved.

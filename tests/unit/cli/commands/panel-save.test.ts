@@ -353,7 +353,7 @@ describe("panel save (T9)", () => {
 
     expect(stdout).toContain("goodpanel");
     // Control sequences from the untrusted session name must be stripped.
-    expect(stdout).not.toMatch(/\u001b\[/);
+    expect(stdout).not.toContain("\u001b[");
     expect(stdout).not.toContain("\u0007");
     // Printable characters are preserved.
     expect(stdout).toContain("evil");

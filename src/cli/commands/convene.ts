@@ -19,6 +19,7 @@ import { CliUserError } from "../cli-user-error.js";
 import { parseExpertSlugs, warnOnStrayExpertArgs } from "./expert-args.js";
 
 import { autoComposePanel } from "../../core/auto-compose.js";
+import { allowlistExpertDefinition, type ExpertDefinition } from "../../core/expert.js";
 import { checkTopicAdmission } from "../../core/topic-admission.js";
 import {
   getCouncilDataHome,
@@ -77,6 +78,41 @@ export { ENGINE_KINDS as CONVENE_ENGINE_KINDS };
 export type ConveneEngineKind = EngineKind;
 
 export type { ConfirmProvider } from "./confirm.js";
+
+/**
+ * Build the EXPLICIT, allowlisted panel definition object that is persisted
+ * into a session's `config_json.definition`. Rather than serializing the
+ * whole {@link ResolvedPanelDefinition} (which may carry resolver-internal or
+ * otherwise unexpected properties), we copy ONLY the fields that the
+ * `panel save` / chat resolve path re-reads (see `StoredPanelDefinitionSchema`
+ * in `panel.ts`). Each expert is run through {@link allowlistExpertDefinition}
+ * so the stored shape stays fully re-resolvable (round-trip integrity).
+ */
+export function buildPersistedPanelDefinition(template: ResolvedPanelDefinition): {
+  readonly name: string;
+  readonly description?: string;
+  readonly defaults?: ResolvedPanelDefinition["defaults"];
+  readonly experts: readonly ExpertDefinition[];
+} {
+  return {
+    name: template.name,
+    ...(template.description !== undefined ? { description: template.description } : {}),
+    ...(template.defaults !== undefined ? { defaults: template.defaults } : {}),
+    experts: template.experts.map((e) => allowlistExpertDefinition(e)),
+  };
+}
+
+/**
+ * Render the post-debate hint that points the user at `council panel save`.
+ * The session name is AI-derived and may contain terminal control sequences,
+ * so it is sanitized via {@link stripControlChars} before being written to
+ * the terminal — matching every other session-name write sink in this file.
+ */
+export function formatPanelSaveHint(sessionName: string): string {
+  return `Tip: Liked this panel? Save it to your library to reuse it: council panel save ${stripControlChars(
+    sessionName,
+  )} [name]\n`;
+}
 
 export interface ConveneCommandDeps {
   readonly engineFactory?: () => CouncilEngine;
@@ -607,7 +643,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
               // can later be promoted to a reusable library panel via
               // `council panel save`. Additive — existing readers key off
               // `template`/`mode`/`engine` and are unaffected.
-              definition: template,
+              definition: buildPersistedPanelDefinition(template),
             }),
           });
           sessionName = panel.name;
@@ -708,9 +744,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         }
         if (opts.format !== "json" && !isQuiet()) {
           if (autoComposed && sessionName !== undefined) {
-            write(
-              `Tip: Liked this panel? Save it to your library to reuse it: council panel save ${sessionName} [name]\n`,
-            );
+            write(formatPanelSaveHint(sessionName));
           }
           write(
             "Tip: Try `council ask <panel> \"<question>\"` for follow-ups, or `council sessions` to review past debates.\n",

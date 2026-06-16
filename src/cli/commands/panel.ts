@@ -33,7 +33,11 @@ import {
   type CouncilConfig,
 } from "../../config/index.js";
 import { FileExpertLibrary, type ExpertLibrary } from "../../core/expert-library.js";
-import { ExpertDefinitionSchema, type ExpertDefinition } from "../../core/expert.js";
+import {
+  ExpertDefinitionSchema,
+  allowlistExpertDefinition,
+  type ExpertDefinition,
+} from "../../core/expert.js";
 import {
   DEBATE_MODES,
   PanelDefaultsSchema,
@@ -56,6 +60,7 @@ import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
 import { resolveSession } from "../session-resolver.js";
 import { suggestMatch } from "../fuzzy-match.js";
+import { stripControlChars } from "../strip-control-chars.js";
 
 const PANEL_NAME_RE = /^[a-z][a-z0-9-]*$/;
 
@@ -623,14 +628,14 @@ function buildSaveCommand(write: Writer, writeError: Writer): Command {
 
           const session = await ctx.runtimePanelRepo.findByName(sessionName);
           if (!session) {
-            writeError(`Session "${sessionName}" not found.\n`);
+            writeError(`Session "${stripControlChars(sessionName)}" not found.\n`);
             throw new CliUserError(`panel save: session "${sessionName}" not found.`);
           }
 
           const stored = parseStoredDefinition(session.configJson);
           if (stored.kind === "absent") {
             writeError(
-              `Session "${sessionName}" has no stored panel definition, so it cannot be saved ` +
+              `Session "${stripControlChars(sessionName)}" has no stored panel definition, so it cannot be saved ` +
                 `as a library panel. Only sessions created by newer versions of ` +
                 `\`council convene\` carry the data needed to promote them (older sessions predate ` +
                 `this feature).\n`,
@@ -641,7 +646,7 @@ function buildSaveCommand(write: Writer, writeError: Writer): Command {
           }
           if (stored.kind === "invalid") {
             writeError(
-              `Session "${sessionName}" has a stored panel definition that is invalid or ` +
+              `Session "${stripControlChars(sessionName)}" has a stored panel definition that is invalid or ` +
                 `corrupt and cannot be promoted: ${stored.message}\n`,
             );
             throw new CliUserError(
@@ -657,7 +662,7 @@ function buildSaveCommand(write: Writer, writeError: Writer): Command {
               : slugifyPanelName(definition.name);
           if (!PANEL_NAME_RE.test(requestedName)) {
             writeError(
-              `Invalid panel name "${requestedName}": must be kebab-case (lowercase letters, ` +
+              `Invalid panel name "${stripControlChars(requestedName)}": must be kebab-case (lowercase letters, ` +
                 `digits, hyphens; must start with a letter).\n`,
             );
             throw new CliUserError(`panel save: invalid panel name "${requestedName}".`);
@@ -666,55 +671,94 @@ function buildSaveCommand(write: Writer, writeError: Writer): Command {
           const finalPanelName = await assignFreePanelName(ctx, requestedName);
 
           // Create library experts, suffixing slugs that already exist.
+          // Track the slugs created during THIS operation so a partial
+          // failure (a later create, or the panel persist, throwing after
+          // ≥1 expert was created) can be compensated by deleting exactly
+          // those experts — leaving pre-existing library data untouched and
+          // preventing orphaned experts (and -2/-3 duplicate accrual on retry).
           const claimedSlugs = new Set<string>();
           const memberSlugs: string[] = [];
           const expertRenames: { readonly from: string; readonly to: string }[] = [];
-          for (const expert of definition.experts) {
-            const finalSlug = await assignFreeExpertSlug(ctx, expert.slug, claimedSlugs);
-            claimedSlugs.add(finalSlug);
-            if (finalSlug !== expert.slug) {
-              expertRenames.push({ from: expert.slug, to: finalSlug });
+          const createdSlugs: string[] = [];
+          try {
+            for (const expert of definition.experts) {
+              const finalSlug = await assignFreeExpertSlug(ctx, expert.slug, claimedSlugs);
+              claimedSlugs.add(finalSlug);
+              if (finalSlug !== expert.slug) {
+                expertRenames.push({ from: expert.slug, to: finalSlug });
+              }
+              await ctx.library.create(allowlistExpertDefinition(expert, finalSlug));
+              createdSlugs.push(finalSlug);
+              memberSlugs.push(finalSlug);
             }
-            await ctx.library.create({ ...expert, slug: finalSlug });
-            memberSlugs.push(finalSlug);
-          }
 
-          // Build + persist the library panel referencing the new slugs,
-          // reusing the exact `panel create` write path.
-          const defaults: { mode: DebateMode; maxRounds?: number; model?: string } = {
-            mode: definition.defaults?.mode ?? "freeform",
-          };
-          if (definition.defaults?.maxRounds !== undefined) {
-            defaults.maxRounds = definition.defaults.maxRounds;
-          }
-          if (definition.defaults?.model !== undefined) {
-            defaults.model = definition.defaults.model;
-          }
+            // Build + persist the library panel referencing the new slugs,
+            // reusing the exact `panel create` write path.
+            const defaults: { mode: DebateMode; maxRounds?: number; model?: string } = {
+              mode: definition.defaults?.mode ?? "freeform",
+            };
+            if (definition.defaults?.maxRounds !== undefined) {
+              defaults.maxRounds = definition.defaults.maxRounds;
+            }
+            if (definition.defaults?.model !== undefined) {
+              defaults.model = definition.defaults.model;
+            }
 
-          const panel: PanelDefinition = PanelDefinitionSchema.parse({
-            name: finalPanelName,
-            ...(definition.description ? { description: definition.description } : {}),
-            defaults,
-            experts: memberSlugs,
-          });
+            const panel: PanelDefinition = PanelDefinitionSchema.parse({
+              name: finalPanelName,
+              ...(definition.description ? { description: definition.description } : {}),
+              defaults,
+              experts: memberSlugs,
+            });
 
-          const { yamlPath } = await persistPanelArtifacts(ctx, panel, writeError);
+            const { yamlPath } = await persistPanelArtifacts(ctx, panel, writeError);
 
-          write(
-            `✓ Saved session "${sessionName}" as panel "${finalPanelName}" at ${displayPath(yamlPath)}\n`,
-          );
-          write(`  Experts: ${memberSlugs.join(", ")}\n`);
-          if (finalPanelName !== requestedName) {
             write(
-              `  Note: a panel named "${requestedName}" already existed; saved as "${finalPanelName}".\n`,
+              `✓ Saved session "${stripControlChars(sessionName)}" as panel "${stripControlChars(
+                finalPanelName,
+              )}" at ${displayPath(yamlPath)}\n`,
             );
-          }
-          for (const rename of expertRenames) {
+            write(`  Experts: ${memberSlugs.join(", ")}\n`);
+            if (finalPanelName !== requestedName) {
+              write(
+                `  Note: a panel named "${stripControlChars(
+                  requestedName,
+                )}" already existed; saved as "${stripControlChars(finalPanelName)}".\n`,
+              );
+            }
+            for (const rename of expertRenames) {
+              write(
+                `  Note: expert slug "${rename.from}" already existed; saved as "${rename.to}".\n`,
+              );
+            }
             write(
-              `  Note: expert slug "${rename.from}" already existed; saved as "${rename.to}".\n`,
+              `\nStart a fresh debate with this panel: council chat ${stripControlChars(
+                finalPanelName,
+              )}\n`,
             );
+          } catch (err) {
+            // Compensating rollback: delete ONLY the experts this operation
+            // created, mirroring the rollback + AggregateError pattern in
+            // persistPanelArtifacts. Surface the original error after cleanup
+            // so the caller still sees the root cause. Pre-existing library
+            // data is never touched (we remove exactly what we added).
+            const rollbackErrors: unknown[] = [];
+            for (const slug of createdSlugs) {
+              try {
+                await ctx.library.delete(slug, { force: true });
+              } catch (deleteErr) {
+                rollbackErrors.push(deleteErr);
+              }
+            }
+            if (rollbackErrors.length > 0) {
+              throw new AggregateError(
+                [err, ...rollbackErrors],
+                `Failed to save panel "${finalPanelName}" and rollback of newly created experts ` +
+                  `also failed — library may be inconsistent`,
+              );
+            }
+            throw err;
           }
-          write(`\nStart a fresh debate with this panel: council chat ${finalPanelName}\n`);
         });
       },
     );
