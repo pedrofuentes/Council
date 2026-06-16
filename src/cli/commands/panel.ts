@@ -19,6 +19,7 @@ import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 
 import { Command, Option } from "commander";
+import { z } from "zod";
 
 import { CliUserError } from "../cli-user-error.js";
 import { parseExpertSlugs, warnOnStrayExpertArgs } from "./expert-args.js";
@@ -32,9 +33,14 @@ import {
   type CouncilConfig,
 } from "../../config/index.js";
 import { FileExpertLibrary, type ExpertLibrary } from "../../core/expert-library.js";
-import type { ExpertDefinition } from "../../core/expert.js";
+import {
+  ExpertDefinitionSchema,
+  allowlistExpertDefinition,
+  type ExpertDefinition,
+} from "../../core/expert.js";
 import {
   DEBATE_MODES,
+  PanelDefaultsSchema,
   PanelDefinitionSchema,
   type DebateMode,
   type PanelDefinition,
@@ -52,7 +58,9 @@ import {
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
+import { resolveSession } from "../session-resolver.js";
 import { suggestMatch } from "../fuzzy-match.js";
+import { stripControlChars } from "../strip-control-chars.js";
 
 const PANEL_NAME_RE = /^[a-z][a-z0-9-]*$/;
 
@@ -157,6 +165,97 @@ function entrySlug(entry: PanelExpertEntry): string {
   return typeof entry === "string" ? entry : entry.slug;
 }
 
+/**
+ * Persist the on-disk + relational artifacts for a library panel: the
+ * `panel_library` row, the `<dataHome>/panels/<name>.yaml` file (written
+ * with O_EXCL so a concurrent writer cannot be clobbered), the ordered
+ * `panel_members` rows, and the panel docs directory. On any failure the
+ * partial state is rolled back (row deleted, YAML unlinked).
+ *
+ * Extracted from `panel create` so `panel save` (T9) reuses the EXACT same
+ * write path — both commands produce identical, valid library panels.
+ *
+ * @returns the absolute YAML path and the ordered expert slugs written.
+ */
+async function persistPanelArtifacts(
+  ctx: PanelContext,
+  panel: PanelDefinition,
+  writeError: Writer,
+): Promise<{ readonly yamlPath: string; readonly expertSlugs: readonly string[] }> {
+  const name = panel.name;
+  const expertSlugs = panel.experts.map(entrySlug);
+  const yamlPath = panelYamlPath(ctx.dataHome, name);
+  const yamlContent = yaml.stringify(panel);
+  const checksum = sha256(yamlContent);
+
+  // DB row first so a YAML write failure can roll back cleanly.
+  await ctx.panelRepo.create({
+    name,
+    description: panel.description ?? null,
+    yamlPath,
+    yamlChecksum: checksum,
+  });
+  let yamlWritten = false;
+  try {
+    await fs.mkdir(path.dirname(yamlPath), { recursive: true });
+    // O_EXCL: fail if another concurrent create already wrote here.
+    // Split open from write so a mid-write failure (ENOSPC, EIO, …)
+    // still triggers rollback of the file we just created.
+    let handle: fs.FileHandle;
+    try {
+      handle = await fs.open(yamlPath, "wx");
+    } catch (openErr) {
+      if ((openErr as NodeJS.ErrnoException).code === "EEXIST") {
+        writeError(`Panel YAML already exists at ${displayPath(yamlPath)}\n`);
+        throw new CliUserError(`Panel "${name}" already exists at ${yamlPath}`);
+      }
+      throw openErr;
+    }
+    yamlWritten = true;
+    try {
+      await handle.writeFile(yamlContent, "utf-8");
+    } catch (writeErr) {
+      // Preserve the primary write failure if close() also fails —
+      // a secondary close error must not mask the ENOSPC/EIO root
+      // cause the operator needs to see.
+      try {
+        await handle.close();
+      } catch {
+        /* swallow secondary cleanup error */
+      }
+      throw writeErr;
+    }
+    await handle.close();
+    await ctx.panelRepo.setMembers(name, expertSlugs);
+    await fs.mkdir(panelDocsDir(ctx.dataHome, name), { recursive: true });
+  } catch (err) {
+    const rollbackErrors: unknown[] = [];
+    try {
+      await ctx.panelRepo.delete(name);
+    } catch (deleteErr) {
+      rollbackErrors.push(deleteErr);
+    }
+    // Only unlink the YAML if we are the writer that created it; an
+    // EEXIST collision means the file belongs to another process.
+    if (yamlWritten) {
+      try {
+        await fs.unlink(yamlPath);
+      } catch (unlinkErr) {
+        const code = (unlinkErr as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT") rollbackErrors.push(unlinkErr);
+      }
+    }
+    if (rollbackErrors.length > 0) {
+      throw new AggregateError(
+        [err, ...rollbackErrors],
+        `Failed to create panel "${name}" and rollback also failed — storage may be inconsistent`,
+      );
+    }
+    throw err;
+  }
+  return { yamlPath, expertSlugs };
+}
+
 export function buildPanelCommand(
   write: Writer = defaultWriter,
   writeError: Writer = defaultErrorWriter,
@@ -169,6 +268,7 @@ export function buildPanelCommand(
     await runPanelList(write, "table", false);
   });
   cmd.addCommand(buildCreateCommand(write, writeError));
+  cmd.addCommand(buildSaveCommand(write, writeError));
   cmd.addCommand(buildListCommand(write));
   cmd.addCommand(buildInspectCommand(write, writeError));
   cmd.addCommand(buildEditCommand(write, writeError));
@@ -352,10 +452,6 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
           throw new CliUserError(`Panel "${name}" already exists`);
         }
 
-        const yamlPath = panelYamlPath(ctx.dataHome, name);
-        // Existence is enforced atomically below via O_EXCL ('wx') at write
-        // time — no fs.access pre-check, which would be racy (issue #307).
-
         const fields = await gatherCreateFields(opts, ctx.library, write, writeError);
 
         const mode: DebateMode = fields.mode;
@@ -370,79 +466,302 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
           experts: fields.expertSlugs,
         });
 
-        const yamlContent = yaml.stringify(panel);
-        const checksum = sha256(yamlContent);
-
-        // DB row first so a YAML write failure can roll back cleanly.
-        await ctx.panelRepo.create({
-          name,
-          description: fields.description ?? null,
-          yamlPath,
-          yamlChecksum: checksum,
-        });
-        let yamlWritten = false;
-        try {
-          await fs.mkdir(path.dirname(yamlPath), { recursive: true });
-          // O_EXCL: fail if another concurrent create already wrote here.
-          // Split open from write so a mid-write failure (ENOSPC, EIO, …)
-          // still triggers rollback of the file we just created.
-          let handle: fs.FileHandle;
-          try {
-            handle = await fs.open(yamlPath, "wx");
-          } catch (openErr) {
-            if ((openErr as NodeJS.ErrnoException).code === "EEXIST") {
-              writeError(`Panel YAML already exists at ${displayPath(yamlPath)}\n`);
-              throw new CliUserError(`Panel "${name}" already exists at ${yamlPath}`);
-            }
-            throw openErr;
-          }
-          yamlWritten = true;
-          try {
-            await handle.writeFile(yamlContent, "utf-8");
-          } catch (writeErr) {
-            // Preserve the primary write failure if close() also fails —
-            // a secondary close error must not mask the ENOSPC/EIO root
-            // cause the operator needs to see.
-            try {
-              await handle.close();
-            } catch {
-              /* swallow secondary cleanup error */
-            }
-            throw writeErr;
-          }
-          await handle.close();
-          await ctx.panelRepo.setMembers(name, fields.expertSlugs);
-          await fs.mkdir(panelDocsDir(ctx.dataHome, name), { recursive: true });
-        } catch (err) {
-          const rollbackErrors: unknown[] = [];
-          try {
-            await ctx.panelRepo.delete(name);
-          } catch (deleteErr) {
-            rollbackErrors.push(deleteErr);
-          }
-          // Only unlink the YAML if we are the writer that created it; an
-          // EEXIST collision means the file belongs to another process.
-          if (yamlWritten) {
-            try {
-              await fs.unlink(yamlPath);
-            } catch (unlinkErr) {
-              const code = (unlinkErr as NodeJS.ErrnoException).code;
-              if (code !== "ENOENT") rollbackErrors.push(unlinkErr);
-            }
-          }
-          if (rollbackErrors.length > 0) {
-            throw new AggregateError(
-              [err, ...rollbackErrors],
-              `Failed to create panel "${name}" and rollback also failed — storage may be inconsistent`,
-            );
-          }
-          throw err;
-        }
+        const { yamlPath } = await persistPanelArtifacts(ctx, panel, writeError);
 
         write(`✓ Panel "${name}" created at ${displayPath(yamlPath)}\n`);
         write(`  Experts: ${fields.expertSlugs.join(", ")}\n`);
       });
     });
+  return cmd;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// save (T9) — promote a debate session into a reusable library panel
+// ──────────────────────────────────────────────────────────────────────
+
+/**
+ * Schema for the `ResolvedPanelDefinition` that `council convene` stores in
+ * a session's `config_json.definition`. Experts MUST be fully inline (the
+ * promotion creates real library experts from them) — a slug-string entry
+ * would have nothing to promote.
+ */
+const StoredPanelDefinitionSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().min(1).optional(),
+  defaults: PanelDefaultsSchema.optional(),
+  experts: z.array(ExpertDefinitionSchema).min(1).max(8),
+});
+
+type StoredDefinition = z.infer<typeof StoredPanelDefinitionSchema>;
+
+type StoredDefinitionResult =
+  | { readonly kind: "ok"; readonly definition: StoredDefinition }
+  | { readonly kind: "absent" }
+  | { readonly kind: "invalid"; readonly message: string };
+
+/**
+ * Read and validate the stored panel definition from a session's
+ * `config_json`. Distinguishes three cases so the command can emit a
+ * precise error: the key is absent (older session, predates the enabler),
+ * present-but-malformed (corrupt), or a usable definition.
+ */
+function parseStoredDefinition(configJson: string): StoredDefinitionResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(configJson);
+  } catch {
+    return { kind: "absent" };
+  }
+  if (parsed === null || typeof parsed !== "object" || !("definition" in parsed)) {
+    return { kind: "absent" };
+  }
+  const definition = (parsed as { definition: unknown }).definition;
+  if (definition === undefined || definition === null) {
+    return { kind: "absent" };
+  }
+  const result = StoredPanelDefinitionSchema.safeParse(definition);
+  if (!result.success) {
+    return { kind: "invalid", message: result.error.issues.map((i) => i.message).join("; ") };
+  }
+  return { kind: "ok", definition: result.data };
+}
+
+/**
+ * Lowercase-kebab a composed panel name so it satisfies {@link PANEL_NAME_RE}
+ * (must start with a letter). Used to derive a default library name when the
+ * user does not pass one to `panel save`.
+ */
+function slugifyPanelName(name: string): string {
+  const base = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (base.length === 0) return "panel";
+  return /^[a-z]/.test(base) ? base : `panel-${base}`;
+}
+
+/**
+ * Find a free library panel name by suffixing `-2`, `-3`, … when `base`
+ * (or a candidate) already exists as a `panel_library` row or YAML file.
+ * Non-destructive: promotion never clobbers an existing panel.
+ */
+async function assignFreePanelName(ctx: PanelContext, base: string): Promise<string> {
+  let candidate = base;
+  let n = 2;
+  for (;;) {
+    const rowExists = (await ctx.panelRepo.findByName(candidate)) !== undefined;
+    const fileExists = await pathExists(panelYamlPath(ctx.dataHome, candidate));
+    if (!rowExists && !fileExists) return candidate;
+    candidate = `${base}-${n}`;
+    n += 1;
+  }
+}
+
+/**
+ * Find a free expert slug by suffixing `-2`, `-3`, … when `base` already
+ * exists in the library or has been claimed earlier in THIS promotion
+ * (`taken` guards against intra-batch collisions when two source experts
+ * resolve to the same slug).
+ */
+async function assignFreeExpertSlug(
+  ctx: PanelContext,
+  base: string,
+  taken: ReadonlySet<string>,
+): Promise<string> {
+  let candidate = base;
+  let n = 2;
+  for (;;) {
+    const inLibrary = (await ctx.library.get(candidate)) !== null;
+    if (!taken.has(candidate) && !inLibrary) return candidate;
+    candidate = `${base}-${n}`;
+    n += 1;
+  }
+}
+
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await fs.stat(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+interface SaveOptions {
+  readonly latest?: boolean;
+}
+
+function buildSaveCommand(write: Writer, writeError: Writer): Command {
+  const cmd = new Command("save");
+  cmd
+    .description(
+      "Promote a debate session (e.g. an auto-composed `convene` run) into a reusable library panel + experts.",
+    )
+    .argument("[session]", "Session name or unique prefix to promote (omit when using --latest)")
+    .argument(
+      "[name]",
+      "Name for the new library panel (kebab-case). Defaults to the panel's composed name.",
+    )
+    .option("--latest", "Promote the most recently active session instead of naming one")
+    .action(
+      async (sessionArg: string | undefined, nameArg: string | undefined, opts: SaveOptions) => {
+        // With --latest the session is auto-resolved, so a lone positional
+        // is interpreted as the NEW panel name (`save --latest mypanel`).
+        let sessionSelector = sessionArg;
+        let panelNameArg = nameArg;
+        if (opts.latest === true && panelNameArg === undefined) {
+          panelNameArg = sessionArg;
+          sessionSelector = undefined;
+        }
+
+        await withPanelContext(async (ctx) => {
+          const sessionName = await resolveSession({
+            db: ctx.db,
+            dataHome: ctx.dataHome,
+            panelArg: sessionSelector,
+            latest: opts.latest === true,
+            writeError,
+            missingPanelMessage:
+              "Session name is required. Pass `council panel save <session> [name]` or use --latest.",
+          });
+
+          const session = await ctx.runtimePanelRepo.findByName(sessionName);
+          if (!session) {
+            writeError(`Session "${stripControlChars(sessionName)}" not found.\n`);
+            throw new CliUserError(`panel save: session "${sessionName}" not found.`);
+          }
+
+          const stored = parseStoredDefinition(session.configJson);
+          if (stored.kind === "absent") {
+            writeError(
+              `Session "${stripControlChars(sessionName)}" has no stored panel definition, so it cannot be saved ` +
+                `as a library panel. Only sessions created by newer versions of ` +
+                `\`council convene\` carry the data needed to promote them (older sessions predate ` +
+                `this feature).\n`,
+            );
+            throw new CliUserError(
+              `panel save: session "${sessionName}" has no stored panel definition.`,
+            );
+          }
+          if (stored.kind === "invalid") {
+            writeError(
+              `Session "${stripControlChars(sessionName)}" has a stored panel definition that is invalid or ` +
+                `corrupt and cannot be promoted: ${stored.message}\n`,
+            );
+            throw new CliUserError(
+              `panel save: session "${sessionName}" has an invalid stored panel definition.`,
+            );
+          }
+          const definition = stored.definition;
+
+          // Resolve the requested library name (default: the composed name).
+          const requestedName =
+            panelNameArg !== undefined && panelNameArg.length > 0
+              ? panelNameArg
+              : slugifyPanelName(definition.name);
+          if (!PANEL_NAME_RE.test(requestedName)) {
+            writeError(
+              `Invalid panel name "${stripControlChars(requestedName)}": must be kebab-case (lowercase letters, ` +
+                `digits, hyphens; must start with a letter).\n`,
+            );
+            throw new CliUserError(`panel save: invalid panel name "${requestedName}".`);
+          }
+
+          const finalPanelName = await assignFreePanelName(ctx, requestedName);
+
+          // Create library experts, suffixing slugs that already exist.
+          // Track the slugs created during THIS operation so a partial
+          // failure (a later create, or the panel persist, throwing after
+          // ≥1 expert was created) can be compensated by deleting exactly
+          // those experts — leaving pre-existing library data untouched and
+          // preventing orphaned experts (and -2/-3 duplicate accrual on retry).
+          const claimedSlugs = new Set<string>();
+          const memberSlugs: string[] = [];
+          const expertRenames: { readonly from: string; readonly to: string }[] = [];
+          const createdSlugs: string[] = [];
+          try {
+            for (const expert of definition.experts) {
+              const finalSlug = await assignFreeExpertSlug(ctx, expert.slug, claimedSlugs);
+              claimedSlugs.add(finalSlug);
+              if (finalSlug !== expert.slug) {
+                expertRenames.push({ from: expert.slug, to: finalSlug });
+              }
+              await ctx.library.create(allowlistExpertDefinition(expert, finalSlug));
+              createdSlugs.push(finalSlug);
+              memberSlugs.push(finalSlug);
+            }
+
+            // Build + persist the library panel referencing the new slugs,
+            // reusing the exact `panel create` write path.
+            const defaults: { mode: DebateMode; maxRounds?: number; model?: string } = {
+              mode: definition.defaults?.mode ?? "freeform",
+            };
+            if (definition.defaults?.maxRounds !== undefined) {
+              defaults.maxRounds = definition.defaults.maxRounds;
+            }
+            if (definition.defaults?.model !== undefined) {
+              defaults.model = definition.defaults.model;
+            }
+
+            const panel: PanelDefinition = PanelDefinitionSchema.parse({
+              name: finalPanelName,
+              ...(definition.description ? { description: definition.description } : {}),
+              defaults,
+              experts: memberSlugs,
+            });
+
+            const { yamlPath } = await persistPanelArtifacts(ctx, panel, writeError);
+
+            write(
+              `✓ Saved session "${stripControlChars(sessionName)}" as panel "${stripControlChars(
+                finalPanelName,
+              )}" at ${displayPath(yamlPath)}\n`,
+            );
+            write(`  Experts: ${memberSlugs.join(", ")}\n`);
+            if (finalPanelName !== requestedName) {
+              write(
+                `  Note: a panel named "${stripControlChars(
+                  requestedName,
+                )}" already existed; saved as "${stripControlChars(finalPanelName)}".\n`,
+              );
+            }
+            for (const rename of expertRenames) {
+              write(
+                `  Note: expert slug "${rename.from}" already existed; saved as "${rename.to}".\n`,
+              );
+            }
+            write(
+              `\nStart a fresh debate with this panel: council chat ${stripControlChars(
+                finalPanelName,
+              )}\n`,
+            );
+          } catch (err) {
+            // Compensating rollback: delete ONLY the experts this operation
+            // created, mirroring the rollback + AggregateError pattern in
+            // persistPanelArtifacts. Surface the original error after cleanup
+            // so the caller still sees the root cause. Pre-existing library
+            // data is never touched (we remove exactly what we added).
+            const rollbackErrors: unknown[] = [];
+            for (const slug of createdSlugs) {
+              try {
+                await ctx.library.delete(slug, { force: true });
+              } catch (deleteErr) {
+                rollbackErrors.push(deleteErr);
+              }
+            }
+            if (rollbackErrors.length > 0) {
+              throw new AggregateError(
+                [err, ...rollbackErrors],
+                `Failed to save panel "${finalPanelName}" and rollback of newly created experts ` +
+                  `also failed — library may be inconsistent`,
+              );
+            }
+            throw err;
+          }
+        });
+      },
+    );
   return cmd;
 }
 

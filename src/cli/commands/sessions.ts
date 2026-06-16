@@ -211,7 +211,9 @@ export function buildSessionsCommand(depsOrWrite?: SessionsCommandDeps | Writer)
         }
 
         write(
-          "\nPanels are templates; sessions are debate runs. Use 'council panel list' for templates.\n",
+          "\nPanels are reusable library templates; sessions are individual debate runs. " +
+            "Use 'council panel list' to see saved panels, or " +
+            "'council panel save <session> [name]' to keep this run's panel for reuse.\n",
         );
         write("\x1b[2mNext: council memory inspect <panel> | council export <panel>\x1b[0m\n");
       } finally {

@@ -100,3 +100,46 @@ export const ExpertDefinitionSchema = z
 export type Expertise = z.infer<typeof ExpertiseSchema>;
 export type ExpertDefinition = z.infer<typeof ExpertDefinitionSchema>;
 export type ExpertKind = "generic" | "persona";
+
+/**
+ * Return a NEW expert object containing ONLY the fields defined by
+ * {@link ExpertDefinitionSchema}, dropping any unexpected runtime property.
+ *
+ * Defense-in-depth: upstream Zod parsing already strips unknown keys, but
+ * write sinks that spread a stored expert (`{ ...expert }`) or serialize a
+ * resolved template into persistent storage can leak provider-injected or
+ * prototype-polluted properties if the object was ever constructed outside
+ * the schema gate. Constructing an explicit allowlist at every such sink
+ * closes that gap. Every legitimate field is preserved so the persisted
+ * shape remains fully re-resolvable (round-trip integrity for `panel save`).
+ *
+ * @param expert    the source expert definition.
+ * @param slugOverride optional replacement slug (used when promotion assigns
+ *                  a collision-free slug).
+ */
+export function allowlistExpertDefinition(
+  expert: ExpertDefinition,
+  slugOverride?: string,
+): ExpertDefinition {
+  return {
+    slug: slugOverride ?? expert.slug,
+    displayName: expert.displayName,
+    role: expert.role,
+    expertise: {
+      weightedEvidence: [...expert.expertise.weightedEvidence],
+      referenceCases: [...expert.expertise.referenceCases],
+      notExpertIn: [...expert.expertise.notExpertIn],
+    },
+    epistemicStance: expert.epistemicStance,
+    kind: expert.kind,
+    ...(expert.model !== undefined ? { model: expert.model } : {}),
+    ...(expert.debateProtocol !== undefined ? { debateProtocol: expert.debateProtocol } : {}),
+    ...(expert.outputContract !== undefined ? { outputContract: expert.outputContract } : {}),
+    ...(expert.forbiddenMoves !== undefined ? { forbiddenMoves: [...expert.forbiddenMoves] } : {}),
+    ...(expert.personality !== undefined ? { personality: expert.personality } : {}),
+    ...(expert.personaDescription !== undefined
+      ? { personaDescription: expert.personaDescription }
+      : {}),
+    ...(expert.docsPath !== undefined ? { docsPath: expert.docsPath } : {}),
+  };
+}

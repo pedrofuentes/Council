@@ -22,6 +22,28 @@
 
 <!-- Add new decisions below this line, most recent first -->
 
+### ADR-020: Promote sessions to library panels via `panel save` (suffix on name collision)
+**Date**: 2026-06-15
+**Status**: Accepted
+**Context**: `council convene <topic>` without `--template` auto-composes a panel, but that panel exists only as a timestamped *session* (visible in `council sessions`) — it is never written to the reusable library, so `council panels` shows "No panels found" and users cannot `council chat` with a panel they just convened. The composed expertise was discarded after each run. Closing this gap (T9) required two sub-decisions: (1) where to store the data needed to reconstruct a library panel from a session, and (2) what to do when a promoted panel name or expert slug already exists in the library.
+**Decision**:
+- **Enabler (no migration)**: at convene time, persist the full `ResolvedPanelDefinition` (structured experts: slug/role/expertise/epistemicStance + defaults) as JSON under a new `definition` key inside the session's existing `panels.config_json` column. No schema change — `config_json` is already free-form JSON, and existing readers key off `template`/`mode`/`engine`, which are untouched.
+- **New opt-in command** `council panel save <session> [name]` (also `--latest`) reads that stored definition and promotes the session into a real library panel + experts, reusing `FileExpertLibrary.create` and the exact `panel create` write path (extracted into a shared `persistPanelArtifacts` helper). Session resolution reuses `resolveSession` (exact / unique-prefix / `--latest`), consistent with `resume`/`export`.
+- **Name-collision policy: suffix `-2`, `-3`, …** for both the panel name and any colliding expert slugs. Promotion is non-destructive: it never overwrites or silently reuses an existing library panel/expert. Renames are surfaced in the command output ("Note: … already existed; saved as …").
+**Alternatives considered**:
+- **A dedicated `panel_definition` table / DB migration** — rejected: migrations are HUMAN-REQUIRED in this repo, and `config_json` already carries per-session config. JSON-in-column is backward-compatible and reversible.
+- **Auto-save every auto-composed panel to the library** — rejected: pollutes the library with one entry per convene run; promotion should be a deliberate, opt-in act. The convene banner + tip now point users at `panel save` instead.
+- **Error on name/slug collision** — rejected as the default: forces the user to re-run with a different name and makes promotion fail late (after some experts may exist). Suffixing always succeeds and is easy to rename later. (Considered an `--overwrite` flag; deferred — destructive and unnecessary for the core flow.)
+- **Overwrite existing artifacts** — rejected: silently clobbering a hand-authored library panel/expert is data loss.
+**Consequences**:
+- ✅ A convened panel can be kept with one command; afterwards `council panels` lists it and `council chat <name>` resolves it (via `loadPanel`).
+- ✅ Backward compatible: sessions created before this feature simply lack the `definition` key; `panel save` reports a clear `CliUserError` ("no stored panel definition … predates this feature") rather than crashing.
+- ✅ DRY: `panel create` and `panel save` share one persistence path, so both produce identical, valid library panels (same rollback semantics).
+- ⚠️ Repeated saves of the same session accumulate suffixed copies (`mypanel-2`, `mypanel-3`, …) rather than updating in place. Acceptable for an opt-in promote action; an explicit update/overwrite mode can be added later if needed.
+- ⚠️ Suffixing can in theory exceed the 64-char slug limit for very long base slugs; not handled specially (composed slugs are short). Revisit if it surfaces.
+
+
+
 ### ADR-019: Custom in-process TypeScript extractors, not Microsoft MarkItDown
 **Date**: 2026-06-14
 **Status**: Accepted
