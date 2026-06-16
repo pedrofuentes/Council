@@ -42,6 +42,12 @@ export default defineConfig({
     testTimeout: 20_000,
     hookTimeout: 30_000,
 
+    // Bounded retry for transient Windows subprocess-timeout flakes (#860/#972/#863/#936).
+    // Windows-only so the Ubuntu CI signal is never masked. retry re-runs ONLY failed
+    // tests, so green tests are unaffected and a deterministic failure still exhausts all
+    // retries (a real bug is NOT hidden — it just runs a few extra times before failing).
+    retry: process.platform === "win32" ? 2 : 0,
+
     // Per-process test isolation: tests/setup.ts redirects COUNCIL_HOME
     // to a per-process temp dir so commands that touch the filesystem
     // cannot pollute the user's real ~/.council/ directory.
