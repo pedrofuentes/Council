@@ -236,13 +236,20 @@ describe("DX-11: expert delete --force lists affected panels", () => {
       else process.env["COUNCIL_HOME"] = origHome;
       if (origDataHome === undefined) delete process.env["COUNCIL_DATA_HOME"];
       else process.env["COUNCIL_DATA_HOME"] = origDataHome;
+      // Best-effort cleanup with a BOUNDED retry budget. On Windows, @libsql
+      // releases the council.db `-wal`/`-shm` handles slightly after
+      // `db.destroy()`, so an immediate `rm` hits transient EPERM/EBUSY.
+      // Node's fs.rm backoff is `retryDelay * 2^attempt` PER locked file, so a
+      // wide budget (e.g. 5 × 200 ms) compounds to ~20 s across the three
+      // SQLite files and pushes this test over its timeout. Mirror the proven
+      // sibling teardown (panel-delete.test.ts) — 3 × 50 ms gives up fast.
       await fs
-        .rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+        .rm(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 })
         .catch(() => {
           /* best-effort */
         });
       await fs
-        .rm(dataHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+        .rm(dataHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 })
         .catch(() => {
           /* best-effort */
         });
