@@ -10,6 +10,10 @@
  * - A11Y-13: TERM=dumb auto-detection (covered by A11Y-10)
  * - A11Y-14: Ink fallback on render crash
  */
+import * as os from "node:os";
+import * as path from "node:path";
+import * as fs from "node:fs/promises";
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { selectRenderer } from "../../../../src/cli/renderers/select.js";
@@ -17,6 +21,12 @@ import { PlainRenderer } from "../../../../src/cli/renderers/plain.js";
 import { InkRenderer } from "../../../../src/cli/renderers/ink/InkRenderer.js";
 import { createChatRenderer } from "../../../../src/cli/renderers/chat-renderer.js";
 import type { Sink } from "../../../../src/cli/renderers/types.js";
+import type { ChatInputProvider } from "../../../../src/cli/commands/chat.js";
+import { FileExpertLibrary } from "../../../../src/core/expert-library.js";
+import type { ExpertDefinition } from "../../../../src/core/expert.js";
+import { createDatabase } from "../../../../src/memory/db.js";
+import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
+import { copyTemplateDb } from "../../../helpers/template-db.js";
 
 // ── Helpers ──
 
@@ -246,45 +256,160 @@ describe("A11Y-11: chat command stdin.isTTY check", () => {
     expect(isInteractiveTerminal(undefined)).toBe(false);
   });
 
-  it("buildChatCommand rejects with CliUserError when stdin is not a TTY", async () => {
-    const { buildChatCommand } = await import(
-      "../../../../src/cli/commands/chat.js"
-    );
-    const { CliUserError } = await import(
-      "../../../../src/cli/cli-user-error.js"
-    );
-
-    // Build command without inputProvider — the TTY guard should fire
-    const cmd = buildChatCommand({});
-
-    // Save and mock process.stdin.isTTY
-    const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
-    Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
-
-    try {
-      // Commander catches errors from .action() — we need to invoke the action
-      // by calling parseAsync. The command will throw CliUserError before any DB/engine work.
-      let caughtError: unknown;
-      cmd.exitOverride(); // prevent process.exit
-      try {
-        await cmd.parseAsync(["node", "chat", "some-expert", "--engine", "mock"], { from: "user" });
-      } catch (err: unknown) {
-        caughtError = err;
-      }
-
-      // Commander wraps errors — unwrap if needed
-      const actual = caughtError instanceof Error && "nestedError" in caughtError
-        ? (caughtError as { nestedError: unknown }).nestedError
-        : caughtError;
-      expect(actual).toBeInstanceOf(CliUserError);
-      expect((actual as Error).message).toContain("interactive terminal");
-      expect((actual as Error).message).toContain("council ask");
-    } finally {
-      if (originalIsTTY) {
-        Object.defineProperty(process.stdin, "isTTY", originalIsTTY);
-      } else {
-        delete (process.stdin as Record<string, unknown>)["isTTY"];
-      }
+  // The TTY guard fires only AFTER the target is validated and resolved
+  // (production validates the target BEFORE the TTY check, see chat/index.ts).
+  // These tests therefore seed a *resolvable* expert in a hermetic COUNCIL_HOME
+  // so the command actually reaches the guard, then assert the guarantee.
+  describe("buildChatCommand TTY guard (resolvable target)", () => {
+    interface TtyTestEnv {
+      readonly home: string;
+      readonly dataHome: string;
+      readonly originalHome: string | undefined;
+      readonly originalDataHome: string | undefined;
     }
+
+    const SAMPLE: ExpertDefinition = {
+      slug: "dahlia-cto",
+      displayName: "Dahlia Renner (CTO)",
+      role: "Skeptical CTO with 20 years of experience",
+      expertise: {
+        weightedEvidence: ["production incident data"],
+        referenceCases: [],
+        notExpertIn: [],
+      },
+      epistemicStance: "Bayesian skeptic",
+      kind: "generic",
+    };
+
+    function scriptedInput(lines: readonly string[]): ChatInputProvider {
+      let i = 0;
+      return {
+        async readLine(): Promise<string | null> {
+          if (i >= lines.length) return null;
+          const line = lines[i] ?? null;
+          i += 1;
+          return line;
+        },
+        close(): void {
+          /* no-op */
+        },
+      };
+    }
+
+    let env: TtyTestEnv;
+
+    beforeEach(async () => {
+      const home = await fs.mkdtemp(path.join(os.tmpdir(), "council-a11y11-home-"));
+      const dataHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-a11y11-data-"));
+      const originalHome = process.env["COUNCIL_HOME"];
+      const originalDataHome = process.env["COUNCIL_DATA_HOME"];
+      process.env["COUNCIL_HOME"] = home;
+      process.env["COUNCIL_DATA_HOME"] = dataHome;
+      await copyTemplateDb(path.join(home, "council.db"));
+      // Seed a resolvable expert so the command passes target validation and
+      // reaches the TTY guard.
+      const db = await createDatabase(path.join(home, "council.db"));
+      try {
+        await new FileExpertLibrary(dataHome, db).create(SAMPLE);
+      } finally {
+        await db.destroy();
+      }
+      env = { home, dataHome, originalHome, originalDataHome };
+    });
+
+    afterEach(async () => {
+      if (env.originalHome === undefined) delete process.env["COUNCIL_HOME"];
+      else process.env["COUNCIL_HOME"] = env.originalHome;
+      if (env.originalDataHome === undefined) delete process.env["COUNCIL_DATA_HOME"];
+      else process.env["COUNCIL_DATA_HOME"] = env.originalDataHome;
+      for (const dir of [env.home, env.dataHome]) {
+        try {
+          await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    it("buildChatCommand rejects with CliUserError when stdin is not a TTY", async () => {
+      const { buildChatCommand } = await import(
+        "../../../../src/cli/commands/chat.js"
+      );
+      const { CliUserError } = await import(
+        "../../../../src/cli/cli-user-error.js"
+      );
+
+      // No inputProvider — the guard is `!deps.inputProvider && !isInteractiveTerminal(...)`,
+      // so an inputProvider would SKIP the guard. It must be absent here.
+      const cmd = buildChatCommand({
+        write: () => undefined,
+        writeError: () => undefined,
+      });
+      cmd.exitOverride(); // prevent process.exit
+
+      // Save and force a non-TTY stdin.
+      const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+      Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+
+      try {
+        // Default parsing strips the node/script prefix, so <target> resolves to
+        // the seeded "dahlia-cto" expert; the command then reaches the TTY guard.
+        let caughtError: unknown;
+        try {
+          await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+        } catch (err: unknown) {
+          caughtError = err;
+        }
+
+        // Commander wraps errors — unwrap if needed.
+        const actual = caughtError instanceof Error && "nestedError" in caughtError
+          ? (caughtError as { nestedError: unknown }).nestedError
+          : caughtError;
+        expect(actual).toBeInstanceOf(CliUserError);
+        expect((actual as Error).message).toContain("interactive terminal");
+        expect((actual as Error).message).toContain("council ask");
+      } finally {
+        if (originalIsTTY) {
+          Object.defineProperty(process.stdin, "isTTY", originalIsTTY);
+        } else {
+          delete (process.stdin as Record<string, unknown>)["isTTY"];
+        }
+      }
+    });
+
+    it("does NOT raise the interactive-terminal error when an inputProvider is supplied (positive control)", async () => {
+      const { buildChatCommand } = await import(
+        "../../../../src/cli/commands/chat.js"
+      );
+
+      // Same resolvable target and same non-TTY stdin, but WITH an inputProvider:
+      // the guard short-circuits on `!deps.inputProvider`, proving the negative
+      // test above is non-vacuous — it fails ONLY because the guard runs.
+      let errOutput = "";
+      const cmd = buildChatCommand({
+        write: () => undefined,
+        writeError: (s) => {
+          errOutput += s;
+        },
+        engineFactory: () => new MockEngine(),
+        inputProvider: () => scriptedInput([]),
+      });
+      cmd.exitOverride();
+
+      const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+      Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+
+      try {
+        await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+      } finally {
+        if (originalIsTTY) {
+          Object.defineProperty(process.stdin, "isTTY", originalIsTTY);
+        } else {
+          delete (process.stdin as Record<string, unknown>)["isTTY"];
+        }
+      }
+
+      expect(errOutput).not.toContain("interactive terminal");
+    });
   });
 });
