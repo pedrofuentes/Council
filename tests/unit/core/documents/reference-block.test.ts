@@ -9,6 +9,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  appendReferenceDocuments,
   capSnippetsByChars,
   REFERENCE_DOCS_CHAR_CAP,
 } from "../../../../src/core/documents/reference-block.js";
@@ -49,5 +50,41 @@ describe("capSnippetsByChars", () => {
 describe("REFERENCE_DOCS_CHAR_CAP", () => {
   it("is a sane positive default budget", () => {
     expect(REFERENCE_DOCS_CHAR_CAP).toBeGreaterThan(0);
+  });
+});
+
+describe("appendReferenceDocuments — figure/number grounding guidance (F04)", () => {
+  // F04: an expert relabelled a "$4.2B TAM" figure as "$4.2B revenue" — the
+  // number was lifted from retrieved context but attached to the wrong
+  // concept. The reference block must instruct experts to preserve a figure's
+  // exact label/context and never reinterpret what a number represents. These
+  // assertions are deterministic — they inspect the constructed prompt string,
+  // not any LLM output.
+  const out = appendReferenceDocuments("what's our revenue?", [
+    snip("The total addressable market (TAM) is $4.2B."),
+  ]);
+
+  it("instructs experts to cite figures with their exact source label/context", () => {
+    expect(out).toMatch(/exact (?:source )?label/i);
+    expect(out).toContain("$4.2B TAM");
+  });
+
+  it("instructs experts not to reinterpret or relabel what a number represents", () => {
+    expect(out).toMatch(/(?:do not|never) reinterpret/i);
+    expect(out).toMatch(/relabel/i);
+  });
+
+  it("instructs experts to ground numeric/factual claims in the retrieved text", () => {
+    expect(out).toMatch(/ground/i);
+    expect(out).toMatch(/(?:numeric|number|figure|quantit)/i);
+  });
+
+  it("still emits the original wrapper and citation guidance (no regression)", () => {
+    expect(out).toContain("[REFERENCE DOCUMENTS]");
+    expect(out).toContain("If these excerpts are relevant to the discussion, cite them.");
+  });
+
+  it("emits no grounding guidance when there are no snippets", () => {
+    expect(appendReferenceDocuments("hello", [])).toBe("hello");
   });
 });
