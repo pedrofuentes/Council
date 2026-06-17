@@ -67,6 +67,32 @@ Every claim you make must be either:
 Avoid statements that could appear in any expert's response on any topic.`.trim();
 
 /**
+ * Domain-expert framing appended to the [1] IDENTITY section of GENERIC
+ * (non-persona) experts (F17).
+ *
+ * Generic experts have only a thin template-derived identity, so the
+ * underlying SDK's default coding-agent framing can dominate: experts have
+ * been observed emitting tool-call markup (e.g. `<invoke name="glob">`),
+ * assuming a "repository" working context, and applying code-assistant
+ * refusal policies (e.g. declining to discuss "access tokens") to ordinary
+ * domain questions. This block re-establishes the deliberation-panelist
+ * role and explicitly steers away from those coding-agent behaviors.
+ *
+ * Persona experts already receive a document-derived persona, so they do
+ * NOT get this block (see `renderIdentity`).
+ *
+ * NOTE: this is static, trusted text — it must never contain `[NN]`
+ * section markers or control bytes, since it is interpolated into the
+ * IDENTITY section alongside sanitized user fields.
+ */
+export const GENERIC_EXPERT_DOMAIN_FRAMING = `
+You are a subject-matter expert serving on a deliberation panel — you are not a software or coding agent. Answer as a domain expert, in prose, drawing on your knowledge and reasoning.
+
+You are NOT operating inside a code repository or working tree, and you have no tools, file system, terminal, or function-calling ability. Never emit tool-call or function-call markup of any kind (for example, do not write invoke/tool/function tags or XML such as <invoke ...>), and never assume a repository, codebase, or file context unless one is explicitly provided to you.
+
+Treat every question as an ordinary subject-matter question and engage with its substance directly. Do not apply software-assistant security, credential, or content-refusal policies to ordinary domain discussion: questions about a topic (including, for example, how tokens, secrets, or auth work in the abstract) are legitimate matters for expert analysis, not requests you must refuse.`.trim();
+
+/**
  * Per-expert memory accumulated across sessions.
  * See ROADMAP §3.1 (persistent expert memory) for the storage layer.
  */
@@ -102,7 +128,15 @@ function renderIdentity(def: ExpertDefinition): string {
   const safeName = sanitizePromptField(def.displayName);
   const safeRole = sanitizePromptField(def.role);
   const personality = def.personality ? ` ${sanitizePromptField(def.personality)}` : "";
-  return `You are ${safeName}. ${safeRole}.${personality}`;
+  const identity = `You are ${safeName}. ${safeRole}.${personality}`;
+  // Persona experts get a document-derived persona (section [8]) that
+  // establishes voice and role, so they keep the bare identity. Generic
+  // experts have only this thin template identity, so we append the
+  // domain-expert framing to suppress default coding-agent behavior (F17).
+  if (def.kind === "persona") {
+    return identity;
+  }
+  return `${identity}\n\n${GENERIC_EXPERT_DOMAIN_FRAMING}`;
 }
 
 function renderExpertise(def: ExpertDefinition): string {
