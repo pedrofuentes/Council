@@ -184,6 +184,18 @@ export async function runPanelChat(opts: PanelChatOptions): Promise<void> {
           "warn",
         );
       }
+      // F24: when no documents at all were found (and all folders scanned
+      // successfully), tell the user so they're not left wondering whether
+      // docs loaded. Distinct from T03's per-expert persona/generic warning.
+      if (
+        result.indexed === 0 &&
+        result.failed === 0 &&
+        result.unchanged === 0 &&
+        result.needsReview === 0 &&
+        result.foldersFailed === 0
+      ) {
+        renderer.showSystem("No documents loaded for this panel.", "info");
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       renderer.showSystem(`Panel document scan failed (continuing): ${msg}`, "warn");
@@ -207,7 +219,7 @@ export async function runPanelChat(opts: PanelChatOptions): Promise<void> {
     } else if (willCreateFresh) {
       session = await repo.createSession({ targetType: "panel", targetSlug: target });
       renderer.showSessionStatus(
-        `Starting group chat with ${panel.name} (${resolved.length} experts) — use @<slug> to address specific experts`,
+        `Starting panel chat with ${panel.name} (${resolved.length} experts) — use @<slug> to address specific experts`,
       );
     } else if (resumingSession) {
       session = resumingSession;
