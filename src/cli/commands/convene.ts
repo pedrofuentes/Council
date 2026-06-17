@@ -59,6 +59,7 @@ import { PanelRepository } from "../../memory/repositories/panels.js";
 import { runExtractMemoryHook } from "../extract-memory-hook.js";
 
 import { stripControlChars } from "../strip-control-chars.js";
+import { suggestMatch } from "../fuzzy-match.js";
 import { truncatePrompt } from "../renderers/truncate-prompt.js";
 import { defaultErrorWriter, defaultWriter, isQuiet, setQuiet, type Writer } from "./writer.js";
 import {
@@ -411,7 +412,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           await migDb.destroy();
         }
 
-        const panel = await loadPanel(opts.template, dataHome);
+        const panel = await loadPanelFriendly(opts.template, dataHome, writeError);
         const hasSlugRefs = panel.experts.some((e) => typeof e === "string");
         if (!hasSlugRefs) {
           template = assertAllInline(panel, opts.template);
@@ -452,9 +453,21 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           const library = new FileExpertLibrary(dataHome, libDb);
           const { resolved, missing } = await resolveExperts(expertSlugs, library);
           if (missing.length > 0) {
-            const msg = `--experts references experts not in the library: ${missing
-              .map((s) => stripControlChars(s))
-              .join(", ")}. Add them with 'council expert create'.`;
+            const validSlugs = (await library.list()).map((e) => e.slug);
+            const named = missing
+              .map((slug) => {
+                const safe = stripControlChars(slug);
+                const suggestions = suggestMatch(slug, validSlugs);
+                return suggestions.length > 0
+                  ? `'${safe}' (did you mean ${suggestions
+                      .map((s) => `'${stripControlChars(s)}'`)
+                      .join(", ")}?)`
+                  : `'${safe}'`;
+              })
+              .join(", ");
+            const msg =
+              `--experts references experts not in the library: ${named}. ` +
+              `Run 'council expert list' to see valid slugs, or omit --experts to auto-compose a panel from your topic.`;
             writeError(`${msg}\n`);
             throw new CliUserError(msg);
           }
@@ -814,6 +827,38 @@ Wrap topics containing $, !, or backticks in SINGLE quotes to keep them literal:
   });
 
   return cmd;
+}
+
+/**
+ * Matches the validation failure raised when a panel's `experts` array is
+ * empty (Zod `.min(1)` on the experts list). Used to translate the raw Zod
+ * message into friendly, jargon-free guidance at the command boundary.
+ */
+const ZERO_EXPERT_VALIDATION_PATTERN = /experts:.*(too small|expected array|at least 1|>=\s*1)/is;
+
+/**
+ * Load a panel by name, translating the zero-expert schema-validation error
+ * into a friendly message (F11). Other load errors propagate unchanged so the
+ * user still sees actionable detail (bad YAML, traversal rejection, etc.).
+ */
+async function loadPanelFriendly(
+  name: string,
+  dataHome: string,
+  writeError: Writer,
+): Promise<Awaited<ReturnType<typeof loadPanel>>> {
+  try {
+    return await loadPanel(name, dataHome);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (ZERO_EXPERT_VALIDATION_PATTERN.test(message)) {
+      const friendly =
+        `Panel "${stripControlChars(name)}" has no experts. ` +
+        `A panel needs at least one expert — add experts to the panel definition or re-create the panel.`;
+      writeError(`${friendly}\n`);
+      throw new CliUserError(friendly);
+    }
+    throw err;
+  }
 }
 
 function parseFormat(raw: string | undefined): RendererFormat {

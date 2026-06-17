@@ -124,6 +124,29 @@ describe("resolveSession", () => {
     expect(stderr).toContain("Beta topic");
   });
 
+  it("F18: ambiguous prefix includes disambiguation guidance to use the full name", async () => {
+    await seedPanel("code-review-a", "Alpha topic");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await seedPanel("code-review-b", "Beta topic");
+
+    let stderr = "";
+    await expect(
+      resolveSession({
+        db,
+        dataHome: testHome,
+        panelArg: "code-review",
+        writeError: (chunk) => {
+          stderr += chunk;
+        },
+        isNonInteractive: () => true,
+      }),
+    ).rejects.toBeInstanceOf(CliUserError);
+
+    // After listing the matches, tell the user how to disambiguate.
+    expect(stderr).toMatch(/full name/i);
+    expect(stderr).toContain("council resume");
+  });
+
   it("explains when a panel template exists but has no debates yet", async () => {
     const panelsDir = path.join(testHome, "panels");
     await fs.mkdir(panelsDir, { recursive: true });
