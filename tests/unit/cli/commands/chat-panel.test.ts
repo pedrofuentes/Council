@@ -1048,8 +1048,7 @@ describe("panel chat — @mention routing", () => {
     });
   });
 
-  it("unknown @slug surfaces the error and does NOT persist the user turn", async () => {
-    await seedTwoExperts();
+  it("unknown @slug surfaces the error and does NOT persist the user turn", async () => {    await seedTwoExperts();
     await writeUserPanel(env, "panel3", ["panel-a", "panel-b"]);
 
     let err = "";
@@ -1071,6 +1070,46 @@ describe("panel chat — @mention routing", () => {
       // without leaving a stray fragment in the conversation.
       expect(turns.length).toBe(0);
     });
+  });
+
+  it('quoted display-name @mention errors and does NOT silently broadcast', async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "panelq", ["panel-a", "panel-b"]);
+
+    let err = "";
+    const cmd = buildChatCommand({
+      write: () => undefined,
+      writeError: (s) => (err += s),
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(['@"Alice (Architect)" hi there', "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "panelq", "--engine", "mock"]);
+
+    expect(err).toMatch(/display[- ]name/i);
+
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "panelq");
+      const turns = await repo.getTurns(session?.id ?? "");
+      // Must NOT have broadcast to the panel: no user/expert turns persisted.
+      expect(turns.length).toBe(0);
+    });
+  });
+
+  it("startup banner lists the expert slugs so users know what to type", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "panelr", ["panel-a", "panel-b"]);
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "panelr", "--engine", "mock"]);
+
+    expect(out).toContain("@panel-a");
+    expect(out).toContain("@panel-b");
   });
 
   it("non-mentioned experts see the @mention exchange in their context on next turn", async () => {

@@ -4,7 +4,10 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { parseUserInput } from "../../../../src/core/chat/mention-parser.js";
+import {
+  parseUserInput,
+  formatExpertRoster,
+} from "../../../../src/core/chat/mention-parser.js";
 
 const SLUGS: readonly string[] = ["cto", "staff", "sre", "pm"];
 
@@ -118,5 +121,34 @@ describe("parseUserInput", () => {
     expect(() => parseUserInput("@CTO hi", SLUGS)).toThrow(
       /Expert "CTO" is not in this panel/,
     );
+  });
+
+  it("throws on a leading double-quoted display-name mention instead of broadcasting", () => {
+    expect(() => parseUserInput('@"Sasha Lin" what do you think?', SLUGS)).toThrow(
+      /display[- ]name/i,
+    );
+    // It must NOT silently fall through to a general broadcast.
+    expect(() => parseUserInput('@"Sasha Lin" what do you think?', SLUGS)).toThrow(
+      /cto, staff, sre, pm/,
+    );
+  });
+
+  it("throws on a leading single-quoted display-name mention instead of broadcasting", () => {
+    expect(() => parseUserInput("@'Sasha Lin' hello", SLUGS)).toThrow(
+      /display[- ]name/i,
+    );
+  });
+});
+
+describe("formatExpertRoster", () => {
+  it("lists each slug prefixed with @ and explains usage", () => {
+    const out = formatExpertRoster(["cto", "pm"]);
+    expect(out).toContain("@cto");
+    expect(out).toContain("@pm");
+    expect(out).toMatch(/use @/i);
+  });
+
+  it("returns an empty string when there are no slugs", () => {
+    expect(formatExpertRoster([])).toBe("");
   });
 });
