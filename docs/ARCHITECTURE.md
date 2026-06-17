@@ -210,6 +210,7 @@ User input → CLI command → Core (Panel/Debate/Moderator) → Engine (Council
 | File | Purpose |
 |------|---------|
 | `src/engine/index.ts` | CouncilEngine interface — the architectural seam |
+| `src/engine/models.ts` | Canonical `SUPPORTED_MODELS` registry + `isSupportedModel` guard — single source of truth shared by `doctor --models`, the first-run wizard, and `convene --model` validation |
 | `src/engine/copilot/adapter.ts` | Only file importing @github/copilot-sdk |
 | `src/core/debate.ts` | Debate orchestrator, AsyncIterable<DebateEvent> |
 | `src/core/moderator/strategy.ts` | ModeratorStrategy interface |
