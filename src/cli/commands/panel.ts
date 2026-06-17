@@ -562,24 +562,56 @@ async function assignFreePanelName(ctx: PanelContext, base: string): Promise<str
 }
 
 /**
- * Find a free expert slug by suffixing `-2`, `-3`, … when `base` already
- * exists in the library or has been claimed earlier in THIS promotion
- * (`taken` guards against intra-batch collisions when two source experts
- * resolve to the same slug).
+ * Decide whether a defining-equivalent clone of `expert` already exists in
+ * the library and should be REUSED, or whether a fresh clone must be created
+ * (suffixing `-2`, `-3`, … past slugs occupied by *different* experts).
+ *
+ * Equivalence (F22 dedup) is defined on EXISTING data only — no schema field
+ * is added: two experts are equivalent when they share the same base slug
+ * family AND have byte-identical defining content for every field except the
+ * slug (compared via {@link allowlistExpertDefinition}, which yields a stable
+ * key order). This makes repeated `panel save` of the same session idempotent
+ * with respect to expert clones instead of accruing `vc-2`/`vc-3` duplicates,
+ * while never collapsing a genuinely different expert that happens to share a
+ * base slug.
+ *
+ * `claimed` guards against intra-batch collisions: slugs already resolved in
+ * THIS promotion are skipped so two source experts never map to one member.
  */
-async function assignFreeExpertSlug(
+async function resolveExpertSlug(
   ctx: PanelContext,
-  base: string,
-  taken: ReadonlySet<string>,
-): Promise<string> {
+  expert: ExpertDefinition,
+  claimed: ReadonlySet<string>,
+): Promise<{ readonly kind: "reuse" | "create"; readonly slug: string }> {
+  const base = expert.slug;
   let candidate = base;
   let n = 2;
   for (;;) {
-    const inLibrary = (await ctx.library.get(candidate)) !== null;
-    if (!taken.has(candidate) && !inLibrary) return candidate;
+    if (!claimed.has(candidate)) {
+      const existing = await ctx.library.get(candidate);
+      if (existing === null) {
+        return { kind: "create", slug: candidate };
+      }
+      if (expertDefinitionsEquivalent(existing, expert)) {
+        return { kind: "reuse", slug: candidate };
+      }
+    }
     candidate = `${base}-${n}`;
     n += 1;
   }
+}
+
+/**
+ * Structural equality of two expert definitions ignoring their slug. Both
+ * sides are normalized through {@link allowlistExpertDefinition} (fixed key
+ * order, defensively copied arrays) and compared as JSON, so field order in
+ * stored YAML does not affect the result.
+ */
+function expertDefinitionsEquivalent(a: ExpertDefinition, b: ExpertDefinition): boolean {
+  const placeholder = "__dedup__";
+  const normalize = (def: ExpertDefinition): string =>
+    JSON.stringify(allowlistExpertDefinition(def, placeholder));
+  return normalize(a) === normalize(b);
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -685,13 +717,16 @@ function buildSaveCommand(write: Writer, writeError: Writer): Command {
           const createdSlugs: string[] = [];
           try {
             for (const expert of definition.experts) {
-              const finalSlug = await assignFreeExpertSlug(ctx, expert.slug, claimedSlugs);
+              const resolution = await resolveExpertSlug(ctx, expert, claimedSlugs);
+              const finalSlug = resolution.slug;
               claimedSlugs.add(finalSlug);
               if (finalSlug !== expert.slug) {
                 expertRenames.push({ from: expert.slug, to: finalSlug });
               }
-              await ctx.library.create(allowlistExpertDefinition(expert, finalSlug));
-              createdSlugs.push(finalSlug);
+              if (resolution.kind === "create") {
+                await ctx.library.create(allowlistExpertDefinition(expert, finalSlug));
+                createdSlugs.push(finalSlug);
+              }
               memberSlugs.push(finalSlug);
             }
 
