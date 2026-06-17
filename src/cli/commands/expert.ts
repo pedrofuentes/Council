@@ -426,7 +426,7 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
       if (opts.format !== "plain" && opts.format !== "json") {
         throw new CliUserError(`Unknown format "${opts.format}" — use "plain" or "json"`);
       }
-      await withExpertLibrary(async (library, _config, dataHome) => {
+      await withExpertLibrary(async (library, _config, dataHome, db) => {
         const expert = await library.get(slug);
         if (!expert) {
           const all = (await library.list()).map((e) => e.slug);
@@ -436,6 +436,10 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
         }
         const panels = await library.panelsFor(slug);
         const yamlPath = path.join(dataHome, "experts", `${slug}.yaml`);
+        // F20: surface the training-derived persona profile (when one has
+        // been learned) alongside the manually-authored persona description.
+        const profile =
+          expert.kind === "persona" ? await new ProfileRepository(db).findBySlug(slug) : null;
 
         if (opts.format === "json") {
           const json = {
@@ -452,6 +456,7 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
             ...(expert.kind === "persona" && expert.personaDescription
               ? { personaDescription: expert.personaDescription }
               : {}),
+            ...(profile ? { profile } : {}),
           };
           write(JSON.stringify(json, null, 2) + "\n");
           return;
@@ -487,6 +492,25 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
         }
         if (expert.kind === "persona" && expert.personaDescription) {
           write(`Persona:          ${expert.personaDescription}\n`);
+        }
+        if (profile) {
+          write("\n");
+          write("Learned Profile (from training):\n");
+          write(`  Communication Style: ${profile.communicationStyle}\n`);
+          if (profile.decisionPatterns.length > 0) {
+            write(`  Decision Patterns:   ${profile.decisionPatterns.join(", ")}\n`);
+          }
+          if (profile.biases.length > 0) {
+            write(`  Biases:              ${profile.biases.join(", ")}\n`);
+          }
+          if (profile.vocabulary.length > 0) {
+            write(`  Vocabulary:          ${profile.vocabulary.join(", ")}\n`);
+          }
+          write(`  Epistemic Stance:    ${profile.epistemicStance}\n`);
+          write(
+            `  Documents:           ${profile.documentCount} (${profile.totalWords} words)\n`,
+          );
+          write(`  Last Updated:        ${profile.lastUpdated}\n`);
         }
       });
     });
