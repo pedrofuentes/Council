@@ -600,4 +600,117 @@ describe("council docs doctor", () => {
     // A distinct AI-review breakdown line.
     expect(stdout).toMatch(/2 files.*review|awaiting/i);
   });
+
+  it("shows a distinct encrypted/password-protected category when one encrypted file exists (F26)", async () => {
+    const { stdout } = await runDocs(
+      ["doctor", "finance"],
+      depsFor({
+        kind: "scanned",
+        result: scanResult({
+          indexed: 1,
+          failed: 1,
+          files: [
+            fileDetail({ filename: "ok.md", status: "indexed", wordCount: 100 }),
+            fileDetail({
+              filename: "secret.pdf",
+              status: "failed",
+              errorKind: "encrypted-document",
+              errorMessage: "encrypted",
+            }),
+          ],
+        }),
+      }),
+    );
+
+    // Must show a distinct encrypted/password-protected line, not just "pending review"
+    expect(stdout).toMatch(/encrypted|password-protected/i);
+    expect(stdout).toContain("secret.pdf");
+  });
+
+  it("counts multiple encrypted files and lists all their names (F26)", async () => {
+    const { stdout } = await runDocs(
+      ["doctor", "finance"],
+      depsFor({
+        kind: "scanned",
+        result: scanResult({
+          indexed: 1,
+          failed: 2,
+          files: [
+            fileDetail({ filename: "ok.md", status: "indexed", wordCount: 100 }),
+            fileDetail({
+              filename: "locked1.pdf",
+              status: "failed",
+              errorKind: "encrypted-document",
+              errorMessage: "encrypted",
+            }),
+            fileDetail({
+              filename: "locked2.pdf",
+              status: "failed",
+              errorKind: "encrypted-document",
+              errorMessage: "encrypted",
+            }),
+          ],
+        }),
+      }),
+    );
+
+    // Should show "2 files" with encrypted/password-protected label
+    expect(stdout).toMatch(/\b2\b.*(?:encrypted|password-protected)/i);
+    expect(stdout).toContain("locked1.pdf");
+    expect(stdout).toContain("locked2.pdf");
+  });
+
+  it("does not conflate encrypted files with corrupt files (F26)", async () => {
+    const { stdout } = await runDocs(
+      ["doctor", "finance"],
+      depsFor({
+        kind: "scanned",
+        result: scanResult({
+          indexed: 1,
+          failed: 2,
+          files: [
+            fileDetail({ filename: "ok.md", status: "indexed", wordCount: 100 }),
+            fileDetail({
+              filename: "broken.xlsx",
+              status: "failed",
+              errorKind: "corrupt-document",
+              errorMessage: "bad zip",
+            }),
+            fileDetail({
+              filename: "secret.pdf",
+              status: "failed",
+              errorKind: "encrypted-document",
+              errorMessage: "encrypted",
+            }),
+          ],
+        }),
+      }),
+    );
+
+    // Corrupt category should only list the corrupt file
+    expect(stdout).toMatch(/1 file corrupt/i);
+    expect(stdout).toContain("broken.xlsx");
+    // Encrypted category should list the encrypted file distinctly
+    expect(stdout).toMatch(/encrypted|password-protected/i);
+    expect(stdout).toContain("secret.pdf");
+  });
+
+  it("omits the encrypted category line when no encrypted files exist (F26)", async () => {
+    const { stdout, error } = await runDocs(
+      ["doctor", "finance"],
+      depsFor({
+        kind: "scanned",
+        result: scanResult({
+          indexed: 2,
+          files: [
+            fileDetail({ filename: "a.md", status: "indexed", wordCount: 100 }),
+            fileDetail({ filename: "b.pdf", status: "indexed", wordCount: 200 }),
+          ],
+        }),
+      }),
+    );
+
+    expect(error).toBeUndefined();
+    expect(stdout).not.toMatch(/encrypted|password-protected/i);
+  });
 });

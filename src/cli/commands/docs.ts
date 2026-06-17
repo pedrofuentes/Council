@@ -520,6 +520,9 @@ function buildDoctorCommand(
       const unsupported = failed.filter(
         (f) => f.errorKind === "unsupported-format",
       );
+      const encrypted = failed.filter(
+        (f) => f.errorKind === "encrypted-document",
+      );
       const pending = failed.length + needsReview.length;
 
       write(`Panel "${panel}" document health:\n`);
@@ -549,6 +552,12 @@ function buildDoctorCommand(
         const names = unsupported.map((f) => f.filename).join(", ");
         write(
           `  ✘ ${unsupported.length} ${unsupported.length === 1 ? "file" : "files"} unsupported (${names})\n`,
+        );
+      }
+      if (encrypted.length > 0) {
+        const names = encrypted.map((f) => f.filename).join(", ");
+        write(
+          `  🔒 ${encrypted.length} ${encrypted.length === 1 ? "file" : "files"} encrypted/password-protected (${names})\n`,
         );
       }
       if (result.managedFolderFailed) {
