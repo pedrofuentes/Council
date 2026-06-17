@@ -24,7 +24,12 @@ import type { Turn } from "../../../../src/memory/repositories/turns.js";
 import { CliUserError } from "../../../../src/cli/cli-user-error.js";
 import { buildProgram } from "../../../../src/bin/council.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
-import type { ExpertSpec } from "../../../../src/engine/index.js";
+import type {
+  CouncilEngine,
+  EngineEvent,
+  ExpertSpec,
+  SendOptions,
+} from "../../../../src/engine/index.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
 import { DebateRepository } from "../../../../src/memory/repositories/debates.js";
@@ -192,6 +197,57 @@ function makeMockEngine(jsonResponse: string): MockEngine {
   return new MockEngine({
     responses: { [SYNTH_ID]: jsonResponse },
   });
+}
+
+/**
+ * Minimal CouncilEngine stub that returns a different response per send,
+ * draining the seeded list in order (and reusing the last entry for any
+ * further sends). Lets tests drive the conclude synthesizer's retry path
+ * deterministically — e.g. unparsable first, clean JSON second.
+ */
+class RecordingSynthEngine implements CouncilEngine {
+  readonly #responses: string[];
+  #sends = 0;
+
+  constructor(responses: readonly string[]) {
+    this.#responses = [...responses];
+  }
+
+  /** Number of `send()` calls observed so far (one per synthesis attempt). */
+  get sendCount(): number {
+    return this.#sends;
+  }
+
+  async start(): Promise<void> {
+    /* no-op */
+  }
+  async stop(): Promise<void> {
+    /* no-op */
+  }
+  async addExpert(_spec: ExpertSpec): Promise<void> {
+    /* no-op */
+  }
+  async removeExpert(_expertId: string): Promise<void> {
+    /* no-op */
+  }
+  async listModels(): Promise<readonly string[]> {
+    return ["mock-model"];
+  }
+
+  send(opts: SendOptions): AsyncIterable<EngineEvent> {
+    this.#sends += 1;
+    const expertId = opts.expertId;
+    const idx = Math.min(this.#sends - 1, this.#responses.length - 1);
+    const text = this.#responses[idx] ?? "";
+    return (async function* (): AsyncGenerator<EngineEvent, void, void> {
+      yield { kind: "message.delta", expertId, text };
+      yield {
+        kind: "message.complete",
+        expertId,
+        response: { latencyMs: 1, tokensIn: 1, tokensOut: 1 },
+      };
+    })();
+  }
 }
 
 describe("buildConcludeCommand", () => {
@@ -644,6 +700,117 @@ describe("buildConcludeCommand", () => {
     expect(thrown.toLowerCase()).toMatch(/failed to parse|json/);
     // Must NOT leak raw model output
     expect(thrown).not.toContain("this is not json at all");
+  });
+
+  it("recovers from malformed-but-repairable JSON (trailing commas) and still emits a decision framework", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    // A valid synthesis object, but with JSON5-style trailing commas that
+    // strict JSON.parse rejects — the PM-04 "Expected ',' or '}'" failure
+    // class. conclude must repair and still produce the decision document.
+    const withTrailingCommas =
+      "{\n" +
+      '  "consensus": ["Coupling is a real pain point",],\n' +
+      '  "tensions": ["Migration timing is disputed",],\n' +
+      '  "decisionMatrix": [],\n' +
+      '  "recommendation": "Phase the migration behind a feature flag.",\n' +
+      '  "confidence": "medium",\n' +
+      "}";
+    let captured = "";
+    const cmd = buildConcludeCommand({
+      write: (s) => {
+        captured += s;
+      },
+      writeError: () => undefined,
+      engineFactory: () => makeMockEngine(withTrailingCommas),
+      synthesizerId: SYNTH_ID,
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-conclude",
+      seed.panelName,
+      "--engine",
+      "mock",
+      "--format",
+      "json",
+    ]);
+
+    const parsed = JSON.parse(captured.trim()) as ConcludeOutput;
+    expect(parsed.recommendation).toBe("Phase the migration behind a feature flag.");
+    expect(parsed.confidence).toBe("medium");
+  });
+
+  it("retries the synthesizer once when the first response is unparseable, then emits a decision framework", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    // First send: a JSON syntax error (unescaped inner quotes) that no
+    // repair heuristic can fix. Second send: clean JSON. This mirrors the
+    // PM-04 reality that "a re-run often succeeds".
+    const broken =
+      '{"consensus":[],"tensions":[],"decisionMatrix":[],' +
+      '"recommendation":"He said "ship it" loudly","confidence":"low"}';
+    const engine = new RecordingSynthEngine([broken, JSON.stringify(SAMPLE_OUTPUT)]);
+    let captured = "";
+    const cmd = buildConcludeCommand({
+      write: (s) => {
+        captured += s;
+      },
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      synthesizerId: SYNTH_ID,
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-conclude",
+      seed.panelName,
+      "--engine",
+      "mock",
+      "--format",
+      "json",
+    ]);
+
+    const parsed = JSON.parse(captured.trim()) as ConcludeOutput;
+    expect(parsed.recommendation).toBe(SAMPLE_OUTPUT.recommendation);
+    // The synthesizer was called twice: the broken first attempt and the
+    // successful retry.
+    expect(engine.sendCount).toBe(2);
+  });
+
+  it("degrades gracefully with a clear, actionable error (no raw crash) when JSON stays unparseable after retry", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    // Unescaped inner quotes are unrepairable by fence/brace/trailing-comma
+    // heuristics, and the mock returns the same broken text on the retry.
+    const broken =
+      '{"consensus":[],"tensions":[],"decisionMatrix":[],' +
+      '"recommendation":"He said "ship it" loudly","confidence":"low"}';
+    let errOutput = "";
+    const cmd = buildConcludeCommand({
+      write: () => undefined,
+      writeError: (s) => {
+        errOutput += s;
+      },
+      engineFactory: () => makeMockEngine(broken),
+      synthesizerId: SYNTH_ID,
+    });
+    cmd.exitOverride();
+
+    let thrownErr: Error | undefined;
+    try {
+      await cmd.parseAsync(["node", "council-conclude", seed.panelName, "--engine", "mock"]);
+    } catch (err) {
+      thrownErr = err instanceof Error ? err : undefined;
+    }
+
+    // Graceful: a CliUserError (message already surfaced via writeError),
+    // NOT a raw thrown JSON.parse exception that crashes to exit code 4.
+    expect(thrownErr).toBeInstanceOf(CliUserError);
+    // The user got an actionable, non-crash message that points at a re-run.
+    expect(errOutput.toLowerCase()).toMatch(/json/);
+    expect(errOutput.toLowerCase()).toMatch(/again|re-run|retry|try/);
+    // Must NOT surface raw JSON.parse internals or leak raw model output.
+    expect(errOutput).not.toContain("position");
+    expect(errOutput).not.toContain("He said");
+    expect(thrownErr?.message ?? "").not.toContain("He said");
   });
 
   it("emits one diagnostic when the engine fails during synthesis", async () => {
