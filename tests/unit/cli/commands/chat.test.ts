@@ -233,7 +233,7 @@ describe("buildChatCommand", () => {
       );
     });
 
-    it("lists archived sessions only for the target, excluding active and foreign-target rows", async () => {
+    it("lists archived sessions for the target, excluding foreign-target rows", async () => {
       await seedExpert(env);
       await seedExpert(env, {
         ...SAMPLE,
@@ -241,15 +241,11 @@ describe("buildChatCommand", () => {
         displayName: "Other Expert",
       });
       let archivedId = "";
-      let activeId = "";
       let foreignArchivedId = "";
       await withRepo(env, async (repo) => {
         const a = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
         archivedId = a.id;
         await repo.archiveSession(a.id);
-        const b = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
-        activeId = b.id;
-        await repo.addTurn({ chatId: b.id, role: "user", content: "active" });
         const c = await repo.createSession({ targetType: "expert", targetSlug: "other-expert" });
         foreignArchivedId = c.id;
         await repo.archiveSession(c.id);
@@ -259,10 +255,59 @@ describe("buildChatCommand", () => {
       await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--history"]);
       // Target archived session present.
       expect(out).toContain(archivedId);
-      // Active session for target absent.
-      expect(out).not.toContain(activeId);
       // Foreign-target archived session absent.
       expect(out).not.toContain(foreignArchivedId);
+    });
+
+    it("indicates the active session distinctly (F23)", async () => {
+      await seedExpert(env);
+      let archivedId = "";
+      let activeId = "";
+      await withRepo(env, async (repo) => {
+        const a = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        archivedId = a.id;
+        await repo.archiveSession(a.id);
+        const b = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        activeId = b.id;
+        await repo.addTurn({ chatId: b.id, role: "user", content: "let us discuss the roadmap" });
+      });
+      let out = "";
+      const cmd = buildChatCommand({ write: (s) => (out += s) });
+      await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--history"]);
+      // The active session must be shown and clearly marked as active.
+      expect(out).toContain(activeId);
+      expect(out.toLowerCase()).toMatch(/active/);
+      // Archived session still listed (no regression).
+      expect(out).toContain(archivedId);
+    });
+
+    it("shows a per-session topic summary derived from existing data (F23)", async () => {
+      await seedExpert(env);
+      const firstPrompt = "How should we approach the database migration strategy";
+      await withRepo(env, async (repo) => {
+        const a = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        await repo.addTurn({ chatId: a.id, role: "user", content: firstPrompt });
+        await repo.archiveSession(a.id);
+      });
+      let out = "";
+      const cmd = buildChatCommand({ write: (s) => (out += s) });
+      await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--history"]);
+      // A scannable topic excerpt (not just id + timestamp) must appear.
+      expect(out).toContain("database migration strategy");
+    });
+
+    it("prefers a stored session summary for the topic when present (F23)", async () => {
+      await seedExpert(env);
+      await withRepo(env, async (repo) => {
+        const a = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        await repo.addTurn({ chatId: a.id, role: "user", content: "raw first prompt text" });
+        await repo.updateSummary(a.id, "Hiring plan for Q3 engineering", 1);
+        await repo.archiveSession(a.id);
+      });
+      let out = "";
+      const cmd = buildChatCommand({ write: (s) => (out += s) });
+      await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--history"]);
+      expect(out).toContain("Hiring plan for Q3 engineering");
     });
   });
 
