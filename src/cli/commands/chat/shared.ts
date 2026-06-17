@@ -83,7 +83,7 @@ export { makeEngineFromKind, ENGINE_KINDS } from "../../run-with-engine.js";
 export { collectSendWithEmptyRetry, isEmptyResponse } from "../../../engine/index.js";
 export { suggestMatch } from "../../fuzzy-match.js";
 export { checkTopicAdmission } from "../../../core/topic-admission.js";
-export { parseUserInput } from "../../../core/chat/mention-parser.js";
+export { parseUserInput, formatExpertRoster } from "../../../core/chat/mention-parser.js";
 export { getExpertPanelMemberships } from "../../../core/panel-membership-query.js";
 export { resolveEngine } from "../../../config/index.js";
 export { defaultErrorWriter, defaultWriter } from "../writer.js";
