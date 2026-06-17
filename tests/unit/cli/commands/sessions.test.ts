@@ -388,6 +388,40 @@ describe("buildSessionsCommand", () => {
       expect(captured.toLowerCase()).not.toMatch(/status:\s*(completed|running)/);
     });
 
+    it("does not pair the paused icon with a running session's status label", async () => {
+      // PM-11: a stale/orphaned `running` debate (left over from a crash or
+      // hard-kill) is still persisted with status='running'. Listing it must
+      // not render the ⏸ paused icon next to the literal `status: running`
+      // text — the paused icon and the running label would contradict.
+      await seedPanelWithDebates(testHome, "live-session", ["running"]);
+
+      let captured = "";
+      const cmd = buildSessionsCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-sessions"]);
+
+      expect(captured).toContain("status: running");
+      // ⏸ means "interrupted / paused / resumable", not "running".
+      expect(captured).not.toContain("⏸");
+    });
+
+    it("pairs the paused icon with an interrupted session's status label", async () => {
+      // The ⏸ paused icon is reserved for genuinely interrupted (resumable)
+      // debates, keeping the icon consistent with the `status: interrupted`
+      // label produced by the graceful Ctrl+C / SIGINT path.
+      await seedPanelWithDebates(testHome, "paused-session", ["interrupted"]);
+
+      let captured = "";
+      const cmd = buildSessionsCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-sessions"]);
+
+      expect(captured).toContain("status: interrupted");
+      expect(captured).toContain("⏸");
+    });
+
     it("shows a resume hint for running debates with no activity for more than an hour", async () => {
       const seeded = await seedPanelWithDebates(testHome, "stuck-session", ["running"]);
       await setDebateStartedAt(
