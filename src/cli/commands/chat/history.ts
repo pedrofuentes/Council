@@ -19,6 +19,36 @@ import {
   createDatabase,
   type Writer,
 } from "./shared.js";
+import { stripControlChars } from "../../strip-control-chars.js";
+import type { ChatRepository } from "../../../memory/repositories/chat-repository.js";
+import type { ChatSession } from "../../../core/chat/chat-session.js";
+
+/** Maximum characters shown for a derived topic excerpt in `--history`. */
+const TOPIC_MAX_LENGTH = 60;
+
+/**
+ * Derive a short, scannable topic summary for a session from EXISTING data
+ * only (no schema change): prefer the stored rolling `summary`, otherwise fall
+ * back to an excerpt of the session's first user prompt. Both sources are
+ * untrusted (LLM-generated summary / user-supplied or imported prompt), so the
+ * text is stripped of control/escape sequences before whitespace is collapsed
+ * and the result is truncated with an ellipsis when long.
+ */
+async function deriveTopic(repo: ChatRepository, session: ChatSession): Promise<string> {
+  const stored = session.summary?.trim();
+  let source = stored && stored.length > 0 ? stored : "";
+  if (source.length === 0) {
+    const [firstTurn] = await repo.getTurns(session.id, { limit: 1 });
+    source = firstTurn?.content.trim() ?? "";
+  }
+  const collapsed = stripControlChars(source).replace(/\s+/g, " ").trim();
+  if (collapsed.length === 0) {
+    return "(no messages yet)";
+  }
+  return collapsed.length > TOPIC_MAX_LENGTH
+    ? `${collapsed.slice(0, TOPIC_MAX_LENGTH - 1)}…`
+    : collapsed;
+}
 
 export async function runHistory(target: string, write: Writer, writeError: Writer): Promise<void> {
   const config = await loadConfig();
@@ -58,25 +88,50 @@ export async function runHistory(target: string, write: Writer, writeError: Writ
   }
 
   await withChatRepository(async (repo) => {
+    const active = await repo.findActiveSession(resolvedType, target);
     const all = await repo.listSessions({ targetSlug: target, status: "archived" });
     const archived = all.filter((s) => s.targetType === resolvedType);
-    if (archived.length === 0) {
-      write(`No archived conversations for "${target}".\n`);
+
+    if (!active && archived.length === 0) {
+      write(`No conversations for "${target}".\n`);
       return;
     }
-    const rows = await Promise.all(
-      archived.map(async (s) => {
-        const count = await repo.getTurnCount(s.id);
-        return [
-          s.id,
-          String(count),
-          formatDate(s.createdAt),
-          formatDate(s.updatedAt),
-          s.status,
-        ] as const;
-      }),
-    );
-    const header = ["session id", "messages", "started", "last active", "status"] as const;
+
+    const header = [
+      "",
+      "session id",
+      "messages",
+      "started",
+      "last active",
+      "status",
+      "topic",
+    ] as const;
+
+    const buildRow = async (s: ChatSession, marker: string): Promise<readonly string[]> => {
+      const count = await repo.getTurnCount(s.id);
+      const topic = await deriveTopic(repo, s);
+      return [
+        marker,
+        s.id,
+        String(count),
+        formatDate(s.createdAt),
+        formatDate(s.updatedAt),
+        s.status,
+        topic,
+      ] as const;
+    };
+
+    const rows: (readonly string[])[] = [];
+    if (active) {
+      rows.push(await buildRow(active, "→"));
+    }
+    for (const s of archived) {
+      rows.push(await buildRow(s, ""));
+    }
+
+    if (active) {
+      write('"→" marks the active conversation (resumed by `council chat ' + target + "`).\n");
+    }
     writeTable(header, rows, write);
   });
 }
