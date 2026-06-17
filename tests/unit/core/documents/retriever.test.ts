@@ -233,6 +233,91 @@ describe("createDocumentRetriever", () => {
     expect(sources).toContain("charter.md");
     expect(sources).not.toContain("notes.md");
   });
+
+  // ── T01: PDF/DOCX retrieval-truncation fix ───────────────────────────
+  it("returns the full multi-sentence fact from a long prose document (no mid-sentence crop)", async () => {
+    const indexer = createDocumentIndexer(db);
+    // A prose document longer than the legacy 64-token snippet window. The
+    // query term sits in the FIRST sentence and a distinctive token (REDFOX)
+    // in the LAST — the legacy snippet() cropped the tail with an ellipsis,
+    // losing the rest of the fact. PDF/DOCX extraction produces exactly this
+    // kind of long prose, which is why those formats truncated while short
+    // table-shaped XLSX/CSV/PPTX/ODT content did not.
+    const prose =
+      "The project codename is BLUEJAY and it was reviewed-by Alice Martinez on the fourteenth of March. " +
+      "The deployment window opens at midnight UTC and closes six hours later. " +
+      "All changes must be reviewed-by two senior engineers before merge. " +
+      "The rollback procedure requires running the restore script from the backup vault. " +
+      "Performance budgets cap the page load at two hundred milliseconds. " +
+      "The on-call rotation spans four engineers across two time zones. " +
+      "Incident severity one requires paging the director within fifteen minutes. " +
+      "The data retention policy keeps logs for ninety days and metrics for one year. " +
+      "The release manager is Bob Chen and the codename for the next cycle is REDFOX.";
+    await indexer.index({
+      content: prose,
+      sourceType: "expert",
+      sourceSlug: "ceo",
+      filePath: "/docs/experts/ceo/long.pdf",
+    });
+
+    const retriever = createDocumentRetriever(db);
+    const results = await retriever.retrieve("BLUEJAY", { expertSlug: "ceo" });
+    const hit = results.find((r) => r.source === "long.pdf");
+    expect(hit).toBeDefined();
+    if (hit === undefined) throw new Error("unreachable");
+    expect(hit.content).toContain("BLUEJAY");
+    // The tail of the fact must survive — the legacy snippet cropped it.
+    expect(hit.content).toContain("REDFOX");
+    expect(hit.content).toContain("metrics for one year");
+    // And the returned text must not dangle on a mid-sentence ellipsis.
+    expect(hit.content.trimEnd().endsWith("...")).toBe(false);
+  });
+
+  it("returns short table-shaped content in full (XLSX/CSV/PPTX/ODT regression guard)", async () => {
+    const indexer = createDocumentIndexer(db);
+    const table =
+      "## Sheet1\n| key | value |\n| --- | --- |\n| codename | BLUEJAY |\n| owner | Alice Martinez |\n| window | midnight UTC |";
+    await indexer.index({
+      content: table,
+      sourceType: "expert",
+      sourceSlug: "ops",
+      filePath: "/docs/experts/ops/table.csv",
+    });
+
+    const retriever = createDocumentRetriever(db);
+    const results = await retriever.retrieve("BLUEJAY", { expertSlug: "ops" });
+    const hit = results.find((r) => r.source === "table.csv");
+    expect(hit).toBeDefined();
+    if (hit === undefined) throw new Error("unreachable");
+    expect(hit.content).toContain("BLUEJAY");
+    expect(hit.content).toContain("Alice Martinez");
+    expect(hit.content).toContain("midnight UTC");
+  });
+
+  it("serves a sentence-complete bounded chunk from a document larger than one chunk", async () => {
+    const indexer = createDocumentIndexer(db);
+    const filler =
+      "This is ordinary filler prose that pads the document well beyond a single chunk. ";
+    const target =
+      "The secret codename for the alpha release is PEREGRINE and it ships in the autumn quarter.";
+    const content = `${filler.repeat(60)}${target} ${filler.repeat(60)}`;
+    await indexer.index({
+      content,
+      sourceType: "expert",
+      sourceSlug: "ceo",
+      filePath: "/docs/experts/ceo/huge.pdf",
+    });
+
+    const retriever = createDocumentRetriever(db);
+    const results = await retriever.retrieve("PEREGRINE", { expertSlug: "ceo" });
+    const hit = results.find((r) => r.source === "huge.pdf");
+    expect(hit).toBeDefined();
+    if (hit === undefined) throw new Error("unreachable");
+    // The whole target sentence is present (not cropped mid-sentence)...
+    expect(hit.content).toContain(target);
+    // ...but retrieval returns a bounded chunk, not the entire document.
+    expect(hit.content.length).toBeLessThan(content.length);
+  });
 });
 
 describe("buildExpertRetrievalScopes", () => {
