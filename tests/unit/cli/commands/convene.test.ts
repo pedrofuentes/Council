@@ -1372,4 +1372,73 @@ describe("buildConveneCommand — user panels with slug references", () => {
       ]),
     ).rejects.toThrow(/not in the library.*library-missing.*council expert create/s);
   });
+
+  it("F06: --experts unknown slug names the slug and hints at recovery paths", async () => {
+    await seedLibraryExpert("library-known", "Known");
+
+    let stderr = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (chunk) => {
+        stderr += chunk;
+      },
+    });
+    cmd.exitOverride();
+
+    await expect(
+      cmd.parseAsync([
+        "node",
+        "council-convene",
+        "topic",
+        "--experts",
+        "totally-unknown-slug",
+        "--engine",
+        "mock",
+      ]),
+    ).rejects.toThrow(/totally-unknown-slug/);
+
+    // (a) names the unknown slug
+    expect(stderr).toContain("totally-unknown-slug");
+    // (b) hint: run `council expert list` to see valid slugs
+    expect(stderr).toContain("council expert list");
+    // (b) hint: omitting --experts auto-composes a panel
+    expect(stderr).toMatch(/omit.*--experts|auto-compose/i);
+  });
+
+  it("F11: convene on a zero-expert panel produces a friendly message, not raw Zod jargon", async () => {
+    await writeUserPanel(
+      "empty-panel",
+      ["name: empty-panel", "experts: []", ""].join("\n"),
+    );
+
+    let stderr = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (chunk) => {
+        stderr += chunk;
+      },
+    });
+    cmd.exitOverride();
+
+    await expect(
+      cmd.parseAsync([
+        "node",
+        "council-convene",
+        "topic",
+        "--template",
+        "empty-panel",
+        "--engine",
+        "mock",
+      ]),
+    ).rejects.toThrow(/no experts/i);
+
+    // Friendly, jargon-free guidance
+    expect(stderr).toMatch(/no experts/i);
+    expect(stderr).toMatch(/at least one expert/i);
+    // Raw Zod jargon must NOT leak to the user
+    expect(stderr).not.toContain("Too small");
+    expect(stderr).not.toContain("expected array");
+  });
 });
