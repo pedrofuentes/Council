@@ -17,6 +17,7 @@
 import { sql } from "kysely";
 
 import type { CouncilDatabase } from "../../memory/db.js";
+import { chunkText } from "./chunking.js";
 
 export type DocumentSourceType = "expert" | "panel";
 
@@ -39,11 +40,20 @@ export interface DocumentIndexer {
 export function createDocumentIndexer(db: CouncilDatabase): DocumentIndexer {
   return {
     async index(options: IndexDocumentOptions): Promise<void> {
-      // Replace-by-path semantics: delete any prior row then insert fresh.
+      // Replace-by-path semantics: delete any prior rows then insert fresh.
       // FTS5 tables don't support UPSERT, so the canonical pattern is
       // DELETE + INSERT. The pair MUST run as an atomic unit — without a
       // transaction, an INSERT failure after a successful DELETE would
       // silently lose the existing entry (#356).
+      //
+      // Content is split into sentence-aligned, size-bounded chunks (T01)
+      // and stored as one FTS5 row per chunk (all sharing the same
+      // file_path). This lets the retriever return a whole matched chunk
+      // verbatim instead of a 64-token snippet() window that crops long
+      // prose (PDF/DOCX) mid-sentence. Short documents (a small table from
+      // XLSX/CSV/PPTX/ODT, a one-line note) yield a single chunk, preserving
+      // the prior one-row-per-document behavior. Empty/whitespace-only
+      // content yields no chunks, so the path is removed from the index.
       //
       // We issue raw BEGIN/COMMIT against the same libsql client
       // connection rather than using Kysely's `db.transaction()`. The
@@ -52,13 +62,16 @@ export function createDocumentIndexer(db: CouncilDatabase): DocumentIndexer {
       // for non-transactional calls, which breaks `:memory:` databases
       // (the new connection is a brand-new empty DB). Raw BEGIN/COMMIT
       // on the client keeps connection state intact.
+      const chunks = chunkText(options.content);
       await sql`BEGIN`.execute(db);
       try {
         await sql`DELETE FROM document_index WHERE file_path = ${options.filePath}`.execute(db);
-        await sql`
-          INSERT INTO document_index (content, source_type, source_slug, file_path)
-          VALUES (${options.content}, ${options.sourceType}, ${options.sourceSlug}, ${options.filePath})
-        `.execute(db);
+        for (const chunk of chunks) {
+          await sql`
+            INSERT INTO document_index (content, source_type, source_slug, file_path)
+            VALUES (${chunk}, ${options.sourceType}, ${options.sourceSlug}, ${options.filePath})
+          `.execute(db);
+        }
         await sql`COMMIT`.execute(db);
       } catch (err) {
         try {

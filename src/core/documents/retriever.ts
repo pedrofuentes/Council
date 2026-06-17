@@ -9,6 +9,14 @@
  * negative — lower is better). We return `relevanceScore = -rank` so that
  * higher values are more relevant for callers.
  *
+ * Excerpts: each indexed row holds a sentence-aligned, size-bounded chunk
+ * (see {@link "./chunking.js"} and {@link "./indexer.js"}), so we return the
+ * matched row's full `content` column rather than an FTS5 `snippet()` window.
+ * The legacy 64-token `snippet()` cropped long prose (PDF/DOCX) mid-sentence
+ * with a trailing ellipsis while short table-shaped content (XLSX/CSV/PPTX/
+ * ODT) fit inside the window untouched; returning the whole chunk gives every
+ * format a complete, sentence-bounded excerpt within a predictable budget.
+ *
  * Query sanitization: user messages may contain FTS5 operators (`AND`,
  * `OR`, `NOT`, `NEAR`, parentheses, `*`, quotes, `^`). To avoid syntax
  * errors and surprising operator behavior we split on whitespace, strip
@@ -78,9 +86,6 @@ interface SnippetRow {
 }
 
 const DEFAULT_MAX_RESULTS = 5;
-// FTS5's snippet() caps the token window at 64; use the maximum so planted
-// figures that sit deep inside a paragraph are not cropped out of the excerpt.
-const SNIPPET_TOKEN_COUNT = 64;
 
 /**
  * Split a raw user message into FTS-safe tokens. FTS5-significant
@@ -165,7 +170,7 @@ export function createDocumentRetriever(db: CouncilDatabase): DocumentRetriever 
             source_type,
             source_slug,
             file_path,
-            snippet(document_index, 0, '', '', '...', ${SNIPPET_TOKEN_COUNT}) AS excerpt,
+            content AS excerpt,
             rank AS rank
           FROM document_index
           WHERE ${whereClause}

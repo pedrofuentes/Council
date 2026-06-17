@@ -80,8 +80,11 @@ council/
 │   │   │                                .odt .ods .odp
 │   │   │                                (RTF \'XX decoded as Latin-1 codepoints, not full
 │   │   │                                Windows-1252)
-│   │   ├── indexer.ts                 ← Writes extracted text into FTS5 `document_index`
-│   │   ├── retriever.ts               ← Sanitised FTS5 query → ranked snippets for RAG
+│   │   ├── chunking.ts                ← Sentence-aligned, size-bounded chunking of extracted
+│   │   │                                text (DEFAULT_CHUNK_MAX_CHARS) before indexing
+│   │   ├── indexer.ts                 ← Writes extracted text into FTS5 `document_index`,
+│   │   │                                one row per chunk (shared file_path)
+│   │   ├── retriever.ts               ← Sanitised FTS5 query → ranked full-chunk excerpts for RAG
 │   │   ├── processor.ts               ← End-to-end per-expert pipeline (detect → extract →
 │   │   │                                index → analyze) wired into `council chat <persona>`
 │   │   ├── profile-analyzer.ts        ← LLM-backed persona-profile distillation with
@@ -182,6 +185,7 @@ CLI Commands:
 | IDs | ULIDs | Lexicographic sort by creation time. Better than UUIDs for debugging. |
 | Module system | ESM only | Node 20+ floor. All deps are ESM-first. |
 | Permissions | denyAll by default | Experts are reasoners, not agents. Opt-in tool access per expert. |
+| RAG excerpts | Chunk at index time, return full chunks | One FTS5 row per sentence-aligned, size-bounded chunk; retrieval returns the whole matched chunk instead of an FTS5 `snippet(...,64)` window, which cropped long PDF/DOCX prose mid-sentence while short table-shaped content fit untouched. |
 
 ## Module Boundaries
 
