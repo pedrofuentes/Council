@@ -703,6 +703,26 @@ describe("buildConcludeCommand", () => {
     const names = program.commands.map((c) => c.name());
     expect(names).toContain("conclude");
   });
+
+  it("command description expands 'ADR' to 'Architecture Decision Record'", () => {
+    const cmd = buildConcludeCommand();
+    expect(cmd.description()).toContain("Architecture Decision Record");
+  });
+
+  it("plain-format 'Next:' hint expands 'adr' to 'Architecture Decision Record'", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    let captured = "";
+    const cmd = buildConcludeCommand({
+      write: (s) => {
+        captured += s;
+      },
+      writeError: () => undefined,
+      engineFactory: () => makeMockEngine(JSON.stringify(SAMPLE_OUTPUT)),
+      synthesizerId: SYNTH_ID,
+    });
+    await cmd.parseAsync(["node", "council-conclude", seed.panelName, "--engine", "mock"]);
+    expect(captured).toContain("Architecture Decision Record");
+  });
 });
 
 function makeTranscriptDoc(turns: readonly Turn[]): TranscriptDocument {
