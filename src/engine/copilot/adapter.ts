@@ -26,7 +26,7 @@ import type {
   ExpertSpec,
   SendOptions,
 } from "../index.js";
-import { KNOWN_MODELS } from "../models.js";
+import { SUPPORTED_MODELS } from "../models.js";
 
 import { denyAll } from "./permissions.js";
 
@@ -69,9 +69,9 @@ export interface ModelDiscoveryResult {
   readonly source: "live" | "static";
 }
 
-const STATIC_MODEL_LIST = (Object.isFrozen(KNOWN_MODELS)
-  ? KNOWN_MODELS
-  : Object.freeze(KNOWN_MODELS)) as readonly string[];
+const STATIC_MODEL_LIST = (Object.isFrozen(SUPPORTED_MODELS)
+  ? SUPPORTED_MODELS
+  : Object.freeze(SUPPORTED_MODELS)) as readonly string[];
 
 function freezeDiscoveredModels(models: readonly { readonly id: string }[]): readonly string[] {
   return Object.freeze(models.map(({ id }) => id)) as readonly string[];

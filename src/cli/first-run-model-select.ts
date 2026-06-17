@@ -2,13 +2,22 @@ import { createInterface } from "node:readline/promises";
 
 import { updateConfigField } from "../config/index.js";
 import { discoverAvailableModels, type ModelDiscoveryResult } from "../engine/copilot/health.js";
+import type { ModelId } from "../engine/models.js";
 
 import { CliUserError } from "./cli-user-error.js";
 import type { Writer } from "./commands/writer.js";
 
 const MAX_SELECTION_ATTEMPTS = 3;
-const RECOMMENDED_MODEL = "claude-sonnet-4.5";
-const GPT_FALLBACK_MODEL = "gpt-5.4";
+// Ranking hints for the model picker. Typed as `ModelId` so they are enforced
+// at compile time to be members of the canonical SUPPORTED_MODELS registry,
+// keeping the wizard in sync with the doctor/--model paths (bug F02).
+const RECOMMENDED_MODEL: ModelId = "claude-sonnet-4.5";
+const GPT_FALLBACK_MODEL: ModelId = "gpt-5.4";
+
+/** The model the wizard recommends by default (member of SUPPORTED_MODELS). */
+export const WIZARD_RECOMMENDED_MODEL: ModelId = RECOMMENDED_MODEL;
+/** The GPT model the wizard prefers when ordering (member of SUPPORTED_MODELS). */
+export const WIZARD_GPT_FALLBACK_MODEL: ModelId = GPT_FALLBACK_MODEL;
 
 interface TtyReadableStream extends NodeJS.ReadableStream {
   readonly isTTY?: boolean;

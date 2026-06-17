@@ -50,7 +50,7 @@ import {
 } from "../../core/documents/reference-block.js";
 import { resolveStrategy, STRATEGY_NAMES } from "../strategy-resolver.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
-import { KNOWN_MODELS } from "../../engine/models.js";
+import { isSupportedModel, SUPPORTED_MODELS } from "../../engine/models.js";
 import type { HumanInputProvider } from "../../core/human-input.js";
 import { createDatabase } from "../../memory/db.js";
 import { ExpertRepository } from "../../memory/repositories/experts.js";
@@ -283,9 +283,9 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       "--model <model>",
       "Model to use for experts (default: from config; run 'council doctor --models' to list available models)",
       (v) => {
-        if (!KNOWN_MODELS.includes(v)) {
+        if (!isSupportedModel(v)) {
           throw new Error(
-            `--model received an unknown model id (got: ${v}). Valid options: ${KNOWN_MODELS.join(", ")}`,
+            `--model received an unknown model id (got: ${v}). Valid options: ${SUPPORTED_MODELS.join(", ")}`,
           );
         }
         return v;
