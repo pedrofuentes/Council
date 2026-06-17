@@ -101,6 +101,26 @@ async function getFieldSources(
     sources.set(`defaults.${key}`, key in rawDefaults ? "config file" : "default");
   }
 
+  const rawDocuments =
+    rawObj["documents"] && typeof rawObj["documents"] === "object"
+      ? (rawObj["documents"] as Record<string, unknown>)
+      : {};
+
+  const documentKeys = ["aiExtraction", "aiExtractionAllowedExtensions", "maxFileSizeMB"];
+  for (const key of documentKeys) {
+    sources.set(`documents.${key}`, key in rawDocuments ? "config file" : "default");
+  }
+
+  const rawConclude =
+    rawObj["conclude"] && typeof rawObj["conclude"] === "object"
+      ? (rawObj["conclude"] as Record<string, unknown>)
+      : {};
+
+  sources.set(
+    "conclude.maxTranscriptChars",
+    "maxTranscriptChars" in rawConclude ? "config file" : "default",
+  );
+
   return sources;
 }
 
@@ -118,36 +138,57 @@ function buildShowCommand(write: Writer): Command {
     const dbPath = path.join(councilHome, "council.db");
 
     write(`Config path: ${configFilePath}\n`);
-    write(`Council home: ${councilHome}\n`);
-    write(`Data home: ${dataHome}\n`);
+    write(`Council home: ${councilHome}  (config file, database)\n`);
+    write(`Data home: ${dataHome}  (experts, panels, documents)\n`);
     write(`Experts directory: ${expertsDir}\n`);
     write(`Panels directory: ${panelsDir}\n`);
     write(`Database: ${dbPath}\n\n`);
     write("Effective values:\n");
 
-    const entries: [string, unknown, string][] = [
+    const allowedExts = config.documents.aiExtractionAllowedExtensions;
+    const entries: [string, string, string][] = [
       ["defaults.model", config.defaults.model, sources.get("defaults.model") ?? "default"],
       ["defaults.engine", config.defaults.engine, sources.get("defaults.engine") ?? "default"],
       [
         "defaults.maxRounds",
-        config.defaults.maxRounds,
+        String(config.defaults.maxRounds),
         sources.get("defaults.maxRounds") ?? "default",
       ],
       [
         "defaults.maxExperts",
-        config.defaults.maxExperts,
+        String(config.defaults.maxExperts),
         sources.get("defaults.maxExperts") ?? "default",
       ],
       [
         "defaults.maxWordsPerResponse",
-        config.defaults.maxWordsPerResponse,
+        String(config.defaults.maxWordsPerResponse),
         sources.get("defaults.maxWordsPerResponse") ?? "default",
+      ],
+      [
+        "documents.aiExtraction",
+        config.documents.aiExtraction,
+        sources.get("documents.aiExtraction") ?? "default",
+      ],
+      [
+        "documents.aiExtractionAllowedExtensions",
+        allowedExts.length === 0 ? "(none)" : allowedExts.join(", "),
+        sources.get("documents.aiExtractionAllowedExtensions") ?? "default",
+      ],
+      [
+        "documents.maxFileSizeMB",
+        String(config.documents.maxFileSizeMB),
+        sources.get("documents.maxFileSizeMB") ?? "default",
+      ],
+      [
+        "conclude.maxTranscriptChars",
+        String(config.conclude.maxTranscriptChars),
+        sources.get("conclude.maxTranscriptChars") ?? "default",
       ],
     ];
 
     const keyWidth = Math.max(...entries.map(([k]) => k.length));
     for (const [key, value, source] of entries) {
-      write(`  ${key.padEnd(keyWidth)}  ${String(value).padEnd(24)} (${source})\n`);
+      write(`  ${key.padEnd(keyWidth)}  ${value.padEnd(24)} (${source})\n`);
     }
   });
   return cmd;

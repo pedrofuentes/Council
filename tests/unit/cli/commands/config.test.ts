@@ -113,6 +113,57 @@ describe("buildConfigCommand", () => {
       expect(stdout).toContain("Database:");
       expect(stdout).toContain("council.db");
     });
+
+    // F09: documents.* settings must appear in config show output
+    describe("F09: documents.* settings", () => {
+      it("shows all documents.* config keys", async () => {
+        const { stdout } = await runConfig(["show"]);
+        expect(stdout).toContain("documents.aiExtraction");
+        expect(stdout).toContain("documents.aiExtractionAllowedExtensions");
+        expect(stdout).toContain("documents.maxFileSizeMB");
+      });
+
+      it("reflects a non-default documents.maxFileSizeMB value", async () => {
+        await fs.mkdir(testHome, { recursive: true });
+        await fs.writeFile(
+          path.join(testHome, "config.yaml"),
+          "documents:\n  maxFileSizeMB: 123\n",
+          "utf-8",
+        );
+
+        const { stdout } = await runConfig(["show"]);
+        expect(stdout).toContain("documents.maxFileSizeMB");
+        expect(stdout).toContain("123");
+        expect(stdout).toContain("(config file)");
+      });
+
+      it("reflects a non-default documents.aiExtraction value", async () => {
+        await fs.mkdir(testHome, { recursive: true });
+        await fs.writeFile(
+          path.join(testHome, "config.yaml"),
+          "documents:\n  aiExtraction: ask\n",
+          "utf-8",
+        );
+
+        const { stdout } = await runConfig(["show"]);
+        expect(stdout).toContain("documents.aiExtraction");
+        expect(stdout).toContain("ask");
+        expect(stdout).toContain("(config file)");
+      });
+    });
+
+    // F10: home path labels must include clarifying annotations
+    describe("F10: clarified home path labels", () => {
+      it("Council home label includes annotation for config file and database", async () => {
+        const { stdout } = await runConfig(["show"]);
+        expect(stdout).toContain("(config file, database)");
+      });
+
+      it("Data home label includes annotation for experts, panels, and documents", async () => {
+        const { stdout } = await runConfig(["show"]);
+        expect(stdout).toContain("(experts, panels, documents)");
+      });
+    });
   });
 
   describe("config edit", () => {
