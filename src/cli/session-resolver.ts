@@ -128,6 +128,9 @@ async function resolveAmbiguousPrefix(args: {
 }): Promise<SessionMatch> {
   if (args.isNonInteractive()) {
     writeAmbiguousMatches(args.requested, args.matches, args.writeError);
+    args.writeError(
+      `Run \`council resume <name>\` with the full name of one of the panels above to disambiguate.\n`,
+    );
     throw new CliUserError(
       `Ambiguous prefix '${args.requested}' matches ${args.matches.length} panels.`,
     );
