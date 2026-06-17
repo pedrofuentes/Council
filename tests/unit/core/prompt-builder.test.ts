@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildSystemPrompt,
   renderPanelMemberships,
+  GENERIC_EXPERT_DOMAIN_FRAMING,
   type PanelMembership,
 } from "../../../src/core/prompt-builder.js";
 import type { ExpertDefinition } from "../../../src/core/expert.js";
@@ -850,5 +851,68 @@ describe("buildSystemPrompt() — anti-tool-seeking constraints (T-11)", () => {
 
     // Must explicitly forbid the "need to examine" pattern
     expect(forbiddenSection).toMatch(/need to examine.*without providing|saying.*need to examine/i);
+  });
+});
+
+describe("buildSystemPrompt() — generic expert domain framing (F17)", () => {
+  const genericExpert: ExpertDefinition = {
+    slug: "economist",
+    displayName: "Generic Economist",
+    role: "Macroeconomics expert",
+    expertise: {
+      weightedEvidence: ["Empirical studies"],
+      referenceCases: [],
+      notExpertIn: [],
+    },
+    epistemicStance: "Evidence over ideology.",
+    kind: "generic",
+  } as ExpertDefinition;
+
+  const personaExpert: ExpertDefinition = {
+    ...genericExpert,
+    kind: "persona",
+  } as ExpertDefinition;
+
+  it("establishes a domain-expert / deliberation-panelist role for generic experts", () => {
+    const prompt = buildSystemPrompt(genericExpert, undefined, "Discuss inflation.");
+    const identitySection = prompt.slice(
+      prompt.indexOf("[1] IDENTITY"),
+      prompt.indexOf("[2] EXPERTISE PRIOR"),
+    );
+    // The constructed prompt must carry the exported domain framing block.
+    expect(prompt).toContain(GENERIC_EXPERT_DOMAIN_FRAMING);
+    // Framing belongs to the IDENTITY section so the role is set up front.
+    expect(identitySection).toContain(GENERIC_EXPERT_DOMAIN_FRAMING);
+    // Must name the deliberation-panel / subject-matter-expert role.
+    expect(identitySection).toMatch(/deliberation panel|subject-matter expert|panelist/i);
+  });
+
+  it("steers generic experts away from coding-agent behavior (no tool markup, no repository context, no code-assistant refusals)", () => {
+    const prompt = buildSystemPrompt(genericExpert, undefined, "Discuss inflation.");
+    // Must explicitly disclaim being a coding/software agent.
+    expect(prompt).toMatch(/not a (software|coding)[^.\n]*agent/i);
+    // Must forbid emitting tool-call / function-call markup.
+    expect(prompt).toMatch(/tool-call|function-call|invoke/i);
+    // Must reject assuming a repository / working-tree context.
+    expect(prompt).toMatch(/repositor|working tree/i);
+    // Must steer away from applying code-assistant refusal policies to domain questions.
+    expect(prompt).toMatch(/refus|do not apply.*polic/i);
+  });
+
+  it("does NOT inject the generic domain framing for persona experts (no regression)", () => {
+    const prompt = buildSystemPrompt(personaExpert, undefined, "Discuss inflation.");
+    expect(prompt).not.toContain(GENERIC_EXPERT_DOMAIN_FRAMING);
+  });
+
+  it("persona prompt output is unchanged by the generic framing (byte-identical to no-framing baseline)", () => {
+    // The persona IDENTITY section must contain only the identity sentence,
+    // with no appended generic framing.
+    const prompt = buildSystemPrompt(personaExpert, undefined, "Discuss inflation.");
+    const identitySection = prompt.slice(
+      prompt.indexOf("[1] IDENTITY"),
+      prompt.indexOf("[2] EXPERTISE PRIOR"),
+    );
+    expect(identitySection).toContain("You are Generic Economist. Macroeconomics expert.");
+    expect(identitySection).not.toMatch(/deliberation panel|subject-matter expert|panelist/i);
   });
 });
