@@ -33,6 +33,10 @@ const CONVENE_KEYWORD = "convene";
 // Allows lowercase ASCII, digits, dashes — matches the slug grammar used
 // elsewhere (e.g. expert library, panel YAML). Anchored at start.
 const LEADING_MENTION_RE = /^@([A-Za-z0-9][A-Za-z0-9_-]*)\b/;
+// A leading `@` immediately followed by a quote denotes a display-name
+// mention (e.g. `@"Sasha Lin"`). Slugs never contain quotes, so this can
+// only be an attempt to address an expert by display name.
+const LEADING_QUOTED_MENTION_RE = /^@["']/;
 
 export function parseUserInput(
   input: string,
@@ -48,6 +52,16 @@ export function parseUserInput(
       throw new Error("@convene requires a topic. Usage: @convene <topic>");
     }
     return { type: "convene", targetSlugs: [], content: topic };
+  }
+
+  // Reject display-name mentions explicitly. Without this guard a quoted
+  // mention fails the slug regex below, leaving `slugs` empty, and would
+  // be silently broadcast to the whole panel — masquerading as a targeted
+  // message that never routed. Erroring keeps routing unambiguous.
+  if (LEADING_QUOTED_MENTION_RE.test(trimmed)) {
+    throw new Error(
+      `Display-name mentions like @"..." are not supported — address an expert by slug instead. Available experts: ${availableSlugs.join(", ")}`,
+    );
   }
 
   // Try to consume one or more leading `@slug` tokens.
@@ -86,3 +100,15 @@ export function parseUserInput(
 // Re-export the keyword so callers (e.g. help text) can reference the
 // canonical name without duplicating the literal.
 export const CONVENE_DIRECTIVE = `@${CONVENE_KEYWORD}`;
+
+/**
+ * Render a one-line roster of addressable expert slugs for the panel-chat
+ * startup banner, e.g. `Experts: @sasha-cfo, @diego-cto — use @<slug> to
+ * address a specific expert.` Returns an empty string when there are no
+ * slugs so callers can skip rendering. Pure: no I/O.
+ */
+export function formatExpertRoster(slugs: readonly string[]): string {
+  if (slugs.length === 0) return "";
+  const list = slugs.map((s) => `@${s}`).join(", ");
+  return `Experts: ${list} — use @<slug> to address a specific expert.`;
+}

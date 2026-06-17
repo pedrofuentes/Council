@@ -24,6 +24,7 @@ import {
   defaultSubscribeInterrupt,
   formatDate,
   parseUserInput,
+  formatExpertRoster,
   resolveExperts,
   ChatRepository,
   createChatRenderer,
@@ -206,7 +207,7 @@ export async function runPanelChat(opts: PanelChatOptions): Promise<void> {
     } else if (willCreateFresh) {
       session = await repo.createSession({ targetType: "panel", targetSlug: target });
       renderer.showSessionStatus(
-        `Starting group chat with ${panel.name} (${resolved.length} experts) — use @name to address specific experts`,
+        `Starting group chat with ${panel.name} (${resolved.length} experts) — use @<slug> to address specific experts`,
       );
     } else if (resumingSession) {
       session = resumingSession;
@@ -218,7 +219,12 @@ export async function runPanelChat(opts: PanelChatOptions): Promise<void> {
       throw new Error("internal: panel chat session resolution failed");
     }
 
-    // Show startup help text
+    // Show the addressable expert roster so users know exactly which
+    // slugs to @mention, then the general startup help text.
+    const rosterLine = formatExpertRoster(resolved.map((e) => e.slug));
+    if (rosterLine.length > 0) {
+      renderer.showSystem(rosterLine, "info");
+    }
     renderer.showSystem(getStartupHelpText(), "info");
 
     await runPanelInteractiveLoop({
