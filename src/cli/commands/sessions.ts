@@ -14,6 +14,7 @@ import { DebateRepository, type DebateStatus } from "../../memory/repositories/d
 import { ExpertRepository } from "../../memory/repositories/experts.js";
 import { type Panel, PanelRepository } from "../../memory/repositories/panels.js";
 import { TurnRepository } from "../../memory/repositories/turns.js";
+import { stripControlChars } from "../strip-control-chars.js";
 import { getSymbols } from "../renderers/symbols.js";
 
 import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
@@ -94,7 +95,10 @@ function isPossiblyStuckRunningDebate(
   }
 
   const lastActivityMs = Date.parse(lastActivityAt);
-  return Number.isFinite(lastActivityMs) && Date.now() - lastActivityMs > STUCK_RUNNING_DEBATE_THRESHOLD_MS;
+  return (
+    Number.isFinite(lastActivityMs) &&
+    Date.now() - lastActivityMs > STUCK_RUNNING_DEBATE_THRESHOLD_MS
+  );
 }
 
 function formatStuckSessionHint(panelName: string): string {
@@ -118,7 +122,9 @@ async function findPanelByNameOrPrefix(
   if (exactMatches.length > 1) {
     if (options?.rejectExactCollisions === true) {
       const ambiguousLabel = options.ambiguousLabel ?? "panels";
-      throw new Error(`Ambiguous name '${requestedName}' matches ${exactMatches.length} ${ambiguousLabel}.`);
+      throw new Error(
+        `Ambiguous name '${requestedName}' matches ${exactMatches.length} ${ambiguousLabel}.`,
+      );
     }
     return exactMatches[0];
   }
@@ -127,7 +133,9 @@ async function findPanelByNameOrPrefix(
   }
   if (prefixMatches.length > 1) {
     const ambiguousLabel = options?.ambiguousLabel ?? "panels";
-    throw new Error(`Ambiguous prefix '${requestedName}' matches ${prefixMatches.length} ${ambiguousLabel}.`);
+    throw new Error(
+      `Ambiguous prefix '${requestedName}' matches ${prefixMatches.length} ${ambiguousLabel}.`,
+    );
   }
 
   return undefined;
@@ -217,10 +225,22 @@ export function buildSessionsCommand(depsOrWrite?: SessionsCommandDeps | Writer)
           const latest = debates.length > 0 ? debates[debates.length - 1] : undefined;
           // F35: prefer the stored topic; fall back to the latest debate prompt
           // so the listing is scannable even when no topic was recorded.
-          const topic = truncateTopic(session.topic ?? latest?.prompt ?? null, 80);
+          // Both the topic and the prompt are untrusted (user/imported debate
+          // input) — sanitize before writing to the terminal to strip ANSI/OSC
+          // escape sequences (clipboard-hijack, phishing hyperlinks, spoofing).
+          const topic = stripControlChars(
+            truncateTopic(session.topic ?? latest?.prompt ?? null, 80),
+          );
           // F32: surface the friendly panel name (from the persisted template)
-          // distinctly from the timestamped slug used by resume/export.
-          const panelName = parsePanelTemplateName(session.configJson) ?? session.name;
+          // distinctly from the timestamped slug used by resume/export. The
+          // template is untrusted, so sanitize it for display.
+          const panelName = stripControlChars(
+            parsePanelTemplateName(session.configJson) ?? session.name,
+          );
+          // The slug shown on the resume/export line is also untrusted; sanitize
+          // it for DISPLAY only — the underlying session.name value used by
+          // resume/export lookups is unchanged.
+          const displayName = stripControlChars(session.name);
           let turnCount = 0;
           for (const d of debates) {
             turnCount += await turnRepo.countByDebateId(d.id);
@@ -230,11 +250,11 @@ export function buildSessionsCommand(depsOrWrite?: SessionsCommandDeps | Writer)
           const icon = statusIcon(latest?.status);
           write(`  ${icon} ${panelName} — ${topic}\n`);
           write(`    panel: ${panelName}\n`);
-          write(`    resume/export: ${session.name}\n`);
+          write(`    resume/export: ${displayName}\n`);
           write(`    id: ${session.id}\n`);
           write(`    status: ${latest?.status ?? "none"}\n`);
           if (isPossiblyStuckRunningDebate(latest?.status, latestActivityAt)) {
-            write(`    ${formatStuckSessionHint(session.name)}\n`);
+            write(`    ${formatStuckSessionHint(displayName)}\n`);
           }
           write(`    experts: ${experts.length}, turns: ${turnCount}\n`);
           write(`    created: ${session.createdAt}\n`);
