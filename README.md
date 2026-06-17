@@ -407,6 +407,9 @@ council export <panel> --format <fmt>                          # Export (markdow
 # Persistent conversational chat (Phase 5) — engine defaults to copilot
 council chat <expert-slug>                       # 1:1 conversational REPL with an expert
 council chat <panel-name>                        # Group chat with a panel (supports @mentions, @convene)
+# Panel chat prints the addressable expert roster at startup (e.g. "Experts:
+# @sasha-cfo, @diego-cto …"); address one with @<slug>. Display-name mentions
+# like @"Sasha Lin" are rejected with a hint, never silently broadcast.
 council chat <target> --new                      # Archive active session and start fresh
 council chat --list                              # List every chat session across all targets (no engine needed)
 council chat <target> --history                  # Show archived sessions read-only (no engine needed)
