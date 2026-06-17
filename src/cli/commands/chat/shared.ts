@@ -3,6 +3,7 @@
  * `council chat` command family. Extracted from the former monolithic
  * `chat.ts` to support focused module boundaries.
  */
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as readline from "node:readline/promises";
 import { stdin as defaultStdin, stdout as defaultStdout } from "node:process";
@@ -646,16 +647,47 @@ interface MaybeProcessPersonaDocsOptions {
 }
 
 /**
+ * Read-only check: returns the names of regular files in a generic expert's
+ * docs folder. Generic experts never index these documents, so their presence
+ * is surfaced as a warning (F01) rather than silently ignored.
+ */
+async function listUnindexedDocFiles(docsPath: string): Promise<readonly string[]> {
+  try {
+    const entries = await fs.readdir(docsPath, { withFileTypes: true });
+    return entries.filter((e) => e.isFile()).map((e) => e.name);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * If the expert is a persona, scan its docs folder for new/changed files,
  * extract + index them, and refresh the persona profile (Roadmap 6.4).
+ *
+ * Generic (non-persona) experts never index documents. If such an expert has
+ * files in its docs folder they would be silently ignored, so emit a clear,
+ * one-time warning naming the expert and the remedy (F01).
  */
 export async function maybeProcessPersonaDocs(
   opts: MaybeProcessPersonaDocsOptions,
 ): Promise<PersonaProfile | undefined> {
   const { expert, dataHome, db, engine, config, renderer } = opts;
-  if (expert.kind !== "persona") return undefined;
-
   const docsPath = path.join(dataHome, "experts", expert.slug, "docs");
+
+  if (expert.kind !== "persona") {
+    const unindexed = await listUnindexedDocFiles(docsPath);
+    if (unindexed.length > 0) {
+      renderer.showSystem(
+        `Expert "${expert.displayName}" (${expert.slug}) is a generic expert — ` +
+          `${unindexed.length} document(s) in ${docsPath} are NOT indexed and will be ignored. ` +
+          `To ground answers in these documents, recreate the expert as a persona ` +
+          `(council expert create --persona ...) and train it with \`council expert train\`.`,
+        "warn",
+      );
+    }
+    return undefined;
+  }
+
   const documentRepo = new DocumentRepository(db);
   const profileRepo = new ProfileRepository(db);
   const indexer = createDocumentIndexer(db);
