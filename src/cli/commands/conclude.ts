@@ -137,7 +137,7 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
   cmd
     .description(
       "Synthesize a panel's most substantive debate into a structured decision framework. " +
-        "For transcript-based ADR export, use `council export --format adr` instead.",
+        "For transcript-based ADR (Architecture Decision Record) export, use `council export --format adr` instead.",
     )
     .argument("[panel]", "Panel name to conclude (defaults to the most recently created panel)")
     .addOption(
@@ -275,7 +275,7 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
           write(JSON.stringify(output, null, 2) + "\n");
         } else {
           write(renderPlain(output));
-          write(`\x1b[2mNext: council export ${panelName} --format adr\x1b[0m\n`);
+          write(`\x1b[2mNext: council export ${panelName} --format adr  (Architecture Decision Record)\x1b[0m\n`);
         }
       } finally {
         await db.destroy().catch((err: unknown) => {
