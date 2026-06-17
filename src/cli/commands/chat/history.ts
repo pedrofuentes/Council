@@ -19,6 +19,7 @@ import {
   createDatabase,
   type Writer,
 } from "./shared.js";
+import { stripControlChars } from "../../strip-control-chars.js";
 import type { ChatRepository } from "../../../memory/repositories/chat-repository.js";
 import type { ChatSession } from "../../../core/chat/chat-session.js";
 
@@ -28,8 +29,10 @@ const TOPIC_MAX_LENGTH = 60;
 /**
  * Derive a short, scannable topic summary for a session from EXISTING data
  * only (no schema change): prefer the stored rolling `summary`, otherwise fall
- * back to an excerpt of the session's first user prompt. Whitespace is
- * collapsed and the result is truncated with an ellipsis when long.
+ * back to an excerpt of the session's first user prompt. Both sources are
+ * untrusted (LLM-generated summary / user-supplied or imported prompt), so the
+ * text is stripped of control/escape sequences before whitespace is collapsed
+ * and the result is truncated with an ellipsis when long.
  */
 async function deriveTopic(repo: ChatRepository, session: ChatSession): Promise<string> {
   const stored = session.summary?.trim();
@@ -38,7 +41,7 @@ async function deriveTopic(repo: ChatRepository, session: ChatSession): Promise<
     const [firstTurn] = await repo.getTurns(session.id, { limit: 1 });
     source = firstTurn?.content.trim() ?? "";
   }
-  const collapsed = source.replace(/\s+/g, " ").trim();
+  const collapsed = stripControlChars(source).replace(/\s+/g, " ").trim();
   if (collapsed.length === 0) {
     return "(no messages yet)";
   }
