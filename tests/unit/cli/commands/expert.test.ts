@@ -1904,14 +1904,16 @@ fs.writeFileSync(p, body, 'utf-8');`,
     // F21: --url format hint
     // ──────────────────────────────────────────────────────────────────
 
-    it("--url help text hints that only plain-text/Markdown URLs are supported (F21)", () => {
+    it("--url help text accurately describes the supported-extension constraint (F21)", () => {
       const train = buildExpertCommand().commands.find((c) => c.name() === "train");
       const help = train?.helpInformation() ?? "";
-      expect(help).toMatch(/plain[- ]?text|markdown/i);
+      expect(help).toMatch(/supported file extension/i);
+      // The corrected hint must NOT falsely claim HTML is unsupported.
+      expect(help).not.toMatch(/HTML pages are not/i);
     });
 
     it(
-      "--url fetch-failure error includes a plain-text/Markdown format hint (F21)",
+      "--url fetch-failure error includes the supported-extension constraint hint (F21)",
       { timeout: 30_000 },
       async () => {
         await seedExpert(env, PERSONA);
@@ -1940,7 +1942,8 @@ fs.writeFileSync(p, body, 'utf-8');`,
               "https://example.com/page.html",
             ]),
           ).rejects.toThrow(/404|failed to (download|fetch)/i);
-          expect(erred).toMatch(/plain[- ]?text|markdown/i);
+          expect(erred).toMatch(/supported file extension/i);
+          expect(erred).not.toMatch(/HTML pages are not/i);
         } finally {
           vi.unstubAllGlobals();
         }

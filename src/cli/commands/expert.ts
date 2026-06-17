@@ -934,7 +934,7 @@ async function ingestUrlIntoDocs(
   }
   if (!resp.ok) {
     throw new CliUserError(
-      `Failed to download ${displayUrl}: HTTP ${resp.status}${resp.statusText ? ` ${resp.statusText}` : ""} — only plain-text/Markdown URLs are supported; HTML pages are not.`,
+      `Failed to download ${displayUrl}: HTTP ${resp.status}${resp.statusText ? ` ${resp.statusText}` : ""}. The URL's path must end in a supported file extension (e.g. .md, .txt, .html, .pdf, .csv, .docx); pages without a recognized extension won't be ingested.`,
     );
   }
   const contentLengthHeader = resp.headers.get("content-length");
@@ -999,7 +999,7 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
     )
     .option(
       "--url <url...>",
-      "Download one or more URLs (plain-text or Markdown only — HTML pages are not supported) into the expert docs dir before training (repeatable)",
+      "Download one or more URLs into the expert docs dir before training (repeatable); the URL's path must end in a supported file extension — .md, .txt, .html, .pdf, .csv, .docx, etc. — pages without a recognized extension won't be ingested",
     )
     .addOption(
       new Option("--engine <kind>", "Engine to use for profile analysis")
