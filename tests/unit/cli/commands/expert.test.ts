@@ -588,6 +588,64 @@ describe("buildExpertCommand", () => {
         ]),
       ).rejects.toThrow(/slug/i);
     });
+
+    it(
+      "fails fast (non-zero, no misleading ✓) when required fields are missing in non-TTY mode (PM-08)",
+      { timeout: 15_000 },
+      async () => {
+        // Regression for PM-08: `expert create --slug x --persona` with a
+        // non-interactive stdin used to print a misleading "✓ slug" prefill
+        // line and exit 0 while persisting nothing — the wizard hit EOF on
+        // stdin and was abandoned. The command must instead fail fast with an
+        // actionable, non-zero error and create nothing.
+        const originalIsTTY = process.stdin.isTTY;
+        Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+
+        let captured = "";
+        let errored = "";
+        const cmd = buildExpertCommand(
+          (s) => {
+            captured += s;
+          },
+          (s) => {
+            errored += s;
+          },
+        );
+
+        try {
+          await expect(
+            cmd.parseAsync([
+              "node",
+              "council-expert",
+              "create",
+              "--slug",
+              "trained-cfo",
+              "--persona",
+            ]),
+          ).rejects.toThrow(/non-interactive/i);
+
+          // No misleading success indicator may be printed.
+          expect(captured).not.toContain("✓");
+          // The error must point the user at the flags to supply.
+          expect(errored).toMatch(/non-interactive/i);
+          expect(errored).toMatch(/--name/);
+          // Nothing may be persisted: no YAML and absent from `expert list`.
+          const yamlPath = path.join(env.dataHome, "experts", "trained-cfo.yaml");
+          await expect(fs.access(yamlPath)).rejects.toThrow();
+
+          let listed = "";
+          await buildExpertCommand((s) => {
+            listed += s;
+          }).parseAsync(["node", "council-expert", "list"]);
+          expect(listed).not.toContain("trained-cfo");
+        } finally {
+          Object.defineProperty(process.stdin, "isTTY", {
+            value: originalIsTTY,
+            configurable: true,
+          });
+        }
+      },
+    );
   });
 
   describe("expert delete", () => {
