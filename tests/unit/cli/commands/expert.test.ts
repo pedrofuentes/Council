@@ -1753,6 +1753,68 @@ fs.writeFileSync(p, body, 'utf-8');`,
       }
     });
 
+    it("does not orphan a --file when a later --url input fails (atomic ingestion, F14)", async () => {
+      await seedExpert(env, PERSONA);
+      // A valid local file is passed alongside a URL that 404s. The file
+      // must NOT be left orphaned in the docs dir when ingestion aborts.
+      const srcDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-src-"));
+      const srcPath = path.join(srcDir, "good-notes.md");
+      await fs.writeFile(srcPath, "Good notes for the boss.", "utf-8");
+
+      const fakeFetch = vi.fn(
+        async () => new Response("nope", { status: 404, statusText: "Not Found" }),
+      );
+      vi.stubGlobal("fetch", fakeFetch);
+      try {
+        let erred = "";
+        const cmd = buildExpertCommand(
+          () => {
+            /* noop */
+          },
+          (s) => {
+            erred += s;
+          },
+          { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+        );
+        await expect(
+          cmd.parseAsync([
+            "node",
+            "council-expert",
+            "train",
+            "boss",
+            "--file",
+            srcPath,
+            "--url",
+            "https://example.com/missing.md",
+          ]),
+        ).rejects.toThrow(/404|failed to (download|fetch)/i);
+        expect(erred.toLowerCase()).toMatch(/404|failed to (download|fetch)/);
+
+        // No orphaned file: the valid file must not have landed in docs.
+        const docsDir = path.join(env.dataHome, "experts", "boss", "docs");
+        const entries = await fs.readdir(docsDir).catch(() => [] as string[]);
+        expect(entries).not.toContain("good-notes.md");
+        // And no other (non-dot) files were committed either.
+        expect(entries.filter((e) => !e.startsWith("."))).toEqual([]);
+
+        // Training never recorded any document for the expert.
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { DocumentRepository } = await import(
+          "../../../../src/memory/repositories/document-repository.js"
+        );
+        const db = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          const docs = await new DocumentRepository(db).findByExpert("boss");
+          expect(docs.length).toBe(0);
+        } finally {
+          await db.destroy();
+        }
+      } finally {
+        vi.unstubAllGlobals();
+        await fs.rm(srcDir, { recursive: true, force: true });
+      }
+    });
+
     it("--url rejects responses whose Content-Length exceeds the size cap", async () => {
       await seedExpert(env, PERSONA);
       const tooBig = 100 * 1024 * 1024; // 100 MB
