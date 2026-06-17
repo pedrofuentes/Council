@@ -43,6 +43,10 @@ import { stripControlChars } from "../strip-control-chars.js";
 import { createDatabase } from "../../memory/db.js";
 import { PanelLibraryRepository } from "../../memory/repositories/panel-library-repo.js";
 
+import {
+  createReadlineConfirmProvider,
+  type ConfirmProvider,
+} from "./confirm.js";
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
 /**
@@ -139,6 +143,7 @@ export function buildDocsCommand(
   cmd.description("Document format reference and discoverability helpers");
   cmd.addCommand(buildFormatsCommand(write, writeError));
   cmd.addCommand(buildReviewCommand(write, writeError, deps));
+  cmd.addCommand(buildExtractCommand(write, writeError, deps));
   cmd.addCommand(buildDoctorCommand(write, writeError, deps));
   return cmd;
 }
@@ -209,9 +214,25 @@ export interface DocsCommandDeps {
   readonly scanPanel?: (panelName: string) => Promise<PanelScanLookupResult>;
   /** Override config loading (used by tests). */
   readonly loadConfigFn?: () => Promise<CouncilConfig>;
+  /**
+   * Override the AI-extraction run used by `docs extract`. Defaults to a
+   * scan-and-index pass with the AI fallback forced to `auto` — i.e. the
+   * SAME extraction path `auto` mode uses, only gated behind the
+   * `docs extract` confirmation prompt. Injected by tests to assert the
+   * extraction path is invoked on confirm and skipped on decline.
+   */
+  readonly extractPanel?: (panelName: string) => Promise<PanelScanLookupResult>;
+  /**
+   * Factory for the confirmation prompt used by `docs extract`. When
+   * omitted, a readline-backed default is used. Injected by tests.
+   */
+  readonly confirmProvider?: () => ConfirmProvider;
 }
 
-async function defaultScanPanel(panelName: string): Promise<PanelScanLookupResult> {
+async function scanPanelWithMode(
+  panelName: string,
+  modeOverride?: "off" | "ask" | "auto",
+): Promise<PanelScanLookupResult> {
   const config = await loadConfig();
   const dataHome = getCouncilDataHome(config);
   await ensureDataDirectories(dataHome);
@@ -231,7 +252,7 @@ async function defaultScanPanel(panelName: string): Promise<PanelScanLookupResul
       supportedFormats: config.expert.supportedFormats,
       maxFileSizeBytes: config.documents.maxFileSizeMB * 1024 * 1024,
       aiFallback: {
-        mode: config.documents.aiExtraction,
+        mode: modeOverride ?? config.documents.aiExtraction,
         allowedExtensions: config.documents.aiExtractionAllowedExtensions,
       },
     });
@@ -239,6 +260,23 @@ async function defaultScanPanel(panelName: string): Promise<PanelScanLookupResul
   } finally {
     await db.destroy();
   }
+}
+
+async function defaultScanPanel(panelName: string): Promise<PanelScanLookupResult> {
+  return scanPanelWithMode(panelName);
+}
+
+/**
+ * Default extraction run for `docs extract`. Re-scans the panel with the
+ * AI fallback forced to `auto`, which makes the EXISTING extraction path
+ * index the files that `ask` mode previously held as needs-review. No new
+ * AI/engine integration is introduced — this gates `auto`-mode behavior
+ * behind the `docs extract` confirmation prompt.
+ */
+async function defaultExtractPanel(
+  panelName: string,
+): Promise<PanelScanLookupResult> {
+  return scanPanelWithMode(panelName, "auto");
 }
 
 function isAiExtractionEligible(
@@ -332,6 +370,12 @@ function buildReviewCommand(
         write(
           `\n'ask' mode flags AI-extractable files for review — none were auto-extracted or indexed.\n`,
         );
+        // Point the user at the actionable command so `ask` mode is no
+        // longer a dead-end (F07): `docs extract` prompts for confirmation
+        // and then runs the extraction.
+        write(
+          `Run \`council docs extract ${panel}\` to extract them (you'll be asked to confirm).\n`,
+        );
       }
       if (suggestFormats) {
         write(`\nRun \`council docs formats\` to see supported file types.\n`);
@@ -346,6 +390,91 @@ function buildReviewCommand(
       );
       err.exitCode = 1;
       throw err;
+    });
+  return cmd;
+}
+
+function buildExtractCommand(
+  write: Writer,
+  writeError: Writer,
+  deps: DocsCommandDeps,
+): Command {
+  const cmd = new Command("extract");
+  cmd
+    .description(
+      "Run AI extraction on files a panel is holding for review (ask mode)",
+    )
+    .argument("<panel>", "Panel name")
+    .action(async (panel: string) => {
+      const scanFn = deps.scanPanel ?? defaultScanPanel;
+      const configFn = deps.loadConfigFn ?? loadConfig;
+
+      const [lookup, config] = await Promise.all([scanFn(panel), configFn()]);
+
+      if (lookup.kind === "not-found") {
+        writeError(`Panel "${panel}" not found.\n`);
+        const err = new CliUserError(`Panel "${panel}" not found.`);
+        err.exitCode = 1;
+        throw err;
+      }
+
+      // `off` has nothing to extract — eligibility requires a non-off
+      // mode. Guide the user to enable AI extraction rather than dead-end.
+      if (config.documents.aiExtraction === "off") {
+        write(
+          `AI extraction is disabled (mode: off).\n` +
+            `Enable it with: council config set documents.aiExtraction ask\n`,
+        );
+        return;
+      }
+
+      const needsReview = lookup.result.files.filter(
+        (f) => f.status === "needs-review",
+      );
+      if (needsReview.length === 0) {
+        write(`Panel "${panel}": no files awaiting AI-extraction review.\n`);
+        return;
+      }
+
+      write(
+        `Panel "${panel}" has ${needsReview.length} ${needsReview.length === 1 ? "file" : "files"} awaiting AI extraction:\n\n`,
+      );
+      for (const file of needsReview) {
+        const detected =
+          file.detectedFormat !== undefined
+            ? sanitizeAiText(file.detectedFormat)
+            : "";
+        const suffix = detected.length > 0 ? ` — ${detected}` : "";
+        write(`  ⚠ ${file.filename}${suffix}\n`);
+      }
+      write("\n");
+
+      const provider = deps.confirmProvider
+        ? deps.confirmProvider()
+        : createReadlineConfirmProvider();
+      const confirmed = await provider.confirm(
+        `Run AI extraction on ${needsReview.length} ${needsReview.length === 1 ? "file" : "files"}? [y/N] `,
+      );
+      if (!confirmed) {
+        write("Aborted. No files were extracted.\n");
+        return;
+      }
+
+      // Confirmed: run the EXISTING extraction path (auto-mode
+      // scan-and-index) so the held files are extracted and indexed.
+      const extractFn = deps.extractPanel ?? defaultExtractPanel;
+      const extractLookup = await extractFn(panel);
+      if (extractLookup.kind === "not-found") {
+        writeError(`Panel "${panel}" not found.\n`);
+        const err = new CliUserError(`Panel "${panel}" not found.`);
+        err.exitCode = 1;
+        throw err;
+      }
+
+      const indexed = extractLookup.result.indexed;
+      write(
+        `AI extraction complete: ${indexed} ${indexed === 1 ? "file" : "files"} indexed.\n`,
+      );
     });
   return cmd;
 }

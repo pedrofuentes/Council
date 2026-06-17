@@ -287,6 +287,8 @@ need no conversion; rich-document formats are converted to plain text before ind
 council docs formats               # list supported formats, AI-extraction status, and size limit
 council docs review <panel>        # list files that failed extraction or use unsupported formats
                                    #   (exits non-zero when any are present — CI-friendly)
+council docs extract <panel>       # run AI extraction on files held for review (ask mode):
+                                   #   prompts for confirmation, then extracts and indexes them
 council docs doctor <panel>        # document-health diagnostics: indexed count, word count,
                                    #   pending review, corrupt files, AI-extraction mode
 ```
@@ -451,6 +453,7 @@ council doctor                              # Diagnose setup issues (incl. termi
 council docs formats                        # List supported formats, AI-extraction status, size limit
 council docs review <panel>                 # List files that failed extraction or are unsupported
                                             #   (exits non-zero when any are present — CI-friendly)
+council docs extract <panel>                # Extract files held for review (ask mode); prompts to confirm
 council docs doctor <panel>                 # Document-health diagnostics for a panel
 
 # Global flags available on all commands
