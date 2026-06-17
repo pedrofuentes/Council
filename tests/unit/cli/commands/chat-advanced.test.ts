@@ -615,6 +615,19 @@ async function seedPersonaWithDocs(
   return docsDir;
 }
 
+async function seedGenericWithDocs(
+  env: TestEnv,
+  files: Readonly<Record<string, string>>,
+): Promise<string> {
+  await seedExpert(env, SAMPLE); // SAMPLE is a generic expert (no `kind: persona`).
+  const docsDir = path.join(env.dataHome, "experts", SAMPLE.slug, "docs");
+  await fs.mkdir(docsDir, { recursive: true });
+  for (const [name, content] of Object.entries(files)) {
+    await fs.writeFile(path.join(docsDir, name), content);
+  }
+  return docsDir;
+}
+
 describe("safe wrappers — best-effort failure handling", () => {
   it("safeMaybeSummarize times out (does not hang) when maybeSummarize never resolves", async () => {
     const warnings: string[] = [];
@@ -1445,6 +1458,64 @@ describe("persona expert — on-demand document processing", () => {
     await cmd2.parseAsync(["node", "council-chat", PERSONA_SAMPLE.slug, "--engine", "mock"]);
     expect(out2).not.toMatch(/no documents found/i);
     expect(out2).not.toMatch(/running .* as a generic expert/i);
+  });
+
+  it("generic expert WITH docs: warns the docs are not indexed and names the remedy", async () => {
+    // F01: a generic expert with files in its docs folder must NOT be silently
+    // ignored — surface a non-silent warning naming the expert and the remedy.
+    await seedGenericWithDocs(env, {
+      "memo.md": "# Memo\n\nThis content will be ignored by a generic expert.",
+    });
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", SAMPLE.slug, "--engine", "mock"]);
+
+    expect(out).toMatch(/generic expert/i);
+    expect(out).toMatch(/not indexed/i);
+    expect(out).toMatch(/--persona/);
+    // Names the offending expert so the warning is actionable.
+    expect(out).toContain(SAMPLE.slug);
+    // Behavior is unchanged — generic experts still skip persona processing.
+    expect(out).not.toMatch(/processing persona documents/i);
+  });
+
+  it("generic expert with NO docs: emits no doc-ignored warning", async () => {
+    await seedExpert(env); // generic SAMPLE, no docs folder created
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", SAMPLE.slug, "--engine", "mock"]);
+
+    expect(out).not.toMatch(/not indexed/i);
+    expect(out).not.toMatch(/--persona/);
+  });
+
+  it("persona expert WITH docs: processes docs and emits no generic-ignored warning", async () => {
+    await seedPersonaWithDocs(env, { "memo.md": "# Memo\n\nReal persona content." });
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", PERSONA_SAMPLE.slug, "--engine", "mock"]);
+
+    // Persona docs ARE processed (no false "not indexed" warning).
+    expect(out).not.toMatch(/not indexed/i);
+    expect(out).toMatch(/processing persona documents/i);
   });
 });
 
