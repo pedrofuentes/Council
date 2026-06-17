@@ -1855,5 +1855,99 @@ fs.writeFileSync(p, body, 'utf-8');`,
         vi.unstubAllGlobals();
       }
     });
+
+    // F15: training summary counter wording
+    // ──────────────────────────────────────────────────────────────────
+
+    it(
+      "training summary labels skipped (already-trained) count unambiguously from newly-processed (F15)",
+      { timeout: 30_000 },
+      async () => {
+        await seedExpert(env, PERSONA);
+        // First run: ingest existing.md so it becomes "already up to date" on
+        // the next run.
+        await writeDoc("boss", "existing.md", "Previously trained content.");
+        const cmd1 = buildExpertCommand(
+          () => {
+            /* noop */
+          },
+          () => {
+            /* noop */
+          },
+          { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+        );
+        await cmd1.parseAsync(["node", "council-expert", "train", "boss"]);
+
+        // Second run: new.md is new (filesProcessed ≥ 1); existing.md is
+        // unchanged (filesSkipped ≥ 1).  The summary must NOT use the old
+        // misleading "(N unchanged)" placement adjacent to "Processed N".
+        await writeDoc("boss", "new.md", "Brand new content for second run.");
+        let captured = "";
+        const cmd2 = buildExpertCommand(
+          (s) => {
+            captured += s;
+          },
+          () => {
+            /* noop */
+          },
+          { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+        );
+        await cmd2.parseAsync(["node", "council-expert", "train", "boss"]);
+
+        // Must use clear "already up to date" label for skipped count.
+        expect(captured).toMatch(/already up to date/i);
+        // Old "(N unchanged)" parenthetical must be gone.
+        expect(captured).not.toMatch(/\(\d+ unchanged/);
+      },
+    );
+
+    // F21: --url format hint
+    // ──────────────────────────────────────────────────────────────────
+
+    it("--url help text accurately describes the supported-extension constraint (F21)", () => {
+      const train = buildExpertCommand().commands.find((c) => c.name() === "train");
+      const help = train?.helpInformation() ?? "";
+      expect(help).toMatch(/supported file extension/i);
+      // The corrected hint must NOT falsely claim HTML is unsupported.
+      expect(help).not.toMatch(/HTML pages are not/i);
+    });
+
+    it(
+      "--url fetch-failure error includes the supported-extension constraint hint (F21)",
+      { timeout: 30_000 },
+      async () => {
+        await seedExpert(env, PERSONA);
+        const fakeFetch = vi.fn(
+          async () => new Response("Not Found", { status: 404, statusText: "Not Found" }),
+        );
+        vi.stubGlobal("fetch", fakeFetch);
+        try {
+          let erred = "";
+          const cmd = buildExpertCommand(
+            () => {
+              /* noop */
+            },
+            (s) => {
+              erred += s;
+            },
+            { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+          );
+          await expect(
+            cmd.parseAsync([
+              "node",
+              "council-expert",
+              "train",
+              "boss",
+              "--url",
+              "https://example.com/page.html",
+            ]),
+          ).rejects.toThrow(/404|failed to (download|fetch)/i);
+          expect(erred).toMatch(/supported file extension/i);
+          expect(erred).not.toMatch(/HTML pages are not/i);
+        } finally {
+          vi.unstubAllGlobals();
+        }
+      },
+    );
   });
 });

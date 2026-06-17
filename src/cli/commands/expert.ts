@@ -934,7 +934,7 @@ async function ingestUrlIntoDocs(
   }
   if (!resp.ok) {
     throw new CliUserError(
-      `Failed to download ${displayUrl}: HTTP ${resp.status}${resp.statusText ? ` ${resp.statusText}` : ""}`,
+      `Failed to download ${displayUrl}: HTTP ${resp.status}${resp.statusText ? ` ${resp.statusText}` : ""}. The URL's path must end in a supported file extension (e.g. .md, .txt, .html, .pdf, .csv, .docx); pages without a recognized extension won't be ingested.`,
     );
   }
   const contentLengthHeader = resp.headers.get("content-length");
@@ -999,7 +999,7 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
     )
     .option(
       "--url <url...>",
-      "Download one or more http(s) URLs into the expert docs dir before training (repeatable)",
+      "Download one or more URLs into the expert docs dir before training (repeatable); the URL's path must end in a supported file extension — .md, .txt, .html, .pdf, .csv, .docx, etc. — pages without a recognized extension won't be ingested",
     )
     .addOption(
       new Option("--engine <kind>", "Engine to use for profile analysis")
@@ -1154,8 +1154,9 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
           });
           write(
             `✓ Processed ${result.filesProcessed} document(s) ` +
-              `(${result.filesSkipped} unchanged, ${result.filesFailed} failed, ` +
-              `${result.filesNeedingReview} needs review, ${result.filesRemoved} removed, ${result.totalWords} total words).\n`,
+              `(${result.filesFailed} failed, ${result.filesNeedingReview} needs review, ` +
+              `${result.filesRemoved} removed, ${result.totalWords} total words); ` +
+              `${result.filesSkipped} already up to date.\n`,
           );
           if (result.profileError !== null) {
             writeError(`Persona profile refresh failed: ${result.profileError}\n`);

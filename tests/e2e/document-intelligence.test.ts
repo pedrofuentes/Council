@@ -315,7 +315,7 @@ describe.sequential("document intelligence e2e", () => {
     });
 
     expect(retrained.stdout).toContain("alpha.md");
-    expect(retrained.stdout).toContain("0 unchanged");
+    expect(retrained.stdout).toContain("0 already up to date");
 
     const after = await readExpertDocuments(ctx, "boss");
     expect(after).toHaveLength(1);
