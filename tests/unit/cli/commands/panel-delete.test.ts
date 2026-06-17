@@ -109,6 +109,15 @@ describe("buildPanelCommand: delete subcommand (T2)", () => {
     expect(help).not.toMatch(/--force/);
   });
 
+  it("help text clarifies that debate sessions are preserved, not removed (F08)", () => {
+    const del = buildPanelCommand().commands.find((command) => command.name() === "delete");
+    const help = del?.helpInformation() ?? "";
+
+    // Must mention sessions being kept — not just "DB rows" (which implies all data gone).
+    expect(help).toMatch(/session/i);
+    expect(help).toMatch(/preserved|kept|remain/i);
+  });
+
   describe("panel delete behavior", () => {
     let env: TestEnv;
     beforeEach(async () => {
