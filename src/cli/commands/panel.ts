@@ -288,7 +288,10 @@ function buildDeleteCommand(
 ): Command {
   const cmd = new Command("delete");
   cmd
-    .description("Delete a panel (YAML file, docs directory, and DB rows)")
+    .description(
+      "Removes the panel template (library record, members, documents, YAML, and docs directory). " +
+        "Debate sessions created with this panel are preserved and remain accessible via 'council sessions'.",
+    )
     .argument("<name>", "Panel name to delete")
     .option("--yes", "Skip the confirmation prompt (non-interactive runs)")
     .addOption(
