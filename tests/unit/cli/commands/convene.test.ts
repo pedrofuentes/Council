@@ -628,7 +628,7 @@ describe("buildConveneCommand", () => {
     expect(stderrCaptured).toContain("[MOCK ENGINE]");
   });
 
-  it("suppresses the mock banner when quiet mode is enabled", async () => {
+  it("emits the mock banner to stderr even when quiet mode is enabled", async () => {
     setQuiet(true);
     let stderrCaptured = "";
     const cmd = buildConveneCommand({
@@ -651,7 +651,9 @@ describe("buildConveneCommand", () => {
       "json",
     ]);
 
-    expect(stderrCaptured).not.toContain("[MOCK ENGINE]");
+    // F19: --quiet suppresses info notices but must NOT hide the [MOCK ENGINE]
+    // warning — CI consumers need to distinguish mock from real output.
+    expect(stderrCaptured).toContain("[MOCK ENGINE]");
   });
 
   it("suppresses auto-compose informational messages when quiet mode is enabled", async () => {
@@ -683,7 +685,8 @@ describe("buildConveneCommand", () => {
     ]);
 
     expect(stderrCaptured).not.toContain("Auto-composed panel:");
-    expect(stderrCaptured).not.toContain("[MOCK ENGINE]");
+    // F19: [MOCK ENGINE] warning must reach stderr even under --quiet.
+    expect(stderrCaptured).toContain("[MOCK ENGINE]");
     expect(stdoutCaptured).toContain('"kind":"debate.end"');
   });
 

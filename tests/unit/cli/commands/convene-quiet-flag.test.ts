@@ -219,7 +219,7 @@ describe("buildConveneCommand — --quiet flag", () => {
     expect(engine.quietDuringSend).toBe(false);
   });
 
-  it("suppresses the mock-engine informational banner when --quiet is set", async () => {
+  it("emits the mock-engine warning to stderr even when --quiet is set", async () => {
     const engine = new QuietProbeEngine([
       validPanelJson,
       "Alpha response",
@@ -247,7 +247,9 @@ describe("buildConveneCommand — --quiet flag", () => {
       "1",
     ]);
 
-    expect(stderr).not.toContain("[MOCK ENGINE]");
+    // F19: --quiet must NOT suppress the [MOCK ENGINE] warning — it goes to
+    // stderr so CI scripts can distinguish mock from real output.
+    expect(stderr).toContain("[MOCK ENGINE]");
   });
 
   it("emits the mock-engine informational banner when --quiet is absent", async () => {
@@ -278,5 +280,16 @@ describe("buildConveneCommand — --quiet flag", () => {
     ]);
 
     expect(stderr).toContain("[MOCK ENGINE]");
+  });
+
+  it("help text documents --yes for non-interactive / CI auto-compose runs (F27)", () => {
+    // F27: `--yes` must appear in `convene --help` with a description that
+    // tells CI users they need it for non-interactive auto-compose runs.
+    const cmd = buildConveneCommand();
+    const help = cmd.helpInformation();
+    expect(help).toContain("--yes");
+    // Description must call out CI so users can identify the flag from --help
+    // without having to read through an error message mid-run.
+    expect(help).toMatch(/--yes\s+.*CI/i);
   });
 });
