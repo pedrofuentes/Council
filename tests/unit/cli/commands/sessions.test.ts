@@ -798,6 +798,143 @@ describe("buildSessionsCommand", () => {
       expect(state.panelExists).toBe(true);
       expect(state.debateCount).toBe(1);
     });
+
+    describe("naming/display consistency (F32, F35)", () => {
+      it("shows the human panel name and the resume/export id together (F32)", async () => {
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
+        const db = await createDatabase(path.join(testHome, "council.db"));
+        const repo = new PanelRepository(db);
+        await repo.create({
+          name: "code-review-2026-06-16T23:47:21",
+          topic: "Reduce checkout latency",
+          copilotHome: path.join(testHome, "copilot"),
+          configJson: JSON.stringify({ template: "code-review" }),
+        });
+        await db.destroy();
+
+        let captured = "";
+        const cmd = buildSessionsCommand((s) => {
+          captured += s;
+        });
+        await cmd.parseAsync(["node", "council-sessions"]);
+
+        // F32: the friendly panel name is surfaced on its own — not the
+        // timestamped slug — so users can connect "the code-review debate".
+        expect(captured).toContain("panel: code-review\n");
+        // F32: the identifier passed to resume/export is shown with a clear label.
+        expect(captured).toMatch(/resume\/export:\s*code-review-2026-06-16T23:47:21/);
+        // IDs preserved: the exact resume/export slug appears verbatim (unchanged).
+        expect(captured).toContain("code-review-2026-06-16T23:47:21");
+      });
+
+      it("derives a scannable topic label from the latest prompt when no topic is set (F35)", async () => {
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
+        const { DebateRepository } = await import("../../../../src/memory/repositories/debates.js");
+        const db = await createDatabase(path.join(testHome, "council.db"));
+        try {
+          const panelRepo = new PanelRepository(db);
+          const debateRepo = new DebateRepository(db);
+          const panel = await panelRepo.create({
+            name: "arch-2026-06-16T10:00:00",
+            topic: null,
+            copilotHome: path.join(testHome, "copilot"),
+            configJson: JSON.stringify({ template: "arch" }),
+          });
+          await debateRepo.create({
+            panelId: panel.id,
+            prompt: "Should we migrate to microservices",
+            moderator: "round-robin",
+          });
+        } finally {
+          await db.destroy();
+        }
+
+        let captured = "";
+        const cmd = buildSessionsCommand((s) => {
+          captured += s;
+        });
+        await cmd.parseAsync(["node", "council-sessions"]);
+
+        // F35: a scannable label is derived from existing data (the prompt)
+        // instead of the unscannable "(no topic)" placeholder.
+        expect(captured).toContain("Should we migrate to microservices");
+        expect(captured).not.toContain("(no topic)");
+      });
+
+      it("strips terminal escape sequences from untrusted session fields (security)", async () => {
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
+        const { DebateRepository } = await import("../../../../src/memory/repositories/debates.js");
+        const db = await createDatabase(path.join(testHome, "council.db"));
+        try {
+          const panelRepo = new PanelRepository(db);
+          const debateRepo = new DebateRepository(db);
+          // Untrusted, attacker-influenced fields: a CSI-colored session slug,
+          // an OSC 52 clipboard-hijack payload in the template (-> panelName),
+          // and an OSC 8 phishing hyperlink in the debate prompt (-> topic
+          // fallback when no topic is recorded).
+          const panel = await panelRepo.create({
+            name: "\u001b[31mevil\u001b[0m-2026-06-16T23:47:21",
+            topic: null,
+            copilotHome: path.join(testHome, "copilot"),
+            configJson: JSON.stringify({ template: "\u001b]52;c;ZXZpbA==\u0007code-review" }),
+          });
+          await debateRepo.create({
+            panelId: panel.id,
+            prompt: "\u001b]8;;http://evil.example\u0007phish\u001b]8;;\u0007",
+            moderator: "round-robin",
+          });
+        } finally {
+          await db.destroy();
+        }
+
+        let captured = "";
+        const cmd = buildSessionsCommand((s) => {
+          captured += s;
+        });
+        await cmd.parseAsync(["node", "council-sessions"]);
+
+        // No raw attacker-injected ESC sequence (OSC 52 clipboard hijack,
+        // OSC 8 phishing hyperlink, CSI color spoof) reaches the terminal.
+        expect(captured).not.toContain("\u001b]52");
+        expect(captured).not.toContain("\u001b]8;");
+        expect(captured).not.toContain("\u001b[31m");
+        // No BEL (OSC terminator) survives — the only escapes left are the
+        // command's own hardcoded styling, never the untrusted payloads.
+        expect(captured).not.toContain("\u0007");
+        // Visible text is preserved — sanitization only removes control codes.
+        expect(captured).toContain("code-review");
+        expect(captured).toContain("phish");
+        expect(captured).toContain("evil");
+        // The resume/export id keeps its visible value (only control codes go).
+        expect(captured).toMatch(/resume\/export:\s*evil-2026-06-16T23:47:21/);
+      });
+
+      it("falls back to the session slug as the panel name when no template is recorded", async () => {
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
+        const db = await createDatabase(path.join(testHome, "council.db"));
+        const repo = new PanelRepository(db);
+        await repo.create({
+          name: "legacy-session",
+          topic: "legacy topic",
+          copilotHome: path.join(testHome, "copilot"),
+          configJson: "{}",
+        });
+        await db.destroy();
+
+        let captured = "";
+        const cmd = buildSessionsCommand((s) => {
+          captured += s;
+        });
+        await cmd.parseAsync(["node", "council-sessions"]);
+
+        expect(captured).toContain("panel: legacy-session\n");
+        expect(captured).toMatch(/resume\/export:\s*legacy-session/);
+      });
+    });
   });
 
   describe("CLI registration in buildProgram()", () => {

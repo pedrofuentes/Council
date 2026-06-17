@@ -14,6 +14,7 @@ import { DebateRepository, type DebateStatus } from "../../memory/repositories/d
 import { ExpertRepository } from "../../memory/repositories/experts.js";
 import { type Panel, PanelRepository } from "../../memory/repositories/panels.js";
 import { TurnRepository } from "../../memory/repositories/turns.js";
+import { stripControlChars } from "../strip-control-chars.js";
 import { getSymbols } from "../renderers/symbols.js";
 
 import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
@@ -61,6 +62,30 @@ function truncateTopic(topic: string | null, maxLength: number): string {
   return topic.slice(0, maxLength - 3) + "...";
 }
 
+/**
+ * Extract the friendly panel/template name from a session's persisted config.
+ * `convene` stores the human template name (e.g. `code-review`) under
+ * `template`, while the session's own `name` column is a timestamped slug
+ * (e.g. `code-review-2026-06-16T23:47:21`) used as the resume/export key.
+ * Returns undefined for legacy/seeded rows without a recorded template.
+ */
+function parsePanelTemplateName(configJson: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(configJson);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    return undefined;
+  }
+  const template = (parsed as Record<string, unknown>)["template"];
+  if (typeof template === "string" && template.trim().length > 0) {
+    return template.trim();
+  }
+  return undefined;
+}
+
 function isPossiblyStuckRunningDebate(
   status: DebateStatus | undefined,
   lastActivityAt: string | undefined,
@@ -70,7 +95,10 @@ function isPossiblyStuckRunningDebate(
   }
 
   const lastActivityMs = Date.parse(lastActivityAt);
-  return Number.isFinite(lastActivityMs) && Date.now() - lastActivityMs > STUCK_RUNNING_DEBATE_THRESHOLD_MS;
+  return (
+    Number.isFinite(lastActivityMs) &&
+    Date.now() - lastActivityMs > STUCK_RUNNING_DEBATE_THRESHOLD_MS
+  );
 }
 
 function formatStuckSessionHint(panelName: string): string {
@@ -94,7 +122,9 @@ async function findPanelByNameOrPrefix(
   if (exactMatches.length > 1) {
     if (options?.rejectExactCollisions === true) {
       const ambiguousLabel = options.ambiguousLabel ?? "panels";
-      throw new Error(`Ambiguous name '${requestedName}' matches ${exactMatches.length} ${ambiguousLabel}.`);
+      throw new Error(
+        `Ambiguous name '${requestedName}' matches ${exactMatches.length} ${ambiguousLabel}.`,
+      );
     }
     return exactMatches[0];
   }
@@ -103,7 +133,9 @@ async function findPanelByNameOrPrefix(
   }
   if (prefixMatches.length > 1) {
     const ambiguousLabel = options?.ambiguousLabel ?? "panels";
-    throw new Error(`Ambiguous prefix '${requestedName}' matches ${prefixMatches.length} ${ambiguousLabel}.`);
+    throw new Error(
+      `Ambiguous prefix '${requestedName}' matches ${prefixMatches.length} ${ambiguousLabel}.`,
+    );
   }
 
   return undefined;
@@ -188,10 +220,27 @@ export function buildSessionsCommand(depsOrWrite?: SessionsCommandDeps | Writer)
         const turnRepo = new TurnRepository(db);
 
         for (const session of sessions) {
-          const topic = truncateTopic(session.topic, 80);
           const debates = await debateRepo.findByPanelId(session.id);
           const experts = await expertRepo.findByPanelId(session.id);
           const latest = debates.length > 0 ? debates[debates.length - 1] : undefined;
+          // F35: prefer the stored topic; fall back to the latest debate prompt
+          // so the listing is scannable even when no topic was recorded.
+          // Both the topic and the prompt are untrusted (user/imported debate
+          // input) — sanitize before writing to the terminal to strip ANSI/OSC
+          // escape sequences (clipboard-hijack, phishing hyperlinks, spoofing).
+          const topic = stripControlChars(
+            truncateTopic(session.topic ?? latest?.prompt ?? null, 80),
+          );
+          // F32: surface the friendly panel name (from the persisted template)
+          // distinctly from the timestamped slug used by resume/export. The
+          // template is untrusted, so sanitize it for display.
+          const panelName = stripControlChars(
+            parsePanelTemplateName(session.configJson) ?? session.name,
+          );
+          // The slug shown on the resume/export line is also untrusted; sanitize
+          // it for DISPLAY only — the underlying session.name value used by
+          // resume/export lookups is unchanged.
+          const displayName = stripControlChars(session.name);
           let turnCount = 0;
           for (const d of debates) {
             turnCount += await turnRepo.countByDebateId(d.id);
@@ -199,12 +248,13 @@ export function buildSessionsCommand(depsOrWrite?: SessionsCommandDeps | Writer)
           const latestTurn = latest ? await turnRepo.findLatestByDebateId(latest.id) : undefined;
           const latestActivityAt = latestTurn?.createdAt ?? latest?.startedAt;
           const icon = statusIcon(latest?.status);
-          write(`  ${icon} ${session.name} — ${topic}\n`);
-          write(`    panel: ${session.name}\n`);
+          write(`  ${icon} ${panelName} — ${topic}\n`);
+          write(`    panel: ${panelName}\n`);
+          write(`    resume/export: ${displayName}\n`);
           write(`    id: ${session.id}\n`);
           write(`    status: ${latest?.status ?? "none"}\n`);
           if (isPossiblyStuckRunningDebate(latest?.status, latestActivityAt)) {
-            write(`    ${formatStuckSessionHint(session.name)}\n`);
+            write(`    ${formatStuckSessionHint(displayName)}\n`);
           }
           write(`    experts: ${experts.length}, turns: ${turnCount}\n`);
           write(`    created: ${session.createdAt}\n`);
