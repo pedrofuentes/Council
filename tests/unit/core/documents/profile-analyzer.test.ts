@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 import {
   analyzeDocuments,
   calculateRecencyWeight,
+  parseAnalyzerJSON,
   type AnalyzeOptions,
   type PersonaProfile,
 } from "../../../../src/core/documents/profile-analyzer.js";
@@ -270,6 +271,27 @@ describe("analyzeDocuments() — engine-backed profile extraction", () => {
     const engine = new RecordingEngine([fenced]);
     const out = await analyzeDocuments(sampleDocs, null, engine, defaultOptions);
     expect(out.communicationStyle).toMatch(/Direct/);
+  });
+
+  it("tolerates JSON wrapped in prose preamble + trailing commentary (F16)", async () => {
+    const wrapped =
+      "Sure! Here is the persona profile you asked for:\n\n" +
+      validProfileJSON +
+      "\n\nLet me know if you'd like any adjustments.";
+    const engine = new RecordingEngine([wrapped]);
+    const out = await analyzeDocuments(sampleDocs, null, engine, defaultOptions);
+    expect(out.communicationStyle).toMatch(/Direct/);
+    // Recovered on the FIRST send — no wasted retry.
+    expect(engine.sends.length).toBe(1);
+  });
+
+  it("tolerates a fenced JSON block preceded by prose (F16)", async () => {
+    const wrapped =
+      "Here's the distilled profile:\n```json\n" + validProfileJSON + "\n```\nHope that helps.";
+    const engine = new RecordingEngine([wrapped]);
+    const out = await analyzeDocuments(sampleDocs, null, engine, defaultOptions);
+    expect(out.communicationStyle).toMatch(/Direct/);
+    expect(engine.sends.length).toBe(1);
   });
 
   it("sums total words across documents and reports documentCount", async () => {
@@ -716,6 +738,89 @@ describe("analyzeDocuments() — error handling (#359 #360 #361)", () => {
     const warning = warnings[0] ?? "";
     expect(warning).toMatch(/removeExpert|cleanup|teardown/i);
     expect(warning).toContain(engine.registered[0]?.id ?? "<missing>");
+  });
+});
+
+describe("parseAnalyzerJSON() — robust recovery of analyzer JSON (F16)", () => {
+  const validObject = {
+    communicationStyle: "Direct and declarative.",
+    decisionPatterns: ["data-first", "ship-incrementally"],
+    biases: ["recency"],
+    vocabulary: ["ship", "metrics"],
+    epistemicStance: "Empirical; updates on evidence.",
+  };
+  const valid = JSON.stringify(validObject);
+
+  it("parses a clean raw JSON object", () => {
+    const parsed = parseAnalyzerJSON(valid);
+    expect(parsed?.communicationStyle).toBe("Direct and declarative.");
+    expect(parsed?.epistemicStance).toMatch(/Empirical/);
+    expect(parsed?.decisionPatterns).toEqual(["data-first", "ship-incrementally"]);
+  });
+
+  it("parses JSON wrapped in a ```json code fence", () => {
+    const parsed = parseAnalyzerJSON("```json\n" + valid + "\n```");
+    expect(parsed?.communicationStyle).toBe("Direct and declarative.");
+  });
+
+  it("parses JSON wrapped in a bare ``` code fence (no language tag)", () => {
+    const parsed = parseAnalyzerJSON("```\n" + valid + "\n```");
+    expect(parsed?.communicationStyle).toBe("Direct and declarative.");
+  });
+
+  it("parses JSON with a leading prose preamble", () => {
+    const parsed = parseAnalyzerJSON("Sure, here is the profile:\n\n" + valid);
+    expect(parsed?.communicationStyle).toBe("Direct and declarative.");
+  });
+
+  it("parses JSON with trailing prose commentary", () => {
+    const parsed = parseAnalyzerJSON(valid + "\n\nLet me know if you need changes.");
+    expect(parsed?.communicationStyle).toBe("Direct and declarative.");
+  });
+
+  it("parses a fenced JSON block surrounded by prose on both sides", () => {
+    const parsed = parseAnalyzerJSON(
+      "Here you go:\n```json\n" + valid + "\n```\nHope that helps!",
+    );
+    expect(parsed?.communicationStyle).toBe("Direct and declarative.");
+  });
+
+  it("isolates the first balanced object when prose contains stray brackets", () => {
+    const parsed = parseAnalyzerJSON("See reference [1] below: " + valid);
+    expect(parsed?.communicationStyle).toBe("Direct and declarative.");
+  });
+
+  it("tolerates trailing commas before closing braces/brackets", () => {
+    const withTrailingCommas =
+      '{\n  "communicationStyle": "Direct and declarative.",\n' +
+      '  "decisionPatterns": ["data-first", "ship-incrementally",],\n' +
+      '  "biases": ["recency",],\n' +
+      '  "vocabulary": ["ship",],\n' +
+      '  "epistemicStance": "Empirical; updates on evidence.",\n}';
+    const parsed = parseAnalyzerJSON(withTrailingCommas);
+    expect(parsed?.communicationStyle).toBe("Direct and declarative.");
+    expect(parsed?.decisionPatterns).toEqual(["data-first", "ship-incrementally"]);
+  });
+
+  it("returns null for genuinely unparsable input (graceful failure, no throw)", () => {
+    expect(parseAnalyzerJSON("not json at all")).toBeNull();
+    expect(parseAnalyzerJSON("")).toBeNull();
+    expect(parseAnalyzerJSON("   ")).toBeNull();
+    expect(parseAnalyzerJSON("garbage { not really json")).toBeNull();
+  });
+
+  it("returns null when required narrative fields are missing or empty", () => {
+    expect(
+      parseAnalyzerJSON(JSON.stringify({ ...validObject, communicationStyle: "" })),
+    ).toBeNull();
+    expect(
+      parseAnalyzerJSON(JSON.stringify({ ...validObject, epistemicStance: "   " })),
+    ).toBeNull();
+    expect(parseAnalyzerJSON(JSON.stringify({ decisionPatterns: ["x"] }))).toBeNull();
+  });
+
+  it("does not throw on a top-level JSON array (returns null)", () => {
+    expect(parseAnalyzerJSON("[1, 2, 3]")).toBeNull();
   });
 });
 

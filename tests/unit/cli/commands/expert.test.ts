@@ -238,6 +238,105 @@ describe("buildExpertCommand", () => {
       expect(captured).toContain("Model:  claude-sonnet-4.5");
     });
 
+    it("surfaces the learned persona profile when one exists (F20)", async () => {
+      const PERSONA: ExpertDefinition = {
+        slug: "boss",
+        displayName: "My Boss",
+        role: "VP Eng",
+        expertise: { weightedEvidence: ["calibration"], referenceCases: [], notExpertIn: [] },
+        epistemicStance: "Outcome-driven",
+        kind: "persona",
+        personaDescription: "VP of Engineering",
+      };
+      await seedExpert(env, PERSONA);
+
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { ProfileRepository } = await import(
+        "../../../../src/memory/repositories/profile-repository.js"
+      );
+      {
+        const db = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          await new ProfileRepository(db).upsert("boss", {
+            communicationStyle: "Terse, metrics-driven, action-oriented.",
+            decisionPatterns: ["consult-data", "ship-incrementally"],
+            biases: ["recency-bias"],
+            vocabulary: ["ship", "metrics", "north-star"],
+            epistemicStance: "Empirical; updates beliefs on measured outcomes.",
+            lastUpdated: "2026-06-01T00:00:00.000Z",
+            documentCount: 3,
+            totalWords: 1200,
+          });
+        } finally {
+          await db.destroy();
+        }
+      }
+
+      let captured = "";
+      const cmd = buildExpertCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-expert", "inspect", "boss"]);
+      // The training-derived profile must be visible, not just the manual
+      // persona description.
+      expect(captured).toContain("VP of Engineering");
+      expect(captured).toMatch(/Terse, metrics-driven/);
+      expect(captured).toContain("Empirical; updates beliefs on measured outcomes.");
+      expect(captured).toContain("consult-data");
+      expect(captured).toContain("recency-bias");
+      expect(captured).toContain("north-star");
+    });
+
+    it("includes the learned profile in --format json output (F20)", async () => {
+      const PERSONA: ExpertDefinition = {
+        slug: "boss",
+        displayName: "My Boss",
+        role: "VP Eng",
+        expertise: { weightedEvidence: ["calibration"], referenceCases: [], notExpertIn: [] },
+        epistemicStance: "Outcome-driven",
+        kind: "persona",
+        personaDescription: "VP of Engineering",
+      };
+      await seedExpert(env, PERSONA);
+
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { ProfileRepository } = await import(
+        "../../../../src/memory/repositories/profile-repository.js"
+      );
+      {
+        const db = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          await new ProfileRepository(db).upsert("boss", {
+            communicationStyle: "Terse, metrics-driven, action-oriented.",
+            decisionPatterns: ["consult-data"],
+            biases: ["recency-bias"],
+            vocabulary: ["ship"],
+            epistemicStance: "Empirical.",
+            lastUpdated: "2026-06-01T00:00:00.000Z",
+            documentCount: 3,
+            totalWords: 1200,
+          });
+        } finally {
+          await db.destroy();
+        }
+      }
+
+      let captured = "";
+      const cmd = buildExpertCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync([
+        "node",
+        "council-expert",
+        "inspect",
+        "boss",
+        "--format",
+        "json",
+      ]);
+      const parsed = JSON.parse(captured) as { profile?: { communicationStyle?: string } };
+      expect(parsed.profile?.communicationStyle).toBe("Terse, metrics-driven, action-oriented.");
+    });
+
     it("reports not found", async () => {
       let captured = "";
       let errored = "";
