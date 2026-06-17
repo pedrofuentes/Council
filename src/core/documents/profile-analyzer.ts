@@ -27,6 +27,7 @@
 import { ulid } from "ulid";
 
 import type { CouncilEngine, EngineEvent } from "../../engine/index.js";
+import { jsonCandidates, tryParseJSON } from "../robust-json.js";
 import { escapeFenceContent, sanitizePromptField } from "../prompt-sanitize.js";
 
 export interface DocumentContent {
@@ -229,114 +230,6 @@ function formatPromptBody(
   return lines.join("\n");
 }
 
-function stripCodeFence(raw: string): string {
-  return raw
-    .trim()
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/```\s*$/i, "")
-    .trim();
-}
-
-/**
- * Extract the contents of the first fenced code block (``` ``` ``` or
- * ``` ```json ```) anywhere in the response — including when the model
- * prefixes the fence with prose ("Here's the profile:\n```json\n...").
- * The leading-/trailing-fence strip in {@link stripCodeFence} only fires
- * when the fence is flush against the string ends; this recovers the
- * common "prose, then fenced JSON" shape.
- */
-function extractFencedBlock(raw: string): string | null {
-  const match = raw.match(/```(?:[a-zA-Z0-9]+)?[ \t]*\r?\n?([\s\S]*?)```/);
-  return match && match[1] !== undefined ? match[1].trim() : null;
-}
-
-/**
- * Isolate the first balanced top-level JSON object (`{ ... }`) in `s`,
- * skipping over any leading prose and ignoring braces that appear inside
- * string literals (so `"a } b"` does not terminate the scan). Returns
- * `null` when no balanced object is present.
- */
-function isolateBalancedObject(s: string): string | null {
-  const start = s.indexOf("{");
-  if (start === -1) return null;
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = start; i < s.length; i++) {
-    const ch = s[i];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (ch === "\\") {
-        escaped = true;
-      } else if (ch === '"') {
-        inString = false;
-      }
-      continue;
-    }
-    if (ch === '"') {
-      inString = true;
-    } else if (ch === "{") {
-      depth++;
-    } else if (ch === "}") {
-      depth--;
-      if (depth === 0) return s.slice(start, i + 1);
-    }
-  }
-  return null;
-}
-
-/**
- * Remove trailing commas before a closing `}` or `]`. LLMs frequently
- * emit JSON5-style trailing commas that strict `JSON.parse` rejects.
- * Applied only as a fallback after a strict parse fails, so well-formed
- * responses are never touched.
- */
-function stripTrailingCommas(s: string): string {
-  return s.replace(/,(\s*[}\]])/g, "$1");
-}
-
-/**
- * Best-effort parse of a single candidate string: strict `JSON.parse`
- * first, then a trailing-comma-tolerant retry. Returns `undefined` when
- * both attempts fail (never throws).
- */
-function tryParseJSON(candidate: string): unknown {
-  try {
-    return JSON.parse(candidate);
-  } catch {
-    /* fall through to the tolerant retry */
-  }
-  try {
-    return JSON.parse(stripTrailingCommas(candidate));
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Ordered, de-duplicated list of candidate JSON strings to attempt, most
- * likely to least likely. Covers raw JSON, code-fenced JSON (with or
- * without surrounding prose), and prose-wrapped bare JSON.
- */
-function jsonCandidates(raw: string): readonly string[] {
-  const out: string[] = [];
-  const add = (value: string | null | undefined): void => {
-    if (value === null || value === undefined) return;
-    const trimmed = value.trim();
-    if (trimmed.length > 0 && !out.includes(trimmed)) out.push(trimmed);
-  };
-  const fenceStripped = stripCodeFence(raw);
-  const fenced = extractFencedBlock(raw);
-  add(fenceStripped);
-  add(fenced);
-  add(raw);
-  add(isolateBalancedObject(fenceStripped));
-  if (fenced !== null) add(isolateBalancedObject(fenced));
-  add(isolateBalancedObject(raw));
-  return out;
-}
-
 function coerceStringArray(value: unknown): readonly string[] {
   if (!Array.isArray(value)) return [];
   const out: string[] = [];
@@ -423,9 +316,7 @@ async function collectResponse(
   }
   if (errored) {
     if (signal.aborted) {
-      throw new Error(
-        `Profile analyzer engine call timed out after ${timeoutMs}ms`,
-      );
+      throw new Error(`Profile analyzer engine call timed out after ${timeoutMs}ms`);
     }
     throw new Error(
       `Profile analyzer engine call failed${errorMessage ? `: ${errorMessage}` : ""}`,
@@ -485,13 +376,10 @@ export async function analyzeDocuments(
         // chain (#432). Without this the upstream provider error from
         // the first attempt is silently lost.
         if (firstError !== undefined) {
-          const wrapped =
-            err instanceof Error ? err : new Error(String(err));
+          const wrapped = err instanceof Error ? err : new Error(String(err));
           if (wrapped.cause === undefined) {
             const original =
-              firstError instanceof Error
-                ? firstError
-                : new Error(String(firstError));
+              firstError instanceof Error ? firstError : new Error(String(firstError));
             (wrapped as { cause?: unknown }).cause = original;
           }
           throw wrapped;

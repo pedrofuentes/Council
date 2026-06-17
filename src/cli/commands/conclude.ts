@@ -34,12 +34,13 @@ import { z } from "zod";
 
 import { getCouncilHome, loadConfig, resolveEngine } from "../../config/index.js";
 import { type CouncilEngine, type EngineEvent, type ExpertSpec } from "../../engine/index.js";
+import { jsonCandidates, tryParseJSON } from "../../core/robust-json.js";
 import { createDatabase } from "../../memory/db.js";
 import { loadTranscript, type TranscriptDocument } from "../../memory/transcript.js";
 
 import { CliUserError } from "../cli-user-error.js";
 import { formatEngineError } from "../error-mapper.js";
-import { exitCodeForEngineError } from "../exit-codes.js";
+import { EXIT_USER_ERROR, exitCodeForEngineError } from "../exit-codes.js";
 import { ENGINE_KINDS, type EngineKind, makeEngineFromKind } from "../run-with-engine.js";
 import { resolveSession } from "../session-resolver.js";
 import { defaultErrorWriter, defaultNoticeWriter, defaultWriter, type Writer } from "./writer.js";
@@ -220,7 +221,7 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
           systemMessage: SYNTHESIS_SYSTEM_PROMPT,
         };
 
-        let raw_response: string;
+        let parseResult: SynthesisParseResult;
         try {
           await engine.start();
           await engine.addExpert(synthesizerSpec);
@@ -244,7 +245,18 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
               }),
             );
           }
-          raw_response = await collectResponse(engine, synthesizerId, prompt, raw.timeout);
+          parseResult = parseSynthesisResponse(
+            await collectResponse(engine, synthesizerId, prompt, raw.timeout),
+          );
+          if (!parseResult.ok && parseResult.reason === "unparseable") {
+            // The synthesizer intermittently emits JSON with a syntax error
+            // (e.g. an unescaped character inside a long string). Re-sampling
+            // the same prompt once usually yields well-formed JSON, which is
+            // why a manual re-run "often succeeds" (finding PM-04).
+            parseResult = parseSynthesisResponse(
+              await collectResponse(engine, synthesizerId, prompt, raw.timeout),
+            );
+          }
         } catch (err: unknown) {
           writeError("\n" + formatEngineError(err as Error) + "\n\n");
           const cliErr = new CliUserError(err instanceof Error ? err.message : String(err));
@@ -257,7 +269,28 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
           });
         }
 
-        const parsed = parseSynthesisResponse(raw_response);
+        if (!parseResult.ok) {
+          if (parseResult.reason === "schema") {
+            throw new Error(
+              `Synthesizer response did not match expected schema: ${parseResult.detail}`,
+            );
+          }
+          // Unparseable even after tolerant repair AND one retry: surface a
+          // clear, actionable message (never the raw JSON.parse exception) and
+          // exit non-zero gracefully so the user understands a re-run usually
+          // resolves this transient model formatting glitch (finding PM-04).
+          const message =
+            `Could not parse the synthesizer's response into a decision framework: the model ` +
+            `returned invalid JSON even after an automatic repair attempt and one retry. This is ` +
+            `usually a transient formatting glitch — running \`council conclude ${panelName}\` ` +
+            `again often succeeds.`;
+          writeError("\n" + message + "\n\n");
+          const cliErr = new CliUserError(message);
+          cliErr.exitCode = EXIT_USER_ERROR;
+          throw cliErr;
+        }
+
+        const parsed = parseResult.value;
         const output: ConcludeOutput = {
           panelName,
           topic: doc.panel.topic ?? doc.latestDebate.prompt,
@@ -275,7 +308,9 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
           write(JSON.stringify(output, null, 2) + "\n");
         } else {
           write(renderPlain(output));
-          write(`\x1b[2mNext: council export ${panelName} --format adr  (Architecture Decision Record)\x1b[0m\n`);
+          write(
+            `\x1b[2mNext: council export ${panelName} --format adr  (Architecture Decision Record)\x1b[0m\n`,
+          );
         }
       } finally {
         await db.destroy().catch((err: unknown) => {
@@ -384,7 +419,13 @@ interface TruncationFacts {
 }
 
 export function formatTruncationWarning(facts: TruncationFacts): string {
-  const { truncatedByTurns, truncatedByChars, originalTurnCount, finalTurnCount, appliedCharLimit } = facts;
+  const {
+    truncatedByTurns,
+    truncatedByChars,
+    originalTurnCount,
+    finalTurnCount,
+    appliedCharLimit,
+  } = facts;
   const prefix = `transcript truncated from ${originalTurnCount} to ${finalTurnCount} turns`;
   if (truncatedByTurns && truncatedByChars) {
     return `${prefix} to fit synthesis budget (turn limit ${MAX_TRANSCRIPT_TURNS} and ${appliedCharLimit} char limit both exceeded)`;
@@ -440,34 +481,50 @@ async function collectResponse(
   return buf.join("");
 }
 
-const FENCE_RE = /```(?:json)?\s*([\s\S]*?)\s*```/i;
+/**
+ * Outcome of attempting to recover a validated decision framework from a raw
+ * synthesizer response. The two failure modes are handled differently by the
+ * caller:
+ *   - `unparseable`: no candidate substring yielded a JSON object even after
+ *     fence/brace/trailing-comma repair. The synthesizer's malformed JSON is
+ *     intermittent (finding PM-04), so this is worth one retry.
+ *   - `schema`: a JSON object parsed but did not match the expected shape.
+ *     This is deterministic, so it is surfaced immediately without retry.
+ */
+export type SynthesisParseResult =
+  | { readonly ok: true; readonly value: z.infer<typeof SynthesisSchema> }
+  | { readonly ok: false; readonly reason: "unparseable" }
+  | { readonly ok: false; readonly reason: "schema"; readonly detail: string };
 
-export function parseSynthesisResponse(raw: string): z.infer<typeof SynthesisSchema> {
-  const trimmed = raw.trim();
-  let candidate = trimmed;
-  const fence = FENCE_RE.exec(trimmed);
-  if (fence?.[1]) {
-    candidate = fence[1].trim();
-  } else if (!trimmed.startsWith("{")) {
-    // Try to find the first { ... } block in free-form text.
-    const start = trimmed.indexOf("{");
-    const end = trimmed.lastIndexOf("}");
-    if (start !== -1 && end !== -1 && end > start) {
-      candidate = trimmed.slice(start, end + 1);
+/**
+ * Robustly recover a validated synthesis object from a raw engine response.
+ *
+ * Reuses the shared tolerant-JSON helpers ({@link jsonCandidates} and
+ * {@link tryParseJSON}) — the same recovery path the documents analyzer uses —
+ * to tolerate markdown code fences, surrounding prose, and JSON5-style
+ * trailing commas. The first candidate that both parses AND satisfies
+ * {@link SynthesisSchema} wins. This function is pure and never throws, so the
+ * caller can decide whether to retry the engine or degrade gracefully.
+ */
+export function parseSynthesisResponse(raw: string): SynthesisParseResult {
+  let sawObject = false;
+  let lastSchemaError: string | undefined;
+  for (const candidate of jsonCandidates(raw)) {
+    const parsed = tryParseJSON(candidate);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      continue;
     }
+    sawObject = true;
+    const result = SynthesisSchema.safeParse(parsed);
+    if (result.success) {
+      return { ok: true, value: result.data };
+    }
+    lastSchemaError = result.error.message;
   }
-  let json: unknown;
-  try {
-    json = JSON.parse(candidate);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to parse synthesizer response as JSON: ${msg}`);
+  if (sawObject) {
+    return { ok: false, reason: "schema", detail: lastSchemaError ?? "unknown validation error" };
   }
-  const result = SynthesisSchema.safeParse(json);
-  if (!result.success) {
-    throw new Error(`Synthesizer response did not match expected schema: ${result.error.message}`);
-  }
-  return result.data;
+  return { ok: false, reason: "unparseable" };
 }
 
 function renderPlain(out: ConcludeOutput): string {
