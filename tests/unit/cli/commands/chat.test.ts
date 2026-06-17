@@ -309,6 +309,43 @@ describe("buildChatCommand", () => {
       await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--history"]);
       expect(out).toContain("Hiring plan for Q3 engineering");
     });
+
+    it("strips control/escape sequences from the topic before writing to stdout (F23 security)", async () => {
+      await seedExpert(env);
+      // Untrusted stored content (LLM summary or imported first-turn) may embed
+      // ANSI/OSC escapes — e.g. OSC 52 clipboard hijack and a CSI colour code.
+      const malicious = "\u001b]52;c;ZXZpbA==\u0007\u001b[31mclipboard hijack\u001b[0m";
+      await withRepo(env, async (repo) => {
+        const a = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        await repo.addTurn({ chatId: a.id, role: "user", content: malicious });
+        await repo.archiveSession(a.id);
+      });
+      let out = "";
+      const cmd = buildChatCommand({ write: (s) => (out += s) });
+      await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--history"]);
+      // No raw ESC / OSC / CSI / BEL escape introducers reach the terminal.
+      expect(out).not.toContain("\u001b");
+      expect(out).not.toContain("\u0007");
+      // Visible text survives sanitization.
+      expect(out).toContain("clipboard hijack");
+    });
+
+    it("strips control/escape sequences from a stored summary topic (F23 security)", async () => {
+      await seedExpert(env);
+      const malicious = "\u001b[2J\u001b]8;;https://evil.example\u0007Roadmap planning";
+      await withRepo(env, async (repo) => {
+        const a = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        await repo.addTurn({ chatId: a.id, role: "user", content: "raw first prompt text" });
+        await repo.updateSummary(a.id, malicious, 1);
+        await repo.archiveSession(a.id);
+      });
+      let out = "";
+      const cmd = buildChatCommand({ write: (s) => (out += s) });
+      await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--history"]);
+      expect(out).not.toContain("\u001b");
+      expect(out).not.toContain("\u0007");
+      expect(out).toContain("Roadmap planning");
+    });
   });
 
   describe("expert resolution", () => {
