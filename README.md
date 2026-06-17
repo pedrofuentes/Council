@@ -418,7 +418,7 @@ council expert inspect <slug>               # Full detail + panel memberships
 council expert edit <slug>                  # Open YAML in $EDITOR; re-validates on save
 council expert delete <slug> [--force]      # Refuses if expert is in any panel
 council expert docs <slug>                  # Manage a persona expert's reference-docs folder
-council expert train <slug> [--retrain] [--file <path>...] [--url <url>...]   # (Re-)run the persona profile analyzer; --file/--url ingest documents directly
+council expert train <slug> [--retrain] [--file <path>...] [--url <url>...]   # (Re-)run the persona profile analyzer; --file/--url ingestion is atomic (a failed input aborts before any file is added)
 
 # Panel library (Phase 4)
 council panel create <name>                 # Interactive wizard: pick experts, set description + mode

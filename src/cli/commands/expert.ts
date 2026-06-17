@@ -801,16 +801,16 @@ interface TrainOptions {
 }
 
 /**
- * Copy a user-provided file into the expert's docs directory so that
+ * Copy a user-provided file into the given destination directory so that
  * the normal training pass picks it up. Validates the source exists
  * and is a regular file, and refuses path-like names that would
- * escape the destination directory.
+ * escape the destination directory. Returns the destination filename.
  */
 async function ingestFileIntoDocs(
   srcPath: string,
-  docsPath: string,
+  destDir: string,
   write: Writer,
-): Promise<void> {
+): Promise<string> {
   const abs = path.resolve(srcPath);
   let stat: Stats;
   try {
@@ -825,9 +825,10 @@ async function ingestFileIntoDocs(
   if (filename === "" || filename === "." || filename === ".." || /[\\/]/.test(filename)) {
     throw new CliUserError(`Invalid filename derived from path: ${srcPath}`);
   }
-  const dest = path.join(docsPath, filename);
+  const dest = path.join(destDir, filename);
   write(`Copying ${filename} to expert docs...\n`);
   await fs.copyFile(abs, dest);
+  return filename;
 }
 
 /**
@@ -905,10 +906,11 @@ export function deriveFilenameFromUrl(rawUrl: string): string {
 }
 
 /**
- * Download an http(s) URL into the expert's docs directory using the
+ * Download an http(s) URL into the given destination directory using the
  * filename derived from the URL's last path segment. The downloaded
  * payload is written verbatim; the standard training extractor then
- * processes it like any other file in the docs dir.
+ * processes it like any other file in the docs dir. Returns the
+ * destination filename.
  *
  * Sentinel-required guardrails (PR #761): redact URL credentials in
  * logs, time out idle fetches, and abort downloads that exceed the
@@ -917,9 +919,9 @@ export function deriveFilenameFromUrl(rawUrl: string): string {
  */
 async function ingestUrlIntoDocs(
   rawUrl: string,
-  docsPath: string,
+  destDir: string,
   write: Writer,
-): Promise<void> {
+): Promise<string> {
   const filename = deriveFilenameFromUrl(rawUrl);
   const displayUrl = redactUrlForLog(new URL(rawUrl));
   write(`Downloading ${displayUrl} to ${filename}...\n`);
@@ -945,13 +947,13 @@ async function ingestUrlIntoDocs(
       );
     }
   }
-  const dest = path.join(docsPath, filename);
+  const dest = path.join(destDir, filename);
   const body = resp.body;
   if (body === null) {
     // Server returned an empty body — write a zero-byte file so the
     // processor can still classify it (and likely skip it).
     await fs.writeFile(dest, Buffer.alloc(0));
-    return;
+    return filename;
   }
   const handle = await fs.open(dest, "w");
   let total = 0;
@@ -982,6 +984,7 @@ async function ingestUrlIntoDocs(
     throw err;
   }
   await handle.close();
+  return filename;
 }
 
 function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertCommandDeps): Command {
@@ -1022,25 +1025,49 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
           throw new CliUserError(msg);
         }
 
-        const docsPath = path.join(dataHome, "experts", slug, "docs");
+        const expertDir = path.join(dataHome, "experts", slug);
+        const docsPath = path.join(expertDir, "docs");
         await fs.mkdir(docsPath, { recursive: true });
 
         // Ingest --file and --url inputs into the docs dir BEFORE training
-        // so the existing processor picks them up as new documents. Any
-        // ingestion failure aborts the run before training starts so the
-        // user sees a clear, actionable error.
-        try {
-          for (const f of opts.file ?? []) {
-            await ingestFileIntoDocs(f, docsPath, write);
+        // so the existing processor picks them up as new documents.
+        //
+        // F14: ingestion must be atomic. Previously each input was written
+        // straight into the docs dir as it was processed, so a --url that
+        // 404'd after a --file had already been copied left an orphaned,
+        // untrained file behind (and training never ran). To make the step
+        // all-or-nothing, every input is first staged into a private temp
+        // dir that the processor never scans. Only once every input has
+        // succeeded are the staged files committed into the docs dir. Any
+        // failure aborts before a single file lands in docs, and the
+        // staging dir is always removed.
+        const fileInputs = opts.file ?? [];
+        const urlInputs = opts.url ?? [];
+        if (fileInputs.length > 0 || urlInputs.length > 0) {
+          const stagingPath = await fs.mkdtemp(path.join(expertDir, ".train-staging-"));
+          try {
+            const staged: string[] = [];
+            for (const f of fileInputs) {
+              staged.push(await ingestFileIntoDocs(f, stagingPath, write));
+            }
+            for (const u of urlInputs) {
+              staged.push(await ingestUrlIntoDocs(u, stagingPath, write));
+            }
+            // Commit: every input succeeded, so copy the staged files into
+            // the docs dir. This phase only touches local files we just
+            // created and runs immediately before training, eliminating the
+            // orphan window.
+            for (const filename of staged) {
+              await fs.copyFile(path.join(stagingPath, filename), path.join(docsPath, filename));
+            }
+          } catch (err) {
+            if (err instanceof CliUserError) {
+              writeError(err.message + "\n");
+            }
+            throw err;
+          } finally {
+            await fs.rm(stagingPath, { recursive: true, force: true }).catch(() => undefined);
           }
-          for (const u of opts.url ?? []) {
-            await ingestUrlIntoDocs(u, docsPath, write);
-          }
-        } catch (err) {
-          if (err instanceof CliUserError) {
-            writeError(err.message + "\n");
-          }
-          throw err;
         }
 
         const documentRepo = new DocumentRepository(db);
