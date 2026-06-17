@@ -281,6 +281,80 @@ describe("panel save (T9)", () => {
     expect(stdout).toContain("alpha-2");
   });
 
+  // F22 — repeated `panel save` of the SAME session must be idempotent with
+  // respect to expert clones: an equivalent clone (same base slug + identical
+  // defining content) is REUSED rather than re-cloned into a fresh `-2`/`-3`
+  // suffix, so the expert library does not accumulate duplicates.
+  it("reuses equivalent expert clones on repeated saves (idempotent — no -2 accrual)", async () => {
+    const sessionName = await seedSession(env, {
+      name: "auto-panel-2026-06-15T17:00:00",
+      definition: autoDefinition(["alpha", "beta", "gamma"]),
+    });
+
+    const firstSave = buildPanelCommand(
+      () => undefined,
+      () => undefined,
+    );
+    await firstSave.parseAsync(["node", "council-panel", "save", sessionName, "mypanel"]);
+
+    const secondSave = buildPanelCommand(
+      () => undefined,
+      () => undefined,
+    );
+    await secondSave.parseAsync(["node", "council-panel", "save", sessionName, "mypanel"]);
+
+    const db = await createDatabase(path.join(env.home, "council.db"));
+    try {
+      const expertRepo = new ExpertLibraryRepository(db);
+      // The original clones still exist…
+      for (const slug of ["alpha", "beta", "gamma"]) {
+        expect(await expertRepo.findBySlug(slug)).toBeDefined();
+      }
+      // …and the second save did NOT create duplicate `-2` clones.
+      expect(await expertRepo.findBySlug("alpha-2")).toBeUndefined();
+      expect(await expertRepo.findBySlug("beta-2")).toBeUndefined();
+      expect(await expertRepo.findBySlug("gamma-2")).toBeUndefined();
+
+      const panelRepo = new PanelLibraryRepository(db);
+      // Both saved panels reference the SAME reused experts.
+      expect([...(await panelRepo.getMembers("mypanel"))]).toEqual(["alpha", "beta", "gamma"]);
+      expect([...(await panelRepo.getMembers("mypanel-2"))]).toEqual(["alpha", "beta", "gamma"]);
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it("does not reuse a same-slug expert whose defining content differs (creates a distinct clone)", async () => {
+    // A pre-existing library expert shares the base slug but has DIFFERENT
+    // content, so dedup must NOT collapse it — a suffixed clone is created.
+    await seedLibraryExpert(env, expertDef("alpha", { displayName: "Existing Alpha" }));
+
+    const sessionName = await seedSession(env, {
+      name: "auto-panel-2026-06-15T17:30:00",
+      definition: autoDefinition(["alpha", "beta"]),
+    });
+    const cmd = buildPanelCommand(
+      () => undefined,
+      () => undefined,
+    );
+    await cmd.parseAsync(["node", "council-panel", "save", sessionName, "mypanel"]);
+
+    const db = await createDatabase(path.join(env.home, "council.db"));
+    try {
+      const expertRepo = new ExpertLibraryRepository(db);
+      // The differing original is untouched; a distinct clone was created.
+      const original = await expertRepo.findBySlug("alpha");
+      expect(original?.displayName).toBe("Existing Alpha");
+      expect(await expertRepo.findBySlug("alpha-2")).toBeDefined();
+      expect([...(await new PanelLibraryRepository(db).getMembers("mypanel"))]).toEqual([
+        "alpha-2",
+        "beta",
+      ]);
+    } finally {
+      await db.destroy();
+    }
+  });
+
   it("supports --latest to promote the most recent session", async () => {
     await seedSession(env, {
       name: "auto-panel-2026-06-15T14:00:00",
