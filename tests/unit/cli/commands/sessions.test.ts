@@ -863,6 +863,55 @@ describe("buildSessionsCommand", () => {
         expect(captured).not.toContain("(no topic)");
       });
 
+      it("strips terminal escape sequences from untrusted session fields (security)", async () => {
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
+        const { DebateRepository } = await import("../../../../src/memory/repositories/debates.js");
+        const db = await createDatabase(path.join(testHome, "council.db"));
+        try {
+          const panelRepo = new PanelRepository(db);
+          const debateRepo = new DebateRepository(db);
+          // Untrusted, attacker-influenced fields: a CSI-colored session slug,
+          // an OSC 52 clipboard-hijack payload in the template (-> panelName),
+          // and an OSC 8 phishing hyperlink in the debate prompt (-> topic
+          // fallback when no topic is recorded).
+          const panel = await panelRepo.create({
+            name: "\u001b[31mevil\u001b[0m-2026-06-16T23:47:21",
+            topic: null,
+            copilotHome: path.join(testHome, "copilot"),
+            configJson: JSON.stringify({ template: "\u001b]52;c;ZXZpbA==\u0007code-review" }),
+          });
+          await debateRepo.create({
+            panelId: panel.id,
+            prompt: "\u001b]8;;http://evil.example\u0007phish\u001b]8;;\u0007",
+            moderator: "round-robin",
+          });
+        } finally {
+          await db.destroy();
+        }
+
+        let captured = "";
+        const cmd = buildSessionsCommand((s) => {
+          captured += s;
+        });
+        await cmd.parseAsync(["node", "council-sessions"]);
+
+        // No raw attacker-injected ESC sequence (OSC 52 clipboard hijack,
+        // OSC 8 phishing hyperlink, CSI color spoof) reaches the terminal.
+        expect(captured).not.toContain("\u001b]52");
+        expect(captured).not.toContain("\u001b]8;");
+        expect(captured).not.toContain("\u001b[31m");
+        // No BEL (OSC terminator) survives — the only escapes left are the
+        // command's own hardcoded styling, never the untrusted payloads.
+        expect(captured).not.toContain("\u0007");
+        // Visible text is preserved — sanitization only removes control codes.
+        expect(captured).toContain("code-review");
+        expect(captured).toContain("phish");
+        expect(captured).toContain("evil");
+        // The resume/export id keeps its visible value (only control codes go).
+        expect(captured).toMatch(/resume\/export:\s*evil-2026-06-16T23:47:21/);
+      });
+
       it("falls back to the session slug as the panel name when no template is recorded", async () => {
         const { createDatabase } = await import("../../../../src/memory/db.js");
         const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
