@@ -241,7 +241,7 @@ describe("panel chat mode", () => {
     });
     await cmd.parseAsync(["node", "council-chat", "my-panel", "--engine", "mock"]);
 
-    expect(out).toMatch(/Starting group chat/i);
+    expect(out).toMatch(/Starting panel chat/i);
     expect(out).toMatch(/2 experts/i);
 
     await withRepo(env, async (repo) => {
