@@ -277,7 +277,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       "Skip post-debate LLM extraction — for offline/air-gapped use. " +
         "Useful for offline tests and air-gapped environments.",
     )
-    .option("--yes", "Skip the auto-compose confirmation prompt (non-interactive runs)")
+    .option("--yes", "Skip the auto-compose confirmation prompt — required for non-interactive / CI runs")
     .option("--verbose", "Show template migration notices and zero-change summaries")
     .option("-q, --quiet", "Suppress informational output")
     .option(
@@ -324,7 +324,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       };
       let mockWarningEmitted = false;
       const emitMockWarning = (): void => {
-        if (mockWarningEmitted || resolvedEngine !== "mock" || isQuiet()) {
+        if (mockWarningEmitted || resolvedEngine !== "mock") {
           return;
         }
         mockWarningEmitted = true;
