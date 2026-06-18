@@ -183,7 +183,7 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
     .option("--personality <flavor>", "Optional personality flavor")
     .option("--persona-description <text>", "Persona relationship description")
     .action(async (opts: CreateOptions) => {
-      const fields = await gatherCreateFields(opts, write);
+      const fields = await gatherCreateFields(opts, write, writeError);
       validateSlug(fields.slug);
 
       const weightedEvidence = fields.expertise
@@ -268,7 +268,11 @@ interface GatheredFields {
   readonly personaDescription?: string;
 }
 
-async function gatherCreateFields(opts: CreateOptions, write: Writer): Promise<GatheredFields> {
+async function gatherCreateFields(
+  opts: CreateOptions,
+  write: Writer,
+  writeError: Writer,
+): Promise<GatheredFields> {
   // If every required field was provided via flags, skip the interactive
   // wizard entirely — this is the path tests exercise.
   if (
@@ -290,6 +294,31 @@ async function gatherCreateFields(opts: CreateOptions, write: Writer): Promise<G
         ? { personaDescription: opts.personaDescription }
         : {}),
     };
+  }
+
+  // The wizard below prompts on stdin for any required field not supplied as
+  // a flag. In a non-interactive context (piped stdin, CI, redirected fd)
+  // those prompts hit EOF and never resolve, so the command would emit the
+  // "✓ <field>" pre-fill feedback and then be abandoned — exiting without
+  // persisting anything while appearing to succeed (PM-08). Fail fast with an
+  // actionable error before writing any banner or success indicator.
+  if (isNonInteractive()) {
+    const missing: string[] = [];
+    if (opts.slug === undefined) missing.push("--slug");
+    if (opts.name === undefined) missing.push("--name");
+    if (opts.role === undefined) missing.push("--role");
+    if (opts.expertise === undefined) missing.push("--expertise");
+    if (opts.stance === undefined) missing.push("--stance");
+    if (opts.persona && opts.personaDescription === undefined) {
+      missing.push("--persona-description");
+    }
+    const plural = missing.length === 1 ? "" : "s";
+    const msg =
+      `Non-interactive mode: "expert create" cannot prompt for the missing ` +
+      `field${plural}. Provide ${missing.join(", ")} as flag${plural}, ` +
+      `or run the command in an interactive terminal.`;
+    writeError(`${msg}\n`);
+    throw new CliUserError(msg);
   }
 
   // Interactive wizard. Only prompts for fields not provided as flags.
