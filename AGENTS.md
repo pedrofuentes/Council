@@ -16,7 +16,7 @@
 
 **Council** — A CLI tool that creates persistent, conversational AI expert panels for deliberation and decision-making.
 
-- **Tech stack**: TypeScript, Commander.js + Ink, @github/copilot-sdk, @libsql/client + Kysely, Zod — versions: TS 5.7+, Node.js 20+
+- **Tech stack**: TypeScript, Commander.js + Ink, @github/copilot-sdk, @libsql/client + Kysely, Zod — versions: TS 5.7+, Node.js 22+
 - **Package manager**: pnpm | **Module system**: ES modules
 
 ## Commands
