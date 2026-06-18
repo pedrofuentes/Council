@@ -27,11 +27,11 @@
 **Status**: Accepted
 **Context**: Document extraction expanded from 3 text formats (`.md`, `.txt`, `.html`) to 13+ binary/structured formats (PDF, DOCX, PPTX, XLSX, CSV/TSV, RTF, ODT/ODS/ODP). Some formats (e.g., password-protected PDFs, corrupt DOCX) can fail extraction or produce unusable output. This required a policy decision: should Council auto-extract all eligible files immediately, prompt the user per-file, or skip extraction entirely?
 **Decision**: Introduced `documents.aiExtraction` config with three modes:
-- **`off`**: Skip AI extraction entirely. Index only plaintext/markdown. Binary files are marked `needs_review` but never processed. Use case: users who want full control or are concerned about local LLM/API costs.
-- **`ask`** (default): Eligible files are marked `needs_review` and held for user approval. The user runs `council docs extract` to batch-process them after review. Use case: cautious users who want to see what will be extracted before committing to the AI call.
+- **`off`** (default): Skip AI extraction entirely. Index only plaintext/markdown. Binary files are marked `needs_review` but never processed. Use case: users who want full control or are concerned about local LLM/API costs.
+- **`ask`**: Eligible files are marked `needs_review` and held for user approval. The user runs `council docs extract` to batch-process them after review. Use case: cautious users who want to see what will be extracted before committing to the AI call.
 - **`auto`**: Eligible files are extracted and indexed immediately on add/refresh. Use case: power users who trust the heuristic and want zero friction.
 
-Eligibility is centralized in `isExtensionAiEligible` (exported from `src/documents/utils.ts`): PDFs, Office formats, iWork, OpenDocument, RTF, images. The AI fallback (when extraction fails) builds a LOCAL structured description (filename, size, type, context) — no external AI/SDK call, so it's safe and deterministic.
+Eligibility is centralized in `isExtensionAiEligible` (exported from `src/core/documents/extractors/ai-fallback.ts`): PDFs, Office formats, iWork, OpenDocument, RTF, images. The AI fallback (when extraction fails) builds a LOCAL structured description (filename, size, type, context) — no external AI/SDK call, so it's safe and deterministic.
 
 **Alternatives considered**:
 - **Always auto-extract (no opt-out)** — rejected: some users may not want to incur LLM API costs or latency for every binary file. Council should be usable with zero AI calls for extraction if the user prefers.
@@ -41,7 +41,7 @@ Eligibility is centralized in `isExtensionAiEligible` (exported from `src/docume
 
 **Consequences**:
 - ✅ Users can tune extraction aggressiveness to their workflow (zero friction vs full control).
-- ✅ `ask` mode (default) is safe for first-time users: no surprise AI calls, no accidental indexing of sensitive binary content.
+- ✅ `off` (default) is safe for first-time users: no surprise AI calls, no accidental indexing of sensitive binary content. `ask` adds a review step before any extraction.
 - ✅ Single source of truth for eligibility: `isExtensionAiEligible` is reused by `doctor --models`, the refresh logic, and the extraction command.
 - ✅ Fallback descriptions are free (no SDK call) and always available, so even `off` mode users get basic metadata for binary files.
 - ⚠️ `auto` mode may extract large or corrupt files that produce poor results. Acceptable trade-off: power users can always re-run `council docs remove` + `add` if needed.
@@ -51,7 +51,7 @@ Eligibility is centralized in `isExtensionAiEligible` (exported from `src/docume
 **Date**: 2026-06-17
 **Status**: Accepted
 **Context**: Council's `package.json` originally specified `"engines": { "node": ">=20.0.0" }` based on TypeScript ES2022 compilation target and the assumption that the Copilot SDK would be compatible with Node 20 LTS. During PR #1145, CI intermittently failed with `[CLI subprocess] TypeError: Promise.withResolvers is not a function`. Investigation (issue #1138) revealed the root cause: the `@github/copilot-sdk` package spawns a CLI subprocess (via `CopilotClient.start()`) that uses `Promise.withResolvers`, an ES2024 feature available only in Node 22+. Even though Council's own code compiles to ES2022, the SDK's runtime subprocess requirement forced a hard floor.
-**Decision**: Bump `engines.node` to `>=22.0.0` in `package.json`, update CI matrix to `[22.x]` only, and document Node 22+ as a hard requirement in README.md. Council can no longer run on Node 20, regardless of transpilation target.
+**Decision**: Bump `engines.node` to `>=22` in `package.json`, set the CI `node-version` to `22`, and document Node 22+ as a hard requirement in README.md. Council can no longer run on Node 20, regardless of transpilation target. (Implemented in PR #1149.)
 **Alternatives considered**:
 - **Polyfill `Promise.withResolvers` in the subprocess** — rejected: the subprocess is owned by `@github/copilot-sdk`, not Council. We cannot inject polyfills into a third-party CLI binary.
 - **Vendor/fork the SDK and downgrade its code** — rejected: unsustainable maintenance burden. The SDK is actively developed; staying on a fork diverges from upstream security patches and feature updates.
@@ -94,8 +94,8 @@ No other file may hardcode a model ID list. ESLint rule or grep check enforces t
 **Status**: Accepted
 **Context**: Users invoke `council convene "prompt text"` and `council ask "question"` with free-text arguments. Shells (Bash, Zsh, PowerShell, cmd.exe) apply their own expansion rules before passing `argv` to Node.js: variable interpolation (`$VAR`, `%VAR%`), glob expansion (`*.txt`), quote removal, escape-sequence processing. This is unrecoverable from the CLI's perspective — by the time Council sees `process.argv`, the shell has already mangled the input. Examples:
 - PowerShell: `council convene "I have $180K budget"` drops `$180K` (undefined variable).
-- Bash: `council convene "files: *.md"` expands `*.md` to space-separated filenames if the glob matches.
-- Windows cmd.exe: `council ask "path\to\file"` may interpret `\t` as tab.
+- Bash: `council convene files: *.md` (unquoted) expands `*.md` to the matching filenames before Council sees `argv`; double-quoting (`"*.md"`) prevents the expansion.
+- Windows cmd.exe: `council ask "cost %BUDGET%"` expands `%BUDGET%` (to its value, or strips it if undefined) even inside double quotes.
 
 This is a fundamental UX hazard for a CLI that accepts free-text human input. Users expect verbatim pass-through but shells don't provide it. Problem PM-02 in the project backlog tracked this as a "shell-safe input method" requirement.
 
