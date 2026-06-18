@@ -14,9 +14,14 @@ const SQLITE_EXPERIMENTAL_WARNING_STDERR_LINE_RE =
 
 // Companion hint Node prints right after any ExperimentalWarning. We only
 // suppress it when it immediately follows a suppressed SQLite warning so
-// unrelated ExperimentalWarnings keep their hint.
+// unrelated ExperimentalWarnings keep their hint. The executable token is
+// derived by Node from `process.argv0`; the @github/copilot-sdk subprocess
+// inherits the parent's `process.execPath`, so on Windows the token may be
+// `node.exe` / `node.EXE` (or another case variant) instead of bare `node`.
+// Match any non-space token there so the footer is dropped on every platform —
+// otherwise the message line is filtered but its footer leaks alone (PM-05).
 const TRACE_WARNINGS_HINT_LINE_RE =
-  /^(?:\[CLI subprocess\] )?\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\r?\n?/m;
+  /^(?:\[CLI subprocess\] )?\(Use `[^\s`]+ --trace-warnings \.\.\.` to show where the warning was created\)\r?\n?/m;
 
 type EmitWarning = typeof process.emitWarning;
 

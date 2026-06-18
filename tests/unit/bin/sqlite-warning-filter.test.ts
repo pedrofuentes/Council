@@ -119,6 +119,53 @@ describe("installSqliteExperimentalWarningStderrFilter", () => {
     expect(writes).toEqual([]);
   });
 
+  it("suppresses the trace-warnings hint when Node names the executable `node.EXE` (Windows argv0)", () => {
+    // On Windows, Node derives the hint's executable token from `process.argv0`,
+    // which the @github/copilot-sdk subprocess inherits as the parent's
+    // `process.execPath`. Depending on how `node` was launched the token can be
+    // `node.exe` / `node.EXE` instead of bare `node`. The SQLite warning message
+    // line is still dropped (its `(node:PID)` tag is executable-independent), so
+    // an unmatched footer leaks ALONE — the contextless footer of PM-05.
+    const { fakeStderr, writes } = createFakeStderr();
+    installSqliteExperimentalWarningStderrFilter(fakeStderr);
+
+    fakeStderr.write(
+      "[CLI subprocess] (node:63972) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n",
+    );
+    fakeStderr.write(
+      "[CLI subprocess] (Use `node.EXE --trace-warnings ...` to show where the warning was created)\n",
+    );
+
+    expect(writes).toEqual([]);
+  });
+
+  it("suppresses the SQLite warning and its `node.exe`-named hint delivered in a single chunk", () => {
+    const { fakeStderr, writes } = createFakeStderr();
+    installSqliteExperimentalWarningStderrFilter(fakeStderr);
+
+    fakeStderr.write(
+      "[CLI subprocess] (node:1) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n" +
+        "[CLI subprocess] (Use `node.exe --trace-warnings ...` to show where the warning was created)\n",
+    );
+
+    expect(writes).toEqual([]);
+  });
+
+  it("does not drop a `node.EXE`-named hint that follows a non-SQLite ExperimentalWarning", () => {
+    const { fakeStderr, writes } = createFakeStderr();
+    installSqliteExperimentalWarningStderrFilter(fakeStderr);
+
+    const fetchLine =
+      "(node:1) ExperimentalWarning: Fetch is an experimental feature and might change at any time\n";
+    const hintLine =
+      "(Use `node.EXE --trace-warnings ...` to show where the warning was created)\n";
+
+    fakeStderr.write(fetchLine);
+    fakeStderr.write(hintLine);
+
+    expect(writes).toEqual([fetchLine, hintLine]);
+  });
+
   it("passes unrelated stderr content through unchanged", () => {
     const { fakeStderr, writes } = createFakeStderr();
     installSqliteExperimentalWarningStderrFilter(fakeStderr);
