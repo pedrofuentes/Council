@@ -18,6 +18,9 @@ git worktree add .worktrees/feature-name -b feature/feature-name main
 # Change into the worktree
 cd .worktrees/feature-name
 
+# Install dependencies inside the new worktree (worktrees do not share node_modules)
+pnpm install --frozen-lockfile
+
 # List active worktrees
 git worktree list
 
@@ -38,14 +41,15 @@ git branch -D feature/feature-name
 ### Branch Lifecycle
 1. Fetch latest: `git fetch origin main`
 2. Create worktree + branch from `main`: `git worktree add .worktrees/name -b feature/name main && cd .worktrees/name`
-3. TDD: write failing tests, implement, refactor
-4. Commit following the format in AGENTS.md
-5. Push branch: `git push -u origin feature/name`
-6. Open PR: `gh pr create` or via GitHub UI
-7. Invoke Sentinel for review
-8. Address any Sentinel feedback, re-submit
-9. On Sentinel approval, merge to `main`
-10. Cleanup: `cd S:\Pedro\Projects\Council && git worktree remove .worktrees/name && git branch -D feature/name`
+3. Install dependencies in the new worktree: `pnpm install --frozen-lockfile`
+4. TDD: write failing tests, implement, refactor
+5. Commit following the format in AGENTS.md
+6. Push branch: `git push -u origin feature/name`
+7. Open PR: `gh pr create` or via GitHub UI
+8. Invoke Sentinel for review
+9. Address any Sentinel feedback, re-submit
+10. On Sentinel approval, merge to `main`
+11. Cleanup: `cd S:\Pedro\Projects\Council && git worktree remove .worktrees/name && git branch -D feature/name`
 
 ### Branch Naming Convention
 | Prefix | Use For |
@@ -103,7 +107,7 @@ git pull origin main
 - pnpm (`npm install -g pnpm`)
 - GitHub Copilot CLI (`npm install -g @github/copilot`)
 - GitHub Copilot subscription (Individual, Business, or Enterprise)
-- Copilot authenticated (`copilot auth login`)
+- Copilot authenticated (`gh auth login`; verify with `gh auth status`)
 
 ### Initial Setup
 ```bash
