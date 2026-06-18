@@ -60,7 +60,7 @@ tailored to your topic. See [Part 1](#part-1).
 Before starting, make sure you have:
 
 1. **Node.js 22 or later** installed
-2. **Council installed globally**: `npm install -g @council/cli`
+2. **Council installed globally**: `npm install -g @council/cli` (coming soon — not yet on npm; install from source for now, see `docs/DEVELOPMENT-WORKFLOW.md`)
 3. **A GitHub Copilot subscription** (Individual, Business, or Enterprise)
 
 No API keys, no OpenAI account, no credits to manage. Council uses the GitHub
@@ -91,15 +91,15 @@ Run this command — Council will design an expert panel from your topic automat
 council convene "Should we build our own analytics platform or buy a third-party solution?"
 ```
 
-Council auto-composes a panel of 3–5 experts tailored to your question. You should
+Council auto-composes a panel of experts (3 by default; configurable 2–8 via `defaults.maxExperts` or `--max-experts`) tailored to your question. You should
 see something like:
 
 ```
 🏛️ Auto-composing expert panel...
 ✓ Panel assembled: 3 experts
-  • Priya Mehta (CTO) — claude-sonnet-4
-  • James Whitfield (CFO) — claude-sonnet-4
-  • Lisa Park (VP Product) — claude-sonnet-4
+  • Priya Mehta (CTO) — claude-sonnet-4.5
+  • James Whitfield (CFO) — claude-sonnet-4.5
+  • Lisa Park (VP Product) — claude-sonnet-4.5
 
 ━━━ Round 1 ━━━
 
@@ -637,7 +637,10 @@ You can also link external folders:
 council panel docs link strategy-review --path ./research/
 ```
 
-For **1:1 expert chat**, place files in the expert's docs folder:
+For **1:1 expert chat**, document retrieval is available for persona experts
+created with `council expert create --persona` and trained with
+`council expert train`; generic experts ignore expert documents. Place files in
+that persona expert's docs folder:
 
 ```
 ~/Council/experts/cfo/docs/
@@ -1214,7 +1217,7 @@ never reaches the panel unnoticed.
 
 | Variable             | Purpose                                      | Example                              |
 | -------------------- | -------------------------------------------- | ------------------------------------ |
-| `COUNCIL_HOME`       | Config directory (default: `~/Council`)       | `COUNCIL_HOME=/opt/council`          |
+| `COUNCIL_HOME`       | Config directory (default: `~/.council`)      | `COUNCIL_HOME=/opt/council`          |
 | `COUNCIL_DATA_HOME`  | Data directory (database, experts, panels)    | `COUNCIL_DATA_HOME=/tmp/council-ci`  |
 | `COUNCIL_ASCII`      | Force ASCII symbols (no Unicode)              | `COUNCIL_ASCII=1`                    |
 | `NO_COLOR`           | Disable color output                         | `NO_COLOR=1`                         |
@@ -1310,11 +1313,16 @@ council panel docs unlink strategy-review --path ./research/    # unlink
 | `council panel list`      | List all panels                                    |
 | `council panel inspect`   | View panel details and expert roster               |
 | `council panel edit`      | Edit panel YAML in your editor                     |
+| `council panel save`      | Promote a convene session into a library panel     |
 | `council panel delete`    | Remove a panel                                     |
 | `council panel docs`      | Manage panel's shared document corpus              |
+| `council docs`            | Document utilities (`formats`, `review`, `extract`, `doctor`) |
+| `council models`          | List available Copilot models                      |
 | `council templates`       | List built-in templates                            |
 | `council templates inspect`| View template details                             |
 | `council sessions`        | List past debate sessions                          |
+| `council sessions cancel` | Cancel an in-progress session                      |
+| `council sessions delete` | Delete a saved session                             |
 | `council memory list`     | Summary of stored memories by panel                |
 | `council memory inspect`  | Detailed memory view for a panel or expert         |
 | `council memory reset`    | Clear debate history (keeps panel config)           |
@@ -1324,11 +1332,15 @@ council panel docs unlink strategy-review --path ./research/    # unlink
 | `council config edit`     | Open config in your editor                         |
 | `council config set`      | Change a configuration value                       |
 
+Aliases: `experts`, `panels`, and `history` are aliases for `expert`, `panel`, and `sessions`.
+
 ### `council convene` options
 
 | Flag                  | Description                                    | Default          |
 | --------------------- | ---------------------------------------------- | ---------------- |
-| `--template`, `--panel` | Use a built-in or custom panel               | (auto-compose)   |
+| `--template <name>`   | Use a built-in or custom panel                 | (auto-compose)   |
+| `-p, --panel <name>` | Alias for `--template`                         | (auto-compose)   |
+| `--prompt-file <path>` | Read topic verbatim from file or `-` for stdin | (none)           |
 | `--model`             | Override the AI model                          | `claude-sonnet-4.5` |
 | `--engine`            | Engine to use (`copilot` or `mock`)            | `copilot`        |
 | `--max-rounds`        | Number of deliberation rounds (1–20)           | `4`              |
@@ -1342,8 +1354,10 @@ council panel docs unlink strategy-review --path ./research/    # unlink
 | `--yes`               | Skip confirmations                             | `false`          |
 | `--verbose`           | Extra diagnostic output                        | `false`          |
 | `--max-words`         | Max words per expert response (50–2000)        | `250`            |
-| `--experts`           | Comma-separated expert slugs (bypass template) | (none)           |
+| `--experts`           | Expert slugs from the library, space- or comma-separated, repeatable | (none) |
 | `--human`             | Add a human participant (repeatable)           | (none)           |
+| `--heuristic-summaries` | Local summarizer for offline use             | `false`          |
+| `--heuristic-memory`  | Skip post-debate LLM extraction                | `false`          |
 
 ### `council chat` options
 
@@ -1376,13 +1390,17 @@ Set these with `council config set <key> <value>`:
 | `defaults.maxRounds`             | Default deliberation rounds          | `4`              |
 | `defaults.maxExperts`            | Default max experts (auto-compose)   | `3`              |
 | `defaults.maxWordsPerResponse`   | Default max words per response       | `250`            |
-| `expert.backgroundProcessing`    | Process docs in background           | (see docs)       |
+| `documents.aiExtraction`         | AI-assisted document extraction      | `off` (`off`, `ask`, `auto`) |
+| `documents.aiExtractionAllowedExtensions` | Extensions allowed for AI extraction | `[]` |
+| `documents.maxFileSizeMB`        | Maximum document file size           | `50`             |
+| `conclude.maxTranscriptChars`    | Max transcript chars for conclusion  | `50000`          |
+| `expert.backgroundProcessing`    | Process docs in background           | `false`          |
 | `expert.recencyHalfLifeDays`     | Document recency half-life           | `90`             |
 | `expert.supportedFormats`        | Supported doc formats                | 14 extensions (`md, txt, html, pdf, csv, tsv, rtf, docx, pptx, xlsx, xls, odt, ods, odp`) |
-| `chat.recentTurnCount`           | Recent turns to include              | (see docs)       |
-| `chat.summaryMaxWords`           | Summary length limit                 | (see docs)       |
-| `chat.longConversationWarning`   | Warn on long conversations           | (see docs)       |
-| `telemetry.enabled`              | Enable telemetry                     | (see docs)       |
+| `chat.recentTurnCount`           | Recent turns to include              | `10`             |
+| `chat.summaryMaxWords`           | Summary length limit                 | `500`            |
+| `chat.longConversationWarning`   | Warn on long conversations           | `500`            |
+| `telemetry.enabled`              | Enable telemetry                     | `false`          |
 | `paths.dataHome`                 | Data directory path                  | `~/Council`      |
 
 ### Glossary
@@ -1414,7 +1432,7 @@ Set these with `council config set <key> <value>`:
 **"command not found: council"**
 Council isn't installed globally. Run:
 ```bash
-npm install -g @council/cli
+npm install -g @council/cli  # coming soon — not yet on npm; install from source for now (see docs/DEVELOPMENT-WORKFLOW.md)
 ```
 
 **"Did you mean…?" suggestion**
