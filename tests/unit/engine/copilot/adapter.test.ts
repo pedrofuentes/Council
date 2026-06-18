@@ -46,6 +46,8 @@ interface MockClientState {
   listModelsError: Error | undefined;
   /** Number of times any session's abort() was invoked by the adapter. */
   abortCalls: number;
+  /** Per-session: error to throw on `abort()` (async rejection) */
+  abortErrors: Map<string, Error>;
 }
 
 const mockState: MockClientState = {
@@ -59,6 +61,7 @@ const mockState: MockClientState = {
   listModelsResults: [],
   listModelsError: undefined,
   abortCalls: 0,
+  abortErrors: new Map(),
 };
 
 vi.mock("@github/copilot-sdk", () => {
@@ -102,6 +105,8 @@ vi.mock("@github/copilot-sdk", () => {
     }
     async abort(): Promise<void> {
       mockState.abortCalls += 1;
+      const err = mockState.abortErrors.get(this.id);
+      if (err) throw err;
     }
     async disconnect(): Promise<void> {
       const session = mockState.sessions.find((s) => s.id === this.id);
@@ -182,6 +187,7 @@ function resetMockState(): void {
   mockState.listModelsResults = [];
   mockState.listModelsError = undefined;
   mockState.abortCalls = 0;
+  mockState.abortErrors.clear();
 }
 
 describe("CopilotEngine — implements CouncilEngine", () => {
@@ -573,5 +579,55 @@ describe("CopilotEngine — listener cleanup (#479)", () => {
 
     // Core assertion: finally block ran and unregistered every SDK listener.
     expect(session.listenerCount()).toBe(baseline);
+  });
+
+  it("emits a diagnostic when session.abort() rejects (F2 #1143)", async () => {
+    const engine = new CopilotEngine();
+    await engine.start();
+    await engine.addExpert(expertA);
+
+    // Configure the mock to throw an error when abort() is called
+    const abortError = new Error("session disconnected");
+    mockState.abortErrors.set("session-0", abortError);
+
+    // Prepare stream with deltas so abort is called in-flight
+    mockState.sendQueues.set("session-0", [
+      { kind: "assistant.message_delta", data: { deltaContent: "response" } },
+    ]);
+
+    // Spy on console.warn to capture diagnostic emissions
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+      // suppress noisy stderr in test output
+    });
+
+    const controller = new AbortController();
+    const stream = engine.send({
+      prompt: "test",
+      expertId: expertA.id,
+      signal: controller.signal,
+    });
+
+    const events: EngineEvent[] = [];
+    for await (const evt of stream) {
+      events.push(evt);
+      if (evt.kind === "message.delta") {
+        controller.abort();
+      }
+    }
+
+    // The stream still terminates with ABORTED (existing behavior preserved)
+    const last = events[events.length - 1];
+    expect(last?.kind).toBe("error");
+    if (last?.kind === "error") {
+      expect(last.error.code).toBe("ABORTED");
+    }
+
+    // Core assertion: a diagnostic must be emitted when session.abort() rejects
+    expect(warnSpy).toHaveBeenCalled();
+    const joined = warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(joined).toMatch(/abort.*fail/i);
+
+    warnSpy.mockRestore();
+    await engine.stop();
   });
 });
