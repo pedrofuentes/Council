@@ -183,7 +183,7 @@ CLI Commands:
 | Bundler | tsup (esbuild) | Zero config, fast, dual ESM/CJS. |
 | Testing | Vitest + MockEngine | Fast, ESM-native. MockEngine provides deterministic responses. |
 | IDs | ULIDs | Lexicographic sort by creation time. Better than UUIDs for debugging. |
-| Module system | ESM only | Node 20+ floor. All deps are ESM-first. |
+| Module system | ESM only | Node 22+ floor. All deps are ESM-first. |
 | Permissions | denyAll by default | Experts are reasoners, not agents. Opt-in tool access per expert. |
 | RAG excerpts | Chunk at index time, return full chunks | One FTS5 row per sentence-aligned, size-bounded chunk; retrieval returns the whole matched chunk instead of an FTS5 `snippet(...,64)` window, which cropped long PDF/DOCX prose mid-sentence while short table-shaped content fit untouched. |
 
