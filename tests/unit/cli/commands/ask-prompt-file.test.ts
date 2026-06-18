@@ -240,6 +240,113 @@ describe("ask --prompt-file + confirm-on-detect", () => {
     });
   });
 
+  describe("C — empty / whitespace --prompt-file rejection (#1146)", () => {
+    async function debateCount(): Promise<number> {
+      const db = await createDatabase(path.join(testHome, "council.db"));
+      try {
+        return (await new DebateRepository(db).findByPanelId(panelId)).length;
+      } finally {
+        await db.destroy();
+      }
+    }
+
+    it("rejects an EMPTY --prompt-file with a clear error and runs no call", async () => {
+      const file = path.join(testHome, "empty.txt");
+      await fs.writeFile(file, "", "utf-8");
+
+      let stdout = "";
+      let stderr = "";
+      const cmd = buildAskCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: (s) => {
+          stdout += s;
+        },
+        writeError: (s) => {
+          stderr += s;
+        },
+      });
+      cmd.exitOverride();
+
+      await expect(
+        cmd.parseAsync([
+          "node",
+          "council-ask",
+          panelName,
+          "--prompt-file",
+          file,
+          "--engine",
+          "mock",
+        ]),
+      ).rejects.toThrow(/empty/i);
+
+      expect(stderr.toLowerCase()).toContain("empty");
+      expect(stderr).toContain("--prompt-file");
+      // No single-expert call ran and no blank-question debate was persisted.
+      expect(stdout).not.toContain("Question:");
+      expect(await debateCount()).toBe(0);
+    });
+
+    it.each(["   ", "\n\n", "\t\n  \t", "\r\n"])(
+      "rejects a WHITESPACE-ONLY --prompt-file (%j) with no call",
+      async (whitespace) => {
+        const file = path.join(testHome, "blank.txt");
+        await fs.writeFile(file, whitespace, "utf-8");
+
+        let stdout = "";
+        let stderr = "";
+        const cmd = buildAskCommand({
+          engineFactory: makeMockEngineFactory(),
+          write: (s) => {
+            stdout += s;
+          },
+          writeError: (s) => {
+            stderr += s;
+          },
+        });
+        cmd.exitOverride();
+
+        await expect(
+          cmd.parseAsync([
+            "node",
+            "council-ask",
+            panelName,
+            "--prompt-file",
+            file,
+            "--engine",
+            "mock",
+          ]),
+        ).rejects.toThrow(/empty/i);
+        expect(stderr.toLowerCase()).toContain("empty");
+        expect(stdout).not.toContain("Question:");
+        expect(await debateCount()).toBe(0);
+      },
+    );
+
+    it("leaves positional-EMPTY behavior UNCHANGED (warns via arg residue, still runs)", async () => {
+      // An empty positional is the shell-mangled-away case: it must keep its
+      // existing warn-and-proceed behavior, NOT the new --prompt-file rejection.
+      let stdout = "";
+      let stderr = "";
+      const cmd = buildAskCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: (s) => {
+          stdout += s;
+        },
+        writeError: (s) => {
+          stderr += s;
+        },
+      });
+
+      await cmd.parseAsync(["node", "council-ask", panelName, "", "--engine", "mock"]);
+
+      // Warned about shell expansion, but the call still ran (unchanged) and
+      // the new emptiness rejection did NOT fire.
+      expect(stderr).toMatch(/shell expansion/i);
+      expect(stderr.toLowerCase()).not.toContain("is empty");
+      expect(stdout).toContain("Question:");
+    });
+  });
+
   describe("A — confirm-on-detect (shell-arg source)", () => {
     // The canonical PM-02 residue: PowerShell expands `"$180K"` to "",
     // leaving a double space where the amount used to be.

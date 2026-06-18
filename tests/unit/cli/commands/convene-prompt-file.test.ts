@@ -229,6 +229,125 @@ describe("convene --prompt-file + confirm-on-detect", () => {
     });
   });
 
+  describe("C — empty / whitespace --prompt-file rejection (#1146)", () => {
+    async function panelCount(): Promise<number> {
+      const db = await createDatabase(path.join(testHome, "council.db"));
+      try {
+        return (await new PanelRepository(db).findAll()).length;
+      } finally {
+        await db.destroy();
+      }
+    }
+
+    it("rejects an EMPTY --prompt-file with a clear error and runs no debate", async () => {
+      const file = path.join(testHome, "empty.txt");
+      await fs.writeFile(file, "", "utf-8");
+
+      let stdout = "";
+      let stderr = "";
+      const cmd = buildConveneCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: (s) => {
+          stdout += s;
+        },
+        writeError: (s) => {
+          stderr += s;
+        },
+      });
+      cmd.exitOverride();
+
+      await expect(
+        cmd.parseAsync([
+          "node",
+          "council-convene",
+          "--prompt-file",
+          file,
+          "--template",
+          "code-review",
+          "--engine",
+          "mock",
+        ]),
+      ).rejects.toThrow(/empty/i);
+
+      expect(stderr.toLowerCase()).toContain("empty");
+      expect(stderr).toContain("--prompt-file");
+      // No debate ran and no blank-topic panel was persisted.
+      expect(stdout).not.toContain("Topic:");
+      expect(await panelCount()).toBe(0);
+    });
+
+    it.each(["   ", "\n\n", "\t\n  \t", "\r\n"])(
+      "rejects a WHITESPACE-ONLY --prompt-file (%j) with no debate",
+      async (whitespace) => {
+        const file = path.join(testHome, "blank.txt");
+        await fs.writeFile(file, whitespace, "utf-8");
+
+        let stdout = "";
+        let stderr = "";
+        const cmd = buildConveneCommand({
+          engineFactory: makeMockEngineFactory(),
+          write: (s) => {
+            stdout += s;
+          },
+          writeError: (s) => {
+            stderr += s;
+          },
+        });
+        cmd.exitOverride();
+
+        await expect(
+          cmd.parseAsync([
+            "node",
+            "council-convene",
+            "--prompt-file",
+            file,
+            "--template",
+            "code-review",
+            "--engine",
+            "mock",
+          ]),
+        ).rejects.toThrow(/empty/i);
+        expect(stderr.toLowerCase()).toContain("empty");
+        expect(stdout).not.toContain("Topic:");
+        expect(await panelCount()).toBe(0);
+      },
+    );
+
+    it("leaves positional-EMPTY behavior UNCHANGED (warns via arg residue, still runs)", async () => {
+      // An empty positional is the shell-mangled-away case: it must keep its
+      // existing warn-and-proceed behavior, NOT the new --prompt-file rejection.
+      let stdout = "";
+      let stderr = "";
+      const cmd = buildConveneCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: (s) => {
+          stdout += s;
+        },
+        writeError: (s) => {
+          stderr += s;
+        },
+      });
+
+      await cmd.parseAsync([
+        "node",
+        "council-convene",
+        "",
+        "--template",
+        "code-review",
+        "--max-rounds",
+        "1",
+        "--engine",
+        "mock",
+      ]);
+
+      // Warned about shell expansion, but the debate still ran (unchanged) and
+      // the new emptiness rejection did NOT fire.
+      expect(stderr).toMatch(/shell expansion/i);
+      expect(stderr.toLowerCase()).not.toContain("is empty");
+      expect(stdout).toContain("Topic:");
+    });
+  });
+
   describe("A — confirm-on-detect (shell-arg source)", () => {
     // The canonical PM-02 residue: PowerShell expands `"$180K"` to "",
     // leaving a double space where the amount used to be.

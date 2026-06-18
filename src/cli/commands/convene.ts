@@ -362,6 +362,19 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         throw new CliUserError(message);
       }
 
+      // Reject empty/whitespace-only --prompt-file (and stdin) content. The
+      // source-aware heuristic intentionally suppresses the empty-after-trim
+      // residue signal for non-arg sources, so without this explicit check an
+      // empty file would silently launch a useless blank-topic debate. A CLI
+      // positional is exempt: an empty arg is the shell-mangled-away case that
+      // keeps its existing warn-and-proceed behavior.
+      if (topicSource === "file" && topic.trim().length === 0) {
+        const message =
+          "Topic from --prompt-file is empty. Provide a non-empty topic (file contents, or piped stdin for `--prompt-file -`).";
+        writeError(message + "\n");
+        throw new CliUserError(message);
+      }
+
       const admission = checkTopicAdmission(topic, topicSource);
       for (const warning of admission.warnings) {
         writeError(warning + "\n");

@@ -139,6 +139,19 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
           throw new CliUserError(message);
         }
 
+        // Reject empty/whitespace-only --prompt-file (and stdin) content. The
+        // source-aware heuristic intentionally suppresses the empty-after-trim
+        // residue signal for non-arg sources, so without this explicit check an
+        // empty file would silently launch a useless blank-question call. A CLI
+        // positional is exempt: an empty arg is the shell-mangled-away case that
+        // keeps its existing warn-and-proceed behavior.
+        if (questionSource === "file" && question.trim().length === 0) {
+          const message =
+            "Question from --prompt-file is empty. Provide a non-empty question (file contents, or piped stdin for `--prompt-file -`).";
+          writeError(message + "\n");
+          throw new CliUserError(message);
+        }
+
         const admission = checkTopicAdmission(question, questionSource);
         for (const warning of admission.warnings) {
           writeError(warning + "\n");
