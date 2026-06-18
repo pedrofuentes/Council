@@ -292,6 +292,39 @@ describe("council docs review", () => {
     expect(stdout).not.toMatch(/AI extraction available/i);
   });
 
+  it("does not flag a blocklisted extension as AI-extraction-eligible (blocklist wins over allowlist)", async () => {
+    const { stdout } = await runDocs(
+      ["review", "finance"],
+      depsFor(
+        {
+          kind: "scanned",
+          result: scanResult({
+            failed: 1,
+            files: [
+              fileDetail({
+                filename: "archive.zip",
+                status: "failed",
+                errorKind: "unsupported-format",
+                errorMessage: "Unsupported format (.zip)",
+              }),
+            ],
+          }),
+        },
+        makeConfig({
+          aiExtraction: "ask",
+          aiExtractionAllowedExtensions: [".zip"],
+        }),
+      ),
+    );
+
+    expect(stdout).toContain("archive.zip");
+    // `.zip` is blocklisted by the AI fallback, so it can never actually
+    // be AI-extracted — even when the user explicitly allowlists it. The
+    // "AI extraction available" label must not appear, otherwise
+    // `docs extract` is a dead-end for this file.
+    expect(stdout).not.toMatch(/AI extraction available/i);
+  });
+
   it("emits an error and non-zero exit when the panel does not exist", async () => {
     const { stderr, error } = await runDocs(
       ["review", "ghost"],
