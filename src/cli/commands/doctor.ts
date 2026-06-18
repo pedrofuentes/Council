@@ -45,19 +45,21 @@ export interface DoctorDeps {
   readonly discoverModels?: () => Promise<ModelDiscoveryResult>;
 }
 
-async function checkNodeVersion(): Promise<CheckResult> {
-  const major = Number.parseInt(process.versions.node.split(".")[0] ?? "0", 10);
-  if (major >= 20) {
+export async function checkNodeVersion(
+  nodeVersion: string = process.versions.node,
+): Promise<CheckResult> {
+  const major = Number.parseInt(nodeVersion.split(".")[0] ?? "0", 10);
+  if (major >= 22) {
     return {
       name: "Node.js version",
       status: "pass",
-      detail: `v${process.versions.node} (>= 20 required)`,
+      detail: `v${nodeVersion} (>= 22 required)`,
     };
   }
   return {
     name: "Node.js version",
     status: "fail",
-    detail: `v${process.versions.node} is too old; Council requires Node.js 20 or newer`,
+    detail: `v${nodeVersion} is too old; Council requires Node.js 22 or newer`,
   };
 }
 

@@ -7,7 +7,7 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { buildDoctorCommand } from "../../../../src/cli/commands/doctor.js";
+import { buildDoctorCommand, checkNodeVersion } from "../../../../src/cli/commands/doctor.js";
 import type { Writer } from "../../../../src/cli/commands/writer.js";
 
 interface DoctorDepsLike {
@@ -334,5 +334,19 @@ describe("buildDoctorCommand", () => {
     const output = await runDoctor([]);
 
     expect(output).toContain("Could not load configuration");
+  });
+});
+
+describe("checkNodeVersion", () => {
+  it("fails for Node older than 22", async () => {
+    const result = await checkNodeVersion("21.5.0");
+    expect(result.status).toBe("fail");
+    expect(result.detail).toContain("22 or newer");
+  });
+
+  it("passes for Node 22 and newer", async () => {
+    const result = await checkNodeVersion("22.0.0");
+    expect(result.status).toBe("pass");
+    expect(result.detail).toContain(">= 22 required");
   });
 });
