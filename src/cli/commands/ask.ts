@@ -9,6 +9,7 @@ import * as path from "node:path";
 
 import { Command, Option } from "commander";
 
+import { CliUserError } from "../cli-user-error.js";
 import {
   getCouncilDataHome,
   getCouncilHome,
@@ -17,7 +18,11 @@ import {
   type CouncilConfig,
 } from "../../config/index.js";
 import { PanelNotFoundError, TEMPLATE_NAME_PATTERN, loadPanel } from "../../core/template-loader.js";
-import { checkTopicAdmission } from "../../core/topic-admission.js";
+import {
+  checkTopicAdmission,
+  detectShellExpansion,
+  type TopicSource,
+} from "../../core/topic-admission.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import { createDatabase } from "../../memory/db.js";
 import { ExpertRepository } from "../../memory/repositories/experts.js";
@@ -26,13 +31,26 @@ import { PanelRepository } from "../../memory/repositories/panels.js";
 import { defaultErrorWriter, defaultWriter, isQuiet, type Writer } from "./writer.js";
 import { ENGINE_KINDS, type EngineKind, runWithEngine } from "../run-with-engine.js";
 import { RENDERER_FORMATS, type RendererFormat } from "../renderers/select.js";
+import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
+import { isNonInteractive } from "../non-interactive.js";
+import { readTextInput } from "../read-text-input.js";
+import { stripControlChars } from "../strip-control-chars.js";
+import { truncatePrompt } from "../renderers/truncate-prompt.js";
 
 const DEFAULT_MAX_WORDS = 250;
+
+export type { ConfirmProvider } from "./confirm.js";
 
 export interface AskCommandDeps {
   readonly engineFactory?: () => CouncilEngine;
   readonly write?: Writer;
   readonly writeError?: Writer;
+  /**
+   * Factory to create a ConfirmProvider for the shell-expansion
+   * confirm-on-detect prompt (PM-02). When omitted, a readline-backed
+   * default is used (gated by {@link isNonInteractive}).
+   */
+  readonly topicConfirmProvider?: () => ConfirmProvider;
 }
 
 export function buildAskCommand(deps: AskCommandDeps = {}): Command {
@@ -50,7 +68,16 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
       "Panel name from a previous debate (as shown by `council sessions`). " +
         "For library experts, use `council chat`.",
     )
-    .argument("<question>", "The question to ask")
+    .argument(
+      "[question]",
+      "The question to ask (optional when --prompt-file is used)",
+    )
+    .option(
+      "--prompt-file <path>",
+      "Read the question VERBATIM from a file (or `-` for stdin) instead of the positional argument. " +
+        "Bypasses the shell so `$`, backticks, and values like `$180K` survive intact. " +
+        "Mutually exclusive with the positional <question>.",
+    )
     .addOption(
       new Option("--engine <kind>", "Engine to use (default: from config)").choices([
         ...ENGINE_KINDS,
@@ -69,17 +96,83 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
     .action(
       async (
         panelName: string,
-        question: string,
+        questionArg: string | undefined,
         raw: {
           engine?: EngineKind;
           expert?: string;
           format?: string;
           maxWords?: number;
+          promptFile?: string;
         },
       ) => {
-        const admission = checkTopicAdmission(question);
+        // Resolve the question from either the positional <question> or
+        // --prompt-file. --prompt-file reads the question VERBATIM (file
+        // contents or stdin), bypassing the shell entirely so `$`, backticks,
+        // and values like `$180K` survive. The two sources are mutually
+        // exclusive.
+        const promptFile = raw.promptFile;
+        if (promptFile !== undefined && questionArg !== undefined) {
+          const message =
+            "Cannot combine a positional <question> with --prompt-file. Pass the question as an argument OR via --prompt-file, not both.";
+          writeError(message + "\n");
+          throw new CliUserError(message);
+        }
+
+        let question: string;
+        let questionSource: TopicSource;
+        if (promptFile !== undefined) {
+          questionSource = "file";
+          try {
+            question = await readTextInput(promptFile);
+          } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
+            writeError(message + "\n");
+            throw new CliUserError(message);
+          }
+        } else if (questionArg !== undefined) {
+          questionSource = "arg";
+          question = questionArg;
+        } else {
+          const message =
+            "No question provided. Pass a positional <question>, or use --prompt-file <path> (or --prompt-file - to read stdin).";
+          writeError(message + "\n");
+          throw new CliUserError(message);
+        }
+
+        const admission = checkTopicAdmission(question, questionSource);
         for (const warning of admission.warnings) {
           writeError(warning + "\n");
+        }
+
+        // Confirm-on-detect (PM-02): when the shell-expansion heuristic fires
+        // for a shell-argument question, the shell may have silently altered
+        // the text before Council saw it. In an interactive session, echo what
+        // we received and require confirmation before running the (expensive)
+        // single-expert call. Skipped for --quiet and non-interactive shells
+        // (warn-and-proceed). File and stdin input never reach the shell, so
+        // they are never gated here.
+        if (
+          questionSource === "arg" &&
+          !isQuiet() &&
+          detectShellExpansion(question, "arg")
+        ) {
+          const confirmQuestion = async (provider: ConfirmProvider): Promise<void> => {
+            writeError(`Received question: ${truncatePrompt(stripControlChars(question))}\n`);
+            const proceed = await provider.confirm("Proceed with this question? [y/N] ");
+            if (!proceed) {
+              const message =
+                "Aborted: question not confirmed. Re-run with the question in SINGLE quotes, or use --prompt-file <path>.";
+              writeError(message + "\n");
+              throw new CliUserError(message);
+            }
+          };
+          const confirmFactory = deps.topicConfirmProvider;
+          if (confirmFactory) {
+            await confirmQuestion(confirmFactory());
+          } else if (!isNonInteractive()) {
+            await confirmQuestion(createReadlineConfirmProvider());
+          }
+          // else: non-interactive with no injected provider -> warn-and-proceed.
         }
 
         let loadedConfig: CouncilConfig | undefined;
@@ -187,6 +280,9 @@ Shell quoting: bash and PowerShell both expand $variables inside double quotes.
 Wrap questions containing $, !, or backticks in SINGLE quotes to keep them literal:
   bash       $ council ask my-panel 'Is the $450 cost justified?' --engine copilot
   PowerShell > council ask my-panel 'Is the $450 cost justified?' --engine copilot
+Bulletproof option — read the question VERBATIM from a file or stdin (no shell):
+  $ council ask my-panel --prompt-file question.txt --engine copilot
+  $ echo 'Is the $450 cost justified?' | council ask my-panel --prompt-file - --engine copilot
 `,
   );
 
