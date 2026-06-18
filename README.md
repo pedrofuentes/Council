@@ -17,9 +17,9 @@ $ council convene "Should we build our own analytics platform or buy a third-par
 
 🏛️ Auto-composing expert panel...
 ✓ Panel assembled: 3 experts
-  • Priya Mehta (CTO) — claude-sonnet-4
-  • James Whitfield (CFO) — claude-sonnet-4
-  • Lisa Park (VP Product) — claude-sonnet-4
+  • Priya Mehta (CTO) — claude-sonnet-4.5
+  • James Whitfield (CFO) — claude-sonnet-4.5
+  • Lisa Park (VP Product) — claude-sonnet-4.5
 
 ━━━ Round 1 ━━━
 
@@ -60,8 +60,10 @@ ChatGPT gives you **one perspective**. Council gives you **structured deliberati
 
 ## Install
 
+> **Note:** Council is not yet published to npm — the command below will work once it ships (see [ROADMAP.md](./ROADMAP.md), Phase 8). For now, install from source: see [docs/DEVELOPMENT-WORKFLOW.md](./docs/DEVELOPMENT-WORKFLOW.md).
+
 ```bash
-npm install -g @council/cli
+npm install -g @council/cli   # coming soon — not yet on npm
 ```
 
 On first run, Council auto-creates a default configuration and offers setup guidance via `council doctor`.
@@ -74,7 +76,7 @@ On first run, Council auto-creates a default configuration and offers setup guid
 
 ## Quick Start
 
-> **Phases 1–7.5 complete.** The CLI implements `convene`, `ask`, `resume`, `conclude`, `export`, `sessions`, `templates`, `expert`, `panel`, `chat`, `memory`, `doctor`, and `config`. See [ROADMAP.md](./ROADMAP.md) for Phase 8 (Growth & Ecosystem) plans.
+> **Phases 1–7.6 complete.** The CLI implements `convene`, `ask`, `resume`, `conclude`, `export`, `sessions`, `templates`, `expert`, `panel`, `chat`, `memory`, `doctor`, `docs`, and `config`. See [ROADMAP.md](./ROADMAP.md) for Phase 8 (Growth & Ecosystem) plans.
 
 ```bash
 # Verify your setup
@@ -211,18 +213,17 @@ with `council expert create --persona --slug <slug>` — Council provisions
 6.4, 6.8):
 
 1. **Detect** new, modified, and deleted files by SHA-256 checksum
-   against the `expert_documents` table (migration 006).
+   against the `expert_documents` table (defined in `src/memory/migrations/001_unified.sql`).
 2. **Extract** content from any of the 16 registered formats via the
    modular extractor registry (`src/core/documents/extractors/`) —
    a TOCTOU-safe fd-bound read dispatches to the format-specific
    extractor registered for the file's extension (or detected from its
    magic bytes). Run `council docs formats` for the full list.
-3. **Index** the normalised text into FTS5 (`document_index`,
-   migration 007) for retrieval-augmented prompts.
+3. **Index** the normalised text into FTS5 (`document_index`) for retrieval-augmented prompts.
 4. **Analyze** the corpus into a structured `PersonaProfile`
    (`communicationStyle`, `decisionPatterns`, `biases`, `vocabulary`,
    `epistemicStance`) via a transient LLM "Profile Analyzer" expert. The
-   profile is persisted to `persona_profiles` (migration 008) and
+   profile is persisted to `persona_profiles` and
    injected into the expert's system prompt as `[N] PERSONA PROFILE` so
    the very next reply already reflects the latest material.
 
@@ -427,6 +428,7 @@ council expert train <slug> [--retrain] [--file <path>...] [--url <url>...]   # 
 
 # Panel library (Phase 4)
 council panel create <name>                 # Interactive wizard: pick experts, set description + mode
+council panel save <session> [name]         # Promote an auto-composed convene session into a reusable library panel
 council panel list [--format json]          # Browse panels in the library
 council panel inspect <name>                # Panel metadata + resolved expert roster
 council panel edit <name>                   # Open YAML in $EDITOR; re-validates on save
@@ -439,9 +441,12 @@ council panel docs unlink <name> --path <p> # Unlink a folder + clean up its FTS
 council config show                         # Print effective config values with sources
 council config path                         # Print config file path
 council config edit                         # Open config in $EDITOR
+council config set <key> <value>            # Set a single config value (dot-notation key)
 
 # Inspection & diagnostics
 council sessions                            # List all debate sessions (with status/turns/experts)
+council sessions cancel [name]              # Mark stale running debates as interrupted
+council sessions delete <name>              # Delete a completed or interrupted session
 council templates                           # List built-in panel templates with descriptions
 council templates inspect <name>            # Show template details (experts, mode, rounds)
 council memory list                         # Show what experts remember
