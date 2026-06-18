@@ -197,7 +197,7 @@ export async function loadConfigWithMeta(): Promise<ConfigLoadResult> {
  */
 export async function updateConfigField(
   key: string,
-  value: string | number | boolean,
+  value: string | number | boolean | readonly string[],
 ): Promise<void> {
   await ensureHomeDirectory();
   const file = configPath();
