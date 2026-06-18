@@ -27,6 +27,7 @@ const SETTABLE_CONFIG_KEYS = [
   "defaults.maxExperts",
   "defaults.maxWordsPerResponse",
   "documents.aiExtraction",
+  "documents.aiExtractionAllowedExtensions",
   "documents.maxFileSizeMB",
   "conclude.maxTranscriptChars",
 ] as const;
@@ -260,7 +261,34 @@ function isSettableConfigKey(key: string): key is SettableConfigKey {
   return SETTABLE_CONFIG_KEYS.includes(key as SettableConfigKey);
 }
 
-function coerceConfigValue(key: SettableConfigKey, rawValue: string): string | number {
+/**
+ * Parse a comma-separated extension list into a normalized array:
+ * trimmed, lowercased, leading-dot-prefixed, de-duplicated, with empty
+ * segments dropped. An empty (or all-whitespace) value yields `[]`,
+ * which clears the allow-list — meaning "all non-blocklisted extensions
+ * are eligible" per the schema contract. Normalizing the leading dot
+ * matters: the AI-fallback eligibility check (`isExtensionAiEligible`)
+ * compares against `path.extname()` output, which always includes the
+ * dot, so `png` and `.png` must collapse to the same stored value.
+ */
+function normalizeExtensionList(rawValue: string): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const part of rawValue.split(",")) {
+    const trimmed = part.trim().toLowerCase();
+    if (trimmed.length === 0) continue;
+    const ext = trimmed.startsWith(".") ? trimmed : `.${trimmed}`;
+    if (seen.has(ext)) continue;
+    seen.add(ext);
+    result.push(ext);
+  }
+  return result;
+}
+
+function coerceConfigValue(
+  key: SettableConfigKey,
+  rawValue: string,
+): string | number | readonly string[] {
   switch (key) {
     case "defaults.maxRounds":
     case "defaults.maxExperts":
@@ -279,6 +307,9 @@ function coerceConfigValue(key: SettableConfigKey, rawValue: string): string | n
         );
       }
       return rawValue;
+    }
+    case "documents.aiExtractionAllowedExtensions": {
+      return normalizeExtensionList(rawValue);
     }
     case "documents.maxFileSizeMB": {
       const parsed = Number(rawValue);
@@ -316,7 +347,7 @@ function buildSetCommand(write: Writer, writeError: Writer): Command {
         throw new CliUserError(msg);
       }
 
-      let value: string | number;
+      let value: string | number | readonly string[];
       try {
         value = coerceConfigValue(key, rawValue);
       } catch (err: unknown) {
@@ -333,7 +364,12 @@ function buildSetCommand(write: Writer, writeError: Writer): Command {
         throw new CliUserError(msg);
       }
 
-      write(`Set ${key} = ${String(value)}\n`);
+      const displayValue = Array.isArray(value)
+        ? value.length === 0
+          ? "(none)"
+          : value.join(", ")
+        : String(value);
+      write(`Set ${key} = ${displayValue}\n`);
     });
   return cmd;
 }

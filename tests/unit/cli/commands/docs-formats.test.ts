@@ -119,6 +119,25 @@ describe("buildDocsCommand", () => {
       expect(stdout).toContain("documents.aiExtraction");
     });
 
+    it("explains what AI extraction is and when to enable it", async () => {
+      const { stdout } = await runDocs(["formats"]);
+      // PM-01: the block must explain WHAT AI extraction does, not just
+      // expose its on/off status — it builds a structured text
+      // description of files no native extractor can read, so experts can
+      // still reference them...
+      expect(stdout).toMatch(/structured text description/i);
+      expect(stdout).toMatch(/experts/i);
+      // ...and WHEN/WHY to turn it on.
+      expect(stdout).toMatch(/when to enable/i);
+    });
+
+    it("documents the allowed-extensions configure hint", async () => {
+      const { stdout } = await runDocs(["formats"]);
+      // PM-09 made `aiExtractionAllowedExtensions` settable; `formats`
+      // should point users at it so the allow-list is discoverable.
+      expect(stdout).toContain("documents.aiExtractionAllowedExtensions");
+    });
+
     it("displays the file size limit from the default config", async () => {
       const { stdout } = await runDocs(["formats"]);
       expect(stdout).toMatch(/File size limit:\s*50\s*MB/i);

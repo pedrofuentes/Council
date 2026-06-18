@@ -1319,4 +1319,85 @@ describe("scanAndIndexPanelDocuments — ask-mode review for unsupported extensi
       "shot.png",
     ]);
   });
+
+  it("auto mode: an eligible unsupported-extension file is AI-extracted, indexed, and tracked", async () => {
+    await fs.writeFile(path.join(managedDir, "deck.key"), "keynote outline", "utf-8");
+
+    const result = await scanAndIndexPanelDocuments({
+      panelName: "ask-panel",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt"],
+      aiFallback: { mode: "auto", allowedExtensions: [] },
+    });
+
+    // The detector drops `.key` (not in supportedFormats); in `auto`
+    // mode the scanner must still AI-extract and index it — completing
+    // the `docs extract` workflow rather than reporting it as failed.
+    expect(result.indexed).toBe(1);
+    expect(result.needsReview).toBe(0);
+    expect(result.failed).toBe(0);
+    expect(result.unsupported).toBe(0);
+    const f = result.files.find((x) => x.filename === "deck.key");
+    expect(f?.status).toBe("indexed");
+    expect(f?.aiExtracted).toBe(true);
+    expect(f?.errorKind).toBeUndefined();
+    // Searchable in FTS and tracked in panel_documents.
+    expect(await panelFtsCount(db)).toBe(1);
+    const docsRepo = new PanelDocumentRepository(db);
+    const tracked = await docsRepo.listDocuments("ask-panel");
+    expect(tracked).toHaveLength(1);
+  });
+
+  it("auto mode: a blocklisted .png is NOT AI-extracted and stays an unsupported failure", async () => {
+    await fs.writeFile(path.join(managedDir, "shot.png"), "x", "utf-8");
+
+    const result = await scanAndIndexPanelDocuments({
+      panelName: "ask-panel",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt"],
+      aiFallback: { mode: "auto", allowedExtensions: [] },
+    });
+
+    // Blocklist always wins, even in `auto` mode: a `.png` is never
+    // AI-extracted and remains an unsupported failure.
+    expect(result.indexed).toBe(0);
+    expect(result.unsupported).toBe(1);
+    expect(result.failed).toBe(1);
+    const f = result.files.find((x) => x.filename === "shot.png");
+    expect(f?.status).toBe("failed");
+    expect(f?.errorKind).toBe("unsupported-format");
+    expect(await panelFtsCount(db)).toBe(0);
+  });
+
+  it("auto mode: re-scanning an already-extracted file reports it unchanged (no re-index churn)", async () => {
+    await fs.writeFile(path.join(managedDir, "deck.key"), "keynote outline", "utf-8");
+    const opts = {
+      panelName: "ask-panel",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt"],
+      aiFallback: { mode: "auto" as const, allowedExtensions: [] },
+    };
+
+    const first = await scanAndIndexPanelDocuments(opts);
+    expect(first.indexed).toBe(1);
+
+    // The detector never tracks unsupported-extension files, so `.key`
+    // reappears in `unsupportedFiles` on every scan. The scanner must
+    // recognize the unchanged checksum and report `unchanged` instead of
+    // re-indexing (which would churn FTS rows on every chat startup).
+    const second = await scanAndIndexPanelDocuments(opts);
+    expect(second.indexed).toBe(0);
+    expect(second.unchanged).toBe(1);
+    expect(second.failed).toBe(0);
+    const f = second.files.find((x) => x.filename === "deck.key");
+    expect(f?.status).toBe("unchanged");
+    // Still exactly one FTS row and one tracked doc — no duplication.
+    expect(await panelFtsCount(db)).toBe(1);
+    const docsRepo = new PanelDocumentRepository(db);
+    const tracked = await docsRepo.listDocuments("ask-panel");
+    expect(tracked).toHaveLength(1);
+  });
 });

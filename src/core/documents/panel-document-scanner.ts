@@ -38,8 +38,9 @@ import { sql } from "kysely";
 
 import { detectDocumentChanges, type DocumentFile } from "./detector.js";
 import * as extractorModule from "./extractor.js";
-import type { AiFallbackOption } from "./extractor.js";
-import { createDocumentIndexer } from "./indexer.js";
+import type { AiFallbackOption, DocumentContent } from "./extractor.js";
+import { isExtensionAiEligible } from "./extractors/ai-fallback.js";
+import { createDocumentIndexer, type DocumentIndexer } from "./indexer.js";
 import {
   classifyExtractionError,
   classifyUnsupportedFile,
@@ -129,6 +130,97 @@ export interface PanelScanResult {
 interface FolderToScan {
   readonly source: PanelDocumentSource;
   readonly path: string;
+}
+
+type PersistOutcome = "indexed" | "skipped";
+
+/**
+ * Index a freshly-extracted document into FTS and track it in
+ * `panel_documents`. Encapsulates the source-specific write path so the
+ * normal new/modified loop and the `auto`-mode AI-extraction path for
+ * detector-dropped files share ONE implementation — preventing the two
+ * from drifting (the exact class of bug this task fixes).
+ *
+ * For `linked` sources the (link-membership re-check + FTS DELETE+INSERT
+ * + panel_documents UPSERT) sequence MUST run as a single atomic unit
+ * (issue #424): a `BEGIN IMMEDIATE` transaction takes the writer lock up
+ * front so a concurrent `panel docs unlink` cannot have its deletes
+ * silently undone, leaving unlinked content retrievable after a
+ * reported-success unlink. The raw FTS INSERT mirrors `indexer.index()`,
+ * which opens its own transaction we cannot nest inside another. When the
+ * folder was unlinked mid-scan the path is removed from `seenPaths` and
+ * `"skipped"` is returned so the caller reports it without indexing
+ * (issue #528). Managed-source files go through `indexer.index()` since
+ * the managed dir cannot be unlinked.
+ */
+async function persistExtractedDocument(args: {
+  readonly db: CouncilDatabase;
+  readonly docsRepo: PanelDocumentRepository;
+  readonly indexer: DocumentIndexer;
+  readonly panelName: string;
+  readonly folder: FolderToScan;
+  readonly filePath: string;
+  readonly filename: string;
+  readonly extracted: DocumentContent;
+  readonly seenPaths: Set<string>;
+}): Promise<PersistOutcome> {
+  const { db, docsRepo, indexer, panelName, folder, filePath, filename, extracted, seenPaths } =
+    args;
+  if (folder.source === "linked") {
+    await sql`BEGIN IMMEDIATE`.execute(db);
+    try {
+      const linkRow = await sql<{
+        c: number;
+      }>`SELECT COUNT(*) AS c FROM panel_linked_folders WHERE panel_name = ${panelName} AND folder_path = ${folder.path}`.execute(
+        db,
+      );
+      if ((linkRow.rows[0]?.c ?? 0) === 0) {
+        await sql`COMMIT`.execute(db);
+        // Drop from `seenPaths` so the prune pass is free to reconcile
+        // the (already-unlinked) row if it still exists in `known`.
+        seenPaths.delete(filePath);
+        return "skipped";
+      }
+      await sql`DELETE FROM document_index WHERE file_path = ${filePath}`.execute(db);
+      await sql`INSERT INTO document_index (content, source_type, source_slug, file_path) VALUES (${extracted.content}, 'panel', ${panelName}, ${filePath})`.execute(
+        db,
+      );
+      await docsRepo.trackDocument({
+        panelName,
+        source: folder.source,
+        filePath,
+        filename,
+        checksum: extracted.checksum,
+        sizeBytes: extracted.sizeBytes,
+        wordCount: extracted.wordCount,
+      });
+      await sql`COMMIT`.execute(db);
+    } catch (err) {
+      try {
+        await sql`ROLLBACK`.execute(db);
+      } catch {
+        /* preserve original error */
+      }
+      throw err;
+    }
+    return "indexed";
+  }
+  await indexer.index({
+    content: extracted.content,
+    sourceType: "panel",
+    sourceSlug: panelName,
+    filePath,
+  });
+  await docsRepo.trackDocument({
+    panelName,
+    source: folder.source,
+    filePath,
+    filename,
+    checksum: extracted.checksum,
+    sizeBytes: extracted.sizeBytes,
+    wordCount: extracted.wordCount,
+  });
+  return "indexed";
 }
 
 export async function scanAndIndexPanelDocuments(
@@ -298,14 +390,113 @@ export async function scanAndIndexPanelDocuments(
     // must register here to be reported. `seenPaths` keeps them out of
     // the prune pass.
     //
-    // When `aiExtraction` is `ask`, an eligible (non-blocklisted,
-    // allowlisted) extension is held as a `needs-review` outcome instead
-    // (`classifyUnsupportedFile`): `ask` means review, so it surfaces as
-    // "awaiting AI-extraction review" — NOT indexed, NOT tracked, NOT a
-    // failure. No extraction is performed; the file is only flagged. The
-    // needs-review count still fires the render gate above.
+    // The active `aiExtraction` mode decides what happens to an eligible
+    // (non-blocklisted, allowlisted) extension:
+    //   - `auto`: AI-extract the structured description NOW and index it,
+    //     so `docs extract` actually surfaces the file (the previously
+    //     dead-end path this fix repairs). The detector never tracks
+    //     unsupported files, so they reappear here every scan — we compare
+    //     the content checksum against `known` and report `unchanged`
+    //     instead of re-indexing when nothing changed.
+    //   - `ask`: hold as a `needs-review` outcome via
+    //     `classifyUnsupportedFile` — NOT read, NOT indexed, NOT tracked,
+    //     NOT a failure — surfacing as "awaiting AI-extraction review".
+    //   - `off` / not eligible: reported as a plain `unsupported` failure.
+    // The needs-review and indexed/unchanged counts each fire the render
+    // gate above.
     for (const unsupportedPath of detection.unsupportedFiles) {
       seenPaths.add(unsupportedPath);
+      const ext = path.extname(unsupportedPath).toLowerCase();
+      if (
+        aiFallback !== undefined &&
+        aiFallback.mode === "auto" &&
+        isExtensionAiEligible(ext, aiFallback)
+      ) {
+        const filename = path.basename(unsupportedPath);
+        try {
+          // The detector dropped this file before extraction, so no
+          // native extractor exists for it — `extractDocument` runs the
+          // AI fallback after the full TOCTOU/confinement sequence.
+          // `confinementRoot: canonical` re-validates the file resolves
+          // inside the scanned folder (issue #385), mirroring the
+          // new/modified path above.
+          const extracted = await extractorModule.extractDocument(unsupportedPath, {
+            confinementRoot: canonical,
+            _rootIsCanonical: true,
+            ...(maxFileSizeBytes !== undefined ? { maxFileSizeBytes } : {}),
+            aiFallback,
+          });
+          if (known.get(unsupportedPath) === extracted.checksum) {
+            unchanged += 1;
+            onProgress?.({ filename, source: folder.source, status: "unchanged" });
+            files.push({
+              path: unsupportedPath,
+              filename,
+              extension: ext,
+              status: "unchanged",
+            });
+            continue;
+          }
+          const outcome = await persistExtractedDocument({
+            db,
+            docsRepo,
+            indexer,
+            panelName,
+            folder,
+            filePath: unsupportedPath,
+            filename,
+            extracted,
+            seenPaths,
+          });
+          if (outcome === "skipped") {
+            onProgress?.({ filename, source: folder.source, status: "unchanged" });
+            files.push({
+              path: unsupportedPath,
+              filename,
+              extension: ext,
+              status: "unchanged",
+            });
+            continue;
+          }
+          indexed += 1;
+          onProgress?.({ filename, source: folder.source, status: "indexed" });
+          const aiExtracted = extracted.metadata?.aiFallback === true;
+          files.push({
+            path: unsupportedPath,
+            filename,
+            extension: ext,
+            status: known.has(unsupportedPath) ? "modified" : "indexed",
+            wordCount: extracted.wordCount,
+            ...(extracted.metadata !== undefined ? { metadata: extracted.metadata } : {}),
+            ...(aiExtracted ? { aiExtracted: true } : {}),
+            ...(aiExtracted && extracted.metadata?.detectedFormat !== undefined
+              ? { detectedFormat: extracted.metadata.detectedFormat }
+              : {}),
+          });
+        } catch (err: unknown) {
+          failed += 1;
+          const msg = err instanceof Error ? err.message : String(err);
+          onProgress?.({
+            filename,
+            source: folder.source,
+            status: "failed",
+            error: msg,
+          });
+          const classified = classifyExtractionError(err);
+          if (classified.kind === "unsupported-format") {
+            unsupported += 1;
+          }
+          files.push({
+            path: unsupportedPath,
+            filename,
+            extension: ext,
+            status: "failed",
+            errorKind: classified.kind,
+            errorMessage: classified.message,
+          });
+        }
+        continue;
+      }
       const detail = classifyUnsupportedFile(unsupportedPath, aiFallback);
       if (detail.status === "needs-review") {
         needsReview += 1;
@@ -373,97 +564,32 @@ export async function scanAndIndexPanelDocuments(
           });
           continue;
         }
-        // For `linked` sources, the (link-membership re-check + FTS
-        // DELETE+INSERT + panel_documents UPSERT) sequence MUST run as
-        // a single atomic unit (issue #424). Without the transaction
-        // wrap, a concurrent `panel docs unlink` that committed
-        // between our re-check and our subsequent writes would have
-        // its FTS + panel_documents deletes silently undone — leaving
-        // the unlinked folder's content retrievable after a
-        // reported-success unlink. We use `BEGIN IMMEDIATE` so the
-        // writer lock is taken at the start: in multi-process
-        // operation (e.g. `panel docs unlink` running in one terminal
-        // while `chat <panel>` runs in another) SQLite serializes the
-        // two transactions, and our SELECT sees the committed result
-        // of whichever ran first. The FTS DELETE+INSERT block here
-        // mirrors the body of `indexer.index()` (which opens its own
-        // transaction we cannot nest inside another); managed-source
-        // files still go through `indexer.index()` since the managed
-        // dir cannot be unlinked.
-        if (folder.source === "linked") {
-          let skipped = false;
-          await sql`BEGIN IMMEDIATE`.execute(db);
-          try {
-            const linkRow = await sql<{
-              c: number;
-            }>`SELECT COUNT(*) AS c FROM panel_linked_folders WHERE panel_name = ${panelName} AND folder_path = ${folder.path}`.execute(
-              db,
-            );
-            if ((linkRow.rows[0]?.c ?? 0) === 0) {
-              await sql`COMMIT`.execute(db);
-              // Drop from `seenPaths` so the prune pass is free to
-              // reconcile the (already-unlinked) row if it still
-              // exists in `known`.
-              seenPaths.delete(file.path);
-              skipped = true;
-            } else {
-              await sql`DELETE FROM document_index WHERE file_path = ${file.path}`.execute(
-                db,
-              );
-              await sql`INSERT INTO document_index (content, source_type, source_slug, file_path) VALUES (${extracted.content}, 'panel', ${panelName}, ${file.path})`.execute(
-                db,
-              );
-              await docsRepo.trackDocument({
-                panelName,
-                source: folder.source,
-                filePath: file.path,
-                filename: file.filename,
-                checksum: extracted.checksum,
-                sizeBytes: extracted.sizeBytes,
-                wordCount: extracted.wordCount,
-              });
-              await sql`COMMIT`.execute(db);
-            }
-          } catch (err) {
-            try {
-              await sql`ROLLBACK`.execute(db);
-            } catch {
-              /* preserve original error */
-            }
-            throw err;
-          }
-          if (skipped) {
-            // File from a linked folder that was unlinked mid-scan (#528).
-            // Report as skipped before continuing to next file.
-            onProgress?.({
-              filename: file.filename,
-              source: folder.source,
-              status: "unchanged",
-            });
-            files.push({
-              path: file.path,
-              filename: file.filename,
-              extension: path.extname(file.path).toLowerCase(),
-              status: "unchanged",
-            });
-            continue;
-          }
-        } else {
-          await indexer.index({
-            content: extracted.content,
-            sourceType: "panel",
-            sourceSlug: panelName,
-            filePath: file.path,
-          });
-          await docsRepo.trackDocument({
-            panelName,
-            source: folder.source,
-            filePath: file.path,
+        const outcome = await persistExtractedDocument({
+          db,
+          docsRepo,
+          indexer,
+          panelName,
+          folder,
+          filePath: file.path,
+          filename: file.filename,
+          extracted,
+          seenPaths,
+        });
+        if (outcome === "skipped") {
+          // File from a linked folder that was unlinked mid-scan (#528).
+          // Report as skipped before continuing to next file.
+          onProgress?.({
             filename: file.filename,
-            checksum: extracted.checksum,
-            sizeBytes: extracted.sizeBytes,
-            wordCount: extracted.wordCount,
+            source: folder.source,
+            status: "unchanged",
           });
+          files.push({
+            path: file.path,
+            filename: file.filename,
+            extension: path.extname(file.path).toLowerCase(),
+            status: "unchanged",
+          });
+          continue;
         }
         indexed += 1;
         onProgress?.({ filename: file.filename, source: folder.source, status: "indexed" });
