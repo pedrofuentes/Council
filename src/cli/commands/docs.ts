@@ -34,6 +34,7 @@ import {
   type CouncilConfig,
 } from "../../config/index.js";
 import { getSupportedExtensions } from "../../core/documents/extractors/index.js";
+import { isExtensionAiEligible } from "../../core/documents/extractors/ai-fallback.js";
 import {
   scanAndIndexPanelDocuments,
   type PanelScanResult,
@@ -179,12 +180,25 @@ function buildFormatsCommand(write: Writer, _writeError: Writer): Command {
       const aiMode = sanitize(config.documents.aiExtraction);
       const allowed = config.documents.aiExtractionAllowedExtensions.map(sanitize);
       write("AI Extraction (experimental):\n");
+      write(
+        "  What it is: builds a structured text description of files no native\n" +
+          "    extractor can read, so experts can still reference them (it never\n" +
+          "    sends your files to an external AI service).\n",
+      );
+      write(
+        "  When to enable: turn it on for panels that need otherwise-unreadable\n" +
+          "    files — 'ask' holds each file for your approval (run `council docs\n" +
+          "    extract <panel>`), 'auto' extracts and indexes them automatically.\n",
+      );
       write(`  Status: ${aiMode}\n`);
       if (allowed.length > 0) {
         write(`  Allowed extensions: ${allowed.join(", ")}\n`);
       }
       write(
         "  Configure: council config set documents.aiExtraction off|ask|auto\n",
+      );
+      write(
+        "  Limit to specific types: council config set documents.aiExtractionAllowedExtensions .ext1,.ext2\n",
       );
       write("\n");
 
@@ -284,10 +298,18 @@ function isAiExtractionEligible(
   aiMode: "off" | "ask" | "auto",
   allowedExtensions: readonly string[],
 ): boolean {
-  if (aiMode === "off") return false;
+  // Only unsupported-format files are AI-extraction candidates (corrupt /
+  // encrypted / too-large files are not). Beyond that, defer to the AI
+  // fallback's own eligibility rule — the single source of truth shared
+  // with the scanner — so this label can never claim extraction is
+  // available for a file the scanner would refuse to extract (e.g. a
+  // blocklisted archive or image). Keeping both checks in one place is
+  // what prevents the label and the extract path from drifting.
   if (file.errorKind !== "unsupported-format") return false;
-  if (allowedExtensions.length === 0) return true;
-  return allowedExtensions.includes(file.extension);
+  return isExtensionAiEligible(file.extension, {
+    mode: aiMode,
+    allowedExtensions,
+  });
 }
 
 /**
