@@ -367,7 +367,7 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
       }
 
       if (parsed.type === "convene") {
-        const admission = checkTopicAdmission(parsed.content);
+        const admission = checkTopicAdmission(parsed.content, "interactive");
         for (const warning of admission.warnings) {
           renderer.showSystem(warning, "warn");
         }

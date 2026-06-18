@@ -258,7 +258,7 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
         return;
       }
 
-      const admission = checkTopicAdmission(trimmed);
+      const admission = checkTopicAdmission(trimmed, "interactive");
       for (const warning of admission.warnings) {
         renderer.showSystem(warning, "warn");
       }
