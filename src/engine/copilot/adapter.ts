@@ -332,7 +332,13 @@ export class CopilotEngine implements CouncilEngine {
         // completion in the background after Ctrl+C. Best-effort and not
         // awaited: the consumer is already returning to the prompt, and any
         // rejection (e.g. the session was disconnected) is irrelevant here.
-        void record.session.abort().catch(() => undefined);
+        void record.session.abort().catch((err: unknown) => {
+          // Emit a non-secret diagnostic so a failed cancellation is observable
+          // instead of silently swallowed (#1143). The ABORTED event is already
+          // pushed above, so user-facing behavior is unchanged.
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[council/engine] session.abort() failed: ${message}`);
+        });
         push({
           kind: "error",
           expertId,
