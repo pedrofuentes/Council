@@ -50,7 +50,7 @@ Zod-based `ConfigSchema` with conservative defaults (3 experts, 4 rounds, 250-wo
 
 `@libsql/client` (pure WASM, no native build — ADR-005) + `@libsql/kysely-libsql` dialect. Tables: `panels`, `experts`, `debates`, `turns`, `turns_fts` (FTS5), `schema_version`. Typed CRUD repositories with camelCase domain objects mapped from snake_case rows. ULID-generated IDs.
 
-**Key files**: `src/memory/db.ts`, `src/memory/migrations/001_init.sql`, `src/memory/repositories/`
+**Key files**: `src/memory/db.ts`, `src/memory/migrations/001_unified.sql`, `src/memory/repositories/`
 
 ### 1.8 Debate Orchestrator ✅
 
@@ -66,9 +66,9 @@ Zod-based `ConfigSchema` with conservative defaults (3 experts, 4 rounds, 250-wo
 
 ### 1.10 Core CLI Commands ✅
 
-`council convene`, `council panels`, `council templates`, `council doctor` wired as Commander.js subcommands. `convene` runs the full pipeline: template → prompts → DB → engine → Debate → DebatePersister → Renderer. Engine selection is explicit (`--engine mock|copilot`).
+`council convene`, `council panels`, `council templates`, `council doctor` wired as Commander.js subcommands. `convene` runs the full pipeline: template → prompts → DB → engine → Debate → DebatePersister → Renderer. Engine defaults to config (`copilot`); override with `--engine mock|copilot`.
 
-**Key files**: `src/bin/council.ts`, `src/cli/commands/convene.ts`, `src/cli/commands/panels.ts`, `src/cli/commands/templates.ts`, `src/cli/commands/doctor.ts`
+**Key files**: `src/bin/council.ts`, `src/cli/commands/convene.ts`, `src/cli/commands/panel.ts`, `src/cli/commands/templates.ts`, `src/cli/commands/doctor.ts`
 
 ### 1.11 Built-in Panel Templates ✅
 
@@ -116,7 +116,7 @@ Zod-based `ConfigSchema` with conservative defaults (3 experts, 4 rounds, 250-wo
 
 **Key files**: `src/core/moderator/strategy.ts`, `src/core/moderator/strategies.ts`, `src/cli/strategy-resolver.ts`
 
-Strategies are wired into `Debate.#runFreeform()` via `DebateConfig.strategy` (default: `createRoundRobinStrategy()`). The CLI exposes `--strategy <name>` on `council convene` and `council resume --continue`; structured mode ignores the flag by design. The resolved strategy name is persisted to `debates.moderator`.
+Strategies are wired into `Debate.#runFreeform()` via `DebateConfig.strategy` (default: `createRoundRobinStrategy()`). The CLI exposes `--strategy <name>` on `council convene` and `council resume --prompt`; structured mode ignores the flag by design. The resolved strategy name is persisted to `debates.moderator`.
 
 ### 2.4 Anti-sycophancy Enforcement ✅
 
@@ -166,7 +166,7 @@ Visibility scoping (`all` / `same-round` / `recent`), LLM-based rolling summarie
 
 ### 3.2 Session Resume ✅
 
-`council resume <panel>` — transcript mode (default) replays persisted turns via synthesized `DebateEvent` stream. Continue mode (`--continue "<prompt>"`) runs a new debate against the same panel/experts. Honors the panel's persisted `mode` (freeform or structured). Engine selection required for `--continue`.
+`council resume <panel>` — transcript mode (default) replays persisted turns via synthesized `DebateEvent` stream. Continue mode (`--prompt "<prompt>"`) runs a new debate against the same panel/experts. Honors the panel's persisted `mode` (freeform or structured). Engine selection defaults to config; override with `--engine mock|copilot`.
 
 **Key files**: `src/cli/commands/resume.ts`, `src/memory/transcript.ts`
 
@@ -250,9 +250,9 @@ The 5 built-in panel templates (architecture, startup, code-review, incident, ca
 
 ### 4.7 Schema Migration 004 ✅
 
-`004_expert_library.sql` — adds `expert_library`, `panel_library`, and `panel_members` tables (the panel-membership join required for cross-panel awareness in Phase 7). Applied automatically on first run after upgrade.
+`src/memory/migrations/001_unified.sql` — adds `expert_library`, `panel_library`, and `panel_members` tables (the panel-membership join required for cross-panel awareness in Phase 7). Applied automatically on first run after upgrade.
 
-**Key files**: `src/memory/migrations/004_expert_library.sql`
+**Key files**: `src/memory/migrations/001_unified.sql`
 
 ---
 
@@ -264,9 +264,9 @@ The 5 built-in panel templates (architecture, startup, code-review, incident, ca
 
 ### 5.1 Chat Session Infrastructure ✅
 
-`ChatSession` model and `chat_sessions` / `chat_turns` tables (`005_chat.sql`). Sessions are scoped to either a single expert or a panel and can be resumed across CLI invocations. Repository encapsulates persistence and pagination.
+`ChatSession` model and `chat_sessions` / `chat_turns` tables (`src/memory/migrations/001_unified.sql`). Sessions are scoped to either a single expert or a panel and can be resumed across CLI invocations. Repository encapsulates persistence and pagination.
 
-**Key files**: `src/core/chat/chat-session.ts`, `src/memory/repositories/chat-repository.ts`, `src/memory/migrations/005_chat.sql`
+**Key files**: `src/core/chat/chat-session.ts`, `src/memory/repositories/chat-repository.ts`, `src/memory/migrations/001_unified.sql`
 
 ### 5.2 1:1 Expert Chat ✅
 
@@ -314,21 +314,21 @@ Ink-based chat UI with streaming text, color-coded experts, `@mention` highlight
 
 ### 6.1 Document Detection & Extraction ✅
 
-Detects supported formats (`.md`, `.txt`, `.html`) under an expert's or panel's `docs/` folder and extracts text content via regex normalisers (see ADR-009). Tracks file checksum (SHA-256) and word count in `expert_documents` / `panel_documents` to skip unchanged files. PDF and DOCX formats are NOT supported in Phase 6; reserved for Phase 8.
+Detects supported formats (`.md`, `.txt`, `.html`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.xls`, `.csv`, `.tsv`, `.rtf`, `.odt`, `.ods`, `.odp`, and more — run `council docs formats`) under an expert's or panel's `docs/` folder and extracts text content via the extractor registry (`src/core/documents/extractors/`). Tracks file checksum (SHA-256) and word count in `expert_documents` / `panel_documents` to skip unchanged files.
 
 **Key files**: `src/core/documents/detector.ts`, `src/core/documents/extractor.ts`
 
 ### 6.2 Persona Profile Analysis ✅
 
-LLM-based profile synthesis from documents into the expert's persona section of the system prompt. Profiles are cached in `persona_profiles` (`008_persona_profiles.sql`) and re-generated when source documents change.
+LLM-based profile synthesis from documents into the expert's persona section of the system prompt. Profiles are cached in `persona_profiles` (`src/memory/migrations/001_unified.sql`) and re-generated when source documents change.
 
-**Key files**: `src/core/documents/profile-analyzer.ts`, `src/memory/migrations/008_persona_profiles.sql`
+**Key files**: `src/core/documents/profile-analyzer.ts`, `src/memory/migrations/001_unified.sql`
 
 ### 6.3 Content Indexing (RAG) ✅
 
-Documents are chunked and indexed into a SQLite FTS5 virtual table (`007_document_index.sql`). The retriever ranks chunks using FTS5's built-in BM25 scoring against the current turn and injects top-k snippets into the prompt.
+Documents are chunked and indexed into a SQLite FTS5 virtual table (`src/memory/migrations/001_unified.sql`). The retriever ranks chunks using FTS5's built-in BM25 scoring against the current turn and injects top-k snippets into the prompt.
 
-**Key files**: `src/core/documents/indexer.ts`, `src/core/documents/retriever.ts`, `src/memory/migrations/007_document_index.sql`
+**Key files**: `src/core/documents/indexer.ts`, `src/core/documents/retriever.ts`, `src/memory/migrations/001_unified.sql`
 
 ### 6.4 On-demand Processing ✅
 
@@ -342,15 +342,15 @@ A daemon-style background processor for document changes was scoped but **deferr
 
 ### 6.6 Expert Document CLI ✅
 
-`council expert docs add | list | remove | reprocess` for managing an expert's persona document folder. `add` symlinks/copies into `~/Council/experts/<slug>/docs/`; `reprocess` forces re-extraction and re-indexing.
+`council expert docs <slug>` lists indexed documents for an expert; `--remove <file>` un-indexes one document. `council expert train <slug>` reprocesses docs and refreshes the expert profile.
 
 **Key files**: `src/cli/commands/expert.ts`
 
 ### 6.7 Panel Document Folder ✅
 
-`~/Council/panels/<panel>/docs/` and `council panel docs link/unlink` for shared panel context (`009_panel_documents.sql`). Panel documents are visible to every member during chat and debate.
+`~/Council/panels/<panel>/docs/` and `council panel docs link/unlink` for shared panel context (`src/memory/migrations/001_unified.sql`). Panel documents are visible to every member during chat and debate.
 
-**Key files**: `src/cli/commands/panel.ts`, `src/core/documents/panel-document-scanner.ts`, `src/memory/migrations/009_panel_documents.sql`
+**Key files**: `src/cli/commands/panel.ts`, `src/core/documents/panel-document-scanner.ts`, `src/memory/migrations/001_unified.sql`
 
 ### 6.8 Recency Weighting ✅
 
@@ -416,6 +416,8 @@ Generic experts get debate memory only; persona experts get document + debate me
 `council memory reset` clears extracted debate memory (`extracted_memory_json`) but preserves persona profiles, so resetting an expert's debate history does not require re-processing their documents.
 
 **Key files**: `src/cli/commands/memory.ts`, `src/memory/expert-memory.ts`
+
+> **Phases 7.5 (UX Polish) and 7.6 (PM-Driven QA Fixes)** are complete; see [ROADMAP.md](./ROADMAP.md) for the itemized summaries.
 
 ---
 
