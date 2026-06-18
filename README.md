@@ -68,7 +68,7 @@ On first run, Council auto-creates a default configuration and offers setup guid
 
 **Requirements:**
 
-- Node.js 20+
+- Node.js 22+
 - GitHub Copilot subscription (Individual, Business, or Enterprise)
 - No API keys. No OpenAI account. No credits to manage.
 
