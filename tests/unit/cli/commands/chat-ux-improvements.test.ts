@@ -16,6 +16,7 @@ import {
   getStartupHelpText,
   type ChatInputProvider,
 } from "../../../../src/cli/commands/chat.js";
+import { CONVENE_DIRECTIVE } from "../../../../src/core/chat/mention-parser.js";
 import { FileExpertLibrary } from "../../../../src/core/expert-library.js";
 import type { ExpertDefinition } from "../../../../src/core/expert.js";
 import { createDatabase } from "../../../../src/memory/db.js";
@@ -136,9 +137,22 @@ describe("Chat UX Improvements (T-08)", () => {
       expect(help).not.toContain("/help");
     });
 
+    it("documents @convene for inline debates", () => {
+      const help = getStartupHelpText();
+      expect(help).toContain("@convene");
+    });
+
+    it("documents @mention for addressing specific experts", () => {
+      const help = getStartupHelpText();
+      expect(help).toMatch(/@<slug>|@mention/i);
+    });
+
     it("returns exact expected help text", () => {
       const help = getStartupHelpText();
-      expect(help).toBe("Type /exit or /quit to save and end the conversation.");
+      expect(help).toBe(
+        "Type /exit or /quit to save and end the conversation. " +
+          "Use @<slug> to address a specific expert, or @convene <topic> to run a structured debate inline.",
+      );
     });
   });
 
@@ -222,6 +236,53 @@ describe("Chat UX Improvements (T-08)", () => {
       expect(out).toMatch(/\[mock response/);
       // Should still eventually exit cleanly
       expect(out).toMatch(/Conversation saved/i);
+    });
+  });
+
+  describe("council chat --help documentation", () => {
+    it("documents @convene for inline debates", () => {
+      const cmd = buildChatCommand({});
+      let helpOutput = "";
+      cmd.configureOutput({
+        writeOut: (str) => { helpOutput += str; },
+        writeErr: (str) => { helpOutput += str; },
+      });
+      try {
+        cmd.help({ error: false });
+      } catch {
+        // Commander throws after outputting help
+      }
+      expect(helpOutput).toContain("@convene");
+    });
+
+    it("documents @mention or @<slug> for addressing experts", () => {
+      const cmd = buildChatCommand({});
+      let helpOutput = "";
+      cmd.configureOutput({
+        writeOut: (str) => { helpOutput += str; },
+        writeErr: (str) => { helpOutput += str; },
+      });
+      try {
+        cmd.help({ error: false });
+      } catch {
+        // Commander throws after outputting help
+      }
+      expect(helpOutput).toMatch(/@<slug>|@mention/i);
+    });
+
+    it("includes the correct @convene token", () => {
+      const cmd = buildChatCommand({});
+      let helpOutput = "";
+      cmd.configureOutput({
+        writeOut: (str) => { helpOutput += str; },
+        writeErr: (str) => { helpOutput += str; },
+      });
+      try {
+        cmd.help({ error: false });
+      } catch {
+        // Commander throws after outputting help
+      }
+      expect(helpOutput).toContain(CONVENE_DIRECTIVE);
     });
   });
 });
