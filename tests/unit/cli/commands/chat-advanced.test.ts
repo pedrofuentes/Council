@@ -2127,6 +2127,121 @@ describe("graceful SIGINT handling (PRD §F4)", () => {
     });
   });
 
+  // PM-07 (faithful interrupt). A real Copilot turn arrives as a single large
+  // SDK message and the engine only cancels at the network layer, so a plain
+  // `for await` over engine.send() keeps awaiting the in-flight pull until the
+  // WHOLE answer has streamed — Ctrl+C mid-stream is noticed only afterwards.
+  // This engine reproduces that: it IGNORES opts.signal and never yields
+  // ABORTED or stops on its own. Only a consumer that breaks the async
+  // iteration on interrupt stops draining, so the partial turn must hold just
+  // the tokens received before Ctrl+C — not the full response.
+  it("during streaming with a non-cooperative engine: stops draining on interrupt and saves only the partial received so far", async () => {
+    await seedExpert(env);
+
+    let triggerInterrupt: (() => void) | null = null;
+    const subscribeInterrupt = (handler: () => void): (() => void) => {
+      triggerInterrupt = handler;
+      return () => {
+        triggerInterrupt = null;
+      };
+    };
+
+    const chunks = [
+      "First sentence. ",
+      "Second sentence. ",
+      "Third sentence. ",
+      "Fourth sentence.",
+    ];
+    // True once the engine streamed every chunk through to message.complete —
+    // i.e. the consumer drained the whole stream instead of aborting promptly.
+    let streamReachedCompletion = false;
+    let registeredExpertId: string | null = null;
+    const engine: CouncilEngine = {
+      async start(): Promise<void> {
+        /* no-op */
+      },
+      async stop(): Promise<void> {
+        /* no-op */
+      },
+      async addExpert(spec): Promise<void> {
+        registeredExpertId = spec.id;
+      },
+      async removeExpert(): Promise<void> {
+        /* no-op */
+      },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock-model"];
+      },
+      send(opts): AsyncIterable<EngineEvent> {
+        const expertId = opts.expertId;
+        if (expertId !== registeredExpertId) {
+          throw new Error(`Expert ${expertId} is not registered`);
+        }
+        // Deliberately non-cooperative: opts.signal is never consulted.
+        async function* gen(): AsyncGenerator<EngineEvent, void, void> {
+          for (let idx = 0; idx < chunks.length; idx += 1) {
+            yield { kind: "message.delta", expertId, text: chunks[idx] ?? "" };
+            if (idx === 0) {
+              // User presses Ctrl+C right after the first token lands. Firing
+              // from inside the generator makes ordering deterministic: the
+              // abort is observed on the consumer's next pull, with no timers.
+              triggerInterrupt?.();
+            }
+          }
+          streamReachedCompletion = true;
+          yield {
+            kind: "message.complete",
+            expertId,
+            response: { latencyMs: 200, tokensIn: 1, tokensOut: 1 },
+          };
+        }
+        return gen();
+      },
+    };
+
+    let out = "";
+    const lines: readonly string[] = ["tell me a story", "/quit"];
+    let i = 0;
+    const inputProvider: ChatInputProvider = {
+      async readLine(): Promise<string | null> {
+        return lines[i++] ?? null;
+      },
+      close(): void {
+        /* no-op */
+      },
+    };
+
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () => inputProvider,
+      subscribeInterrupt,
+    });
+    await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+
+    // Interrupt outcome surfaced and control returned to the prompt (the loop
+    // went on to read "/quit" and exit cleanly).
+    expect(out).toMatch(/Response interrupted\. Partial response saved\./);
+    expect(out).toMatch(/Conversation saved\./);
+    // The in-flight stream must NOT have been drained to completion.
+    expect(streamReachedCompletion).toBe(false);
+
+    await withRepo(env, async (repo) => {
+      const sessions = await repo.listSessions({ targetSlug: "dahlia-cto" });
+      expect(sessions.length).toBeGreaterThan(0);
+      const session = sessions[0];
+      if (!session) throw new Error("expected session");
+      const turns = await repo.getTurns(session.id);
+      const expertTurns = turns.filter((t) => t.role === "expert");
+      expect(expertTurns.length).toBe(1);
+      const partial = expertTurns[0];
+      if (!partial) throw new Error("expected partial turn");
+      // Only the first token was received before the interrupt.
+      expect(partial.content).toBe("First sentence. ");
+    });
+  });
+
   it("at the input prompt: prints save-and-resume message and exits cleanly", async () => {
     await seedExpert(env);
 
@@ -2297,6 +2412,113 @@ describe("graceful SIGINT handling (PRD §F4)", () => {
       expect(partial.content.length).toBeGreaterThan(0);
       expect(partial.content).toContain("First sentence");
       expect(partial.content).not.toContain("Fourth sentence");
+    });
+  });
+
+  // PM-07 (faithful interrupt), panel variant. Same non-cooperative engine:
+  // the currently-streaming member ignores opts.signal, so only a consumer
+  // that breaks the iteration on interrupt persists a true partial and skips
+  // the remaining panelists.
+  it("panel mode during streaming with a non-cooperative engine: stops draining on interrupt, persists only the partial, skips remaining members", async () => {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "duo-faithful-sigint", ["panel-a", "panel-b"]);
+
+    let triggerInterrupt: (() => void) | null = null;
+    const subscribeInterrupt = (handler: () => void): (() => void) => {
+      triggerInterrupt = handler;
+      return () => {
+        triggerInterrupt = null;
+      };
+    };
+
+    const chunks = [
+      "First sentence. ",
+      "Second sentence. ",
+      "Third sentence. ",
+      "Fourth sentence.",
+    ];
+    let streamReachedCompletion = false;
+    let interruptFired = false;
+    const registered = new Set<string>();
+    const engine: CouncilEngine = {
+      async start(): Promise<void> {
+        /* no-op */
+      },
+      async stop(): Promise<void> {
+        /* no-op */
+      },
+      async addExpert(spec): Promise<void> {
+        registered.add(spec.id);
+      },
+      async removeExpert(): Promise<void> {
+        /* no-op */
+      },
+      async listModels(): Promise<readonly string[]> {
+        return ["mock-model"];
+      },
+      send(opts): AsyncIterable<EngineEvent> {
+        const expertId = opts.expertId;
+        if (!registered.has(expertId)) {
+          throw new Error(`Expert ${expertId} is not registered`);
+        }
+        // Deliberately non-cooperative: opts.signal is never consulted.
+        async function* gen(): AsyncGenerator<EngineEvent, void, void> {
+          for (let idx = 0; idx < chunks.length; idx += 1) {
+            yield { kind: "message.delta", expertId, text: chunks[idx] ?? "" };
+            if (idx === 0 && !interruptFired) {
+              interruptFired = true;
+              triggerInterrupt?.();
+            }
+          }
+          streamReachedCompletion = true;
+          yield {
+            kind: "message.complete",
+            expertId,
+            response: { latencyMs: 200, tokensIn: 1, tokensOut: 1 },
+          };
+        }
+        return gen();
+      },
+    };
+
+    let out = "";
+    const lines: readonly string[] = ["panel question", "/quit"];
+    let i = 0;
+    const inputProvider: ChatInputProvider = {
+      async readLine(): Promise<string | null> {
+        return lines[i++] ?? null;
+      },
+      close(): void {
+        /* no-op */
+      },
+    };
+
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      inputProvider: () => inputProvider,
+      subscribeInterrupt,
+    });
+    await cmd.parseAsync(["node", "council-chat", "duo-faithful-sigint", "--engine", "mock"]);
+
+    expect(out).toMatch(/Response interrupted\. Partial response saved\./);
+    expect(out).toMatch(/Conversation saved\./);
+    expect(streamReachedCompletion).toBe(false);
+
+    await withRepo(env, async (repo) => {
+      const session = await repo.findActiveSession("panel", "duo-faithful-sigint");
+      expect(session).toBeDefined();
+      if (!session) throw new Error("expected session");
+      const turns = await repo.getTurns(session.id);
+      const expertTurns = turns.filter((t) => t.role === "expert");
+      // Only the streaming member has a partial turn; the remaining panelist
+      // in the same user-turn must be skipped.
+      expect(expertTurns.length).toBe(1);
+      const partial = expertTurns[0];
+      if (!partial) throw new Error("expected partial turn");
+      expect(partial.content).toBe("First sentence. ");
     });
   });
 
