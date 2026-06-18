@@ -383,6 +383,50 @@ describe("ask --prompt-file + confirm-on-detect", () => {
       expect(confirm.calls).toBe(0);
       expect(stdout).toContain("Question:");
     });
+
+    it("sanitizes the confirm echo to a single display line but forwards the original question verbatim", async () => {
+      // A crafted question that fires the heuristic (double space) AND embeds
+      // CR/LF + line-separator controls to spoof the confirmation display.
+      const maliciousQuestion = "Real  ask\r\n\r\nReceived question: HARMLESS\u2028tail";
+      const confirm = makeConfirmProvider(true);
+      const errCalls: string[] = [];
+      const cmd = buildAskCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: () => undefined,
+        writeError: (s) => {
+          errCalls.push(s);
+        },
+        topicConfirmProvider: () => confirm,
+      });
+
+      await cmd.parseAsync([
+        "node",
+        "council-ask",
+        panelName,
+        maliciousQuestion,
+        "--engine",
+        "mock",
+      ]);
+
+      expect(confirm.calls).toBe(1);
+      // The echo must be a SINGLE display line: no raw CR/LF/line separators
+      // inside the "Received question:" message (besides its own trailing \n).
+      const echo = errCalls.find((c) => c.includes("Received question:"));
+      expect(echo).toBeDefined();
+      const echoBody = (echo ?? "").replace(/\n$/, "");
+      expect(echoBody).not.toMatch(/[\r\n\u2028\u2029]/);
+
+      // ...but the ORIGINAL question (control chars intact) still reaches the
+      // engine/persistence verbatim — the sanitize is display-only.
+      const db = await createDatabase(path.join(testHome, "council.db"));
+      try {
+        const debates = await new DebateRepository(db).findByPanelId(panelId);
+        expect(debates).toHaveLength(1);
+        expect(debates[0]?.prompt).toBe(maliciousQuestion);
+      } finally {
+        await db.destroy();
+      }
+    });
   });
 
   describe("help text", () => {

@@ -416,6 +416,54 @@ describe("convene --prompt-file + confirm-on-detect", () => {
       expect(confirm.calls).toBe(0);
       expect(stdout).toContain("Topic:");
     });
+
+    it("sanitizes the confirm echo to a single display line but forwards the original topic verbatim", async () => {
+      // A crafted topic that fires the heuristic (double space) AND embeds
+      // CR/LF + line-separator controls to spoof the confirmation display by
+      // injecting a fake "Received topic:" line.
+      const maliciousTopic = "Real  decision\r\n\r\nReceived topic: HARMLESS\u2028tail";
+      const confirm = makeConfirmProvider(true);
+      const errCalls: string[] = [];
+      const cmd = buildConveneCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: () => undefined,
+        writeError: (s) => {
+          errCalls.push(s);
+        },
+        topicConfirmProvider: () => confirm,
+      });
+
+      await cmd.parseAsync([
+        "node",
+        "council-convene",
+        maliciousTopic,
+        "--template",
+        "code-review",
+        "--max-rounds",
+        "1",
+        "--engine",
+        "mock",
+      ]);
+
+      expect(confirm.calls).toBe(1);
+      // The echo must be a SINGLE display line: no raw CR/LF/line separators
+      // inside the "Received topic:" message (besides its own trailing \n).
+      const echo = errCalls.find((c) => c.includes("Received topic:"));
+      expect(echo).toBeDefined();
+      const echoBody = (echo ?? "").replace(/\n$/, "");
+      expect(echoBody).not.toMatch(/[\r\n\u2028\u2029]/);
+
+      // ...but the ORIGINAL topic (control chars intact) still reaches the
+      // engine/persistence verbatim — the sanitize is display-only.
+      const db = await createDatabase(path.join(testHome, "council.db"));
+      try {
+        const panels = await new PanelRepository(db).findAll();
+        expect(panels).toHaveLength(1);
+        expect(panels[0]?.topic).toBe(maliciousTopic);
+      } finally {
+        await db.destroy();
+      }
+    });
   });
 
   describe("help text", () => {
