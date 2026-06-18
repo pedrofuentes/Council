@@ -17,12 +17,12 @@ filesystem.
 >
 > - Authenticated GitHub Copilot: `gh auth status` shows an active
 >   token with Copilot access, AND `copilot --version` runs cleanly.
-> - Clean test home: `export COUNCIL_HOME=$(mktemp -d)` (Linux/macOS)
->   or `$env:COUNCIL_HOME = (New-TemporaryFile).Directory` (PowerShell)
+> - Clean test home: `export COUNCIL_DATA_HOME=$(mktemp -d)` (Linux/macOS)
+>   or `$env:COUNCIL_DATA_HOME = Join-Path $env:TEMP ("council-smoke-" + [guid]::NewGuid()); New-Item -ItemType Directory -Path $env:COUNCIL_DATA_HOME | Out-Null` (PowerShell)
 >   so smoke results never collide with your real `~/Council/`.
 > - Latest build: `pnpm install && pnpm build && pnpm link --global`
->   (or run `node ./dist/cli.js` directly).
-> - Reset between sections by `rm -rf $COUNCIL_HOME/*` if a prior step
+>   (or run `node ./dist/bin/council.js` directly).
+> - Reset between sections by `rm -rf $COUNCIL_DATA_HOME/*` if a prior step
 >   left state you no longer want.
 
 For every checked box, also note: ✅ pass, ⚠️ pass-with-issue, ❌ fail.
@@ -34,11 +34,11 @@ shipping.
 ## 1. Doctor & first-run sanity
 
 - [ ] `council doctor` reports Copilot SDK reachable and DB writable.
-- [ ] `council doctor --models` lists known model identifiers and notes
-      that `--online` verifies whether your default model is accessible.
-- [ ] `council doctor --online` creates a session against the configured
-      default model and reports that session creation succeeded.
-- [ ] First-ever run on a fresh `COUNCIL_HOME` creates the directory
+- [ ] `council doctor --models` lists known model identifiers.
+- [ ] `council doctor` runs the online probe by default, creates a session
+      against the configured default model, and reports that session creation
+      succeeded; `--offline` skips the online probe.
+- [ ] First-ever run on a fresh `COUNCIL_DATA_HOME` creates the directory
       tree (`experts/`, `panels/`, `council.db`) without errors.
 - [ ] `council --help` and `council <subcommand> --help` render
       without crashes.
@@ -47,8 +47,7 @@ shipping.
 
 - [ ] `council experts list` on a fresh home prints "no experts yet"
       (or equivalent) and exit code 0.
-- [ ] `council experts create cto` (interactive): wizard prompts for
-      display name, role, expertise, epistemic stance; finishes by
+- [ ] `council expert create --slug cto --name "CTO" --role "Chief Technology Officer" --expertise "architecture,strategy" --stance "pragmatic"` finishes by
       writing `$COUNCIL_HOME/experts/cto.yaml` and a row in
       `expert_library`.
 - [ ] `council experts list` now shows `cto` with the chosen display
@@ -63,8 +62,7 @@ shipping.
 
 ## 3. Panel library CRUD
 
-- [ ] Create three experts (`council experts create cto`, `sre`,
-      `pm`).
+- [ ] Create three experts (`council expert create --slug cto --name "CTO" --role "Chief Technology Officer" --expertise "architecture,strategy" --stance "pragmatic"`, `council expert create --slug sre --name "SRE" --role "Site Reliability Engineer" --expertise "reliability,operations" --stance "risk-focused"`, `council expert create --slug pm --name "PM" --role "Product Manager" --expertise "product,prioritization" --stance "user-focused"`).
 - [ ] `council panel create arch-review` (interactive): wizard lets
       you multi-select experts numerically, accepts mode = freeform,
       writes `$COUNCIL_HOME/panels/arch-review.yaml` and rows in
@@ -170,8 +168,9 @@ shipping.
 
 ## 10. Persona expert documents
 
-- [ ] Create a persona expert: `council experts create alex --kind
-    persona`.
+- [ ] Create a persona expert: `council expert create --persona --slug alex
+    --name "Alex" --role "Persona expert" --expertise "writing,analysis"
+    --stance "reflective"`.
 - [ ] Place 2–3 markdown files in
       `$COUNCIL_HOME/experts/alex/docs/`.
 - [ ] `council chat alex` shows a one-time progress banner as
@@ -256,7 +255,7 @@ release PR before merging.
 
 ```
 Council version : <output of `council --version`>
-Copilot SDK     : <output of `copilot --version`>
+Copilot SDK     : <output of `node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).dependencies['@github/copilot-sdk']"`>
 Node.js         : <output of `node --version`>
 OS              : <e.g. macOS 14.5 / Ubuntu 24.04 / Windows 11>
 Tester          : <github-handle>

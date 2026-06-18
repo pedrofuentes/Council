@@ -12,7 +12,7 @@
 |------|---------|----------|--------|
 | Unit | Core logic, pure functions, isolated components | `tests/unit/` or `*.test.ts` | Vitest |
 | Integration | Cross-component interactions, engine integration | `tests/integration/` | Vitest |
-| E2E | CLI command flows end-to-end | `tests/e2e/` (94 tests across 10 files) | Vitest (in-process) |
+| E2E | CLI command flows end-to-end | `tests/e2e/` (across 11 files) | Vitest (in-process) |
 | Security | Prompt injection defense verification, hostile payload tests | `tests/security/` | Vitest |
 
 ## Coverage Requirements
@@ -60,13 +60,13 @@ describe('Debate', () => {
 
 ### Integration Tests with Real SDK
 Integration tests that use the real Copilot SDK are:
-- Gated behind `COUNCIL_INTEGRATION_TESTS=true` env var
+- Gated behind `COUNCIL_INTEGRATION=1` env var
 - Skipped in CI by default (costs money)
 - Run manually before major releases
 - Located in `tests/integration/`
 
 ### E2E Tests — Command-Level Verification
-E2E tests verify all 12 CLI commands end-to-end using in-process execution with isolated test environments. The suite consists of **94 tests across 10 test files** covering every user-facing workflow.
+E2E tests verify all 15 top-level CLI commands end-to-end using in-process execution with isolated test environments. The suite covers every user-facing workflow across 11 test files.
 
 **Infrastructure** (`tests/e2e/helpers.ts`):
 - `createE2EContext()` / `cleanupE2EContext()` — isolated temp directories for `COUNCIL_HOME` and `COUNCIL_DATA_HOME`
@@ -97,7 +97,7 @@ expect(stdout()).toContain('expected output');
 await cleanupE2EContext(ctx);
 ```
 
-**Test coverage** (10 files):
+**Test coverage** (11 files):
 - `debate-lifecycle.test.ts` (17 tests) — convene, resume, export, conclude, sessions
 - `error-paths.test.ts` (15 tests) — error conditions across all commands
 - `memory-management.test.ts` (11 tests) — memory list/inspect/reset
@@ -108,6 +108,7 @@ await cleanupE2EContext(ctx);
 - `ask-command.test.ts` (7 tests) — one-shot ask workflow
 - `document-intelligence.test.ts` (6 tests) — document processing pipeline
 - `doctor-diagnostics.test.ts` (5 tests) — diagnostics command
+- `helpers-cleanup.test.ts` — E2E helper cleanup behavior
 
 **Why in-process execution (not subprocess)**:
 - Faster — no Node.js spawn overhead
@@ -167,7 +168,7 @@ COUNCIL_INTEGRATION=1 pnpm test:integration
 ## CI Integration
 
 - CI runs automatically on every PR targeting `main` and on every push to `main` (`.github/workflows/ci.yml`)
-- Pipeline: typecheck → lint → unit tests → e2e tests → integration tests (offline subset) → security tests
+- Pipeline: lint/typecheck job, 4 sharded unit-test jobs, E2E/integration/security job, and aggregate `ci-pass` gate (required branch-protection check)
 - All steps must pass before Sentinel review begins
 - Flaky tests must be fixed immediately, not skipped
 - Integration tests that use MockEngine run in CI; live-SDK tests (`COUNCIL_INTEGRATION=1`) are manual-only
