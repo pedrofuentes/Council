@@ -104,6 +104,10 @@ Examples:
   $ council chat architecture-review --engine copilot            # group chat with a panel
   $ council chat --list                                          # list all chat sessions
 
+In panel chat sessions:
+  @<slug> — address a specific expert by slug (e.g., @cfo, @cto)
+  @convene <topic> — run a structured 4-phase debate inline
+
 Panels come from your reusable library (see 'council panel list'). An
 auto-composed 'council convene' run is NOT saved to the library — to keep one
 as a reusable panel, promote its session first:

@@ -137,7 +137,10 @@ export function isExitCommand(input: string): boolean {
  * available commands to improve discoverability.
  */
 export function getStartupHelpText(): string {
-  return "Type /exit or /quit to save and end the conversation.";
+  return (
+    "Type /exit or /quit to save and end the conversation. " +
+    "Use @<slug> to address a specific expert, or @convene <topic> to run a structured debate inline."
+  );
 }
 
 // ──────────────────────────────────────────────────────────────────────

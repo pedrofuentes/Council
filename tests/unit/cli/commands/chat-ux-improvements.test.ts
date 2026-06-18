@@ -149,7 +149,10 @@ describe("Chat UX Improvements (T-08)", () => {
 
     it("returns exact expected help text", () => {
       const help = getStartupHelpText();
-      expect(help).toBe("Type /exit or /quit to save and end the conversation.");
+      expect(help).toBe(
+        "Type /exit or /quit to save and end the conversation. " +
+          "Use @<slug> to address a specific expert, or @convene <topic> to run a structured debate inline.",
+      );
     });
   });
 
@@ -239,20 +242,47 @@ describe("Chat UX Improvements (T-08)", () => {
   describe("council chat --help documentation", () => {
     it("documents @convene for inline debates", () => {
       const cmd = buildChatCommand({});
-      const helpText = cmd.helpInformation();
-      expect(helpText).toContain("@convene");
+      let helpOutput = "";
+      cmd.configureOutput({
+        writeOut: (str) => { helpOutput += str; },
+        writeErr: (str) => { helpOutput += str; },
+      });
+      try {
+        cmd.help({ error: false });
+      } catch {
+        // Commander throws after outputting help
+      }
+      expect(helpOutput).toContain("@convene");
     });
 
     it("documents @mention or @<slug> for addressing experts", () => {
       const cmd = buildChatCommand({});
-      const helpText = cmd.helpInformation();
-      expect(helpText).toMatch(/@<slug>|@mention/i);
+      let helpOutput = "";
+      cmd.configureOutput({
+        writeOut: (str) => { helpOutput += str; },
+        writeErr: (str) => { helpOutput += str; },
+      });
+      try {
+        cmd.help({ error: false });
+      } catch {
+        // Commander throws after outputting help
+      }
+      expect(helpOutput).toMatch(/@<slug>|@mention/i);
     });
 
     it("includes the correct @convene token", () => {
       const cmd = buildChatCommand({});
-      const helpText = cmd.helpInformation();
-      expect(helpText).toContain(CONVENE_DIRECTIVE);
+      let helpOutput = "";
+      cmd.configureOutput({
+        writeOut: (str) => { helpOutput += str; },
+        writeErr: (str) => { helpOutput += str; },
+      });
+      try {
+        cmd.help({ error: false });
+      } catch {
+        // Commander throws after outputting help
+      }
+      expect(helpOutput).toContain(CONVENE_DIRECTIVE);
     });
   });
 });
