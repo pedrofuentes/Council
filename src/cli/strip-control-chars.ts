@@ -36,3 +36,22 @@ const CONTROL_CHAR_PATTERN =
 export function stripControlChars(text: string): string {
   return text.replace(CONTROL_CHAR_PATTERN, "");
 }
+
+/**
+ * Sanitize untrusted text for display on a SINGLE terminal line.
+ *
+ * `stripControlChars` deliberately preserves newline (\n), carriage return
+ * (\r) and tab (\t), and does not touch the Unicode line/paragraph separators
+ * U+2028/U+2029. Those surviving characters let untrusted text break out of a
+ * one-line echo — e.g. a crafted topic containing "\r\n\r\nReceived topic: …"
+ * could inject extra lines or CR-overwrite a label, spoofing a confirmation
+ * prompt. This helper first strips the dangerous control sequences, then
+ * collapses any run of line/paragraph separators, CR, LF and tabs into a
+ * single space so the result always renders as one line.
+ *
+ * Display-only: callers must keep forwarding the original (unsanitized) value
+ * to the engine/persistence layer.
+ */
+export function toSingleLineDisplay(text: string): string {
+  return stripControlChars(text).replace(/[\r\n\t\u2028\u2029]+/g, " ");
+}

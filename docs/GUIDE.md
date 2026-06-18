@@ -191,6 +191,9 @@ council export analytics --format adr --output adr-analytics.md
 > council convene "Should we price this at `$49/month?"
 > ```
 >
+> Or sidestep quoting entirely with `--prompt-file <path>` (or `--prompt-file -`
+> for stdin), which reads the topic verbatim — no shell involved.
+>
 > See [Shell Quoting Guide](#shell-quoting) for the full reference.
 
 > 🔧 **Something went wrong?** Run `council doctor` to check your setup.
@@ -1174,6 +1177,26 @@ Compare these options:
 | `$`       | `'...'` or `\$`   | `` `$ `` or `'...'` |
 | Backtick  | `'...'` or `` \` ``| Already escaped    |
 | `"`       | `\"` or `'...'`   | `` `" `` or `'...'` |
+
+**Bulletproof option — `--prompt-file`:** to sidestep shell quoting entirely,
+read the topic/question VERBATIM from a file or stdin. Nothing passes through the
+shell, so `$180K`, backticks, and `$variables` survive exactly as written. This
+works for both `convene` and `ask`:
+
+```bash
+# From a file
+council convene --prompt-file topic.txt
+
+# From stdin (use - as the path)
+echo 'We have $180K in runway — raise or cut?' | council convene --prompt-file -
+council ask my-panel --prompt-file question.txt
+```
+
+`--prompt-file` is mutually exclusive with the positional `<topic>`/`<question>`
+argument. When a shell-argument topic looks like it may have been mangled by the
+shell (for example, a `$amount` that expanded to nothing), Council echoes what it
+received and asks you to confirm before running — so a silently corrupted prompt
+never reaches the panel unnoticed.
 
 <a id="exit-codes"></a>
 

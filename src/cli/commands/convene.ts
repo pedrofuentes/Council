@@ -20,7 +20,7 @@ import { parseExpertSlugs, warnOnStrayExpertArgs } from "./expert-args.js";
 
 import { autoComposePanel } from "../../core/auto-compose.js";
 import { allowlistExpertDefinition, type ExpertDefinition } from "../../core/expert.js";
-import { checkTopicAdmission } from "../../core/topic-admission.js";
+import { checkTopicAdmission, detectShellExpansion, type TopicSource } from "../../core/topic-admission.js";
 import {
   getCouncilDataHome,
   getCouncilHome,
@@ -58,7 +58,7 @@ import { PanelRepository } from "../../memory/repositories/panels.js";
 
 import { runExtractMemoryHook } from "../extract-memory-hook.js";
 
-import { stripControlChars } from "../strip-control-chars.js";
+import { stripControlChars, toSingleLineDisplay } from "../strip-control-chars.js";
 import { suggestMatch } from "../fuzzy-match.js";
 import { truncatePrompt } from "../renderers/truncate-prompt.js";
 import { defaultErrorWriter, defaultWriter, isQuiet, setQuiet, type Writer } from "./writer.js";
@@ -71,6 +71,7 @@ import {
 import { RENDERER_FORMATS, type RendererFormat } from "../renderers/select.js";
 import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
 import { isNonInteractive } from "../non-interactive.js";
+import { readTextInput } from "../read-text-input.js";
 
 const DEFAULT_MAX_ROUNDS = 4;
 const DEFAULT_MAX_WORDS = 250;
@@ -128,6 +129,14 @@ export interface ConveneCommandDeps {
    */
   readonly confirmProvider?: () => ConfirmProvider;
   /**
+   * Factory to create a ConfirmProvider for the shell-expansion
+   * confirm-on-detect prompt (PM-02). Kept separate from
+   * {@link confirmProvider} so the two prompts can be exercised
+   * independently in tests. When omitted, a readline-backed default is
+   * used (gated by {@link isNonInteractive}).
+   */
+  readonly topicConfirmProvider?: () => ConfirmProvider;
+  /**
    * Subscribe to SIGINT (Ctrl+C). Returns an unsubscribe function.
    * When omitted, a default implementation that calls `process.on`
    * is used. Tests inject a stub to simulate interrupts deterministically
@@ -139,6 +148,7 @@ export interface ConveneCommandDeps {
 export interface ConveneOptions {
   readonly template?: string | undefined;
   readonly panel?: string | undefined;
+  readonly promptFile?: string | undefined;
   readonly experts?: string | readonly string[] | undefined;
   readonly format: RendererFormat;
   readonly maxRounds: number;
@@ -185,7 +195,16 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       "Run a panel debate on a topic and persist results to the local DB. " +
         "For one-shot questions use `council ask`. For conversation use `council chat`.",
     )
-    .argument("<topic>", "The topic / question for the panel to debate")
+    .argument(
+      "[topic]",
+      "The topic / question for the panel to debate (optional when --prompt-file is used)",
+    )
+    .option(
+      "--prompt-file <path>",
+      "Read the topic VERBATIM from a file (or `-` for stdin) instead of the positional argument. " +
+        "Bypasses the shell so `$`, backticks, and values like `$180K` survive intact. " +
+        "Mutually exclusive with the positional <topic>.",
+    )
     .option(
       "-p, --panel <name>",
       "Use a built-in or custom panel template (alias: --template). **Omit to let Council auto-design an expert panel from your topic.**",
@@ -303,14 +322,81 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         return parsed;
       },
     )
-    .action(async (topic: string, raw: ConveneOptions, command: Command) => {
+    .action(async (topicArg: string | undefined, raw: ConveneOptions, command: Command) => {
       if (raw.quiet === true) {
         setQuiet(true);
       }
       warnOnStrayExpertArgs(command, writeError);
-      const admission = checkTopicAdmission(topic);
+
+      // Resolve the topic from either the positional <topic> or --prompt-file.
+      // --prompt-file is the bulletproof input channel: it reads the topic
+      // VERBATIM (file contents or stdin), bypassing the shell entirely so
+      // `$`, backticks, and values like `$180K` survive. The two sources are
+      // mutually exclusive (mirrors the --experts / --template pattern).
+      const promptFile = raw.promptFile;
+      if (promptFile !== undefined && topicArg !== undefined) {
+        const message =
+          "Cannot combine a positional <topic> with --prompt-file. Pass the topic as an argument OR via --prompt-file, not both.";
+        writeError(message + "\n");
+        throw new CliUserError(message);
+      }
+
+      let topic: string;
+      let topicSource: TopicSource;
+      if (promptFile !== undefined) {
+        topicSource = "file";
+        try {
+          topic = await readTextInput(promptFile);
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error);
+          writeError(message + "\n");
+          throw new CliUserError(message);
+        }
+      } else if (topicArg !== undefined) {
+        topicSource = "arg";
+        topic = topicArg;
+      } else {
+        const message =
+          "No topic provided. Pass a positional <topic>, or use --prompt-file <path> (or --prompt-file - to read stdin).";
+        writeError(message + "\n");
+        throw new CliUserError(message);
+      }
+
+      const admission = checkTopicAdmission(topic, topicSource);
       for (const warning of admission.warnings) {
         writeError(warning + "\n");
+      }
+
+      // Confirm-on-detect (PM-02): when the shell-expansion heuristic fires for
+      // a shell-argument topic, the shell may have silently altered the text
+      // before Council ever saw it. In an interactive session, echo what we
+      // actually received and require explicit confirmation before launching
+      // the debate. Skipped for --yes, --quiet, and non-interactive shells
+      // (which keep the existing warn-and-proceed behavior). File and stdin
+      // input never reach the shell, so they are never gated here.
+      if (
+        topicSource === "arg" &&
+        raw.yes !== true &&
+        !isQuiet() &&
+        detectShellExpansion(topic, "arg")
+      ) {
+        const confirmTopic = async (provider: ConfirmProvider): Promise<void> => {
+          writeError(`Received topic: ${truncatePrompt(toSingleLineDisplay(topic))}\n`);
+          const proceed = await provider.confirm("Proceed with this topic? [y/N] ");
+          if (!proceed) {
+            const message =
+              "Aborted: topic not confirmed. Re-run with the topic in SINGLE quotes, or use --prompt-file <path>.";
+            writeError(message + "\n");
+            throw new CliUserError(message);
+          }
+        };
+        const confirmFactory = deps.topicConfirmProvider;
+        if (confirmFactory) {
+          await confirmTopic(confirmFactory());
+        } else if (!isNonInteractive()) {
+          await confirmTopic(createReadlineConfirmProvider());
+        }
+        // else: non-interactive with no injected provider -> warn-and-proceed.
       }
 
       const config = await loadConfig();
@@ -783,11 +869,21 @@ Shell quoting: bash and PowerShell both expand $variables inside double quotes.
 Wrap topics containing $, !, or backticks in SINGLE quotes to keep them literal:
   bash       $ council convene 'Is $450/hr reasonable?' --engine copilot
   PowerShell > council convene 'Is $450/hr reasonable?' --engine copilot
+Bulletproof option — read the topic VERBATIM from a file or stdin (no shell):
+  $ council convene --prompt-file topic.txt --engine copilot
+  $ echo 'We have $180K in runway' | council convene --prompt-file - --engine copilot
 `,
   );
 
   // CLI-05: Help tiering — separate common vs advanced flags
-  const COMMON_FLAGS = new Set(["--template", "--engine", "--format", "--max-rounds", "--yes"]);
+  const COMMON_FLAGS = new Set([
+    "--template",
+    "--prompt-file",
+    "--engine",
+    "--format",
+    "--max-rounds",
+    "--yes",
+  ]);
 
   cmd.configureHelp({
     formatHelp: (command, helper) => {

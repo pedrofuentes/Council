@@ -144,6 +144,35 @@ describe("topic admission integration", () => {
     expect(stderr).not.toContain("violence/weapons");
   });
 
+  it("convene WARNS about shell expansion for a double-space string supplied as a shell ARG", async () => {
+    let stderr = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (s) => {
+        stderr += s;
+      },
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "Compare red  and blue options",
+      "--template",
+      "code-review",
+      "--max-rounds",
+      "1",
+      "--engine",
+      "mock",
+      "--yes",
+    ]);
+
+    // Source-awareness contrast (see the chat test below): identical text, but
+    // a CLI positional CAN be shell-mangled, so the residue (double space) is
+    // flagged here. --yes skips the confirm gate; the warning still fires.
+    expect(stderr).toMatch(/shell expansion/i);
+  });
+
   it("ask emits a warning for a sensitive question and still answers", async () => {
     const seed = await seedPanel(testHome);
     let stderr = "";
@@ -359,6 +388,26 @@ describe("topic admission — chat integration", () => {
     expect(out).not.toContain("violence/weapons");
   });
 
+  it("1:1 chat REPL does NOT warn about shell expansion for a typed double-space message (interactive source)", async () => {
+    await seedExpert(env, CHAT_EXPERT);
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => {
+        out += s;
+      },
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["Compare red  and blue options", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+
+    // The double space is an ARG-ONLY shell-mangling residue signal; a typed
+    // chat turn is never shell-mangled, so it must NOT trip the heuristic.
+    // (Contrast: the same string as a convene ARG DOES warn — see above.)
+    expect(out).not.toMatch(/shell expansion/i);
+  });
+
   it("panel chat @convene emits a warning for a sensitive debate topic and still runs the deliberation", async () => {
     await seedExpert(env, PANEL_EXPERT_A);
     await seedExpert(env, PANEL_EXPERT_B);
@@ -383,6 +432,35 @@ describe("topic admission — chat integration", () => {
     expect(out).toContain("Crescendo escalation");
     expect(out).toContain("violence/weapons");
     // Deliberation banner confirms the debate was NOT blocked.
+    expect(out).toMatch(/Starting structured deliberation/i);
+  });
+
+  it("panel chat @convene does NOT warn about shell expansion for a typed double-space topic (interactive source)", async () => {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "duo", ["panel-a", "panel-b"]);
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => {
+        out += s;
+      },
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () =>
+        scriptedInput(["@convene Compare red  and blue options", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "duo", "--engine", "mock"]);
+
+    // The double space is an ARG-ONLY shell-mangling residue signal. A typed
+    // @convene topic in the panel-chat REPL is never shell-mangled, so the
+    // admission hook must pass source "interactive" and the heuristic must NOT
+    // fire. This pins panel-chat.ts's interactive source: reverting it to the
+    // default "arg" makes this assertion fail. (Contrast: the same string as a
+    // convene CLI ARG DOES warn — see the convene test above.)
+    expect(out).not.toMatch(/shell expansion/i);
+    // Sanity: the @convene path actually ran the deliberation (so the
+    // admission hook was genuinely exercised, not skipped).
     expect(out).toMatch(/Starting structured deliberation/i);
   });
 });

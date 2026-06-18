@@ -248,11 +248,14 @@ describe("missing required argument help hint", () => {
     return { output };
   }
 
-  it("appends a --help hint when convene is missing the topic argument", async () => {
+  it("appends a --help hint when a command is missing a required argument", async () => {
     const program = buildProgram();
     const { output } = captureErrorOutput(program);
 
-    await expect(program.parseAsync(["node", "council", "convene"])).rejects.toThrow(
+    // `convene`'s topic is now optional (it can be supplied via --prompt-file),
+    // so the generic missing-required-argument hint is exercised through `ask`,
+    // whose <panel> positional remains required.
+    await expect(program.parseAsync(["node", "council", "ask"])).rejects.toThrow(
       /missing required argument/,
     );
 
