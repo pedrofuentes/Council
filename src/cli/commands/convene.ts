@@ -58,7 +58,7 @@ import { PanelRepository } from "../../memory/repositories/panels.js";
 
 import { runExtractMemoryHook } from "../extract-memory-hook.js";
 
-import { stripControlChars } from "../strip-control-chars.js";
+import { stripControlChars, toSingleLineDisplay } from "../strip-control-chars.js";
 import { suggestMatch } from "../fuzzy-match.js";
 import { truncatePrompt } from "../renderers/truncate-prompt.js";
 import { defaultErrorWriter, defaultWriter, isQuiet, setQuiet, type Writer } from "./writer.js";
@@ -381,7 +381,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         detectShellExpansion(topic, "arg")
       ) {
         const confirmTopic = async (provider: ConfirmProvider): Promise<void> => {
-          writeError(`Received topic: ${truncatePrompt(stripControlChars(topic))}\n`);
+          writeError(`Received topic: ${truncatePrompt(toSingleLineDisplay(topic))}\n`);
           const proceed = await provider.confirm("Proceed with this topic? [y/N] ");
           if (!proceed) {
             const message =

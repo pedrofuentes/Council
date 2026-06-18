@@ -34,7 +34,7 @@ import { RENDERER_FORMATS, type RendererFormat } from "../renderers/select.js";
 import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
 import { isNonInteractive } from "../non-interactive.js";
 import { readTextInput } from "../read-text-input.js";
-import { stripControlChars } from "../strip-control-chars.js";
+import { toSingleLineDisplay } from "../strip-control-chars.js";
 import { truncatePrompt } from "../renderers/truncate-prompt.js";
 
 const DEFAULT_MAX_WORDS = 250;
@@ -157,7 +157,7 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
           detectShellExpansion(question, "arg")
         ) {
           const confirmQuestion = async (provider: ConfirmProvider): Promise<void> => {
-            writeError(`Received question: ${truncatePrompt(stripControlChars(question))}\n`);
+            writeError(`Received question: ${truncatePrompt(toSingleLineDisplay(question))}\n`);
             const proceed = await provider.confirm("Proceed with this question? [y/N] ");
             if (!proceed) {
               const message =
