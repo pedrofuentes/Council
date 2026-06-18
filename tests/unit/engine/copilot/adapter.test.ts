@@ -44,6 +44,8 @@ interface MockClientState {
   listModelsCalls: number;
   listModelsResults: MockModelInfo[];
   listModelsError: Error | undefined;
+  /** Number of times any session's abort() was invoked by the adapter. */
+  abortCalls: number;
 }
 
 const mockState: MockClientState = {
@@ -56,6 +58,7 @@ const mockState: MockClientState = {
   listModelsCalls: 0,
   listModelsResults: [],
   listModelsError: undefined,
+  abortCalls: 0,
 };
 
 vi.mock("@github/copilot-sdk", () => {
@@ -96,6 +99,9 @@ vi.mock("@github/copilot-sdk", () => {
       // Always emit session.idle to mark completion
       const idleHandlers = this.handlers.get("session.idle") ?? [];
       for (const h of idleHandlers) h({});
+    }
+    async abort(): Promise<void> {
+      mockState.abortCalls += 1;
     }
     async disconnect(): Promise<void> {
       const session = mockState.sessions.find((s) => s.id === this.id);
@@ -175,6 +181,7 @@ function resetMockState(): void {
   mockState.listModelsCalls = 0;
   mockState.listModelsResults = [];
   mockState.listModelsError = undefined;
+  mockState.abortCalls = 0;
 }
 
 describe("CopilotEngine — implements CouncilEngine", () => {
@@ -397,6 +404,51 @@ describe("CopilotEngine — cancellation", () => {
     const events = await collect(
       engine.send({ prompt: "x", expertId: expertA.id, signal: controller.signal }),
     );
+    const last = events[events.length - 1];
+    expect(last?.kind).toBe("error");
+    if (last?.kind === "error") {
+      expect(last.error.code).toBe("ABORTED");
+      expect(last.recoverable).toBe(false);
+    }
+  });
+
+  it("calls session.abort() to cancel the underlying SDK request when aborted in-flight (PM-07)", async () => {
+    const engine = new CopilotEngine();
+    await engine.start();
+    await engine.addExpert(expertA);
+    const session = mockState.sessionInstances[0];
+    expect(session).toBeDefined();
+    if (!session) return;
+
+    // Multiple deltas so the abort lands genuinely in-flight (after listeners
+    // are registered and at least one delta has streamed).
+    mockState.sendQueues.set("session-0", [
+      { kind: "assistant.message_delta", data: { deltaContent: "first" } },
+      { kind: "assistant.message_delta", data: { deltaContent: "second" } },
+      { kind: "assistant.message_delta", data: { deltaContent: "third" } },
+    ]);
+
+    const controller = new AbortController();
+    const stream = engine.send({
+      prompt: "stream-then-abort",
+      expertId: expertA.id,
+      signal: controller.signal,
+    });
+
+    const events: EngineEvent[] = [];
+    for await (const evt of stream) {
+      events.push(evt);
+      if (evt.kind === "message.delta" && !controller.signal.aborted) {
+        controller.abort();
+      }
+    }
+
+    // Core assertion: the adapter must cancel the underlying SDK request via
+    // session.abort() rather than letting it stream to completion in the
+    // background after the consumer has interrupted.
+    expect(mockState.abortCalls).toBeGreaterThanOrEqual(1);
+
+    // The stream still terminates with ABORTED (existing contract preserved).
     const last = events[events.length - 1];
     expect(last?.kind).toBe("error");
     if (last?.kind === "error") {
