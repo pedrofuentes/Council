@@ -45,7 +45,7 @@
 > Experts remember, sessions persist, and the UX is polished.
 
 - ✅ **3.1 Persistent Expert Memory** — LLM-based post-debate extraction cached in DB (default, `--heuristic-memory` for token-saving), sanitized against prompt injection
-- ✅ **3.2 Session Resume** — `council resume` for transcript replay and `--continue` for new debates
+- ✅ **3.2 Session Resume** — `council resume` for transcript replay and `--prompt` for new debates
 - ✅ **3.3 Human-as-expert** — `council convene --human` adds interactive human participants
 - ✅ **3.4 Rich Ink Terminal UI** — React + Ink components with color-coded experts and streaming text
 - ✅ **3.5 Memory Inspection CLI** — `council memory list/inspect/reset` for panel/expert curation
@@ -64,7 +64,7 @@
 - ✅ **4.4 Panel CLI Commands (Updated)** — `council panel create | list | inspect | edit | delete` over slug-referencing panels
 - ✅ **4.5 User Data Directory** — `~/Council/` user-facing layout (`experts/`, `panels/`) replaces opaque `~/.council/`
 - ✅ **4.6 Template Migration** — 5 built-in panels migrated to the new expert+panel split with deterministic slugs
-- ✅ **4.7 Schema Migration 004** — `expert_library`, `panel_library`, and `panel_members` tables (`004_expert_library.sql`)
+- ✅ **4.7 Schema Migration 004** — `expert_library`, `panel_library`, and `panel_members` tables (`001_unified.sql`)
 
 ---
 
@@ -72,7 +72,7 @@
 
 > Persistent chat — both 1:1 with an expert and multi-expert panel chat — with smart context handling and inline structured debates.
 
-- ✅ **5.1 Chat Session Infrastructure** — `ChatSession` model + `chat_sessions` / `chat_turns` tables (`005_chat.sql`)
+- ✅ **5.1 Chat Session Infrastructure** — `ChatSession` model + `chat_sessions` / `chat_turns` tables (`001_unified.sql`)
 - ✅ **5.2 1:1 Expert Chat** — `council chat <expert-slug>` for persistent single-expert conversation
 - ✅ **5.3 Context Management** — Rolling LLM summaries for older turns + full recent turns, shared with debate context manager
 - ✅ **5.4 Panel Chat Mode** — `council chat <panel>` for multi-expert conversation with moderator-style turn taking
@@ -86,13 +86,13 @@
 
 > Persona experts grounded in user-supplied documents, plus panel-level document folders for shared context. RAG retrieval during conversations.
 
-- ✅ **6.1 Document Detection & Extraction** — Detect supported formats (md, txt, pdf, docx) under `docs/` and extract text
+- ✅ **6.1 Document Detection & Extraction** — Detect supported formats (md, txt, pdf, docx, and more — run `council docs formats`) under `docs/` and extract text
 - ✅ **6.2 Persona Profile Analysis** — LLM-based profile synthesis from documents into the expert's persona section
-- ✅ **6.3 Content Indexing (RAG)** — Chunk + index documents into SQLite FTS5 for BM25-ranked retrieval (`007_document_index.sql`)
+- ✅ **6.3 Content Indexing (RAG)** — Chunk + index documents into SQLite FTS5 for BM25-ranked retrieval (`001_unified.sql`)
 - ✅ **6.4 On-demand Processing** — Process documents lazily on first chat/debate use with visible progress feedback
 - ⏳ **6.5 Background Processing** — **Deferred** — on-demand processing (6.4) covers the primary use case; a background daemon adds complexity with limited incremental value for a CLI tool
-- ✅ **6.6 Expert Document CLI** — `council expert docs add | list | remove | reprocess`
-- ✅ **6.7 Panel Document Folder** — `~/Council/panels/<panel>/docs/` with `panel docs link/unlink` for shared panel context (`009_panel_documents.sql`)
+- ✅ **6.6 Expert Document CLI** — `council expert docs <slug>` lists indexed documents, `--remove <file>` un-indexes one, and `council expert train <slug>` reprocesses docs and refreshes the profile
+- ✅ **6.7 Panel Document Folder** — `~/Council/panels/<panel>/docs/` with `panel docs link/unlink` for shared panel context (`001_unified.sql`)
 - ✅ **6.8 Recency Weighting** — Newer documents weighted higher during retrieval to bias persona toward latest material
 
 ---
