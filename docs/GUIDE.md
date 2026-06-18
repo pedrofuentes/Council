@@ -59,7 +59,7 @@ tailored to your topic. See [Part 1](#part-1).
 
 Before starting, make sure you have:
 
-1. **Node.js 20 or later** installed
+1. **Node.js 22 or later** installed
 2. **Council installed globally**: `npm install -g @council/cli`
 3. **A GitHub Copilot subscription** (Individual, Business, or Enterprise)
 
@@ -1436,7 +1436,7 @@ See [Shell Quoting Guide](#shell-quoting). Use single quotes in bash/zsh.
 
 **`council doctor` reports issues**
 Follow the suggested fixes. Common issues:
-- Node.js version too old (need 20+)
+- Node.js version too old (need 22+)
 - Config file syntax error (run `council config edit` to fix)
 - Database locked (close other Council processes)
 - Copilot authentication expired (re-authenticate in your editor)
