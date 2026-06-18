@@ -11,6 +11,13 @@
  *
  * Live discovery (when the Copilot SDK is reachable) may report a superset that
  * reflects the user's actual Copilot tier; this list is the offline contract.
+ *
+ * It MUST mirror what live discovery offers so that anything `council models`
+ * advertises also passes `council convene --model` validation (bug PM-03 — the
+ * static list lagged discovery: it carried a bogus `gpt-5.2` that was never
+ * offered, and omitted ids discovery advertised). The special selector `auto`
+ * (delegate model choice to Copilot) is a routable selector and lives here too,
+ * so it validates and is advertised like any other id.
  */
 export const SUPPORTED_MODELS = [
   // Anthropic via Copilot
@@ -20,13 +27,20 @@ export const SUPPORTED_MODELS = [
   "claude-opus-4.5",
   "claude-opus-4.6",
   "claude-opus-4.7",
+  "claude-opus-4.8",
   // OpenAI via Copilot
   "gpt-4.1",
   "gpt-5-mini",
-  "gpt-5.2",
+  "gpt-5.3-codex",
   "gpt-5.4",
-  "gpt-5.5",
   "gpt-5.4-mini",
+  "gpt-5.5",
+  // Google via Copilot
+  "gemini-3.1-pro-preview",
+  "gemini-3.5-flash",
+  // Other Copilot-routable selectors
+  "mai-code-1-flash-internal",
+  "auto",
 ] as const;
 
 /** A model identifier known to the canonical {@link SUPPORTED_MODELS} registry. */

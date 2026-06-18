@@ -3,10 +3,7 @@
  */
 import { Command } from "commander";
 
-import {
-  discoverAvailableModels,
-  type ModelDiscoveryResult,
-} from "../../engine/copilot/health.js";
+import { discoverAvailableModels, type ModelDiscoveryResult } from "../../engine/copilot/health.js";
 import { stripControlChars } from "../strip-control-chars.js";
 
 import { defaultWriter, type Writer } from "./writer.js";
@@ -16,6 +13,9 @@ const MODEL_GROUPS = [
   { label: "OpenAI", prefix: "gpt-" },
   { label: "Google", prefix: "gemini-" },
 ] as const;
+
+/** Bucket for routable ids that don't match a provider prefix (e.g. `auto`). */
+const OTHER_GROUP_LABEL = "Other";
 
 export interface ModelsDeps {
   readonly write?: Writer;
@@ -46,7 +46,10 @@ export function formatAvailableModels(
     ),
   ];
 
-  const labelWidth = Math.max(...MODEL_GROUPS.map((group) => group.label.length));
+  const labelWidth = Math.max(
+    OTHER_GROUP_LABEL.length,
+    ...MODEL_GROUPS.map((group) => group.label.length),
+  );
   const header =
     source === "live" ? "Available models:" : "Known models (live discovery unavailable):";
 
@@ -58,6 +61,16 @@ export function formatAvailableModels(
       continue;
     }
     output += `  ${group.label.padEnd(labelWidth, " ")}: ${groupedModels.join(", ")}\n`;
+  }
+
+  // Surface routable ids that don't match a provider prefix (e.g. the `auto`
+  // selector or internal models) so `council models` / `doctor --models`
+  // advertise everything `convene --model` accepts (bug PM-03).
+  const ungroupedModels = orderedModels.filter(
+    (model) => !MODEL_GROUPS.some((group) => model.startsWith(group.prefix)),
+  );
+  if (ungroupedModels.length > 0) {
+    output += `  ${OTHER_GROUP_LABEL.padEnd(labelWidth, " ")}: ${ungroupedModels.join(", ")}\n`;
   }
 
   output += "\n";
