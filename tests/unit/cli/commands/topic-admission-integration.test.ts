@@ -434,4 +434,33 @@ describe("topic admission — chat integration", () => {
     // Deliberation banner confirms the debate was NOT blocked.
     expect(out).toMatch(/Starting structured deliberation/i);
   });
+
+  it("panel chat @convene does NOT warn about shell expansion for a typed double-space topic (interactive source)", async () => {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "duo", ["panel-a", "panel-b"]);
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => {
+        out += s;
+      },
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () =>
+        scriptedInput(["@convene Compare red  and blue options", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "duo", "--engine", "mock"]);
+
+    // The double space is an ARG-ONLY shell-mangling residue signal. A typed
+    // @convene topic in the panel-chat REPL is never shell-mangled, so the
+    // admission hook must pass source "interactive" and the heuristic must NOT
+    // fire. This pins panel-chat.ts's interactive source: reverting it to the
+    // default "arg" makes this assertion fail. (Contrast: the same string as a
+    // convene CLI ARG DOES warn — see the convene test above.)
+    expect(out).not.toMatch(/shell expansion/i);
+    // Sanity: the @convene path actually ran the deliberation (so the
+    // admission hook was genuinely exercised, not skipped).
+    expect(out).toMatch(/Starting structured deliberation/i);
+  });
 });
