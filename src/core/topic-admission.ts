@@ -26,6 +26,21 @@ export interface TopicAdmissionResult {
   readonly warnings: readonly string[];
 }
 
+/**
+ * Where a topic originated — used to scope the shell-expansion residue
+ * heuristics (see {@link detectShellExpansion}).
+ *
+ *   - `"arg"`         — a CLI positional (e.g. `council convene <topic>`).
+ *                       This is the ONLY source a shell can mangle before
+ *                       Council sees it, so the ambiguous residue signals
+ *                       apply here.
+ *   - `"interactive"` — typed into a REPL prompt (e.g. a `council chat`
+ *                       turn). Never shell-mangled.
+ *   - `"file"`        — read verbatim via `--prompt-file`. Never
+ *                       shell-mangled.
+ */
+export type TopicSource = "arg" | "interactive" | "file";
+
 interface PatternCategory {
   readonly label: string;
   readonly patterns: readonly RegExp[];
@@ -96,43 +111,80 @@ function looksLikeExpansionArtifact(normalized: string): boolean {
 }
 
 /**
- * Exported detection function for shell expansion warning heuristic.
+ * Multiple consecutive INTERNAL spaces. PowerShell treats `$180K` as an
+ * undefined variable and expands it to the empty string, so a double-quoted
+ * `"We have $180K in runway"` arrives as `We have  in runway` — a tell-tale
+ * double space where the amount used to be, with no surviving `$`.
+ */
+const MULTI_SPACE_RESIDUE_PATTERN = /\S {2,}\S/;
+
+/**
+ * A lone unit suffix (`K`/`M`/`B`/`G`) standing alone after a space. In bash,
+ * `$180K` expands `$1` (empty) leaving `80K`, or in shells that consume the
+ * whole numeric run `$180` leaving a bare `K` — e.g. `Raise $180K now`
+ * arrives as `Raise  K now`. The isolated single-letter unit is the residue.
+ *
+ * This is deliberately ARG-ONLY (see {@link detectShellExpansion}): typed or
+ * file-sourced phrases such as "Vitamin K" or "Plan B" are NOT shell-mangled
+ * and must never trip this signal.
+ */
+const LONE_UNIT_SUFFIX_PATTERN = /\s[KMBG]\b/;
+
+/**
+ * Exported detection function for the shell expansion warning heuristic.
  * Returns `true` if the topic shows evidence of potential shell expansion
  * issues that warrant a warning to the user.
  *
- * Detection signals:
- * 1. Contains a `$VAR`-style pattern ($ followed by letter/underscore) —
- *    indicates the user may have intended a literal `$PATH` or similar
- *    but used double quotes, OR correctly single-quoted and the literal
- *    survived (warning is advisory in either case).
- * 2. Contains shell positional parameters like `$0`, `$1`, `$2` (single digit
- *    after `$` followed by word boundary) — distinct from currency amounts
- *    like `$50`, `$180K` which have 2+ digits or additional context.
- * 3. Topic is exactly one character after normalization — strong signal
- *    that a currency literal like `$180K` was mangled by the shell,
- *    leaving only the trailing unit suffix `K`.
+ * Two tiers of signal, gated by {@link TopicSource}:
+ *
+ *   1. Survivor signals (ALL sources): a literal `$VAR` / `$1` is still
+ *      present in the text. Advisory for typed/file input too — the user
+ *      may have meant a literal `$`, or correctly single-quoted it.
+ *        - `$VAR`-style: `$` followed by a letter/underscore.
+ *        - `$0`..`$9` positional parameters (single digit + word boundary).
+ *
+ *   2. Residue signals (ARG source ONLY): evidence that mangling ALREADY
+ *      happened and erased the `$`, leaving a fragment. These can only occur
+ *      for a CLI positional that passed through a shell as argv, so applying
+ *      them to typed (`"interactive"`) or `--prompt-file` (`"file"`) input
+ *      would be pure false positives.
+ *        - empty after trimming (the whole topic expanded away);
+ *        - exactly one character (e.g. a lone trailing unit suffix);
+ *        - multiple consecutive internal spaces;
+ *        - a lone `K`/`M`/`B`/`G` unit suffix after a space.
  *
  * Does NOT warn on intact currency/number literals like `$50`, `$450/mo`,
- * `$180K`, `$2M` where the `$` is followed by 2+ digits or has
- * additional non-boundary context. These are intact values that survived
- * shell expansion (user correctly used single quotes or the shell had
- * no variable to expand).
+ * `$180K`, `$2M` where the `$` is followed by 2+ digits — these are intact
+ * values that survived shell expansion.
  */
-export function detectShellExpansion(topic: string): boolean {
+export function detectShellExpansion(topic: string, source: TopicSource = "arg"): boolean {
   const normalized = topic.trim().normalize("NFKC");
+
+  // Survivor signals — meaningful for every source.
+  if (SHELL_VAR_PATTERN.test(normalized) || SHELL_POSITIONAL_PATTERN.test(normalized)) {
+    return true;
+  }
+
+  // Residue signals — only a shell argument can carry shell-mangling residue.
+  if (source !== "arg") {
+    return false;
+  }
+
   return (
-    SHELL_VAR_PATTERN.test(normalized) ||
-    SHELL_POSITIONAL_PATTERN.test(normalized) ||
-    looksLikeExpansionArtifact(normalized)
+    normalized.length === 0 ||
+    looksLikeExpansionArtifact(normalized) ||
+    MULTI_SPACE_RESIDUE_PATTERN.test(normalized) ||
+    LONE_UNIT_SUFFIX_PATTERN.test(normalized)
   );
 }
 
 function shellExpansionWarning(): string {
   return (
     "⚠ Topic looks like it may have been affected by shell expansion " +
-    "(possible shell expansion). If you intended a literal `$` or used a value " +
-    "like `$180K`, wrap the topic in single quotes (e.g., 'literal $180K') so " +
-    "the shell does not expand it before Council sees it."
+    "(possible shell expansion). If you intended a literal `$` or a value " +
+    "like `$180K`, wrap the topic in single quotes (e.g., 'literal $180K'), " +
+    "or pass it via `--prompt-file <path>` (or `--prompt-file -` for stdin) " +
+    "to bypass the shell entirely."
   );
 }
 
@@ -140,7 +192,10 @@ function warningMessage(categories: readonly string[]): string {
   return `⚠ This topic touches sensitive areas (${categories.join(", ")}). Proceeding — experts will follow safety guidelines.`;
 }
 
-export function checkTopicAdmission(topic: string): TopicAdmissionResult {
+export function checkTopicAdmission(
+  topic: string,
+  source: TopicSource = "arg",
+): TopicAdmissionResult {
   const normalized = topic.trim().normalize("NFKC");
   const matched: string[] = [];
   for (const category of CATEGORIES) {
@@ -149,7 +204,7 @@ export function checkTopicAdmission(topic: string): TopicAdmissionResult {
     }
   }
   const warnings: string[] = matched.map((label) => warningMessage([label]));
-  if (detectShellExpansion(topic)) {
+  if (detectShellExpansion(topic, source)) {
     warnings.push(shellExpansionWarning());
   }
   return { admitted: true, warnings };
