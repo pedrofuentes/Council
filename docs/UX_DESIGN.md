@@ -3,6 +3,12 @@
 > A comprehensive UX design document for Council, an AI expert panel CLI tool.
 > Written from the perspective of a Senior Product Designer & CLI UX Expert.
 
+> **Status: forward-looking design document.** This describes the *intended* UX vision.
+> Sections such as "Proposed Command Reference" and "Terminal Mockups" may describe commands,
+> flags, and flows that are not yet implemented (or differ) in the shipped CLI. For the current,
+> authoritative command surface, run `council --help` or see the [README](../README.md) and
+> [GUIDE](./GUIDE.md).
+
 ---
 
 ## Table of Contents
@@ -96,7 +102,7 @@ $ council
 
   ┌─────────────────────────────────────────────────────┐
   │                                                     │
-  │   ◆ Council v1.0.0                                  │
+  │   ◆ Council v0.1.0                                  │
   │                                                     │
   │   AI expert panels for better decisions.            │
   │                                                     │
@@ -121,7 +127,7 @@ $ council
 
   ┌─────────────────────────────────────────────────────┐
   │                                                     │
-  │   ◆ Council v1.0.0                                  │
+  │   ◆ Council v0.1.0                                  │
   │                                                     │
   │   ⚠ GitHub Copilot not found.                      │
   │                                                     │
