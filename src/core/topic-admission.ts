@@ -46,6 +46,39 @@ interface PatternCategory {
   readonly patterns: readonly RegExp[];
 }
 
+/**
+ * Maximum number of input characters scanned by the sensitive-category
+ * regexes.
+ *
+ * The category patterns use a greedy `.*` between two `\b…\b` anchors, which
+ * is super-linear on a single very long line (~5 s for a 180 KB `--prompt-file`
+ * payload). Now that `--prompt-file`/stdin can feed arbitrary-size content into
+ * {@link checkTopicAdmission}, the scanned text is capped to this prefix BEFORE
+ * the regexes (and the NFKC normalize) run, keeping admission fast and O(1)
+ * with respect to oversized input (~10 ms worst case at this bound).
+ *
+ * 8 KiB is far larger than any realistic topic/question — even a verbose
+ * multi-paragraph file topic is well under it — so capping never changes the
+ * verdict for real input (every input at or below the cap is scanned
+ * byte-identically to before). Detection of a sensitive phrase that begins only
+ * AFTER the first 8 KiB is intentionally sacrificed; this layer is an advisory
+ * warning, not a security boundary — the underlying LLM remains the hard guard.
+ */
+export const CATEGORY_SCAN_LIMIT = 8192;
+
+/**
+ * Bound the text handed to the sensitive-category regexes to a safe prefix.
+ *
+ * Slicing the RAW input *before* `.trim()`/NFKC normalization caps the cost of
+ * both the normalize and the super-linear `.*` category scan. A no-op for input
+ * at or below {@link CATEGORY_SCAN_LIMIT}, so realistic topics are unaffected.
+ * Exported so tests can pin the bound deterministically by scanned-slice length
+ * rather than relying on flaky wall-clock timing.
+ */
+export function boundCategoryScanText(topic: string): string {
+  return topic.length > CATEGORY_SCAN_LIMIT ? topic.slice(0, CATEGORY_SCAN_LIMIT) : topic;
+}
+
 const CATEGORIES: readonly PatternCategory[] = [
   {
     label: "violence/weapons",
@@ -196,7 +229,7 @@ export function checkTopicAdmission(
   topic: string,
   source: TopicSource = "arg",
 ): TopicAdmissionResult {
-  const normalized = topic.trim().normalize("NFKC");
+  const normalized = boundCategoryScanText(topic).trim().normalize("NFKC");
   const matched: string[] = [];
   for (const category of CATEGORIES) {
     if (category.patterns.some((p) => p.test(normalized))) {
