@@ -326,6 +326,13 @@ export class CopilotEngine implements CouncilEngine {
       unsubscribes.push(record.session.on("session.error", onError));
 
       const onAbort = (): void => {
+        // Cancel the underlying SDK request so the provider stops generating
+        // for an interrupted turn. The SDK `send()` promise stays pending for
+        // the whole request, so without this the model keeps streaming to
+        // completion in the background after Ctrl+C. Best-effort and not
+        // awaited: the consumer is already returning to the prompt, and any
+        // rejection (e.g. the session was disconnected) is irrelevant here.
+        void record.session.abort().catch(() => undefined);
         push({
           kind: "error",
           expertId,

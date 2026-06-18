@@ -56,6 +56,7 @@ import {
   type DocumentSnippet,
 } from "./shared.js";
 import type { FileExpertLibrary } from "./shared.js";
+import { takeUntilAborted } from "./take-until-aborted.js";
 
 interface PanelChatOptions {
   readonly target: string;
@@ -481,11 +482,18 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
             // first response completes empty/whitespace-only and was not
             // failed/aborted. The single AbortController covers both the
             // initial send and the retry, so an interrupt cancels either.
-            const outcome = await collectSendWithEmptyRetry(engine, {
-              prompt,
-              expertId: spec.id,
-              signal: controller.signal,
-            });
+            // Wrap each send so the consumer breaks the async iteration the
+            // instant the interrupt fires, rather than draining the whole
+            // in-flight response first. The signal is still forwarded to the
+            // engine so the underlying request is cancelled at the source.
+            const outcome = await collectSendWithEmptyRetry(
+              { send: (options) => takeUntilAborted(engine.send(options), options.signal) },
+              {
+                prompt,
+                expertId: spec.id,
+                signal: controller.signal,
+              },
+            );
             assembled = outcome.content;
             failed = outcome.failed;
             recoverable = outcome.recoverable;

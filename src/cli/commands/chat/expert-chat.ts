@@ -43,6 +43,7 @@ import {
   type PanelMembership,
   type ChatRenderer,
 } from "./shared.js";
+import { takeUntilAborted } from "./take-until-aborted.js";
 
 interface ExpertChatOptions {
   readonly target: string;
@@ -322,11 +323,14 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
         const controller = new AbortController();
         state = { kind: "streaming", controller };
         try {
-          for await (const evt of engine.send({
-            prompt,
-            expertId: expertSpec.id,
-            signal: controller.signal,
-          })) {
+          for await (const evt of takeUntilAborted(
+            engine.send({
+              prompt,
+              expertId: expertSpec.id,
+              signal: controller.signal,
+            }),
+            controller.signal,
+          )) {
             if (evt.kind === "message.delta") {
               assembled += evt.text;
             } else if (evt.kind === "error") {
