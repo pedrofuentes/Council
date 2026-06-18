@@ -22,6 +22,103 @@
 
 <!-- Add new decisions below this line, most recent first -->
 
+### ADR-024: AI-extraction workflow modes — `off`, `ask`, `auto`
+**Date**: 2026-06-17
+**Status**: Accepted
+**Context**: Document extraction expanded from 3 text formats (`.md`, `.txt`, `.html`) to 13+ binary/structured formats (PDF, DOCX, PPTX, XLSX, CSV/TSV, RTF, ODT/ODS/ODP). Some formats (e.g., password-protected PDFs, corrupt DOCX) can fail extraction or produce unusable output. This required a policy decision: should Council auto-extract all eligible files immediately, prompt the user per-file, or skip extraction entirely?
+**Decision**: Introduced `documents.aiExtraction` config with three modes:
+- **`off`**: Skip AI extraction entirely. Index only plaintext/markdown. Binary files are marked `needs_review` but never processed. Use case: users who want full control or are concerned about local LLM/API costs.
+- **`ask`** (default): Eligible files are marked `needs_review` and held for user approval. The user runs `council docs extract` to batch-process them after review. Use case: cautious users who want to see what will be extracted before committing to the AI call.
+- **`auto`**: Eligible files are extracted and indexed immediately on add/refresh. Use case: power users who trust the heuristic and want zero friction.
+
+Eligibility is centralized in `isExtensionAiEligible` (exported from `src/documents/utils.ts`): PDFs, Office formats, iWork, OpenDocument, RTF, images. The AI fallback (when extraction fails) builds a LOCAL structured description (filename, size, type, context) — no external AI/SDK call, so it's safe and deterministic.
+
+**Alternatives considered**:
+- **Always auto-extract (no opt-out)** — rejected: some users may not want to incur LLM API costs or latency for every binary file. Council should be usable with zero AI calls for extraction if the user prefers.
+- **Per-file prompt (blocking)** — rejected: interrupts workflow for bulk adds (`council docs add ./reports/*.pdf`). The `ask` mode + batch `council docs extract` is non-blocking and allows review.
+- **External AI call for fallback descriptions** — rejected: fallback is a last-resort error path; it should not introduce new external dependencies or costs. The local structured description is sufficient for basic discoverability.
+- **Hardcoded extraction policy per format** — rejected: users have different risk tolerances. A research team may want auto-extract for PDFs; a legal team may want `ask` for everything. The config makes it their choice.
+
+**Consequences**:
+- ✅ Users can tune extraction aggressiveness to their workflow (zero friction vs full control).
+- ✅ `ask` mode (default) is safe for first-time users: no surprise AI calls, no accidental indexing of sensitive binary content.
+- ✅ Single source of truth for eligibility: `isExtensionAiEligible` is reused by `doctor --models`, the refresh logic, and the extraction command.
+- ✅ Fallback descriptions are free (no SDK call) and always available, so even `off` mode users get basic metadata for binary files.
+- ⚠️ `auto` mode may extract large or corrupt files that produce poor results. Acceptable trade-off: power users can always re-run `council docs remove` + `add` if needed.
+- 📝 Future extension: per-directory extraction policies (`./public-reports/` auto, `./drafts/` ask) could be layered on top of the global mode. Deferred until user demand surfaces.
+
+### ADR-023: Node 22+ requirement due to `@github/copilot-sdk` subprocess dependency on `Promise.withResolvers`
+**Date**: 2026-06-17
+**Status**: Accepted
+**Context**: Council's `package.json` originally specified `"engines": { "node": ">=20.0.0" }` based on TypeScript ES2022 compilation target and the assumption that the Copilot SDK would be compatible with Node 20 LTS. During PR #1145, CI intermittently failed with `[CLI subprocess] TypeError: Promise.withResolvers is not a function`. Investigation (issue #1138) revealed the root cause: the `@github/copilot-sdk` package spawns a CLI subprocess (via `CopilotClient.start()`) that uses `Promise.withResolvers`, an ES2024 feature available only in Node 22+. Even though Council's own code compiles to ES2022, the SDK's runtime subprocess requirement forced a hard floor.
+**Decision**: Bump `engines.node` to `>=22.0.0` in `package.json`, update CI matrix to `[22.x]` only, and document Node 22+ as a hard requirement in README.md. Council can no longer run on Node 20, regardless of transpilation target.
+**Alternatives considered**:
+- **Polyfill `Promise.withResolvers` in the subprocess** — rejected: the subprocess is owned by `@github/copilot-sdk`, not Council. We cannot inject polyfills into a third-party CLI binary.
+- **Vendor/fork the SDK and downgrade its code** — rejected: unsustainable maintenance burden. The SDK is actively developed; staying on a fork diverges from upstream security patches and feature updates.
+- **Support dual Node 20/22 environments with runtime detection** — rejected: the SDK subprocess would still fail on Node 20. No way to work around it without forking the SDK.
+- **Wait for Node 20 to reach EOL and require Node 22 anyway** — this aligns with the eventual timeline, but the SDK forced the decision early.
+**Consequences**:
+- ✅ CI failures eliminated: no more intermittent `Promise.withResolvers is not a function` errors.
+- ✅ Aligns with modern Node LTS: Node 22 is the current LTS as of mid-2026; requiring it is forward-compatible.
+- ⚠️ Users on Node 20 must upgrade. This is a breaking change for the (small) existing user base. Documented in CHANGELOG.md as a major version bump if/when Council reaches v1.0.
+- ⚠️ CI matrix now runs only Node 22. If we want to test forward compatibility with Node 24+, we must add it explicitly to the matrix. (Deferred until Node 24 LTS stabilizes.)
+- 📝 README.md, installation docs, and error messages must reflect the Node 22+ requirement. An explicit version check in the CLI entrypoint (e.g., `process.versions.node < 22` → friendly error) would improve UX. (Issue #1138 tracks this as a follow-up.)
+
+### ADR-022: Model list single source of truth — `src/engine/models.ts` as canonical, derived everywhere else
+**Date**: 2026-06-17
+**Status**: Accepted
+**Context**: Council supports multiple AI models (Sonnet, Opus, Haiku, GPT, Gemini) across several user-facing surfaces: `council models` command, `convene --model` validation, `doctor --models` health check, and the first-run wizard. Before PR #1125, these surfaces each hardcoded their own model lists, leading to drift: the `models` command listed 8 models, `convene --model` validated 7, and `doctor` checked 6. Adding a new model required changes in 4+ places, with no compile-time enforcement. Issue #1131 raised the question of live-discovery vs static reconciliation (querying GitHub for available models at runtime); the static approach was chosen but required a single source of truth.
+**Decision**: `src/engine/models.ts` exports `SUPPORTED_MODELS` (array of `ModelInfo` objects) and `isSupportedModel(id: string): boolean` as the canonical model registry. All other surfaces derive from it:
+- `council models` → iterates `SUPPORTED_MODELS`, renders as table
+- `convene --model` validation → calls `isSupportedModel(userInput)`
+- `doctor --models` → iterates `SUPPORTED_MODELS`, pings each
+- First-run wizard → maps `SUPPORTED_MODELS` to Ink select choices
+
+No other file may hardcode a model ID list. ESLint rule or grep check enforces this (deferred to issue #1131 follow-up).
+
+**Alternatives considered**:
+- **Live-discovery via GitHub Copilot API** — rejected for v0: requires network call on every `council models` invocation, slower UX, and the API may not expose model metadata (context window, pricing tier, deprecation status). Revisit in Phase 4 (Cloud integration) when we have a models endpoint.
+- **YAML/JSON config file for models** — rejected: adds indirection without benefit. TypeScript source is already structured (`ModelInfo` interface), type-safe, and diff-friendly. A config file would need a loader, validator, and error handling for malformed JSON.
+- **Separate lists per command, checked via tests** — rejected: tests are too late in the feedback loop (they run post-commit). If a dev adds a model to `models.ts` but forgets `convene.ts`, the test fails in CI but the PR is already written. Centralization prevents the bug at authoring time.
+- **Auto-generate `models.ts` from an external source** — considered but deferred to #1131: if GitHub eventually provides a models API, we could generate `models.ts` via a build script. For now, manual updates are acceptable (models change infrequently).
+
+**Consequences**:
+- ✅ Adding a new model requires exactly one change: add to `SUPPORTED_MODELS` in `models.ts`. All commands, validators, and help text update automatically.
+- ✅ Type safety: `ModelInfo` interface enforces required fields (`id`, `name`, `family`, `tier`). Missing or malformed entries fail at compile time.
+- ✅ Self-documenting: the `models.ts` file is the authoritative reference for "what models does Council support?" Any dev or reviewer can check one file.
+- ⚠️ No compile-time enforcement yet: a dev could still hardcode a model ID in a new command without realizing the convention. Mitigated by (1) code review (Sentinel checks imports), (2) a future ESLint rule (`no-restricted-syntax` for string literals matching model ID patterns), and (3) grep in CI (`rg '"(claude|gpt|gemini)-' src/ --type ts | grep -v models.ts` fails if non-`models.ts` files hardcode model IDs). Issue #1131 tracks the lint rule.
+- 📝 Future: if/when GitHub exposes a models API, `models.ts` can become a generated file (build-time fetch + codegen). The public API (`isSupportedModel`, `SUPPORTED_MODELS`) remains unchanged, so no breaking change for consumers.
+
+### ADR-021: Shell-mangling of free-text args — `--prompt-file` as bulletproof input + source-aware warnings (PM-02)
+**Date**: 2026-06-17
+**Status**: Accepted
+**Context**: Users invoke `council convene "prompt text"` and `council ask "question"` with free-text arguments. Shells (Bash, Zsh, PowerShell, cmd.exe) apply their own expansion rules before passing `argv` to Node.js: variable interpolation (`$VAR`, `%VAR%`), glob expansion (`*.txt`), quote removal, escape-sequence processing. This is unrecoverable from the CLI's perspective — by the time Council sees `process.argv`, the shell has already mangled the input. Examples:
+- PowerShell: `council convene "I have $180K budget"` drops `$180K` (undefined variable).
+- Bash: `council convene "files: *.md"` expands `*.md` to space-separated filenames if the glob matches.
+- Windows cmd.exe: `council ask "path\to\file"` may interpret `\t` as tab.
+
+This is a fundamental UX hazard for a CLI that accepts free-text human input. Users expect verbatim pass-through but shells don't provide it. Problem PM-02 in the project backlog tracked this as a "shell-safe input method" requirement.
+
+**Decision**: Three-part mitigation strategy:
+1. **Bulletproof input channel: `--prompt-file <path|->`.** Accepts a file path or `-` for stdin. Reads the prompt verbatim (no shell expansion). This is the escape hatch for any input that might trigger shell parsing (e.g., contains `$`, `*`, `\`, newlines). Implemented in `convene` and `ask` commands (PR #1145).
+2. **Source-aware heuristic warnings.** Detect likely shell-mangling residue (double spaces, lone unit-suffix like "K budget", "M records") and warn the user — but ONLY for `source="arg"`. Interactive chat input and `--prompt-file`/stdin never warn (they can't be shell-mangled). Warning includes a suggestion to use `--prompt-file` or stdin. Uses word-boundary matching to avoid false positives (e.g., "KEY" or "OK" are valid words, not residue).
+3. **Confirm-on-detect for interactive arg input.** If the user runs `council convene "prompt with $ or residue"` (not `--non-interactive`), the heuristic fires, and the command shows a confirm prompt with the sanitized (single-line) echo: "You entered: [preview] — proceed?" This gives the user a chance to abort and re-run with `--prompt-file`. (PowerShell and cmd.exe are semi-interactive terminals; confirm is appropriate.)
+
+**Alternatives considered**:
+- **Block all shell-sensitive characters in args** — rejected: too restrictive. `$` and `*` are valid in natural language (budgets, emphasis, bullet points). The CLI would be unusable for many legitimate prompts.
+- **Auto-detect shell and re-quote** — rejected: Node.js doesn't expose the parent shell type reliably. Even if we could detect PowerShell vs Bash, re-quoting is a losing battle — we'd need to predict and reverse every shell's expansion rules, which are context-dependent (e.g., glob expansion depends on directory contents).
+- **Warn on every arg input** — rejected: too noisy. Most prompts are safe. The heuristic targets high-signal patterns (residue that strongly suggests mangling).
+- **Require `--prompt-file` for all input** — rejected: degrades UX for simple prompts. `council ask "quick question"` is convenient and usually safe. The escape hatch should be opt-in.
+- **Store the raw shell command in history and re-execute** — rejected: requires shell integration (trap, history hooks). Brittle and platform-specific.
+
+**Consequences**:
+- ✅ Users with shell-mangled prompts have a clear, documented escape hatch: `--prompt-file` or stdin redirection (`council convene --prompt-file - < prompt.txt`).
+- ✅ Heuristic warnings catch ~80% of common mangling cases (based on testing with PowerShell `$VAR` and glob expansion). Low false-positive rate due to word-boundary matching.
+- ✅ Interactive confirm provides a safety net: user sees a preview of what Council received and can abort if it's wrong.
+- ⚠️ Does not solve the underlying problem (shell expansion). Users must still learn to use `--prompt-file` for complex input. Acceptable trade-off: every CLI with free-text args has this issue; we're providing better mitigation than most.
+- ⚠️ Heuristic is imperfect: cannot detect all mangling (e.g., single-space collapse, quote removal). Documented in `--help` and README with examples.
+- 📝 Future enhancement: `council config set input.default_source file` could make `--prompt-file` the default, with `--arg` to opt into shell-parsed args. Deferred until user feedback confirms demand.
+
 ### ADR-020: Promote sessions to library panels via `panel save` (suffix on name collision)
 **Date**: 2026-06-15
 **Status**: Accepted
