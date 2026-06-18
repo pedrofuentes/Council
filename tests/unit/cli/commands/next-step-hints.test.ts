@@ -253,7 +253,7 @@ describe("IA-04: sessions enrichment", () => {
     expect(captured).toContain(symbols.error);
   });
 
-  it("shows paused indicator for running session", async () => {
+  it("shows an in-progress (non-paused) indicator for running session", async () => {
     await seedSession({ debateStatus: "running" });
     let captured = "";
     const cmd = buildSessionsCommand((s) => {
@@ -261,7 +261,11 @@ describe("IA-04: sessions enrichment", () => {
     });
     await cmd.parseAsync(["node", "council-sessions"]);
     const symbols = getSymbols();
-    expect(captured).toContain(symbols.paused);
+    // PM-11: a running session must not show the ⏸ paused icon (reserved for
+    // interrupted/resumable debates); it uses a neutral in-progress marker so
+    // the icon stays consistent with the `status: running` label.
+    expect(captured).toContain(symbols.info);
+    expect(captured).not.toContain(symbols.paused);
   });
 
   it("shows turn count in plain output", async () => {

@@ -45,12 +45,18 @@ function statusIcon(status: DebateStatus | undefined): string {
     case "completed":
       return symbols.complete;
     case "interrupted":
-      return symbols.warn;
+      // ⏸ is reserved for genuinely interrupted (paused/resumable) debates —
+      // the graceful Ctrl+C / SIGINT path finalizes the row to 'interrupted'.
+      return symbols.paused;
     case "failed":
     case "aborted":
       return symbols.error;
     case "running":
-      return symbols.paused;
+      // A 'running' row is in progress (or stale after a crash/hard-kill that
+      // left status='running'); it is NOT paused, so it must not borrow the
+      // ⏸ icon. Use a neutral in-progress marker consistent with the label.
+      // Stale rows are separately surfaced via the "May be stuck" hint below.
+      return symbols.info;
     default:
       return " ";
   }
