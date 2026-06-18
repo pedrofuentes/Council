@@ -144,6 +144,35 @@ describe("topic admission integration", () => {
     expect(stderr).not.toContain("violence/weapons");
   });
 
+  it("convene WARNS about shell expansion for a double-space string supplied as a shell ARG", async () => {
+    let stderr = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (s) => {
+        stderr += s;
+      },
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "Compare red  and blue options",
+      "--template",
+      "code-review",
+      "--max-rounds",
+      "1",
+      "--engine",
+      "mock",
+      "--yes",
+    ]);
+
+    // Source-awareness contrast (see the chat test below): identical text, but
+    // a CLI positional CAN be shell-mangled, so the residue (double space) is
+    // flagged here. --yes skips the confirm gate; the warning still fires.
+    expect(stderr).toMatch(/shell expansion/i);
+  });
+
   it("ask emits a warning for a sensitive question and still answers", async () => {
     const seed = await seedPanel(testHome);
     let stderr = "";
@@ -357,6 +386,26 @@ describe("topic admission — chat integration", () => {
 
     expect(out).not.toContain("sensitive areas");
     expect(out).not.toContain("violence/weapons");
+  });
+
+  it("1:1 chat REPL does NOT warn about shell expansion for a typed double-space message (interactive source)", async () => {
+    await seedExpert(env, CHAT_EXPERT);
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => {
+        out += s;
+      },
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["Compare red  and blue options", "/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
+
+    // The double space is an ARG-ONLY shell-mangling residue signal; a typed
+    // chat turn is never shell-mangled, so it must NOT trip the heuristic.
+    // (Contrast: the same string as a convene ARG DOES warn — see above.)
+    expect(out).not.toMatch(/shell expansion/i);
   });
 
   it("panel chat @convene emits a warning for a sensitive debate topic and still runs the deliberation", async () => {
