@@ -61,7 +61,10 @@
     "lint": "eslint src tests",
     "lint:fix": "eslint src tests --fix",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "pnpm build"
+    "publint": "publint --strict",
+    "attw": "attw --pack .",
+    "pack:check": "npm pack --dry-run",
+    "prepublishOnly": "pnpm build && pnpm publint && pnpm attw"
   },
   "dependencies": {
     "@github/copilot-sdk": "~0.3.0",
@@ -81,5 +84,9 @@
     "yaml": "^2.8.4",
     "yauzl": "3.3.2",
     "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.3",
+    "publint": "^0.3.21"
   }
 }

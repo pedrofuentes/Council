@@ -1,0 +1,4 @@
+{
+  "$schema": "https://cdn.jsdelivr.net/npm/@arethetypeswrong/cli@0.18.3/config.schema.json",
+  "ignoreRules": ["cjs-resolves-to-esm"]
+}
