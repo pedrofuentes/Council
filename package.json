@@ -15,7 +15,7 @@
     "url": "https://github.com/pedrofuentes/Council/issues"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "build": "pnpm --filter @council-ai/cli build",
