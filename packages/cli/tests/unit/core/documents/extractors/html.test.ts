@@ -72,6 +72,29 @@ describe("html extractor", () => {
     expect(out.content).not.toContain("hidden-css-token");
   });
 
+  it("strips script/style content even when close tags contain whitespace/newlines", async () => {
+    const { extractor } = await loadHtmlExtractor();
+    const cases: readonly { html: string; leak: string }[] = [
+      { html: "<script>alert(1)</script >", leak: "alert(1)" },
+      { html: "<script>bad()</script\n>", leak: "bad()" },
+      { html: "<SCRIPT>x()</SCRIPT>", leak: "x()" },
+      {
+        html: '<script type="text/javascript">y()</script  >',
+        leak: "y()",
+      },
+      { html: "<style>.a{color:red}</style >", leak: "color:red" },
+      { html: "<style>.b{margin:0}</style\n>", leak: "margin:0" },
+    ];
+    for (const { html, leak } of cases) {
+      const out = await extractor(
+        ctx(Buffer.from(`<body>visible ${html} text</body>`, "utf-8")),
+      );
+      expect(out.content, `leak from: ${html}`).not.toContain(leak);
+      expect(out.content).toContain("visible");
+      expect(out.content).toContain("text");
+    }
+  });
+
   it("registers itself for both .html and .htm", async () => {
     vi.resetModules();
     await import("../../../../../src/core/documents/extractors/html.js");
