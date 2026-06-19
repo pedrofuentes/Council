@@ -79,7 +79,7 @@
     "kysely": "^0.28.17",
     "mammoth": "1.12.0",
     "node-html-parser": "^7.1.0",
-    "pdfjs-dist": "5.4.624",
+    "pdfjs-dist": "6.0.227",
     "react": "^19.2.6",
     "ulid": "^3.0.2",
     "yaml": "^2.8.4",
