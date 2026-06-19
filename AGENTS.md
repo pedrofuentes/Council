@@ -22,9 +22,9 @@
 ## Commands
 
 ```bash
-pnpm test -- {{path}}       # file-scoped (prefer)
-pnpm lint -- {{path}}
-pnpm install | build | test | lint | typecheck | format   # full suite
+pnpm --filter @council-ai/cli test            # package-scoped
+cd packages/cli && pnpm exec vitest run <path> # file-scoped (prefer)
+pnpm install | build | test | lint | typecheck | format   # full suite (root)
 ```
 
 ## Autonomous Workflow — REQUIRED
@@ -148,7 +148,7 @@ Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `ci`, `style`, `perf`
 - Verify failing test exists before writing behavior-bearing code; verify HEAD is NOT `main` before commit
 - Run `pnpm test && lint` before PR; invoke Sentinel before merge
 - Use worktrees for all work
-- Only `engine/copilot/adapter.ts` may import `@github/copilot-sdk` — enforced by ESLint `no-restricted-imports`
+- Only `packages/cli/src/engine/copilot/adapter.ts` may import `@github/copilot-sdk` — enforced by ESLint `no-restricted-imports`
 
 ### ⚠️ ASK FIRST
 **Protocol**: State intended action + justification → ask → wait for explicit "yes". Silence, "ok", or "sounds good" ≠ approval.
