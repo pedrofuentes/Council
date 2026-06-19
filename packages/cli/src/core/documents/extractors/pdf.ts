@@ -46,7 +46,6 @@ interface PdfDocument {
   readonly numPages: number;
   getPage(n: number): Promise<PdfPage>;
   getMetadata(): Promise<PdfMetadataResult>;
-  destroy(): Promise<void>;
 }
 
 interface PdfLoadingTask {
@@ -140,9 +139,7 @@ const pdfExtractor: ContentExtractor = async (
     });
   }
 
-  const pdfjsLib = (await import(
-    "pdfjs-dist/legacy/build/pdf.mjs"
-  )) as unknown as PdfJsModule;
+  const pdfjsLib = (await import("pdfjs-dist/legacy/build/pdf.mjs")) as unknown as PdfJsModule;
 
   const loadingTask = pdfjsLib.getDocument({
     data: new Uint8Array(ctx.buffer),
@@ -214,7 +211,8 @@ const pdfExtractor: ContentExtractor = async (
     }
     throw classifyPdfError(err, ctx.filename);
   } finally {
-    if (pdf !== undefined) await pdf.destroy().catch(() => undefined);
+    // pdfjs-dist v6 removed PDFDocumentProxy.destroy(); destroying the
+    // loading task tears down the document, transport, and worker.
     await loadingTask.destroy().catch(() => undefined);
   }
 };
