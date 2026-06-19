@@ -32,8 +32,8 @@ function decodeHtmlEntities(input: string): string {
   );
 }
 
-const SCRIPT_BLOCK = /<script\b[^>]*>[\s\S]*?<\/script\s*>/gi;
-const STYLE_BLOCK = /<style\b[^>]*>[\s\S]*?<\/style\s*>/gi;
+const SCRIPT_BLOCK = /<script\b[^>]*>[\s\S]*?<\/script\b[^>]*>/gi;
+const STYLE_BLOCK = /<style\b[^>]*>[\s\S]*?<\/style\b[^>]*>/gi;
 
 function stripUntilStable(input: string, pattern: RegExp): string {
   let current = input;
