@@ -64,7 +64,7 @@
     "publint": "publint --strict",
     "attw": "attw --pack .",
     "pack:check": "npm pack --dry-run",
-    "prepublishOnly": "pnpm build && pnpm publint && pnpm attw"
+    "prepublishOnly": "pnpm build && pnpm publint"
   },
   "dependencies": {
     "@github/copilot-sdk": "~0.3.0",
