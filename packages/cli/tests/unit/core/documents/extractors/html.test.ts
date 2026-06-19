@@ -142,8 +142,31 @@ describe("html extractor", () => {
     expect(out.content).not.toContain("<script");
   });
 
+  it("does not leak trailing text smuggled via an in-body open + orphan close", async () => {
+    const { extractor } = await loadHtmlExtractor();
+    const cases: readonly { html: string; leaks: readonly string[] }[] = [
+      {
+        html: "<script>safe<script>code()</script>SMUGGLED_TEXT</script>",
+        leaks: ["code()", "SMUGGLED_TEXT"],
+      },
+      {
+        html: "<script><script>evil()</script>; leaked_code()</script>",
+        leaks: ["evil()", "leaked_code()"],
+      },
+      {
+        html: "<style>a<style>b{}</style>LEAKED_CSS_TEXT</style>",
+        leaks: ["b{}", "LEAKED_CSS_TEXT"],
+      },
+    ];
+    for (const { html, leaks } of cases) {
+      const out = await extractor(ctx(Buffer.from(html, "utf-8")));
+      for (const leak of leaks) {
+        expect(out.content, `leak from: ${html}`).not.toContain(leak);
+      }
+    }
+  });
+
   it("registers itself for both .html and .htm", async () => {
-    vi.resetModules();
     await import("../../../../../src/core/documents/extractors/html.js");
     const registry = await import(
       "../../../../../src/core/documents/extractors/registry.js"
