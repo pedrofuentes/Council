@@ -67,7 +67,7 @@
     "prepublishOnly": "pnpm build && pnpm publint"
   },
   "dependencies": {
-    "@github/copilot-sdk": "~0.3.0",
+    "@github/copilot-sdk": "~1.0.2",
     "@libsql/client": "^0.8.0",
     "@libsql/kysely-libsql": "^0.4.1",
     "chalk": "^5.6.2",

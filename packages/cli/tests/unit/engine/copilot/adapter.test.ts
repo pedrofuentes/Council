@@ -356,7 +356,7 @@ describe("CopilotEngine — send() event translation", () => {
     const engine = new CopilotEngine();
     await engine.start();
     await engine.addExpert(expertA);
-    // SDK v0.3.0 sends complete responses via assistant.message instead of streaming deltas
+    // The Copilot SDK may deliver a complete response via assistant.message instead of streaming deltas
     mockState.sendQueues.set("session-0", [
       { kind: "assistant.message", data: { content: "Complete response text" } },
     ]);
