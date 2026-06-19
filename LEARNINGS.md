@@ -200,7 +200,7 @@
 ### [2026-05-06] Copilot SDK bundles ~187MB unpacked
 **Context**: Architecture analysis during project planning.
 **Learning**: `@github/copilot-sdk` bundles the full `@github/copilot` package (~187MB). This rules out binary distribution (pkg/nexe) and means `npm install -g` is a 200+ MB download.
-**Impact**: Primary distribution must be `npm install -g @council/cli`. Consider `npx` for try-before-install, but note cold-run UX. Don't pursue binary packaging.
+**Impact**: Primary distribution must be `npm install -g @council-ai/cli`. Consider `npx` for try-before-install, but note cold-run UX. Don't pursue binary packaging.
 
 ### [2026-05-06] SDK's infiniteSessions provides free context compaction
 **Context**: Analyzing context window management strategies.

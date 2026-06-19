@@ -60,7 +60,7 @@ tailored to your topic. See [Part 1](#part-1).
 Before starting, make sure you have:
 
 1. **Node.js 22 or later** installed
-2. **Council installed globally**: `npm install -g @council/cli` (coming soon — not yet on npm; install from source for now, see `docs/DEVELOPMENT-WORKFLOW.md`)
+2. **Council installed globally**: `npm install -g @council-ai/cli` (coming soon — not yet on npm; install from source for now, see `docs/DEVELOPMENT-WORKFLOW.md`)
 3. **A GitHub Copilot subscription** (Individual, Business, or Enterprise)
 
 No API keys, no OpenAI account, no credits to manage. Council uses the GitHub
@@ -1432,7 +1432,7 @@ Set these with `council config set <key> <value>`:
 **"command not found: council"**
 Council isn't installed globally. Run:
 ```bash
-npm install -g @council/cli  # coming soon — not yet on npm; install from source for now (see docs/DEVELOPMENT-WORKFLOW.md)
+npm install -g @council-ai/cli  # coming soon — not yet on npm; install from source for now (see docs/DEVELOPMENT-WORKFLOW.md)
 ```
 
 **"Did you mean…?" suggestion**

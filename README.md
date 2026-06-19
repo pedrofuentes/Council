@@ -4,7 +4,7 @@
 
 > Like having a board of advisors in your terminal — with memory, genuine disagreement, and structured synthesis.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![npm version](https://img.shields.io/npm/v/@council-ai/cli?logo=npm)](https://www.npmjs.com/package/@council-ai/cli) [![npm downloads](https://img.shields.io/npm/dm/@council-ai/cli?logo=npm)](https://www.npmjs.com/package/@council-ai/cli) [![CI](https://github.com/pedrofuentes/Council/actions/workflows/ci.yml/badge.svg)](https://github.com/pedrofuentes/Council/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![npm provenance](https://img.shields.io/badge/npm-provenance-cb3837?logo=npm)](https://docs.npmjs.com/generating-provenance-statements)
 
 ---
 
@@ -63,7 +63,7 @@ ChatGPT gives you **one perspective**. Council gives you **structured deliberati
 > **Note:** Council is not yet published to npm — the command below will work once it ships (see [ROADMAP.md](./ROADMAP.md), Phase 8). For now, install from source: see [docs/DEVELOPMENT-WORKFLOW.md](./docs/DEVELOPMENT-WORKFLOW.md).
 
 ```bash
-npm install -g @council/cli   # coming soon — not yet on npm
+npm install -g @council-ai/cli   # coming soon — not yet on npm
 ```
 
 On first run, Council auto-creates a default configuration and offers setup guidance via `council doctor`.
@@ -484,7 +484,7 @@ See [ROADMAP.md](./ROADMAP.md) for the high-level plan and [IMPLEMENTATION-PLAN.
 
 ## Contributing
 
-We welcome contributions! The easiest way to start: **create a panel template** (YAML file in `panels/`) and submit a PR.
+We welcome contributions! The easiest way to start: **create a panel template** (YAML file in `packages/cli/panels/`) and submit a PR.
 
 See [docs/DEVELOPMENT-WORKFLOW.md](./docs/DEVELOPMENT-WORKFLOW.md) for development setup.
 

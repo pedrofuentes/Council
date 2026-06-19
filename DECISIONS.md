@@ -22,6 +22,28 @@
 
 <!-- Add new decisions below this line, most recent first -->
 
+### ADR-025: npm namespace `@council-ai` and pnpm monorepo structure
+**Date**: 2026-06-18
+**Status**: Accepted
+**Context**: Phase 8 (Growth & Ecosystem) requires publishing Council to npm. Two questions had to be settled before the first publish: (1) which npm name/namespace to claim — the unscoped `council` name and the bare `councilai` are effectively unavailable/ambiguous, and a scoped name gives us a stable org for future packages; and (2) how to lay out the repository so additional surfaces (a shared core engine, a future web UI) can be developed and versioned without coupling them to the CLI's release cadence. The codebase was previously a single top-level package (`src/`, `tests/`, `panels/` at the repo root), which leaks internal paths into the published tarball and blocks independent packages.
+**Decision**:
+1. **npm namespace** — publish the CLI as the scoped package **`@council-ai/cli`** (binary: `council`) under the **`@council-ai`** npm organization. The unscoped **`councilai`** name is reserved (claimed defensively) but is **not** used for publishing — all packages live under the `@council-ai` scope. Published with npm **provenance** (`publishConfig.provenance: true`) via the OIDC publish workflow.
+2. **Monorepo structure** — convert to a **pnpm workspace** (`pnpm-workspace.yaml` → `packages/*`). The publishable CLI lives in **`packages/cli/`** (`@council-ai/cli`). Two private placeholders reserve names for future extraction: **`packages/core/`** (`@council-ai/core`, `private: true` — shared deliberation engine/domain types, not yet extracted) and **`packages/web/`** (`@council-ai/web`, `private: true` — browser interface, not yet implemented). Only `packages/cli/` is published; the placeholders are `private` so they can never be accidentally released.
+3. **ESM-only type-checking** — `packages/cli` ships ESM-only and uses `@arethetypeswrong/cli` (`attw`) + `publint` in `prepublishOnly` to verify the published types/exports resolve correctly for consumers (ref [#1182](https://github.com/pedrofuentes/Council/issues/1182)). An `.attw.json` configuration documents the ESM-only resolution expectations so CJS-resolution warnings are not treated as failures.
+
+**Alternatives considered**:
+- **Unscoped `council` / `councilai` as the primary published name** — rejected: unscoped names are unavailable or ambiguous, and a scope gives a stable home for `core`/`web`. `councilai` is held as a reservation only.
+- **Single top-level package (no monorepo)** — rejected: blocks independent versioning of a future core engine and web UI, and leaks repo-root paths into the published tarball.
+- **Separate repositories per package (polyrepo)** — rejected as premature: a workspace keeps shared tooling/CI in one place and lets `core` be extracted incrementally without a repo split.
+- **Publishing `core`/`web` immediately** — rejected: nothing is extracted/implemented yet; publishing empty packages pollutes the registry. They stay `private` placeholders until real code lands.
+
+**Consequences**:
+- The published install command is `npm install -g @council-ai/cli`; docs/planning references use the scoped name consistently.
+- `packages/cli/` owns its own `README.md` (npm-facing), `LICENSE`, and `CHANGELOG.md`; the root `README.md` is the monorepo/project overview.
+- All `src/…` and `tests/…` paths in architecture/testing docs are now relative to `packages/cli/`.
+- Future engine/web work has a reserved name and a place to live without a CLI release bump.
+- Provenance + `attw`/`publint` gating raises publish confidence but adds a `prepublishOnly` build/verify step.
+
 ### ADR-024: AI-extraction workflow modes — `off`, `ask`, `auto`
 **Date**: 2026-06-17
 **Status**: Accepted

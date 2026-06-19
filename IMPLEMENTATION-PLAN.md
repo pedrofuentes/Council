@@ -12,7 +12,7 @@
 
 ### 1.1 Project Scaffolding ✅
 
-TypeScript ESM project (Node 22+) with tsup bundler, Vitest test runner, ESLint flat config v9 (typescript-eslint strict), and Prettier. CLI binary entry via Commander.js. Packaged as `@council/cli` with `council` binary (not yet published to npm — see Phase 8).
+TypeScript ESM project (Node 22+) with tsup bundler, Vitest test runner, ESLint flat config v9 (typescript-eslint strict), and Prettier. CLI binary entry via Commander.js. Packaged as `@council-ai/cli` with `council` binary (not yet published to npm — see Phase 8).
 
 **Key files**: `package.json`, `tsconfig.json`, `tsup.config.ts`, `vitest.config.ts`, `eslint.config.mjs`, `src/bin/council.ts`
 
@@ -434,7 +434,7 @@ Generic experts get debate memory only; persona experts get document + debate me
 **Goal**: `gh council convene "..." --template code-review` runs Council as a `gh` extension, making it installable via `gh extension install`.
 
 **Proposed implementation**:
-- Thin wrapper that delegates to the `@council/cli` binary
+- Thin wrapper that delegates to the `@council-ai/cli` binary
 - Extension manifest for `gh extension install pedrofuentes/gh-council`
 - Leverage `gh` auth context (Copilot token passthrough)
 
@@ -524,4 +524,4 @@ Generic experts get debate memory only; persona experts get document + debate me
 | `gh` CLI extension | 8.1 | ⬜ Planned |
 | GitHub Action | 8.2 | ⬜ Planned |
 | Direct provider APIs | 8.4 | ⬜ Planned |
-| Published to npm as `@council/cli` | 8 | ⬜ Planned |
+| Published to npm as `@council-ai/cli` | 8 | ⬜ Planned |
