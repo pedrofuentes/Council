@@ -1,0 +1,18 @@
+{
+  "name": "@council-ai/web",
+  "version": "0.0.0",
+  "description": "Council web — browser-based interface for Council panels. Placeholder reserving the @council-ai/web name; not yet implemented or published.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "author": "Pedro Fuentes",
+  "homepage": "https://github.com/pedrofuentes/Council",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pedrofuentes/Council.git",
+    "directory": "packages/web"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

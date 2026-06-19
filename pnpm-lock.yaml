@@ -109,6 +109,10 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
 
+  packages/core: {}
+
+  packages/web: {}
+
 packages:
 
   '@alcalzone/ansi-tokenize@0.3.0':

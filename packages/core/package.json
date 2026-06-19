@@ -1,0 +1,23 @@
+{
+  "name": "@council-ai/core",
+  "version": "0.0.0",
+  "description": "Council core — shared deliberation engine and domain types. Placeholder reserving the @council-ai/core name; not yet extracted or published.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "author": "Pedro Fuentes",
+  "homepage": "https://github.com/pedrofuentes/Council",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pedrofuentes/Council.git",
+    "directory": "packages/core"
+  },
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}
