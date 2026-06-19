@@ -422,6 +422,9 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
       "Create a new panel with library experts. If `council convene` runs without `--template`, Council auto-composes a panel for you.",
     )
     .argument("[name]", "Panel name (kebab-case). Alias: --slug")
+    // Keep stray operands instead of erroring so warnOnStrayExpertArgs can flag
+    // bare slugs passed without --experts (e.g. PowerShell splitting --experts a,b,c).
+    .allowExcessArguments()
     .option("--slug <slug>", "Panel name (kebab-case). Alias for the positional <name> argument.")
     .option(
       "--experts <slugs...>",
