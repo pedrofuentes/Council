@@ -303,6 +303,23 @@ describe("odt extractor", () => {
     }
   }, 3000);
 
+  it("escapes backslashes in table cell values so they cannot corrupt the markdown row", async () => {
+    const { extractor } = await loadOdtExtractor();
+    const buf = makeOdt(
+      `<table:table>` +
+        `<table:table-row>` +
+        `<table:table-cell><text:p>col</text:p></table:table-cell>` +
+        `</table:table-row>` +
+        `<table:table-row>` +
+        `<table:table-cell><text:p>a\\|b</text:p></table:table-cell>` +
+        `</table:table-row>` +
+        `</table:table>`,
+    );
+    const out = await extractor(ctx(buf));
+    // Backslash must be escaped (\\) before the pipe (\|), yielding "a\\\|b".
+    expect(out.content).toContain("a\\\\\\|b");
+  });
+
   it("registers itself for .odt", async () => {
     vi.resetModules();
     await import("../../../../../src/core/documents/extractors/odt.js");

@@ -371,6 +371,16 @@ describe("xlsx extractor", () => {
     expect(out.content).not.toMatch(/line1\r?\nline2/);
   });
 
+  it("escapes backslashes in cell values so they cannot corrupt the markdown row", async () => {
+    const { extractor } = await loadXlsxExtractor();
+    const buf = await createTestXlsx([
+      { name: "BS", rows: [["col"], ["a\\|b"]] },
+    ]);
+    const out = await extractor(ctx(buf));
+    // Backslash must be escaped (\\) before the pipe (\|), yielding "a\\\|b".
+    expect(out.content).toContain("a\\\\\\|b");
+  });
+
   it("pads ragged rows shorter than the header with empty cells", async () => {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet("Ragged");
