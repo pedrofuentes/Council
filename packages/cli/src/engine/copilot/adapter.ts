@@ -300,9 +300,10 @@ export class CopilotEngine implements CouncilEngine {
           push({ kind: "message.delta", expertId, text });
         }
       };
-      // SDK v0.3.0 sends complete responses via assistant.message instead
-      // of streaming deltas. Emit as a single message.delta so downstream
-      // consumers (debate, chat) accumulate content identically.
+      // The Copilot SDK may deliver a complete response as a single
+      // assistant.message event instead of streaming assistant.message_delta
+      // events. Emit it as one message.delta so downstream consumers
+      // (debate, chat) accumulate content identically.
       const onMessage = (evt: { data: { content: string } }): void => {
         const text = evt.data?.content ?? "";
         if (text.length > 0) {
