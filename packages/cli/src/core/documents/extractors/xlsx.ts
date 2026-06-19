@@ -113,7 +113,7 @@ function cellToString(value: unknown): string {
 function escapeCell(value: string): string {
   // Escape pipes and collapse newlines so a single cell never breaks the
   // surrounding Markdown table row.
-  return value.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+  return value.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 }
 
 function isEncryptedError(error: unknown): boolean {
