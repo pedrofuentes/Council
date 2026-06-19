@@ -100,11 +100,14 @@ function stripTagBlocks(html: string, tag: string): string {
     }
     let closeEnd = scanTagEnd(html, firstClose);
     if (closeEnd === -1) break; // malformed close tag -> drop the rest
+    // First real open tag after this block's open — computed ONCE (a single
+    // O(N) scan), not per orphan-close iteration, so the whole pass stays
+    // linear and can't be driven into O(N^2) by many trailing close tags.
+    const nextOpen = findTag(lower, open, openEnd + 1);
     for (;;) {
       const nextClose = findTag(lower, close, closeEnd + 1);
       if (nextClose === -1) break;
-      const nextOpen = findTag(lower, open, closeEnd + 1);
-      if (nextOpen !== -1 && nextOpen < nextClose) break; // a new block starts
+      if (nextOpen !== -1 && nextOpen < nextClose) break; // a sibling block starts first
       const nextEnd = scanTagEnd(html, nextClose);
       if (nextEnd === -1) {
         closeEnd = html.length - 1;
