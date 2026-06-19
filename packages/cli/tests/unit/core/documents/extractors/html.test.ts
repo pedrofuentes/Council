@@ -131,6 +131,17 @@ describe("html extractor", () => {
     expect(out.content).not.toContain("more_evil()");
   });
 
+  it("does not degrade to O(n^2) on many trailing orphan close tags", async () => {
+    const { extractor } = await loadHtmlExtractor();
+    const input = "<script>body</script>" + "</script>".repeat(30000);
+    const startedAt = Date.now();
+    const out = await extractor(ctx(Buffer.from(input, "utf-8")));
+    const elapsedMs = Date.now() - startedAt;
+    expect(elapsedMs).toBeLessThan(500);
+    expect(out.content).not.toContain("body");
+    expect(out.content).not.toContain("<script");
+  });
+
   it("registers itself for both .html and .htm", async () => {
     vi.resetModules();
     await import("../../../../../src/core/documents/extractors/html.js");
