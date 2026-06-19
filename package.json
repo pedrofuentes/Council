@@ -1,6 +1,6 @@
 {
   "name": "council",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Council monorepo — persistent AI expert panels that deliberate, disagree, and remember.",
   "private": true,
   "type": "module",
