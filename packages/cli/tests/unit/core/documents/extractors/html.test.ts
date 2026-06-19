@@ -95,6 +95,23 @@ describe("html extractor", () => {
     }
   });
 
+  it("strips script/style content when close tags carry trailing attributes/garbage", async () => {
+    const { extractor } = await loadHtmlExtractor();
+    const cases: readonly { html: string; leak: string }[] = [
+      { html: '<script>alert(1)</script foo="bar">', leak: "alert(1)" },
+      { html: "<script>alert(1)</script\t\n bar>", leak: "alert(1)" },
+      { html: '<style>.a{color:red}</style foo="bar">', leak: "color:red" },
+    ];
+    for (const { html, leak } of cases) {
+      const out = await extractor(
+        ctx(Buffer.from(`<body>visible ${html} text</body>`, "utf-8")),
+      );
+      expect(out.content, `leak from: ${html}`).not.toContain(leak);
+      expect(out.content).toContain("visible");
+      expect(out.content).toContain("text");
+    }
+  });
+
   it("registers itself for both .html and .htm", async () => {
     vi.resetModules();
     await import("../../../../../src/core/documents/extractors/html.js");
