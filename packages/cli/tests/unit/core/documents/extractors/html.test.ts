@@ -112,6 +112,25 @@ describe("html extractor", () => {
     }
   });
 
+  it("does not catastrophically backtrack on crafted unclosed script tags (ReDoS guard)", async () => {
+    const { extractor } = await loadHtmlExtractor();
+    const input = "<script>x" + "</script ".repeat(50000);
+    const startedAt = Date.now();
+    const out = await extractor(ctx(Buffer.from(input, "utf-8")));
+    const elapsedMs = Date.now() - startedAt;
+    expect(elapsedMs).toBeLessThan(1000);
+    expect(out.content).not.toContain("<script");
+  });
+
+  it("does not leak script body when close tag contains a quoted '>'", async () => {
+    const { extractor } = await loadHtmlExtractor();
+    const html =
+      '<body><script>evil()</script attr="a>b">more_evil()</script></body>';
+    const out = await extractor(ctx(Buffer.from(html, "utf-8")));
+    expect(out.content).not.toContain("evil()");
+    expect(out.content).not.toContain("more_evil()");
+  });
+
   it("registers itself for both .html and .htm", async () => {
     vi.resetModules();
     await import("../../../../../src/core/documents/extractors/html.js");
