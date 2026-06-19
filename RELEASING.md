@@ -27,9 +27,10 @@ A Trusted Publisher cannot be configured on npm until the package exists, so the
 
 1. A human org member runs, from the built `cli` package:
    ```bash
-   npm publish --access public
+   npm publish --access public --no-provenance
    ```
    to publish `@council-ai/cli@0.1.0`.
+   - `--no-provenance` is required: `packages/cli/package.json` sets `publishConfig.provenance: true`, which npm inherits and then fails outside GitHub Actions CI (no OIDC). CI continues to publish with provenance; the manual bootstrap cannot.
    - This bootstrap `0.1.0` is published **without provenance**.
 2. On npmjs.com, configure the **Trusted Publisher** for `@council-ai/cli`,
    pointing at this repository and the `release.yml` workflow.
@@ -60,8 +61,8 @@ A Trusted Publisher cannot be configured on npm until the package exists, so the
 1. On a clean checkout of `main`: `pnpm install --frozen-lockfile`.
 2. Build the package: `pnpm --filter @council-ai/cli build`.
 3. Validate packaging: `pnpm --filter @council-ai/cli publint` and `pnpm --filter @council-ai/cli attw` (both must pass). _(attw runs here and in CI rather than in the publish hook.)_
-4. Optional dry run: `cd packages/cli && npm publish --dry-run --access public`.
-5. Publish: `cd packages/cli && npm publish --access public`, entering your npm 2FA OTP. This ships `@council-ai/cli@0.1.0` **without** provenance.
+4. Optional dry run: `cd packages/cli && npm publish --dry-run --access public --no-provenance`.
+5. Publish: `cd packages/cli && npm publish --access public --no-provenance`, entering your npm 2FA OTP. This ships `@council-ai/cli@0.1.0` **without** provenance.
 
 **Configure Trusted Publishing (one-time, after the package exists)**
 6. On npmjs.com → `@council-ai/cli` → Settings → **Trusted Publishers** → add a GitHub Actions publisher pointing at repo `pedrofuentes/Council` and workflow `.github/workflows/release.yml`.
