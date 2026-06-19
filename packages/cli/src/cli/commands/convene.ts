@@ -199,6 +199,9 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       "[topic]",
       "The topic / question for the panel to debate (optional when --prompt-file is used)",
     )
+    // Keep stray operands instead of erroring so warnOnStrayExpertArgs can flag
+    // bare slugs passed without --experts (e.g. PowerShell splitting --experts a,b,c).
+    .allowExcessArguments()
     .option(
       "--prompt-file <path>",
       "Read the topic VERBATIM from a file (or `-` for stdin) instead of the positional argument. " +
