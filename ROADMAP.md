@@ -168,4 +168,4 @@
 | Cross-panel expert awareness                           | 7     | ✅ Done               |
 | UX polish: 106 findings from cross-model audit         | 7.5   | ✅ Done               |
 | PM-driven QA fixes (45 findings, 28 fixed)             | 7.6   | ✅ Done               |
-| Published to npm as `@council/cli`                     | 8     | ⬜ Planned            |
+| Published to npm as `@council-ai/cli`                  | 8     | ⬜ Planned            |

@@ -49,7 +49,7 @@
 
 ### Phase 1: Discovery → Install (Day 0)
 ```
-See README → npm install -g @council/cli → council
+See README → npm install -g @council-ai/cli → council
 ```
 
 ### Phase 2: First Session (Minute 1-5)

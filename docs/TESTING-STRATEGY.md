@@ -10,10 +10,10 @@
 
 | Type | Purpose | Location | Runner |
 |------|---------|----------|--------|
-| Unit | Core logic, pure functions, isolated components | `tests/unit/` or `*.test.ts` | Vitest |
-| Integration | Cross-component interactions, engine integration | `tests/integration/` | Vitest |
-| E2E | CLI command flows end-to-end | `tests/e2e/` (across 11 files) | Vitest (in-process) |
-| Security | Prompt injection defense verification, hostile payload tests | `tests/security/` | Vitest |
+| Unit | Core logic, pure functions, isolated components | `packages/cli/tests/unit/` or `*.test.ts` | Vitest |
+| Integration | Cross-component interactions, engine integration | `packages/cli/tests/integration/` | Vitest |
+| E2E | CLI command flows end-to-end | `packages/cli/tests/e2e/` (across 11 files) | Vitest (in-process) |
+| Security | Prompt injection defense verification, hostile payload tests | `packages/cli/tests/security/` | Vitest |
 
 ## Coverage Requirements
 
@@ -63,12 +63,12 @@ Integration tests that use the real Copilot SDK are:
 - Gated behind `COUNCIL_INTEGRATION=1` env var
 - Skipped in CI by default (costs money)
 - Run manually before major releases
-- Located in `tests/integration/`
+- Located in `packages/cli/tests/integration/`
 
 ### E2E Tests — Command-Level Verification
 E2E tests verify all 15 top-level CLI commands end-to-end using in-process execution with isolated test environments. The suite covers every user-facing workflow across 11 test files.
 
-**Infrastructure** (`tests/e2e/helpers.ts`):
+**Infrastructure** (`packages/cli/tests/e2e/helpers.ts`):
 - `createE2EContext()` / `cleanupE2EContext()` — isolated temp directories for `COUNCIL_HOME` and `COUNCIL_DATA_HOME`
 - `captureOutput()` — captures stdout/stderr for assertion
 - `makeMockEngineFactory()` — provides deterministic MockEngine instances

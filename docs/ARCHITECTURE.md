@@ -7,7 +7,26 @@
 ## Project Structure
 
 ```
-council/
+council/                               ← monorepo root (pnpm workspace)
+├── packages/
+│   ├── cli/                           ← @council-ai/cli (publishable CLI package — see below)
+│   ├── core/                          ← @council-ai/core (private placeholder — name reserved, not yet extracted)
+│   └── web/                           ← @council-ai/web  (private placeholder — name reserved, not yet implemented)
+├── docs/                              ← Agent and architecture documentation
+├── AGENTS.md                          ← Agent instructions (MUST rules)
+├── DECISIONS.md                       ← Architecture Decision Records
+├── LEARNINGS.md                       ← Discovered knowledge
+├── ROADMAP.md                         ← Project phases and plan
+├── CHANGELOG.md                       ← User-facing changes
+├── LICENSE                            ← MIT
+├── README.md                          ← Monorepo overview
+└── pnpm-workspace.yaml                ← pnpm workspace definition (packages/*)
+```
+
+The publishable CLI package lives under `packages/cli/`. All `src/…` and `tests/…` paths referenced elsewhere in this document are relative to `packages/cli/`:
+
+```
+packages/cli/
 ├── src/
 │   ├── bin/
 │   │   └── council.ts                 ← CLI entry point, argv parsing, renderer selection
@@ -130,18 +149,14 @@ council/
 ├── tests/
 │   ├── unit/
 │   ├── integration/
+│   ├── e2e/
 │   └── security/                      ← Red-team prompt-injection payload tests
 │                                        (section-marker spoofing, fence-breaking,
 │                                        cross-expert injection, memory poisoning,
 │                                        Unicode bypass, context stuffing)
-├── docs/                              ← Agent and architecture documentation
-├── AGENTS.md                          ← Agent instructions (MUST rules)
-├── DECISIONS.md                       ← Architecture Decision Records
-├── LEARNINGS.md                       ← Discovered knowledge
-├── ROADMAP.md                         ← Project phases and plan
-├── CHANGELOG.md                       ← User-facing changes
+├── README.md                          ← npm-facing package README
 ├── LICENSE                            ← MIT
-├── README.md
+├── CHANGELOG.md                       ← User-facing changes (Release Please)
 ├── package.json
 ├── tsconfig.json
 ├── tsup.config.ts
@@ -150,7 +165,7 @@ council/
 
 ## CLI Commands
 
-The authoritative subcommand list lives in `src/bin/council.ts`; per-command flags and subcommands live under `src/cli/commands/`.
+The authoritative subcommand list lives in `packages/cli/src/bin/council.ts`; per-command flags and subcommands live under `packages/cli/src/cli/commands/`.
 
 ```
 CLI Commands:
