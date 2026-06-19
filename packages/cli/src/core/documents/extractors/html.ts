@@ -32,10 +32,23 @@ function decodeHtmlEntities(input: string): string {
   );
 }
 
+const SCRIPT_BLOCK = /<script\b[^>]*>[\s\S]*?<\/script\s*>/gi;
+const STYLE_BLOCK = /<style\b[^>]*>[\s\S]*?<\/style\s*>/gi;
+
+function stripUntilStable(input: string, pattern: RegExp): string {
+  let current = input;
+  let previous: string;
+  do {
+    previous = current;
+    current = current.replace(pattern, "");
+  } while (current !== previous);
+  return current;
+}
+
 function normalizeHtml(raw: string): string {
   let s = raw;
-  s = s.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
-  s = s.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "");
+  s = stripUntilStable(s, SCRIPT_BLOCK);
+  s = stripUntilStable(s, STYLE_BLOCK);
   s = s.replace(/<[^>]+>/g, " ");
   s = decodeHtmlEntities(s);
   s = s.replace(/[ \t]+/g, " ").replace(/\s*\n\s*/g, "\n");
