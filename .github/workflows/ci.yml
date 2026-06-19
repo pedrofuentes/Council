@@ -63,8 +63,8 @@ jobs:
         # parser treats `--` as end-of-options, so `--shard` is consumed as a
         # positional filter rather than the shard flag — every shard then runs
         # the full suite instead of its slice. Calling vitest directly (scoped
-        # to the @council/cli workspace package) passes `--shard` through cleanly.
-        run: pnpm --filter @council/cli exec vitest run tests/unit --shard=${{ matrix.shard }}/4
+        # to the @council-ai/cli workspace package) passes `--shard` through cleanly.
+        run: pnpm --filter @council-ai/cli exec vitest run tests/unit --shard=${{ matrix.shard }}/4
 
   other-tests:
     name: E2E, Integration & Security Tests

@@ -1,5 +1,5 @@
 {
-  "name": "@council/cli",
+  "name": "@council-ai/cli",
   "version": "0.1.0",
   "description": "Persistent AI expert panels that deliberate, disagree, and remember.",
   "type": "module",
@@ -24,6 +24,13 @@
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "bin": {
     "council": "./dist/bin/council.js"
   },
@@ -36,6 +43,10 @@
   ],
   "engines": {
     "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "scripts": {
     "build": "tsup",
