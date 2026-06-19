@@ -19,6 +19,7 @@ Closes #
 - [ ] Commits follow **Conventional Commits** (`type(scope): description`).
 - [ ] `pnpm test` passes (full suite green).
 - [ ] `pnpm lint` passes (zero warnings).
+- [ ] `pnpm format` (Prettier) clean.
 - [ ] `pnpm typecheck` passes.
 - [ ] **Sentinel review** is required and must be APPROVED/CONDITIONAL before
       this PR is merged to `main`.
