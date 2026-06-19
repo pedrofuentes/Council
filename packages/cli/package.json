@@ -1,0 +1,74 @@
+{
+  "name": "@council/cli",
+  "version": "0.1.0",
+  "description": "Persistent AI expert panels that deliberate, disagree, and remember.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Pedro Fuentes",
+  "homepage": "https://github.com/pedrofuentes/Council",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pedrofuentes/Council.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/pedrofuentes/Council/issues"
+  },
+  "keywords": [
+    "ai",
+    "cli",
+    "multi-agent",
+    "deliberation",
+    "decision-making",
+    "github-copilot"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "council": "./dist/bin/council.js"
+  },
+  "files": [
+    "dist",
+    "panels",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:e2e": "vitest run tests/e2e",
+    "test:integration": "vitest run tests/integration",
+    "test:security": "vitest run tests/security",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src tests",
+    "lint:fix": "eslint src tests --fix",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {
+    "@github/copilot-sdk": "~0.3.0",
+    "@libsql/client": "^0.8.0",
+    "@libsql/kysely-libsql": "^0.4.1",
+    "chalk": "^5.6.2",
+    "commander": "^12.1.0",
+    "exceljs": "4.4.0",
+    "fast-xml-parser": "5.8.0",
+    "ink": "^7.0.2",
+    "ink-spinner": "^5.0.0",
+    "kysely": "^0.28.17",
+    "mammoth": "1.12.0",
+    "pdfjs-dist": "5.4.624",
+    "react": "^19.2.6",
+    "ulid": "^3.0.2",
+    "yaml": "^2.8.4",
+    "yauzl": "3.3.2",
+    "zod": "^4.4.3"
+  }
+}
