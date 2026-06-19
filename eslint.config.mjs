@@ -54,6 +54,13 @@ export default tseslint.config(
           ],
         },
       ],
+      // eslint 10's updated `eslint:recommended` newly enables these two rules.
+      // Deferred from the eslint 9->10 bump to keep that a pure, behavior-preserving
+      // tooling change. Adoption is tracked separately:
+      //   preserve-caught-error  -> #1231 (adding { cause } changes error behavior; needs tests)
+      //   no-useless-assignment  -> #1232 (some flagged stores are intentional/defensive)
+      "preserve-caught-error": "off",
+      "no-useless-assignment": "off",
     },
   },
   {
