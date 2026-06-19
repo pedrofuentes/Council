@@ -42,6 +42,8 @@ Thumbs.db
 
 # Temp directories
 .tmp-*/
+.should-not-delete-*/
+.post-debate-hints-test-*/
 
 # Windows reserved filenames
 CON

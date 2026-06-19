@@ -5,13 +5,13 @@ import tseslint from "typescript-eslint";
 export default tseslint.config(
   {
     ignores: [
-      "dist/**",
-      "node_modules/**",
+      "**/dist/**",
+      "**/node_modules/**",
       ".worktrees/**",
-      "coverage/**",
-      "*.config.ts",
-      "*.config.js",
-      "*.config.mjs",
+      "**/coverage/**",
+      "**/*.config.ts",
+      "**/*.config.js",
+      "**/*.config.mjs",
     ],
   },
   eslint.configs.recommended,
@@ -20,7 +20,7 @@ export default tseslint.config(
   {
     languageOptions: {
       parserOptions: {
-        project: "./tsconfig.test.json",
+        project: "./packages/cli/tsconfig.test.json",
         tsconfigRootDir: import.meta.dirname,
       },
     },
@@ -49,7 +49,7 @@ export default tseslint.config(
             {
               group: ["@github/copilot-sdk", "@github/copilot-sdk/*"],
               message:
-                "@github/copilot-sdk may only be imported from src/engine/copilot/. Use the CouncilEngine interface from src/engine/index.ts elsewhere.",
+                "@github/copilot-sdk may only be imported from packages/cli/src/engine/copilot/. Use the CouncilEngine interface from packages/cli/src/engine/index.ts elsewhere.",
             },
           ],
         },
@@ -59,16 +59,16 @@ export default tseslint.config(
   {
     // Allow the SDK import only inside the single adapter file (per AGENTS.md
     // §Boundaries and DECISIONS.md ADR-003). Sibling files in
-    // src/engine/copilot/ (session-pool, permissions, etc.) must talk to the
+    // engine/copilot/ (session-pool, permissions, etc.) must talk to the
     // adapter, not the SDK directly.
-    files: ["src/engine/copilot/adapter.ts"],
+    files: ["**/engine/copilot/adapter.ts"],
     rules: {
       "no-restricted-imports": "off",
     },
   },
   {
     // Tests may import freely (including engine internals) but should still avoid SDK leaks.
-    files: ["tests/**/*.ts", "**/*.test.ts"],
+    files: ["**/tests/**/*.ts", "**/*.test.ts"],
     rules: {
       "@typescript-eslint/explicit-function-return-type": "off",
     },

@@ -11,8 +11,6 @@
     "noFallthroughCasesInSwitch": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "outDir": "dist",
-    "rootDir": "src",
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
@@ -23,7 +21,5 @@
     "jsx": "react-jsx",
     "isolatedModules": true,
     "verbatimModuleSyntax": true
-  },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "tests", "**/*.test.ts"]
+  }
 }
