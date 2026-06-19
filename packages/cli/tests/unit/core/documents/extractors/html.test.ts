@@ -270,5 +270,17 @@ describe("html extractor", () => {
       expect(elapsed).toBeLessThan(BUDGET_MS);
       expect(out.content).toContain("deep");
     });
+
+    it("does not throw on pathologically deep nesting (stack overflow guard)", async () => {
+      // node-html-parser's structuredText/textContent recurse over the DOM,
+      // so a deeply nested document (>= ~5000 levels) overflows the call
+      // stack and throws RangeError. The extractor must degrade gracefully
+      // on a crafted untrusted file rather than crash.
+      const depth = 8_000;
+      const html = "<div>".repeat(depth) + "hello" + "</div>".repeat(depth); // ~80 KB
+      const out = await run(html);
+      expect(typeof out.content).toBe("string");
+      expect(typeof out.wordCount).toBe("number");
+    });
   });
 });
