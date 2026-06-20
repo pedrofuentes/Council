@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/pedrofuentes/Council/compare/cli-v0.2.0...cli-v0.2.1) (2026-06-20)
+
+
+### Bug Fixes
+
+* **copilot:** resolve the Copilot CLI path so the SDK can spawn it ([82fa2eb](https://github.com/pedrofuentes/Council/commit/82fa2ebe234ecce2d02f5305fa137daec996f880))
+* **copilot:** resolve the Copilot CLI path so the SDK can spawn it ([#1273](https://github.com/pedrofuentes/Council/issues/1273)) ([fe00e89](https://github.com/pedrofuentes/Council/commit/fe00e893734cf18958c819a297e88afeae31b13b))
+
 ## [0.2.0](https://github.com/pedrofuentes/Council/compare/cli-v0.1.1...cli-v0.2.0) (2026-06-20)
 
 
