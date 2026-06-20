@@ -124,9 +124,7 @@ async function loadXlsxExtractor(ext = ".xlsx"): Promise<{
 }> {
   vi.resetModules();
   await import("../../../../../src/core/documents/extractors/xlsx.js");
-  const registry = await import(
-    "../../../../../src/core/documents/extractors/registry.js"
-  );
+  const registry = await import("../../../../../src/core/documents/extractors/registry.js");
   const extractor = await registry.getExtractor(ext);
   return { extractor };
 }
@@ -177,15 +175,25 @@ describe("xlsx extractor", () => {
   it("renders multiple sheets as separate sections", async () => {
     const { extractor } = await loadXlsxExtractor();
     const buf = await createTestXlsx([
-      { name: "Alpha", rows: [["a", "b"], ["1", "2"]] },
-      { name: "Beta", rows: [["x", "y"], ["9", "8"]] },
+      {
+        name: "Alpha",
+        rows: [
+          ["a", "b"],
+          ["1", "2"],
+        ],
+      },
+      {
+        name: "Beta",
+        rows: [
+          ["x", "y"],
+          ["9", "8"],
+        ],
+      },
     ]);
     const out = await extractor(ctx(buf));
     expect(out.content).toContain("## Alpha");
     expect(out.content).toContain("## Beta");
-    expect(out.content.indexOf("## Alpha")).toBeLessThan(
-      out.content.indexOf("## Beta"),
-    );
+    expect(out.content.indexOf("## Alpha")).toBeLessThan(out.content.indexOf("## Beta"));
   });
 
   it("surfaces sheet names in metadata", async () => {
@@ -246,10 +254,7 @@ describe("xlsx extractor", () => {
     ws.addRow(["header"]);
     const row = ws.addRow([null]);
     row.getCell(1).value = {
-      richText: [
-        { text: "Hello " },
-        { text: "World" },
-      ],
+      richText: [{ text: "Hello " }, { text: "World" }],
     };
     const buf = Buffer.from((await wb.xlsx.writeBuffer()) as ArrayBuffer);
 
@@ -263,10 +268,7 @@ describe("xlsx extractor", () => {
     const buf = await createTestXlsx([
       {
         name: "Pipes",
-        rows: [
-          ["col"],
-          ["a|b"],
-        ],
+        rows: [["col"], ["a|b"]],
       },
     ]);
     const out = await extractor(ctx(buf));
@@ -296,9 +298,7 @@ describe("xlsx extractor", () => {
   it("registers itself for both .xlsx and .xls", async () => {
     vi.resetModules();
     await import("../../../../../src/core/documents/extractors/xlsx.js");
-    const registry = await import(
-      "../../../../../src/core/documents/extractors/registry.js"
-    );
+    const registry = await import("../../../../../src/core/documents/extractors/registry.js");
     const a = await registry.getExtractor(".xlsx");
     const b = await registry.getExtractor(".xls");
     expect(a).toBe(b);
@@ -306,9 +306,7 @@ describe("xlsx extractor", () => {
 
   it("rejects .xls binary files with a re-save suggestion", async () => {
     // Classic BIFF8 .xls file signature (OLE2 compound document)
-    const xlsHeader = Buffer.from([
-      0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1,
-    ]);
+    const xlsHeader = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
     const buf = Buffer.concat([xlsHeader, Buffer.alloc(512)]);
     const { extractor } = await loadXlsxExtractor(".xls");
     await expect(extractor(ctx(buf, ".xls"))).rejects.toMatchObject({
@@ -363,9 +361,7 @@ describe("xlsx extractor", () => {
 
   it("collapses newlines in cell values to single-line table rows", async () => {
     const { extractor } = await loadXlsxExtractor();
-    const buf = await createTestXlsx([
-      { name: "NL", rows: [["col"], ["line1\nline2"]] },
-    ]);
+    const buf = await createTestXlsx([{ name: "NL", rows: [["col"], ["line1\nline2"]] }]);
     const out = await extractor(ctx(buf));
     expect(out.content).toContain("| line1 line2 |");
     expect(out.content).not.toMatch(/line1\r?\nline2/);
@@ -373,9 +369,7 @@ describe("xlsx extractor", () => {
 
   it("escapes backslashes in cell values so they cannot corrupt the markdown row", async () => {
     const { extractor } = await loadXlsxExtractor();
-    const buf = await createTestXlsx([
-      { name: "BS", rows: [["col"], ["a\\|b"]] },
-    ]);
+    const buf = await createTestXlsx([{ name: "BS", rows: [["col"], ["a\\|b"]] }]);
     const out = await extractor(ctx(buf));
     // Backslash must be escaped (\\) before the pipe (\|), yielding "a\\\|b".
     expect(out.content).toContain("a\\\\\\|b");
@@ -394,114 +388,75 @@ describe("xlsx extractor", () => {
   });
 });
 
-interface MockWorkbookOptions {
-  readonly loadError?: Error;
-  readonly sheetCount?: number;
-  readonly rowsPerSheet?: number;
-  readonly cellsPerRow?: number;
-  readonly cellValue?: unknown;
+interface MockSheet {
+  readonly name: string;
+  readonly rows: string[][];
 }
 
-function mockExcelJs(opts: MockWorkbookOptions): void {
-  const sheetCount = opts.sheetCount ?? 1;
-  const rowsPerSheet = opts.rowsPerSheet ?? 1;
-  const cellsPerRow = opts.cellsPerRow ?? 1;
-  const cellValue = opts.cellValue ?? "x";
-  const loadError = opts.loadError;
+const READER_PATH = "../../../../../src/core/documents/extractors/xlsx-reader.js";
 
-  vi.doMock("exceljs", () => {
-    class MockWorkbook {
-      public readonly xlsx: {
-        readonly load: (buf: unknown) => Promise<void>;
-      };
-      public constructor() {
-        this.xlsx = {
-          load: async (): Promise<void> => {
-            if (loadError !== undefined) {
-              throw loadError;
-            }
-          },
-        };
-      }
-      public eachSheet(cb: (ws: unknown) => void): void {
-        for (let s = 0; s < sheetCount; s++) {
-          cb({
-            name: `S${s}`,
-            eachRow: (
-              _o: unknown,
-              rowCb: (row: unknown) => void,
-            ): void => {
-              for (let r = 0; r < rowsPerSheet; r++) {
-                rowCb({
-                  eachCell: (
-                    _oo: unknown,
-                    cellCb: (cell: { value: unknown }) => void,
-                  ): void => {
-                    for (let c = 0; c < cellsPerRow; c++) {
-                      cellCb({ value: cellValue });
-                    }
-                  },
-                });
-              }
-            },
-          });
-        }
-      }
-    }
-    return { default: { Workbook: MockWorkbook } };
-  });
+function mockReader(sheets: readonly MockSheet[]): void {
+  vi.doMock(READER_PATH, () => ({
+    readXlsxSheets: async (): Promise<readonly MockSheet[]> => sheets,
+    XlsxEncryptedError: class XlsxEncryptedError extends Error {},
+    XlsxParseError: class XlsxParseError extends Error {},
+  }));
 }
 
-async function loadMockedExtractor(): Promise<ContentExtractor> {
-  const registry = await import(
-    "../../../../../src/core/documents/extractors/registry.js"
-  );
+async function loadReaderMockedExtractor(): Promise<ContentExtractor> {
+  const registry = await import("../../../../../src/core/documents/extractors/registry.js");
   await import("../../../../../src/core/documents/extractors/xlsx.js");
   return await registry.getExtractor(".xlsx");
 }
 
-describe("xlsx extractor - encrypted documents (mocked)", () => {
+function encryptedXlsx(marker = "EncryptedPackage"): Buffer {
+  // Encrypted workbooks are OLE/CFB compound documents (not ZIPs) whose
+  // directory carries an `EncryptedPackage`/`EncryptionInfo` stream name
+  // (stored UTF-16LE). The reader detects this signature and reports it
+  // as an encrypted workbook rather than a generic parse failure.
+  const ole = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+  return Buffer.concat([ole, Buffer.alloc(64), Buffer.from(marker, "utf16le"), Buffer.alloc(64)]);
+}
+
+describe("xlsx extractor - encrypted documents", () => {
   afterEach(() => {
-    vi.doUnmock("exceljs");
     vi.resetModules();
   });
 
-  it("throws ExtractionError(encrypted-document) when load reports password protection", async () => {
+  it("throws ExtractionError(encrypted-document) for an encrypted package", async () => {
     vi.resetModules();
-    mockExcelJs({ loadError: new Error("File is password-protected") });
-    const extractor = await loadMockedExtractor();
-    await expect(
-      extractor(ctx(tinyValidXlsxZip())),
-    ).rejects.toMatchObject({
+    const { extractor } = await loadXlsxExtractor();
+    await expect(extractor(ctx(encryptedXlsx("EncryptedPackage")))).rejects.toMatchObject({
       name: "ExtractionError",
       kind: "encrypted-document",
       suggestion: expect.stringMatching(/password/i),
     });
   });
 
-  it("recognizes 'encrypted' wording in the underlying error", async () => {
+  it("detects the EncryptionInfo stream marker as encryption", async () => {
     vi.resetModules();
-    mockExcelJs({ loadError: new Error("workbook is encrypted") });
-    const extractor = await loadMockedExtractor();
-    await expect(
-      extractor(ctx(tinyValidXlsxZip())),
-    ).rejects.toMatchObject({ kind: "encrypted-document" });
+    const { extractor } = await loadXlsxExtractor();
+    await expect(extractor(ctx(encryptedXlsx("EncryptionInfo")))).rejects.toMatchObject({
+      kind: "encrypted-document",
+    });
   });
 });
 
-describe("xlsx extractor - DoS limits (mocked)", () => {
+describe("xlsx extractor - DoS limits", () => {
   afterEach(() => {
-    vi.doUnmock("exceljs");
+    vi.doUnmock(READER_PATH);
     vi.resetModules();
   });
 
   it("rejects workbooks with more than 100 sheets", async () => {
     vi.resetModules();
-    mockExcelJs({ sheetCount: 101 });
-    const extractor = await loadMockedExtractor();
-    await expect(
-      extractor(ctx(tinyValidXlsxZip())),
-    ).rejects.toMatchObject({
+    const sheets: MockSheet[] = [];
+    for (let s = 0; s < 101; s++) {
+      sheets.push({ name: `S${String(s)}`, rows: [["x"]] });
+    }
+    mockReader(sheets);
+    const extractor = await loadReaderMockedExtractor();
+    await expect(extractor(ctx(tinyValidXlsxZip()))).rejects.toMatchObject({
       name: "ExtractionError",
       kind: "oversize-file",
       suggestion: expect.stringMatching(/split/i),
@@ -510,11 +465,13 @@ describe("xlsx extractor - DoS limits (mocked)", () => {
 
   it("rejects workbooks with more than 100,000 total rows", async () => {
     vi.resetModules();
-    mockExcelJs({ rowsPerSheet: 100_001 });
-    const extractor = await loadMockedExtractor();
-    await expect(
-      extractor(ctx(tinyValidXlsxZip())),
-    ).rejects.toMatchObject({
+    const rows: string[][] = [];
+    for (let r = 0; r < 100_001; r++) {
+      rows.push(["x"]);
+    }
+    mockReader([{ name: "Big", rows }]);
+    const extractor = await loadReaderMockedExtractor();
+    await expect(extractor(ctx(tinyValidXlsxZip()))).rejects.toMatchObject({
       name: "ExtractionError",
       kind: "oversize-file",
     });
@@ -522,11 +479,13 @@ describe("xlsx extractor - DoS limits (mocked)", () => {
 
   it("rejects workbooks with more than 1,000,000 total cells", async () => {
     vi.resetModules();
-    mockExcelJs({ rowsPerSheet: 1, cellsPerRow: 1_000_001 });
-    const extractor = await loadMockedExtractor();
-    await expect(
-      extractor(ctx(tinyValidXlsxZip())),
-    ).rejects.toMatchObject({
+    const wide: string[] = [];
+    for (let c = 0; c < 1_000_001; c++) {
+      wide.push("x");
+    }
+    mockReader([{ name: "Wide", rows: [wide] }]);
+    const extractor = await loadReaderMockedExtractor();
+    await expect(extractor(ctx(tinyValidXlsxZip()))).rejects.toMatchObject({
       name: "ExtractionError",
       kind: "oversize-file",
     });
@@ -535,16 +494,9 @@ describe("xlsx extractor - DoS limits (mocked)", () => {
   it("rejects workbooks whose rendered output exceeds 10MB", async () => {
     vi.resetModules();
     const bigCell = "x".repeat(11 * 1024 * 1024);
-    mockExcelJs({
-      sheetCount: 1,
-      rowsPerSheet: 2,
-      cellsPerRow: 1,
-      cellValue: bigCell,
-    });
-    const extractor = await loadMockedExtractor();
-    await expect(
-      extractor(ctx(tinyValidXlsxZip())),
-    ).rejects.toMatchObject({
+    mockReader([{ name: "Huge", rows: [["x"], [bigCell]] }]);
+    const extractor = await loadReaderMockedExtractor();
+    await expect(extractor(ctx(tinyValidXlsxZip()))).rejects.toMatchObject({
       name: "ExtractionError",
       kind: "oversize-file",
     });
@@ -673,9 +625,7 @@ describe("xlsx extractor - zip-bomb preflight", () => {
     // so exceljs can surface the actionable "re-save as .xlsx"
     // corrupt-document error. This is the safe fallback path that
     // makes always-on preflighting workable for legacy binary inputs.
-    const oleHeader = Buffer.from([
-      0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1,
-    ]);
+    const oleHeader = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
     const buf = Buffer.concat([oleHeader, Buffer.alloc(512)]);
     const { extractor } = await loadXlsxExtractor(".xls");
     await expect(extractor(ctx(buf, ".xls"))).rejects.toMatchObject({
@@ -706,9 +656,7 @@ describe("xlsx extractor - zip-bomb preflight", () => {
       });
     }
     const zipBomb = buildZip(entries);
-    const oleHeader = Buffer.from([
-      0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1,
-    ]);
+    const oleHeader = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
     const polyglot = Buffer.concat([oleHeader, zipBomb]);
 
     const { extractor } = await loadXlsxExtractor();
