@@ -454,6 +454,53 @@ describe("maybeNotifyUpdate — joinable refresh seam", () => {
   });
 });
 
+describe("maybeNotifyUpdate — poisoned cache defense", () => {
+  it("never writes control bytes even when the cached latestVersion is poisoned", async () => {
+    const poisoned = "2.0.0-\x1b]0;pwned\x07";
+    await fs.writeFile(
+      cacheFile,
+      JSON.stringify({ lastCheckMs: FIXED_NOW, latestVersion: poisoned }),
+      "utf8",
+    );
+
+    await maybeNotifyUpdate({
+      currentVersion: "1.5.0",
+      isTTY: true,
+      env: {},
+      write,
+      now: () => FIXED_NOW,
+      cacheDir,
+    });
+
+    const output = captured.join("");
+    // eslint-disable-next-line no-control-regex
+    expect(output).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+    expect(captured).toEqual([]);
+  });
+
+  it("suppresses the notice for any control/escape byte in the cached version", async () => {
+    for (const poisoned of ["1.0.0\x1b[2J", "9.9.9\x00", "\x1b]52;c;x\x07"]) {
+      captured = [];
+      await fs.writeFile(
+        cacheFile,
+        JSON.stringify({ lastCheckMs: FIXED_NOW, latestVersion: poisoned }),
+        "utf8",
+      );
+
+      await maybeNotifyUpdate({
+        currentVersion: "0.0.1",
+        isTTY: true,
+        env: {},
+        write,
+        now: () => FIXED_NOW,
+        cacheDir,
+      });
+
+      expect(captured).toEqual([]);
+    }
+  });
+});
+
 describe("maybeNotifyUpdate — error containment", () => {
   it("never throws when the cache is corrupt", async () => {
     await fs.writeFile(cacheFile, "}}corrupt{{", "utf8");

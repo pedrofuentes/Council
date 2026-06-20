@@ -14,7 +14,11 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { fetchLatestVersion, isNewerVersion } from "../../../../src/core/version/registry.js";
+import {
+  fetchLatestVersion,
+  isNewerVersion,
+  isSafeRegistryVersion,
+} from "../../../../src/core/version/registry.js";
 
 const REGISTRY_URL = "https://registry.npmjs.org/@council-ai%2Fcli/latest";
 
@@ -143,5 +147,59 @@ describe("fetchLatestVersion", () => {
     await vi.advanceTimersByTimeAsync(1600);
 
     expect(await pending).toBe(null);
+  });
+});
+
+describe("isSafeRegistryVersion", () => {
+  it("accepts semver core, pre-release, and build metadata", () => {
+    expect(isSafeRegistryVersion("1.2.3")).toBe(true);
+    expect(isSafeRegistryVersion("1.2.3-beta.1")).toBe(true);
+    expect(isSafeRegistryVersion("1.2.3+build.5")).toBe(true);
+    expect(isSafeRegistryVersion("v0.2.1")).toBe(true);
+  });
+
+  it("rejects empty strings", () => {
+    expect(isSafeRegistryVersion("")).toBe(false);
+  });
+
+  it("rejects strings containing control / ANSI / OSC escape bytes", () => {
+    expect(isSafeRegistryVersion("2.0.0-\x1b]0;pwned\x07")).toBe(false);
+    expect(isSafeRegistryVersion("1.0.0\x1b[2J")).toBe(false);
+    expect(isSafeRegistryVersion("1.0.0\x00")).toBe(false);
+    expect(isSafeRegistryVersion("1.0.0\x07")).toBe(false);
+    expect(isSafeRegistryVersion("\x1b]52;c;cG93bmVk\x07")).toBe(false);
+    expect(isSafeRegistryVersion("1.0.0\x9b")).toBe(false);
+    expect(isSafeRegistryVersion("1.0.0\x7f")).toBe(false);
+  });
+
+  it("rejects whitespace and other out-of-charset bytes", () => {
+    expect(isSafeRegistryVersion("1.0.0 ")).toBe(false);
+    expect(isSafeRegistryVersion(" 1.0.0")).toBe(false);
+    expect(isSafeRegistryVersion("1.0.0\n")).toBe(false);
+    expect(isSafeRegistryVersion("-1.0.0")).toBe(false);
+  });
+});
+
+describe("fetchLatestVersion — registry version validation (trust boundary)", () => {
+  it("returns null when the manifest version embeds an OSC escape sequence", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ version: "2.0.0-\x1b]0;pwned\x07" }));
+
+    expect(await fetchLatestVersion({ fetchImpl })).toBe(null);
+  });
+
+  it("returns null for any control/escape byte in the manifest version", async () => {
+    const malicious = ["1.0.0\x1b[2J", "1.0.0\x00", "1.0.0\x07", "\x1b]52;c;x\x07", "1.0.0\x9b"];
+
+    for (const version of malicious) {
+      const fetchImpl = vi.fn(async () => jsonResponse({ version }));
+      expect(await fetchLatestVersion({ fetchImpl })).toBe(null);
+    }
+  });
+
+  it("still returns legitimate semver versions (core, pre-release, build metadata)", async () => {
+    for (const version of ["1.2.3", "1.2.3-beta.1", "1.2.3+build.5"]) {
+      const fetchImpl = vi.fn(async () => jsonResponse({ version }));
+      expect(await fetchLatestVersion({ fetchImpl })).toBe(version);
+    }
   });
 });
