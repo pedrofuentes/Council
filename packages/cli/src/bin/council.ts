@@ -50,11 +50,13 @@ import { handleCliError } from "../cli/handle-cli-error.js";
 import {
   defaultErrorWriter,
   defaultWriter,
+  isQuiet,
   setQuiet,
   type Writer,
 } from "../cli/commands/writer.js";
 import { selectModelInteractively } from "../cli/first-run-model-select.js";
 import { loadConfigWithMeta } from "../config/index.js";
+import { maybeNotifyUpdate } from "../core/version/index.js";
 
 type WriteCallback = (error?: Error | null) => void;
 
@@ -170,9 +172,7 @@ export interface BuildProgramOptions {
 
 let hasRunFirstRunSetup = false;
 
-export async function runFirstRunSetupOnce(
-  options: FirstRunSetupOptions = {},
-): Promise<void> {
+export async function runFirstRunSetupOnce(options: FirstRunSetupOptions = {}): Promise<void> {
   if (hasRunFirstRunSetup) {
     return;
   }
@@ -326,9 +326,25 @@ const isMainModule =
   import.meta.url.endsWith("/bin/council.js");
 
 if (isMainModule) {
-  buildProgram({ firstRunSetup: {} })
-    .parseAsync(process.argv)
-    .catch((err: unknown) => {
+  const runCli = async (): Promise<void> => {
+    try {
+      await buildProgram({ firstRunSetup: {} }).parseAsync(process.argv);
+    } catch (err: unknown) {
       process.exitCode = handleCliError(err, defaultErrorWriter);
-    });
+    } finally {
+      // Print a throttled "update available" notice at the END of a run (both
+      // success and error paths). Gated on a stderr TTY and --quiet; the notice
+      // goes to stderr only so stdout/JSON output stays clean. The background
+      // registry refresh is fired and forgotten (its abort timer is unref'd)
+      // so it never changes the exit code, throws, or delays exit.
+      const quiet = isQuiet() || process.argv.includes("-q") || process.argv.includes("--quiet");
+      await maybeNotifyUpdate({
+        currentVersion: packageJson.version,
+        isTTY: process.stderr.isTTY === true,
+        quiet,
+      });
+    }
+  };
+
+  void runCli();
 }
