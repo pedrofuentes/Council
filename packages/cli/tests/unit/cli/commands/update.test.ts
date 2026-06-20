@@ -1,0 +1,287 @@
+/**
+ * Tests for `council update` — upgrade the globally-installed Council CLI.
+ *
+ * Every test is hermetic: the version fetcher, the package-manager runner,
+ * the confirmation prompt, and the spinner are injected mocks. No real
+ * child process is spawned and no real network request is made.
+ */
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  buildUpdateCommand,
+  buildUpgradeArgs,
+  detectPackageManager,
+  isPackageManager,
+  type PackageManager,
+  type UpdateCommandDeps,
+  type UpgradeRunResult,
+  type UpgradeRunner,
+} from "../../../../src/cli/commands/update.js";
+
+interface RunResult {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly error: unknown;
+}
+
+function noopSpinner(): { start: () => void; stop: () => void } {
+  return { start: () => undefined, stop: () => undefined };
+}
+
+async function runUpdate(
+  args: readonly string[],
+  deps: UpdateCommandDeps = {},
+): Promise<RunResult> {
+  let stdout = "";
+  let stderr = "";
+  const cmd = buildUpdateCommand({
+    write:
+      deps.write ??
+      ((s: string) => {
+        stdout += s;
+      }),
+    writeError:
+      deps.writeError ??
+      ((s: string) => {
+        stderr += s;
+      }),
+    createSpinner: deps.createSpinner ?? noopSpinner,
+    env: deps.env ?? {},
+    ...deps,
+  });
+  cmd.exitOverride();
+  let error: unknown = undefined;
+  await cmd.parseAsync(["node", "council-update", ...args]).catch((err: unknown) => {
+    error = err;
+  });
+  return { stdout, stderr, error };
+}
+
+function okRunner(): UpgradeRunner {
+  return vi.fn(
+    async (): Promise<UpgradeRunResult> => ({ exitCode: 0, stdout: "done", stderr: "" }),
+  );
+}
+
+describe("detectPackageManager", () => {
+  it("detects pnpm from the npm_config_user_agent", () => {
+    expect(detectPackageManager({ userAgent: "pnpm/9.15.0 npm/? node/v22.0.0" })).toBe("pnpm");
+  });
+
+  it("detects yarn from the npm_config_user_agent", () => {
+    expect(detectPackageManager({ userAgent: "yarn/1.22.19 npm/? node/v22.0.0" })).toBe("yarn");
+  });
+
+  it("detects bun from the npm_config_user_agent", () => {
+    expect(detectPackageManager({ userAgent: "bun/1.1.0 npm/? node/v22.0.0" })).toBe("bun");
+  });
+
+  it("detects npm from the npm_config_user_agent", () => {
+    expect(detectPackageManager({ userAgent: "npm/10.0.0 node/v22.0.0" })).toBe("npm");
+  });
+
+  it("falls back to the exec path when the user agent is absent (pnpm)", () => {
+    expect(
+      detectPackageManager({
+        execPath: "/Users/x/Library/pnpm/global/5/node_modules/.bin/council",
+      }),
+    ).toBe("pnpm");
+  });
+
+  it("falls back to the exec path when the user agent is absent (yarn)", () => {
+    expect(detectPackageManager({ execPath: "/usr/local/yarn/bin/council" })).toBe("yarn");
+  });
+
+  it("falls back to the exec path when the user agent is absent (bun)", () => {
+    expect(detectPackageManager({ execPath: "/Users/x/.bun/bin/council" })).toBe("bun");
+  });
+
+  it("defaults to npm when nothing is detected", () => {
+    expect(detectPackageManager({})).toBe("npm");
+    expect(detectPackageManager({ userAgent: "", execPath: "/usr/local/bin/council" })).toBe("npm");
+  });
+
+  it("prefers the user agent over the exec path", () => {
+    expect(
+      detectPackageManager({ userAgent: "pnpm/9.0.0", execPath: "/usr/local/yarn/bin/council" }),
+    ).toBe("pnpm");
+  });
+});
+
+describe("isPackageManager", () => {
+  it("accepts the allow-listed managers", () => {
+    for (const pm of ["npm", "pnpm", "yarn", "bun"]) {
+      expect(isPackageManager(pm)).toBe(true);
+    }
+  });
+
+  it("rejects anything outside the allow-list", () => {
+    for (const bogus of ["rm -rf /", "npm; echo hi", "NPM", "deno", "", "pip"]) {
+      expect(isPackageManager(bogus)).toBe(false);
+    }
+  });
+});
+
+describe("buildUpgradeArgs", () => {
+  const cases: readonly (readonly [PackageManager, readonly string[]])[] = [
+    ["npm", ["install", "-g", "@council-ai/cli@latest"]],
+    ["pnpm", ["add", "-g", "@council-ai/cli@latest"]],
+    ["yarn", ["global", "add", "@council-ai/cli@latest"]],
+    ["bun", ["add", "-g", "@council-ai/cli@latest"]],
+  ];
+
+  for (const [pm, expected] of cases) {
+    it(`maps ${pm} to its global-install argv`, () => {
+      expect(buildUpgradeArgs(pm)).toEqual(expected);
+    });
+  }
+
+  it("never embeds a shell string (each token is a separate arg)", () => {
+    for (const [pm] of cases) {
+      const args = buildUpgradeArgs(pm);
+      for (const token of args) {
+        expect(token).not.toMatch(/\s/);
+      }
+      expect(args).toContain("@council-ai/cli@latest");
+    }
+  });
+});
+
+describe("council update — command behavior", () => {
+  it("rejects an invalid --pm value without running anything", async () => {
+    const runner = okRunner();
+    const fetchLatest = vi.fn(async () => "9.9.9");
+    const { stderr, error } = await runUpdate(["--pm", "deno"], {
+      runner,
+      fetchLatest,
+      currentVersion: "0.1.0",
+    });
+    expect(stderr).toMatch(/package manager/i);
+    expect(error).toBeInstanceOf(Error);
+    expect(runner).not.toHaveBeenCalled();
+    expect(fetchLatest).not.toHaveBeenCalled();
+  });
+
+  it("honors an explicit valid --pm override", async () => {
+    const runner = okRunner();
+    const { stdout } = await runUpdate(["--pm", "yarn", "--yes"], {
+      runner,
+      fetchLatest: vi.fn(async () => "0.2.0"),
+      currentVersion: "0.1.0",
+    });
+    expect(runner).toHaveBeenCalledWith("yarn", ["global", "add", "@council-ai/cli@latest"]);
+    expect(stdout).toMatch(/Updated/);
+  });
+
+  it("short-circuits when already up to date and never runs the package manager", async () => {
+    const runner = okRunner();
+    const { stdout } = await runUpdate([], {
+      runner,
+      fetchLatest: vi.fn(async () => "0.2.0"),
+      currentVersion: "0.2.0",
+    });
+    expect(stdout).toMatch(/already up to date/i);
+    expect(stdout).toMatch(/0\.2\.0/);
+    expect(runner).not.toHaveBeenCalled();
+  });
+
+  it("prints a friendly notice and does not run when the latest version is unknown", async () => {
+    const runner = okRunner();
+    const { stderr } = await runUpdate([], {
+      runner,
+      fetchLatest: vi.fn(async () => null),
+      currentVersion: "0.1.0",
+    });
+    expect(stderr).toMatch(/could ?n.t check/i);
+    expect(runner).not.toHaveBeenCalled();
+  });
+
+  it("--dry-run prints the exact command and does not execute", async () => {
+    const runner = okRunner();
+    const { stdout } = await runUpdate(["--dry-run"], {
+      runner,
+      fetchLatest: vi.fn(async () => "0.2.0"),
+      currentVersion: "0.1.0",
+      execPath: "/usr/local/bin/council",
+    });
+    expect(stdout).toMatch(/npm install -g @council-ai\/cli@latest/);
+    expect(runner).not.toHaveBeenCalled();
+  });
+
+  it("aborts without running when the user declines the confirmation", async () => {
+    const runner = okRunner();
+    const confirm = vi.fn(async () => false);
+    const { stderr } = await runUpdate([], {
+      runner,
+      fetchLatest: vi.fn(async () => "0.2.0"),
+      currentVersion: "0.1.0",
+      confirmProvider: () => ({ confirm }),
+    });
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(runner).not.toHaveBeenCalled();
+    expect(stderr).toMatch(/abort/i);
+  });
+
+  it("runs the upgrade and prints old→new on confirm", async () => {
+    const runner = okRunner();
+    const confirm = vi.fn(async () => true);
+    const { stdout } = await runUpdate([], {
+      runner,
+      fetchLatest: vi.fn(async () => "0.2.0"),
+      currentVersion: "0.1.0",
+      confirmProvider: () => ({ confirm }),
+      execPath: "/usr/local/bin/council",
+    });
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(runner).toHaveBeenCalledWith("npm", ["install", "-g", "@council-ai/cli@latest"]);
+    expect(stdout).toMatch(/0\.1\.0/);
+    expect(stdout).toMatch(/0\.2\.0/);
+    expect(stdout).toMatch(/restart council/i);
+  });
+
+  it("--yes skips the prompt and runs immediately", async () => {
+    const runner = okRunner();
+    const confirm = vi.fn(async () => false);
+    const { stdout } = await runUpdate(["--yes"], {
+      runner,
+      fetchLatest: vi.fn(async () => "0.2.0"),
+      currentVersion: "0.1.0",
+      confirmProvider: () => ({ confirm }),
+      execPath: "/usr/local/bin/council",
+    });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(runner).toHaveBeenCalledOnce();
+    expect(stdout).toMatch(/Updated/);
+  });
+
+  it("surfaces the package manager's stderr and exits non-zero on a failed run", async () => {
+    const runner: UpgradeRunner = vi.fn(async () => ({
+      exitCode: 1,
+      stdout: "",
+      stderr: "EACCES: permission denied",
+    }));
+    const { stderr, error } = await runUpdate(["--yes"], {
+      runner,
+      fetchLatest: vi.fn(async () => "0.2.0"),
+      currentVersion: "0.1.0",
+      execPath: "/usr/local/bin/council",
+    });
+    expect(runner).toHaveBeenCalledOnce();
+    expect(stderr).toMatch(/EACCES: permission denied/);
+    expect(error).toBeInstanceOf(Error);
+  });
+
+  it("surfaces a spawn failure (runner rejection) as an error", async () => {
+    const runner: UpgradeRunner = vi.fn(async () => {
+      throw new Error("spawn npm ENOENT");
+    });
+    const { stderr, error } = await runUpdate(["--yes"], {
+      runner,
+      fetchLatest: vi.fn(async () => "0.2.0"),
+      currentVersion: "0.1.0",
+      execPath: "/usr/local/bin/council",
+    });
+    expect(stderr).toMatch(/ENOENT/);
+    expect(error).toBeInstanceOf(Error);
+  });
+});
