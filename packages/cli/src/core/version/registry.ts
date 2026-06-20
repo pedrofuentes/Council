@@ -29,8 +29,9 @@ export interface FetchLatestVersionOptions {
  * GET the latest published version of `@council-ai/cli` from the npm registry.
  *
  * Returns the `version` string on success, or `null` on ANY failure
- * (network error, non-2xx response, malformed JSON, missing field, or
- * timeout). This function never throws.
+ * (network error, non-2xx response, malformed JSON, missing field, an unsafe
+ * version that fails {@link isSafeRegistryVersion}, or timeout). This function
+ * never throws.
  */
 export async function fetchLatestVersion(
   options: FetchLatestVersionOptions = {},
@@ -69,10 +70,26 @@ function extractVersion(payload: unknown): string | null {
     return null;
   }
   const version = (payload as Record<string, unknown>)["version"];
-  if (typeof version === "string" && version.length > 0) {
+  if (typeof version === "string" && isSafeRegistryVersion(version)) {
     return version;
   }
   return null;
+}
+
+/**
+ * Strict allow-list for an untrusted npm-registry `version` string at the trust
+ * boundary. A safe version begins with an alphanumeric and contains only the
+ * characters used by semver core, pre-release, and build metadata
+ * (`[0-9A-Za-z]`, `.`, `-`, `+`). This deliberately excludes whitespace and
+ * EVERY control / ANSI / OSC escape byte (`\x00-\x1f`, `\x7f-\x9f`), so a
+ * poisoned version can never be rendered to the terminal (title spoof, OSC-52
+ * clipboard hijack, screen clear, output forgery) or persisted to the update
+ * cache. Reject (`false`) → callers treat it as "no version available".
+ */
+const SAFE_REGISTRY_VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z.\-+]*$/;
+
+export function isSafeRegistryVersion(value: string): boolean {
+  return SAFE_REGISTRY_VERSION_PATTERN.test(value);
 }
 
 /**

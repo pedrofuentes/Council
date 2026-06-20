@@ -18,7 +18,12 @@ import chalk from "chalk";
 
 import { getCouncilHome } from "../../config/index.js";
 
-import { fetchLatestVersion, isNewerVersion, type FetchLatestVersionOptions } from "./registry.js";
+import {
+  fetchLatestVersion,
+  isNewerVersion,
+  isSafeRegistryVersion,
+  type FetchLatestVersionOptions,
+} from "./registry.js";
 
 const CACHE_FILENAME = ".update-check.json";
 
@@ -185,6 +190,7 @@ export async function maybeNotifyUpdate(options: MaybeNotifyUpdateOptions): Prom
     if (
       cache !== null &&
       cache.latestVersion !== null &&
+      isSafeRegistryVersion(cache.latestVersion) &&
       isNewerVersion(options.currentVersion, cache.latestVersion)
     ) {
       write(formatUpdateNotice(options.currentVersion, cache.latestVersion));
