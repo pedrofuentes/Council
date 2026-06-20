@@ -1,5 +1,5 @@
 /**
- * Tests for the persistence layer (libsql + Kysely).
+ * Tests for the persistence layer (node:sqlite + Kysely).
  *
  * Covers:
  *   - createDatabase(":memory:") returns a typed Kysely instance
@@ -9,7 +9,7 @@
  *   - ExpertRepository: create, findByPanelId, findById, update, delete; UNIQUE (panel_id, slug) enforced
  *   - TurnRepository: create, findByDebateId (ordered), search via FTS5
  *
- * No native dependencies — runs against in-memory libsql (pure WASM).
+ * No native dependencies — runs against Node's built-in node:sqlite.
  *
  * RED at this commit: src/memory/* does not exist yet.
  */
@@ -18,11 +18,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { DatabaseSync } from "node:sqlite";
 
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 
-import { createClient } from "@libsql/client";
-import type * as LibsqlClientModule from "@libsql/client";
 import { sql } from "kysely";
 
 import {
@@ -102,16 +101,16 @@ describe("createDatabase", () => {
     const dbPath = path.join(testHome, "council.db");
     const db = await createDatabase(dbPath);
     const holderScript = [
-      'import { createClient } from "@libsql/client";',
-      `const client = createClient({ url: ${JSON.stringify(`file:${dbPath}`)} });`,
+      'import { DatabaseSync } from "node:sqlite";',
+      `const db = new DatabaseSync(${JSON.stringify(dbPath)});`,
       'try {',
-      '  await client.execute("BEGIN IMMEDIATE;");',
-      '  await client.execute("INSERT INTO panels (id, name, topic, copilot_home, config_json, created_at, updated_at) VALUES (\'holder-panel\', \'holder-panel\', NULL, \'holder-home\', \'{}\', \'2026-01-01T00:00:00.000Z\', \'2026-01-01T00:00:00.000Z\');");',
+      '  db.exec("BEGIN IMMEDIATE;");',
+      '  db.exec("INSERT INTO panels (id, name, topic, copilot_home, config_json, created_at, updated_at) VALUES (\'holder-panel\', \'holder-panel\', NULL, \'holder-home\', \'{}\', \'2026-01-01T00:00:00.000Z\', \'2026-01-01T00:00:00.000Z\');");',
       '  console.log("LOCKED");',
       '  await new Promise((resolve) => setTimeout(resolve, 250));',
-      '  await client.execute("COMMIT;");',
+      '  db.exec("COMMIT;");',
       '} finally {',
-      '  client.close();',
+      '  db.close();',
       '}',
     ].join("\n");
 
@@ -158,29 +157,25 @@ describe("createDatabase", () => {
   }, 30_000);
 
   it("throws when a file-backed database cannot enter WAL mode", async () => {
-    const mockClient = {
-      execute: vi.fn(async (statement: string) => {
-        if (statement.startsWith("PRAGMA busy_timeout")) {
-          return { rows: [{ timeout: 5000 }] };
-        }
-
-        if (statement === "PRAGMA journal_mode = WAL;") {
-          return { rows: [{ journal_mode: "delete" }] };
-        }
-
-        throw new Error(`Unexpected statement: ${statement}`);
-      }),
-      close: vi.fn(),
-    };
+    const mockExec = vi.fn();
+    const mockClose = vi.fn();
+    const mockPrepare = vi.fn((statement: string) => ({
+      get: () =>
+        statement.startsWith("PRAGMA journal_mode")
+          ? { journal_mode: "delete" }
+          : undefined,
+      run: () => ({ changes: 0, lastInsertRowid: 0 }),
+      all: () => [],
+    }));
 
     vi.resetModules();
-    vi.doMock("@libsql/client", async () => {
-      const actual = await vi.importActual<typeof LibsqlClientModule>("@libsql/client");
-      return {
-        ...actual,
-        createClient: vi.fn(() => mockClient),
-      };
-    });
+    vi.doMock("node:sqlite", () => ({
+      DatabaseSync: class {
+        exec = mockExec;
+        prepare = mockPrepare;
+        close = mockClose;
+      },
+    }));
 
     try {
       const { createDatabase: createDatabaseWithMock } = await import("../../../src/memory/db.js");
@@ -188,9 +183,9 @@ describe("createDatabase", () => {
       await expect(createDatabaseWithMock("fake-db.sqlite")).rejects.toThrow(
         "Failed to enable SQLite journal mode WAL; got delete",
       );
-      expect(mockClient.close).toHaveBeenCalledTimes(1);
+      expect(mockClose).toHaveBeenCalledTimes(1);
     } finally {
-      vi.doUnmock("@libsql/client");
+      vi.doUnmock("node:sqlite");
       vi.resetModules();
     }
   });
@@ -198,30 +193,32 @@ describe("createDatabase", () => {
   it("rolls back a failed migration without advancing schema_version", async () => {
     const testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-db-rollback-"));
     const dbPath = path.join(testHome, "council.db");
-    const setupClient = createClient({ url: `file:${dbPath}` });
+    const setupDb = new DatabaseSync(dbPath);
 
     try {
       // Pre-create a malformed `panels` table (missing `name` column) so the
       // unified migration's CREATE INDEX idx_panels_name ON panels(name) fails.
-      await setupClient.execute(
+      setupDb.exec(
         "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);",
       );
-      await setupClient.execute("CREATE TABLE panels (id TEXT PRIMARY KEY);");
+      setupDb.exec("CREATE TABLE panels (id TEXT PRIMARY KEY);");
     } finally {
-      setupClient.close();
+      setupDb.close();
     }
 
     await expect(createDatabase(dbPath)).rejects.toThrow();
 
-    const verifyClient = createClient({ url: `file:${dbPath}` });
+    const verifyDb = new DatabaseSync(dbPath);
     try {
-      const versions = (await verifyClient.execute("SELECT version FROM schema_version ORDER BY version;")).rows.map(
-        (row) => Number((row as { readonly version: number }).version),
-      );
+      const versions = (
+        verifyDb
+          .prepare("SELECT version FROM schema_version ORDER BY version;")
+          .all() as readonly { readonly version: number }[]
+      ).map((row) => Number(row.version));
       // Migration rolled back — no version rows recorded
       expect(versions).toEqual([]);
     } finally {
-      verifyClient.close();
+      verifyDb.close();
       await cleanupFileBackedDatabaseDir(testHome);
     }
   }, 30_000);

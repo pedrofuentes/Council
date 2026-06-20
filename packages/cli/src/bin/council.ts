@@ -18,7 +18,7 @@
 // SQLite ExperimentalWarning filter — MUST be the first import in this
 // entry point. Importing this module installs `process.emitWarning` patch
 // as a side effect, before any sibling import can transitively load
-// `node:sqlite` (via `@libsql/client`) and emit Node's
+// `node:sqlite` (Council's persistence backend) and emit Node's
 // `SQLite is an experimental feature` warning. See F02 in T12.
 import "./sqlite-warning-filter.js";
 

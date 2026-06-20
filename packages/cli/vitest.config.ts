@@ -14,11 +14,10 @@ export default defineConfig({
     // running the migration per `createDatabase()` call.
     globalSetup: ["./tests/global-setup.ts"],
 
-    // Use forked child processes (not worker threads). @libsql/client loads a
-    // native binding that is not safe to share across worker_threads, and the
-    // SQLite file handles it owns must be owned by a single OS process for
-    // clean teardown on Windows. `forks` is the Vitest default, but we make it
-    // explicit so a future Vitest default change cannot silently break us.
+    // Use forked child processes (not worker threads). The SQLite file handles
+    // node:sqlite owns must be owned by a single OS process for clean teardown
+    // on Windows. `forks` is the Vitest default, but we make it explicit so a
+    // future Vitest default change cannot silently break us.
     pool: "forks",
 
     // Cap parallelism. On Windows, too many concurrent forks thrash

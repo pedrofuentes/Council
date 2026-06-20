@@ -1365,15 +1365,15 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
           await setupDb.destroy();
         }
 
-        // Patch LibsqlConnection.prototype.executeQuery so the SECOND
+        // Patch NodeSqliteConnection.prototype.executeQuery so the SECOND
         // `DELETE FROM document_index WHERE file_path = ?` throws.
         // This is the same interception strategy used by the indexer
         // atomicity test and survives the cmd's internal `db` instance.
-        const { LibsqlConnection } = await import("@libsql/kysely-libsql");
-        const originalExecute = LibsqlConnection.prototype.executeQuery;
+        const { NodeSqliteConnection } = await import("../../../../src/memory/node-sqlite-dialect.js");
+        const originalExecute = NodeSqliteConnection.prototype.executeQuery;
         let ftsDeleteCount = 0;
-        LibsqlConnection.prototype.executeQuery = async function (
-          this: InstanceType<typeof LibsqlConnection>,
+        NodeSqliteConnection.prototype.executeQuery = async function (
+          this: InstanceType<typeof NodeSqliteConnection>,
           compiledQuery: { sql: string; parameters: readonly unknown[] },
         ): Promise<unknown> {
           const isPerFileFtsDelete = /DELETE\s+FROM\s+document_index\s+WHERE\s+file_path\s*=/i.test(
@@ -1434,7 +1434,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
             await verifyDb.destroy();
           }
         } finally {
-          LibsqlConnection.prototype.executeQuery = originalExecute;
+          NodeSqliteConnection.prototype.executeQuery = originalExecute;
         }
       } finally {
         await fs.rm(linkDir, { recursive: true, force: true });

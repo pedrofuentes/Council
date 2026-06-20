@@ -153,7 +153,7 @@ export function installSqliteExperimentalWarningFilter(
 
 // Self-install on the current process as a module-load side effect so both
 // filters (process.emitWarning AND process.stderr) are active before any
-// sibling import (e.g. `@libsql/client`, `node:sqlite`) or any spawned
+// sibling import (e.g. `node:sqlite`) or any spawned
 // subprocess (e.g. `@github/copilot-sdk`'s Copilot CLI server) can leak
 // Node's SQLite ExperimentalWarning into our output. Idempotent via the
 // WeakSets above — an explicit call from the entry point becomes a no-op.
