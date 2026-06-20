@@ -351,6 +351,27 @@ describe("xlsx-reader: readXlsxSheets", () => {
     expect(sheets[0]?.rows).toEqual([["1"], ["2"]]);
   });
 
+  it("caps an oversized column reference instead of allocating an unbounded row", async () => {
+    // A crafted cell whose column letters decode far beyond the OOXML maximum
+    // (16,384 = "XFD"). Before the cap, the sparse-fill loop pushed
+    // `columnIndex` empty strings — "ABCD1" decodes to ~19,010 and a reference
+    // like "AAAAAAA1" drove a ~321M-element allocation -> OOM DoS.
+    const buf = buildXlsx({
+      sheets: [{ name: "Huge", sheetData: '<row r="1"><c r="ABCD1"><v>1</v></c></row>' }],
+    });
+    const start = Date.now();
+    const sheets = await readXlsxSheets(buf);
+    const elapsedMs = Date.now() - start;
+    const row = sheets[0]?.rows[0] ?? [];
+    // The row width must never exceed the OOXML column maximum, regardless of
+    // the (attacker-controlled) cell reference.
+    expect(row.length).toBeLessThanOrEqual(16_384);
+    // The cell value is still captured (placed at the sequential fallback column).
+    expect(row).toContain("1");
+    // And parsing completes quickly — no multi-second hang from a huge allocation.
+    expect(elapsedMs).toBeLessThan(1_000);
+  });
+
   it("returns an empty rows array for a sheet with no data", async () => {
     const buf = buildXlsx({
       sheets: [{ name: "Blank", sheetData: "" }],
