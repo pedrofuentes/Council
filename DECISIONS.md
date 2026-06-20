@@ -22,6 +22,23 @@
 
 <!-- Add new decisions below this line, most recent first -->
 
+### ADR-027: SQLite backend = Node's built-in `node:sqlite`, not `@libsql/client`
+**Date**: 2026-06-20
+**Status**: Accepted (supersedes ADR-005; ADR-002's orchestration-index role unchanged)
+**Context**: ADR-005 chose `@libsql/client` + `@libsql/kysely-libsql` on the premise that it was "pure JavaScript / WebAssembly … no native build, no prebuilds." That premise was **incorrect**: the Node entry point of `@libsql/client` loads the **native** `libsql` addon, which selects a per-platform prebuilt binary via `optionalDependencies`. `libsql` publishes prebuilts for darwin (x64/arm64), linux (x64/arm64, gnu+musl), and **win32-x64 only** — there is **no `@libsql/win32-arm64-msvc` at any version** (`libsql@0.5.29`'s `neon.targets` has no `aarch64-pc-windows-msvc`). On Windows-on-ARM the optional dep is silently skipped at install and `council` crashes at startup: `Cannot find module '@libsql/win32-arm64-msvc'` (reported on a fresh Node 25 arm64 machine). So ADR-005 did not actually escape the native-prebuild risk it was created to avoid (better-sqlite3's missing Node-version prebuild) — it shifted it from a Node-version gap to a platform gap.
+**Decision**: Use Node's built-in **`node:sqlite`** (`DatabaseSync`) as the SQLite backend, driven through an in-repo Kysely dialect (`packages/cli/src/memory/node-sqlite-dialect.ts`) that reuses Kysely's `SqliteAdapter` / `SqliteIntrospector` / `SqliteQueryCompiler` and adapts only the driver/connection (node:sqlite passes bound params as spread args and has no `stmt.reader`, so read-vs-write is derived from `stmt.columns().length`). `node:sqlite` ships inside Node, so persistence is dependency-free and platform-independent (works on Windows ARM64) and bundles FTS5. It is available unflagged from Node 24+, so the minimum Node was raised to `>=24.0.0`. Removed `@libsql/client` and `@libsql/kysely-libsql`.
+**Alternatives considered**:
+- **Upgrade `libsql`** — rejected: no win32-arm64 prebuilt exists at any version.
+- **Keep `libsql`; document running x64 Node under Windows-ARM emulation** — rejected: pushes a platform workaround onto users; violates "simple to run".
+- **`better-sqlite3`** — rejected (the original ADR-005 blocker): native, reintroduces the missing-prebuild risk.
+- **`node-sqlite3-wasm`** — rejected: pure WASM but a smaller community and no first-party Kysely dialect.
+**Consequences**:
+- ✅ Eliminates the entire "missing prebuilt binary" failure class — `node:sqlite` is part of the Node runtime; `pnpm install` needs no native toolchain.
+- ✅ Zero native/runtime dependencies for persistence.
+- ⚠️ Minimum Node is now 24 (`node:sqlite` is flagged on Node 22). It is still marked "experimental" by Node, but Node 24 is LTS and Council uses only basic SQL execution; the `ExperimentalWarning` is suppressed by `packages/cli/src/bin/sqlite-warning-filter.ts` (now load-bearing).
+- ⚠️ Drops the "same code path → Turso cloud (`libsql://`) for Phase 5" alignment ADR-005 noted; a future hosted-persistence path would reintroduce an HTTP/libsql client behind the existing `CouncilDatabase` Kysely seam.
+- 📝 Follow-ups tracked: #1259/#1260/#1261 (dialect coverage + robustness), #1265–#1269 (minor cleanups). The AGENTS.md tech-stack line still says `@libsql/client` — HUMAN REQUIRED to edit; `packages/cli/package.json` is the source of truth.
+
 ### ADR-026: npm OIDC Trusted Publishing + provenance for `@council-ai/cli`
 **Date**: 2026-06-18
 **Status**: Accepted
@@ -86,7 +103,7 @@ Eligibility is centralized in `isExtensionAiEligible` (exported from `src/core/d
 
 ### ADR-023: Node 22+ requirement due to `@github/copilot-sdk` subprocess dependency on `Promise.withResolvers`
 **Date**: 2026-06-17
-**Status**: Accepted
+**Status**: Accepted (Node floor later raised to ≥24 by ADR-027; Node 24 still satisfies this ≥22 constraint)
 **Context**: Council's `package.json` originally specified `"engines": { "node": ">=20.0.0" }` based on TypeScript ES2022 compilation target and the assumption that the Copilot SDK would be compatible with Node 20 LTS. During PR #1145, CI intermittently failed with `[CLI subprocess] TypeError: Promise.withResolvers is not a function`. Investigation (issue #1138) revealed the root cause: the `@github/copilot-sdk` package spawns a CLI subprocess (via `CopilotClient.start()`) that uses `Promise.withResolvers`, an ES2024 feature available only in Node 22+. Even though Council's own code compiles to ES2022, the SDK's runtime subprocess requirement forced a hard floor.
 **Decision**: Bump `engines.node` to `>=22` in `package.json`, set the CI `node-version` to `22`, and document Node 22+ as a hard requirement in README.md. Council can no longer run on Node 20, regardless of transpilation target. (Implemented in PR #1149.)
 **Alternatives considered**:
@@ -483,7 +500,7 @@ Provenance is a column on the per-file row, not a separate table. FTS index entr
 
 ### ADR-005: SQLite backend = `@libsql/client` (pure WASM), not `better-sqlite3`
 **Date**: 2026-05-07
-**Status**: Accepted (supersedes the implicit `better-sqlite3` choice in DECISIONS ADR-002 and ROADMAP §1.7)
+**Status**: Superseded by ADR-027 (was Accepted; superseded the implicit `better-sqlite3` choice in DECISIONS ADR-002 and ROADMAP §1.7)
 **Context**: ROADMAP §1.7 originally specified `better-sqlite3` + Kysely. During Phase 1 implementation (after PR #54 landed) the dev environment exposed a hard blocker: `better-sqlite3@11.10.0` ships no Node 25.5.0 prebuild, and the local Visual Studio Build Tools install lacks the ClangCL toolset required by `node-gyp`. Verified runtime failure: `Could not locate the bindings file. Tried [...] compiled\25.5.0\win32\x64\better_sqlite3.node`. This blocks ROADMAP §1.7, §1.8, §1.10, §1.12, §1.13 and most of Phases 2–3. Council's positioning ("simple to run") cannot survive a tool that requires users to install Visual Studio Build Tools.
 
 **Decision**: Use `@libsql/client` (pure JavaScript / WebAssembly, by Turso) as the SQLite backend, paired with `@libsql/kysely-libsql` as the Kysely dialect. Local file mode via `url: 'file:./db.sqlite'`; `:memory:` mode via `url: ':memory:'` for tests. No native build, no toolchain, no prebuilds.

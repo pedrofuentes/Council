@@ -103,7 +103,7 @@ git pull origin main
 ## Environment Setup
 
 ### Prerequisites
-- Node.js 22+
+- Node.js 24+
 - pnpm (`npm install -g pnpm`)
 - GitHub Copilot CLI (`npm install -g @github/copilot`)
 - GitHub Copilot subscription (Individual, Business, or Enterprise)

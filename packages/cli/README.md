@@ -17,7 +17,7 @@ npm install -g @council-ai/cli
 
 **Requirements:**
 
-- Node.js 22+
+- Node.js 24+
 - A GitHub Copilot subscription (Individual, Business, or Enterprise)
 
 ## Quick Start
