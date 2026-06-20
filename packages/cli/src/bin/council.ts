@@ -45,6 +45,7 @@ import { buildPanelCommand } from "../cli/commands/panel.js";
 import { buildResumeCommand } from "../cli/commands/resume.js";
 import { buildSessionsCommand } from "../cli/commands/sessions.js";
 import { buildTemplatesCommand } from "../cli/commands/templates.js";
+import { buildUpdateCommand } from "../cli/commands/update.js";
 
 import { handleCliError } from "../cli/handle-cli-error.js";
 import {
@@ -153,7 +154,7 @@ installSqliteExperimentalWarningFilter();
 
 // Command categories for grouped help output
 const COMMAND_CATEGORIES = {
-  "Getting Started": ["doctor", "config", "docs"],
+  "Getting Started": ["doctor", "config", "docs", "update"],
   Deliberation: ["convene", "resume", "conclude"],
   Conversation: ["ask", "chat"],
   Library: ["expert", "panel", "templates"],
@@ -244,6 +245,7 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
   program.addCommand(buildDoctorCommand());
   program.addCommand(buildConfigCommand());
   program.addCommand(buildDocsCommand());
+  program.addCommand(buildUpdateCommand());
   program.addCommand(buildConveneCommand());
   program.addCommand(buildResumeCommand());
   program.addCommand(buildConcludeCommand());
