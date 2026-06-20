@@ -48,6 +48,14 @@ export interface MaybeNotifyUpdateOptions {
   readonly fetchImpl?: typeof fetch;
   readonly now?: () => number;
   readonly cacheDir?: string;
+  /**
+   * Schedules the throttled background cache refresh. Defaults to a
+   * fire-and-forget implementation so the CLI never awaits the network probe
+   * and process exit is never delayed. Tests may inject a scheduler that
+   * captures the in-flight promise to deterministically join the refresh
+   * before assertions/cleanup, eliminating a race with filesystem teardown.
+   */
+  readonly scheduleRefresh?: (run: () => Promise<void>) => void;
 }
 
 function cacheFilePath(cacheDir: string): string {
@@ -143,12 +151,22 @@ const writeToStderr = (s: string): void => {
 };
 
 /**
+ * Default refresh scheduler: fire-and-forget. The promise is intentionally not
+ * awaited so the CLI's exit is never delayed by the registry probe.
+ */
+const fireAndForgetRefresh = (run: () => Promise<void>): void => {
+  void run();
+};
+
+/**
  * Print an "update available" notice (from cache) and schedule a throttled
  * background refresh. Suppressed when stderr is not a TTY, in quiet mode, or
  * when `NO_UPDATE_NOTIFIER`/`CI` is set. Never throws; never writes to stdout.
  *
  * The print path awaits only a fast local cache read. Any registry refresh is
- * fired and forgotten via {@link refreshUpdateCache} so it never delays exit.
+ * scheduled via {@link MaybeNotifyUpdateOptions.scheduleRefresh}, which defaults
+ * to a fire-and-forget call so it never delays exit. Tests may inject a
+ * scheduler that joins the in-flight refresh deterministically.
  */
 export async function maybeNotifyUpdate(options: MaybeNotifyUpdateOptions): Promise<void> {
   try {
@@ -160,6 +178,7 @@ export async function maybeNotifyUpdate(options: MaybeNotifyUpdateOptions): Prom
     const now = options.now ?? Date.now;
     const cacheDir = options.cacheDir ?? getCouncilHome();
     const write = options.write ?? writeToStderr;
+    const scheduleRefresh = options.scheduleRefresh ?? fireAndForgetRefresh;
 
     const cache = await readUpdateCache(cacheDir);
 
@@ -179,7 +198,7 @@ export async function maybeNotifyUpdate(options: MaybeNotifyUpdateOptions): Prom
       if (options.fetchImpl !== undefined) {
         refreshOptions.fetchImpl = options.fetchImpl;
       }
-      void refreshUpdateCache(refreshOptions);
+      scheduleRefresh(() => refreshUpdateCache(refreshOptions));
     }
   } catch {
     // The notifier is best effort: never let it affect the CLI's outcome.

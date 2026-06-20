@@ -70,7 +70,7 @@ function createCaptureScheduler(): {
   scheduleRefresh: (run: () => Promise<void>) => void;
   settled: () => Promise<void>;
 } {
-  const inFlight: Array<Promise<void>> = [];
+  const inFlight: Promise<void>[] = [];
   return {
     scheduleRefresh: (run: () => Promise<void>): void => {
       inFlight.push(run());
@@ -317,6 +317,7 @@ describe("maybeNotifyUpdate — printing", () => {
 
   it("does not print when the cache is missing", async () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ version: "0.3.0" }));
+    const { scheduleRefresh, settled } = createCaptureScheduler();
 
     await maybeNotifyUpdate({
       currentVersion: "0.2.1",
@@ -326,9 +327,13 @@ describe("maybeNotifyUpdate — printing", () => {
       fetchImpl,
       now: () => FIXED_NOW,
       cacheDir,
+      scheduleRefresh,
     });
 
     expect(captured).toEqual([]);
+    // A missing cache triggers a background refresh; join it so its write
+    // cannot race afterEach teardown of cacheDir.
+    await settled();
   });
 
   it("writes notices to process.stderr by default and never to stdout", async () => {
@@ -453,6 +458,7 @@ describe("maybeNotifyUpdate — error containment", () => {
   it("never throws when the cache is corrupt", async () => {
     await fs.writeFile(cacheFile, "}}corrupt{{", "utf8");
     const fetchImpl = vi.fn(async () => jsonResponse({ version: "0.3.0" }));
+    const { scheduleRefresh, settled } = createCaptureScheduler();
 
     await expect(
       maybeNotifyUpdate({
@@ -463,16 +469,21 @@ describe("maybeNotifyUpdate — error containment", () => {
         fetchImpl,
         now: () => FIXED_NOW,
         cacheDir,
+        scheduleRefresh,
       }),
     ).resolves.toBeUndefined();
 
     expect(captured).toEqual([]);
+    // Join the background refresh so its cache write cannot race afterEach
+    // teardown of cacheDir.
+    await settled();
   });
 
   it("never throws when the background refresh fetch fails", async () => {
     const fetchImpl = vi.fn(async () => {
       throw new Error("offline");
     });
+    const { scheduleRefresh, settled } = createCaptureScheduler();
 
     await expect(
       maybeNotifyUpdate({
@@ -483,10 +494,11 @@ describe("maybeNotifyUpdate — error containment", () => {
         fetchImpl,
         now: () => FIXED_NOW,
         cacheDir,
+        scheduleRefresh,
       }),
     ).resolves.toBeUndefined();
 
-    await waitFor(() => fileExists(cacheFile));
+    await settled();
     expect(await readUpdateCache(cacheDir)).toEqual({
       lastCheckMs: FIXED_NOW,
       latestVersion: null,
