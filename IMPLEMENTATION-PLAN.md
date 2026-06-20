@@ -12,7 +12,7 @@
 
 ### 1.1 Project Scaffolding ✅
 
-TypeScript ESM project (Node 22+) with tsup bundler, Vitest test runner, ESLint flat config v9 (typescript-eslint strict), and Prettier. CLI binary entry via Commander.js. Packaged as `@council-ai/cli` with `council` binary (not yet published to npm — see Phase 8).
+TypeScript ESM project (Node 22+) with tsup bundler, Vitest test runner, ESLint flat config v9 (typescript-eslint strict), and Prettier. CLI binary entry via Commander.js. Packaged as `@council-ai/cli` with `council` binary (published to npm — see Phase 8).
 
 **Key files**: `package.json`, `tsconfig.json`, `tsup.config.ts`, `vitest.config.ts`, `eslint.config.mjs`, `src/bin/council.ts`
 
