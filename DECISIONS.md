@@ -26,7 +26,7 @@
 **Date**: 2026-06-18
 **Status**: Accepted
 **Context**: A long-lived `NPM_TOKEN` stored in GitHub Actions secrets is a standing secret/rotation burden and a supply-chain risk. npm supports OIDC Trusted Publishing (keyless, short-lived tokens exchanged at publish time), eliminating the need to store any npm credential in steady state.
-**Decision**: The release pipeline (`release-please` → GitHub Release → `.github/workflows/release.yml`) publishes `@council-ai/cli` using npm OIDC Trusted Publishing: the job requests `id-token: write`, and `--provenance` is passed to attach a SLSA Level 2 attestation. No `NPM_TOKEN` is stored in repository secrets. The `0.1.0` bootstrap (first publish, required to register the OIDC link on npm) is a one-time manual step documented in `RELEASING.md`. `@council-ai/cli` ships ESM-only (`type: module`; exports expose only `import`), so `packages/cli/.attw.json` suppresses the inherent `cjs-resolves-to-esm` attw rule by design — not a misconfiguration (#1182).
+**Decision**: The release pipeline uses `.github/workflows/release-please.yml`, which runs both the `release-please` job (creates the tag + GitHub Release on a merged release PR) and a **gated `publish` job** in the same push-triggered run (chained on `releases_created == true`). The publish job uses the `npm-publish` GitHub environment (required reviewer approval gate), requests `id-token: write`, and passes `--provenance` to attach a SLSA Level 2 attestation. No `NPM_TOKEN` is stored in repository secrets. The `0.1.0` bootstrap (first publish, required to register the OIDC link on npm) is a one-time manual step documented in `RELEASING.md`; `0.1.1` was the first automated provenance release. `@council-ai/cli` ships ESM-only (`type: module`; exports expose only `import`), so `packages/cli/.attw.json` suppresses the inherent `cjs-resolves-to-esm` attw rule by design — not a misconfiguration (#1182).
 **Alternatives considered**:
 - **Long-lived `NPM_TOKEN`** — rejected: stored secret, requires rotation, exploitable if leaked.
 - **Granular access token (npm `automation` type)** — mitigates scope but still a stored secret; OIDC is strictly better when npm supports it.
@@ -35,6 +35,7 @@
 - Zero stored npm secrets in steady state — token exchange happens at publish time via GitHub OIDC.
 - The `0.1.0` bootstrap publish lacks provenance (manual); all subsequent CI-published versions carry SLSA Level 2 attestation.
 - Requires one-time npm org configuration (trusted publisher link) before the first CI publish.
+- The publish is chained as a job inside the push-triggered `release-please.yml` run (not via a separate `on: release: published` workflow) because GitHub does not trigger new workflow runs from events initiated by the default `GITHUB_TOKEN`; a `workflow_dispatch` manual fallback exists. Each publish is guarded by the `npm-publish` environment approval gate (required reviewer), preventing accidental or automated publishes.
 
 ### ADR-025: npm namespace `@council-ai` and pnpm monorepo structure
 **Date**: 2026-06-18

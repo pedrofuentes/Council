@@ -19,6 +19,11 @@
 
 <!-- Add new learnings below this line, most recent first -->
 
+### [2026-06-20] GitHub Actions: GITHUB_TOKEN-initiated events don't trigger workflows
+**Context**: Setting up automated npm publishing. Merging a release-please PR created the tag + GitHub Release, but the separate `release.yml` (`on: release: published`) never fired, and npm stayed on the old version until a manual `workflow_dispatch`. The `CI` workflow likewise doesn't run on release-please's bot PRs.
+**Learning**: GitHub does not trigger new workflow runs from events initiated by the default `GITHUB_TOKEN` (Releases, tags, PRs it creates). So a two-workflow design (release-please creates the Release → a separate workflow publishes `on: release`) silently never auto-publishes. Fixes: (a) chain the publish as a job in the SAME push-triggered release-please workflow, gated on the action's `releases_created` output (chosen — keeps pure OIDC, PR #1249); or (b) give release-please a PAT so its Release fires downstream workflows. Also note: npm Trusted Publishing binds to the exact workflow filename (+ optional environment), so moving the publish job changes the required Trusted Publisher config.
+**Impact**: For any release automation, don't rely on a `GITHUB_TOKEN`-created Release/tag/PR to trigger another workflow. Prefer same-run chained jobs gated on `releases_created`, or use a PAT. Keep `workflow_dispatch` as a manual fallback.
+
 ### [2026-06-17] Sentinel rejection pattern — sanitize *display* output of untrusted content for line-injection attacks
 **Context**: PR #1145 implemented `--prompt-file` and source-aware shell-expansion warnings. Sentinel REJECTED the initial version because the confirm/echo prompt displayed the user's raw prompt text using `stripControlChars`, which intentionally preserves `\n`/`\r`/`\t`/`\u2028`/`\u2029` for multi-line text. This opened a line-injection / CR-overwrite attack: an attacker-controlled prompt like `"Innocent question\rMalicious line overwrites console"` could spoof the displayed confirmation, tricking the user into approving something they didn't intend.
 **Learning**:
