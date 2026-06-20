@@ -259,7 +259,8 @@ describe("buildDoctorCommand", () => {
     }));
 
     const output = await runDoctor([], { onlineProbe, discoverModels });
-    const alternativesBlock = output.match(/Available alternatives:\n([\s\S]*?)\n\s*Fix:/)?.[1] ?? "";
+    const alternativesBlock =
+      output.match(/Available alternatives:\n([\s\S]*?)\n\s*Fix:/)?.[1] ?? "";
 
     expect(output).toContain("Available alternatives:");
     expect(output).toContain("Fix: council config set defaults.model gpt-5.4");
