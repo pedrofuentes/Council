@@ -23,8 +23,11 @@ How `@council-ai/cli` is versioned and published.
    `@council-ai/cli` to npm via **OIDC Trusted Publishing** with **provenance**.
    - No long-lived npm tokens are stored or used in steady state.
 
-**Manual / fallback publish**: `gh workflow run release-please.yml --ref main`
-re-runs the workflow and publishes if a release is pending. Emergency fallback:
+**Manual / fallback publish**: `gh workflow run release-please.yml --ref main` re-runs
+release-please, but it publishes **only if that run creates a new release** (i.e. a pending
+release PR is processed into a release in the same run). It will **not** re-publish a version
+that was already released (`releases_created` is `false`, so the gated `publish` job is skipped).
+To re-publish or ship a version outside this flow, use the emergency fallback:
 `cd packages/cli && npm publish --access public` (no provenance).
 
 ## One-time bootstrap (first publish)
