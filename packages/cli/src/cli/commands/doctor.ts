@@ -102,14 +102,14 @@ async function checkCouncilDataHome(): Promise<CheckResult> {
 
 async function checkSqlite(): Promise<CheckResult> {
   try {
-    const { createClient } = await import("@libsql/client");
-    const client = createClient({ url: ":memory:" });
-    await client.execute("SELECT 1");
-    client.close();
-    return { name: "SQLite (libsql)", status: "pass", detail: "in-memory DB OK" };
+    const { DatabaseSync } = await import("node:sqlite");
+    const database = new DatabaseSync(":memory:");
+    database.prepare("SELECT 1").get();
+    database.close();
+    return { name: "SQLite (node:sqlite)", status: "pass", detail: "in-memory DB OK" };
   } catch (err: unknown) {
     return {
-      name: "SQLite (libsql)",
+      name: "SQLite (node:sqlite)",
       status: "fail",
       detail: formatError(err),
     };

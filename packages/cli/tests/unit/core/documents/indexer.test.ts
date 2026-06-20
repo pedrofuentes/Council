@@ -153,8 +153,8 @@ describe("createDocumentIndexer", () => {
     // libsql connection layer and asserting BEGIN appears before
     // DELETE FROM document_index and COMMIT appears after INSERT INTO
     // document_index.
-    const { LibsqlConnection } = await import("@libsql/kysely-libsql");
-    const protoAny = LibsqlConnection.prototype as unknown as {
+    const { NodeSqliteConnection } = await import("../../../../src/memory/node-sqlite-dialect.js");
+    const protoAny = NodeSqliteConnection.prototype as unknown as {
       executeQuery: (q: { sql: string }) => Promise<unknown>;
     };
     const orig = protoAny.executeQuery;
@@ -193,8 +193,8 @@ describe("createDocumentIndexer", () => {
     // prior DELETE does not commit orphaned. We verify: (a) ROLLBACK
     // appears in the call log, (b) the original error propagates, (c) any
     // pre-existing row survives.
-    const { LibsqlConnection } = await import("@libsql/kysely-libsql");
-    const protoAny = LibsqlConnection.prototype as unknown as {
+    const { NodeSqliteConnection } = await import("../../../../src/memory/node-sqlite-dialect.js");
+    const protoAny = NodeSqliteConnection.prototype as unknown as {
       executeQuery: (q: { sql: string }) => Promise<unknown>;
     };
     const orig = protoAny.executeQuery;

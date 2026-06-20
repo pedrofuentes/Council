@@ -1,10 +1,12 @@
 /**
- * libsql + Kysely persistence layer for Council.
+ * node:sqlite + Kysely persistence layer for Council.
  *
- * Per ADR-005 (DECISIONS.md), Council uses `@libsql/client` (pure WASM) +
- * `@libsql/kysely-libsql` so that `pnpm install` works on every Node version
- * without a native build step. The orchestration-index role from ADR-002
- * is unchanged: this DB owns metadata only; transcript bodies live in the
+ * Council uses Node's built-in `node:sqlite` (via the in-repo
+ * {@link NodeSqliteDialect}) so the CLI runs on every platform Node supports —
+ * including Windows on ARM64, for which the native `libsql` addon ships no
+ * prebuilt binary at any version. This supersedes ADR-005's `@libsql/client`
+ * choice (see DECISIONS.md). The orchestration-index role from ADR-002 is
+ * unchanged: this DB owns metadata only; transcript bodies live in the
  * Copilot SDK's per-session store.
  *
  * Public API:
@@ -14,12 +16,14 @@
  *
  * `path` semantics:
  *   - ":memory:"          → in-memory DB (used by tests)
- *   - any other string    → treated as a filesystem path; libsql wraps it as `file:<path>`
- *                            and the underlying filesystem must support SQLite WAL mode
+ *   - any other string    → opened directly as a filesystem path; the
+ *                            underlying filesystem must support SQLite WAL mode
  */
-import { type Client, createClient } from "@libsql/client";
-import { LibsqlDialect } from "@libsql/kysely-libsql";
+import { DatabaseSync } from "node:sqlite";
+
 import { Kysely } from "kysely";
+
+import { NodeSqliteDialect } from "./node-sqlite-dialect.js";
 
 // ---------- Schema row shapes ----------
 
@@ -496,10 +500,12 @@ export function splitSqlStatements(sqlText: string): readonly string[] {
   return statements;
 }
 
-async function configureSqliteConnection(client: Client, dbPath: string): Promise<void> {
-  await client.execute(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS};`);
-  const journalModeResult = await client.execute("PRAGMA journal_mode = WAL;");
-  const journalMode = String(journalModeResult.rows[0]?.journal_mode ?? "");
+function configureSqliteConnection(database: DatabaseSync, dbPath: string): void {
+  database.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS};`);
+  const journalModeRow = database.prepare("PRAGMA journal_mode = WAL;").get() as
+    | { readonly journal_mode?: string }
+    | undefined;
+  const journalMode = String(journalModeRow?.journal_mode ?? "");
   const expectedJournalMode = dbPath === ":memory:" ? "memory" : "wal";
 
   if (journalMode !== expectedJournalMode) {
@@ -509,17 +515,17 @@ async function configureSqliteConnection(client: Client, dbPath: string): Promis
   }
 }
 
-async function applyMigrations(client: Client, db: CouncilDatabase): Promise<void> {
+async function applyMigrations(database: DatabaseSync, db: CouncilDatabase): Promise<void> {
   // Ensure schema_version exists so we can gate migrations before re-running them.
   // (The 001 migration also creates it via CREATE TABLE IF NOT EXISTS, so this is safe.)
-  await client.execute(
+  database.exec(
     "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);",
   );
   const migrations = loadMigrations();
   for (const migration of migrations) {
     let transactionOpen = false;
     try {
-      await client.execute("BEGIN IMMEDIATE;");
+      database.exec("BEGIN IMMEDIATE;");
       transactionOpen = true;
       const existing = await db
         .selectFrom("schema_version")
@@ -527,12 +533,12 @@ async function applyMigrations(client: Client, db: CouncilDatabase): Promise<voi
         .where("version", "=", migration.version)
         .executeTakeFirst();
       if (existing) {
-        await client.execute("COMMIT;");
+        database.exec("COMMIT;");
         transactionOpen = false;
         continue;
       }
       for (const statement of splitSqlStatements(migration.sql)) {
-        await client.execute(statement);
+        database.exec(statement);
       }
       await db
         .insertInto("schema_version")
@@ -542,12 +548,12 @@ async function applyMigrations(client: Client, db: CouncilDatabase): Promise<voi
         })
         .onConflict((oc) => oc.column("version").doNothing())
         .execute();
-      await client.execute("COMMIT;");
+      database.exec("COMMIT;");
       transactionOpen = false;
     } catch (error) {
       if (transactionOpen) {
         try {
-          await client.execute("ROLLBACK;");
+          database.exec("ROLLBACK;");
         } catch {
           // Best-effort rollback; preserve the original migration failure.
         }
@@ -557,24 +563,35 @@ async function applyMigrations(client: Client, db: CouncilDatabase): Promise<voi
   }
 }
 
+/**
+ * Close a raw handle without throwing if it is already closed (e.g. because
+ * Kysely's driver `destroy()` already closed the shared connection).
+ */
+function closeQuietly(database: DatabaseSync): void {
+  try {
+    database.close();
+  } catch {
+    // Already closed — nothing to do.
+  }
+}
+
 // ---------- Public entry ----------
 
 export async function createDatabase(dbPath: string): Promise<CouncilDatabase> {
-  const url = dbPath === ":memory:" ? ":memory:" : `file:${dbPath}`;
-  const client = createClient({ url });
+  const database = new DatabaseSync(dbPath);
   let db: CouncilDatabase | undefined;
 
   try {
-    await configureSqliteConnection(client, dbPath);
-    const dialect = new LibsqlDialect({ client });
+    configureSqliteConnection(database, dbPath);
+    const dialect = new NodeSqliteDialect({ database });
     db = new Kysely<CouncilSchema>({ dialect });
-    await applyMigrations(client, db);
+    await applyMigrations(database, db);
     return db;
   } catch (error) {
     if (db !== undefined) {
       await db.destroy().catch(() => undefined);
     }
-    client.close();
+    closeQuietly(database);
     throw error;
   }
 }

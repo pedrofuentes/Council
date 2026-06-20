@@ -233,26 +233,26 @@ export async function destroyTestDb(db: CouncilDatabase): Promise<void> {
  */
 export async function waitForDbRelease(testHome: string): Promise<void> {
   const { expect } = await import("vitest");
-  const { createClient } = await import("@libsql/client");
+  const { DatabaseSync } = await import("node:sqlite");
 
-  async function isDbReleased(): Promise<boolean> {
-    let client: ReturnType<typeof createClient> | undefined;
+  function isDbReleased(): boolean {
+    let database: InstanceType<typeof DatabaseSync> | undefined;
     try {
-      client = createClient({ url: `file:${path.join(testHome, "council.db")}` });
+      database = new DatabaseSync(path.join(testHome, "council.db"));
       // Use a write-side probe: BEGIN IMMEDIATE acquires a RESERVED lock,
       // confirming the previous test has fully released its write handle.
       // A read-only SELECT 1 would succeed even with a pending writer.
-      await client.execute("BEGIN IMMEDIATE");
-      await client.execute("ROLLBACK");
+      database.exec("BEGIN IMMEDIATE");
+      database.exec("ROLLBACK");
       return true;
     } catch {
-      // Any open/probe failure (lock, transient libsql error, etc.) means
+      // Any open/probe failure (lock, transient error, etc.) means
       // not-yet-released; keep polling until the outer timeout fires.
       return false;
     } finally {
-      if (client !== undefined) {
+      if (database !== undefined) {
         try {
-          client.close();
+          database.close();
         } catch {
           // best-effort: handle may still be unwinding
         }
@@ -263,7 +263,7 @@ export async function waitForDbRelease(testHome: string): Promise<void> {
   const timeout = process.platform === "win32" ? 10_000 : 2_000;
 
   await expect
-    .poll(async () => isDbReleased(), {
+    .poll(() => isDbReleased(), {
       interval: 50,
       timeout,
     })

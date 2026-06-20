@@ -27,7 +27,7 @@ describe("doctor diagnostics E2E", () => {
     expect(stdout).toContain("Council Doctor");
     expect(stdout).toContain("Node.js version");
     expect(stdout).toContain("Council home");
-    expect(stdout).toContain("SQLite (libsql)");
+    expect(stdout).toContain("SQLite (node:sqlite)");
     expect(stdout).toContain("All checks passed");
 
     const unsafeCleanupCtx: E2EContext = {
