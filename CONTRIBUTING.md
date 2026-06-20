@@ -8,7 +8,7 @@ Thanks for your interest in contributing to **Council** (`@council-ai/cli`)!
 
 ## Prerequisites
 
-- **Node.js 22+**
+- **Node.js 24+**
 - **pnpm** (the project's package manager)
 - A POSIX-compatible shell or Windows PowerShell
 

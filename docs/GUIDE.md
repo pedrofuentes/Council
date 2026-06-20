@@ -59,7 +59,7 @@ tailored to your topic. See [Part 1](#part-1).
 
 Before starting, make sure you have:
 
-1. **Node.js 22 or later** installed
+1. **Node.js 24 or later** installed
 2. **Council installed globally**: `npm install -g @council-ai/cli`
 3. **A GitHub Copilot subscription** (Individual, Business, or Enterprise)
 

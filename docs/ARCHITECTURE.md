@@ -118,7 +118,7 @@ packages/cli/
 │   │   └── mock/
 │   │       └── mock-engine.ts         ← Deterministic responses for testing
 │   ├── memory/
-│   │   ├── db.ts                      ← @libsql/client (WASM) + Kysely (per ADR-005)
+│   │   ├── db.ts                      ← node:sqlite + Kysely (per ADR-027)
 │   │   ├── persister.ts               ← DebatePersister: bridges Debate events → SQLite
 │   │   ├── transcript.ts              ← loadTranscript / synthesizeEvents (shared by resume/export)
 │   │   ├── memory-extractor.ts        ← LLM-driven ExpertMemory distillation (per debate)
@@ -194,11 +194,11 @@ CLI Commands:
 |----------|--------|-----------|
 | AI engine | `@github/copilot-sdk` behind `CouncilEngine` interface | Zero API key setup, multi-model access, single auth. Interface allows engine swap. |
 | CLI framework | Commander.js + Ink | Commander for parsing, Ink for rich TUI. Pluggable renderers for JSON/Plain output. |
-| Persistence | `@libsql/client` (WASM) + Kysely | Pure JS, no native build, future Turso-cloud-ready. Per ADR-005. |
+| Persistence | `node:sqlite` + Kysely | Built into Node, platform-independent (incl. Windows ARM64), bundles FTS5, no native build. Per ADR-027. |
 | Bundler | tsup (esbuild) | Zero config, fast, ESM-only. |
 | Testing | Vitest + MockEngine | Fast, ESM-native. MockEngine provides deterministic responses. |
 | IDs | ULIDs | Lexicographic sort by creation time. Better than UUIDs for debugging. |
-| Module system | ESM only | Node 22+ floor. All deps are ESM-first. |
+| Module system | ESM only | Node 24+ floor. All deps are ESM-first. |
 | Permissions | denyAll by default | Experts are reasoners, not agents. Opt-in tool access per expert. |
 | RAG excerpts | Chunk at index time, return full chunks | One FTS5 row per sentence-aligned, size-bounded chunk; retrieval returns the whole matched chunk instead of an FTS5 `snippet(...,64)` window, which cropped long PDF/DOCX prose mid-sentence while short table-shaped content fit untouched. |
 
@@ -230,7 +230,7 @@ User input → CLI command → Core (Panel/Debate/Moderator) → Engine (Council
 | `src/core/debate.ts` | Debate orchestrator, AsyncIterable<DebateEvent> |
 | `src/core/moderator/strategy.ts` | ModeratorStrategy interface |
 | `src/core/expert.ts` | Expert entity, 8-section prompt template |
-| `src/memory/db.ts` | libsql client (WASM) + Kysely connection, migrations, schema_version tracking |
+| `src/memory/db.ts` | node:sqlite + Kysely connection, migrations, schema_version tracking |
 | `panels/*.yaml` | Built-in panel definitions (Zod-validated) |
 
 ## Code Patterns
