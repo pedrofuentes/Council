@@ -19,6 +19,7 @@ import {
   type ModelDiscoveryResult,
 } from "../../engine/copilot/health.js";
 import { getSymbols } from "../renderers/symbols.js";
+import { createSpinner, type Spinner } from "../renderers/spinner.js";
 import { stripControlChars } from "../strip-control-chars.js";
 
 import { probeCopilotModel } from "./doctor-online-probe.js";
@@ -43,6 +44,12 @@ export interface DoctorDeps {
   readonly write?: Writer;
   readonly onlineProbe?: (model: string) => Promise<{ ok: boolean; detail: string }>;
   readonly discoverModels?: () => Promise<ModelDiscoveryResult>;
+  readonly createSpinner?: () => Spinner;
+}
+
+interface LabeledCheck {
+  readonly label: string;
+  readonly run: () => Promise<CheckResult>;
 }
 
 export async function checkNodeVersion(
@@ -264,11 +271,17 @@ function resolveDoctorDeps(input: DoctorDeps | Writer): Required<DoctorDeps> {
     write: deps.write ?? defaultWriter,
     onlineProbe: deps.onlineProbe ?? probeCopilotModel,
     discoverModels: deps.discoverModels ?? discoverAvailableModels,
+    createSpinner: deps.createSpinner ?? createSpinner,
   };
 }
 
 export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
-  const { write, onlineProbe, discoverModels } = resolveDoctorDeps(input);
+  const {
+    write,
+    onlineProbe,
+    discoverModels,
+    createSpinner: makeSpinner,
+  } = resolveDoctorDeps(input);
   const cmd = new Command("doctor");
   cmd
     .description("Diagnose Council setup (Node, libsql, Copilot SDK, disk)")
@@ -276,18 +289,21 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
     .option("--offline", "Skip online model probe")
     .option("--models", "List available Copilot models (live discovery with static fallback)")
     .action(async (options: DoctorOptions) => {
-      const checks: (() => Promise<CheckResult>)[] = [
-        checkNodeVersion,
-        checkCouncilHome,
-        checkCouncilDataHome,
-        checkSqlite,
-        checkCopilotSdk,
-        checkDiskSpace,
+      const checks: LabeledCheck[] = [
+        { label: "Node.js version", run: checkNodeVersion },
+        { label: "Council home", run: checkCouncilHome },
+        { label: "Council data home", run: checkCouncilDataHome },
+        { label: "SQLite (node:sqlite)", run: checkSqlite },
+        { label: "Copilot SDK", run: checkCopilotSdk },
+        { label: "Disk write", run: checkDiskSpace },
       ];
 
       // Run online check by default unless --offline is specified
       if (!options.offline) {
-        checks.push(() => checkDefaultModelAccess(onlineProbe, discoverModels));
+        checks.push({
+          label: "Default model access",
+          run: () => checkDefaultModelAccess(onlineProbe, discoverModels),
+        });
       }
 
       write("Council Doctor\n");
@@ -296,9 +312,16 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
       write(`Platform: ${os.platform()} ${os.arch()}\n`);
       write("\n");
 
+      const spinner = makeSpinner();
       let allPassed = true;
-      for (const run of checks) {
-        const result = await run();
+      for (const { label, run } of checks) {
+        spinner.start(label);
+        let result: CheckResult;
+        try {
+          result = await run();
+        } finally {
+          spinner.stop();
+        }
         if (result.status === "fail") {
           allPassed = false;
         }
