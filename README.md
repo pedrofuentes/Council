@@ -60,10 +60,8 @@ ChatGPT gives you **one perspective**. Council gives you **structured deliberati
 
 ## Install
 
-> **Note:** Council is not yet published to npm — the command below will work once it ships (see [ROADMAP.md](./ROADMAP.md), Phase 8). For now, install from source: see [docs/DEVELOPMENT-WORKFLOW.md](./docs/DEVELOPMENT-WORKFLOW.md).
-
 ```bash
-npm install -g @council-ai/cli   # coming soon — not yet on npm
+npm install -g @council-ai/cli
 ```
 
 On first run, Council auto-creates a default configuration and offers setup guidance via `council doctor`.

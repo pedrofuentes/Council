@@ -15,9 +15,6 @@ keys, no separate accounts, no credits to manage.
 npm install -g @council-ai/cli
 ```
 
-> Not yet published to npm — the command above will work once it ships. For now,
-> install from source (see the [development workflow](https://github.com/pedrofuentes/Council/blob/main/docs/DEVELOPMENT-WORKFLOW.md)).
-
 **Requirements:**
 
 - Node.js 22+
