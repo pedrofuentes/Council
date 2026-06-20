@@ -10,6 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildDoctorCommand, checkNodeVersion } from "../../../../src/cli/commands/doctor.js";
 import type { Writer } from "../../../../src/cli/commands/writer.js";
 
+interface SpinnerLike {
+  start(label: string): void;
+  stop(): void;
+}
+
 interface DoctorDepsLike {
   readonly write?: Writer;
   readonly onlineProbe?: (model: string) => Promise<{ ok: boolean; detail: string }>;
@@ -17,6 +22,7 @@ interface DoctorDepsLike {
     models: readonly string[];
     source: "live" | "static";
   }>;
+  readonly createSpinner?: () => SpinnerLike;
 }
 
 const buildDoctorCommandWithDeps = buildDoctorCommand as unknown as (
@@ -334,6 +340,35 @@ describe("buildDoctorCommand", () => {
     const output = await runDoctor([]);
 
     expect(output).toContain("Could not load configuration");
+  });
+
+  it("doctor drives the injected spinner around each check", async () => {
+    const start = vi.fn();
+    const stop = vi.fn();
+    const createSpinner = vi.fn(() => ({ start, stop }));
+    const onlineProbe = vi.fn(async () => ({ ok: true, detail: "ok" }));
+
+    await runDoctor([], { onlineProbe, createSpinner });
+
+    expect(createSpinner).toHaveBeenCalledTimes(1);
+    // 6 base checks + 1 default-model-access check (online runs by default).
+    expect(start).toHaveBeenCalledTimes(7);
+    expect(stop).toHaveBeenCalledTimes(7);
+    expect(start).toHaveBeenCalledWith("Node.js version");
+    expect(start).toHaveBeenCalledWith("Default model access");
+  });
+
+  it("doctor report content is byte-identical whether or not a spinner is injected", async () => {
+    const probe = (): Promise<{ ok: boolean; detail: string }> =>
+      Promise.resolve({ ok: true, detail: "ok" });
+
+    const noSpinner = await runDoctor(["--offline"], { onlineProbe: vi.fn(probe) });
+    const withSpinner = await runDoctor(["--offline"], {
+      onlineProbe: vi.fn(probe),
+      createSpinner: () => ({ start: vi.fn(), stop: vi.fn() }),
+    });
+
+    expect(withSpinner).toBe(noSpinner);
   });
 });
 
