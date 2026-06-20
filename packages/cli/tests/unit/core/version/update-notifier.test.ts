@@ -60,6 +60,27 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
+/**
+ * A test scheduler that captures the in-flight background refresh promise so a
+ * test can deterministically await its completion before assertions/cleanup,
+ * instead of racing the fire-and-forget default. `settled()` resolves once
+ * every scheduled refresh has fully finished (including its cache write).
+ */
+function createCaptureScheduler(): {
+  scheduleRefresh: (run: () => Promise<void>) => void;
+  settled: () => Promise<void>;
+} {
+  const inFlight: Array<Promise<void>> = [];
+  return {
+    scheduleRefresh: (run: () => Promise<void>): void => {
+      inFlight.push(run());
+    },
+    settled: async (): Promise<void> => {
+      await Promise.allSettled(inFlight);
+    },
+  };
+}
+
 let cacheDir: string;
 let cacheFile: string;
 let captured: string[];
@@ -398,6 +419,33 @@ describe("maybeNotifyUpdate — refresh throttling", () => {
 
     await new Promise((resolve) => setImmediate(resolve));
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe("maybeNotifyUpdate — joinable refresh seam", () => {
+  it("schedules the background refresh through an injected scheduler", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ version: "0.3.0" }));
+    const { scheduleRefresh, settled } = createCaptureScheduler();
+
+    await maybeNotifyUpdate({
+      currentVersion: "0.2.1",
+      isTTY: true,
+      env: {},
+      write,
+      fetchImpl,
+      now: () => FIXED_NOW,
+      cacheDir,
+      scheduleRefresh,
+    });
+
+    // The injected scheduler must receive the in-flight refresh so callers
+    // (and tests) can join it deterministically rather than racing it.
+    await settled();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(await readUpdateCache(cacheDir)).toEqual({
+      lastCheckMs: FIXED_NOW,
+      latestVersion: "0.3.0",
+    });
   });
 });
 
