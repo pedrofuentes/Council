@@ -15,6 +15,10 @@
  * Lifecycle: `start()` calls `client.start()`; `stop()` disconnects every
  * session then calls `client.stop()`. Both are idempotent.
  */
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+
 import { CopilotClient, type CopilotSession, type PermissionRequest } from "@github/copilot-sdk";
 
 import type {
@@ -69,6 +73,56 @@ export interface ModelDiscoveryResult {
   readonly source: "live" | "static";
 }
 
+/**
+ * Resolve the absolute path to the `@github/copilot` CLI entry that
+ * `@github/copilot-sdk` spawns.
+ *
+ * The SDK's own resolver (`getBundledCliPath`) assumes `@github/copilot`
+ * exposes an `index.js` / `./sdk` export, but `@github/copilot` >= 1.0.4x is a
+ * bin-only loader package (`npm-loader.js`, no `index.js`/`exports`). The SDK
+ * therefore computes a bogus path and fails with "Copilot CLI not found". We
+ * read the CLI's own `bin` entry from its `package.json`, resolving it relative
+ * to the SDK so it works under both hoisted (npm global) and nested (pnpm)
+ * `node_modules` layouts. Returns `undefined` if anything can't be resolved.
+ */
+export function resolveCopilotCliPath(): string | undefined {
+  try {
+    const require = createRequire(import.meta.url);
+    const sdkDir = dirname(require.resolve("@github/copilot-sdk"));
+    const cliPackageJsonPath = require.resolve("@github/copilot/package.json", {
+      paths: [sdkDir],
+    });
+    const cliPackage = JSON.parse(readFileSync(cliPackageJsonPath, "utf8")) as {
+      readonly bin?: string | Record<string, string>;
+    };
+    const binEntry =
+      typeof cliPackage.bin === "string" ? cliPackage.bin : cliPackage.bin?.copilot;
+    if (binEntry === undefined) {
+      return undefined;
+    }
+    return join(dirname(cliPackageJsonPath), binEntry);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Point the Copilot SDK at the resolved CLI via its sanctioned
+ * `COPILOT_CLI_PATH` override, unless the caller already set it. Idempotent and
+ * best-effort: if the CLI can't be resolved, the SDK's default resolution is
+ * left untouched. Call before constructing a {@link CopilotClient}.
+ */
+export function ensureCopilotCliPath(): void {
+  const existing = process.env.COPILOT_CLI_PATH;
+  if (existing !== undefined && existing !== "") {
+    return;
+  }
+  const resolved = resolveCopilotCliPath();
+  if (resolved !== undefined) {
+    process.env.COPILOT_CLI_PATH = resolved;
+  }
+}
+
 const STATIC_MODEL_LIST = (Object.isFrozen(SUPPORTED_MODELS)
   ? SUPPORTED_MODELS
   : Object.freeze(SUPPORTED_MODELS)) as readonly string[];
@@ -80,6 +134,7 @@ function freezeDiscoveredModels(models: readonly { readonly id: string }[]): rea
 export async function discoverAvailableModels(): Promise<ModelDiscoveryResult> {
   let client: CopilotClient | undefined;
   try {
+    ensureCopilotCliPath();
     client = new CopilotClient();
     await client.start();
     return {
@@ -131,6 +186,7 @@ export class CopilotEngine implements CouncilEngine {
 
   async start(): Promise<void> {
     if (this.#started && !this.#stopped) return;
+    ensureCopilotCliPath();
     this.#client = new CopilotClient();
     await this.#client.start();
     this.#started = true;
