@@ -309,7 +309,13 @@ function parseRelationships(entries: Map<string, Buffer>): Map<string, string> {
   return targets;
 }
 
-/** Convert a cell reference's column letters (e.g. "B" in "B3") to a 0-based index. */
+/**
+ * Convert a cell reference's column letters (e.g. "B" in "B3") to a 0-based index.
+ *
+ * The returned value is NOT bounded here; callers that use it to size an array
+ * must clamp it against {@link MAX_XLSX_COLUMNS} to avoid attacker-controlled
+ * references driving an unbounded allocation.
+ */
 function columnIndex(ref: string): number {
   let index = 0;
   for (const char of ref) {
@@ -324,6 +330,16 @@ function columnIndex(ref: string): number {
   }
   return index - 1;
 }
+
+/**
+ * The OOXML hard limit on worksheet columns: 16,384 columns, the last being
+ * "XFD". A valid `.xlsx` never references a column past this, so a larger
+ * decoded {@link columnIndex} signals a malformed (or maliciously crafted)
+ * cell reference. We cap row placement at this value to prevent an
+ * attacker-controlled reference (e.g. `r="AAAAAAA1"` -> column ~321M) from
+ * driving an unbounded heap allocation in the sparse row-fill loop (OOM DoS).
+ */
+const MAX_XLSX_COLUMNS = 16_384;
 
 function serialToIso(serial: number): string {
   const epoch = Date.UTC(1899, 11, 30);
@@ -398,7 +414,13 @@ function parseSheetRows(
       const ref = cell["@_r"];
       const column =
         typeof ref === "string" && ref.length > 0 ? columnIndex(ref) : nextDefaultColumn;
-      const target = column >= 0 ? column : nextDefaultColumn;
+      // Bound the placement column to the OOXML maximum. A reference at or
+      // beyond MAX_XLSX_COLUMNS (or an unparseable one, column < 0) is treated
+      // as if no explicit ref were given -> fall back to the sequential next
+      // column. This keeps each row's width <= MAX_XLSX_COLUMNS regardless of
+      // the cell reference, preventing an unbounded fill-loop allocation.
+      const target =
+        column >= 0 && column < MAX_XLSX_COLUMNS ? column : nextDefaultColumn;
       while (built.length < target) {
         built.push("");
       }
