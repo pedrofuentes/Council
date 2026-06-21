@@ -158,4 +158,37 @@ describe("buildConfigCommand config wizard", () => {
     });
     expect(config.conclude.maxTranscriptChars).toBe(120000);
   });
+
+  it("strips terminal controls from discovered model ids before listing and echoing the selection", async () => {
+    const output = createCapturedOutput();
+    const rawModel = "gpt\u001B[31m-\u0085evil\u202E";
+    const discoverModels = vi.fn(async () => ({
+      models: [rawModel],
+      source: "live" as const,
+    }));
+    const input = createInput(
+      ["1", "", "", "", "", "", "", "", "", "", "", "", ""].join("\n") + "\n",
+    );
+
+    const { stderr } = await runConfig(["wizard"], {
+      write: (text) => output.stream.write(text),
+      wizard: {
+        input,
+        output: output.stream,
+        discoverModels,
+      },
+    });
+
+    const text = output.text();
+    expect(stderr).toBe("");
+    expect(text).toContain("1. gpt-evil (recommended)");
+    expect(text).toContain("Set defaults.model = gpt-evil");
+    expect(text).not.toContain(rawModel);
+    for (const codePoint of [0x1b, 0x85, 0x202e]) {
+      expect(text).not.toContain(String.fromCodePoint(codePoint));
+    }
+
+    const config = await loadConfig();
+    expect(config.defaults.model).toBe(rawModel);
+  });
 });
