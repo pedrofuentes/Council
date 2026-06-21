@@ -23,7 +23,7 @@ jobs:
           manifest-file: .release-please-manifest.json
 
   publish:
-    name: Publish @council-ai/cli
+    name: Publish council-ai
     needs: release-please
     if: ${{ needs.release-please.outputs.releases_created == 'true' }}
     runs-on: ubuntu-latest
@@ -50,13 +50,13 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build
-        run: pnpm --filter @council-ai/cli build
+        run: pnpm --filter council-ai build
 
       - name: Validate package exports (publint)
-        run: pnpm --filter @council-ai/cli publint
+        run: pnpm --filter council-ai publint
 
       - name: Validate type definitions (attw)
-        run: pnpm --filter @council-ai/cli attw
+        run: pnpm --filter council-ai attw
 
       - name: Verify package contents
         working-directory: packages/cli
