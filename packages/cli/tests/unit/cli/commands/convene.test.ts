@@ -218,7 +218,8 @@ describe("buildConveneCommand", () => {
     const kinds = parsed.map((p) => p.kind);
     expect(kinds[0]).toBe("panel.assembled");
     expect(kinds).toContain("turn.end");
-    expect(kinds[kinds.length - 1]).toBe("debate.end");
+    expect(kinds).toContain("debate.end");
+    expect(kinds[kinds.length - 1]).toBe("conclusion");
   });
 
   it("end-to-end with --format plain: produces human-readable output", async () => {
