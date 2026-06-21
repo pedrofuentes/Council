@@ -8,14 +8,11 @@ on:
       - ".github/workflows/deploy-pages.yml"
   workflow_dispatch:
 
-# Least-privilege token plus the scopes the GitHub Pages deployment requires:
-# `pages: write` to publish and `id-token: write` for the deploy job's OIDC
-# attestation. Going live still requires a maintainer to enable Pages
-# (Settings → Pages → Source: GitHub Actions).
+# Least-privilege defaults: top level grants only `contents: read` so the build
+# job (which runs third-party code via pnpm install + astro build) has minimal
+# permissions. The deploy job explicitly declares `pages: write` + `id-token: write`.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 # Serialize Pages deployments; never cancel an in-progress publish so a running
 # deployment can finish cleanly.
@@ -60,6 +57,9 @@ jobs:
     name: Deploy to GitHub Pages
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
