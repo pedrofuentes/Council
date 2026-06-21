@@ -1,0 +1,13 @@
+import { stripControlChars, toSingleLineDisplay } from "../strip-control-chars.js";
+
+export function sanitizeExportBlock(text: string): string {
+  return stripControlChars(text);
+}
+
+export function sanitizeExportLine(text: string): string {
+  return toSingleLineDisplay(text);
+}
+
+export function sanitizeExportBlockLines(text: string): readonly string[] {
+  return sanitizeExportBlock(text).split("\n");
+}
