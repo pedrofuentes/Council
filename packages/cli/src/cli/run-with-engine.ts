@@ -21,8 +21,7 @@
 import { Debate, type DebateConfig } from "../core/debate.js";
 import type { HumanInputProvider } from "../core/human-input.js";
 import type { CouncilEngine, ExpertSpec } from "../engine/index.js";
-import { MockEngine } from "../engine/mock/mock-engine.js";
-import { CopilotEngine } from "../engine/copilot/adapter.js";
+import { createEngine, PROVIDER_IDS, type ProviderId } from "../engine/providers.js";
 import type { CouncilDatabase } from "../memory/db.js";
 import { DebateRepository } from "../memory/repositories/debates.js";
 import { TurnRepository } from "../memory/repositories/turns.js";
@@ -35,20 +34,24 @@ import type { Sink } from "./renderers/types.js";
 import { formatEngineError } from "./error-mapper.js";
 import type { Writer } from "./commands/writer.js";
 
-export const ENGINE_KINDS = ["mock", "copilot"] as const;
-export type EngineKind = (typeof ENGINE_KINDS)[number];
+/**
+ * CLI-facing engine kinds — the choices offered by every `--engine` option.
+ * Sourced from the provider registry so the CLI and the registry can never
+ * drift: available providers (copilot/mock) construct; coming-soon ones
+ * (openai/anthropic) are selectable but yield a graceful "not yet
+ * available" error at construction time.
+ */
+export const ENGINE_KINDS = PROVIDER_IDS;
+export type EngineKind = ProviderId;
 
+/**
+ * Construct an engine from a CLI engine kind by delegating to the provider
+ * registry (the single source of truth for provider → factory). Coming-soon
+ * providers throw a graceful {@link ProviderNotAvailableError}; unknown
+ * kinds throw "Unknown engine kind".
+ */
 export function makeEngineFromKind(kind: EngineKind): CouncilEngine {
-  switch (kind) {
-    case "mock":
-      return new MockEngine();
-    case "copilot":
-      return new CopilotEngine();
-    default: {
-      const _exhaustive: never = kind;
-      throw new Error(`Unknown engine kind: ${String(_exhaustive)}`);
-    }
-  }
+  return createEngine(kind);
 }
 
 export interface RunWithEngineOpts {
