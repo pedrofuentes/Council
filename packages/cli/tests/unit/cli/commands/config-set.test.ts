@@ -6,6 +6,7 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { CliUserError } from "../../../../src/cli/cli-user-error.js";
 import { buildConfigCommand } from "../../../../src/cli/commands/config.js";
 import { loadConfig } from "../../../../src/config/index.js";
 import type { Writer } from "../../../../src/cli/commands/writer.js";
@@ -18,9 +19,10 @@ interface ConfigCommandDeps {
 async function runConfig(
   args: readonly string[],
   deps: ConfigCommandDeps = {},
-): Promise<{ stdout: string; stderr: string }> {
+): Promise<{ stdout: string; stderr: string; error: unknown }> {
   let stdout = "";
   let stderr = "";
+  let error: unknown;
   const cmd = buildConfigCommand(
     deps.write ??
       ((s: string) => {
@@ -32,8 +34,10 @@ async function runConfig(
       }),
   );
   cmd.exitOverride();
-  await cmd.parseAsync(["node", "council-config", ...args]).catch(() => undefined);
-  return { stdout, stderr };
+  await cmd.parseAsync(["node", "council-config", ...args]).catch((err: unknown) => {
+    error = err;
+  });
+  return { stdout, stderr, error };
 }
 
 describe("buildConfigCommand config set", () => {
@@ -77,6 +81,89 @@ describe("buildConfigCommand config set", () => {
     expect(stdout).toContain("Set telemetry.enabled = true");
     const config = await loadConfig();
     expect(config.telemetry.enabled).toBe(true);
+  });
+
+  it.each(["false", "off", "no", "0"])(
+    "sets telemetry.enabled to false from %s",
+    async (rawValue) => {
+      await runConfig(["set", "telemetry.enabled", "true"]);
+
+      const { stdout, stderr, error } = await runConfig(["set", "telemetry.enabled", rawValue]);
+
+      expect(error).toBeUndefined();
+      expect(stderr).toBe("");
+      expect(stdout).toContain("Set telemetry.enabled = false");
+      const config = await loadConfig();
+      expect(config.telemetry.enabled).toBe(false);
+    },
+  );
+
+  it("rejects invalid telemetry.enabled values as a user error", async () => {
+    const { stderr, error } = await runConfig(["set", "telemetry.enabled", "maybe"]);
+
+    expect(error).toBeInstanceOf(CliUserError);
+    expect(stderr).toContain("Config value for telemetry.enabled must be true or false.");
+  });
+
+  it("sets defaults.engine to a valid engine", async () => {
+    const { stdout, stderr, error } = await runConfig(["set", "defaults.engine", "mock"]);
+
+    expect(error).toBeUndefined();
+    expect(stderr).toBe("");
+    expect(stdout).toContain("Set defaults.engine = mock");
+    const config = await loadConfig();
+    expect(config.defaults.engine).toBe("mock");
+  });
+
+  it("rejects invalid defaults.engine values as a user error", async () => {
+    const { stderr, error } = await runConfig(["set", "defaults.engine", "ollama"]);
+
+    expect(error).toBeInstanceOf(CliUserError);
+    expect(stderr).toContain(
+      "Config value for defaults.engine must be one of: copilot, mock, openai, anthropic",
+    );
+  });
+
+  describe("chat.* settings", () => {
+    it.each([
+      ["chat.recentTurnCount", "25", 25],
+      ["chat.summaryMaxWords", "750", 750],
+      ["chat.longConversationWarning", "1500", 1500],
+    ] as const)("sets %s to a valid integer", async (key, rawValue, expectedValue) => {
+      const { stdout, stderr, error } = await runConfig(["set", key, rawValue]);
+
+      expect(error).toBeUndefined();
+      expect(stderr).toBe("");
+      expect(stdout).toContain(`Set ${key} = ${rawValue}`);
+      const config = await loadConfig();
+      if (key === "chat.recentTurnCount") {
+        expect(config.chat.recentTurnCount).toBe(expectedValue);
+      } else if (key === "chat.summaryMaxWords") {
+        expect(config.chat.summaryMaxWords).toBe(expectedValue);
+      } else {
+        expect(config.chat.longConversationWarning).toBe(expectedValue);
+      }
+    });
+
+    it.each([
+      ["chat.recentTurnCount", "4", ">=5"],
+      ["chat.summaryMaxWords", "99", ">=100"],
+      ["chat.longConversationWarning", "49", ">=50"],
+    ] as const)("rejects out-of-range %s values as user errors", async (key, rawValue, bound) => {
+      const { stderr, error } = await runConfig(["set", key, rawValue]);
+
+      expect(error).toBeInstanceOf(CliUserError);
+      expect(stderr).toContain("Invalid Council config");
+      expect(stderr).toContain(key);
+      expect(stderr).toContain(bound);
+    });
+
+    it("rejects non-integer chat values as a user error", async () => {
+      const { stderr, error } = await runConfig(["set", "chat.recentTurnCount", "10.5"]);
+
+      expect(error).toBeInstanceOf(CliUserError);
+      expect(stderr).toContain("Config value for chat.recentTurnCount must be an integer.");
+    });
   });
 
   it("rejects unsupported keys with the valid key list", async () => {
