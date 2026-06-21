@@ -75,9 +75,17 @@ export { CliUserError } from "../../cli-user-error.js";
 export { PersistTurnPairError } from "../../../memory/repositories/chat-repository.js";
 export { FileExpertLibrary } from "../../../core/expert-library.js";
 export { ExpertLibraryRepository } from "../../../memory/repositories/expert-library-repo.js";
-export { PanelNotFoundError, loadPanel, resolveExperts } from "../../../core/template-loader.js";
+export {
+  PanelNotFoundError,
+  loadPanel,
+  parseStoredPanelDefinition,
+  resolveExperts,
+} from "../../../core/template-loader.js";
 export { createChatRenderer } from "../../renderers/chat-renderer.js";
-export { createDocumentRetriever, buildExpertRetrievalScopes } from "../../../core/documents/retriever.js";
+export {
+  createDocumentRetriever,
+  buildExpertRetrievalScopes,
+} from "../../../core/documents/retriever.js";
 export { createContextManager } from "../../../core/chat/context-manager.js";
 export { formatEngineError } from "../../error-mapper.js";
 export { makeEngineFromKind, ENGINE_KINDS } from "../../run-with-engine.js";
@@ -120,15 +128,15 @@ export const EXIT_TOKENS = new Set(["exit", "/quit", "quit", "/exit"]);
 export function isExitCommand(input: string): boolean {
   const trimmed = input.trim().toLowerCase();
   if (trimmed.length === 0) return false;
-  
+
   // Check exact match first
   if (EXIT_TOKENS.has(trimmed)) return true;
-  
+
   // Check if starts with any exit token
   for (const token of EXIT_TOKENS) {
     if (trimmed.startsWith(token + " ")) return true;
   }
-  
+
   return false;
 }
 

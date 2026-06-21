@@ -19,6 +19,7 @@ import type { ExpertDefinition } from "../../../../src/core/expert.js";
 import type { ChatTurn } from "../../../../src/core/chat/chat-session.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import { ChatRepository } from "../../../../src/memory/repositories/chat-repository.js";
+import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
 import type { CouncilEngine } from "../../../../src/engine/index.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
@@ -250,6 +251,53 @@ describe("panel chat mode", () => {
       expect(session?.targetType).toBe("panel");
       expect(session?.targetSlug).toBe("my-panel");
     });
+  });
+
+  it("loads an auto-composed panel from the persisted session definition when its template is absent", async () => {
+    const db = await createDatabase(path.join(env.home, "council.db"));
+    try {
+      const repo = new PanelRepository(db);
+      await repo.create({
+        name: "composed-panel-2026-06-21T13:28:08",
+        topic: "Choose the launch plan",
+        copilotHome: path.join(env.home, "copilot"),
+        configJson: JSON.stringify({
+          template: "auto-template-that-was-never-saved",
+          mode: "structured",
+          engine: "mock",
+          definition: {
+            name: "Composed Launch Panel",
+            description: "A one-off launch readiness panel",
+            defaults: { mode: "structured", maxRounds: 2, model: "mock" },
+            experts: [PANEL_EXPERT_A, PANEL_EXPERT_B],
+          },
+        }),
+      });
+    } finally {
+      await db.destroy();
+    }
+
+    let out = "";
+    let err = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: (s) => (err += s),
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-chat",
+      "composed-panel-2026-06-21T13:28:08",
+      "--engine",
+      "mock",
+    ]);
+
+    expect(out).toMatch(/Starting panel chat/i);
+    expect(out).toContain("Composed Launch Panel");
+    expect(out).toMatch(/2 experts/i);
+    expect(err).not.toMatch(/failed to load its template/i);
   });
 
   it("errors when target is neither an expert slug nor a panel", async () => {
@@ -1048,7 +1096,8 @@ describe("panel chat — @mention routing", () => {
     });
   });
 
-  it("unknown @slug surfaces the error and does NOT persist the user turn", async () => {    await seedTwoExperts();
+  it("unknown @slug surfaces the error and does NOT persist the user turn", async () => {
+    await seedTwoExperts();
     await writeUserPanel(env, "panel3", ["panel-a", "panel-b"]);
 
     let err = "";
@@ -1072,7 +1121,7 @@ describe("panel chat — @mention routing", () => {
     });
   });
 
-  it('quoted display-name @mention errors and does NOT silently broadcast', async () => {
+  it("quoted display-name @mention errors and does NOT silently broadcast", async () => {
     await seedTwoExperts();
     await writeUserPanel(env, "panelq", ["panel-a", "panel-b"]);
 
