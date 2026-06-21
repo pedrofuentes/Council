@@ -279,7 +279,9 @@ async function promptWithQuestion(write: (s: string) => void): Promise<string> {
     if (isReadlineAbort(err)) {
       throw new CliUserError("Aborted");
     }
-    throw new CliUserError(`Topic input failed: ${sanitizeErrorMessage(err)}`, { cause: err });
+    const message = `Topic input failed: ${sanitizeErrorMessage(err)}`;
+    write(`${message}\n`);
+    throw new CliUserError(message, { cause: err });
   } finally {
     rl.close();
   }
