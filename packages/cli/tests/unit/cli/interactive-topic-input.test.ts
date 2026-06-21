@@ -1,7 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { EventEmitter } from "node:events";
+import readline from "node:readline";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { mockCreateInterface } = vi.hoisted(() => ({
+  mockCreateInterface: vi.fn(),
+}));
+
+vi.mock("node:readline/promises", () => ({
+  createInterface: mockCreateInterface,
+}));
 
 import { CliUserError } from "../../../src/cli/cli-user-error.js";
 import {
+  promptForTopic,
+  promptForTopicFromStdin,
   processKeypressStream,
   type KeypressEvent,
 } from "../../../src/cli/interactive-topic-input.js";
@@ -27,6 +40,53 @@ const bracketedPasteStart = key({ sequence: "\x1b[200~" });
 const bracketedPasteEnd = key({ sequence: "\x1b[201~" });
 const unknownCsi = key({ sequence: "\x1b[A", name: "up" });
 
+class MockStdin extends EventEmitter {
+  isTTY = true;
+  isRaw = false;
+  private paused = true;
+
+  readonly setRawMode = vi.fn((enabled: boolean): this => {
+    this.isRaw = enabled;
+    return this;
+  });
+
+  readonly resume = vi.fn((): this => {
+    this.paused = false;
+    return this;
+  });
+
+  readonly pause = vi.fn((): this => {
+    this.paused = true;
+    return this;
+  });
+
+  readonly isPaused = vi.fn((): boolean => this.paused);
+
+  readonly on = vi.fn(
+    (eventName: string | symbol, listener: (...args: readonly unknown[]) => void): this =>
+      super.on(eventName, listener),
+  );
+
+  readonly once = vi.fn(
+    (eventName: string | symbol, listener: (...args: readonly unknown[]) => void): this =>
+      super.once(eventName, listener),
+  );
+
+  readonly off = vi.fn(
+    (eventName: string | symbol, listener: (...args: readonly unknown[]) => void): this =>
+      super.off(eventName, listener),
+  );
+
+  readonly removeListener = vi.fn(
+    (eventName: string | symbol, listener: (...args: readonly unknown[]) => void): this =>
+      super.removeListener(eventName, listener),
+  );
+
+  emitKeypress(event: KeypressEvent): boolean {
+    return this.emit("keypress", event.sequence, event);
+  }
+}
+
 async function* source(
   events: readonly KeypressEvent[],
 ): AsyncGenerator<KeypressEvent, void, void> {
@@ -41,6 +101,43 @@ async function run(
     output += s;
   });
   return { result, output };
+}
+
+async function waitForKeypressListener(stdin: MockStdin): Promise<void> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (stdin.listenerCount("keypress") > 0) {
+      return;
+    }
+    await Promise.resolve();
+  }
+  throw new Error("keypress listener was not attached");
+}
+
+async function runPromptWithMockStdin(
+  stdin: MockStdin,
+  emitEvents: () => void,
+): Promise<{ readonly result: string; readonly output: string }> {
+  let output = "";
+  const originalStdin = process.stdin;
+  Object.defineProperty(process, "stdin", { configurable: true, value: stdin });
+  const emitKeypressEvents = vi
+    .spyOn(readline, "emitKeypressEvents")
+    .mockImplementation(() => undefined);
+  try {
+    const promise = promptForTopic({
+      isNonInteractiveFn: () => false,
+      write: (s) => {
+        output += s;
+      },
+    });
+    await waitForKeypressListener(stdin);
+    emitEvents();
+    const result = await promise;
+    return { result, output };
+  } finally {
+    emitKeypressEvents.mockRestore();
+    Object.defineProperty(process, "stdin", { configurable: true, value: originalStdin });
+  }
 }
 
 describe("processKeypressStream", () => {
@@ -75,6 +172,117 @@ describe("processKeypressStream", () => {
       run([char("h"), char("i"), altEnter, char("w"), char("o"), enter]),
     ).resolves.toMatchObject({
       result: "hi\nwo",
+    });
+  });
+
+  describe("promptForTopic", () => {
+    beforeEach(() => {
+      vi.unstubAllEnvs();
+      mockCreateInterface.mockReset();
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      vi.restoreAllMocks();
+    });
+
+    it("restores raw mode, bracketed paste, paused stdin state, and listeners after submit", async () => {
+      const stdin = new MockStdin();
+      stdin.isRaw = false;
+
+      const { result, output } = await runPromptWithMockStdin(stdin, () => {
+        stdin.emitKeypress(char("h"));
+        stdin.emitKeypress(char("i"));
+        stdin.emitKeypress(enter);
+      });
+
+      expect(result).toBe("hi");
+      expect(stdin.resume).toHaveBeenCalledOnce();
+      expect(stdin.pause).toHaveBeenCalledOnce();
+      expect(stdin.setRawMode).toHaveBeenNthCalledWith(1, true);
+      expect(stdin.setRawMode).toHaveBeenLastCalledWith(false);
+      expect(output).toContain("\x1b[?2004h");
+      expect(output).toContain("\x1b[?2004l");
+      expect(stdin.listenerCount("keypress")).toBe(0);
+      expect(stdin.off).toHaveBeenCalledWith("keypress", expect.any(Function));
+    });
+
+    it("restores terminal state and listeners after Ctrl+C abort", async () => {
+      const stdin = new MockStdin();
+      let output = "";
+      const originalStdin = process.stdin;
+      Object.defineProperty(process, "stdin", { configurable: true, value: stdin });
+      const emitKeypressEvents = vi
+        .spyOn(readline, "emitKeypressEvents")
+        .mockImplementation(() => undefined);
+      try {
+        const promise = promptForTopic({
+          isNonInteractiveFn: () => false,
+          write: (s) => {
+            output += s;
+          },
+        });
+        await waitForKeypressListener(stdin);
+        stdin.emitKeypress(ctrlC);
+
+        await expect(promise).rejects.toBeInstanceOf(CliUserError);
+      } finally {
+        emitKeypressEvents.mockRestore();
+        Object.defineProperty(process, "stdin", { configurable: true, value: originalStdin });
+      }
+
+      expect(stdin.pause).toHaveBeenCalledOnce();
+      expect(stdin.setRawMode).toHaveBeenLastCalledWith(false);
+      expect(output).toContain("\x1b[?2004l");
+      expect(stdin.listenerCount("keypress")).toBe(0);
+    });
+
+    it("restores terminal state and listeners after the keypress stream throws", async () => {
+      const stdin = new MockStdin();
+      const failure = new Error("pty read failed");
+      let output = "";
+
+      const failingSource: AsyncIterable<KeypressEvent> = {
+        [Symbol.asyncIterator](): AsyncIterator<KeypressEvent> {
+          return {
+            async next(): Promise<IteratorResult<KeypressEvent>> {
+              throw failure;
+            },
+          };
+        },
+      };
+
+      await expect(
+        promptForTopicFromStdin(stdin, failingSource, (s) => {
+          output += s;
+        }),
+      ).rejects.toBe(failure);
+
+      expect(stdin.pause).toHaveBeenCalledOnce();
+      expect(stdin.setRawMode).toHaveBeenLastCalledWith(false);
+      expect(output).toContain("\x1b[?2004l");
+      expect(stdin.listenerCount("keypress")).toBe(0);
+    });
+
+    it("preserves the cause when dumb-terminal readline fails unexpectedly", async () => {
+      vi.stubEnv("TERM", "dumb");
+      const failure = new Error("pty failed");
+      const close = vi.fn();
+      mockCreateInterface.mockReturnValue({
+        close,
+        question: vi.fn().mockRejectedValue(failure),
+      });
+
+      await expect(
+        promptForTopic({
+          isNonInteractiveFn: () => false,
+          write: () => undefined,
+        }),
+      ).rejects.toMatchObject({
+        message: "Topic input failed: pty failed",
+        cause: failure,
+      });
+      expect(close).toHaveBeenCalledOnce();
     });
   });
 
