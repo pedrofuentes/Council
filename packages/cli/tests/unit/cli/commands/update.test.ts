@@ -356,6 +356,58 @@ describe("council update — command behavior", () => {
     expect(stderr).toMatch(/lots of progress output/);
     expect(error).toBeInstanceOf(Error);
   });
+
+  it("sanitizes subprocess output with control bytes before displaying it", async () => {
+    // A hostile package-manager transcript: OSC title-set + BEL, a real error
+    // line, a CSI screen-clear introducing a forged "success" line, a C1 CSI
+    // introducer (0x9B), a CR, and a Bidi override (Trojan Source, CVE-2021-42574).
+    const hostile =
+      "\x1b]0;pwned\x07real-error\n\x1b[2Jfake-success\x9b31m\r\u202Egnisrever";
+    const runner: UpgradeRunner = vi.fn(async () => ({
+      exitCode: 1,
+      stdout: "",
+      stderr: hostile,
+    }));
+    const { stderr, error } = await runUpdate(["--yes"], {
+      runner,
+      fetchLatest: vi.fn(async () => "0.2.0"),
+      currentVersion: "0.1.0",
+      execPath: "/usr/local/bin/council",
+    });
+
+    // No raw terminal-control bytes survive to the writer.
+    expect(stderr).not.toContain("\x1b");
+    expect(stderr).not.toContain("\x07");
+    expect(stderr).not.toContain("\x9b");
+    expect(stderr).not.toContain("\u202e");
+
+    // The surfaced detail is collapsed onto a SINGLE line so multi-line output
+    // cannot forge terminal structure (e.g. a fake "success" line beneath the
+    // real error). The writer output is "Error: ... failed:\n<detail>\n".
+    const lines = stderr.split("\n").filter((line) => line.length > 0);
+    expect(lines).toHaveLength(2);
+    const detail = lines[1];
+    expect(detail).not.toMatch(/[\r\n]/);
+    expect(detail).toContain("real-error");
+    expect(detail).toContain("fake-success");
+
+    expect(error).toBeInstanceOf(Error);
+  });
+
+  it("surfaces legitimate plain output unchanged (modulo newline normalization)", async () => {
+    const runner: UpgradeRunner = vi.fn(async () => ({
+      exitCode: 1,
+      stdout: "",
+      stderr: "npm ERR! code E404",
+    }));
+    const { stderr } = await runUpdate(["--yes"], {
+      runner,
+      fetchLatest: vi.fn(async () => "0.2.0"),
+      currentVersion: "0.1.0",
+      execPath: "/usr/local/bin/council",
+    });
+    expect(stderr).toContain("npm ERR! code E404");
+  });
 });
 
 describe("classifyExecFileResult", () => {
