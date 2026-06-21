@@ -1,0 +1,176 @@
+---
+title: Use Built-in Panel Templates
+description: Leverage pre-configured expert panels for common decision scenarios.
+---
+
+**Time**: ~4 minutes  
+**Learning outcome**: Discover and use Council's built-in templates for specialized deliberation scenarios.
+
+## What you'll learn
+
+By the end of this tutorial, you will:
+
+- List all available built-in templates
+- Inspect template details to understand the expert panel composition
+- Run a debate using a template
+
+## Prerequisites
+
+- Completed [Tutorial 1: Install and First Debate](/Council/docs/tutorials/01-install-and-first-debate/)
+- Familiarity with `council convene`
+
+## What are templates?
+
+Templates are **pre-configured expert panels** designed for specific decision contexts. Each template includes:
+
+- **Curated experts** with specific roles and perspectives
+- **Optimized system prompts** tailored to the scenario
+- **Sensible defaults** for debate configuration
+
+Templates are optional — Council can auto-compose a panel for any topic — but they provide consistency and expertise for common use cases.
+
+## Step 1: List available templates
+
+See all built-in templates:
+
+```bash
+council templates
+```
+
+You'll see output like:
+
+```
+Built-in templates:
+  • architecture-review
+    Technical architecture decisions with CTO, Staff Engineer, SRE, PM
+
+  • startup-validation
+    Validate startup or product ideas with VC, Customer, Competitor, Distribution
+
+  • code-review
+    Code quality and design with Senior Dev, Security Auditor, Perf Engineer, Maintainer
+
+  • incident-postmortem
+    Production incident analysis with SRE, Eng Manager, Customer Advocate, Facilitator
+
+  • career-coaching
+    Career decisions with IC Mentor, Eng Manager, VP Eng, Career Coach
+
+Use with: council convene --template <name>
+```
+
+## Step 2: Inspect a template
+
+Before using a template, inspect it to see the full expert panel composition:
+
+```bash
+council templates inspect architecture-review
+```
+
+You'll see:
+
+- Template name and description
+- List of experts with roles and responsibilities
+- Default configuration (max rounds, debate mode, etc.)
+
+Example output:
+
+```
+Template: architecture-review
+Description: Technical architecture decisions with cross-functional perspectives
+
+Experts (4):
+  • Alex Chen (CTO)
+    Strategic technical vision, long-term system design, risk assessment
+
+  • Jordan Martinez (Staff Engineer)
+    Implementation feasibility, technical debt, engineering velocity
+
+  • Sam Okafor (Site Reliability Engineer)
+    Operational impact, scalability, observability, incident response
+
+  • Taylor Kim (Product Manager)
+    User impact, business value, time-to-market, stakeholder alignment
+
+Debate mode: panel
+Max rounds: 4
+```
+
+## Step 3: Run a template-based debate
+
+Use a template by passing the `--template` flag (or its shorter alias `--panel`):
+
+```bash
+council convene "Should we migrate from REST to GraphQL?" --template architecture-review
+```
+
+Or using the shorter `--panel` alias:
+
+```bash
+council convene "Should we migrate from REST to GraphQL?" --panel architecture-review
+```
+
+**What happens**:
+
+1. Council loads the `architecture-review` template
+2. The CTO, Staff Engineer, SRE, and PM experts are instantiated with their specialized prompts
+3. The debate proceeds with perspectives tailored to architectural decisions
+
+You'll see output like:
+
+```
+✓ Panel assembled: 4 experts (architecture-review template)
+  • Alex Chen (CTO) — claude-sonnet-4.5
+  • Jordan Martinez (Staff Engineer) — claude-sonnet-4.5
+  • Sam Okafor (Site Reliability Engineer) — claude-sonnet-4.5
+  • Taylor Kim (Product Manager) — claude-sonnet-4.5
+
+━━━ Round 1 ━━━
+
+[Alex Chen — CTO]
+GraphQL gives clients query flexibility, but we need to be
+honest about the operational cost...
+
+[Sam Okafor — SRE]
+Alex is underselling the observability nightmare. With REST,
+every endpoint is a discrete trace. With GraphQL...
+```
+
+## When to use templates vs. auto-composition
+
+| Use auto-composition when...             | Use templates when...                        |
+| ---------------------------------------- | -------------------------------------------- |
+| Exploring a new topic or question        | You need consistent panel composition        |
+| You want Council to design the panel     | The scenario is a known domain (e.g., code review) |
+| The topic doesn't fit a template         | You're running repeated debates on similar topics |
+
+## What you accomplished
+
+- Listed all built-in templates
+- Inspected a template's expert panel configuration
+- Ran a debate using a specialized template
+
+## Next steps
+
+- **Tutorial 4**: [Resume a Debate](/Council/docs/tutorials/04-resume-a-debate/) — Continue a prior debate or view its transcript
+- **Try other templates**: Experiment with `startup-validation`, `code-review`, or `career-coaching`
+- **Customize templates**: Once comfortable, explore creating custom panel definitions
+
+## Commands introduced
+
+| Command                        | Purpose                                    |
+| ------------------------------ | ------------------------------------------ |
+| `council templates`            | List all built-in panel templates          |
+| `council templates inspect`    | Show detailed template configuration       |
+| `council convene --template`   | Run debate with specified template         |
+| `council convene --panel`      | Shorter alias for `--template`             |
+
+## Built-in template reference
+
+| Template                  | Use for...                                  | Experts                                    |
+| ------------------------- | ------------------------------------------- | ------------------------------------------ |
+| `architecture-review`     | Technical architecture decisions            | CTO, Staff Engineer, SRE, Product Manager  |
+| `startup-validation`      | Validating startup or product ideas         | VC Partner, Target Customer, Competitor, Distribution Expert |
+| `code-review`             | Code quality and design decisions           | Senior Dev, Security Auditor, Performance Engineer, Maintainer |
+| `incident-postmortem`     | Production incident analysis                | SRE, Engineering Manager, Customer Advocate, Facilitator |
+| `career-coaching`         | Career and professional development decisions | IC Mentor, Engineering Manager, VP Engineering, Career Coach |

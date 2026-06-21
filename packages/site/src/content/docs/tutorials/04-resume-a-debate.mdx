@@ -1,0 +1,170 @@
+---
+title: Resume a Debate
+description: Continue a previous debate, view transcripts, and manage saved sessions.
+---
+
+**Time**: ~3 minutes  
+**Learning outcome**: List saved debates, view transcripts, and continue deliberations with follow-up questions.
+
+## What you'll learn
+
+By the end of this tutorial, you will:
+
+- List all saved debate sessions
+- View a debate transcript without continuing it
+- Resume a debate with a follow-up question
+
+## Prerequisites
+
+- Completed [Tutorial 1: Install and First Debate](/Council/docs/tutorials/01-install-and-first-debate/)
+- At least one completed debate (from `council convene`)
+
+## What is a session?
+
+Every `council convene` creates a **session** — a saved record of the panel, experts, and all debate turns. Sessions persist in Council's local database (`~/.council/council.db`) so you can:
+
+- Review past deliberations
+- Continue debates with new questions
+- Export or share decisions made weeks or months ago
+
+## Step 1: List your sessions
+
+See all saved debates:
+
+```bash
+council sessions
+```
+
+You'll see output like:
+
+```
+Saved sessions:
+  ✓ analytics-platform-3vk9j2 (completed)
+    Topic: Should we build our own analytics platform or buy?
+    Experts: 3 · Rounds: 4 · Last activity: 2 hours ago
+
+  ✓ graphql-migration-8xm2k1 (completed)
+    Topic: Should we migrate from REST to GraphQL?
+    Experts: 4 · Rounds: 3 · Last activity: 1 day ago
+```
+
+Each session shows:
+
+- **Status icon**: ✓ (completed), ⏸ (interrupted), ⚠ (failed)
+- **Panel identifier**: the name you'll use to resume or export
+- **Topic**: the original question
+- **Metadata**: expert count, rounds, timestamp
+
+## Step 2: View a transcript (read-only)
+
+To replay a debate without continuing it:
+
+```bash
+council resume <panel-name>
+```
+
+Replace `<panel-name>` with the identifier from `council sessions` (e.g., `analytics-platform-3vk9j2`).
+
+**What happens**:
+
+Council streams the saved transcript to your terminal:
+
+```
+━━━ Round 1 ━━━
+
+[Priya Mehta — CTO]
+Building in-house gives us full control, but the cost is real...
+
+[James Whitfield — CFO]
+Three engineers at $180K fully loaded is $270K just for the build phase...
+
+━━━ Synthesis ━━━
+The panel converges on one risk: the 6-month data gap...
+```
+
+No LLM calls are made — this is a pure read from the database. Fast and offline-friendly.
+
+## Step 3: Resume with a follow-up question
+
+To continue a debate with new input, use the `--prompt` flag:
+
+```bash
+council resume <panel-name> --prompt "What if our data volume is 10x larger than expected?"
+```
+
+**What happens**:
+
+1. Council loads the saved panel and experts
+2. A new debate round begins with your follow-up question
+3. Experts build on their prior positions (if memory is enabled)
+4. The session is updated with the new turns
+
+Example output:
+
+```
+Resuming panel: analytics-platform-3vk9j2
+Topic: Should we build our own analytics platform or buy?
+
+━━━ Follow-up ━━━
+
+[Priya Mehta — CTO]
+At 10x scale, the vendor cost equation flips. Mixpanel charges
+per event — we'd be looking at $30K/month, not $3K...
+
+[James Whitfield — CFO]
+True, but the build cost also scales. We'd need distributed
+tracing, partitioning, and a dedicated data platform team...
+```
+
+## Step 4: Resume the most recent debate (shortcut)
+
+If you just want to continue your latest session without looking up the panel name:
+
+```bash
+council resume --latest --prompt "What about compliance requirements?"
+```
+
+The `--latest` flag skips name resolution and resumes the most recent panel automatically.
+
+## What you accomplished
+
+- Listed all saved debate sessions
+- Viewed a debate transcript in read-only mode
+- Continued a debate with a follow-up question
+- Learned the `--latest` shortcut for quick resumption
+
+## Next steps
+
+- **Combine with export**: After resuming, run `council export <panel-name>` to capture the full deliberation
+- **Conclude a resumed debate**: Use `council conclude <panel-name>` to synthesize the extended discussion
+- **Explore memory**: Read about Council's memory system to understand how experts recall prior debates
+
+## Commands introduced
+
+| Command                             | Purpose                                         |
+| ----------------------------------- | ----------------------------------------------- |
+| `council sessions`                  | List all saved debate sessions                  |
+| `council resume <panel>`            | View debate transcript (read-only)              |
+| `council resume <panel> --prompt`   | Continue debate with follow-up question         |
+| `council resume --latest --prompt`  | Resume most recent debate                       |
+
+## Session management tips
+
+- **Panel identifiers**: Council auto-generates unique IDs (e.g., `analytics-platform-3vk9j2`). You can also use prefix matching — `council resume analytics` works if only one panel starts with "analytics".
+- **Interrupted debates**: If you Ctrl+C during a debate, it's saved with `interrupted` status and can be resumed.
+- **Transcript formats**: Use `council resume <panel> --format json` to get machine-readable NDJSON output instead of pretty-printed text.
+
+## What's next?
+
+You've completed the beginner tutorial ladder! You now know how to:
+
+1. Install and run your first debate
+2. Conclude and export decisions
+3. Use built-in templates for specialized panels
+4. Resume and continue saved debates
+
+**Continue learning**:
+
+- **How-To Guides**: Task-oriented recipes for specific workflows
+- **Reference**: Complete command and configuration documentation
+- **Explanation**: Deep dives into Council's architecture and design
