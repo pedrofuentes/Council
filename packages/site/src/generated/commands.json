@@ -610,6 +610,15 @@
             "negate": false
           },
           {
+            "flags": "--no-conclude",
+            "description": "Skip automatic conclusion synthesis after a completed debate",
+            "long": "--no-conclude",
+            "required": false,
+            "optional": false,
+            "variadic": false,
+            "negate": true
+          },
+          {
             "flags": "--verbose",
             "description": "Show template migration notices and zero-change summaries",
             "long": "--verbose",
