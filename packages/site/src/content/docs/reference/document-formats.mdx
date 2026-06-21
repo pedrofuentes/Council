@@ -1,0 +1,167 @@
+---
+title: Document Formats
+description: File formats supported for expert document ingestion.
+---
+
+Council can ingest documents to train persona experts and enrich panel context. Support varies from native (text-based) to rich (converted) to AI-assisted (experimental).
+
+## Supported Formats
+
+View the complete, up-to-date list from your current installation:
+
+```bash
+council docs formats
+```
+
+### Native (Text-Based)
+
+These formats are parsed directly with no conversion overhead.
+
+| Extension | Description |
+|-----------|-------------|
+| `.md`, `.markdown` | Markdown |
+| `.txt` | Plain text |
+| `.html`, `.htm` | HTML |
+
+### Rich Documents (Converted to Text)
+
+These formats are converted to plain text using specialized extractors.
+
+| Extension | Description | Notes |
+|-----------|-------------|-------|
+| `.pdf` | PDF | Text extraction via native parser |
+| `.docx` | Word document | OpenXML format |
+| `.pptx` | PowerPoint presentation | Slide text + speaker notes |
+| `.xlsx` | Excel spreadsheet | Sheet names, cell values |
+| `.xls` | Legacy Excel | Re-save as `.xlsx` recommended |
+| `.csv` | Comma-separated values | Column headers + rows |
+| `.tsv` | Tab-separated values | Column headers + rows |
+| `.rtf` | Rich Text Format | Text + basic formatting |
+| `.odt` | OpenDocument Text | LibreOffice/OpenOffice |
+| `.ods` | OpenDocument Spreadsheet | LibreOffice/OpenOffice |
+| `.odp` | OpenDocument Presentation | LibreOffice/OpenOffice |
+
+## File Size Limits
+
+**Default:** 50 MB per file
+
+Files exceeding this limit are rejected with an `oversize-file` error before any processing.
+
+**Configure:**
+
+```bash
+council config set documents.maxFileSizeMB 100
+```
+
+**Range:** 1–500 MB
+
+## AI Extraction (Experimental)
+
+For formats without a native extractor, Council can optionally use AI-based extraction to build a structured text description. **This never sends files to an external service** — AI extraction runs locally via the configured engine (GitHub Copilot).
+
+### Modes
+
+| Mode | Behavior |
+|------|----------|
+| `off` | (Default) Reject unknown formats. No AI extraction. |
+| `ask` | Prompt user for approval before extracting each file. |
+| `auto` | Automatically extract unknown formats without prompting. |
+
+**Configure:**
+
+```bash
+council config set documents.aiExtraction ask
+```
+
+**When to Enable:**
+
+- Panels that need otherwise-unreadable files (e.g., proprietary formats, screenshots with text)
+- You want structured descriptions of images, diagrams, or scanned PDFs (OCR)
+- Experimenting with new document types
+
+**Performance Note:** AI extraction is slower and consumes API tokens. Use sparingly for production workflows.
+
+### Whitelist Extensions
+
+By default, AI extraction applies to **all** unknown formats. Restrict to specific extensions:
+
+```bash
+council config set documents.aiExtractionAllowedExtensions '[".png", ".jpg", ".bmp"]'
+```
+
+**Empty array = all extensions eligible.**
+
+## Checking Supported Formats
+
+### CLI Command
+
+```bash
+council docs formats
+```
+
+**Output includes:**
+
+- Native formats
+- Rich document formats
+- AI extraction status and mode
+- File size limit
+- Configuration instructions
+
+### Programmatic Check
+
+```typescript
+import { getSupportedExtensions } from "@council-ai/cli/core/documents/extractors";
+
+const extensions = getSupportedExtensions();
+console.log(extensions); // [".md", ".txt", ".pdf", ...]
+```
+
+## Corpus Management
+
+After adding documents to a panel's `docs/` folder:
+
+### Review Pending Files
+
+```bash
+council docs review <panel>
+```
+
+Lists files that couldn't be processed (unsupported format, extraction failed, AI-eligible).
+
+**Exit code:** Non-zero if any files are pending review (useful in CI).
+
+### Health Check
+
+```bash
+council docs doctor <panel>
+```
+
+Shows:
+
+- Total indexed documents + word count
+- Pending review count
+- Corrupt file count
+- Configured AI extraction mode
+- File size limit
+
+### Re-Index Documents
+
+```bash
+council docs extract <panel>
+```
+
+Re-runs extraction on pending files (e.g., after enabling AI extraction or adding new documents).
+
+## Configuration Reference
+
+| Config Key | Type | Default | Description |
+|------------|------|---------|-------------|
+| `expert.supportedFormats` | string[] | (see above) | File extensions eligible for ingestion. |
+| `documents.aiExtraction` | `off` \| `ask` \| `auto` | `off` | AI-based extraction fallback mode. |
+| `documents.aiExtractionAllowedExtensions` | string[] | `[]` | Whitelist for AI extraction. Empty = all. |
+| `documents.maxFileSizeMB` | integer | 50 | Maximum file size (1–500 MB). |
+
+## Related
+
+- [Configuration](/Council/docs/reference/configuration/) — Full config schema
+- [Expert YAML Format](/Council/docs/reference/expert-yaml/) — `docsPath` field for persona experts

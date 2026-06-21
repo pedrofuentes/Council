@@ -1,0 +1,85 @@
+---
+title: Panel YAML Format
+description: Schema and examples for panel definition files.
+---
+
+Panel definitions specify a reusable group of experts with shared defaults. Store them as `.yaml` files in `~/Council/panels/` (user panels) or use bundled templates that ship with Council.
+
+## Schema
+
+### Top-Level Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Panel name (e.g., `code-review`, `architecture-review`). |
+| `description` | string | No | Human-readable summary of the panel's purpose. |
+| `defaults` | object | No | Panel-level defaults. See [Defaults Object](#defaults-object). |
+| `experts` | array | Yes | List of expert entries. Min 1, max 8. See [Expert Entries](#expert-entries). |
+
+### Defaults Object
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `mode` | `freeform` \| `structured` | No | Debate mode. Defaults to `freeform`. |
+| `maxRounds` | integer | No | Maximum debate rounds (1–20). Falls back to global config default (4). |
+| `model` | string | No | Provider-agnostic model override (e.g., `claude-sonnet-4.5`). |
+
+### Expert Entries
+
+Each entry in the `experts` array is **either**:
+
+1. **Slug reference** (string): References an expert from your library by slug (e.g., `senior`, `cto`). Council resolves it from `~/Council/experts/`.
+2. **Inline definition** (object): A full expert definition embedded directly in the panel. See [Expert YAML Format](/Council/docs/reference/expert-yaml/) for the schema.
+
+**Constraint**: All expert slugs within a panel must be unique (no duplicates).
+
+## Example: User Panel
+
+```yaml
+name: code-review
+description: Multi-perspective code review with separated concerns.
+defaults:
+  mode: freeform
+  maxRounds: 3
+
+experts:
+  - senior      # slug reference
+  - security    # slug reference
+  - slug: maintainer
+    displayName: Future Maintainer
+    role: The engineer who will inherit this code in 6-12 months
+    expertise:
+      weightedEvidence:
+        - Implicit assumptions encoded in arg order or magic strings
+        - Error messages that explain why, not just what
+      notExpertIn:
+        - this PR's specific business context
+    epistemicStance: >
+      You will inherit this code, and you will not have the context
+      the author has today.
+```
+
+## Panel Precedence
+
+User panels in `~/Council/panels/` **override** bundled templates with the same name. This lets you customize stock panels without modifying the package.
+
+## Bundled Templates
+
+Council ships several pre-configured panels:
+
+- `code-review` — Senior Dev, Security Auditor, Performance Engineer, Future Maintainer
+- `architecture-review` — System Architect, SRE, Security Architect, Business Analyst
+- `incident-postmortem` — Incident Commander, Site Reliability Engineer, Security Analyst, Customer Success
+- `career-coaching` — Career Advisor, Mentor, Skills Coach
+- `startup-validation` — Market Analyst, Product Strategist, Financial Advisor
+
+List all available templates:
+
+```bash
+council panel list --templates
+```
+
+## Related
+
+- [Expert YAML Format](/Council/docs/reference/expert-yaml/)
+- [Configuration](/Council/docs/reference/configuration/)

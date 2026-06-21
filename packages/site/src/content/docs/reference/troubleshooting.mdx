@@ -1,0 +1,501 @@
+---
+title: Troubleshooting
+description: Common issues and solutions for Council.
+---
+
+Solutions for common issues when installing, configuring, or using Council.
+
+## Installation & Setup
+
+### Command Not Found: `council`
+
+**Symptom:** Shell reports `command not found: council` after installation.
+
+**Cause:** `pnpm` global bin directory is not in your `PATH`.
+
+**Solution:**
+
+1. Find your pnpm global bin path:
+
+```bash
+pnpm bin -g
+```
+
+2. Add it to your `PATH` (in `~/.zshrc`, `~/.bashrc`, or equivalent):
+
+```bash
+export PATH="$(pnpm bin -g):$PATH"
+```
+
+3. Reload your shell:
+
+```bash
+source ~/.zshrc  # or ~/.bashrc
+```
+
+---
+
+### GitHub Copilot Authentication Fails
+
+**Symptom:** `council convene` exits with code `2` and error `NOT_AUTHENTICATED`.
+
+**Cause:** GitHub Copilot is not authenticated or the session expired.
+
+**Solution:**
+
+1. Verify Copilot subscription:
+
+```bash
+gh copilot status
+```
+
+2. Re-authenticate:
+
+```bash
+gh auth login
+```
+
+3. Verify Council detects Copilot:
+
+```bash
+council doctor
+```
+
+Look for:
+
+```
+✓ GitHub Copilot: connected
+```
+
+**Still failing?** Check `COPILOT_CLI_PATH` override:
+
+```bash
+unset COPILOT_CLI_PATH
+council doctor
+```
+
+---
+
+## Configuration
+
+### Config Changes Not Taking Effect
+
+**Symptom:** Changes to `~/.council/config.yaml` are ignored.
+
+**Cause:**
+
+1. Syntax error in YAML (invalid indentation, missing colons)
+2. Config cached by a long-running process
+3. CLI flags override config file
+
+**Solution:**
+
+1. Validate YAML syntax:
+
+```bash
+cat ~/.council/config.yaml | yq eval
+# (install yq: brew install yq)
+```
+
+2. Check active config:
+
+```bash
+council config get
+```
+
+3. Override with CLI flags for testing:
+
+```bash
+council convene tech-review --max-rounds 5
+```
+
+---
+
+### Invalid Config Key Error
+
+**Symptom:** `council config set <key> <value>` fails with "Invalid key."
+
+**Cause:** Typo in key name or unsupported nesting.
+
+**Solution:** Use dot notation for nested keys:
+
+```bash
+# ✅ Correct
+council config set defaults.maxRounds 5
+council config set documents.aiExtraction ask
+
+# ❌ Incorrect
+council config set maxRounds 5  # Missing 'defaults.' prefix
+```
+
+**See:** [Configuration Reference](/Council/docs/reference/configuration/)
+
+---
+
+## Panels & Experts
+
+### Panel Not Found
+
+**Symptom:** `council convene my-panel` fails with "Panel template 'my-panel' not found."
+
+**Cause:**
+
+1. Panel file doesn't exist
+2. Typo in panel name
+3. Panel file has syntax error
+
+**Solution:**
+
+1. List available panels:
+
+```bash
+council panel list
+```
+
+2. Check user panels:
+
+```bash
+ls ~/Council/panels/
+```
+
+3. Validate panel YAML syntax:
+
+```bash
+cat ~/Council/panels/my-panel.yaml | yq eval
+```
+
+**Tip:** Panel names are **case-sensitive** and must match the file name (without `.yaml` extension).
+
+---
+
+### Expert Slug Not Found in Panel
+
+**Symptom:** Error: "Expert 'security' is not in this panel."
+
+**Cause:** Panel YAML references an expert slug that doesn't exist in `~/Council/experts/`.
+
+**Solution:**
+
+1. List available experts:
+
+```bash
+council expert list
+```
+
+2. Create the missing expert:
+
+```bash
+# Copy a template or define manually
+cp examples/security-expert.yaml ~/Council/experts/security.yaml
+```
+
+3. Check panel YAML references:
+
+```bash
+cat ~/Council/panels/tech-review.yaml
+# Ensure `experts:` list matches available expert slugs
+```
+
+---
+
+### Duplicate Expert Slug Error
+
+**Symptom:** "duplicate expert slug 'cto' — slugs must be unique within a panel"
+
+**Cause:** Panel YAML lists the same expert slug twice (or two experts with the same slug).
+
+**Solution:** Edit panel YAML and remove duplicates:
+
+```yaml
+experts:
+  - cto
+  - cto  # ❌ Duplicate
+```
+
+Fix:
+
+```yaml
+experts:
+  - cto
+  - cfo  # ✅ Unique slugs
+```
+
+---
+
+## Documents
+
+### Unsupported File Format
+
+**Symptom:** `council docs review <panel>` lists files as "unsupported format."
+
+**Cause:** File extension is not in `config.expert.supportedFormats` or no native extractor exists.
+
+**Solutions:**
+
+1. **Check supported formats:**
+
+```bash
+council docs formats
+```
+
+2. **Add extension to supported list:**
+
+```bash
+council config set expert.supportedFormats '[".md",".txt",".pdf",".custom"]'
+```
+
+3. **Enable AI extraction (experimental):**
+
+```bash
+council config set documents.aiExtraction ask
+council docs extract <panel>
+```
+
+**See:** [Document Formats](/Council/docs/reference/document-formats/)
+
+---
+
+### File Size Exceeded
+
+**Symptom:** Error: "File exceeds maximum size (50 MB): oversize-file"
+
+**Cause:** Document exceeds `config.documents.maxFileSizeMB` limit.
+
+**Solution:** Increase the limit:
+
+```bash
+council config set documents.maxFileSizeMB 100
+```
+
+**Range:** 1–500 MB
+
+**Alternative:** Split the document or summarize it into a smaller file.
+
+---
+
+### AI Extraction Stuck on "Ask" Mode
+
+**Symptom:** `council docs extract` prompts for every file, slowing down corpus building.
+
+**Cause:** `documents.aiExtraction` is set to `ask`.
+
+**Solution:** Switch to `auto` for batch processing:
+
+```bash
+council config set documents.aiExtraction auto
+council docs extract <panel>
+```
+
+**Revert** to `ask` or `off` after processing if desired.
+
+---
+
+## Performance & Networking
+
+### Slow Response Times
+
+**Symptom:** Debates take minutes per response.
+
+**Possible Causes:**
+
+1. Large document corpus (persona expert indexes huge files)
+2. High `maxWordsPerResponse` (forces longer responses)
+3. Network latency to GitHub Copilot API
+4. Rate limiting
+
+**Solutions:**
+
+1. **Reduce response length:**
+
+```bash
+council config set defaults.maxWordsPerResponse 150
+```
+
+2. **Prune document corpus:**
+
+```bash
+# Check corpus size
+council docs doctor <panel>
+
+# Remove or archive old documents
+```
+
+3. **Check network:**
+
+```bash
+council doctor
+# Look for "Network: reachable" status
+```
+
+4. **Check rate limits:**
+
+```bash
+gh copilot status
+# Look for usage/quota info
+```
+
+---
+
+### Network Error (Exit Code 3)
+
+**Symptom:** `council convene` exits with code `3` and `NETWORK` or `RATE_LIMITED` error.
+
+**Cause:**
+
+1. No internet connection
+2. GitHub API unreachable
+3. Rate limit exceeded
+
+**Solutions:**
+
+1. **Check connectivity:**
+
+```bash
+ping github.com
+```
+
+2. **Retry after rate limit resets:**
+
+```bash
+# Wait a few minutes, then retry
+council convene tech-review
+```
+
+3. **Use `--max-rounds` to reduce API calls:**
+
+```bash
+council convene tech-review --max-rounds 2
+```
+
+**See:** [Exit Codes](/Council/docs/reference/exit-codes/)
+
+---
+
+## Output & Rendering
+
+### Garbled Output / No Color
+
+**Symptom:** Terminal shows ANSI escape codes as literal text, or no color.
+
+**Cause:**
+
+1. Terminal doesn't support ANSI codes (`TERM=dumb`)
+2. Output piped to file or `less`
+3. `NO_COLOR` environment variable set
+
+**Solutions:**
+
+1. **Force plain output:**
+
+```bash
+council convene tech-review --format plain
+```
+
+2. **Disable color:**
+
+```bash
+export NO_COLOR=1
+council convene tech-review
+```
+
+3. **Use ASCII-only charset:**
+
+```bash
+export COUNCIL_ASCII=1
+council convene tech-review
+```
+
+**See:** [Environment Variables](/Council/docs/reference/environment-variables/)
+
+---
+
+### Unicode Symbols Not Rendering
+
+**Symptom:** Boxes, checkmarks, or progress indicators show as `?` or broken glyphs.
+
+**Cause:** Terminal font doesn't support Unicode.
+
+**Solution:**
+
+1. **Force ASCII charset:**
+
+```bash
+export COUNCIL_ASCII=1
+council convene tech-review
+```
+
+2. **Use a modern terminal font** (e.g., JetBrains Mono, Fira Code, Cascadia Code).
+
+---
+
+## Debugging
+
+### Enable Verbose Logging
+
+Council logs detailed errors to `~/.council/logs/`. Check there first when troubleshooting.
+
+**View recent errors:**
+
+```bash
+tail -f ~/.council/logs/error.log
+```
+
+---
+
+### Run Health Check
+
+```bash
+council doctor
+```
+
+**Output includes:**
+
+- GitHub Copilot connection status
+- Config file validity
+- Database health
+- Network reachability
+- Installed version
+
+---
+
+### Reset to Defaults
+
+**Nuclear option:** Delete runtime directory and start fresh.
+
+```bash
+# Backup first!
+cp -r ~/.council ~/.council.backup
+
+# Reset
+rm -rf ~/.council
+council config get  # Regenerates defaults
+```
+
+---
+
+## Getting Help
+
+### Report a Bug
+
+1. **Check logs:**
+
+```bash
+cat ~/.council/logs/error.log
+```
+
+2. **Run diagnostics:**
+
+```bash
+council doctor > diagnostics.txt
+```
+
+3. **Open an issue:** Include diagnostics, error logs, and reproduction steps.
+
+---
+
+### Further Reading
+
+- [Configuration](/Council/docs/reference/configuration/)
+- [Environment Variables](/Council/docs/reference/environment-variables/)
+- [Exit Codes](/Council/docs/reference/exit-codes/)
+- [Data Locations](/Council/docs/reference/data-locations/)
