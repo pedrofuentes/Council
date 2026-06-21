@@ -24,6 +24,7 @@ interface DoctorDepsLike {
     source: "live" | "static";
   }>;
   readonly createSpinner?: () => SpinnerLike;
+  readonly resolveCliPath?: () => string | undefined;
 }
 
 const buildDoctorCommandWithDeps = buildDoctorCommand as unknown as (
@@ -47,12 +48,15 @@ describe("buildDoctorCommand", () => {
   let testHome: string;
   let originalHome: string | undefined;
   let originalDataHome: string | undefined;
+  let originalCliPath: string | undefined;
 
   beforeEach(async () => {
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-doctor-test-"));
     originalHome = process.env["COUNCIL_HOME"];
     originalDataHome = process.env["COUNCIL_DATA_HOME"];
+    originalCliPath = process.env["COPILOT_CLI_PATH"];
     process.env["COUNCIL_HOME"] = testHome;
+    delete process.env["COPILOT_CLI_PATH"];
   });
 
   afterEach(async () => {
@@ -60,6 +64,8 @@ describe("buildDoctorCommand", () => {
     else process.env["COUNCIL_HOME"] = originalHome;
     if (originalDataHome === undefined) delete process.env["COUNCIL_DATA_HOME"];
     else process.env["COUNCIL_DATA_HOME"] = originalDataHome;
+    if (originalCliPath === undefined) delete process.env["COPILOT_CLI_PATH"];
+    else process.env["COPILOT_CLI_PATH"] = originalCliPath;
     await fs.rm(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
@@ -365,10 +371,11 @@ describe("buildDoctorCommand", () => {
     await runDoctor([], { onlineProbe, createSpinner });
 
     expect(createSpinner).toHaveBeenCalledTimes(1);
-    // 6 base checks + 1 default-model-access check (online runs by default).
-    expect(start).toHaveBeenCalledTimes(7);
-    expect(stop).toHaveBeenCalledTimes(7);
+    // 7 base checks + 1 default-model-access check (online runs by default).
+    expect(start).toHaveBeenCalledTimes(8);
+    expect(stop).toHaveBeenCalledTimes(8);
     expect(start).toHaveBeenCalledWith("Node.js version");
+    expect(start).toHaveBeenCalledWith("Copilot CLI");
     expect(start).toHaveBeenCalledWith("Default model access");
   });
 
@@ -384,18 +391,64 @@ describe("buildDoctorCommand", () => {
 
     expect(withSpinner).toBe(noSpinner);
   });
+
+  it("doctor passes the Copilot CLI check when the entry resolves", async () => {
+    const cliEntry = path.join(testHome, "npm-loader.js");
+    await fs.writeFile(cliEntry, "// loader", "utf-8");
+
+    const output = await runDoctor(["--offline"], { resolveCliPath: () => cliEntry });
+
+    expect(output).toContain("Copilot CLI");
+    expect(output).not.toContain("known Windows path-resolution issue");
+  });
+
+  it("doctor prints actionable remediation when the Copilot CLI path cannot be resolved", async () => {
+    const output = await runDoctor(["--offline"], { resolveCliPath: () => undefined });
+
+    expect(output).toContain("Copilot CLI");
+    expect(output).toContain("COPILOT_CLI_PATH");
+    expect(output).toContain("@github/copilot/npm-loader.js");
+  });
+
+  it("doctor flags the bogus @github/index.js CLI path", async () => {
+    const output = await runDoctor(["--offline"], {
+      resolveCliPath: () => "/proj/node_modules/@github/index.js",
+    });
+
+    expect(output).toContain("COPILOT_CLI_PATH");
+    expect(output).toContain("@github/copilot/npm-loader.js");
+  });
+
+  it("doctor respects an existing COPILOT_CLI_PATH override", async () => {
+    process.env["COPILOT_CLI_PATH"] = "/custom/copilot/entry.js";
+
+    const output = await runDoctor(["--offline"], { resolveCliPath: () => undefined });
+
+    expect(output).toContain("COPILOT_CLI_PATH override");
+    expect(output).not.toContain("known Windows path-resolution issue");
+  });
+
+  it("doctor Copilot CLI remediation does not leak the home path or username", async () => {
+    const output = await runDoctor(["--offline"], { resolveCliPath: () => undefined });
+    const remediationLine =
+      output.split("\n").find((line) => line.includes("COPILOT_CLI_PATH")) ?? "";
+
+    expect(remediationLine).toContain("npm-loader.js");
+    expect(remediationLine).not.toContain(os.homedir());
+    expect(remediationLine).not.toContain(os.userInfo().username);
+  });
 });
 
 describe("checkNodeVersion", () => {
-  it("fails for Node older than 22", async () => {
-    const result = await checkNodeVersion("21.5.0");
+  it("fails for Node older than 24", async () => {
+    const result = await checkNodeVersion("23.5.0");
     expect(result.status).toBe("fail");
-    expect(result.detail).toContain("22 or newer");
+    expect(result.detail).toContain("24 or newer");
   });
 
-  it("passes for Node 22 and newer", async () => {
-    const result = await checkNodeVersion("22.0.0");
+  it("passes for Node 24 and newer", async () => {
+    const result = await checkNodeVersion("24.0.0");
     expect(result.status).toBe("pass");
-    expect(result.detail).toContain(">= 22 required");
+    expect(result.detail).toContain(">= 24 required");
   });
 });
