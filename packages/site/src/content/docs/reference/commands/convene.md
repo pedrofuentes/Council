@@ -17,7 +17,7 @@ council convene [options] [topic]
 
 | Argument | Description | Default |
 | --- | --- | --- |
-| `[topic]` | The topic / question for the panel to debate (optional when --prompt-file is used) | — |
+| `[topic]` | The topic / question for the panel to debate (optional when --prompt-file is used; omit in a terminal to enter it interactively) | — |
 
 ## Options
 

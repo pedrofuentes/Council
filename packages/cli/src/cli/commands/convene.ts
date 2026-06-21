@@ -1,5 +1,5 @@
 /**
- * `council convene <topic> [--template <name>] --engine <kind>` — runs a full
+ * `council convene [topic] [--template <name>] --engine <kind>` — runs a full
  * panel debate end-to-end and persists the result to the local SQLite DB.
  *
  * `--template` is optional: when omitted, convene auto-composes a panel from
@@ -211,7 +211,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
     )
     .argument(
       "[topic]",
-      "The topic / question for the panel to debate (optional when --prompt-file is used)",
+      "The topic / question for the panel to debate (optional when --prompt-file is used; omit in a terminal to enter it interactively)",
     )
     // Keep stray operands instead of erroring so warnOnStrayExpertArgs can flag
     // bare slugs passed without --experts (e.g. PowerShell splitting --experts a,b,c).
