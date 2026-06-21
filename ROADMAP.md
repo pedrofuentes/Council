@@ -148,24 +148,36 @@
 
 ---
 
+## 1.0 Readiness ⬜
+
+> Release-readiness criteria for a stable 1.0 launch.
+
+- ⬜ **Privacy Policy** — Publish `PRIVACY.md` covering data handling, storage, and third-party provider behavior
+- ⬜ **Windows/macOS CI** — Verify the CLI across supported desktop platforms
+- ⬜ **Direct Provider Abstraction** — Add OpenAI/Anthropic provider support without requiring Copilot
+- ⬜ **Stability, SemVer, and Deprecation Policy** — Define compatibility guarantees and migration expectations
+- ⬜ **Supply-chain Baseline** — Establish CodeQL, Scorecard, and SBOM coverage
+
+---
+
 ## Key Milestones
 
-| Milestone                                              | Phase | Status                |
-| ------------------------------------------------------ | ----- | --------------------- |
-| `pnpm build && pnpm test` pass                         | 1     | ✅ Done               |
-| `council convene "topic"` produces multi-expert debate | 1     | ✅ Done               |
-| Structured 4-phase choreography                        | 2     | ✅ Done               |
-| Individual expert chat                                 | 2     | ✅ Done               |
-| Session resume + export + memory CLI                   | 3     | ✅ Done               |
-| Human-as-expert participation                          | 3     | ✅ Done               |
-| Panel auto-composition (no `--template` required)      | 2     | ✅ Done               |
-| Experts remember across sessions                       | 3     | ✅ Done               |
-| `council conclude` with decision matrix                | 2     | ✅ Done               |
-| Rich Ink terminal UI                                   | 3     | ✅ Shipped            |
-| Experts as standalone reusable entities                | 4     | ✅ Done               |
-| Persistent 1:1 and panel chat                          | 5     | ✅ Done               |
-| Document-driven persona experts                        | 6     | ✅ Done (6.5 deferred)|
-| Cross-panel expert awareness                           | 7     | ✅ Done               |
-| UX polish: 106 findings from cross-model audit         | 7.5   | ✅ Done               |
-| PM-driven QA fixes (45 findings, 28 fixed)             | 7.6   | ✅ Done               |
-| Published to npm as `@council-ai/cli`                  | 8     | ⬜ Planned            |
+| Milestone                                              | Phase | Status                 |
+| ------------------------------------------------------ | ----- | ---------------------- |
+| `pnpm build && pnpm test` pass                         | 1     | ✅ Done                |
+| `council convene "topic"` produces multi-expert debate | 1     | ✅ Done                |
+| Structured 4-phase choreography                        | 2     | ✅ Done                |
+| Individual expert chat                                 | 2     | ✅ Done                |
+| Session resume + export + memory CLI                   | 3     | ✅ Done                |
+| Human-as-expert participation                          | 3     | ✅ Done                |
+| Panel auto-composition (no `--template` required)      | 2     | ✅ Done                |
+| Experts remember across sessions                       | 3     | ✅ Done                |
+| `council conclude` with decision matrix                | 2     | ✅ Done                |
+| Rich Ink terminal UI                                   | 3     | ✅ Shipped             |
+| Experts as standalone reusable entities                | 4     | ✅ Done                |
+| Persistent 1:1 and panel chat                          | 5     | ✅ Done                |
+| Document-driven persona experts                        | 6     | ✅ Done (6.5 deferred) |
+| Cross-panel expert awareness                           | 7     | ✅ Done                |
+| UX polish: 106 findings from cross-model audit         | 7.5   | ✅ Done                |
+| PM-driven QA fixes (45 findings, 28 fixed)             | 7.6   | ✅ Done                |
+| Published to npm as `@council-ai/cli`                  | 8     | ✅ Done (v0.3.0)       |

@@ -13,6 +13,6 @@
     "directory": "packages/web"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=24.0.0"
   }
 }
