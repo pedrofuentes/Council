@@ -242,32 +242,33 @@ describe("buildProgram", () => {
 
       // Getting Started
       expect(commandNames[0]).toBe("doctor");
-      expect(commandNames[1]).toBe("config");
-      expect(commandNames[2]).toBe("telemetry");
-      expect(commandNames[3]).toBe("docs");
-      expect(commandNames[4]).toBe("update");
+      expect(commandNames[1]).toBe("demo");
+      expect(commandNames[2]).toBe("config");
+      expect(commandNames[3]).toBe("telemetry");
+      expect(commandNames[4]).toBe("docs");
+      expect(commandNames[5]).toBe("update");
 
       // Deliberation
-      expect(commandNames[5]).toBe("convene");
-      expect(commandNames[6]).toBe("resume");
-      expect(commandNames[7]).toBe("conclude");
+      expect(commandNames[6]).toBe("convene");
+      expect(commandNames[7]).toBe("resume");
+      expect(commandNames[8]).toBe("conclude");
 
       // Conversation
-      expect(commandNames[8]).toBe("ask");
-      expect(commandNames[9]).toBe("chat");
+      expect(commandNames[9]).toBe("ask");
+      expect(commandNames[10]).toBe("chat");
 
       // Library
-      expect(commandNames[10]).toBe("expert");
-      expect(commandNames[11]).toBe("panel");
-      expect(commandNames[12]).toBe("templates");
+      expect(commandNames[11]).toBe("expert");
+      expect(commandNames[12]).toBe("panel");
+      expect(commandNames[13]).toBe("templates");
 
       // Inspection
-      expect(commandNames[13]).toBe("sessions");
-      expect(commandNames[14]).toBe("memory");
-      expect(commandNames[15]).toBe("export");
+      expect(commandNames[14]).toBe("sessions");
+      expect(commandNames[15]).toBe("memory");
+      expect(commandNames[16]).toBe("export");
 
       // Other commands (not in categories but registered)
-      expect(commandNames[16]).toBe("models");
+      expect(commandNames[17]).toBe("models");
     });
   });
 });
