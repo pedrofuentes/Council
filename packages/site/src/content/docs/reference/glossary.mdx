@@ -13,7 +13,7 @@ A group of experts deliberating together. Panels are defined in YAML files (`~/C
 
 **Example:** `code-review`, `architecture-review`
 
-**See:** [Panel YAML Format](/Council/docs/reference/panel-yaml/)
+**See:** [Panel YAML Format](/Council/reference/panel-yaml/)
 
 ---
 
@@ -26,7 +26,7 @@ A synthetic participant in a panel with a defined role, expertise, and epistemic
 - **Generic expert:** Template-based expert defined by role and expertise (e.g., "Senior Developer")
 - **Persona expert:** Document-trained expert that learns from a corpus (e.g., your CTO, trained on architecture decision records)
 
-**See:** [Expert YAML Format](/Council/docs/reference/expert-yaml/)
+**See:** [Expert YAML Format](/Council/reference/expert-yaml/)
 
 ---
 
@@ -67,7 +67,7 @@ The lens through which an expert interprets evidence and forms beliefs. Defines 
 
 **Example:** "You have seen too many breach post-mortems where the root cause was 'we trusted X'."
 
-**See:** [Expert YAML Format](/Council/docs/reference/expert-yaml/)
+**See:** [Expert YAML Format](/Council/reference/expert-yaml/)
 
 ---
 
@@ -111,7 +111,7 @@ The directory where user-authored experts, panels, and documents live. Default: 
 
 **Override:** `COUNCIL_DATA_HOME` or `config.paths.dataHome`
 
-**See:** [Data Locations](/Council/docs/reference/data-locations/)
+**See:** [Data Locations](/Council/reference/data-locations/)
 
 ---
 
@@ -121,7 +121,7 @@ The directory for ephemeral state (database, logs, cache). Default: `~/.council/
 
 **Override:** `COUNCIL_HOME` environment variable
 
-**See:** [Data Locations](/Council/docs/reference/data-locations/)
+**See:** [Data Locations](/Council/reference/data-locations/)
 
 ---
 
@@ -133,7 +133,7 @@ A collection of files indexed for a persona expert. Council extracts text from s
 
 **Location:** `~/Council/docs/<expert-slug>/`
 
-**See:** [Document Formats](/Council/docs/reference/document-formats/)
+**See:** [Document Formats](/Council/reference/document-formats/)
 
 ---
 
@@ -143,7 +143,7 @@ Experimental feature that uses AI to build structured text descriptions of unsup
 
 **Modes:** `off` (default), `ask`, `auto`
 
-**See:** [Document Formats](/Council/docs/reference/document-formats/) · [Configuration](/Council/docs/reference/configuration/)
+**See:** [Document Formats](/Council/reference/document-formats/) · [Configuration](/Council/reference/configuration/)
 
 ---
 
@@ -151,7 +151,7 @@ Experimental feature that uses AI to build structured text descriptions of unsup
 
 File extensions Council can natively parse or convert to text. Includes `.md`, `.txt`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.csv`, and more.
 
-**See:** [Document Formats](/Council/docs/reference/document-formats/)
+**See:** [Document Formats](/Council/reference/document-formats/)
 
 ---
 
@@ -168,7 +168,7 @@ The output formatter used during live debates (`council convene`, `council resum
 - `plain` — Line-by-line output
 - `json` — NDJSON stream
 
-**See:** [Output Formats](/Council/docs/reference/output-formats/)
+**See:** [Output Formats](/Council/reference/output-formats/)
 
 ---
 
@@ -182,7 +182,7 @@ The file format for exporting panel transcripts (`council export`).
 - `json` — NDJSON stream
 - `adr` — Architecture Decision Record
 
-**See:** [Output Formats](/Council/docs/reference/output-formats/)
+**See:** [Output Formats](/Council/reference/output-formats/)
 
 ---
 
@@ -245,7 +245,7 @@ Interactive chat session with a panel. Supports `@mention` and `@convene` direct
 council chat <panel>
 ```
 
-**See:** [In-Chat Directives](/Council/docs/reference/in-chat-directives/)
+**See:** [In-Chat Directives](/Council/reference/in-chat-directives/)
 
 ---
 
@@ -291,5 +291,5 @@ council ask <expert> <question>
 
 ## Related
 
-- [Commands Reference](/Council/docs/reference/commands/) — Full command syntax
-- [Configuration](/Council/docs/reference/configuration/) — Settings reference
+- [Commands Reference](/Council/reference/commands/) — Full command syntax
+- [Configuration](/Council/reference/configuration/) — Settings reference

@@ -65,7 +65,7 @@ During a chat or debate:
 3. Appends them to the expert's prompt as `[REFERENCE DOCUMENT]` blocks
 4. The expert now has both the **persona profile** (general context) and **specific document snippets** (targeted evidence)
 
-See [Document RAG](/Council/docs/explanation/document-rag) for extraction, indexing, and retrieval details.
+See [Document RAG](/Council/explanation/document-rag) for extraction, indexing, and retrieval details.
 
 ## Memory Model
 
@@ -73,7 +73,7 @@ Persona experts get **two kinds of memory**:
 1. **Document memory** (persona profile + RAG snippets) — who they are, how they think
 2. **Debate memory** (past panel transcripts) — what they've discussed before
 
-Generic experts only get debate memory. See [Memory Model](/Council/docs/explanation/memory-model) for why.
+Generic experts only get debate memory. See [Memory Model](/Council/explanation/memory-model) for why.
 
 ## Creating a Persona Expert
 
@@ -121,7 +121,7 @@ Persona experts store:
 
 All of this is **local-only** (stored in `~/Council/data.db`). Council does not send your documents to a third party except during profile generation and retrieval (when the configured AI provider processes the context).
 
-See [Security and Privacy](/Council/docs/explanation/security-and-privacy) for details on what's sent to AI providers and what's stored locally.
+See [Security and Privacy](/Council/explanation/security-and-privacy) for details on what's sent to AI providers and what's stored locally.
 
 ## Retraining a Persona
 
@@ -154,7 +154,7 @@ This prevents a persona from acting like they've never met you before when you s
 
 ## Relation to Other Concepts
 
-- [Document RAG](/Council/docs/explanation/document-rag) — how Council indexes and retrieves document snippets
-- [Memory Model](/Council/docs/explanation/memory-model) — persona experts get document + debate memory
-- [Security and Privacy](/Council/docs/explanation/security-and-privacy) — what's stored, what's sent to providers, prompt injection defenses
-- [Anti-Sycophancy](/Council/docs/explanation/anti-sycophancy) — persona experts still enforce disagreement in panel debates
+- [Document RAG](/Council/explanation/document-rag) — how Council indexes and retrieves document snippets
+- [Memory Model](/Council/explanation/memory-model) — persona experts get document + debate memory
+- [Security and Privacy](/Council/explanation/security-and-privacy) — what's stored, what's sent to providers, prompt injection defenses
+- [Anti-Sycophancy](/Council/explanation/anti-sycophancy) — persona experts still enforce disagreement in panel debates
