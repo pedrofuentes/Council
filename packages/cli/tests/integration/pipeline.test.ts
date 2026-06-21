@@ -21,7 +21,6 @@
  */
 import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
 
 import { sql } from "kysely";
@@ -42,6 +41,7 @@ import { ChatRepository } from "../../src/memory/repositories/chat-repository.js
 import { DocumentRepository } from "../../src/memory/repositories/document-repository.js";
 import { PanelLibraryRepository } from "../../src/memory/repositories/panel-library-repo.js";
 import { ProfileRepository } from "../../src/memory/repositories/profile-repository.js";
+import { mkCanonicalTempDir } from "../helpers/tmp.js";
 
 // ─────────────────────────────────────────────────────────────────────
 // Shared fixtures
@@ -53,9 +53,7 @@ interface PipelineEnv {
 }
 
 async function makeEnv(): Promise<PipelineEnv> {
-  const dataHome = await fs.mkdtemp(
-    path.join(os.tmpdir(), "council-pipeline-"),
-  );
+  const dataHome = await mkCanonicalTempDir("council-pipeline-");
   const db = await createDatabase(":memory:");
   return { dataHome, db };
 }
