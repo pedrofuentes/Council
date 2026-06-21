@@ -5,10 +5,19 @@ import starlight from "@astrojs/starlight";
 // GitHub Pages project site: https://pedrofuentes.github.io/Council/
 // `site` is the deploy origin and `base` is the project sub-path. Both feed
 // Astro's URL generation so internal links and assets resolve under /Council/.
+const base = "/Council/";
+
 export default defineConfig({
   site: "https://pedrofuentes.github.io",
-  base: "/Council/",
+  base,
   output: "static",
+  // The marketing splash now renders at the site root (`/Council/`). Preserve
+  // the previous `/Council/docs/` splash URL (and any external bookmarks to it)
+  // by redirecting it to the new root home. Astro applies `base` to the redirect
+  // source path but not the destination, so the destination uses `base` directly.
+  redirects: {
+    "/docs": base,
+  },
   integrations: [
     starlight({
       title: "Council",
@@ -19,7 +28,7 @@ export default defineConfig({
       sidebar: [
         {
           label: "Start Here",
-          link: "/docs/",
+          link: "/",
         },
         {
           label: "Tutorials",
@@ -39,11 +48,11 @@ export default defineConfig({
         },
         {
           label: "Contributing",
-          items: [{ label: "Overview", link: "/docs/contributing/" }],
+          items: [{ label: "Overview", link: "/contributing/" }],
         },
         {
           label: "Versioning & Stability",
-          link: "/docs/versioning/",
+          link: "/versioning/",
         },
       ],
     }),
