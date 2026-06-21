@@ -1,0 +1,1997 @@
+{
+  "$generated": "DO NOT EDIT — this file is auto-generated from the Council CLI's Commander definitions by `pnpm --filter @council-ai/site docs:generate:commands`. Run that command to regenerate it, and `pnpm --filter @council-ai/site docs:check:commands` to verify it is in sync.",
+  "$source": "@council-ai/cli buildProgram()",
+  "command": {
+    "name": "council",
+    "path": [
+      "council"
+    ],
+    "commandPath": "council",
+    "description": "Persistent AI expert panels for deliberation and decision-making",
+    "aliases": [],
+    "usage": "[options] [command]",
+    "arguments": [],
+    "options": [
+      {
+        "flags": "-V, --version",
+        "description": "output the version number",
+        "long": "--version",
+        "short": "-V",
+        "required": false,
+        "optional": false,
+        "variadic": false,
+        "negate": false
+      },
+      {
+        "flags": "-q, --quiet",
+        "description": "Suppress informational stderr output",
+        "long": "--quiet",
+        "short": "-q",
+        "required": false,
+        "optional": false,
+        "variadic": false,
+        "negate": false
+      }
+    ],
+    "subcommands": [
+      {
+        "name": "doctor",
+        "path": [
+          "council",
+          "doctor"
+        ],
+        "commandPath": "council doctor",
+        "description": "Diagnose Council setup (Node, libsql, Copilot SDK, disk)",
+        "aliases": [],
+        "usage": "[options]",
+        "arguments": [],
+        "options": [
+          {
+            "flags": "--online",
+            "description": "No-op; online check now runs by default (backwards compatibility)",
+            "long": "--online",
+            "required": false,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "--offline",
+            "description": "Skip online model probe",
+            "long": "--offline",
+            "required": false,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "--models",
+            "description": "List available Copilot models (live discovery with static fallback)",
+            "long": "--models",
+            "required": false,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "config",
+        "path": [
+          "council",
+          "config"
+        ],
+        "commandPath": "council config",
+        "description": "View and edit Council configuration",
+        "aliases": [],
+        "usage": "[options] [command]",
+        "arguments": [],
+        "options": [],
+        "subcommands": [
+          {
+            "name": "show",
+            "path": [
+              "council",
+              "config",
+              "show"
+            ],
+            "commandPath": "council config show",
+            "description": "Print effective config values with source annotation",
+            "aliases": [],
+            "usage": "[options]",
+            "arguments": [],
+            "options": [],
+            "subcommands": []
+          },
+          {
+            "name": "path",
+            "path": [
+              "council",
+              "config",
+              "path"
+            ],
+            "commandPath": "council config path",
+            "description": "Print the config file path (useful for scripts)",
+            "aliases": [],
+            "usage": "[options]",
+            "arguments": [],
+            "options": [],
+            "subcommands": []
+          },
+          {
+            "name": "edit",
+            "path": [
+              "council",
+              "config",
+              "edit"
+            ],
+            "commandPath": "council config edit",
+            "description": "Open the config file in $EDITOR and validate on save",
+            "aliases": [],
+            "usage": "[options]",
+            "arguments": [],
+            "options": [],
+            "subcommands": []
+          },
+          {
+            "name": "set",
+            "path": [
+              "council",
+              "config",
+              "set"
+            ],
+            "commandPath": "council config set",
+            "description": "Set a supported config value",
+            "aliases": [],
+            "usage": "[options] <key> <value>",
+            "arguments": [
+              {
+                "name": "key",
+                "display": "<key>",
+                "description": "Dot-notation config key",
+                "required": true,
+                "variadic": false
+              },
+              {
+                "name": "value",
+                "display": "<value>",
+                "description": "Value to write",
+                "required": true,
+                "variadic": false
+              }
+            ],
+            "options": [],
+            "subcommands": []
+          }
+        ]
+      },
+      {
+        "name": "telemetry",
+        "path": [
+          "council",
+          "telemetry"
+        ],
+        "commandPath": "council telemetry",
+        "description": "Manage telemetry settings",
+        "aliases": [],
+        "usage": "[options] [command]",
+        "arguments": [],
+        "options": [],
+        "subcommands": [
+          {
+            "name": "status",
+            "path": [
+              "council",
+              "telemetry",
+              "status"
+            ],
+            "commandPath": "council telemetry status",
+            "description": "Show current telemetry status",
+            "aliases": [],
+            "usage": "[options]",
+            "arguments": [],
+            "options": [],
+            "subcommands": []
+          },
+          {
+            "name": "enable",
+            "path": [
+              "council",
+              "telemetry",
+              "enable"
+            ],
+            "commandPath": "council telemetry enable",
+            "description": "Enable telemetry collection",
+            "aliases": [],
+            "usage": "[options]",
+            "arguments": [],
+            "options": [],
+            "subcommands": []
+          },
+          {
+            "name": "disable",
+            "path": [
+              "council",
+              "telemetry",
+              "disable"
+            ],
+            "commandPath": "council telemetry disable",
+            "description": "Disable telemetry collection",
+            "aliases": [],
+            "usage": "[options]",
+            "arguments": [],
+            "options": [],
+            "subcommands": []
+          },
+          {
+            "name": "explain",
+            "path": [
+              "council",
+              "telemetry",
+              "explain"
+            ],
+            "commandPath": "council telemetry explain",
+            "description": "Explain what telemetry collects",
+            "aliases": [],
+            "usage": "[options]",
+            "arguments": [],
+            "options": [],
+            "subcommands": []
+          }
+        ]
+      },
+      {
+        "name": "docs",
+        "path": [
+          "council",
+          "docs"
+        ],
+        "commandPath": "council docs",
+        "description": "Document format reference and discoverability helpers",
+        "aliases": [],
+        "usage": "[options] [command]",
+        "arguments": [],
+        "options": [],
+        "subcommands": [
+          {
+            "name": "formats",
+            "path": [
+              "council",
+              "docs",
+              "formats"
+            ],
+            "commandPath": "council docs formats",
+            "description": "List supported document formats",
+            "aliases": [],
+            "usage": "[options]",
+            "arguments": [],
+            "options": [],
+            "subcommands": []
+          },
+          {
+            "name": "review",
+            "path": [
+              "council",
+              "docs",
+              "review"
+            ],
+            "commandPath": "council docs review",
+            "description": "Review files in a panel's docs corpus that couldn't be auto-processed",
+            "aliases": [],
+            "usage": "[options] <panel>",
+            "arguments": [
+              {
+                "name": "panel",
+                "display": "<panel>",
+                "description": "Panel name",
+                "required": true,
+                "variadic": false
+              }
+            ],
+            "options": [],
+            "subcommands": []
+          },
+          {
+            "name": "extract",
+            "path": [
+              "council",
+              "docs",
+              "extract"
+            ],
+            "commandPath": "council docs extract",
+            "description": "Run AI extraction on files a panel is holding for review (ask mode)",
+            "aliases": [],
+            "usage": "[options] <panel>",
+            "arguments": [
+              {
+                "name": "panel",
+                "display": "<panel>",
+                "description": "Panel name",
+                "required": true,
+                "variadic": false
+              }
+            ],
+            "options": [],
+            "subcommands": []
+          },
+          {
+            "name": "doctor",
+            "path": [
+              "council",
+              "docs",
+              "doctor"
+            ],
+            "commandPath": "council docs doctor",
+            "description": "Diagnostic health check for a panel's document pipeline",
+            "aliases": [],
+            "usage": "[options] <panel>",
+            "arguments": [
+              {
+                "name": "panel",
+                "display": "<panel>",
+                "description": "Panel name",
+                "required": true,
+                "variadic": false
+              }
+            ],
+            "options": [],
+            "subcommands": []
+          }
+        ]
+      },
+      {
+        "name": "update",
+        "path": [
+          "council",
+          "update"
+        ],
+        "commandPath": "council update",
+        "description": "Upgrade the globally-installed Council CLI to the latest version",
+        "aliases": [],
+        "usage": "[options]",
+        "arguments": [],
+        "options": [
+          {
+            "flags": "--pm <name>",
+            "description": "Package manager to use (npm, pnpm, yarn, bun)",
+            "long": "--pm",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "-y, --yes",
+            "description": "Skip the confirmation prompt",
+            "long": "--yes",
+            "short": "-y",
+            "required": false,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "--dry-run",
+            "description": "Print the upgrade command without running it",
+            "long": "--dry-run",
+            "required": false,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "convene",
+        "path": [
+          "council",
+          "convene"
+        ],
+        "commandPath": "council convene",
+        "description": "Run a panel debate on a topic and persist results to the local DB. For one-shot questions use `council ask`. For conversation use `council chat`.",
+        "aliases": [],
+        "usage": "[options] [topic]",
+        "arguments": [
+          {
+            "name": "topic",
+            "display": "[topic]",
+            "description": "The topic / question for the panel to debate (optional when --prompt-file is used)",
+            "required": false,
+            "variadic": false
+          }
+        ],
+        "options": [
+          {
+            "flags": "--prompt-file <path>",
+            "description": "Read the topic VERBATIM from a file (or `-` for stdin) instead of the positional argument. Bypasses the shell so `$`, backticks, and values like `$180K` survive intact. Mutually exclusive with the positional <topic>.",
+            "long": "--prompt-file",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "-p, --panel <name>",
+            "description": "Use a built-in or custom panel template (alias: --template). **Omit to let Council auto-design an expert panel from your topic.**",
+            "long": "--panel",
+            "short": "-p",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "--template <name>",
+            "description": "Use a built-in or custom panel template (alias: --panel). **Omit to let Council auto-design an expert panel from your topic.**",
+            "long": "--template",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "--experts <slugs...>",
+            "description": "Expert slugs from the library (space- or comma-separated, repeatable). Bypasses both --template and auto-compose.",
+            "long": "--experts",
+            "required": true,
+            "optional": false,
+            "variadic": true,
+            "negate": false
+          },
+          {
+            "flags": "--engine <kind>",
+            "description": "Engine to use (default: from config)",
+            "long": "--engine",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "choices": [
+              "mock",
+              "copilot"
+            ]
+          },
+          {
+            "flags": "--format <kind>",
+            "description": "Output format (auto picks Ink TUI on TTY, plain text otherwise)",
+            "long": "--format",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "defaultValue": "auto",
+            "choices": [
+              "auto",
+              "json",
+              "plain"
+            ]
+          },
+          {
+            "flags": "--max-rounds <n>",
+            "description": "Max rounds (freeform mode only)",
+            "long": "--max-rounds",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "defaultValue": 4
+          },
+          {
+            "flags": "--mode <kind>",
+            "description": "Debate mode",
+            "long": "--mode",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "defaultValue": "freeform",
+            "choices": [
+              "freeform",
+              "structured"
+            ]
+          },
+          {
+            "flags": "--max-words <n>",
+            "description": "Soft per-response word cap",
+            "long": "--max-words",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "defaultValue": 250
+          },
+          {
+            "flags": "--human <name>",
+            "description": "Add a human participant by name (repeatable)",
+            "long": "--human",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "defaultValue": []
+          },
+          {
+            "flags": "--strategy <name>",
+            "description": "Moderator strategy for freeform mode (round-robin | devils-advocate | consensus-check). devils-advocate accepts an optional \":<slug>\" suffix to pin the advocate (defaults to first expert).",
+            "long": "--strategy",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "defaultValue": "round-robin"
+          },
+          {
+            "flags": "--context-scope <scope>",
+            "description": "Visibility scope for prior turns: all | same-round | recent",
+            "long": "--context-scope",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "defaultValue": "all"
+          },
+          {
+            "flags": "--summarize-after <n>",
+            "description": "Start rolling-summary after N rounds. Omit to disable.",
+            "long": "--summarize-after",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "--heuristic-summaries",
+            "description": "Use simpler local summarizer instead of LLM — for offline/air-gapped use",
+            "long": "--heuristic-summaries",
+            "required": false,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "--heuristic-memory",
+            "description": "Skip post-debate LLM extraction — for offline/air-gapped use. Useful for offline tests and air-gapped environments.",
+            "long": "--heuristic-memory",
+            "required": false,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "--yes",
+            "description": "Skip the auto-compose confirmation prompt — required for non-interactive / CI runs",
+            "long": "--yes",
+            "required": false,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "--verbose",
+            "description": "Show template migration notices and zero-change summaries",
+            "long": "--verbose",
+            "required": false,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "-q, --quiet",
+            "description": "Suppress informational output",
+            "long": "--quiet",
+            "short": "-q",
+            "required": false,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "--model <model>",
+            "description": "Model to use for experts (default: from config; run 'council doctor --models' to list available models)",
+            "long": "--model",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "--max-experts <n>",
+            "description": "Maximum number of experts for auto-compose",
+            "long": "--max-experts",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "resume",
+        "path": [
+          "council",
+          "resume"
+        ],
+        "commandPath": "council resume",
+        "description": "Reopen a panel: show transcript, or continue with a new prompt",
+        "aliases": [],
+        "usage": "[options] [panel]",
+        "arguments": [
+          {
+            "name": "panel",
+            "display": "[panel]",
+            "description": "Panel name to resume (as shown by `council sessions`)",
+            "required": false,
+            "variadic": false
+          }
+        ],
+        "options": [
+          {
+            "flags": "--format <kind>",
+            "description": "Output format",
+            "long": "--format",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "defaultValue": "auto",
+            "choices": [
+              "auto",
+              "json",
+              "plain"
+            ]
+          },
+          {
+            "flags": "--prompt <prompt>",
+            "description": "Run a new debate against the same panel with this prompt",
+            "long": "--prompt",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "--engine <kind>",
+            "description": "Engine for continue mode",
+            "long": "--engine",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "choices": [
+              "mock",
+              "copilot"
+            ]
+          },
+          {
+            "flags": "--max-rounds <n>",
+            "description": "Max rounds for --prompt mode (default: 1)",
+            "long": "--max-rounds",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "--max-words <n>",
+            "description": "Soft per-response word cap for --prompt mode",
+            "long": "--max-words",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "defaultValue": 250
+          },
+          {
+            "flags": "--strategy <name>",
+            "description": "Moderator strategy for --prompt freeform mode (round-robin | devils-advocate | consensus-check). devils-advocate accepts an optional \":<slug>\" suffix.",
+            "long": "--strategy",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "defaultValue": "round-robin"
+          },
+          {
+            "flags": "--heuristic-memory",
+            "description": "Skip post-debate LLM extraction — for offline/air-gapped use. Useful for offline tests and air-gapped environments.",
+            "long": "--heuristic-memory",
+            "required": false,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "--latest",
+            "description": "Resume the most recent panel session",
+            "long": "--latest",
+            "required": false,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "conclude",
+        "path": [
+          "council",
+          "conclude"
+        ],
+        "commandPath": "council conclude",
+        "description": "Synthesize a panel's most substantive debate into a structured decision framework. For transcript-based ADR (Architecture Decision Record) export, use `council export --format adr` instead.",
+        "aliases": [],
+        "usage": "[options] [panel]",
+        "arguments": [
+          {
+            "name": "panel",
+            "display": "[panel]",
+            "description": "Panel name to conclude (defaults to the most recently created panel)",
+            "required": false,
+            "variadic": false
+          }
+        ],
+        "options": [
+          {
+            "flags": "--engine <kind>",
+            "description": "Engine kind (default: from config)",
+            "long": "--engine",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "choices": [
+              "mock",
+              "copilot"
+            ]
+          },
+          {
+            "flags": "--format <kind>",
+            "description": "Output format",
+            "long": "--format",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "defaultValue": "plain",
+            "choices": [
+              "plain",
+              "json"
+            ]
+          },
+          {
+            "flags": "--timeout <ms>",
+            "description": "Synthesis timeout in milliseconds",
+            "long": "--timeout",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "defaultValue": 60000
+          },
+          {
+            "flags": "--model <model>",
+            "description": "Model to use for synthesis (default: from config)",
+            "long": "--model",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "ask",
+        "path": [
+          "council",
+          "ask"
+        ],
+        "commandPath": "council ask",
+        "description": "Ask one expert from an existing panel a single question. For multi-expert debates use `council convene`. For conversation use `council chat`.",
+        "aliases": [],
+        "usage": "[options] <panel> [question]",
+        "arguments": [
+          {
+            "name": "panel",
+            "display": "<panel>",
+            "description": "Panel name from a previous debate (as shown by `council sessions`). For library experts, use `council chat`.",
+            "required": true,
+            "variadic": false
+          },
+          {
+            "name": "question",
+            "display": "[question]",
+            "description": "The question to ask (optional when --prompt-file is used)",
+            "required": false,
+            "variadic": false
+          }
+        ],
+        "options": [
+          {
+            "flags": "--prompt-file <path>",
+            "description": "Read the question VERBATIM from a file (or `-` for stdin) instead of the positional argument. Bypasses the shell so `$`, backticks, and values like `$180K` survive intact. Mutually exclusive with the positional <question>.",
+            "long": "--prompt-file",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "--engine <kind>",
+            "description": "Engine to use (default: from config)",
+            "long": "--engine",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "choices": [
+              "mock",
+              "copilot"
+            ]
+          },
+          {
+            "flags": "--expert <slug>",
+            "description": "Expert slug to ask (default: first expert in the panel)",
+            "long": "--expert",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "--format <kind>",
+            "description": "Output format",
+            "long": "--format",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "defaultValue": "auto",
+            "choices": [
+              "auto",
+              "json",
+              "plain"
+            ]
+          },
+          {
+            "flags": "--max-words <n>",
+            "description": "Soft per-response word cap",
+            "long": "--max-words",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "defaultValue": 250
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "chat",
+        "path": [
+          "council",
+          "chat"
+        ],
+        "commandPath": "council chat",
+        "description": "Persistent conversation with an expert or panel from the library. For structured debates use `council convene`.",
+        "aliases": [],
+        "usage": "[options] [target]",
+        "arguments": [
+          {
+            "name": "target",
+            "display": "[target]",
+            "description": "Expert slug or panel name to chat with",
+            "required": false,
+            "variadic": false
+          }
+        ],
+        "options": [
+          {
+            "flags": "--engine <kind>",
+            "description": "Engine to use (default: from config)",
+            "long": "--engine",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "choices": [
+              "mock",
+              "copilot"
+            ]
+          },
+          {
+            "flags": "--new",
+            "description": "Archive the active conversation and start a fresh one",
+            "long": "--new",
+            "required": false,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "--list",
+            "description": "List all chat conversations and exit",
+            "long": "--list",
+            "required": false,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "--history",
+            "description": "Show archived conversations for the target",
+            "long": "--history",
+            "required": false,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "expert",
+        "path": [
+          "council",
+          "expert"
+        ],
+        "commandPath": "council expert",
+        "description": "Manage Council's expert library (create, list, inspect, edit, delete)",
+        "aliases": [
+          "experts"
+        ],
+        "usage": "[options] [command]",
+        "arguments": [],
+        "options": [],
+        "subcommands": [
+          {
+            "name": "create",
+            "path": [
+              "council",
+              "expert",
+              "create"
+            ],
+            "commandPath": "council expert create",
+            "description": "Create a new expert in the library (or recreate one whose YAML was deleted)",
+            "aliases": [],
+            "usage": "[options]",
+            "arguments": [],
+            "options": [
+              {
+                "flags": "--persona",
+                "description": "Create a trainable persona expert with document-based training via 'council expert train'",
+                "long": "--persona",
+                "required": false,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              },
+              {
+                "flags": "--slug <slug>",
+                "description": "URL-safe slug (lowercase, alphanumeric + hyphens)",
+                "long": "--slug",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              },
+              {
+                "flags": "--name <displayName>",
+                "description": "Display name",
+                "long": "--name",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              },
+              {
+                "flags": "--role <role>",
+                "description": "One-line role descriptor",
+                "long": "--role",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              },
+              {
+                "flags": "--expertise <items>",
+                "description": "Comma-separated weighted-evidence types (at least one)",
+                "long": "--expertise",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              },
+              {
+                "flags": "--stance <stance>",
+                "description": "Viewpoint or perspective (e.g., skeptical, optimistic, devil's advocate, conservative, neutral)",
+                "long": "--stance",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              },
+              {
+                "flags": "--model <model>",
+                "description": "Model identifier (e.g. claude-haiku-4.5)",
+                "long": "--model",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              },
+              {
+                "flags": "--personality <flavor>",
+                "description": "Optional personality flavor",
+                "long": "--personality",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              },
+              {
+                "flags": "--persona-description <text>",
+                "description": "Persona relationship description",
+                "long": "--persona-description",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "list",
+            "path": [
+              "council",
+              "expert",
+              "list"
+            ],
+            "commandPath": "council expert list",
+            "description": "List all experts in the library",
+            "aliases": [],
+            "usage": "[options]",
+            "arguments": [],
+            "options": [
+              {
+                "flags": "--format <kind>",
+                "description": "Output format: table (default) or json",
+                "long": "--format",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false,
+                "defaultValue": "table"
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "inspect",
+            "path": [
+              "council",
+              "expert",
+              "inspect"
+            ],
+            "commandPath": "council expert inspect",
+            "description": "Show full detail for a single expert",
+            "aliases": [],
+            "usage": "[options] <slug>",
+            "arguments": [
+              {
+                "name": "slug",
+                "display": "<slug>",
+                "description": "Expert slug to inspect",
+                "required": true,
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "flags": "--format <kind>",
+                "description": "Output format (plain or json)",
+                "long": "--format",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false,
+                "defaultValue": "plain"
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "edit",
+            "path": [
+              "council",
+              "expert",
+              "edit"
+            ],
+            "commandPath": "council expert edit",
+            "description": "Open the expert YAML in $EDITOR and re-validate on save",
+            "aliases": [],
+            "usage": "[options] <slug>",
+            "arguments": [
+              {
+                "name": "slug",
+                "display": "<slug>",
+                "description": "Expert slug to edit",
+                "required": true,
+                "variadic": false
+              }
+            ],
+            "options": [],
+            "subcommands": []
+          },
+          {
+            "name": "delete",
+            "path": [
+              "council",
+              "expert",
+              "delete"
+            ],
+            "commandPath": "council expert delete",
+            "description": "Delete an expert from the library",
+            "aliases": [],
+            "usage": "[options] <slug>",
+            "arguments": [
+              {
+                "name": "slug",
+                "display": "<slug>",
+                "description": "Expert slug to delete",
+                "required": true,
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "flags": "--force",
+                "description": "Delete even if the expert is a member of one or more panels",
+                "long": "--force",
+                "required": false,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              },
+              {
+                "flags": "--yes",
+                "description": "Skip confirmation prompt (required in non-interactive mode)",
+                "long": "--yes",
+                "required": false,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "docs",
+            "path": [
+              "council",
+              "expert",
+              "docs"
+            ],
+            "commandPath": "council expert docs",
+            "description": "List or un-index documents for a persona expert",
+            "aliases": [],
+            "usage": "[options] <slug>",
+            "arguments": [
+              {
+                "name": "slug",
+                "display": "<slug>",
+                "description": "Persona expert slug",
+                "required": true,
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "flags": "--remove <file>",
+                "description": "Un-index the named document (kept on disk; profile refreshes on next use)",
+                "long": "--remove",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "train",
+            "path": [
+              "council",
+              "expert",
+              "train"
+            ],
+            "commandPath": "council expert train",
+            "description": "Reprocess all documents for a persona expert and refresh its profile",
+            "aliases": [],
+            "usage": "[options] <slug>",
+            "arguments": [
+              {
+                "name": "slug",
+                "display": "<slug>",
+                "description": "Persona expert slug",
+                "required": true,
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "flags": "--retrain",
+                "description": "Clear the existing profile and rebuild from scratch",
+                "long": "--retrain",
+                "required": false,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              },
+              {
+                "flags": "--file <path...>",
+                "description": "Copy one or more files into the expert docs dir before training (repeatable)",
+                "long": "--file",
+                "required": true,
+                "optional": false,
+                "variadic": true,
+                "negate": false
+              },
+              {
+                "flags": "--url <url...>",
+                "description": "Download one or more URLs into the expert docs dir before training (repeatable); the URL's path must end in a supported file extension — .md, .txt, .html, .pdf, .csv, .docx, etc. — pages without a recognized extension won't be ingested",
+                "long": "--url",
+                "required": true,
+                "optional": false,
+                "variadic": true,
+                "negate": false
+              },
+              {
+                "flags": "--engine <kind>",
+                "description": "Engine to use for profile analysis",
+                "long": "--engine",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false,
+                "defaultValue": "copilot",
+                "choices": [
+                  "mock",
+                  "copilot"
+                ]
+              }
+            ],
+            "subcommands": []
+          }
+        ]
+      },
+      {
+        "name": "panel",
+        "path": [
+          "council",
+          "panel"
+        ],
+        "commandPath": "council panel",
+        "description": "Manage Council panels (create, list, inspect, edit, delete)",
+        "aliases": [
+          "panels"
+        ],
+        "usage": "[options] [command]",
+        "arguments": [],
+        "options": [],
+        "subcommands": [
+          {
+            "name": "create",
+            "path": [
+              "council",
+              "panel",
+              "create"
+            ],
+            "commandPath": "council panel create",
+            "description": "Create a new panel with library experts. If `council convene` runs without `--template`, Council auto-composes a panel for you.",
+            "aliases": [],
+            "usage": "[options] [name]",
+            "arguments": [
+              {
+                "name": "name",
+                "display": "[name]",
+                "description": "Panel name (kebab-case). Alias: --slug",
+                "required": false,
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "flags": "--slug <slug>",
+                "description": "Panel name (kebab-case). Alias for the positional <name> argument.",
+                "long": "--slug",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              },
+              {
+                "flags": "--experts <slugs...>",
+                "description": "Expert slugs from the library (space- or comma-separated, repeatable)",
+                "long": "--experts",
+                "required": true,
+                "optional": false,
+                "variadic": true,
+                "negate": false
+              },
+              {
+                "flags": "--mode <mode>",
+                "description": "Debate mode: freeform | structured",
+                "long": "--mode",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              },
+              {
+                "flags": "--max-rounds <n>",
+                "description": "Maximum debate rounds (1-20)",
+                "long": "--max-rounds",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              },
+              {
+                "flags": "--model <model>",
+                "description": "Default model for all experts in this panel",
+                "long": "--model",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              },
+              {
+                "flags": "--description <text>",
+                "description": "One-line description",
+                "long": "--description",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "save",
+            "path": [
+              "council",
+              "panel",
+              "save"
+            ],
+            "commandPath": "council panel save",
+            "description": "Promote a debate session (e.g. an auto-composed `convene` run) into a reusable library panel + experts.",
+            "aliases": [],
+            "usage": "[options] [session] [name]",
+            "arguments": [
+              {
+                "name": "session",
+                "display": "[session]",
+                "description": "Session name or unique prefix to promote (omit when using --latest)",
+                "required": false,
+                "variadic": false
+              },
+              {
+                "name": "name",
+                "display": "[name]",
+                "description": "Name for the new library panel (kebab-case). Defaults to the panel's composed name.",
+                "required": false,
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "flags": "--latest",
+                "description": "Promote the most recently active session instead of naming one",
+                "long": "--latest",
+                "required": false,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "list",
+            "path": [
+              "council",
+              "panel",
+              "list"
+            ],
+            "commandPath": "council panel list",
+            "description": "List user panels in the library",
+            "aliases": [],
+            "usage": "[options]",
+            "arguments": [],
+            "options": [
+              {
+                "flags": "--format <kind>",
+                "description": "Output format: table (default) or json",
+                "long": "--format",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false,
+                "defaultValue": "table"
+              },
+              {
+                "flags": "--long",
+                "description": "Show full descriptions without truncation",
+                "long": "--long",
+                "required": false,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "inspect",
+            "path": [
+              "council",
+              "panel",
+              "inspect"
+            ],
+            "commandPath": "council panel inspect",
+            "description": "Show full detail for a single panel",
+            "aliases": [],
+            "usage": "[options] <name>",
+            "arguments": [
+              {
+                "name": "name",
+                "display": "<name>",
+                "description": "Panel name to inspect",
+                "required": true,
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "flags": "--format <kind>",
+                "description": "Output format (plain or json)",
+                "long": "--format",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false,
+                "defaultValue": "plain"
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "edit",
+            "path": [
+              "council",
+              "panel",
+              "edit"
+            ],
+            "commandPath": "council panel edit",
+            "description": "Open the panel YAML in $EDITOR and re-validate on save",
+            "aliases": [],
+            "usage": "[options] <name>",
+            "arguments": [
+              {
+                "name": "name",
+                "display": "<name>",
+                "description": "Panel name to edit",
+                "required": true,
+                "variadic": false
+              }
+            ],
+            "options": [],
+            "subcommands": []
+          },
+          {
+            "name": "delete",
+            "path": [
+              "council",
+              "panel",
+              "delete"
+            ],
+            "commandPath": "council panel delete",
+            "description": "Removes the panel template (library record, members, documents, YAML, and docs directory). Debate sessions created with this panel are preserved and remain accessible via 'council sessions'.",
+            "aliases": [],
+            "usage": "[options] <name>",
+            "arguments": [
+              {
+                "name": "name",
+                "display": "<name>",
+                "description": "Panel name to delete",
+                "required": true,
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "flags": "--yes",
+                "description": "Skip the confirmation prompt (non-interactive runs)",
+                "long": "--yes",
+                "required": false,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "docs",
+            "path": [
+              "council",
+              "panel",
+              "docs"
+            ],
+            "commandPath": "council panel docs",
+            "description": "Manage panel reference documents (list, link, unlink)",
+            "aliases": [],
+            "usage": "[options] [command] [name]",
+            "arguments": [
+              {
+                "name": "name",
+                "display": "[name]",
+                "description": "Panel name (when omitted, prints usage)",
+                "required": false,
+                "variadic": false
+              }
+            ],
+            "options": [],
+            "subcommands": [
+              {
+                "name": "list",
+                "path": [
+                  "council",
+                  "panel",
+                  "docs",
+                  "list"
+                ],
+                "commandPath": "council panel docs list",
+                "description": "List all documents accessible to a panel (managed + linked)",
+                "aliases": [],
+                "usage": "[options] <name>",
+                "arguments": [
+                  {
+                    "name": "name",
+                    "display": "<name>",
+                    "description": "Panel name",
+                    "required": true,
+                    "variadic": false
+                  }
+                ],
+                "options": [],
+                "subcommands": []
+              },
+              {
+                "name": "link",
+                "path": [
+                  "council",
+                  "panel",
+                  "docs",
+                  "link"
+                ],
+                "commandPath": "council panel docs link",
+                "description": "Link an external folder for RAG retrieval",
+                "aliases": [],
+                "usage": "[options] <name>",
+                "arguments": [
+                  {
+                    "name": "name",
+                    "display": "<name>",
+                    "description": "Panel name",
+                    "required": true,
+                    "variadic": false
+                  }
+                ],
+                "options": [
+                  {
+                    "flags": "--path <path>",
+                    "description": "Absolute path to the folder to link",
+                    "long": "--path",
+                    "required": true,
+                    "optional": false,
+                    "variadic": false,
+                    "negate": false
+                  },
+                  {
+                    "flags": "--yes",
+                    "description": "Skip the confirmation prompt (non-interactive runs)",
+                    "long": "--yes",
+                    "required": false,
+                    "optional": false,
+                    "variadic": false,
+                    "negate": false
+                  }
+                ],
+                "subcommands": []
+              },
+              {
+                "name": "unlink",
+                "path": [
+                  "council",
+                  "panel",
+                  "docs",
+                  "unlink"
+                ],
+                "commandPath": "council panel docs unlink",
+                "description": "Remove a linked folder and un-index its documents",
+                "aliases": [],
+                "usage": "[options] <name>",
+                "arguments": [
+                  {
+                    "name": "name",
+                    "display": "<name>",
+                    "description": "Panel name",
+                    "required": true,
+                    "variadic": false
+                  }
+                ],
+                "options": [
+                  {
+                    "flags": "--path <path>",
+                    "description": "Folder path previously linked",
+                    "long": "--path",
+                    "required": true,
+                    "optional": false,
+                    "variadic": false,
+                    "negate": false
+                  }
+                ],
+                "subcommands": []
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "templates",
+        "path": [
+          "council",
+          "templates"
+        ],
+        "commandPath": "council templates",
+        "description": "List built-in panel templates",
+        "aliases": [],
+        "usage": "[options] [command]",
+        "arguments": [],
+        "options": [],
+        "subcommands": [
+          {
+            "name": "inspect",
+            "path": [
+              "council",
+              "templates",
+              "inspect"
+            ],
+            "commandPath": "council templates inspect",
+            "description": "Show detailed information about a template",
+            "aliases": [],
+            "usage": "[options] <name>",
+            "arguments": [
+              {
+                "name": "name",
+                "display": "<name>",
+                "description": "Template name to inspect",
+                "required": true,
+                "variadic": false
+              }
+            ],
+            "options": [],
+            "subcommands": []
+          }
+        ]
+      },
+      {
+        "name": "sessions",
+        "path": [
+          "council",
+          "sessions"
+        ],
+        "commandPath": "council sessions",
+        "description": "List debate sessions (past runs). For panel templates, use `council panel list`.",
+        "aliases": [
+          "history"
+        ],
+        "usage": "[options] [command]",
+        "arguments": [],
+        "options": [
+          {
+            "flags": "--format <kind>",
+            "description": "Output format: json (NDJSON) or plain (human-readable)",
+            "long": "--format",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "defaultValue": "plain"
+          }
+        ],
+        "subcommands": [
+          {
+            "name": "cancel",
+            "path": [
+              "council",
+              "sessions",
+              "cancel"
+            ],
+            "commandPath": "council sessions cancel",
+            "description": "Mark stale running debates as interrupted",
+            "aliases": [],
+            "usage": "[options] [name]",
+            "arguments": [
+              {
+                "name": "name",
+                "display": "[name]",
+                "description": "Panel name to cancel (supports unique prefix matching)",
+                "required": false,
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "flags": "--all",
+                "description": "Cancel all running debates",
+                "long": "--all",
+                "required": false,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "delete",
+            "path": [
+              "council",
+              "sessions",
+              "delete"
+            ],
+            "commandPath": "council sessions delete",
+            "description": "Delete a completed or interrupted session",
+            "aliases": [],
+            "usage": "[options] <name>",
+            "arguments": [
+              {
+                "name": "name",
+                "display": "<name>",
+                "description": "Session name to delete (supports unique prefix matching)",
+                "required": true,
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "flags": "--yes",
+                "description": "Skip confirmation prompt",
+                "long": "--yes",
+                "required": false,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              }
+            ],
+            "subcommands": []
+          }
+        ]
+      },
+      {
+        "name": "memory",
+        "path": [
+          "council",
+          "memory"
+        ],
+        "commandPath": "council memory",
+        "description": "Manage past debates and what experts remember",
+        "aliases": [],
+        "usage": "[options] [command]",
+        "arguments": [],
+        "options": [],
+        "subcommands": [
+          {
+            "name": "list",
+            "path": [
+              "council",
+              "memory",
+              "list"
+            ],
+            "commandPath": "council memory list",
+            "description": "List all panels with persisted state summary",
+            "aliases": [],
+            "usage": "[options]",
+            "arguments": [],
+            "options": [
+              {
+                "flags": "--panel <name>",
+                "description": "Filter to a single panel",
+                "long": "--panel",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              },
+              {
+                "flags": "--format <kind>",
+                "description": "Output format: plain (default) or json",
+                "long": "--format",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false,
+                "defaultValue": "plain"
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "inspect",
+            "path": [
+              "council",
+              "memory",
+              "inspect"
+            ],
+            "commandPath": "council memory inspect",
+            "description": "Show detailed state for a single panel",
+            "aliases": [],
+            "usage": "[options] <panel>",
+            "arguments": [
+              {
+                "name": "panel",
+                "display": "<panel>",
+                "description": "Panel name to inspect",
+                "required": true,
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "flags": "--expert <slug>",
+                "description": "Focus on a single expert by slug",
+                "long": "--expert",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              },
+              {
+                "flags": "--format <kind>",
+                "description": "Output format: plain (default) or json",
+                "long": "--format",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false,
+                "defaultValue": "plain"
+              }
+            ],
+            "subcommands": []
+          },
+          {
+            "name": "reset",
+            "path": [
+              "council",
+              "memory",
+              "reset"
+            ],
+            "commandPath": "council memory reset",
+            "description": "Delete persisted state for a panel (destructive — requires --yes). Clears debate memory (debates, turns, extracted_memory_json) for the panel's experts. Document-derived persona profiles are preserved; use `council expert train --retrain` to reset a persona profile.",
+            "aliases": [],
+            "usage": "[options] <panel>",
+            "arguments": [
+              {
+                "name": "panel",
+                "display": "<panel>",
+                "description": "Panel name to reset",
+                "required": true,
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "flags": "--yes",
+                "description": "Confirm the destructive operation (REQUIRED — no interactive prompt)",
+                "long": "--yes",
+                "required": false,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              },
+              {
+                "flags": "--hard",
+                "description": "Delete the entire panel (CASCADE removes experts + debates + turns)",
+                "long": "--hard",
+                "required": false,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              },
+              {
+                "flags": "--expert <slug>",
+                "description": "Drop only this expert from the panel (keeps panel + others)",
+                "long": "--expert",
+                "required": true,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              }
+            ],
+            "subcommands": []
+          }
+        ]
+      },
+      {
+        "name": "export",
+        "path": [
+          "council",
+          "export"
+        ],
+        "commandPath": "council export",
+        "description": "Export a panel transcript to markdown, json, or adr format",
+        "aliases": [],
+        "usage": "[options] <panel>",
+        "arguments": [
+          {
+            "name": "panel",
+            "display": "<panel>",
+            "description": "Panel name to export (as shown by `council sessions`)",
+            "required": true,
+            "variadic": false
+          }
+        ],
+        "options": [
+          {
+            "flags": "--format <kind>",
+            "description": "Output format",
+            "long": "--format",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "defaultValue": "markdown",
+            "choices": [
+              "markdown",
+              "json",
+              "adr"
+            ]
+          },
+          {
+            "flags": "--output <path>",
+            "description": "Write to file instead of stdout (default: stdout)",
+            "long": "--output",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          }
+        ],
+        "subcommands": []
+      },
+      {
+        "name": "models",
+        "path": [
+          "council",
+          "models"
+        ],
+        "commandPath": "council models",
+        "description": "List available Copilot models (live discovery with static fallback)",
+        "aliases": [],
+        "usage": "[options]",
+        "arguments": [],
+        "options": [],
+        "subcommands": []
+      }
+    ]
+  }
+}
