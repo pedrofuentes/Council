@@ -830,6 +830,89 @@
         "subcommands": []
       },
       {
+        "name": "review",
+        "path": [
+          "council",
+          "review"
+        ],
+        "commandPath": "council review",
+        "description": "Run the built-in code-review expert panel over a diff and print the review. The diff is SENT to the configured AI engine (e.g. Copilot); use --engine mock to run offline.",
+        "aliases": [],
+        "usage": "[options]",
+        "arguments": [],
+        "options": [
+          {
+            "flags": "--diff-file <path>",
+            "description": "Read the unified diff from a file, or `-` to read stdin. When omitted, Council reviews `git diff <base>` (your local changes).",
+            "long": "--diff-file",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "--base <ref>",
+            "description": "Git ref to diff the working tree against when --diff-file is omitted",
+            "long": "--base",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "defaultValue": "HEAD"
+          },
+          {
+            "flags": "--engine <kind>",
+            "description": "Engine to use (default: from config)",
+            "long": "--engine",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "choices": [
+              "copilot",
+              "mock",
+              "openai",
+              "anthropic"
+            ]
+          },
+          {
+            "flags": "--format <kind>",
+            "description": "Output format",
+            "long": "--format",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "defaultValue": "auto",
+            "choices": [
+              "auto",
+              "json",
+              "plain"
+            ]
+          },
+          {
+            "flags": "--max-rounds <n>",
+            "description": "Max debate rounds (default: the code-review panel's own default)",
+            "long": "--max-rounds",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "--max-words <n>",
+            "description": "Soft per-response word cap",
+            "long": "--max-words",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "defaultValue": 250
+          }
+        ],
+        "subcommands": []
+      },
+      {
         "name": "ask",
         "path": [
           "council",

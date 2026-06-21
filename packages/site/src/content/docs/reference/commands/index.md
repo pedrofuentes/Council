@@ -20,6 +20,7 @@ Persistent AI expert panels for deliberation and decision-making
 | [`council convene`](./convene/) | Run a panel debate on a topic and persist results to the local DB. |
 | [`council resume`](./resume/) | Reopen a panel: show transcript, or continue with a new prompt |
 | [`council conclude`](./conclude/) | Synthesize a panel's most substantive debate into a structured decision framework. |
+| [`council review`](./review/) | Run the built-in code-review expert panel over a diff and print the review. |
 | [`council ask`](./ask/) | Ask one expert from an existing panel a single question. |
 | [`council chat`](./chat/) | Persistent conversation with an expert or panel from the library. |
 | [`council expert`](./expert/) | Manage Council's expert library (create, list, inspect, edit, delete) |
