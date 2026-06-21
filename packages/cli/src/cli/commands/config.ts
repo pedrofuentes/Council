@@ -352,7 +352,7 @@ function coerceConfigValue(
     case "chat.longConversationWarning": {
       const parsed = Number(rawValue);
       if (!Number.isInteger(parsed)) {
-        throw new CliUserError(`Config value for ${key} must be an integer.`);
+        throw new CliUserError(`Config value for ${toSingleLineDisplay(key)} must be an integer.`);
       }
       return parsed;
     }
@@ -360,12 +360,12 @@ function coerceConfigValue(
       const normalized = rawValue.trim().toLowerCase();
       if (["true", "yes", "y", "on", "1"].includes(normalized)) return true;
       if (["false", "no", "n", "off", "0"].includes(normalized)) return false;
-      throw new CliUserError(`Config value for ${key} must be true or false.`);
+      throw new CliUserError(`Config value for ${toSingleLineDisplay(key)} must be true or false.`);
     }
     case "defaults.engine": {
       if (!ENGINE_CHOICES.includes(rawValue as (typeof ENGINE_CHOICES)[number])) {
         throw new CliUserError(
-          `Config value for ${key} must be one of: ${ENGINE_CHOICES.join(", ")}`,
+          `Config value for ${toSingleLineDisplay(key)} must be one of: ${ENGINE_CHOICES.map((choice) => toSingleLineDisplay(choice)).join(", ")}`,
         );
       }
       return rawValue;
@@ -373,7 +373,11 @@ function coerceConfigValue(
     case "documents.aiExtraction": {
       const validValues = ["off", "ask", "auto"] as const;
       if (!validValues.includes(rawValue as (typeof validValues)[number])) {
-        throw new CliUserError(`Config value for ${key} must be one of: ${validValues.join(", ")}`);
+        throw new CliUserError(
+          `Config value for ${toSingleLineDisplay(key)} must be one of: ${validValues
+            .map((choice) => toSingleLineDisplay(choice))
+            .join(", ")}`,
+        );
       }
       return rawValue;
     }
@@ -383,7 +387,9 @@ function coerceConfigValue(
     case "documents.maxFileSizeMB": {
       const parsed = Number(rawValue);
       if (!Number.isFinite(parsed) || parsed < 1 || parsed > 500) {
-        throw new CliUserError(`Config value for ${key} must be a number between 1 and 500.`);
+        throw new CliUserError(
+          `Config value for ${toSingleLineDisplay(key)} must be a number between 1 and 500.`,
+        );
       }
       return parsed;
     }
@@ -391,7 +397,7 @@ function coerceConfigValue(
       const parsed = Number(rawValue);
       if (!Number.isFinite(parsed) || parsed < 1000 || parsed > 1000000) {
         throw new CliUserError(
-          `Config value for ${key} must be a number between 1000 and 1000000.`,
+          `Config value for ${toSingleLineDisplay(key)} must be a number between 1000 and 1000000.`,
         );
       }
       return parsed;
@@ -412,6 +418,10 @@ function formatWizardValue(value: string | number | boolean | readonly string[])
   }
   if (typeof value === "string") return toSingleLineDisplay(value);
   return String(value);
+}
+
+function formatWizardKey(key: SettableConfigKey): string {
+  return toSingleLineDisplay(key);
 }
 
 function promptText(
@@ -435,7 +445,11 @@ function selectChoice(
     if (selected !== undefined) return selected;
   }
   if (choices.includes(trimmed)) return trimmed;
-  throw new CliUserError(`Config value for ${key} must be one of: ${choices.join(", ")}`);
+  throw new CliUserError(
+    `Config value for ${formatWizardKey(key)} must be one of: ${choices
+      .map((choice) => toSingleLineDisplay(choice))
+      .join(", ")}`,
+  );
 }
 
 async function promptForModel(
@@ -463,7 +477,7 @@ async function promptForModel(
   );
   output.write(`Default model [1-${models.length}] (Enter for recommended): `);
   const selected = selectChoice(await line(), models, models[0] ?? "", "defaults.model");
-  write(`Set defaults.model = ${toSingleLineDisplay(selected)}\n`);
+  write(`Set ${formatWizardKey("defaults.model")} = ${toSingleLineDisplay(selected)}\n`);
   return selected;
 }
 
@@ -583,7 +597,7 @@ async function runWizard(write: Writer, deps: ConfigWizardDependencies | undefin
     for (const [key, label, current] of values) {
       const value = await promptForValue(key, label, current, nextLine, output);
       await updateConfigField(key, value);
-      write(`Set ${key} = ${formatWizardValue(value)}\n`);
+      write(`Set ${formatWizardKey(key)} = ${formatWizardValue(value)}\n`);
     }
     write("\nConfig wizard complete.\n");
   } finally {
@@ -642,8 +656,9 @@ function buildWizardCommand(
       await runWizard(write, wizardDeps);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      writeError(`${msg}\n`);
-      throw err instanceof CliUserError ? err : new CliUserError(msg);
+      const displayMsg = toSingleLineDisplay(msg);
+      writeError(`${displayMsg}\n`);
+      throw new CliUserError(displayMsg);
     }
   });
   return cmd;
