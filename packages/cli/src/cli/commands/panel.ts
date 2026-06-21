@@ -42,10 +42,12 @@ import {
   DEBATE_MODES,
   PanelDefaultsSchema,
   PanelDefinitionSchema,
+  listTemplateFiles,
   type DebateMode,
   type PanelDefinition,
   type PanelExpertEntry,
 } from "../../core/template-loader.js";
+import { lintPanelDefinition, type LintResult } from "../../core/panel-lint.js";
 import { scanAndIndexPanelDocuments } from "../../core/documents/panel-document-scanner.js";
 import { createDatabase, type CouncilDatabase } from "../../memory/db.js";
 import { PanelLibraryRepository } from "../../memory/repositories/panel-library-repo.js";
@@ -263,7 +265,7 @@ export function buildPanelCommand(
 ): Command {
   const cmd = new Command("panel");
   cmd.alias("panels");
-  cmd.description("Manage Council panels (create, list, inspect, edit, delete)");
+  cmd.description("Manage Council panels (create, list, inspect, edit, lint, delete)");
   cmd.action(async () => {
     await runPanelList(write, "table", false);
   });
@@ -272,6 +274,7 @@ export function buildPanelCommand(
   cmd.addCommand(buildListCommand(write));
   cmd.addCommand(buildInspectCommand(write, writeError));
   cmd.addCommand(buildEditCommand(write, writeError));
+  cmd.addCommand(buildLintCommand(write, writeError));
   cmd.addCommand(buildDeleteCommand(write, writeError, confirmProvider));
   cmd.addCommand(buildDocsCommand(write, writeError, confirmProvider));
   return cmd;
@@ -1094,6 +1097,140 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
       });
     });
   return cmd;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// lint
+// ──────────────────────────────────────────────────────────────────────
+
+interface LintCliOptions {
+  readonly builtIns?: boolean;
+  readonly official?: boolean;
+}
+
+interface LintTarget {
+  /** Label shown in the report (file path for user files, basename for built-ins). */
+  readonly label: string;
+  /** Absolute path to read. */
+  readonly file: string;
+}
+
+function buildLintCommand(write: Writer, writeError: Writer): Command {
+  const cmd = new Command("lint");
+  cmd
+    .description("Validate panel YAML against the Council quality gate")
+    .argument("[files...]", "Panel YAML file(s) to lint")
+    .option("--built-ins", "Lint every bundled built-in panel instead of named files")
+    .option(
+      "--official",
+      "Apply the strict official-quality bar (sample-prompt, filler-phrase, and slug-reference warnings become errors)",
+    )
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Each finding is tagged with a rule id and a severity. Warnings are",
+        "informational; the command exits non-zero only when an ERROR is found.",
+        "",
+        "Examples:",
+        "  council panel lint ./my-panel.yaml",
+        "  council panel lint --built-ins",
+        "  council panel lint --official ./candidate.yaml",
+      ].join("\n"),
+    )
+    .action(async (files: string[], opts: LintCliOptions) => {
+      await runPanelLint(files, opts, write, writeError);
+    });
+  return cmd;
+}
+
+async function runPanelLint(
+  files: readonly string[],
+  opts: LintCliOptions,
+  write: Writer,
+  writeError: Writer,
+): Promise<void> {
+  const official = opts.official === true;
+
+  const targets: LintTarget[] = [];
+  if (opts.builtIns === true) {
+    for (const file of await listTemplateFiles()) {
+      targets.push({ label: path.basename(file), file });
+    }
+  }
+  for (const file of files) {
+    targets.push({ label: file, file: path.resolve(process.cwd(), file) });
+  }
+
+  if (targets.length === 0) {
+    const msg = "No panels to lint. Pass one or more YAML files, or use --built-ins.";
+    writeError(`${msg}\n`);
+    throw new CliUserError(msg);
+  }
+
+  let totalErrors = 0;
+  let totalWarnings = 0;
+
+  for (const target of targets) {
+    let raw: string;
+    try {
+      raw = await fs.readFile(target.file, "utf-8");
+    } catch (err: unknown) {
+      const reason = err instanceof Error ? err.message : String(err);
+      write(`${target.label}\n  ✖ error  read-file: ${stripControlChars(reason)}\n\n`);
+      totalErrors += 1;
+      continue;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = yaml.parse(raw);
+    } catch (err: unknown) {
+      const reason = err instanceof Error ? err.message : String(err);
+      write(`${target.label}\n  ✖ error  yaml-parse: ${stripControlChars(reason)}\n\n`);
+      totalErrors += 1;
+      continue;
+    }
+
+    const result = lintPanelDefinition(parsed, { official });
+    totalErrors += result.errorCount;
+    totalWarnings += result.warningCount;
+    write(renderLintReport(target.label, result));
+  }
+
+  write(renderLintSummary(targets.length, totalErrors, totalWarnings, official));
+
+  if (totalErrors > 0) {
+    throw new CliUserError(
+      `Panel lint failed: ${totalErrors} error(s) across ${targets.length} file(s).`,
+    );
+  }
+}
+
+function renderLintReport(label: string, result: LintResult): string {
+  if (result.findings.length === 0) {
+    return `✓ ${label} — no issues\n\n`;
+  }
+  const lines = [label];
+  for (const finding of result.findings) {
+    const icon = finding.severity === "error" ? "✖" : "⚠";
+    const location = finding.path !== undefined ? ` [${finding.path}]` : "";
+    lines.push(
+      `  ${icon} ${finding.severity}  ${finding.ruleId}${location}: ${stripControlChars(finding.message)}`,
+    );
+  }
+  return `${lines.join("\n")}\n\n`;
+}
+
+function renderLintSummary(
+  fileCount: number,
+  errors: number,
+  warnings: number,
+  official: boolean,
+): string {
+  const status = errors > 0 ? "✖" : "✓";
+  const mode = official ? "official" : "standard";
+  return `${status} ${errors} error(s), ${warnings} warning(s) across ${fileCount} file(s) [${mode} mode].\n`;
 }
 
 // ──────────────────────────────────────────────────────────────────────

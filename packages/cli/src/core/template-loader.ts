@@ -34,6 +34,14 @@ export const DEBATE_MODES = ["freeform", "structured"] as const;
 export const DebateModeSchema = z.enum(DEBATE_MODES);
 export type DebateMode = z.infer<typeof DebateModeSchema>;
 
+/**
+ * Regulated domains that require explicit non-advice / decision-support
+ * framing (enforced by the panel quality gate, see `core/panel-lint.ts`).
+ */
+export const REGULATED_DOMAINS = ["legal", "finance", "hr"] as const;
+export const RegulatedDomainSchema = z.enum(REGULATED_DOMAINS);
+export type RegulatedDomain = z.infer<typeof RegulatedDomainSchema>;
+
 export const PanelDefaultsSchema = z.object({
   mode: DebateModeSchema.default("freeform"),
   maxRounds: z.number().int().min(1).max(20).optional(),
@@ -57,6 +65,22 @@ export const PanelDefinitionSchema = z
     description: NonEmptyString.optional(),
     defaults: PanelDefaultsSchema.optional(),
     experts: z.array(PanelExpertEntrySchema).min(1).max(8),
+    /**
+     * Example questions that showcase what this panel is for. Optional and
+     * backward-compatible — existing panels omit it. The quality gate
+     * (`core/panel-lint.ts`) warns (or, under the official bar, errors) when
+     * an official panel ships without at least one sample prompt.
+     */
+    samplePrompts: z.array(NonEmptyString).readonly().optional(),
+    /** One-line description of the concrete decision artifact this panel helps produce. */
+    decisionArtifact: NonEmptyString.optional(),
+    /** Free-form discovery tags (e.g. "engineering", "hiring"). */
+    tags: z.array(NonEmptyString).readonly().optional(),
+    /**
+     * Marks a panel as operating in a regulated advice domain. When set, the
+     * quality gate requires explicit non-advice / decision-support framing.
+     */
+    regulatedDomain: RegulatedDomainSchema.optional(),
   })
   .superRefine((panel, ctx) => {
     const seen = new Set<string>();
@@ -138,10 +162,7 @@ function levenshtein(a: string, b: string): number {
  * candidate when its Levenshtein distance is within a small threshold
  * proportional to `name.length`; otherwise undefined.
  */
-function suggestClosest(
-  name: string,
-  candidates: readonly string[],
-): string | undefined {
+function suggestClosest(name: string, candidates: readonly string[]): string | undefined {
   if (candidates.length === 0) return undefined;
   // Threshold: up to 1/3 of the input length, minimum 1, maximum 3. This
   // catches typical typos ("securty" → "security-review") without offering
@@ -227,6 +248,26 @@ export async function listTemplates(): Promise<readonly string[]> {
   return entries
     .filter((name) => name.endsWith(".yaml") || name.endsWith(".yml"))
     .map((name) => name.replace(/\.ya?ml$/, ""))
+    .sort();
+}
+
+/**
+ * List the absolute paths of every bundled panel YAML file.
+ *
+ * Used by `council panel lint --built-ins` to lint the shipped panels in
+ * place. Returns an empty array when the panels directory is missing.
+ */
+export async function listTemplateFiles(): Promise<readonly string[]> {
+  let entries: string[];
+  try {
+    entries = await fs.readdir(PANELS_DIR);
+  } catch (err: unknown) {
+    if (isENOENT(err)) return [];
+    throw err;
+  }
+  return entries
+    .filter((name) => name.endsWith(".yaml") || name.endsWith(".yml"))
+    .map((name) => path.join(PANELS_DIR, name))
     .sort();
 }
 
