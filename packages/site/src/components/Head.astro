@@ -1,0 +1,43 @@
+---
+/**
+ * Custom Starlight `Head` override.
+ *
+ * Renders Starlight's built-in head first (title, description, canonical,
+ * Open Graph, Twitter card, sitemap link) and then *augments* it with the
+ * social-preview image tags Starlight does not emit, plus homepage JSON-LD.
+ * Nothing here removes or duplicates a Starlight tag.
+ */
+import Default from "@astrojs/starlight/components/Head.astro";
+import {
+  basePath,
+  buildSoftwareApplicationLd,
+  socialImageAlt,
+  socialImageUrl,
+} from "../config/site";
+
+// The marketing homepage (src/content/docs/index.mdx) renders at the site
+// root. Emit the SoftwareApplication JSON-LD only there so inner docs pages
+// aren't mislabelled as the application entry point. Compare against the
+// configured base path and tolerate trailing-slash differences.
+const currentPath = Astro.url.pathname.replace(/\/+$/, "");
+const rootPath = basePath.replace(/\/+$/, "");
+const isHomepage = currentPath === rootPath || currentPath === "";
+const jsonLd = isHomepage
+  ? JSON.stringify(buildSoftwareApplicationLd())
+  : null;
+---
+
+<Default />
+
+{/* Social-preview image — absolute URLs so previews resolve when shared off-site. */}
+<meta property="og:image" content={socialImageUrl} />
+<meta property="og:image:alt" content={socialImageAlt} />
+<meta property="og:image:type" content="image/png" />
+<meta property="og:image:width" content="1280" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:image" content={socialImageUrl} />
+<meta name="twitter:image:alt" content={socialImageAlt} />
+
+{jsonLd && (
+  <script type="application/ld+json" is:inline set:html={jsonLd} />
+)}

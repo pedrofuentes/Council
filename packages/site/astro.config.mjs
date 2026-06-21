@@ -21,7 +21,17 @@ export default defineConfig({
   integrations: [
     starlight({
       title: "Council",
+      // Fallback metadata description so every page emits og:description and a
+      // meta description even when a page omits its own frontmatter description.
+      // Provider-honest: Council ships on GitHub Copilot today.
+      description:
+        "Council convenes persistent panels of AI experts that deliberate, disagree, and remember — structured decisions you can defend, right in your terminal.",
       customCss: ["./src/styles/global.css"],
+      // Augment Starlight's built-in <head> (canonical, Open Graph, Twitter
+      // card, sitemap link) with social-preview image tags + homepage JSON-LD.
+      components: {
+        Head: "./src/components/Head.astro",
+      },
       // Diátaxis information architecture: tutorials, how-to guides,
       // reference, and explanation sections for optimal documentation
       // discoverability.

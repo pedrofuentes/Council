@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://pedrofuentes.github.io/Council/sitemap-index.xml
