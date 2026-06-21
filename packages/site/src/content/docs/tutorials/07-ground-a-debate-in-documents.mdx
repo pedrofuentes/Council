@@ -1,0 +1,243 @@
+---
+title: Ground a Debate in Documents
+description: Attach reference documents to your panel so experts debate with real data, specs, and context.
+---
+
+**Time**: ~8 minutes  
+**Learning outcome**: Add documents to a panel, verify indexing, and convene a document-grounded debate.
+
+## What you'll learn
+
+By the end of this tutorial, you will:
+
+- Add reference documents to a panel (specs, reports, policies)
+- Understand Council's document processing pipeline
+- Convene a debate where experts retrieve and cite your documents
+- Inspect and troubleshoot document indexing with `council docs`
+
+## Prerequisites
+
+- Completed [Tutorial 6: Build a Custom Panel](/Council/docs/tutorials/06-build-a-custom-panel/)
+- A custom panel created (or create one now — see below)
+- Sample documents (Markdown, PDF, Word, HTML, or plain text)
+
+:::note[Supported document formats]
+Council natively processes Markdown, plain text, and HTML. PDF, Word (`.docx`), PowerPoint (`.pptx`), Excel (`.xlsx`), and other formats are extracted using built-in parsers. Run `council docs formats` to see the full list and AI-fallback status.
+:::
+
+## What is document-grounded deliberation?
+
+By default, Council experts debate based on **their training data and reasoning**. Adding documents to a panel gives experts access to:
+
+- **Specs and requirements**: Product roadmaps, API docs, architecture diagrams
+- **Data and reports**: Metrics, user research, compliance reports
+- **Policies and standards**: Security policies, coding standards, legal guidance
+
+When you convene a panel with documents, Council:
+
+1. **Indexes** the documents (extracts text, chunks, embeds)
+2. **Retrieves** relevant passages during deliberation based on the topic
+3. **Injects** those passages as context for each expert's response
+
+This grounds the debate in your actual project data, not generic advice.
+
+## Step 1: Create a panel for document testing
+
+If you don't already have a panel, create one:
+
+```bash
+council panel create \
+  --name product-review \
+  --description "Product roadmap and feasibility review" \
+  --mode sequential \
+  --experts product-manager,engineer,designer \
+  --max-rounds 3
+```
+
+## Step 2: Check supported document formats
+
+Before adding documents, see what Council can process:
+
+```bash
+council docs formats
+```
+
+Output:
+
+```
+Supported document formats:
+
+  Native (no extraction):
+    .md, .markdown   Markdown
+    .txt             Plain text
+    .html, .htm      HTML
+
+  Structured extraction:
+    .pdf             PDF
+    .docx            Word document
+    .pptx            PowerPoint presentation
+    .xlsx, .csv      Spreadsheet formats
+    .rtf             Rich Text Format
+    .odt, .ods, .odp OpenDocument formats
+
+  AI-fallback (when enabled):
+    .png, .jpg, .jpeg, .gif   Images (OCR + description)
+
+Default file size limit: 10 MB per document
+```
+
+If you need to process images or other unsupported formats, enable AI-fallback in `~/.council/config.json`:
+
+```json
+{
+  "documents": {
+    "ai": {
+      "enabled": true,
+      "maxFileSizeBytes": 10485760
+    }
+  }
+}
+```
+
+## Step 3: Add documents to your panel
+
+Place your reference documents in the panel's `docs/` directory:
+
+```bash
+# The panel docs directory is: ~/.council/data/panels/<panel-name>/docs/
+mkdir -p ~/.council/data/panels/product-review/docs
+cp my-product-spec.md ~/.council/data/panels/product-review/docs/
+cp user-research-report.pdf ~/.council/data/panels/product-review/docs/
+```
+
+Or use a subdirectory structure:
+
+```bash
+mkdir -p ~/.council/data/panels/product-review/docs/specs
+mkdir -p ~/.council/data/panels/product-review/docs/research
+cp product-spec.md ~/.council/data/panels/product-review/docs/specs/
+cp user-interviews.pdf ~/.council/data/panels/product-review/docs/research/
+```
+
+Council scans the entire `docs/` tree (recursively) when you convene the panel.
+
+:::tip[Relative paths]
+You can also copy documents to `~/.council/data/panels/<panel>/docs/` from your project directory:
+```bash
+cp ./specs/*.md ~/.council/data/panels/product-review/docs/
+```
+:::
+
+## Step 4: Verify document indexing
+
+Before convening, confirm Council can process your documents:
+
+```bash
+council docs doctor product-review
+```
+
+Output:
+
+```
+Panel: product-review
+Document corpus health:
+
+  ✓ Indexed documents: 3
+    Total words: 4,250
+  ✓ Pending review: 0
+  ✓ Failed/corrupt: 0
+
+  AI-fallback: enabled
+  Max file size: 10 MB
+
+All documents indexed successfully.
+```
+
+If any documents failed to process, run:
+
+```bash
+council docs review product-review
+```
+
+This lists files that couldn't be indexed and suggests fixes (e.g., unsupported format, file too large, corrupted PDF).
+
+## Step 5: Convene a document-grounded debate
+
+Now run your panel. Council automatically retrieves relevant passages from your documents:
+
+```bash
+council convene product-review "Should we prioritize the mobile app redesign in Q3, or focus on web performance?"
+```
+
+**What happens during deliberation**:
+
+1. Council analyzes the topic: *"mobile app redesign… Q3… web performance"*
+2. Retrieves relevant chunks from your indexed documents (product spec, research report)
+3. Injects those passages as context for each expert's response
+4. Experts cite or reference the documents in their arguments
+
+Example output:
+
+```
+🏛️ Convening panel: product-review
+✓ Panel loaded: 3 experts
+✓ Documents indexed: 3 (4,250 words)
+
+━━━ Round 1 ━━━
+
+[Product Manager]
+According to the user research report, mobile engagement dropped 22% last quarter.
+The redesign addresses the top 3 pain points from interviews. However, the product
+spec notes that web traffic still accounts for 65% of conversions, and our Core Web
+Vitals are below industry benchmarks...
+```
+
+Notice the expert references your documents directly. Council doesn't hallucinate data — it retrieves and cites what you provided.
+
+## Step 6: Review document usage (optional)
+
+After the debate, you can export the transcript to see which document passages were retrieved:
+
+```bash
+council export product-review --format markdown > debate-transcript.md
+```
+
+The transcript includes inline references when experts cite documents.
+
+## Troubleshooting: Document processing issues
+
+If `council docs doctor <panel>` reports failures:
+
+1. **Unsupported format**: Check `council docs formats`. Convert to PDF or Markdown if needed.
+2. **File too large**: Reduce file size or increase the limit in `~/.council/config.json`:
+   ```json
+   {
+     "documents": {
+       "maxFileSizeBytes": 20971520  // 20 MB
+     }
+   }
+   ```
+3. **Corrupted file**: Re-save or re-export the document.
+4. **AI-fallback needed**: Enable AI extraction for images/complex PDFs (see Step 2).
+
+Run `council docs review <panel>` to see the exact error for each failed document.
+
+## Best practices for panel documents
+
+- **Keep documents focused**: Include only materials relevant to the panel's purpose (don't add your entire wiki)
+- **Use clear filenames**: `product-roadmap-q3.md` is better than `doc1.md`
+- **Update incrementally**: You can add/remove files in the `docs/` directory anytime — Council re-indexes on the next convene
+- **Markdown is fastest**: Native formats (`.md`, `.txt`, `.html`) process instantly; PDFs and Word docs add ~1–3 seconds per file
+
+## What you learned
+
+- ✅ Added reference documents to a panel's `docs/` directory
+- ✅ Verified indexing with `council docs doctor <panel>`
+- ✅ Convened a debate where experts retrieved and cited your documents
+- ✅ Troubleshot processing issues with `council docs review <panel>`
+
+## Next steps
+
+- [Tutorial 8: Continue, Conclude, and Export](/Council/docs/tutorials/08-continue-conclude-and-export/) — resume debates, synthesize decisions, and export artifacts
+- **Experiment**: Create a panel with your project's docs (specs, ADRs, policies) and see how grounded context changes the debate quality
+- **Advanced**: Use document-grounded panels for compliance reviews, technical feasibility analysis, or requirements refinement

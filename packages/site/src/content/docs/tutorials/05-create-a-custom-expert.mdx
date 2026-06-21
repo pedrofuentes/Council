@@ -1,0 +1,182 @@
+---
+title: Create a Custom Expert
+description: Define your own expert with a unique persona, model, and reasoning style for reuse across panels.
+---
+
+**Time**: ~5 minutes  
+**Learning outcome**: Create, inspect, and use a custom expert definition in a debate.
+
+## What you'll learn
+
+By the end of this tutorial, you will:
+
+- Create a custom expert using `council expert create`
+- Understand expert YAML structure (persona, model, instructions)
+- Use your custom expert in a live debate
+- List and inspect experts in your library
+
+## Prerequisites
+
+- Completed [Tutorial 1: Install and First Debate](/Council/docs/tutorials/01-install-and-first-debate/)
+- Familiarity with `council convene` for running debates
+
+:::note[Expert library basics]
+Council stores custom experts as YAML files in `~/.council/data/experts/`. Each expert has a unique **slug** (like `security-auditor` or `empathy-coach`) that you reference when composing panels.
+:::
+
+## What is a custom expert?
+
+When you run `council convene` without specifying experts, Council auto-composes a panel from **generic experts** — temporary personas tailored to your question. Custom experts are **persistent, named personas** you define once and reuse:
+
+- **Persona experts**: specific roles with attitudes, expertise, and decision-making styles (e.g., a risk-averse CFO, a customer-first product lead)
+- **Generic experts**: minimal definitions that let Council infer the role from context (useful for flexible, topic-driven composition)
+
+## Step 1: Create your first custom expert
+
+Run the interactive wizard:
+
+```bash
+council expert create
+```
+
+You'll be prompted for:
+
+1. **Slug**: A unique identifier (lowercase, hyphens only). Example: `risk-analyst`
+2. **Display name**: The human-readable name shown in transcripts. Example: `Sarah Chen (Risk Analyst)`
+3. **Kind**: Choose `persona` (for a role with specific traits) or `generic` (for a flexible expert)
+4. **Persona** (if kind=persona): Describe the expert's role, background, and perspective. Example:
+   ```
+   You are a seasoned enterprise risk analyst with 15 years of experience in financial services.
+   You prioritize compliance, data security, and long-term stability. When evaluating decisions,
+   you always surface potential failure modes and regulatory concerns.
+   ```
+5. **Model** (optional): Leave blank to use the default, or specify a model like `claude-sonnet-4.5`
+
+After you answer the prompts, Council saves the expert to `~/.council/data/experts/risk-analyst.yaml` and confirms:
+
+```
+✓ Expert created: risk-analyst
+  Location: ~/.council/data/experts/risk-analyst.yaml
+```
+
+:::tip[Non-interactive creation]
+For scripts or testing, use flags:
+```bash
+council expert create \
+  --slug risk-analyst \
+  --name "Sarah Chen (Risk Analyst)" \
+  --kind persona \
+  --persona "You are a seasoned enterprise risk analyst..." \
+  --model claude-sonnet-4.5
+```
+:::
+
+## Step 2: Inspect your expert
+
+View the full expert definition:
+
+```bash
+council expert inspect risk-analyst
+```
+
+Output:
+
+```yaml
+slug: risk-analyst
+displayName: Sarah Chen (Risk Analyst)
+kind: persona
+persona: >
+  You are a seasoned enterprise risk analyst with 15 years of experience in
+  financial services. You prioritize compliance, data security, and long-term
+  stability. When evaluating decisions, you always surface potential failure
+  modes and regulatory concerns.
+model: claude-sonnet-4.5
+```
+
+This is the exact YAML stored in `~/.council/data/experts/risk-analyst.yaml`. You can edit it directly (see Step 4) or via the CLI.
+
+## Step 3: Use your custom expert in a debate
+
+Now convene a panel that includes your new expert. Use the `--expert` flag to specify custom experts by slug:
+
+```bash
+council convene \
+  --expert risk-analyst \
+  --expert product-lead \
+  --expert cfo \
+  "Should we migrate to a multi-cloud architecture?"
+```
+
+**What happens**:
+
+1. Council resolves each `--expert` slug from your library
+2. If a slug doesn't exist, Council falls back to auto-composing a generic expert with that name
+3. The panel debates with your `risk-analyst` persona bringing their characteristic risk-focused perspective
+
+You'll see output like:
+
+```
+🏛️ Convening panel...
+✓ Panel assembled: 3 experts
+  • Sarah Chen (Risk Analyst) — claude-sonnet-4.5  [custom]
+  • product-lead — claude-sonnet-4.5              [auto-composed]
+  • cfo — claude-sonnet-4.5                       [auto-composed]
+
+━━━ Round 1 ━━━
+
+[Sarah Chen — Risk Analyst]
+Before considering multi-cloud, we need to address three critical risks...
+```
+
+## Step 4: Browse and manage your expert library
+
+List all custom experts:
+
+```bash
+council expert list
+```
+
+Output:
+
+```
+Custom experts in your library:
+
+  risk-analyst
+    Name: Sarah Chen (Risk Analyst)
+    Kind: persona · Model: claude-sonnet-4.5
+    Created: 2 minutes ago
+
+  empathy-coach
+    Name: Alex Rivera (Empathy Coach)
+    Kind: persona · Model: claude-sonnet-4.5
+    Created: 3 days ago
+```
+
+Edit an existing expert (opens your default editor):
+
+```bash
+council expert edit risk-analyst
+```
+
+Delete an expert:
+
+```bash
+council expert delete risk-analyst
+```
+
+:::caution[Deletion is permanent]
+`council expert delete` removes the expert from the library immediately. Past debates that used this expert remain intact — the expert data is **snapshotted** when a debate starts.
+:::
+
+## What you learned
+
+- ✅ Created a custom expert with `council expert create`
+- ✅ Inspected the expert YAML structure
+- ✅ Used a custom expert in a debate with `--expert <slug>`
+- ✅ Listed and managed experts in your library
+
+## Next steps
+
+- [Tutorial 6: Build a Custom Panel](/Council/docs/tutorials/06-build-a-custom-panel/) — combine multiple custom experts into a reusable panel template
+- **Experiment**: Create experts for roles you frequently debate (architect, UX lead, ops engineer)
+- **Try the mock engine**: Use `--engine mock` to test panel composition without consuming API credits
