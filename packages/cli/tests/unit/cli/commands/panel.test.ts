@@ -81,7 +81,9 @@ describe("buildPanelCommand", () => {
     const cmd = buildPanelCommand();
     expect(cmd.name()).toBe("panel");
     const subs = cmd.commands.map((c) => c.name()).sort();
-    expect(subs).toEqual(["create", "delete", "docs", "edit", "inspect", "list", "save"].sort());
+    expect(subs).toEqual(
+      ["create", "delete", "docs", "edit", "inspect", "lint", "list", "save"].sort(),
+    );
   });
 
   it("defaults bare panel to the list action", async () => {
