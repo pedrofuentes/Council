@@ -46,10 +46,9 @@ This grounds the debate in your actual project data, not generic advice.
 If you don't already have a panel, create one:
 
 ```bash
-council panel create \
-  --name product-review \
+council panel create product-review \
   --description "Product roadmap and feasibility review" \
-  --mode sequential \
+  --mode freeform \
   --experts product-manager,engineer,designer \
   --max-rounds 3
 ```
@@ -166,7 +165,7 @@ This lists files that couldn't be indexed and suggests fixes (e.g., unsupported 
 Now run your panel. Council automatically retrieves relevant passages from your documents:
 
 ```bash
-council convene product-review "Should we prioritize the mobile app redesign in Q3, or focus on web performance?"
+council convene --panel product-review "Should we prioritize the mobile app redesign in Q3, or focus on web performance?"
 ```
 
 **What happens during deliberation**:

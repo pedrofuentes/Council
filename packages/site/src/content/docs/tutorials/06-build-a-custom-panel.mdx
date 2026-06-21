@@ -12,7 +12,7 @@ By the end of this tutorial, you will:
 
 - Create a custom panel with `council panel create`
 - Configure panel members (custom experts + generic fallbacks)
-- Set panel-level debate parameters (mode, rounds, word limit)
+- Set panel-level debate parameters (mode, rounds)
 - Convene your panel template by name
 - Manage panel templates in your library
 
@@ -50,7 +50,7 @@ You'll be prompted for:
 
 1. **Panel name**: A unique identifier (lowercase, hyphens, starts with a letter). Example: `security-review`
 2. **Description**: Human-readable purpose. Example: `Security, compliance, and privacy review panel for new features`
-3. **Debate mode**: Choose `sequential` (experts take turns) or `simultaneous` (all respond to the topic in parallel, then deliberate)
+3. **Debate mode**: Choose `freeform` (rounds of moderated open discussion — the default) or `structured` (a fixed multi-phase debate choreography)
 4. **Expert members**: Provide expert slugs one per prompt. Press Enter on a blank line when done. Example:
    ```
    Enter expert slug (or blank to finish): security-auditor
@@ -59,7 +59,6 @@ You'll be prompted for:
    Enter expert slug (or blank to finish): <blank — press Enter>
    ```
 5. **Max rounds** (optional): How many deliberation rounds. Default: 3
-6. **Max words per response** (optional): Soft word limit for expert replies. Default: 250
 
 After confirming, Council saves the panel to `~/.council/data/panels/security-review.yaml`:
 
@@ -72,13 +71,11 @@ After confirming, Council saves the panel to `~/.council/data/panels/security-re
 :::tip[Non-interactive creation]
 For scripts:
 ```bash
-council panel create \
-  --name security-review \
+council panel create security-review \
   --description "Security, compliance, and privacy review panel" \
-  --mode sequential \
+  --mode freeform \
   --experts security-auditor,privacy-officer,senior-engineer \
-  --max-rounds 3 \
-  --max-words 250
+  --max-rounds 3
 ```
 :::
 
@@ -95,36 +92,29 @@ Output:
 ```yaml
 name: security-review
 description: Security, compliance, and privacy review panel for new features
-mode: sequential
+mode: freeform
 experts:
   - slug: security-auditor
   - slug: privacy-officer
   - slug: senior-engineer
 maxRounds: 3
-maxWords: 250
 ```
 
 Each expert slug must exist in your expert library (created via `council expert create`). If a slug is missing when you convene, Council will error with suggestions.
 
 ## Step 3: Convene your custom panel
 
-Use the panel by name:
+Use the panel by name with the `--panel` flag:
 
 ```bash
-council convene security-review "We're adding OAuth2 social login. Should we support Twitter/X given their API instability?"
-```
-
-Or use the `--panel` flag:
-
-```bash
-council convene --panel security-review "OAuth2 social login: include Twitter/X?"
+council convene --panel security-review "We're adding OAuth2 social login. Should we support Twitter/X given their API instability?"
 ```
 
 **What happens**:
 
 1. Council loads the `security-review` panel definition
 2. Resolves all expert slugs from your library
-3. Runs the debate using the panel's configured mode, rounds, and word limits
+3. Runs the debate using the panel's configured mode and rounds
 4. Creates a new session tied to the panel template
 
 Output:
@@ -157,12 +147,12 @@ Custom panels in your library:
 
   security-review
     Description: Security, compliance, and privacy review panel
-    Members: 3 experts · Mode: sequential
+    Members: 3 experts · Mode: freeform
     Created: 5 minutes ago
 
   architecture-decision
     Description: Technical architecture review with cross-functional stakeholders
-    Members: 5 experts · Mode: simultaneous
+    Members: 5 experts · Mode: structured
     Created: 2 days ago
 ```
 
@@ -201,7 +191,7 @@ experts:
 ## What you learned
 
 - ✅ Created a custom panel with `council panel create`
-- ✅ Configured expert members, debate mode, rounds, and word limits
+- ✅ Configured expert members, debate mode, and rounds
 - ✅ Convened your panel template by name
 - ✅ Managed panel templates with `list`, `inspect`, `edit`, `delete`
 

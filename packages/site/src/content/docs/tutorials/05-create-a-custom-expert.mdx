@@ -65,8 +65,11 @@ For scripts or testing, use flags:
 council expert create \
   --slug risk-analyst \
   --name "Sarah Chen (Risk Analyst)" \
-  --kind persona \
-  --persona "You are a seasoned enterprise risk analyst..." \
+  --role "Enterprise risk analyst" \
+  --expertise "compliance,data-security,operational-risk" \
+  --stance "Risk-averse; surfaces failure modes and regulatory concerns" \
+  --persona \
+  --persona-description "Seasoned enterprise risk analyst with 15 years in financial services" \
   --model claude-sonnet-4.5
 ```
 :::
@@ -97,19 +100,17 @@ This is the exact YAML stored in `~/.council/data/experts/risk-analyst.yaml`. Yo
 
 ## Step 3: Use your custom expert in a debate
 
-Now convene a panel that includes your new expert. Use the `--expert` flag to specify custom experts by slug:
+Now convene a panel that includes your new expert. Use the `--experts` flag to specify custom experts by slug:
 
 ```bash
 council convene \
-  --expert risk-analyst \
-  --expert product-lead \
-  --expert cfo \
+  --experts risk-analyst,product-lead,cfo \
   "Should we migrate to a multi-cloud architecture?"
 ```
 
 **What happens**:
 
-1. Council resolves each `--expert` slug from your library
+1. Council resolves each slug in `--experts` from your library
 2. If a slug doesn't exist, Council falls back to auto-composing a generic expert with that name
 3. The panel debates with your `risk-analyst` persona bringing their characteristic risk-focused perspective
 
@@ -172,7 +173,7 @@ council expert delete risk-analyst
 
 - ✅ Created a custom expert with `council expert create`
 - ✅ Inspected the expert YAML structure
-- ✅ Used a custom expert in a debate with `--expert <slug>`
+- ✅ Used a custom expert in a debate with `--experts <slugs>`
 - ✅ Listed and managed experts in your library
 
 ## Next steps
