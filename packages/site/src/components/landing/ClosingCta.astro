@@ -15,10 +15,10 @@ interface NavLink {
 }
 
 const sectionLinks: readonly NavLink[] = [
-  { label: "Tutorials", href: `${base}docs/tutorials/` },
-  { label: "How-to guides", href: `${base}docs/how-to/` },
-  { label: "Reference", href: `${base}docs/reference/` },
-  { label: "Explanation", href: `${base}docs/explanation/` },
+  { label: "Tutorials", href: `${base}tutorials/` },
+  { label: "How-to guides", href: `${base}how-to/` },
+  { label: "Reference", href: `${base}reference/` },
+  { label: "Explanation", href: `${base}explanation/` },
   { label: "Panel gallery", href: `${base}gallery/` },
 ];
 ---
@@ -38,7 +38,7 @@ const sectionLinks: readonly NavLink[] = [
       npm install -g @council-ai/cli
     </p>
     <div class="council-cta-row">
-      <a class="council-button council-button-primary" href={`${base}docs/tutorials/`}>
+      <a class="council-button council-button-primary" href={`${base}tutorials/`}>
         Get started
       </a>
       <a class="council-button council-button-secondary" href={`${base}docs/`}>
