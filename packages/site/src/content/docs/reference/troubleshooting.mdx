@@ -106,7 +106,7 @@ council config get
 3. Override with CLI flags for testing:
 
 ```bash
-council convene tech-review --max-rounds 5
+council convene "Test topic" --panel tech-review --max-rounds 5
 ```
 
 ---
@@ -364,7 +364,7 @@ council convene tech-review
 3. **Use `--max-rounds` to reduce API calls:**
 
 ```bash
-council convene tech-review --max-rounds 2
+council convene "Quick review" --panel tech-review --max-rounds 2
 ```
 
 **See:** [Exit Codes](/Council/docs/reference/exit-codes/)
@@ -388,7 +388,7 @@ council convene tech-review --max-rounds 2
 1. **Force plain output:**
 
 ```bash
-council convene tech-review --format plain
+council convene "Review request" --panel tech-review --format plain
 ```
 
 2. **Disable color:**

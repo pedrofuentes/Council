@@ -82,7 +82,7 @@ esac
 ```yaml
 # GitHub Actions example
 - name: Run Council panel
-  run: council convene tech-review --format json > output.ndjson
+  run: council convene "Should we proceed with this deployment?" --panel tech-review --format json > output.ndjson
   id: council
   continue-on-error: true
 
