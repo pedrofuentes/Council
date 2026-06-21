@@ -111,7 +111,9 @@ function lintCommand(): {
     },
   );
   return {
-    parse: (args) => cmd.parseAsync(["node", "council-panel", "lint", ...args]),
+    parse: async (args) => {
+      await cmd.parseAsync(["node", "council-panel", "lint", ...args]);
+    },
     out: () => stdout,
     err: () => stderr,
   };
