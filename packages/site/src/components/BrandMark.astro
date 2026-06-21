@@ -1,0 +1,72 @@
+---
+/**
+ * BrandMark - Council Logo Component
+ *
+ * Renders the Council circuit-board emblem + COUNCIL wordmark.
+ * Council-first branding per project brand guidelines.
+ */
+
+interface Props {
+  /**
+   * Logo size in pixels (height and width)
+   * @default 80
+   */
+  size?: number;
+  /**
+   * Whether to include the wordmark text below the emblem
+   * @default true
+   */
+  showWordmark?: boolean;
+  /**
+   * Additional CSS class names
+   */
+  class?: string;
+}
+
+const { size = 80, showWordmark = true, class: className } = Astro.props;
+---
+
+<div class:list={['council-brandmark', className]}>
+  <img
+    src="/brand/council-logo.svg"
+    alt="Council"
+    width={size}
+    height={size}
+    class="council-logo-emblem"
+  />
+  {
+    showWordmark && (
+      <span class="council-wordmark" aria-label="Council">
+        COUNCIL
+      </span>
+    )
+  }
+</div>
+
+<style>
+  .council-brandmark {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .council-logo-emblem {
+    display: block;
+  }
+
+  .council-wordmark {
+    font-family: var(--council-font-mono, monospace);
+    font-size: 0.875rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--council-color-text, #1b2c32);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .council-wordmark {
+      color: var(--council-color-text, #e6e9e6);
+    }
+  }
+</style>
