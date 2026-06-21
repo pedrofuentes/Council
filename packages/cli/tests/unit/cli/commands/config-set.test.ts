@@ -71,12 +71,21 @@ describe("buildConfigCommand config set", () => {
     expect(config.defaults.maxRounds).toBe(7);
   });
 
+  it("sets boolean config values", async () => {
+    const { stdout } = await runConfig(["set", "telemetry.enabled", "true"]);
+
+    expect(stdout).toContain("Set telemetry.enabled = true");
+    const config = await loadConfig();
+    expect(config.telemetry.enabled).toBe(true);
+  });
+
   it("rejects unsupported keys with the valid key list", async () => {
-    const { stderr } = await runConfig(["set", "telemetry.enabled", "true"]);
+    const { stderr } = await runConfig(["set", "providers.openai.apiKeyEnvVar", "OPENAI_API_KEY"]);
 
     expect(stderr).toContain("Unsupported config key");
     expect(stderr).toContain("defaults.model");
     expect(stderr).toContain("defaults.maxWordsPerResponse");
+    expect(stderr).toContain("telemetry.enabled");
   });
 
   it("prints validation errors and does not rewrite the config file", async () => {

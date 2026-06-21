@@ -106,7 +106,11 @@ describe("buildConfigCommand config set conclude.*", () => {
 
   describe("valid keys listing", () => {
     it("includes conclude.maxTranscriptChars in unsupported key error", async () => {
-      const { stderr } = await runConfig(["set", "telemetry.enabled", "true"]);
+      const { stderr } = await runConfig([
+        "set",
+        "providers.openai.apiKeyEnvVar",
+        "OPENAI_API_KEY",
+      ]);
 
       expect(stderr).toContain("Unsupported config key");
       expect(stderr).toContain("conclude.maxTranscriptChars");

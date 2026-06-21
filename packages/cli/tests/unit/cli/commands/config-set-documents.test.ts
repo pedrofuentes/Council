@@ -158,11 +158,7 @@ describe("buildConfigCommand config set documents.*", () => {
       expect(stderr).toBe("");
       expect(stdout).toContain("Set documents.aiExtractionAllowedExtensions");
       const config = await loadConfig();
-      expect(config.documents.aiExtractionAllowedExtensions).toEqual([
-        ".png",
-        ".zip",
-        ".log",
-      ]);
+      expect(config.documents.aiExtractionAllowedExtensions).toEqual([".png", ".zip", ".log"]);
     });
 
     it("deduplicates and drops empty segments", async () => {
@@ -174,23 +170,12 @@ describe("buildConfigCommand config set documents.*", () => {
 
       expect(stderr).toBe("");
       const config = await loadConfig();
-      expect(config.documents.aiExtractionAllowedExtensions).toEqual([
-        ".epub",
-        ".mobi",
-      ]);
+      expect(config.documents.aiExtractionAllowedExtensions).toEqual([".epub", ".mobi"]);
     });
 
     it("clears the allow-list when set to an empty value", async () => {
-      await runConfig([
-        "set",
-        "documents.aiExtractionAllowedExtensions",
-        ".epub",
-      ]);
-      const { stderr } = await runConfig([
-        "set",
-        "documents.aiExtractionAllowedExtensions",
-        "",
-      ]);
+      await runConfig(["set", "documents.aiExtractionAllowedExtensions", ".epub"]);
+      const { stderr } = await runConfig(["set", "documents.aiExtractionAllowedExtensions", ""]);
 
       expect(stderr).toBe("");
       const config = await loadConfig();
@@ -198,11 +183,7 @@ describe("buildConfigCommand config set documents.*", () => {
     });
 
     it("is reflected by config show", async () => {
-      await runConfig([
-        "set",
-        "documents.aiExtractionAllowedExtensions",
-        ".png,.zip",
-      ]);
+      await runConfig(["set", "documents.aiExtractionAllowedExtensions", ".png,.zip"]);
       const { stdout } = await runConfig(["show"]);
 
       expect(stdout).toContain("documents.aiExtractionAllowedExtensions");
@@ -212,7 +193,11 @@ describe("buildConfigCommand config set documents.*", () => {
 
   describe("valid keys listing", () => {
     it("includes documents.aiExtraction in unsupported key error", async () => {
-      const { stderr } = await runConfig(["set", "telemetry.enabled", "true"]);
+      const { stderr } = await runConfig([
+        "set",
+        "providers.openai.apiKeyEnvVar",
+        "OPENAI_API_KEY",
+      ]);
 
       expect(stderr).toContain("Unsupported config key");
       expect(stderr).toContain("documents.aiExtraction");
@@ -220,7 +205,11 @@ describe("buildConfigCommand config set documents.*", () => {
     });
 
     it("includes documents.aiExtractionAllowedExtensions in the settable key list", async () => {
-      const { stderr } = await runConfig(["set", "telemetry.enabled", "true"]);
+      const { stderr } = await runConfig([
+        "set",
+        "providers.openai.apiKeyEnvVar",
+        "OPENAI_API_KEY",
+      ]);
 
       expect(stderr).toContain("Unsupported config key");
       expect(stderr).toContain("documents.aiExtractionAllowedExtensions");
