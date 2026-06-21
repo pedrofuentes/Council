@@ -1,0 +1,359 @@
+---
+title: Deep Document-Grounded Deliberation
+description: Ground expert panels in multi-document corpora with RAG retrieval for evidence-based, citation-backed deliberation.
+---
+
+**Time**: ~12 minutes  
+**Learning outcome**: Set up document-grounded panels, manage multi-document corpora, and verify RAG retrieval with `council docs` commands.
+
+## What you'll learn
+
+By the end of this tutorial, you will:
+
+- Understand when document grounding improves deliberation quality
+- Create a panel with a managed document corpus
+- Add multiple documents to a panel's corpus
+- Verify document indexing with `council docs formats` and `council docs review`
+- Run a document-grounded debate with automatic citation retrieval
+- Manage large-context documents and unsupported file types
+
+## Prerequisites
+
+- Completed [Tutorial 7: Ground a Debate in Documents](/Council/docs/tutorials/07-ground-a-debate-in-documents/)
+- Familiarity with `council panel create` and expert definitions
+
+:::note[When to ground in documents]
+Document grounding is most valuable when:
+- Experts need to cite specific evidence (policy docs, RFCs, incident reports)
+- The decision depends on proprietary context not in the LLM's training data
+- You want verifiable citations rather than plausible-sounding claims
+
+Skip document grounding for abstract questions (philosophy, pure tradeoffs) where lived experience > written docs.
+:::
+
+## How document grounding works
+
+When you attach documents to a panel, Council:
+
+1. **Indexes documents** at panel creation time (chunking, embeddings)
+2. **Retrieves relevant passages** for each expert before they respond (RAG)
+3. **Injects citations** into the expert's context as `[SOURCE: filename.pdf, page 3]`
+4. **Experts reference sources** in their arguments (enforced by the output contract)
+
+This shifts deliberation from **plausible claims** to **evidence-backed arguments**.
+
+## Step 1: Check supported document formats
+
+Before adding documents, verify which file types Council can process:
+
+```bash
+council docs formats
+```
+
+Output:
+
+```
+Supported document formats:
+
+Native extraction (always available):
+  • .txt      — Plain text
+  • .md       — Markdown
+  • .json     — Structured JSON
+  • .yaml     — YAML configuration files
+  • .log      — Log files
+
+AI-powered extraction (requires LLM):
+  • .pdf      — Portable Document Format
+  • .docx     — Microsoft Word documents
+  • .xlsx     — Excel spreadsheets
+  • .pptx     — PowerPoint presentations
+  • .html     — Web pages
+
+AI extraction: ask (prompts before processing)
+Max file size: 5 MB (configurable via `council config set documents.maxFileSizeMb`)
+
+Unsupported formats are skipped. Run `council docs review <panel>` to see pending issues.
+```
+
+**Key takeaway**: PDFs, Word docs, and spreadsheets require **AI extraction** (uses the LLM to convert visual/formatted content to searchable text). Native text formats (`.txt`, `.md`) are processed immediately.
+
+## Step 2: Create a document-grounded panel
+
+Create a new panel for a document-heavy decision scenario:
+
+```bash
+council panel create --slug security-audit
+```
+
+When prompted, add experts relevant to the domain:
+
+```yaml
+name: security-audit
+description: Security posture review grounded in threat model docs, incident reports, and compliance frameworks
+experts:
+  - slug: security-architect
+  - slug: compliance-officer
+  - slug: incident-responder
+samplePrompts:
+  - Should we adopt a zero-trust architecture based on our current threat model?
+  - Do our incident response procedures meet SOC 2 requirements?
+decisionArtifact: |
+  Security recommendation memo with:
+  - Current state assessment (cited from docs)
+  - Gaps identified by experts
+  - Prioritized remediation roadmap
+```
+
+## Step 3: Add documents to the panel corpus
+
+Documents live in a **managed folder** per panel:
+
+```
+~/.council/data/panels/<panel-name>/docs/
+```
+
+For the `security-audit` panel:
+
+```bash
+mkdir -p ~/.council/data/panels/security-audit/docs
+```
+
+Copy documents into this folder:
+
+```bash
+cp ~/Downloads/threat-model-2024.pdf ~/.council/data/panels/security-audit/docs/
+cp ~/Downloads/incident-report-q4.md ~/.council/data/panels/security-audit/docs/
+cp ~/company-docs/soc2-controls.docx ~/.council/data/panels/security-audit/docs/
+```
+
+Council auto-discovers files in this folder when the panel is invoked.
+
+## Step 4: Verify document indexing
+
+Check that Council successfully indexed your documents:
+
+```bash
+council docs review security-audit
+```
+
+Output:
+
+```
+Panel: security-audit
+Document corpus: ~/.council/data/panels/security-audit/docs/
+
+✅ 3 documents indexed successfully:
+  • threat-model-2024.pdf (247 KB, 12,450 words)
+  • incident-report-q4.md (18 KB, 3,200 words)
+  • soc2-controls.docx (92 KB, 8,100 words)
+
+⚠️ 1 document pending review:
+  • legacy-diagram.png (unsupported format)
+
+Total indexed: 23,750 words across 3 documents.
+
+Run `council docs formats` to see supported file types.
+```
+
+### Fixing pending documents
+
+If a document failed to index:
+
+1. **Unsupported format** (`.png`, `.mp4`, `.zip`): Convert to `.pdf` or `.txt`
+2. **File too large**: Reduce size or increase limit with `council config set documents.maxFileSizeMb 10`
+3. **Corrupted file**: Re-download or repair the file
+
+After fixing, Council auto-retries on the next `council convene` invocation.
+
+## Step 5: Enable AI extraction for PDFs and Word docs
+
+If you have PDFs or `.docx` files, Council needs permission to use the LLM for extraction:
+
+```bash
+council config set documents.aiExtraction ask
+```
+
+Options:
+
+- `ask` (default): Prompts before processing each AI-eligible file
+- `auto`: Automatically processes all AI-eligible files
+- `off`: Skips AI extraction (only native formats like `.txt`, `.md` are indexed)
+
+**Why "ask"?** AI extraction consumes LLM tokens (typically ~500–2000 tokens per document). The `ask` mode lets you review file sizes and approve extraction costs before proceeding.
+
+## Step 6: Run a document-grounded debate
+
+Convene the panel with a question that requires citing documents:
+
+```bash
+council convene --panel security-audit \
+  "Should we adopt a zero-trust architecture based on our current threat model?"
+```
+
+**What happens**:
+
+1. Council loads the indexed document corpus
+2. For each expert turn, RAG retrieves the **top 5 most relevant passages** from the corpus
+3. Experts receive citations in their context:
+   ```
+   [SOURCE: threat-model-2024.pdf, page 7]
+   "Our current perimeter-based defenses assume internal network traffic is trusted..."
+
+   [SOURCE: incident-report-q4.md, line 45]
+   "The lateral movement phase took 72 hours to detect due to lack of internal segmentation."
+   ```
+4. Experts cite sources in their arguments:
+   ```
+   [Security Architect]
+   Per the threat model (threat-model-2024.pdf, p.7), our perimeter defenses
+   can't stop lateral movement. The Q4 incident (incident-report-q4.md) proves
+   this — 72 hours of undetected lateral movement. Zero-trust closes this gap.
+   ```
+
+## Step 7: Review citations in the transcript
+
+After the debate, export the transcript to see how experts cited sources:
+
+```bash
+council export security-audit --output security-decision.md
+```
+
+Search for citation patterns:
+
+```bash
+grep -n "SOURCE:" security-decision.md
+```
+
+**High-quality document grounding** should show:
+
+- Multiple experts citing the same source with different interpretations
+- Experts citing **conflicting evidence** from different documents
+- Specific page/line references (not just vague mentions)
+
+## Step 8: Manage large document corpora
+
+For panels with 10+ documents or 100,000+ words, consider:
+
+### Strategy 1: Split by sub-topic
+
+Create multiple panels for different aspects of a decision:
+
+- `security-audit-infrastructure` (infra docs only)
+- `security-audit-compliance` (compliance docs only)
+- `security-audit-incidents` (incident reports only)
+
+Run separate debates, then synthesize results manually.
+
+### Strategy 2: Use focused document subsets
+
+Instead of adding all company docs, curate a **minimal corpus** per question:
+
+```bash
+# Bad: 50 documents, most irrelevant
+cp ~/all-company-docs/* ~/.council/data/panels/security-audit/docs/
+
+# Good: 3-5 documents directly relevant to the question
+cp ~/threat-model.pdf ~/.council/data/panels/security-audit/docs/
+cp ~/incident-q4.md ~/.council/data/panels/security-audit/docs/
+cp ~/soc2-controls.docx ~/.council/data/panels/security-audit/docs/
+```
+
+**Why**: RAG retrieval quality degrades as corpus size grows. A focused corpus produces higher-precision citations.
+
+### Strategy 3: Chunk long documents
+
+If a single document is too large (e.g., 200-page compliance manual), split it into chapters:
+
+```bash
+# Split a large PDF into per-chapter files
+pdftk compliance-manual.pdf burst output chapter-%02d.pdf
+
+# Add only relevant chapters to the panel corpus
+cp chapter-03.pdf ~/.council/data/panels/security-audit/docs/access-control.pdf
+cp chapter-07.pdf ~/.council/data/panels/security-audit/docs/incident-response.pdf
+```
+
+## Step 9: Verify corpus health with `council docs doctor`
+
+Get a diagnostic summary of the panel's document corpus:
+
+```bash
+council docs doctor security-audit
+```
+
+Output:
+
+```
+Panel: security-audit
+Document corpus health:
+
+✅ 12 documents indexed (45,300 words)
+⚠️ 2 documents pending review (unsupported format)
+❌ 1 document failed (corrupted PDF)
+
+AI extraction: ask
+Max file size: 5 MB
+
+Recommendations:
+  • Convert 2 pending files to .pdf or .txt
+  • Re-download or repair 1 corrupted file
+  • Consider splitting large documents (2 files > 10,000 words)
+```
+
+## Troubleshooting
+
+### Problem: "No relevant documents found"
+
+**Cause**: The question doesn't overlap with document content (vocabulary mismatch).
+
+**Fix**: Rephrase the question to use keywords from the docs, or verify docs were indexed (`council docs review <panel>`).
+
+### Problem: "AI extraction failed for document X"
+
+**Cause**: Document is malformed, corrupted, or exceeds token limits.
+
+**Fix**:
+
+1. Re-download the file
+2. Convert to plain text manually (e.g., `pdftotext input.pdf output.txt`)
+3. Reduce file size by extracting relevant pages only
+
+### Problem: Experts cite the same passage repeatedly
+
+**Cause**: Corpus is too small or retrieval isn't finding diverse passages.
+
+**Fix**: Add more documents or split a large document into smaller, topic-focused files.
+
+## What you accomplished
+
+- Set up a multi-document corpus for a panel
+- Verified document indexing with `council docs formats` and `council docs review`
+- Ran a document-grounded debate with RAG citation retrieval
+- Managed large corpora with focused subsets and splitting strategies
+- Diagnosed corpus health with `council docs doctor`
+
+## Next steps
+
+- **Tutorial 12**: [Automate Council in CI or Scripts](/Council/docs/tutorials/12-automate-council-in-ci-or-scripts/) — Script Council for CI pipelines, offline environments, and reproducible decision logs
+- **Experiment with corpus size**: Test how deliberation quality changes with 1 vs. 5 vs. 20 documents
+- **Try persona experts with docs**: Ground persona experts in personal writings (blog posts, decision memos) for hyper-specific priors
+
+## Key concepts introduced
+
+| Concept | Definition |
+|---------|------------|
+| **Document corpus** | Collection of files indexed for RAG retrieval during deliberation |
+| **RAG (Retrieval-Augmented Generation)** | Technique that injects relevant document passages into expert context |
+| **AI extraction** | LLM-powered conversion of formatted files (PDF, DOCX) to searchable text |
+| **Citation injection** | Automatic inclusion of `[SOURCE: file, page X]` references in expert context |
+| **Focused corpus** | Curated subset of documents (3-5 files) for high-precision retrieval |
+
+## Commands introduced
+
+| Command | Purpose |
+|---------|---------|
+| `council docs formats` | List supported file types and AI extraction status |
+| `council docs review <panel>` | Show indexed documents and pending issues |
+| `council docs doctor <panel>` | Diagnostic health summary for a panel's document corpus |
+| `council config set documents.aiExtraction <mode>` | Configure AI extraction (`ask`, `auto`, `off`) |
+| `council config set documents.maxFileSizeMb <N>` | Set maximum file size for indexing |

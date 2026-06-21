@@ -1,0 +1,318 @@
+---
+title: Design and Lint a Panel
+description: Compose a high-quality expert panel from scratch and verify it meets the official quality bar with the panel linter.
+---
+
+**Time**: ~10 minutes  
+**Learning outcome**: Design a full panel definition, run `council panel lint` to verify quality, and understand regulated-domain requirements.
+
+## What you'll learn
+
+By the end of this tutorial, you will:
+
+- Design a panel from scratch with 3–5 experts representing distinct decision variables
+- Add `samplePrompts` and `decisionArtifact` to the panel definition
+- Run `council panel lint` to verify the panel meets the official quality bar
+- Understand regulated-domain framing (legal, finance, HR) for decision-support
+- Fix linter findings (errors and warnings)
+
+## Prerequisites
+
+- Completed [Tutorial 9: Author High-Quality Expert Personas](/Council/docs/tutorials/09-author-high-quality-personas/)
+- Familiarity with expert YAML structure (`weightedEvidence`, `referenceCases`, `epistemicStance`)
+
+:::note[Why linting matters]
+The panel linter enforces the same quality bar that every official Council template must pass. Panels that pass the linter produce **substantive disagreement** rather than consensus theater.
+:::
+
+## What is a panel definition?
+
+A **panel** is a YAML file that specifies:
+
+- **Topic framing**: How the panel introduces itself and the decision context
+- **Experts**: 3–5 personas with distinct roles and decision-making priors
+- **Sample prompts**: Example questions that demonstrate the panel's scope
+- **Decision artifact**: The output format (ADR, recommendation memo, pros/cons list, etc.)
+- **Debate configuration**: Round count, synthesis mode, and expert turn order
+
+## Step 1: Choose a decision scenario with competing priorities
+
+High-quality panels arise from scenarios with **genuine tradeoffs**. Pick a decision where 3–5 experts would naturally prioritize different variables.
+
+**Good example**: "Should we adopt a microservices architecture?"
+
+- **Decision variables**: Cost, time-to-market, operational complexity, team autonomy, scalability
+- **Natural expert perspectives**: CTO (technical vision), SRE (operational load), CFO (cost), VP Engineering (team structure), Product Lead (time-to-market)
+
+**Bad example**: "Should we use HTTPS?"
+
+- No meaningful tradeoffs — the answer is always "yes" (compliance, security)
+- Experts would agree, producing shallow deliberation
+
+## Step 2: Create the panel YAML file
+
+Create a new panel:
+
+```bash
+council panel create --slug architecture-decision
+```
+
+You'll be prompted for:
+
+1. **Name**: `architecture-decision`
+2. **Description**: "Technical architecture decisions with cross-functional perspectives"
+3. **Experts**: Add 3–5 experts (use existing slugs or inline definitions)
+
+Alternatively, create a YAML file manually at `~/.council/data/panels/architecture-decision.yaml`:
+
+```yaml
+name: architecture-decision
+description: Deliberate on technical architecture decisions with tradeoffs in cost, complexity, and velocity
+experts:
+  - slug: infra-sre
+  - slug: cto
+  - slug: cfo
+  - slug: product-lead
+samplePrompts:
+  - Should we migrate to microservices or stay with a modular monolith?
+  - Should we adopt Kubernetes or stick with simpler container orchestration?
+  - Should we build an internal platform or use a PaaS like Heroku/Render?
+decisionArtifact: |
+  An Architecture Decision Record (ADR) with:
+  - Context and constraints
+  - Options considered with expert perspectives
+  - Decision recommendation with rationale
+  - Risks and mitigations
+debateConfig:
+  maxRounds: 3
+  mode: "turn-based"
+```
+
+## Step 3: Lint the panel (first pass)
+
+Run the linter to check for quality issues:
+
+```bash
+council panel lint ~/.council/data/panels/architecture-decision.yaml
+```
+
+You might see output like:
+
+```
+Linting: ~/.council/data/panels/architecture-decision.yaml
+
+❌ 3 errors, 1 warning
+
+Errors:
+  [expert-evidence] experts[0].expertise.weightedEvidence
+    Expert "infra-sre" has only 2 weighted evidence types.
+    The official bar requires ≥4 to encode a falsifiable prior.
+    Add specific evidence types this expert prioritizes.
+
+  [expert-reference-cases] experts[0].expertise.referenceCases
+    Expert "infra-sre" has only 0 reference cases.
+    The official bar requires ≥2 named, falsifiable patterns.
+    Example: "Kubernetes etcd split-brain incident class"
+
+  [expert-not-expert-in] experts[1].expertise.notExpertIn
+    Expert "cto" has only 1 explicit disclaimer.
+    The official bar requires ≥2 to model humility and specialization.
+
+Warnings:
+  [expert-count-preferred] root
+    Panel has 4 experts. Preferred range is 3-5 for optimal deliberation depth.
+    (This is advisory — 4 is within the schema's hard limit of 2-8.)
+
+Run with --official to enforce the strict bar (escalates quality warnings to errors).
+```
+
+## Step 4: Fix linter errors
+
+Edit the panel YAML or the referenced expert definitions to address errors:
+
+### Fix: Add weighted evidence
+
+Edit `~/.council/data/experts/infra-sre.yaml`:
+
+```yaml
+expertise:
+  weightedEvidence:
+    - Post-incident reports from production outages
+    - Quantitative SLO/SLI data over multi-quarter windows
+    - Operational load patterns (on-call burden, MTTR trends)
+    - Dependency graph complexity metrics
+```
+
+### Fix: Add reference cases
+
+```yaml
+expertise:
+  referenceCases:
+    - "Distributed monolith anti-pattern (2018 microservices migrations)"
+    - "Kubernetes etcd split-brain incident class"
+```
+
+### Fix: Add notExpertIn disclaimers
+
+```yaml
+expertise:
+  notExpertIn:
+    - Go-to-market strategy
+    - UX/UI design decisions
+```
+
+## Step 5: Re-lint until clean
+
+Re-run the linter:
+
+```bash
+council panel lint ~/.council/data/panels/architecture-decision.yaml
+```
+
+Success output:
+
+```
+Linting: ~/.council/data/panels/architecture-decision.yaml
+
+✅ No errors (1 warning)
+
+Warnings:
+  [sample-prompts-recommended] root
+    Panel is missing `samplePrompts`. These help users understand scope.
+
+The panel passes the default quality bar.
+Run with --official to check against the strict official template bar.
+```
+
+Warnings don't block usage — they're recommendations. To pass the **official bar** (required for built-in templates), fix all warnings:
+
+Add `samplePrompts` to the panel YAML:
+
+```yaml
+samplePrompts:
+  - Should we migrate to microservices or stay with a modular monolith?
+  - Should we adopt Kubernetes or stick with simpler container orchestration?
+  - Should we build an internal platform or use a PaaS like Heroku/Render?
+```
+
+## Step 6: Lint with --official flag
+
+The `--official` flag enforces the strict bar every built-in template must pass:
+
+```bash
+council panel lint --official ~/.council/data/panels/architecture-decision.yaml
+```
+
+This escalates quality warnings (filler phrases, missing sample prompts) to **errors**. If the panel passes, it meets the same bar as Council's shipped templates.
+
+## Step 7: Lint all built-in panels (reference)
+
+See how official templates pass the linter:
+
+```bash
+council panel lint --built-ins
+```
+
+Output:
+
+```
+Linting built-in templates:
+
+✅ architecture-review.yaml — 0 errors, 0 warnings
+✅ code-review.yaml — 0 errors, 0 warnings
+✅ startup-validation.yaml — 0 errors, 0 warnings
+⚠️ incident-postmortem.yaml — 0 errors, 1 warning
+  [expert-count-preferred] Panel has 6 experts (advisory)
+✅ career-coaching.yaml — 0 errors, 0 warnings
+
+All official templates pass the default bar.
+```
+
+## Regulated domains: Legal, finance, HR
+
+Panels operating in **regulated domains** (legal advice, financial planning, HR decisions) must include explicit **decision-support framing** to avoid liability.
+
+### What triggers the regulated-domain check?
+
+The linter flags a panel as regulated if any expert's role contains keywords like:
+
+- `lawyer`, `attorney`, `legal counsel`
+- `financial advisor`, `investment`, `tax planner`
+- `HR`, `human resources`, `employment law`
+
+### How to pass: Non-advice framing
+
+Add an explicit disclaimer in the panel description or `debateProtocol`:
+
+```yaml
+description: |
+  Employment law decision support (NOT legal advice).
+  This panel synthesizes perspectives to inform your decision.
+  Consult a licensed attorney before taking action.
+```
+
+Or in an expert's `debateProtocol` override:
+
+```yaml
+debateProtocol: |
+  You provide decision-support analysis, not legal advice.
+  Surface risks, precedents, and tradeoffs — the user owns the final decision.
+```
+
+### Example: Compliant HR panel
+
+```yaml
+name: employment-decision-support
+description: |
+  Employment law perspectives for decision-making (NOT legal advice).
+  This panel identifies risks and options — consult an attorney before action.
+experts:
+  - slug: employment-lawyer
+    debateProtocol: |
+      You provide decision-support analysis, not legal advice.
+      Surface legal risks and precedents; the user owns the decision.
+  - slug: hr-director
+  - slug: diversity-equity-lead
+```
+
+The linter checks for phrases like:
+
+- "not legal advice"
+- "decision support"
+- "consult a licensed [attorney|advisor|professional]"
+- "informational purposes only"
+
+If found, the `[regulated-domain-framing]` rule passes.
+
+## What you accomplished
+
+- Designed a full panel from scratch with distinct expert perspectives
+- Ran `council panel lint` to verify quality
+- Fixed linter errors (evidence, reference cases, disclaimers)
+- Understood the difference between default and `--official` bars
+- Learned regulated-domain framing for legal/finance/HR panels
+
+## Next steps
+
+- **Tutorial 11**: [Deep Document-Grounded Deliberation](/Council/docs/tutorials/11-deep-document-grounded-deliberation/) — Ground your panel in multi-document corpora with RAG retrieval
+- **Use your panel**: `council convene --panel architecture-decision "Should we migrate to Kubernetes?"`
+- **Explore official templates**: `council panel lint --built-ins` to see reference implementations
+
+## Key concepts introduced
+
+| Concept | Definition |
+|---------|------------|
+| **Panel linter** | Quality gate that verifies expert definitions meet the falsifiable-prior bar |
+| **Sample prompts** | Example questions that demonstrate the panel's intended scope |
+| **Decision artifact** | The structured output format (ADR, memo, pros/cons) the panel produces |
+| **Regulated domain** | Legal, finance, HR contexts requiring explicit non-advice framing |
+| **Official bar** | Strict quality level (`--official` flag) required for built-in templates |
+
+## Commands introduced
+
+| Command | Purpose |
+|---------|---------|
+| `council panel lint <file>` | Verify a panel definition meets the quality bar |
+| `council panel lint --built-ins` | Lint all shipped templates (reference) |
+| `council panel lint --official <file>` | Enforce strict official-template quality bar |
+| `council panel create` | Interactively create a new panel |
