@@ -8,7 +8,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildConfigCommand } from "../../../../src/cli/commands/config.js";
-import { loadConfig } from "../../../../src/config/index.js";
+import { loadConfig, updateConfigField } from "../../../../src/config/index.js";
 import type { Writer } from "../../../../src/cli/commands/writer.js";
 
 interface CapturedOutput {
@@ -190,5 +190,62 @@ describe("buildConfigCommand config wizard", () => {
 
     const config = await loadConfig();
     expect(config.defaults.model).toBe(rawModel);
+  });
+
+  it("strips terminal controls from wizard string and array display while preserving persisted values", async () => {
+    const output = createCapturedOutput();
+    const rawModel = "gpt\u001B[31m-\u0085evil\u202E";
+    const rawCurrentExtension = ".txt\u001B[32mY\u202E";
+    const rawSelectedExtension = "md\u001B[31mX\u202E";
+    await updateConfigField("documents.aiExtractionAllowedExtensions", [rawCurrentExtension]);
+    const discoverModels = vi.fn(async () => ({
+      models: [rawModel],
+      source: "live" as const,
+    }));
+    const input = createInput(
+      [
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        rawSelectedExtension,
+        "",
+        "",
+      ].join("\n") + "\n",
+    );
+
+    const { stderr } = await runConfig(["wizard"], {
+      write: (text) => output.stream.write(text),
+      wizard: {
+        input,
+        output: output.stream,
+        discoverModels,
+      },
+    });
+
+    const text = output.text();
+    expect(stderr).toBe("");
+    expect(text).toContain("1. gpt-evil (recommended)");
+    expect(text).toContain("Set defaults.model = gpt-evil");
+    expect(text).toContain("AI extraction extensions (comma-separated, blank for current) [.txtY]: ");
+    expect(text).toContain("Set documents.aiExtractionAllowedExtensions = .mdx");
+    expect(text).not.toContain(rawModel);
+    expect(text).not.toContain(rawCurrentExtension);
+    expect(text).not.toContain(`.${rawSelectedExtension.toLowerCase()}`);
+    for (const codePoint of [0x1b, 0x85, 0x202e]) {
+      expect(text).not.toContain(String.fromCodePoint(codePoint));
+    }
+
+    const config = await loadConfig();
+    expect(config.defaults.model).toBe(rawModel);
+    expect(config.documents.aiExtractionAllowedExtensions).toEqual([
+      `.${rawSelectedExtension.toLowerCase()}`,
+    ]);
   });
 });
