@@ -42,15 +42,44 @@ Your Question → Expert Panel ─┬─ Debate → Conclusion → Export
 
 ## Which template should I use?
 
-Council ships with five built-in templates. Each comes pre-configured with a curated expert panel:
+Council ships with **seventeen** built-in templates. Each comes pre-configured with a curated expert panel:
 
-| You are deciding about…        | Use this template        | Experts you get                                        |
-| ------------------------------ | ------------------------ | ------------------------------------------------------ |
-| Technical architecture         | `architecture-review`    | CTO, Staff Engineer, SRE, Product Manager              |
-| Startup or product ideas       | `startup-validation`     | VC Partner, Target Customer, Competitor, Distribution   |
-| Code quality and design        | `code-review`            | Senior Dev, Security Auditor, Perf Engineer, Maintainer |
-| Production incidents           | `incident-postmortem`    | SRE, Eng Manager, Customer Advocate, Facilitator       |
-| Career decisions               | `career-coaching`        | IC Mentor, Eng Manager, VP Eng, Career Coach           |
+### Engineering
+| You are deciding about…        | Use this template        |
+| ------------------------------ | ------------------------ |
+| Technical architecture         | `architecture-review`    |
+| Code quality and design        | `code-review`            |
+| Production incidents           | `incident-postmortem`    |
+
+### Product & Design
+| You are deciding about…        | Use this template        |
+| ------------------------------ | ------------------------ |
+| Product strategy or major bets | `product-strategy-review` |
+| Backlog prioritization         | `roadmap-prioritization` |
+| User experience or redesigns   | `ux-review`              |
+
+### Go-to-Market
+| You are deciding about…             | Use this template            |
+| ----------------------------------- | ---------------------------- |
+| Brand and positioning               | `brand-positioning-review`   |
+| Enterprise deals                    | `enterprise-deal-review`     |
+| Growth experiments                  | `growth-experiment-review`   |
+| High-stakes negotiations            | `negotiation-prep`           |
+| Pricing and packaging               | `pricing-packaging-review`   |
+
+### Finance, People, Legal & Executive
+| You are deciding about…             | Use this template                |
+| ----------------------------------- | -------------------------------- |
+| Board meetings or strategy          | `executive-strategy-board-prep`  |
+| Budgets and forecasts               | `fpna-budget-review`             |
+| Hiring decisions                    | `hiring-decision-review`         |
+| Contracts and legal risk            | `legal-risk-review`              |
+
+### Startup & Career
+| You are deciding about…        | Use this template        |
+| ------------------------------ | ------------------------ |
+| Career decisions               | `career-coaching`        |
+| Startup or product ideas       | `startup-validation`     |
 
 You can also skip templates entirely — Council will **auto-compose** a custom panel
 tailored to your topic. See [Part 1](#part-1).
@@ -221,7 +250,7 @@ See what templates are available:
 council templates
 ```
 
-You should see the five built-in templates with descriptions and the experts each
+You should see the **seventeen** built-in templates with descriptions and the experts each
 one includes.
 
 ### Step 2: Run a debate with a template
