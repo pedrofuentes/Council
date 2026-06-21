@@ -1,5 +1,5 @@
 /**
- * @council-ai/cli — Command-line interface entry point.
+ * council-ai — Command-line interface entry point.
  *
  * Subcommands (see `buildProgram()` below for the canonical list):
  *   - `convene`    run a panel debate on a topic (engine: mock | copilot)

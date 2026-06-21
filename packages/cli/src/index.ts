@@ -1,5 +1,5 @@
 /**
- * @council-ai/cli — Programmatic API entry point.
+ * council-ai — Programmatic API entry point.
  *
  * The primary user-facing surface is the CLI in `src/bin/council.ts`.
  * This file is reserved for future programmatic consumers of Council
