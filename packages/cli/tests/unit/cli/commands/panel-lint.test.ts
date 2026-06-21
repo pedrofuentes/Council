@@ -182,10 +182,7 @@ describe("council panel lint", () => {
   it("promotes warnings to errors for a single file under --official", async () => {
     // Clean panel minus its samplePrompts → only a warning by default, an error
     // under --official.
-    const noPrompts = CLEAN_PANEL.replace(
-      /samplePrompts:\n {2}- .*\n/,
-      "",
-    );
+    const noPrompts = CLEAN_PANEL.replace(/samplePrompts:\n {2}- .*\n/, "");
     const file = await writeFile(tmp.dir, "no-prompts.yaml", noPrompts);
 
     const ok = lintCommand();

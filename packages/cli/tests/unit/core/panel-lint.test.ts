@@ -120,7 +120,9 @@ describe("lintPanelDefinition — schema-valid", () => {
   );
 
   it("rejects an experts list larger than the schema maximum (8)", () => {
-    const experts = Array.from({ length: 9 }, (_, i) => validExpert(`e${i}`, { role: `role ${i}` }));
+    const experts = Array.from({ length: 9 }, (_, i) =>
+      validExpert(`e${i}`, { role: `role ${i}` }),
+    );
     const result = lintPanelDefinition(validPanel({ experts }));
     expect(result.ok).toBe(false);
     expect(findingFor(result, "schema-valid")).toBeDefined();
@@ -181,17 +183,16 @@ describe("lintPanelDefinition — expert-count", () => {
   it("warns when there are fewer than 3 experts", () => {
     const result = lintPanelDefinition(
       validPanel({
-        experts: [
-          validExpert("a", { role: "role a" }),
-          validExpert("b", { role: "role b" }),
-        ],
+        experts: [validExpert("a", { role: "role a" }), validExpert("b", { role: "role b" })],
       }),
     );
     expect(findingFor(result, "expert-count")?.severity).toBe("warning");
   });
 
   it("warns when there are more than 5 experts", () => {
-    const experts = Array.from({ length: 6 }, (_, i) => validExpert(`e${i}`, { role: `role ${i}` }));
+    const experts = Array.from({ length: 6 }, (_, i) =>
+      validExpert(`e${i}`, { role: `role ${i}` }),
+    );
     const result = lintPanelDefinition(validPanel({ experts }));
     expect(findingFor(result, "expert-count")?.severity).toBe("warning");
   });
@@ -402,9 +403,7 @@ describe("lintPanelDefinition — expert-slug-reference", () => {
 
 describe("lintPanelDefinition — regulated-domain-framing", () => {
   it("errors when regulatedDomain is set but no non-advice framing is present", () => {
-    const result = lintPanelDefinition(
-      validPanel({ regulatedDomain: "finance" }),
-    );
+    const result = lintPanelDefinition(validPanel({ regulatedDomain: "finance" }));
     expect(findingFor(result, "regulated-domain-framing")?.severity).toBe("error");
     expect(result.ok).toBe(false);
   });
