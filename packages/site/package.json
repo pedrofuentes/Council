@@ -1,0 +1,38 @@
+{
+  "name": "@council-ai/site",
+  "version": "0.0.0",
+  "description": "Council site — Astro + Starlight static site for documentation and marketing, deployed to GitHub Pages.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "author": "Pedro Fuentes",
+  "homepage": "https://github.com/pedrofuentes/Council",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pedrofuentes/Council.git",
+    "directory": "packages/site"
+  },
+  "bugs": {
+    "url": "https://github.com/pedrofuentes/Council/issues"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.40.0",
+    "@council-ai/cli": "workspace:*",
+    "astro": "^6.4.8"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.9",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  }
+}
