@@ -93,7 +93,7 @@ const [leadPrompt, ...morePrompts] = panel.samplePrompts;
   <figure class="panel-card__usage">
     <figcaption class="panel-card__subhead">Run this panel</figcaption>
     <div class="panel-card__snippet">
-      <pre><code>{panel.conveneCommand}</code></pre>
+      <pre tabindex="0"><code>{panel.conveneCommand}</code></pre>
       <button
         type="button"
         class="copy-button"
@@ -153,7 +153,7 @@ const [leadPrompt, ...morePrompts] = panel.samplePrompts;
     font-weight: 600;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: var(--council-color-bg);
+    color: var(--council-color-on-accent);
     background: var(--council-color-primary);
   }
 
@@ -173,7 +173,7 @@ const [leadPrompt, ...morePrompts] = panel.samplePrompts;
   }
 
   .badge--regulated {
-    color: var(--council-color-bg);
+    color: var(--council-color-on-accent);
     background: var(--council-color-accent-amber);
   }
 
@@ -245,7 +245,11 @@ const [leadPrompt, ...morePrompts] = panel.samplePrompts;
 
   .panel-card__more summary {
     cursor: pointer;
-    color: var(--council-color-primary-hover);
+    /* Darken the primary toward the ink so the small summary text clears AA on
+       the card surface in light mode (raw primary-hover is only ~3.3:1 there);
+       --council-color-text flips per theme, so dark mode lightens and stays
+       well above AA. */
+    color: color-mix(in srgb, var(--council-color-primary-hover) 60%, var(--council-color-text));
   }
 
   .panel-card__more ul {
@@ -270,7 +274,11 @@ const [leadPrompt, ...morePrompts] = panel.samplePrompts;
     border-radius: 999px;
     font-size: 0.72rem;
     color: var(--council-color-text-muted);
-    background: color-mix(in srgb, var(--council-color-text-muted) 14%, transparent);
+    /* Transparent fill keeps the muted text on the card surface (not a
+       lightened tint), so it clears AA in dark mode (5.1:1) where the previous
+       14%-tint fill sat at 4.0:1. The thin border preserves the chip shape. */
+    background: transparent;
+    border: 1px solid color-mix(in srgb, var(--council-color-text-muted) 30%, transparent);
   }
 
   .panel-card__usage {

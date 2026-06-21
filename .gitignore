@@ -3,6 +3,7 @@ dist/
 coverage/
 .worktrees/
 .agent-backup/
+.lighthouseci/
 
 # Council runtime data
 .council/
