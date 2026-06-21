@@ -25,6 +25,13 @@ import { ConfigSchema, type CouncilConfig, type EngineChoice } from "./schema.js
 
 const CONFIG_FILE = "config.yaml";
 
+type ConfigFieldValue = string | number | boolean | readonly string[];
+
+export interface ConfigFieldUpdate {
+  readonly key: string;
+  readonly value: ConfigFieldValue;
+}
+
 /**
  * Resolve the directory that holds Council's runtime data.
  * Honors `COUNCIL_HOME`, then falls back to `COUNCIL_DATA_HOME` so a single
@@ -195,10 +202,17 @@ export async function loadConfigWithMeta(): Promise<ConfigLoadResult> {
  * Update a single dot-notation field inside config.yaml, validating the full
  * document before writing any changes back to disk.
  */
-export async function updateConfigField(
-  key: string,
-  value: string | number | boolean | readonly string[],
-): Promise<void> {
+export async function updateConfigField(key: string, value: ConfigFieldValue): Promise<void> {
+  await updateConfigFields([{ key, value }]);
+}
+
+/**
+ * Update multiple dot-notation fields inside config.yaml with a single
+ * validated atomic write.
+ */
+export async function updateConfigFields(updates: readonly ConfigFieldUpdate[]): Promise<void> {
+  if (updates.length === 0) return;
+
   await ensureHomeDirectory();
   const file = configPath();
   const lockPath = `${file}.lock`;
@@ -230,7 +244,9 @@ export async function updateConfigField(
       );
     }
 
-    document.setIn(key.split("."), value);
+    for (const { key, value } of updates) {
+      document.setIn(key.split("."), value);
+    }
 
     const result = ConfigSchema.safeParse(document.toJS() ?? {});
     if (!result.success) {
