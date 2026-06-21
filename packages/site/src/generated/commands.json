@@ -451,7 +451,7 @@
           {
             "name": "topic",
             "display": "[topic]",
-            "description": "The topic / question for the panel to debate (optional when --prompt-file is used)",
+            "description": "The topic / question for the panel to debate (optional when --prompt-file is used; omit in a terminal to enter it interactively)",
             "required": false,
             "variadic": false
           }
