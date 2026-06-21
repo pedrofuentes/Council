@@ -127,10 +127,10 @@ describe("isPackageManager", () => {
 
 describe("buildUpgradeArgs", () => {
   const cases: readonly (readonly [PackageManager, readonly string[]])[] = [
-    ["npm", ["install", "-g", "@council-ai/cli@latest"]],
-    ["pnpm", ["add", "-g", "@council-ai/cli@latest"]],
-    ["yarn", ["global", "add", "@council-ai/cli@latest"]],
-    ["bun", ["add", "-g", "@council-ai/cli@latest"]],
+    ["npm", ["install", "-g", "council-ai@latest"]],
+    ["pnpm", ["add", "-g", "council-ai@latest"]],
+    ["yarn", ["global", "add", "council-ai@latest"]],
+    ["bun", ["add", "-g", "council-ai@latest"]],
   ];
 
   for (const [pm, expected] of cases) {
@@ -145,7 +145,7 @@ describe("buildUpgradeArgs", () => {
       for (const token of args) {
         expect(token).not.toMatch(/\s/);
       }
-      expect(args).toContain("@council-ai/cli@latest");
+      expect(args).toContain("council-ai@latest");
     }
   });
 });
@@ -172,7 +172,7 @@ describe("council update — command behavior", () => {
       fetchLatest: vi.fn(async () => "0.2.0"),
       currentVersion: "0.1.0",
     });
-    expect(runner).toHaveBeenCalledWith("yarn", ["global", "add", "@council-ai/cli@latest"]);
+    expect(runner).toHaveBeenCalledWith("yarn", ["global", "add", "council-ai@latest"]);
     expect(stdout).toMatch(/Updated/);
   });
 
@@ -207,7 +207,7 @@ describe("council update — command behavior", () => {
       currentVersion: "0.1.0",
       execPath: "/usr/local/bin/council",
     });
-    expect(stdout).toMatch(/npm install -g @council-ai\/cli@latest/);
+    expect(stdout).toMatch(/npm install -g council-ai@latest/);
     expect(runner).not.toHaveBeenCalled();
   });
 
@@ -236,7 +236,7 @@ describe("council update — command behavior", () => {
       execPath: "/usr/local/bin/council",
     });
     expect(confirm).toHaveBeenCalledOnce();
-    expect(runner).toHaveBeenCalledWith("npm", ["install", "-g", "@council-ai/cli@latest"]);
+    expect(runner).toHaveBeenCalledWith("npm", ["install", "-g", "council-ai@latest"]);
     expect(stdout).toMatch(/0\.1\.0/);
     expect(stdout).toMatch(/0\.2\.0/);
     expect(stdout).toMatch(/restart council/i);

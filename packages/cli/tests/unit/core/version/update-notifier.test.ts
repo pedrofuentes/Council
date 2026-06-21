@@ -154,7 +154,7 @@ describe("formatUpdateNotice", () => {
     expect(notice).toContain("0.2.1");
     expect(notice).toContain("0.3.0");
     expect(notice).toContain("council update");
-    expect(notice).toContain("npm i -g @council-ai/cli");
+    expect(notice).toContain("npm i -g council-ai");
     expect(notice.endsWith("\n")).toBe(true);
   });
 });

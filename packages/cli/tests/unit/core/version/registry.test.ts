@@ -3,7 +3,7 @@
  *
  * Pure + network-injectable functions used by the startup update notifier:
  *   - `fetchLatestVersion()` GETs the npm registry `/latest` manifest for
- *     `@council-ai/cli` and returns its `version`, or `null` on ANY error.
+ *     `council-ai` and returns its `version`, or `null` on ANY error.
  *     It MUST NEVER throw (network failure, non-200, bad JSON, timeout).
  *   - `isNewerVersion()` performs a minimal numeric `major.minor.patch`
  *     compare, returning true iff `latest` is strictly greater than `current`.
@@ -20,7 +20,7 @@ import {
   isSafeRegistryVersion,
 } from "../../../../src/core/version/registry.js";
 
-const REGISTRY_URL = "https://registry.npmjs.org/@council-ai%2Fcli/latest";
+const REGISTRY_URL = "https://registry.npmjs.org/council-ai/latest";
 
 function jsonResponse(body: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(body), {
@@ -95,7 +95,7 @@ describe("fetchLatestVersion", () => {
     expect(result).toBe("0.3.0");
   });
 
-  it("requests the URL-encoded scoped /latest manifest with an abort signal", async () => {
+  it("requests the unscoped /latest manifest with an abort signal", async () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ version: "0.3.0" }));
 
     await fetchLatestVersion({ fetchImpl });
@@ -119,7 +119,7 @@ describe("fetchLatestVersion", () => {
   });
 
   it("returns null when the manifest has no version field", async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse({ name: "@council-ai/cli" }));
+    const fetchImpl = vi.fn(async () => jsonResponse({ name: "council-ai" }));
 
     expect(await fetchLatestVersion({ fetchImpl })).toBe(null);
   });
