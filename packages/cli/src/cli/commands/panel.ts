@@ -19,7 +19,6 @@ import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 
 import { Command, Option } from "commander";
-import { z } from "zod";
 
 import { CliUserError } from "../cli-user-error.js";
 import { parseExpertSlugs, warnOnStrayExpertArgs } from "./expert-args.js";
@@ -33,16 +32,12 @@ import {
   type CouncilConfig,
 } from "../../config/index.js";
 import { FileExpertLibrary, type ExpertLibrary } from "../../core/expert-library.js";
-import {
-  ExpertDefinitionSchema,
-  allowlistExpertDefinition,
-  type ExpertDefinition,
-} from "../../core/expert.js";
+import { allowlistExpertDefinition, type ExpertDefinition } from "../../core/expert.js";
 import {
   DEBATE_MODES,
-  PanelDefaultsSchema,
   PanelDefinitionSchema,
   listTemplateFiles,
+  parseStoredPanelDefinition,
   type DebateMode,
   type PanelDefinition,
   type PanelExpertEntry,
@@ -489,53 +484,6 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
 // ──────────────────────────────────────────────────────────────────────
 
 /**
- * Schema for the `ResolvedPanelDefinition` that `council convene` stores in
- * a session's `config_json.definition`. Experts MUST be fully inline (the
- * promotion creates real library experts from them) — a slug-string entry
- * would have nothing to promote.
- */
-const StoredPanelDefinitionSchema = z.object({
-  name: z.string().min(1),
-  description: z.string().min(1).optional(),
-  defaults: PanelDefaultsSchema.optional(),
-  experts: z.array(ExpertDefinitionSchema).min(1).max(8),
-});
-
-type StoredDefinition = z.infer<typeof StoredPanelDefinitionSchema>;
-
-type StoredDefinitionResult =
-  | { readonly kind: "ok"; readonly definition: StoredDefinition }
-  | { readonly kind: "absent" }
-  | { readonly kind: "invalid"; readonly message: string };
-
-/**
- * Read and validate the stored panel definition from a session's
- * `config_json`. Distinguishes three cases so the command can emit a
- * precise error: the key is absent (older session, predates the enabler),
- * present-but-malformed (corrupt), or a usable definition.
- */
-function parseStoredDefinition(configJson: string): StoredDefinitionResult {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(configJson);
-  } catch {
-    return { kind: "absent" };
-  }
-  if (parsed === null || typeof parsed !== "object" || !("definition" in parsed)) {
-    return { kind: "absent" };
-  }
-  const definition = (parsed as { definition: unknown }).definition;
-  if (definition === undefined || definition === null) {
-    return { kind: "absent" };
-  }
-  const result = StoredPanelDefinitionSchema.safeParse(definition);
-  if (!result.success) {
-    return { kind: "invalid", message: result.error.issues.map((i) => i.message).join("; ") };
-  }
-  return { kind: "ok", definition: result.data };
-}
-
-/**
  * Lowercase-kebab a composed panel name so it satisfies {@link PANEL_NAME_RE}
  * (must start with a letter). Used to derive a default library name when the
  * user does not pass one to `panel save`.
@@ -673,7 +621,7 @@ function buildSaveCommand(write: Writer, writeError: Writer): Command {
             throw new CliUserError(`panel save: session "${sessionName}" not found.`);
           }
 
-          const stored = parseStoredDefinition(session.configJson);
+          const stored = parseStoredPanelDefinition(session.configJson);
           if (stored.kind === "absent") {
             writeError(
               `Session "${stripControlChars(sessionName)}" has no stored panel definition, so it cannot be saved ` +

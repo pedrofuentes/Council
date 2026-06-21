@@ -13,6 +13,7 @@ import {
   ExpertLibraryRepository,
   PanelNotFoundError,
   loadPanel,
+  parseStoredPanelDefinition,
   suggestMatch,
   createDatabase,
   ensureDataDirectories,
@@ -56,6 +57,34 @@ export type {
   BuildPanelTurnPromptOptions,
   SummarizationGate,
 } from "./shared.js";
+
+function readTemplateName(configJson: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(configJson);
+  } catch {
+    return undefined;
+  }
+  if (parsed === null || typeof parsed !== "object" || !("template" in parsed)) {
+    return undefined;
+  }
+  const template = (parsed as { readonly template: unknown }).template;
+  return typeof template === "string" && template.length > 0 ? template : undefined;
+}
+
+function loadPersistedPanelDefinition(
+  target: string,
+  configJson: string,
+): PanelDefinition | undefined {
+  const stored = parseStoredPanelDefinition(configJson);
+  if (stored.kind === "ok") {
+    return stored.definition;
+  }
+  if (stored.kind === "invalid") {
+    throw new Error(`Stored panel definition for "${target}" is invalid: ${stored.message}`);
+  }
+  return undefined;
+}
 
 export function buildChatCommand(deps: ChatCommandDeps = {}): Command {
   const write: Writer = deps.write ?? defaultWriter;
@@ -109,8 +138,8 @@ In panel chat sessions:
   @convene <topic> — run a structured 4-phase debate inline
 
 Panels come from your reusable library (see 'council panel list'). An
-auto-composed 'council convene' run is NOT saved to the library — to keep one
-as a reusable panel, promote its session first:
+auto-composed 'council convene' session can be reopened directly; to keep one
+as a reusable library panel, promote its session:
   $ council panel save <session> [name]
 `,
   );
@@ -130,7 +159,7 @@ async function validateAndResolveTarget(
   writeError: Writer,
 ): Promise<{ type: "expert" | "panel"; expert?: ExpertDefinition; panel?: PanelDefinition }> {
   const library = new FileExpertLibrary(dataHome, db);
-  
+
   // Check for expert first (file or cached)
   let expert = await library.get(target);
   if (!expert) {
@@ -150,15 +179,26 @@ async function validateAndResolveTarget(
   const dbPanel = await panelRepo.findByName(target);
 
   if (dbPanel) {
-    // Found a panel in the DB. Extract its template name and load that panel definition.
+    // Found a panel session in the DB. Prefer the reusable template; fall back
+    // to the full definition persisted by auto-composed convene sessions.
     try {
-      const configParsed = JSON.parse(dbPanel.configJson) as { template?: string };
-      const templateName = configParsed.template;
+      const templateName = readTemplateName(dbPanel.configJson);
       if (!templateName) {
         throw new Error(`Panel "${target}" has no template name in configJson`);
       }
-      const panel = await loadPanel(templateName, dataHome);
-      return { type: "panel", panel };
+      try {
+        const panel = await loadPanel(templateName, dataHome);
+        return { type: "panel", panel };
+      } catch (err: unknown) {
+        if (!(err instanceof PanelNotFoundError)) {
+          throw err;
+        }
+        const storedPanel = loadPersistedPanelDefinition(target, dbPanel.configJson);
+        if (storedPanel) {
+          return { type: "panel", panel: storedPanel };
+        }
+        throw err;
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       writeError(

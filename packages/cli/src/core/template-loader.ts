@@ -112,6 +112,46 @@ export interface ResolvedPanelDefinition {
   readonly experts: readonly ExpertDefinition[];
 }
 
+export const StoredPanelDefinitionSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().min(1).optional(),
+  defaults: PanelDefaultsSchema.optional(),
+  experts: z.array(ExpertDefinitionSchema).min(1).max(8),
+});
+
+export type StoredPanelDefinition = z.infer<typeof StoredPanelDefinitionSchema>;
+
+export type StoredPanelDefinitionResult =
+  | { readonly kind: "ok"; readonly definition: StoredPanelDefinition }
+  | { readonly kind: "absent" }
+  | { readonly kind: "invalid"; readonly message: string };
+
+/**
+ * Read and validate the stored panel definition from a session's
+ * `config_json`. Distinguishes three cases so callers can emit precise
+ * errors for older sessions, corrupt sessions, or usable definitions.
+ */
+export function parseStoredPanelDefinition(configJson: string): StoredPanelDefinitionResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(configJson);
+  } catch {
+    return { kind: "absent" };
+  }
+  if (parsed === null || typeof parsed !== "object" || !("definition" in parsed)) {
+    return { kind: "absent" };
+  }
+  const definition = (parsed as { readonly definition: unknown }).definition;
+  if (definition === undefined || definition === null) {
+    return { kind: "absent" };
+  }
+  const result = StoredPanelDefinitionSchema.safeParse(definition);
+  if (!result.success) {
+    return { kind: "invalid", message: result.error.issues.map((i) => i.message).join("; ") };
+  }
+  return { kind: "ok", definition: result.data };
+}
+
 /**
  * Typed error: a panel was looked up by name but no matching file exists.
  *
