@@ -20,6 +20,7 @@ import {
 import { discoverAvailableModels, type ModelDiscoveryResult } from "../../engine/copilot/health.js";
 import { orderModelsByPreference, writeModelList } from "../first-run-model-select.js";
 import { CliUserError } from "../cli-user-error.js";
+import { stripControlChars } from "../strip-control-chars.js";
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
@@ -453,10 +454,13 @@ async function promptForModel(
       "No AI models are available. Run 'council doctor' to verify your setup.",
     );
   }
-  writeModelList(write, models);
+  writeModelList(
+    write,
+    models.map((model) => stripControlChars(model)),
+  );
   output.write(`Default model [1-${models.length}] (Enter for recommended): `);
   const selected = selectChoice(await line(), models, models[0] ?? "", "defaults.model");
-  write(`Set defaults.model = ${selected}\n`);
+  write(`Set defaults.model = ${stripControlChars(selected)}\n`);
   return selected;
 }
 
