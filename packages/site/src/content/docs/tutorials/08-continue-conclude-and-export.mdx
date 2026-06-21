@@ -1,0 +1,288 @@
+---
+title: Continue, Conclude, and Export
+description: Resume debates with follow-up questions, synthesize structured decisions, and export artifacts for documentation.
+---
+
+**Time**: ~6 minutes  
+**Learning outcome**: Resume a debate with new questions, generate a decision synthesis, and export transcripts in multiple formats.
+
+## What you'll learn
+
+By the end of this tutorial, you will:
+
+- List all saved debate sessions with `council sessions`
+- Resume a debate with a follow-up question using `council resume --prompt`
+- Synthesize a structured decision with `council conclude`
+- Export transcripts as Markdown, JSON, ADR, or shareable reports
+
+## Prerequisites
+
+- Completed [Tutorial 1: Install and First Debate](/Council/docs/tutorials/01-install-and-first-debate/)
+- At least one completed debate session (from `council convene`)
+
+:::note[Sessions persist automatically]
+Every `council convene` creates a **session** — a saved record in `~/.council/council.db`. Sessions include the panel, experts, topic, and all deliberation turns. You never lose a debate.
+:::
+
+## What are sessions?
+
+Council sessions are persistent debate records. Each session has:
+
+- **Unique name**: Auto-generated identifier (e.g., `analytics-platform-3vk9j2`)
+- **Status**: `completed`, `interrupted`, or `failed`
+- **Metadata**: Topic, expert count, round count, timestamp
+- **Transcript**: Full expert responses and synthesis (if concluded)
+
+Sessions let you:
+
+- Review past deliberations months later
+- Continue debates with new questions
+- Export decisions for documentation or sharing
+
+## Step 1: List your sessions
+
+See all saved debates:
+
+```bash
+council sessions
+```
+
+Output:
+
+```
+Saved sessions:
+
+  ✓ security-review-3vk9j2 (completed)
+    Topic: Should we add OAuth2 social login?
+    Experts: 3 · Rounds: 3 · Last activity: 2 hours ago
+
+  ✓ product-review-8xm2k1 (completed)
+    Topic: Prioritize mobile redesign or web performance?
+    Experts: 3 · Rounds: 3 · Last activity: 1 day ago
+
+  ⏸ architecture-decision-5jx7p3 (interrupted)
+    Topic: Migrate to microservices or modular monolith?
+    Experts: 4 · Rounds: 2 (stopped mid-debate) · Last activity: 3 days ago
+```
+
+Icons:
+- ✓ `completed` — Debate finished all rounds
+- ⏸ `interrupted` — Stopped mid-debate (Ctrl+C) — resumable
+- ⚠ `failed` — Encountered an error
+
+## Step 2: View a transcript (read-only)
+
+Replay a debate without continuing it:
+
+```bash
+council resume security-review-3vk9j2
+```
+
+Council streams the saved transcript:
+
+```
+━━━ Round 1 ━━━
+
+[Elena Vasquez — Security Auditor]
+Let's assess the OAuth2 risks for Twitter/X integration. The primary concern
+is API stability...
+
+[Dr. Kwame Osei — Privacy Officer]
+From a privacy perspective, we need to consider data minimization...
+
+━━━ Round 2 ━━━
+...
+```
+
+**No LLM calls are made** — this is a pure replay from the database. Press Ctrl+C to stop scrolling.
+
+## Step 3: Resume a debate with a follow-up question
+
+Continue a debate with new context:
+
+```bash
+council resume security-review-3vk9j2 --prompt "What if we add rate limiting and a fallback to email login?"
+```
+
+**What happens**:
+
+1. Council loads the original panel and experts from the session
+2. Runs **one new round** (default for follow-ups) with your prompt as the topic
+3. Experts build on the previous debate — they have context from earlier rounds
+4. Creates a **continuation debate** linked to the original session
+
+Output:
+
+```
+🏛️ Resuming panel: security-review-3vk9j2
+✓ Panel loaded: 3 experts (from session)
+
+━━━ Follow-up Round ━━━
+
+[Elena Vasquez — Security Auditor]
+Rate limiting significantly mitigates the API instability risk. If Twitter/X
+becomes unreliable, the email fallback ensures users aren't locked out...
+```
+
+The new turns are saved to the session. If you run `council resume security-review-3vk9j2` again (without `--prompt`), you'll see the original debate **plus** the follow-up rounds.
+
+:::tip[Multi-round follow-ups]
+By default, `--prompt` runs 1 round. For deeper deliberation:
+```bash
+council resume <panel> --prompt "<question>" --max-rounds 3
+```
+:::
+
+## Step 4: Synthesize a structured decision
+
+After a debate, generate a decision framework:
+
+```bash
+council conclude security-review-3vk9j2
+```
+
+Council reads the transcript, sends it to an LLM, and produces:
+
+```
+━━━ Decision Synthesis ━━━
+
+Panel: security-review-3vk9j2
+Topic: Should we add OAuth2 social login?
+
+Consensus:
+  • Implement OAuth2 with rate limiting and email fallback
+  • Exclude Twitter/X until API stability improves
+  • Prioritize Google and GitHub as initial providers
+
+Key Tensions:
+  • Security (API trust, token storage) vs. UX convenience
+  • Build cost vs. user onboarding friction
+
+Decision Matrix:
+
+  Dimension: OAuth2 adoption timing
+    - Elena Vasquez (Security): "Now, with strict controls"
+    - Dr. Kwame Osei (Privacy): "Now, with consent flow"
+    - Jordan Kim (Engineer): "Defer until Q3 — focus on core features first"
+
+Recommendation:
+  Proceed with OAuth2 for Google and GitHub in the current sprint. Implement
+  rate limiting, token expiration (7 days), and email fallback. Defer Twitter/X
+  until their API has 99.9% uptime for 2+ months. Estimated effort: 3 weeks.
+
+Confidence: medium
+  (Disagreement on timing; consensus on approach and providers.)
+```
+
+The synthesis is **not a debate turn** — it's a one-shot LLM call that structures the deliberation for decision-making.
+
+:::tip[Export synthesis as JSON]
+For tooling integration:
+```bash
+council conclude security-review-3vk9j2 --format json > decision.json
+```
+:::
+
+## Step 5: Export transcripts
+
+Council supports four export formats:
+
+### Markdown (default)
+
+Human-readable transcript with headers and expert attributions:
+
+```bash
+council export security-review-3vk9j2 --format markdown > debate.md
+```
+
+Or output to stdout (default):
+
+```bash
+council export security-review-3vk9j2
+```
+
+### JSON (machine-readable)
+
+NDJSON stream of all events (topic, turns, synthesis):
+
+```bash
+council export security-review-3vk9j2 --format json > debate.ndjson
+```
+
+Useful for analytics, archival, or feeding into other tools.
+
+### ADR (Architecture Decision Record)
+
+Structured markdown with Status, Context, Options, Discussion, Decision sections:
+
+```bash
+council export security-review-3vk9j2 --format adr > adr-oauth-social-login.md
+```
+
+Perfect for adding to your `docs/decisions/` directory.
+
+### Share (polished report)
+
+Launch-ready markdown with panel roster, key tensions, recommendation, next actions, and full transcript:
+
+```bash
+council export security-review-3vk9j2 --format share > report.md
+```
+
+Great for Slack, email, or wiki documentation. If you didn't run `council conclude`, synthesis-derived sections show *"Not recorded"* placeholders.
+
+:::tip[Save to file]
+All formats support `--output`:
+```bash
+council export security-review-3vk9j2 --format adr --output docs/decisions/adr-0042.md
+```
+:::
+
+## Advanced: Resume the latest debate automatically
+
+Skip panel name lookup — resume the most recent session:
+
+```bash
+council resume --latest --prompt "What if we delay OAuth2 until Q3?"
+```
+
+Useful for quick follow-ups during active deliberation.
+
+## Session cleanup
+
+Sessions persist forever by default. To delete old sessions:
+
+```bash
+council sessions delete security-review-3vk9j2
+```
+
+Confirm with `y`. This removes the session, panel record, experts, and all turns. **Exported files remain intact** — only the database record is deleted.
+
+:::caution[Deletion is permanent]
+Once deleted, you cannot resume or re-export the session. Export first if you need an archive.
+:::
+
+## What you learned
+
+- ✅ Listed saved sessions with `council sessions`
+- ✅ Viewed a transcript in read-only mode with `council resume <panel>`
+- ✅ Continued a debate with a follow-up question using `--prompt`
+- ✅ Synthesized a decision with `council conclude`
+- ✅ Exported transcripts in Markdown, JSON, ADR, and share formats
+
+## Next steps
+
+- **Experiment**: Resume an old debate with new information and see how experts adapt
+- **Workflow**: Integrate `council conclude` + `export --format adr` into your decision documentation process
+- **Advanced**: Use `--heuristic-memory` so experts recall past debates when resuming (see [How-To Guides](/Council/docs/howto/) for memory configuration)
+
+---
+
+**Congratulations!** You've completed the beginner and intermediate tutorial tracks. You can now:
+
+- Run auto-composed debates (`convene`)
+- Create custom experts and panels (`expert`, `panel`)
+- Ground debates in documents (panel `docs/`)
+- Resume, synthesize, and export decisions (`resume`, `conclude`, `export`)
+
+For advanced workflows (memory, strategies, engine configuration), explore the [How-To Guides](/Council/docs/howto/) and [Reference](/Council/docs/reference/) sections.

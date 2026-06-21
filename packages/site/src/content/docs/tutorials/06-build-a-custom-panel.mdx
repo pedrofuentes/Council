@@ -1,0 +1,202 @@
+---
+title: Build a Custom Panel
+description: Compose a reusable panel template with specific experts, debate settings, and context for recurring decision scenarios.
+---
+
+**Time**: ~7 minutes  
+**Learning outcome**: Create a custom panel template, configure its experts and debate parameters, and convene it by name.
+
+## What you'll learn
+
+By the end of this tutorial, you will:
+
+- Create a custom panel with `council panel create`
+- Configure panel members (custom experts + generic fallbacks)
+- Set panel-level debate parameters (mode, rounds)
+- Convene your panel template by name
+- Manage panel templates in your library
+
+## Prerequisites
+
+- Completed [Tutorial 5: Create a Custom Expert](/Council/docs/tutorials/05-create-a-custom-expert/)
+- At least one custom expert in your library (or follow Step 1 to create one)
+
+:::note[Panel templates vs. sessions]
+- **Panel template**: A reusable YAML definition saved in `~/.council/data/panels/<name>.yaml` with your chosen experts and settings
+- **Session**: A specific debate run created each time you convene the panel (listed in `council sessions`)
+
+One panel template → many sessions over time.
+:::
+
+## What is a custom panel?
+
+Auto-composition (the default when you run `council convene <topic>`) is great for one-off questions, but some scenarios benefit from a **pre-defined panel**:
+
+- **Recurring decisions**: Architecture reviews, vendor selection, incident post-mortems
+- **Fixed perspectives**: Security + compliance + engineering every time
+- **Consistent format**: Same debate mode, round count, and synthesis style
+
+Custom panels capture this configuration once and make it trivial to reuse.
+
+## Step 1: Create a custom panel
+
+Run the interactive wizard:
+
+```bash
+council panel create
+```
+
+You'll be prompted for:
+
+1. **Panel name**: A unique identifier (lowercase, hyphens, starts with a letter). Example: `security-review`
+2. **Description**: Human-readable purpose. Example: `Security, compliance, and privacy review panel for new features`
+3. **Debate mode**: Choose `freeform` (rounds of moderated open discussion — the default) or `structured` (a fixed multi-phase debate choreography)
+4. **Expert members**: Provide expert slugs one per prompt. Press Enter on a blank line when done. Example:
+   ```
+   Enter expert slug (or blank to finish): security-auditor
+   Enter expert slug (or blank to finish): privacy-officer
+   Enter expert slug (or blank to finish): senior-engineer
+   Enter expert slug (or blank to finish): <blank — press Enter>
+   ```
+5. **Max rounds** (optional): How many deliberation rounds. Default: 3
+
+After confirming, Council saves the panel to `~/.council/data/panels/security-review.yaml`:
+
+```
+✓ Panel created: security-review
+  Location: ~/.council/data/panels/security-review.yaml
+  Members: 3 experts
+```
+
+:::tip[Non-interactive creation]
+For scripts:
+```bash
+council panel create security-review \
+  --description "Security, compliance, and privacy review panel" \
+  --mode freeform \
+  --experts security-auditor,privacy-officer,senior-engineer \
+  --max-rounds 3
+```
+:::
+
+## Step 2: Inspect your panel
+
+View the full panel definition:
+
+```bash
+council panel inspect security-review
+```
+
+Output:
+
+```yaml
+name: security-review
+description: Security, compliance, and privacy review panel for new features
+mode: freeform
+experts:
+  - slug: security-auditor
+  - slug: privacy-officer
+  - slug: senior-engineer
+maxRounds: 3
+```
+
+Each expert slug must exist in your expert library (created via `council expert create`). If a slug is missing when you convene, Council will error with suggestions.
+
+## Step 3: Convene your custom panel
+
+Use the panel by name with the `--panel` flag:
+
+```bash
+council convene --panel security-review "We're adding OAuth2 social login. Should we support Twitter/X given their API instability?"
+```
+
+**What happens**:
+
+1. Council loads the `security-review` panel definition
+2. Resolves all expert slugs from your library
+3. Runs the debate using the panel's configured mode and rounds
+4. Creates a new session tied to the panel template
+
+Output:
+
+```
+🏛️ Convening panel: security-review
+✓ Panel loaded: 3 experts
+  • Elena Vasquez (Security Auditor) — claude-sonnet-4.5
+  • Dr. Kwame Osei (Privacy Officer) — claude-sonnet-4.5
+  • Jordan Kim (Senior Engineer) — claude-sonnet-4.5
+
+━━━ Round 1 ━━━
+
+[Elena Vasquez — Security Auditor]
+Let's assess the OAuth2 risks for Twitter/X integration...
+```
+
+## Step 4: Manage your panel library
+
+List all custom panels:
+
+```bash
+council panel list
+```
+
+Output:
+
+```
+Custom panels in your library:
+
+  security-review
+    Description: Security, compliance, and privacy review panel
+    Members: 3 experts · Mode: freeform
+    Created: 5 minutes ago
+
+  architecture-decision
+    Description: Technical architecture review with cross-functional stakeholders
+    Members: 5 experts · Mode: structured
+    Created: 2 days ago
+```
+
+Edit an existing panel (opens your default editor):
+
+```bash
+council panel edit security-review
+```
+
+Delete a panel:
+
+```bash
+council panel delete security-review
+```
+
+:::caution[Deletion and past sessions]
+`council panel delete` removes the panel template from your library. **Past debate sessions remain intact** and can still be resumed or exported via `council sessions` — debate data is snapshotted when the session starts.
+:::
+
+## Advanced: Custom experts vs. generic fallbacks
+
+Panel members can be:
+
+1. **Custom experts**: Defined in your library with full personas (e.g., `security-auditor`)
+2. **Generic slugs**: If a slug doesn't exist as a custom expert, Council auto-composes a generic expert with that name at convene-time
+
+This lets you mix stable, persona-driven experts with flexible, context-aware participants:
+
+```yaml
+experts:
+  - slug: security-auditor      # custom persona (consistent across debates)
+  - slug: privacy-officer        # custom persona
+  - slug: frontend-specialist    # auto-composed from context if not in library
+```
+
+## What you learned
+
+- ✅ Created a custom panel with `council panel create`
+- ✅ Configured expert members, debate mode, and rounds
+- ✅ Convened your panel template by name
+- ✅ Managed panel templates with `list`, `inspect`, `edit`, `delete`
+
+## Next steps
+
+- [Tutorial 7: Ground a Debate in Documents](/Council/docs/tutorials/07-ground-a-debate-in-documents/) — attach reference materials so your panel debates with real data
+- **Experiment**: Create panels for your common decision scenarios (incident reviews, vendor evals, feature prioritization)
+- **Advanced**: Combine panel templates with heuristic memory (`--heuristic-memory`) for experts that recall past debates
