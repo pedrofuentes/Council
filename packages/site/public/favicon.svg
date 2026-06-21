@@ -1,0 +1,9 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="256" cy="256" r="256" fill="#1b2c32"/>
+  <circle cx="256" cy="256" r="120" fill="#85a8c5" opacity="0.9"/>
+  <path fill="#e6e9e6" d="M 196 226 L 206 226 L 206 196 L 236 196 L 236 226 L 266 226 L 266 256 L 236 256 L 236 286 L 206 286 L 206 256 L 196 256 Z" opacity="0.8"/>
+  <path fill="#e6e9e6" d="M 276 226 L 286 226 L 286 196 L 316 196 L 316 226 L 326 226 L 326 256 L 316 256 L 316 286 L 286 286 L 286 256 L 276 256 Z" opacity="0.8"/>
+  <circle cx="256" cy="320" r="12" fill="#cb9492"/>
+  <circle cx="230" cy="305" r="10" fill="#9877a4"/>
+  <circle cx="282" cy="305" r="10" fill="#e5a25a"/>
+</svg>

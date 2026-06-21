@@ -1,0 +1,54 @@
+/**
+ * Council Brand Design Tokens
+ *
+ * Color palette derived from the Council logo:
+ * - Deep ink/teal background
+ * - Off-white neutral text
+ * - Muted cyan/blue primary accent
+ * - Coral, lavender, amber expert accents
+ */
+
+:root {
+  /* Light theme (default) */
+  --council-color-bg: #e6e9e6;
+  --council-color-surface: #ffffff;
+  --council-color-text: #1b2c32;
+  --council-color-text-muted: #4a5c62;
+  --council-color-primary: #85a8c5;
+  --council-color-primary-hover: #6b92b0;
+  --council-color-accent-coral: #cb9492;
+  --council-color-accent-lavender: #9877a4;
+  --council-color-accent-amber: #e5a25a;
+
+  /* Typography */
+  --council-font-mono: 'Berkeley Mono', 'JetBrains Mono', 'Fira Code', 'Consolas',
+    'Monaco', 'Courier New', monospace;
+}
+
+/* Dark theme */
+[data-theme='dark'] {
+  --council-color-bg: #1b2c32;
+  --council-color-surface: #2a3c42;
+  --council-color-text: #e6e9e6;
+  --council-color-text-muted: #a0b0b6;
+  --council-color-primary: #85a8c5;
+  --council-color-primary-hover: #9fbcd6;
+  --council-color-accent-coral: #cb9492;
+  --council-color-accent-lavender: #9877a4;
+  --council-color-accent-amber: #e5a25a;
+}
+
+/* Automatic dark mode based on system preference */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --council-color-bg: #1b2c32;
+    --council-color-surface: #2a3c42;
+    --council-color-text: #e6e9e6;
+    --council-color-text-muted: #a0b0b6;
+    --council-color-primary: #85a8c5;
+    --council-color-primary-hover: #9fbcd6;
+    --council-color-accent-coral: #cb9492;
+    --council-color-accent-lavender: #9877a4;
+    --council-color-accent-amber: #e5a25a;
+  }
+}
