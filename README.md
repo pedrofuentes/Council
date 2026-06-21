@@ -144,6 +144,57 @@ council update                                      # Upgrade to latest publishe
 
 ---
 
+## Built-in Panels
+
+Council ships with **17 built-in expert panels** covering engineering, product, go-to-market, finance, people, legal, and executive decisions. Each panel is pre-configured with domain experts who bring distinct perspectives and genuine disagreement.
+
+### Engineering
+
+| Panel                      | Use for...                                                                  |
+| -------------------------- | --------------------------------------------------------------------------- |
+| `architecture-review`      | Multi-perspective review of architecture and engineering decisions          |
+| `code-review`              | Multi-perspective code review with separated concerns                       |
+| `incident-postmortem`      | Blameless analysis of a production incident                                 |
+
+### Product & Design
+
+| Panel                      | Use for...                                                                  |
+| -------------------------- | --------------------------------------------------------------------------- |
+| `product-strategy-review`  | Pressure-tests a product strategy or major bet                              |
+| `roadmap-prioritization`   | Turns a noisy backlog into a defensible ranked roadmap                      |
+| `ux-review`                | Reviews a user experience — a flow, screen, or redesign                     |
+
+### Go-to-Market
+
+| Panel                       | Use for...                                                                  |
+| --------------------------- | --------------------------------------------------------------------------- |
+| `brand-positioning-review`  | Pressure-tests a brand and positioning decision from five conflicting seats |
+| `enterprise-deal-review`    | Reviews a high-stakes enterprise deal from five seats                       |
+| `growth-experiment-review`  | Reviews a growth experiment before launch or before shipping the "winner"   |
+| `negotiation-prep`          | Prepares for a high-stakes negotiation from five seats                      |
+| `pricing-packaging-review`  | Stress-tests a pricing and packaging decision                               |
+
+### Finance, People, Legal & Executive
+
+| Panel                            | Use for...                                                                                      |
+| -------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `executive-strategy-board-prep`  | Prepares an executive team for a board meeting or major strategy decision                       |
+| `fpna-budget-review`             | Pressure-tests an annual or quarterly budget (decision-support, not financial advice)           |
+| `hiring-decision-review`         | Stress-tests a hiring decision before the offer (decision-support, not professional HR advice)  |
+| `legal-risk-review`              | Reviews a contract, launch, or risk decision (decision-support, not legal advice)               |
+
+### Startup & Career
+
+| Panel                 | Use for...                                                                       |
+| --------------------- | -------------------------------------------------------------------------------- |
+| `career-coaching`     | Career-decision panel for engineers weighing IC vs. management or job changes    |
+| `startup-validation`  | Stress-test a startup or product idea                                            |
+
+**Usage:** `council convene "<topic>" --panel <name>`  
+**See all:** `council templates`
+
+---
+
 ## Example Use Cases
 
 - **Architecture review:** Multi-expert deliberation on technical decisions (microservices, build vs. buy, tech stack)
