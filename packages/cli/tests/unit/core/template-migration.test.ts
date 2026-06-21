@@ -25,12 +25,19 @@ import {
 } from "../../../src/core/template-migration.js";
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
 
+// Every panel YAML shipped in `packages/cli/panels/`. The migration scans that
+// directory dynamically (no registry), so this list must stay in sync with the
+// files on disk; assertions below derive their expected counts from its length.
 const BUILTIN_PANELS = [
   "architecture-review",
+  "brand-positioning-review",
   "career-coaching",
   "code-review",
+  "enterprise-deal-review",
   "growth-experiment-review",
   "incident-postmortem",
+  "negotiation-prep",
+  "pricing-packaging-review",
   "product-strategy-review",
   "roadmap-prioritization",
   "startup-validation",
