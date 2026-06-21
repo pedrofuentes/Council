@@ -137,7 +137,6 @@ async function seedPanelWithMultipleDebates(testHome: string): Promise<{ panelNa
   try {
     const panelRepo = new PanelRepository(db);
     const expertRepo = new ExpertRepository(db);
-    const debateRepo = new DebateRepository(db);
     const turnRepo = new TurnRepository(db);
 
     const panel = await panelRepo.create({
@@ -161,11 +160,43 @@ async function seedPanelWithMultipleDebates(testHome: string): Promise<{ panelNa
       systemMessage: "You are a PM.",
     });
 
-    const firstDebate = await debateRepo.create({
-      panelId: panel.id,
-      prompt: "Original first debate prompt",
-      moderator: "round-robin",
-    });
+    const sharedStartedAt = "2026-01-01T00:00:00.000Z";
+    await db
+      .insertInto("debates")
+      .values([
+        {
+          id: "debate-c-original",
+          panel_id: panel.id,
+          prompt: "Original first debate prompt",
+          status: "completed",
+          moderator: "round-robin",
+          started_at: sharedStartedAt,
+          ended_at: "2026-01-01T00:01:00.000Z",
+          cost_estimate: null,
+        },
+        {
+          id: "debate-b-substantive",
+          panel_id: panel.id,
+          prompt: "Substantive follow-up debate prompt",
+          status: "completed",
+          moderator: "round-robin",
+          started_at: sharedStartedAt,
+          ended_at: "2026-01-01T00:02:00.000Z",
+          cost_estimate: null,
+        },
+        {
+          id: "debate-a-latest",
+          panel_id: panel.id,
+          prompt: "Latest but less substantive prompt",
+          status: "completed",
+          moderator: "round-robin",
+          started_at: sharedStartedAt,
+          ended_at: "2026-01-01T00:03:00.000Z",
+          cost_estimate: null,
+        },
+      ])
+      .execute();
+    const firstDebate = { id: "debate-c-original" };
     await turnRepo.create({
       debateId: firstDebate.id,
       round: 0,
@@ -174,16 +205,7 @@ async function seedPanelWithMultipleDebates(testHome: string): Promise<{ panelNa
       expertId: cto.id,
       content: "First debate opening note.",
     });
-    await debateRepo.update(firstDebate.id, {
-      status: "completed",
-      endedAt: new Date().toISOString(),
-    });
-
-    const substantiveDebate = await debateRepo.create({
-      panelId: panel.id,
-      prompt: "Substantive follow-up debate prompt",
-      moderator: "round-robin",
-    });
+    const substantiveDebate = { id: "debate-b-substantive" };
     await turnRepo.create({
       debateId: substantiveDebate.id,
       round: 0,
@@ -216,16 +238,7 @@ async function seedPanelWithMultipleDebates(testHome: string): Promise<{ panelNa
       expertId: pm.id,
       content: "PM conclusion: agree to phased launch after checklist.",
     });
-    await debateRepo.update(substantiveDebate.id, {
-      status: "completed",
-      endedAt: new Date().toISOString(),
-    });
-
-    const latestShortDebate = await debateRepo.create({
-      panelId: panel.id,
-      prompt: "Latest but less substantive prompt",
-      moderator: "round-robin",
-    });
+    const latestShortDebate = { id: "debate-a-latest" };
     await turnRepo.create({
       debateId: latestShortDebate.id,
       round: 0,
@@ -234,11 +247,6 @@ async function seedPanelWithMultipleDebates(testHome: string): Promise<{ panelNa
       expertId: pm.id,
       content: "Latest short debate note.",
     });
-    await debateRepo.update(latestShortDebate.id, {
-      status: "completed",
-      endedAt: new Date().toISOString(),
-    });
-
     return { panelName: panel.name };
   } finally {
     await db.destroy();
