@@ -4,9 +4,19 @@
  * UNIQUE (panel_id, slug) is enforced by the schema; `create()` will throw
  * on collision. The caller is expected to surface a friendly error.
  */
-import { ulid } from "ulid";
+import { monotonicFactory } from "ulid";
 
 import type { CouncilDatabase, ExpertRow } from "../db.js";
+
+/**
+ * Monotonic ULID factory shared across all expert inserts in this process.
+ *
+ * Unlike the per-call `ulid()`, this guarantees strictly increasing ids even
+ * for experts created within the same millisecond. Because `findByPanelId`
+ * orders by `id ASC`, monotonic ids preserve insertion order — which the
+ * default-expert selection in `council ask` relies on (#1281).
+ */
+const ulidMonotonic = monotonicFactory();
 
 export interface Expert {
   readonly id: string;
@@ -83,7 +93,7 @@ export class ExpertRepository {
   constructor(private readonly db: CouncilDatabase) {}
 
   async create(input: NewExpert): Promise<Expert> {
-    const id = ulid();
+    const id = ulidMonotonic();
     const now = new Date().toISOString();
     await this.db
       .insertInto("experts")
@@ -125,6 +135,7 @@ export class ExpertRepository {
       .selectFrom("experts")
       .selectAll()
       .where("panel_id", "=", panelId)
+      .orderBy("created_at", "asc")
       .orderBy("id", "asc")
       .execute();
     return rows.map(toDomain);
