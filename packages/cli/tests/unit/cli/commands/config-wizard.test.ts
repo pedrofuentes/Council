@@ -248,4 +248,42 @@ describe("buildConfigCommand config wizard", () => {
       `.${rawSelectedExtension.toLowerCase()}`,
     ]);
   });
+
+  it("collapses multiline wizard values to one terminal line while preserving persisted values", async () => {
+    const output = createCapturedOutput();
+    const rawModel = "a\r\nINJECTED";
+    const rawCurrentExtension = "md\nX";
+    await updateConfigField("documents.aiExtractionAllowedExtensions", [rawCurrentExtension]);
+    const discoverModels = vi.fn(async () => ({
+      models: [rawModel],
+      source: "live" as const,
+    }));
+    const input = createInput(
+      ["1", "", "", "", "", "", "", "", "", "", "", "", ""].join("\n") + "\n",
+    );
+
+    const { stderr } = await runConfig(["wizard"], {
+      write: (text) => output.stream.write(text),
+      wizard: {
+        input,
+        output: output.stream,
+        discoverModels,
+      },
+    });
+
+    const text = output.text();
+    expect(stderr).toBe("");
+    expect(text).toContain("1. a INJECTED (recommended)");
+    expect(text).toContain("Set defaults.model = a INJECTED\n");
+    expect(text).toContain(
+      "AI extraction extensions (comma-separated, blank for current) [md X]: ",
+    );
+    expect(text).toContain("Set documents.aiExtractionAllowedExtensions = md X\n");
+    expect(text).not.toContain(rawModel);
+    expect(text).not.toContain(rawCurrentExtension);
+
+    const config = await loadConfig();
+    expect(config.defaults.model).toBe(rawModel);
+    expect(config.documents.aiExtractionAllowedExtensions).toEqual([rawCurrentExtension]);
+  });
 });
