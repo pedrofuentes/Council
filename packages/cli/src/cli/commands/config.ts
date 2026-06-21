@@ -4,18 +4,23 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { createInterface } from "node:readline/promises";
 
 import { Command } from "commander";
 import * as yaml from "yaml";
 
 import {
   ConfigSchema,
+  ENGINE_CHOICES,
   getCouncilDataHome,
   getCouncilHome,
   loadConfig,
   updateConfigField,
 } from "../../config/index.js";
+import { discoverAvailableModels, type ModelDiscoveryResult } from "../../engine/copilot/health.js";
+import { orderModelsByPreference, writeModelList } from "../first-run-model-select.js";
 import { CliUserError } from "../cli-user-error.js";
+import { toSingleLineDisplay } from "../strip-control-chars.js";
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
@@ -26,6 +31,10 @@ const SETTABLE_CONFIG_KEYS = [
   "defaults.maxRounds",
   "defaults.maxExperts",
   "defaults.maxWordsPerResponse",
+  "telemetry.enabled",
+  "chat.recentTurnCount",
+  "chat.summaryMaxWords",
+  "chat.longConversationWarning",
   "documents.aiExtraction",
   "documents.aiExtractionAllowedExtensions",
   "documents.maxFileSizeMB",
@@ -33,6 +42,16 @@ const SETTABLE_CONFIG_KEYS = [
 ] as const;
 
 type SettableConfigKey = (typeof SETTABLE_CONFIG_KEYS)[number];
+
+interface TtyReadableStream extends NodeJS.ReadableStream {
+  readonly isTTY?: boolean;
+}
+
+export interface ConfigWizardDependencies {
+  readonly input?: TtyReadableStream;
+  readonly output?: NodeJS.WritableStream;
+  readonly discoverModels?: typeof discoverAvailableModels;
+}
 
 function getConfigFilePath(): string {
   return path.join(getCouncilHome(), CONFIG_FILE);
@@ -102,6 +121,21 @@ async function getFieldSources(
     sources.set(`defaults.${key}`, key in rawDefaults ? "config file" : "default");
   }
 
+  const rawTelemetry =
+    rawObj["telemetry"] && typeof rawObj["telemetry"] === "object"
+      ? (rawObj["telemetry"] as Record<string, unknown>)
+      : {};
+  sources.set("telemetry.enabled", "enabled" in rawTelemetry ? "config file" : "default");
+
+  const rawChat =
+    rawObj["chat"] && typeof rawObj["chat"] === "object"
+      ? (rawObj["chat"] as Record<string, unknown>)
+      : {};
+  const chatKeys = ["recentTurnCount", "summaryMaxWords", "longConversationWarning"];
+  for (const key of chatKeys) {
+    sources.set(`chat.${key}`, key in rawChat ? "config file" : "default");
+  }
+
   const rawDocuments =
     rawObj["documents"] && typeof rawObj["documents"] === "object"
       ? (rawObj["documents"] as Record<string, unknown>)
@@ -169,6 +203,26 @@ function buildShowCommand(write: Writer): Command {
         "documents.aiExtraction",
         config.documents.aiExtraction,
         sources.get("documents.aiExtraction") ?? "default",
+      ],
+      [
+        "telemetry.enabled",
+        String(config.telemetry.enabled),
+        sources.get("telemetry.enabled") ?? "default",
+      ],
+      [
+        "chat.recentTurnCount",
+        String(config.chat.recentTurnCount),
+        sources.get("chat.recentTurnCount") ?? "default",
+      ],
+      [
+        "chat.summaryMaxWords",
+        String(config.chat.summaryMaxWords),
+        sources.get("chat.summaryMaxWords") ?? "default",
+      ],
+      [
+        "chat.longConversationWarning",
+        String(config.chat.longConversationWarning),
+        sources.get("chat.longConversationWarning") ?? "default",
       ],
       [
         "documents.aiExtractionAllowedExtensions",
@@ -288,22 +342,41 @@ function normalizeExtensionList(rawValue: string): string[] {
 function coerceConfigValue(
   key: SettableConfigKey,
   rawValue: string,
-): string | number | readonly string[] {
+): string | number | boolean | readonly string[] {
   switch (key) {
     case "defaults.maxRounds":
     case "defaults.maxExperts":
-    case "defaults.maxWordsPerResponse": {
+    case "defaults.maxWordsPerResponse":
+    case "chat.recentTurnCount":
+    case "chat.summaryMaxWords":
+    case "chat.longConversationWarning": {
       const parsed = Number(rawValue);
       if (!Number.isInteger(parsed)) {
-        throw new CliUserError(`Config value for ${key} must be an integer.`);
+        throw new CliUserError(`Config value for ${toSingleLineDisplay(key)} must be an integer.`);
       }
       return parsed;
+    }
+    case "telemetry.enabled": {
+      const normalized = rawValue.trim().toLowerCase();
+      if (["true", "yes", "y", "on", "1"].includes(normalized)) return true;
+      if (["false", "no", "n", "off", "0"].includes(normalized)) return false;
+      throw new CliUserError(`Config value for ${toSingleLineDisplay(key)} must be true or false.`);
+    }
+    case "defaults.engine": {
+      if (!ENGINE_CHOICES.includes(rawValue as (typeof ENGINE_CHOICES)[number])) {
+        throw new CliUserError(
+          `Config value for ${toSingleLineDisplay(key)} must be one of: ${ENGINE_CHOICES.map((choice) => toSingleLineDisplay(choice)).join(", ")}`,
+        );
+      }
+      return rawValue;
     }
     case "documents.aiExtraction": {
       const validValues = ["off", "ask", "auto"] as const;
       if (!validValues.includes(rawValue as (typeof validValues)[number])) {
         throw new CliUserError(
-          `Config value for ${key} must be one of: ${validValues.join(", ")}`,
+          `Config value for ${toSingleLineDisplay(key)} must be one of: ${validValues
+            .map((choice) => toSingleLineDisplay(choice))
+            .join(", ")}`,
         );
       }
       return rawValue;
@@ -315,7 +388,7 @@ function coerceConfigValue(
       const parsed = Number(rawValue);
       if (!Number.isFinite(parsed) || parsed < 1 || parsed > 500) {
         throw new CliUserError(
-          `Config value for ${key} must be a number between 1 and 500.`,
+          `Config value for ${toSingleLineDisplay(key)} must be a number between 1 and 500.`,
         );
       }
       return parsed;
@@ -324,13 +397,211 @@ function coerceConfigValue(
       const parsed = Number(rawValue);
       if (!Number.isFinite(parsed) || parsed < 1000 || parsed > 1000000) {
         throw new CliUserError(
-          `Config value for ${key} must be a number between 1000 and 1000000.`,
+          `Config value for ${toSingleLineDisplay(key)} must be a number between 1000 and 1000000.`,
         );
       }
       return parsed;
     }
     default:
       return rawValue;
+  }
+}
+
+function isInteractiveInput(input: TtyReadableStream | undefined): boolean {
+  const activeInput = input ?? process.stdin;
+  return activeInput.isTTY === true;
+}
+
+function formatWizardValue(value: string | number | boolean | readonly string[]): string {
+  if (Array.isArray(value)) {
+    return value.length === 0 ? "none" : value.map((item) => toSingleLineDisplay(item)).join(", ");
+  }
+  if (typeof value === "string") return toSingleLineDisplay(value);
+  return String(value);
+}
+
+function formatWizardKey(key: SettableConfigKey): string {
+  return toSingleLineDisplay(key);
+}
+
+function promptText(
+  output: NodeJS.WritableStream,
+  label: string,
+  current: string | number | boolean | readonly string[],
+): void {
+  output.write(`${label} [${formatWizardValue(current)}]: `);
+}
+
+function selectChoice(
+  rawValue: string,
+  choices: readonly string[],
+  current: string,
+  key: SettableConfigKey,
+): string {
+  const trimmed = rawValue.trim();
+  if (trimmed.length === 0) return current;
+  if (/^\d+$/.test(trimmed)) {
+    const selected = choices[Number.parseInt(trimmed, 10) - 1];
+    if (selected !== undefined) return selected;
+  }
+  if (choices.includes(trimmed)) return trimmed;
+  throw new CliUserError(
+    `Config value for ${formatWizardKey(key)} must be one of: ${choices
+      .map((choice) => toSingleLineDisplay(choice))
+      .join(", ")}`,
+  );
+}
+
+async function promptForModel(
+  line: () => Promise<string>,
+  write: Writer,
+  output: NodeJS.WritableStream,
+  discoverModels: typeof discoverAvailableModels,
+): Promise<string> {
+  write("Discovering available models...\n\n");
+  const discovery: ModelDiscoveryResult = await discoverModels();
+  const models = orderModelsByPreference(discovery.models);
+  if (discovery.source === "static") {
+    write(
+      "Warning: Live model discovery failed, so Council is showing a built-in fallback list.\n\n",
+    );
+  }
+  if (models.length === 0) {
+    throw new CliUserError(
+      "No AI models are available. Run 'council doctor' to verify your setup.",
+    );
+  }
+  writeModelList(
+    write,
+    models.map((model) => toSingleLineDisplay(model)),
+  );
+  output.write(`Default model [1-${models.length}] (Enter for recommended): `);
+  const selected = selectChoice(await line(), models, models[0] ?? "", "defaults.model");
+  write(`Set ${formatWizardKey("defaults.model")} = ${toSingleLineDisplay(selected)}\n`);
+  return selected;
+}
+
+async function promptForValue(
+  key: SettableConfigKey,
+  label: string,
+  current: string | number | boolean | readonly string[],
+  line: () => Promise<string>,
+  output: NodeJS.WritableStream,
+): Promise<string | number | boolean | readonly string[]> {
+  promptText(output, label, current);
+  const rawValue = (await line()).trim();
+  if (rawValue.length === 0) return current;
+  const value =
+    key === "defaults.engine"
+      ? selectChoice(rawValue, ENGINE_CHOICES, String(current), key)
+      : key === "documents.aiExtraction"
+        ? selectChoice(rawValue, ["off", "ask", "auto"], String(current), key)
+        : coerceConfigValue(key, rawValue);
+  ConfigSchema.parse(setValueInConfig(await loadConfig(), key, value));
+  return value;
+}
+
+function setValueInConfig(
+  config: Awaited<ReturnType<typeof loadConfig>>,
+  key: SettableConfigKey,
+  value: string | number | boolean | readonly string[],
+): unknown {
+  const clone: Record<string, unknown> = structuredClone(config) as Record<string, unknown>;
+  const parts = key.split(".");
+  let target = clone;
+  for (const part of parts.slice(0, -1)) {
+    const next = target[part];
+    if (typeof next !== "object" || next === null || Array.isArray(next)) {
+      target[part] = {};
+    }
+    target = target[part] as Record<string, unknown>;
+  }
+  target[parts[parts.length - 1] ?? key] = value;
+  return clone;
+}
+
+async function runWizard(write: Writer, deps: ConfigWizardDependencies | undefined): Promise<void> {
+  const input = deps?.input;
+  if (!isInteractiveInput(input)) {
+    throw new CliUserError(
+      'Non-interactive mode: "config wizard" requires an interactive terminal or injected input.',
+    );
+  }
+
+  const output = deps?.output ?? process.stdout;
+  const rl = createInterface({
+    input: input ?? process.stdin,
+    output,
+    terminal: false,
+  });
+  const lines = rl[Symbol.asyncIterator]();
+  const nextLine = async (): Promise<string> => {
+    const next = await lines.next();
+    return next.done ? "" : next.value;
+  };
+
+  try {
+    write("Config wizard. Press Ctrl+C to abort.\n\n");
+    const config = await loadConfig();
+    const values: readonly [
+      SettableConfigKey,
+      string,
+      string | number | boolean | readonly string[],
+    ][] = [
+      ["defaults.engine", `Default engine (${ENGINE_CHOICES.join("/")})`, config.defaults.engine],
+      ["defaults.maxRounds", "Maximum debate rounds (1-20)", config.defaults.maxRounds],
+      ["defaults.maxExperts", "Maximum experts per panel (2-8)", config.defaults.maxExperts],
+      [
+        "defaults.maxWordsPerResponse",
+        "Maximum words per expert response (50-2000)",
+        config.defaults.maxWordsPerResponse,
+      ],
+      ["telemetry.enabled", "Telemetry enabled (yes/no)", config.telemetry.enabled],
+      ["chat.recentTurnCount", "Recent chat turns to keep (5-50)", config.chat.recentTurnCount],
+      ["chat.summaryMaxWords", "Chat summary max words (100-2000)", config.chat.summaryMaxWords],
+      [
+        "chat.longConversationWarning",
+        "Long conversation warning turn count (50-10000)",
+        config.chat.longConversationWarning,
+      ],
+      [
+        "documents.aiExtraction",
+        "AI document extraction mode (off/ask/auto)",
+        config.documents.aiExtraction,
+      ],
+      [
+        "documents.aiExtractionAllowedExtensions",
+        "AI extraction extensions (comma-separated, blank for current)",
+        config.documents.aiExtractionAllowedExtensions,
+      ],
+      [
+        "documents.maxFileSizeMB",
+        "Maximum document file size in MB (1-500)",
+        config.documents.maxFileSizeMB,
+      ],
+      [
+        "conclude.maxTranscriptChars",
+        "Conclude transcript character budget (1000-1000000)",
+        config.conclude.maxTranscriptChars,
+      ],
+    ];
+
+    const model = await promptForModel(
+      nextLine,
+      write,
+      output,
+      deps?.discoverModels ?? discoverAvailableModels,
+    );
+    await updateConfigField("defaults.model", model);
+
+    for (const [key, label, current] of values) {
+      const value = await promptForValue(key, label, current, nextLine, output);
+      await updateConfigField(key, value);
+      write(`Set ${formatWizardKey(key)} = ${formatWizardValue(value)}\n`);
+    }
+    write("\nConfig wizard complete.\n");
+  } finally {
+    rl.close();
   }
 }
 
@@ -347,7 +618,7 @@ function buildSetCommand(write: Writer, writeError: Writer): Command {
         throw new CliUserError(msg);
       }
 
-      let value: string | number | readonly string[];
+      let value: string | number | boolean | readonly string[];
       try {
         value = coerceConfigValue(key, rawValue);
       } catch (err: unknown) {
@@ -374,10 +645,30 @@ function buildSetCommand(write: Writer, writeError: Writer): Command {
   return cmd;
 }
 
+function buildWizardCommand(
+  write: Writer,
+  writeError: Writer,
+  wizardDeps?: ConfigWizardDependencies,
+): Command {
+  const cmd = new Command("wizard");
+  cmd.description("Guided interactive setup for common config values").action(async () => {
+    try {
+      await runWizard(write, wizardDeps);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const displayMsg = toSingleLineDisplay(msg);
+      writeError(`${displayMsg}\n`);
+      throw new CliUserError(displayMsg);
+    }
+  });
+  return cmd;
+}
+
 export function buildConfigCommand(
   write: Writer = defaultWriter,
   writeError: Writer = defaultErrorWriter,
   editorRunner?: EditorRunner,
+  wizardDeps?: ConfigWizardDependencies,
 ): Command {
   const cmd = new Command("config");
   cmd.description("View and edit Council configuration");
@@ -385,5 +676,6 @@ export function buildConfigCommand(
   cmd.addCommand(buildPathCommand(write));
   cmd.addCommand(buildEditCommand(write, writeError, editorRunner));
   cmd.addCommand(buildSetCommand(write, writeError));
+  cmd.addCommand(buildWizardCommand(write, writeError, wizardDeps));
   return cmd;
 }

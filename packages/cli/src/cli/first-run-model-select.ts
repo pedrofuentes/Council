@@ -47,7 +47,7 @@ function getModelRank(model: string): number {
   return 3;
 }
 
-function orderModelsByPreference(models: readonly string[]): readonly string[] {
+export function orderModelsByPreference(models: readonly string[]): readonly string[] {
   return [...new Set(models)].sort((left, right) => {
     const rankDifference = getModelRank(left) - getModelRank(right);
     return rankDifference !== 0 ? rankDifference : left.localeCompare(right);
@@ -59,7 +59,7 @@ function isInteractiveInput(input: TtyReadableStream | undefined): boolean {
   return activeInput.isTTY === true;
 }
 
-function writeModelList(write: Writer, models: readonly string[]): void {
+export function writeModelList(write: Writer, models: readonly string[]): void {
   write("Available models:\n");
   models.forEach((model, index) => {
     const recommendedSuffix = index === 0 ? " (recommended)" : "";
@@ -142,7 +142,9 @@ export async function selectModelInteractively(
   const models = orderModelsByPreference(discovery.models);
 
   if (discovery.source === "static") {
-    write("Warning: Live model discovery failed, so Council is showing a built-in fallback list.\n\n");
+    write(
+      "Warning: Live model discovery failed, so Council is showing a built-in fallback list.\n\n",
+    );
   }
 
   if (models.length === 0) {
