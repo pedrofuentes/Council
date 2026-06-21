@@ -16,7 +16,7 @@ Stop getting single-perspective advice from AI. Council creates persistent exper
 # Install
 npm install -g @council-ai/cli
 
-# Verify setup (checks Node.js, libsql, Copilot SDK, disk)
+# Verify setup (checks Node.js, SQLite, Copilot SDK, disk)
 council doctor
 
 # Run your first deliberation — Council auto-composes an expert panel for you
@@ -109,7 +109,7 @@ for year two if data ownership becomes a competitive advantage...
 
 ```bash
 # Getting started
-council doctor                                      # Verify Node, libsql, Copilot SDK, disk
+council doctor                                      # Verify Node, SQLite, Copilot SDK, disk
 council config                                      # View/edit configuration
 
 # Run a deliberation
