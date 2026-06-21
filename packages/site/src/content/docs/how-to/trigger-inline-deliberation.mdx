@@ -1,0 +1,55 @@
+---
+title: Trigger inline deliberation (@convene)
+description: Start a structured debate from within panel chat using @convene.
+---
+
+When a chat topic needs formal debate treatment, use `@convene` to trigger a structured 4-phase deliberation without leaving the chat.
+
+## Basic usage
+
+```
+You> @convene Should we raise prices by 20%?
+
+⚙ Starting structured deliberation: "Should we raise prices by 20%?"...
+
+━━━ Opening Statements ━━━
+[Sarah Chen — VP Strategy]
+A 20% increase signals confidence in our value...
+
+[Marcus Cole — Devil's Advocate]
+That's aggressive given current churn rates...
+
+━━━ Cross-Examination ━━━
+...
+
+━━━ Rebuttals ━━━
+...
+
+━━━ Synthesis ━━━
+The panel agrees that a price increase is warranted but splits on magnitude...
+
+You>
+```
+
+## How it works
+
+The deliberation runs through four phases:
+
+1. **Opening Statements** — each expert stakes out their position
+2. **Cross-Examination** — experts challenge each other
+3. **Rebuttals** — experts defend or refine their positions
+4. **Synthesis** — convergence on key insights
+
+The entire deliberation is saved in your chat history, and you return to the `You>` prompt afterward.
+
+## Requirements
+
+`@convene` requires a topic:
+
+- ✅ `@convene Should we ship the MVP?`
+- ❌ `@convene` (alone) — shows a usage hint
+
+## Related
+
+- [Chat with a panel](/Council/docs/how-to/chat-with-a-panel/) — starting group conversations
+- [Direct message experts](/Council/docs/how-to/direct-message-experts/) — use `@mentions` to route messages

@@ -1,0 +1,46 @@
+---
+title: Direct message experts (@mentions)
+description: Route messages to specific experts in panel chat using @mentions.
+---
+
+In panel chat, prefix your message with `@slug` to route it to one or more specific experts.
+
+## Mention a single expert
+
+```
+You> @strategist What's our biggest competitive moat?
+
+[Sarah Chen — VP Strategy]
+Our data network effects are the primary moat...
+```
+
+Only the mentioned expert responds — others stay silent for that turn.
+
+## Mention multiple experts
+
+```
+You> @strategist @devils-advocate Is our pricing strategy sustainable?
+
+[Sarah Chen — VP Strategy]
+The current pricing model aligns with our value metric...
+
+[Marcus Cole — Devil's Advocate]
+I'd push back on that. Three of our five largest accounts have asked for
+volume discounts...
+```
+
+## Important constraints
+
+**Mentions must appear at the start of your message:**
+
+- ✅ `@strategist What do you think?` — works
+- ❌ `What do you think @strategist?` — treated as a general message to everyone
+
+## Error handling
+
+If you mention a slug that isn't in the panel, Council shows an error listing the available experts — no guessing required.
+
+## Related
+
+- [Chat with a panel](/Council/docs/how-to/chat-with-a-panel/) — starting group conversations
+- [Trigger inline deliberation](/Council/docs/how-to/trigger-inline-deliberation/) — use `@convene` for structured debate

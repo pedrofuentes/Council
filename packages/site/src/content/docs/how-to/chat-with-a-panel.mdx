@@ -1,0 +1,56 @@
+---
+title: Chat with a panel
+description: Start an ongoing group conversation with all panel experts.
+---
+
+Use `council chat` with a panel name for an ongoing group conversation where all experts participate.
+
+## Start panel chat
+
+```bash
+council chat strategy-review
+```
+
+Council resolves the panel's experts, indexes any documents in the panel's docs folder, and drops you into an interactive REPL:
+
+```
+📋 Starting group chat with strategy-review (3 experts: Sarah Chen, Marcus Cole, Priya Mehta) — use @name to address specific experts
+ℹ Type /exit or /quit to save and end the conversation.
+
+You> What should our Q4 priorities be given the competitive landscape?
+
+[Sarah Chen — VP Strategy]
+Given the recent moves by our top two competitors, I'd focus on three things...
+
+[Marcus Cole — Devil's Advocate]
+Before we lock in priorities, let's challenge the assumption that we need to
+react to competitors at all...
+
+[Priya Mehta — Customer Research]
+I'd reframe this around what our customers are actually asking for...
+
+You>
+```
+
+Every expert responds to each message. The conversation persists — exit with `/exit` or `/quit` and pick up where you left off next time.
+
+## Interrupt a response
+
+Press **Ctrl+C** to abort an expert mid-response. The partial output is saved and you return to the `You>` prompt.
+
+## Document retrieval
+
+If the panel has documents in its `docs/` folder, Council indexes them automatically:
+
+```
+ℹ Indexed 3 panel document(s) (0 unchanged, 0 failed).
+📋 Starting group chat with strategy-review (3 experts)...
+```
+
+See [Review documents in chat](/Council/docs/how-to/review-documents-in-chat/) for details.
+
+## Related
+
+- [Direct message experts](/Council/docs/how-to/direct-message-experts/) — use `@mentions` to route messages
+- [Trigger inline deliberation](/Council/docs/how-to/trigger-inline-deliberation/) — use `@convene` for structured debate
+- [Chat with a single expert](/Council/docs/how-to/chat-with-an-expert/) — for 1:1 conversations

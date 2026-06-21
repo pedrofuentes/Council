@@ -1,0 +1,45 @@
+---
+title: Continue a debate
+description: Review past debate transcripts or continue with follow-up questions.
+---
+
+Use `council resume` to replay transcripts or continue a previous debate with new questions.
+
+## Review a debate transcript
+
+```bash
+council resume strategy-review
+```
+
+This displays the debate transcript without starting a new debate — no LLM calls, no engine.
+
+## Continue with a follow-up question
+
+```bash
+council resume strategy-review --prompt "What about the regulatory risk in the EU?"
+```
+
+This starts a **new debate** using the same panel and experts.
+
+## Prefix matching
+
+Type just enough of the panel name to uniquely identify it:
+
+```bash
+council resume strat
+```
+
+This works if `strategy-review` is the only panel starting with "strat."
+
+## View all past sessions
+
+```bash
+council sessions
+```
+
+This lists all debate sessions stored in Council's local database, including their status and experts.
+
+## Related
+
+- [Manage chat sessions](/Council/docs/how-to/manage-chat-sessions/) — for chat (not debate) persistence
+- [Export an ADR](/Council/docs/how-to/export-an-adr/) — snapshot debates into shareable documents

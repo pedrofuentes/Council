@@ -1,0 +1,66 @@
+---
+title: Handle shell quoting
+description: Prevent your shell from mangling topics containing $, backticks, or other special characters.
+---
+
+If your topic contains `$`, backticks, or other special characters, wrap it in quotes to prevent your shell from interpreting them.
+
+## Bash / Zsh
+
+Use **single quotes** to prevent shell expansion:
+
+```bash
+council convene 'Should we raise salaries to $180K?'
+```
+
+Or escape individual characters:
+
+```bash
+council convene "Should we raise salaries to \$180K?"
+```
+
+## PowerShell
+
+Use **single quotes** or escape with backtick:
+
+```powershell
+# Single quotes (safest)
+council convene 'Should we raise salaries to $180K?'
+
+# Backtick escape
+council convene "Should we raise salaries to `$180K?"
+```
+
+## Bulletproof option: `--prompt-file`
+
+To sidestep shell quoting entirely, write your topic to a file and pass it via `--prompt-file`:
+
+```bash
+echo "Should we raise salaries to $180K?" > topic.txt
+council convene --prompt-file topic.txt
+```
+
+Or pipe from stdin:
+
+```bash
+echo "Should we raise salaries to $180K?" | council convene --prompt-file -
+```
+
+The file bypasses the shell, so `$180K`, backticks, and `$variables` survive exactly as written.
+
+## Shell character reference
+
+| Character | Bash/Zsh | PowerShell | In file (`--prompt-file`) |
+|-----------|----------|------------|---------------------------|
+| `$`       | `'...'` or `\$` | `'...'` or `` `$ `` | Already safe |
+| Backtick  | `'...'` or `` \` `` | Already escaped | Already safe |
+| `!`       | `'...'` or `\!` | Already safe | Already safe |
+| `*`       | `'...'` or `\*` | `'...'` | Already safe |
+
+## Shell-expansion detection
+
+When a topic looks like it may have been mangled by the shell (for example, a `$amount` that expanded to nothing), Council echoes what it received and asks for confirmation before proceeding.
+
+## Related
+
+- [Ask a quick question](/Council/docs/how-to/ask-a-quick-question/) — using `council ask` with special characters

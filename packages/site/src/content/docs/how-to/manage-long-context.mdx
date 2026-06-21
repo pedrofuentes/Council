@@ -1,0 +1,63 @@
+---
+title: Manage long context in debates
+description: Control how much prior context experts see to prevent repetitive responses and manage token usage.
+---
+
+For debates with many rounds, you can control how much prior context each expert sees. This prevents responses from becoming repetitive and manages token usage.
+
+## Recent context only
+
+Experts see only the most recent turns:
+
+```bash
+council convene "Long architectural debate" --template architecture-review \
+  --max-rounds 10 --context-scope recent
+```
+
+## Same-round context
+
+Experts only see other responses from the current round:
+
+```bash
+council convene "Long debate" --template architecture-review \
+  --max-rounds 10 --context-scope same-round
+```
+
+## Rolling summary
+
+Prepend a summary after a specified round:
+
+```bash
+council convene "Long debate" --template architecture-review \
+  --max-rounds 10 --summarize-after 3
+```
+
+## Inspect panel memory
+
+View what Council remembers about a panel:
+
+```bash
+council memory list
+```
+
+```bash
+council memory inspect strategy-review
+```
+
+View a specific expert's memory and provenance:
+
+```bash
+council memory inspect strategy-review --expert cto
+```
+
+## Clear debate history
+
+Clear debate history while keeping the panel configuration:
+
+```bash
+council memory reset strategy-review --yes
+```
+
+## Related
+
+- [Use moderator strategies](/Council/docs/how-to/use-moderator-strategies/) — control debate dynamics
