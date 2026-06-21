@@ -1,0 +1,295 @@
+---
+title: Glossary
+description: Key terms and concepts used throughout Council.
+---
+
+Definitions of terms used in Council documentation, commands, and configuration.
+
+## Core Concepts
+
+### Panel
+
+A group of experts deliberating together. Panels are defined in YAML files (`~/Council/panels/*.yaml` or bundled templates) and specify experts, defaults, and debate mode.
+
+**Example:** `code-review`, `architecture-review`
+
+**See:** [Panel YAML Format](/Council/docs/reference/panel-yaml/)
+
+---
+
+### Expert
+
+A synthetic participant in a panel with a defined role, expertise, and epistemic stance. Experts can be **generic** (template-based) or **persona** (document-trained).
+
+**Types:**
+
+- **Generic expert:** Template-based expert defined by role and expertise (e.g., "Senior Developer")
+- **Persona expert:** Document-trained expert that learns from a corpus (e.g., your CTO, trained on architecture decision records)
+
+**See:** [Expert YAML Format](/Council/docs/reference/expert-yaml/)
+
+---
+
+### Slug
+
+A short, URL-safe identifier for experts and panels. Must match `^[a-z0-9][a-z0-9-]{0,63}$` (lowercase letters, digits, and hyphens; must start with a letter or digit; maximum 64 characters).
+
+**Examples:** `cto`, `security-expert`, `code-review`, `3d-modeler`
+
+---
+
+### Debate Mode
+
+The structure of a panel's deliberation.
+
+| Mode | Description |
+|------|-------------|
+| `freeform` | (Default) Open-ended discussion. Experts respond in turns, building on each other's points. |
+| `structured` | Four-phase debate: Hypothesis Formation → Deliberation → Convergence → Synthesis. |
+
+**Configure:** `defaults.mode` in panel YAML or `--mode` CLI flag.
+
+---
+
+### Round
+
+One complete cycle where each expert contributes once. Panels run for multiple rounds (`maxRounds`) or until convergence.
+
+**Default:** 4 rounds
+
+**Range:** 1–20 rounds
+
+---
+
+### Epistemic Stance
+
+The lens through which an expert interprets evidence and forms beliefs. Defines their values, priorities, and cognitive biases.
+
+**Example:** "You have seen too many breach post-mortems where the root cause was 'we trusted X'."
+
+**See:** [Expert YAML Format](/Council/docs/reference/expert-yaml/)
+
+---
+
+### Weighted Evidence
+
+Types of evidence an expert prioritizes when reasoning. Ordered by importance.
+
+**Example (Security Auditor):**
+
+- Trust boundaries (where untrusted input enters)
+- Auth/AuthN/AuthZ correctness
+- Injection paths (SQL, command, template)
+
+---
+
+### Synthesis
+
+The final consolidated answer produced by `council conclude` or the structured debate's Synthesis phase. Combines insights from all experts into a coherent recommendation.
+
+---
+
+### Session
+
+A persistent debate or chat session stored in the database. Sessions can be resumed, exported, or archived.
+
+**Commands:** `council sessions list`, `council resume <session-id>`
+
+---
+
+### Memory
+
+Expert-specific knowledge indexed from documents. Used by persona experts to ground responses in prior context (e.g., past decisions, team guidelines).
+
+**Commands:** `council memory list`, `council memory show <key>`
+
+---
+
+### Data Home
+
+The directory where user-authored experts, panels, and documents live. Default: `~/Council/`
+
+**Override:** `COUNCIL_DATA_HOME` or `config.paths.dataHome`
+
+**See:** [Data Locations](/Council/docs/reference/data-locations/)
+
+---
+
+### Runtime Home
+
+The directory for ephemeral state (database, logs, cache). Default: `~/.council/`
+
+**Override:** `COUNCIL_HOME` environment variable
+
+**See:** [Data Locations](/Council/docs/reference/data-locations/)
+
+---
+
+## Document Management
+
+### Document Corpus
+
+A collection of files indexed for a persona expert. Council extracts text from supported formats and builds a searchable index.
+
+**Location:** `~/Council/docs/<expert-slug>/`
+
+**See:** [Document Formats](/Council/docs/reference/document-formats/)
+
+---
+
+### AI Extraction
+
+Experimental feature that uses AI to build structured text descriptions of unsupported file formats. Never sends files externally — runs locally via the configured engine.
+
+**Modes:** `off` (default), `ask`, `auto`
+
+**See:** [Document Formats](/Council/docs/reference/document-formats/) · [Configuration](/Council/docs/reference/configuration/)
+
+---
+
+### Supported Formats
+
+File extensions Council can natively parse or convert to text. Includes `.md`, `.txt`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.csv`, and more.
+
+**See:** [Document Formats](/Council/docs/reference/document-formats/)
+
+---
+
+## Output & Rendering
+
+### Renderer
+
+The output formatter used during live debates (`council convene`, `council resume`, `council ask`).
+
+**Options:**
+
+- `auto` — (Default) Ink (TUI) if TTY, plain otherwise
+- `ink` — Interactive terminal UI
+- `plain` — Line-by-line output
+- `json` — NDJSON stream
+
+**See:** [Output Formats](/Council/docs/reference/output-formats/)
+
+---
+
+### Export Format
+
+The file format for exporting panel transcripts (`council export`).
+
+**Options:**
+
+- `markdown` — (Default) Human-readable transcript
+- `json` — NDJSON stream
+- `adr` — Architecture Decision Record
+
+**See:** [Output Formats](/Council/docs/reference/output-formats/)
+
+---
+
+### NDJSON
+
+Newline-Delimited JSON. One JSON object per line. Used for machine-readable exports and programmatic processing.
+
+**Example:**
+
+```json
+{"role":"system","content":"..."}
+{"role":"user","content":"..."}
+{"role":"assistant","content":"...","expert":"cto"}
+```
+
+---
+
+## Engine & Provider
+
+### Engine
+
+The AI backend Council uses to power expert responses.
+
+**Options:**
+
+- `copilot` — (Default) GitHub Copilot (requires authentication)
+- `mock` — Deterministic mock engine for testing
+
+**Configure:** `defaults.engine` or `--engine` flag
+
+---
+
+### Model
+
+Provider-agnostic model identifier (e.g., `claude-sonnet-4.5`). Council translates this to the provider-native name.
+
+**Default:** `claude-sonnet-4.5`
+
+**Configure:** `defaults.model`, panel YAML `defaults.model`, or expert YAML `model`
+
+---
+
+## Commands
+
+### Convene
+
+Start a structured debate with a panel of experts.
+
+```bash
+council convene <panel>
+```
+
+---
+
+### Chat
+
+Interactive chat session with a panel. Supports `@mention` and `@convene` directives.
+
+```bash
+council chat <panel>
+```
+
+**See:** [In-Chat Directives](/Council/docs/reference/in-chat-directives/)
+
+---
+
+### Conclude
+
+Synthesize a panel's transcript into a final recommendation.
+
+```bash
+council conclude <panel>
+```
+
+---
+
+### Resume
+
+Resume a previous session by ID.
+
+```bash
+council resume <session-id>
+```
+
+---
+
+### Export
+
+Export a panel transcript to markdown, JSON, or ADR format.
+
+```bash
+council export <panel> --format <format>
+```
+
+---
+
+### Ask
+
+One-shot question to an expert (no panel).
+
+```bash
+council ask <expert> <question>
+```
+
+---
+
+## Related
+
+- [Commands Reference](/Council/docs/reference/commands/) — Full command syntax
+- [Configuration](/Council/docs/reference/configuration/) — Settings reference

@@ -1,0 +1,123 @@
+---
+title: Exit Codes
+description: Semantic exit codes returned by Council commands.
+---
+
+Council uses semantic exit codes to distinguish between success, user errors, and system failures. Scripts can check for specific error categories beyond simple "zero vs non-zero."
+
+## Exit Code Reference
+
+| Code | Constant | Meaning | When Returned |
+|------|----------|---------|---------------|
+| 0 | `EXIT_SUCCESS` | Success or clean cancellation | Command completed successfully, or user aborted with Ctrl+C (clean cancellation, not an error). |
+| 1 | `EXIT_USER_ERROR` | User error | Invalid arguments, missing required input, invalid panel/expert names, context overflow, model unavailable. |
+| 2 | `EXIT_AUTH_ERROR` | Authentication error | GitHub Copilot authentication failed or not configured. |
+| 3 | `EXIT_NETWORK_ERROR` | Network or rate-limit error | Network unreachable, API request failed, rate limit exceeded. |
+| 4 | `EXIT_INTERNAL_ERROR` | Internal or provider error | Unexpected internal error, provider API error, unhandled exception. |
+
+## Engine Error Mapping
+
+Council's engine layer reports typed error codes that map to CLI exit codes:
+
+| Engine Error Code | CLI Exit Code | Description |
+|-------------------|---------------|-------------|
+| `ABORTED` | 0 (Success) | User canceled with Ctrl+C — **not an error**. |
+| `NOT_AUTHENTICATED` | 2 | GitHub Copilot authentication required. |
+| `NETWORK` | 3 | Network connectivity issue. |
+| `RATE_LIMITED` | 3 | API rate limit exceeded. |
+| `INTERNAL` | 4 | Internal engine error. |
+| `PROVIDER_ERROR` | 4 | AI provider returned an error. |
+| `MODEL_UNAVAILABLE` | 1 | Requested model is not available. |
+| `CONTEXT_OVERFLOW` | 1 | Input exceeds model's context window. |
+
+## Usage in Scripts
+
+### Basic Error Checking
+
+```bash
+#!/bin/bash
+council convene tech-review
+if [ $? -ne 0 ]; then
+  echo "Error: council command failed"
+  exit 1
+fi
+```
+
+### Specific Error Handling
+
+```bash
+#!/bin/bash
+council convene tech-review
+EXIT_CODE=$?
+
+case $EXIT_CODE in
+  0)
+    echo "Success"
+    ;;
+  1)
+    echo "User error: check arguments and inputs"
+    exit 1
+    ;;
+  2)
+    echo "Authentication error: run 'gh auth login' to authenticate GitHub Copilot"
+    exit 2
+    ;;
+  3)
+    echo "Network error: check connectivity and retry"
+    exit 3
+    ;;
+  4)
+    echo "Internal error: see logs for details"
+    exit 4
+    ;;
+  *)
+    echo "Unknown exit code: $EXIT_CODE"
+    exit 1
+    ;;
+esac
+```
+
+### CI/CD Integration
+
+```yaml
+# GitHub Actions example
+- name: Run Council panel
+  run: council convene tech-review --format json > output.ndjson
+  id: council
+  continue-on-error: true
+
+- name: Check exit code
+  if: steps.council.outcome == 'failure'
+  run: |
+    if [ ${{ steps.council.exit_code }} -eq 2 ]; then
+      echo "::error::GitHub Copilot authentication required"
+    elif [ ${{ steps.council.exit_code }} -eq 3 ]; then
+      echo "::warning::Network error, retrying..."
+    else
+      echo "::error::Command failed with exit code ${{ steps.council.exit_code }}"
+    fi
+    exit 1
+```
+
+## Exit Code 0: Success vs Abort
+
+**Important:** Exit code `0` is returned for both:
+
+1. **Successful completion** — the command finished normally
+2. **Clean user abort** — the user pressed Ctrl+C to cancel (e.g., during a debate)
+
+This design follows Unix conventions where Ctrl+C is a deliberate, expected user action — **not an error**. Scripts that need to distinguish these cases should check command output or use `--format json` to parse structured results.
+
+## Debugging
+
+When a command exits with a non-zero code:
+
+1. **Check logs:** `~/.council/logs/` contains detailed error traces
+2. **Run `council doctor`:** Diagnoses common configuration and authentication issues
+3. **Use `--verbose` flag:** (if available) for additional debug output
+4. **Check GitHub Copilot status:** `gh copilot status` or `council doctor`
+
+## Related
+
+- [Troubleshooting](/Council/docs/reference/troubleshooting/) — Common error scenarios
+- [Environment Variables](/Council/docs/reference/environment-variables/) — Configuration options

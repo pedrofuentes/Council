@@ -1,0 +1,132 @@
+---
+title: Environment Variables
+description: Environment variables recognized by Council.
+---
+
+Council respects several environment variables for configuration, testing, and accessibility.
+
+## Configuration
+
+### `COUNCIL_HOME`
+
+Override the default runtime directory (`~/.council/`). Used by `--ephemeral` mode and tests to isolate state.
+
+**Default:** `~/.council/`
+
+**Example:**
+
+```bash
+export COUNCIL_HOME=/tmp/council-test
+council convene tech-review
+```
+
+### `COUNCIL_DATA_HOME`
+
+Override the default data directory (`~/Council/`) for expert and panel YAML files.
+
+**Default:** `~/Council/` (or `config.paths.dataHome` if set in `config.yaml`)
+
+**Example:**
+
+```bash
+export COUNCIL_DATA_HOME=~/my-councils
+council expert list
+```
+
+**Precedence:**
+
+1. `COUNCIL_DATA_HOME` environment variable
+2. `config.paths.dataHome` in `~/.council/config.yaml`
+3. Default: `~/Council/`
+
+## Rendering & Accessibility
+
+### `NO_COLOR`
+
+When set (any non-empty value), disables ANSI color codes in output. Follows the [NO_COLOR](https://no-color.org/) standard.
+
+**Example:**
+
+```bash
+export NO_COLOR=1
+council convene tech-review --format plain
+```
+
+**Effect:**
+
+- Color output disabled
+- ASCII charset used (block art retained for banners)
+- Spinner/progress indicators simplified
+
+### `COUNCIL_ASCII`
+
+Force ASCII-only charset. Disables Unicode box-drawing characters and emoji.
+
+**Example:**
+
+```bash
+export COUNCIL_ASCII=1
+council convene tech-review
+```
+
+**Use Cases:**
+
+- Legacy terminals without Unicode support
+- Screen readers and accessibility tools
+- Log files and CI environments
+- `TERM=dumb` is automatically detected
+
+## GitHub Copilot Integration
+
+### `COPILOT_CLI_PATH`
+
+Override the auto-detected path to `@github/copilot/npm-loader.js`. Council auto-detects the bundled loader; use this only when troubleshooting authentication or installation issues.
+
+**Default:** Auto-detected from `@github/copilot` package
+
+**Example:**
+
+```bash
+export COPILOT_CLI_PATH=/custom/path/to/npm-loader.js
+council doctor
+```
+
+**When to Use:**
+
+- Custom Copilot CLI installations
+- Debugging authentication failures
+- Non-standard Node.js module resolution
+
+## Internal / Testing
+
+### `TERM`
+
+Standard terminal type variable. Council detects `TERM=dumb` and automatically switches to ASCII-only charset.
+
+**Example:**
+
+```bash
+TERM=dumb council convene tech-review
+```
+
+**Auto-Detection:**
+
+- `TERM=dumb` → ASCII charset, no color
+- Modern terminals → Unicode + color
+
+## Summary Table
+
+| Variable | Purpose | Default | Example |
+|----------|---------|---------|---------|
+| `COUNCIL_HOME` | Runtime directory (DB, logs) | `~/.council/` | `/tmp/council-test` |
+| `COUNCIL_DATA_HOME` | Data directory (experts, panels) | `~/Council/` | `~/my-councils` |
+| `NO_COLOR` | Disable color output | (unset) | `1` |
+| `COUNCIL_ASCII` | Force ASCII charset | (unset) | `1` |
+| `COPILOT_CLI_PATH` | Override Copilot loader path | Auto-detected | `/custom/path/npm-loader.js` |
+| `TERM` | Terminal type | Auto-detected | `dumb` |
+
+## Related
+
+- [Configuration](/Council/docs/reference/configuration/) — `config.yaml` settings
+- [Data Locations](/Council/docs/reference/data-locations/) — Directory structure
+- [Troubleshooting](/Council/docs/reference/troubleshooting/) — Common issues

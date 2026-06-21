@@ -1,0 +1,142 @@
+---
+title: Output Formats
+description: Export and rendering formats supported by Council commands.
+---
+
+Council commands support multiple output formats for different use cases: human-readable terminal output, machine-readable JSON, and structured exports like ADR.
+
+## Export Formats
+
+### `council export`
+
+Export panel transcripts to various formats.
+
+```bash
+council export <panel> --format <format> [--output <path>]
+```
+
+| Format | Description | Use Case |
+|--------|-------------|----------|
+| `markdown` | (Default) Readable transcript with H1 header and expert attribution. | Documentation, PR descriptions, sharing with teams. |
+| `json` | NDJSON stream (newline-delimited JSON). One message per line. | Programmatic processing, archival, analytics. |
+| `adr` | Architecture Decision Record markdown. Includes Status, Context, Decision, Consequences. | Decision logging, RFC workflows, documentation. |
+
+**Examples:**
+
+```bash
+# Markdown to stdout
+council export my-panel
+
+# NDJSON to file
+council export my-panel --format json --output transcript.ndjson
+
+# ADR format
+council export my-panel --format adr --output decision.md
+```
+
+## Command-Specific Formats
+
+### `council convene` / `council resume` / `council ask`
+
+Renderer format for live debate output.
+
+```bash
+council convene <panel> --format <format>
+```
+
+| Format | Description |
+|--------|-------------|
+| `auto` | (Default) Ink (interactive TUI) if TTY detected, plain otherwise. |
+| `ink` | Interactive terminal UI with live updates, spinners, and rich formatting. |
+| `plain` | Non-interactive line-by-line output. Respects `NO_COLOR` and `COUNCIL_ASCII`. |
+| `json` | NDJSON stream for programmatic consumption. |
+
+**Examples:**
+
+```bash
+# Auto-detect
+council convene tech-review
+
+# Force plain (useful in CI or for logging)
+council convene tech-review --format plain
+
+# JSON stream
+council convene tech-review --format json > debate.ndjson
+```
+
+### `council panel list` / `council expert list`
+
+Tabular or JSON output for listing resources.
+
+```bash
+council panel list --format <format>
+council expert list --format <format>
+```
+
+| Format | Description |
+|--------|-------------|
+| `table` | (Default) Human-readable table. |
+| `json` | JSON array of objects. |
+
+**Examples:**
+
+```bash
+# Table view
+council panel list
+
+# JSON for scripting
+council panel list --format json | jq '.[] | select(.name == "code-review")'
+```
+
+### `council sessions list`
+
+```bash
+council sessions list --format <format>
+```
+
+| Format | Description |
+|--------|-------------|
+| `plain` | (Default) Human-readable list. |
+| `json` | NDJSON (one session per line). |
+
+**Examples:**
+
+```bash
+# Plain list
+council sessions list
+
+# JSON stream
+council sessions list --format json
+```
+
+### `council memory list` / `council memory show`
+
+```bash
+council memory list --format <format>
+council memory show <key> --format <format>
+```
+
+| Format | Description |
+|--------|-------------|
+| `plain` | (Default) Human-readable output. |
+| `json` | JSON object or array. |
+
+## Programmatic JSON Output
+
+All JSON formats are **machine-readable** and suitable for:
+
+- CI/CD pipelines
+- Log aggregation
+- Custom analytics dashboards
+- Scripting and automation
+
+**Tip:** Combine with `jq` for powerful querying:
+
+```bash
+council panel list --format json | jq '.[] | select(.experts | length > 3)'
+```
+
+## Related
+
+- [Environment Variables](/Council/docs/reference/environment-variables/) — `NO_COLOR`, `COUNCIL_ASCII`
+- [Commands Reference](/Council/docs/reference/commands/) — Full command syntax
