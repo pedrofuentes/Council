@@ -276,3 +276,55 @@ describe("missing required argument help hint", () => {
     expect(combined).toMatch(/did you mean/i);
   });
 });
+
+describe("buildProgram banner in help", () => {
+  const FULL_BLOCK = "\u2588";
+
+  function withStdout(props: { isTTY?: boolean; columns?: number }, fn: () => void): void {
+    const origTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    const origCols = Object.getOwnPropertyDescriptor(process.stdout, "columns");
+    Object.defineProperty(process.stdout, "isTTY", { value: props.isTTY, configurable: true });
+    Object.defineProperty(process.stdout, "columns", { value: props.columns, configurable: true });
+    try {
+      fn();
+    } finally {
+      if (origTTY) Object.defineProperty(process.stdout, "isTTY", origTTY);
+      if (origCols) Object.defineProperty(process.stdout, "columns", origCols);
+    }
+  }
+
+  function captureHelp(command: Command): string {
+    let out = "";
+    command.configureOutput({
+      writeOut: (s: string) => {
+        out += s;
+      },
+      writeErr: () => undefined,
+    });
+    command.outputHelp();
+    return out;
+  }
+
+  it("prepends the Council banner to root help on a TTY", () => {
+    withStdout({ isTTY: true, columns: 120 }, () => {
+      expect(captureHelp(buildProgram())).toContain(FULL_BLOCK);
+    });
+  });
+
+  it("omits the banner from root help when stdout is not a TTY", () => {
+    withStdout({ isTTY: false, columns: 120 }, () => {
+      expect(captureHelp(buildProgram())).not.toContain(FULL_BLOCK);
+    });
+  });
+
+  it("does not prepend the banner to subcommand help", () => {
+    withStdout({ isTTY: true, columns: 120 }, () => {
+      const program = buildProgram();
+      const doctor = program.commands.find((c) => c.name() === "doctor");
+      if (doctor === undefined) {
+        throw new Error("doctor command not registered");
+      }
+      expect(captureHelp(doctor)).not.toContain(FULL_BLOCK);
+    });
+  });
+});

@@ -56,6 +56,7 @@ import {
   type Writer,
 } from "../cli/commands/writer.js";
 import { selectModelInteractively } from "../cli/first-run-model-select.js";
+import { renderBanner } from "../cli/renderers/banner.js";
 import { loadConfigWithMeta } from "../config/index.js";
 import { maybeNotifyUpdate } from "../core/version/index.js";
 
@@ -219,6 +220,15 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
     .option("-q, --quiet", "Suppress informational stderr output")
     .showSuggestionAfterError(true)
     .showHelpAfterError("(run `council <command> --help` for usage)");
+
+  // Show the wordmark banner above root help only (bare `council` / `council
+  // --help`), and only on an interactive stdout. Commander's "before" position
+  // (unlike "beforeAll") does not propagate to subcommand help, so
+  // `council <cmd> --help` stays banner-free. `--version` emits no help and is
+  // therefore unaffected.
+  program.addHelpText("before", () =>
+    process.stdout.isTTY === true ? `${renderBanner({ version: packageJson.version })}\n\n` : "",
+  );
 
   const firstRunSetupOptions = options.firstRunSetup;
 

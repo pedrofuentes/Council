@@ -5,7 +5,10 @@ import { discoverAvailableModels, type ModelDiscoveryResult } from "../engine/co
 import type { ModelId } from "../engine/models.js";
 
 import { CliUserError } from "./cli-user-error.js";
+import { renderBanner } from "./renderers/banner.js";
 import type { Writer } from "./commands/writer.js";
+
+import packageJson from "../../package.json" with { type: "json" };
 
 const MAX_SELECTION_ATTEMPTS = 3;
 // Ranking hints for the model picker. Typed as `ModelId` so they are enforced
@@ -131,6 +134,7 @@ export async function selectModelInteractively(
   const discoverModels = options.discoverModels ?? discoverAvailableModels;
   const persistConfig = options.updateConfig ?? updateConfigField;
 
+  write(`${renderBanner({ version: packageJson.version })}\n\n`);
   write("Welcome to Council! Let's set up your default AI model.\n\n");
   write("Discovering available models...\n\n");
 
