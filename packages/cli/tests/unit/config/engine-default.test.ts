@@ -32,8 +32,23 @@ describe("ConfigSchema — defaults.engine field (CLI-02)", () => {
     expect(config.defaults.engine).toBe("copilot");
   });
 
-  it("rejects invalid engine values", () => {
-    expect(() => ConfigSchema.parse({ defaults: { engine: "openai" } })).toThrow();
+  it("accepts 'openai' as a valid (coming-soon) engine value", () => {
+    // Config validation must accept the id so the value can be stored and
+    // a graceful "not yet available" message can be shown at engine
+    // construction time (T-ecosystem-1).
+    const config = ConfigSchema.parse({ defaults: { engine: "openai" } });
+    expect(config.defaults.engine).toBe("openai");
+  });
+
+  it("accepts 'anthropic' as a valid (coming-soon) engine value", () => {
+    const config = ConfigSchema.parse({ defaults: { engine: "anthropic" } });
+    expect(config.defaults.engine).toBe("anthropic");
+  });
+
+  it("rejects genuinely-unknown engine values", () => {
+    expect(() => ConfigSchema.parse({ defaults: { engine: "gemini" } })).toThrow();
+    expect(() => ConfigSchema.parse({ defaults: { engine: "anthropic-direct" } })).toThrow();
+    expect(() => ConfigSchema.parse({ defaults: { engine: "" } })).toThrow();
   });
 
   it("preserves existing config fields when engine is added", () => {
@@ -52,6 +67,46 @@ describe("ConfigSchema — defaults.engine field (CLI-02)", () => {
       telemetry: { enabled: false },
     });
     expect(config.defaults.engine).toBe("copilot");
+  });
+});
+
+describe("ConfigSchema — providers section (env-var NAME only, never a key value)", () => {
+  it("defaults to an empty providers map when omitted", () => {
+    const config = ConfigSchema.parse({});
+    expect(config.providers).toEqual({});
+  });
+
+  it("accepts a per-provider apiKeyEnvVar NAME override", () => {
+    const config = ConfigSchema.parse({
+      providers: { openai: { apiKeyEnvVar: "MY_OPENAI_KEY" } },
+    });
+    expect(config.providers.openai?.apiKeyEnvVar).toBe("MY_OPENAI_KEY");
+  });
+
+  it("accepts apiKeyEnvVar names for both coming-soon providers", () => {
+    const config = ConfigSchema.parse({
+      providers: {
+        openai: { apiKeyEnvVar: "OPENAI_API_KEY" },
+        anthropic: { apiKeyEnvVar: "ANTHROPIC_API_KEY" },
+      },
+    });
+    expect(config.providers.openai?.apiKeyEnvVar).toBe("OPENAI_API_KEY");
+    expect(config.providers.anthropic?.apiKeyEnvVar).toBe("ANTHROPIC_API_KEY");
+  });
+
+  it("never stores a key VALUE — unknown fields like apiKey are stripped", () => {
+    const config = ConfigSchema.parse({
+      providers: { openai: { apiKey: "sk-super-secret-value" } },
+    });
+    // The secret must not survive parsing in any form.
+    expect(config.providers.openai).toEqual({});
+    expect(JSON.stringify(config)).not.toContain("sk-super-secret-value");
+  });
+
+  it("rejects a non-string apiKeyEnvVar", () => {
+    expect(() =>
+      ConfigSchema.parse({ providers: { openai: { apiKeyEnvVar: 42 } } }),
+    ).toThrow();
   });
 });
 
