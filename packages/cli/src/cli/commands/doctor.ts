@@ -28,6 +28,12 @@ import { stripControlChars } from "../strip-control-chars.js";
 import packageJson from "../../../package.json" with { type: "json" };
 
 import { probeCopilotModel } from "./doctor-online-probe.js";
+import {
+  buildDoctorReport,
+  isDoctorReportFormat,
+  renderDoctorReport,
+  type DoctorReportCheck,
+} from "./doctor-report.js";
 import { formatAvailableModels } from "./models.js";
 import { defaultWriter, type Writer } from "./writer.js";
 
@@ -43,6 +49,7 @@ interface DoctorOptions {
   readonly online?: boolean;
   readonly offline?: boolean;
   readonly models?: boolean;
+  readonly report?: string;
 }
 
 export interface DoctorDeps {
@@ -313,6 +320,10 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
     .option("--online", "No-op; online check now runs by default (backwards compatibility)")
     .option("--offline", "Skip online model probe")
     .option("--models", "List available Copilot models (live discovery with static fallback)")
+    .option(
+      "--report <format>",
+      "Emit a sanitized diagnostic report for bug reports (json|markdown)",
+    )
     .action(async (options: DoctorOptions) => {
       const checks: LabeledCheck[] = [
         { label: "Node.js version", run: checkNodeVersion },
@@ -330,6 +341,43 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
           label: "Default model access",
           run: () => checkDefaultModelAccess(onlineProbe, discoverModels),
         });
+      }
+
+      // Sanitized diagnostic report mode (--report json|markdown): emit a
+      // paste-ready, redaction-safe payload and exit before any human-facing
+      // banner/config/terminal sections (which legitimately echo paths).
+      if (options.report !== undefined) {
+        const reportFormat = options.report;
+        if (!isDoctorReportFormat(reportFormat)) {
+          cmd.error('Unknown --report format. Use "json" or "markdown".', {
+            exitCode: 1,
+            code: "council.doctor.report.invalid",
+          });
+          return;
+        }
+        const reportChecks: DoctorReportCheck[] = [];
+        for (const { run } of checks) {
+          const result = await run();
+          reportChecks.push({ name: result.name, status: result.status });
+        }
+        const copilotCliPathStatus = checkCopilotCliPath({
+          override: process.env.COPILOT_CLI_PATH,
+          resolvedPath: resolveCliPath(),
+        }).status;
+        let telemetryEnabled = false;
+        try {
+          telemetryEnabled = (await loadConfig()).telemetry.enabled;
+        } catch {
+          telemetryEnabled = false;
+        }
+        const report = buildDoctorReport({
+          cliVersion: version,
+          checks: reportChecks,
+          copilotCliPathStatus,
+          telemetryEnabled,
+        });
+        write(renderDoctorReport(report, reportFormat));
+        return;
       }
 
       write(renderBanner({ version }) + "\n");
