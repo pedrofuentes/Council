@@ -199,6 +199,38 @@ council panel docs link <name> --path <folder>             # link an external fo
 council panel docs unlink <name> --path <folder>           # remove a linked folder + its FTS entries
 ```
 
+## Keeping Council Up to Date
+
+`council update` upgrades the globally-installed `@council-ai/cli` to the latest
+published version. It auto-detects the package manager that owns the install
+(npm, pnpm, yarn, or bun), shows the exact command it will run, and asks for
+confirmation before shelling out.
+
+```bash
+council update                      # detect the package manager and upgrade (prompts first)
+council update --yes                # skip the confirmation prompt
+council update --dry-run            # print the upgrade command without running it
+council update --pm pnpm            # force a specific package manager (npm | pnpm | yarn | bun)
+```
+
+The upgrade runs via an argv-array `execFile` (never a shell string) with a
+fixed `@council-ai/cli@latest` spec, so no untrusted input is interpolated into
+the spawned command. The child process is bounded for robustness:
+
+- **Timeout** — the install is terminated after 5 minutes; a wedged package
+  manager can't hang `council update` forever.
+- **Output buffer** — up to 64 MiB of stdout/stderr is captured (well above
+  Node's 1 MiB default), so a verbose `npm i -g` is never falsely reported as a
+  failure.
+- **Clear failures** — a non-zero exit, a timeout, a signal kill, and an
+  output-buffer overflow are each reported distinctly with the captured output,
+  and are never mislabelled as "package manager not installed".
+
+Exit codes follow the usual convention: `0` when already up to date or after a
+successful upgrade, and a non-zero code on failure — including a distinct
+network error code when the registry can't be reached (so "offline" is
+distinguishable from "already up to date" in scripts).
+
 ## Persona Experts & Document Intelligence
 
 A **persona expert** is one whose voice is shaped by a corpus of reference
