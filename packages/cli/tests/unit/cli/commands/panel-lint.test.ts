@@ -80,6 +80,30 @@ const STRUCTURALLY_INVALID_PANEL = CLEAN_PANEL.replace(
   "",
 );
 
+/**
+ * A panel whose first expert carries a hostile `slug` packed with terminal
+ * control sequences — a CSI colour code, an OSC 8 hyperlink, a BEL, a C1 CSI
+ * introducer, a bidi override (Trojan Source), and a newline. The slug is only
+ * validated as `z.string().min(1)`, so it survives schema validation and flows
+ * verbatim into the finding's `path` (`experts[0] (<slug>)…`). With the expert
+ * also short one weightedEvidence entry, it raises an `expert-evidence` finding
+ * whose rendered location embeds the slug — the terminal-injection sink.
+ */
+const TERMINAL_INJECTION_PANEL = STRUCTURALLY_INVALID_PANEL.replace(
+  "  - slug: backend",
+  '  - slug: "ev\\x1b[31m\\x1b]8;;http://evil\\x07IL\\x9b1m\\u202eX\\nFAKE"',
+);
+
+/**
+ * Dangerous control characters a sanitizer MUST strip before terminal output:
+ * C0 controls except the benign whitespace TAB/LF/CR, DEL, the C1 range, and
+ * the bidi override/isolate codepoints. This deliberately EXCLUDES \n/\t/\r —
+ * `stripControlChars` (the sanitizer applied to `finding.message`) preserves
+ * them by design, so the assertions target only the injection-capable set.
+ */
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F\u202A-\u202E\u2066-\u2069]/;
+
 interface TempDir {
   readonly dir: string;
 }
@@ -191,5 +215,28 @@ describe("council panel lint", () => {
     const strict = lintCommand();
     await expect(strict.parse(["--official", file])).rejects.toThrow();
     expect(strict.out() + strict.err()).toContain("sample-prompts");
+  });
+
+  it("strips terminal control sequences from a finding's rendered location", async () => {
+    // The hostile slug reaches the report only through `finding.path`; the
+    // message is already sanitized. A raw location would let untrusted YAML
+    // inject ANSI/OSC/bidi sequences into the operator's terminal.
+    const file = await writeFile(tmp.dir, "injection.yaml", TERMINAL_INJECTION_PANEL);
+    const cli = lintCommand();
+    await expect(cli.parse([file])).rejects.toThrow();
+    const output = cli.out() + cli.err();
+    expect(output).toContain("expert-evidence"); // the finding was actually rendered
+    expect(output).not.toMatch(CONTROL_CHARS);
+  });
+
+  it("strips terminal control sequences from the file label of a read error", async () => {
+    // `target.label` is echoed verbatim for read/parse failures; a path laced
+    // with control characters must not reach the terminal unsanitized.
+    const evilPath = path.join(tmp.dir, "ev\u001b[31m\u0007\u009b\u202emissing.yaml");
+    const cli = lintCommand();
+    await expect(cli.parse([evilPath])).rejects.toThrow();
+    const output = cli.out() + cli.err();
+    expect(output).toContain("read-file"); // the read-error line was rendered
+    expect(output).not.toMatch(CONTROL_CHARS);
   });
 });
