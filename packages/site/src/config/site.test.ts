@@ -13,7 +13,7 @@ import {
 
 describe("site config", () => {
   it("exposes the GitHub Pages origin as the site URL", () => {
-    expect(siteUrl).toBe("https://pedrofuentes.github.io");
+    expect(siteUrl).toBe("https://pedrofuent.es");
   });
 
   it("exposes the project base path", () => {

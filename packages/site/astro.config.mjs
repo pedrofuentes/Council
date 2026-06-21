@@ -2,13 +2,16 @@
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 
-// GitHub Pages project site: https://pedrofuentes.github.io/Council/
-// `site` is the deploy origin and `base` is the project sub-path. Both feed
-// Astro's URL generation so internal links and assets resolve under /Council/.
+// Council is deployed as a GitHub Pages project site at
+// https://pedrofuent.es/Council/ via the custom domain configured on the
+// pedrofuentes.github.io user-site repo. `site` is the canonical origin and
+// `base` is the project sub-path. Both feed Astro's URL generation so
+// canonical URLs, Open Graph tags, sitemap entries, and internal links all
+// resolve correctly under /Council/.
 const base = "/Council/";
 
 export default defineConfig({
-  site: "https://pedrofuentes.github.io",
+  site: "https://pedrofuent.es",
   base,
   output: "static",
   // The marketing splash now renders at the site root (`/Council/`). Preserve
