@@ -416,4 +416,32 @@ describe("xlsx-reader: readXlsxSheets", () => {
     const buf = Buffer.from("this is not a zip archive at all", "utf-8");
     await expect(readXlsxSheets(buf)).rejects.toBeInstanceOf(XlsxParseError);
   });
+
+  it("throws XlsxParseError when a declared worksheet entry is missing (#1283)", async () => {
+    // Build a workbook that declares a sheet via workbook.xml + rels but
+    // omits the worksheet part from the archive. Silently returning an
+    // empty sheet would be indistinguishable from a genuinely empty sheet
+    // (silent data loss), so the reader must throw — mirroring how a
+    // missing workbook.xml is handled.
+    const buf = buildZip([
+      { name: "[Content_Types].xml", data: Buffer.from(`${XML_DECL}<Types/>`, "utf-8") },
+      {
+        name: "xl/workbook.xml",
+        data: Buffer.from(
+          `${XML_DECL}<workbook xmlns="${SSML}" xmlns:r="${REL_NS}">` +
+            `<sheets><sheet name="Gone" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+          "utf-8",
+        ),
+      },
+      {
+        name: "xl/_rels/workbook.xml.rels",
+        data: Buffer.from(
+          `${XML_DECL}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+            `<Relationship Id="rId1" Type="${REL_NS}/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+          "utf-8",
+        ),
+      },
+    ]);
+    await expect(readXlsxSheets(buf)).rejects.toBeInstanceOf(XlsxParseError);
+  });
 });

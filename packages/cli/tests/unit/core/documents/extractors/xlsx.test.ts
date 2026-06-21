@@ -766,3 +766,28 @@ describe("xlsx extractor - sheet name injection (#1282)", () => {
     expect(out.metadata?.sheetNames).toEqual(["People"]);
   });
 });
+
+describe("xlsx extractor - missing worksheet entry (#1283)", () => {
+  it("missing declared worksheet entry throws corrupt-document", async () => {
+    // A workbook declares a sheet whose worksheet part is absent from the
+    // ZIP. Silently rendering it as `(empty sheet)` is indistinguishable
+    // from an intentionally empty sheet — a silent data-loss bug. The
+    // reader must surface this as a parse failure so the extractor reports
+    // a `corrupt-document` error with a re-save suggestion.
+    const { extractor } = await loadXlsxExtractor();
+    const buf = buildRawXlsx("Present", "", { includeWorksheet: false });
+    await expect(extractor(ctx(buf))).rejects.toMatchObject({
+      name: "ExtractionError",
+      kind: "corrupt-document",
+      suggestion: expect.stringMatching(/xlsx/i),
+    });
+  });
+
+  it("does not throw for a genuinely empty but present worksheet", async () => {
+    const { extractor } = await loadXlsxExtractor();
+    const buf = buildRawXlsx("Blank", "", { includeWorksheet: true });
+    const out = await extractor(ctx(buf));
+    expect(out.content).toContain("## Blank");
+    expect(out.content).toContain("(empty sheet)");
+  });
+});
