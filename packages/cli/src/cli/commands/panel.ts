@@ -62,7 +62,7 @@ import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
 import { resolveSession } from "../session-resolver.js";
 import { suggestMatch } from "../fuzzy-match.js";
-import { stripControlChars } from "../strip-control-chars.js";
+import { stripControlChars, toSingleLineDisplay } from "../strip-control-chars.js";
 
 const PANEL_NAME_RE = /^[a-z][a-z0-9-]*$/;
 
@@ -1178,7 +1178,7 @@ async function runPanelLint(
     } catch (err: unknown) {
       const reason = err instanceof Error ? err.message : String(err);
       write(
-        `${stripControlChars(target.label)}\n  ✖ error  read-file: ${stripControlChars(reason)}\n\n`,
+        `${toSingleLineDisplay(target.label)}\n  ✖ error  read-file: ${toSingleLineDisplay(reason)}\n\n`,
       );
       totalErrors += 1;
       continue;
@@ -1190,7 +1190,7 @@ async function runPanelLint(
     } catch (err: unknown) {
       const reason = err instanceof Error ? err.message : String(err);
       write(
-        `${stripControlChars(target.label)}\n  ✖ error  yaml-parse: ${stripControlChars(reason)}\n\n`,
+        `${toSingleLineDisplay(target.label)}\n  ✖ error  yaml-parse: ${toSingleLineDisplay(reason)}\n\n`,
       );
       totalErrors += 1;
       continue;
@@ -1212,20 +1212,23 @@ async function runPanelLint(
 }
 
 function renderLintReport(label: string, result: LintResult): string {
-  // `label` (a file path/arg) and each `finding.path` can embed untrusted text
-  // — e.g. an expert slug, validated only as a non-empty string, surfaces in
-  // the finding location. Sanitize them exactly like `finding.message` so no
-  // raw ANSI/OSC/bidi control sequence reaches the terminal.
-  const safeLabel = stripControlChars(label);
+  // `label` (a file path/arg) and each `finding.path`/`finding.message` can
+  // embed untrusted text — e.g. an expert slug, validated only as a non-empty
+  // string, surfaces in the finding location and message. Render them through
+  // `toSingleLineDisplay` so no raw ANSI/OSC/bidi control sequence reaches the
+  // terminal AND any embedded CR/LF/U+2028/U+2029 is collapsed to a single
+  // space — preventing a forged report line or a CR-overwrite of the severity
+  // prefix on this security/quality gate.
+  const safeLabel = toSingleLineDisplay(label);
   if (result.findings.length === 0) {
     return `✓ ${safeLabel} — no issues\n\n`;
   }
   const lines = [safeLabel];
   for (const finding of result.findings) {
     const icon = finding.severity === "error" ? "✖" : "⚠";
-    const location = finding.path !== undefined ? ` [${stripControlChars(finding.path)}]` : "";
+    const location = finding.path !== undefined ? ` [${toSingleLineDisplay(finding.path)}]` : "";
     lines.push(
-      `  ${icon} ${finding.severity}  ${finding.ruleId}${location}: ${stripControlChars(finding.message)}`,
+      `  ${icon} ${finding.severity}  ${finding.ruleId}${location}: ${toSingleLineDisplay(finding.message)}`,
     );
   }
   return `${lines.join("\n")}\n\n`;
