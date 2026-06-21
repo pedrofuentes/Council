@@ -418,4 +418,68 @@ describe("buildReviewCommand", () => {
     }
     expect(thrown.toLowerCase()).toMatch(/unknown.*engine|allowed choices|mock/);
   });
+
+  it("rejects a --base value starting with dash (argument injection protection)", async () => {
+    let errText = "";
+    const cmd = buildReviewCommand({
+      engineFactory: makeRecordingMockFactory().factory,
+      gitDiff: async (_base: string) => {
+        // If we reach here with a malicious base, the current code is vulnerable.
+        // The fix should either reject the base before calling gitDiff, or pass
+        // --end-of-options so git treats it as a ref (which then fails as unknown).
+        return SAMPLE_DIFF;
+      },
+      write: () => undefined,
+      writeError: (s) => {
+        errText += s;
+      },
+    });
+    cmd.exitOverride();
+
+    let thrown: unknown;
+    try {
+      await cmd.parseAsync([
+        "node",
+        "council-review",
+        "--base",
+        "--output=/tmp/evil",
+        "--engine",
+        "mock",
+        "--max-rounds",
+        "1",
+      ]);
+    } catch (err) {
+      thrown = err;
+    }
+
+    // The malicious --base must be rejected with a clear CliUserError explaining
+    // that --base must be a git ref, not an option starting with dash.
+    expect(thrown).toBeInstanceOf(CliUserError);
+    expect(errText.toLowerCase()).toMatch(/--base.*ref|option|dash|-/);
+  });
+
+  it("rejects other dash-prefixed --base values (e.g., --ext-diff)", async () => {
+    const cmd = buildReviewCommand({
+      engineFactory: makeRecordingMockFactory().factory,
+      gitDiff: async (_base: string) => SAMPLE_DIFF,
+      write: () => undefined,
+      writeError: () => undefined,
+    });
+    cmd.exitOverride();
+
+    let thrown: unknown;
+    try {
+      await cmd.parseAsync([
+        "node",
+        "council-review",
+        "--base",
+        "--ext-diff",
+        "--engine",
+        "mock",
+      ]);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(CliUserError);
+  });
 });
