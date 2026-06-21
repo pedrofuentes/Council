@@ -19,6 +19,11 @@
 
 <!-- Add new learnings below this line, most recent first -->
 
+### [2026-06-20] npm rejects publishing a name "too similar" to an existing package
+**Context**: After publishing the unscoped `council-ai` placeholder, an attempt to publish a second placeholder named `councilai` (no hyphen) failed: `403 Forbidden — Package name too similar to existing package council-ai; try renaming your package to '@pedrofuentes/councilai'`.
+**Learning**: npm enforces a package-name **similarity guard** at publish time — a new unscoped name that is too close to an existing one (hyphen/spacing/punctuation variants) is rejected with 403. So once `council-ai` exists, `councilai` is unclaimable **by anyone**; npm itself auto-defends the typo. Defensive near-duplicate placeholder packages are therefore both unnecessary and impossible (only a *scoped* `@you/councilai` is allowed, which doesn't defend the unscoped name and adds no value).
+**Impact**: Don't add/publish unscoped placeholder packages for hyphen/punctuation typo variants of a name you already own — rely on npm's similarity guard. Only pursue placeholders for genuinely *dissimilar* confusable names. The `packaging/councilai/` placeholder added in #1304 was removed for this reason; see ADR-028.
+
 ### [2026-06-20] `@libsql/client` (Node) is a NATIVE addon with no win32-arm64 prebuilt — use `node:sqlite`
 **Context**: `council` crashed at startup on a fresh Windows-on-ARM machine (Node v25 arm64) with `Cannot find module '@libsql/win32-arm64-msvc'`, even though `npm install` "succeeded".
 **Learning**: `@libsql/client`'s Node import condition loads the **native** `libsql` addon (NOT pure WASM, despite ADR-005's old wording). `libsql` selects a per-platform prebuilt via `optionalDependencies` and ships **no win32-arm64 binary at any version** — the optional dep is skipped silently at install and only fails at runtime `require`. Upgrading `libsql` does not help. Node's built-in `node:sqlite` (`DatabaseSync`) is platform-independent, bundles FTS5, and is unflagged from Node 24+; it replaced `libsql` via an in-repo Kysely dialect (`packages/cli/src/memory/node-sqlite-dialect.ts`). See ADR-027 (supersedes ADR-005); minimum Node is now 24.

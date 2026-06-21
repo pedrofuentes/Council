@@ -35,7 +35,7 @@
 - ✅ Zero change to the working `@council-ai/cli` package, CI, release pipeline, or Trusted Publishing.
 - ✅ `npmjs.com/package/council-ai` shows a redirect README and the name is owned (no typosquat/supply-chain exposure).
 - ⚠️ The placeholder must be `npm publish`ed and `npm deprecate`d by a human (HUMAN REQUIRED / ASK FIRST); it is kept minimal so it never needs version maintenance.
-- 📝 The no-hyphen `councilai` variant (the ADR-025 reservation) can get the same deprecated-placeholder treatment as an optional follow-up.
+- 📝 The no-hyphen `councilai` variant needs **no** placeholder: once `council-ai` is published, npm's package-name **similarity guard** rejects publishing `councilai` (`403 — too similar to existing package council-ai`), so the typo is auto-defended and the name is unclaimable by anyone. A `packaging/councilai/` placeholder was briefly added (#1304) and then **removed** when the publish was blocked — see LEARNINGS.md [2026-06-20].
 
 ### ADR-027: SQLite backend = Node's built-in `node:sqlite`, not `@libsql/client`
 **Date**: 2026-06-20
