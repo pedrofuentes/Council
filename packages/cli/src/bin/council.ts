@@ -157,7 +157,7 @@ installSqliteExperimentalWarningFilter();
 
 // Command categories for grouped help output
 const COMMAND_CATEGORIES = {
-  "Getting Started": ["demo", "doctor", "config", "telemetry", "docs", "update"],
+  "Getting Started": ["doctor", "demo", "config", "telemetry", "docs", "update"],
   Deliberation: ["convene", "resume", "conclude"],
   Conversation: ["ask", "chat"],
   Library: ["expert", "panel", "templates"],
@@ -262,8 +262,8 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
   }
 
   // Register commands in category order
-  program.addCommand(buildDemoCommand());
   program.addCommand(buildDoctorCommand());
+  program.addCommand(buildDemoCommand());
   program.addCommand(buildConfigCommand());
   program.addCommand(buildTelemetryCommand());
   program.addCommand(buildDocsCommand());
