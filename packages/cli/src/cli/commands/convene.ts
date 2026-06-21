@@ -72,6 +72,7 @@ import { RENDERER_FORMATS, type RendererFormat } from "../renderers/select.js";
 import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
 import { isNonInteractive } from "../non-interactive.js";
 import { readTextInput } from "../read-text-input.js";
+import { createProgress } from "../progress.js";
 
 const DEFAULT_MAX_ROUNDS = 4;
 const DEFAULT_MAX_WORDS = 250;
@@ -589,6 +590,11 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         const composeEngine = deps.engineFactory
           ? deps.engineFactory()
           : makeEngineFromKind(opts.engine);
+        const composeProgress = createProgress({
+          stream: { write: writeError, isTTY: process.stderr.isTTY },
+          quiet: isQuiet(),
+        });
+        composeProgress.start("Composing panel");
         try {
           await composeEngine.start();
           try {
@@ -607,7 +613,8 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
               // Ensure min ≤ max: if maxExperts is less than default minimum (3), clamp min
               autoComposeOptions.minExperts = Math.min(3, resolvedMaxExperts);
             }
-            
+
+            composeProgress.update("Selecting experts");
             template = await autoComposePanel(topic, composeEngine, autoComposeOptions);
           } catch (err: unknown) {
             const cause = err instanceof Error ? err.message : String(err);
@@ -616,6 +623,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             );
           }
         } finally {
+          composeProgress.stop();
           await composeEngine.stop().catch((err: unknown) => {
             const msg = err instanceof Error ? err.message : String(err);
             writeError(`!! engine.stop() failed during auto-compose cleanup: ${msg}\n`);
