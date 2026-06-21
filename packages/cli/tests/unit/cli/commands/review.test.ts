@@ -151,9 +151,7 @@ describe("buildReviewCommand", () => {
     expect(kinds).toContain("turn.end");
     expect(kinds[kinds.length - 1]).toBe("debate.end");
 
-    const turnSlugs = new Set(
-      events.filter((e) => e.kind === "turn.end").map((e) => e.expertSlug),
-    );
+    const turnSlugs = new Set(events.filter((e) => e.kind === "turn.end").map((e) => e.expertSlug));
     for (const slug of CODE_REVIEW_SLUGS) {
       expect(turnSlugs).toContain(slug);
     }
@@ -337,14 +335,7 @@ describe("buildReviewCommand", () => {
 
     let thrown: unknown;
     try {
-      await cmd.parseAsync([
-        "node",
-        "council-review",
-        "--diff-file",
-        diffPath,
-        "--engine",
-        "mock",
-      ]);
+      await cmd.parseAsync(["node", "council-review", "--diff-file", diffPath, "--engine", "mock"]);
     } catch (err) {
       thrown = err;
     }
@@ -364,14 +355,7 @@ describe("buildReviewCommand", () => {
 
     let thrown: unknown;
     try {
-      await cmd.parseAsync([
-        "node",
-        "council-review",
-        "--diff-file",
-        "-",
-        "--engine",
-        "mock",
-      ]);
+      await cmd.parseAsync(["node", "council-review", "--diff-file", "-", "--engine", "mock"]);
     } catch (err) {
       thrown = err;
     }
@@ -389,12 +373,7 @@ describe("buildReviewCommand", () => {
 
     let thrown: unknown;
     try {
-      await cmd.parseAsync([
-        "node",
-        "council-review",
-        "--engine",
-        "mock",
-      ]);
+      await cmd.parseAsync(["node", "council-review", "--engine", "mock"]);
     } catch (err) {
       thrown = err;
     }
@@ -415,14 +394,7 @@ describe("buildReviewCommand", () => {
 
     let thrown: unknown;
     try {
-      await cmd.parseAsync([
-        "node",
-        "council-review",
-        "--diff-file",
-        missing,
-        "--engine",
-        "mock",
-      ]);
+      await cmd.parseAsync(["node", "council-review", "--diff-file", missing, "--engine", "mock"]);
     } catch (err) {
       thrown = err;
     }
@@ -440,14 +412,7 @@ describe("buildReviewCommand", () => {
 
     let thrown = "";
     try {
-      await cmd.parseAsync([
-        "node",
-        "council-review",
-        "--diff-file",
-        diffPath,
-        "--engine",
-        "nope",
-      ]);
+      await cmd.parseAsync(["node", "council-review", "--diff-file", diffPath, "--engine", "nope"]);
     } catch (err) {
       thrown = err instanceof Error ? err.message : String(err);
     }
