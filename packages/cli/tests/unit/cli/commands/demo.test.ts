@@ -57,29 +57,15 @@ function parseNdjson(text: string): ParsedDebateEvent[] {
 }
 
 describe("buildDemoCommand", () => {
-  let savedEnv: Record<string, string | undefined> = {};
-  const MANAGED_ENV = [
-    "NO_COLOR",
-    "COUNCIL_HOME",
-    "COUNCIL_DATA_HOME",
-    "GITHUB_TOKEN",
-    "GH_TOKEN",
-    "COPILOT_API_KEY",
-  ];
+  const originalEnv = { ...process.env };
 
   beforeEach(() => {
-    savedEnv = {};
-    for (const key of MANAGED_ENV) savedEnv[key] = process.env[key];
     // Deterministic, color-free output for substring assertions.
     process.env["NO_COLOR"] = "1";
   });
 
   afterEach(() => {
-    for (const key of MANAGED_ENV) {
-      const value = savedEnv[key];
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
+    process.env = { ...originalEnv };
   });
 
   it("registers a 'demo' command with a --format option and no required args", () => {
