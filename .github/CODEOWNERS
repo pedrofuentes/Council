@@ -1,0 +1,15 @@
+# Repository ownership and review assignment
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default ownership
+* @pedrofuentes
+
+# Root documentation and configuration
+/*.md @pedrofuentes
+/.github/ @pedrofuentes
+
+# CLI package
+/packages/cli/ @pedrofuentes
+
+# Site package
+/packages/site/ @pedrofuentes

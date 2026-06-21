@@ -1,0 +1,107 @@
+name: Bug report
+description: Report a problem to help us improve Council
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out the sections below to help us diagnose and fix the issue.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of what the bug is.
+      placeholder: Describe the issue you encountered
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: How can we reproduce the issue?
+      placeholder: |
+        1. Run '...'
+        2. With config '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What you expected to happen.
+      placeholder: Describe what should have occurred
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened. Include error output or logs.
+      placeholder: Paste error messages or logs here (redact any secrets/tokens/paths)
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor-output
+    attributes:
+      label: Council Doctor Output
+      description: |
+        Please run `council doctor` and paste the output below. This helps us understand your environment configuration.
+        **Important:** Redact any secrets, tokens, API keys, or sensitive file paths before pasting.
+      placeholder: |
+        Paste the output of `council doctor` here
+        (Remember to remove any sensitive information)
+      render: text
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Council Version
+      description: Run `council --version` to get the version number
+      placeholder: e.g., 0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating System
+      description: What OS are you running?
+      placeholder: e.g., Windows 11, macOS 14, Ubuntu 24.04
+    validations:
+      required: true
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js Version
+      description: Output of `node --version` (see the README for supported Node versions)
+      placeholder: e.g., v24.0.0
+    validations:
+      required: true
+
+  - type: input
+    id: pnpm-version
+    attributes:
+      label: pnpm Version
+      description: Run `pnpm --version`
+      placeholder: e.g., 9.0.0
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Add any other context, screenshots, or related issues here.
+      placeholder: Any additional information that might help us understand the problem
+    validations:
+      required: false
