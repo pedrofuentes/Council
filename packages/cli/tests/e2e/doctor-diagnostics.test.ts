@@ -24,7 +24,7 @@ describe("doctor diagnostics E2E", () => {
     await cmd.parseAsync(["node", "council-doctor", "--offline"]);
 
     const stdout = output.stdout();
-    expect(stdout).toContain("Council Doctor");
+    expect(stdout).toMatch(/Council v\d+\.\d+\.\d+/);
     expect(stdout).toContain("Node.js version");
     expect(stdout).toContain("Council home");
     expect(stdout).toContain("SQLite (node:sqlite)");
@@ -139,7 +139,7 @@ describe("doctor diagnostics E2E", () => {
     await cmd.parseAsync(["node", "council-doctor", "--offline"]);
 
     const stdout = output.stdout();
-    expect(stdout).toContain("Council Doctor");
+    expect(stdout).toMatch(/Council v\d+\.\d+\.\d+/);
     expect(stdout).not.toContain("Default model access");
     expect(stdout).toContain("All checks passed");
   });

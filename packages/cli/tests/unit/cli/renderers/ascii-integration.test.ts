@@ -178,7 +178,7 @@ describe("Doctor command with ASCII mode", () => {
     await fs.rm(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
-  it("uses ASCII header rule when COUNCIL_ASCII=1", async () => {
+  it("emits an ASCII-safe version banner header when COUNCIL_ASCII=1", async () => {
     let captured = "";
     const write: Writer = (chunk: string) => {
       captured += chunk;
@@ -186,7 +186,8 @@ describe("Doctor command with ASCII mode", () => {
     const cmd = buildDoctorCommand({ write });
     cmd.exitOverride();
     await cmd.parseAsync(["node", "council-doctor"]).catch(() => undefined);
-    expect(captured).toContain("=".repeat(40));
+    expect(captured).toMatch(/Council v\d+\.\d+\.\d+/);
+    expect(captured).not.toContain("\u2588"); // no block glyphs
     expect(captured).not.toContain("═");
   });
 
