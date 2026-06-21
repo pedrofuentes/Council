@@ -86,6 +86,36 @@
         "subcommands": []
       },
       {
+        "name": "demo",
+        "path": [
+          "council",
+          "demo"
+        ],
+        "commandPath": "council demo",
+        "description": "Run a zero-setup, offline showcase debate (no login, keys, or network) to see Council in one command",
+        "aliases": [],
+        "usage": "[options]",
+        "arguments": [],
+        "options": [
+          {
+            "flags": "--format <kind>",
+            "description": "Output format (auto picks Ink TUI on TTY, plain text otherwise)",
+            "long": "--format",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false,
+            "defaultValue": "auto",
+            "choices": [
+              "auto",
+              "json",
+              "plain"
+            ]
+          }
+        ],
+        "subcommands": []
+      },
+      {
         "name": "config",
         "path": [
           "council",
