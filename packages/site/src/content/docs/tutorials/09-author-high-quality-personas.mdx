@@ -1,0 +1,207 @@
+---
+title: Author High-Quality Expert Personas
+description: Design experts that drive genuine deliberation with weighted evidence, epistemic stances, and falsifiable expertise.
+---
+
+**Time**: ~8 minutes  
+**Learning outcome**: Understand and apply the official expert quality bar to create personas that generate substantive disagreement.
+
+## What you'll learn
+
+By the end of this tutorial, you will:
+
+- Understand why expertise is a **prior**, not just a persona
+- Design experts with `weightedEvidence`, `referenceCases`, and `notExpertIn`
+- Craft `epistemicStance` that shapes belief formation
+- Distinguish **persona experts** from **generic experts**
+- Understand how expert quality drives anti-sycophancy and genuine disagreement
+
+## Prerequisites
+
+- Completed [Tutorial 5: Create a Custom Expert](/Council/docs/tutorials/05-create-a-custom-expert/)
+- Familiarity with `council expert create` and expert YAML structure
+
+:::note[The quality gap]
+Most AI "expert" systems produce **sycophantic agreement** or **shallow disagreement** (stylistic variation on the same conclusion). Council's expert schema is designed to avoid this by encoding **falsifiable priors** that create real decision variables.
+:::
+
+## Why expertise matters
+
+When you ask three generic LLMs the same question, they typically agree on 90% of the substance and differ only in tone or framing. This isn't deliberation — it's **consensus theater**.
+
+**Council's approach**: Experts are **priors encoded as structured evidence preferences**. An expert who weights "post-incident reports from distributed systems" differently than one who weights "academic worst-case proofs" will reach substantively different conclusions on the same architecture question.
+
+## The official expert quality bar
+
+The Council project applies a quality gate to every official built-in expert. User-authored experts are not required to meet this bar, but **experts that do produce dramatically better debates**.
+
+### Required fields for high-quality experts
+
+1. **weightedEvidence** (≥4 items): Evidence types this expert prioritizes
+2. **referenceCases** (≥2 items): Specific historical patterns or principles the expert cites by name
+3. **notExpertIn** (≥2 items): Areas this expert explicitly disclaims expertise
+4. **epistemicStance**: The belief-formation process (skeptical, bayesian, first-principles, heuristic-driven, etc.)
+
+### Why these fields matter
+
+| Field | Purpose | Anti-sycophancy mechanism |
+|-------|---------|--------------------------|
+| `weightedEvidence` | Encodes **what counts as truth** for this expert | Creates decision dimensions — experts diverge when evidence conflicts |
+| `referenceCases` | Grounds reasoning in **falsifiable history** | Forces experts to cite precedent, not just opinion |
+| `notExpertIn` | Defines **blind spots** | Encourages deference and reduces hallucination |
+| `epistemicStance` | Shapes **how beliefs form** | Creates process-level disagreement even on the same data |
+
+## Step 1: Design an expert with weighted evidence
+
+Create an expert with strong, specific evidence preferences:
+
+```bash
+council expert create \
+  --slug infra-veteran \
+  --name "Maya Patel (Infrastructure SRE)" \
+  --persona
+```
+
+When prompted for the expert YAML, include:
+
+```yaml
+slug: infra-veteran
+displayName: Maya Patel (Infrastructure SRE)
+role: Site Reliability Engineer with 12 years in distributed systems
+kind: persona
+expertise:
+  weightedEvidence:
+    - Post-incident reports from production outages
+    - Quantitative SLO/SLI data over multi-quarter windows
+    - Operational load patterns (on-call burden, MTTR trends)
+    - Dependency graph complexity metrics
+    - Capacity planning projections with failure mode analysis
+  referenceCases:
+    - "Distributed monolith anti-pattern (2018 microservices migrations)"
+    - "Kubernetes etcd split-brain incident class"
+  notExpertIn:
+    - Frontend user experience tradeoffs
+    - Go-to-market or competitive positioning
+epistemicStance: |
+  Skeptical empiricist: I trust production telemetry over architectural diagrams.
+  Every claim must survive the question "what happens when this fails at 3am?"
+```
+
+**What this achieves**: Maya will prioritize operational evidence over theoretical benefits. She'll clash with experts who weight "time-to-market" or "developer velocity" higher.
+
+## Step 2: Add reference cases for falsifiable reasoning
+
+Reference cases anchor reasoning in **named, verifiable patterns**:
+
+- **Bad**: "Microservices can be complex" (generic, non-falsifiable)
+- **Good**: "Distributed monolith anti-pattern (2018 microservices migrations)" (specific, falsifiable, citable)
+
+```yaml
+referenceCases:
+  - "Distributed monolith anti-pattern (2018 microservices migrations)"
+  - "Kubernetes etcd split-brain incident class"
+  - "AWS S3 2017 outage cascade from typo in runbook"
+```
+
+These cases let Maya cite specific failure modes rather than vague warnings. Other experts can **disagree by citing counter-evidence** ("Yes, but Netflix and Uber succeeded with microservices because...").
+
+## Step 3: Define notExpertIn to encourage humility
+
+Explicitly disclaim areas outside expertise:
+
+```yaml
+notExpertIn:
+  - Frontend user experience tradeoffs
+  - Go-to-market or competitive positioning
+  - Data science model accuracy vs. latency tradeoffs
+```
+
+**Why this matters**: Without `notExpertIn`, models tend to answer every question with equal confidence. Defining blind spots:
+
+1. **Reduces hallucination** — the expert defers to others on out-of-scope topics
+2. **Creates specialization gaps** — experts genuinely need each other
+3. **Models real-world humility** — senior engineers say "I don't know" more often than juniors
+
+## Step 4: Craft an epistemic stance
+
+The epistemic stance defines **how** the expert forms beliefs, not just **what** they believe.
+
+Examples:
+
+| Stance | Belief formation process |
+|--------|-------------------------|
+| **Skeptical empiricist** | "I trust data over theory. Claims must survive production testing." |
+| **Bayesian pragmatist** | "I update incrementally on new evidence. Prior assumptions are explicit and revisable." |
+| **First-principles rationalist** | "I reason from axioms. If the logic is sound, implementation details are secondary." |
+| **Heuristic-driven survivalist** | "I pattern-match to known failure modes. Fast, approximate, wrong beats slow and perfect." |
+
+```yaml
+epistemicStance: |
+  Skeptical empiricist: I trust production telemetry over architectural diagrams.
+  Every claim must survive the question "what happens when this fails at 3am?"
+```
+
+**Result**: Two experts with different epistemic stances will disagree **even when they agree on the facts**. One might say "the theory is sound, ship it" while the other says "theory doesn't predict this edge case, wait for A/B test results."
+
+## Step 5: Edit an existing expert to meet the quality bar
+
+Inspect a simple expert you've created:
+
+```bash
+council expert inspect risk-analyst
+```
+
+If it's missing any of the quality fields, edit it:
+
+```bash
+council expert edit risk-analyst
+```
+
+Add or expand:
+
+- `weightedEvidence` (aim for 4+ items)
+- `referenceCases` (aim for 2+ specific, named cases)
+- `notExpertIn` (aim for 2+ explicit disclaimers)
+- `epistemicStance` (1-2 sentences on belief formation)
+
+## Persona vs. generic experts
+
+Council supports two expert kinds:
+
+| Kind | When to use | Example |
+|------|-------------|---------|
+| **persona** | Specific role with fixed priors | "Maya Patel (Infrastructure SRE)" — always weights operational load |
+| **generic** | Flexible role inferred from context | "CTO" — Council infers priorities from the question |
+
+**Persona experts drive better deliberation** when you know the decision variables in advance. Generic experts are faster to author but produce less substantive disagreement.
+
+## What you accomplished
+
+- Designed experts with falsifiable priors (`weightedEvidence`, `referenceCases`)
+- Encoded humility with `notExpertIn`
+- Crafted epistemic stances that shape belief formation
+- Understood why these fields drive anti-sycophancy and genuine disagreement
+
+## Next steps
+
+- **Tutorial 10**: [Design and Lint a Panel](/Council/docs/tutorials/10-design-and-lint-a-panel/) — Compose a full panel and verify it meets the official quality bar
+- **Explore built-in experts**: Run `council expert list` to see which experts ship with Council
+- **Test disagreement**: Convene a panel with two high-quality experts on opposite epistemic stances
+
+## Key concepts introduced
+
+| Concept | Definition |
+|---------|------------|
+| **Expertise as a prior** | Evidence preferences that shape reasoning, not just personality traits |
+| **Weighted evidence** | Types of proof this expert trusts most (operational data vs. theory vs. user research) |
+| **Reference cases** | Named historical patterns the expert cites (falsifiable, specific) |
+| **Epistemic stance** | How the expert forms beliefs (skeptical, bayesian, first-principles, etc.) |
+| **Anti-sycophancy** | Designing experts so they genuinely disagree on substance, not just style |
+
+## Commands used
+
+| Command | Purpose |
+|---------|---------|
+| `council expert create` | Create a new expert (interactive or with flags) |
+| `council expert inspect <slug>` | View full expert definition |
+| `council expert edit <slug>` | Open expert YAML in your editor |

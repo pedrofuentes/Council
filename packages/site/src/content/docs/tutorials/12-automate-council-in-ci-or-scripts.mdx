@@ -1,0 +1,455 @@
+---
+title: Automate Council in CI or Scripts
+description: Integrate Council into scripts, CI pipelines, and offline environments with JSON output, exit codes, and the deterministic mock engine.
+---
+
+**Time**: ~10 minutes  
+**Learning outcome**: Run Council non-interactively, parse structured output, capture exit codes, and use the mock engine for reproducible tests.
+
+## What you'll learn
+
+By the end of this tutorial, you will:
+
+- Run Council in non-interactive mode for scripts and CI
+- Parse structured JSON output with `--format json`
+- Use exit codes to detect failures in pipelines
+- Run Council with the deterministic `mock` engine for offline tests
+- Capture and commit decision artifacts (ADRs, recommendations) automatically
+
+## Prerequisites
+
+- Completed [Tutorial 8: Continue, Conclude, and Export](/Council/docs/tutorials/08-continue-conclude-and-export/)
+- Familiarity with shell scripting and exit codes
+- (Optional) Access to a CI environment (GitHub Actions, GitLab CI, CircleCI, etc.)
+
+:::note[Why automate Council?]
+Scripted Council enables:
+- **Pre-commit hooks**: Review design decisions before merging
+- **CI gates**: Validate architecture decisions against policy
+- **Documentation pipelines**: Auto-generate ADRs from deliberations
+- **Reproducible tests**: Verify panel behavior with deterministic mock responses
+:::
+
+## Non-interactive mode
+
+Council detects non-interactive environments automatically:
+
+- **TTY detection**: No prompts if `stdin` is not a terminal
+- **CI detection**: Recognizes `CI=true` (GitHub Actions, GitLab CI, etc.)
+- **Explicit flags**: Use `--no-confirm` or `--yes` to skip all prompts
+
+## Step 1: Run a deliberation in a script
+
+Create a shell script to convene a panel and capture the result:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Non-interactive convene (assumes panel "architecture-review" exists)
+council convene --panel architecture-review \
+  "Should we adopt GraphQL or REST for our new API?" \
+  --output decision.md
+
+echo "Decision saved to decision.md"
+```
+
+**What happens**:
+
+- Council skips all interactive prompts (no "Press any key to continue")
+- Output is written to `decision.md` (or stdout if `--output` is omitted)
+- Exit code: `0` on success, non-zero on failure
+
+## Step 2: Parse structured output with --format json
+
+For programmatic analysis, export as newline-delimited JSON (NDJSON):
+
+```bash
+council convene --panel architecture-review \
+  "Should we adopt GraphQL or REST?" \
+  --format json --output debate.ndjson
+```
+
+**Output structure** (one event per line):
+
+```json
+{"type":"panel_start","panel":"architecture-review","topic":"Should we adopt GraphQL or REST?","timestamp":"2024-06-21T09:15:00Z"}
+{"type":"expert_turn","expert":"cto","round":1,"content":"GraphQL reduces over-fetching...","timestamp":"2024-06-21T09:15:12Z"}
+{"type":"expert_turn","expert":"frontend-lead","round":1,"content":"REST is simpler for our team's skill level...","timestamp":"2024-06-21T09:15:24Z"}
+{"type":"synthesis","round":1,"content":"The panel converges on one tradeoff: flexibility vs. simplicity...","timestamp":"2024-06-21T09:15:36Z"}
+{"type":"panel_end","status":"completed","timestamp":"2024-06-21T09:16:00Z"}
+```
+
+### Parse JSON in a script
+
+```bash
+#!/usr/bin/env bash
+
+council convene --panel architecture-review \
+  "Should we adopt GraphQL?" \
+  --format json --output debate.ndjson
+
+# Extract all expert turns
+jq -r 'select(.type=="expert_turn") | "\(.expert): \(.content)"' debate.ndjson
+
+# Count total rounds
+jq -r 'select(.type=="synthesis") | .round' debate.ndjson | wc -l
+```
+
+**Use cases**:
+
+- **Analysis**: Count how many times each expert cited a source
+- **Filtering**: Extract only synthesis summaries for a TL;DR
+- **Archival**: Store deliberations in a structured database
+
+## Step 3: Handle exit codes for CI gates
+
+Council exits with non-zero codes on failure:
+
+| Exit Code | Meaning |
+|-----------|---------|
+| `0` | Success (deliberation completed) |
+| `1` | User error (invalid arguments, missing panel) |
+| `2` | Runtime error (LLM API failure, network timeout) |
+| `130` | User interrupted (Ctrl+C) |
+
+### Example: CI gate
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run deliberation; fail CI if it errors
+if ! council convene --panel security-review "Proposed architecture for PII storage" \
+       --output decision.md; then
+  echo "ERROR: Security review deliberation failed"
+  exit 1
+fi
+
+# Verify the decision artifact was created
+if [[ ! -f decision.md ]]; then
+  echo "ERROR: Decision artifact not generated"
+  exit 1
+fi
+
+echo "✅ Security review passed"
+```
+
+### Example: GitHub Actions workflow
+
+```yaml
+name: Architecture Review
+
+on:
+  pull_request:
+    paths:
+      - 'docs/architecture/**'
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Council
+        run: npm install -g @council-ai/cli
+
+      - name: Run architecture review
+        run: |
+          council convene --panel architecture-review \
+            "Review the proposed architecture in ${{ github.event.pull_request.title }}" \
+            --output architecture-review.md
+
+      - name: Upload decision artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: architecture-review
+          path: architecture-review.md
+
+      - name: Post review to PR
+        run: gh pr comment ${{ github.event.pull_request.number }} \
+             --body-file architecture-review.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+**Result**: Every PR touching architecture docs triggers a Council deliberation, and the result is posted as a PR comment.
+
+## Step 4: Use the mock engine for deterministic tests
+
+The **mock engine** produces **deterministic, pre-scripted responses** without calling an LLM. Perfect for:
+
+- **Unit tests**: Verify panel behavior without network dependencies
+- **Offline development**: Test Council without GitHub Copilot access
+- **CI performance**: Skip LLM latency in non-critical tests
+
+### Run with the mock engine
+
+```bash
+council convene --engine mock \
+  --panel architecture-review \
+  "Should we use PostgreSQL or MySQL?"
+```
+
+**Output** (deterministic, repeatable):
+
+```
+🏛️ Panel: architecture-review (mock engine)
+Topic: Should we use PostgreSQL or MySQL?
+
+━━━ Round 1 ━━━
+
+[Mock Expert 1]
+Mock response 1: This is a deterministic reply from the mock engine.
+
+[Mock Expert 2]
+Mock response 2: Another scripted response for testing.
+
+━━━ Synthesis ━━━
+Mock synthesis: The panel agrees on all points.
+
+✅ Debate completed (mock mode — no LLM calls made)
+```
+
+### Use mock in tests
+
+```bash
+#!/usr/bin/env bash
+
+# Test: Verify the panel runs without errors
+if ! council convene --engine mock \
+       --panel architecture-review "Test question" \
+       --output test-output.md; then
+  echo "ERROR: Panel failed to run"
+  exit 1
+fi
+
+# Test: Verify output was generated
+if [[ ! -s test-output.md ]]; then
+  echo "ERROR: Output file is empty"
+  exit 1
+fi
+
+echo "✅ Panel execution test passed"
+```
+
+**Key property**: The mock engine **always succeeds** and produces the same output for the same inputs. Use it to test infrastructure, not deliberation quality.
+
+## Step 5: Automate decision artifact capture
+
+Capture and commit ADRs automatically from deliberations:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Convene panel and export as ADR
+council convene --panel architecture-review \
+  "Should we migrate to Kubernetes?" \
+  --output /tmp/debate.md
+
+council export architecture-review \
+  --format adr \
+  --output docs/adr/0042-kubernetes-migration.md
+
+# Commit the ADR
+git add docs/adr/0042-kubernetes-migration.md
+git commit -m "docs: add ADR-0042 from Council deliberation
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+
+echo "✅ ADR committed: docs/adr/0042-kubernetes-migration.md"
+```
+
+**Use case**: Automatically document major decisions in a standardized ADR format, sourced from multi-expert deliberation.
+
+## Step 6: Chain multiple deliberations
+
+Run multiple panels in sequence and aggregate results:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run three different panels on the same question
+for panel in architecture-review security-review cost-analysis; do
+  echo "Running panel: $panel"
+
+  council convene --panel "$panel" \
+    "Should we migrate to Kubernetes?" \
+    --output "decision-${panel}.md"
+done
+
+# Aggregate results
+cat decision-*.md > final-decision.md
+
+echo "✅ Aggregated decision: final-decision.md"
+```
+
+**Result**: Three independent expert panels review the same question from different angles (technical, security, cost). The combined transcript provides a comprehensive view.
+
+## Step 7: Handle missing panels gracefully
+
+Check if a panel exists before running:
+
+```bash
+#!/usr/bin/env bash
+
+PANEL="architecture-review"
+
+# Check if panel exists
+if ! council panel inspect "$PANEL" &>/dev/null; then
+  echo "ERROR: Panel '$PANEL' not found"
+  echo "Available panels:"
+  council panel list
+  exit 1
+fi
+
+# Run deliberation
+council convene --panel "$PANEL" "Should we adopt microservices?"
+```
+
+**Alternative**: Use `council templates` for built-in panels:
+
+```bash
+if council templates inspect architecture-review &>/dev/null; then
+  council convene --template architecture-review "Question here"
+else
+  echo "ERROR: Template not found"
+  exit 1
+fi
+```
+
+## Step 8: Store deliberations in version control
+
+Commit exported deliberations for historical tracking:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+TIMESTAMP=$(date +%Y-%m-%d)
+OUTPUT="deliberations/${TIMESTAMP}-api-decision.md"
+
+mkdir -p deliberations
+
+council convene --panel architecture-review \
+  "REST vs GraphQL for our API?" \
+  --output "$OUTPUT"
+
+git add "$OUTPUT"
+git commit -m "docs: deliberation on API architecture"
+
+echo "✅ Deliberation archived: $OUTPUT"
+```
+
+**Result**: Every deliberation is versioned, searchable, and auditable. Teams can review past decisions months later.
+
+## Troubleshooting
+
+### Problem: "No TTY available" error
+
+**Cause**: Council tries to prompt for input in a non-interactive environment.
+
+**Fix**: Pass `--no-confirm` or ensure the panel/expert already exists:
+
+```bash
+council convene --panel architecture-review \
+  --no-confirm \
+  "Question here"
+```
+
+### Problem: Mock engine output is too generic for tests
+
+**Cause**: The mock engine produces the same scripted response for all questions.
+
+**Fix**: For meaningful tests, use the real engine (`--engine copilot`) or mock at the API level (stub GitHub Copilot responses in your test harness).
+
+### Problem: CI fails with "GitHub Copilot authentication required"
+
+**Cause**: The CI environment doesn't have GitHub Copilot credentials.
+
+**Fix**:
+
+1. Use the mock engine for tests that don't require real LLM output
+2. Provide credentials via environment variables (check `council doctor` for required vars)
+3. Use a dedicated CI service account with Copilot access
+
+## What you accomplished
+
+- Ran Council non-interactively in scripts and CI
+- Parsed structured JSON output for programmatic analysis
+- Used exit codes to gate CI pipelines
+- Ran deterministic tests with the mock engine
+- Automated decision artifact capture and version control
+
+## Next steps
+
+- **Integrate with your CI**: Add a Council gate to your PR workflow (architecture reviews, security checks, etc.)
+- **Build a decision log**: Script regular deliberations and commit results to a `docs/decisions/` folder
+- **Explore advanced scripting**: Chain multiple panels, aggregate outputs, or feed Council results into other tools
+
+## Key concepts introduced
+
+| Concept | Definition |
+|---------|------------|
+| **Non-interactive mode** | Council runs without prompts when `stdin` is not a TTY |
+| **NDJSON output** | Newline-delimited JSON (one event per line) for programmatic parsing |
+| **Exit codes** | Process return values (`0` = success, non-zero = failure) |
+| **Mock engine** | Deterministic, scripted LLM replacement for tests and offline use |
+| **Decision artifact capture** | Automated export and commit of ADRs or recommendations |
+
+## Commands introduced
+
+| Command | Purpose |
+|---------|---------|
+| `council convene --format json` | Output deliberation as newline-delimited JSON |
+| `council convene --engine mock` | Run with deterministic mock responses (no LLM) |
+| `council export --format adr` | Export deliberation as Architecture Decision Record |
+| `council panel inspect <slug>` | Check if a panel exists (exit code 0 if found) |
+| `council templates inspect <name>` | Check if a built-in template exists |
+
+## Example scripts
+
+### Pre-commit hook (validate architecture decisions)
+
+```bash
+#!/usr/bin/env bash
+# .git/hooks/pre-commit
+
+if git diff --cached --name-only | grep -q '^docs/architecture/'; then
+  echo "Running architecture review..."
+
+  council convene --engine mock \
+    --panel architecture-review \
+    "Review proposed changes in docs/architecture/" \
+    --output /tmp/review.md
+
+  if [[ $? -ne 0 ]]; then
+    echo "❌ Architecture review failed"
+    exit 1
+  fi
+
+  echo "✅ Architecture review passed"
+fi
+```
+
+### Nightly decision log (cron job)
+
+```bash
+#!/usr/bin/env bash
+# /etc/cron.daily/council-decision-log
+
+TIMESTAMP=$(date +%Y-%m-%d)
+OUTPUT="/var/log/council/decision-${TIMESTAMP}.md"
+
+council convene --panel executive-review \
+  "Review outstanding technical decisions from the past 24 hours" \
+  --output "$OUTPUT"
+
+echo "Decision log saved: $OUTPUT"
+```
+
+### CI gate (GitHub Actions)
+
+See Step 3 example above for a complete GitHub Actions workflow.
