@@ -14,6 +14,11 @@
  *   - **adr**: Architecture Decision Record markdown — Status,
  *     Context, Options Considered, Discussion, Decision sections
  *     populated from the panel's debate.
+ *   - **share**: polished, launch-ready markdown that leads with the
+ *     panel roster, key tensions, the recommendation, and next actions
+ *     (derived from a recorded synthesis) before the full transcript.
+ *     Synthesis-derived sections print an honest "Not recorded"
+ *     placeholder when no synthesis was persisted — see `export-share.ts`.
  *
  * Pure read path: no engine, no LLM, and no debate-persistence side effects.
  * Reuses `synthesizeEvents()` from `src/memory/transcript.ts` (shared
@@ -39,9 +44,10 @@ import { synthesizeEvents, type TranscriptDocument } from "../../memory/transcri
 
 import { CliUserError } from "../cli-user-error.js";
 import { resolveSession } from "../session-resolver.js";
+import { renderShare } from "./export-share.js";
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
-export const EXPORT_FORMATS = ["markdown", "json", "adr"] as const;
+export const EXPORT_FORMATS = ["markdown", "json", "adr", "share"] as const;
 export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 
 export interface ExportCommandDeps {
@@ -60,7 +66,7 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
 
   const cmd = new Command("export");
   cmd
-    .description("Export a panel transcript to markdown, json, or adr format")
+    .description("Export a panel transcript to markdown, json, adr, or share format")
     .argument("<panel>", "Panel name to export (as shown by `council sessions`)")
     .addOption(
       new Option("--format <kind>", "Output format")
@@ -99,7 +105,7 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
           const shouldRetryWithConfig =
             err instanceof CliUserError &&
             err.message.startsWith("No panel found matching") &&
-            !(process.env["COUNCIL_DATA_HOME"]?.length);
+            !process.env["COUNCIL_DATA_HOME"]?.length;
           if (!shouldRetryWithConfig) {
             writeError(firstAttemptStderr);
             throw err;
@@ -150,6 +156,7 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
 Examples:
   $ council export my-panel                         # markdown to stdout
   $ council export my-panel --format adr            # Architecture Decision Record
+  $ council export my-panel --format share          # polished, shareable summary
   $ council export my-panel --format json --output transcript.ndjson
 `,
   );
@@ -165,6 +172,8 @@ function renderForExport(doc: TranscriptDocument, format: ExportFormat): string 
       return renderJson(doc);
     case "adr":
       return renderAdr(doc);
+    case "share":
+      return renderShare(doc);
     default: {
       const _exhaustive: never = format;
       throw new Error(`Unknown export format: ${String(_exhaustive)}`);
