@@ -20,7 +20,11 @@ import { parseExpertSlugs, warnOnStrayExpertArgs } from "./expert-args.js";
 
 import { autoComposePanel } from "../../core/auto-compose.js";
 import { allowlistExpertDefinition, type ExpertDefinition } from "../../core/expert.js";
-import { checkTopicAdmission, detectShellExpansion, type TopicSource } from "../../core/topic-admission.js";
+import {
+  checkTopicAdmission,
+  detectShellExpansion,
+  type TopicSource,
+} from "../../core/topic-admission.js";
 import {
   getCouncilDataHome,
   getCouncilHome,
@@ -40,10 +44,7 @@ import {
   type ResolvedPanelDefinition,
 } from "../../core/template-loader.js";
 import { buildSystemPrompt, type ExpertMemory } from "../../core/prompt-builder.js";
-import {
-  createDocumentRetriever,
-  type DocumentSnippet,
-} from "../../core/documents/retriever.js";
+import { createDocumentRetriever, type DocumentSnippet } from "../../core/documents/retriever.js";
 import {
   capSnippetsByChars,
   REFERENCE_DOCS_CHAR_CAP,
@@ -55,6 +56,7 @@ import type { HumanInputProvider } from "../../core/human-input.js";
 import { createDatabase } from "../../memory/db.js";
 import { ExpertRepository } from "../../memory/repositories/experts.js";
 import { PanelRepository } from "../../memory/repositories/panels.js";
+import { loadTranscript } from "../../memory/transcript.js";
 
 import { runExtractMemoryHook } from "../extract-memory-hook.js";
 
@@ -73,6 +75,10 @@ import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.j
 import { isNonInteractive } from "../non-interactive.js";
 import { readTextInput } from "../read-text-input.js";
 import { createProgress } from "../progress.js";
+import {
+  renderPlain as renderConclusionPlain,
+  synthesizeConclusion,
+} from "../conclusion-synthesis.js";
 
 const DEFAULT_MAX_ROUNDS = 4;
 const DEFAULT_MAX_WORDS = 250;
@@ -167,6 +173,7 @@ export interface ConveneOptions {
   readonly quiet?: boolean;
   readonly model?: string;
   readonly maxExperts?: number;
+  readonly conclude?: boolean;
 }
 
 /**
@@ -300,7 +307,11 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       "Skip post-debate LLM extraction — for offline/air-gapped use. " +
         "Useful for offline tests and air-gapped environments.",
     )
-    .option("--yes", "Skip the auto-compose confirmation prompt — required for non-interactive / CI runs")
+    .option(
+      "--yes",
+      "Skip the auto-compose confirmation prompt — required for non-interactive / CI runs",
+    )
+    .option("--no-conclude", "Skip automatic conclusion synthesis after a completed debate")
     .option("--verbose", "Show template migration notices and zero-change summaries")
     .option("-q, --quiet", "Suppress informational output")
     .option(
@@ -315,17 +326,13 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         return v;
       },
     )
-    .option(
-      "--max-experts <n>",
-      "Maximum number of experts for auto-compose",
-      (v) => {
-        const parsed = Number(v);
-        if (!Number.isInteger(parsed)) {
-          throw new Error(`--max-experts must be an integer (got: ${v})`);
-        }
-        return parsed;
-      },
-    )
+    .option("--max-experts <n>", "Maximum number of experts for auto-compose", (v) => {
+      const parsed = Number(v);
+      if (!Number.isInteger(parsed)) {
+        throw new Error(`--max-experts must be an integer (got: ${v})`);
+      }
+      return parsed;
+    })
     .action(async (topicArg: string | undefined, raw: ConveneOptions, command: Command) => {
       if (raw.quiet === true) {
         setQuiet(true);
@@ -441,8 +448,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       const templateName = raw.panel ?? raw.template;
 
       if (raw.experts !== undefined && templateName !== undefined) {
-        const msg =
-          "Cannot use --experts together with --template/--panel. Pass one or the other.";
+        const msg = "Cannot use --experts together with --template/--panel. Pass one or the other.";
         writeError(`${msg}\n`);
         throw new CliUserError(msg);
       }
@@ -469,6 +475,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         heuristicSummaries: raw.heuristicSummaries === true,
         heuristicMemory: raw.heuristicMemory === true,
         verbose: raw.verbose === true,
+        conclude: raw.conclude !== false,
         ...(raw.strategy !== undefined ? { strategy: raw.strategy } : {}),
         ...(raw.contextScope !== undefined ? { contextScope: raw.contextScope } : {}),
         ...(raw.summarizeAfter !== undefined && Number.isFinite(raw.summarizeAfter)
@@ -603,7 +610,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
               maxExperts?: number;
               minExperts?: number;
             } = { defaultModel };
-            
+
             // Precedence: --max-experts CLI flag > config.defaults.maxExperts >
             // auto-compose hardcoded default. When either source provides a value,
             // also set minExperts to avoid impossible ranges.
@@ -843,21 +850,45 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
               }
               write("\n");
             },
-            ...(opts.heuristicMemory === true
-              ? {}
-              : {
-                  onDebateComplete: async (ctx) =>
-                    runExtractMemoryHook({
+            onDebateComplete: async (ctx) => {
+              if (opts.conclude !== false) {
+                try {
+                  const doc = await loadTranscript(ctx.db, panel.name);
+                  if (
+                    doc.latestDebate.id === ctx.debateId &&
+                    doc.latestDebate.status === "completed"
+                  ) {
+                    const conclusion = await synthesizeConclusion({
+                      doc,
+                      panelName: panel.name,
                       engine: ctx.engine,
-                      db: ctx.db,
-                      panelId: ctx.panelId,
-                      debateId: ctx.debateId,
-                      expertSlugToId: ctx.expertSlugToId,
-                      humanSlugs,
                       model: defaultModel,
-                      writeError,
-                    }),
-                }),
+                      maxTranscriptChars: config.conclude.maxTranscriptChars,
+                    });
+                    if (opts.format === "json") {
+                      write(JSON.stringify({ kind: "conclusion", conclusion }) + "\n");
+                    } else {
+                      write(renderConclusionPlain(conclusion));
+                    }
+                  }
+                } catch (err: unknown) {
+                  const msg = err instanceof Error ? err.message : String(err);
+                  writeError(`!! conclusion generation failed (continuing): ${msg}\n`);
+                }
+              }
+              if (opts.heuristicMemory !== true) {
+                await runExtractMemoryHook({
+                  engine: ctx.engine,
+                  db: ctx.db,
+                  panelId: ctx.panelId,
+                  debateId: ctx.debateId,
+                  expertSlugToId: ctx.expertSlugToId,
+                  humanSlugs,
+                  model: defaultModel,
+                  writeError,
+                });
+              }
+            },
           });
         } finally {
           unsubscribeInterrupt();
@@ -870,7 +901,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             write(formatPanelSaveHint(sessionName));
           }
           write(
-            "Tip: Try `council ask <panel> \"<question>\"` for follow-ups, or `council sessions` to review past debates.\n",
+            'Tip: Try `council ask <panel> "<question>"` for follow-ups, or `council sessions` to review past debates.\n',
           );
         }
       } finally {
