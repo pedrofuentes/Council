@@ -12,24 +12,24 @@ constraints exist, and how to reason about multi-expert deliberation.
 
 ## Core Concepts
 
-- [**Deliberation Model**](/Council/docs/explanation/deliberation-model) — How Council orchestrates multi-expert debates through structured disagreement, freeform vs. structured modes, and why multi-agent debate surfaces better insights than single-agent advice.
+- [**Deliberation Model**](/Council/explanation/deliberation-model) — How Council orchestrates multi-expert debates through structured disagreement, freeform vs. structured modes, and why multi-agent debate surfaces better insights than single-agent advice.
 
-- [**Anti-Sycophancy Design**](/Council/docs/explanation/anti-sycophancy) — The 3-layer quality gate that prevents experts from agreeing performatively and enforces genuine, substantive disagreement.
+- [**Anti-Sycophancy Design**](/Council/explanation/anti-sycophancy) — The 3-layer quality gate that prevents experts from agreeing performatively and enforces genuine, substantive disagreement.
 
-- [**Memory Model**](/Council/docs/explanation/memory-model) — How experts remember past debates, why generic and persona experts have different memory models, and how to inspect and reset memory.
+- [**Memory Model**](/Council/explanation/memory-model) — How experts remember past debates, why generic and persona experts have different memory models, and how to inspect and reset memory.
 
-- [**Document RAG**](/Council/docs/explanation/document-rag) — How Council indexes and retrieves user documents to ground expert reasoning in real context: detection, extraction, chunking, FTS5 indexing, and recency weighting.
+- [**Document RAG**](/Council/explanation/document-rag) — How Council indexes and retrieves user documents to ground expert reasoning in real context: detection, extraction, chunking, FTS5 indexing, and recency weighting.
 
-- [**Persona Experts**](/Council/docs/explanation/persona-experts) — How document-trained experts combine LLM-synthesized profiles with RAG retrieval to reason like specific individuals, not generic roles.
+- [**Persona Experts**](/Council/explanation/persona-experts) — How document-trained experts combine LLM-synthesized profiles with RAG retrieval to reason like specific individuals, not generic roles.
 
 ## Orchestration & Control
 
-- [**Moderation Strategies**](/Council/docs/explanation/moderation-strategies) — How Council controls turn order and prompt generation in freeform debates: round-robin, devil's advocate, consensus-check, and when to use each.
+- [**Moderation Strategies**](/Council/explanation/moderation-strategies) — How Council controls turn order and prompt generation in freeform debates: round-robin, devil's advocate, consensus-check, and when to use each.
 
-- [**Context Window Management**](/Council/docs/explanation/context-management) — How Council keeps long debates within model token limits through visibility scoping, rolling summaries, and hard caps.
+- [**Context Window Management**](/Council/explanation/context-management) — How Council keeps long debates within model token limits through visibility scoping, rolling summaries, and hard caps.
 
 ## Architecture & Security
 
-- [**Architecture Overview**](/Council/docs/explanation/architecture-overview) — High-level architectural patterns, module boundaries, the 8-section system prompt structure, and the engine abstraction that makes Council provider-flexible.
+- [**Architecture Overview**](/Council/explanation/architecture-overview) — High-level architectural patterns, module boundaries, the 8-section system prompt structure, and the engine abstraction that makes Council provider-flexible.
 
-- [**Security and Privacy**](/Council/docs/explanation/security-and-privacy) — What Council stores locally, what it sends to AI providers, how secrets are handled, and the layered defenses against prompt injection in documents and cross-expert turns.
+- [**Security and Privacy**](/Council/explanation/security-and-privacy) — What Council stores locally, what it sends to AI providers, how secrets are handled, and the layered defenses against prompt injection in documents and cross-expert turns.

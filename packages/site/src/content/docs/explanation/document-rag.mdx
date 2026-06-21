@@ -36,7 +36,7 @@ Each document format has a specialized extractor:
 - **ODT/ODS/ODP**: ZIP-based XML parsing (built-in)
 - **Plain text**: direct UTF-8 read
 
-Extracted text is **untrusted** (see [Security and Privacy](/Council/docs/explanation/security-and-privacy) for prompt injection defenses).
+Extracted text is **untrusted** (see [Security and Privacy](/Council/explanation/security-and-privacy) for prompt injection defenses).
 
 ### 3. Chunking
 Extracted text is split into **sentence-aligned chunks** (default max: 1000 characters). Sentence-aligned means Council won't split mid-sentence — it finds the nearest sentence boundary.
@@ -86,7 +86,7 @@ council expert train <expert-slug>    # re-process docs, regenerate profile
 
 Every byte of extracted text is **untrusted**. A malicious PDF could contain text designed to subvert the model ("Ignore previous instructions and...").
 
-Council applies **layered defenses** (see [Security and Privacy](/Council/docs/explanation/security-and-privacy)):
+Council applies **layered defenses** (see [Security and Privacy](/Council/explanation/security-and-privacy)):
 1. Structural sanitization (strips control chars, bidi overrides, zero-width chars)
 2. Role-marker neutralization (wraps `<system>`, `<|im_start|>`, `Human:` sequences)
 3. Per-document delimiter wrapping with explicit "UNTRUSTED" framing
@@ -128,7 +128,7 @@ A folder of 50 PDFs might take 5-10 seconds to index the first time, then subseq
 
 ## Relation to Other Concepts
 
-- [Persona Experts](/Council/docs/explanation/persona-experts) — how documents combine with expert definitions to create grounded personas
-- [Memory Model](/Council/docs/explanation/memory-model) — persona experts get document memory + debate memory
-- [Security and Privacy](/Council/docs/explanation/security-and-privacy) — how Council defends against prompt injection in untrusted documents
-- [Context Management](/Council/docs/explanation/context-management) — how Council caps retrieved snippets to fit token budgets
+- [Persona Experts](/Council/explanation/persona-experts) — how documents combine with expert definitions to create grounded personas
+- [Memory Model](/Council/explanation/memory-model) — persona experts get document memory + debate memory
+- [Security and Privacy](/Council/explanation/security-and-privacy) — how Council defends against prompt injection in untrusted documents
+- [Context Management](/Council/explanation/context-management) — how Council caps retrieved snippets to fit token budgets
