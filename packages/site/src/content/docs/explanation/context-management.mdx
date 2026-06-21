@@ -144,6 +144,12 @@ Council emits a `cost.update` event after each round showing:
 - Total tokens out (output)
 - Estimated cost ($USD)
 
+The CLI also shows an estimated premium request count while a debate runs. A
+premium request is one AI expert turn, so the estimate is roughly experts ×
+rounds in freeform debates or experts × phases in structured debates. It is not
+a hard limit or stop condition; actual usage can differ when retries, early
+exits, or future debate mechanics change the number of AI turns.
+
 Watch for input token counts approaching your model's limit (e.g., 128k for Claude Sonnet, 200k for GPT-4 Turbo). If you see >80k input tokens, consider enabling context management.
 
 ## Relation to Other Concepts
