@@ -28,6 +28,16 @@ function escapeCell(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 }
 
+function sanitizeSheetName(name: string): string {
+  // A sheet name is attacker-controlled and is interpolated into
+  // block-level Markdown (`## ...` headings) and surfaced via
+  // metadata.sheetNames. fast-xml-parser preserves literal CR/LF in the
+  // workbook's `name` attribute verbatim, so an unsanitized name can
+  // inject arbitrary headings into content later fed to AI prompts.
+  // Collapse any run of CR/LF into a single space and trim the result.
+  return name.replace(/[\r\n]+/g, " ").trim();
+}
+
 function countWords(text: string): number {
   return text.split(/\s+/).filter((t) => t.length > 0).length;
 }
@@ -232,7 +242,8 @@ const xlsxExtractor: ContentExtractor = async (
     if (sheetCount > MAX_SHEETS) {
       throw oversizeError(ctx.filename, `sheet count (${MAX_SHEETS})`);
     }
-    sheetNames.push(sheet.name);
+    const safeName = sanitizeSheetName(sheet.name);
+    sheetNames.push(safeName);
 
     const rows: string[][] = [];
     for (const sheetRow of sheet.rows) {
@@ -252,7 +263,7 @@ const xlsxExtractor: ContentExtractor = async (
     }
 
     if (rows.length === 0) {
-      const placeholder = `## ${sheet.name}\n\n(empty sheet)`;
+      const placeholder = `## ${safeName}\n\n(empty sheet)`;
       sections.push(placeholder);
       totalContentLength += placeholder.length;
       if (totalContentLength > MAX_CONTENT_BYTES) {
@@ -264,7 +275,7 @@ const xlsxExtractor: ContentExtractor = async (
     const header = rows[0] ?? [];
     const dataRows = rows.slice(1);
 
-    let table = `## ${sheet.name}\n\n`;
+    let table = `## ${safeName}\n\n`;
     table += `| ${header.join(" | ")} |\n`;
     table += `| ${header.map(() => "---").join(" | ")} |\n`;
     for (const row of dataRows) {
