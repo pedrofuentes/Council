@@ -36,7 +36,7 @@ Council's engine layer reports typed error codes that map to CLI exit codes:
 
 ```bash
 #!/bin/bash
-council convene tech-review
+council convene "Review request" --panel tech-review
 if [ $? -ne 0 ]; then
   echo "Error: council command failed"
   exit 1
@@ -47,7 +47,7 @@ fi
 
 ```bash
 #!/bin/bash
-council convene tech-review
+council convene "Review request" --panel tech-review
 EXIT_CODE=$?
 
 case $EXIT_CODE in

@@ -17,7 +17,7 @@ Override the default runtime directory (`~/.council/`). Used by `--ephemeral` mo
 
 ```bash
 export COUNCIL_HOME=/tmp/council-test
-council convene tech-review
+council convene "Review request" --panel tech-review
 ```
 
 ### `COUNCIL_DATA_HOME`
@@ -66,7 +66,7 @@ Force ASCII-only charset. Disables Unicode box-drawing characters and emoji.
 
 ```bash
 export COUNCIL_ASCII=1
-council convene tech-review
+council convene "Review request" --panel tech-review
 ```
 
 **Use Cases:**
@@ -106,7 +106,7 @@ Standard terminal type variable. Council detects `TERM=dumb` and automatically s
 **Example:**
 
 ```bash
-TERM=dumb council convene tech-review
+TERM=dumb council convene "Review request" --panel tech-review
 ```
 
 **Auto-Detection:**

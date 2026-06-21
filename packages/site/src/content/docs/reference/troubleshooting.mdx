@@ -358,7 +358,7 @@ ping github.com
 
 ```bash
 # Wait a few minutes, then retry
-council convene tech-review
+council convene "Review request" --panel tech-review
 ```
 
 3. **Use `--max-rounds` to reduce API calls:**
@@ -395,14 +395,14 @@ council convene "Review request" --panel tech-review --format plain
 
 ```bash
 export NO_COLOR=1
-council convene tech-review
+council convene "Review request" --panel tech-review
 ```
 
 3. **Use ASCII-only charset:**
 
 ```bash
 export COUNCIL_ASCII=1
-council convene tech-review
+council convene "Review request" --panel tech-review
 ```
 
 **See:** [Environment Variables](/Council/docs/reference/environment-variables/)
@@ -421,7 +421,7 @@ council convene tech-review
 
 ```bash
 export COUNCIL_ASCII=1
-council convene tech-review
+council convene "Review request" --panel tech-review
 ```
 
 2. **Use a modern terminal font** (e.g., JetBrains Mono, Fira Code, Cascadia Code).

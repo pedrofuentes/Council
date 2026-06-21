@@ -221,7 +221,7 @@ To run Council in an isolated environment (e.g., integration tests, CI):
 ```bash
 export COUNCIL_HOME=/tmp/council-test
 export COUNCIL_DATA_HOME=/tmp/council-data
-council convene test-panel
+council convene "Test topic" --panel test-panel
 ```
 
 Council creates fresh directories and does not touch `~/.council/` or `~/Council/`.
