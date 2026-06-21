@@ -1,0 +1,35 @@
+---
+/**
+ * EmptyState component for the gallery page.
+ * Displays a friendly message when no panels are available yet.
+ */
+---
+
+<div class="empty-state">
+  <h2>Panel Gallery Coming Soon</h2>
+  <p>
+    The Council panel library is under active development. Check back soon for
+    pre-built expert panels covering various disciplines.
+  </p>
+</div>
+
+<style>
+  .empty-state {
+    text-align: center;
+    padding: 4rem 2rem;
+    color: var(--sl-color-text-accent);
+  }
+
+  .empty-state h2 {
+    font-size: 1.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .empty-state p {
+    font-size: 1rem;
+    line-height: 1.6;
+    max-width: 40rem;
+    margin-inline: auto;
+    color: var(--sl-color-gray-2);
+  }
+</style>

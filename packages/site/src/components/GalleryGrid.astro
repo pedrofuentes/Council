@@ -1,0 +1,154 @@
+---
+/**
+ * GalleryGrid component that renders a grid of panel entries.
+ * Accepts an array of gallery entries and renders cards for each.
+ */
+import type { GalleryEntry } from "../content/gallery/schema";
+import EmptyState from "./EmptyState.astro";
+
+interface Props {
+  readonly entries: readonly GalleryEntry[];
+}
+
+const { entries } = Astro.props;
+---
+
+{
+  entries.length === 0 ? (
+    <EmptyState />
+  ) : (
+    <div class="gallery-grid">
+      {
+        entries.map((entry) => (
+          <article class="panel-card">
+            <header>
+              <h3>{entry.name}</h3>
+              <span class={`maturity-badge maturity-${entry.maturity}`}>
+                {entry.maturity}
+              </span>
+            </header>
+            <p class="summary">{entry.summary}</p>
+            <div class="disciplines">
+              {entry.disciplines.map((d) => (
+                <span class="discipline-tag">{d}</span>
+              ))}
+            </div>
+            <div class="experts">
+              <strong>Experts:</strong> {entry.experts.join(", ")}
+            </div>
+            <details>
+              <summary>Sample Prompts</summary>
+              <ul>
+                {entry.samplePrompts.map((prompt) => (
+                  <li>{prompt}</li>
+                ))}
+              </ul>
+            </details>
+            <pre class="install-snippet"><code>{entry.installSnippet}</code></pre>
+          </article>
+        ))
+      }
+    </div>
+  )
+}
+
+<style>
+  .gallery-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
+    gap: 2rem;
+    padding: 2rem;
+  }
+
+  .panel-card {
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    background: var(--sl-color-bg-nav);
+  }
+
+  .panel-card header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 1rem;
+  }
+
+  .panel-card h3 {
+    margin: 0;
+    font-size: 1.25rem;
+  }
+
+  .maturity-badge {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+
+  .maturity-stable {
+    background: var(--sl-color-green-high);
+    color: var(--sl-color-green-low);
+  }
+
+  .maturity-beta {
+    background: var(--sl-color-blue-high);
+    color: var(--sl-color-blue-low);
+  }
+
+  .maturity-experimental,
+  .maturity-alpha {
+    background: var(--sl-color-orange-high);
+    color: var(--sl-color-orange-low);
+  }
+
+  .summary {
+    margin-bottom: 1rem;
+    line-height: 1.6;
+  }
+
+  .disciplines {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .discipline-tag {
+    font-size: 0.875rem;
+    padding: 0.25rem 0.75rem;
+    background: var(--sl-color-gray-6);
+    border-radius: 1rem;
+  }
+
+  .experts {
+    font-size: 0.875rem;
+    margin-bottom: 1rem;
+    color: var(--sl-color-gray-2);
+  }
+
+  details {
+    margin-bottom: 1rem;
+    font-size: 0.875rem;
+  }
+
+  details summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--sl-color-text-accent);
+  }
+
+  details ul {
+    margin-top: 0.5rem;
+    padding-left: 1.5rem;
+  }
+
+  .install-snippet {
+    font-size: 0.875rem;
+    padding: 0.75rem;
+    background: var(--sl-color-gray-6);
+    border-radius: 0.25rem;
+    overflow-x: auto;
+  }
+</style>

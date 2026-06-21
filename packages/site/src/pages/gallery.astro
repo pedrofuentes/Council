@@ -1,0 +1,84 @@
+---
+/**
+ * Gallery page - lists pre-built Council panels from the library.
+ * Currently shows an empty state; the registry data will be provided by a later task.
+ */
+import GalleryGrid from "../components/GalleryGrid.astro";
+import type { GalleryEntry } from "../content/gallery/schema";
+import "../styles/global.css";
+
+// Currently empty - the library task will populate this with actual panel data
+const panels: readonly GalleryEntry[] = [];
+
+const base = import.meta.env.BASE_URL;
+const docsHref = `${base}docs/`;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Panel Gallery - Council</title>
+    <meta
+      name="description"
+      content="Browse pre-built Council expert panels covering various disciplines"
+    />
+  </head>
+  <body>
+    <header class="page-header">
+      <h1>Panel Gallery</h1>
+      <p>
+        Browse pre-built expert panels for various disciplines and use cases.
+      </p>
+      <nav>
+        <a href={base}>Home</a>
+        <a href={docsHref}>Documentation</a>
+      </nav>
+    </header>
+    <main>
+      <GalleryGrid entries={panels} />
+    </main>
+  </body>
+</html>
+
+<style>
+  .page-header {
+    padding: 2rem;
+    text-align: center;
+    border-bottom: 1px solid var(--sl-color-gray-5);
+  }
+
+  .page-header h1 {
+    margin: 0 0 0.5rem 0;
+    font-size: 2.5rem;
+  }
+
+  .page-header p {
+    margin: 0 0 1.5rem 0;
+    color: var(--sl-color-gray-2);
+    font-size: 1.125rem;
+  }
+
+  .page-header nav {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+  }
+
+  .page-header nav a {
+    padding: 0.5rem 1rem;
+    border-radius: 0.25rem;
+    text-decoration: none;
+    color: var(--sl-color-text-accent);
+    border: 1px solid var(--sl-color-gray-5);
+  }
+
+  .page-header nav a:hover {
+    background: var(--sl-color-gray-6);
+  }
+
+  main {
+    min-height: 50vh;
+  }
+</style>
