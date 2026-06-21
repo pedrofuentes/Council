@@ -5,6 +5,8 @@ Thanks for your interest in contributing to **Council** (`@council-ai/cli`)!
 > [`AGENTS.md`](./AGENTS.md) is the **authoritative** source for the development
 > workflow, quality gates, and all process rules. This document is a summary —
 > if anything here conflicts with `AGENTS.md`, `AGENTS.md` wins.
+>
+> **Maintainers:** For launch operations, see [`docs/LAUNCH-RUNBOOK.md`](./docs/LAUNCH-RUNBOOK.md).
 
 ## Prerequisites
 
