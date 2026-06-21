@@ -23,135 +23,22 @@ View current config:
 council config get [key]
 ```
 
-## Schema Reference
+## Schema reference
 
-### `defaults`
+:::tip[Canonical reference]
+The complete, authoritative list of every configuration key — its dot-path, type, default, and description — is **auto-generated from the CLI's Zod config schema** so it can never drift from the code. See the **[Config & Environment Reference](/Council/docs/reference/config-reference/)**.
+:::
 
-Global defaults for all panels (overridable per-panel or per-command).
-
-| Key | Type | Range | Default | Description |
-|-----|------|-------|---------|-------------|
-| `model` | string | — | `claude-sonnet-4.5` | Provider-agnostic model ID. |
-| `engine` | `copilot` \| `mock` | — | `copilot` | Engine to use when `--engine` is not specified. |
-| `maxRounds` | integer | 1–20 | 4 | Maximum debate rounds. |
-| `maxExperts` | integer | 2–8 | 3 | Maximum experts per panel. |
-| `maxWordsPerResponse` | integer | 50–2000 | 250 | Soft per-expert response cap (words). |
-
-**Example:**
+All keys are optional and grouped into sections — `defaults`, `telemetry`, `providers`, `expert`, `documents`, `chat`, `conclude`, and `paths`. A typical `config.yaml` overriding a few common settings looks like:
 
 ```yaml
 defaults:
-  model: claude-sonnet-4.5
-  engine: copilot
-  maxRounds: 4
-  maxExperts: 3
-  maxWordsPerResponse: 250
-```
-
-### `telemetry`
-
-Opt-in usage telemetry (command names only, no content).
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `enabled` | boolean | `false` | Enable anonymous usage telemetry. |
-
-**Example:**
-
-```yaml
+  maxRounds: 5
+  maxExperts: 4
+documents:
+  aiExtraction: ask
 telemetry:
   enabled: false
-```
-
-### `expert`
-
-Expert library settings — govern document ingestion and memory decay.
-
-| Key | Type | Range | Default | Description |
-|-----|------|-------|---------|-------------|
-| `backgroundProcessing` | boolean | — | `false` | Enable background document indexing. |
-| `recencyHalfLifeDays` | integer | 1–365 | 90 | Days until memory weights decay by 50%. |
-| `supportedFormats` | string[] | — | See [Document Formats](/Council/docs/reference/document-formats/) | File extensions eligible for ingestion. |
-
-**Example:**
-
-```yaml
-expert:
-  backgroundProcessing: false
-  recencyHalfLifeDays: 90
-  supportedFormats:
-    - .md
-    - .txt
-    - .pdf
-    - .docx
-```
-
-### `documents`
-
-Document extraction and AI-fallback settings.
-
-| Key | Type | Options | Default | Description |
-|-----|------|---------|---------|-------------|
-| `aiExtraction` | enum | `off`, `ask`, `auto` | `off` | AI-based extraction fallback for unknown formats. |
-| `aiExtractionAllowedExtensions` | string[] | — | `[]` | Whitelist of extensions eligible for AI extraction. Empty = all eligible. |
-| `maxFileSizeMB` | integer | 1–500 | 50 | Maximum file size accepted by extractor (MB). |
-
-**Example:**
-
-```yaml
-documents:
-  aiExtraction: off
-  aiExtractionAllowedExtensions: []
-  maxFileSizeMB: 50
-```
-
-### `chat`
-
-Chat-mode context management and summarization.
-
-| Key | Type | Range | Default | Description |
-|-----|------|-------|---------|-------------|
-| `recentTurnCount` | integer | 5–50 | 10 | Recent turns to keep verbatim. |
-| `summaryMaxWords` | integer | 100–2000 | 500 | Max words for historical summary. |
-| `longConversationWarning` | integer | 50–10000 | 500 | Warn user after this many turns. |
-
-**Example:**
-
-```yaml
-chat:
-  recentTurnCount: 10
-  summaryMaxWords: 500
-  longConversationWarning: 500
-```
-
-### `conclude`
-
-Synthesis settings for `council conclude`.
-
-| Key | Type | Range | Default | Description |
-|-----|------|-------|---------|-------------|
-| `maxTranscriptChars` | integer | 1000–1000000 | 50000 | Character budget for transcript in synthesis prompt. |
-
-**Example:**
-
-```yaml
-conclude:
-  maxTranscriptChars: 50000
-```
-
-### `paths`
-
-User-facing data directory paths.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `dataHome` | string | `~/Council` | Directory for expert/panel YAML files. |
-
-**Example:**
-
-```yaml
-paths:
-  dataHome: ~/Council
 ```
 
 ## Editing Config
@@ -177,5 +64,6 @@ council config get
 
 ## Related
 
+- [Config & Environment Reference](/Council/docs/reference/config-reference/) — Auto-generated table of every config key and environment variable
 - [Environment Variables](/Council/docs/reference/environment-variables/)
 - [Data Locations](/Council/docs/reference/data-locations/)
