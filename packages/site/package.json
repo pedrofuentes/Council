@@ -23,6 +23,8 @@
     "build": "astro build",
     "preview": "astro preview",
     "check": "astro check",
+    "docs:generate:commands": "node scripts/generate-command-reference.ts",
+    "docs:check:commands": "node scripts/check-command-reference.ts",
     "test": "vitest run"
   },
   "dependencies": {
