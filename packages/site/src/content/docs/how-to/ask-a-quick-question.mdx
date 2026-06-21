@@ -23,8 +23,10 @@ The `--expert` flag directs the question to a specific expert in the panel.
 
 ## Use a different model
 
+`council ask` uses the panel's configured model. To pick a model per run, use `council convene` with the `--model` flag:
+
 ```bash
-council ask strategy-review "Quick design question" --model gpt-4.1
+council convene strategy-review "Quick design question" --model gpt-4.1
 ```
 
 ## When to use `ask` vs `convene`
