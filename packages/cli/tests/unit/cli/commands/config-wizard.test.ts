@@ -159,6 +159,56 @@ describe("buildConfigCommand config wizard", () => {
     expect(config.conclude.maxTranscriptChars).toBe(120000);
   });
 
+  it("aborts on EOF without changing persisted config", async () => {
+    await updateConfigField("defaults.model", "previous-model");
+    await updateConfigField("defaults.engine", "mock");
+    const before = await loadConfig();
+    const output = createCapturedOutput();
+    const discoverModels = vi.fn(async () => ({
+      models: ["new-model"],
+      source: "live" as const,
+    }));
+
+    const { stderr } = await runConfig(["wizard"], {
+      write: (text) => output.stream.write(text),
+      wizard: {
+        input: createInput(""),
+        output: output.stream,
+        discoverModels,
+      },
+    });
+
+    expect(stderr).toContain("Config wizard aborted before completion.");
+    expect(output.text()).not.toContain("Config wizard complete.");
+    expect(await loadConfig()).toEqual(before);
+  });
+
+  it("leaves persisted config unchanged when a later wizard answer is invalid", async () => {
+    await updateConfigField("defaults.model", "previous-model");
+    await updateConfigField("defaults.engine", "mock");
+    await updateConfigField("defaults.maxRounds", 7);
+    const before = await loadConfig();
+    const output = createCapturedOutput();
+    const discoverModels = vi.fn(async () => ({
+      models: ["new-model"],
+      source: "live" as const,
+    }));
+    const input = createInput(["1", "copilot", "not-a-number"].join("\n") + "\n");
+
+    const { stderr } = await runConfig(["wizard"], {
+      write: (text) => output.stream.write(text),
+      wizard: {
+        input,
+        output: output.stream,
+        discoverModels,
+      },
+    });
+
+    expect(stderr).toContain("Config value for defaults.maxRounds must be an integer.");
+    expect(output.text()).not.toContain("Config wizard complete.");
+    expect(await loadConfig()).toEqual(before);
+  });
+
   it("strips terminal controls from discovered model ids before listing and echoing the selection", async () => {
     const output = createCapturedOutput();
     const rawModel = "gpt\u001B[31m-\u0085evil\u202E";
