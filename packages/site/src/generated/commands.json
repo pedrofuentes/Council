@@ -202,6 +202,21 @@
             ],
             "options": [],
             "subcommands": []
+          },
+          {
+            "name": "wizard",
+            "path": [
+              "council",
+              "config",
+              "wizard"
+            ],
+            "commandPath": "council config wizard",
+            "description": "Guided interactive setup for common config values",
+            "aliases": [],
+            "usage": "[options]",
+            "arguments": [],
+            "options": [],
+            "subcommands": []
           }
         ]
       },

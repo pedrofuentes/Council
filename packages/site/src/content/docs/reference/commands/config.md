@@ -61,3 +61,13 @@ council config set [options] <key> <value>
 | --- | --- | --- |
 | `<key>` | Dot-notation config key | — |
 | `<value>` | Value to write | — |
+
+### council config wizard
+
+Guided interactive setup for common config values
+
+**Usage**
+
+```text
+council config wizard [options]
+```
