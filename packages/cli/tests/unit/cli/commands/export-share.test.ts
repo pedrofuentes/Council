@@ -3,16 +3,17 @@
  *
  * The `share` format renders a polished, launch-ready markdown document
  * with clearly labelled sections in a fixed order:
- *   Title → Prompt → Panel roster → Key Disagreements → Recommendation
- *   → Next Actions → Transcript.
+ *   Title → Prompt → Panel roster → Panel Positions → Recommendation
+ *   → Transcript.
  *
  * It is a PURE projection of the persisted session — no engine/LLM call.
- * Synthesis-derived sections (disagreements, recommendation, next actions)
- * come from a persisted moderator synthesis turn. When that synthesis was
- * never recorded, each such section prints an honest "Not recorded"
- * placeholder rather than fabricating a conclusion.
- *
- * RED at this commit: "share" is not yet an allowed `--format` value.
+ * Council persists only expert/human turns (see `src/memory/persister.ts`)
+ * and `council conclude` prints its synthesis to stdout WITHOUT persisting
+ * it. So `share` cannot include a synthesized recommendation: the
+ * "Panel Positions" section surfaces each panellist's most recent REAL
+ * recorded turn, and the "Recommendation" section is honest about the
+ * missing synthesis — it points at `council conclude` (whose stdout the
+ * user can copy in) rather than implying the export will be populated.
  */
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -28,21 +29,13 @@ import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
 import { TurnRepository } from "../../../../src/memory/repositories/turns.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
 
-const SYNTHESIS_JSON = JSON.stringify({
-  tensions: [
-    "Speed-to-market versus security hardening before launch",
-    "Feature-flag rollout versus a full public launch",
-  ],
-  recommendation: "Ship behind a feature flag after completing the auth checklist.",
-  nextActions: [
-    "Finish the auth checklist",
-    "Configure the launch feature flag",
-    "Schedule a phased rollout",
-  ],
-});
-
-/** Seed a panel whose latest debate INCLUDES a moderator synthesis turn. */
-async function seedConcludedPanel(testHome: string): Promise<{ panelName: string }> {
+/**
+ * Seed a realistic completed panel: two experts (CTO, PM) each speak an
+ * opening turn (round 0) and a closing turn (round 1). NO moderator turn
+ * is persisted — Council never persists one (the persister only writes
+ * expert/human turns), so this mirrors what real panels actually store.
+ */
+async function seedDebatedPanel(testHome: string): Promise<{ panelName: string }> {
   const db = await createDatabase(path.join(testHome, "council.db"));
   try {
     const panelRepo = new PanelRepository(db);
@@ -51,7 +44,7 @@ async function seedConcludedPanel(testHome: string): Promise<{ panelName: string
     const turnRepo = new TurnRepository(db);
 
     const panel = await panelRepo.create({
-      name: "share-concluded",
+      name: "share-debated",
       topic: "Should we ship the MVP?",
       copilotHome: path.join(testHome, "copilot"),
       configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
@@ -75,13 +68,14 @@ async function seedConcludedPanel(testHome: string): Promise<{ panelName: string
       prompt: "Should we ship the MVP?",
       moderator: "round-robin",
     });
+    // Round 0 — opening positions.
     await turnRepo.create({
       debateId: debate.id,
       round: 0,
       seq: 0,
       speakerKind: "expert",
       expertId: cto.id,
-      content: "CTO position: ship now to get user feedback fast.",
+      content: "CTO opening: ship the MVP now to learn from real users.",
     });
     await turnRepo.create({
       debateId: debate.id,
@@ -89,61 +83,24 @@ async function seedConcludedPanel(testHome: string): Promise<{ panelName: string
       seq: 1,
       speakerKind: "expert",
       expertId: pm.id,
-      content: "PM position: hold two weeks for the auth flow.",
+      content: "PM opening: hold two weeks to finish the auth flow.",
     });
-    // Persisted moderator synthesis turn — the recorded "conclusion".
+    // Round 1 — closing positions (each expert's most recent turn).
     await turnRepo.create({
       debateId: debate.id,
       round: 1,
       seq: 0,
-      speakerKind: "moderator",
-      expertId: null,
-      content: SYNTHESIS_JSON,
-    });
-    await debateRepo.update(debate.id, {
-      status: "completed",
-      endedAt: new Date().toISOString(),
-    });
-    return { panelName: panel.name };
-  } finally {
-    await db.destroy();
-  }
-}
-
-/** Seed a panel whose debate has NO synthesis turn (conclude never run). */
-async function seedUnconcludedPanel(testHome: string): Promise<{ panelName: string }> {
-  const db = await createDatabase(path.join(testHome, "council.db"));
-  try {
-    const panelRepo = new PanelRepository(db);
-    const expertRepo = new ExpertRepository(db);
-    const debateRepo = new DebateRepository(db);
-    const turnRepo = new TurnRepository(db);
-
-    const panel = await panelRepo.create({
-      name: "share-unconcluded",
-      topic: "Adopt a monorepo?",
-      copilotHome: path.join(testHome, "copilot"),
-      configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
-    });
-    const arch = await expertRepo.create({
-      panelId: panel.id,
-      slug: "architect",
-      displayName: "Architect",
-      model: "claude-sonnet-4",
-      systemMessage: "You are a software architect.",
-    });
-    const debate = await debateRepo.create({
-      panelId: panel.id,
-      prompt: "Should the team adopt a monorepo?",
-      moderator: "round-robin",
+      speakerKind: "expert",
+      expertId: cto.id,
+      content: "CTO closing: ship behind a feature flag once the auth checklist is done.",
     });
     await turnRepo.create({
       debateId: debate.id,
-      round: 0,
-      seq: 0,
+      round: 1,
+      seq: 1,
       speakerKind: "expert",
-      expertId: arch.id,
-      content: "Architect: a monorepo simplifies cross-package refactors.",
+      expertId: pm.id,
+      content: "PM closing: agreed, provided the auth checklist lands first.",
     });
     await debateRepo.update(debate.id, {
       status: "completed",
@@ -201,7 +158,7 @@ describe("council export --format share", () => {
   });
 
   it("renders all share sections in the required order", async () => {
-    const seed = await seedConcludedPanel(testHome);
+    const seed = await seedDebatedPanel(testHome);
     const cap = captureExport();
     const cmd = buildExportCommand(cap.deps);
     await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "share"]);
@@ -210,32 +167,22 @@ describe("council export --format share", () => {
     const titleIdx = out.indexOf("# Should we ship the MVP?");
     const promptIdx = out.indexOf("## Prompt");
     const panelIdx = out.indexOf("## Panel");
-    const tensionsIdx = out.search(/## Key Disagreements/i);
+    const positionsIdx = out.search(/## Panel Positions/i);
     const recIdx = out.search(/## Recommendation/i);
-    const actionsIdx = out.search(/## Next Actions/i);
     const transcriptIdx = out.indexOf("## Transcript");
 
-    for (const idx of [
-      titleIdx,
-      promptIdx,
-      panelIdx,
-      tensionsIdx,
-      recIdx,
-      actionsIdx,
-      transcriptIdx,
-    ]) {
+    for (const idx of [titleIdx, promptIdx, panelIdx, positionsIdx, recIdx, transcriptIdx]) {
       expect(idx).toBeGreaterThanOrEqual(0);
     }
     expect(titleIdx).toBeLessThan(promptIdx);
     expect(promptIdx).toBeLessThan(panelIdx);
-    expect(panelIdx).toBeLessThan(tensionsIdx);
-    expect(tensionsIdx).toBeLessThan(recIdx);
-    expect(recIdx).toBeLessThan(actionsIdx);
-    expect(actionsIdx).toBeLessThan(transcriptIdx);
+    expect(panelIdx).toBeLessThan(positionsIdx);
+    expect(positionsIdx).toBeLessThan(recIdx);
+    expect(recIdx).toBeLessThan(transcriptIdx);
   });
 
   it("renders the panel roster with each expert and model", async () => {
-    const seed = await seedConcludedPanel(testHome);
+    const seed = await seedDebatedPanel(testHome);
     const cap = captureExport();
     const cmd = buildExportCommand(cap.deps);
     await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "share"]);
@@ -248,61 +195,64 @@ describe("council export --format share", () => {
     expect(out).toContain("claude-sonnet-4");
   });
 
-  it("populates synthesis sections from a recorded moderator synthesis turn", async () => {
-    const seed = await seedConcludedPanel(testHome);
+  it("surfaces each expert's latest recorded position from real turns (not a moderator turn)", async () => {
+    const seed = await seedDebatedPanel(testHome);
     const cap = captureExport();
     const cmd = buildExportCommand(cap.deps);
     await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "share"]);
     const out = cap.read();
 
-    // Recorded tensions, recommendation and next actions appear verbatim.
-    expect(out).toContain("Speed-to-market versus security hardening before launch");
-    expect(out).toContain("Ship behind a feature flag after completing the auth checklist.");
-    expect(out).toContain("Finish the auth checklist");
+    expect(out).toContain("## Panel Positions");
 
-    // The structured synthesis is parsed, NOT dumped as raw JSON.
+    const positionsBlock = out.slice(
+      out.search(/## Panel Positions/i),
+      out.search(/## Recommendation/i),
+    );
+    // Positions surface each expert's MOST RECENT (closing) turn.
+    expect(positionsBlock).toContain(
+      "CTO closing: ship behind a feature flag once the auth checklist is done.",
+    );
+    expect(positionsBlock).toContain(
+      "PM closing: agreed, provided the auth checklist lands first.",
+    );
+    // The opening turns belong to the transcript, not the positions summary.
+    expect(positionsBlock).not.toContain("CTO opening");
+
+    const transcriptBlock = out.slice(out.indexOf("## Transcript"));
+    expect(transcriptBlock).toContain("CTO opening: ship the MVP now to learn from real users.");
+
+    // Never fabricates a synthesis: no "Not recorded" placeholder and no raw
+    // JSON dumped from a (non-existent) moderator turn.
+    expect(out).not.toMatch(/Not recorded/i);
     expect(out).not.toContain('"tensions"');
     expect(out).not.toContain('"recommendation"');
     expect(out).not.toContain('"nextActions"');
-
-    // No "Not recorded" placeholder when a synthesis exists.
-    expect(out).not.toMatch(/Not recorded/i);
-
-    // The synthesis turn is surfaced in its sections, not in the transcript.
-    expect(out).toContain("## Transcript");
-    expect(out).toContain("ship now to get user feedback fast");
   });
 
-  it("prints honest placeholders (never fabricates) when no synthesis was recorded", async () => {
-    const seed = await seedUnconcludedPanel(testHome);
+  it("gives an honest recommendation pointer, never false 'run conclude to populate' guidance", async () => {
+    const seed = await seedDebatedPanel(testHome);
     const cap = captureExport();
     const cmd = buildExportCommand(cap.deps);
     await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "share"]);
     const out = cap.read();
 
-    // Title / prompt / roster / transcript still render from persisted data.
-    expect(out).toContain("# Adopt a monorepo?");
-    expect(out).toContain("Should the team adopt a monorepo?");
-    expect(out).toContain("Architect");
-    expect(out).toContain("a monorepo simplifies cross-package refactors");
+    const recBlock = out.slice(out.search(/## Recommendation/i), out.indexOf("## Transcript"));
 
-    // Each synthesis-derived section honestly reports missing data and
-    // points the user at `council conclude`.
-    const tensionsBlock = out.slice(
-      out.search(/## Key Disagreements/i),
-      out.search(/## Recommendation/i),
-    );
-    const recBlock = out.slice(out.search(/## Recommendation/i), out.search(/## Next Actions/i));
-    const actionsBlock = out.slice(out.search(/## Next Actions/i), out.indexOf("## Transcript"));
+    // Honest, accurate pointer: conclude prints to stdout for the user to copy in.
+    expect(recBlock).toContain("council conclude share-debated");
+    expect(recBlock).toMatch(/stdout/i);
+    expect(recBlock).toMatch(/copy/i);
 
-    for (const block of [tensionsBlock, recBlock, actionsBlock]) {
-      expect(block).toMatch(/Not recorded/i);
-      expect(block).toContain("council conclude");
-    }
+    // The old FALSE guidance must be gone: nothing may claim that running
+    // conclude will populate / synthesize / derive these export sections.
+    expect(out).not.toMatch(/to populate/i);
+    expect(out).not.toMatch(/run `council conclude` first/i);
+    expect(out).not.toContain("synthesize the panel's disagreements");
+    expect(out).not.toContain("derive recommended next actions");
   });
 
   it("is deterministic for identical input", async () => {
-    const seed = await seedConcludedPanel(testHome);
+    const seed = await seedDebatedPanel(testHome);
 
     const first = captureExport();
     await buildExportCommand(first.deps).parseAsync([
@@ -326,7 +276,7 @@ describe("council export --format share", () => {
   });
 
   it("writes share output to a file when --output is given", async () => {
-    const seed = await seedConcludedPanel(testHome);
+    const seed = await seedDebatedPanel(testHome);
     const outPath = path.join(testHome, "share.md");
     const cmd = buildExportCommand({ write: () => undefined, writeError: () => undefined });
     await cmd.parseAsync([
@@ -340,22 +290,23 @@ describe("council export --format share", () => {
     ]);
     const fileContent = await fs.readFile(outPath, "utf8");
     expect(fileContent).toContain("# Should we ship the MVP?");
+    expect(fileContent).toContain("## Panel Positions");
     expect(fileContent).toContain("## Recommendation");
     expect(fileContent).toContain(
-      "Ship behind a feature flag after completing the auth checklist.",
+      "CTO closing: ship behind a feature flag once the auth checklist is done.",
     );
   });
 
   it("does NOT alter the markdown format output (non-breaking)", async () => {
-    const seed = await seedConcludedPanel(testHome);
+    const seed = await seedDebatedPanel(testHome);
     const cap = captureExport();
     const cmd = buildExportCommand(cap.deps);
     await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "markdown"]);
     const out = cap.read();
 
-    // Share-only section headers must not leak into markdown.
-    expect(out).not.toMatch(/## Key Disagreements/i);
-    expect(out).not.toMatch(/## Next Actions/i);
-    expect(out).not.toMatch(/Not recorded — run/i);
+    // Share-only sections and guidance must not leak into markdown.
+    expect(out).not.toMatch(/## Panel Positions/i);
+    expect(out).not.toMatch(/## Recommendation/i);
+    expect(out).not.toMatch(/Not recorded/i);
   });
 });
