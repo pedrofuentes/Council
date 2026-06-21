@@ -3,6 +3,7 @@
  *
  * Subcommands (see `buildProgram()` below for the canonical list):
  *   - `convene`    run a panel debate on a topic (engine: mock | copilot)
+ *   - `review`     run the code-review panel over a diff (file | stdin | git diff)
  *   - `ask`        ask one expert from an existing panel a single question
  *   - `chat`       open a persistent conversational REPL with an expert or panel
  *   - `resume`     reopen a panel: show transcript or continue
@@ -37,6 +38,7 @@ import { buildMemoryCommand } from "../cli/commands/memory.js";
 import { buildModelsCommand } from "../cli/commands/models.js";
 import { buildPanelCommand } from "../cli/commands/panel.js";
 import { buildResumeCommand } from "../cli/commands/resume.js";
+import { buildReviewCommand } from "../cli/commands/review.js";
 import { buildSessionsCommand } from "../cli/commands/sessions.js";
 import { buildTelemetryCommand } from "../cli/commands/telemetry.js";
 import { buildTemplatesCommand } from "../cli/commands/templates.js";
@@ -148,7 +150,7 @@ export function configureOutputEncoding(
 // Command categories for grouped help output
 const COMMAND_CATEGORIES = {
   "Getting Started": ["doctor", "demo", "config", "telemetry", "docs", "update"],
-  Deliberation: ["convene", "resume", "conclude"],
+  Deliberation: ["convene", "resume", "conclude", "review"],
   Conversation: ["ask", "chat"],
   Library: ["expert", "panel", "templates"],
   Inspection: ["sessions", "memory", "export"],
@@ -261,6 +263,7 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
   program.addCommand(buildConveneCommand());
   program.addCommand(buildResumeCommand());
   program.addCommand(buildConcludeCommand());
+  program.addCommand(buildReviewCommand());
   program.addCommand(buildAskCommand());
   program.addCommand(buildChatCommand());
   program.addCommand(buildExpertCommand());

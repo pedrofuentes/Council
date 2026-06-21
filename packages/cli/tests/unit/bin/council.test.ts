@@ -252,23 +252,24 @@ describe("buildProgram", () => {
       expect(commandNames[6]).toBe("convene");
       expect(commandNames[7]).toBe("resume");
       expect(commandNames[8]).toBe("conclude");
+      expect(commandNames[9]).toBe("review");
 
       // Conversation
-      expect(commandNames[9]).toBe("ask");
-      expect(commandNames[10]).toBe("chat");
+      expect(commandNames[10]).toBe("ask");
+      expect(commandNames[11]).toBe("chat");
 
       // Library
-      expect(commandNames[11]).toBe("expert");
-      expect(commandNames[12]).toBe("panel");
-      expect(commandNames[13]).toBe("templates");
+      expect(commandNames[12]).toBe("expert");
+      expect(commandNames[13]).toBe("panel");
+      expect(commandNames[14]).toBe("templates");
 
       // Inspection
-      expect(commandNames[14]).toBe("sessions");
-      expect(commandNames[15]).toBe("memory");
-      expect(commandNames[16]).toBe("export");
+      expect(commandNames[15]).toBe("sessions");
+      expect(commandNames[16]).toBe("memory");
+      expect(commandNames[17]).toBe("export");
 
       // Other commands (not in categories but registered)
-      expect(commandNames[17]).toBe("models");
+      expect(commandNames[18]).toBe("models");
     });
   });
 });
