@@ -22,11 +22,11 @@ Persistent AI expert panels for deliberation and decision-making
 | [`council ask`](./ask/) | Ask one expert from an existing panel a single question. |
 | [`council chat`](./chat/) | Persistent conversation with an expert or panel from the library. |
 | [`council expert`](./expert/) | Manage Council's expert library (create, list, inspect, edit, delete) |
-| [`council panel`](./panel/) | Manage Council panels (create, list, inspect, edit, delete) |
+| [`council panel`](./panel/) | Manage Council panels (create, list, inspect, edit, lint, delete) |
 | [`council templates`](./templates/) | List built-in panel templates |
 | [`council sessions`](./sessions/) | List debate sessions (past runs). |
 | [`council memory`](./memory/) | Manage past debates and what experts remember |
-| [`council export`](./export/) | Export a panel transcript to markdown, json, or adr format |
+| [`council export`](./export/) | Export a panel transcript to markdown, json, adr, or share format |
 | [`council models`](./models/) | List available Copilot models (live discovery with static fallback) |
 
 ## Global options

@@ -163,4 +163,4 @@ council expert train [options] <slug>
 | `--retrain` | Clear the existing profile and rebuild from scratch | — |
 | `--file <path...>` | Copy one or more files into the expert docs dir before training (repeatable) | — |
 | `--url <url...>` | Download one or more URLs into the expert docs dir before training (repeatable); the URL's path must end in a supported file extension — .md, .txt, .html, .pdf, .csv, .docx, etc. — pages without a recognized extension won't be ingested | — |
-| `--engine <kind>` | Engine to use for profile analysis (choices: `mock`, `copilot`) | `copilot` |
+| `--engine <kind>` | Engine to use for profile analysis (choices: `copilot`, `mock`, `openai`, `anthropic`) | `copilot` |

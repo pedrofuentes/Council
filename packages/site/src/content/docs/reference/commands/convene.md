@@ -27,7 +27,7 @@ council convene [options] [topic]
 | `-p, --panel <name>` | Use a built-in or custom panel template (alias: --template). \*\*Omit to let Council auto-design an expert panel from your topic.\*\* | — |
 | `--template <name>` | Use a built-in or custom panel template (alias: --panel). \*\*Omit to let Council auto-design an expert panel from your topic.\*\* | — |
 | `--experts <slugs...>` | Expert slugs from the library (space- or comma-separated, repeatable). Bypasses both --template and auto-compose. | — |
-| `--engine <kind>` | Engine to use (default: from config) (choices: `mock`, `copilot`) | — |
+| `--engine <kind>` | Engine to use (default: from config) (choices: `copilot`, `mock`, `openai`, `anthropic`) | — |
 | `--format <kind>` | Output format (auto picks Ink TUI on TTY, plain text otherwise) (choices: `auto`, `json`, `plain`) | `auto` |
 | `--max-rounds <n>` | Max rounds (freeform mode only) | `4` |
 | `--mode <kind>` | Debate mode (choices: `freeform`, `structured`) | `freeform` |

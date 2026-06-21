@@ -1,11 +1,11 @@
 ---
 title: "council panel"
-description: "Manage Council panels (create, list, inspect, edit, delete)"
+description: "Manage Council panels (create, list, inspect, edit, lint, delete)"
 ---
 
 > DO NOT EDIT — this file is auto-generated from the Council CLI's Commander definitions by `pnpm --filter @council-ai/site docs:generate:commands`. Run that command to regenerate it, and `pnpm --filter @council-ai/site docs:check:commands` to verify it is in sync.
 
-Manage Council panels (create, list, inspect, edit, delete)
+Manage Council panels (create, list, inspect, edit, lint, delete)
 
 ## Usage
 
@@ -121,6 +121,29 @@ council panel edit [options] <name>
 | Argument | Description | Default |
 | --- | --- | --- |
 | `<name>` | Panel name to edit | — |
+
+### council panel lint
+
+Validate panel YAML against the Council quality gate
+
+**Usage**
+
+```text
+council panel lint [options] [files...]
+```
+
+**Arguments**
+
+| Argument | Description | Default |
+| --- | --- | --- |
+| `[files...]` | Panel YAML file(s) to lint | — |
+
+**Options**
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--built-ins` | Lint every bundled built-in panel instead of named files | — |
+| `--official` | Apply the strict official-quality bar (sample-prompt, filler-phrase, and slug-reference warnings become errors) | — |
 
 ### council panel delete
 

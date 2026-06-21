@@ -23,7 +23,7 @@ council conclude [options] [panel]
 
 | Option | Description | Default |
 | --- | --- | --- |
-| `--engine <kind>` | Engine kind (default: from config) (choices: `mock`, `copilot`) | — |
+| `--engine <kind>` | Engine kind (default: from config) (choices: `copilot`, `mock`, `openai`, `anthropic`) | — |
 | `--format <kind>` | Output format (choices: `plain`, `json`) | `plain` |
 | `--timeout <ms>` | Synthesis timeout in milliseconds | `60000` |
 | `--model <model>` | Model to use for synthesis (default: from config) | — |

@@ -20,3 +20,4 @@ council doctor [options]
 | `--online` | No-op; online check now runs by default (backwards compatibility) | — |
 | `--offline` | Skip online model probe | — |
 | `--models` | List available Copilot models (live discovery with static fallback) | — |
+| `--report <format>` | Emit a sanitized diagnostic report for bug reports (json\|markdown) | — |

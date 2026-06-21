@@ -25,7 +25,7 @@ council ask [options] <panel> [question]
 | Option | Description | Default |
 | --- | --- | --- |
 | `--prompt-file <path>` | Read the question VERBATIM from a file (or \`-\` for stdin) instead of the positional argument. Bypasses the shell so \`$\`, backticks, and values like \`$180K\` survive intact. Mutually exclusive with the positional \<question\>. | — |
-| `--engine <kind>` | Engine to use (default: from config) (choices: `mock`, `copilot`) | — |
+| `--engine <kind>` | Engine to use (default: from config) (choices: `copilot`, `mock`, `openai`, `anthropic`) | — |
 | `--expert <slug>` | Expert slug to ask (default: first expert in the panel) | — |
 | `--format <kind>` | Output format (choices: `auto`, `json`, `plain`) | `auto` |
 | `--max-words <n>` | Soft per-response word cap | `250` |

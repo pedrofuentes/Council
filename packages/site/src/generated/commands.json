@@ -72,6 +72,15 @@
             "optional": false,
             "variadic": false,
             "negate": false
+          },
+          {
+            "flags": "--report <format>",
+            "description": "Emit a sanitized diagnostic report for bug reports (json|markdown)",
+            "long": "--report",
+            "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false
           }
         ],
         "subcommands": []
@@ -449,8 +458,10 @@
             "variadic": false,
             "negate": false,
             "choices": [
+              "copilot",
               "mock",
-              "copilot"
+              "openai",
+              "anthropic"
             ]
           },
           {
@@ -661,8 +672,10 @@
             "variadic": false,
             "negate": false,
             "choices": [
+              "copilot",
               "mock",
-              "copilot"
+              "openai",
+              "anthropic"
             ]
           },
           {
@@ -744,8 +757,10 @@
             "variadic": false,
             "negate": false,
             "choices": [
+              "copilot",
               "mock",
-              "copilot"
+              "openai",
+              "anthropic"
             ]
           },
           {
@@ -829,8 +844,10 @@
             "variadic": false,
             "negate": false,
             "choices": [
+              "copilot",
               "mock",
-              "copilot"
+              "openai",
+              "anthropic"
             ]
           },
           {
@@ -899,8 +916,10 @@
             "variadic": false,
             "negate": false,
             "choices": [
+              "copilot",
               "mock",
-              "copilot"
+              "openai",
+              "anthropic"
             ]
           },
           {
@@ -1261,8 +1280,10 @@
                 "negate": false,
                 "defaultValue": "copilot",
                 "choices": [
+                  "copilot",
                   "mock",
-                  "copilot"
+                  "openai",
+                  "anthropic"
                 ]
               }
             ],
@@ -1277,7 +1298,7 @@
           "panel"
         ],
         "commandPath": "council panel",
-        "description": "Manage Council panels (create, list, inspect, edit, delete)",
+        "description": "Manage Council panels (create, list, inspect, edit, lint, delete)",
         "aliases": [
           "panels"
         ],
@@ -1493,6 +1514,48 @@
               }
             ],
             "options": [],
+            "subcommands": []
+          },
+          {
+            "name": "lint",
+            "path": [
+              "council",
+              "panel",
+              "lint"
+            ],
+            "commandPath": "council panel lint",
+            "description": "Validate panel YAML against the Council quality gate",
+            "aliases": [],
+            "usage": "[options] [files...]",
+            "arguments": [
+              {
+                "name": "files",
+                "display": "[files...]",
+                "description": "Panel YAML file(s) to lint",
+                "required": false,
+                "variadic": true
+              }
+            ],
+            "options": [
+              {
+                "flags": "--built-ins",
+                "description": "Lint every bundled built-in panel instead of named files",
+                "long": "--built-ins",
+                "required": false,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              },
+              {
+                "flags": "--official",
+                "description": "Apply the strict official-quality bar (sample-prompt, filler-phrase, and slug-reference warnings become errors)",
+                "long": "--official",
+                "required": false,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              }
+            ],
             "subcommands": []
           },
           {
@@ -1938,7 +2001,7 @@
           "export"
         ],
         "commandPath": "council export",
-        "description": "Export a panel transcript to markdown, json, or adr format",
+        "description": "Export a panel transcript to markdown, json, adr, or share format",
         "aliases": [],
         "usage": "[options] <panel>",
         "arguments": [
@@ -1963,7 +2026,8 @@
             "choices": [
               "markdown",
               "json",
-              "adr"
+              "adr",
+              "share"
             ]
           },
           {
