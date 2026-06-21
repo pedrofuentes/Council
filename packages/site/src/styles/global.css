@@ -1,0 +1,12 @@
+/* Minimal placeholder global styles. Real theming is owned by a later task. */
+:root {
+  color-scheme: light dark;
+}
+
+.landing {
+  margin-inline: auto;
+  max-width: 40rem;
+  padding: 2rem 1rem;
+  font-family: system-ui, sans-serif;
+  line-height: 1.6;
+}

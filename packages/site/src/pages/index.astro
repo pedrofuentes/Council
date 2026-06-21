@@ -1,0 +1,26 @@
+---
+import "../styles/global.css";
+
+// `BASE_URL` is Astro's configured base path ("/Council/"), so internal links
+// resolve correctly on the GitHub Pages project site. Real marketing copy and
+// components are owned by a separate task — this is a minimal placeholder.
+const base = import.meta.env.BASE_URL;
+const docsHref = `${base}docs/`;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Council</title>
+  </head>
+  <body>
+    <main class="landing">
+      <h1>Council</h1>
+      <p>Persistent AI expert panels that deliberate, disagree, and remember.</p>
+      <pre><code>npm i -g @council-ai/cli</code></pre>
+      <p><a href={docsHref}>Read the documentation</a></p>
+    </main>
+  </body>
+</html>
