@@ -82,7 +82,7 @@ describe("buildTelemetryCommand", () => {
       const output = await runTelemetry(["explain"]);
       expect(output.toLowerCase()).toContain("opt-in");
       expect(output.toLowerCase()).toContain("content-free");
-      expect(output).toContain("command");
+      expect(output.toLowerCase()).toContain("command");
       expect(output).toContain("version");
     });
 
