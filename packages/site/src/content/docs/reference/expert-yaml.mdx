@@ -11,7 +11,7 @@ Expert definitions specify the static profile of a panel participant. Store them
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `slug` | string | Yes | Short identifier scoped to the panel (e.g., `cto`, `skeptic`). Lowercase, digits, hyphens; must start with a letter. |
+| `slug` | string | Yes | Short identifier scoped to the panel (e.g., `cto`, `skeptic`, `3d-modeler`). Lowercase letters, digits, and hyphens; must start with a letter or digit; maximum 64 characters. |
 | `displayName` | string | Yes | Name shown in transcripts (e.g., `Dahlia Renner (CTO)`). |
 | `role` | string | Yes | One-line role descriptor. |
 | `expertise` | object | Yes | Evidence weights and prior knowledge. See [Expertise Object](#expertise-object). |
@@ -36,7 +36,7 @@ Expert definitions specify the static profile of a panel participant. Store them
 ## Constraints
 
 - **Section marker injection**: Fields like `displayName`, `role`, `personality`, and `epistemicStance` **must not** contain patterns like `[1]`, `[2]` (these are reserved for the internal prompt structure).
-- **Slug pattern**: `^[a-z][a-z0-9-]*$` (lowercase, digits, hyphens; must start with a letter).
+- **Slug pattern**: `^[a-z0-9][a-z0-9-]{0,63}$` (lowercase letters, digits, and hyphens; must start with a letter or digit; maximum 64 characters).
 - **Unique slugs**: Within a panel, all expert slugs must be unique.
 
 ## Example
