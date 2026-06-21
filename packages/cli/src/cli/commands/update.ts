@@ -9,7 +9,7 @@
  * fixed literal package spec, so no untrusted input is ever interpolated into
  * the spawned command.
  */
-import { execFile } from "node:child_process";
+import { execFile, type ExecFileException } from "node:child_process";
 
 import { Command } from "commander";
 
@@ -17,7 +17,7 @@ import packageJson from "../../../package.json" with { type: "json" };
 
 import { fetchLatestVersion, isNewerVersion } from "../../core/version/index.js";
 import { CliUserError } from "../cli-user-error.js";
-import { EXIT_INTERNAL_ERROR } from "../exit-codes.js";
+import { EXIT_INTERNAL_ERROR, EXIT_NETWORK_ERROR } from "../exit-codes.js";
 import { createSpinner, type Spinner, type SpinnerOptions } from "../renderers/spinner.js";
 
 import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
@@ -37,16 +37,58 @@ const PACKAGE_MANAGERS: readonly PackageManager[] = ["npm", "pnpm", "yarn", "bun
 const PACKAGE_SPEC = "@council-ai/cli@latest";
 
 /** Result of running the package manager's global-install command. */
-export interface UpgradeRunResult {
-  readonly exitCode: number;
-  readonly stdout: string;
-  readonly stderr: string;
-}
+export type UpgradeRunResult =
+  | {
+      /** Process exited normally (possibly with a non-zero status). */
+      readonly kind?: "exit";
+      readonly exitCode: number;
+      readonly stdout: string;
+      readonly stderr: string;
+    }
+  | {
+      /** Parent killed the child after exceeding the configured timeout. */
+      readonly kind: "timeout";
+      readonly stdout: string;
+      readonly stderr: string;
+    }
+  | {
+      /** Child was terminated by a signal (e.g. an external SIGKILL). */
+      readonly kind: "signal";
+      readonly signal: string;
+      readonly stdout: string;
+      readonly stderr: string;
+    }
+  | {
+      /** Child produced more output than `maxBuffer` allows. */
+      readonly kind: "maxBuffer";
+      readonly stdout: string;
+      readonly stderr: string;
+    };
 
 /**
- * Runs the package manager with the given argv array and resolves with its
- * exit code and captured output. Rejects only when the process cannot be
- * spawned at all (e.g. the binary is missing).
+ * How long to wait for a global install before giving up. A real
+ * `npm i -g` is usually well under a minute, but slow networks and large
+ * dependency trees can take longer — five minutes is generous without
+ * letting a wedged package manager hang `council update` forever.
+ */
+export const UPDATE_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * Upper bound on captured stdout/stderr. Node's `execFile` default is 1 MiB,
+ * which a chatty `npm i -g` can exceed — at which point Node kills the child
+ * and reports failure even though the install would have succeeded. 64 MiB is
+ * far above any realistic global-install transcript.
+ */
+export const UPDATE_MAX_BUFFER = 64 * 1024 * 1024;
+
+/** Node's error code when a child exceeds the configured `maxBuffer`. */
+const MAXBUFFER_ERROR_CODE = "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+
+/**
+ * Runs the package manager with the given argv array and resolves with a
+ * classified outcome (clean/non-zero exit, timeout, signal kill, or maxBuffer
+ * overflow). Rejects only when the process cannot be spawned at all (e.g. the
+ * binary is missing).
  */
 export type UpgradeRunner = (
   pm: PackageManager,
@@ -124,22 +166,65 @@ export function buildUpgradeArgs(pm: PackageManager): readonly string[] {
   }
 }
 
+/**
+ * Classifies the result of an `execFile` callback into a discriminated
+ * {@link UpgradeRunResult}. Throws the original error only for genuine spawn
+ * failures (e.g. `ENOENT` when the package manager is not installed), so
+ * callers can report "not installed" without mislabelling a signal/maxBuffer
+ * termination.
+ */
+export function classifyExecFileResult(
+  error: ExecFileException | null,
+  stdout: string,
+  stderr: string,
+): UpgradeRunResult {
+  if (error === null) {
+    return { kind: "exit", exitCode: 0, stdout, stderr };
+  }
+
+  const code = error.code;
+  if (typeof code === "number") {
+    return { kind: "exit", exitCode: code, stdout, stderr };
+  }
+
+  if (code === MAXBUFFER_ERROR_CODE) {
+    return { kind: "maxBuffer", stdout, stderr };
+  }
+
+  const signal = error.signal ?? null;
+  if (signal !== null) {
+    // `killed` is true only when the parent sent the signal — i.e. our own
+    // timeout fired. An external SIGKILL/SIGTERM leaves `killed` false.
+    if (error.killed === true) {
+      return { kind: "timeout", stdout, stderr };
+    }
+    return { kind: "signal", signal, stdout, stderr };
+  }
+
+  // No numeric code and no signal → the process could not be spawned at all.
+  throw error;
+}
+
 const defaultRunner: UpgradeRunner = (pm, args) =>
   new Promise<UpgradeRunResult>((resolve, reject) => {
-    execFile(pm, [...args], { windowsHide: true, encoding: "utf8" }, (error, stdout, stderr) => {
-      if (error === null) {
-        resolve({ exitCode: 0, stdout, stderr });
-        return;
-      }
-      const code = (error as NodeJS.ErrnoException).code;
-      if (typeof code === "number") {
-        resolve({ exitCode: code, stdout, stderr });
-        return;
-      }
-      // No numeric exit code → the process could not be spawned at all
-      // (e.g. ENOENT when the package manager is not installed).
-      reject(error);
-    });
+    execFile(
+      pm,
+      [...args],
+      {
+        windowsHide: true,
+        encoding: "utf8",
+        timeout: UPDATE_TIMEOUT_MS,
+        maxBuffer: UPDATE_MAX_BUFFER,
+        killSignal: "SIGTERM",
+      },
+      (error, stdout, stderr) => {
+        try {
+          resolve(classifyExecFileResult(error, stdout, stderr));
+        } catch (spawnError) {
+          reject(spawnError instanceof Error ? spawnError : new Error(String(spawnError)));
+        }
+      },
+    );
   });
 
 export interface UpdateCommandDeps {
@@ -160,11 +245,20 @@ interface UpdateOptions {
   readonly dryRun?: boolean;
 }
 
-function failUpdate(writeError: Writer, message: string): never {
+function failUpdate(
+  writeError: Writer,
+  message: string,
+  exitCode: number = EXIT_INTERNAL_ERROR,
+): never {
   writeError(`Error: ${message}\n`);
   const err = new CliUserError("council update failed");
-  err.exitCode = EXIT_INTERNAL_ERROR;
+  err.exitCode = exitCode;
   throw err;
+}
+
+/** Picks the most useful captured output to show the user, with a fallback. */
+function outputDetail(stdout: string, stderr: string, fallback: string): string {
+  return stderr.trim() || stdout.trim() || fallback;
 }
 
 export function buildUpdateCommand(deps: UpdateCommandDeps = {}): Command {
@@ -205,8 +299,11 @@ export function buildUpdateCommand(deps: UpdateCommandDeps = {}): Command {
 
       const latest = await fetchLatest();
       if (latest === null) {
-        writeError("Couldn't check for the latest version. Please try again later.\n");
-        return;
+        failUpdate(
+          writeError,
+          "couldn't check for updates \u2014 the package registry is unreachable. Please check your connection and try again later.",
+          EXIT_NETWORK_ERROR,
+        );
       }
 
       if (!isNewerVersion(currentVersion, latest)) {
@@ -244,10 +341,49 @@ export function buildUpdateCommand(deps: UpdateCommandDeps = {}): Command {
         spinner.stop();
       }
 
+      if (result.kind === "timeout") {
+        const minutes = Math.round(UPDATE_TIMEOUT_MS / 60000);
+        failUpdate(
+          writeError,
+          `"${commandLine}" timed out after ${minutes} minute(s) and was terminated. The package manager may be stuck or the network may be slow.\n${outputDetail(
+            result.stdout,
+            result.stderr,
+            "no output was captured before the timeout",
+          )}`,
+        );
+      }
+
+      if (result.kind === "signal") {
+        failUpdate(
+          writeError,
+          `"${commandLine}" was terminated by signal ${result.signal} before it finished.\n${outputDetail(
+            result.stdout,
+            result.stderr,
+            "no output was captured before the process was killed",
+          )}`,
+        );
+      }
+
+      if (result.kind === "maxBuffer") {
+        failUpdate(
+          writeError,
+          `"${commandLine}" produced more output than Council can buffer and was terminated. Try running the upgrade command manually.\n${outputDetail(
+            result.stdout,
+            result.stderr,
+            "no output was captured",
+          )}`,
+        );
+      }
+
       if (result.exitCode !== 0) {
-        const detail =
-          result.stderr.trim() || result.stdout.trim() || `exited with code ${result.exitCode}`;
-        failUpdate(writeError, `"${commandLine}" failed:\n${detail}`);
+        failUpdate(
+          writeError,
+          `"${commandLine}" failed:\n${outputDetail(
+            result.stdout,
+            result.stderr,
+            `exited with code ${result.exitCode}`,
+          )}`,
+        );
       }
 
       write(

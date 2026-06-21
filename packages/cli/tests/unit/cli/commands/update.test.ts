@@ -7,9 +7,11 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
+import { CliUserError } from "../../../../src/cli/cli-user-error.js";
 import {
   buildUpdateCommand,
   buildUpgradeArgs,
+  classifyExecFileResult,
   detectPackageManager,
   isPackageManager,
   type PackageManager,
@@ -17,6 +19,7 @@ import {
   type UpgradeRunResult,
   type UpgradeRunner,
 } from "../../../../src/cli/commands/update.js";
+import { EXIT_NETWORK_ERROR } from "../../../../src/cli/exit-codes.js";
 
 interface RunResult {
   readonly stdout: string;
@@ -283,5 +286,140 @@ describe("council update — command behavior", () => {
     });
     expect(stderr).toMatch(/ENOENT/);
     expect(error).toBeInstanceOf(Error);
+  });
+
+  it("exits with a non-zero network error code when the registry is unreachable", async () => {
+    const runner = okRunner();
+    const { stderr, error } = await runUpdate([], {
+      runner,
+      fetchLatest: vi.fn(async () => null),
+      currentVersion: "0.1.0",
+    });
+    expect(stderr).toMatch(/could ?n.t check/i);
+    expect(runner).not.toHaveBeenCalled();
+    expect(error).toBeInstanceOf(CliUserError);
+    expect((error as CliUserError).exitCode).toBe(EXIT_NETWORK_ERROR);
+  });
+
+  it("reports a timeout distinctly and keeps the captured output", async () => {
+    const runner: UpgradeRunner = vi.fn(async () => ({
+      kind: "timeout",
+      stdout: "fetching packages...",
+      stderr: "still installing",
+    }));
+    const { stderr, error } = await runUpdate(["--yes"], {
+      runner,
+      fetchLatest: vi.fn(async () => "0.2.0"),
+      currentVersion: "0.1.0",
+      execPath: "/usr/local/bin/council",
+    });
+    expect(stderr).toMatch(/timed out/i);
+    expect(stderr).not.toMatch(/not installed/i);
+    expect(stderr).toMatch(/still installing|fetching packages/);
+    expect(error).toBeInstanceOf(Error);
+  });
+
+  it("classifies a signal kill (not 'not installed') and keeps the captured output", async () => {
+    const runner: UpgradeRunner = vi.fn(async () => ({
+      kind: "signal",
+      signal: "SIGKILL",
+      stdout: "",
+      stderr: "child was killed",
+    }));
+    const { stderr, error } = await runUpdate(["--yes"], {
+      runner,
+      fetchLatest: vi.fn(async () => "0.2.0"),
+      currentVersion: "0.1.0",
+      execPath: "/usr/local/bin/council",
+    });
+    expect(stderr).toMatch(/signal/i);
+    expect(stderr).toMatch(/SIGKILL/);
+    expect(stderr).not.toMatch(/not installed/i);
+    expect(stderr).toMatch(/child was killed/);
+    expect(error).toBeInstanceOf(Error);
+  });
+
+  it("classifies a maxBuffer overflow and keeps the captured output", async () => {
+    const runner: UpgradeRunner = vi.fn(async () => ({
+      kind: "maxBuffer",
+      stdout: "lots of progress output",
+      stderr: "",
+    }));
+    const { stderr, error } = await runUpdate(["--yes"], {
+      runner,
+      fetchLatest: vi.fn(async () => "0.2.0"),
+      currentVersion: "0.1.0",
+      execPath: "/usr/local/bin/council",
+    });
+    expect(stderr).toMatch(/output/i);
+    expect(stderr).not.toMatch(/not installed/i);
+    expect(stderr).toMatch(/lots of progress output/);
+    expect(error).toBeInstanceOf(Error);
+  });
+});
+
+describe("classifyExecFileResult", () => {
+  it("treats a null error as a clean exit", () => {
+    expect(classifyExecFileResult(null, "ok", "")).toEqual({
+      kind: "exit",
+      exitCode: 0,
+      stdout: "ok",
+      stderr: "",
+    });
+  });
+
+  it("maps a numeric error code to a non-zero exit", () => {
+    const err = Object.assign(new Error("Command failed"), { code: 1 });
+    expect(classifyExecFileResult(err, "", "EACCES")).toEqual({
+      kind: "exit",
+      exitCode: 1,
+      stdout: "",
+      stderr: "EACCES",
+    });
+  });
+
+  it("classifies a maxBuffer overflow by its error code", () => {
+    const err = Object.assign(new Error("stdout maxBuffer length exceeded"), {
+      code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+      killed: true,
+      signal: "SIGTERM",
+    });
+    expect(classifyExecFileResult(err, "huge", "")).toEqual({
+      kind: "maxBuffer",
+      stdout: "huge",
+      stderr: "",
+    });
+  });
+
+  it("classifies a parent-initiated kill (timeout) when killed is true", () => {
+    const err = Object.assign(new Error("Command failed"), {
+      code: null,
+      signal: "SIGTERM",
+      killed: true,
+    });
+    expect(classifyExecFileResult(err, "partial", "")).toEqual({
+      kind: "timeout",
+      stdout: "partial",
+      stderr: "",
+    });
+  });
+
+  it("classifies an external signal kill when killed is false", () => {
+    const err = Object.assign(new Error("Command failed"), {
+      code: null,
+      signal: "SIGKILL",
+      killed: false,
+    });
+    expect(classifyExecFileResult(err, "", "boom")).toEqual({
+      kind: "signal",
+      signal: "SIGKILL",
+      stdout: "",
+      stderr: "boom",
+    });
+  });
+
+  it("throws a spawn failure (ENOENT) so callers can report 'not installed'", () => {
+    const err = Object.assign(new Error("spawn npm ENOENT"), { code: "ENOENT" });
+    expect(() => classifyExecFileResult(err, "", "")).toThrow(/ENOENT/);
   });
 });
