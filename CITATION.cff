@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Council"
+type: software
+authors:
+  - family-names: "Fuentes"
+    given-names: "Pedro"
+repository-code: "https://github.com/pedrofuentes/Council"
+license: MIT
