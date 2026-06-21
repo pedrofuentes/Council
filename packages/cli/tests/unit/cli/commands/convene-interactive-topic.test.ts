@@ -113,6 +113,39 @@ describe("convene interactive topic input", () => {
     expect(stderr).toMatch(/When running in a terminal/i);
   });
 
+  it("does not prompt in quiet mode when no topic is provided", async () => {
+    restoreStdinIsTTY = setStdinIsTTY(true);
+    let providerCalls = 0;
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: () => undefined,
+      topicInputProvider: async () => {
+        providerCalls += 1;
+        throw new Error("topicInputProvider should not be called");
+      },
+    });
+
+    let thrown: unknown;
+    try {
+      await cmd.parseAsync([
+        "node",
+        "council-convene",
+        "--quiet",
+        "--template",
+        "code-review",
+        "--engine",
+        "mock",
+      ]);
+    } catch (error: unknown) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(CliUserError);
+    expect(thrown).toMatchObject({ message: expect.stringMatching(/no topic provided/i) });
+    expect(providerCalls).toBe(0);
+  });
+
   it("propagates provider aborts as CliUserError", async () => {
     restoreStdinIsTTY = setStdinIsTTY(true);
     const cmd = buildConveneCommand({
