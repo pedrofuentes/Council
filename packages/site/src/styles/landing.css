@@ -1,0 +1,537 @@
+/**
+ * Landing page styles — scoped to the marketing splash homepage.
+ *
+ * This stylesheet is imported only by `src/content/docs/index.mdx`, so its
+ * rules ship only on the homepage bundle and never leak into the docs.
+ *
+ * All colors are consumed from the Council brand tokens (`tokens.css`); no new
+ * colors are introduced here. Because several brand tokens flip between light
+ * and dark themes (e.g. `--council-color-text` is ink in light mode and paper
+ * in dark mode), the high-emphasis surfaces below use that inversion on
+ * purpose to keep contrast well above WCAG AA in both themes.
+ */
+
+/* ---------------------------------------------------------------------------
+ * Brandize the Starlight splash hero call-to-action buttons.
+ * Starlight renders these outside the markdown content region, so they are
+ * targeted globally — safe because this file only loads on the homepage.
+ * Unlayered rules here intentionally win over Starlight's @layer styles.
+ * ------------------------------------------------------------------------- */
+.hero .sl-link-button.primary {
+  background: var(--council-color-text);
+  border-color: var(--council-color-text);
+  color: var(--council-color-bg);
+}
+
+.hero .sl-link-button.primary:hover,
+.hero .sl-link-button.primary:focus-visible {
+  background: var(--council-color-text-muted);
+  border-color: var(--council-color-text-muted);
+  color: var(--council-color-bg);
+}
+
+.hero .sl-link-button.secondary {
+  border-color: var(--council-color-primary);
+  color: var(--council-color-text);
+}
+
+.hero .sl-link-button.secondary:hover,
+.hero .sl-link-button.secondary:focus-visible {
+  background: color-mix(in srgb, var(--council-color-primary) 16%, transparent);
+  border-color: var(--council-color-primary);
+}
+
+.hero .tagline {
+  color: var(--council-color-text-muted);
+  max-width: 46ch;
+}
+
+/* ---------------------------------------------------------------------------
+ * Layout shell
+ * ------------------------------------------------------------------------- */
+.council-landing {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(3.5rem, 8vw, 6.5rem);
+  max-width: 64rem;
+  margin-inline: auto;
+  padding-block: clamp(1rem, 4vw, 3rem);
+  font-size: var(--sl-text-base);
+  line-height: 1.6;
+}
+
+.council-landing-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.council-eyebrow {
+  margin: 0;
+  font-family: var(--council-font-mono);
+  font-size: var(--sl-text-xs);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--council-color-text-muted);
+}
+
+.council-section-title {
+  margin: 0;
+  font-size: clamp(var(--sl-text-2xl), calc(1rem + 2.4vw), var(--sl-text-4xl));
+  font-weight: 600;
+  line-height: 1.15;
+  color: var(--council-color-text);
+}
+
+.council-section-intro {
+  margin: 0;
+  max-width: 60ch;
+  color: var(--council-color-text-muted);
+}
+
+.council-section-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+/* ---------------------------------------------------------------------------
+ * Lede — the supporting line + provider framing under the hero
+ * ------------------------------------------------------------------------- */
+.council-lede {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  align-items: center;
+  text-align: center;
+}
+
+.council-lede p {
+  margin: 0;
+  max-width: 58ch;
+  font-size: clamp(var(--sl-text-lg), calc(0.9rem + 0.6vw), var(--sl-text-xl));
+  color: var(--council-color-text);
+}
+
+.council-provider-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.85rem;
+  border: 1px solid color-mix(in srgb, var(--council-color-primary) 35%, transparent);
+  border-radius: 999rem;
+  font-family: var(--council-font-mono);
+  font-size: var(--sl-text-xs);
+  color: var(--council-color-text-muted);
+}
+
+.council-provider-note .dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--council-color-primary);
+}
+
+/* ---------------------------------------------------------------------------
+ * Terminal window
+ * ------------------------------------------------------------------------- */
+.council-terminal {
+  border-radius: 0.85rem;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--council-color-primary) 30%, transparent);
+  box-shadow: 0 1.5rem 3rem -1.5rem rgba(0, 0, 0, 0.4);
+  background: var(--council-color-surface);
+}
+
+.council-terminal-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 1rem;
+  background: color-mix(in srgb, var(--council-color-text) 6%, var(--council-color-surface));
+  border-bottom: 1px solid color-mix(in srgb, var(--council-color-text) 10%, transparent);
+}
+
+.council-terminal-dots {
+  display: inline-flex;
+  gap: 0.4rem;
+}
+
+.council-terminal-dots span {
+  width: 0.72rem;
+  height: 0.72rem;
+  border-radius: 50%;
+  display: block;
+}
+
+.council-terminal-dots span:nth-child(1) {
+  background: var(--council-color-accent-coral);
+}
+.council-terminal-dots span:nth-child(2) {
+  background: var(--council-color-accent-amber);
+}
+.council-terminal-dots span:nth-child(3) {
+  background: var(--council-color-accent-lavender);
+}
+
+.council-terminal-title {
+  font-family: var(--council-font-mono);
+  font-size: var(--sl-text-xs);
+  color: var(--council-color-text-muted);
+}
+
+.council-terminal pre {
+  margin: 0;
+  padding: 1.25rem 1.35rem;
+  overflow-x: auto;
+  background: var(--council-color-surface);
+  color: var(--council-color-text);
+  font-family: var(--council-font-mono);
+  font-size: var(--sl-text-sm);
+  line-height: 1.7;
+  tab-size: 2;
+}
+
+.council-terminal code {
+  font-family: inherit;
+  color: inherit;
+  background: none;
+}
+
+.council-terminal .term-comment {
+  color: var(--council-color-text-muted);
+}
+
+.council-terminal .term-prompt {
+  color: var(--council-color-text-muted);
+  user-select: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * Feature cards
+ * ------------------------------------------------------------------------- */
+.council-card-grid {
+  display: grid;
+  gap: 1.1rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 38rem) {
+  .council-card-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.council-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 1.4rem 1.4rem 1.5rem;
+  border: 1px solid color-mix(in srgb, var(--council-color-primary) 22%, transparent);
+  border-radius: 0.85rem;
+  background: var(--council-color-surface);
+  box-shadow: 0 1rem 2rem -1.5rem rgba(0, 0, 0, 0.35);
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    border-color 160ms ease;
+}
+
+.council-card::before {
+  content: "";
+  position: absolute;
+  inset-block: 1.4rem auto;
+  inset-inline-start: 0;
+  width: 3px;
+  height: 1.6rem;
+  border-radius: 0 3px 3px 0;
+  background: var(--council-color-primary);
+}
+
+.council-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 1.4rem 2.4rem -1.4rem rgba(0, 0, 0, 0.45);
+  border-color: color-mix(in srgb, var(--council-color-primary) 45%, transparent);
+}
+
+.council-card h3 {
+  margin: 0;
+  font-size: var(--sl-text-lg);
+  font-weight: 600;
+  color: var(--council-color-text);
+}
+
+.council-card p {
+  margin: 0;
+  color: var(--council-color-text-muted);
+  font-size: var(--sl-text-sm);
+}
+
+/* ---------------------------------------------------------------------------
+ * How it works — numbered steps
+ * ------------------------------------------------------------------------- */
+.council-steps {
+  display: grid;
+  gap: 1.1rem;
+  grid-template-columns: 1fr;
+  counter-reset: council-step;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+@media (min-width: 48rem) {
+  .council-steps {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.council-step {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 1.3rem;
+  border: 1px solid color-mix(in srgb, var(--council-color-text-muted) 20%, transparent);
+  border-radius: 0.85rem;
+  background: color-mix(in srgb, var(--council-color-surface) 60%, transparent);
+}
+
+.council-step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 50%;
+  background: var(--council-color-text);
+  color: var(--council-color-bg);
+  box-shadow: 0 0 0 1px var(--council-color-primary);
+  font-family: var(--council-font-mono);
+  font-size: var(--sl-text-base);
+  font-weight: 600;
+}
+
+.council-step h3 {
+  margin: 0;
+  font-size: var(--sl-text-lg);
+  font-weight: 600;
+  color: var(--council-color-text);
+}
+
+.council-step p {
+  margin: 0;
+  color: var(--council-color-text-muted);
+  font-size: var(--sl-text-sm);
+}
+
+/* ---------------------------------------------------------------------------
+ * Use cases
+ * ------------------------------------------------------------------------- */
+.council-usecases {
+  display: grid;
+  gap: 0.9rem;
+  grid-template-columns: 1fr;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+@media (min-width: 38rem) {
+  .council-usecases {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.council-usecase {
+  display: flex;
+  gap: 0.85rem;
+  align-items: flex-start;
+  padding: 1.05rem 1.15rem;
+  border-radius: 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--council-color-text-muted) 16%, transparent);
+}
+
+.council-usecase .marker {
+  flex-shrink: 0;
+  margin-top: 0.35rem;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 2px;
+  transform: rotate(45deg);
+  background: var(--council-color-primary);
+}
+
+.council-usecase-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.council-usecase-body strong {
+  display: block;
+  color: var(--council-color-text);
+  font-weight: 600;
+}
+
+.council-usecase-body span {
+  color: var(--council-color-text-muted);
+  font-size: var(--sl-text-sm);
+}
+
+/* ---------------------------------------------------------------------------
+ * Closing call-to-action
+ * ------------------------------------------------------------------------- */
+.council-closing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.4rem;
+  text-align: center;
+  padding: clamp(2rem, 5vw, 3.25rem) 1.5rem;
+  border: 1px solid color-mix(in srgb, var(--council-color-primary) 28%, transparent);
+  border-radius: 1.1rem;
+  background:
+    radial-gradient(
+      120% 120% at 50% 0%,
+      color-mix(in srgb, var(--council-color-primary) 12%, transparent),
+      transparent 60%
+    ),
+    var(--council-color-surface);
+}
+
+.council-closing .council-section-title {
+  max-width: 24ch;
+}
+
+/* The shared BrandMark component hard-codes a root-absolute logo path
+   (`/brand/...`) that omits the configured site base, so its emblem 404s under
+   `/Council/`. We reuse BrandMark for its wordmark + typography and repaint the
+   emblem from the correct base path until BrandMark itself becomes base-aware.
+   The `.council-landing` prefix raises specificity above BrandMark's own
+   scoped `.council-logo-emblem` rule so these win regardless of bundle order. */
+.council-landing .council-closing .council-logo-emblem {
+  display: none;
+}
+
+.council-landing .council-closing .council-brandmark::before {
+  content: "";
+  display: block;
+  width: 60px;
+  height: 60px;
+  background: center / contain no-repeat url("/Council/brand/council-logo.svg");
+}
+
+.council-closing-sub {
+  margin: 0;
+  max-width: 52ch;
+  color: var(--council-color-text-muted);
+}
+
+.council-install {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.7rem 1rem;
+  border-radius: 0.6rem;
+  border: 1px solid color-mix(in srgb, var(--council-color-primary) 25%, transparent);
+  background: color-mix(in srgb, var(--council-color-text) 6%, var(--council-color-surface));
+  color: var(--council-color-text);
+  font-family: var(--council-font-mono);
+  font-size: var(--sl-text-sm);
+}
+
+.council-install .term-prompt {
+  color: var(--council-color-text-muted);
+  user-select: none;
+}
+
+.council-cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  justify-content: center;
+}
+
+.council-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 1.3rem;
+  border-radius: 999rem;
+  border: 1px solid transparent;
+  font-weight: 600;
+  font-size: var(--sl-text-sm);
+  text-decoration: none;
+  transition:
+    transform 160ms ease,
+    background 160ms ease,
+    border-color 160ms ease;
+}
+
+.council-button-primary {
+  background: var(--council-color-text);
+  border-color: var(--council-color-text);
+  color: var(--council-color-bg);
+}
+
+.council-button-primary:hover {
+  background: var(--council-color-text-muted);
+  border-color: var(--council-color-text-muted);
+  transform: translateY(-2px);
+}
+
+.council-button-secondary {
+  border-color: var(--council-color-primary);
+  color: var(--council-color-text);
+}
+
+.council-button-secondary:hover {
+  background: color-mix(in srgb, var(--council-color-primary) 16%, transparent);
+  transform: translateY(-2px);
+}
+
+.council-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.4rem;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--sl-text-sm);
+}
+
+.council-links a {
+  color: var(--council-color-text);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--council-color-primary) 70%, transparent);
+  text-underline-offset: 0.2em;
+}
+
+.council-links a:hover {
+  text-decoration-color: var(--council-color-primary);
+}
+
+/* ---------------------------------------------------------------------------
+ * Focus + motion
+ * ------------------------------------------------------------------------- */
+.council-landing a:focus-visible,
+.hero .sl-link-button:focus-visible {
+  outline: 2px solid var(--council-color-primary);
+  outline-offset: 0.25rem;
+  border-radius: 0.3rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .council-card,
+  .council-button {
+    transition: none;
+  }
+
+  .council-card:hover,
+  .council-button:hover {
+    transform: none;
+  }
+}

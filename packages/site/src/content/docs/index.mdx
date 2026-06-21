@@ -1,0 +1,41 @@
+---
+title: Multi-expert AI deliberation in your terminal
+description: Council convenes persistent panels of AI experts that deliberate, disagree, and remember — structured decisions you can defend, right in your terminal.
+slug: docs
+template: splash
+hero:
+  title: Council
+  tagline: Convene a panel of AI experts that deliberate, disagree, and remember — without leaving your terminal.
+  image:
+    html: '<img src="/Council/brand/council-logo.svg" alt="" width="220" height="220" loading="eager" decoding="async" />'
+  actions:
+    - text: Get started
+      link: /Council/tutorials/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/pedrofuentes/Council
+      icon: github
+      variant: secondary
+      attrs:
+        target: _blank
+        rel: noopener
+---
+
+import "../../styles/tokens.css";
+import "../../styles/landing.css";
+import Lede from "../../components/landing/Lede.astro";
+import TerminalShowcase from "../../components/landing/TerminalShowcase.astro";
+import FeatureGrid from "../../components/landing/FeatureGrid.astro";
+import HowItWorks from "../../components/landing/HowItWorks.astro";
+import UseCases from "../../components/landing/UseCases.astro";
+import ClosingCta from "../../components/landing/ClosingCta.astro";
+
+<div class="council-landing not-content">
+  <Lede />
+  <TerminalShowcase />
+  <FeatureGrid />
+  <HowItWorks />
+  <UseCases />
+  <ClosingCta />
+</div>

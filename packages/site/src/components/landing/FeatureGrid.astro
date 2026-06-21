@@ -1,0 +1,48 @@
+---
+/**
+ * FeatureGrid — capability cards. Every card states a capability that ships on
+ * `main` today, in one honest sentence — nothing aspirational is implied.
+ */
+interface Feature {
+  readonly title: string;
+  readonly body: string;
+}
+
+const features: readonly Feature[] = [
+  {
+    title: "Persistent panels & memory",
+    body: "Experts, panels, and full debate transcripts persist in a local libSQL database, so each debate builds on the last instead of starting cold.",
+  },
+  {
+    title: "Anti-sycophancy quality gate",
+    body: "Devil's-advocate and consensus-check moderation strategies force genuine disagreement — a stress-tested answer instead of agreeable mush.",
+  },
+  {
+    title: "Decisions you can export",
+    body: "Turn any debate into Markdown, JSON, an Architecture Decision Record, or a launch-ready share document with one command.",
+  },
+  {
+    title: "Document-grounded deliberation",
+    body: "Link your own reference documents to a panel and experts argue from your facts — retrieval-augmented debate, grounded in your sources.",
+  },
+];
+---
+
+<section class="council-landing-section" aria-labelledby="features-heading">
+  <div class="council-section-head">
+    <p class="council-eyebrow">Why Council</p>
+    <h2 id="features-heading" class="council-section-title">
+      Built for decisions you have to defend
+    </h2>
+  </div>
+  <div class="council-card-grid">
+    {
+      features.map((feature) => (
+        <article class="council-card">
+          <h3>{feature.title}</h3>
+          <p>{feature.body}</p>
+        </article>
+      ))
+    }
+  </div>
+</section>

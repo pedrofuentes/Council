@@ -1,0 +1,25 @@
+---
+/**
+ * Terminal — a reusable terminal-window chrome wrapper.
+ *
+ * Renders the title bar (traffic-light dots + title) and a slot for the
+ * console body. Styling lives in `src/styles/landing.css` and is driven by the
+ * Council brand tokens.
+ */
+interface Props {
+  /** Text shown in the terminal title bar. */
+  title?: string;
+}
+
+const { title = "council" } = Astro.props;
+---
+
+<div class="council-terminal not-content">
+  <div class="council-terminal-bar">
+    <span class="council-terminal-dots" aria-hidden="true">
+      <span></span><span></span><span></span>
+    </span>
+    <span class="council-terminal-title">{title}</span>
+  </div>
+  <slot />
+</div>
