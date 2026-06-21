@@ -3,20 +3,22 @@
 ## Supported Versions
 
 Council is pre-1.0 software. Security fixes are provided only for the latest
-`0.1.x` release line.
+`0.4.x` release line.
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
-| < 0.1   | :x:                |
+| 0.4.x   | :white_check_mark: |
+| < 0.4   | :x:                |
 
 ## Reporting a Vulnerability
 
 **Please do not report security vulnerabilities through public GitHub issues,
-pull requests, or discussions.**
+pull requests, or discussions.** When reporting, do not include secrets, API
+tokens, credentials, or full file paths in any public issue or diagnostic
+output.
 
-Instead, report them privately using GitHub's built-in private vulnerability
-reporting:
+Instead, report vulnerabilities privately using GitHub's built-in private
+vulnerability reporting:
 
 1. Go to the [Security tab](https://github.com/pedrofuentes/Council/security)
    of this repository.
