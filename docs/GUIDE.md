@@ -1155,8 +1155,9 @@ council expert list --format json
 ```
 
 JSON output goes to **stdout**. Progress messages, banners, and logs go to
-**stderr**. This means you can safely pipe JSON to `jq` or redirect to a file
-without capturing noise:
+**stderr**. This includes `council convene` auto-compose setup progress and
+`council ask` answer-preparation progress, so you can safely pipe JSON to `jq`
+or redirect to a file without capturing noise:
 
 ```bash
 council convene "Topic" --template code-review --format json > debate.ndjson 2>/dev/null
@@ -1222,9 +1223,11 @@ Key flags for CI:
 - `--engine mock` — deterministic, no network calls
 - `--format json` — machine-parseable output
 - `--yes` — skip interactive confirmations
-- `--quiet` — suppress informational stderr messages
+- `--quiet` — suppress informational stderr messages, including `convene` /
+  `ask` setup progress
 - `COUNCIL_DATA_HOME` — isolate CI data from your user data
-- `TERM=dumb` / `NO_COLOR=1` — disable terminal formatting
+- `TERM=dumb` / `NO_COLOR=1` — disable terminal formatting; non-TTY output is
+  plain text with no spinner animation
 - `COUNCIL_ASCII=1` — use ASCII instead of Unicode symbols
 
 <a id="shell-quoting"></a>

@@ -11,6 +11,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildAskCommand } from "../../../../src/cli/commands/ask.js";
+import { setQuiet } from "../../../../src/cli/commands/writer.js";
 import type { CouncilEngine } from "../../../../src/engine/index.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
 import { createDatabase } from "../../../../src/memory/db.js";
@@ -61,6 +62,7 @@ describe("buildAskCommand", () => {
   });
 
   afterEach(async () => {
+    setQuiet(false);
     if (originalHome === undefined) delete process.env["COUNCIL_HOME"];
     else process.env["COUNCIL_HOME"] = originalHome;
     try {
@@ -92,9 +94,7 @@ describe("buildAskCommand", () => {
     cmd.exitOverride();
     let thrown = "";
     try {
-      await cmd.parseAsync([
-        "node", "council-ask", "no-such-panel", "What?", "--engine", "mock",
-      ]);
+      await cmd.parseAsync(["node", "council-ask", "no-such-panel", "What?", "--engine", "mock"]);
     } catch (err) {
       thrown = err instanceof Error ? err.message : String(err);
     }
@@ -135,7 +135,12 @@ describe("buildAskCommand", () => {
       let thrown = "";
       try {
         await cmd.parseAsync([
-          "node", "council-ask", "template-only-panel", "What?", "--engine", "mock",
+          "node",
+          "council-ask",
+          "template-only-panel",
+          "What?",
+          "--engine",
+          "mock",
         ]);
       } catch (err) {
         thrown = err instanceof Error ? err.message : String(err);
@@ -188,7 +193,12 @@ describe("buildAskCommand", () => {
       let thrown = "";
       try {
         await cmd.parseAsync([
-          "node", "council-ask", "config-template-panel", "What?", "--engine", "mock",
+          "node",
+          "council-ask",
+          "config-template-panel",
+          "What?",
+          "--engine",
+          "mock",
         ]);
       } catch (err) {
         thrown = err instanceof Error ? err.message : String(err);
@@ -212,8 +222,14 @@ describe("buildAskCommand", () => {
     let thrown = "";
     try {
       await cmd.parseAsync([
-        "node", "council-ask", "ask-test-panel", "What?",
-        "--expert", "ghost", "--engine", "mock",
+        "node",
+        "council-ask",
+        "ask-test-panel",
+        "What?",
+        "--expert",
+        "ghost",
+        "--engine",
+        "mock",
       ]);
     } catch (err) {
       thrown = err instanceof Error ? err.message : String(err);
@@ -227,9 +243,7 @@ describe("buildAskCommand", () => {
     cmd.exitOverride();
     let thrown = "";
     try {
-      await cmd.parseAsync([
-        "node", "council-ask", "ask-test-panel", "What?",
-      ]);
+      await cmd.parseAsync(["node", "council-ask", "ask-test-panel", "What?"]);
     } catch (err) {
       thrown = err instanceof Error ? err.message : String(err);
     }
@@ -242,13 +256,21 @@ describe("buildAskCommand", () => {
     let captured = "";
     const cmd = buildAskCommand({
       engineFactory: makeMockEngineFactory(),
-      write: (s) => { captured += s; },
+      write: (s) => {
+        captured += s;
+      },
       writeError: () => undefined,
     });
 
     await cmd.parseAsync([
-      "node", "council-ask", seed.panelName, "What should we ship?",
-      "--engine", "mock", "--format", "json",
+      "node",
+      "council-ask",
+      seed.panelName,
+      "What should we ship?",
+      "--engine",
+      "mock",
+      "--format",
+      "json",
     ]);
 
     // DB should have one new debate with 1 turn (default expert = first = cto).
@@ -276,13 +298,23 @@ describe("buildAskCommand", () => {
     let captured = "";
     const cmd = buildAskCommand({
       engineFactory: makeMockEngineFactory(),
-      write: (s) => { captured += s; },
+      write: (s) => {
+        captured += s;
+      },
       writeError: () => undefined,
     });
 
     await cmd.parseAsync([
-      "node", "council-ask", seed.panelName, "Question",
-      "--expert", "pm", "--engine", "mock", "--format", "json",
+      "node",
+      "council-ask",
+      seed.panelName,
+      "Question",
+      "--expert",
+      "pm",
+      "--engine",
+      "mock",
+      "--format",
+      "json",
     ]);
 
     // The turn should be attributed to pm, not cto.
@@ -299,14 +331,13 @@ describe("buildAskCommand", () => {
     let captured = "";
     const cmd = buildAskCommand({
       engineFactory: makeMockEngineFactory(),
-      write: (s) => { captured += s; },
+      write: (s) => {
+        captured += s;
+      },
       writeError: () => undefined,
     });
 
-    await cmd.parseAsync([
-      "node", "council-ask", "ask-test-panel", "Question",
-      "--engine", "mock",
-    ]);
+    await cmd.parseAsync(["node", "council-ask", "ask-test-panel", "Question", "--engine", "mock"]);
 
     // Plain format should mention the expert and NOT start with '{'.
     expect(captured).not.toMatch(/^\{/);
@@ -318,13 +349,21 @@ describe("buildAskCommand", () => {
     let captured = "";
     const cmd = buildAskCommand({
       engineFactory: makeMockEngineFactory(),
-      write: (s) => { captured += s; },
+      write: (s) => {
+        captured += s;
+      },
       writeError: () => undefined,
     });
 
     await cmd.parseAsync([
-      "node", "council-ask", "ask-test-panel", "Question",
-      "--engine", "mock", "--format", "json",
+      "node",
+      "council-ask",
+      "ask-test-panel",
+      "Question",
+      "--engine",
+      "mock",
+      "--format",
+      "json",
     ]);
 
     const lines = captured.split("\n").filter((l) => l.trim().length > 0);
@@ -337,6 +376,83 @@ describe("buildAskCommand", () => {
     expect(captured).not.toMatch(/^# Asking/m);
   });
 
+  it("writes setup progress to stderr without contaminating json stdout", async () => {
+    await seedPanel(testHome);
+    const writes: { readonly stream: "stdout" | "stderr"; readonly text: string }[] = [];
+    let stdout = "";
+    let stderr = "";
+    const cmd = buildAskCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (s) => {
+        stdout += s;
+        writes.push({ stream: "stdout", text: s });
+      },
+      writeError: (s) => {
+        stderr += s;
+        writes.push({ stream: "stderr", text: s });
+      },
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-ask",
+      "ask-test-panel",
+      "Question",
+      "--engine",
+      "mock",
+      "--format",
+      "json",
+    ]);
+
+    expect(stderr).toContain("Preparing answer…\n");
+    expect(stdout).not.toContain("Preparing answer");
+    expect(stderr).not.toContain("\r");
+    expect(stderr).not.toContain("\x1B");
+
+    const firstStdoutIndex = writes.findIndex((entry) => entry.stream === "stdout");
+    const progressIndex = writes.findIndex((entry) => entry.text.includes("Preparing answer"));
+    expect(progressIndex).toBeGreaterThanOrEqual(0);
+    expect(firstStdoutIndex).toBeGreaterThan(progressIndex);
+
+    const lines = stdout.split("\n").filter((line) => line.trim().length > 0);
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) {
+      expect(line.trim()).toMatch(/^\{/);
+      expect(() => JSON.parse(line)).not.toThrow();
+    }
+  });
+
+  it("suppresses setup progress when quiet mode is enabled", async () => {
+    await seedPanel(testHome);
+    setQuiet(true);
+    let stdout = "";
+    let stderr = "";
+    const cmd = buildAskCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (s) => {
+        stdout += s;
+      },
+      writeError: (s) => {
+        stderr += s;
+      },
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-ask",
+      "ask-test-panel",
+      "Question",
+      "--engine",
+      "mock",
+      "--format",
+      "json",
+    ]);
+
+    expect(stderr).not.toContain("Preparing answer");
+    expect(stdout).not.toContain("Preparing answer");
+    expect(stdout.split("\n").some((line) => line.trim().startsWith("{"))).toBe(true);
+  });
+
   it("--engine with invalid value rejects with clear error", async () => {
     await seedPanel(testHome);
     const cmd = buildAskCommand({
@@ -347,8 +463,12 @@ describe("buildAskCommand", () => {
     let thrown = "";
     try {
       await cmd.parseAsync([
-        "node", "council-ask", "ask-test-panel", "Question",
-        "--engine", "nope",
+        "node",
+        "council-ask",
+        "ask-test-panel",
+        "Question",
+        "--engine",
+        "nope",
       ]);
     } catch (err) {
       thrown = err instanceof Error ? err.message : String(err);
