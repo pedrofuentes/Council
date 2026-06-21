@@ -97,9 +97,9 @@ function renderPage(model: ConfigModel): GeneratedFile {
     renderEnvVarsTable(model.envVars),
     "## Related",
     [
-      "- [Configuration](/Council/docs/reference/configuration/) — narrative guide to editing `config.yaml`.",
-      "- [Environment Variables](/Council/docs/reference/environment-variables/) — detailed environment-variable guide.",
-      "- [Data Locations](/Council/docs/reference/data-locations/) — directory structure and file locations.",
+      "- [Configuration](/Council/reference/configuration/) — narrative guide to editing `config.yaml`.",
+      "- [Environment Variables](/Council/reference/environment-variables/) — detailed environment-variable guide.",
+      "- [Data Locations](/Council/reference/data-locations/) — directory structure and file locations.",
     ].join("\n"),
   ];
   const frontmatter = renderFrontmatter(

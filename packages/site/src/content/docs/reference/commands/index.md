@@ -12,6 +12,7 @@ Persistent AI expert panels for deliberation and decision-making
 | Command | Description |
 | --- | --- |
 | [`council doctor`](./doctor/) | Diagnose Council setup (Node, libsql, Copilot SDK, disk) |
+| [`council demo`](./demo/) | Run a zero-setup, offline showcase debate (no login, keys, or network) to see Council in one command |
 | [`council config`](./config/) | View and edit Council configuration |
 | [`council telemetry`](./telemetry/) | Manage telemetry settings |
 | [`council docs`](./docs/) | Document format reference and discoverability helpers |

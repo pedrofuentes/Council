@@ -120,6 +120,17 @@ describe("renderConfigReference", () => {
     expect(mdx).toContain("NO_COLOR");
   });
 
+  it("links Related entries at /Council/reference without a /docs/ segment", () => {
+    // Starlight serves these reference pages at /Council/reference/<page>/, not
+    // /Council/docs/reference/<page>/. The generator must emit the live URLs so
+    // regenerating never reintroduces the broken /docs/ links fixed in #1398.
+    expect(mdx).toContain("(/Council/reference/configuration/)");
+    expect(mdx).toContain("(/Council/reference/environment-variables/)");
+    expect(mdx).toContain("(/Council/reference/data-locations/)");
+    expect(mdx).not.toContain("/Council/docs/reference/");
+    expect(mdx).not.toContain("/docs/reference/");
+  });
+
   it("serialises sections and environment variables to config.json", () => {
     const parsed = JSON.parse(json ?? "{}") as {
       config: {
