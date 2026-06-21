@@ -7,7 +7,8 @@
  * `--yes` is given — asks for confirmation before shelling out. The upgrade is
  * executed via `execFile` with an argv array (NEVER a shell string) and a
  * fixed literal package spec, so no untrusted input is ever interpolated into
- * the spawned command.
+ * the spawned command. Any subprocess output shown to the terminal is sanitized
+ * as display output before rendering.
  */
 import { execFile, type ExecFileException } from "node:child_process";
 
