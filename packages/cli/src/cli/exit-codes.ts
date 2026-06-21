@@ -30,6 +30,12 @@ export function exitCodeForEngineError(code: EngineErrorCode | string | undefine
     case "MODEL_UNAVAILABLE":
     case "CONTEXT_OVERFLOW":
       return EXIT_USER_ERROR;
+    // Selecting a known-but-not-yet-available provider (openai/anthropic) is
+    // a user-selection issue, not an internal bug. Code string mirrors
+    // `PROVIDER_NOT_AVAILABLE` in engine/providers.ts (kept as a literal to
+    // avoid coupling this low-level util to the engine layer).
+    case "PROVIDER_NOT_AVAILABLE":
+      return EXIT_USER_ERROR;
     default:
       return EXIT_INTERNAL_ERROR;
   }

@@ -70,6 +70,12 @@ describe("exitCodeForEngineError", () => {
     expect(exitCodeForEngineError("ABORTED")).toBe(0);
   });
 
+  it("maps PROVIDER_NOT_AVAILABLE to EXIT_USER_ERROR (1)", () => {
+    // Selecting a coming-soon provider is a user-selection issue, not an
+    // internal bug — it should exit as a user error (T-ecosystem-1).
+    expect(exitCodeForEngineError("PROVIDER_NOT_AVAILABLE")).toBe(1);
+  });
+
   it("maps undefined code to EXIT_INTERNAL_ERROR (4)", () => {
     expect(exitCodeForEngineError(undefined)).toBe(4);
   });

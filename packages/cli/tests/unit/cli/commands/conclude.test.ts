@@ -361,11 +361,37 @@ describe("buildConcludeCommand", () => {
     cmd.exitOverride();
     let thrown = "";
     try {
+      await cmd.parseAsync([
+        "node",
+        "council-conclude",
+        seed.panelName,
+        "--engine",
+        "anthropic-direct",
+      ]);
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    expect(thrown.toLowerCase()).toMatch(/engine|expected|unknown|allowed choices/);
+  });
+
+  it("shows a graceful 'not yet available' error for a coming-soon provider", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    const cmd = buildConcludeCommand({
+      write: () => undefined,
+      writeError: () => undefined,
+      synthesizerId: SYNTH_ID,
+    });
+    cmd.exitOverride();
+    let thrown = "";
+    try {
       await cmd.parseAsync(["node", "council-conclude", seed.panelName, "--engine", "openai"]);
     } catch (err) {
       thrown = err instanceof Error ? err.message : String(err);
     }
-    expect(thrown.toLowerCase()).toMatch(/engine|expected|unknown/);
+    // The id is a valid choice now, so Commander accepts it; the graceful
+    // error is surfaced at engine construction (no SDK, no network).
+    expect(thrown.toLowerCase()).toMatch(/not yet available|coming soon/);
+    expect(thrown.toLowerCase()).toContain("openai");
   });
 
   it("emits a clear error when the latest debate has no turns", async () => {

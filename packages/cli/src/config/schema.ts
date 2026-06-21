@@ -13,8 +13,21 @@ import { z } from "zod";
 
 export const DEFAULT_MODEL = "claude-sonnet-4.5";
 
-export const ENGINE_CHOICES = ["copilot", "mock"] as const;
+export const ENGINE_CHOICES = ["copilot", "mock", "openai", "anthropic"] as const;
 export type EngineChoice = (typeof ENGINE_CHOICES)[number];
+
+/**
+ * Per-provider settings. Council stores the NAME of the environment
+ * variable that holds a provider's API key (e.g. "OPENAI_API_KEY") — never
+ * the key VALUE itself, and never in SQLite. A future adapter reads
+ * `process.env[apiKeyEnvVar]` at call time. Unknown fields (e.g. a stray
+ * `apiKey`) are stripped on parse, so a secret can never accidentally be
+ * persisted to config.yaml.
+ */
+const ProviderSettingsSchema = z.object({
+  /** NAME of the env var holding the API key — never the key value. */
+  apiKeyEnvVar: z.string().min(1).optional(),
+});
 
 export const ConfigSchema = z
   .object({
@@ -44,6 +57,18 @@ export const ConfigSchema = z
         enabled: z.boolean().default(false),
       })
       .default({ enabled: false }),
+    /**
+     * Per-provider settings for engines that authenticate with a
+     * standalone API key (e.g. future OpenAI / Anthropic adapters).
+     * Defaults to an empty map; only the env-var NAME is ever stored
+     * here, never the key value (see {@link ProviderSettingsSchema}).
+     */
+    providers: z
+      .object({
+        openai: ProviderSettingsSchema.optional(),
+        anthropic: ProviderSettingsSchema.optional(),
+      })
+      .default({}),
     /**
      * Expert library settings — govern how experts ingest sources and
      * decay memory weights over time. Background processing is off by
@@ -179,6 +204,7 @@ export const ConfigSchema = z
       maxWordsPerResponse: 250,
     },
     telemetry: { enabled: false },
+    providers: {},
     expert: {
       backgroundProcessing: false,
       recencyHalfLifeDays: 90,
