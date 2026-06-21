@@ -20,6 +20,12 @@ import {
   resolveCopilotCliPath,
   type ModelDiscoveryResult,
 } from "../../engine/copilot/health.js";
+import {
+  PROVIDER_IDS,
+  getProviderApiKeyEnvVar,
+  isProviderAvailable,
+  type ProviderId,
+} from "../../engine/providers.js";
 import { getSymbols } from "../renderers/symbols.js";
 import { renderBanner } from "../renderers/banner.js";
 import { createSpinner, type Spinner } from "../renderers/spinner.js";
@@ -30,8 +36,10 @@ import packageJson from "../../../package.json" with { type: "json" };
 import { probeCopilotModel } from "./doctor-online-probe.js";
 import {
   buildDoctorReport,
+  collectTerminalCapabilities,
   isDoctorReportFormat,
   renderDoctorReport,
+  type DoctorProviderAvailability,
   type DoctorReportCheck,
 } from "./doctor-report.js";
 import { formatAvailableModels } from "./models.js";
@@ -305,6 +313,50 @@ function resolveDoctorDeps(input: DoctorDeps | Writer): Required<DoctorDeps> {
   };
 }
 
+interface ProviderStatus {
+  readonly id: ProviderId;
+  readonly available: boolean;
+  readonly apiKeyEnvVar: string | undefined;
+}
+
+/**
+ * Snapshot each known provider's availability straight from the engine
+ * registry so `doctor` never drifts from what the CLI can actually run. The
+ * env-var NAME (never a value) rides along for coming-soon providers.
+ */
+function collectProviderStatuses(): readonly ProviderStatus[] {
+  return PROVIDER_IDS.map((id) => ({
+    id,
+    available: isProviderAvailable(id),
+    apiKeyEnvVar: getProviderApiKeyEnvVar(id),
+  }));
+}
+
+/** Reduce provider statuses to the coarse, secret-free shape the report ships. */
+function toReportProviders(
+  statuses: readonly ProviderStatus[],
+): readonly DoctorProviderAvailability[] {
+  return statuses.map(({ id, available }) => ({ id, available }));
+}
+
+/**
+ * Render the human-facing "Providers" section: each provider id with whether
+ * its adapter is usable today, sourced from the registry so it stays in sync.
+ * ASCII mode swaps the em dash for a hyphen, mirroring the sibling sections'
+ * symbol handling. Only the env-var NAME is ever shown for coming-soon
+ * providers — never a value.
+ */
+function renderProvidersSection(write: Writer, statuses: readonly ProviderStatus[]): void {
+  const sym = getSymbols();
+  const dash = collectTerminalCapabilities().ascii ? "-" : "\u2014";
+  write(`${sym.info} Providers\n`);
+  for (const { id, available, apiKeyEnvVar } of statuses) {
+    const status = available ? "available" : "not yet available (coming soon)";
+    const keyHint = !available && apiKeyEnvVar !== undefined ? ` [env: ${apiKeyEnvVar}]` : "";
+    write(`   ${id} ${dash} ${status}${keyHint}\n`);
+  }
+}
+
 export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
   const {
     write,
@@ -375,6 +427,7 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
           checks: reportChecks,
           copilotCliPathStatus,
           telemetryEnabled,
+          providers: toReportProviders(collectProviderStatuses()),
         });
         write(renderDoctorReport(report, reportFormat));
         return;
@@ -419,6 +472,11 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
         const sym2 = getSymbols();
         write(`${sym2.warn} Config\n   Could not load configuration\n`);
       }
+
+      // Provider availability section (T-ecosystem-6): surface which engines
+      // are usable today vs coming soon, sourced from the engine registry.
+      write("\n");
+      renderProvidersSection(write, collectProviderStatuses());
 
       // Terminal capability section (A11Y-16)
       write("\n");

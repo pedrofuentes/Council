@@ -16,6 +16,10 @@
  *     are dropped here: only each check's `name` + coarse `status` survive.
  *   - The Copilot CLI probe contributes its STATUS CATEGORY
  *     (`ok` | `override` | `needs-remediation`) only — never the resolved path.
+ *   - Provider availability is coarse: each entry is the canonical provider id
+ *     plus an `available` boolean. The env-var NAME a future adapter would read
+ *     (and never its value) is deliberately omitted here — the report carries
+ *     only the enum/boolean, never any key material.
  *   - String fields are additionally passed through {@link toSingleLineDisplay}
  *     as defense-in-depth against control-character / ANSI injection.
  */
@@ -37,6 +41,16 @@ export interface DoctorReportCheck {
   readonly status: DoctorCheckStatus;
 }
 
+/**
+ * Coarse provider availability for the report. Carries only the canonical
+ * provider id and whether its adapter is usable today — never an API-key
+ * value, env-var name, or any other provider-specific secret.
+ */
+export interface DoctorProviderAvailability {
+  readonly id: string;
+  readonly available: boolean;
+}
+
 /** Coarse terminal capability booleans — no env values, just predicates. */
 export interface DoctorTerminalCapabilities {
   readonly noColor: boolean;
@@ -52,6 +66,7 @@ export interface DoctorReport {
   readonly terminal: DoctorTerminalCapabilities;
   readonly copilotCliPathStatus: CopilotCliPathStatus;
   readonly telemetryEnabled: boolean;
+  readonly providers: readonly DoctorProviderAvailability[];
   readonly checks: readonly DoctorReportCheck[];
 }
 
@@ -61,6 +76,7 @@ export interface DoctorReportInput {
   readonly checks: readonly DoctorReportCheck[];
   readonly copilotCliPathStatus: CopilotCliPathStatus;
   readonly telemetryEnabled: boolean;
+  readonly providers?: readonly DoctorProviderAvailability[];
   readonly platform?: string;
   readonly arch?: string;
   readonly nodeVersion?: string;
@@ -107,6 +123,10 @@ export function buildDoctorReport(input: DoctorReportInput): DoctorReport {
     terminal: input.terminal ?? collectTerminalCapabilities(),
     copilotCliPathStatus: input.copilotCliPathStatus,
     telemetryEnabled: input.telemetryEnabled,
+    providers: (input.providers ?? []).map((provider) => ({
+      id: safeString(provider.id),
+      available: provider.available,
+    })),
     checks: input.checks.map((check) => ({
       name: safeString(check.name),
       status: check.status,
@@ -139,6 +159,10 @@ function renderMarkdown(report: DoctorReport): string {
     `| Terminal ASCII | ${boolText(report.terminal.ascii)} |`,
     `| Copilot CLI path | ${report.copilotCliPathStatus} |`,
     `| Telemetry enabled | ${boolText(report.telemetryEnabled)} |`,
+    "",
+    "| Provider | Available |",
+    "| --- | --- |",
+    ...report.providers.map((provider) => `| ${provider.id} | ${boolText(provider.available)} |`),
     "",
     "| Check | Status |",
     "| --- | --- |",
