@@ -182,7 +182,8 @@ describe("debate lifecycle e2e", () => {
     expect(state.debates[0]?.status).toBe("completed");
     expect(state.turns).toHaveLength(state.expertCount);
     expect(events[0]?.kind).toBe("panel.assembled");
-    expect(events.at(-1)?.kind).toBe("debate.end");
+    expect(events.some((event) => event.kind === "debate.end")).toBe(true);
+    expect(events.at(-1)?.kind).toBe("conclusion");
   });
 
   it("convene with plain format produces readable output", async () => {
@@ -287,7 +288,8 @@ describe("debate lifecycle e2e", () => {
     expect(state.debates[0]?.moderator).toBe("structured-phases");
     expect(state.debates[0]?.status).toBe("completed");
     expect(state.turns.length).toBeGreaterThan(0);
-    expect(events.at(-1)?.kind).toBe("debate.end");
+    expect(events.some((event) => event.kind === "debate.end")).toBe(true);
+    expect(events.at(-1)?.kind).toBe("conclusion");
   });
 
   it("resume transcript mode replays debate", async () => {
