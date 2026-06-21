@@ -1,0 +1,45 @@
+---
+/**
+ * TerminalShowcase — a real, copy-pasteable first session.
+ *
+ * Every command shown exists on `main` today: `npm install`, `council doctor`,
+ * `council convene`, `council sessions`, and `council export --format adr`.
+ * No invented flags. `<panel>` is a literal placeholder for the panel name
+ * that `council sessions` prints.
+ */
+import Terminal from "./Terminal.astro";
+
+const lines: readonly string[] = [
+  '<span class="term-comment"># Install — requires Node.js 24+ and a GitHub Copilot subscription</span>',
+  '<span class="term-prompt">$</span> npm install -g @council-ai/cli',
+  "",
+  '<span class="term-comment"># Check that Council can reach the Copilot engine</span>',
+  '<span class="term-prompt">$</span> council doctor',
+  "",
+  '<span class="term-comment"># Convene a panel — Council designs the experts from your topic</span>',
+  '<span class="term-prompt">$</span> council convene "Should we adopt event sourcing for our orders service?"',
+  "",
+  '<span class="term-comment"># Review past debates, then export the decision as an ADR</span>',
+  '<span class="term-prompt">$</span> council sessions',
+  '<span class="term-prompt">$</span> council export &lt;panel&gt; --format adr',
+];
+
+const code: string = lines.join("\n");
+---
+
+<section class="council-landing-section" aria-labelledby="showcase-heading">
+  <div class="council-section-head">
+    <p class="council-eyebrow">Your first session</p>
+    <h2 id="showcase-heading" class="council-section-title">
+      From install to a decision in four commands
+    </h2>
+    <p class="council-section-intro">
+      Every command below runs today. Council auto-composes a panel, runs a
+      structured debate, and persists the full transcript locally — so you can
+      export it, share it, or revisit it later.
+    </p>
+  </div>
+  <Terminal title="bash — your first council">
+    <pre><code set:html={code} /></pre>
+  </Terminal>
+</section>

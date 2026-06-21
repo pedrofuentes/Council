@@ -1,0 +1,66 @@
+---
+/**
+ * ClosingCta — final conversion band. Reuses the shared BrandMark component
+ * and the Council brand tokens. All internal links are built from the
+ * configured base path so they resolve under the project site sub-path.
+ */
+import BrandMark from "../BrandMark.astro";
+
+const base = import.meta.env.BASE_URL;
+const repoUrl = "https://github.com/pedrofuentes/Council";
+
+interface NavLink {
+  readonly label: string;
+  readonly href: string;
+}
+
+const sectionLinks: readonly NavLink[] = [
+  { label: "Tutorials", href: `${base}docs/tutorials/` },
+  { label: "How-to guides", href: `${base}docs/how-to/` },
+  { label: "Reference", href: `${base}docs/reference/` },
+  { label: "Explanation", href: `${base}docs/explanation/` },
+  { label: "Panel gallery", href: `${base}gallery/` },
+];
+---
+
+<section class="council-landing-section" aria-labelledby="closing-heading">
+  <div class="council-closing">
+    <BrandMark size={60} />
+    <h2 id="closing-heading" class="council-section-title">
+      Convene your first council
+    </h2>
+    <p class="council-closing-sub">
+      Runs on GitHub Copilot today — no API keys, no OpenAI account, no credits
+      to manage. OpenAI and Anthropic providers are on the roadmap.
+    </p>
+    <p class="council-install">
+      <span class="term-prompt" aria-hidden="true">$</span>
+      npm install -g @council-ai/cli
+    </p>
+    <div class="council-cta-row">
+      <a class="council-button council-button-primary" href={`${base}docs/tutorials/`}>
+        Get started
+      </a>
+      <a class="council-button council-button-secondary" href={`${base}docs/`}>
+        Read the docs
+      </a>
+      <a
+        class="council-button council-button-secondary"
+        href={repoUrl}
+        target="_blank"
+        rel="noopener"
+      >
+        Star on GitHub
+      </a>
+    </div>
+    <ul class="council-links">
+      {
+        sectionLinks.map((link) => (
+          <li>
+            <a href={link.href}>{link.label}</a>
+          </li>
+        ))
+      }
+    </ul>
+  </div>
+</section>

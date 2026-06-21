@@ -1,0 +1,51 @@
+---
+/**
+ * UseCases — honest framings of where multi-expert deliberation helps. These
+ * are positioning statements, not feature claims.
+ */
+interface UseCase {
+  readonly title: string;
+  readonly body: string;
+}
+
+const cases: readonly UseCase[] = [
+  {
+    title: "Architecture reviews",
+    body: "Pressure-test a design and its trade-offs before you commit code to it.",
+  },
+  {
+    title: "Product & strategy trade-offs",
+    body: "Weigh build-vs-buy, pricing, and roadmap bets from finance, product, and engineering lenses.",
+  },
+  {
+    title: "Hiring debriefs",
+    body: "Structure a panel debrief instead of defaulting to the loudest voice in the room.",
+  },
+  {
+    title: "Pricing decisions",
+    body: "Model the upside and the margin risk before you change a number customers see.",
+  },
+];
+---
+
+<section class="council-landing-section" aria-labelledby="usecases-heading">
+  <div class="council-section-head">
+    <p class="council-eyebrow">Use cases</p>
+    <h2 id="usecases-heading" class="council-section-title">
+      Where a council beats a single opinion
+    </h2>
+  </div>
+  <ul class="council-usecases">
+    {
+      cases.map((useCase) => (
+        <li class="council-usecase">
+          <span class="marker" aria-hidden="true" />
+          <span class="council-usecase-body">
+            <strong>{useCase.title}</strong>
+            <span>{useCase.body}</span>
+          </span>
+        </li>
+      ))
+    }
+  </ul>
+</section>

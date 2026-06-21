@@ -1,0 +1,47 @@
+---
+/**
+ * HowItWorks — the three-step path from question to decision. Command names
+ * referenced here (convene, ask, chat, export) all exist on `main`.
+ */
+interface Step {
+  readonly title: string;
+  readonly body: string;
+}
+
+const steps: readonly Step[] = [
+  {
+    title: "Define a panel",
+    body: "Let Council auto-compose experts from your topic, or pick a built-in template like code-review or architecture-review.",
+  },
+  {
+    title: "Convene the debate",
+    body: "Experts deliberate in rounds and challenge each other while a moderator drives toward synthesis. Need a quick take? Ask one expert with council ask, or hold a conversation with council chat.",
+  },
+  {
+    title: "Export the decision",
+    body: "Capture the outcome as an ADR or share-ready document with council export — a decision your team can actually review.",
+  },
+];
+---
+
+<section class="council-landing-section" aria-labelledby="how-heading">
+  <div class="council-section-head">
+    <p class="council-eyebrow">How it works</p>
+    <h2 id="how-heading" class="council-section-title">
+      Three steps from question to decision
+    </h2>
+  </div>
+  <ol class="council-steps">
+    {
+      steps.map((step, index) => (
+        <li class="council-step">
+          <span class="council-step-number" aria-hidden="true">
+            {index + 1}
+          </span>
+          <h3>{step.title}</h3>
+          <p>{step.body}</p>
+        </li>
+      ))
+    }
+  </ol>
+</section>
