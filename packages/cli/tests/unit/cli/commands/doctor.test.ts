@@ -437,6 +437,66 @@ describe("buildDoctorCommand", () => {
     expect(remediationLine).not.toContain(os.homedir());
     expect(remediationLine).not.toContain(os.userInfo().username);
   });
+
+  it("doctor lists each known provider with availability sourced from the registry", async () => {
+    const output = await runDoctor(["--offline"]);
+
+    expect(output).toContain("Providers");
+
+    const lineFor = (id: string): string =>
+      output.split("\n").find((line) => line.trimStart().startsWith(`${id} `)) ?? "";
+
+    const copilotLine = lineFor("copilot");
+    expect(copilotLine).toContain("available");
+    expect(copilotLine).not.toContain("not yet");
+
+    const mockLine = lineFor("mock");
+    expect(mockLine).toContain("available");
+    expect(mockLine).not.toContain("not yet");
+
+    const openaiLine = lineFor("openai");
+    expect(openaiLine).toContain("not yet available");
+    expect(openaiLine).toContain("coming soon");
+
+    const anthropicLine = lineFor("anthropic");
+    expect(anthropicLine).toContain("not yet available");
+    expect(anthropicLine).toContain("coming soon");
+  });
+
+  it("doctor provider section never prints an API key value", async () => {
+    const original = process.env["OPENAI_API_KEY"];
+    process.env["OPENAI_API_KEY"] = "sk-LEAKED-SECRET-doctor-value";
+    try {
+      const output = await runDoctor(["--offline"]);
+
+      expect(output).toContain("Providers");
+      expect(output).not.toContain("sk-LEAKED-SECRET-doctor-value");
+    } finally {
+      if (original === undefined) delete process.env["OPENAI_API_KEY"];
+      else process.env["OPENAI_API_KEY"] = original;
+    }
+  });
+
+  it("doctor provider section respects ASCII mode (NO_COLOR)", async () => {
+    const original = process.env["NO_COLOR"];
+    process.env["NO_COLOR"] = "1";
+    try {
+      const output = await runDoctor(["--offline"]);
+
+      expect(output).toContain("[i] Providers");
+
+      const providerLines = output
+        .split("\n")
+        .filter((line) => /^\s+(copilot|mock|openai|anthropic) /.test(line));
+      expect(providerLines.length).toBeGreaterThanOrEqual(4);
+      for (const line of providerLines) {
+        expect(line).not.toContain("\u2014");
+      }
+    } finally {
+      if (original === undefined) delete process.env["NO_COLOR"];
+      else process.env["NO_COLOR"] = original;
+    }
+  });
 });
 
 describe("checkNodeVersion", () => {
