@@ -1,0 +1,147 @@
+---
+title: Conclude and Export a Debate
+description: Turn a deliberative debate into a structured decision framework and export it as a shareable artifact.
+---
+
+**Time**: ~3 minutes  
+**Learning outcome**: Extract a decision framework from a debate and export it in multiple formats.
+
+## What you'll learn
+
+By the end of this tutorial, you will:
+
+- Generate a structured decision framework with `council conclude`
+- Export debate transcripts as markdown, JSON, or Architecture Decision Records (ADRs)
+- Understand when to use each export format
+
+## Prerequisites
+
+- Completed [Tutorial 1: Install and First Debate](/Council/docs/tutorials/01-install-and-first-debate/)
+- At least one debate saved (from `council convene`)
+
+## Step 1: Conclude a debate
+
+After a debate completes, you can synthesize it into a structured decision framework:
+
+```bash
+council conclude
+```
+
+If you have multiple debates, Council will use the most recent one. To conclude a specific panel:
+
+```bash
+council conclude <panel-name>
+```
+
+Replace `<panel-name>` with the panel identifier from `council sessions`.
+
+**What you'll see**:
+
+Council runs an LLM synthesis to produce:
+
+- **Decision dimensions** — key trade-off axes identified by the panel
+- **Expert positions** — where each expert stands on those dimensions
+- **Areas of consensus** — points of agreement
+- **Areas of disagreement** — unresolved tensions or competing priorities
+- **Recommendation** — actionable next steps
+
+Example output:
+
+```
+━━━ Decision Framework ━━━
+
+Decision Dimensions:
+  1. Cost (upfront vs. ongoing)
+  2. Time to value (speed vs. control)
+  3. Risk tolerance (vendor lock-in vs. maintenance burden)
+
+Positions:
+  • CTO (Priya): Build for control, accept 6-month delay
+  • CFO (James): Buy to minimize TCO over 3 years
+  • VP Product (Lisa): Buy to eliminate data gap
+
+Consensus: 6-month data gap is the critical risk
+
+Recommendation: Start with vendor (Mixpanel/Amplitude), 
+ring-fence build decision for year two if data ownership 
+becomes competitive advantage.
+```
+
+## Step 2: Export as markdown (default)
+
+Export the full debate transcript to share with your team:
+
+```bash
+council export <panel-name>
+```
+
+This outputs a readable markdown document to stdout with:
+
+- Panel topic and status
+- All expert turns from every round
+- Expert names, roles, and models used
+
+**Redirect to a file**:
+
+```bash
+council export <panel-name> --output decision.md
+```
+
+## Step 3: Export as JSON (machine-readable)
+
+For programmatic access or archiving:
+
+```bash
+council export <panel-name> --format json --output debate.json
+```
+
+The JSON format is NDJSON (newline-delimited JSON) — one event per line. Useful for:
+
+- Feeding into analysis scripts
+- Importing into other tools
+- Long-term archival with structured metadata
+
+## Step 4: Export as an Architecture Decision Record (ADR)
+
+For technical decisions, export in the ADR format:
+
+```bash
+council export <panel-name> --format adr --output adr-0001-analytics-platform.md
+```
+
+The ADR template includes:
+
+- **Status**: Proposed, Accepted, Deprecated, Superseded
+- **Context**: The problem and constraints
+- **Options Considered**: The alternatives debated
+- **Discussion**: Summary of expert arguments
+- **Decision**: The chosen path
+
+ADRs are widely used in software projects to document significant architectural choices.
+
+## When to use each format
+
+| Format       | Best for...                                                  |
+| ------------ | ------------------------------------------------------------ |
+| `markdown`   | Sharing with humans — readable, searchable, presentable      |
+| `json`       | Automation, analysis, archival — machine-readable events     |
+| `adr`        | Technical decisions — standardized decision record format    |
+
+## What you accomplished
+
+- Synthesized a debate into a structured decision framework
+- Exported debate transcripts in three formats
+- Learned when each format is most useful
+
+## Next steps
+
+- **Tutorial 3**: [Built-in Templates](/Council/docs/tutorials/03-built-in-templates/) — Use pre-configured expert panels for common scenarios
+- **Explore other panels**: Run `council sessions` to see all your saved debates
+- **Resume a debate**: Use `council resume <panel-name>` to continue a prior discussion
+
+## Commands introduced
+
+| Command              | Purpose                                         |
+| -------------------- | ----------------------------------------------- |
+| `council conclude`   | Generate decision framework from debate         |
+| `council export`     | Export debate transcript (markdown/json/adr)    |

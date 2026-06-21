@@ -1,0 +1,114 @@
+---
+title: Install and Run Your First Debate
+description: Install Council, verify your setup, and convene your first expert panel.
+---
+
+**Time**: ~5 minutes  
+**Learning outcome**: Install Council, confirm setup, and run a deliberative AI debate.
+
+## What you'll learn
+
+By the end of this tutorial, you will:
+
+- Install Council globally via npm
+- Verify your environment with `council doctor`
+- Run your first auto-composed expert panel debate
+
+## Prerequisites
+
+- **Node.js 24 or later** installed ([download](https://nodejs.org))
+- **A GitHub Copilot subscription** (Individual, Business, or Enterprise)
+- Terminal access (macOS Terminal, Windows Terminal, or any shell)
+
+:::note[Provider-flexible by design]
+Council currently uses GitHub Copilot as the LLM provider. Support for OpenAI, Anthropic, and other providers is planned — the architecture is designed to be provider-agnostic.
+:::
+
+## Step 1: Install Council
+
+Open your terminal and run:
+
+```bash
+npm install -g @council-ai/cli
+```
+
+This installs the `council` command globally. You should see output confirming the package was added.
+
+## Step 2: Verify your setup
+
+Check that Council can connect to GitHub Copilot:
+
+```bash
+council doctor
+```
+
+You should see output like:
+
+```
+✓ Node.js version: 24.0.0
+✓ GitHub Copilot: authenticated
+✓ Configuration: ~/.council/config.json
+✓ Database: ~/.council/council.db
+
+All systems operational.
+```
+
+If you see any errors, follow the guidance provided by `council doctor`.
+
+## Step 3: Convene your first panel
+
+Council automatically designs an expert panel from your topic. No template required — just ask:
+
+```bash
+council convene "Should we build our own analytics platform or buy a third-party solution?"
+```
+
+**What happens next**:
+
+1. **Auto-composition**: Council analyzes your question and assembles 3 experts (default; configurable 2–8) with relevant perspectives
+2. **Deliberation**: Experts debate across multiple rounds, building on each other's arguments
+3. **Synthesis**: A final summary captures areas of agreement, disagreement, and actionable insights
+
+You'll see output like:
+
+```
+🏛️ Auto-composing expert panel...
+✓ Panel assembled: 3 experts
+  • Priya Mehta (CTO) — claude-sonnet-4.5
+  • James Whitfield (CFO) — claude-sonnet-4.5
+  • Lisa Park (VP Product) — claude-sonnet-4.5
+
+━━━ Round 1 ━━━
+
+[Priya Mehta — CTO]
+Building in-house gives us full control, but the cost is real:
+a team of 3 engineers for 6+ months, ongoing maintenance...
+
+[James Whitfield — CFO]
+Three engineers at $180K fully loaded is $270K just for the
+build phase. A vendor at $3K/month is $36K/year...
+
+━━━ Synthesis ━━━
+The panel converges on one risk: the 6-month data gap...
+```
+
+## What you accomplished
+
+- Installed Council globally
+- Verified your GitHub Copilot connection
+- Ran a multi-expert deliberation with real disagreement and synthesis
+
+## Next steps
+
+- **Tutorial 2**: [Conclude and Export](/Council/docs/tutorials/02-conclude-and-export/) — Turn the debate into a structured decision artifact
+- **Explore templates**: Run `council templates` to see built-in panel configurations
+- **Resume a debate**: Use `council sessions` to list your debates, then `council resume <panel>` to continue
+
+## Commands introduced
+
+| Command            | Purpose                                    |
+| ------------------ | ------------------------------------------ |
+| `council doctor`   | Verify setup and environment               |
+| `council convene`  | Start a new expert panel debate            |
+| `council templates`| List available panel templates             |
+| `council sessions` | Show all saved debates                     |

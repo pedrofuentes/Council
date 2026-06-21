@@ -23,7 +23,30 @@ export default defineConfig({
         },
         {
           label: "Tutorials",
-          items: [{ label: "Overview", link: "/docs/tutorials/" }],
+          items: [
+            { label: "Overview", link: "/docs/tutorials/" },
+            {
+              label: "Beginner",
+              items: [
+                {
+                  label: "1. Install and First Debate",
+                  link: "/docs/tutorials/01-install-and-first-debate/",
+                },
+                {
+                  label: "2. Conclude and Export",
+                  link: "/docs/tutorials/02-conclude-and-export/",
+                },
+                {
+                  label: "3. Built-in Templates",
+                  link: "/docs/tutorials/03-built-in-templates/",
+                },
+                {
+                  label: "4. Resume a Debate",
+                  link: "/docs/tutorials/04-resume-a-debate/",
+                },
+              ],
+            },
+          ],
         },
         {
           label: "How-To Guides",
