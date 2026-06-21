@@ -83,7 +83,7 @@ body:
     id: node-version
     attributes:
       label: Node.js Version
-      description: Run `node --version` (Node.js 24+ required)
+      description: Output of `node --version` (see the README for supported Node versions)
       placeholder: e.g., v24.0.0
     validations:
       required: true
