@@ -99,9 +99,10 @@ describe.sequential("output formats e2e", () => {
     // First event should be panel.assembled
     expect(events[0]?.kind).toBe("panel.assembled");
 
-    // Last event should be debate.end
+    // Auto-conclude appends a structured conclusion after debate.end.
+    expect(events.some((event) => event.kind === "debate.end")).toBe(true);
     const lastEvent = events[events.length - 1];
-    expect(lastEvent?.kind).toBe("debate.end");
+    expect(lastEvent?.kind).toBe("conclusion");
   });
 
   it("convene plain output structure", async () => {

@@ -17,6 +17,7 @@ import {
   buildSynthesisPrompt,
   MAX_TRANSCRIPT_CHARS,
   MAX_TRANSCRIPT_TURNS,
+  renderPlain,
   type ConcludeOutput,
 } from "../../../../src/cli/commands/conclude.js";
 import type { TranscriptDocument } from "../../../../src/memory/transcript.js";
@@ -467,6 +468,56 @@ describe("buildConcludeCommand", () => {
     expect(captured).toContain("monolith");
     expect(captured).toContain("phased migration");
     expect(captured.toLowerCase()).toContain("medium");
+  });
+
+  it("strips terminal control sequences and collapses line breaks in model-generated plain conclusion fields", () => {
+    const rendered = renderPlain({
+      panelName: "conclude-test",
+      topic: "Should we ship?",
+      debateId: "debate-1",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      consensus: [
+        "agree \u202Eevil",
+        "click \u001B]8;;https://evil.example\u0007here\u001B]8;;\u0007",
+        "no\rnew\nlines\tor\u2028separators\u2029",
+      ],
+      tensions: ["risk \u009B31mred", "rewrite \u001B[2Jscreen", "watch\rfor\nlabel overwrite"],
+      decisionMatrix: [
+        {
+          dimension: "Path \u001B[31mred\u001B[0m\rplan",
+          positions: [
+            {
+              expert: "CTO \u001B]0;owned\u0007\nfake-label",
+              stance: "ship \u0000carefully\twith\u2028guardrails\u2029",
+            },
+          ],
+        },
+      ],
+      recommendation: "ship \u001B[31mEVIL\u001B[0m \u0007\rnow\nwithout\tcontrol\u2028breaks\u2029",
+      confidence: "high",
+    });
+
+    const disallowedControls = ["\u001B", "\u0000", "\u0007", "\u009B", "\u202E", "\r", "\t", "\u2028", "\u2029"];
+    expect(disallowedControls.some((char) => rendered.includes(char))).toBe(false);
+    expect(rendered).toContain("Recommendation: ship EVIL  now without control breaks ");
+    expect(rendered).toContain("  - agree evil");
+    expect(rendered).toContain("  - click here");
+    expect(rendered).toContain("  - no new lines or separators ");
+    expect(rendered).toContain("  - risk 31mred");
+    expect(rendered).toContain("  - rewrite screen");
+    expect(rendered).toContain("  - watch for label overwrite");
+    expect(rendered).toContain("  * Path red plan");
+    expect(rendered).toContain("      - CTO  fake-label: ship carefully with guardrails ");
+
+    expect(rendered.split("\n")).toEqual(
+      expect.arrayContaining([
+        "Recommendation: ship EVIL  now without control breaks ",
+        "  - no new lines or separators ",
+        "  - watch for label overwrite",
+        "  * Path red plan",
+        "      - CTO  fake-label: ship carefully with guardrails ",
+      ]),
+    );
   });
 
   it("synthesis prompt includes the topic and every expert turn", async () => {

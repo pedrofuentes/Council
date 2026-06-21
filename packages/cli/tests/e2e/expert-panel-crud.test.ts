@@ -480,7 +480,8 @@ fs.writeFileSync(file, body, "utf-8");`,
     expect(kinds[0]).toBe("panel.assembled");
     expect(kinds).toContain("turn.start");
     expect(kinds).toContain("turn.end");
-    expect(kinds[kinds.length - 1]).toBe("debate.end");
+    expect(kinds).toContain("debate.end");
+    expect(kinds[kinds.length - 1]).toBe("conclusion");
     
     // Verify turn events are ordered per expert
     const turnEvents = jsonLines.filter((e) => e.kind === "turn.start" || e.kind === "turn.end");
@@ -583,7 +584,8 @@ fs.writeFileSync(file, body, "utf-8");`,
       .map((line) => JSON.parse(line) as { readonly kind: string });
     const kinds = jsonLines.map((line) => line.kind);
     expect(kinds[0]).toBe("panel.assembled");
-    expect(kinds[kinds.length - 1]).toBe("debate.end");
+    expect(kinds).toContain("debate.end");
+    expect(kinds[kinds.length - 1]).toBe("conclusion");
 
     const runtimePanel = await findRuntimePanelByTemplate(ctx, "product-council");
     expect(runtimePanel?.topic).toBe("Should we expand into enterprise self-serve?");

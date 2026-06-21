@@ -39,6 +39,7 @@ council convene [options] [topic]
 | `--heuristic-summaries` | Use simpler local summarizer instead of LLM — for offline/air-gapped use | — |
 | `--heuristic-memory` | Skip post-debate LLM extraction — for offline/air-gapped use. Useful for offline tests and air-gapped environments. | — |
 | `--yes` | Skip the auto-compose confirmation prompt — required for non-interactive / CI runs | — |
+| `--no-conclude` | Skip automatic conclusion synthesis after a completed debate | — |
 | `--verbose` | Show template migration notices and zero-change summaries | — |
 | `-q, --quiet` | Suppress informational output | — |
 | `--model <model>` | Model to use for experts (default: from config; run 'council doctor --models' to list available models) | — |
