@@ -15,13 +15,6 @@
  *   - `memory`     inspect and curate Council's local SQLite state
  *   - `doctor`     diagnose Council setup
  */
-// SQLite ExperimentalWarning filter — MUST be the first import in this
-// entry point. Importing this module installs `process.emitWarning` patch
-// as a side effect, before any sibling import can transitively load
-// `node:sqlite` (Council's persistence backend) and emit Node's
-// `SQLite is an experimental feature` warning. See F02 in T12.
-import "./sqlite-warning-filter.js";
-
 import * as childProcess from "node:child_process";
 
 import { Command } from "commander";
@@ -151,9 +144,6 @@ export function configureOutputEncoding(
     wrapUtf8Writes(stderr);
   }
 }
-
-configureOutputEncoding();
-installSqliteExperimentalWarningFilter();
 
 // Command categories for grouped help output
 const COMMAND_CATEGORIES = {
@@ -350,6 +340,21 @@ const isMainModule =
   import.meta.url.endsWith("/bin/council.js");
 
 if (isMainModule) {
+  // CLI process-global setup — runs ONLY when this module is the program entry
+  // point, never on import. (Importing `@council-ai/cli` must stay free of side
+  // effects; see tests/unit/bin/import-side-effects.test.ts.)
+  //
+  // `installSqliteExperimentalWarningFilter()` patches `process.emitWarning`
+  // and `process.stderr.write` to drop Node's `node:sqlite` ExperimentalWarning.
+  // That warning is queued when `node:sqlite` is loaded (transitively, while
+  // this module's imports are evaluated, before this block runs), but Node
+  // emits warnings asynchronously via `process.nextTick`. Installing the stderr
+  // filter here — synchronously, before `parseAsync` and before the event loop
+  // turns — still intercepts the deferred write, so the warning stays
+  // suppressed. `configureOutputEncoding()` switches a Windows TTY to UTF-8.
+  configureOutputEncoding();
+  installSqliteExperimentalWarningFilter();
+
   const runCli = async (): Promise<void> => {
     try {
       await buildProgram({ firstRunSetup: {} }).parseAsync(process.argv);

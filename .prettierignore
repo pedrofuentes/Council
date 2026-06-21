@@ -2,3 +2,7 @@
 .agent-backup/
 docs/analysis/
 COMPETITIVE_INTELLIGENCE.md
+
+# Auto-generated CLI command reference (owned by docs:generate:commands; drift-checked by docs:check:commands)
+packages/site/src/content/docs/reference/commands/
+packages/site/src/generated/
