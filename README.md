@@ -23,6 +23,10 @@ council doctor
 council convene "Should we build our own analytics or buy a vendor solution?"
 ```
 
+When a debate completes, `council convene` automatically generates a final
+structured conclusion by default. This costs one additional premium synthesis
+request; pass `--no-conclude` to save the request and skip the conclusion.
+
 **Requirements:** Node.js 24+, GitHub Copilot subscription (Individual, Business, or Enterprise). No API keys, no credits to manage.
 
 ---
@@ -150,45 +154,45 @@ Council ships with **17 built-in expert panels** covering engineering, product, 
 
 ### Engineering
 
-| Panel                      | Use for...                                                                  |
-| -------------------------- | --------------------------------------------------------------------------- |
-| `architecture-review`      | Multi-perspective review of architecture and engineering decisions          |
-| `code-review`              | Multi-perspective code review with separated concerns                       |
-| `incident-postmortem`      | Blameless analysis of a production incident                                 |
+| Panel                 | Use for...                                                         |
+| --------------------- | ------------------------------------------------------------------ |
+| `architecture-review` | Multi-perspective review of architecture and engineering decisions |
+| `code-review`         | Multi-perspective code review with separated concerns              |
+| `incident-postmortem` | Blameless analysis of a production incident                        |
 
 ### Product & Design
 
-| Panel                      | Use for...                                                                  |
-| -------------------------- | --------------------------------------------------------------------------- |
-| `product-strategy-review`  | Pressure-tests a product strategy or major bet                              |
-| `roadmap-prioritization`   | Turns a noisy backlog into a defensible ranked roadmap                      |
-| `ux-review`                | Reviews a user experience — a flow, screen, or redesign                     |
+| Panel                     | Use for...                                              |
+| ------------------------- | ------------------------------------------------------- |
+| `product-strategy-review` | Pressure-tests a product strategy or major bet          |
+| `roadmap-prioritization`  | Turns a noisy backlog into a defensible ranked roadmap  |
+| `ux-review`               | Reviews a user experience — a flow, screen, or redesign |
 
 ### Go-to-Market
 
-| Panel                       | Use for...                                                                  |
-| --------------------------- | --------------------------------------------------------------------------- |
-| `brand-positioning-review`  | Pressure-tests a brand and positioning decision from five conflicting seats |
-| `enterprise-deal-review`    | Reviews a high-stakes enterprise deal from five seats                       |
-| `growth-experiment-review`  | Reviews a growth experiment before launch or before shipping the "winner"   |
-| `negotiation-prep`          | Prepares for a high-stakes negotiation from five seats                      |
-| `pricing-packaging-review`  | Stress-tests a pricing and packaging decision                               |
+| Panel                      | Use for...                                                                  |
+| -------------------------- | --------------------------------------------------------------------------- |
+| `brand-positioning-review` | Pressure-tests a brand and positioning decision from five conflicting seats |
+| `enterprise-deal-review`   | Reviews a high-stakes enterprise deal from five seats                       |
+| `growth-experiment-review` | Reviews a growth experiment before launch or before shipping the "winner"   |
+| `negotiation-prep`         | Prepares for a high-stakes negotiation from five seats                      |
+| `pricing-packaging-review` | Stress-tests a pricing and packaging decision                               |
 
 ### Finance, People, Legal & Executive
 
-| Panel                            | Use for...                                                                                      |
-| -------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `executive-strategy-board-prep`  | Prepares an executive team for a board meeting or major strategy decision                       |
-| `fpna-budget-review`             | Pressure-tests an annual or quarterly budget (decision-support, not financial advice)           |
-| `hiring-decision-review`         | Stress-tests a hiring decision before the offer (decision-support, not professional HR advice)  |
-| `legal-risk-review`              | Reviews a contract, launch, or risk decision (decision-support, not legal advice)               |
+| Panel                           | Use for...                                                                                     |
+| ------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `executive-strategy-board-prep` | Prepares an executive team for a board meeting or major strategy decision                      |
+| `fpna-budget-review`            | Pressure-tests an annual or quarterly budget (decision-support, not financial advice)          |
+| `hiring-decision-review`        | Stress-tests a hiring decision before the offer (decision-support, not professional HR advice) |
+| `legal-risk-review`             | Reviews a contract, launch, or risk decision (decision-support, not legal advice)              |
 
 ### Startup & Career
 
-| Panel                 | Use for...                                                                       |
-| --------------------- | -------------------------------------------------------------------------------- |
-| `career-coaching`     | Career-decision panel for engineers weighing IC vs. management or job changes    |
-| `startup-validation`  | Stress-test a startup or product idea                                            |
+| Panel                | Use for...                                                                    |
+| -------------------- | ----------------------------------------------------------------------------- |
+| `career-coaching`    | Career-decision panel for engineers weighing IC vs. management or job changes |
+| `startup-validation` | Stress-test a startup or product idea                                         |
 
 **Usage:** `council convene "<topic>" --panel <name>`  
 **See all:** `council templates`
@@ -284,6 +288,8 @@ council convene "Long debate" --template architecture-review \
 
 # Pipe NDJSON output to jq, logs, or scripts
 council convene "..." --template code-review --format json | jq .
+# Completed debates emit {"kind":"conclusion","conclusion":{...}} as the final
+# NDJSON line after debate.end, unless you pass --no-conclude.
 
 # Show the transcript of a previous debate
 council resume <panel-name>
@@ -568,6 +574,7 @@ disk if the database is reset.
 # Debate orchestration (engine defaults to copilot; pass --engine mock for offline/CI)
 council convene <topic>                                        # Auto-compose a panel + start deliberation
 council convene <topic> --template <name>                      # Use a built-in or library panel
+council convene <topic> --no-conclude                          # Skip the default final conclusion synthesis
 council ask <panel> "<question>"                               # One-shot to one expert (default: first; pin with --expert <slug>)
 council conclude [panel]                                       # Decision matrix + recommendation
 council conclude [panel] --timeout 90000                      # Custom synthesis timeout (ms)
