@@ -10,7 +10,8 @@
  *   - Emit BEL / NUL / other C0 controls that interfere with TTYs
  *
  * This helper strips:
- *   - ANSI CSI sequences:  ESC [ ... letter
+ *   - ANSI CSI sequences:  ESC [ ... final byte, including ECMA-48
+ *     private/intermediate bytes
  *   - OSC sequences:        ESC ] ... BEL
  *   - C0 controls except newline (\n), tab (\t), carriage return (\r)
  *   - DEL (0x7F)
@@ -21,20 +22,28 @@
  *   - Bidi override/isolate characters (U+202A–U+202E, U+2066–U+2069) that
  *     enable Trojan Source attacks (CVE-2021-42574) by visually reordering
  *     text in the terminal to disguise malicious content.
+ *   - Weak Bidi_Control marks (U+061C, U+200E, U+200F), zero-width characters,
+ *     and hidden default-ignorable format characters that can invisibly
+ *     reorder, hide, or pad terminal output.
  *
  * Printable Unicode (emoji, accents, CJK, NBSP and other Latin-1 supplement
  * characters at U+00A0+) is preserved.
  */
+import { HIDDEN_FORMAT_CHARS, ZERO_WIDTH_CHARS } from "./hidden-format-chars.js";
+
 const CONTROL_CHAR_PATTERN =
   // Order matters: match the multi-char ANSI/OSC sequences BEFORE the C0
   // character class, otherwise the class would consume the leading ESC
   // (\x1B is in the \x0E-\x1F range) and leave the rest of the sequence
   // visible.
   // eslint-disable-next-line no-control-regex
-  /\x1B\[[0-9;]*[a-zA-Z]|\x1B\].*?\x07|[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]|[\u202A-\u202E\u2066-\u2069]/g;
+  /\x1B\[[0-?]*[ -/]*[@-~]|\x1B\].*?\x07|[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]|[\u202A-\u202E\u2066-\u2069]/gs;
 
 export function stripControlChars(text: string): string {
-  return text.replace(CONTROL_CHAR_PATTERN, "");
+  return text
+    .replace(CONTROL_CHAR_PATTERN, "")
+    .replace(ZERO_WIDTH_CHARS, "")
+    .replace(HIDDEN_FORMAT_CHARS, "");
 }
 
 /**
