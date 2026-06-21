@@ -367,6 +367,41 @@ describe("panel chat mode", () => {
     expect(err).toMatch(/re-run `council convene "Decide the migration plan"`/i);
   });
 
+  it("collapses legacy recovery hint topics to one terminal line", async () => {
+    const db = await createDatabase(path.join(env.home, "council.db"));
+    try {
+      const repo = new PanelRepository(db);
+      await repo.create({
+        name: "legacy-spoof-topic-panel",
+        topic: "Ship now\r\n\u001B[31mspoof OK\u2028next line",
+        copilotHome: path.join(env.home, "copilot"),
+        configJson: JSON.stringify({
+          template: "missing-legacy-spoof-template",
+          mode: "structured",
+          engine: "mock",
+        }),
+      });
+    } finally {
+      await db.destroy();
+    }
+
+    let err = "";
+    const cmd = buildChatCommand({
+      write: () => undefined,
+      writeError: (s) => (err += s),
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput([]),
+    });
+
+    await expect(
+      cmd.parseAsync(["node", "council-chat", "legacy-spoof-topic-panel", "--engine", "mock"]),
+    ).rejects.toThrow(/Failed to load panel template for "legacy-spoof-topic-panel"/);
+    expect(err).toContain('Re-run `council convene "Ship now spoof OK next line"`');
+    expect(err).not.toContain("\r");
+    expect(err).not.toContain("\u001B");
+    expect(err).not.toContain("\u2028");
+  });
+
   it("errors when a persisted panel has an invalid stored definition", async () => {
     const db = await createDatabase(path.join(env.home, "council.db"));
     try {
