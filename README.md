@@ -1,19 +1,64 @@
 # 🏛️ Council
 
-**Persistent AI expert panels that deliberate, disagree, and remember.**
+**Structured multi-expert deliberation in your terminal — with memory, genuine disagreement, and no sycophancy.**
 
-> Like having a board of advisors in your terminal — with memory, genuine disagreement, and structured synthesis.
+Stop getting single-perspective advice from AI. Council creates persistent expert panels that deliberate, disagree, and remember across sessions — so you get deeper insights for complex decisions.
 
 [![npm version](https://img.shields.io/npm/v/@council-ai/cli?logo=npm)](https://www.npmjs.com/package/@council-ai/cli) [![npm downloads](https://img.shields.io/npm/dm/@council-ai/cli?logo=npm)](https://www.npmjs.com/package/@council-ai/cli) [![CI](https://github.com/pedrofuentes/Council/actions/workflows/ci.yml/badge.svg)](https://github.com/pedrofuentes/Council/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![npm provenance](https://img.shields.io/badge/npm-provenance-cb3837?logo=npm)](https://docs.npmjs.com/generating-provenance-statements)
 
+**Provider-flexible:** Runs on GitHub Copilot today. OpenAI and Anthropic support planned ([see roadmap](./ROADMAP.md#phase-8-growth--ecosystem)).
+
 ---
 
-## 30-Second Demo
-
-<!-- TODO: Add terminal recording (VHS/asciinema) -->
+## Quick Start
 
 ```bash
-$ council convene "Should we build our own analytics platform or buy a third-party solution?"
+# Install
+npm install -g @council-ai/cli
+
+# Verify setup (checks Node.js, libsql, Copilot SDK, disk)
+council doctor
+
+# Run your first deliberation — Council auto-composes an expert panel for you
+council convene "Should we build our own analytics or buy a vendor solution?"
+```
+
+**Requirements:** Node.js 24+, GitHub Copilot subscription (Individual, Business, or Enterprise). No API keys, no credits to manage.
+
+---
+
+## Why Council?
+
+ChatGPT gives you **one perspective**. Council gives you **structured deliberation** from multiple expert viewpoints — with memory, disagreement, and synthesis.
+
+| You ask...                        | Single AI says...      | Council deliberates...                                                                                                          |
+| --------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| "Build or buy analytics?"         | Generic pros/cons list | CTO estimates build cost, CFO models 3-year TCO, VP Product argues speed to insight — synthesis names the real risk             |
+| "Should we add a freemium tier?"  | Balanced advice        | VP Growth projects conversion funnels, CFO flags margin erosion, Head of CS warns about support load — genuine disagreement     |
+| "Should we use microservices?"    | Generic pros/cons list | CTO argues operational risk, PM argues time-to-learning, Adversary challenges both — then synthesis names the crux              |
+| "Review this auth middleware"     | Unified feedback       | Security auditor flags JWT expiry, performance engineer finds N+1, future maintainer asks "will I understand this in 6 months?" |
+| "Should I take the manager role?" | Balanced advice        | IC mentor argues stay, manager argues switch, career coach provides a decision framework                                        |
+
+---
+
+## Core Features
+
+- **Auto-composition:** Describe your problem; Council designs an expert panel for you.
+- **Persistent memory:** Experts remember prior debates and evolve their perspectives across sessions.
+- **Anti-sycophancy enforcement:** 3-layer quality gate ensures genuine disagreement and specificity (forbidden phrases, disagreement budget, concrete evidence requirements).
+- **Structured & freeform modes:** 4-phase choreography (opening → cross-exam → rebuttal → synthesis) or flexible moderated discussion.
+- **Document-driven persona experts:** Ground experts in your own reference material (CVs, RFCs, design docs, transcripts) for domain-specific voice and expertise.
+- **Persistent chat:** 1:1 conversations with experts or multi-expert panel chat with `@mention` support and inline debates.
+- **Export & share:** Markdown, JSON, ADR (Architecture Decision Record), and shareable formats.
+
+**Shipped:** Phases 1–7.6 complete ([ROADMAP.md](./ROADMAP.md)). CLI includes `convene`, `ask`, `chat`, `conclude`, `resume`, `export`, `sessions`, `templates`, `expert`, `panel`, `memory`, `doctor`, `docs`, `config`, `telemetry`, and `update`.
+
+---
+
+## Demo
+
+```bash
+$ council convene "Should we build our own analytics or buy a vendor solution?"
 
 🏛️ Auto-composing expert panel...
 ✓ Panel assembled: 3 experts
@@ -46,41 +91,91 @@ data gap is the real risk. Start with a vendor, ring-fence the build option
 for year two if data ownership becomes a competitive advantage...
 ```
 
-## Why Council?
+---
 
-ChatGPT gives you **one perspective**. Council gives you **structured deliberation** from multiple expert viewpoints — with memory, disagreement, and synthesis.
+## Learn More
 
-| You ask...                        | Single AI says...      | Council deliberates...                                                                                                          |
-| --------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| "Build or buy analytics?"         | Generic pros/cons list | CTO estimates build cost, CFO models 3-year TCO, VP Product argues speed to insight — synthesis names the real risk             |
-| "Should we add a freemium tier?"  | Balanced advice        | VP Growth projects conversion funnels, CFO flags margin erosion, Head of CS warns about support load — genuine disagreement     |
-| "Should we use microservices?"    | Generic pros/cons list | CTO argues operational risk, PM argues time-to-learning, Adversary challenges both — then synthesis names the crux              |
-| "Review this auth middleware"     | Unified feedback       | Security auditor flags JWT expiry, performance engineer finds N+1, future maintainer asks "will I understand this in 6 months?" |
-| "Should I take the manager role?" | Balanced advice        | IC mentor argues stay, manager argues switch, career coach provides a decision framework                                        |
+- **[Installation & First Debate](packages/site/src/content/docs/tutorials/01-install-and-first-debate.mdx)** — Get started in 5 minutes
+- **[Tutorials](packages/site/src/content/docs/tutorials/)** — Step-by-step guides for key workflows
+- **[How-To Guides](packages/site/src/content/docs/how-to/)** — Practical recipes for common tasks
+- **[Architecture & Concepts](packages/site/src/content/docs/explanation/)** — Understand deliberation model, anti-sycophancy, memory, and RAG
+- **[Reference](packages/site/src/content/docs/reference/)** — CLI command reference and API docs
+- **[ROADMAP.md](./ROADMAP.md)** — Completed phases (1–7.6) and Phase 8 plans (GitHub Action, direct provider APIs, telemetry)
+- **[CONTRIBUTING.md](./CONTRIBUTING.md)** — Development setup, testing, and contribution guidelines
 
-## Install
+---
+
+## Commands at a Glance
 
 ```bash
-npm install -g @council-ai/cli
+# Getting started
+council doctor                                      # Verify Node, libsql, Copilot SDK, disk
+council config                                      # View/edit configuration
+
+# Run a deliberation
+council convene "Should we go public?"              # Auto-compose a panel
+council convene "..." --template code-review        # Use built-in template
+council templates                                   # List all built-in templates
+
+# Conversation
+council ask <expert> "What do you think?"           # One-shot question to a single expert
+council chat <expert-or-panel>                      # Persistent 1:1 or panel chat
+council resume <panel>                              # Show transcript or continue debate
+
+# Decision framework
+council conclude <panel>                            # Synthesize into decision matrix
+
+# Export & inspect
+council export <panel>                              # Export to markdown (or --format adr/json)
+council sessions                                    # List all past debates
+council memory list                                 # Summary of all panels
+council memory inspect <panel>                      # Detail view
+
+# Manage library
+council expert create                               # Interactive wizard for new expert
+council expert create --persona                     # Persona expert (with docs/ folder)
+council panel create                                # Create a custom panel
+council expert list                                 # View your expert library
+council panel list                                  # View your panels
+
+# Keep up to date
+council update                                      # Upgrade to latest published version
 ```
 
-On first run, Council auto-creates a default configuration and offers setup guidance via `council doctor`.
+---
 
-**Requirements:**
+## Example Use Cases
 
-- Node.js 24+
-- GitHub Copilot subscription (Individual, Business, or Enterprise)
-- No API keys. No OpenAI account. No credits to manage.
+- **Architecture review:** Multi-expert deliberation on technical decisions (microservices, build vs. buy, tech stack)
+- **Code review:** Security auditor + performance engineer + future maintainer review PRs or modules
+- **Incident postmortem:** Analyze failures with multiple expert perspectives on root cause and remediation
+- **Career decisions:** IC mentor + manager + career coach deliberate on role changes, negotiation, growth
+- **Startup strategy:** CEO + CFO + VP Product debate product-market fit, pricing, fundraising timing
 
-## Quick Start
+---
 
-> **Phases 1–7.6 complete.** The CLI implements `convene`, `ask`, `resume`, `conclude`, `export`, `sessions`, `templates`, `expert`, `panel`, `chat`, `memory`, `doctor`, `docs`, and `config`. See [ROADMAP.md](./ROADMAP.md) for Phase 8 (Growth & Ecosystem) plans.
+## Documentation & Community
+
+- **Documentation:** [packages/site/](packages/site/src/content/docs/) — Tutorials, how-to guides, reference, architecture
+- **Roadmap:** [ROADMAP.md](./ROADMAP.md) — Completed phases and Phase 8 plans
+- **Contributing:** [CONTRIBUTING.md](./CONTRIBUTING.md) — Development setup, testing, pull requests
+- **Issues:** [GitHub Issues](https://github.com/pedrofuentes/Council/issues) — Bug reports and feature requests
+- **License:** [MIT](LICENSE)
+
+---
+
+## What's Next
+
+Below you'll find the full CLI reference, advanced usage patterns, persona expert setup, and deep-dive explanations of Council's deliberation model, anti-sycophancy enforcement, memory system, and document intelligence (RAG).
+
+**New to Council?** Start with `council doctor` to verify your setup, then run `council convene "your first question"`.
+
+---
+
+## Full CLI Reference
 
 ```bash
 # Verify your setup
-council doctor
-
-# View or edit your configuration
 council config show                # print effective config values with sources
 council config path                # print config file location
 council config edit                # open in $EDITOR
@@ -290,27 +385,27 @@ need no conversion; rich-document formats are converted to plain text before ind
 
 **Native (no conversion needed):**
 
-| Extension | Format |
-|-----------|--------|
-| `.md`, `.markdown` | Markdown |
-| `.txt` | Plain text |
-| `.html`, `.htm` | HTML |
+| Extension          | Format     |
+| ------------------ | ---------- |
+| `.md`, `.markdown` | Markdown   |
+| `.txt`             | Plain text |
+| `.html`, `.htm`    | HTML       |
 
 **Rich documents (converted to text):**
 
-| Extension | Format |
-|-----------|--------|
-| `.pdf` | PDF |
-| `.docx` | Word document |
-| `.pptx` | PowerPoint presentation |
-| `.xlsx` | Excel spreadsheet |
-| `.xls` | Legacy Excel (re-save as `.xlsx` recommended) |
-| `.csv` | Comma-separated values |
-| `.tsv` | Tab-separated values |
-| `.rtf` | Rich Text Format |
-| `.odt` | OpenDocument Text |
-| `.ods` | OpenDocument Spreadsheet |
-| `.odp` | OpenDocument Presentation |
+| Extension | Format                                        |
+| --------- | --------------------------------------------- |
+| `.pdf`    | PDF                                           |
+| `.docx`   | Word document                                 |
+| `.pptx`   | PowerPoint presentation                       |
+| `.xlsx`   | Excel spreadsheet                             |
+| `.xls`    | Legacy Excel (re-save as `.xlsx` recommended) |
+| `.csv`    | Comma-separated values                        |
+| `.tsv`    | Tab-separated values                          |
+| `.rtf`    | Rich Text Format                              |
+| `.odt`    | OpenDocument Text                             |
+| `.ods`    | OpenDocument Spreadsheet                      |
+| `.odp`    | OpenDocument Presentation                     |
 
 ### Document commands
 
@@ -326,12 +421,12 @@ council docs doctor <panel>        # document-health diagnostics: indexed count,
 
 ### Document configuration
 
-| Key | Values | Default | Description |
-|-----|--------|---------|-------------|
-| `documents.maxFileSizeMB` | 1–500 | `50` | Maximum file size the extractor will read |
-| `documents.aiExtraction` | `off` \| `ask` \| `auto` | `off` | AI-based fallback for unsupported formats |
-| `documents.aiExtractionAllowedExtensions` | list of extensions | `[]` (all eligible) | Restrict AI extraction to specific extensions |
-| `expert.supportedFormats` | list of extensions | 14 extensions (all above **except** `.markdown` and `.htm`) | Formats a panel's document scanner will accept |
+| Key                                       | Values                   | Default                                                     | Description                                    |
+| ----------------------------------------- | ------------------------ | ----------------------------------------------------------- | ---------------------------------------------- |
+| `documents.maxFileSizeMB`                 | 1–500                    | `50`                                                        | Maximum file size the extractor will read      |
+| `documents.aiExtraction`                  | `off` \| `ask` \| `auto` | `off`                                                       | AI-based fallback for unsupported formats      |
+| `documents.aiExtractionAllowedExtensions` | list of extensions       | `[]` (all eligible)                                         | Restrict AI extraction to specific extensions  |
+| `expert.supportedFormats`                 | list of extensions       | 14 extensions (all above **except** `.markdown` and `.htm`) | Formats a panel's document scanner will accept |
 
 Configure with `council config set <key> <value>` or open `~/.council/config.yaml` with `council config edit`.
 
