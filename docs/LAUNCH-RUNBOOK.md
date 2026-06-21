@@ -29,7 +29,7 @@
 
 - [x] **npm package published** — `@council-ai/cli` at v0.4.0+ on npmjs.com with provenance
 - [ ] **[HUMAN]** Verify `npm i -g @council-ai/cli` installs cleanly on macOS, Linux, Windows (or document Windows unsupported if true)
-- [x] `council doctor` implemented — checks Node.js 24+, libsql, Copilot SDK, disk space, and online model connectivity
+- [x] `council doctor` implemented — checks Node.js 24+, SQLite, Copilot SDK, disk space, and online model connectivity
 - [ ] **[HUMAN]** Run `council doctor` on a clean machine (no prior Council install) — all checks green
 - [x] `council demo` implemented — zero-setup offline showcase debate (no login/API keys required)
 - [ ] **[HUMAN]** Verify `council demo` runs successfully on a clean machine
@@ -284,7 +284,7 @@ Check subreddit rules before posting. Candidates:
 - **Deliberation ≠ truth** — multiple perspectives improve decisions, but experts can still be wrong
 - **GitHub Copilot required today** — state this up-front, not buried in docs
   - Future: "OpenAI and Anthropic support planned" (link to ROADMAP.md §Phase 8)
-- **Node.js 24+ required** — not optional (due to `@libsql/client` native modules)
+- **Node.js 24+ required** — not optional (Council uses the built-in `node:sqlite` module)
 
 ### ✅ What to Emphasize
 
