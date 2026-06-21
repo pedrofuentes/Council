@@ -17,6 +17,7 @@ import {
   buildSynthesisPrompt,
   MAX_TRANSCRIPT_CHARS,
   MAX_TRANSCRIPT_TURNS,
+  renderPlain,
   type ConcludeOutput,
 } from "../../../../src/cli/commands/conclude.js";
 import type { TranscriptDocument } from "../../../../src/memory/transcript.js";
@@ -467,6 +468,40 @@ describe("buildConcludeCommand", () => {
     expect(captured).toContain("monolith");
     expect(captured).toContain("phased migration");
     expect(captured.toLowerCase()).toContain("medium");
+  });
+
+  it("strips terminal control sequences from model-generated plain conclusion fields", () => {
+    const rendered = renderPlain({
+      panelName: "conclude-test",
+      topic: "Should we ship?",
+      debateId: "debate-1",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      consensus: ["agree \u202Eevil", "click \u001B]8;;https://evil.example\u0007here\u001B]8;;\u0007"],
+      tensions: ["risk \u009B31mred", "rewrite \u001B[2Jscreen"],
+      decisionMatrix: [
+        {
+          dimension: "Path \u001B[31mred\u001B[0m",
+          positions: [
+            {
+              expert: "CTO \u001B]0;owned\u0007",
+              stance: "ship \u0000carefully",
+            },
+          ],
+        },
+      ],
+      recommendation: "ship \u001B[31mEVIL\u001B[0m \u0007",
+      confidence: "high",
+    });
+
+    const disallowedControls = ["\u001B", "\u0000", "\u0007", "\u009B", "\u202E"];
+    expect(disallowedControls.some((char) => rendered.includes(char))).toBe(false);
+    expect(rendered).toContain("Recommendation: ship EVIL ");
+    expect(rendered).toContain("  - agree evil");
+    expect(rendered).toContain("  - click here");
+    expect(rendered).toContain("  - risk 31mred");
+    expect(rendered).toContain("  - rewrite screen");
+    expect(rendered).toContain("  * Path red");
+    expect(rendered).toContain("      - CTO : ship carefully");
   });
 
   it("synthesis prompt includes the topic and every expert turn", async () => {
