@@ -30,6 +30,36 @@ pnpm test -- path/to/file.test.ts
 pnpm lint -- path/to/file.ts
 ```
 
+## Ways to Contribute
+
+Council welcomes contributions at different levels of rigor depending on what
+you're contributing:
+
+### 🎯 Panel Recipes, Documentation, and Examples (lighter process)
+
+These contributions help the community without requiring the full code workflow:
+
+- **Panel YAML recipes** — share expert panel configurations for specific domains
+  (e.g., a code-review panel, security-analysis panel, or creative-writing
+  panel). Self-check with `council panel lint <your-panel.yaml>` before
+  submitting. Submit via PR to a future panel gallery or link in GitHub Issues.
+- **Documentation fixes** — typos, clarifications, improved examples, or new
+  guides. Edit the relevant `.md` file and open a PR.
+- **Example transcripts** — real-world Council session examples demonstrating
+  interesting use cases or workflows. Share as GitHub Issues or discussions.
+
+**Process**: Open a PR with your changes. Prettier must pass
+(`npx prettier --check <file>`), but you don't need TDD commit choreography or
+the full pre-push verification. A maintainer will review and merge. Look for
+`good-first-issue` labels on GitHub Issues to get started.
+
+### 💻 Code Contributions (full TDD + Sentinel workflow)
+
+Code changes to the CLI, engine, or core libraries follow a rigorous,
+mechanically-enforced process described below and in
+[`AGENTS.md`](./AGENTS.md). This ensures quality and consistency for the
+codebase.
+
 ## Development Workflow
 
 Council follows a strict, mechanically-enforced workflow. The essentials:
