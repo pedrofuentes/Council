@@ -188,6 +188,56 @@ describe("doctor --report (integration)", () => {
     expect(output).not.toContain("cliVersion");
     expect(() => JSON.parse(output)).toThrow();
   });
+
+  it("--report json includes coarse provider availability from the registry", async () => {
+    const output = await runDoctor(["--report", "json", "--offline"], {
+      resolveCliPath: () => CLI_PATH_SENTINEL,
+    });
+
+    const parsed = JSON.parse(output) as {
+      providers: readonly { id: string; available: boolean }[];
+    };
+    const availability = new Map(parsed.providers.map((p) => [p.id, p.available]));
+    expect(availability.get("copilot")).toBe(true);
+    expect(availability.get("mock")).toBe(true);
+    expect(availability.get("openai")).toBe(false);
+    expect(availability.get("anthropic")).toBe(false);
+
+    assertNoSensitiveLeak(output);
+  });
+
+  it("--report json provider entries expose only id + available (no env var name or value)", async () => {
+    const original = process.env["OPENAI_API_KEY"];
+    process.env["OPENAI_API_KEY"] = "sk-REPORT-SECRET-value";
+    try {
+      const output = await runDoctor(["--report", "json", "--offline"]);
+
+      const parsed = JSON.parse(output) as {
+        providers: readonly Record<string, unknown>[];
+      };
+      expect(parsed.providers.length).toBeGreaterThan(0);
+      for (const provider of parsed.providers) {
+        expect(Object.keys(provider).sort()).toEqual(["available", "id"]);
+      }
+      expect(output).not.toContain("sk-REPORT-SECRET-value");
+      expect(output).not.toContain("OPENAI_API_KEY");
+    } finally {
+      if (original === undefined) delete process.env["OPENAI_API_KEY"];
+      else process.env["OPENAI_API_KEY"] = original;
+    }
+  });
+
+  it("--report markdown lists provider availability and stays sanitized", async () => {
+    const output = await runDoctor(["--report", "markdown", "--offline"], {
+      resolveCliPath: () => CLI_PATH_SENTINEL,
+    });
+
+    expect(output).toContain("| Provider | Available |");
+    expect(output).toContain("| copilot | true |");
+    expect(output).toContain("| openai | false |");
+
+    assertNoSensitiveLeak(output);
+  });
 });
 
 describe("buildDoctorReport (unit)", () => {
@@ -206,6 +256,7 @@ describe("buildDoctorReport (unit)", () => {
       arch: "x64",
       nodeVersion: "24.0.0",
       terminal: { noColor: true, tty: false, ascii: true },
+      providers: [{ id: "copilot", available: true }],
     });
 
     expect(report).toEqual({
@@ -215,11 +266,30 @@ describe("buildDoctorReport (unit)", () => {
       terminal: { noColor: true, tty: false, ascii: true },
       copilotCliPathStatus: "ok",
       telemetryEnabled: true,
+      providers: [{ id: "copilot", available: true }],
       checks: [
         { name: "Node.js version", status: "pass" },
         { name: "Copilot CLI", status: "fail" },
       ],
     });
+  });
+
+  it("includes coarse provider availability and sanitizes provider ids", () => {
+    const report = buildDoctorReport({
+      cliVersion: "1.0.0",
+      checks: baseChecks,
+      copilotCliPathStatus: "ok",
+      telemetryEnabled: false,
+      providers: [
+        { id: "copilot", available: true },
+        { id: "openai\u001b[31m", available: false },
+      ],
+    });
+
+    expect(report.providers).toEqual([
+      { id: "copilot", available: true },
+      { id: "openai", available: false },
+    ]);
   });
 
   it("drops any non-whitelisted property smuggled into a check", () => {
@@ -260,6 +330,7 @@ describe("renderDoctorReport (unit)", () => {
     terminal: { noColor: false, tty: true, ascii: false },
     copilotCliPathStatus: "ok",
     telemetryEnabled: false,
+    providers: [{ id: "copilot", available: true }],
     checks: [{ name: "Node.js version", status: "pass" }],
   };
 
@@ -274,6 +345,12 @@ describe("renderDoctorReport (unit)", () => {
     expect(out).toContain("| Check | Status |");
     expect(out).toContain("Node.js version");
     expect(out).toContain("pass");
+  });
+
+  it("markdown output contains a providers table", () => {
+    const out = renderDoctorReport(report, "markdown");
+    expect(out).toContain("| Provider | Available |");
+    expect(out).toContain("| copilot | true |");
   });
 });
 
