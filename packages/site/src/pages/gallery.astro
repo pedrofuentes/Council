@@ -44,6 +44,7 @@ function disciplineId(discipline: string): string {
     />
   </head>
   <body>
+    <a class="skip-link" href="#gallery-main">Skip to content</a>
     <header class="page-header">
       <nav class="page-nav" aria-label="Site">
         <a href={base}>Home</a>
@@ -57,7 +58,7 @@ function disciplineId(discipline: string): string {
       </p>
     </header>
 
-    <main class="gallery">
+    <main id="gallery-main" class="gallery">
       {
         groups.length === 0 ? (
           <GalleryGrid panels={summaries} />
@@ -157,6 +158,33 @@ function disciplineId(discipline: string): string {
         line-height: 1.6;
       }
 
+      .skip-link {
+        position: absolute;
+        left: 0.75rem;
+        top: -3.5rem;
+        z-index: 100;
+        padding: 0.55rem 0.95rem;
+        border-radius: 0.45rem;
+        background: var(--council-color-surface);
+        color: var(--council-color-text);
+        border: 1px solid var(--council-color-primary);
+        font-weight: 600;
+        text-decoration: none;
+        transition: top 140ms ease;
+      }
+
+      .skip-link:focus-visible {
+        top: 0.75rem;
+        outline: 2px solid var(--council-color-primary);
+        outline-offset: 2px;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .skip-link {
+          transition: none;
+        }
+      }
+
       .page-header {
         max-width: 72rem;
         margin-inline: auto;
@@ -170,7 +198,7 @@ function disciplineId(discipline: string): string {
       }
 
       .page-nav a {
-        color: var(--council-color-primary-hover);
+        color: color-mix(in srgb, var(--council-color-primary-hover) 60%, var(--council-color-text));
         text-decoration: none;
         font-weight: 600;
       }
@@ -225,14 +253,13 @@ function disciplineId(discipline: string): string {
       }
 
       .filter-chip[aria-pressed="true"] {
-        color: var(--council-color-bg);
+        color: var(--council-color-on-accent);
         background: var(--council-color-primary);
         border-color: var(--council-color-primary);
       }
 
       .filter-count {
         font-variant-numeric: tabular-nums;
-        opacity: 0.8;
       }
 
       .gallery-section {

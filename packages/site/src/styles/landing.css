@@ -178,7 +178,7 @@
 .council-terminal-title {
   font-family: var(--council-font-mono);
   font-size: var(--sl-text-xs);
-  color: var(--council-color-text-muted);
+  color: var(--council-color-text);
 }
 
 .council-terminal pre {
@@ -384,6 +384,8 @@
  * Closing call-to-action
  * ------------------------------------------------------------------------- */
 .council-closing {
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -392,13 +394,25 @@
   padding: clamp(2rem, 5vw, 3.25rem) 1.5rem;
   border: 1px solid color-mix(in srgb, var(--council-color-primary) 28%, transparent);
   border-radius: 1.1rem;
-  background:
-    radial-gradient(
-      120% 120% at 50% 0%,
-      color-mix(in srgb, var(--council-color-primary) 12%, transparent),
-      transparent 60%
-    ),
-    var(--council-color-surface);
+  /* Solid, contrast-determinable base. The brand radial tint is painted by the
+     decorative ::before below: CSS gradients are not contrast-computable, so
+     leaving the tint on the element itself makes a11y tooling unable to verify
+     the text on this band even though it passes. */
+  background: var(--council-color-surface);
+}
+
+.council-closing::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(
+    120% 120% at 50% 0%,
+    color-mix(in srgb, var(--council-color-primary) 12%, transparent),
+    transparent 60%
+  );
 }
 
 .council-closing .council-section-title {

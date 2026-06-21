@@ -1,6 +1,17 @@
 /* Minimal placeholder global styles. Real theming is owned by a later task. */
 :root {
   color-scheme: light dark;
+
+  /*
+   * On-accent foreground ink. The accent tokens (--council-color-primary,
+   * --council-color-accent-*) are identical in the light and dark themes, so
+   * text placed on a solid accent fill must use a single constant ink to keep
+   * >= 4.5:1 contrast in BOTH themes. The theme-flipping --council-color-bg is
+   * near-white in light mode and fails on the light accents there (≈2:1); the
+   * brand deep-ink (see tokens.css palette header) passes on primary (5.78:1)
+   * and amber (6.64:1) in both themes.
+   */
+  --council-color-on-accent: #1b2c32;
 }
 
 .landing {
