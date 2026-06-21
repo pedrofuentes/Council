@@ -125,6 +125,34 @@ describe("PanelDefinitionSchema", () => {
     expect(parsed.defaults?.maxRounds).toBe(6);
   });
 
+  it("accepts and preserves optional v1 metadata fields (backward-compatible)", () => {
+    const parsed = PanelDefinitionSchema.parse({
+      ...minimal,
+      samplePrompts: ["What should we do?"],
+      decisionArtifact: "A go/no-go recommendation with risks.",
+      tags: ["engineering", "architecture"],
+      regulatedDomain: "finance",
+    });
+    expect(parsed.samplePrompts).toEqual(["What should we do?"]);
+    expect(parsed.decisionArtifact).toBe("A go/no-go recommendation with risks.");
+    expect(parsed.tags).toEqual(["engineering", "architecture"]);
+    expect(parsed.regulatedDomain).toBe("finance");
+  });
+
+  it("leaves the new metadata fields undefined when omitted", () => {
+    const parsed = PanelDefinitionSchema.parse(minimal);
+    expect(parsed.samplePrompts).toBeUndefined();
+    expect(parsed.decisionArtifact).toBeUndefined();
+    expect(parsed.tags).toBeUndefined();
+    expect(parsed.regulatedDomain).toBeUndefined();
+  });
+
+  it("rejects an unknown regulatedDomain value", () => {
+    expect(() =>
+      PanelDefinitionSchema.parse({ ...minimal, regulatedDomain: "astrology" }),
+    ).toThrow();
+  });
+
   it("PanelDefaultsSchema accepts model field", () => {
     const parsed = PanelDefaultsSchema.parse({
       mode: "structured",
