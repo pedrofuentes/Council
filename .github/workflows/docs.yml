@@ -1,0 +1,67 @@
+name: Docs Quality
+
+# Standalone docs-quality gate. Deliberately decoupled from ci.yml / the
+# required "Typecheck, Lint & Test" aggregate gate so docs drift + link
+# regressions are caught without blocking non-docs PRs on doc checks.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "packages/site/**"
+      - "packages/cli/src/**"
+      - ".github/workflows/docs.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/site/**"
+      - "packages/cli/src/**"
+      - ".github/workflows/docs.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  docs-checks:
+    name: Docs Drift & Link Regression
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Command/config references are generated from the CLI source, so the CLI
+      # must be built before the drift checks can compare generated vs committed.
+      - name: Build CLI
+        run: pnpm --filter @council-ai/cli build
+
+      - name: Check command reference drift
+        run: pnpm --filter @council-ai/site run docs:check:commands
+
+      - name: Check config reference drift
+        run: pnpm --filter @council-ai/site run docs:check:config
+
+      - name: Build site
+        run: pnpm --filter @council-ai/site build
+
+      - name: Astro check
+        run: pnpm --filter @council-ai/site check
+
+      # Guard against regression of broken `/docs/<section>` content cross-links.
+      # Internal links must not point at bare `/docs/<section>` (or the
+      # `/Council/docs/<section>` GitHub Pages base) paths.
+      - name: Link-regression guard
+        shell: bash
+        run: |
+          if grep -rnE '\]\((/Council)?/docs/(tutorials|how-to|reference|explanation|gallery|contributing|versioning)' packages/site/src/content; then
+            echo "Broken /docs/<section> cross-links found"
+            exit 1
+          fi
