@@ -150,4 +150,19 @@ describe("selectModelInteractively", () => {
     expect(updateConfig).not.toHaveBeenCalled();
     expect(output.text()).toContain("Run 'council doctor' to verify your full setup.");
   });
+
+  it("opens the wizard with the Council version banner", async () => {
+    discoverModels.mockResolvedValue({ models: ["claude-sonnet-4.5"], source: "live" });
+    const output = createCapturedOutput();
+
+    await selectModelInteractively({
+      write: (text) => output.stream.write(text),
+      input: createInput("\n"),
+      output: output.stream,
+      discoverModels,
+      updateConfig,
+    });
+
+    expect(output.text()).toMatch(/Council v\d+\.\d+\.\d+/);
+  });
 });
