@@ -13,10 +13,39 @@ export default defineConfig({
     starlight({
       title: "Council",
       customCss: ["./src/styles/global.css"],
-      // Minimal placeholder sidebar — the real information architecture is
-      // owned by the documentation task that adds content under
-      // src/content/docs/**.
-      sidebar: [{ label: "Documentation", link: "/docs/" }],
+      // Diátaxis information architecture: tutorials, how-to guides,
+      // reference, and explanation sections for optimal documentation
+      // discoverability.
+      sidebar: [
+        {
+          label: "Start Here",
+          link: "/docs/",
+        },
+        {
+          label: "Tutorials",
+          items: [{ label: "Overview", link: "/docs/tutorials/" }],
+        },
+        {
+          label: "How-To Guides",
+          items: [{ label: "Overview", link: "/docs/how-to/" }],
+        },
+        {
+          label: "Reference",
+          items: [{ label: "Overview", link: "/docs/reference/" }],
+        },
+        {
+          label: "Explanation",
+          items: [{ label: "Overview", link: "/docs/explanation/" }],
+        },
+        {
+          label: "Contributing",
+          items: [{ label: "Overview", link: "/docs/contributing/" }],
+        },
+        {
+          label: "Versioning & Stability",
+          link: "/docs/versioning/",
+        },
+      ],
     }),
   ],
 });

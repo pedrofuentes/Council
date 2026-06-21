@@ -1,0 +1,33 @@
+---
+title: Versioning & Stability
+description: Semantic versioning, stability guarantees, and release policy.
+---
+
+Council follows [Semantic Versioning 2.0.0](https://semver.org/) and maintains
+clear stability boundaries.
+
+## Version Scheme
+
+- **Major (X.0.0)**: Breaking changes to CLI commands, panel schemas, or public APIs
+- **Minor (0.X.0)**: New features, backward-compatible enhancements
+- **Patch (0.0.X)**: Bug fixes, security patches, documentation updates
+
+## Stability Guarantees
+
+**Stable** (as of 1.0):
+- Core CLI commands (`council create`, `council ask`, `council export`)
+- Panel definition schema (YAML format)
+- Configuration file structure
+
+**Unstable** (subject to breaking changes in minor versions):
+- Programmatic APIs (if/when exposed)
+- Internal data structures and SQLite schema
+- Experimental features marked with warnings
+
+## Release Cadence
+
+Releases are driven by completed features and fixes, not a fixed schedule. Each
+release is automatically published to npm with a generated changelog.
+
+See [SUPPORT.md](https://github.com/pedrofuentes/Council/blob/main/SUPPORT.md)
+for supported versions and security update policy.
