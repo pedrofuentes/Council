@@ -1,0 +1,80 @@
+---
+title: Feed a persona more documents
+description: Make an existing persona expert more like the real person by adding documents over time, with incremental training and retraining.
+---
+
+A persona expert sharpens as you feed it more of the person's material. This guide covers adding documents, incremental versus full retraining, and managing the corpus. To create a persona first, see [Create and train a persona of a real person](/Council/how-to/train-a-persona-expert/).
+
+## Add new documents (incremental training)
+
+Re-run `council expert train` with the new files. Council reprocesses only what's new or changed and **merges it into the existing profile** — it doesn't start over.
+
+```bash
+council expert train pedro-fuentes --file ~/staff-meeting-notes.md
+```
+
+```
+Copying staff-meeting-notes.md to expert docs...
+Training "pedro-fuentes" from ~/Council/experts/pedro-fuentes/docs...
+  staff-meeting-notes.md: 42 words
+✓ Processed 1 document(s) (0 failed, 0 needs review, 0 removed, 42 total words); 2 already up to date.
+✓ Persona profile updated.
+```
+
+The `2 already up to date` line confirms only the new file was processed. Recent documents are weighted more heavily, so the persona reflects the person's **current** thinking.
+
+## See the full corpus
+
+`council expert inspect` shows the profile, but its `Documents:` count reflects the **most recent training batch**. To see every indexed document retrieval draws from, use:
+
+```bash
+council expert docs pedro-fuentes
+```
+
+```
+filename                  words  processed                 status
+------------------------  -----  ------------------------  ---------
+decision-log-2026-q2.md   88     2026-06-21T20:54:45.395Z  processed
+proposal-review-notes.md  61     2026-06-21T20:54:45.398Z  processed
+staff-meeting-notes.md    42     2026-06-21T20:55:02.978Z  processed
+```
+
+## Remove an outdated document
+
+Un-index a file so it no longer influences the persona. The file stays on disk; the profile refreshes on the next training run.
+
+```bash
+council expert docs pedro-fuentes --remove staff-meeting-notes.md
+```
+
+```
+✓ "staff-meeting-notes.md" removed from index. Profile will be updated on next use.
+```
+
+## Rebuild from scratch
+
+When you've replaced or heavily revised the source material, clear the cached profile and rebuild from the **entire** corpus in one pass:
+
+```bash
+council expert train pedro-fuentes --retrain
+```
+
+```
+↻ Retrain: cleared profile and tracking for "pedro-fuentes" (2 cleared).
+Training "pedro-fuentes" from ~/Council/experts/pedro-fuentes/docs...
+✓ Processed 3 document(s) (0 failed, 0 needs review, 0 removed, 191 total words); 0 already up to date.
+✓ Persona profile updated.
+```
+
+After a full retrain, `council expert inspect` reports the whole corpus (here, `Documents: 3 (191 words)`).
+
+:::tip[Incremental vs. retrain]
+Use plain `council expert train` to **add** material — it's faster and preserves accumulated context. Use `--retrain` when documents were removed or substantially rewritten and you want a clean rebuild.
+:::
+
+## Related
+
+- [Create and train a persona of a real person](/Council/how-to/train-a-persona-expert/) — set one up
+- [Model a Real Person as a Persona Expert](/Council/tutorials/13-model-a-real-person-persona/) — the full tutorial
+- [Document RAG](/Council/explanation/document-rag/) — how retrieval and recency weighting work
+- [Review documents in chat](/Council/how-to/review-documents-in-chat/) — bring documents into conversations

@@ -40,7 +40,7 @@ Generic experts do **not** get document memory because they're general-purpose r
 
 ### Persona Experts: Document + Debate Memory
 
-**Persona experts** (e.g., "Alice Smith (Engineering Manager)", "VP Product") are **document-trained** — you point Council at a folder of documents (emails, meeting notes, prior proposals) and it distills a persona profile.
+**Persona experts** (e.g., "Pedro Fuentes (VP of Engineering)", "VP Product") are **document-trained** — you point Council at a folder of documents (emails, meeting notes, prior proposals) and it distills a persona profile.
 
 Their memory consists of:
 1. **Persona profile** (section [6] of the prompt): LLM-synthesized summary of the person's communication style, priorities, domain knowledge, and decision patterns
@@ -90,7 +90,7 @@ Clearing memory is **irreversible** — use it when an expert's context is stale
 
 For persona experts, `council memory reset` clears **debate memory only**. The persona profile (from documents) is preserved. To rebuild the profile from scratch, use:
 ```bash
-council expert train alice-smith       # re-processes docs, regenerates profile
+council expert train pedro-fuentes       # re-processes docs, regenerates profile
 ```
 
 ## Privacy & Local Storage

@@ -9,6 +9,10 @@ Council supports two kinds of experts:
 
 Persona experts combine **document RAG** with **LLM-synthesized profiles** to create agents that reason like real individuals.
 
+:::tip[Hands-on walkthrough]
+For a step-by-step lesson — create a persona, train it, inspect the learned profile, and refine it over time — follow [Model a Real Person as a Persona Expert](/Council/tutorials/13-model-a-real-person-persona/).
+:::
+
 ## The Difference: Role vs. Individual
 
 A **generic expert** reasons from a role template:
@@ -25,21 +29,21 @@ epistemicStance: Optimize for long-term technical health...
 
 A **persona expert** reasons from documents about a real person:
 ```yaml
-slug: alice-smith
+slug: pedro-fuentes
 kind: persona
-role: Engineering Manager
-personaDescription: "Engineering Manager I report to"
-docsPath: ~/Council/experts/alice-smith/docs
+role: VP of Engineering
+personaDescription: "VP of Engineering whose decisions I want to anticipate"
+docsPath: ~/Council/experts/pedro-fuentes/docs
 ```
 
-The generic expert applies a CTO's general priorities. The persona expert applies **Alice's specific priorities** as distilled from her emails, meeting notes, and decision logs.
+The generic expert applies a CTO's general priorities. The persona expert applies **Pedro's specific priorities** as distilled from his emails, meeting notes, and decision logs.
 
 ## How Persona Experts Work
 
 ### 1. Document Folder
 Point Council at a folder of documents about or by the person:
 ```
-~/Council/experts/alice-smith/docs/
+~/Council/experts/pedro-fuentes/docs/
   ├── weekly-updates-2024-Q1.md
   ├── 1-on-1-notes.md
   ├── roadmap-proposal.pdf
@@ -50,13 +54,13 @@ Point Council at a folder of documents about or by the person:
 Supported formats: Markdown, PDF, DOCX, plain text, and more (run `council docs formats`).
 
 ### 2. Profile Analysis (Roadmap 6.2)
-When you first chat with a persona expert, Council:
+When you train a persona expert with `council expert train` — or the first time you chat with one that still has unprocessed documents — Council:
 1. Extracts text from all documents
 2. Sends the extracted text to an LLM with this meta-prompt:
    > "Analyze these documents and generate a persona profile. Extract: communication style, priorities, domain knowledge, decision patterns, recurring concerns."
-3. Stores the resulting profile in section [6] of the expert's system prompt
+3. Stores the resulting profile in the `[8] PERSONA PROFILE` section of the expert's system prompt
 
-The profile is **cached** — Council doesn't regenerate it on every chat unless you explicitly retrain.
+The profile is **cached** — Council doesn't regenerate it on every chat unless documents change or you explicitly retrain.
 
 ### 3. RAG Retrieval (Roadmap 6.3)
 During a chat or debate:
@@ -78,23 +82,25 @@ Generic experts only get debate memory. See [Memory Model](/Council/explanation/
 ## Creating a Persona Expert
 
 ```bash
-# Create the expert YAML definition
-council expert create alice-smith \
-  --role "Engineering Manager" \
-  --kind persona \
-  --persona-description "Engineering Manager I report to" \
-  --docs-path ~/alice-docs
+# Create the persona expert (the --persona flag makes it trainable)
+council expert create --persona \
+  --slug pedro-fuentes \
+  --name "Pedro Fuentes (VP of Engineering)" \
+  --role "VP of Engineering" \
+  --expertise "Past decisions and their outcomes, Written rationale in proposals and reviews" \
+  --stance "Pragmatic, outcome-oriented" \
+  --persona-description "VP of Engineering whose decisions I want to anticipate"
 
-# Add documents (either copy files into ~/Council/experts/alice-smith/docs/
+# Add documents (copy files into ~/Council/experts/pedro-fuentes/docs/
 # or use the --file/--url flags during training)
-council expert train alice-smith --file ~/meeting-notes.md
-council expert train alice-smith --url https://example.com/alice-blog-post
+council expert train pedro-fuentes --file ~/meeting-notes.md
+council expert train pedro-fuentes --url https://example.com/pedro-strategy-memo.md
 
-# Train: process all docs and generate the persona profile
-council expert train alice-smith
+# Re-process all docs and refresh the persona profile
+council expert train pedro-fuentes
 
 # Now chat with the persona
-council chat alice-smith
+council chat pedro-fuentes
 ```
 
 ## When to Use Persona Experts
@@ -105,7 +111,7 @@ council chat alice-smith
 | Stakeholder simulation | Test how a VP or executive would react to a proposal |
 | Institutional memory | A persona trained on your team's past decisions can recall context |
 | Personalized mentoring | A persona trained on a mentor's writings can provide tailored advice |
-| Cross-functional panels | Mix persona experts (Alice, Bob) with generic roles (Security Auditor, PM) |
+| Cross-functional panels | Mix persona experts (Pedro, Dana) with generic roles (Security Auditor, PM) |
 
 **Don't** use persona experts for:
 - Public figures without their consent (ethical + legal risk)
@@ -127,28 +133,28 @@ See [Security and Privacy](/Council/explanation/security-and-privacy) for detail
 
 If documents change or you want to refresh the profile:
 ```bash
-council expert train alice-smith       # re-process all docs, regenerate profile
+council expert train pedro-fuentes       # re-process all docs, regenerate profile
 ```
 
 Retraining **overwrites** the cached profile but preserves debate memory. To clear debate memory separately:
 ```bash
-council memory reset alice-smith       # clears debate memory only
+council memory reset pedro-fuentes       # clears debate memory only
 ```
 
 ## Recency Weighting (Roadmap 6.8)
 
 When Council retrieves document snippets, it **weights recent documents higher**. Why?
 
-A persona should reflect the person's **current** priorities, not outdated context. Alice's priorities from 2 years ago are less relevant than her priorities from last month.
+A persona should reflect the person's **current** priorities, not outdated context. Pedro's priorities from 2 years ago are less relevant than his priorities from last month.
 
 The recency decay is exponential: documents from the past week score 1.0, documents from 30 days ago score ~0.5, documents from 6 months ago score ~0.1.
 
-You can override this by explicitly naming an old document: "What did Alice say about X in the 2023 roadmap?"
+You can override this by explicitly naming an old document: "What did Pedro say about X in the 2023 roadmap?"
 
 ## Cross-Panel Awareness (Roadmap 7.2)
 
 In 1:1 chat mode, Council injects a summary of which other panels the persona expert participates in:
-> "Alice, you're also a member of the 'architecture-review' and 'incident-postmortem' panels. Recent activity: last spoke 3 days ago in architecture-review about API versioning strategy."
+> "Pedro, you're also a member of the 'architecture-review' and 'incident-postmortem' panels. Recent activity: last spoke 3 days ago in architecture-review about API versioning strategy."
 
 This prevents a persona from acting like they've never met you before when you switch contexts.
 
