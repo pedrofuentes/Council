@@ -1,0 +1,69 @@
+name: Deploy Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/site/**"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch:
+
+# Least-privilege token plus the scopes the GitHub Pages deployment requires:
+# `pages: write` to publish and `id-token: write` for the deploy job's OIDC
+# attestation. Going live still requires a maintainer to enable Pages
+# (Settings → Pages → Source: GitHub Actions).
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Serialize Pages deployments; never cancel an in-progress publish so a running
+# deployment can finish cleanly.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The site's command-reference tooling imports the built @council-ai/cli
+      # package; build it first so the workspace dependency resolves.
+      - name: Build CLI
+        run: pnpm --filter @council-ai/cli build
+
+      - name: Build site
+        run: pnpm --filter @council-ai/site build
+
+      - name: Configure Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: packages/site/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
