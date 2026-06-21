@@ -1,0 +1,44 @@
+---
+title: Use moderator strategies
+description: Change debate dynamics with consensus-check, devil's advocate, or structured mode.
+---
+
+By default, Council uses **round-robin** moderation — each expert speaks in turn. You can change this to get different dynamics.
+
+## Consensus-check
+
+Experts work toward agreement:
+
+```bash
+council convene "Should we adopt Kubernetes?" --template architecture-review --strategy consensus-check
+```
+
+## Devil's advocate
+
+One expert is assigned to challenge everything:
+
+```bash
+council convene "Should we ship the MVP?" --template code-review --strategy devils-advocate
+```
+
+Pin a specific expert as the contrarian:
+
+```bash
+council convene "Ship now or wait?" --template code-review --strategy devils-advocate:senior
+```
+
+## Structured mode
+
+A choreographed 4-phase debate (opening statements → cross-examination → rebuttals → synthesis):
+
+```bash
+council convene "Should we go public?" --template architecture-review --mode structured
+```
+
+## Default behavior
+
+Without a `--strategy` or `--mode` flag, Council uses **round-robin** — experts speak in sequence, each responding to the topic and prior turns.
+
+## Related
+
+- [Trigger inline deliberation](/Council/docs/how-to/trigger-inline-deliberation/) — use `@convene` in chat for structured debate

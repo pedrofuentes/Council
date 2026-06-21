@@ -1,0 +1,55 @@
+---
+title: Chat with a single expert (1:1)
+description: Start an ongoing conversation with one expert.
+---
+
+Use `council chat` with an expert slug for a direct 1:1 conversation.
+
+## Start a 1:1 chat
+
+```bash
+council chat cto
+```
+
+This starts a persistent conversation with the specified expert. There are no `@mentions` or `@convene` in 1:1 mode — every message goes to your expert and every response comes from them.
+
+## With persona experts
+
+1:1 chat is especially powerful with [persona experts](/Council/docs/explanation/persona-experts/) trained on your documents. The expert draws on its reference material to give document-informed responses:
+
+```bash
+council chat cfo
+```
+
+```
+You> What's our payback period on the new data platform?
+
+[Sarah Chen — CFO]
+Based on the financial projections in our Q3 analysis, the payback period
+is approximately 14 months, assuming we hit the adoption targets in the
+rollout plan...
+```
+
+## Session management
+
+All the session management commands work in 1:1 chat:
+
+```bash
+# Start a fresh conversation
+council chat cto --new
+
+# List all 1:1 conversations
+council chat --list
+
+# View past conversations with this expert
+council chat cto --history
+```
+
+## Exit the chat
+
+Type `/exit` or `/quit` to save and end the conversation. Resume anytime by running the same `council chat` command.
+
+## Related
+
+- [Chat with a panel](/Council/docs/how-to/chat-with-a-panel/) — for multi-expert group conversations
+- [Ask a quick question](/Council/docs/how-to/ask-a-quick-question/) — for one-shot queries

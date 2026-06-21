@@ -1,0 +1,49 @@
+---
+title: Manage chat sessions
+description: Start fresh conversations, view history, and list all active chats.
+---
+
+Council persists your conversations automatically. Here's how to manage them.
+
+## Start a fresh conversation
+
+Archive the current conversation and begin a new one:
+
+```bash
+council chat strategy-review --new
+```
+
+This applies to both panel chat and 1:1 expert chat.
+
+## List all conversations
+
+See every chat session across all experts and panels:
+
+```bash
+council chat --list
+```
+
+## View conversation history
+
+See past conversations for a specific target:
+
+```bash
+council chat strategy-review --history
+```
+
+## End a conversation
+
+Type `/exit` or `/quit` at the chat prompt. Your conversation is saved and you can resume it anytime by running the same `council chat` command.
+
+## Resume a conversation
+
+Simply run the same `council chat` command to pick up where you left off:
+
+```bash
+council chat strategy-review
+```
+
+## Related
+
+- [Chat with a panel](/Council/docs/how-to/chat-with-a-panel/) — for multi-expert conversations
+- [Chat with a single expert](/Council/docs/how-to/chat-with-an-expert/) — for 1:1 conversations

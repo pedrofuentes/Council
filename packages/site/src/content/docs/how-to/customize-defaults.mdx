@@ -1,0 +1,66 @@
+---
+title: Customize defaults
+description: View and change your Council configuration for models, rounds, experts, and more.
+---
+
+Council stores its configuration in `~/Council/config.yaml`. You can view and modify settings via the `council config` commands.
+
+## View current configuration
+
+```bash
+council config show
+```
+
+This displays all settings with their current values and where each value comes from (default, config file, or environment variable).
+
+## View config file location
+
+```bash
+council config path
+```
+
+## Change a default
+
+```bash
+council config set defaults.model gpt-4.1
+council config set defaults.maxRounds 6
+council config set defaults.maxExperts 5
+council config set defaults.engine copilot
+```
+
+## Edit config directly
+
+Open the config file in your editor for more complex changes:
+
+```bash
+council config edit
+```
+
+This opens `~/Council/config.yaml` in `$EDITOR` (or `$VISUAL`).
+
+## Available settings
+
+Common configuration keys:
+
+- `defaults.model` — default model (e.g., `claude-sonnet-4.5`, `gpt-4.1`)
+- `defaults.engine` — default engine (`copilot` or `mock`)
+- `defaults.maxRounds` — max debate rounds (default: 4)
+- `defaults.maxExperts` — max auto-composed experts (default: 3, range: 2–8)
+- `defaults.maxWordsPerResponse` — word limit per expert response
+- `documents.aiExtraction` — enable AI-based document extraction (bool)
+- `documents.maxFileSizeMB` — max file size for document indexing
+- `conclude.maxTranscriptChars` — character limit for conclusion synthesis
+
+See the [Configuration Reference](/Council/docs/reference/configuration/) for the complete list.
+
+## Override per-command
+
+You can override any default on individual commands:
+
+```bash
+council convene "Question" --model gpt-4.1 --max-rounds 6 --max-experts 4
+```
+
+## Related
+
+- [Run offline with mock engine](/Council/docs/how-to/run-offline-with-mock-engine/) — use the mock engine for testing
