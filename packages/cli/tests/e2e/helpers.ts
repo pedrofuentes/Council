@@ -10,6 +10,7 @@ import { DebateRepository } from "../../src/memory/repositories/debates.js";
 import { ExpertRepository } from "../../src/memory/repositories/experts.js";
 import { PanelRepository } from "../../src/memory/repositories/panels.js";
 import { TurnRepository } from "../../src/memory/repositories/turns.js";
+import { mkCanonicalTempDir } from "../helpers/tmp.js";
 
 const DEFAULT_PANEL_NAME = "test-panel";
 const DEFAULT_TOPIC = "Test Topic";
@@ -94,8 +95,8 @@ function sleep(ms: number): Promise<void> {
  * @param budgetMs - Maximum wallclock time to spend retrying.
  */
 async function removeDir(dirPath: string, budgetMs = 5_000): Promise<void> {
-  const tempRoot = normalizeTempPath(os.tmpdir());
-  const candidatePath = normalizeTempPath(dirPath);
+  const tempRoot = normalizeTempPath(await fs.realpath(os.tmpdir()));
+  const candidatePath = normalizeTempPath(await fs.realpath(dirPath).catch(() => dirPath));
   const tempPrefix = `${tempRoot}${path.sep}`;
 
   if (!candidatePath.startsWith(tempPrefix)) {
@@ -134,8 +135,8 @@ async function removeDir(dirPath: string, budgetMs = 5_000): Promise<void> {
 export async function createE2EContext(): Promise<E2EContext> {
   const originalHome = process.env["COUNCIL_HOME"];
   const originalDataHome = process.env["COUNCIL_DATA_HOME"];
-  const testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-e2e-"));
-  const testDataHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-e2e-data-"));
+  const testHome = await mkCanonicalTempDir("council-e2e-");
+  const testDataHome = await mkCanonicalTempDir("council-e2e-data-");
 
   try {
     // These helpers mutate process.env, so E2E suites must avoid overlapping contexts in one process.
