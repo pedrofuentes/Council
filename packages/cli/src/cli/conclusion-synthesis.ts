@@ -116,6 +116,10 @@ export function buildSynthesisPrompt(
     body = turnBlocks.join("\n");
     truncatedByChars = true;
   }
+  if (body.length > maxTranscriptChars) {
+    body = body.slice(0, maxTranscriptChars);
+    truncatedByChars = true;
+  }
 
   const finalTurnCount = turnBlocks.length;
   const truncated = truncatedByTurns || truncatedByChars;

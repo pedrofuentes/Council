@@ -493,11 +493,22 @@ describe("buildConcludeCommand", () => {
           ],
         },
       ],
-      recommendation: "ship \u001B[31mEVIL\u001B[0m \u0007\rnow\nwithout\tcontrol\u2028breaks\u2029",
+      recommendation:
+        "ship \u001B[31mEVIL\u001B[0m \u0007\rnow\nwithout\tcontrol\u2028breaks\u2029",
       confidence: "high",
     });
 
-    const disallowedControls = ["\u001B", "\u0000", "\u0007", "\u009B", "\u202E", "\r", "\t", "\u2028", "\u2029"];
+    const disallowedControls = [
+      "\u001B",
+      "\u0000",
+      "\u0007",
+      "\u009B",
+      "\u202E",
+      "\r",
+      "\t",
+      "\u2028",
+      "\u2029",
+    ];
     expect(disallowedControls.some((char) => rendered.includes(char))).toBe(false);
     expect(rendered).toContain("Recommendation: ship EVIL  now without control breaks ");
     expect(rendered).toContain("  - agree evil");
@@ -1080,6 +1091,21 @@ describe("buildSynthesisPrompt — truncation reporting", () => {
     expect(result.truncatedByChars).toBe(true);
     expect(result.truncatedByTurns).toBe(false);
     expect(MAX_TRANSCRIPT_CHARS).toBe(50_000);
+  });
+
+  it("hard-truncates a single oversized turn to the transcript character cap", () => {
+    const maxTranscriptChars = 100;
+    const result = buildSynthesisPrompt(
+      makeTranscriptDoc([makeTurn(0, "x".repeat(1000))]),
+      maxTranscriptChars,
+    );
+    const transcriptBody =
+      result.prompt.match(/<transcript>\n([\s\S]*)\n<\/transcript>/)?.[1] ?? "";
+
+    expect(result.truncated).toBe(true);
+    expect(result.truncatedByChars).toBe(true);
+    expect(result.finalTurnCount).toBe(1);
+    expect(transcriptBody.length).toBeLessThanOrEqual(maxTranscriptChars);
   });
 });
 

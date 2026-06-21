@@ -867,6 +867,9 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
                     doc.latestDebate.id === ctx.debateId &&
                     doc.latestDebate.status === "completed"
                   ) {
+                    writeError(
+                      "Generating conclusion (1 more premium request; may retry once if JSON is unparseable; use --no-conclude to skip)\n",
+                    );
                     const conclusion = await synthesizeConclusion({
                       doc,
                       panelName: panel.name,
@@ -882,7 +885,9 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
                   }
                 } catch (err: unknown) {
                   const msg = err instanceof Error ? err.message : String(err);
-                  writeError(`!! conclusion generation failed (continuing): ${msg}\n`);
+                  writeError(
+                    `!! conclusion generation failed (continuing): ${toSingleLineDisplay(msg)}\n`,
+                  );
                 }
               }
               if (opts.heuristicMemory !== true) {

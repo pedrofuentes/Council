@@ -24,7 +24,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildConveneCommand } from "../../../../src/cli/commands/convene.js";
 import { setQuiet } from "../../../../src/cli/commands/writer.js";
-import type { CouncilEngine, EngineEvent, ExpertSpec } from "../../../../src/engine/index.js";
+import type {
+  CouncilEngine,
+  EngineEvent,
+  ExpertSpec,
+  SendOptions,
+} from "../../../../src/engine/index.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
@@ -63,6 +68,32 @@ describe("buildConveneCommand", () => {
         // The MockEngine returns a default response when the id is unknown.
         responses: {},
       });
+  }
+
+  class RejectingSynthesisEngine extends MockEngine {
+    readonly #synthesizerIds = new Set<string>();
+
+    override async addExpert(spec: ExpertSpec): Promise<void> {
+      await super.addExpert(spec);
+      if (spec.slug === "synthesizer") {
+        this.#synthesizerIds.add(spec.id);
+      }
+    }
+
+    override send(options: SendOptions): AsyncIterable<EngineEvent> {
+      if (!this.#synthesizerIds.has(options.expertId)) {
+        return super.send(options);
+      }
+
+      return (async function* (): AsyncGenerator<EngineEvent, void, void> {
+        yield { kind: "message.delta", expertId: options.expertId, text: "not json" };
+        yield {
+          kind: "message.complete",
+          expertId: options.expertId,
+          response: { latencyMs: 0, tokensIn: 1, tokensOut: 1 },
+        };
+      })();
+    }
   }
 
   it("registers a 'convene' command with topic positional arg and optional --template", () => {
@@ -148,9 +179,9 @@ describe("buildConveneCommand", () => {
       // The custom parser, if present, must accept registry values unchanged.
       const parser = modelOpt?.parseArg as ((v: string, prev: unknown) => unknown) | undefined;
       expect(parser).toBeDefined();
-      expect((parser as (v: string, prev: unknown) => unknown)("claude-sonnet-4.5", undefined)).toBe(
-        "claude-sonnet-4.5",
-      );
+      expect(
+        (parser as (v: string, prev: unknown) => unknown)("claude-sonnet-4.5", undefined),
+      ).toBe("claude-sonnet-4.5");
     });
   });
 
@@ -277,9 +308,37 @@ describe("buildConveneCommand", () => {
     expect(captured).toContain("=== Council Decision Framework ===");
     expect(captured).toContain("Recommendation:");
     expect(captured).toContain("Tip: Try `council ask");
-    expect(engine.sentPrompts.some((p) => p.prompt.includes("Now produce the JSON synthesis"))).toBe(
-      true,
-    );
+    expect(
+      engine.sentPrompts.some((p) => p.prompt.includes("Now produce the JSON synthesis")),
+    ).toBe(true);
+  });
+
+  it("warns that auto-conclusion spends one more premium request before synthesis", async () => {
+    let errors = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (s) => {
+        errors += s;
+      },
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "Should we ship the MVP?",
+      "--template",
+      "code-review",
+      "--max-rounds",
+      "1",
+      "--engine",
+      "mock",
+      "--heuristic-memory",
+    ]);
+
+    expect(errors).toContain("Generating conclusion (1 more premium request");
+    expect(errors).toContain("may retry once if JSON is unparseable");
+    expect(errors).toContain("use --no-conclude to skip");
   });
 
   it("--no-conclude skips automatic conclusion generation", async () => {
@@ -309,9 +368,75 @@ describe("buildConveneCommand", () => {
 
     expect(captured).not.toContain("=== Council Decision Framework ===");
     expect(captured).not.toContain("Recommendation:");
-    expect(engine.sentPrompts.some((p) => p.prompt.includes("Now produce the JSON synthesis"))).toBe(
-      false,
-    );
+    expect(
+      engine.sentPrompts.some((p) => p.prompt.includes("Now produce the JSON synthesis")),
+    ).toBe(false);
+  });
+
+  it("--no-conclude skips the auto-conclusion premium-request warning", async () => {
+    let errors = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (s) => {
+        errors += s;
+      },
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "Should we ship the MVP?",
+      "--template",
+      "code-review",
+      "--max-rounds",
+      "1",
+      "--engine",
+      "mock",
+      "--heuristic-memory",
+      "--no-conclude",
+    ]);
+
+    expect(errors).not.toContain("Generating conclusion");
+  });
+
+  it("warns and continues when automatic conclusion generation fails", async () => {
+    let captured = "";
+    let errors = "";
+    const cmd = buildConveneCommand({
+      engineFactory: () => new RejectingSynthesisEngine(),
+      write: (s) => {
+        captured += s;
+      },
+      writeError: (s) => {
+        errors += s;
+      },
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "Should we ship the MVP?",
+      "--template",
+      "code-review",
+      "--max-rounds",
+      "1",
+      "--engine",
+      "mock",
+      "--heuristic-memory",
+    ]);
+
+    expect(errors).toContain("conclusion generation failed (continuing)");
+    expect(captured).toContain("Tip: Try `council ask");
+
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const panels = await new PanelRepository(db).findAll();
+      const debates = await new DebateRepository(db).findByPanelId(panels[0]?.id ?? "");
+      expect(debates[0]?.status).toBe("completed");
+    } finally {
+      await db.destroy();
+    }
   });
 
   it("uses config.defaults.model (not hardcoded DEFAULT_MODEL) for expert registration", async () => {
@@ -1475,10 +1600,7 @@ describe("buildConveneCommand — user panels with slug references", () => {
   });
 
   it("F11: convene on a zero-expert panel produces a friendly message, not raw Zod jargon", async () => {
-    await writeUserPanel(
-      "empty-panel",
-      ["name: empty-panel", "experts: []", ""].join("\n"),
-    );
+    await writeUserPanel("empty-panel", ["name: empty-panel", "experts: []", ""].join("\n"));
 
     let stderr = "";
     const cmd = buildConveneCommand({
