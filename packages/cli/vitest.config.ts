@@ -74,11 +74,31 @@ export default defineConfig({
 
     coverage: {
       provider: "v8",
-      reporter: ["text", "html", "lcov"],
+      // text/html are for humans; lcov feeds external coverage viewers;
+      // json-summary writes coverage/coverage-summary.json for tooling/CI.
+      reporter: ["text", "json-summary", "lcov", "html"],
       include: ["src/**/*.ts"],
       exclude: ["src/**/*.test.ts", "src/**/types.ts", "src/bin/**"],
-      // Thresholds will be enabled in PR #2 once behavior-bearing code lands.
-      // See ROADMAP §1.2 (CouncilEngine interface).
+
+      // Non-regression ratchet. Thresholds sit a conservative margin BELOW the
+      // measured full-suite baseline (2026-06: statements 91.97%, branches
+      // 80.70%, functions 93.10%, lines 93.08%) so normal run-to-run and
+      // cross-platform variation never false-fails, while a real regression
+      // (deleted tests, large untested additions) still trips the gate.
+      // Branches sit a wider margin below baseline — it is the most volatile
+      // metric, so 80.70% → 75 (not 80) avoids spurious failures.
+      //
+      // IMPORTANT: these thresholds are enforced ONLY by the standalone
+      // full-suite coverage run (.github/workflows/coverage.yml). The required
+      // ci.yml runs unit tests in 4 shards WITHOUT --coverage, so partial
+      // per-shard coverage is never checked here. Ratchet up (never down) when
+      // the full-suite baseline rises.
+      thresholds: {
+        statements: 90,
+        branches: 75,
+        functions: 90,
+        lines: 90,
+      },
     },
   },
 });
