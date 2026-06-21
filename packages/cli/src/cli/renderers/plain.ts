@@ -101,7 +101,7 @@ export class PlainRenderer implements Renderer {
         case "cost.update":
           if (!this.#quiet && this.#showCost) {
             this.write(
-              `${this.gray(`[Cost: ${evt.premiumRequests}/${evt.estimatedTotal} premium requests]`)}\n`,
+              `${this.gray(`[Premium requests: ${evt.premiumRequests} (est. ~${evt.estimatedTotal})]`)}\n`,
             );
           }
           break;

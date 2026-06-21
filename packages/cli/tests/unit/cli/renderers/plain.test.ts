@@ -119,12 +119,13 @@ describe("PlainRenderer", () => {
     expect(text.toLowerCase()).toMatch(/debate.*complete|complete.*debate/);
   });
 
-  it("prints cost.update on its own line with the running count", async () => {
+  it("prints cost.update on its own line with the running count and estimated total", async () => {
     const sink = new StringSink();
     const renderer = new PlainRenderer(sink, { color: false });
     await renderer.render(events({ kind: "cost.update", premiumRequests: 4, estimatedTotal: 16 }));
     const text = stripAnsi(sink.text);
-    expect(text).toMatch(/4.*16|cost/i);
+    expect(text).toContain("[Premium requests: 4 (est. ~16)]");
+    expect(text).not.toContain("4/16");
   });
 
   it("suppresses cost.update when cost display is disabled", async () => {

@@ -484,11 +484,11 @@ function CostIndicator({
     <Box marginTop={1}>
       {isWarning ? (
         <Text color="yellow">
-          {`[Cost: ${state.cost.premiumRequests}/${state.cost.estimatedTotal} premium requests]`}
+          {`[Premium requests: ${state.cost.premiumRequests} (est. ~${state.cost.estimatedTotal})]`}
         </Text>
       ) : (
         <Text dimColor>
-          {`[Cost: ${state.cost.premiumRequests}/${state.cost.estimatedTotal} premium requests]`}
+          {`[Premium requests: ${state.cost.premiumRequests} (est. ~${state.cost.estimatedTotal})]`}
         </Text>
       )}
     </Box>

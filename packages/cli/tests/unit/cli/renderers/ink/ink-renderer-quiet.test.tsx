@@ -37,9 +37,8 @@ describe("DebateApp quiet mode", () => {
     const ui = render(<DebateApp events={events} />);
     await flush();
     const frame = stripAnsi(ui.lastFrame() ?? "");
-    expect(frame).toContain("Cost:");
-    expect(frame).toContain("3");
-    expect(frame).toContain("10");
+    expect(frame).toContain("[Premium requests: 3 (est. ~10)]");
+    expect(frame).not.toContain("3/10");
     ui.unmount();
   });
 
