@@ -4,7 +4,7 @@ import { z } from "zod";
 import { jsonCandidates, tryParseJSON } from "../core/robust-json.js";
 import type { CouncilEngine, EngineEvent, ExpertSpec } from "../engine/index.js";
 import type { TranscriptDocument } from "../memory/transcript.js";
-import { stripControlChars } from "./strip-control-chars.js";
+import { toSingleLineDisplay } from "./strip-control-chars.js";
 
 /** Maximum number of transcript turns to include in the synthesis prompt. */
 export const MAX_TRANSCRIPT_TURNS = 50;
@@ -350,17 +350,17 @@ export function renderPlain(out: ConcludeOutput): string {
   lines.push("=== Council Decision Framework ===");
   lines.push("");
   if (out.warnings && out.warnings.length > 0) {
-    for (const w of out.warnings) lines.push(`!! warning: ${stripControlChars(w)}`);
+    for (const w of out.warnings) lines.push(`!! warning: ${toSingleLineDisplay(w)}`);
     lines.push("");
   }
-  lines.push(`Panel: ${stripControlChars(out.panelName)}`);
-  lines.push(`Topic: ${stripControlChars(out.topic)}`);
+  lines.push(`Panel: ${toSingleLineDisplay(out.panelName)}`);
+  lines.push(`Topic: ${toSingleLineDisplay(out.topic)}`);
   lines.push(
-    `Debate: ${stripControlChars(out.debateId)} (started ${stripControlChars(out.startedAt)})`,
+    `Debate: ${toSingleLineDisplay(out.debateId)} (started ${toSingleLineDisplay(out.startedAt)})`,
   );
   lines.push("");
 
-  lines.push(`Recommendation: ${stripControlChars(out.recommendation)}`);
+  lines.push(`Recommendation: ${toSingleLineDisplay(out.recommendation)}`);
   lines.push(`Confidence: ${out.confidence}`);
   lines.push("");
 
@@ -368,7 +368,7 @@ export function renderPlain(out: ConcludeOutput): string {
   if (out.consensus.length === 0) {
     lines.push("  (none identified)");
   } else {
-    for (const c of out.consensus) lines.push(`  - ${stripControlChars(c)}`);
+    for (const c of out.consensus) lines.push(`  - ${toSingleLineDisplay(c)}`);
   }
   lines.push("");
 
@@ -376,7 +376,7 @@ export function renderPlain(out: ConcludeOutput): string {
   if (out.tensions.length === 0) {
     lines.push("  (none identified)");
   } else {
-    for (const t of out.tensions) lines.push(`  - ${stripControlChars(t)}`);
+    for (const t of out.tensions) lines.push(`  - ${toSingleLineDisplay(t)}`);
   }
   lines.push("");
 
@@ -385,9 +385,9 @@ export function renderPlain(out: ConcludeOutput): string {
     lines.push("  (no dimensions identified)");
   } else {
     for (const d of out.decisionMatrix) {
-      lines.push(`  * ${stripControlChars(d.dimension)}`);
+      lines.push(`  * ${toSingleLineDisplay(d.dimension)}`);
       for (const p of d.positions) {
-        lines.push(`      - ${stripControlChars(p.expert)}: ${stripControlChars(p.stance)}`);
+        lines.push(`      - ${toSingleLineDisplay(p.expert)}: ${toSingleLineDisplay(p.stance)}`);
       }
     }
   }
