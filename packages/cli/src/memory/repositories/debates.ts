@@ -10,6 +10,7 @@
  * Returned objects are camelCase domain types. The mapping lives in
  * `toDomain()` so callers never see snake_case columns.
  */
+import { sql } from "kysely";
 import { ulid } from "ulid";
 
 import type { CouncilDatabase, DebateRow } from "../db.js";
@@ -95,7 +96,7 @@ export class DebateRepository {
       .selectAll()
       .where("panel_id", "=", panelId)
       .orderBy("started_at", "asc")
-      .orderBy("id", "asc")
+      .orderBy(sql<number>`rowid`, "asc")
       .execute();
     return rows.map(toDomain);
   }
@@ -107,7 +108,7 @@ export class DebateRepository {
       .where("panel_id", "=", panelId)
       .where("status", "=", "running")
       .orderBy("started_at", "desc")
-      .orderBy("id", "desc")
+      .orderBy(sql<number>`rowid`, "desc")
       .executeTakeFirst();
     if (!row) {
       return undefined;
