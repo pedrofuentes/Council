@@ -1,0 +1,40 @@
+---
+title: Ask a quick question
+description: Get a single expert's perspective without a full panel debate.
+---
+
+Use `council ask` when you want a focused answer from one expert without convening a full panel debate.
+
+## Basic usage
+
+```bash
+council ask strategy-review "What are the tradeoffs of event sourcing vs CRUD?"
+```
+
+Council picks an expert from the panel and gives you a focused answer.
+
+## Target a specific expert
+
+```bash
+council ask strategy-review "What are the tradeoffs?" --expert cto
+```
+
+The `--expert` flag directs the question to a specific expert in the panel.
+
+## Use a different model
+
+`council ask` uses the panel's configured model. To pick a model per run, use `council convene` with the `--model` flag:
+
+```bash
+council convene strategy-review "Quick design question" --model gpt-4.1
+```
+
+## When to use `ask` vs `convene`
+
+- **Use `ask`**: single expert perspective, quick feedback, focused answer
+- **Use `convene`**: multiple perspectives, structured deliberation, decision framework
+
+## Related
+
+- [Chat with a single expert](/Council/docs/how-to/chat-with-an-expert/) — for ongoing 1:1 conversations
+- [Chat with a panel](/Council/docs/how-to/chat-with-a-panel/) — for multi-expert dialogue

@@ -1,0 +1,52 @@
+---
+title: Run offline with the mock engine
+description: Use Council's deterministic mock engine for testing, demos, and offline use.
+---
+
+Council includes a deterministic mock engine for testing, demos, and offline use.
+
+## Use the mock engine
+
+```bash
+council convene "Test topic" --template code-review --engine mock
+```
+
+Mock responses are clearly labeled with `!! [MOCK ENGINE]` banners so you never confuse them with real output.
+
+## When to use
+
+The mock engine is useful for:
+
+- **Testing panel configurations** before running live
+- **CI/CD pipelines** — deterministic output for tests
+- **Demos and screenshots** — predictable output
+- **Working without network access**
+
+## Available engines
+
+Today, Council supports two engines:
+
+- **`copilot`** (default) — GitHub Copilot SDK (requires GitHub Copilot subscription)
+- **`mock`** — deterministic responses for testing
+
+:::note[Provider roadmap]
+OpenAI and Anthropic direct integrations are planned but not yet available. Currently, only GitHub Copilot and the mock engine are supported.
+:::
+
+## Override the default engine
+
+Set your default engine in config:
+
+```bash
+council config set defaults.engine copilot
+```
+
+Or override per-command:
+
+```bash
+council convene "Question" --template code-review --engine mock
+```
+
+## Related
+
+- [Customize defaults](/Council/docs/how-to/customize-defaults/) — set your default engine and other config

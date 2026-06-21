@@ -1,0 +1,122 @@
+---
+title: Review documents in chat
+description: Use RAG to bring your documents into chat conversations for expert review and critique.
+---
+
+Council can pull relevant content from your documents into chat conversations using RAG (retrieval-augmented generation). This lets you ask experts to review, critique, or build on your existing work.
+
+## For panel chat
+
+### Step 1: Place documents in the panel's docs folder
+
+```
+~/Council/panels/strategy-review/docs/
+  ├── market-analysis.md
+  ├── product-brief.txt
+  └── competitive-landscape.html
+```
+
+Or link an external folder:
+
+```bash
+council panel docs link strategy-review --path ./research/
+```
+
+### Step 2: Start panel chat
+
+Council indexes new and changed documents automatically:
+
+```bash
+council chat strategy-review
+```
+
+```
+ℹ Indexed 3 panel document(s) (0 unchanged, 0 failed).
+📋 Starting group chat with strategy-review (3 experts)...
+```
+
+### Step 3: Ask for review or synthesis
+
+Reference your documents naturally — Council retrieves relevant snippets automatically:
+
+```
+You> Review the product brief and tell me what's weak.
+
+[Sarah Chen — VP Strategy]
+The brief covers the target market well, but I see three gaps. First,
+the competitive positioning section on page 2 doesn't address the pricing
+pressure from FreshDesk's new tier...
+```
+
+Ask for rewrites:
+
+```
+You> Rewrite the executive summary to be more compelling for our board.
+
+[Sarah Chen — VP Strategy]
+Here's a revised executive summary:
+
+"In Q3, our platform processed 2.4M transactions — a 47% increase that
+outpaced the market by 3x. This growth validates our bet on..."
+```
+
+:::note
+Experts produce rewritten text **in the chat response**. They cannot write files back to disk. Copy the output manually or use `council export` to capture the full conversation.
+:::
+
+### Step 4: Synthesize across documents
+
+Ask questions that require connecting insights across multiple documents:
+
+```
+You> Based on the market analysis and the product brief, what's missing
+from our go-to-market plan?
+
+[Marcus Cole — Devil's Advocate]
+The market analysis identifies three underserved segments, but the product
+brief only targets one of them. The go-to-market plan doesn't explain why
+we're leaving the other two on the table...
+```
+
+## For 1:1 expert chat
+
+Document retrieval is available for **persona experts** created with `council expert create --persona` and trained with `council expert train`. Generic experts ignore expert documents.
+
+Place files in the persona expert's docs folder:
+
+```
+~/Council/experts/cfo/docs/
+  ├── q3-financials.md
+  └── budget-proposal.txt
+```
+
+Then chat normally:
+
+```bash
+council chat cfo
+```
+
+## Supported formats
+
+Default: `.md`, `.txt`, `.html`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.xls`, `.csv`, `.tsv`, `.rtf`, `.odt`, `.ods`, `.odp`.
+
+Run `council docs formats` for the full list.
+
+## Document updates
+
+When you update a document in the docs folder, Council re-indexes automatically the next time you start a chat:
+
+```
+ℹ Indexed 1 panel document(s) (2 unchanged, 0 failed).
+```
+
+Council detects changed files by checksum — only modified documents are reprocessed. You don't need `--new` to pick up document changes; use `--new` only when you want to archive the current conversation and start fresh.
+
+:::tip
+If you have multiple versions of the same document in the docs folder, consider removing outdated versions to keep retrieval focused on the latest content.
+:::
+
+## Related
+
+- [Chat with a panel](/Council/docs/how-to/chat-with-a-panel/) — for multi-expert conversations
+- [Chat with a single expert](/Council/docs/how-to/chat-with-an-expert/) — for 1:1 conversations

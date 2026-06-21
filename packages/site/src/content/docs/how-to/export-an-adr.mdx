@@ -1,0 +1,40 @@
+---
+title: Export an Architecture Decision Record (ADR)
+description: Export any debate in ADR format for engineering documentation.
+---
+
+ADRs (Architecture Decision Records) are short documents that capture technical decisions, the options considered, and why one was chosen. Council can export any debate directly in ADR format.
+
+## Export as ADR
+
+```bash
+council export strategy-review --format adr --output docs/adr/0007-european-expansion.md
+```
+
+## ADR structure
+
+The ADR includes:
+
+- **Title** and **date**
+- **Status** (proposed/accepted/superseded)
+- **Context** (the question debated)
+- **Decision** (the recommendation)
+- **Consequences** (tradeoffs and risks)
+
+## Other export formats
+
+```bash
+# Markdown transcript (default)
+council export strategy-review --format markdown --output debate.md
+
+# JSON (machine-readable)
+council export strategy-review --format json --output debate.ndjson
+```
+
+## When to use
+
+This bridges the gap between discussion and engineering documentation — you can debate in Council and commit the result alongside your code.
+
+## Related
+
+- [Continue a debate](/Council/docs/how-to/continue-a-debate/) — resume past debates with follow-up questions
