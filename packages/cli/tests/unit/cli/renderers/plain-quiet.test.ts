@@ -44,7 +44,7 @@ describe("PlainRenderer quiet mode", () => {
       ),
     );
     const text = stripAnsi(sink.text);
-    expect(text).toContain("[Cost: 5/10 premium requests]");
+    expect(text).toContain("[Premium requests: 5 (est. ~10)]");
   });
 
   it("suppresses cost updates when quiet is true", async () => {
