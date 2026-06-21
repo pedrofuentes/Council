@@ -114,6 +114,54 @@ function tinyValidXlsxZip(): Buffer {
   ]);
 }
 
+const RAW_XML_DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+const RAW_SSML = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+const RAW_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+/**
+ * Build a minimal valid `.xlsx` ZIP by hand so a test can control the
+ * exact raw workbook XML — including a sheet `name` attribute carrying
+ * crafted content (e.g. `&#10;` newlines), or a declared sheet whose
+ * worksheet part is deliberately omitted from the archive.
+ */
+function buildRawXlsx(
+  sheetNameXml: string,
+  sheetData: string,
+  options: { readonly includeWorksheet?: boolean } = {},
+): Buffer {
+  const includeWorksheet = options.includeWorksheet ?? true;
+  const entries: ZipEntry[] = [
+    { name: "[Content_Types].xml", data: Buffer.from(`${RAW_XML_DECL}<Types/>`, "utf-8") },
+    {
+      name: "xl/workbook.xml",
+      data: Buffer.from(
+        `${RAW_XML_DECL}<workbook xmlns="${RAW_SSML}" xmlns:r="${RAW_REL_NS}">` +
+          `<sheets><sheet name="${sheetNameXml}" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+        "utf-8",
+      ),
+    },
+    {
+      name: "xl/_rels/workbook.xml.rels",
+      data: Buffer.from(
+        `${RAW_XML_DECL}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+          `<Relationship Id="rId1" Type="${RAW_REL_NS}/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+        "utf-8",
+      ),
+    },
+  ];
+  if (includeWorksheet) {
+    entries.push({
+      name: "xl/worksheets/sheet1.xml",
+      data: Buffer.from(
+        `${RAW_XML_DECL}<worksheet xmlns="${RAW_SSML}" xmlns:r="${RAW_REL_NS}">` +
+          `<sheetData>${sheetData}</sheetData></worksheet>`,
+        "utf-8",
+      ),
+    });
+  }
+  return buildZip(entries);
+}
+
 interface SheetSpec {
   readonly name: string;
   readonly rows: readonly (readonly (string | number | Date | boolean)[])[];
@@ -669,5 +717,77 @@ describe("xlsx extractor - zip-bomb preflight", () => {
       name: "ExtractionError",
       kind: expect.stringMatching(/^(zip-bomb-detected|corrupt-document)$/),
     });
+  });
+});
+
+describe("xlsx extractor - sheet name injection (#1282)", () => {
+  it("sheet name with newlines does not inject markdown headings", async () => {
+    // A crafted workbook carries literal newlines in its sheet name.
+    // fast-xml-parser preserves them verbatim (it does not apply XML
+    // attribute-value whitespace normalization), so without sanitization
+    // the name is interpolated raw into a `## ` heading, letting an
+    // attacker inject arbitrary block-level Markdown (here a forged
+    // `## INJECTED` heading) into content later fed to an AI prompt.
+    const { extractor } = await loadXlsxExtractor();
+    const buf = buildRawXlsx(
+      "Legit\n\n## INJECTED",
+      '<row r="1"><c r="A1" t="inlineStr"><is><t>col</t></is></c></row>',
+    );
+    const out = await extractor(ctx(buf));
+
+    // No line may begin with the injected heading — the name must be
+    // flattened onto the single `## ` header line instead.
+    expect(out.content).not.toMatch(/^## INJECTED/m);
+    expect(out.content).toContain("## Legit ## INJECTED");
+
+    // The metadata surface must also be a single line.
+    const names = out.metadata?.sheetNames;
+    expect(names?.[0]).toBe("Legit ## INJECTED");
+    expect(names?.[0]).not.toMatch(/[\r\n]/);
+  });
+
+  it("flattens newlines in an empty-sheet placeholder heading too", async () => {
+    const { extractor } = await loadXlsxExtractor();
+    const buf = buildRawXlsx("Blank\n## INJECTED", "");
+    const out = await extractor(ctx(buf));
+    expect(out.content).toContain("(empty sheet)");
+    expect(out.content).not.toMatch(/^## INJECTED/m);
+    expect(out.content).toContain("## Blank ## INJECTED");
+  });
+
+  it("leaves legitimate single-line sheet names unchanged", async () => {
+    const { extractor } = await loadXlsxExtractor();
+    const buf = buildRawXlsx(
+      "People",
+      '<row r="1"><c r="A1" t="inlineStr"><is><t>Name</t></is></c></row>',
+    );
+    const out = await extractor(ctx(buf));
+    expect(out.content).toContain("## People");
+    expect(out.metadata?.sheetNames).toEqual(["People"]);
+  });
+});
+
+describe("xlsx extractor - missing worksheet entry (#1283)", () => {
+  it("missing declared worksheet entry throws corrupt-document", async () => {
+    // A workbook declares a sheet whose worksheet part is absent from the
+    // ZIP. Silently rendering it as `(empty sheet)` is indistinguishable
+    // from an intentionally empty sheet — a silent data-loss bug. The
+    // reader must surface this as a parse failure so the extractor reports
+    // a `corrupt-document` error with a re-save suggestion.
+    const { extractor } = await loadXlsxExtractor();
+    const buf = buildRawXlsx("Present", "", { includeWorksheet: false });
+    await expect(extractor(ctx(buf))).rejects.toMatchObject({
+      name: "ExtractionError",
+      kind: "corrupt-document",
+      suggestion: expect.stringMatching(/xlsx/i),
+    });
+  });
+
+  it("does not throw for a genuinely empty but present worksheet", async () => {
+    const { extractor } = await loadXlsxExtractor();
+    const buf = buildRawXlsx("Blank", "", { includeWorksheet: true });
+    const out = await extractor(ctx(buf));
+    expect(out.content).toContain("## Blank");
+    expect(out.content).toContain("(empty sheet)");
   });
 });

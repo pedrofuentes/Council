@@ -497,7 +497,14 @@ export async function readXlsxSheets(buffer: Buffer): Promise<XlsxSheet[]> {
 
   return sheetRefs.map((ref) => {
     const raw = entries.get(ref.path);
-    const rows = raw === undefined ? [] : parseSheetRows(raw, sharedStrings, dateFlags);
+    if (raw === undefined) {
+      // The workbook declares this sheet but its worksheet part is absent
+      // from the archive. Returning an empty sheet here would be silent
+      // data loss (indistinguishable from a genuinely empty sheet), so we
+      // fail loudly — mirroring the missing-workbook.xml handling.
+      throw new XlsxParseError(`Worksheet part is missing from the archive: ${ref.path}`);
+    }
+    const rows = parseSheetRows(raw, sharedStrings, dateFlags);
     return { name: ref.name, rows };
   });
 }
