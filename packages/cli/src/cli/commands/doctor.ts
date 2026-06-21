@@ -14,8 +14,10 @@ import {
   loadConfig,
 } from "../../config/index.js";
 import {
+  checkCopilotCliPath,
   discoverAvailableModels,
   pingProviderHealth,
+  resolveCopilotCliPath,
   type ModelDiscoveryResult,
 } from "../../engine/copilot/health.js";
 import { getSymbols } from "../renderers/symbols.js";
@@ -49,6 +51,7 @@ export interface DoctorDeps {
   readonly onlineProbe?: (model: string) => Promise<{ ok: boolean; detail: string }>;
   readonly discoverModels?: () => Promise<ModelDiscoveryResult>;
   readonly createSpinner?: () => Spinner;
+  readonly resolveCliPath?: () => string | undefined;
 }
 
 interface LabeledCheck {
@@ -60,17 +63,17 @@ export async function checkNodeVersion(
   nodeVersion: string = process.versions.node,
 ): Promise<CheckResult> {
   const major = Number.parseInt(nodeVersion.split(".")[0] ?? "0", 10);
-  if (major >= 22) {
+  if (major >= 24) {
     return {
       name: "Node.js version",
       status: "pass",
-      detail: `v${nodeVersion} (>= 22 required)`,
+      detail: `v${nodeVersion} (>= 24 required)`,
     };
   }
   return {
     name: "Node.js version",
     status: "fail",
-    detail: `v${nodeVersion} is too old; Council requires Node.js 22 or newer`,
+    detail: `v${nodeVersion} is too old; Council requires Node.js 24 or newer`,
   };
 }
 
@@ -133,6 +136,20 @@ async function checkCopilotSdk(): Promise<CheckResult> {
     name: "Copilot SDK",
     status: health.ok ? "pass" : "fail",
     detail: health.detail,
+  };
+}
+
+async function checkCopilotCli(
+  resolveCliPath: NonNullable<DoctorDeps["resolveCliPath"]>,
+): Promise<CheckResult> {
+  const probe = checkCopilotCliPath({
+    override: process.env.COPILOT_CLI_PATH,
+    resolvedPath: resolveCliPath(),
+  });
+  return {
+    name: "Copilot CLI",
+    status: probe.status === "needs-remediation" ? "fail" : "pass",
+    detail: probe.detail,
   };
 }
 
@@ -277,6 +294,7 @@ function resolveDoctorDeps(input: DoctorDeps | Writer): Required<DoctorDeps> {
     onlineProbe: deps.onlineProbe ?? probeCopilotModel,
     discoverModels: deps.discoverModels ?? discoverAvailableModels,
     createSpinner: deps.createSpinner ?? createSpinner,
+    resolveCliPath: deps.resolveCliPath ?? resolveCopilotCliPath,
   };
 }
 
@@ -287,6 +305,7 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
     onlineProbe,
     discoverModels,
     createSpinner: makeSpinner,
+    resolveCliPath,
   } = resolveDoctorDeps(input);
   const cmd = new Command("doctor");
   cmd
@@ -301,6 +320,7 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
         { label: "Council data home", run: checkCouncilDataHome },
         { label: "SQLite (node:sqlite)", run: checkSqlite },
         { label: "Copilot SDK", run: checkCopilotSdk },
+        { label: "Copilot CLI", run: () => checkCopilotCli(resolveCliPath) },
         { label: "Disk write", run: checkDiskSpace },
       ];
 
