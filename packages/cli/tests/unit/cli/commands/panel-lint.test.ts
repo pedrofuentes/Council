@@ -183,11 +183,14 @@ describe("council panel lint", () => {
   it("fails when a target file does not exist", async () => {
     const cli = lintCommand();
     await expect(cli.parse([path.join(tmp.dir, "nope.yaml")])).rejects.toThrow();
+    // Surface the specific diagnostic, not merely a non-zero exit.
+    expect(cli.out() + cli.err()).toContain("read-file");
   });
 
   it("fails when neither files nor --built-ins are provided", async () => {
     const cli = lintCommand();
     await expect(cli.parse([])).rejects.toThrow();
+    expect(cli.out() + cli.err()).toContain("No panels to lint");
   });
 
   it("lints every built-in panel and passes in default (non-official) mode", async () => {

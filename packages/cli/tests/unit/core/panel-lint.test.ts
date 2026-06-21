@@ -362,6 +362,67 @@ describe("lintPanelDefinition — filler-phrase", () => {
 });
 
 // ──────────────────────────────────────────────────────────────────────
+// panel-level filler-phrase (description / decisionArtifact / samplePrompts)
+// ──────────────────────────────────────────────────────────────────────
+
+describe("lintPanelDefinition — panel-level filler-phrase", () => {
+  it("warns (default) when panel.description contains a banned filler phrase", () => {
+    const result = lintPanelDefinition(
+      validPanel({ description: "We unlock synergy across teams." }),
+    );
+    const f = findingFor(result, "filler-phrase");
+    expect(f?.severity).toBe("warning");
+    expect(f?.path).toBe("description");
+    expect(f?.message.toLowerCase()).toContain("synergy");
+    expect(result.ok).toBe(true); // warnings never fail the default gate
+  });
+
+  it("flags a banned filler phrase in decisionArtifact", () => {
+    const result = lintPanelDefinition(validPanel({ decisionArtifact: "A robust decision memo." }));
+    const f = findingFor(result, "filler-phrase");
+    expect(f?.severity).toBe("warning");
+    expect(f?.path).toBe("decisionArtifact");
+    expect(f?.message.toLowerCase()).toContain("robust");
+  });
+
+  it("flags a banned filler phrase in a samplePrompts entry, tagged by index", () => {
+    const result = lintPanelDefinition(
+      validPanel({
+        samplePrompts: ["How should we shard orders?", "How do we leverage caching here?"],
+      }),
+    );
+    const f = findingFor(result, "filler-phrase");
+    expect(f?.severity).toBe("warning");
+    expect(f?.path).toBe("samplePrompts[1]");
+    expect(f?.message.toLowerCase()).toContain("leverage");
+  });
+
+  it("escalates a panel.description filler phrase to an error under official", () => {
+    const result = lintPanelDefinition(
+      validPanel({ description: "A holistic, world-class panel." }),
+      { official: true },
+    );
+    const f = findingFor(result, "filler-phrase");
+    expect(f?.severity).toBe("error");
+    expect(f?.path).toBe("description");
+    expect(result.ok).toBe(false);
+  });
+
+  it("does not flag a panel whose description/decisionArtifact/samplePrompts are clean", () => {
+    const result = lintPanelDefinition(
+      validPanel({
+        description: "A panel that pressure-tests orders-service architecture decisions.",
+        decisionArtifact: "A one-page memo capturing the recommendation and its tradeoffs.",
+        samplePrompts: ["Should we shard the orders database this quarter?"],
+      }),
+      { official: true },
+    );
+    expect(findingFor(result, "filler-phrase")).toBeUndefined();
+    expect(result.ok).toBe(true);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
 // expert-slug-reference (warning → error when official)
 // ──────────────────────────────────────────────────────────────────────
 
