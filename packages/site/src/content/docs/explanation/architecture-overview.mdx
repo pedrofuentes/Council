@@ -1,0 +1,188 @@
+---
+title: Architecture Overview
+description: High-level architectural patterns, module boundaries, and the engine abstraction that makes Council provider-flexible.
+---
+
+Council is built around **strict module boundaries** and a **provider-agnostic engine interface**. This page explains the high-level architecture, key design decisions, and how the pieces fit together.
+
+## Core Layers
+
+```
+┌─────────────────────────────────────────┐
+│            CLI Commands                 │  ← User-facing layer
+│  (convene, ask, chat, export, ...)     │
+└─────────────────────────────────────────┘
+              ↓
+┌─────────────────────────────────────────┐
+│        Core Domain Logic                │  ← Deliberation orchestration
+│  (Debate, Expert, Moderator, Chat)     │
+└─────────────────────────────────────────┘
+              ↓                      ↓
+┌──────────────────────┐  ┌────────────────────┐
+│   CouncilEngine      │  │   Memory (SQLite)  │
+│   (abstraction)      │  │   (persistence)    │
+└──────────────────────┘  └────────────────────┘
+              ↓
+┌──────────────────────────────────────────┐
+│   Provider Adapters                      │
+│   (Copilot, OpenAI, Anthropic, ...)     │
+└──────────────────────────────────────────┘
+```
+
+### 1. CLI Commands (`src/cli/commands/`)
+User-facing commands: `convene`, `ask`, `chat`, `export`, `doctor`, etc.
+
+Responsibilities:
+- Parse flags and arguments (Commander.js)
+- Load configuration and validate inputs
+- Call core domain logic
+- Render output (via pluggable renderers: Ink, JSON, Plain)
+
+**Key rule**: CLI commands are **thin** — they orchestrate, but don't implement deliberation logic.
+
+### 2. Core Domain Logic (`src/core/`)
+The deliberation engine: experts, debates, moderators, chat sessions, document RAG.
+
+Key modules:
+- `debate.ts` — orchestrates multi-expert debates, emits `DebateEvent` stream
+- `expert.ts` — expert definitions, 8-section system prompt builder
+- `moderator/` — pluggable turn-ordering strategies
+- `chat/` — persistent 1:1 and panel chat sessions
+- `documents/` — detection, extraction, indexing, retrieval (RAG)
+- `prompt-builder.ts` — renders expert system prompts from templates
+- `quality-gate.ts` — anti-sycophancy enforcement
+
+**Key rule**: Core logic depends on the `CouncilEngine` **interface** only, never a specific provider.
+
+### 3. CouncilEngine Abstraction (`src/engine/index.ts`)
+The **architectural seam** — a provider-agnostic interface for AI interactions.
+
+```typescript
+interface CouncilEngine {
+  sendMessage(
+    expertSpec: ExpertSpec,
+    prompt: string,
+    options?: SendOptions
+  ): AsyncIterable<EngineEvent>;
+}
+```
+
+**Key rule**: Only `src/engine/copilot/adapter.ts` imports `@github/copilot-sdk`. Everything else uses the `CouncilEngine` interface.
+
+This makes Council **provider-flexible** — swapping from Copilot to OpenAI or Anthropic requires changing one adapter file, not rewriting the deliberation logic.
+
+### 4. Memory (SQLite) (`src/memory/`)
+Local persistence: debates, turns, chat sessions, expert memory, document indexes.
+
+Key modules:
+- `db.ts` — `node:sqlite` + Kysely connection, migrations
+- `repositories/` — typed data access (panels, experts, debates, turns, chat, documents)
+- `migrations/` — SQL schema definitions (`001_unified.sql`)
+
+**Key rule**: Memory is **orchestration index only** — Council stores metadata (who said what, when) but delegates message content storage to the AI provider's SDK transcripts where possible.
+
+### 5. Renderers (`src/cli/renderers/`)
+Pluggable output layers:
+- **Ink** (TTY): rich terminal UI with color, streaming, expert badges
+- **Plain** (non-TTY): simple text fallback with ANSI stripping
+- **JSON** (CI/scripts): NDJSON output for machine parsing
+
+**Key rule**: Renderers are **pure presentation** — they receive `DebateEvent` streams but don't mutate state or call the engine.
+
+## Key Design Decisions
+
+| Decision | Why |
+|----------|-----|
+| **Provider abstraction** | GitHub Copilot today; OpenAI/Anthropic soon. The engine interface isolates provider details. |
+| **SQLite (not Postgres/Mongo)** | Built into Node.js (no external service), platform-independent (works on Windows ARM64), includes FTS5 for full-text search. |
+| **ESM-only** | Node.js 24+ is the floor. All deps are ESM-first. No CommonJS interop complexity. |
+| **Commander + Ink** | Commander for CLI parsing, Ink for rich TUI. Decoupled via renderer abstraction. |
+| **Zod for validation** | Type-safe YAML parsing for expert/panel definitions. Single source of truth for schemas. |
+| **MockEngine** | Deterministic in-memory engine for unit tests. No SDK or network required. |
+| **Permissions: deny-all by default** | Experts are **reasoners**, not agents. Tool access (file write, shell, network) is opt-in per expert. |
+
+## The 8-Section System Prompt
+
+Every expert's system prompt follows a fixed structure (built by `src/core/prompt-builder.ts`):
+
+```
+[1] IDENTITY
+  - Role, display name, personality
+
+[2] EXPERTISE
+  - Weighted evidence types
+  - Reference cases
+  - Explicit disclaimers (notExpertIn)
+
+[3] EPISTEMIC STANCE
+  - How the expert forms beliefs (e.g., "Prioritize empirical data over anecdotes")
+
+[4] DEBATE PROTOCOL
+  - Anti-sycophancy rules (enforced by quality gate)
+  - Stand-down marker ("stress-tested")
+
+[5] OUTPUT CONTRACT
+  - Response format expectations
+
+[6] PERSONA (persona experts only)
+  - LLM-synthesized profile from documents
+
+[7] MEMORY (if present)
+  - Extracted key points from past debates
+
+[8] PANEL CONTEXT (1:1 chat only)
+  - Cross-panel awareness: which other panels this expert participates in
+```
+
+The structure is **stable** — Council can evolve individual sections without breaking the overall prompt architecture.
+
+## Module Boundaries (Enforced by ESLint)
+
+| Rule | Enforcement |
+|------|-------------|
+| Only `engine/copilot/adapter.ts` may import `@github/copilot-sdk` | `no-restricted-imports` |
+| Core logic depends on `CouncilEngine` interface, never adapters | Import graph analysis |
+| Secrets never stored in SQLite | Schema design + ADR-documented policy |
+
+## Data Flow (Typical Debate)
+
+1. **User** runs `council convene "Should we use microservices?"`
+2. **CLI** (`convene.ts`) parses flags, loads panel definition, calls `Debate.run()`
+3. **Core** (`debate.ts`) iterates rounds:
+   - Moderator strategy plans turn order
+   - For each expert: build prompt (8-section structure + prior turns)
+   - Call `engine.sendMessage()` → `AsyncIterable<EngineEvent>`
+   - Quality gate inspects response, regenerates if sycophantic
+   - Emit `DebateEvent` (turn.delta, turn.end, round.end, ...)
+4. **Memory** (`persister.ts`) listens to `turn.end` events, writes to SQLite
+5. **Renderer** (Ink/JSON/Plain) consumes `DebateEvent` stream, displays output
+6. After debate ends, **memory extractor** runs (LLM-based or heuristic), stores extracted memory in `expert_memory` table
+
+## Security: Layered Prompt Injection Defense
+
+Council's multi-agent architecture creates many injection surfaces (cross-expert turns, document snippets, LLM-composed panels). Defense is **layered**:
+
+1. **Structural sanitization** — strip C0 controls, bidi overrides, defang section markers
+2. **Heuristic detection** — scan for "ignore previous instructions" patterns (logged, not blocked)
+3. **Fencing** — wrap untrusted content in `<from_expert>`, `<summary>`, `[REFERENCE DOCUMENT]` delimiters with explicit "treat as data" framing
+4. **Schema enforcement** — Zod rejects expert YAML with `[NN]`-style section markers
+5. **Canary tokens** — inject per-session random token into system prompt, detect leakage in responses
+
+See [Security and Privacy](/Council/docs/explanation/security-and-privacy) for full details.
+
+## Testing Strategy
+
+- **Unit tests** (`tests/unit/`): MockEngine, Zod schemas, quality gate, sanitizers
+- **Integration tests** (`tests/integration/`): full debate flows with MockEngine
+- **Security tests** (`tests/security/`): red-team prompt injection payloads
+- **E2E tests** (`tests/e2e/`): real SDK calls (gated behind `E2E_TESTS=1`)
+
+**Coverage target**: >80% for core domain logic.
+
+## Relation to Other Concepts
+
+- [Deliberation Model](/Council/docs/explanation/deliberation-model) — how `Debate` orchestrates multi-expert conversations
+- [Anti-Sycophancy](/Council/docs/explanation/anti-sycophancy) — how the quality gate enforces disagreement
+- [Memory Model](/Council/docs/explanation/memory-model) — how SQLite stores and retrieves expert memory
+- [Document RAG](/Council/docs/explanation/document-rag) — how documents flow through detection → extraction → indexing → retrieval
+- [Security and Privacy](/Council/docs/explanation/security-and-privacy) — how layered defenses protect against prompt injection

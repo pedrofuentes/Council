@@ -10,8 +10,26 @@ trade-offs, and provides context for design decisions. Read these to build
 mental models of how Council's architecture fits together, why certain
 constraints exist, and how to reason about multi-expert deliberation.
 
-Topics include: the deliberation model, consensus mechanisms, memory and
-persistence, provider abstraction, tool safety, and the philosophy behind
-structured expert panels.
+## Core Concepts
 
-_Comprehensive explanation content will be added in a future update._
+- [**Deliberation Model**](/Council/docs/explanation/deliberation-model) — How Council orchestrates multi-expert debates through structured disagreement, freeform vs. structured modes, and why multi-agent debate surfaces better insights than single-agent advice.
+
+- [**Anti-Sycophancy Design**](/Council/docs/explanation/anti-sycophancy) — The 3-layer quality gate that prevents experts from agreeing performatively and enforces genuine, substantive disagreement.
+
+- [**Memory Model**](/Council/docs/explanation/memory-model) — How experts remember past debates, why generic and persona experts have different memory models, and how to inspect and reset memory.
+
+- [**Document RAG**](/Council/docs/explanation/document-rag) — How Council indexes and retrieves user documents to ground expert reasoning in real context: detection, extraction, chunking, FTS5 indexing, and recency weighting.
+
+- [**Persona Experts**](/Council/docs/explanation/persona-experts) — How document-trained experts combine LLM-synthesized profiles with RAG retrieval to reason like specific individuals, not generic roles.
+
+## Orchestration & Control
+
+- [**Moderation Strategies**](/Council/docs/explanation/moderation-strategies) — How Council controls turn order and prompt generation in freeform debates: round-robin, devil's advocate, consensus-check, and when to use each.
+
+- [**Context Window Management**](/Council/docs/explanation/context-management) — How Council keeps long debates within model token limits through visibility scoping, rolling summaries, and hard caps.
+
+## Architecture & Security
+
+- [**Architecture Overview**](/Council/docs/explanation/architecture-overview) — High-level architectural patterns, module boundaries, the 8-section system prompt structure, and the engine abstraction that makes Council provider-flexible.
+
+- [**Security and Privacy**](/Council/docs/explanation/security-and-privacy) — What Council stores locally, what it sends to AI providers, how secrets are handled, and the layered defenses against prompt injection in documents and cross-expert turns.
