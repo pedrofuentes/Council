@@ -203,21 +203,7 @@ describe("buildConfigCommand config wizard", () => {
       source: "live" as const,
     }));
     const input = createInput(
-      [
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        rawSelectedExtension,
-        "",
-        "",
-      ].join("\n") + "\n",
+      ["", "", "", "", "", "", "", "", "", "", rawSelectedExtension, "", ""].join("\n") + "\n",
     );
 
     const { stderr } = await runConfig(["wizard"], {
@@ -233,7 +219,9 @@ describe("buildConfigCommand config wizard", () => {
     expect(stderr).toBe("");
     expect(text).toContain("1. gpt-evil (recommended)");
     expect(text).toContain("Set defaults.model = gpt-evil");
-    expect(text).toContain("AI extraction extensions (comma-separated, blank for current) [.txtY]: ");
+    expect(text).toContain(
+      "AI extraction extensions (comma-separated, blank for current) [.txtY]: ",
+    );
     expect(text).toContain("Set documents.aiExtractionAllowedExtensions = .mdx");
     expect(text).not.toContain(rawModel);
     expect(text).not.toContain(rawCurrentExtension);
@@ -285,5 +273,30 @@ describe("buildConfigCommand config wizard", () => {
     const config = await loadConfig();
     expect(config.defaults.model).toBe(rawModel);
     expect(config.documents.aiExtractionAllowedExtensions).toEqual([rawCurrentExtension]);
+  });
+
+  it("sanitizes discovered model ids in invalid wizard choice errors", async () => {
+    const output = createCapturedOutput();
+    const rawModel = "gpt\u001B[31m\r\nEVIL";
+    const discoverModels = vi.fn(async () => ({
+      models: [rawModel],
+      source: "live" as const,
+    }));
+    const input = createInput("not-a-choice\n");
+
+    const { stderr } = await runConfig(["wizard"], {
+      write: (text) => output.stream.write(text),
+      wizard: {
+        input,
+        output: output.stream,
+        discoverModels,
+      },
+    });
+
+    expect(stderr).toContain("Config value for defaults.model must be one of: gpt EVIL");
+    expect(stderr).not.toContain(rawModel);
+    expect(stderr).not.toContain("\u001B");
+    expect(stderr).not.toContain("\r");
+    expect(stderr).not.toContain("gpt\nEVIL");
   });
 });
