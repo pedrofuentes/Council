@@ -31,7 +31,7 @@ import {
   type ExpertDefinition,
 } from "./shared.js";
 import { defaultWriter, defaultErrorWriter } from "../writer.js";
-import { stripControlChars } from "../../strip-control-chars.js";
+import { stripControlChars, toSingleLineDisplay } from "../../strip-control-chars.js";
 import { runList } from "./list.js";
 import { runHistory } from "./history.js";
 import { runExpertChat } from "./expert-chat.js";
@@ -90,7 +90,7 @@ function loadPersistedPanelDefinition(
 
 function legacyPanelRecoveryHint(topic: string | null): string {
   const safeTopic =
-    typeof topic === "string" && topic.trim().length > 0 ? stripControlChars(topic) : null;
+    typeof topic === "string" && topic.trim().length > 0 ? toSingleLineDisplay(topic) : null;
   const rerunHint =
     safeTopic === null
       ? "Re-run `council convene` for the original topic to recreate the panel."
