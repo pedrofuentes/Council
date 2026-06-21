@@ -146,6 +146,90 @@ async function seedPanelWithUnsafeDebate(
   }
 }
 
+async function seedPanelWithUnsafeFallbackSpeaker(
+  testHome: string,
+): Promise<{ panelName: string }> {
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    const panel = await new PanelRepository(db).create({
+      name: "export-unsafe-speaker",
+      topic: "Speaker fallback safety",
+      copilotHome: path.join(testHome, "copilot"),
+      configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+    });
+    const debate = await new DebateRepository(db).create({
+      panelId: panel.id,
+      prompt: "Speaker fallback safety prompt",
+      moderator: "round-robin",
+    });
+    await db
+      .insertInto("turns")
+      .values({
+        id: "turn-unsafe-speaker",
+        debate_id: debate.id,
+        round: 0,
+        seq: 0,
+        speaker_kind: `moderator${ESC}]8;;https://evil.example${BEL}${C1_CSI}31m${BIDI_OVERRIDE}`,
+        expert_id: null,
+        content: "Fallback speaker content.",
+        tokens_in: null,
+        tokens_out: null,
+        latency_ms: null,
+        created_at: new Date().toISOString(),
+      })
+      .execute();
+    await new DebateRepository(db).update(debate.id, {
+      status: "completed",
+      endedAt: new Date().toISOString(),
+    });
+    return { panelName: panel.name };
+  } finally {
+    await db.destroy();
+  }
+}
+
+async function seedPanelWithUnsafeLineBreakContent(
+  testHome: string,
+  content: string,
+): Promise<{ panelName: string }> {
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    const panel = await new PanelRepository(db).create({
+      name: "export-unsafe-line-break",
+      topic: "Line break safety",
+      copilotHome: path.join(testHome, "copilot"),
+      configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+    });
+    const debate = await new DebateRepository(db).create({
+      panelId: panel.id,
+      prompt: "Line break safety prompt",
+      moderator: "round-robin",
+    });
+    const expert = await new ExpertRepository(db).create({
+      panelId: panel.id,
+      slug: "cto",
+      displayName: "CTO",
+      model: "claude-sonnet-4",
+      systemMessage: "You are a CTO.",
+    });
+    await new TurnRepository(db).create({
+      debateId: debate.id,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId: expert.id,
+      content,
+    });
+    await new DebateRepository(db).update(debate.id, {
+      status: "completed",
+      endedAt: new Date().toISOString(),
+    });
+    return { panelName: panel.name };
+  } finally {
+    await db.destroy();
+  }
+}
+
 async function seedPanelWithUnicodeDebate(
   testHome: string,
 ): Promise<{ panelName: string; readonly unicodeSnippet: string }> {
@@ -721,6 +805,40 @@ describe("buildExportCommand", () => {
     expect(captured).toContain("**CTO** (`cto`) - claude31m-sonnet-4");
     expect(captured).toContain("> Legit **markdown** café 🎉");
     expect(captured).toContain("> Second line ≥ baseline");
+  });
+
+  it("--format markdown sanitizes fallback speaker headings when no expert id is present", async () => {
+    const seed = await seedPanelWithUnsafeFallbackSpeaker(testHome);
+    let captured = "";
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
+    await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "markdown"]);
+
+    expectNoTerminalControls(captured);
+    expect(captured).toContain("#### moderator31m");
+    expect(captured).toContain("> Fallback speaker content.");
+  });
+
+  it.each([
+    ["CR", "alpha\rbeta"],
+    ["CRLF", "alpha\r\nbeta"],
+    ["Unicode line separator", "alpha\u2028beta"],
+    ["Unicode paragraph separator", "alpha\u2029beta"],
+  ])("--format markdown prefixes every block-quote line after %s", async (_name, content) => {
+    const seed = await seedPanelWithUnsafeLineBreakContent(testHome, content);
+    let captured = "";
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
+    await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "markdown"]);
+
+    expect(captured).not.toContain(content);
+    expect(captured).toContain("> alpha\n> beta");
   });
 
   it("--format adr strips terminal controls from headings and transcript content while preserving legitimate body text", async () => {
