@@ -73,6 +73,7 @@ import {
 import { RENDERER_FORMATS, type RendererFormat } from "../renderers/select.js";
 import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
 import { isNonInteractive } from "../non-interactive.js";
+import { promptForTopic } from "../interactive-topic-input.js";
 import { readTextInput } from "../read-text-input.js";
 import { createProgress } from "../progress.js";
 import {
@@ -143,6 +144,11 @@ export interface ConveneCommandDeps {
    * used (gated by {@link isNonInteractive}).
    */
   readonly topicConfirmProvider?: () => ConfirmProvider;
+  /**
+   * Provider for interactive topic input when no positional topic or
+   * --prompt-file is supplied.
+   */
+  readonly topicInputProvider?: () => Promise<string>;
   /**
    * Subscribe to SIGINT (Ctrl+C). Returns an unsubscribe function.
    * When omitted, a default implementation that calls `process.on`
@@ -366,9 +372,12 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       } else if (topicArg !== undefined) {
         topicSource = "arg";
         topic = topicArg;
+      } else if (!isNonInteractive() && !isQuiet()) {
+        topicSource = "interactive";
+        topic = await (deps.topicInputProvider ?? promptForTopic)();
       } else {
         const message =
-          "No topic provided. Pass a positional <topic>, or use --prompt-file <path> (or --prompt-file - to read stdin).";
+          "No topic provided. Pass a positional <topic>, or use --prompt-file <path> (or --prompt-file - to read stdin). When running in a terminal, omit the topic argument to enter it interactively.";
         writeError(message + "\n");
         throw new CliUserError(message);
       }
