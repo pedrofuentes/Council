@@ -1,0 +1,30 @@
+{
+  "ci": {
+    "collect": {
+      "startServerCommand": "pnpm exec astro preview --port 4321",
+      "startServerReadyPattern": "ready in",
+      "startServerReadyTimeout": 30000,
+      "url": [
+        "http://localhost:4321/Council/",
+        "http://localhost:4321/Council/gallery/",
+        "http://localhost:4321/Council/tutorials/",
+        "http://localhost:4321/Council/tutorials/01-install-and-first-debate/"
+      ],
+      "numberOfRuns": 1,
+      "settings": {
+        "chromeFlags": "--no-sandbox --disable-dev-shm-usage"
+      }
+    },
+    "assert": {
+      "assertions": {
+        "categories:accessibility": ["warn", { "minScore": 0.95 }],
+        "categories:best-practices": ["warn", { "minScore": 0.9 }],
+        "categories:seo": ["warn", { "minScore": 0.9 }]
+      }
+    },
+    "upload": {
+      "target": "filesystem",
+      "outputDir": "./.lighthouseci"
+    }
+  }
+}

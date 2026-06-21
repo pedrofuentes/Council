@@ -1,0 +1,60 @@
+name: Lighthouse a11y (informational)
+
+# Standalone, INFORMATIONAL accessibility/performance audit for the docs +
+# marketing site. This workflow is intentionally NOT a required check:
+#   * the required merge gate is `ci-pass` in ci.yml (do not add this file to
+#     branch protection),
+#   * the Lighthouse assertions are `warn` (see packages/site/lighthouserc.json),
+#   * the audit step uses `continue-on-error` so a score regression — or a
+#     transient Chrome/LHCI failure — never blocks a merge.
+# Audit tooling runs via `npx` so no project dependency is added to package.json.
+
+on:
+  pull_request:
+    paths:
+      - "packages/site/**"
+      - ".github/workflows/lighthouse.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lighthouse:
+    name: Lighthouse a11y audit (non-blocking)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build site
+        run: pnpm --filter @council-ai/site build
+
+      # `npx` keeps @lhci/cli out of package.json. autorun reads
+      # packages/site/lighthouserc.json, boots `astro preview` (so the
+      # /Council/ base path is served), audits the built output, then tears the
+      # server down. continue-on-error guarantees this stays non-blocking.
+      - name: Run Lighthouse CI (informational)
+        id: lhci
+        continue-on-error: true
+        working-directory: packages/site
+        run: npx --yes @lhci/cli@0.15.1 autorun
+
+      - name: Upload Lighthouse reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: lighthouse-reports
+          path: packages/site/.lighthouseci/
+          if-no-files-found: ignore
+          retention-days: 14
