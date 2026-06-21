@@ -2,7 +2,7 @@
   <defs>
     <linearGradient id="gradient1" x1="579.74" y1="501.12" x2="500.26" y2="477.96">
       <stop offset="0" stop-color="#80a4c7"/>
-      <stop offset="1" stop-color="#ede ce3"/>
+      <stop offset="1" stop-color="#edece3"/>
     </linearGradient>
     <linearGradient id="gradient2" x1="440.39" y1="487.87" x2="522.64" y2="464.54">
       <stop offset="0" stop-color="#81a8c7"/>
