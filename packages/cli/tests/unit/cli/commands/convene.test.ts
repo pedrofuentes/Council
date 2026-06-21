@@ -249,6 +249,70 @@ describe("buildConveneCommand", () => {
     expect(captured).toContain("Topic");
   });
 
+  it("auto-generates a conclusion by default after a completed debate", async () => {
+    let captured = "";
+    const engine = new MockEngine();
+    const cmd = buildConveneCommand({
+      engineFactory: () => engine,
+      write: (s) => {
+        captured += s;
+      },
+      writeError: () => undefined,
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "Should we ship the MVP?",
+      "--template",
+      "code-review",
+      "--max-rounds",
+      "1",
+      "--engine",
+      "mock",
+      "--heuristic-memory",
+    ]);
+
+    expect(captured).toContain("=== Council Decision Framework ===");
+    expect(captured).toContain("Recommendation:");
+    expect(captured).toContain("Tip: Try `council ask");
+    expect(engine.sentPrompts.some((p) => p.prompt.includes("Now produce the JSON synthesis"))).toBe(
+      true,
+    );
+  });
+
+  it("--no-conclude skips automatic conclusion generation", async () => {
+    let captured = "";
+    const engine = new MockEngine();
+    const cmd = buildConveneCommand({
+      engineFactory: () => engine,
+      write: (s) => {
+        captured += s;
+      },
+      writeError: () => undefined,
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "Should we ship the MVP?",
+      "--template",
+      "code-review",
+      "--max-rounds",
+      "1",
+      "--engine",
+      "mock",
+      "--heuristic-memory",
+      "--no-conclude",
+    ]);
+
+    expect(captured).not.toContain("=== Council Decision Framework ===");
+    expect(captured).not.toContain("Recommendation:");
+    expect(engine.sentPrompts.some((p) => p.prompt.includes("Now produce the JSON synthesis"))).toBe(
+      false,
+    );
+  });
+
   it("uses config.defaults.model (not hardcoded DEFAULT_MODEL) for expert registration", async () => {
     // Write a config file that overrides the default model
     const configPath = path.join(testHome, "config.yaml");
