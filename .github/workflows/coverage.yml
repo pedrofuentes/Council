@@ -1,0 +1,58 @@
+name: Coverage
+
+# Standalone, NON-REQUIRED full-suite coverage gate. It runs the entire test
+# suite ONCE (not sharded) with --coverage so the thresholds in
+# packages/cli/vitest.config.ts are evaluated against COMPLETE coverage data.
+#
+# This is intentionally separate from the required ci.yml, which runs unit tests
+# in 4 shards. Each shard exercises only a slice of the suite, so enforcing
+# coverage thresholds per-shard would compare partial coverage against
+# whole-suite numbers and false-fail. Keeping the threshold check here protects
+# the required merge gate from that failure mode.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    name: Full-suite coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Full suite (NOT sharded) with coverage. The thresholds in
+      # vitest.config.ts are enforced by this step. A project-local TMPDIR keeps
+      # SQLite temp files off the shared runner tmpdir, avoiding the temp-dir
+      # flakes (#1330/#1355). This job is non-required, so a transient flake
+      # (e.g. ask.test.ts #1386) can simply be re-run.
+      - name: Run full suite with coverage
+        working-directory: packages/cli
+        run: |
+          mkdir -p "$PWD/.tmptest"
+          TMPDIR="$PWD/.tmptest" pnpm exec vitest run --coverage
+
+      - name: Upload coverage report (lcov)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-lcov
+          path: packages/cli/coverage/lcov.info
+          if-no-files-found: warn
