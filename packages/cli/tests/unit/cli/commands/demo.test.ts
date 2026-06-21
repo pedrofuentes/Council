@@ -118,7 +118,10 @@ describe("buildDemoCommand", () => {
     const events = parseNdjson(out.read());
     expect(events.length).toBeGreaterThan(0);
     // Every non-empty stdout line is valid JSON (no human framing leaked).
-    for (const line of out.read().split("\n").filter((l) => l.trim().length > 0)) {
+    for (const line of out
+      .read()
+      .split("\n")
+      .filter((l) => l.trim().length > 0)) {
       expect(() => JSON.parse(line)).not.toThrow();
     }
     expect(out.read()).not.toMatch(/council convene/);
