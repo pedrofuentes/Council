@@ -17,6 +17,7 @@ import {
   loadConfig,
   updateConfigField,
 } from "../../config/index.js";
+import { updateConfigFields } from "../../config/loader.js";
 import { discoverAvailableModels, type ModelDiscoveryResult } from "../../engine/copilot/health.js";
 import { orderModelsByPreference, writeModelList } from "../first-run-model-select.js";
 import { CliUserError } from "../cli-user-error.js";
@@ -42,6 +43,11 @@ const SETTABLE_CONFIG_KEYS = [
 ] as const;
 
 type SettableConfigKey = (typeof SETTABLE_CONFIG_KEYS)[number];
+type ConfigValue = string | number | boolean | readonly string[];
+interface ConfigUpdate {
+  readonly key: SettableConfigKey;
+  readonly value: ConfigValue;
+}
 
 interface TtyReadableStream extends NodeJS.ReadableStream {
   readonly isTTY?: boolean;
@@ -412,7 +418,7 @@ function isInteractiveInput(input: TtyReadableStream | undefined): boolean {
   return activeInput.isTTY === true;
 }
 
-function formatWizardValue(value: string | number | boolean | readonly string[]): string {
+function formatWizardValue(value: ConfigValue): string {
   if (Array.isArray(value)) {
     return value.length === 0 ? "none" : value.map((item) => toSingleLineDisplay(item)).join(", ");
   }
@@ -424,11 +430,7 @@ function formatWizardKey(key: SettableConfigKey): string {
   return toSingleLineDisplay(key);
 }
 
-function promptText(
-  output: NodeJS.WritableStream,
-  label: string,
-  current: string | number | boolean | readonly string[],
-): void {
+function promptText(output: NodeJS.WritableStream, label: string, current: ConfigValue): void {
   output.write(`${label} [${formatWizardValue(current)}]: `);
 }
 
@@ -484,10 +486,10 @@ async function promptForModel(
 async function promptForValue(
   key: SettableConfigKey,
   label: string,
-  current: string | number | boolean | readonly string[],
+  current: ConfigValue,
   line: () => Promise<string>,
   output: NodeJS.WritableStream,
-): Promise<string | number | boolean | readonly string[]> {
+): Promise<ConfigValue> {
   promptText(output, label, current);
   const rawValue = (await line()).trim();
   if (rawValue.length === 0) return current;
@@ -497,7 +499,6 @@ async function promptForValue(
       : key === "documents.aiExtraction"
         ? selectChoice(rawValue, ["off", "ask", "auto"], String(current), key)
         : coerceConfigValue(key, rawValue);
-  ConfigSchema.parse(setValueInConfig(await loadConfig(), key, value));
   return value;
 }
 
@@ -537,7 +538,10 @@ async function runWizard(write: Writer, deps: ConfigWizardDependencies | undefin
   const lines = rl[Symbol.asyncIterator]();
   const nextLine = async (): Promise<string> => {
     const next = await lines.next();
-    return next.done ? "" : next.value;
+    if (next.done === true) {
+      throw new CliUserError("Config wizard aborted before completion.");
+    }
+    return next.value;
   };
 
   try {
@@ -586,19 +590,27 @@ async function runWizard(write: Writer, deps: ConfigWizardDependencies | undefin
       ],
     ];
 
+    const updates: ConfigUpdate[] = [];
+    let stagedConfig = config;
+    const stageUpdate = (key: SettableConfigKey, value: ConfigValue): void => {
+      stagedConfig = ConfigSchema.parse(setValueInConfig(stagedConfig, key, value));
+      updates.push({ key, value });
+    };
+
     const model = await promptForModel(
       nextLine,
       write,
       output,
       deps?.discoverModels ?? discoverAvailableModels,
     );
-    await updateConfigField("defaults.model", model);
+    stageUpdate("defaults.model", model);
 
     for (const [key, label, current] of values) {
       const value = await promptForValue(key, label, current, nextLine, output);
-      await updateConfigField(key, value);
+      stageUpdate(key, value);
       write(`Set ${formatWizardKey(key)} = ${formatWizardValue(value)}\n`);
     }
+    await updateConfigFields(updates);
     write("\nConfig wizard complete.\n");
   } finally {
     rl.close();
