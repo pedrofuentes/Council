@@ -1,7 +1,7 @@
 import { stripControlChars, toSingleLineDisplay } from "../strip-control-chars.js";
 
 export function sanitizeExportBlock(text: string): string {
-  return stripControlChars(text);
+  return stripControlChars(text.replace(/\r\n?/g, "\n").replace(/[\u2028\u2029]/g, "\n"));
 }
 
 export function sanitizeExportLine(text: string): string {

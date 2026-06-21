@@ -245,7 +245,7 @@ function renderMarkdown(doc: TranscriptDocument): string {
         lastRound = t.round;
       }
       const slug = t.expertId ? slugById.get(t.expertId) : undefined;
-      const display = slug ? (nameBySlug.get(slug) ?? slug) : t.speakerKind;
+      const display = sanitizeExportLine(slug ? (nameBySlug.get(slug) ?? slug) : t.speakerKind);
       const model = slug ? modelBySlug.get(slug) : undefined;
       lines.push(`#### ${display}${model ? ` _(${model})_` : ""}`);
       lines.push("");
