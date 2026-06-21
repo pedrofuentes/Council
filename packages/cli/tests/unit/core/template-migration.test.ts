@@ -29,8 +29,12 @@ const BUILTIN_PANELS = [
   "architecture-review",
   "career-coaching",
   "code-review",
+  "growth-experiment-review",
   "incident-postmortem",
+  "product-strategy-review",
+  "roadmap-prioritization",
   "startup-validation",
+  "ux-review",
 ] as const;
 
 async function exists(p: string): Promise<boolean> {
@@ -334,9 +338,9 @@ describe("template-migration", () => {
   });
 
   describe("migrateBuiltInTemplates()", () => {
-    it("extracts experts from all 5 built-in panels", async () => {
+    it("extracts experts from all built-in panels", async () => {
       const result = await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
-      expect(result.panelsMigrated).toBe(5);
+      expect(result.panelsMigrated).toBe(BUILTIN_PANELS.length);
       expect(result.expertsExtracted).toBeGreaterThanOrEqual(15);
 
       const expertsDir = path.join(dataHome, "experts");
@@ -376,7 +380,7 @@ describe("template-migration", () => {
     it("registers panels and members in panel_library / panel_members", async () => {
       await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
       const panels = await db.selectFrom("panel_library").selectAll().execute();
-      expect(panels.length).toBe(5);
+      expect(panels.length).toBe(BUILTIN_PANELS.length);
       const members = await db
         .selectFrom("panel_members")
         .selectAll()
@@ -630,7 +634,7 @@ describe("template-migration", () => {
 
     it("returns accurate counts in MigrationResult", async () => {
       const result = await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
-      expect(result.panelsMigrated).toBe(5);
+      expect(result.panelsMigrated).toBe(BUILTIN_PANELS.length);
       expect(result.expertsExtracted).toBeGreaterThan(0);
       expect(result.skipped).toBe(0);
       expect(typeof result.duplicatesUnified).toBe("number");
