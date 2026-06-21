@@ -61,9 +61,11 @@ export type GitDiffRunner = (base: string) => Promise<string>;
 const defaultGitDiff: GitDiffRunner = (base) =>
   new Promise<string>((resolve, reject) => {
     // Argv array (never a shell string) so refs are not shell-expanded.
+    // Use --end-of-options to prevent base from being parsed as a git option
+    // (defense in depth — the caller should also reject leading dashes).
     execFile(
       "git",
-      ["diff", base],
+      ["diff", "--end-of-options", base],
       {
         encoding: "utf8",
         windowsHide: true,
@@ -326,6 +328,18 @@ async function resolveDiff(
   }
 
   const base = raw.base ?? DEFAULT_BASE_REF;
+
+  // Guard against argument injection: a --base value starting with dash
+  // (e.g., --output=/tmp/evil or --ext-diff) would be parsed by git as an
+  // option, not a revision, enabling potential misuse.
+  if (base.startsWith("-")) {
+    const message =
+      `Invalid --base value: "${base}". The --base argument must be a git ref ` +
+      "(e.g., HEAD, main, a SHA), not an option starting with dash.";
+    ctx.writeError(message + "\n");
+    throw new CliUserError(message);
+  }
+
   try {
     return await ctx.gitDiff(base);
   } catch (err: unknown) {
