@@ -22,6 +22,21 @@
 
 <!-- Add new decisions below this line, most recent first -->
 
+### ADR-028: Keep `@council-ai/cli` canonical; unscoped `council-ai` is a deprecated placeholder
+**Date**: 2026-06-20
+**Status**: Accepted (extends ADR-025)
+**Context**: Visiting `npmjs.com/package/@council-ai` returns 404 — bare scopes have no npm page, which is true of every scoped package (`@angular`, `@aws-sdk`, `@nestjs`). A proposal (Option R) to rename the CLI to the unscoped `council-ai` (the `expo`/`vercel` "unscoped canonical + scoped internals" model) was implemented and reviewed in PR #1302, then **closed**: Sentinel flagged that the renamed self-update target (`council update` → `council-ai@latest`, plus the version-probe URL) pointed at an **unowned** npm name. Owning the `@council-ai` **org** reserves only the `@council-ai/*` **scope**, not the separate unscoped `council-ai` name (verified 404), so shipping that code was a dependency-confusion/supply-chain risk. Council is also multi-surface (CLI + web + core), which makes the `@council-ai/*` scope the natural umbrella rather than committing the bare brand name to mean "the CLI".
+**Decision**: Keep **`@council-ai/cli`** as the single canonical published package (binary `council`); do **not** rename. Separately publish the unscoped **`council-ai`** as a **deprecated placeholder** — source in `packaging/council-ai/`, deliberately **outside** the pnpm workspace (`packages/*`) so it never affects install/build/test. It is metadata-only (no `bin`, no code, `files: ["README.md"]`); its README points users to `@council-ai/cli`. It is published once by a human and then `npm deprecate`d with a redirect message. This gives `npmjs.com/package/council-ai` real content, defends the brand, and closes the typosquat/supply-chain hole — with **zero** change to `@council-ai/cli`, CI, release-please, or Trusted Publishing.
+**Alternatives considered**:
+- **Rename to unscoped `council-ai` (Option R)** — rejected: requires owning/maintaining a new canonical namespace, a self-update migration bridge, a Trusted-Publisher re-point, and a download-stat reset; commits the bare brand to "the CLI" as the web/core surfaces grow (PR #1302, closed).
+- **Live functional alias** (`council-ai` that depends on and forwards to `@council-ai/cli`) — rejected: essentially unprecedented and fights the built-in `council update` (would shadow the `council` bin / cause double global installs).
+- **Do nothing (accept the 404)** — viable, but leaves the unscoped `council-ai` open to typosquatting and provides no content page.
+**Consequences**:
+- ✅ Zero change to the working `@council-ai/cli` package, CI, release pipeline, or Trusted Publishing.
+- ✅ `npmjs.com/package/council-ai` shows a redirect README and the name is owned (no typosquat/supply-chain exposure).
+- ⚠️ The placeholder must be `npm publish`ed and `npm deprecate`d by a human (HUMAN REQUIRED / ASK FIRST); it is kept minimal so it never needs version maintenance.
+- 📝 The no-hyphen `councilai` variant (the ADR-025 reservation) can get the same deprecated-placeholder treatment as an optional follow-up.
+
 ### ADR-027: SQLite backend = Node's built-in `node:sqlite`, not `@libsql/client`
 **Date**: 2026-06-20
 **Status**: Accepted (supersedes ADR-005; ADR-002's orchestration-index role unchanged)
