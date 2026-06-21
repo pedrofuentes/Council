@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/pedrofuentes/Council/compare/cli-v0.3.0...cli-v0.4.0) (2026-06-21)
+
+
+### Features
+
+* **cli:** add Council wordmark banner renderer ([e6b35c7](https://github.com/pedrofuentes/Council/commit/e6b35c798fc2f0dfb9dcade6bea2a52cfecf55b5))
+* **cli:** Council wordmark banner renderer ([#1306](https://github.com/pedrofuentes/Council/issues/1306)) ([60190b1](https://github.com/pedrofuentes/Council/commit/60190b19d33473fb4bc692d95f6794182edc1bff))
+* **cli:** show banner in root help and first-run wizard ([6fb9d27](https://github.com/pedrofuentes/Council/commit/6fb9d27c09574d21df1838095169860d1cdfc232))
+* **cli:** show banner in root help and first-run wizard ([#1309](https://github.com/pedrofuentes/Council/issues/1309)) ([a84f1bb](https://github.com/pedrofuentes/Council/commit/a84f1bb059c5e12e07d29cf8935c64340f61b10c))
+* **doctor:** show version banner in council doctor ([e9f65d9](https://github.com/pedrofuentes/Council/commit/e9f65d97230604aa78022681ab4869051de6d15a))
+* **doctor:** show version banner in council doctor ([#1308](https://github.com/pedrofuentes/Council/issues/1308)) ([54c342e](https://github.com/pedrofuentes/Council/commit/54c342e9100586d2e3ac00f3ecc06146eef7113c))
+
 ## [0.3.0](https://github.com/pedrofuentes/Council/compare/cli-v0.2.1...cli-v0.3.0) (2026-06-21)
 
 
