@@ -5,7 +5,6 @@
  * does not exist yet.
  */
 import * as fs from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,9 +19,10 @@ import {
 } from "../../../../src/core/documents/panel-document-scanner.js";
 import * as extractorModule from "../../../../src/core/documents/extractor.js";
 import { createDocumentIndexer } from "../../../../src/core/documents/indexer.js";
+import { mkCanonicalTempDir } from "../../../helpers/tmp.js";
 
 async function makeTempDir(prefix: string): Promise<string> {
-  return fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  return mkCanonicalTempDir(prefix);
 }
 
 describe("scanAndIndexPanelDocuments", () => {
