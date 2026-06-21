@@ -29,6 +29,20 @@ import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
 import { TurnRepository } from "../../../../src/memory/repositories/turns.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
 
+const ESC = String.fromCharCode(0x1b);
+const BEL = String.fromCharCode(0x07);
+const C1_CSI = String.fromCharCode(0x9b);
+const BIDI_OVERRIDE = "\u202E";
+const ZERO_WIDTH_SPACE = "\u200B";
+
+function expectNoTerminalControls(out: string): void {
+  expect(out).not.toContain(ESC);
+  expect(out).not.toContain(BEL);
+  expect(out).not.toContain(C1_CSI);
+  expect(out).not.toContain(BIDI_OVERRIDE);
+  expect(out).not.toContain(ZERO_WIDTH_SPACE);
+}
+
 /**
  * Seed a realistic completed panel: two experts (CTO, PM) each speak an
  * opening turn (round 0) and a closing turn (round 1). NO moderator turn
@@ -107,6 +121,53 @@ async function seedDebatedPanel(testHome: string): Promise<{ panelName: string }
       endedAt: new Date().toISOString(),
     });
     return { panelName: panel.name };
+  } finally {
+    await db.destroy();
+  }
+}
+
+async function seedUnsafeSharePanel(
+  testHome: string,
+): Promise<{ panelName: string; readonly preservedBody: string }> {
+  const preservedBody = "Keep **markdown** and unicode Ω 🎉\nKeep this second line.";
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    const panelRepo = new PanelRepository(db);
+    const expertRepo = new ExpertRepository(db);
+    const debateRepo = new DebateRepository(db);
+    const turnRepo = new TurnRepository(db);
+
+    const panel = await panelRepo.create({
+      name: "share-sanitize",
+      topic: `Topic ${ESC}[31mred${ESC}[0m${ZERO_WIDTH_SPACE}\nwrapped${BIDI_OVERRIDE}`,
+      copilotHome: path.join(testHome, "copilot"),
+      configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+    });
+    const expert = await expertRepo.create({
+      panelId: panel.id,
+      slug: "cto",
+      displayName: `C${ESC}]8;;https://evil.example${BEL}TO${BEL}${BIDI_OVERRIDE}`,
+      model: `claude${C1_CSI}31m-sonnet-4`,
+      systemMessage: "You are a CTO.",
+    });
+    const debate = await debateRepo.create({
+      panelId: panel.id,
+      prompt: `Prompt ${ESC}[2Jwith${ZERO_WIDTH_SPACE} controls`,
+      moderator: "round-robin",
+    });
+    await turnRepo.create({
+      debateId: debate.id,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId: expert.id,
+      content: `${ESC}]0;pwnd${BEL}Latest ${BIDI_OVERRIDE}position\n${preservedBody}\nDone${BEL}`,
+    });
+    await debateRepo.update(debate.id, {
+      status: "completed",
+      endedAt: new Date().toISOString(),
+    });
+    return { panelName: panel.name, preservedBody };
   } finally {
     await db.destroy();
   }
@@ -193,6 +254,22 @@ describe("council export --format share", () => {
     expect(out).toContain("cto");
     expect(out).toContain("pm");
     expect(out).toContain("claude-sonnet-4");
+  });
+
+  it("strips terminal controls from share output while preserving markdown, unicode, and transcript newlines", async () => {
+    const seed = await seedUnsafeSharePanel(testHome);
+    const cap = captureExport();
+    const cmd = buildExportCommand(cap.deps);
+    await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "share"]);
+    const out = cap.read();
+
+    expectNoTerminalControls(out);
+    expect(out).toContain("# Topic red wrapped");
+    expect(out).toContain("- **CTO** (`cto`) — claude31m-sonnet-4");
+    expect(out).toContain("### CTO");
+    expect(out).toContain("> Keep **markdown** and unicode Ω 🎉");
+    expect(out).toContain("> Keep this second line.");
+    expect(out).toContain("`council export share-sanitize --format share`");
   });
 
   it("surfaces each expert's latest recorded position from real turns (not a moderator turn)", async () => {

@@ -18,6 +18,20 @@ import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
 import { TurnRepository } from "../../../../src/memory/repositories/turns.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
 
+const ESC = String.fromCharCode(0x1b);
+const BEL = String.fromCharCode(0x07);
+const C1_CSI = String.fromCharCode(0x9b);
+const BIDI_OVERRIDE = "\u202E";
+const ZERO_WIDTH_SPACE = "\u200B";
+
+function expectNoTerminalControls(out: string): void {
+  expect(out).not.toContain(ESC);
+  expect(out).not.toContain(BEL);
+  expect(out).not.toContain(C1_CSI);
+  expect(out).not.toContain(BIDI_OVERRIDE);
+  expect(out).not.toContain(ZERO_WIDTH_SPACE);
+}
+
 async function seedPanelWithDebate(testHome: string): Promise<{ panelName: string }> {
   const db = await createDatabase(path.join(testHome, "council.db"));
   try {
@@ -80,6 +94,53 @@ async function seedPanelWithDebate(testHome: string): Promise<{ panelName: strin
       endedAt: new Date().toISOString(),
     });
     return { panelName: panel.name };
+  } finally {
+    await db.destroy();
+  }
+}
+
+async function seedPanelWithUnsafeDebate(
+  testHome: string,
+): Promise<{ panelName: string; readonly preservedBody: string }> {
+  const preservedBody = "Legit **markdown** café 🎉\nSecond line ≥ baseline";
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    const panelRepo = new PanelRepository(db);
+    const expertRepo = new ExpertRepository(db);
+    const debateRepo = new DebateRepository(db);
+    const turnRepo = new TurnRepository(db);
+
+    const panel = await panelRepo.create({
+      name: "export-sanitize",
+      topic: `Ship ${ESC}[31mred${ESC}[0m${BIDI_OVERRIDE}${ZERO_WIDTH_SPACE}\nnow?`,
+      copilotHome: path.join(testHome, "copilot"),
+      configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+    });
+    const expert = await expertRepo.create({
+      panelId: panel.id,
+      slug: "cto",
+      displayName: `C${ESC}]8;;https://evil.example${BEL}TO${BEL}${BIDI_OVERRIDE}`,
+      model: `claude${C1_CSI}31m-sonnet-4`,
+      systemMessage: "You are a CTO.",
+    });
+    const debate = await debateRepo.create({
+      panelId: panel.id,
+      prompt: `Prompt ${ESC}[2J${ZERO_WIDTH_SPACE}with controls`,
+      moderator: "round-robin",
+    });
+    await turnRepo.create({
+      debateId: debate.id,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId: expert.id,
+      content: `${ESC}]0;pwnd${BEL}Opening ${BIDI_OVERRIDE}position\n${preservedBody}\nDone${BEL}`,
+    });
+    await debateRepo.update(debate.id, {
+      status: "completed",
+      endedAt: new Date().toISOString(),
+    });
+    return { panelName: panel.name, preservedBody };
   } finally {
     await db.destroy();
   }
@@ -642,6 +703,42 @@ describe("buildExportCommand", () => {
 
     expect(captured).toMatch(/## Status\s+\s*Proposed/m);
     expect(captured).not.toContain("Accepted");
+  });
+
+  it("--format markdown strips terminal controls from interpolated content while preserving markdown, unicode, and newlines", async () => {
+    const seed = await seedPanelWithUnsafeDebate(testHome);
+    let captured = "";
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
+    await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "markdown"]);
+
+    expectNoTerminalControls(captured);
+    expect(captured).toContain("# export-sanitize");
+    expect(captured).toContain("> Ship red now?");
+    expect(captured).toContain("**CTO** (`cto`) - claude31m-sonnet-4");
+    expect(captured).toContain("> Legit **markdown** café 🎉");
+    expect(captured).toContain("> Second line ≥ baseline");
+  });
+
+  it("--format adr strips terminal controls from headings and transcript content while preserving legitimate body text", async () => {
+    const seed = await seedPanelWithUnsafeDebate(testHome);
+    let captured = "";
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
+    await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "adr"]);
+
+    expectNoTerminalControls(captured);
+    expect(captured).toContain("# Decision Record: Ship red now?");
+    expect(captured).toContain("Prompt with controls");
+    expect(captured).toContain("### CTO's position");
+    expect(captured).toContain("> Legit **markdown** café 🎉");
+    expect(captured).toContain("> Second line ≥ baseline");
   });
 
   it("--output <path> writes to file instead of stdout", async () => {
