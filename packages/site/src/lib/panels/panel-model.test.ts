@@ -150,9 +150,7 @@ describe("toPanelSummary", () => {
     expect(summary.samplePrompts).toEqual(["What is our real exposure here?"]);
     expect(summary.decisionArtifact).toBe("A go, hold, or mitigate recommendation.");
     expect(summary.regulatedDomain).toEqual({ domain: "legal", label: "Legal" });
-    expect(summary.conveneCommand).toBe(
-      'council convene "<your topic>" --panel legal-risk-review',
-    );
+    expect(summary.conveneCommand).toBe('council convene "<your topic>" --panel legal-risk-review');
   });
 
   it("handles legacy panels without tags, prompts, artifact, or regulated domain", () => {

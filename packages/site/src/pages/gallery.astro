@@ -1,17 +1,35 @@
 ---
 /**
- * Gallery page - lists pre-built Council panels from the library.
- * Currently shows an empty state; the registry data will be provided by a later task.
+ * Panel gallery — showcases every built-in Council panel, sourced at build time
+ * from the CLI's panel YAMLs (`packages/cli/panels/*.yaml`) via the `panels`
+ * content collection. Cards are grouped by discipline and filterable. The page
+ * is deliberately honest: no quality, popularity, or maturity claims — only
+ * what the YAML declares.
  */
+import { getCollection } from "astro:content";
+
 import GalleryGrid from "../components/GalleryGrid.astro";
-import type { GalleryEntry } from "../content/gallery/schema";
+import { groupByDiscipline, toPanelSummary, type PanelSummary } from "../lib/panels/panel-model";
+import "../styles/tokens.css";
 import "../styles/global.css";
 
-// Currently empty - the library task will populate this with actual panel data
-const panels: readonly GalleryEntry[] = [];
+const entries = await getCollection("panels");
+const summaries: readonly PanelSummary[] = entries.map((entry) =>
+  toPanelSummary(entry.id, entry.data),
+);
+const groups = groupByDiscipline(summaries);
+const totalPanels = summaries.length;
+const hasRegulated = summaries.some((panel) => panel.regulatedDomain !== undefined);
 
 const base = import.meta.env.BASE_URL;
 const docsHref = `${base}docs/`;
+
+function disciplineId(discipline: string): string {
+  return discipline
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
 ---
 
 <!doctype html>
@@ -19,66 +37,233 @@ const docsHref = `${base}docs/`;
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Panel Gallery - Council</title>
+    <title>Panel Gallery — Council</title>
     <meta
       name="description"
-      content="Browse pre-built Council expert panels covering various disciplines"
+      content={`Browse all ${totalPanels} built-in Council expert panels, grouped by discipline and sourced directly from the CLI's panel library.`}
     />
   </head>
   <body>
     <header class="page-header">
-      <h1>Panel Gallery</h1>
-      <p>
-        Browse pre-built expert panels for various disciplines and use cases.
-      </p>
-      <nav>
+      <nav class="page-nav" aria-label="Site">
         <a href={base}>Home</a>
         <a href={docsHref}>Documentation</a>
       </nav>
+      <h1>Panel Gallery</h1>
+      <p class="page-lede">
+        Every one of the {totalPanels} built-in expert panels, grouped by discipline. Each card is
+        generated from the panel's definition, so what you see here is exactly what ships with the
+        CLI.
+      </p>
     </header>
-    <main>
-      <GalleryGrid entries={panels} />
+
+    <main class="gallery">
+      {
+        groups.length === 0 ? (
+          <GalleryGrid panels={summaries} />
+        ) : (
+          <>
+            <nav class="gallery-filters" aria-label="Filter panels by discipline">
+              <button type="button" class="filter-chip" data-filter="all" aria-pressed="true">
+                All <span class="filter-count">{totalPanels}</span>
+              </button>
+              {groups.map((group) => (
+                <button
+                  type="button"
+                  class="filter-chip"
+                  data-filter={disciplineId(group.discipline)}
+                  aria-pressed="false"
+                >
+                  {group.discipline} <span class="filter-count">{group.panels.length}</span>
+                </button>
+              ))}
+            </nav>
+
+            {groups.map((group) => {
+              const id = disciplineId(group.discipline);
+              return (
+                <section
+                  class="gallery-section"
+                  data-discipline={id}
+                  aria-labelledby={`section-${id}`}
+                >
+                  <h2 id={`section-${id}`} class="gallery-section__title">
+                    {group.discipline}
+                    <span class="gallery-section__count">{group.panels.length}</span>
+                  </h2>
+                  <GalleryGrid panels={group.panels} />
+                </section>
+              );
+            })}
+          </>
+        )
+      }
+
+      {
+        hasRegulated && (
+          <p class="gallery-note">
+            Panels marked with a regulated domain (finance, people/HR, or legal) are intended as
+            decision-support to structure a conversation — not as professional financial, HR, or
+            legal advice.
+          </p>
+        )
+      }
     </main>
+
+    <script>
+      const filters = document.querySelectorAll<HTMLButtonElement>(".filter-chip");
+      const sections = document.querySelectorAll<HTMLElement>(".gallery-section");
+
+      function applyFilter(value: string): void {
+        sections.forEach((section) => {
+          section.hidden = value !== "all" && section.dataset.discipline !== value;
+        });
+        filters.forEach((chip) => {
+          chip.setAttribute("aria-pressed", String(chip.dataset.filter === value));
+        });
+      }
+
+      filters.forEach((chip) => {
+        chip.addEventListener("click", () => applyFilter(chip.dataset.filter ?? "all"));
+      });
+
+      const copyButtons = document.querySelectorAll<HTMLButtonElement>("[data-copy]");
+      copyButtons.forEach((button) => {
+        button.addEventListener("click", async () => {
+          const command = button.dataset.copy;
+          if (command === undefined) {
+            return;
+          }
+          try {
+            await navigator.clipboard.writeText(command);
+            const previous = button.textContent;
+            button.textContent = "Copied";
+            window.setTimeout(() => {
+              button.textContent = previous;
+            }, 1500);
+          } catch {
+            // Clipboard API unavailable; the command stays selectable in the snippet.
+          }
+        });
+      });
+    </script>
+
+    <style>
+      body {
+        margin: 0;
+        background: var(--council-color-bg);
+        color: var(--council-color-text);
+        font-family: system-ui, sans-serif;
+        line-height: 1.6;
+      }
+
+      .page-header {
+        max-width: 72rem;
+        margin-inline: auto;
+        padding: 2.5rem 1.5rem 1rem;
+      }
+
+      .page-nav {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+      }
+
+      .page-nav a {
+        color: var(--council-color-primary-hover);
+        text-decoration: none;
+        font-weight: 600;
+      }
+
+      .page-nav a:hover,
+      .page-nav a:focus-visible {
+        text-decoration: underline;
+      }
+
+      .page-header h1 {
+        margin: 0 0 0.5rem;
+        font-size: clamp(2rem, 5vw, 2.75rem);
+      }
+
+      .page-lede {
+        margin: 0;
+        max-width: 48rem;
+        color: var(--council-color-text-muted);
+        font-size: 1.1rem;
+      }
+
+      .gallery {
+        max-width: 72rem;
+        margin-inline: auto;
+        padding: 1rem 1.5rem 4rem;
+      }
+
+      .gallery-filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-bottom: 2rem;
+      }
+
+      .filter-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.4rem 0.9rem;
+        border-radius: 999px;
+        border: 1px solid color-mix(in srgb, var(--council-color-text-muted) 28%, transparent);
+        background: var(--council-color-surface);
+        color: var(--council-color-text);
+        font-size: 0.85rem;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .filter-chip:hover,
+      .filter-chip:focus-visible {
+        border-color: var(--council-color-primary);
+      }
+
+      .filter-chip[aria-pressed="true"] {
+        color: var(--council-color-bg);
+        background: var(--council-color-primary);
+        border-color: var(--council-color-primary);
+      }
+
+      .filter-count {
+        font-variant-numeric: tabular-nums;
+        opacity: 0.8;
+      }
+
+      .gallery-section {
+        margin-bottom: 3rem;
+      }
+
+      .gallery-section__title {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        margin: 0 0 1.25rem;
+        font-size: 1.4rem;
+        border-bottom: 1px solid color-mix(in srgb, var(--council-color-text-muted) 20%, transparent);
+        padding-bottom: 0.5rem;
+      }
+
+      .gallery-section__count {
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--council-color-text-muted);
+      }
+
+      .gallery-note {
+        max-width: 48rem;
+        margin: 2rem 0 0;
+        padding: 1rem 1.25rem;
+        border-left: 3px solid var(--council-color-accent-amber);
+        background: color-mix(in srgb, var(--council-color-accent-amber) 10%, transparent);
+        color: var(--council-color-text-muted);
+        font-size: 0.9rem;
+      }
+    </style>
   </body>
 </html>
-
-<style>
-  .page-header {
-    padding: 2rem;
-    text-align: center;
-    border-bottom: 1px solid var(--sl-color-gray-5);
-  }
-
-  .page-header h1 {
-    margin: 0 0 0.5rem 0;
-    font-size: 2.5rem;
-  }
-
-  .page-header p {
-    margin: 0 0 1.5rem 0;
-    color: var(--sl-color-gray-2);
-    font-size: 1.125rem;
-  }
-
-  .page-header nav {
-    display: flex;
-    gap: 1rem;
-    justify-content: center;
-  }
-
-  .page-header nav a {
-    padding: 0.5rem 1rem;
-    border-radius: 0.25rem;
-    text-decoration: none;
-    color: var(--sl-color-text-accent);
-    border: 1px solid var(--sl-color-gray-5);
-  }
-
-  .page-header nav a:hover {
-    background: var(--sl-color-gray-6);
-  }
-
-  main {
-    min-height: 50vh;
-  }
-</style>

@@ -37,15 +37,19 @@ export interface RawExpert {
   readonly role: string;
 }
 
-/** Subset of a parsed panel YAML the gallery reads. */
+/**
+ * Subset of a parsed panel YAML the gallery reads. Optional fields include
+ * `| undefined` so the Zod-inferred type from the content collection loader is
+ * directly assignable under `exactOptionalPropertyTypes`.
+ */
 export interface RawPanel {
   readonly name: string;
   readonly description: string;
   readonly experts: readonly RawExpert[];
-  readonly samplePrompts?: readonly string[];
-  readonly decisionArtifact?: string;
-  readonly tags?: readonly string[];
-  readonly regulatedDomain?: RegulatedDomain;
+  readonly samplePrompts?: readonly string[] | undefined;
+  readonly decisionArtifact?: string | undefined;
+  readonly tags?: readonly string[] | undefined;
+  readonly regulatedDomain?: RegulatedDomain | undefined;
 }
 
 /** A panel expert as rendered on a gallery card. */
@@ -131,7 +135,10 @@ const DISCIPLINE_RULES: readonly (readonly [Discipline, readonly string[]])[] = 
       "leadership",
     ],
   ],
-  ["Engineering", ["engineering", "architecture", "code", "incident", "postmortem", "security", "performance"]],
+  [
+    "Engineering",
+    ["engineering", "architecture", "code", "incident", "postmortem", "security", "performance"],
+  ],
   ["Startup & Career", ["startup", "validation", "career", "coaching", "founder"]],
   ["Product & Design", ["product", "design", "ux", "roadmap", "prioritization"]],
   [
@@ -248,8 +255,8 @@ export function groupByDiscipline(panels: readonly PanelSummary[]): readonly Dis
 }
 
 /** Spread helper that omits `regulatedDomain` entirely when undefined. */
-function domainKey(
-  regulatedDomain: RegulatedDomain | undefined,
-): { readonly regulatedDomain?: RegulatedDomain } {
+function domainKey(regulatedDomain: RegulatedDomain | undefined): {
+  readonly regulatedDomain?: RegulatedDomain;
+} {
   return regulatedDomain !== undefined ? { regulatedDomain } : {};
 }
