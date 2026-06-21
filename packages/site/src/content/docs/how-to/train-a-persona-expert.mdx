@@ -1,0 +1,80 @@
+---
+title: Create and train a persona of a real person
+description: Stand up a persona expert that mimics a specific person and train it on their documents and decisions.
+---
+
+A **persona expert** reasons like a specific person instead of a generic role. You create it, feed it that person's documents, and Council distills a profile (communication style, decision patterns, biases, vocabulary) it uses to respond. For the full walkthrough see [Model a Real Person as a Persona Expert](/Council/tutorials/13-model-a-real-person-persona/).
+
+:::caution[Consent first]
+Only model yourself or someone who has given permission, using documents you're allowed to use. Material is processed by your AI provider during training and retrieval — see [Security and Privacy](/Council/explanation/security-and-privacy/).
+:::
+
+## Step 1: Create a trainable persona
+
+Use the `--persona` flag — only persona experts can be trained on documents.
+
+```bash
+council expert create --persona \
+  --slug pedro-fuentes \
+  --name "Pedro Fuentes (VP of Engineering)" \
+  --role "VP of Engineering" \
+  --expertise "Past decisions and their outcomes, Written rationale in proposals and reviews" \
+  --stance "Pragmatic, outcome-oriented: prefers reversible bets and clear measures of success." \
+  --persona-description "VP of Engineering whose decisions I want to anticipate"
+```
+
+```
+✓ Expert "pedro-fuentes" created at ~/Council/experts/pedro-fuentes.yaml
+  Place documents about this person in ~/Council/experts/pedro-fuentes/docs
+```
+
+The `--persona-description` is the relationship — who this person is to you.
+
+## Step 2: Train from documents
+
+Pass each document with `--file` (repeatable). Council copies it into the persona's docs folder, indexes it, and distills the profile. Choose material that shows how the person decides: decision logs, proposal reviews, meeting notes, strategy memos.
+
+```bash
+council expert train pedro-fuentes \
+  --file ~/decision-log.md \
+  --file ~/proposal-review-notes.md
+```
+
+```
+Copying decision-log.md to expert docs...
+Copying proposal-review-notes.md to expert docs...
+Training "pedro-fuentes" from ~/Council/experts/pedro-fuentes/docs...
+✓ Processed 2 document(s) (0 failed, 0 needs review, 0 removed, 149 total words); 0 already up to date.
+✓ Persona profile updated.
+```
+
+Pull a document from the web with `--url` (its path must end in a supported extension like `.md`, `.pdf`, `.docx`):
+
+```bash
+council expert train pedro-fuentes --url https://example.com/strategy-memo.md
+```
+
+You can also drop files directly into `~/Council/experts/pedro-fuentes/docs/` and run `council expert train pedro-fuentes` with no flags.
+
+## Step 3: Verify the learned profile
+
+```bash
+council expert inspect pedro-fuentes
+```
+
+Look under **Learned Profile (from training)** for the communication style, decision patterns, biases, vocabulary, and epistemic stance Council distilled. If it's empty, training didn't run — confirm the expert was created with `--persona` and that documents are present.
+
+## Step 4: Consult the persona
+
+```bash
+council chat pedro-fuentes
+```
+
+Ask how the person would react to a proposal; the persona answers from its profile plus retrieved snippets of their documents.
+
+## Related
+
+- [Model a Real Person as a Persona Expert](/Council/tutorials/13-model-a-real-person-persona/) — the full tutorial
+- [Feed a persona more documents](/Council/how-to/feed-a-persona-more-documents/) — sharpen it over time
+- [Persona Experts](/Council/explanation/persona-experts/) — how profiles and retrieval work
+- [Author High-Quality Expert Personas](/Council/tutorials/09-author-high-quality-personas/) — persona vs. generic experts

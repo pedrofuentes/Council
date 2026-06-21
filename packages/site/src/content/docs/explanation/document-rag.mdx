@@ -65,7 +65,7 @@ The expert now has **your actual documents** as context.
 
 Newer documents score higher during retrieval. Why?
 
-A persona expert representing "Alice (Engineering Manager)" should reflect Alice's **current** priorities, not a strategy memo from 2 years ago. Recency weighting biases retrieval toward recent material without discarding old documents entirely.
+A persona expert representing "Pedro (VP of Engineering)" should reflect Pedro's **current** priorities, not a strategy memo from 2 years ago. Recency weighting biases retrieval toward recent material without discarding old documents entirely.
 
 The weight decays exponentially: a document from yesterday scores 1.0, a document from 30 days ago scores ~0.5, a document from 6 months ago scores ~0.1.
 
@@ -109,11 +109,11 @@ Shared folders are indexed separately and retrieved for **all** experts in the p
 ## Managing Documents
 
 ```bash
-council expert docs alice-smith              # list indexed documents for this expert
-council expert docs alice-smith --remove meeting-notes.md  # un-index a specific file
-council expert train alice-smith             # re-process all docs, regenerate profile
-council expert train alice-smith --file ~/new-doc.pdf      # add a single document
-council expert train alice-smith --url https://... --file report.md  # fetch+train
+council expert docs pedro-fuentes              # list indexed documents for this expert
+council expert docs pedro-fuentes --remove meeting-notes.md  # un-index a specific file
+council expert train pedro-fuentes             # re-process all docs, regenerate profile
+council expert train pedro-fuentes --file ~/new-doc.pdf      # add a single document
+council expert train pedro-fuentes --url https://... --file report.md  # fetch+train
 ```
 
 ## Performance

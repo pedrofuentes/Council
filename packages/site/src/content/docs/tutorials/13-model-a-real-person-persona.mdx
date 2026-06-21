@@ -1,0 +1,323 @@
+---
+title: Model a Real Person as a Persona Expert
+description: Create a persona expert that mimics a specific real person, train it on their documents and decisions, and feed it more material over time so it reasons more like them.
+---
+
+**Time**: ~12 minutes  
+**Learning outcome**: Build a persona expert that reasons like a specific person, train it from their documents, inspect the learned profile, use it to anticipate a decision, and progressively sharpen the resemblance by feeding it more material.
+
+## What you'll learn
+
+By the end of this tutorial, you will:
+
+- Create a **trainable persona expert** that represents a specific person
+- Choose what documents, decisions, and data to feed it
+- Train it with `council expert train` and read the **learned profile**
+- Use the persona to **anticipate how that person would react** to a proposal
+- Feed it **more documents over time** so it becomes more like the real person
+- Understand how the profile and document retrieval shape its responses
+
+## Prerequisites
+
+- Completed [Tutorial 7: Ground a Debate in Documents](/Council/tutorials/07-ground-a-debate-in-documents/)
+- Completed [Tutorial 9: Author High-Quality Expert Personas](/Council/tutorials/09-author-high-quality-personas/)
+- This tutorial uses `--engine mock` so the training output is deterministic and reproducible offline. Swap in your real provider (for example `--engine copilot`) for genuine results.
+
+:::caution[Consent and privacy come first]
+A persona expert is only as ethical as the documents behind it. Model **yourself**, or someone who has **given you permission**, using material you are **allowed to use**. Don't model public figures or colleagues without consent. Everything you feed a persona is processed by your configured AI provider during training and retrieval — see [Security and Privacy](/Council/explanation/security-and-privacy/).
+
+**Pedro Fuentes** in this tutorial is a **fictional, illustrative** VP of Engineering. The documents below are invented for the example.
+:::
+
+## The scenario
+
+You're about to bring a proposal to **Pedro Fuentes**, your VP of Engineering. Before the meeting, you want to anticipate how he'll react: which questions he'll ask, what he'll push back on, and what would earn a "yes." You have a folder of his past decisions, proposal reviews, and meeting notes. Let's turn that into a persona expert you can consult.
+
+## How a persona expert differs from a generic one
+
+A **generic expert** (Tutorial 5) reasons from a role template — "a VP of Engineering" in the abstract. A **persona expert** reasons from documents about a *specific* person: Council distills their communication style, decision patterns, biases, and vocabulary into a **learned profile**, and retrieves relevant snippets from their documents during deliberation.
+
+The result reflects **this person's** priorities, not a generic role's.
+
+## Step 1: Create the persona expert
+
+Create a trainable persona with the `--persona` flag. Unlike a generic expert, a persona gets its own documents folder and can be trained.
+
+```bash
+council expert create --persona \
+  --slug pedro-fuentes \
+  --name "Pedro Fuentes (VP of Engineering)" \
+  --role "VP of Engineering" \
+  --expertise "Past decisions and their outcomes, Written rationale in proposals and reviews, Team and org constraints" \
+  --stance "Pragmatic, outcome-oriented: prefers reversible bets and clear measures of success." \
+  --persona-description "VP of Engineering whose decisions I want to anticipate before bringing a proposal"
+```
+
+```
+✓ Expert "pedro-fuentes" created at ~/Council/experts/pedro-fuentes.yaml
+  Place documents about this person in ~/Council/experts/pedro-fuentes/docs
+```
+
+The `--persona-description` is the **relationship** — who this person is to you. It anchors the persona so it knows the context in which you're consulting it.
+
+:::note[Persona vs. generic]
+Only experts created with `--persona` can be trained on documents. If you created an expert without `--persona` and now want to train it, re-create it with the flag (or see [Author High-Quality Expert Personas](/Council/tutorials/09-author-high-quality-personas/) to decide which kind you need).
+:::
+
+## Step 2: Gather the person's documents
+
+The persona is only as good as the material you feed it. Good sources capture **how the person actually decides**:
+
+- **Decision logs** — choices they made and the reasons they gave
+- **Proposal reviews and feedback** — what they approved, declined, or pushed back on
+- **Meeting notes** — their questions, concerns, and recurring themes
+- **Written rationale** — strategy memos, design-review comments, postmortems
+- **Communications** — emails, Slack/Teams exports (with consent)
+
+For this tutorial, create two small sample documents. In a real project you'd point Council at the person's actual files.
+
+Create `~/decision-log-2026-q2.md`:
+
+```md
+# Decision Log — Q2 2026
+
+- Approved the payments re-platform, but only as a phased rollout behind a
+  feature flag. Rationale: a reversible bet; we can roll back per-region if
+  error rates climb. Success = checkout conversion holds within 1% during ramp.
+- Declined the "big bang" data migration. Asked for a dual-write window and a
+  measurable cutover plan first. I don't approve one-way doors without an exit.
+- Pushed back on adding a third queue technology. Operational surface area is a
+  cost; show me the on-call burden before we commit.
+```
+
+Create `~/proposal-review-notes.md`:
+
+```md
+# Notes on the Search Revamp Proposal
+
+Good problem framing. Three asks before I sign off:
+1. What is the measurable outcome? "Better relevance" is not a target.
+2. What is the reversible first step? Ship to 5% and compare, don't rewrite.
+3. Who carries the operational load? Name the on-call owner.
+
+I weight the post-launch numbers over the design doc. Ship small, measure, iterate.
+```
+
+## Step 3: Train the persona
+
+Feed the documents in with `--file` (repeatable) and let Council process them. The `--file` flag copies each document into the persona's docs folder, then trains.
+
+```bash
+council expert train pedro-fuentes \
+  --file ~/decision-log-2026-q2.md \
+  --file ~/proposal-review-notes.md \
+  --engine mock
+```
+
+```
+Copying decision-log-2026-q2.md to expert docs...
+Copying proposal-review-notes.md to expert docs...
+Training "pedro-fuentes" from ~/Council/experts/pedro-fuentes/docs...
+  decision-log-2026-q2.md: 88 words
+  proposal-review-notes.md: 61 words
+✓ Processed 2 document(s) (0 failed, 0 needs review, 0 removed, 149 total words); 0 already up to date.
+✓ Persona profile updated.
+```
+
+Council extracted the text, indexed it for retrieval, and asked the engine to distill a **persona profile**.
+
+:::tip[Fetch documents from a URL]
+You can also pull a document straight from the web with `--url`. The URL's path must end in a supported extension (`.md`, `.txt`, `.html`, `.pdf`, `.csv`, `.docx`, …):
+
+```bash
+council expert train pedro-fuentes --url https://example.com/pedro-strategy-memo.md --engine mock
+```
+:::
+
+## Step 4: Inspect the learned profile
+
+Look at what Council learned. `council expert inspect` shows both the authored fields and the **learned profile** distilled from the documents.
+
+```bash
+council expert inspect pedro-fuentes
+```
+
+```
+Expert: pedro-fuentes
+Name:   Pedro Fuentes (VP of Engineering)
+Role:   VP of Engineering
+Kind:   persona
+File:   ~/Council/experts/pedro-fuentes.yaml
+
+Panels: (none)
+
+Expertise:
+  Weighted Evidence: Past decisions and their outcomes, Written rationale in proposals and reviews, Team and org constraints
+
+Epistemic Stance: Pragmatic, outcome-oriented: prefers reversible bets and clear measures of success.
+Persona:          VP of Engineering whose decisions I want to anticipate before bringing a proposal
+
+Learned Profile (from training):
+  Communication Style: Direct and structured, favoring concise declarative sentences with concrete examples over abstract framing.
+  Decision Patterns:   Weighs trade-offs explicitly before committing, Prefers reversible decisions when evidence is thin, Anchors choices to measurable outcomes
+  Biases:              Optimism about iterative improvement, Skepticism of unvalidated claims
+  Vocabulary:          trade-off, iterate, signal, tension, concretely
+  Epistemic Stance:    Forms beliefs by triangulating evidence from multiple sources and updates readily when new data contradicts prior assumptions.
+  Documents:           2 (149 words)
+  Last Updated:        2026-06-21T20:54:45.399Z
+```
+
+Each field of the learned profile feeds the persona's system prompt and shapes how it responds:
+
+| Profile field | What it captures | How it shows up |
+|---------------|------------------|-----------------|
+| **Communication Style** | Tone and structure of how they write | The persona answers in their voice |
+| **Decision Patterns** | The moves they make when deciding | It reproduces their reasoning shape |
+| **Biases** | What they lean toward or distrust | It weights options the way they would |
+| **Vocabulary** | Words and phrases they reach for | It echoes their language |
+| **Epistemic Stance** | How they form and update beliefs | It updates (or holds firm) like they do |
+
+:::note[Reproducible numbers]
+Because you used `--engine mock`, the profile text above is deterministic. With a real provider, the wording will differ and will reflect *your* documents — but the structure (style, patterns, biases, vocabulary, stance) is the same.
+:::
+
+## Step 5: Use the persona to anticipate a decision
+
+Now consult the persona the way you'd consult the real person — a 1:1 conversation:
+
+```bash
+council chat pedro-fuentes
+```
+
+Ask it to react to your proposal:
+
+```
+You> I want to replace our notification service with a new event-driven
+system this quarter. How will you react?
+
+[Pedro Fuentes — VP of Engineering]
+Before I say yes, three things. What's the measurable outcome — not
+"cleaner architecture," a number I can read during rollout? What's the
+reversible first step; can we run it behind a flag for one notification
+type and compare, instead of a full cutover? And who owns the on-call
+burden for a second system while both run? Show me that and I'm inclined
+to support a phased pilot.
+```
+
+Notice how the response reproduces Pedro's pattern from his documents: a measurable outcome, a reversible first step, and the operational/on-call question. The persona combined its **learned profile** with **retrieved snippets** from his decision log and review notes.
+
+:::tip[Bring the persona into a panel]
+A persona expert can also sit on a multi-expert panel so it deliberates alongside other roles (a Security Auditor, a PM, another persona). Add `pedro-fuentes` to a panel and convene it — see [Build a Custom Panel](/Council/tutorials/06-build-a-custom-panel/) and [Design and Lint a Panel](/Council/tutorials/10-design-and-lint-a-panel/).
+:::
+
+## Step 6: Make it more like the real person
+
+A persona sharpens as you feed it more material. Suppose you find a fresh set of staff-meeting notes. Create `~/staff-meeting-notes.md`:
+
+```md
+# Staff Meeting Notes
+
+Pedro on the reorg proposal: "Show me the on-call burden and the blast radius
+before we split the team. I'd rather ship a reversible pilot in one squad and
+read the signal than reorganize three teams on a hypothesis."
+```
+
+Train again — Council picks up only what's new and **merges it into the existing profile**:
+
+```bash
+council expert train pedro-fuentes --file ~/staff-meeting-notes.md --engine mock
+```
+
+```
+Copying staff-meeting-notes.md to expert docs...
+Training "pedro-fuentes" from ~/Council/experts/pedro-fuentes/docs...
+  staff-meeting-notes.md: 42 words
+✓ Processed 1 document(s) (0 failed, 0 needs review, 0 removed, 42 total words); 2 already up to date.
+✓ Persona profile updated.
+```
+
+The `2 already up to date` confirms Council only reprocessed the new file. The profile is **updated**, not rebuilt — each run folds the new material into what it already knew, and **recent documents are weighted more heavily** so the persona reflects the person's *current* thinking.
+
+See the full corpus that backs retrieval with `council expert docs`:
+
+```bash
+council expert docs pedro-fuentes
+```
+
+```
+filename                  words  processed                 status
+------------------------  -----  ------------------------  ---------
+decision-log-2026-q2.md   88     2026-06-21T20:54:45.395Z  processed
+proposal-review-notes.md  61     2026-06-21T20:54:45.398Z  processed
+staff-meeting-notes.md    42     2026-06-21T20:55:02.978Z  processed
+```
+
+:::note[Profile counts vs. the full corpus]
+After an incremental run, the `Documents:` line in `council expert inspect` reflects the **most recent batch** the analyzer saw (here, `1 (42 words)`). The complete set of indexed documents — what retrieval actually draws from — is what `council expert docs` lists. To rebuild the profile from the **entire** corpus in one pass, use `--retrain` (below).
+:::
+
+### Rebuild from scratch when you've changed a lot
+
+If you've replaced or heavily revised the source documents, clear the profile and rebuild from the whole corpus:
+
+```bash
+council expert train pedro-fuentes --retrain --engine mock
+```
+
+```
+↻ Retrain: cleared profile and tracking for "pedro-fuentes" (2 cleared).
+Training "pedro-fuentes" from ~/Council/experts/pedro-fuentes/docs...
+  decision-log-2026-q2.md: 88 words
+  proposal-review-notes.md: 61 words
+  staff-meeting-notes.md: 42 words
+✓ Processed 3 document(s) (0 failed, 0 needs review, 0 removed, 191 total words); 0 already up to date.
+✓ Persona profile updated.
+```
+
+After a full retrain, `council expert inspect` reports the whole corpus — `Documents: 3 (191 words)`.
+
+## How it works
+
+Two mechanisms combine to make the persona reason like the person:
+
+1. **Profile analysis** — at training time, Council sends the documents to the engine and distills the structured profile you saw in Step 4. It's cached and only refreshed when you train.
+2. **Document retrieval (RAG)** — at conversation time, Council retrieves the most relevant snippets from the person's documents and gives them to the persona as evidence, weighting recent material higher.
+
+For the full mechanics, see [Persona Experts](/Council/explanation/persona-experts/) and [Document RAG](/Council/explanation/document-rag/).
+
+## What you accomplished
+
+- Created a trainable persona expert representing a specific person
+- Trained it from documents and read the learned profile
+- Used it to anticipate how that person would react to a proposal
+- Fed it more material and saw how the profile updates incrementally
+- Learned when to retrain from scratch versus train incrementally
+
+## Next steps
+
+- **Make it a teammate**: add the persona to a panel in [Build a Custom Panel](/Council/tutorials/06-build-a-custom-panel/) so it deliberates with other experts
+- **Sharpen disagreement**: revisit [Author High-Quality Expert Personas](/Council/tutorials/09-author-high-quality-personas/) to pair the persona with strong generic experts
+- **Manage the corpus**: un-index stale files with `council expert docs <slug> --remove <file>` and retrain
+
+## Key concepts introduced
+
+| Concept | Definition |
+|---------|------------|
+| **Persona expert** | An expert that reasons like a specific person, trained on their documents |
+| **Learned profile** | The communication style, decision patterns, biases, vocabulary, and stance Council distills from the documents |
+| **Persona description** | The relationship between you and the person, used to anchor the persona |
+| **Incremental training** | Re-running `train` folds new documents into the existing profile |
+| **Retrain** | `--retrain` clears the profile and rebuilds it from the full corpus |
+| **Recency weighting** | Recent documents count more, so the persona reflects current thinking |
+
+## Commands used
+
+| Command | Purpose |
+|---------|---------|
+| `council expert create --persona` | Create a trainable persona expert |
+| `council expert train <slug> --file <path>` | Train (or re-train) from documents |
+| `council expert train <slug> --url <url>` | Fetch a document from the web and train |
+| `council expert train <slug> --retrain` | Clear the profile and rebuild from scratch |
+| `council expert inspect <slug>` | View the authored fields and learned profile |
+| `council expert docs <slug>` | List the indexed documents backing retrieval |
+| `council chat <slug>` | Consult the persona in a 1:1 conversation |
