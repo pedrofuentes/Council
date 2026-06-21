@@ -36,6 +36,7 @@ import { isNonInteractive } from "../non-interactive.js";
 import { readTextInput } from "../read-text-input.js";
 import { toSingleLineDisplay } from "../strip-control-chars.js";
 import { truncatePrompt } from "../renderers/truncate-prompt.js";
+import { createProgress } from "../progress.js";
 
 const DEFAULT_MAX_WORDS = 250;
 
@@ -244,30 +245,42 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
             systemMessage: selectedExpert.systemMessage,
           };
 
-          await runWithEngine({
-            engineKind: resolvedEngine,
-            engineFactory: deps.engineFactory,
-            experts: [expertSpec],
-            debateConfig: {
-              maxRounds: 1,
-              maxWordsPerResponse: maxWords,
-              mode: "freeform",
-            },
-            prompt: question,
-            panelId: panel.id,
-            expertSlugToId: { [expertSpec.slug]: expertSpec.id },
-            moderator: "ask-single-expert",
-            format,
-            write,
-            writeError,
+          const setupProgress = createProgress({
+            stream: { write: writeError, isTTY: process.stderr.isTTY },
             quiet: isQuiet(),
-            db,
-            preamble: () => {
-              write(`\n# Asking ${selectedExpert.displayName} (${selectedExpert.slug})\n`);
-              write(`Panel: ${panel.name}\n`);
-              write(`Question: ${question}\n\n`);
-            },
           });
+          setupProgress.start("Preparing answer");
+          try {
+            await runWithEngine({
+              engineKind: resolvedEngine,
+              engineFactory: deps.engineFactory,
+              experts: [expertSpec],
+              debateConfig: {
+                maxRounds: 1,
+                maxWordsPerResponse: maxWords,
+                mode: "freeform",
+              },
+              prompt: question,
+              panelId: panel.id,
+              expertSlugToId: { [expertSpec.slug]: expertSpec.id },
+              moderator: "ask-single-expert",
+              format,
+              write,
+              writeError,
+              quiet: isQuiet(),
+              db,
+              beforeRender: () => {
+                setupProgress.stop();
+              },
+              preamble: () => {
+                write(`\n# Asking ${selectedExpert.displayName} (${selectedExpert.slug})\n`);
+                write(`Panel: ${panel.name}\n`);
+                write(`Question: ${question}\n\n`);
+              },
+            });
+          } finally {
+            setupProgress.stop();
+          }
           if (format !== "json" && !isQuiet()) {
             write(
               "Tip: Use `council convene --template <panel>` for a full debate, or `council chat <panel>` for conversation.\n",
