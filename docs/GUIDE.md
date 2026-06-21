@@ -17,69 +17,74 @@ Your Question → Expert Panel ─┬─ Debate → Conclusion → Export
 
 ## How to use this guide
 
-| You want to…                              | Start at                                          |
-| ----------------------------------------- | ------------------------------------------------- |
-| Run your first debate right now            | [Part 1: Your First Decision](#part-1)            |
-| Use a built-in template                   | [Part 2: Using Built-in Templates](#part-2)       |
-| Build a reusable expert panel             | [Part 3: Building Your Expert Panel](#part-3)     |
-| Find a recipe for a specific task         | [Part 4: How-to Guides](#part-4)                  |
-| Chat with experts or review documents     | [Part 4: Chat Mode](#chat-with-a-panel)           |
-| Train an expert on your documents         | [Part 5: Creating a Persona Expert](#part-5)      |
-| Script Council or use it in CI/CD         | [Part 6: Power User Patterns](#part-6)            |
-| Look up a command, flag, or config option | [Part 7: Quick Reference](#part-7)                |
+| You want to…                              | Start at                                      |
+| ----------------------------------------- | --------------------------------------------- |
+| Run your first debate right now           | [Part 1: Your First Decision](#part-1)        |
+| Use a built-in template                   | [Part 2: Using Built-in Templates](#part-2)   |
+| Build a reusable expert panel             | [Part 3: Building Your Expert Panel](#part-3) |
+| Find a recipe for a specific task         | [Part 4: How-to Guides](#part-4)              |
+| Chat with experts or review documents     | [Part 4: Chat Mode](#chat-with-a-panel)       |
+| Train an expert on your documents         | [Part 5: Creating a Persona Expert](#part-5)  |
+| Script Council or use it in CI/CD         | [Part 6: Power User Patterns](#part-6)        |
+| Look up a command, flag, or config option | [Part 7: Quick Reference](#part-7)            |
 
 ## Which command should I use?
 
-| Your goal                              | Command             | Example                                                    |
-| -------------------------------------- | ------------------- | ---------------------------------------------------------- |
-| Get multiple expert perspectives       | `council convene`   | `council convene "Should we adopt GraphQL?"`               |
-| Quick answer from one expert           | `council ask`       | `council ask strategy-review "Explain CQRS"`               |
-| Ongoing conversation (1:1 or panel)    | `council chat`      | `council chat strategy-review`                             |
-| Continue a previous debate             | `council resume`    | `council resume strategy-review`                           |
-| Get a structured decision framework    | `council conclude`  | `council conclude strategy-review`                         |
-| Export results to share                 | `council export`    | `council export strategy-review --format adr`              |
-| Check your setup                       | `council doctor`    | `council doctor`                                           |
+| Your goal                           | Command            | Example                                       |
+| ----------------------------------- | ------------------ | --------------------------------------------- |
+| Get multiple expert perspectives    | `council convene`  | `council convene "Should we adopt GraphQL?"`  |
+| Quick answer from one expert        | `council ask`      | `council ask strategy-review "Explain CQRS"`  |
+| Ongoing conversation (1:1 or panel) | `council chat`     | `council chat strategy-review`                |
+| Continue a previous debate          | `council resume`   | `council resume strategy-review`              |
+| Get a structured decision framework | `council conclude` | `council conclude strategy-review`            |
+| Export results to share             | `council export`   | `council export strategy-review --format adr` |
+| Check your setup                    | `council doctor`   | `council doctor`                              |
 
 ## Which template should I use?
 
 Council ships with **seventeen** built-in templates. Each comes pre-configured with a curated expert panel:
 
 ### Engineering
-| You are deciding about…        | Use this template        |
-| ------------------------------ | ------------------------ |
-| Technical architecture         | `architecture-review`    |
-| Code quality and design        | `code-review`            |
-| Production incidents           | `incident-postmortem`    |
+
+| You are deciding about… | Use this template     |
+| ----------------------- | --------------------- |
+| Technical architecture  | `architecture-review` |
+| Code quality and design | `code-review`         |
+| Production incidents    | `incident-postmortem` |
 
 ### Product & Design
-| You are deciding about…        | Use this template        |
-| ------------------------------ | ------------------------ |
+
+| You are deciding about…        | Use this template         |
+| ------------------------------ | ------------------------- |
 | Product strategy or major bets | `product-strategy-review` |
-| Backlog prioritization         | `roadmap-prioritization` |
-| User experience or redesigns   | `ux-review`              |
+| Backlog prioritization         | `roadmap-prioritization`  |
+| User experience or redesigns   | `ux-review`               |
 
 ### Go-to-Market
-| You are deciding about…             | Use this template            |
-| ----------------------------------- | ---------------------------- |
-| Brand and positioning               | `brand-positioning-review`   |
-| Enterprise deals                    | `enterprise-deal-review`     |
-| Growth experiments                  | `growth-experiment-review`   |
-| High-stakes negotiations            | `negotiation-prep`           |
-| Pricing and packaging               | `pricing-packaging-review`   |
+
+| You are deciding about…  | Use this template          |
+| ------------------------ | -------------------------- |
+| Brand and positioning    | `brand-positioning-review` |
+| Enterprise deals         | `enterprise-deal-review`   |
+| Growth experiments       | `growth-experiment-review` |
+| High-stakes negotiations | `negotiation-prep`         |
+| Pricing and packaging    | `pricing-packaging-review` |
 
 ### Finance, People, Legal & Executive
-| You are deciding about…             | Use this template                |
-| ----------------------------------- | -------------------------------- |
-| Board meetings or strategy          | `executive-strategy-board-prep`  |
-| Budgets and forecasts               | `fpna-budget-review`             |
-| Hiring decisions                    | `hiring-decision-review`         |
-| Contracts and legal risk            | `legal-risk-review`              |
+
+| You are deciding about…    | Use this template               |
+| -------------------------- | ------------------------------- |
+| Board meetings or strategy | `executive-strategy-board-prep` |
+| Budgets and forecasts      | `fpna-budget-review`            |
+| Hiring decisions           | `hiring-decision-review`        |
+| Contracts and legal risk   | `legal-risk-review`             |
 
 ### Startup & Career
-| You are deciding about…        | Use this template        |
-| ------------------------------ | ------------------------ |
-| Career decisions               | `career-coaching`        |
-| Startup or product ideas       | `startup-validation`     |
+
+| You are deciding about…  | Use this template    |
+| ------------------------ | -------------------- |
+| Career decisions         | `career-coaching`    |
+| Startup or product ideas | `startup-validation` |
 
 You can also skip templates entirely — Council will **auto-compose** a custom panel
 tailored to your topic. See [Part 1](#part-1).
@@ -108,6 +113,7 @@ Copilot SDK — if you can use GitHub Copilot in your editor, you can use Counci
 **Time**: ~5 minutes · **Goal**: Run a debate, get a recommendation, and export it
 
 By the end of this section, you will have:
+
 - Started an expert debate with a single command
 - Received a structured decision framework
 - Exported the result as a shareable document
@@ -150,7 +156,10 @@ data gap is the real risk...
 
 The debate runs for several rounds (default: 4), with each expert bringing their
 unique perspective. At the end, Council produces a synthesis that identifies where
-experts agree, where they disagree, and what the key decision factors are.
+experts agree, where they disagree, and what the key decision factors are. When
+the debate completes, `council convene` also generates a structured conclusion by
+default. This costs one extra premium synthesis request; pass `--no-conclude` to
+skip it.
 
 > **💡 Tip**: You can press **Ctrl+C** at any time to stop a debate gracefully.
 > The partial transcript is saved and you can resume it later.
@@ -162,7 +171,8 @@ experts agree, where they disagree, and what the key decision factors are.
 
 ### Step 2: Get a structured recommendation
 
-After the debate finishes, run `conclude` to get a decision framework:
+If you used `--no-conclude`, or you want to regenerate the decision framework
+later, run `conclude`:
 
 ```bash
 council conclude analytics
@@ -173,6 +183,7 @@ council conclude analytics
 > the matches so you can pick the right one.
 
 You should see a structured decision document with:
+
 - A clear recommendation
 - Key factors that influenced the recommendation
 - Risks and mitigations
@@ -203,6 +214,7 @@ council export analytics --format adr --output adr-analytics.md
 ```
 
 ✅ **Checkpoint**: You should now have:
+
 - A completed expert debate with multiple rounds
 - A structured decision framework from `council conclude`
 - An exported markdown or ADR file
@@ -238,6 +250,7 @@ council export analytics --format adr --output adr-analytics.md
 **Time**: ~5 minutes · **Goal**: Find and use the right template for your use case
 
 By the end of this section, you will have:
+
 - Browsed the available templates
 - Run a debate using a curated expert panel
 - Understood when to use templates vs auto-compose
@@ -258,31 +271,37 @@ one includes.
 Pick the template that matches your situation:
 
 **For a product decision:**
+
 ```bash
 council convene "Should we add a freemium tier?" --template startup-validation
 ```
 
 **For a technical architecture decision:**
+
 ```bash
 council convene "Should we migrate from REST to GraphQL?" --template architecture-review
 ```
 
 **For a code review:**
+
 ```bash
 council convene "Review our authentication middleware" --template code-review
 ```
 
 **For an incident postmortem:**
+
 ```bash
 council convene "Database outage on March 15" --template incident-postmortem
 ```
 
 **For a career decision:**
+
 ```bash
 council convene "Should I move into engineering management?" --template career-coaching
 ```
 
 > **Shorthand**: `--panel` is an alias for `--template`. Both work the same way:
+>
 > ```bash
 > council convene "Topic" --panel code-review
 > ```
@@ -297,16 +316,17 @@ council templates inspect architecture-review
 
 ### When to use templates vs auto-compose
 
-| Situation                                     | Use                |
-| --------------------------------------------- | ------------------ |
-| General question, unsure what experts you need | Auto-compose       |
-| You know the domain (code, career, incident)  | Built-in template  |
-| You want a repeatable panel for recurring work | Custom panel       |
+| Situation                                      | Use               |
+| ---------------------------------------------- | ----------------- |
+| General question, unsure what experts you need | Auto-compose      |
+| You know the domain (code, career, incident)   | Built-in template |
+| You want a repeatable panel for recurring work | Custom panel      |
 
 Auto-compose is great for exploration. Templates give you a consistent, curated
 panel designed for specific types of decisions.
 
 ✅ **Checkpoint**: You should now have:
+
 - Browsed the template library
 - Run at least one debate with a built-in template
 - Understood the difference between auto-compose and templates
@@ -320,6 +340,7 @@ panel designed for specific types of decisions.
 **Time**: ~10 minutes · **Goal**: Create reusable experts and panels
 
 By the end of this section, you will have:
+
 - Created custom experts in your library
 - Assembled them into a reusable panel
 - Run a debate with your panel and concluded it
@@ -333,6 +354,7 @@ council expert create
 ```
 
 The wizard asks for:
+
 - **Slug** (short identifier): e.g., `strategist`
 - **Display name**: e.g., `Sarah Chen`
 - **Role**: e.g., `VP of Strategy focused on market positioning`
@@ -350,6 +372,7 @@ council expert create
 ```
 
 Some ideas for a strategy review panel:
+
 - A **devil's advocate** who challenges assumptions
 - A **customer researcher** who brings the user's perspective
 - A **finance lead** who focuses on unit economics
@@ -380,6 +403,7 @@ council panel create
 ```
 
 The wizard asks for:
+
 - **Panel name**: e.g., `strategy-review`
 - **Description**: e.g., `Cross-functional strategy review panel`
 - **Experts**: Select from your library (you can also add inline experts)
@@ -415,6 +439,7 @@ Council validates the file when you save — if there's a syntax error, it tells
 you exactly what to fix.
 
 ✅ **Checkpoint**: You should now have:
+
 - Custom experts in your library (`council expert list` to verify)
 - A reusable panel assembled from those experts
 - A completed debate using your custom panel
@@ -799,6 +824,7 @@ council export strategy-review --format adr --output docs/adr/0007-european-expa
 ```
 
 The ADR includes:
+
 - **Title** and **date**
 - **Status** (proposed/accepted/superseded)
 - **Context** (the question debated)
@@ -816,22 +842,26 @@ By default, Council uses **round-robin** moderation — each expert speaks in tu
 You can change this to get different dynamics:
 
 **Consensus check** — experts work toward agreement:
+
 ```bash
 council convene "Should we adopt Kubernetes?" --template architecture-review --strategy consensus-check
 ```
 
 **Devil's advocate** — one expert is assigned to challenge everything:
+
 ```bash
 council convene "Should we ship the MVP?" --template code-review --strategy devils-advocate
 ```
 
 You can pin a specific expert as the contrarian:
+
 ```bash
 council convene "Ship now or wait?" --template code-review --strategy devils-advocate:senior
 ```
 
 **Structured mode** — a choreographed 4-phase debate (opening → cross-examination →
 rebuttal → synthesis):
+
 ```bash
 council convene "Should we go public?" --template architecture-review --mode structured
 ```
@@ -844,18 +874,21 @@ For debates with many rounds, you can control how much prior context each expert
 sees. This prevents responses from becoming repetitive and manages token usage:
 
 **Recent context only** — experts see only the most recent turns:
+
 ```bash
 council convene "Long architectural debate" --template architecture-review \
   --max-rounds 10 --context-scope recent
 ```
 
 **Same-round context** — experts only see other responses from the current round:
+
 ```bash
 council convene "Long debate" --template architecture-review \
   --max-rounds 10 --context-scope same-round
 ```
 
 **Rolling summary** — prepend a summary after a specified round:
+
 ```bash
 council convene "Long debate" --template architecture-review \
   --max-rounds 10 --summarize-after 3
@@ -897,6 +930,7 @@ Mock responses are clearly labeled with `!! [MOCK ENGINE]` banners so you never
 confuse them with real output.
 
 The mock engine is also useful for:
+
 - Testing panel configurations before running live
 - CI/CD pipelines (see [Part 6](#part-6))
 - Demos and screenshots
@@ -944,6 +978,7 @@ See the [Configuration Reference](#configuration-reference) for all available op
 > expert that thinks and talks like a specific person or reflects specific source material.
 
 By the end of this section, you will have:
+
 - Understood the difference between generic and persona experts
 - Created a persona expert
 - Trained it with reference documents
@@ -952,13 +987,13 @@ By the end of this section, you will have:
 
 ### Generic vs persona experts
 
-| Aspect          | Generic expert                     | Persona expert                        |
-| --------------- | ---------------------------------- | ------------------------------------- |
-| **Created with**| `council expert create`            | `council expert create --persona`     |
-| **Shaped by**   | Role description and expertise     | Role + reference documents            |
-| **Training**    | None needed                        | Trained on docs you provide           |
-| **Best for**    | Standard advisory roles            | Mimicking a specific viewpoint        |
-| **Example**     | "CTO focused on scalability"       | "Our CTO, based on their past RFCs"  |
+| Aspect           | Generic expert                 | Persona expert                      |
+| ---------------- | ------------------------------ | ----------------------------------- |
+| **Created with** | `council expert create`        | `council expert create --persona`   |
+| **Shaped by**    | Role description and expertise | Role + reference documents          |
+| **Training**     | None needed                    | Trained on docs you provide         |
+| **Best for**     | Standard advisory roles        | Mimicking a specific viewpoint      |
+| **Example**      | "CTO focused on scalability"   | "Our CTO, based on their past RFCs" |
 
 A generic expert follows its role description. A persona expert also draws on a
 corpus of reference documents — past writings, frameworks, decision records — to
@@ -994,6 +1029,7 @@ Supported formats (default): `.md`, `.txt`, `.html`, `.pdf`, `.docx`, `.pptx`, `
 
 These documents shape how the persona thinks and communicates. Good reference
 material includes:
+
 - Past decision documents or memos
 - Frameworks the person uses
 - Writing samples that show their communication style
@@ -1077,6 +1113,7 @@ council convene "Should we pursue a Series B or bootstrap?" --template strategy-
 ```
 
 ✅ **Checkpoint**: You should now have:
+
 - A persona expert trained on your reference documents
 - Verified that it responds in character, even on off-topic questions
 - Used it in a panel debate alongside generic experts
@@ -1087,7 +1124,7 @@ council convene "Should we pursue a Series B or bootstrap?" --template strategy-
 
 ## Part 6 — Power User Patterns
 
-> *For engineers and automation.* This section covers scripting, CI/CD integration,
+> _For engineers and automation._ This section covers scripting, CI/CD integration,
 > and advanced configuration. You don't need any of this for everyday use.
 
 ### Scripting with JSON output
@@ -1097,6 +1134,21 @@ Several Council commands support `--format json` for machine-readable output:
 ```bash
 council convene "Topic" --template code-review --format json | jq .
 ```
+
+For `council convene --format json`, each line is an NDJSON event. After a
+completed debate, the final line is a conclusion event emitted after
+`{"kind":"debate.end", ...}`:
+
+```text
+{"kind":"conclusion","conclusion":{...}}
+```
+
+The `conclusion` object matches `council conclude --format json`: `panelName`,
+`topic`, `debateId`, `startedAt`, `consensus`, `tensions`, `decisionMatrix`,
+`recommendation`, `confidence`, and optional `warnings`.
+
+Pass `--no-conclude` to omit this final conclusion event and avoid the extra
+premium synthesis request.
 
 ```bash
 council expert list --format json
@@ -1111,6 +1163,7 @@ council convene "Topic" --template code-review --format json > debate.ndjson 2>/
 ```
 
 Council uses specific exit codes for scripting (see [Exit Codes](#exit-codes)):
+
 - `0` = success, `1` = user error, `2` = auth error, `3` = network, `4` = internal
 
 ```bash
@@ -1134,6 +1187,7 @@ council panel delete old-panel --yes
 Chain Council commands for end-to-end workflows:
 
 **Debate → Conclude → Export as ADR:**
+
 ```bash
 council convene "Should we adopt event sourcing?" --template architecture-review
 council conclude architecture-review
@@ -1141,6 +1195,7 @@ council export architecture-review --format adr --output docs/adr/0012-event-sou
 ```
 
 **Quick review with mock engine:**
+
 ```bash
 council convene "Test my panel configuration" --template my-panel --engine mock
 council conclude my-panel --engine mock
@@ -1163,6 +1218,7 @@ council convene "Evaluate migration plan" \
 ```
 
 Key flags for CI:
+
 - `--engine mock` — deterministic, no network calls
 - `--format json` — machine-parseable output
 - `--yes` — skip interactive confirmations
@@ -1179,6 +1235,7 @@ The `$` sign and backticks are the most common source of surprises. Here's how
 to handle them in different shells:
 
 **Bash / Zsh:**
+
 ```bash
 # Use single quotes to prevent all interpolation
 council convene 'Should we price at $49/month?'
@@ -1188,6 +1245,7 @@ council convene "Should we price at \$49/month?"
 ```
 
 **PowerShell:**
+
 ```powershell
 # Use backtick to escape $
 council convene "Should we price at `$49/month?"
@@ -1204,11 +1262,11 @@ Compare these options:
 ```
 
 **General rules:**
-| Character | Bash/Zsh          | PowerShell         |
+| Character | Bash/Zsh | PowerShell |
 | --------- | ----------------- | ------------------ |
-| `$`       | `'...'` or `\$`   | `` `$ `` or `'...'` |
-| Backtick  | `'...'` or `` \` ``| Already escaped    |
-| `"`       | `\"` or `'...'`   | `` `" `` or `'...'` |
+| `$` | `'...'` or `\$` | `` `$ `` or `'...'` |
+| Backtick | `'...'` or `` \` ``| Already escaped |
+| `"` | `\"` or `'...'` | `` `" `` or `'...'` |
 
 **Bulletproof option — `--prompt-file`:** to sidestep shell quoting entirely,
 read the topic/question VERBATIM from a file or stdin. Nothing passes through the
@@ -1234,26 +1292,26 @@ never reaches the panel unnoticed.
 
 ### Exit codes
 
-| Code | Meaning        | Example                                    |
-| ---- | -------------- | ------------------------------------------ |
-| `0`  | Success        | Command completed normally                 |
-| `1`  | User error     | Missing argument, invalid flag, bad input  |
-| `2`  | Auth error     | Copilot authentication failed or expired   |
-| `3`  | Network error  | API unreachable, timeout                   |
-| `4`  | Internal error | Unexpected failure (please report a bug)   |
+| Code | Meaning        | Example                                   |
+| ---- | -------------- | ----------------------------------------- |
+| `0`  | Success        | Command completed normally                |
+| `1`  | User error     | Missing argument, invalid flag, bad input |
+| `2`  | Auth error     | Copilot authentication failed or expired  |
+| `3`  | Network error  | API unreachable, timeout                  |
+| `4`  | Internal error | Unexpected failure (please report a bug)  |
 
 ### Environment variables
 
-| Variable             | Purpose                                      | Example                              |
-| -------------------- | -------------------------------------------- | ------------------------------------ |
-| `COUNCIL_HOME`       | Config directory (default: `~/.council`)      | `COUNCIL_HOME=/opt/council`          |
-| `COUNCIL_DATA_HOME`  | Data directory (database, experts, panels)    | `COUNCIL_DATA_HOME=/tmp/council-ci`  |
-| `COUNCIL_ASCII`      | Force ASCII symbols (no Unicode)              | `COUNCIL_ASCII=1`                    |
-| `NO_COLOR`           | Disable color output                         | `NO_COLOR=1`                         |
-| `TERM`               | Set to `dumb` to disable all terminal effects | `TERM=dumb`                          |
-| `EDITOR` / `VISUAL`  | Editor for `config edit` and `expert edit`    | `EDITOR=vim`                         |
-| `CI`                 | Indicates CI environment (disables interactivity) | `CI=true`                        |
-| `ACCESSIBILITY`      | Enable accessibility features                 | `ACCESSIBILITY=1`                    |
+| Variable            | Purpose                                           | Example                             |
+| ------------------- | ------------------------------------------------- | ----------------------------------- |
+| `COUNCIL_HOME`      | Config directory (default: `~/.council`)          | `COUNCIL_HOME=/opt/council`         |
+| `COUNCIL_DATA_HOME` | Data directory (database, experts, panels)        | `COUNCIL_DATA_HOME=/tmp/council-ci` |
+| `COUNCIL_ASCII`     | Force ASCII symbols (no Unicode)                  | `COUNCIL_ASCII=1`                   |
+| `NO_COLOR`          | Disable color output                              | `NO_COLOR=1`                        |
+| `TERM`              | Set to `dumb` to disable all terminal effects     | `TERM=dumb`                         |
+| `EDITOR` / `VISUAL` | Editor for `config edit` and `expert edit`        | `EDITOR=vim`                        |
+| `CI`                | Indicates CI environment (disables interactivity) | `CI=true`                           |
+| `ACCESSIBILITY`     | Enable accessibility features                     | `ACCESSIBILITY=1`                   |
 
 ### Custom expert YAML
 
@@ -1323,88 +1381,89 @@ council panel docs unlink strategy-review --path ./research/    # unlink
 
 ### All commands
 
-| Command                    | Description                                      |
-| -------------------------- | ------------------------------------------------ |
-| `council convene`          | Start a new expert debate                        |
-| `council ask`              | Quick one-shot question to a single expert       |
-| `council chat`             | Ongoing conversation with an expert or panel     |
-| `council resume`           | View or continue a previous debate               |
-| `council conclude`         | Generate a structured decision framework         |
-| `council export`           | Export debate transcript (markdown or ADR)        |
-| `council expert create`   | Create a new expert (interactive wizard)          |
-| `council expert list`     | List all experts in your library                  |
-| `council expert inspect`  | View expert details and panel memberships         |
-| `council expert edit`     | Edit expert YAML in your editor                   |
-| `council expert delete`   | Remove an expert from your library                |
-| `council expert train`    | Train a persona expert on documents               |
-| `council expert docs`     | Manage a persona expert's document folder         |
-| `council panel create`    | Create a new panel (interactive wizard)            |
-| `council panel list`      | List all panels                                    |
-| `council panel inspect`   | View panel details and expert roster               |
-| `council panel edit`      | Edit panel YAML in your editor                     |
-| `council panel save`      | Promote a convene session into a library panel     |
-| `council panel delete`    | Remove a panel                                     |
-| `council panel docs`      | Manage panel's shared document corpus              |
-| `council docs`            | Document utilities (`formats`, `review`, `extract`, `doctor`) |
-| `council models`          | List available Copilot models                      |
-| `council templates`       | List built-in templates                            |
-| `council templates inspect`| View template details                             |
-| `council sessions`        | List past debate sessions                          |
-| `council sessions cancel` | Cancel an in-progress session                      |
-| `council sessions delete` | Delete a saved session                             |
-| `council memory list`     | Summary of stored memories by panel                |
-| `council memory inspect`  | Detailed memory view for a panel or expert         |
-| `council memory reset`    | Clear debate history (keeps panel config)           |
-| `council doctor`          | Check setup and diagnose issues                    |
-| `council config show`     | Display current configuration with sources         |
-| `council config path`     | Print config file location                         |
-| `council config edit`     | Open config in your editor                         |
-| `council config set`      | Change a configuration value                       |
+| Command                     | Description                                                   |
+| --------------------------- | ------------------------------------------------------------- |
+| `council convene`           | Start a new expert debate                                     |
+| `council ask`               | Quick one-shot question to a single expert                    |
+| `council chat`              | Ongoing conversation with an expert or panel                  |
+| `council resume`            | View or continue a previous debate                            |
+| `council conclude`          | Generate a structured decision framework                      |
+| `council export`            | Export debate transcript (markdown or ADR)                    |
+| `council expert create`     | Create a new expert (interactive wizard)                      |
+| `council expert list`       | List all experts in your library                              |
+| `council expert inspect`    | View expert details and panel memberships                     |
+| `council expert edit`       | Edit expert YAML in your editor                               |
+| `council expert delete`     | Remove an expert from your library                            |
+| `council expert train`      | Train a persona expert on documents                           |
+| `council expert docs`       | Manage a persona expert's document folder                     |
+| `council panel create`      | Create a new panel (interactive wizard)                       |
+| `council panel list`        | List all panels                                               |
+| `council panel inspect`     | View panel details and expert roster                          |
+| `council panel edit`        | Edit panel YAML in your editor                                |
+| `council panel save`        | Promote a convene session into a library panel                |
+| `council panel delete`      | Remove a panel                                                |
+| `council panel docs`        | Manage panel's shared document corpus                         |
+| `council docs`              | Document utilities (`formats`, `review`, `extract`, `doctor`) |
+| `council models`            | List available Copilot models                                 |
+| `council templates`         | List built-in templates                                       |
+| `council templates inspect` | View template details                                         |
+| `council sessions`          | List past debate sessions                                     |
+| `council sessions cancel`   | Cancel an in-progress session                                 |
+| `council sessions delete`   | Delete a saved session                                        |
+| `council memory list`       | Summary of stored memories by panel                           |
+| `council memory inspect`    | Detailed memory view for a panel or expert                    |
+| `council memory reset`      | Clear debate history (keeps panel config)                     |
+| `council doctor`            | Check setup and diagnose issues                               |
+| `council config show`       | Display current configuration with sources                    |
+| `council config path`       | Print config file location                                    |
+| `council config edit`       | Open config in your editor                                    |
+| `council config set`        | Change a configuration value                                  |
 
 Aliases: `experts`, `panels`, and `history` are aliases for `expert`, `panel`, and `sessions`.
 
 ### `council convene` options
 
-| Flag                  | Description                                    | Default          |
-| --------------------- | ---------------------------------------------- | ---------------- |
-| `--template <name>`   | Use a built-in or custom panel                 | (auto-compose)   |
-| `-p, --panel <name>` | Alias for `--template`                         | (auto-compose)   |
-| `--prompt-file <path>` | Read topic verbatim from file or `-` for stdin | (none)           |
-| `--model`             | Override the AI model                          | `claude-sonnet-4.5` |
-| `--engine`            | Engine to use (`copilot` or `mock`)            | `copilot`        |
-| `--max-rounds`        | Number of deliberation rounds (1–20)           | `4`              |
-| `--max-experts`       | Max experts for auto-compose (2–8)             | `3`              |
-| `--strategy`          | Moderator strategy                             | `round-robin`    |
-| `--mode`              | Debate mode (`freeform` or `structured`)       | `freeform`       |
-| `--context-scope`     | Context window management                      | `all`            |
-| `--summarize-after`   | Start rolling summaries after round N          | (disabled)       |
-| `--format`            | Output format (`auto`, `json`, or `plain`)     | `auto`           |
-| `--quiet`             | Suppress informational messages                | `false`          |
-| `--yes`               | Skip confirmations                             | `false`          |
-| `--verbose`           | Extra diagnostic output                        | `false`          |
-| `--max-words`         | Max words per expert response (50–2000)        | `250`            |
-| `--experts`           | Expert slugs from the library, space- or comma-separated, repeatable | (none) |
-| `--human`             | Add a human participant (repeatable)           | (none)           |
-| `--heuristic-summaries` | Local summarizer for offline use             | `false`          |
-| `--heuristic-memory`  | Skip post-debate LLM extraction                | `false`          |
+| Flag                    | Description                                                          | Default             |
+| ----------------------- | -------------------------------------------------------------------- | ------------------- |
+| `--template <name>`     | Use a built-in or custom panel                                       | (auto-compose)      |
+| `-p, --panel <name>`    | Alias for `--template`                                               | (auto-compose)      |
+| `--prompt-file <path>`  | Read topic verbatim from file or `-` for stdin                       | (none)              |
+| `--model`               | Override the AI model                                                | `claude-sonnet-4.5` |
+| `--engine`              | Engine to use (`copilot` or `mock`)                                  | `copilot`           |
+| `--max-rounds`          | Number of deliberation rounds (1–20)                                 | `4`                 |
+| `--max-experts`         | Max experts for auto-compose (2–8)                                   | `3`                 |
+| `--strategy`            | Moderator strategy                                                   | `round-robin`       |
+| `--mode`                | Debate mode (`freeform` or `structured`)                             | `freeform`          |
+| `--context-scope`       | Context window management                                            | `all`               |
+| `--summarize-after`     | Start rolling summaries after round N                                | (disabled)          |
+| `--format`              | Output format (`auto`, `json`, or `plain`)                           | `auto`              |
+| `--no-conclude`         | Skip automatic conclusion synthesis after a completed debate         | (auto-conclude)     |
+| `--quiet`               | Suppress informational messages                                      | `false`             |
+| `--yes`                 | Skip confirmations                                                   | `false`             |
+| `--verbose`             | Extra diagnostic output                                              | `false`             |
+| `--max-words`           | Max words per expert response (50–2000)                              | `250`               |
+| `--experts`             | Expert slugs from the library, space- or comma-separated, repeatable | (none)              |
+| `--human`               | Add a human participant (repeatable)                                 | (none)              |
+| `--heuristic-summaries` | Local summarizer for offline use                                     | `false`             |
+| `--heuristic-memory`    | Skip post-debate LLM extraction                                      | `false`             |
 
 ### `council chat` options
 
-| Flag         | Description                                    | Default          |
-| ------------ | ---------------------------------------------- | ---------------- |
-| `--engine`   | Engine to use (`copilot` or `mock`)            | (from config)    |
-| `--new`      | Archive active conversation, start fresh       | `false`          |
-| `--list`     | List all chat conversations and exit           | `false`          |
-| `--history`  | Show archived conversations for the target     | `false`          |
+| Flag        | Description                                | Default       |
+| ----------- | ------------------------------------------ | ------------- |
+| `--engine`  | Engine to use (`copilot` or `mock`)        | (from config) |
+| `--new`     | Archive active conversation, start fresh   | `false`       |
+| `--list`    | List all chat conversations and exit       | `false`       |
+| `--history` | Show archived conversations for the target | `false`       |
 
 **In-chat directives** (type these at the `You>` prompt during panel chat):
 
-| Directive              | Effect                                             |
-| ---------------------- | -------------------------------------------------- |
-| `@slug message`        | Route message to specific expert(s)                |
-| `@convene topic`       | Trigger inline structured 4-phase deliberation     |
-| `/exit` or `/quit`     | Save conversation and exit                         |
-| **Ctrl+C**             | Abort current expert response, return to prompt    |
+| Directive          | Effect                                          |
+| ------------------ | ----------------------------------------------- |
+| `@slug message`    | Route message to specific expert(s)             |
+| `@convene topic`   | Trigger inline structured 4-phase deliberation  |
+| `/exit` or `/quit` | Save conversation and exit                      |
+| **Ctrl+C**         | Abort current expert response, return to prompt |
 
 <a id="configuration-reference"></a>
 
@@ -1412,54 +1471,55 @@ Aliases: `experts`, `panels`, and `history` are aliases for `expert`, `panel`, a
 
 Set these with `council config set <key> <value>`:
 
-| Key                              | Description                          | Default          |
-| -------------------------------- | ------------------------------------ | ---------------- |
-| `defaults.model`                 | Default AI model                     | `claude-sonnet-4.5` |
-| `defaults.engine`                | Default engine                       | `copilot`        |
-| `defaults.maxRounds`             | Default deliberation rounds          | `4`              |
-| `defaults.maxExperts`            | Default max experts (auto-compose)   | `3`              |
-| `defaults.maxWordsPerResponse`   | Default max words per response       | `250`            |
-| `documents.aiExtraction`         | AI-assisted document extraction      | `off` (`off`, `ask`, `auto`) |
-| `documents.aiExtractionAllowedExtensions` | Extensions allowed for AI extraction | `[]` |
-| `documents.maxFileSizeMB`        | Maximum document file size           | `50`             |
-| `conclude.maxTranscriptChars`    | Max transcript chars for conclusion  | `50000`          |
-| `expert.backgroundProcessing`    | Process docs in background           | `false`          |
-| `expert.recencyHalfLifeDays`     | Document recency half-life           | `90`             |
-| `expert.supportedFormats`        | Supported doc formats                | 14 extensions (`md, txt, html, pdf, csv, tsv, rtf, docx, pptx, xlsx, xls, odt, ods, odp`) |
-| `chat.recentTurnCount`           | Recent turns to include              | `10`             |
-| `chat.summaryMaxWords`           | Summary length limit                 | `500`            |
-| `chat.longConversationWarning`   | Warn on long conversations           | `500`            |
-| `telemetry.enabled`              | Enable telemetry                     | `false`          |
-| `paths.dataHome`                 | Data directory path                  | `~/Council`      |
+| Key                                       | Description                          | Default                                                                                   |
+| ----------------------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `defaults.model`                          | Default AI model                     | `claude-sonnet-4.5`                                                                       |
+| `defaults.engine`                         | Default engine                       | `copilot`                                                                                 |
+| `defaults.maxRounds`                      | Default deliberation rounds          | `4`                                                                                       |
+| `defaults.maxExperts`                     | Default max experts (auto-compose)   | `3`                                                                                       |
+| `defaults.maxWordsPerResponse`            | Default max words per response       | `250`                                                                                     |
+| `documents.aiExtraction`                  | AI-assisted document extraction      | `off` (`off`, `ask`, `auto`)                                                              |
+| `documents.aiExtractionAllowedExtensions` | Extensions allowed for AI extraction | `[]`                                                                                      |
+| `documents.maxFileSizeMB`                 | Maximum document file size           | `50`                                                                                      |
+| `conclude.maxTranscriptChars`             | Max transcript chars for conclusion  | `50000`                                                                                   |
+| `expert.backgroundProcessing`             | Process docs in background           | `false`                                                                                   |
+| `expert.recencyHalfLifeDays`              | Document recency half-life           | `90`                                                                                      |
+| `expert.supportedFormats`                 | Supported doc formats                | 14 extensions (`md, txt, html, pdf, csv, tsv, rtf, docx, pptx, xlsx, xls, odt, ods, odp`) |
+| `chat.recentTurnCount`                    | Recent turns to include              | `10`                                                                                      |
+| `chat.summaryMaxWords`                    | Summary length limit                 | `500`                                                                                     |
+| `chat.longConversationWarning`            | Warn on long conversations           | `500`                                                                                     |
+| `telemetry.enabled`                       | Enable telemetry                     | `false`                                                                                   |
+| `paths.dataHome`                          | Data directory path                  | `~/Council`                                                                               |
 
 ### Glossary
 
-| Term                | Definition                                                                                   |
-| ------------------- | -------------------------------------------------------------------------------------------- |
-| **Auto-compose**    | Council automatically designs an expert panel from your topic — no template or setup needed   |
-| **Panel**           | A saved group of experts that you can reuse across debates                                    |
-| **Expert**          | An AI participant with a defined role, expertise areas, and perspective                       |
-| **Persona expert**  | An expert trained on reference documents to mimic a specific person's viewpoint               |
-| **Generic expert**  | A standard expert defined by role description only (no document training)                     |
-| **Template**        | A built-in panel configuration (e.g., `architecture-review`, `code-review`)                  |
-| **Debate**          | A multi-round discussion where experts respond to a topic from different perspectives         |
-| **Round**           | One cycle where each expert provides a response                                              |
-| **Synthesis**       | Council's summary identifying agreements, disagreements, and key factors                     |
-| **Conclusion**      | A structured decision framework generated by `council conclude`                              |
-| **ADR**             | Architecture Decision Record — a short document capturing a technical decision               |
-| **Slug**            | A short identifier for an expert or panel (e.g., `cto`, `strategy-review`)                   |
-| **Mock engine**     | A deterministic, offline engine for testing and demos (`--engine mock`)                      |
-| **Fidelity**        | How accurately a persona expert reflects its reference documents                             |
-| **Strategy**        | The moderator pattern used during debate (round-robin, consensus-check, devils-advocate)      |
-| **Panel chat**      | Group conversation with all experts in a panel — supports `@mentions` and `@convene`          |
-| **@mention**        | Prefix (`@slug`) that routes a message to specific expert(s) in panel chat                    |
-| **@convene**        | Directive that triggers an inline structured 4-phase deliberation within panel chat            |
-| **RAG**             | Retrieval-augmented generation — automatic surfacing of relevant document snippets in chat     |
+| Term               | Definition                                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------------- |
+| **Auto-compose**   | Council automatically designs an expert panel from your topic — no template or setup needed |
+| **Panel**          | A saved group of experts that you can reuse across debates                                  |
+| **Expert**         | An AI participant with a defined role, expertise areas, and perspective                     |
+| **Persona expert** | An expert trained on reference documents to mimic a specific person's viewpoint             |
+| **Generic expert** | A standard expert defined by role description only (no document training)                   |
+| **Template**       | A built-in panel configuration (e.g., `architecture-review`, `code-review`)                 |
+| **Debate**         | A multi-round discussion where experts respond to a topic from different perspectives       |
+| **Round**          | One cycle where each expert provides a response                                             |
+| **Synthesis**      | Council's summary identifying agreements, disagreements, and key factors                    |
+| **Conclusion**     | A structured decision framework generated by `council conclude`                             |
+| **ADR**            | Architecture Decision Record — a short document capturing a technical decision              |
+| **Slug**           | A short identifier for an expert or panel (e.g., `cto`, `strategy-review`)                  |
+| **Mock engine**    | A deterministic, offline engine for testing and demos (`--engine mock`)                     |
+| **Fidelity**       | How accurately a persona expert reflects its reference documents                            |
+| **Strategy**       | The moderator pattern used during debate (round-robin, consensus-check, devils-advocate)    |
+| **Panel chat**     | Group conversation with all experts in a panel — supports `@mentions` and `@convene`        |
+| **@mention**       | Prefix (`@slug`) that routes a message to specific expert(s) in panel chat                  |
+| **@convene**       | Directive that triggers an inline structured 4-phase deliberation within panel chat         |
+| **RAG**            | Retrieval-augmented generation — automatic surfacing of relevant document snippets in chat  |
 
 ### Troubleshooting
 
 **"command not found: council"**
 Council isn't installed globally. Run:
+
 ```bash
 npm install -g @council-ai/cli
 ```
@@ -1469,6 +1529,7 @@ Council shows helpful suggestions for typos. If you see this, check the
 spelling of the command or subcommand.
 
 **Debate produces generic responses**
+
 - Try a more specific prompt with concrete details (numbers, constraints, context)
 - Use a template that matches your domain
 - Increase `--max-rounds` for deeper exploration
@@ -1478,11 +1539,13 @@ spelling of the command or subcommand.
 See [Shell Quoting Guide](#shell-quoting). Use single quotes in bash/zsh.
 
 **Expert or panel "not found"**
+
 - Check the name with `council expert list` or `council panel list`
 - Use the full slug — prefix matching only works for `resume`, `export`, and `conclude`
 
 **`council doctor` reports issues**
 Follow the suggested fixes. Common issues:
+
 - Node.js version too old (need 22+)
 - Config file syntax error (run `council config edit` to fix)
 - Database locked (close other Council processes)
@@ -1490,6 +1553,7 @@ Follow the suggested fixes. Common issues:
 
 **Mock engine gives "unparsable JSON" during training**
 This is a known limitation. Use the real engine for `council expert train`:
+
 ```bash
 council expert train cfo --retrain
 ```
