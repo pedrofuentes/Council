@@ -407,7 +407,10 @@ function isInteractiveInput(input: TtyReadableStream | undefined): boolean {
 }
 
 function formatWizardValue(value: string | number | boolean | readonly string[]): string {
-  if (Array.isArray(value)) return value.length === 0 ? "none" : value.join(", ");
+  if (Array.isArray(value)) {
+    return value.length === 0 ? "none" : value.map((item) => stripControlChars(item)).join(", ");
+  }
+  if (typeof value === "string") return stripControlChars(value);
   return String(value);
 }
 
