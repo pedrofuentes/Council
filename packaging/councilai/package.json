@@ -1,0 +1,28 @@
+{
+  "name": "councilai",
+  "version": "0.0.1",
+  "description": "Name placeholder for Council (no-hyphen variant). The CLI is published as @council-ai/cli — install with: npm i -g @council-ai/cli",
+  "keywords": [
+    "council",
+    "councilai",
+    "council-ai",
+    "cli",
+    "ai",
+    "deliberation",
+    "placeholder"
+  ],
+  "license": "MIT",
+  "author": "Pedro Fuentes",
+  "homepage": "https://github.com/pedrofuentes/Council#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pedrofuentes/Council.git",
+    "directory": "packaging/councilai"
+  },
+  "bugs": {
+    "url": "https://github.com/pedrofuentes/Council/issues"
+  },
+  "files": [
+    "README.md"
+  ]
+}
