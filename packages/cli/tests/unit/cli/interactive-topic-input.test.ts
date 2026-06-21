@@ -266,8 +266,9 @@ describe("processKeypressStream", () => {
 
     it("preserves the cause when dumb-terminal readline fails unexpectedly", async () => {
       vi.stubEnv("TERM", "dumb");
-      const failure = new Error("pty failed");
+      const failure = new Error("pty\nfailed");
       const close = vi.fn();
+      let output = "";
       mockCreateInterface.mockReturnValue({
         close,
         question: vi.fn().mockRejectedValue(failure),
@@ -276,12 +277,67 @@ describe("processKeypressStream", () => {
       await expect(
         promptForTopic({
           isNonInteractiveFn: () => false,
-          write: () => undefined,
+          write: (s) => {
+            output += s;
+          },
         }),
       ).rejects.toMatchObject({
         message: "Topic input failed: pty failed",
         cause: failure,
       });
+      expect(output).toBe("Topic input failed: pty failed\n");
+      expect(close).toHaveBeenCalledOnce();
+    });
+
+    it("maps dumb-terminal readline AbortError to silent abort without a cause", async () => {
+      vi.stubEnv("TERM", "dumb");
+      const failure = new Error("operation aborted");
+      failure.name = "AbortError";
+      const close = vi.fn();
+      let output = "";
+      mockCreateInterface.mockReturnValue({
+        close,
+        question: vi.fn().mockRejectedValue(failure),
+      });
+
+      let thrown: unknown;
+      try {
+        await promptForTopic({
+          isNonInteractiveFn: () => false,
+          write: (s) => {
+            output += s;
+          },
+        });
+      } catch (err) {
+        thrown = err;
+      }
+
+      expect(thrown).toBeInstanceOf(CliUserError);
+      expect(thrown).toMatchObject({ message: "Aborted" });
+      expect("cause" in (thrown as object)).toBe(false);
+      expect(output).toBe("");
+      expect(close).toHaveBeenCalledOnce();
+    });
+
+    it("maps dumb-terminal closed-readline errors to silent abort", async () => {
+      vi.stubEnv("TERM", "dumb");
+      const failure = new Error("readline was closed");
+      const close = vi.fn();
+      let output = "";
+      mockCreateInterface.mockReturnValue({
+        close,
+        question: vi.fn().mockRejectedValue(failure),
+      });
+
+      await expect(
+        promptForTopic({
+          isNonInteractiveFn: () => false,
+          write: (s) => {
+            output += s;
+          },
+        }),
+      ).rejects.toMatchObject({ message: "Aborted" });
+      expect(output).toBe("");
       expect(close).toHaveBeenCalledOnce();
     });
   });
