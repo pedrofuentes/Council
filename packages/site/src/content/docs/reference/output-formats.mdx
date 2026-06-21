@@ -55,13 +55,13 @@ council convene <panel> --format <format>
 
 ```bash
 # Auto-detect
-council convene tech-review
+council convene "Review this architecture" --panel tech-review
 
 # Force plain (useful in CI or for logging)
-council convene tech-review --format plain
+council convene "Review this architecture" --panel tech-review --format plain
 
 # JSON stream
-council convene tech-review --format json > debate.ndjson
+council convene "Review this architecture" --panel tech-review --format json > debate.ndjson
 ```
 
 ### `council panel list` / `council expert list`
