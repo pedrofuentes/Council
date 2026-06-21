@@ -19,8 +19,11 @@ import {
   type ModelDiscoveryResult,
 } from "../../engine/copilot/health.js";
 import { getSymbols } from "../renderers/symbols.js";
+import { renderBanner } from "../renderers/banner.js";
 import { createSpinner, type Spinner } from "../renderers/spinner.js";
 import { stripControlChars } from "../strip-control-chars.js";
+
+import packageJson from "../../../package.json" with { type: "json" };
 
 import { probeCopilotModel } from "./doctor-online-probe.js";
 import { formatAvailableModels } from "./models.js";
@@ -42,6 +45,7 @@ interface DoctorOptions {
 
 export interface DoctorDeps {
   readonly write?: Writer;
+  readonly version?: string;
   readonly onlineProbe?: (model: string) => Promise<{ ok: boolean; detail: string }>;
   readonly discoverModels?: () => Promise<ModelDiscoveryResult>;
   readonly createSpinner?: () => Spinner;
@@ -269,6 +273,7 @@ function resolveDoctorDeps(input: DoctorDeps | Writer): Required<DoctorDeps> {
   const deps = isWriter(input) ? { write: input } : input;
   return {
     write: deps.write ?? defaultWriter,
+    version: deps.version ?? packageJson.version,
     onlineProbe: deps.onlineProbe ?? probeCopilotModel,
     discoverModels: deps.discoverModels ?? discoverAvailableModels,
     createSpinner: deps.createSpinner ?? createSpinner,
@@ -278,6 +283,7 @@ function resolveDoctorDeps(input: DoctorDeps | Writer): Required<DoctorDeps> {
 export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
   const {
     write,
+    version,
     onlineProbe,
     discoverModels,
     createSpinner: makeSpinner,
@@ -306,9 +312,9 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
         });
       }
 
-      write("Council Doctor\n");
+      write(renderBanner({ version }) + "\n");
+      write("\n");
       const sym = getSymbols();
-      write(sym.headerRule.repeat(40) + "\n");
       write(`Platform: ${os.platform()} ${os.arch()}\n`);
       write("\n");
 
