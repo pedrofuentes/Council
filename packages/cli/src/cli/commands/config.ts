@@ -20,7 +20,7 @@ import {
 import { discoverAvailableModels, type ModelDiscoveryResult } from "../../engine/copilot/health.js";
 import { orderModelsByPreference, writeModelList } from "../first-run-model-select.js";
 import { CliUserError } from "../cli-user-error.js";
-import { stripControlChars } from "../strip-control-chars.js";
+import { toSingleLineDisplay } from "../strip-control-chars.js";
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
@@ -408,9 +408,9 @@ function isInteractiveInput(input: TtyReadableStream | undefined): boolean {
 
 function formatWizardValue(value: string | number | boolean | readonly string[]): string {
   if (Array.isArray(value)) {
-    return value.length === 0 ? "none" : value.map((item) => stripControlChars(item)).join(", ");
+    return value.length === 0 ? "none" : value.map((item) => toSingleLineDisplay(item)).join(", ");
   }
-  if (typeof value === "string") return stripControlChars(value);
+  if (typeof value === "string") return toSingleLineDisplay(value);
   return String(value);
 }
 
@@ -459,11 +459,11 @@ async function promptForModel(
   }
   writeModelList(
     write,
-    models.map((model) => stripControlChars(model)),
+    models.map((model) => toSingleLineDisplay(model)),
   );
   output.write(`Default model [1-${models.length}] (Enter for recommended): `);
   const selected = selectChoice(await line(), models, models[0] ?? "", "defaults.model");
-  write(`Set defaults.model = ${stripControlChars(selected)}\n`);
+  write(`Set defaults.model = ${toSingleLineDisplay(selected)}\n`);
   return selected;
 }
 
