@@ -17,6 +17,7 @@ interface SpinnerLike {
 
 interface DoctorDepsLike {
   readonly write?: Writer;
+  readonly version?: string;
   readonly onlineProbe?: (model: string) => Promise<{ ok: boolean; detail: string }>;
   readonly discoverModels?: () => Promise<{
     models: readonly string[];
@@ -158,8 +159,20 @@ describe("buildDoctorCommand", () => {
     const output = await runDoctor(["--offline"], { onlineProbe });
 
     expect(onlineProbe).not.toHaveBeenCalled();
-    expect(output).toContain("Council Doctor");
+    expect(output).toMatch(/Council v\d+\.\d+\.\d+/);
     expect(output).not.toContain("Default model (");
+  });
+
+  it("doctor displays the Council version", async () => {
+    const output = await runDoctor(["--offline"], { version: "9.9.9" });
+
+    expect(output).toContain("Council v9.9.9");
+  });
+
+  it("doctor no longer prints the old plain-text 'Council Doctor' header", async () => {
+    const output = await runDoctor(["--offline"], { version: "9.9.9" });
+
+    expect(output).not.toContain("Council Doctor");
   });
 
   it("doctor uses COUNCIL_DATA_HOME for visible paths when COUNCIL_HOME is unset", async () => {
