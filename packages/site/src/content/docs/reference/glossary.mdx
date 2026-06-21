@@ -32,9 +32,9 @@ A synthetic participant in a panel with a defined role, expertise, and epistemic
 
 ### Slug
 
-A short, URL-safe identifier for experts and panels. Must match `^[a-z][a-z0-9-]*$` (lowercase, digits, hyphens; must start with a letter).
+A short, URL-safe identifier for experts and panels. Must match `^[a-z0-9][a-z0-9-]{0,63}$` (lowercase letters, digits, and hyphens; must start with a letter or digit; maximum 64 characters).
 
-**Examples:** `cto`, `security-expert`, `code-review`
+**Examples:** `cto`, `security-expert`, `code-review`, `3d-modeler`
 
 ---
 
