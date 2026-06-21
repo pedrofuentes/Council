@@ -237,18 +237,22 @@ describe("buildAskCommand", () => {
     expect(thrown.toLowerCase()).toMatch(/no expert|not found/);
   });
 
-  it("resolves engine from config when --engine is omitted (no longer throws)", async () => {
+  it("resolves engine from config when --engine is omitted", async () => {
     await seedPanel(testHome);
-    const cmd = buildAskCommand({ write: () => undefined });
+    await fs.writeFile(path.join(testHome, "config.yaml"), "defaults:\n  engine: mock\n", "utf-8");
+
+    let errorOutput = "";
+    const cmd = buildAskCommand({
+      write: () => undefined,
+      writeError: (s) => {
+        errorOutput += s;
+      },
+    });
     cmd.exitOverride();
-    let thrown = "";
-    try {
-      await cmd.parseAsync(["node", "council-ask", "ask-test-panel", "What?"]);
-    } catch (err) {
-      thrown = err instanceof Error ? err.message : String(err);
-    }
-    // Should NOT throw about missing --engine anymore
-    expect(thrown.toLowerCase()).not.toMatch(/--engine.*required|required.*engine/);
+
+    await cmd.parseAsync(["node", "council-ask", "ask-test-panel", "What?", "--format", "json"]);
+
+    expect(errorOutput).toMatch(/MOCK ENGINE/);
   });
 
   it("e2e: runs a 1-expert 1-round debate, persists debate + turn rows", async () => {
