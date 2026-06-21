@@ -166,6 +166,85 @@ describe("buildConveneCommand — auto-compose path", () => {
     }
   });
 
+  it("writes auto-compose progress to stderr without contaminating json stdout", async () => {
+    const writes: { readonly stream: "stdout" | "stderr"; readonly text: string }[] = [];
+    let stdout = "";
+    let stderr = "";
+    const cmd = buildConveneCommand({
+      engineFactory: () => new ScriptedEngine([validPanelJson]),
+      write: (s) => {
+        stdout += s;
+        writes.push({ stream: "stdout", text: s });
+      },
+      writeError: (s) => {
+        stderr += s;
+        writes.push({ stream: "stderr", text: s });
+      },
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "Should we adopt event sourcing?",
+      "--max-rounds",
+      "1",
+      "--format",
+      "json",
+      "--engine",
+      "mock",
+      "--yes",
+    ]);
+
+    expect(stderr).toContain("Composing panel…\n");
+    expect(stdout).not.toContain("Composing panel");
+    expect(stderr).not.toContain("\r");
+    expect(stderr).not.toContain("\x1B");
+
+    const firstStdoutIndex = writes.findIndex((entry) => entry.stream === "stdout");
+    const progressIndex = writes.findIndex((entry) => entry.text.includes("Composing panel"));
+    expect(progressIndex).toBeGreaterThanOrEqual(0);
+    expect(firstStdoutIndex).toBeGreaterThan(progressIndex);
+
+    const lines = stdout.split("\n").filter((line) => line.trim().length > 0);
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) {
+      expect(line.trim()).toMatch(/^\{/);
+      expect(() => JSON.parse(line)).not.toThrow();
+    }
+  });
+
+  it("suppresses auto-compose progress under --quiet", async () => {
+    let stdout = "";
+    let stderr = "";
+    const cmd = buildConveneCommand({
+      engineFactory: () => new ScriptedEngine([validPanelJson]),
+      write: (s) => {
+        stdout += s;
+      },
+      writeError: (s) => {
+        stderr += s;
+      },
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "Should we adopt event sourcing?",
+      "--max-rounds",
+      "1",
+      "--format",
+      "json",
+      "--engine",
+      "mock",
+      "--yes",
+      "--quiet",
+    ]);
+
+    expect(stderr).not.toContain("Composing panel");
+    expect(stdout).not.toContain("Composing panel");
+    expect(stdout.split("\n").some((line) => line.trim().startsWith("{"))).toBe(true);
+  });
+
   it("reports a clear error when the engine returns garbage", async () => {
     const cmd = buildConveneCommand({
       engineFactory: () => new ScriptedEngine(["not json"]),
@@ -175,13 +254,7 @@ describe("buildConveneCommand — auto-compose path", () => {
     cmd.exitOverride();
 
     await expect(
-      cmd.parseAsync([
-        "node",
-        "council-convene",
-        "topic",
-        "--engine",
-        "mock",
-      ]),
+      cmd.parseAsync(["node", "council-convene", "topic", "--engine", "mock"]),
     ).rejects.toThrow(/auto-compose|panel|template/i);
   });
 
