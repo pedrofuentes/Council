@@ -35,6 +35,7 @@ import { buildChatCommand } from "../cli/commands/chat.js";
 import { buildConcludeCommand } from "../cli/commands/conclude.js";
 import { buildConfigCommand } from "../cli/commands/config.js";
 import { buildConveneCommand } from "../cli/commands/convene.js";
+import { buildDemoCommand } from "../cli/commands/demo.js";
 import { buildDocsCommand } from "../cli/commands/docs.js";
 import { buildDoctorCommand } from "../cli/commands/doctor.js";
 import { buildExpertCommand } from "../cli/commands/expert.js";
@@ -156,7 +157,7 @@ installSqliteExperimentalWarningFilter();
 
 // Command categories for grouped help output
 const COMMAND_CATEGORIES = {
-  "Getting Started": ["doctor", "config", "telemetry", "docs", "update"],
+  "Getting Started": ["demo", "doctor", "config", "telemetry", "docs", "update"],
   Deliberation: ["convene", "resume", "conclude"],
   Conversation: ["ask", "chat"],
   Library: ["expert", "panel", "templates"],
@@ -199,11 +200,18 @@ export function resetFirstRunSetupForTests(): void {
 }
 
 // Commands that should NOT trigger the first-run model selection prompt.
+// `demo` is a zero-setup, offline showcase — it must run on a brand-new
+// machine with no model configured, so it can never be gated behind setup.
 // `doctor` is the diagnostic/recovery path and must remain usable when the
 // model is unset or broken. `config` is the field-level configuration command
 // (the recovery tool) and likewise must not be gated behind setup. `telemetry`
 // is a configuration management command and must work without model setup.
-const FIRST_RUN_SETUP_SKIP_COMMANDS: ReadonlySet<string> = new Set(["doctor", "config", "telemetry"]);
+const FIRST_RUN_SETUP_SKIP_COMMANDS: ReadonlySet<string> = new Set([
+  "demo",
+  "doctor",
+  "config",
+  "telemetry",
+]);
 
 function getTopLevelCommandName(actionCommand: Command): string {
   let current: Command = actionCommand;
@@ -254,6 +262,7 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
   }
 
   // Register commands in category order
+  program.addCommand(buildDemoCommand());
   program.addCommand(buildDoctorCommand());
   program.addCommand(buildConfigCommand());
   program.addCommand(buildTelemetryCommand());
