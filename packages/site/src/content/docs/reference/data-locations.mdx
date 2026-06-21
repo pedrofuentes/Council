@@ -1,0 +1,233 @@
+---
+title: Data Locations
+description: Directory structure and file locations used by Council.
+---
+
+Council stores configuration, panels, experts, and runtime data in predictable locations. Understanding this structure helps with backups, version control, and troubleshooting.
+
+## Directory Overview
+
+| Path | Purpose | Version Control? |
+|------|---------|------------------|
+| `~/.council/` | Runtime data (DB, logs, cache) | **No** — exclude from VCS |
+| `~/Council/` | User data (experts, panels, docs) | **Yes** — safe to commit |
+
+## `~/.council/` — Runtime Directory
+
+**Default location:** `~/.council/`
+
+**Override:** `COUNCIL_HOME` environment variable
+
+Contains ephemeral runtime state and should **not** be version-controlled.
+
+### Structure
+
+```
+~/.council/
+├── config.yaml          # User configuration
+├── council.db           # SQLite database (panels, experts, chat history, memory)
+├── logs/                # Error logs and debug traces
+└── cache/               # Temporary download cache (update checks, etc.)
+```
+
+### Files
+
+| File/Directory | Description |
+|----------------|-------------|
+| `config.yaml` | User configuration. Edit via `council config set` or manually. |
+| `council.db` | SQLite database. Stores panels, experts, document indexes, chat history, memory. |
+| `logs/` | Error logs and stack traces. Check here when debugging failures. |
+| `cache/` | Ephemeral cache (update notifier, etc.). Safe to delete. |
+
+### Backup Strategy
+
+**What to back up:**
+
+- `config.yaml` — your settings
+- `council.db` — your panels, experts, and chat history
+
+**What to exclude:**
+
+- `logs/`, `cache/` — regenerated as needed
+
+**Example:**
+
+```bash
+# Backup
+tar -czf council-backup.tar.gz ~/.council/config.yaml ~/.council/council.db
+
+# Restore
+tar -xzf council-backup.tar.gz -C ~/
+```
+
+## `~/Council/` — User Data Directory
+
+**Default location:** `~/Council/`
+
+**Override:** `COUNCIL_DATA_HOME` environment variable or `config.paths.dataHome`
+
+Contains **version-controllable** user-authored content: expert definitions, panel definitions, and document corpora.
+
+### Structure
+
+```
+~/Council/
+├── experts/
+│   ├── cto.yaml
+│   ├── security-expert.yaml
+│   └── ...
+├── panels/
+│   ├── tech-review.yaml
+│   ├── code-review.yaml
+│   └── ...
+└── docs/
+    ├── cto/
+    │   ├── architecture-decisions.md
+    │   ├── team-guidelines.pdf
+    │   └── ...
+    └── security-expert/
+        ├── threat-model.md
+        └── ...
+```
+
+### Subdirectories
+
+| Directory | Contains | Description |
+|-----------|----------|-------------|
+| `experts/` | `*.yaml` | Expert definitions. Reusable across panels. See [Expert YAML Format](/Council/docs/reference/expert-yaml/). |
+| `panels/` | `*.yaml` | Panel definitions. Override bundled templates or define custom panels. See [Panel YAML Format](/Council/docs/reference/panel-yaml/). |
+| `docs/<expert-slug>/` | Documents | Persona expert document corpora. Council indexes these to train expert memory. |
+
+### Version Control
+
+**Recommended:**
+
+```bash
+cd ~/Council
+git init
+git add experts/ panels/
+git commit -m "Initial Council setup"
+```
+
+**What to commit:**
+
+- `experts/*.yaml` — expert definitions
+- `panels/*.yaml` — panel definitions
+- `docs/` (optional) — if docs are shareable or team-maintained
+
+**What to ignore:**
+
+```gitignore
+# Exclude sensitive or large binary docs
+docs/**/*.pdf
+docs/**/*.docx
+
+# Or exclude all docs if they're personal/sensitive
+docs/
+```
+
+### Sharing with Teams
+
+To share a panel definition and its experts with a team:
+
+1. Commit `panels/<panel-name>.yaml` and referenced `experts/*.yaml`
+2. Push to a shared repo
+3. Teammates clone and place files in their `~/Council/` directory
+4. Council auto-discovers them
+
+**Example:**
+
+```bash
+# Team member A (author)
+cd ~/Council
+git add experts/cto.yaml experts/cfo.yaml panels/tech-review.yaml
+git commit -m "Add tech-review panel"
+git push origin main
+
+# Team member B (consumer)
+cd ~/Council
+git pull origin main
+council panel show tech-review  # Works immediately
+```
+
+## Document Corpus Locations
+
+### Default Location
+
+For persona experts (experts with `kind: persona`), Council looks for documents in:
+
+```
+~/Council/docs/<expert-slug>/
+```
+
+**Example:**
+
+```yaml
+# experts/cto.yaml
+slug: cto
+kind: persona
+# (no docsPath override)
+```
+
+Council indexes:
+
+```
+~/Council/docs/cto/
+```
+
+### Custom Location
+
+Override with the `docsPath` field:
+
+```yaml
+# experts/cto.yaml
+slug: cto
+kind: persona
+docsPath: /shared/team-docs/architecture
+```
+
+Council indexes:
+
+```
+/shared/team-docs/architecture/
+```
+
+## Checking Current Paths
+
+### Runtime Directory
+
+```bash
+echo $COUNCIL_HOME
+# (unset) → ~/.council/
+
+# Or check active config
+council doctor
+```
+
+### Data Directory
+
+```bash
+echo $COUNCIL_DATA_HOME
+# (unset) → ~/Council/
+
+# Or check active config
+council config get paths.dataHome
+```
+
+## Isolation for Testing
+
+To run Council in an isolated environment (e.g., integration tests, CI):
+
+```bash
+export COUNCIL_HOME=/tmp/council-test
+export COUNCIL_DATA_HOME=/tmp/council-data
+council convene test-panel
+```
+
+Council creates fresh directories and does not touch `~/.council/` or `~/Council/`.
+
+## Related
+
+- [Configuration](/Council/docs/reference/configuration/) — `paths.dataHome` setting
+- [Environment Variables](/Council/docs/reference/environment-variables/) — `COUNCIL_HOME`, `COUNCIL_DATA_HOME`
+- [Expert YAML Format](/Council/docs/reference/expert-yaml/) — `docsPath` field

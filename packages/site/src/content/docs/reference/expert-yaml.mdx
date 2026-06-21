@@ -1,0 +1,68 @@
+---
+title: Expert YAML Format
+description: Schema and examples for expert definition files.
+---
+
+Expert definitions specify the static profile of a panel participant. Store them as `.yaml` files in `~/Council/experts/` for reuse across panels.
+
+## Schema
+
+### Top-Level Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `slug` | string | Yes | Short identifier scoped to the panel (e.g., `cto`, `skeptic`). Lowercase, digits, hyphens; must start with a letter. |
+| `displayName` | string | Yes | Name shown in transcripts (e.g., `Dahlia Renner (CTO)`). |
+| `role` | string | Yes | One-line role descriptor. |
+| `expertise` | object | Yes | Evidence weights and prior knowledge. See [Expertise Object](#expertise-object). |
+| `epistemicStance` | string | Yes | Stance from which the expert forms beliefs. |
+| `model` | string | No | Provider-agnostic model override (e.g., `claude-sonnet-4.5`). Falls back to panel/global default. |
+| `debateProtocol` | string | No | Override for default anti-sycophancy protocol. |
+| `outputContract` | string | No | Override for output formatting requirements. |
+| `forbiddenMoves` | string[] | No | Additional forbidden debate moves; combined with global defaults. |
+| `personality` | string | No | Personality flavor applied to identity tone. |
+| `kind` | `generic` \| `persona` | No | Defaults to `generic`. Use `persona` for document-trained experts. |
+| `personaDescription` | string | No | For persona experts: relationship description (e.g., `VP of Engineering I report to`). |
+| `docsPath` | string | No | For persona experts: override default docs location. |
+
+### Expertise Object
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `weightedEvidence` | string[] | Yes | Evidence types this expert weights heavily, ordered by priority. **Must contain at least one entry.** |
+| `referenceCases` | string[] | No | Specific historical patterns or principles the expert cites by name. |
+| `notExpertIn` | string[] | No | Areas this expert explicitly disclaims expertise in. |
+
+## Constraints
+
+- **Section marker injection**: Fields like `displayName`, `role`, `personality`, and `epistemicStance` **must not** contain patterns like `[1]`, `[2]` (these are reserved for the internal prompt structure).
+- **Slug pattern**: `^[a-z][a-z0-9-]*$` (lowercase, digits, hyphens; must start with a letter).
+- **Unique slugs**: Within a panel, all expert slugs must be unique.
+
+## Example
+
+```yaml
+slug: senior
+displayName: Senior Developer
+role: Senior Developer focused on clarity, idioms, and review-velocity
+expertise:
+  weightedEvidence:
+    - Naming, function decomposition, and call-site readability
+    - Idiomatic use of the language and framework
+    - Test ergonomics (can this be tested without a stub jungle?)
+  referenceCases:
+    - The "clever one-liner" that takes 10 minutes to verify
+  notExpertIn:
+    - infrastructure operations
+    - cryptography
+epistemicStance: >
+  You have read too much code by people who optimized for the
+  hour they spent writing it instead of the year other people
+  will spend reading it.
+personality: Prefers boring, obvious diffs over clever, terse ones.
+```
+
+## Related
+
+- [Panel YAML Format](/Council/docs/reference/panel-yaml/)
+- [Configuration](/Council/docs/reference/configuration/)

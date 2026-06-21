@@ -1,0 +1,166 @@
+---
+title: In-Chat Directives
+description: Special commands available during panel chat sessions.
+---
+
+Panel chat mode (`council chat <panel>`) supports in-line directives for targeted questions and inline debates.
+
+## Directives Overview
+
+| Directive | Syntax | Description |
+|-----------|--------|-------------|
+| **Mention** | `@<slug> <message>` | Address specific experts. |
+| **Convene** | `@convene <topic>` | Run a structured 4-phase debate inline. |
+| **Exit** | `exit`, `/quit`, `quit`, `/exit` | End the chat session. |
+
+## `@<slug>` — Mention Expert
+
+Address one or more experts by their slug. Only the mentioned experts respond.
+
+### Syntax
+
+```
+@<slug> [additional @<slug>...] <message>
+```
+
+- **Slugs** must appear **contiguously at the start** of the message.
+- Multiple mentions allowed: `@cto @cfo <message>`
+- Unknown slugs raise an error listing available experts.
+- Display-name mentions (`@"Sasha Lin"`) are **not supported** — use slugs only.
+
+### Examples
+
+```bash
+# Single mention
+@cto What's the ROI on this refactor?
+
+# Multiple mentions
+@security @perf Review this authentication flow for vulnerabilities and latency.
+
+# Invalid (mention not at start)
+Ask @cto about the timeline.
+# → Treated as plain text, all experts respond
+```
+
+### Behavior
+
+- Only the mentioned experts respond.
+- Repeated mentions are deduplicated, preserving first-occurrence order.
+- Case-sensitive match: `@CTO` ≠ `@cto`.
+
+### Available Experts
+
+Check which experts are in your panel:
+
+```bash
+council chat tech-review
+# → Startup message lists available experts and their slugs
+```
+
+Or list panel composition:
+
+```bash
+council panel show tech-review
+```
+
+## `@convene <topic>` — Inline Debate
+
+Trigger a structured 4-phase debate **within** a chat session. Useful for diving deep on a specific topic without leaving chat mode.
+
+### Syntax
+
+```
+@convene <topic>
+```
+
+- **Reserved keyword**: `@convene` always triggers a debate, even if an expert has slug `convene`.
+- Requires a topic: `@convene` alone raises an error.
+
+### Examples
+
+```bash
+@convene Should we migrate to microservices or stick with the monolith?
+
+@convene What's the best authentication strategy for our new API?
+```
+
+### Behavior
+
+1. Council spawns a structured debate (same as `council convene <panel>`)
+2. Runs 4 phases: Hypothesis Formation → Deliberation → Convergence → Synthesis
+3. Returns control to chat after synthesis
+4. Synthesis result is added to chat history (experts remember it)
+
+### Use Cases
+
+- **Exploratory chat** then **focused debate** on a specific sub-question
+- Switching between free-form brainstorming and rigorous analysis
+- Nesting debates within a longer advisory session
+
+## Exit Tokens
+
+End the chat session with any of:
+
+- `exit`
+- `quit`
+- `/exit`
+- `/quit`
+
+**Case-insensitive.** Pressing Ctrl+C also exits cleanly.
+
+## Chat Startup Help
+
+When you start a panel chat, Council displays:
+
+- Available expert slugs (for `@mention`)
+- Reminder: `@convene <topic>` for inline debates
+- Exit instructions
+
+**Example:**
+
+```
+$ council chat tech-review
+
+Available experts: cto, cfo, security
+Use @<slug> to address a specific expert, or @convene <topic> to run a structured debate inline.
+Type 'exit' or press Ctrl+C to end the session.
+
+> _
+```
+
+## General Messages (No Directive)
+
+Messages without a directive are **broadcast** to all experts — every expert in the panel responds.
+
+```bash
+> What are the trade-offs of adopting TypeScript?
+# → All experts respond
+```
+
+## Errors
+
+### Unknown Expert Slug
+
+```
+> @unknown-expert What's your take?
+Error: Expert "unknown-expert" is not in this panel. Available experts: cto, cfo, security
+```
+
+### Display-Name Mention (Not Supported)
+
+```
+> @"Chief Technology Officer" What's the timeline?
+Error: Display-name mentions like @"..." are not supported — address an expert by slug instead. Available experts: cto, cfo, security
+```
+
+### Convene Without Topic
+
+```
+> @convene
+Error: @convene requires a topic. Usage: @convene <topic>
+```
+
+## Related
+
+- [Commands Reference](/Council/docs/reference/commands/) — `council chat`
+- [Panel YAML Format](/Council/docs/reference/panel-yaml/) — Expert slug definitions
