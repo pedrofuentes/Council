@@ -4,16 +4,16 @@
  * Two responsibilities, both designed to be hermetically testable and to
  * NEVER throw:
  *   - `fetchLatestVersion()` reads the published `version` from the npm
- *     registry `/latest` manifest for `@council-ai/cli`.
+ *     registry `/latest` manifest for `council-ai`.
  *   - `isNewerVersion()` performs a minimal numeric `major.minor.patch`
  *     comparison (pre-release/build suffixes are stripped).
  */
 
 /**
- * The npm registry `/latest` manifest endpoint for `@council-ai/cli`. The
- * scoped package name MUST be URL-encoded (`@council-ai%2Fcli`).
+ * The npm registry `/latest` manifest endpoint for `council-ai`. The package is
+ * unscoped, so the name needs no URL-encoding.
  */
-const REGISTRY_LATEST_URL = "https://registry.npmjs.org/@council-ai%2Fcli/latest";
+const REGISTRY_LATEST_URL = "https://registry.npmjs.org/council-ai/latest";
 
 /** Short default timeout so a slow/unreachable registry never stalls startup. */
 const DEFAULT_TIMEOUT_MS = 1500;
@@ -26,7 +26,7 @@ export interface FetchLatestVersionOptions {
 }
 
 /**
- * GET the latest published version of `@council-ai/cli` from the npm registry.
+ * GET the latest published version of `council-ai` from the npm registry.
  *
  * Returns the `version` string on success, or `null` on ANY failure
  * (network error, non-2xx response, malformed JSON, missing field, an unsafe

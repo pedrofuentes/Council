@@ -109,7 +109,7 @@ export function formatUpdateNotice(current: string, latest: string): string {
   const heading = chalk.yellow("Update available");
   const versions = `${chalk.dim(current)} ${chalk.dim("→")} ${chalk.green(latest)}`;
   const command = chalk.cyan("council update");
-  const fallback = chalk.dim("npm i -g @council-ai/cli");
+  const fallback = chalk.dim("npm i -g council-ai");
   return `${heading} ${versions} — run \`${command}\` (or \`${fallback}\`).\n`;
 }
 

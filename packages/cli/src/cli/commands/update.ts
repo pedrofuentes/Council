@@ -1,5 +1,5 @@
 /**
- * `council update` — upgrade the globally-installed `@council-ai/cli` to the
+ * `council update` — upgrade the globally-installed `council-ai` CLI to the
  * latest published version.
  *
  * The command detects the package manager that owns the install (npm, pnpm,
@@ -35,7 +35,7 @@ const PACKAGE_MANAGERS: readonly PackageManager[] = ["npm", "pnpm", "yarn", "bun
  * compile-time constant — never built from user input — so the spawned command
  * can never be influenced by untrusted data.
  */
-const PACKAGE_SPEC = "@council-ai/cli@latest";
+const PACKAGE_SPEC = "council-ai@latest";
 
 /** Result of running the package manager's global-install command. */
 export type UpgradeRunResult =
