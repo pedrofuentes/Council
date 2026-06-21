@@ -1,0 +1,110 @@
+---
+title: "Config & Environment Reference"
+description: "Auto-generated reference for every Council config.yaml setting and environment variable."
+---
+
+> DO NOT EDIT — this file is auto-generated from the Council CLI's Zod config schema by `pnpm --filter @council-ai/site docs:generate:config`. Run that command to regenerate it, and `pnpm --filter @council-ai/site docs:check:config` to verify it is in sync.
+
+Every Council configuration key and environment variable, generated from the CLI's own Zod config schema so this reference can never drift from the code.
+
+## Configuration keys
+
+Settings live in `~/.council/config.yaml`. All keys are optional and fall back to the defaults below. Use the dot-path with `council config set <key> <value>`.
+
+### `defaults`
+
+Global defaults applied to every panel unless overridden per-panel or per-command.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `defaults.model` | `string` | `claude-sonnet-4.5` | Provider-agnostic model identifier used when a panel does not specify one. |
+| `defaults.engine` | `copilot` \| `mock` \| `openai` \| `anthropic` | `copilot` | Engine used when the --engine flag is not passed on the command line. |
+| `defaults.maxRounds` | `integer` (1–20) | `4` | Maximum number of debate rounds per panel. |
+| `defaults.maxExperts` | `integer` (2–8) | `3` | Maximum number of experts per panel. |
+| `defaults.maxWordsPerResponse` | `integer` (50–2000) | `250` | Soft per-expert response cap, measured in words. |
+
+### `telemetry`
+
+Opt-in, anonymous usage telemetry.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `telemetry.enabled` | `boolean` | `false` | Enable anonymous usage telemetry (command names only, never panel content). |
+
+### `providers`
+
+Per-provider settings for engines that authenticate with a standalone API key. Only the NAME of the environment variable holding the key is stored here, never the key value itself.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `providers.openai.apiKeyEnvVar` | `string` | — | Name of the environment variable holding the OpenAI API key, never the key value itself. |
+| `providers.anthropic.apiKeyEnvVar` | `string` | — | Name of the environment variable holding the Anthropic API key, never the key value itself. |
+
+### `expert`
+
+Expert-library settings governing document ingestion and memory decay.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `expert.backgroundProcessing` | `boolean` | `false` | Enable background document indexing for expert libraries. |
+| `expert.recencyHalfLifeDays` | `integer` (1–365) | `90` | Number of days until an expert's memory weights decay by half. |
+| `expert.supportedFormats` | `string[]` | `[".md",".txt",".html",".pdf",".csv",".tsv",".rtf",".docx",".pptx",".xlsx",".xls",".odt",".ods",".odp"]` | File extensions eligible for expert document ingestion. |
+
+### `documents`
+
+Document-extraction settings, including the optional AI-extraction fallback and the file-size ceiling.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `documents.aiExtraction` | `off` \| `ask` \| `auto` | `off` | AI-based text-extraction fallback for unknown or unsupported file formats. |
+| `documents.aiExtractionAllowedExtensions` | `string[]` | `[]` | Whitelist of extensions eligible for AI extraction; an empty list means every extension is eligible. |
+| `documents.maxFileSizeMB` | `number` (1–500) | `50` | Maximum file size accepted by the document extractor, measured in megabytes. |
+
+### `chat`
+
+Chat-mode context management and summarization.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `chat.recentTurnCount` | `integer` (5–50) | `10` | Number of recent chat turns kept verbatim before summarization. |
+| `chat.summaryMaxWords` | `integer` (100–2000) | `500` | Maximum length, in words, of the rolling chat-history summary. |
+| `chat.longConversationWarning` | `integer` (50–10000) | `500` | Warn the user once a chat exceeds this many turns. |
+
+### `conclude`
+
+Synthesis settings for the council conclude command.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `conclude.maxTranscriptChars` | `integer` (1000–1000000) | `50000` | Character budget for transcript content in the synthesis prompt; older turns are dropped beyond it. |
+
+### `paths`
+
+User-facing data directory locations.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `paths.dataHome` | `string` | `~/Council` | Directory holding user-facing expert and panel YAML files. |
+
+## Environment variables
+
+Environment variables override configuration at runtime and tune rendering and integration behavior.
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `COUNCIL_HOME` | Override the runtime directory that stores Council's database, logs, and config.yaml. Used by --ephemeral mode and tests to isolate state. | `~/.council/` |
+| `COUNCIL_DATA_HOME` | Override the data directory for expert and panel YAML files. Takes precedence over paths.dataHome. | `~/Council/` |
+| `NO_COLOR` | Disable ANSI color output when set to any non-empty value (follows the NO\_COLOR standard). | `(unset)` |
+| `COUNCIL_ASCII` | Force an ASCII-only charset (set to 1), disabling Unicode box-drawing characters and emoji. | `(unset)` |
+| `COPILOT_CLI_PATH` | Override the auto-detected path to the GitHub Copilot CLI loader. | `auto-detected` |
+| `TERM` | Standard terminal type; the value dumb switches Council to ASCII-only, no-color output. | `auto-detected` |
+| `CI` | When set to true or 1, forces non-interactive rendering with no prompts or spinners. | `(unset)` |
+| `ACCESSIBILITY` | When set to 1, forces non-interactive, screen-reader-friendly rendering. | `(unset)` |
+| `VISUAL` | Editor launched by council config edit and other edit commands; checked before EDITOR. | `(unset)` |
+| `EDITOR` | Fallback editor launched by edit commands when VISUAL is unset. | `(unset)` |
+
+## Related
+
+- [Configuration](/Council/docs/reference/configuration/) — narrative guide to editing `config.yaml`.
+- [Environment Variables](/Council/docs/reference/environment-variables/) — detailed environment-variable guide.
+- [Data Locations](/Council/docs/reference/data-locations/) — directory structure and file locations.

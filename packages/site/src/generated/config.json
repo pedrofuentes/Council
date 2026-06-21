@@ -1,0 +1,380 @@
+{
+  "$generated": "DO NOT EDIT — this file is auto-generated from the Council CLI's Zod config schema by `pnpm --filter @council-ai/site docs:generate:config`. Run that command to regenerate it, and `pnpm --filter @council-ai/site docs:check:config` to verify it is in sync.",
+  "$source": "@council-ai/cli ConfigSchema (Zod)",
+  "config": {
+    "sections": [
+      {
+        "name": "defaults",
+        "description": "Global defaults applied to every panel unless overridden per-panel or per-command.",
+        "keys": [
+          {
+            "path": "defaults.model",
+            "segments": [
+              "defaults",
+              "model"
+            ],
+            "section": "defaults",
+            "type": "string",
+            "hasDefault": true,
+            "default": "claude-sonnet-4.5",
+            "description": "Provider-agnostic model identifier used when a panel does not specify one."
+          },
+          {
+            "path": "defaults.engine",
+            "segments": [
+              "defaults",
+              "engine"
+            ],
+            "section": "defaults",
+            "type": "enum",
+            "enumValues": [
+              "copilot",
+              "mock",
+              "openai",
+              "anthropic"
+            ],
+            "hasDefault": true,
+            "default": "copilot",
+            "description": "Engine used when the --engine flag is not passed on the command line."
+          },
+          {
+            "path": "defaults.maxRounds",
+            "segments": [
+              "defaults",
+              "maxRounds"
+            ],
+            "section": "defaults",
+            "type": "integer",
+            "hasDefault": true,
+            "default": 4,
+            "min": 1,
+            "max": 20,
+            "description": "Maximum number of debate rounds per panel."
+          },
+          {
+            "path": "defaults.maxExperts",
+            "segments": [
+              "defaults",
+              "maxExperts"
+            ],
+            "section": "defaults",
+            "type": "integer",
+            "hasDefault": true,
+            "default": 3,
+            "min": 2,
+            "max": 8,
+            "description": "Maximum number of experts per panel."
+          },
+          {
+            "path": "defaults.maxWordsPerResponse",
+            "segments": [
+              "defaults",
+              "maxWordsPerResponse"
+            ],
+            "section": "defaults",
+            "type": "integer",
+            "hasDefault": true,
+            "default": 250,
+            "min": 50,
+            "max": 2000,
+            "description": "Soft per-expert response cap, measured in words."
+          }
+        ]
+      },
+      {
+        "name": "telemetry",
+        "description": "Opt-in, anonymous usage telemetry.",
+        "keys": [
+          {
+            "path": "telemetry.enabled",
+            "segments": [
+              "telemetry",
+              "enabled"
+            ],
+            "section": "telemetry",
+            "type": "boolean",
+            "hasDefault": true,
+            "default": false,
+            "description": "Enable anonymous usage telemetry (command names only, never panel content)."
+          }
+        ]
+      },
+      {
+        "name": "providers",
+        "description": "Per-provider settings for engines that authenticate with a standalone API key. Only the NAME of the environment variable holding the key is stored here, never the key value itself.",
+        "keys": [
+          {
+            "path": "providers.openai.apiKeyEnvVar",
+            "segments": [
+              "providers",
+              "openai",
+              "apiKeyEnvVar"
+            ],
+            "section": "providers",
+            "type": "string",
+            "hasDefault": false,
+            "description": "Name of the environment variable holding the OpenAI API key, never the key value itself."
+          },
+          {
+            "path": "providers.anthropic.apiKeyEnvVar",
+            "segments": [
+              "providers",
+              "anthropic",
+              "apiKeyEnvVar"
+            ],
+            "section": "providers",
+            "type": "string",
+            "hasDefault": false,
+            "description": "Name of the environment variable holding the Anthropic API key, never the key value itself."
+          }
+        ]
+      },
+      {
+        "name": "expert",
+        "description": "Expert-library settings governing document ingestion and memory decay.",
+        "keys": [
+          {
+            "path": "expert.backgroundProcessing",
+            "segments": [
+              "expert",
+              "backgroundProcessing"
+            ],
+            "section": "expert",
+            "type": "boolean",
+            "hasDefault": true,
+            "default": false,
+            "description": "Enable background document indexing for expert libraries."
+          },
+          {
+            "path": "expert.recencyHalfLifeDays",
+            "segments": [
+              "expert",
+              "recencyHalfLifeDays"
+            ],
+            "section": "expert",
+            "type": "integer",
+            "hasDefault": true,
+            "default": 90,
+            "min": 1,
+            "max": 365,
+            "description": "Number of days until an expert's memory weights decay by half."
+          },
+          {
+            "path": "expert.supportedFormats",
+            "segments": [
+              "expert",
+              "supportedFormats"
+            ],
+            "section": "expert",
+            "type": "string[]",
+            "hasDefault": true,
+            "default": [
+              ".md",
+              ".txt",
+              ".html",
+              ".pdf",
+              ".csv",
+              ".tsv",
+              ".rtf",
+              ".docx",
+              ".pptx",
+              ".xlsx",
+              ".xls",
+              ".odt",
+              ".ods",
+              ".odp"
+            ],
+            "description": "File extensions eligible for expert document ingestion."
+          }
+        ]
+      },
+      {
+        "name": "documents",
+        "description": "Document-extraction settings, including the optional AI-extraction fallback and the file-size ceiling.",
+        "keys": [
+          {
+            "path": "documents.aiExtraction",
+            "segments": [
+              "documents",
+              "aiExtraction"
+            ],
+            "section": "documents",
+            "type": "enum",
+            "enumValues": [
+              "off",
+              "ask",
+              "auto"
+            ],
+            "hasDefault": true,
+            "default": "off",
+            "description": "AI-based text-extraction fallback for unknown or unsupported file formats."
+          },
+          {
+            "path": "documents.aiExtractionAllowedExtensions",
+            "segments": [
+              "documents",
+              "aiExtractionAllowedExtensions"
+            ],
+            "section": "documents",
+            "type": "string[]",
+            "hasDefault": true,
+            "default": [],
+            "description": "Whitelist of extensions eligible for AI extraction; an empty list means every extension is eligible."
+          },
+          {
+            "path": "documents.maxFileSizeMB",
+            "segments": [
+              "documents",
+              "maxFileSizeMB"
+            ],
+            "section": "documents",
+            "type": "number",
+            "hasDefault": true,
+            "default": 50,
+            "min": 1,
+            "max": 500,
+            "description": "Maximum file size accepted by the document extractor, measured in megabytes."
+          }
+        ]
+      },
+      {
+        "name": "chat",
+        "description": "Chat-mode context management and summarization.",
+        "keys": [
+          {
+            "path": "chat.recentTurnCount",
+            "segments": [
+              "chat",
+              "recentTurnCount"
+            ],
+            "section": "chat",
+            "type": "integer",
+            "hasDefault": true,
+            "default": 10,
+            "min": 5,
+            "max": 50,
+            "description": "Number of recent chat turns kept verbatim before summarization."
+          },
+          {
+            "path": "chat.summaryMaxWords",
+            "segments": [
+              "chat",
+              "summaryMaxWords"
+            ],
+            "section": "chat",
+            "type": "integer",
+            "hasDefault": true,
+            "default": 500,
+            "min": 100,
+            "max": 2000,
+            "description": "Maximum length, in words, of the rolling chat-history summary."
+          },
+          {
+            "path": "chat.longConversationWarning",
+            "segments": [
+              "chat",
+              "longConversationWarning"
+            ],
+            "section": "chat",
+            "type": "integer",
+            "hasDefault": true,
+            "default": 500,
+            "min": 50,
+            "max": 10000,
+            "description": "Warn the user once a chat exceeds this many turns."
+          }
+        ]
+      },
+      {
+        "name": "conclude",
+        "description": "Synthesis settings for the council conclude command.",
+        "keys": [
+          {
+            "path": "conclude.maxTranscriptChars",
+            "segments": [
+              "conclude",
+              "maxTranscriptChars"
+            ],
+            "section": "conclude",
+            "type": "integer",
+            "hasDefault": true,
+            "default": 50000,
+            "min": 1000,
+            "max": 1000000,
+            "description": "Character budget for transcript content in the synthesis prompt; older turns are dropped beyond it."
+          }
+        ]
+      },
+      {
+        "name": "paths",
+        "description": "User-facing data directory locations.",
+        "keys": [
+          {
+            "path": "paths.dataHome",
+            "segments": [
+              "paths",
+              "dataHome"
+            ],
+            "section": "paths",
+            "type": "string",
+            "hasDefault": true,
+            "default": "~/Council",
+            "description": "Directory holding user-facing expert and panel YAML files."
+          }
+        ]
+      }
+    ],
+    "envVars": [
+      {
+        "name": "COUNCIL_HOME",
+        "purpose": "Override the runtime directory that stores Council's database, logs, and config.yaml. Used by --ephemeral mode and tests to isolate state.",
+        "default": "~/.council/"
+      },
+      {
+        "name": "COUNCIL_DATA_HOME",
+        "purpose": "Override the data directory for expert and panel YAML files. Takes precedence over paths.dataHome.",
+        "default": "~/Council/"
+      },
+      {
+        "name": "NO_COLOR",
+        "purpose": "Disable ANSI color output when set to any non-empty value (follows the NO_COLOR standard).",
+        "default": "(unset)"
+      },
+      {
+        "name": "COUNCIL_ASCII",
+        "purpose": "Force an ASCII-only charset (set to 1), disabling Unicode box-drawing characters and emoji.",
+        "default": "(unset)"
+      },
+      {
+        "name": "COPILOT_CLI_PATH",
+        "purpose": "Override the auto-detected path to the GitHub Copilot CLI loader.",
+        "default": "auto-detected"
+      },
+      {
+        "name": "TERM",
+        "purpose": "Standard terminal type; the value dumb switches Council to ASCII-only, no-color output.",
+        "default": "auto-detected"
+      },
+      {
+        "name": "CI",
+        "purpose": "When set to true or 1, forces non-interactive rendering with no prompts or spinners.",
+        "default": "(unset)"
+      },
+      {
+        "name": "ACCESSIBILITY",
+        "purpose": "When set to 1, forces non-interactive, screen-reader-friendly rendering.",
+        "default": "(unset)"
+      },
+      {
+        "name": "VISUAL",
+        "purpose": "Editor launched by council config edit and other edit commands; checked before EDITOR.",
+        "default": "(unset)"
+      },
+      {
+        "name": "EDITOR",
+        "purpose": "Fallback editor launched by edit commands when VISUAL is unset.",
+        "default": "(unset)"
+      }
+    ]
+  }
+}

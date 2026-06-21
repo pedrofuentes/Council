@@ -25,6 +25,8 @@
     "check": "astro check",
     "docs:generate:commands": "node scripts/generate-command-reference.ts",
     "docs:check:commands": "node scripts/check-command-reference.ts",
+    "docs:generate:config": "node scripts/generate-config-reference.ts",
+    "docs:check:config": "node scripts/check-config-reference.ts",
     "test": "vitest run"
   },
   "dependencies": {
