@@ -23,6 +23,7 @@ import type {
   SendOptions,
 } from "../../../../src/engine/index.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
+import { mkCanonicalTempDir } from "../../../helpers/tmp.js";
 
 // Stub engine used by `expert train` tests — mirrors the one in
 // tests/unit/core/documents/processor.test.ts. It returns a canned
@@ -83,8 +84,8 @@ interface TestEnv {
 }
 
 async function makeEnv(): Promise<TestEnv> {
-  const home = await fs.mkdtemp(path.join(os.tmpdir(), "council-expert-home-"));
-  const dataHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-expert-data-"));
+  const home = await mkCanonicalTempDir("council-expert-home-");
+  const dataHome = await mkCanonicalTempDir("council-expert-data-");
   const originalHome = process.env["COUNCIL_HOME"];
   const originalDataHome = process.env["COUNCIL_DATA_HOME"];
   process.env["COUNCIL_HOME"] = home;

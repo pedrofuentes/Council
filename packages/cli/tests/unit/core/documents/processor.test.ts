@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createDocumentProcessor } from "../../../../src/core/documents/processor.js";
 import { createDocumentIndexer } from "../../../../src/core/documents/indexer.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
+import { mkCanonicalTempDir } from "../../../helpers/tmp.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import type { CouncilDatabase } from "../../../../src/memory/db.js";
 import { DocumentRepository } from "../../../../src/memory/repositories/document-repository.js";
@@ -91,7 +92,7 @@ interface Env {
 }
 
 async function makeEnv(): Promise<Env> {
-  const home = await fs.mkdtemp(path.join(os.tmpdir(), "council-proc-"));
+  const home = await mkCanonicalTempDir("council-proc-");
   await copyTemplateDb(path.join(home, "council.db"));
   const db = await createDatabase(path.join(home, "council.db"));
   return {

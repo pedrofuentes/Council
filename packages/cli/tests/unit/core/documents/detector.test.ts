@@ -10,6 +10,7 @@ import * as path from "node:path";
 import { createHash } from "node:crypto";
 
 import { detectDocumentChanges } from "../../../../src/core/documents/detector.js";
+import { mkCanonicalTempDir } from "../../../helpers/tmp.js";
 
 function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
@@ -19,7 +20,7 @@ describe("detectDocumentChanges", () => {
   let dir: string;
 
   beforeEach(async () => {
-    dir = await fs.mkdtemp(path.join(os.tmpdir(), "council-detect-"));
+    dir = await mkCanonicalTempDir("council-detect-");
   });
 
   afterEach(async () => {
