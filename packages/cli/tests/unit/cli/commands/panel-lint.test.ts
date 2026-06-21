@@ -82,16 +82,20 @@ const STRUCTURALLY_INVALID_PANEL = CLEAN_PANEL.replace(
 
 /**
  * A panel whose first expert carries a hostile `slug` packed with terminal
- * control sequences — a CSI colour code, an OSC 8 hyperlink, a BEL, a C1 CSI
- * introducer, a bidi override (Trojan Source), and a newline. The slug is only
- * validated as `z.string().min(1)`, so it survives schema validation and flows
- * verbatim into the finding's `path` (`experts[0] (<slug>)…`). With the expert
- * also short one weightedEvidence entry, it raises an `expert-evidence` finding
- * whose rendered location embeds the slug — the terminal-injection sink.
+ * control sequences AND line breaks — a CSI colour code, an OSC 8 hyperlink, a
+ * BEL, a C1 CSI introducer, a bidi override (Trojan Source), a CR+LF, and a
+ * Unicode line separator (U+2028). The slug is only validated as
+ * `z.string().min(1)`, so it survives schema validation and flows verbatim into
+ * the finding's `path` (`experts[0] (<slug>)…`) and `message` (`Expert
+ * "<slug>"…`). With the expert also short one weightedEvidence entry, it raises
+ * an `expert-evidence` finding whose rendered location and message embed the
+ * slug — the terminal-injection sink. The CR/LF/U+2028 let the slug forge an
+ * extra report line or CR-overwrite the severity prefix unless the renderer
+ * collapses every line break to a single line.
  */
 const TERMINAL_INJECTION_PANEL = STRUCTURALLY_INVALID_PANEL.replace(
   "  - slug: backend",
-  '  - slug: "ev\\x1b[31m\\x1b]8;;http://evil\\x07IL\\x9b1m\\u202eX\\nFAKE"',
+  '  - slug: "ev\\x1b[31m\\x1b]8;;http://evil\\x07IL\\x9b1m\\u202eX\\r\\nFAKE\\u2028TAIL"',
 );
 
 /**
@@ -103,6 +107,18 @@ const TERMINAL_INJECTION_PANEL = STRUCTURALLY_INVALID_PANEL.replace(
  */
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHARS = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F\u202A-\u202E\u2066-\u2069]/;
+
+/**
+ * Line-break characters that `toSingleLineDisplay` collapses to a single space
+ * but the weaker `stripControlChars` PRESERVES: carriage return, and the
+ * Unicode line/paragraph separators U+2028/U+2029. The lint renderer only ever
+ * emits "\n" between its own report lines, so none of these may appear in its
+ * output — an occurrence means an untrusted field (slug, path, message, error
+ * reason) smuggled a line break onto the terminal, enabling a CR-overwrite of
+ * the severity/rule prefix or a forged report line. (A raw "\n" is asserted
+ * structurally below, since the renderer uses it legitimately.)
+ */
+const LINE_BREAK_CHARS = /[\r\u2028\u2029]/;
 
 interface TempDir {
   readonly dir: string;
@@ -220,26 +236,36 @@ describe("council panel lint", () => {
     expect(strict.out() + strict.err()).toContain("sample-prompts");
   });
 
-  it("strips terminal control sequences from a finding's rendered location", async () => {
-    // The hostile slug reaches the report only through `finding.path`; the
-    // message is already sanitized. A raw location would let untrusted YAML
-    // inject ANSI/OSC/bidi sequences into the operator's terminal.
+  it("collapses line breaks and strips control sequences from a finding's rendered location", async () => {
+    // The hostile slug reaches the report through both `finding.path` and
+    // `finding.message`. A preserved CR/LF/U+2028 would let untrusted YAML forge
+    // a report line or CR-overwrite the severity prefix; ANSI/OSC/bidi would
+    // inject escape sequences. Both classes must be neutralized before the line
+    // reaches the operator's terminal.
     const file = await writeFile(tmp.dir, "injection.yaml", TERMINAL_INJECTION_PANEL);
     const cli = lintCommand();
     await expect(cli.parse([file])).rejects.toThrow();
     const output = cli.out() + cli.err();
     expect(output).toContain("expert-evidence"); // the finding was actually rendered
     expect(output).not.toMatch(CONTROL_CHARS);
+    expect(output).not.toMatch(LINE_BREAK_CHARS);
+    // The forged "\r\nFAKE\u2028TAIL" tail must stay on the finding's single
+    // line rather than breaking the location away from its message (a raw "\n"
+    // would split this line, dropping the "weightedEvidence]:" boundary).
+    const findingLine = output.split("\n").find((line) => line.includes("expert-evidence"));
+    expect(findingLine).toContain("weightedEvidence]:");
   });
 
-  it("strips terminal control sequences from the file label of a read error", async () => {
-    // `target.label` is echoed verbatim for read/parse failures; a path laced
-    // with control characters must not reach the terminal unsanitized.
-    const evilPath = path.join(tmp.dir, "ev\u001b[31m\u0007\u009b\u202emissing.yaml");
+  it("collapses line breaks and strips control sequences from the file label of a read error", async () => {
+    // `target.label` (and the echoed read-error `reason`, which embeds the path)
+    // are printed verbatim for read failures. A path laced with control
+    // characters or a CR must not reach the terminal able to spoof output.
+    const evilPath = path.join(tmp.dir, "ev\u001b[31m\u0007\u009b\u202e\rmissing.yaml");
     const cli = lintCommand();
     await expect(cli.parse([evilPath])).rejects.toThrow();
     const output = cli.out() + cli.err();
     expect(output).toContain("read-file"); // the read-error line was rendered
     expect(output).not.toMatch(CONTROL_CHARS);
+    expect(output).not.toMatch(LINE_BREAK_CHARS);
   });
 });
