@@ -1,0 +1,108 @@
+---
+title: Moderation Strategies
+description: How Council controls turn order and prompt generation in freeform debates to amplify disagreement and drive convergence.
+---
+
+In **freeform debate mode**, Council uses a **moderator strategy** to decide:
+1. Which experts speak in what order per round
+2. What prompt each expert receives
+3. Whether the debate should continue or terminate early
+
+Moderator strategies are **pluggable** — you can choose the one that fits your deliberation goal.
+
+## Why Moderation Matters
+
+Without moderation, experts speak in a fixed order every round (e.g., CTO → CFO → PM → repeat). This works but misses opportunities:
+- No amplification of disagreements
+- No early termination when consensus is reached
+- No targeted follow-ups based on prior turns
+
+Moderators add **context-aware orchestration** to make debates more efficient and insightful.
+
+## Built-In Strategies
+
+### Round-Robin (default)
+Every expert speaks once per round, in the order they were defined.
+
+**When to use**: balanced panel discussions where every perspective should be heard equally.
+
+```bash
+council convene "Topic" --strategy round-robin
+```
+
+**Behavior**:
+- Round 1: Expert A, then B, then C
+- Round 2: Expert A, then B, then C
+- Stops at `maxRounds`
+
+Prompt: each expert sees the topic + all prior turns from earlier rounds + turns from the current round so far.
+
+### Devil's Advocate
+One expert is designated as the **contrarian** — prompted to find weaknesses in every other expert's claims. The rest speak normally.
+
+**When to use**: stress-test a proposal, surface blind spots, ensure nothing is taken for granted.
+
+```bash
+council convene "Should we ship the MVP?" --strategy devils-advocate:skeptic
+```
+
+The `:skeptic` suffix pins the expert with slug `skeptic` as the adversary. If omitted, Council picks one randomly.
+
+**Behavior**:
+- Each round, non-adversary experts speak first (topic-focused prompts)
+- The adversary speaks last, prompted: "Find weaknesses in the arguments above. What scenarios cause these proposals to fail?"
+
+### Consensus-Check
+After each round, the moderator evaluates whether the panel has **converged**. If so, the debate terminates early with reason: `"consensus"`.
+
+**When to use**: avoid wasting tokens when the panel agrees quickly.
+
+```bash
+council convene "Topic" --strategy consensus-check
+```
+
+**Behavior**:
+- Experts speak round-robin
+- After each round, the moderator checks for convergence signals:
+  - All experts used the stand-down phrase ("stress-tested")
+  - No new disagreements introduced
+  - Synthesis shows alignment
+
+If converged, the debate emits a `debate.end` event with `reason: "consensus"` instead of continuing to `maxRounds`.
+
+## How Strategies Work (Implementation)
+
+Moderator strategies implement the `ModeratorStrategy` interface:
+
+```typescript
+interface ModeratorStrategy {
+  planRound(context: ModeratorContext): TurnAssignment[];
+  shouldContinue(context: ModeratorContext): boolean;
+}
+```
+
+- `planRound`: returns a list of `{ expertSlug, prompt }` assignments for the round
+- `shouldContinue`: returns `true` to continue, `false` to terminate early
+
+Strategies are **pure functions** — they receive context (experts, round number, topic, prior turns) and return assignments. They don't call the AI engine or mutate state.
+
+## Custom Strategies (Future)
+
+Moderator strategies are not yet user-extensible. To add a custom strategy today, you'd need to:
+1. Implement the `ModeratorStrategy` interface in TypeScript
+2. Register it in `src/core/moderator/strategies.ts`
+3. Rebuild Council from source
+
+A plugin system for custom strategies is on the roadmap (Phase 8+).
+
+## Structured Mode vs. Freeform Mode
+
+Moderator strategies apply **only in freeform mode**. Structured mode ignores `--strategy` and uses the fixed 4-phase choreography (opening → cross-exam → rebuttal → synthesis).
+
+See [Deliberation Model](/Council/docs/explanation/deliberation-model) for the difference between modes.
+
+## Relation to Other Concepts
+
+- [Deliberation Model](/Council/docs/explanation/deliberation-model) — how freeform and structured modes differ
+- [Anti-Sycophancy](/Council/docs/explanation/anti-sycophancy) — how devil's-advocate mode amplifies disagreement
+- [Context Management](/Council/docs/explanation/context-management) — how moderators cap prompt size with rolling summaries

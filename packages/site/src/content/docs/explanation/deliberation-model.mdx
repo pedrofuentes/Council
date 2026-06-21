@@ -1,0 +1,64 @@
+---
+title: The Deliberation Model
+description: How Council orchestrates multi-expert debates to produce better decisions through structured disagreement.
+---
+
+Council's core value proposition is **structured deliberation** — not just "ask multiple experts," but coordinated, disagreement-aware debate between distinct perspectives that synthesize into actionable insights.
+
+## The Problem with Single-Agent Advice
+
+A single LLM — even a frontier model — provides one perspective compressed into a "balanced" answer. It optimizes for agreement with itself, not for surfacing tensions between competing priorities. You get generic pros/cons lists instead of stakeholder-specific reasoning.
+
+## Council's Approach: Multi-Agent Debate
+
+Council runs **multiple expert agents in parallel**, each with:
+- A distinct **epistemic stance** (how they form beliefs)
+- Weighted **evidence types** (what they prioritize)
+- **Disagreement incentives** (enforced through anti-sycophancy)
+- **Persistent memory** (they remember past debates)
+
+The orchestrator ensures experts see each other's turns, prompts them to find weaknesses in prior arguments, and synthesizes the conversation into decision-ready output.
+
+## Two Debate Modes
+
+### Freeform Mode (default)
+Rounds of expert turns controlled by a **moderator strategy**:
+- **Round-robin**: everyone speaks once per round, sequentially
+- **Devil's advocate**: one expert is prompted to challenge every claim
+- **Consensus-check**: terminates early when the panel converges
+
+The moderator decides turn order, who speaks next, and what prompt they receive. Flexible, but can meander without strong moderation.
+
+### Structured Mode
+Fixed 4-phase choreography (inspired by structured debate formats):
+1. **Opening** — each expert states their position and reasoning
+2. **Cross-examination** — experts critique each other's claims
+3. **Rebuttal** — experts defend or adjust their stance
+4. **Synthesis** — the orchestrator summarizes convergence, tensions, and recommendations
+
+Structured mode guarantees depth and coverage, but takes more tokens and time.
+
+## Why This Works
+
+Multi-agent debate surfaces:
+- **Trade-offs**: CTO argues scalability, CFO argues cost — the tension is the insight
+- **Blind spots**: Security expert finds what the feature team missed
+- **Confidence signals**: when two domain experts disagree, that's a risk flag
+
+The synthesis step converts the debate into a **decision artifact**: what the panel agrees on, where they diverge, which tensions are unresolvable, and what data would close the gap.
+
+## Context Window Management
+
+Long debates hit token limits. Council offers:
+- **Visibility scoping**: show experts only their round (`same-round`), recent turns (`recent`), or everything (`all`)
+- **Rolling summaries**: after N rounds, replace old verbatim turns with an LLM-generated summary
+- **Hard caps**: `maxPromptChars` truncates context to fit models with smaller windows
+
+These controls trade memory for affordability — a 10-round architecture debate with full context might cost $5; with summaries-after-3 and `same-round` visibility, under $1.
+
+## Relation to Other Concepts
+
+- [Anti-Sycophancy](/Council/docs/explanation/anti-sycophancy) — how Council enforces disagreement
+- [Moderation Strategies](/Council/docs/explanation/moderation-strategies) — how turn order is decided
+- [Context Management](/Council/docs/explanation/context-management) — how long debates stay within token budgets
+- [Memory Model](/Council/docs/explanation/memory-model) — how experts remember past debates

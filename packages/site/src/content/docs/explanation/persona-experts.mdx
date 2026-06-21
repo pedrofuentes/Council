@@ -1,0 +1,160 @@
+---
+title: Persona Experts
+description: How Council creates document-grounded expert personas that reason like specific people, not generic roles.
+---
+
+Council supports two kinds of experts:
+- **Generic experts**: template-based roles like "CTO" or "Security Auditor"
+- **Persona experts**: document-trained representations of specific people
+
+Persona experts combine **document RAG** with **LLM-synthesized profiles** to create agents that reason like real individuals.
+
+## The Difference: Role vs. Individual
+
+A **generic expert** reasons from a role template:
+```yaml
+slug: cto
+role: Chief Technology Officer
+expertise:
+  weightedEvidence:
+    - System architecture patterns
+    - Scalability and performance data
+    - Engineering team capacity
+epistemicStance: Optimize for long-term technical health...
+```
+
+A **persona expert** reasons from documents about a real person:
+```yaml
+slug: alice-smith
+kind: persona
+role: Engineering Manager
+personaDescription: "Engineering Manager I report to"
+docsPath: ~/Council/experts/alice-smith/docs
+```
+
+The generic expert applies a CTO's general priorities. The persona expert applies **Alice's specific priorities** as distilled from her emails, meeting notes, and decision logs.
+
+## How Persona Experts Work
+
+### 1. Document Folder
+Point Council at a folder of documents about or by the person:
+```
+~/Council/experts/alice-smith/docs/
+  ├── weekly-updates-2024-Q1.md
+  ├── 1-on-1-notes.md
+  ├── roadmap-proposal.pdf
+  ├── team-retro-notes.md
+  └── slack-export.txt
+```
+
+Supported formats: Markdown, PDF, DOCX, plain text, and more (run `council docs formats`).
+
+### 2. Profile Analysis (Roadmap 6.2)
+When you first chat with a persona expert, Council:
+1. Extracts text from all documents
+2. Sends the extracted text to an LLM with this meta-prompt:
+   > "Analyze these documents and generate a persona profile. Extract: communication style, priorities, domain knowledge, decision patterns, recurring concerns."
+3. Stores the resulting profile in section [6] of the expert's system prompt
+
+The profile is **cached** — Council doesn't regenerate it on every chat unless you explicitly retrain.
+
+### 3. RAG Retrieval (Roadmap 6.3)
+During a chat or debate:
+1. Council generates a search query from your prompt
+2. Retrieves relevant document chunks from the FTS5 index
+3. Appends them to the expert's prompt as `[REFERENCE DOCUMENT]` blocks
+4. The expert now has both the **persona profile** (general context) and **specific document snippets** (targeted evidence)
+
+See [Document RAG](/Council/docs/explanation/document-rag) for extraction, indexing, and retrieval details.
+
+## Memory Model
+
+Persona experts get **two kinds of memory**:
+1. **Document memory** (persona profile + RAG snippets) — who they are, how they think
+2. **Debate memory** (past panel transcripts) — what they've discussed before
+
+Generic experts only get debate memory. See [Memory Model](/Council/docs/explanation/memory-model) for why.
+
+## Creating a Persona Expert
+
+```bash
+# Create the expert YAML definition
+council expert create alice-smith \
+  --role "Engineering Manager" \
+  --kind persona \
+  --persona-description "Engineering Manager I report to" \
+  --docs-path ~/alice-docs
+
+# Add documents (either copy files into ~/Council/experts/alice-smith/docs/
+# or use the --file/--url flags during training)
+council expert train alice-smith --file ~/meeting-notes.md
+council expert train alice-smith --url https://example.com/alice-blog-post
+
+# Train: process all docs and generate the persona profile
+council expert train alice-smith
+
+# Now chat with the persona
+council chat alice-smith
+```
+
+## When to Use Persona Experts
+
+| Use Case | Why Persona? |
+|----------|-------------|
+| Manager advice | Ground responses in their actual communication style and priorities |
+| Stakeholder simulation | Test how a VP or executive would react to a proposal |
+| Institutional memory | A persona trained on your team's past decisions can recall context |
+| Personalized mentoring | A persona trained on a mentor's writings can provide tailored advice |
+| Cross-functional panels | Mix persona experts (Alice, Bob) with generic roles (Security Auditor, PM) |
+
+**Don't** use persona experts for:
+- Public figures without their consent (ethical + legal risk)
+- Anyone whose documents you don't have permission to use
+- Situations requiring real-time context the documents don't contain
+
+## Privacy Considerations
+
+Persona experts store:
+- Extracted document text in the local SQLite FTS5 index
+- The persona profile (LLM-synthesized summary)
+- Chat transcripts and debate memory
+
+All of this is **local-only** (stored in `~/Council/data.db`). Council does not send your documents to a third party except during profile generation and retrieval (when the configured AI provider processes the context).
+
+See [Security and Privacy](/Council/docs/explanation/security-and-privacy) for details on what's sent to AI providers and what's stored locally.
+
+## Retraining a Persona
+
+If documents change or you want to refresh the profile:
+```bash
+council expert train alice-smith       # re-process all docs, regenerate profile
+```
+
+Retraining **overwrites** the cached profile but preserves debate memory. To clear debate memory separately:
+```bash
+council memory reset alice-smith       # clears debate memory only
+```
+
+## Recency Weighting (Roadmap 6.8)
+
+When Council retrieves document snippets, it **weights recent documents higher**. Why?
+
+A persona should reflect the person's **current** priorities, not outdated context. Alice's priorities from 2 years ago are less relevant than her priorities from last month.
+
+The recency decay is exponential: documents from the past week score 1.0, documents from 30 days ago score ~0.5, documents from 6 months ago score ~0.1.
+
+You can override this by explicitly naming an old document: "What did Alice say about X in the 2023 roadmap?"
+
+## Cross-Panel Awareness (Roadmap 7.2)
+
+In 1:1 chat mode, Council injects a summary of which other panels the persona expert participates in:
+> "Alice, you're also a member of the 'architecture-review' and 'incident-postmortem' panels. Recent activity: last spoke 3 days ago in architecture-review about API versioning strategy."
+
+This prevents a persona from acting like they've never met you before when you switch contexts.
+
+## Relation to Other Concepts
+
+- [Document RAG](/Council/docs/explanation/document-rag) — how Council indexes and retrieves document snippets
+- [Memory Model](/Council/docs/explanation/memory-model) — persona experts get document + debate memory
+- [Security and Privacy](/Council/docs/explanation/security-and-privacy) — what's stored, what's sent to providers, prompt injection defenses
+- [Anti-Sycophancy](/Council/docs/explanation/anti-sycophancy) — persona experts still enforce disagreement in panel debates

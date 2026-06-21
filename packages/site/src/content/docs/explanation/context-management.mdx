@@ -1,0 +1,154 @@
+---
+title: Context Window Management
+description: How Council keeps long debates within model token limits through visibility scoping, rolling summaries, and hard caps.
+---
+
+Long debates hit a wall: model token limits. A 10-round debate with 5 experts can easily exceed 100,000 tokens of prior context. Council offers **three levers** to keep prompts within budget while preserving the most important context.
+
+## The Problem: Context Explosion
+
+Each expert's prompt includes:
+- System prompt (identity, expertise, rules) — ~2,000 tokens
+- Topic — ~50–200 tokens
+- Prior turns from earlier rounds — **unbounded**
+- Current round turns so far — **unbounded**
+
+A 5-expert, 10-round debate where each turn is 500 words = ~125,000 tokens of prior context alone. Most models cap at 128k–200k total (input + output).
+
+Without context management, debates either:
+1. Fail with a token limit error
+2. Cost $10+ per debate in input tokens
+3. Run on models with huge context windows (expensive, slower)
+
+## Lever 1: Visibility Scoping
+
+Control **which prior turns** each expert sees.
+
+### `all` (default, no scoping)
+Every expert sees every prior turn from every round.
+
+**Cost**: highest  
+**Quality**: best for cross-expert reasoning  
+**Use when**: short debates (&lt;5 rounds), model supports large context
+
+### `same-round`
+Each expert only sees turns from their current round. Prior rounds are hidden.
+
+**Cost**: lowest (~80% reduction vs. `all`)  
+**Quality**: experts miss earlier arguments but reason from fresh prompts each round  
+**Use when**: token budget is tight, or you want experts to avoid anchoring on round 1
+
+### `recent`
+Each expert sees the most recent N turns (configurable, default N=10).
+
+**Cost**: medium  
+**Quality**: balances recency with cross-expert context  
+**Use when**: debates longer than 5 rounds, you want some history but not everything
+
+```bash
+council convene "Long topic" --context-scope recent --max-rounds 10
+council convene "Tight budget" --context-scope same-round
+```
+
+## Lever 2: Rolling Summaries
+
+After round N, replace old verbatim turns with an **LLM-generated summary**.
+
+### LLM-based summarization (default)
+Council sends the full transcript to an LLM with this prompt:
+> "Summarize the key claims, disagreements, and convergences so far. Be concise but preserve the crux of each expert's position."
+
+The summary (~500–1000 tokens) replaces 10,000+ tokens of verbatim turns.
+
+**Cost**: ~$0.01–0.03 per summary  
+**Quality**: high — captures nuance, references experts by name  
+**Use when**: debates longer than 3–5 rounds
+
+```bash
+council convene "Long debate" --summarize-after 3
+```
+
+After round 3, experts see:
+- Summary of rounds 1–3 (~500 tokens)
+- Verbatim turns from rounds 4+ (~2,000 tokens per round)
+
+### Heuristic summarization (`--heuristic-summaries`)
+Council uses a simple rule: show the first and last turn from each expert in the summarized range.
+
+**Cost**: zero (no LLM call)  
+**Quality**: lower — misses mid-debate shifts, no cross-expert synthesis  
+**Use when**: token budget is critical and summary quality is secondary
+
+```bash
+council convene "Budget debate" --summarize-after 3 --heuristic-summaries
+```
+
+## Lever 3: Hard Cap (`maxPromptChars`)
+
+When visibility scoping and summaries aren't enough, apply a **hard character limit** on verbatim prior turns.
+
+```bash
+council convene "Mega-debate" --max-prompt-chars 50000
+```
+
+Council:
+1. Applies visibility scoping and summaries first
+2. Measures the remaining verbatim turn content (chars)
+3. If over `maxPromptChars`, truncates from the **oldest** turns first (newest-first eviction)
+
+The topic, system prompt, and rolling summary are **never** truncated — only verbatim prior turns.
+
+**Use when**: you've hit token limits even with scoping + summaries.
+
+## Combining Levers
+
+All three levers are **orthogonal** — you can use any combination:
+
+```bash
+council convene "Complex debate" \
+  --context-scope recent \
+  --summarize-after 3 \
+  --max-prompt-chars 40000 \
+  --max-rounds 10
+```
+
+This debate:
+1. Shows each expert only the 10 most recent turns (not all 50+ from 10 rounds)
+2. Replaces rounds 1–3 with an LLM summary after round 3
+3. If the prompt still exceeds 40k chars, truncates the oldest verbatim turns
+
+Cost: ~$1–2 (vs. $10+ with no context management).
+
+## Trade-Offs
+
+| Lever | Pros | Cons |
+|-------|------|------|
+| Visibility scoping | Fast, deterministic, no extra cost | Experts miss earlier context, less cross-expert reasoning |
+| Rolling summaries (LLM) | High-quality compression, preserves key insights | Adds ~$0.01–0.03 per summary |
+| Rolling summaries (heuristic) | Zero cost | Loses mid-debate nuance, no synthesis |
+| Hard cap (`maxPromptChars`) | Guarantees prompt fits | Arbitrary truncation can cut important context |
+
+## Default Behavior
+
+With **no flags**, Council uses:
+- Visibility: `all` (every expert sees everything)
+- Summaries: none (no summarization)
+- Hard cap: none (no truncation)
+
+This works for short debates (1–3 rounds, 3–4 experts) but hits limits beyond that.
+
+## Monitoring Context Size
+
+Council emits a `cost.update` event after each round showing:
+- Total tokens in (input)
+- Total tokens out (output)
+- Estimated cost ($USD)
+
+Watch for input token counts approaching your model's limit (e.g., 128k for Claude Sonnet, 200k for GPT-4 Turbo). If you see >80k input tokens, consider enabling context management.
+
+## Relation to Other Concepts
+
+- [Deliberation Model](/Council/docs/explanation/deliberation-model) — how debate modes interact with context limits
+- [Memory Model](/Council/docs/explanation/memory-model) — how persistent memory across debates contributes to context
+- [Moderation Strategies](/Council/docs/explanation/moderation-strategies) — how moderators inject rolling summaries into prompts
+- [Document RAG](/Council/docs/explanation/document-rag) — how retrieved document snippets count against context budgets

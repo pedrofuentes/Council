@@ -1,0 +1,113 @@
+---
+title: Memory Model
+description: How Council experts remember past debates, what they remember, and why memory is segregated by expert kind.
+---
+
+Council experts are **stateful** — they remember past debates and bring that context into new conversations. But memory isn't universal: **generic experts** and **persona experts** have different memory models to match their different roles.
+
+## Why Memory Matters
+
+Without memory, every debate is a blank slate. Experts repeat themselves, miss past lessons, and cannot reference prior decisions. With memory, experts:
+- Recall past debates on the same topic
+- Reference decisions they've already made
+- Evolve their stance based on accumulated evidence
+- Avoid re-arguing settled questions
+
+Memory turns a one-shot tool into a **persistent advisor**.
+
+## Two Expert Kinds, Two Memory Models
+
+### Generic Experts: Debate Memory Only
+
+**Generic experts** (e.g., "CTO", "Security Auditor") are **template-based** — defined by their role, expertise, and epistemic stance in a YAML file. They have **no documents** and no persona profile.
+
+Their memory consists of:
+- **Debate transcripts**: verbatim turns from past panel debates
+- **Extracted key points**: LLM-distilled summaries of "what this expert learned" from each debate
+
+When a generic expert joins a new debate, Council injects their memory as section [7] of the system prompt:
+```
+[7] MEMORY (From Past Debates)
+
+Panel: architecture-review, 2024-06-15
+Topic: "Should we adopt microservices?"
+- You argued for a phased migration starting with auth
+- DevOps Lead raised operational complexity concerns
+- The panel decided to defer pending a Kubernetes maturity audit
+```
+
+Generic experts do **not** get document memory because they're general-purpose roles, not individuals.
+
+### Persona Experts: Document + Debate Memory
+
+**Persona experts** (e.g., "Alice Smith (Engineering Manager)", "VP Product") are **document-trained** — you point Council at a folder of documents (emails, meeting notes, prior proposals) and it distills a persona profile.
+
+Their memory consists of:
+1. **Persona profile** (section [6] of the prompt): LLM-synthesized summary of the person's communication style, priorities, domain knowledge, and decision patterns
+2. **RAG-retrieved document snippets**: when a question matches indexed content, Council appends relevant excerpts to the prompt
+3. **Debate memory** (section [7], same as generic experts)
+
+Persona experts get **both** kinds of memory because they represent specific people whose context comes from both documents and past interactions.
+
+## Memory Extraction: LLM vs. Heuristic
+
+After every debate, Council extracts memory for each participating expert. Two modes:
+
+### LLM-based extraction (default)
+An LLM reads the full transcript and generates a structured summary for each expert:
+- Key claims the expert made
+- Counter-arguments they faced
+- Outcomes or decisions
+- Open questions or tensions
+
+**Cost**: ~$0.01-0.05 per debate (depends on transcript length and model).  
+**Quality**: high — captures nuance, references, and subtext.
+
+### Heuristic extraction (`--heuristic-memory`)
+Council uses a simple rule: store the last N turns from each expert verbatim.
+
+**Cost**: zero (no LLM call).  
+**Quality**: lower — misses synthesis, stores filler turns, no deduplication.
+
+Use heuristic extraction when cost is a priority and you're okay with noisier memory.
+
+## Memory Boundaries
+
+Memory is **panel-scoped** by default: a CTO expert in the "architecture-review" panel has separate memory from a CTO expert in the "code-review" panel, even if they're the same expert definition.
+
+**Cross-panel awareness** (Roadmap 7.2): In 1:1 chat mode, Council injects a summary of which other panels the expert participates in and recent activity there. This prevents a persona expert from acting like they've never met you before.
+
+## Memory Inspection & Reset
+
+```bash
+council memory list                     # show all stored memories
+council memory inspect cto              # view full memory for an expert
+council memory reset cto                # clear debate memory for an expert
+council memory reset cto --panel arch   # clear memory for a specific panel
+```
+
+Clearing memory is **irreversible** — use it when an expert's context is stale or incorrect.
+
+For persona experts, `council memory reset` clears **debate memory only**. The persona profile (from documents) is preserved. To rebuild the profile from scratch, use:
+```bash
+council expert train alice-smith       # re-processes docs, regenerates profile
+```
+
+## Privacy & Local Storage
+
+All memory is stored **locally** in a SQLite database under `~/Council/data.db`. Council never sends memory to a third-party service (other than the configured AI provider during prompt construction).
+
+Your SQLite database may contain:
+- Debate transcripts
+- Extracted summaries
+- Document indexes and snippets
+- Persona profiles
+
+Treat `~/Council/` as sensitive data. See [Security and Privacy](/Council/docs/explanation/security-and-privacy) for details on secrets handling and provider data flow.
+
+## Relation to Other Concepts
+
+- [Persona Experts](/Council/docs/explanation/persona-experts) — how document-driven experts combine persona profiles with debate memory
+- [Document RAG](/Council/docs/explanation/document-rag) — how Council retrieves relevant document snippets to augment expert prompts
+- [Context Management](/Council/docs/explanation/context-management) — how Council caps prompt size when memory grows large
+- [Security and Privacy](/Council/docs/explanation/security-and-privacy) — what's stored, what's sent to providers

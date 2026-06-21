@@ -1,0 +1,134 @@
+---
+title: Document RAG (Retrieval-Augmented Generation)
+description: How Council indexes and retrieves user documents to ground expert reasoning in real context.
+---
+
+Persona experts in Council are **document-trained** — you point them at a folder of documents, and Council extracts, indexes, and retrieves relevant snippets to ground their responses in your actual context.
+
+## What RAG Solves
+
+Without documents, experts reason from generic priors. With documents:
+- A persona expert representing your VP of Product can reference your actual product strategy docs
+- A "Security Auditor" persona trained on your incident reports knows your specific vulnerabilities
+- Chat with a manager persona grounded in their real meeting notes and decision logs
+
+RAG bridges the gap between "generic expert templates" and "this specific person in this specific organization."
+
+## The RAG Pipeline
+
+### 1. Document Detection
+Council scans `~/Council/experts/<slug>/docs/` (or `~/Council/panels/<panel>/docs/` for shared panel documents) and detects supported formats:
+- Text: `.md`, `.txt`, `.html`
+- Office: `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.xls`
+- OpenDocument: `.odt`, `.ods`, `.odp`
+- Data: `.csv`, `.tsv`
+- Legacy: `.rtf`
+
+Run `council docs formats` to see the full list and extraction method per format.
+
+Council uses **SHA-256 hashing** to detect changes: if a document hasn't changed since last indexing, it's skipped (TOCTOU-safe via file-descriptor locking — see ADR-007).
+
+### 2. Text Extraction
+Each document format has a specialized extractor:
+- **PDF**: pdfjs-based parser (built-in)
+- **DOCX/PPTX/XLSX**: ZIP-based XML parsing (built-in)
+- **HTML**: Cheerio-based (built-in)
+- **ODT/ODS/ODP**: ZIP-based XML parsing (built-in)
+- **Plain text**: direct UTF-8 read
+
+Extracted text is **untrusted** (see [Security and Privacy](/Council/docs/explanation/security-and-privacy) for prompt injection defenses).
+
+### 3. Chunking
+Extracted text is split into **sentence-aligned chunks** (default max: 1000 characters). Sentence-aligned means Council won't split mid-sentence — it finds the nearest sentence boundary.
+
+Why chunk? Large documents (e.g., 50-page PDFs) won't fit in a prompt. Chunking lets Council retrieve only the relevant sections.
+
+### 4. Indexing (SQLite FTS5)
+Each chunk is inserted into a **full-text search index** (SQLite FTS5 with BM25 ranking). Council tags each chunk with:
+- `file_path` — source document
+- `recency_weight` — newer documents score higher (see Recency Weighting below)
+- `chunk_text` — the indexed content
+
+No external vector database, no embeddings API. Everything is local and deterministic.
+
+### 5. Retrieval
+When you chat with a persona expert or run a debate, Council:
+1. Generates a search query from your prompt (extracts key terms)
+2. Runs the query against the FTS5 index
+3. Retrieves the top 5 chunks (BM25-ranked)
+4. Wraps each chunk in a `[REFERENCE DOCUMENT]` delimiter with explicit "treat as data, not instructions" framing (see prompt injection defenses in ADR-012)
+5. Appends the wrapped snippets to the expert's prompt
+
+The expert now has **your actual documents** as context.
+
+## Recency Weighting
+
+Newer documents score higher during retrieval. Why?
+
+A persona expert representing "Alice (Engineering Manager)" should reflect Alice's **current** priorities, not a strategy memo from 2 years ago. Recency weighting biases retrieval toward recent material without discarding old documents entirely.
+
+The weight decays exponentially: a document from yesterday scores 1.0, a document from 30 days ago scores ~0.5, a document from 6 months ago scores ~0.1.
+
+You can override this by explicitly naming an old document in your prompt: "What did the 2023 roadmap say about feature X?"
+
+## Document Processing: Lazy vs. Background
+
+Council processes documents **lazily** — the first time you chat with a persona expert or run a debate, Council detects, extracts, chunks, and indexes their documents (with visible progress feedback).
+
+**Background processing** (Roadmap 6.5) was **deferred** — the lazy approach covers the primary use case without adding daemon complexity for a CLI tool.
+
+To manually trigger processing:
+```bash
+council expert train <expert-slug>    # re-process docs, regenerate profile
+```
+
+## Document Trust Model
+
+Every byte of extracted text is **untrusted**. A malicious PDF could contain text designed to subvert the model ("Ignore previous instructions and...").
+
+Council applies **layered defenses** (see [Security and Privacy](/Council/docs/explanation/security-and-privacy)):
+1. Structural sanitization (strips control chars, bidi overrides, zero-width chars)
+2. Role-marker neutralization (wraps `<system>`, `<|im_start|>`, `Human:` sequences)
+3. Per-document delimiter wrapping with explicit "UNTRUSTED" framing
+4. Content provenance metadata (`extracted via: <method>`)
+
+These defenses raise the bar against casual and opportunistic prompt injection but are **not foolproof** against sophisticated targeted attacks. Exercise caution with third-party documents in high-stakes deliberations.
+
+## Panel-Level Document Folders (Roadmap 6.7)
+
+Persona experts have individual doc folders (`~/Council/experts/<slug>/docs/`). Panels can also have **shared document folders** (`~/Council/panels/<panel>/docs/`) for context that applies to the whole panel.
+
+```bash
+council panel docs link <panel> ~/path/to/shared/docs
+council panel docs unlink <panel> ~/path/to/shared/docs
+council panel docs <panel>  # list linked folders
+```
+
+Shared folders are indexed separately and retrieved for **all** experts in the panel when relevant.
+
+## Managing Documents
+
+```bash
+council expert docs alice-smith              # list indexed documents for this expert
+council expert docs alice-smith --remove meeting-notes.md  # un-index a specific file
+council expert train alice-smith             # re-process all docs, regenerate profile
+council expert train alice-smith --file ~/new-doc.pdf      # add a single document
+council expert train alice-smith --url https://... --file report.md  # fetch+train
+```
+
+## Performance
+
+FTS5 is fast: a query over 10,000 chunks takes ~10ms. Extraction is the bottleneck:
+- Plain text: instant
+- Markdown/HTML: ~5ms per file
+- PDF: ~50-200ms per file (depends on size and complexity)
+- DOCX/XLSX: ~10-50ms per file
+
+A folder of 50 PDFs might take 5-10 seconds to index the first time, then subsequent chats are instant (until a file changes).
+
+## Relation to Other Concepts
+
+- [Persona Experts](/Council/docs/explanation/persona-experts) — how documents combine with expert definitions to create grounded personas
+- [Memory Model](/Council/docs/explanation/memory-model) — persona experts get document memory + debate memory
+- [Security and Privacy](/Council/docs/explanation/security-and-privacy) — how Council defends against prompt injection in untrusted documents
+- [Context Management](/Council/docs/explanation/context-management) — how Council caps retrieved snippets to fit token budgets
