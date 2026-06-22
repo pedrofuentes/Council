@@ -32,10 +32,13 @@
     "typecheck": "pnpm --filter @council-ai/cli typecheck",
     "check": "pnpm typecheck && pnpm lint && pnpm test",
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md,yaml,yml}\"",
-    "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md,yaml,yml}\""
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md,yaml,yml}\"",
+    "fuzz:build": "tsc -p .clusterfuzzlite/tsconfig.fuzz.json",
+    "fuzz": "pnpm fuzz:build && jazzer .clusterfuzzlite/fuzz_strip_control_chars -- -max_total_time=60"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@jazzer.js/core": "^4.0.0",
     "@types/node": "^26.0.0",
     "@types/react": "^19.2.17",
     "@types/yauzl": "3.4.0",

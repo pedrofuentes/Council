@@ -34,6 +34,8 @@ Thumbs.db
 # Build artifacts
 *.tsbuildinfo
 .cache/
+# Fuzzing: transpiled sanitizer output for the ClusterFuzzLite/Jazzer.js targets
+dist-fuzz/
 
 # Test artifacts
 .vitest-cache/

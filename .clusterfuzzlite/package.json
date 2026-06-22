@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "commonjs",
+  "description": "Forces the fuzz_*.js targets in this directory to be treated as CommonJS so they can require('@jazzer.js/core') under the OSS-Fuzz JavaScript launcher, even though @council-ai/cli itself is pure ESM. The targets load the sanitizer from the ESM build in packages/cli/dist-fuzz/ via dynamic import(). Not part of the pnpm workspace (which is packages/*) and never published."
+}
