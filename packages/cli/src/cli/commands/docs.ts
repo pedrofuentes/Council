@@ -40,7 +40,7 @@ import {
   type PanelScanResult,
 } from "../../core/documents/panel-document-scanner.js";
 import { describeScanError } from "../formatters/scan-summary.js";
-import { stripControlChars } from "../strip-control-chars.js";
+import { toSingleLineDisplay } from "../strip-control-chars.js";
 import { createDatabase } from "../../memory/db.js";
 import { PanelLibraryRepository } from "../../memory/repositories/panel-library-repo.js";
 
@@ -67,9 +67,7 @@ function sanitize(s: string): string {
  * lines. Used for needs-review output — never print AI text unsanitized.
  */
 function sanitizeAiText(s: string): string {
-  return stripControlChars(s)
-    .replace(/[\r\n\t]+/g, " ")
-    .trim();
+  return toSingleLineDisplay(s).trim();
 }
 
 const NATIVE_EXTENSIONS: ReadonlySet<string> = new Set([

@@ -60,7 +60,7 @@ import { loadTranscript } from "../../memory/transcript.js";
 
 import { runExtractMemoryHook } from "../extract-memory-hook.js";
 
-import { stripControlChars, toSingleLineDisplay } from "../strip-control-chars.js";
+import { toSingleLineDisplay } from "../strip-control-chars.js";
 import { suggestMatch } from "../fuzzy-match.js";
 import { truncatePrompt } from "../renderers/truncate-prompt.js";
 import { defaultErrorWriter, defaultWriter, isQuiet, setQuiet, type Writer } from "./writer.js";
@@ -115,11 +115,11 @@ export function buildPersistedPanelDefinition(template: ResolvedPanelDefinition)
 /**
  * Render the post-debate hint that points the user at `council panel save`.
  * The session name is AI-derived and may contain terminal control sequences,
- * so it is sanitized via {@link stripControlChars} before being written to
- * the terminal — matching every other session-name write sink in this file.
+ * so it is sanitized via {@link toSingleLineDisplay} before being written to
+ * this single-line terminal sink.
  */
 export function formatPanelSaveHint(sessionName: string): string {
-  return `Tip: Liked this panel? Save it to your library to reuse it: council panel save ${stripControlChars(
+  return `Tip: Liked this panel? Save it to your library to reuse it: council panel save ${toSingleLineDisplay(
     sessionName,
   )} [name]\n`;
 }
@@ -542,7 +542,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             const { resolved, missing } = await resolveExperts(panel.experts, library);
             if (missing.length > 0) {
               throw new Error(
-                `Panel "${stripControlChars(opts.template)}" references experts not in the library: ${missing.map((s) => stripControlChars(s)).join(", ")}. ` +
+                `Panel "${toSingleLineDisplay(opts.template)}" references experts not in the library: ${missing.map((s) => toSingleLineDisplay(s)).join(", ")}. ` +
                   `Add them with 'council expert create' or use inline expert definitions.`,
               );
             }
@@ -575,11 +575,11 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             const validSlugs = (await library.list()).map((e) => e.slug);
             const named = missing
               .map((slug) => {
-                const safe = stripControlChars(slug);
+                const safe = toSingleLineDisplay(slug);
                 const suggestions = suggestMatch(slug, validSlugs);
                 return suggestions.length > 0
                   ? `'${safe}' (did you mean ${suggestions
-                      .map((s) => `'${stripControlChars(s)}'`)
+                      .map((s) => `'${toSingleLineDisplay(s)}'`)
                       .join(", ")}?)`
                   : `'${safe}'`;
               })
@@ -646,12 +646,12 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           });
         }
         writeInformationalNotice(
-          `\n🏛️  Auto-composed panel for this run: ${stripControlChars(template.name)}\n` +
+          `\n🏛️  Auto-composed panel for this run: ${toSingleLineDisplay(template.name)}\n` +
             "   (Not saved to your library — it exists only for this debate.)\n",
         );
         for (const expert of template.experts) {
           writeInformationalNotice(
-            `  • ${stripControlChars(expert.displayName)} — ${stripControlChars(expert.role)}\n`,
+            `  • ${toSingleLineDisplay(expert.displayName)} — ${toSingleLineDisplay(expert.role)}\n`,
           );
         }
         writeInformationalNotice("\n");
@@ -849,8 +849,8 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             humanInput: humanSlugs.size > 0 ? deps.humanInputFactory?.() : undefined,
             beforeRender: emitMockWarning,
             preamble: () => {
-              write(`\n# ${stripControlChars(template.name)}\n`);
-              write(`Topic: ${truncatePrompt(stripControlChars(topic))}\n`);
+              write(`\n# ${toSingleLineDisplay(template.name)}\n`);
+              write(`Topic: ${truncatePrompt(toSingleLineDisplay(topic))}\n`);
               write(
                 `Mode: ${opts.mode} | Max rounds: ${opts.maxRounds} | Engine: ${opts.engine}\n`,
               );
@@ -1017,7 +1017,7 @@ async function loadPanelFriendly(
     const message = err instanceof Error ? err.message : String(err);
     if (ZERO_EXPERT_VALIDATION_PATTERN.test(message)) {
       const friendly =
-        `Panel "${stripControlChars(name)}" has no experts. ` +
+        `Panel "${toSingleLineDisplay(name)}" has no experts. ` +
         `A panel needs at least one expert — add experts to the panel definition or re-create the panel.`;
       writeError(`${friendly}\n`);
       throw new CliUserError(friendly);

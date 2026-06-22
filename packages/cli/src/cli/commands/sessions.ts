@@ -14,7 +14,7 @@ import { DebateRepository, type DebateStatus } from "../../memory/repositories/d
 import { ExpertRepository } from "../../memory/repositories/experts.js";
 import { type Panel, PanelRepository } from "../../memory/repositories/panels.js";
 import { TurnRepository } from "../../memory/repositories/turns.js";
-import { stripControlChars } from "../strip-control-chars.js";
+import { toSingleLineDisplay } from "../strip-control-chars.js";
 import { getSymbols } from "../renderers/symbols.js";
 
 import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
@@ -234,19 +234,19 @@ export function buildSessionsCommand(depsOrWrite?: SessionsCommandDeps | Writer)
           // Both the topic and the prompt are untrusted (user/imported debate
           // input) — sanitize before writing to the terminal to strip ANSI/OSC
           // escape sequences (clipboard-hijack, phishing hyperlinks, spoofing).
-          const topic = stripControlChars(
+          const topic = toSingleLineDisplay(
             truncateTopic(session.topic ?? latest?.prompt ?? null, 80),
           );
           // F32: surface the friendly panel name (from the persisted template)
           // distinctly from the timestamped slug used by resume/export. The
           // template is untrusted, so sanitize it for display.
-          const panelName = stripControlChars(
+          const panelName = toSingleLineDisplay(
             parsePanelTemplateName(session.configJson) ?? session.name,
           );
           // The slug shown on the resume/export line is also untrusted; sanitize
           // it for DISPLAY only — the underlying session.name value used by
           // resume/export lookups is unchanged.
-          const displayName = stripControlChars(session.name);
+          const displayName = toSingleLineDisplay(session.name);
           let turnCount = 0;
           for (const d of debates) {
             turnCount += await turnRepo.countByDebateId(d.id);

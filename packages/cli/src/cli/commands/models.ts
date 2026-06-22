@@ -4,7 +4,7 @@
 import { Command } from "commander";
 
 import { discoverAvailableModels, type ModelDiscoveryResult } from "../../engine/copilot/health.js";
-import { stripControlChars } from "../strip-control-chars.js";
+import { toSingleLineDisplay } from "../strip-control-chars.js";
 
 import { defaultWriter, type Writer } from "./writer.js";
 
@@ -23,9 +23,7 @@ export interface ModelsDeps {
 }
 
 function sanitizeModelId(id: string): string {
-  return stripControlChars(id)
-    .replace(/[\r\n]+/g, " ")
-    .trim();
+  return toSingleLineDisplay(id).trim();
 }
 
 function isValidModelId(id: string): boolean {

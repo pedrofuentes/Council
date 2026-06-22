@@ -57,7 +57,7 @@ import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
 import { resolveSession } from "../session-resolver.js";
 import { suggestMatch } from "../fuzzy-match.js";
-import { stripControlChars, toSingleLineDisplay } from "../strip-control-chars.js";
+import { toSingleLineDisplay } from "../strip-control-chars.js";
 
 const PANEL_NAME_RE = /^[a-z][a-z0-9-]*$/;
 
@@ -617,14 +617,14 @@ function buildSaveCommand(write: Writer, writeError: Writer): Command {
 
           const session = await ctx.runtimePanelRepo.findByName(sessionName);
           if (!session) {
-            writeError(`Session "${stripControlChars(sessionName)}" not found.\n`);
+            writeError(`Session "${toSingleLineDisplay(sessionName)}" not found.\n`);
             throw new CliUserError(`panel save: session "${sessionName}" not found.`);
           }
 
           const stored = parseStoredPanelDefinition(session.configJson);
           if (stored.kind === "absent") {
             writeError(
-              `Session "${stripControlChars(sessionName)}" has no stored panel definition, so it cannot be saved ` +
+              `Session "${toSingleLineDisplay(sessionName)}" has no stored panel definition, so it cannot be saved ` +
                 `as a library panel. Only sessions created by newer versions of ` +
                 `\`council convene\` carry the data needed to promote them (older sessions predate ` +
                 `this feature).\n`,
@@ -635,7 +635,7 @@ function buildSaveCommand(write: Writer, writeError: Writer): Command {
           }
           if (stored.kind === "invalid") {
             writeError(
-              `Session "${stripControlChars(sessionName)}" has a stored panel definition that is invalid or ` +
+              `Session "${toSingleLineDisplay(sessionName)}" has a stored panel definition that is invalid or ` +
                 `corrupt and cannot be promoted: ${stored.message}\n`,
             );
             throw new CliUserError(
@@ -651,7 +651,7 @@ function buildSaveCommand(write: Writer, writeError: Writer): Command {
               : slugifyPanelName(definition.name);
           if (!PANEL_NAME_RE.test(requestedName)) {
             writeError(
-              `Invalid panel name "${stripControlChars(requestedName)}": must be kebab-case (lowercase letters, ` +
+              `Invalid panel name "${toSingleLineDisplay(requestedName)}": must be kebab-case (lowercase letters, ` +
                 `digits, hyphens; must start with a letter).\n`,
             );
             throw new CliUserError(`panel save: invalid panel name "${requestedName}".`);
@@ -706,25 +706,25 @@ function buildSaveCommand(write: Writer, writeError: Writer): Command {
             const { yamlPath } = await persistPanelArtifacts(ctx, panel, writeError);
 
             write(
-              `✓ Saved session "${stripControlChars(sessionName)}" as panel "${stripControlChars(
+              `✓ Saved session "${toSingleLineDisplay(sessionName)}" as panel "${toSingleLineDisplay(
                 finalPanelName,
               )}" at ${displayPath(yamlPath)}\n`,
             );
             write(`  Experts: ${memberSlugs.join(", ")}\n`);
             if (finalPanelName !== requestedName) {
               write(
-                `  Note: a panel named "${stripControlChars(
+                `  Note: a panel named "${toSingleLineDisplay(
                   requestedName,
-                )}" already existed; saved as "${stripControlChars(finalPanelName)}".\n`,
+                )}" already existed; saved as "${toSingleLineDisplay(finalPanelName)}".\n`,
               );
             }
             for (const rename of expertRenames) {
               write(
-                `  Note: expert slug "${rename.from}" already existed; saved as "${rename.to}".\n`,
+                `  Note: expert slug "${toSingleLineDisplay(rename.from)}" already existed; saved as "${toSingleLineDisplay(rename.to)}".\n`,
               );
             }
             write(
-              `\nStart a fresh debate with this panel: council chat ${stripControlChars(
+              `\nStart a fresh debate with this panel: council chat ${toSingleLineDisplay(
                 finalPanelName,
               )}\n`,
             );
