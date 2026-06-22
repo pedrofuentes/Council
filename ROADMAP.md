@@ -148,6 +148,28 @@
 
 ---
 
+## Phase 9: Interactive TUI ("Council Console") 🚧
+
+> **Goal**: Running bare `council` on a TTY opens a full-screen interactive terminal UI where a
+> regular user can do everything — settings, panels, experts, training, chat, convene, sessions —
+> without memorizing subcommands. The CLI stays unchanged for agents, scripts, and CI.
+>
+> **Status**: Current focus. Full design: [docs/designs/interactive-tui.md](./docs/designs/interactive-tui.md).
+> Built milestone-by-milestone behind `COUNCIL_TUI=1`; released as a complete experience at 9.10.
+
+- ⬜ **9.1 Spike & De-risk** — Add deps (`react-router`, `ink-text-input`, `ink-select-input`, `ink-testing-library`); build + test the riskiest Ink primitives in isolation (alt-screen + ErrorBoundary, `useMode` nav/typing gate, windowed ScrollView, MultilineInput, command-palette focus, non-TTY guard)
+- ⬜ **9.2 App Shell & Navigation** — 3-zone alternate-screen layout, collapsible left nav, `MemoryRouter`, semantic colors + NO_COLOR, responsive + resize, contextual footer hints, `?` help overlay, Home dashboard. Entry behind `COUNCIL_TUI=1`; non-TTY falls back to help
+- ⬜ **9.3 Library Browse/Detail** — Panels / Experts / Sessions list + detail (read-only), convened/concluded status, `Ctrl-K` command palette
+- ⬜ **9.4 Settings Overlay** — All config sections with Tab navigation, inline Zod validation, Save/Cancel
+- ⬜ **9.5 Expert Authoring & Training** — Create generic + persona experts, edit, delete (with affected-panel warnings); add documents (path/URL), live indexing progress, list/remove, profile refresh
+- ⬜ **9.6 Panel Authoring** — Create a panel from a multi-select of experts, edit members, delete; auto-compose from a topic with confirmation
+- ⬜ **9.7 Chat (1:1 & Panel)** — Streaming chat with `@mention`, follow-scroll, thinking indicator, history/resume, inline `@convene`
+- ⬜ **9.8 Convene & Conclude** — Cost-confirmation modal → live debate stream (expert pills, per-expert colors, round/phase markers, footer cost meter), `Esc` cancel (partial preserved); decision-matrix conclusion view
+- ⬜ **9.9 Inspection, Memory, Export & A11y Polish** — Memory inspection in expert detail, export overlay, first-run onboarding, tiered error display, startup warnings, accessibility + responsive audit
+- ⬜ **9.10 Make Default & Release** — Flip bare `council` on a TTY to launch the TUI (`--no-tui` / `COUNCIL_NO_TUI` escape; non-TTY fallback); add `council ui`; docs; smoke / platform / performance QA; opt-in TUI telemetry
+
+---
+
 ## 1.0 Readiness ⬜
 
 > Release-readiness criteria for a stable 1.0 launch.
@@ -181,3 +203,4 @@
 | UX polish: 106 findings from cross-model audit         | 7.5   | ✅ Done                |
 | PM-driven QA fixes (45 findings, 28 fixed)             | 7.6   | ✅ Done                |
 | Published to npm as `@council-ai/cli`                  | 8     | ✅ Done (v0.3.0)       |
+| Interactive TUI shell (`council` console)              | 9     | 🚧 In Progress         |

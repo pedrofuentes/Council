@@ -499,6 +499,168 @@ Generic experts get debate memory only; persona experts get document + debate me
 
 ---
 
+## Phase 9: Interactive TUI ("Council Console") 🚧
+
+> **Goal**: Bare `council` on a TTY opens a full-screen interactive terminal UI covering every
+> workflow (settings, panels, experts, training, chat, convene, sessions). The CLI is unchanged for
+> agents, scripts, and CI. Full design: [docs/designs/interactive-tui.md](./docs/designs/interactive-tui.md).
+>
+> **Status**: In progress (current focus). New code lives in `packages/cli/src/tui/`; built behind
+> `COUNCIL_TUI=1` and released as a complete experience at 9.10. Approved dependencies: `react-router`,
+> `ink-text-input`, `ink-select-input`, `ink-testing-library` (dev).
+
+### 9.1 Spike & De-risk ⬜
+
+**Goal**: Prove the riskiest Ink 7 primitives in isolation before any screen depends on them.
+
+**Scope**: alt-screen enter/exit + top-level `ErrorBoundary` (restore terminal on crash); `useMode`
+nav/typing gate; windowed `ScrollView` (pure scroll math); `MultilineInput`; command-palette
+focus-stealing (`useFocusManager`); non-TTY interactive guard; `ink-testing-library` + `flush()`
+harness. Validate `ink-text-input` / `ink-select-input` under Ink 7 / React 19 via stdin tests.
+
+**Acceptance criteria**:
+- Each primitive has unit tests driving keyboard input (`stdin.write`).
+- Non-TTY guard returns `false` under CI; coverage added without lowering the ratchet.
+
+**Key files**: `src/tui/components/`, `src/tui/hooks/`, `tests/unit/tui/`
+
+### 9.2 App Shell & Navigation ⬜
+
+**Goal**: A navigable full-screen shell with the collapsible left nav and a Home dashboard.
+
+**Scope**: `AppShell` (Header / Main / Footer / StatusBar), collapsible `LeftNav`
+(expanded / icon-rail / hidden + `\` toggle, adaptive by width), `MemoryRouter`, semantic color theme
++ NO_COLOR/ASCII, `useWindowSize` resize + breakpoints, contextual footer hints, `?` help overlay,
+`Esc`/`Enter` navigation, Home dashboard (empty + populated). Entry: bare `council` on a TTY behind
+`COUNCIL_TUI=1` launches the TUI; non-TTY → help.
+
+**Acceptance criteria**:
+- Launches in alternate screen on a TTY; non-TTY/CI prints help.
+- Resize reflows; NO_COLOR renders plain; nav toggles across its three states.
+- Home shows counts and recent sessions.
+
+**Key files**: `src/tui/index.tsx`, `src/tui/CouncilTUI.tsx`, `src/tui/components/layout/*`, `src/tui/components/navigation/LeftNav.tsx`, `src/tui/screens/HomeScreen.tsx`, `src/bin/council.ts`
+
+### 9.3 Library Browse/Detail (read-only) ⬜
+
+**Goal**: Browse and inspect Panels, Experts, and Sessions; discover actions via the command palette.
+
+**Scope**: `Panels`/`PanelDetail` (`template-loader` + `PanelLibraryRepository`), `Experts`/`ExpertDetail`
+(`FileExpertLibrary`), `Sessions`/`SessionDetail` (`loadTranscript` + `synthesizeEvents`), `CommandPalette`
+(global + contextual, fuzzy). Read-only view-model layer in `tui/adapters/`.
+
+**Acceptance criteria**:
+- Lists render from real data; detail shows definition/status; session detail shows convened/concluded.
+- `Ctrl-K` opens the palette and runs navigation commands.
+
+**Key files**: `src/tui/screens/{Panels,PanelDetail,Experts,ExpertDetail,Sessions,SessionDetail}.tsx`, `src/tui/components/overlays/CommandPalette.tsx`, `src/tui/adapters/*`
+
+### 9.4 Settings Overlay ⬜
+
+**Goal**: Edit Council configuration from an overlay.
+
+**Scope**: `SettingsDialog` with collapsible sections for `ConfigSchema` (defaults, expert, documents,
+chat, conclude, telemetry, providers env-var names, paths), Tab navigation, inline Zod validation,
+Save/Cancel via `loadConfigWithMeta` + `updateConfigFields`.
+
+**Acceptance criteria**:
+- Edits persist to `config.yaml`; invalid values blocked with inline messages.
+- Secrets are never written — only provider env-var names.
+
+**Key files**: `src/tui/components/overlays/SettingsDialog.tsx`, `src/config/*` (reuse)
+
+### 9.5 Expert Authoring & Training ⬜
+
+**Goal**: Full expert lifecycle and persona training inside the TUI.
+
+**Scope**: create generic + persona experts (guided forms over `ExpertDefinitionSchema`), edit, delete
+with affected-panel warnings (`FileExpertLibrary`). Training: add docs by path/URL, multi-step progress
+(`createDocumentProcessor().process` `onProgress`), list/remove indexed docs (`DocumentRepository`),
+refresh profile (`analyzeDocuments` + `ProfileRepository`). Extract an expert CRUD service from
+`commands/expert.ts`.
+
+**Acceptance criteria**:
+- Experts created/edited/deleted from the UI round-trip to YAML.
+- Training indexes docs with visible progress and refreshes the profile.
+- Existing CLI expert tests stay green after the service extraction.
+
+**Key files**: `src/tui/screens/ExpertDetail.tsx` (+ forms), `src/core/expert*.ts` (service extraction), `src/core/documents/*`
+
+### 9.6 Panel Authoring ⬜
+
+**Goal**: Compose panels inside the TUI.
+
+**Scope**: create a panel from a multi-select of experts, edit members, delete
+(`PanelLibraryRepository.setMembers`); auto-compose from a topic (`autoComposePanel`) with confirmation.
+Extract a panel CRUD service from `commands/panel.ts`.
+
+**Acceptance criteria**:
+- Panels created from selected experts persist (library + YAML + members).
+- Auto-compose preview + confirm works; existing CLI panel tests stay green.
+
+**Key files**: `src/tui/screens/{Panels,PanelDetail}.tsx` (+ forms), `src/core/auto-compose.ts`, panel CRUD service
+
+### 9.7 Chat (1:1 & Panel) ⬜
+
+**Goal**: Streaming conversational chat in the TUI.
+
+**Scope**: `Chat` (1:1) + `PanelChat` with streaming, `@mention` (`parseUserInput`), follow-scroll,
+thinking pill, history load/resume (`ChatRepository`), inline `@convene` (`CONVENE_DIRECTIVE`). Extract
+"produce next turn / stream turn response" primitives from `runExpertChat`/`runPanelChat`.
+
+**Acceptance criteria**:
+- A turn streams token-by-token; `@mention` routes to an expert.
+- History persists and resumes; navigate-away mid-stream cancels cleanly.
+- Existing CLI chat tests stay green after extraction.
+
+**Key files**: `src/tui/screens/{Chat,PanelChat}.tsx`, `src/tui/components/streaming/*`, `src/cli/commands/chat/*` (extraction), `src/core/chat/*`
+
+### 9.8 Convene & Conclude ⬜
+
+**Goal**: Run a live debate and synthesize a conclusion in the TUI.
+
+**Scope**: `Convene` screen (topic input → `CostDialog` confirmation → `Debate.run({ signal })` stream
+with `ExpertPills`, per-expert colors, round/phase separators, footer cost meter, `Esc` cancel
+preserving partial output). `Conclude` view rendering `synthesizeConclusion` output (decision matrix /
+tensions / recommendation).
+
+**Acceptance criteria**:
+- Cost shown + confirmed before spend; live stream renders all `DebateEvent` kinds.
+- `Esc` aborts via `AbortSignal` with the partial transcript persisted; conclusion renders.
+
+**Key files**: `src/tui/screens/{Convene,Conclude}.tsx`, `src/tui/components/streaming/{DebateStreamView,ExpertPills}.tsx`, `src/core/debate.ts` (reuse), `src/cli/conclusion-synthesis.ts` (reuse)
+
+### 9.9 Inspection, Memory, Export & A11y Polish ⬜
+
+**Goal**: Round out inspection and accessibility.
+
+**Scope**: memory inspection in expert detail (`recallMemoryWithProvenance`), export overlay
+(markdown / json / adr / share), first-run onboarding (≤ 2 screens, reuse first-run setup), tiered
+error display + startup warnings, screen-reader / ASCII / NO_COLOR + responsive audit.
+
+**Acceptance criteria**:
+- Memory + provenance shown; export writes all formats; first-run lands on Home.
+- Screen-reader mode produces linear frames; narrow-terminal degradation verified.
+
+**Key files**: `src/tui/screens/ExpertDetail.tsx`, `src/tui/components/overlays/ExportDialog.tsx`, `src/tui/theme/*`
+
+### 9.10 Make Default & Release ⬜
+
+**Goal**: Ship the TUI as the default experience.
+
+**Scope**: flip bare `council` on a TTY to launch the TUI (remove the `COUNCIL_TUI` gate; add
+`--no-tui` / `COUNCIL_NO_TUI` + non-TTY fallback); add an explicit `council ui` command (alias); docs
+(README, `docs/UX_DESIGN.md`, a tutorial); smoke (`docs/SMOKE-TEST.md`) + platform-smoke + performance
+checks; opt-in TUI telemetry events.
+
+**Acceptance criteria**:
+- Bare `council` on a TTY opens the TUI; non-TTY prints help; `--no-tui` / `COUNCIL_NO_TUI` honored; `council ui` works.
+- All existing CLI commands unchanged; smoke + platform-smoke green.
+
+**Key files**: `src/bin/council.ts`, `src/cli/commands/` (new `ui` command), `README.md`, `docs/UX_DESIGN.md`
+
+---
+
 ## Key Milestones
 
 | Milestone | Phase | Status |
@@ -525,3 +687,6 @@ Generic experts get debate memory only; persona experts get document + debate me
 | GitHub Action | 8.2 | ⬜ Planned |
 | Direct provider APIs | 8.4 | ⬜ Planned |
 | Published to npm as `@council-ai/cli` | 8 | ⬜ Planned |
+| Interactive TUI shell (alt-screen console) | 9.2 | ⬜ Planned |
+| Live convene + conclude in the TUI | 9.8 | ⬜ Planned |
+| TUI default on bare `council` (TTY) | 9.10 | ⬜ Planned |
