@@ -13,6 +13,7 @@ import {
   buildSoftwareApplicationLd,
   socialImageAlt,
   socialImageUrl,
+  withBase,
 } from "../config/site";
 
 // The marketing homepage (src/content/docs/index.mdx) renders at the site
@@ -28,6 +29,24 @@ const jsonLd = isHomepage
 ---
 
 <Default />
+
+{/* Favicons + PWA icons — full multi-platform set (web, Android, iOS),
+    base-prefixed so they resolve under the project sub-path. Starlight's
+    Default already emits the SVG favicon link. */}
+<link
+  rel="icon"
+  type="image/png"
+  sizes="96x96"
+  href={withBase("/favicon-96x96.png")}
+/>
+<link rel="icon" href={withBase("/favicon.ico")} sizes="any" />
+<link
+  rel="apple-touch-icon"
+  sizes="180x180"
+  href={withBase("/apple-touch-icon.png")}
+/>
+<link rel="manifest" href={withBase("/site.webmanifest")} />
+<meta name="theme-color" content="#1b2c32" />
 
 {/* Social-preview image — absolute URLs so previews resolve when shared off-site. */}
 <meta property="og:image" content={socialImageUrl} />
