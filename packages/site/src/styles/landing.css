@@ -118,11 +118,14 @@
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
+  /* Opt out of the 58ch cap inherited from `.council-lede p`: it left the pill
+     one character short, orphaning "planned" onto a second line. */
+  max-width: none;
   padding: 0.4rem 0.85rem;
   border: 1px solid color-mix(in srgb, var(--council-color-primary) 35%, transparent);
   border-radius: 999rem;
   font-family: var(--council-font-mono);
-  font-size: var(--sl-text-xs);
+  font-size: calc(var(--sl-text-xs) * 0.9);
   color: var(--council-color-text-muted);
 }
 
