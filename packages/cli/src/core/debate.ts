@@ -47,6 +47,7 @@ import {
   type PriorTurn,
 } from "./moderator/phase-prompts.js";
 import { createRoundRobinStrategy } from "./moderator/strategies.js";
+import { applyQualityGate, type QualityResult } from "./quality-gate.js";
 import type { ModeratorContext, ModeratorStrategy, PriorTurnRecord } from "./moderator/strategy.js";
 import {
   appendReferenceDocuments,
@@ -58,6 +59,24 @@ import type { DebateEvent, DebatePhase } from "./types.js";
 import { appendWordBudget, resolvePhaseWordBudget } from "./word-budget.js";
 
 export type DebateMode = "freeform" | "structured";
+
+/**
+ * Anti-sycophancy quality-gate behaviour for the debate orchestrator
+ * (mirrors `CouncilConfig.qualityGate`). When `DebateConfig.qualityGate`
+ * is omitted the gate is treated as `off` — no behaviour change for
+ * callers that don't opt in.
+ *
+ *   - `off`        — the gate never runs.
+ *   - `warn`       — flag failing responses (emit `turn.quality_gate`
+ *     with `action: "warned"`) but keep the original response.
+ *   - `regenerate` — re-prompt the same expert with the regenerate hint
+ *     up to `maxRegenerations` extra attempts before accepting the last
+ *     candidate.
+ */
+export interface QualityGateConfig {
+  readonly mode: "off" | "warn" | "regenerate";
+  readonly maxRegenerations: number;
+}
 
 /**
  * Context window management config (ROADMAP §2.6). All fields are
@@ -117,6 +136,13 @@ export interface DebateConfig {
    * in the constructor. Human turns are never augmented.
    */
   readonly referenceDocuments?: readonly DocumentSnippet[];
+
+  /**
+   * Anti-sycophancy quality gate (T-PR4c). When omitted, the gate is
+   * `off` and the orchestrator behaves exactly as before. Real debate
+   * commands thread `CouncilConfig.qualityGate` here (default `warn`).
+   */
+  readonly qualityGate?: QualityGateConfig;
 }
 
 /** Default retry backoff per ROADMAP §3.7 — 250ms, then 1s. */
@@ -384,6 +410,10 @@ export class Debate {
       }
 
       let seq = 0;
+      // Slugs of experts who have already spoken THIS round — drives the
+      // quality gate's disagreement-budget check (empty for the first
+      // speaker). Reset per round.
+      const spokenThisRound: string[] = [];
       for (let i = 0; i < initialAssignments.length; i++) {
         if (signal?.aborted) {
           yield { kind: "round.end", round };
@@ -423,6 +453,7 @@ export class Debate {
           round,
           seq,
           counters,
+          spokenThisRound.slice(),
           signal,
         );
 
@@ -433,6 +464,7 @@ export class Debate {
             content: captured,
             round,
           });
+          spokenThisRound.push(expert.slug);
         }
         seq += 1;
       }
@@ -473,6 +505,9 @@ export class Debate {
       yield { kind: "round.start", round: phaseIdx, phase };
 
       let seq = 0;
+      // Slugs that have already spoken in THIS phase — drives the quality
+      // gate's disagreement-budget check (empty for the first speaker).
+      const spokenThisPhase: string[] = [];
       for (const expert of this.experts) {
         if (signal?.aborted) {
           yield { kind: "round.end", round: phaseIdx, phase };
@@ -502,6 +537,7 @@ export class Debate {
           phaseIdx,
           seq,
           counters,
+          spokenThisPhase.slice(),
           signal,
         );
 
@@ -515,6 +551,7 @@ export class Debate {
           else if (phase === "cross-examination") crossExamTurns.push(turn);
           else if (phase === "rebuttal") rebuttalTurns.push(turn);
           // synthesis turns aren't fed back into any later prompt.
+          spokenThisPhase.push(expert.slug);
         }
         seq += 1;
       }
@@ -573,6 +610,7 @@ export class Debate {
     round: number,
     seq: number,
     counters: RunCounters,
+    priorSpeakers: readonly string[],
     signal?: AbortSignal,
   ): AsyncGenerator<DebateEvent, string | null> {
     const isHuman = this.#humanSlugs.has(expert.slug);
@@ -584,7 +622,16 @@ export class Debate {
       return yield* this.#runHumanTurn(expert, prompt, round, seq, counters);
     }
 
-    return yield* this.#runAiTurn(expert, prompt, wordBudget, round, seq, counters, signal);
+    return yield* this.#runAiTurn(
+      expert,
+      prompt,
+      wordBudget,
+      round,
+      seq,
+      counters,
+      priorSpeakers,
+      signal,
+    );
   }
 
   async *#runHumanTurn(
@@ -662,14 +709,12 @@ export class Debate {
     expert: ExpertSpec,
     prompt: string,
     wordBudget: number,
-    _round: number,
+    round: number,
     _seq: number,
     counters: RunCounters,
+    priorSpeakers: readonly string[],
     signal?: AbortSignal,
   ): AsyncGenerator<DebateEvent, string | null> {
-    const backoffMs = this.config.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS;
-    const maxRetries = backoffMs.length;
-
     // T1 RAG: append the shared [REFERENCE DOCUMENTS] block once (before the
     // retry loop) so every attempt sends the same augmented prompt. No-op
     // when the debate was configured without referenceDocuments.
@@ -682,14 +727,114 @@ export class Debate {
     // is the "no cap" sentinel and leaves the prompt untouched.
     const finalPrompt = appendWordBudget(withReferences, wordBudget);
 
+    const gateMode = this.config.qualityGate?.mode ?? "off";
+    // In `regenerate` mode the first response might be rejected, and rejected
+    // candidates must NEVER reach a renderer or the transcript. So we buffer
+    // it (no live deltas), gate it, then emit only the accepted content.
+    // `off`/`warn` stream live exactly as before.
+    const streamLive = gateMode !== "regenerate";
+
+    const outcome = yield* this.#streamWithRetry(expert, finalPrompt, streamLive, true, signal);
+    let content = outcome.content;
+    let turnFailed = outcome.turnFailed;
+
+    // T14: a non-failed turn that is STILL empty after the helper's one
+    // retry is surfaced as a clear error rather than persisted as a blank
+    // turn.end. The debate continues with the remaining experts.
+    if (!turnFailed && outcome.emptyAfterRetry) {
+      yield {
+        kind: "error",
+        expertSlug: expert.slug,
+        message: `${expert.displayName} returned an empty response after a retry.`,
+        recoverable: false,
+      };
+      turnFailed = true;
+    }
+
+    // Anti-sycophancy quality gate (T-PR4c). Runs AFTER a successful,
+    // non-empty response is assembled and BEFORE turn.end.
+    if (!turnFailed && gateMode === "warn") {
+      const result = applyQualityGate(content, { priorSpeakers });
+      if (!result.ok) {
+        yield {
+          kind: "turn.quality_gate",
+          expertSlug: expert.slug,
+          round,
+          mode: "warn",
+          action: "warned",
+          failures: failureKinds(result),
+          priorSpeakers,
+        };
+      }
+    } else if (!turnFailed && gateMode === "regenerate") {
+      // maxRegenerations defaults defensively to 0 when the field is absent.
+      const maxRegenerations = this.config.qualityGate?.maxRegenerations ?? 0;
+      content = yield* this.#regenerateUntilPass(
+        expert,
+        finalPrompt,
+        content,
+        round,
+        priorSpeakers,
+        maxRegenerations,
+        signal,
+      );
+      // Emit the accepted content as a single delta so renderers that build
+      // their body from turn.delta (e.g. PlainRenderer) display it. Only the
+      // accepted candidate is ever emitted — rejected ones stay buffered.
+      if (content.length > 0) {
+        yield { kind: "turn.delta", expertSlug: expert.slug, text: content, speakerKind: "expert" };
+      }
+    }
+
+    if (!turnFailed) {
+      const turnId = ulid();
+      yield { kind: "turn.end", expertSlug: expert.slug, turnId, content, speakerKind: "expert" };
+    }
+
+    counters.premiumRequests += 1;
+    yield {
+      kind: "cost.update",
+      premiumRequests: counters.premiumRequests,
+      estimatedTotal: counters.estimatedTotal,
+    };
+
+    return turnFailed ? null : content;
+  }
+
+  /**
+   * Stream one logical expert response with the engine-error retry loop
+   * (#3.7) and the empty-response auto-retry (T14). Yields `turn.delta`
+   * (only when `emitDeltas`), `turn.retry` (always — a progress signal),
+   * and, on terminal failure, an `error` event (only when
+   * `emitTerminalError`). Returns the assembled content plus failure flags.
+   *
+   * Extracted so the quality-gate regeneration loop (T-PR4c) can reuse the
+   * exact same engine-error retry semantics while buffering its candidates
+   * (no deltas, no terminal error) — keeping the regeneration budget fully
+   * SEPARATE from the per-attempt engine-error retry budget.
+   *
+   * Retry semantics (preserved verbatim from the original #runAiTurn):
+   *   - recoverable error + attempts remaining + not aborted → emit
+   *     `turn.retry`, sleep the matching backoff, retry the send.
+   *   - non-recoverable / exhausted / aborted → stop. Each attempt
+   *     accumulates its own delta content; partial content from a failed
+   *     attempt is discarded so retried turns start fresh.
+   */
+  async *#streamWithRetry(
+    expert: ExpertSpec,
+    finalPrompt: string,
+    emitDeltas: boolean,
+    emitTerminalError: boolean,
+    signal?: AbortSignal,
+  ): AsyncGenerator<DebateEvent, StreamOutcome> {
+    const backoffMs = this.config.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS;
+    const maxRetries = backoffMs.length;
+
     let content = "";
     let turnFailed = false;
     let lastErrorRecoverable = false;
     let lastErrorMessage = "";
     let lastErrorAborted = false;
-    // True when the final (non-failed) attempt was still empty after the
-    // helper's one automatic retry — surfaced as an error below instead of
-    // persisting a blank turn (T14).
     let emptyAfterRetry = false;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -721,18 +866,19 @@ export class Debate {
           const ev = step.value;
           if (ev.kind === "delta") {
             content += ev.text;
-            yield {
-              kind: "turn.delta",
-              expertSlug: expert.slug,
-              text: ev.text,
-              speakerKind: "expert",
-            };
-            // Canary leak detection (T-09). Check accumulated content
-            // (not just this chunk) so a canary split across delta
-            // boundaries is still caught. Warn at most once per
-            // turn-attempt to avoid log spam on long responses; the
-            // flag is local to #runAiTurn so subsequent turns from
-            // the same expert can warn again.
+            if (emitDeltas) {
+              yield {
+                kind: "turn.delta",
+                expertSlug: expert.slug,
+                text: ev.text,
+                speakerKind: "expert",
+              };
+            }
+            // Canary leak detection (T-09). Runs regardless of `emitDeltas`
+            // — it is a security check on the accumulated content, not a
+            // rendering concern. Check accumulated content (not just this
+            // chunk) so a canary split across delta boundaries is still
+            // caught. Warn at most once per turn-attempt.
             const canary = this.#canaries.get(expert.id);
             if (canary !== undefined && !attemptLeakWarned && checkCanaryLeak(content, canary)) {
               attemptLeakWarned = true;
@@ -816,7 +962,7 @@ export class Debate {
       //   - non-ABORTED engine error w/ caller signal aborted ⇒
       //     surface so a real provider failure isn't masked by abort.
       turnFailed = true;
-      if (!(lastErrorAborted && signal?.aborted)) {
+      if (emitTerminalError && !(lastErrorAborted && signal?.aborted)) {
         yield {
           kind: "error",
           expertSlug: expert.slug,
@@ -827,37 +973,108 @@ export class Debate {
       break;
     }
 
-    // T14: a non-failed turn that is STILL empty after the helper's one
-    // retry is surfaced as a clear error rather than persisted as a blank
-    // turn.end. The debate continues with the remaining experts.
-    if (!turnFailed && emptyAfterRetry) {
+    return { content, turnFailed, emptyAfterRetry };
+  }
+
+  /**
+   * Quality-gate regeneration loop (T-PR4c, `mode: "regenerate"`). Given an
+   * already-assembled `original` response that may have failed the gate,
+   * re-prompts the same expert with the regenerate hint up to
+   * `maxRegenerations` times. Each rejected candidate is BUFFERED — no
+   * `turn.delta`/`turn.end` is emitted for it — so no partial or rejected
+   * content leaks to renderers or the transcript.
+   *
+   * Emits `turn.quality_gate` (`action: "regenerating"`) per attempt. If a
+   * regeneration passes the gate it is returned. If the cap is hit and the
+   * response still fails, the last candidate is accepted with
+   * `action: "accepted_after_cap"`. The gate never blocks the debate.
+   *
+   * Engine-error retries inside each regeneration send still fire
+   * (`turn.retry`) — that budget is SEPARATE from the regeneration budget.
+   */
+  async *#regenerateUntilPass(
+    expert: ExpertSpec,
+    finalPrompt: string,
+    original: string,
+    round: number,
+    priorSpeakers: readonly string[],
+    maxRegenerations: number,
+    signal?: AbortSignal,
+  ): AsyncGenerator<DebateEvent, string> {
+    let current = original;
+    let result = applyQualityGate(current, { priorSpeakers });
+    if (result.ok) return current;
+
+    for (let attempt = 1; attempt <= maxRegenerations; attempt++) {
+      if (signal?.aborted) break;
       yield {
-        kind: "error",
+        kind: "turn.quality_gate",
         expertSlug: expert.slug,
-        message: `${expert.displayName} returned an empty response after a retry.`,
-        recoverable: false,
+        round,
+        mode: "regenerate",
+        action: "regenerating",
+        failures: failureKinds(result),
+        regenerationAttempt: attempt,
+        maxRegenerations,
+        priorSpeakers,
       };
-      turnFailed = true;
+
+      const regenPrompt = buildRegeneratePrompt(finalPrompt, result.regenerateHint);
+      // Buffer the candidate (no deltas) and suppress terminal errors — a
+      // failed regeneration must not surface a turn-level error because we
+      // already hold a valid earlier candidate to fall back on.
+      const outcome = yield* this.#streamWithRetry(expert, regenPrompt, false, false, signal);
+      if (outcome.turnFailed || outcome.emptyAfterRetry || outcome.content.length === 0) {
+        break; // keep the best candidate so far
+      }
+      current = outcome.content;
+      result = applyQualityGate(current, { priorSpeakers });
+      if (result.ok) return current;
     }
 
-    if (!turnFailed) {
-      const turnId = ulid();
-      yield { kind: "turn.end", expertSlug: expert.slug, turnId, content, speakerKind: "expert" };
+    // Cap hit / aborted / regeneration failed, and still failing: accept the
+    // last candidate (never block the debate on the gate).
+    if (!result.ok) {
+      yield {
+        kind: "turn.quality_gate",
+        expertSlug: expert.slug,
+        round,
+        mode: "regenerate",
+        action: "accepted_after_cap",
+        failures: failureKinds(result),
+        maxRegenerations,
+        priorSpeakers,
+      };
     }
-
-    counters.premiumRequests += 1;
-    yield {
-      kind: "cost.update",
-      premiumRequests: counters.premiumRequests,
-      estimatedTotal: counters.estimatedTotal,
-    };
-
-    return turnFailed ? null : content;
+    return current;
   }
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Accumulated outcome of one {@link Debate.#streamWithRetry} call. */
+interface StreamOutcome {
+  readonly content: string;
+  readonly turnFailed: boolean;
+  readonly emptyAfterRetry: boolean;
+}
+
+/** Failing quality-check kinds for a `turn.quality_gate` event payload. */
+function failureKinds(result: QualityResult): readonly string[] {
+  return result.failures.map((f) => f.kind);
+}
+
+/**
+ * Build the regeneration prompt: the original prompt plus a sanitizing
+ * instruction carrying the gate's regenerate hint. The hint is appended
+ * verbatim per `quality-gate.ts`'s design ("designed to be appended to a
+ * regeneration prompt").
+ */
+function buildRegeneratePrompt(basePrompt: string, hint: string | undefined): string {
+  const reason = hint !== undefined && hint.length > 0 ? ` ${hint}` : "";
+  return `${basePrompt}\n\n[QUALITY GATE] Your previous response was rejected.${reason} Rewrite it to satisfy these constraints.`;
 }
 
 /**

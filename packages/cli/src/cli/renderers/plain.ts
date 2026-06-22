@@ -123,6 +123,24 @@ export class PlainRenderer implements Renderer {
             ),
           );
           break;
+        case "turn.quality_gate": {
+          const name = this.#displayNames.get(evt.expertSlug) ?? evt.expertSlug;
+          const failures = this.sanitizeLine(evt.failures.join(", "));
+          let verb: string;
+          if (evt.action === "regenerating") {
+            verb = `regenerating (attempt ${evt.regenerationAttempt}/${evt.maxRegenerations})`;
+          } else if (evt.action === "accepted_after_cap") {
+            verb = "accepted after regeneration cap";
+          } else {
+            verb = "flagged";
+          }
+          this.write(
+            this.yellow(
+              `${sym.warn} quality gate: ${this.sanitizeLine(name)} response ${verb} (${failures})\n`,
+            ),
+          );
+          break;
+        }
       }
     }
   }

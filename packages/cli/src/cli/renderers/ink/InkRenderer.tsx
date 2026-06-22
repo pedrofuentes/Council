@@ -32,6 +32,7 @@ import { PlainRenderer } from "../plain.js";
 
 import { assignExpertColor, formatExpertPrefix, type ExpertColor } from "./colors.js";
 import { getSymbols } from "../symbols.js";
+import { toSingleLineDisplay } from "../../strip-control-chars.js";
 
 /**
  * Wrapper that only mounts `useInput` when raw mode is supported.
@@ -95,7 +96,22 @@ interface StaticPanel {
   readonly experts: readonly PanelMemberSnapshot[];
 }
 
-type StaticItem = StaticRoundHeader | StaticTurn | StaticRoundSeparator | StaticPanel;
+interface StaticQualityNotice {
+  readonly id: string;
+  readonly type: "quality-notice";
+  readonly expertSlug: string;
+  readonly action: "warned" | "regenerating" | "accepted_after_cap";
+  readonly failures: readonly string[];
+  readonly regenerationAttempt?: number;
+  readonly maxRegenerations?: number;
+}
+
+type StaticItem =
+  | StaticRoundHeader
+  | StaticTurn
+  | StaticRoundSeparator
+  | StaticPanel
+  | StaticQualityNotice;
 
 // --- Active turn (streaming) ---
 
@@ -267,6 +283,22 @@ export function reduce(s: DebateState, ev: DebateEvent): DebateState {
           reason: ev.reason,
         },
       };
+    case "turn.quality_gate": {
+      // Quality-gate notices render inline in the transcript. They carry NO
+      // response text — only the failing check kinds and regeneration state.
+      const notice: StaticQualityNotice = {
+        id: uid("qg"),
+        type: "quality-notice",
+        expertSlug: ev.expertSlug,
+        action: ev.action,
+        failures: ev.failures,
+        ...(ev.regenerationAttempt !== undefined
+          ? { regenerationAttempt: ev.regenerationAttempt }
+          : {}),
+        ...(ev.maxRegenerations !== undefined ? { maxRegenerations: ev.maxRegenerations } : {}),
+      };
+      return { ...s, completedItems: [...s.completedItems, notice] };
+    }
     default: {
       const _exhaustive: never = ev;
       void _exhaustive;
@@ -422,6 +454,26 @@ function StaticItemView({
           <StreamingText text={item.text} ended={true} retrying={false} />
         </Box>
       );
+    case "quality-notice": {
+      const name = nameFor(state, item.expertSlug);
+      let verb: string;
+      if (item.action === "regenerating") {
+        verb = `regenerating (attempt ${item.regenerationAttempt}/${item.maxRegenerations})`;
+      } else if (item.action === "accepted_after_cap") {
+        verb = "accepted after regeneration cap";
+      } else {
+        verb = "flagged";
+      }
+      const failures = toSingleLineDisplay(item.failures.join(", "));
+      const sym = getSymbols();
+      return (
+        <Box>
+          <Text color="yellow">
+            {`${sym.warn} quality gate: ${toSingleLineDisplay(name)} response ${verb} (${failures})`}
+          </Text>
+        </Box>
+      );
+    }
   }
 }
 
