@@ -44,6 +44,11 @@ import { synthesizeEvents, type TranscriptDocument } from "../../memory/transcri
 
 import { CliUserError } from "../cli-user-error.js";
 import { resolveSession } from "../session-resolver.js";
+import {
+  sanitizeExportBlock,
+  sanitizeExportBlockLines,
+  sanitizeExportLine,
+} from "./export-sanitize.js";
 import { renderShare } from "./export-share.js";
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
@@ -130,16 +135,18 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
           await fs.writeFile(opts.output, rendered, { encoding: "utf8" });
           writeError(`Wrote ${opts.format} export to ${opts.output}\n`);
           if (opts.format !== "json") {
+            const safeResolvedName = sanitizeExportLine(resolvedName);
             write(
-              `\x1b[2mNext: council conclude ${resolvedName} | council resume ${resolvedName}\x1b[0m\n`,
+              `Next: council conclude ${safeResolvedName} | council resume ${safeResolvedName}\n`,
             );
           }
           return;
         }
         write(rendered);
         if (opts.format !== "json") {
+          const safeResolvedName = sanitizeExportLine(resolvedName);
           write(
-            `\x1b[2mNext: council conclude ${resolvedName} | council resume ${resolvedName}\x1b[0m\n`,
+            `Next: council conclude ${safeResolvedName} | council resume ${safeResolvedName}\n`,
           );
         }
       } finally {
@@ -195,24 +202,31 @@ function renderMarkdown(doc: TranscriptDocument): string {
   const nameBySlug = new Map<string, string>();
   const modelBySlug = new Map<string, string>();
   for (const e of doc.experts) {
-    slugById.set(e.id, e.slug);
-    nameBySlug.set(e.slug, e.displayName);
-    modelBySlug.set(e.slug, e.model);
+    const safeSlug = sanitizeExportLine(e.slug);
+    slugById.set(e.id, safeSlug);
+    nameBySlug.set(safeSlug, sanitizeExportLine(e.displayName));
+    modelBySlug.set(safeSlug, sanitizeExportLine(e.model));
   }
 
   const lines: string[] = [];
-  lines.push(`# ${doc.panel.name}`);
-  if (doc.panel.topic) lines.push(`> ${doc.panel.topic}`);
+  lines.push(`# ${sanitizeExportLine(doc.panel.name)}`);
+  if (doc.panel.topic) lines.push(`> ${sanitizeExportLine(doc.panel.topic)}`);
   lines.push("");
-  lines.push(`**Prompt:** ${doc.latestDebate.prompt}`);
-  lines.push(`**Status:** ${doc.latestDebate.status}`);
-  if (doc.latestDebate.endedAt) lines.push(`**Ended:** ${doc.latestDebate.endedAt}`);
+  lines.push(`**Prompt:** ${sanitizeExportLine(doc.latestDebate.prompt)}`);
+  lines.push(`**Status:** ${sanitizeExportLine(doc.latestDebate.status)}`);
+  if (doc.latestDebate.endedAt) {
+    lines.push(`**Ended:** ${sanitizeExportLine(doc.latestDebate.endedAt)}`);
+  }
   lines.push("");
 
   if (doc.experts.length > 0) {
     lines.push("## Panel");
     for (const e of doc.experts) {
-      lines.push(`- **${e.displayName}** (\`${e.slug}\`) - ${e.model}`);
+      lines.push(
+        `- **${sanitizeExportLine(e.displayName)}** (\`${sanitizeExportLine(
+          e.slug,
+        )}\`) - ${sanitizeExportLine(e.model)}`,
+      );
     }
     lines.push("");
   }
@@ -231,13 +245,13 @@ function renderMarkdown(doc: TranscriptDocument): string {
         lastRound = t.round;
       }
       const slug = t.expertId ? slugById.get(t.expertId) : undefined;
-      const display = slug ? (nameBySlug.get(slug) ?? slug) : t.speakerKind;
+      const display = sanitizeExportLine(slug ? (nameBySlug.get(slug) ?? slug) : t.speakerKind);
       const model = slug ? modelBySlug.get(slug) : undefined;
       lines.push(`#### ${display}${model ? ` _(${model})_` : ""}`);
       lines.push("");
       // Indent multi-line content as a markdown block-quote so it
       // renders as the expert's "voice".
-      for (const para of t.content.split("\n")) {
+      for (const para of sanitizeExportBlockLines(t.content)) {
         lines.push(`> ${para}`);
       }
       lines.push("");
@@ -258,8 +272,9 @@ function renderAdr(doc: TranscriptDocument): string {
   const slugById = new Map<string, string>();
   const nameBySlug = new Map<string, string>();
   for (const e of doc.experts) {
-    slugById.set(e.id, e.slug);
-    nameBySlug.set(e.slug, e.displayName);
+    const safeSlug = sanitizeExportLine(e.slug);
+    slugById.set(e.id, safeSlug);
+    nameBySlug.set(safeSlug, sanitizeExportLine(e.displayName));
   }
 
   // For each expert: collect their first turn ("position") and last
@@ -285,24 +300,24 @@ function renderAdr(doc: TranscriptDocument): string {
   const expertContribs: ExpertContrib[] = [];
   for (const c of contribs.values()) {
     expertContribs.push({
-      displayName: c.displayName,
-      position: c.firstTurn,
-      synthesis: c.lastTurn,
+      displayName: sanitizeExportLine(c.displayName),
+      position: sanitizeExportBlock(c.firstTurn),
+      synthesis: sanitizeExportBlock(c.lastTurn),
     });
   }
 
   const status = deriveAdrStatus(doc);
 
   const lines: string[] = [];
-  lines.push(`# Decision Record: ${doc.panel.topic ?? doc.originalPrompt}`);
+  lines.push(`# Decision Record: ${sanitizeExportLine(doc.panel.topic ?? doc.originalPrompt)}`);
   lines.push("");
   lines.push(`## Status`);
   lines.push("");
-  lines.push(status);
+  lines.push(sanitizeExportLine(status));
   lines.push("");
   lines.push(`## Context`);
   lines.push("");
-  lines.push(doc.originalPrompt);
+  lines.push(sanitizeExportBlock(doc.originalPrompt));
   lines.push("");
   lines.push(`## Options Considered`);
   lines.push("");
@@ -312,7 +327,7 @@ function renderAdr(doc: TranscriptDocument): string {
     for (const c of expertContribs) {
       lines.push(`### ${c.displayName}'s position`);
       lines.push("");
-      for (const para of c.position.split("\n")) {
+      for (const para of sanitizeExportBlockLines(c.position)) {
         lines.push(`> ${para}`);
       }
       lines.push("");
@@ -333,8 +348,8 @@ function renderAdr(doc: TranscriptDocument): string {
         lastRound = t.round;
       }
       const slug = t.expertId ? slugById.get(t.expertId) : undefined;
-      const display = slug ? (nameBySlug.get(slug) ?? slug) : t.speakerKind;
-      lines.push(`- **${display}**: ${t.content}`);
+      const display = slug ? (nameBySlug.get(slug) ?? slug) : sanitizeExportLine(t.speakerKind);
+      lines.push(`- **${display}**: ${sanitizeExportBlock(t.content)}`);
     }
     lines.push("");
   }
@@ -346,7 +361,7 @@ function renderAdr(doc: TranscriptDocument): string {
     for (const c of expertContribs) {
       lines.push(`### ${c.displayName}'s final position`);
       lines.push("");
-      for (const para of c.synthesis.split("\n")) {
+      for (const para of sanitizeExportBlockLines(c.synthesis)) {
         lines.push(`> ${para}`);
       }
       lines.push("");
