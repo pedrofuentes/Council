@@ -94,4 +94,17 @@ describe("resolvePhaseWordBudget", () => {
   it("passes a negative budget through unchanged", () => {
     expect(resolvePhaseWordBudget(-5, "rebuttal")).toBe(-5);
   });
+
+  it("passes NaN through unchanged (non-finite guard)", () => {
+    expect(Number.isNaN(resolvePhaseWordBudget(Number.NaN, "opening"))).toBe(true);
+  });
+
+  it("passes positive and negative Infinity through unchanged", () => {
+    expect(resolvePhaseWordBudget(Number.POSITIVE_INFINITY, "synthesis")).toBe(
+      Number.POSITIVE_INFINITY,
+    );
+    expect(resolvePhaseWordBudget(Number.NEGATIVE_INFINITY, "rebuttal")).toBe(
+      Number.NEGATIVE_INFINITY,
+    );
+  });
 });
