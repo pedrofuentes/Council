@@ -1,0 +1,35 @@
+# ClusterFuzzLite — scheduled batch fuzzing. Runs longer than the per-PR check
+# and persists the growing corpus to the Actions cache so future runs start
+# from interesting inputs. Docs: https://google.github.io/clusterfuzzlite/
+name: ClusterFuzzLite (batch)
+
+on:
+  schedule:
+    - cron: "27 3 * * *" # daily at 03:27 UTC
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  batch-fuzzing:
+    name: Batch fuzzing
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read # checkout
+      actions: write # persist the corpus back to the Actions cache
+    steps:
+      - name: Build fuzzers
+        id: build
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          language: javascript
+          sanitizer: none
+
+      - name: Run fuzzers
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 600
+          mode: batch
+          sanitizer: none

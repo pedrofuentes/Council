@@ -1,0 +1,20 @@
+{
+  "//": "Standalone, minimal tsconfig used ONLY to transpile the self-contained sanitizer modules into ESM JavaScript that the CommonJS fuzz targets load via dynamic import(). It deliberately does NOT extend ../tsconfig.base.json so the fuzz build stays decoupled from the app's compiler/version specifics. Output lands in packages/cli/dist-fuzz/ (governed by packages/cli's \"type\": \"module\", so emit is ESM). Used by both `pnpm fuzz:build` locally and .clusterfuzzlite/build.sh in CI.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "rootDir": "../packages/cli/src/cli",
+    "outDir": "../packages/cli/dist-fuzz",
+    "strict": true,
+    "skipLibCheck": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "noEmit": false
+  },
+  "include": [
+    "../packages/cli/src/cli/strip-control-chars.ts",
+    "../packages/cli/src/cli/hidden-format-chars.ts"
+  ]
+}
