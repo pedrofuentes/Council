@@ -39,7 +39,10 @@ const SETTABLE_CONFIG_KEYS = [
   "documents.aiExtraction",
   "documents.aiExtractionAllowedExtensions",
   "documents.maxFileSizeMB",
+  "expert.recencyHalfLifeDays",
+  "expert.supportedFormats",
   "conclude.maxTranscriptChars",
+  "paths.dataHome",
 ] as const;
 
 type SettableConfigKey = (typeof SETTABLE_CONFIG_KEYS)[number];
@@ -355,7 +358,8 @@ function coerceConfigValue(
     case "defaults.maxWordsPerResponse":
     case "chat.recentTurnCount":
     case "chat.summaryMaxWords":
-    case "chat.longConversationWarning": {
+    case "chat.longConversationWarning":
+    case "expert.recencyHalfLifeDays": {
       const parsed = Number(rawValue);
       if (!Number.isInteger(parsed)) {
         throw new CliUserError(`Config value for ${toSingleLineDisplay(key)} must be an integer.`);
@@ -387,8 +391,18 @@ function coerceConfigValue(
       }
       return rawValue;
     }
-    case "documents.aiExtractionAllowedExtensions": {
+    case "documents.aiExtractionAllowedExtensions":
+    case "expert.supportedFormats": {
       return normalizeExtensionList(rawValue);
+    }
+    case "paths.dataHome": {
+      const trimmed = rawValue.trim();
+      if (trimmed.length === 0) {
+        throw new CliUserError(
+          `Config value for ${toSingleLineDisplay(key)} must be a non-empty path.`,
+        );
+      }
+      return trimmed;
     }
     case "documents.maxFileSizeMB": {
       const parsed = Number(rawValue);
@@ -650,9 +664,21 @@ function buildSetCommand(write: Writer, writeError: Writer): Command {
       const displayValue = Array.isArray(value)
         ? value.length === 0
           ? "(none)"
-          : value.join(", ")
-        : String(value);
+          : value.map((item) => toSingleLineDisplay(item)).join(", ")
+        : typeof value === "string"
+          ? toSingleLineDisplay(value)
+          : String(value);
       write(`Set ${key} = ${displayValue}\n`);
+
+      if (key === "paths.dataHome") {
+        // `value` is the user-supplied path string; it must be sanitized
+        // before being echoed to the terminal (terminal-injection safety).
+        const safePath = toSingleLineDisplay(String(value));
+        write(
+          `Note: existing data at the previous location is not moved automatically. ` +
+            `Council will use '${safePath}' for new data — move any existing files there manually if needed.\n`,
+        );
+      }
     });
   return cmd;
 }
