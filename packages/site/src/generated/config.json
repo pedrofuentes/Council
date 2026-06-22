@@ -294,6 +294,43 @@
         ]
       },
       {
+        "name": "qualityGate",
+        "description": "Anti-sycophancy quality gate governing whether expert responses that fail the heuristic quality check are flagged or regenerated before they enter the transcript.",
+        "keys": [
+          {
+            "path": "qualityGate.mode",
+            "segments": [
+              "qualityGate",
+              "mode"
+            ],
+            "section": "qualityGate",
+            "type": "enum",
+            "enumValues": [
+              "off",
+              "warn",
+              "regenerate"
+            ],
+            "hasDefault": true,
+            "default": "warn",
+            "description": "Quality-gate behavior: off disables it, warn flags failing responses without regenerating, regenerate re-prompts them up to maxRegenerations."
+          },
+          {
+            "path": "qualityGate.maxRegenerations",
+            "segments": [
+              "qualityGate",
+              "maxRegenerations"
+            ],
+            "section": "qualityGate",
+            "type": "integer",
+            "hasDefault": true,
+            "default": 1,
+            "min": 0,
+            "max": 3,
+            "description": "Maximum regeneration attempts per response when mode is regenerate."
+          }
+        ]
+      },
+      {
         "name": "paths",
         "description": "User-facing data directory locations.",
         "keys": [

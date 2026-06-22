@@ -183,6 +183,33 @@ export const ConfigSchema = z
         maxTranscriptChars: 50000,
       }),
     /**
+     * Anti-sycophancy quality gate: governs whether (and how aggressively)
+     * Council re-prompts an expert response that fails the heuristic quality
+     * check before it lands in the transcript. Defaults are conservative —
+     * `warn` flags failing responses without spending extra model requests on
+     * regeneration. (Orchestrator wiring lands in a later change; this section
+     * is the config surface only.)
+     */
+    qualityGate: z
+      .object({
+        /**
+         * Gate behavior:
+         *   - `off`        — the gate does nothing.
+         *   - `warn`       — flag failing responses without regenerating (default).
+         *   - `regenerate` — re-prompt failing responses up to `maxRegenerations`.
+         */
+        mode: z.enum(["off", "warn", "regenerate"]).default("warn"),
+        /**
+         * Maximum regeneration attempts per response when `mode` is
+         * `regenerate`. 0..3 inclusive, default 1.
+         */
+        maxRegenerations: z.number().int().min(0).max(3).default(1),
+      })
+      .default({
+        mode: "warn",
+        maxRegenerations: 1,
+      }),
+    /**
      * User-facing data directory paths. `dataHome` holds expert and panel
      * YAML files (separate from the hidden `~/.council/` runtime dir).
      */
@@ -233,6 +260,10 @@ export const ConfigSchema = z
     },
     conclude: {
       maxTranscriptChars: 50000,
+    },
+    qualityGate: {
+      mode: "warn",
+      maxRegenerations: 1,
     },
     paths: { dataHome: "~/Council" },
   });

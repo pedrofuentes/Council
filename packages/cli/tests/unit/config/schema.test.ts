@@ -148,3 +148,44 @@ describe("ConfigSchema — documents section", () => {
     expect(config.expert.supportedFormats).toEqual([".md", ".txt", ".html"]);
   });
 });
+
+describe("ConfigSchema — qualityGate section", () => {
+  it("applies defaults when input is empty", () => {
+    const config = ConfigSchema.parse({});
+    expect(config.qualityGate).toEqual({ mode: "warn", maxRegenerations: 1 });
+  });
+
+  it.each(["off", "warn", "regenerate"] as const)("accepts mode='%s'", (mode) => {
+    const config = ConfigSchema.parse({ qualityGate: { mode } });
+    expect(config.qualityGate.mode).toBe(mode);
+  });
+
+  it("rejects invalid mode values", () => {
+    expect(() => ConfigSchema.parse({ qualityGate: { mode: "loud" } })).toThrow();
+    expect(() => ConfigSchema.parse({ qualityGate: { mode: "" } })).toThrow();
+    expect(() => ConfigSchema.parse({ qualityGate: { mode: true } })).toThrow();
+  });
+
+  it.each([0, 1, 2, 3])("accepts maxRegenerations=%i within range", (value) => {
+    const config = ConfigSchema.parse({ qualityGate: { maxRegenerations: value } });
+    expect(config.qualityGate.maxRegenerations).toBe(value);
+  });
+
+  it("rejects maxRegenerations below the minimum (0)", () => {
+    expect(() => ConfigSchema.parse({ qualityGate: { maxRegenerations: -1 } })).toThrow();
+  });
+
+  it("rejects maxRegenerations above the maximum (3)", () => {
+    expect(() => ConfigSchema.parse({ qualityGate: { maxRegenerations: 4 } })).toThrow();
+  });
+
+  it("rejects non-integer maxRegenerations", () => {
+    expect(() => ConfigSchema.parse({ qualityGate: { maxRegenerations: 1.5 } })).toThrow();
+  });
+
+  it("preserves backward-compatible parsing (no qualityGate key)", () => {
+    const config = ConfigSchema.parse({ defaults: { maxRounds: 6 } });
+    expect(config.qualityGate.mode).toBe("warn");
+    expect(config.qualityGate.maxRegenerations).toBe(1);
+  });
+});
