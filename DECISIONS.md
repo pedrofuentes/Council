@@ -22,6 +22,23 @@
 
 <!-- Add new decisions below this line, most recent first -->
 
+### ADR-029: Enforce `maxWordsPerResponse` as a soft per-turn prompt nudge
+**Date**: 2026-06-21
+**Status**: Accepted
+**Context**: `maxWordsPerResponse` (CLI `--max-words`, default 250) was fully plumbed — flags on `convene`/`ask`/`review`/`resume`, schema validation (50–2000), the config wizard, `config show/set`, and persisted into `DebateConfig` — but it **never reached the model**. It was declared in `DebateConfig` (debate.ts) and `CostInput` (cost.ts) yet read nowhere in prompt construction or cost math, so tightening it did nothing. This was not merely dead config: `error-mapper.ts` advises users to *"Try a smaller `--max-words`"* to escape `CONTEXT_OVERFLOW`, a remedy that was a no-op. Commit `45216c9` already documented the gap (a Sentinel finding renamed the `--max-words` e2e test to "command accepts flag and completes" because "MockEngine doesn't enforce limits"). `chat` intentionally passes `0`.
+**Decision**: Enforce the budget as a **soft prompt nudge**, not a hard truncation. A pure `appendWordBudget(task, maxWords)` helper (`core/word-budget.ts`) appends a length target plus a quality clause ("…do not drop your strongest disagreement or a specific, falsifiable claim just to hit the target"). It is applied at the single AI-turn chokepoint `Debate.#runAiTurn`, **after** the `[REFERENCE DOCUMENTS]` block, so it covers both freeform strategies and structured phases in one place and is always the final instruction. A non-positive budget is the "no cap" sentinel (`chat` → `0`). The default stays **250**.
+**Alternatives considered**:
+- **Remove the flag/config as dead surface** — rejected: `error-mapper` advertises it as a remedy; a word budget is on-brand with the prompt-architecture thesis ("constraints produce intelligence"); and enforcing is cheaper than ripping flags out of 5 commands + schema + wizard + error text.
+- **Inject into the system prompt's OUTPUT CONTRACT** — rejected: the system prompt is built once at convene time and **persisted**; `ask`/`resume` replay it (ask.ts:245, resume.ts:180), so a cap there would be static-per-panel and still ignore per-invocation `--max-words`. Only the per-turn task is rebuilt each run.
+- **Hard truncation / post-hoc trimming** — rejected: cuts experts mid-argument and fights the quality-gate's 12-word floor and the falsifiability contract.
+- **Per-phase budgets** (opening ~250–300 / rebuttal ~150–200 / synthesis ~300–400, per the architecture doc and research) — deferred as a future enhancement; V1 applies a uniform budget.
+**Why 250**: from `docs/analysis/03-prompt-architecture.md` ("250 words/expert/turn", "Length is not depth") and the deliberation literature — Khan et al. 2024 (arXiv:2402.06782) cap debaters at 150 words/turn to curb LLM verbosity bias; human-preferred Q&A answers run 125–175 words; concision instructions don't measurably hurt non-math/deliberative quality. Soft framing + the paired quality clause matter more than the exact number.
+**Consequences**:
+- ✅ `--max-words` now actually shortens expert responses on `convene`/`ask`/`review`/`resume`, and the `error-mapper` `CONTEXT_OVERFLOW` advice is finally true.
+- ✅ `chat` stays uncapped via the `0` sentinel; the persisted system prompt is untouched.
+- ⚠️ Soft nudge: adherence is best-effort. Budgets below ~100 words tend to be **ignored** by the model (token-elasticity, arXiv:2412.18547). The schema floor stays `50` (`min`) for compatibility, but this caveat is documented here rather than enforced.
+- 📝 Existing site docs already describe `--max-words` as a "soft cap", so no doc correction was needed. Follow-ups: per-phase budgets; optionally drop the unused `CostInput.maxWordsPerResponse` field (cost = premium requests = turn count, word-independent).
+
 ### ADR-028: Keep `@council-ai/cli` canonical; unscoped `council-ai` is a deprecated placeholder
 **Date**: 2026-06-20
 **Status**: Accepted (extends ADR-025)

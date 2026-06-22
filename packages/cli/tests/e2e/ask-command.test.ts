@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildAskCommand } from "../../src/cli/commands/ask.js";
+import { MockEngine } from "../../src/engine/mock/mock-engine.js";
 import { DebateRepository } from "../../src/memory/repositories/debates.js";
 import { TurnRepository } from "../../src/memory/repositories/turns.js";
 
@@ -115,17 +116,23 @@ describe.sequential("ask command e2e", () => {
     expect(turnEnds[0]?.expertSlug).toBe("pm");
   });
 
-  it("ask with --max-words — command accepts flag and completes", async () => {
+  it("ask with --max-words — threads the soft word budget into the expert prompt", async () => {
     const { panelName, panelId } = await seedPanelWithExperts(ctx.testHome);
     const output = captureOutput();
 
+    // Capture the engine so we can inspect the prompt it actually received —
+    // this is the regression guard the original test lacked (the flag used to
+    // be accepted but never reached the model).
+    let engine: MockEngine | undefined;
     const cmd = buildAskCommand({
-      engineFactory: makeMockEngineFactory(),
+      engineFactory: () => {
+        engine = new MockEngine({ responses: {} });
+        return engine;
+      },
       write: output.write,
       writeError: output.writeError,
     });
 
-    // Verify command accepts --max-words flag without error
     await cmd.parseAsync([
       "node",
       "council-ask",
@@ -142,8 +149,14 @@ describe.sequential("ask command e2e", () => {
     // Wait for DB to be fully released
     await waitForDbRelease(ctx.testHome);
 
+    // The configured budget must reach the expert as a soft prompt instruction.
+    expect(engine).toBeDefined();
+    expect(engine?.sentPrompts.length).toBeGreaterThan(0);
+    expect(engine?.sentPrompts.some((p) => p.prompt.includes("aim for about 100 words"))).toBe(
+      true,
+    );
+
     // Verify the debate ran successfully
-    // Note: MockEngine doesn't enforce word limits, so we only verify the flag is accepted
     const db = await openTestDb(ctx.testHome);
     try {
       const debates = await new DebateRepository(db).findByPanelId(panelId);

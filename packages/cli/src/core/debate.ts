@@ -33,7 +33,11 @@ import { type CouncilEngine, type ExpertSpec, sendWithEmptyRetry } from "../engi
 import type { HumanInputProvider } from "./human-input.js";
 
 import { generateCanary, checkCanaryLeak } from "./canary.js";
-import { buildHeuristicSummary, buildLLMSummary, type SummarizerConfig } from "./context/summarizer.js";
+import {
+  buildHeuristicSummary,
+  buildLLMSummary,
+  type SummarizerConfig,
+} from "./context/summarizer.js";
 import { filterPriorTurns, type VisibilityConfig } from "./context/visibility.js";
 import {
   buildCrossExamPrompt,
@@ -43,11 +47,7 @@ import {
   type PriorTurn,
 } from "./moderator/phase-prompts.js";
 import { createRoundRobinStrategy } from "./moderator/strategies.js";
-import type {
-  ModeratorContext,
-  ModeratorStrategy,
-  PriorTurnRecord,
-} from "./moderator/strategy.js";
+import type { ModeratorContext, ModeratorStrategy, PriorTurnRecord } from "./moderator/strategy.js";
 import {
   appendReferenceDocuments,
   capSnippetsByChars,
@@ -55,6 +55,7 @@ import {
 } from "./documents/reference-block.js";
 import type { DocumentSnippet } from "./documents/retriever.js";
 import type { DebateEvent, DebatePhase } from "./types.js";
+import { appendWordBudget } from "./word-budget.js";
 
 export type DebateMode = "freeform" | "structured";
 
@@ -279,8 +280,7 @@ export class Debate {
     // Pick the summarizer mode: explicit `mode` from config wins; when
     // omitted, default to "llm" because the orchestrator always has an
     // engine handle. CLI users opt out with --heuristic-summaries.
-    const summarizerMode: "llm" | "heuristic" =
-      contextConfig?.summarizer?.mode ?? "llm";
+    const summarizerMode: "llm" | "heuristic" = contextConfig?.summarizer?.mode ?? "llm";
 
     // Build a ModeratorContext for the current `round`, applying the
     // configured visibility filter, prompt-char cap, and rolling
@@ -331,12 +331,8 @@ export class Debate {
       // Refresh the per-round LLM summary cache before any planning
       // happens so buildCtx() returns a stable summary for this round.
       // Heuristic mode keeps its sync per-turn behaviour via buildCtx().
-      if (
-        summarizerMode === "llm" &&
-        contextConfig?.summarizer !== undefined
-      ) {
-        const moderatorModel =
-          this.config.moderatorModel ?? this.experts[0]?.model ?? "default";
+      if (summarizerMode === "llm" && contextConfig?.summarizer !== undefined) {
+        const moderatorModel = this.config.moderatorModel ?? this.experts[0]?.model ?? "default";
         try {
           cachedRoundSummary = await buildLLMSummary(
             priorTurns,
@@ -420,14 +416,7 @@ export class Debate {
           if (refreshed !== undefined) prompt = refreshed.prompt;
         }
 
-        const captured = yield* this.#runTurn(
-          expert,
-          prompt,
-          round,
-          seq,
-          counters,
-          signal,
-        );
+        const captured = yield* this.#runTurn(expert, prompt, round, seq, counters, signal);
 
         if (captured !== null) {
           priorTurns.push({
@@ -561,7 +550,7 @@ export class Debate {
    * Each attempt accumulates its own delta content; partial content
    * from a failed attempt is discarded so retried turns start fresh.
    */
-   async *#runTurn(
+  async *#runTurn(
     expert: ExpertSpec,
     prompt: string,
     round: number,
@@ -628,8 +617,19 @@ export class Debate {
     }
 
     const turnId = ulid();
-    yield { kind: "turn.delta", expertSlug: expert.slug, text: result.content, speakerKind: "human" };
-    yield { kind: "turn.end", expertSlug: expert.slug, turnId, content: result.content, speakerKind: "human" };
+    yield {
+      kind: "turn.delta",
+      expertSlug: expert.slug,
+      text: result.content,
+      speakerKind: "human",
+    };
+    yield {
+      kind: "turn.end",
+      expertSlug: expert.slug,
+      turnId,
+      content: result.content,
+      speakerKind: "human",
+    };
 
     // Human turns do NOT count as premium requests
     yield {
@@ -649,17 +649,20 @@ export class Debate {
     counters: RunCounters,
     signal?: AbortSignal,
   ): AsyncGenerator<DebateEvent, string | null> {
-
     const backoffMs = this.config.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS;
     const maxRetries = backoffMs.length;
 
     // T1 RAG: append the shared [REFERENCE DOCUMENTS] block once (before the
     // retry loop) so every attempt sends the same augmented prompt. No-op
     // when the debate was configured without referenceDocuments.
-    const finalPrompt =
+    const withReferences =
       this.#referenceDocuments.length > 0
         ? appendReferenceDocuments(prompt, this.#referenceDocuments)
         : prompt;
+    // Soft per-response word budget (#max-words). Appended last so it is the
+    // final instruction the model sees; a non-positive budget (chat passes 0)
+    // is the "no cap" sentinel and leaves the prompt untouched.
+    const finalPrompt = appendWordBudget(withReferences, this.config.maxWordsPerResponse);
 
     let content = "";
     let turnFailed = false;
@@ -700,7 +703,12 @@ export class Debate {
           const ev = step.value;
           if (ev.kind === "delta") {
             content += ev.text;
-            yield { kind: "turn.delta", expertSlug: expert.slug, text: ev.text, speakerKind: "expert" };
+            yield {
+              kind: "turn.delta",
+              expertSlug: expert.slug,
+              text: ev.text,
+              speakerKind: "expert",
+            };
             // Canary leak detection (T-09). Check accumulated content
             // (not just this chunk) so a canary split across delta
             // boundaries is still caught. Warn at most once per
@@ -708,11 +716,7 @@ export class Debate {
             // flag is local to #runAiTurn so subsequent turns from
             // the same expert can warn again.
             const canary = this.#canaries.get(expert.id);
-            if (
-              canary !== undefined &&
-              !attemptLeakWarned &&
-              checkCanaryLeak(content, canary)
-            ) {
+            if (canary !== undefined && !attemptLeakWarned && checkCanaryLeak(content, canary)) {
               attemptLeakWarned = true;
               console.warn(
                 `[canary] leak detected in response from expert ${expert.id} (slug=${expert.slug}) — system prompt may have been exfiltrated`,
