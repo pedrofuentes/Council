@@ -11,7 +11,6 @@ import {
   safeGetContext,
   seedLongConversationCount,
   maybeWarnLongConversation,
-  warnIfBackgroundProcessingEnabled,
   createSummarizationGate,
   rewriteRotateError,
   buildExpertSpec,
@@ -79,8 +78,6 @@ export async function runExpertChat(opts: ExpertChatOptions): Promise<void> {
     sink: makeSink(opts.write, writeError),
     experts: new Map([[expert.slug, expert.displayName]]),
   });
-
-  warnIfBackgroundProcessingEnabled(config, renderer);
 
   const engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(engineKind);
   const inputProvider = (deps.inputProvider ?? defaultInputProvider)();

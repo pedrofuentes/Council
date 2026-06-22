@@ -35,7 +35,6 @@ export const CONFIG_DESCRIPTIONS: Readonly<Record<string, string>> = {
     "Name of the environment variable holding the Anthropic API key, never the key value itself.",
 
   expert: "Expert-library settings governing document ingestion and memory decay.",
-  "expert.backgroundProcessing": "Enable background document indexing for expert libraries.",
   "expert.recencyHalfLifeDays": "Number of days until an expert's memory weights decay by half.",
   "expert.supportedFormats": "File extensions eligible for expert document ingestion.",
 

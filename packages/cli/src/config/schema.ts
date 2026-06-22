@@ -71,12 +71,10 @@ export const ConfigSchema = z
       .default({}),
     /**
      * Expert library settings — govern how experts ingest sources and
-     * decay memory weights over time. Background processing is off by
-     * default to keep first-run behavior predictable.
+     * decay memory weights over time.
      */
     expert: z
       .object({
-        backgroundProcessing: z.boolean().default(false),
         recencyHalfLifeDays: z.number().int().min(1).max(365).default(90),
         supportedFormats: z
           .array(z.string())
@@ -98,7 +96,6 @@ export const ConfigSchema = z
           ]),
       })
       .default({
-        backgroundProcessing: false,
         recencyHalfLifeDays: 90,
         supportedFormats: [
           ".md",
@@ -206,7 +203,6 @@ export const ConfigSchema = z
     telemetry: { enabled: false },
     providers: {},
     expert: {
-      backgroundProcessing: false,
       recencyHalfLifeDays: 90,
       supportedFormats: [
         ".md",

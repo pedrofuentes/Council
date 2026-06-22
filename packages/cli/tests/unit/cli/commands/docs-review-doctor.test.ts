@@ -69,7 +69,6 @@ function makeConfig(overrides: {
     },
     telemetry: { enabled: false },
     expert: {
-      backgroundProcessing: false,
       recencyHalfLifeDays: 90,
       supportedFormats: [".md", ".txt", ".pdf"],
     },
