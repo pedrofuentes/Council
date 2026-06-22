@@ -350,6 +350,33 @@ function normalizeExtensionList(rawValue: string): string[] {
   return result;
 }
 
+/**
+ * Coerce a raw CLI string into an integer for an integer-valued config key.
+ *
+ * `Number()` is far too permissive for config input: it silently maps empty or
+ * whitespace-only strings to `0` and accepts hex (`0x2`), exponent (`1e0`), and
+ * fractional (`1.0`) forms. Such values are then either stored verbatim where
+ * the schema range happens to allow them (e.g. `qualityGate.maxRegenerations ""`
+ * → `0`) or surface a confusing downstream schema error. Reject anything that is
+ * not a plain, optionally-signed decimal integer up front so every integer key
+ * behaves identically. `invalidMessage` lets a key fold this rejection into its
+ * own range message; both default and override are sanitized via
+ * `toSingleLineDisplay` at the call site.
+ */
+function parseIntegerConfigValue(
+  key: SettableConfigKey,
+  rawValue: string,
+  invalidMessage?: string,
+): number {
+  const trimmed = rawValue.trim();
+  if (!/^[+-]?\d+$/.test(trimmed)) {
+    throw new CliUserError(
+      invalidMessage ?? `Config value for ${toSingleLineDisplay(key)} must be an integer.`,
+    );
+  }
+  return Number.parseInt(trimmed, 10);
+}
+
 function coerceConfigValue(
   key: SettableConfigKey,
   rawValue: string,
@@ -362,11 +389,7 @@ function coerceConfigValue(
     case "chat.summaryMaxWords":
     case "chat.longConversationWarning":
     case "expert.recencyHalfLifeDays": {
-      const parsed = Number(rawValue);
-      if (!Number.isInteger(parsed)) {
-        throw new CliUserError(`Config value for ${toSingleLineDisplay(key)} must be an integer.`);
-      }
-      return parsed;
+      return parseIntegerConfigValue(key, rawValue);
     }
     case "telemetry.enabled": {
       const normalized = rawValue.trim().toLowerCase();
@@ -445,11 +468,10 @@ function coerceConfigValue(
       return rawValue;
     }
     case "qualityGate.maxRegenerations": {
-      const parsed = Number(rawValue);
-      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 3) {
-        throw new CliUserError(
-          `Config value for ${toSingleLineDisplay(key)} must be an integer between 0 and 3.`,
-        );
+      const rangeMessage = `Config value for ${toSingleLineDisplay(key)} must be an integer between 0 and 3.`;
+      const parsed = parseIntegerConfigValue(key, rawValue, rangeMessage);
+      if (parsed < 0 || parsed > 3) {
+        throw new CliUserError(rangeMessage);
       }
       return parsed;
     }
