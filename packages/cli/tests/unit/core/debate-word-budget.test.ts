@@ -67,11 +67,26 @@ describe("Debate — soft word-budget injection (maxWordsPerResponse)", () => {
 
     const prompts = engine.sentPrompts.map((p) => p.prompt);
     expect(prompts.length).toBeGreaterThan(0);
+
+    // Couple each phase (identified by its prompt header) to its exact budget —
     // opening ×1.0, cross-exam ×0.6, rebuttal ×0.8, synthesis ×1.5 of the 250 anchor.
-    expect(prompts.some((p) => p.includes("aim for about 250 words"))).toBe(true);
-    expect(prompts.some((p) => p.includes("aim for about 150 words"))).toBe(true);
-    expect(prompts.some((p) => p.includes("aim for about 200 words"))).toBe(true);
-    expect(prompts.some((p) => p.includes("aim for about 375 words"))).toBe(true);
+    const phaseBudgets: readonly (readonly [string, string])[] = [
+      ["Opening statement:", "aim for about 250 words"],
+      ["Cross-examination on:", "aim for about 150 words"],
+      ["Rebuttal on:", "aim for about 200 words"],
+      ["Synthesis and final position on:", "aim for about 375 words"],
+    ];
+    const seenPhases = new Set<string>();
+    for (const prompt of prompts) {
+      const match = phaseBudgets.find(([header]) => prompt.includes(header));
+      expect(match).toBeDefined();
+      if (!match) continue;
+      const [header, budget] = match;
+      expect(prompt).toContain(budget);
+      seenPhases.add(header);
+    }
+    // All four structured phases must have run, each carrying its own budget.
+    expect(seenPhases.size).toBe(4);
   });
 
   it("keeps freeform mode on the uniform base budget (no per-phase scaling)", async () => {
