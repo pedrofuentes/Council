@@ -923,12 +923,18 @@ describe("DEFAULT_FORBIDDEN_PHRASES — documented-ban coverage", () => {
   // (packages/site/src/content/docs/explanation/anti-sycophancy.mdx,
   // §"Layer 1: Forbidden Phrases"). The code list MUST be a superset: any
   // response a reader is promised will be blocked has to actually be blocked.
+  //
+  // NOTE: the bare "echoing" ban was narrowed to its agreement-echo forms
+  // ("echoing the"/"echoing your"/"just echoing") so it no longer over-matches
+  // innocent prose like "an echoing concern" (issue #1506). The documented
+  // example below therefore uses a full performative phrase; the docs Layer-1
+  // list is aligned to match in a separate docs-only change.
   const DOCUMENTED_BANS = [
     "I agree with",
     "great point",
     "solid analysis",
     "well said",
-    "echoing",
+    "echoing the previous point",
     "building on that",
   ];
 

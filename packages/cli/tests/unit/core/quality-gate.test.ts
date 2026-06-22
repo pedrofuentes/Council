@@ -70,6 +70,39 @@ describe("applyQualityGate — forbidden phrases (Layer 1)", () => {
   });
 });
 
+describe("applyQualityGate — narrowed 'echoing' phrase (Layer 1, issue #1506)", () => {
+  // The forbidden-phrase entry was a bare "echoing" substring, which the
+  // case-insensitive `.includes()` matcher over-applied to innocent prose
+  // ("an echoing concern", "re-echoing"). The ban now targets only the
+  // agreement-echo forms, so legitimate uses of the word must pass.
+  const echoForbidden = (response: string): string[] =>
+    applyQualityGate(response, { priorSpeakers: [] })
+      .failures.filter(
+        (f) => f.kind === "forbidden_phrase" && f.detail.toLowerCase().includes("echoing"),
+      )
+      .map((f) => f.detail);
+
+  for (const text of [
+    "This raises an echoing concern about cache invalidation that nobody on the team has actually addressed yet.",
+    "The proposal risks building an echo chamber where every service simply repeats the same flawed latency assumption.",
+    "Re-echoing through the distributed log, the duplicated event eventually corrupts the downstream read model under load.",
+  ]) {
+    it(`does NOT flag legitimate use: "${text.slice(0, 36)}…"`, () => {
+      expect(echoForbidden(text)).toEqual([]);
+    });
+  }
+
+  for (const text of [
+    "Echoing the previous speaker, I think this captures the whole situation and there is nothing more to add here.",
+    "Echoing your point about scalability, I completely agree the team has framed the tradeoffs in the right way.",
+    "I'm just echoing what everyone has already said, but this really is a thorough and well-rounded plan overall.",
+  ]) {
+    it(`still flags performative agreement-echoing: "${text.slice(0, 36)}…"`, () => {
+      expect(echoForbidden(text).length).toBeGreaterThan(0);
+    });
+  }
+});
+
 describe("applyQualityGate — disagreement budget (Layer 2)", () => {
   it("does NOT require disagreement when there are no prior speakers (round 0)", () => {
     const result = applyQualityGate(

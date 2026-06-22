@@ -359,6 +359,42 @@ describe("lintPanelDefinition — filler-phrase", () => {
     );
     expect(findingFor(result, "filler-phrase")).toBeUndefined();
   });
+
+  it("does not flag a legitimate standalone 'echoing' use (issue #1506)", () => {
+    // The bare "echoing" entry over-matched innocent prose; the narrowed
+    // agreement-echo forms must leave a non-sycophantic use untouched.
+    const result = lintPanelDefinition(
+      validPanel({
+        experts: [
+          validExpert("a", {
+            epistemicStance:
+              "You raise an echoing concern about latency budgets the team keeps deferring.",
+          }),
+          validExpert("b", { role: "role b" }),
+          validExpert("c", { role: "role c" }),
+        ],
+      }),
+    );
+    expect(findingFor(result, "filler-phrase")).toBeUndefined();
+  });
+
+  it("still flags performative 'echoing the' agreement (issue #1506)", () => {
+    const result = lintPanelDefinition(
+      validPanel({
+        experts: [
+          validExpert("a", {
+            epistemicStance:
+              "You keep echoing the prior speaker instead of adding your own analysis.",
+          }),
+          validExpert("b", { role: "role b" }),
+          validExpert("c", { role: "role c" }),
+        ],
+      }),
+    );
+    const f = findingFor(result, "filler-phrase");
+    expect(f).toBeDefined();
+    expect(f?.message.toLowerCase()).toContain("echoing the");
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────
