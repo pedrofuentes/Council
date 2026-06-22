@@ -46,7 +46,7 @@ Common configuration keys:
 - `defaults.engine` — default engine (`copilot` or `mock`)
 - `defaults.maxRounds` — max debate rounds (default: 4)
 - `defaults.maxExperts` — max auto-composed experts (default: 3, range: 2–8)
-- `defaults.maxWordsPerResponse` — word limit per expert response
+- `defaults.maxWordsPerResponse` — soft word budget per expert response (default: 250); a nudge, not a hard cap. In **structured** debates it anchors the opening phase and the other phases scale from it (synthesis higher; cross-examination and rebuttal lower); **freeform** debates apply it uniformly.
 - `documents.aiExtraction` — enable AI-based document extraction (bool)
 - `documents.maxFileSizeMB` — max file size for document indexing
 - `conclude.maxTranscriptChars` — character limit for conclusion synthesis

@@ -266,7 +266,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
     )
     .option(
       "--max-words <n>",
-      "Soft per-response word cap",
+      "Soft per-response word budget (opening-phase anchor; structured mode scales the other phases)",
       (v) => {
         const parsed = Number(v);
         if (!Number.isInteger(parsed)) {

@@ -550,7 +550,7 @@
           },
           {
             "flags": "--max-words <n>",
-            "description": "Soft per-response word cap",
+            "description": "Soft per-response word budget (opening-phase anchor; structured mode scales the other phases)",
             "long": "--max-words",
             "required": true,
             "optional": false,
@@ -743,7 +743,7 @@
           },
           {
             "flags": "--max-words <n>",
-            "description": "Soft per-response word cap for --prompt mode",
+            "description": "Soft per-response word budget for --prompt mode (opening-phase anchor; structured mode scales the other phases)",
             "long": "--max-words",
             "required": true,
             "optional": false,
@@ -925,7 +925,7 @@
           },
           {
             "flags": "--max-words <n>",
-            "description": "Soft per-response word cap",
+            "description": "Soft per-response word budget (opening-phase anchor; structured mode scales the other phases)",
             "long": "--max-words",
             "required": true,
             "optional": false,
@@ -1013,7 +1013,7 @@
           },
           {
             "flags": "--max-words <n>",
-            "description": "Soft per-response word cap",
+            "description": "Soft per-response word budget (opening-phase anchor; structured mode scales the other phases)",
             "long": "--max-words",
             "required": true,
             "optional": false,
