@@ -3,7 +3,7 @@ import { createInterface } from "node:readline/promises";
 
 import { CliUserError } from "./cli-user-error.js";
 import { isNonInteractive } from "./non-interactive.js";
-import { stripControlChars } from "./strip-control-chars.js";
+import { stripControlChars, toSingleLineDisplay } from "./strip-control-chars.js";
 
 export interface KeypressEvent {
   readonly sequence: string;
@@ -279,7 +279,7 @@ async function promptWithQuestion(write: (s: string) => void): Promise<string> {
     if (isReadlineAbort(err)) {
       throw new CliUserError("Aborted");
     }
-    const message = `Topic input failed: ${sanitizeErrorMessage(err)}`;
+    const message = `Topic input failed: ${toSingleLineDisplay(sanitizeErrorMessage(err))}`;
     write(`${message}\n`);
     throw new CliUserError(message, { cause: err });
   } finally {
