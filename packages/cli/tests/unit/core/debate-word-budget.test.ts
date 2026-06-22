@@ -52,7 +52,7 @@ const REFERENCE_DOCS: readonly DocumentSnippet[] = [
 ];
 
 describe("Debate — soft word-budget injection (maxWordsPerResponse)", () => {
-  it("appends the word budget to every AI prompt in structured mode", async () => {
+  it("scales the budget per phase in structured mode (opening/cross-exam/rebuttal/synthesis)", async () => {
     const experts = [expert("alpha"), expert("beta")];
     const engine = await makeEngine(experts);
 
@@ -65,9 +65,34 @@ describe("Debate — soft word-budget injection (maxWordsPerResponse)", () => {
     const debate = new Debate(engine, experts, config);
     await collect(debate.run("Should we ship?"));
 
-    expect(engine.sentPrompts.length).toBeGreaterThan(0);
-    for (const p of engine.sentPrompts) {
-      expect(p.prompt).toContain("aim for about 250 words");
+    const prompts = engine.sentPrompts.map((p) => p.prompt);
+    expect(prompts.length).toBeGreaterThan(0);
+    // opening ×1.0, cross-exam ×0.6, rebuttal ×0.8, synthesis ×1.5 of the 250 anchor.
+    expect(prompts.some((p) => p.includes("aim for about 250 words"))).toBe(true);
+    expect(prompts.some((p) => p.includes("aim for about 150 words"))).toBe(true);
+    expect(prompts.some((p) => p.includes("aim for about 200 words"))).toBe(true);
+    expect(prompts.some((p) => p.includes("aim for about 375 words"))).toBe(true);
+  });
+
+  it("keeps freeform mode on the uniform base budget (no per-phase scaling)", async () => {
+    const experts = [expert("alpha")];
+    const engine = await makeEngine(experts);
+
+    const config: DebateConfig = {
+      maxRounds: 2,
+      maxWordsPerResponse: 250,
+      mode: "freeform",
+      retryBackoffMs: [1, 2],
+    };
+    const debate = new Debate(engine, experts, config);
+    await collect(debate.run("Should we ship?"));
+
+    const prompts = engine.sentPrompts.map((p) => p.prompt);
+    expect(prompts.length).toBeGreaterThan(0);
+    for (const p of prompts) {
+      expect(p).toContain("aim for about 250 words");
+      expect(p).not.toContain("aim for about 150 words");
+      expect(p).not.toContain("aim for about 375 words");
     }
   });
 

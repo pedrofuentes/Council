@@ -11,7 +11,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { appendWordBudget } from "../../../src/core/word-budget.js";
+import { appendWordBudget, resolvePhaseWordBudget } from "../../../src/core/word-budget.js";
 
 const TASK = "Deliver your position. Be specific and stake a clear claim.";
 
@@ -60,5 +60,38 @@ describe("appendWordBudget", () => {
 
     expect(result).toContain("250 words");
     expect(result).not.toContain("250.9");
+  });
+});
+
+describe("resolvePhaseWordBudget", () => {
+  it("keeps the opening phase at the base budget (the anchor)", () => {
+    expect(resolvePhaseWordBudget(250, "opening")).toBe(250);
+  });
+
+  it("tightens cross-examination to a sharp-question budget", () => {
+    expect(resolvePhaseWordBudget(250, "cross-examination")).toBe(150);
+  });
+
+  it("tightens rebuttal below the opening budget", () => {
+    expect(resolvePhaseWordBudget(250, "rebuttal")).toBe(200);
+  });
+
+  it("widens synthesis above the opening budget", () => {
+    expect(resolvePhaseWordBudget(250, "synthesis")).toBe(375);
+  });
+
+  it("scales relative to the supplied base, not a hard-coded 250", () => {
+    expect(resolvePhaseWordBudget(200, "opening")).toBe(200);
+    expect(resolvePhaseWordBudget(200, "cross-examination")).toBe(120);
+    expect(resolvePhaseWordBudget(200, "synthesis")).toBe(300);
+  });
+
+  it("passes the 0 'no cap' sentinel through unchanged for every phase", () => {
+    expect(resolvePhaseWordBudget(0, "opening")).toBe(0);
+    expect(resolvePhaseWordBudget(0, "synthesis")).toBe(0);
+  });
+
+  it("passes a negative budget through unchanged", () => {
+    expect(resolvePhaseWordBudget(-5, "rebuttal")).toBe(-5);
   });
 });
