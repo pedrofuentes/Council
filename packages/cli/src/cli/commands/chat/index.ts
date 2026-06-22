@@ -31,7 +31,7 @@ import {
   type ExpertDefinition,
 } from "./shared.js";
 import { defaultWriter, defaultErrorWriter } from "../writer.js";
-import { stripControlChars, toSingleLineDisplay } from "../../strip-control-chars.js";
+import { toSingleLineDisplay } from "../../strip-control-chars.js";
 import { runList } from "./list.js";
 import { runHistory } from "./history.js";
 import { runExpertChat } from "./expert-chat.js";
@@ -77,7 +77,7 @@ function loadPersistedPanelDefinition(
   target: string,
   configJson: string,
 ): PanelDefinition | undefined {
-  const safeTarget = stripControlChars(target);
+  const safeTarget = toSingleLineDisplay(target);
   const stored = parseStoredPanelDefinition(configJson);
   if (stored.kind === "ok") {
     return stored.definition;
@@ -173,7 +173,7 @@ async function validateAndResolveTarget(
   db: CouncilDatabase,
   writeError: Writer,
 ): Promise<{ type: "expert" | "panel"; expert?: ExpertDefinition; panel?: PanelDefinition }> {
-  const safeTarget = stripControlChars(target);
+  const safeTarget = toSingleLineDisplay(target);
   const library = new FileExpertLibrary(dataHome, db);
 
   // Check for expert first (file or cached)
