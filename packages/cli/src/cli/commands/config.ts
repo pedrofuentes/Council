@@ -42,6 +42,8 @@ const SETTABLE_CONFIG_KEYS = [
   "expert.recencyHalfLifeDays",
   "expert.supportedFormats",
   "conclude.maxTranscriptChars",
+  "qualityGate.mode",
+  "qualityGate.maxRegenerations",
   "paths.dataHome",
 ] as const;
 
@@ -427,6 +429,26 @@ function coerceConfigValue(
       if (!Number.isFinite(parsed) || parsed < 1000 || parsed > 1000000) {
         throw new CliUserError(
           `Config value for ${toSingleLineDisplay(key)} must be a number between 1000 and 1000000.`,
+        );
+      }
+      return parsed;
+    }
+    case "qualityGate.mode": {
+      const validValues = ["off", "warn", "regenerate"] as const;
+      if (!validValues.includes(rawValue as (typeof validValues)[number])) {
+        throw new CliUserError(
+          `Config value for ${toSingleLineDisplay(key)} must be one of: ${validValues
+            .map((choice) => toSingleLineDisplay(choice))
+            .join(", ")}`,
+        );
+      }
+      return rawValue;
+    }
+    case "qualityGate.maxRegenerations": {
+      const parsed = Number(rawValue);
+      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 3) {
+        throw new CliUserError(
+          `Config value for ${toSingleLineDisplay(key)} must be an integer between 0 and 3.`,
         );
       }
       return parsed;

@@ -56,6 +56,13 @@ export const CONFIG_DESCRIPTIONS: Readonly<Record<string, string>> = {
   "conclude.maxTranscriptChars":
     "Character budget for transcript content in the synthesis prompt; older turns are dropped beyond it.",
 
+  qualityGate:
+    "Anti-sycophancy quality gate governing whether expert responses that fail the heuristic quality check are flagged or regenerated before they enter the transcript.",
+  "qualityGate.mode":
+    "Quality-gate behavior: off disables it, warn flags failing responses without regenerating, regenerate re-prompts them up to maxRegenerations.",
+  "qualityGate.maxRegenerations":
+    "Maximum regeneration attempts per response when mode is regenerate.",
+
   paths: "User-facing data directory locations.",
   "paths.dataHome": "Directory holding user-facing expert and panel YAML files.",
 };
