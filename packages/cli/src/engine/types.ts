@@ -60,8 +60,7 @@ export interface SendOptions {
 /**
  * Aggregate result of a completed send.
  *
- * - `tokensIn` / `tokensOut`: provider-reported token counts when available;
- *   used for cost accounting (`core/cost.ts`)
+ * - `tokensIn` / `tokensOut`: provider-reported token counts when available
  * - `latencyMs`: wall-clock time from `send()` invocation to the terminal event
  *
  * Note: full content is NOT included here. Consumers that need the assembled
