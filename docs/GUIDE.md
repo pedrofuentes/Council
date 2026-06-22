@@ -1426,29 +1426,29 @@ Aliases: `experts`, `panels`, and `history` are aliases for `expert`, `panel`, a
 
 ### `council convene` options
 
-| Flag                    | Description                                                          | Default             |
-| ----------------------- | -------------------------------------------------------------------- | ------------------- |
-| `--template <name>`     | Use a built-in or custom panel                                       | (auto-compose)      |
-| `-p, --panel <name>`    | Alias for `--template`                                               | (auto-compose)      |
-| `--prompt-file <path>`  | Read topic verbatim from file or `-` for stdin                       | (none)              |
-| `--model`               | Override the AI model                                                | `claude-sonnet-4.5` |
-| `--engine`              | Engine to use (`copilot` or `mock`)                                  | `copilot`           |
-| `--max-rounds`          | Number of deliberation rounds (1–20)                                 | `4`                 |
-| `--max-experts`         | Max experts for auto-compose (2–8)                                   | `3`                 |
-| `--strategy`            | Moderator strategy                                                   | `round-robin`       |
-| `--mode`                | Debate mode (`freeform` or `structured`)                             | `freeform`          |
-| `--context-scope`       | Context window management                                            | `all`               |
-| `--summarize-after`     | Start rolling summaries after round N                                | (disabled)          |
-| `--format`              | Output format (`auto`, `json`, or `plain`)                           | `auto`              |
-| `--no-conclude`         | Skip automatic conclusion synthesis after a completed debate         | (auto-conclude)     |
-| `--quiet`               | Suppress informational messages                                      | `false`             |
-| `--yes`                 | Skip confirmations                                                   | `false`             |
-| `--verbose`             | Extra diagnostic output                                              | `false`             |
-| `--max-words`           | Max words per expert response (50–2000)                              | `250`               |
-| `--experts`             | Expert slugs from the library, space- or comma-separated, repeatable | (none)              |
-| `--human`               | Add a human participant (repeatable)                                 | (none)              |
-| `--heuristic-summaries` | Local summarizer for offline use                                     | `false`             |
-| `--heuristic-memory`    | Skip post-debate LLM extraction                                      | `false`             |
+| Flag                    | Description                                                                  | Default             |
+| ----------------------- | ---------------------------------------------------------------------------- | ------------------- |
+| `--template <name>`     | Use a built-in or custom panel                                               | (auto-compose)      |
+| `-p, --panel <name>`    | Alias for `--template`                                                       | (auto-compose)      |
+| `--prompt-file <path>`  | Read topic verbatim from file or `-` for stdin                               | (none)              |
+| `--model`               | Override the AI model                                                        | `claude-sonnet-4.5` |
+| `--engine`              | Engine to use (`copilot` or `mock`)                                          | `copilot`           |
+| `--max-rounds`          | Number of deliberation rounds (1–20)                                         | `4`                 |
+| `--max-experts`         | Max experts for auto-compose (2–8)                                           | `3`                 |
+| `--strategy`            | Moderator strategy                                                           | `round-robin`       |
+| `--mode`                | Debate mode (`freeform` or `structured`)                                     | `freeform`          |
+| `--context-scope`       | Context window management                                                    | `all`               |
+| `--summarize-after`     | Start rolling summaries after round N                                        | (disabled)          |
+| `--format`              | Output format (`auto`, `json`, or `plain`)                                   | `auto`              |
+| `--no-conclude`         | Skip automatic conclusion synthesis after a completed debate                 | (auto-conclude)     |
+| `--quiet`               | Suppress informational messages                                              | `false`             |
+| `--yes`                 | Skip confirmations                                                           | `false`             |
+| `--verbose`             | Extra diagnostic output                                                      | `false`             |
+| `--max-words`           | Soft per-response word budget (50–2000); structured mode scales it per phase | `250`               |
+| `--experts`             | Expert slugs from the library, space- or comma-separated, repeatable         | (none)              |
+| `--human`               | Add a human participant (repeatable)                                         | (none)              |
+| `--heuristic-summaries` | Local summarizer for offline use                                             | `false`             |
+| `--heuristic-memory`    | Skip post-debate LLM extraction                                              | `false`             |
 
 ### `council chat` options
 
@@ -1474,25 +1474,25 @@ Aliases: `experts`, `panels`, and `history` are aliases for `expert`, `panel`, a
 
 Set these with `council config set <key> <value>`:
 
-| Key                                       | Description                          | Default                                                                                   |
-| ----------------------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------- |
-| `defaults.model`                          | Default AI model                     | `claude-sonnet-4.5`                                                                       |
-| `defaults.engine`                         | Default engine                       | `copilot`                                                                                 |
-| `defaults.maxRounds`                      | Default deliberation rounds          | `4`                                                                                       |
-| `defaults.maxExperts`                     | Default max experts (auto-compose)   | `3`                                                                                       |
-| `defaults.maxWordsPerResponse`            | Default max words per response       | `250`                                                                                     |
-| `documents.aiExtraction`                  | AI-assisted document extraction      | `off` (`off`, `ask`, `auto`)                                                              |
-| `documents.aiExtractionAllowedExtensions` | Extensions allowed for AI extraction | `[]`                                                                                      |
-| `documents.maxFileSizeMB`                 | Maximum document file size           | `50`                                                                                      |
-| `conclude.maxTranscriptChars`             | Max transcript chars for conclusion  | `50000`                                                                                   |
-| `expert.backgroundProcessing`             | Process docs in background           | `false`                                                                                   |
-| `expert.recencyHalfLifeDays`              | Document recency half-life           | `90`                                                                                      |
-| `expert.supportedFormats`                 | Supported doc formats                | 14 extensions (`md, txt, html, pdf, csv, tsv, rtf, docx, pptx, xlsx, xls, odt, ods, odp`) |
-| `chat.recentTurnCount`                    | Recent turns to include              | `10`                                                                                      |
-| `chat.summaryMaxWords`                    | Summary length limit                 | `500`                                                                                     |
-| `chat.longConversationWarning`            | Warn on long conversations           | `500`                                                                                     |
-| `telemetry.enabled`                       | Enable telemetry                     | `false`                                                                                   |
-| `paths.dataHome`                          | Data directory path                  | `~/Council`                                                                               |
+| Key                                       | Description                                                | Default                                                                                   |
+| ----------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `defaults.model`                          | Default AI model                                           | `claude-sonnet-4.5`                                                                       |
+| `defaults.engine`                         | Default engine                                             | `copilot`                                                                                 |
+| `defaults.maxRounds`                      | Default deliberation rounds                                | `4`                                                                                       |
+| `defaults.maxExperts`                     | Default max experts (auto-compose)                         | `3`                                                                                       |
+| `defaults.maxWordsPerResponse`            | Default soft word budget; structured mode scales per phase | `250`                                                                                     |
+| `documents.aiExtraction`                  | AI-assisted document extraction                            | `off` (`off`, `ask`, `auto`)                                                              |
+| `documents.aiExtractionAllowedExtensions` | Extensions allowed for AI extraction                       | `[]`                                                                                      |
+| `documents.maxFileSizeMB`                 | Maximum document file size                                 | `50`                                                                                      |
+| `conclude.maxTranscriptChars`             | Max transcript chars for conclusion                        | `50000`                                                                                   |
+| `expert.backgroundProcessing`             | Process docs in background                                 | `false`                                                                                   |
+| `expert.recencyHalfLifeDays`              | Document recency half-life                                 | `90`                                                                                      |
+| `expert.supportedFormats`                 | Supported doc formats                                      | 14 extensions (`md, txt, html, pdf, csv, tsv, rtf, docx, pptx, xlsx, xls, odt, ods, odp`) |
+| `chat.recentTurnCount`                    | Recent turns to include                                    | `10`                                                                                      |
+| `chat.summaryMaxWords`                    | Summary length limit                                       | `500`                                                                                     |
+| `chat.longConversationWarning`            | Warn on long conversations                                 | `500`                                                                                     |
+| `telemetry.enabled`                       | Enable telemetry                                           | `false`                                                                                   |
+| `paths.dataHome`                          | Data directory path                                        | `~/Council`                                                                               |
 
 ### Glossary
 
