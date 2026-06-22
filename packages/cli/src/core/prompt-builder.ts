@@ -27,11 +27,22 @@ import { sanitizePromptBlock, sanitizePromptField } from "./prompt-sanitize.js";
 /**
  * Phrases banned in every expert response — the surface forms of
  * agreement-padding and generic LLM filler.
+ *
+ * The agreement-padding entries mirror the authoritative "Layer 1: Forbidden
+ * Phrases" list in the anti-sycophancy docs
+ * (`packages/site/src/content/docs/explanation/anti-sycophancy.mdx`): this
+ * constant must remain a superset of every phrase those docs promise to block.
+ * Matching is case-insensitive substring (quality-gate.ts) / word-boundary
+ * (panel-lint.ts), so a broader entry like "Building on" already covers the
+ * documented "building on that".
  */
 export const DEFAULT_FORBIDDEN_PHRASES: readonly string[] = [
   "Great point",
   "I agree with",
   "Building on",
+  "solid analysis",
+  "well said",
+  "echoing",
   "holistic",
   "synergy",
   "leverage",
