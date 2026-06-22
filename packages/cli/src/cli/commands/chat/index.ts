@@ -31,6 +31,7 @@ import {
   type ExpertDefinition,
 } from "./shared.js";
 import { defaultWriter, defaultErrorWriter } from "../writer.js";
+import { toSingleLineDisplay } from "../../strip-control-chars.js";
 import { runList } from "./list.js";
 import { runHistory } from "./history.js";
 import { runExpertChat } from "./expert-chat.js";
@@ -76,14 +77,28 @@ function loadPersistedPanelDefinition(
   target: string,
   configJson: string,
 ): PanelDefinition | undefined {
+  const safeTarget = toSingleLineDisplay(target);
   const stored = parseStoredPanelDefinition(configJson);
   if (stored.kind === "ok") {
     return stored.definition;
   }
   if (stored.kind === "invalid") {
-    throw new Error(`Stored panel definition for "${target}" is invalid: ${stored.message}`);
+    throw new Error(`Stored panel definition for "${safeTarget}" is invalid: ${stored.message}`);
   }
   return undefined;
+}
+
+function legacyPanelRecoveryHint(topic: string | null): string {
+  const safeTopic =
+    typeof topic === "string" && topic.trim().length > 0 ? toSingleLineDisplay(topic) : null;
+  const rerunHint =
+    safeTopic === null
+      ? "Re-run `council convene` for the original topic to recreate the panel."
+      : `Re-run \`council convene "${safeTopic}"\` to recreate the panel for this topic.`;
+  return (
+    "This session predates persisted panel definitions, so its auto-composed panel cannot be " +
+    `reloaded. ${rerunHint}`
+  );
 }
 
 export function buildChatCommand(deps: ChatCommandDeps = {}): Command {
@@ -158,6 +173,7 @@ async function validateAndResolveTarget(
   db: CouncilDatabase,
   writeError: Writer,
 ): Promise<{ type: "expert" | "panel"; expert?: ExpertDefinition; panel?: PanelDefinition }> {
+  const safeTarget = toSingleLineDisplay(target);
   const library = new FileExpertLibrary(dataHome, db);
 
   // Check for expert first (file or cached)
@@ -184,7 +200,11 @@ async function validateAndResolveTarget(
     try {
       const templateName = readTemplateName(dbPanel.configJson);
       if (!templateName) {
-        throw new Error(`Panel "${target}" has no template name in configJson`);
+        throw new Error(
+          `Panel "${safeTarget}" has no template name in configJson. ${legacyPanelRecoveryHint(
+            dbPanel.topic,
+          )}`,
+        );
       }
       try {
         const panel = await loadPanel(templateName, dataHome);
@@ -197,14 +217,15 @@ async function validateAndResolveTarget(
         if (storedPanel) {
           return { type: "panel", panel: storedPanel };
         }
-        throw err;
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`${msg} ${legacyPanelRecoveryHint(dbPanel.topic)}`);
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       writeError(
-        `!! Warning: panel "${target}" exists in database but failed to load its template: ${msg}\n`,
+        `!! Warning: panel "${safeTarget}" exists in database but failed to load its template: ${msg}\n`,
       );
-      throw new CliUserError(`Failed to load panel template for "${target}"`);
+      throw new CliUserError(`Failed to load panel template for "${safeTarget}"`);
     }
   } else {
     // No panel in the DB, try loading from YAML files (user panels or built-in templates).
