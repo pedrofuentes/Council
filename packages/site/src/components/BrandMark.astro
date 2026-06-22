@@ -28,7 +28,7 @@ const { size = 80, showWordmark = true, class: className } = Astro.props;
 
 <div class:list={['council-brandmark', className]}>
   <img
-    src="/brand/council-logo.svg"
+    src={`${import.meta.env.BASE_URL}brand/council-logo.png`}
     alt="Council"
     width={size}
     height={size}

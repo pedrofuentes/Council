@@ -419,24 +419,6 @@
   max-width: 24ch;
 }
 
-/* The shared BrandMark component hard-codes a root-absolute logo path
-   (`/brand/...`) that omits the configured site base, so its emblem 404s under
-   `/Council/`. We reuse BrandMark for its wordmark + typography and repaint the
-   emblem from the correct base path until BrandMark itself becomes base-aware.
-   The `.council-landing` prefix raises specificity above BrandMark's own
-   scoped `.council-logo-emblem` rule so these win regardless of bundle order. */
-.council-landing .council-closing .council-logo-emblem {
-  display: none;
-}
-
-.council-landing .council-closing .council-brandmark::before {
-  content: "";
-  display: block;
-  width: 60px;
-  height: 60px;
-  background: center / contain no-repeat url("/Council/brand/council-logo.svg");
-}
-
 .council-closing-sub {
   margin: 0;
   max-width: 52ch;

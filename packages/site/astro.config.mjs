@@ -24,6 +24,10 @@ export default defineConfig({
   integrations: [
     starlight({
       title: "Council",
+      logo: {
+        src: "./src/assets/council-logo.png",
+        replacesTitle: false,
+      },
       // Fallback metadata description so every page emits og:description and a
       // meta description even when a page omits its own frontmatter description.
       // Provider-honest: Council ships on GitHub Copilot today.
