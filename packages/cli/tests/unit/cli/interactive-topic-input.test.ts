@@ -113,6 +113,19 @@ async function waitForKeypressListener(stdin: MockStdin): Promise<void> {
   throw new Error("keypress listener was not attached");
 }
 
+function hasUnsafeTerminalCodePoint(character: string): boolean {
+  const codePoint = character.codePointAt(0);
+  return (
+    codePoint !== undefined &&
+    ((codePoint >= 0x00 && codePoint <= 0x1f) ||
+      (codePoint >= 0x7f && codePoint <= 0x9f) ||
+      codePoint === 0x2028 ||
+      codePoint === 0x2029 ||
+      (codePoint >= 0x202a && codePoint <= 0x202e) ||
+      (codePoint >= 0x2066 && codePoint <= 0x2069))
+  );
+}
+
 async function runPromptWithMockStdin(
   stdin: MockStdin,
   emitEvents: () => void,
@@ -286,6 +299,34 @@ describe("processKeypressStream", () => {
         cause: failure,
       });
       expect(output).toBe("Topic input failed: pty failed\n");
+      expect(close).toHaveBeenCalledOnce();
+    });
+
+    it("sanitizes dumb-terminal readline failure diagnostics before display", async () => {
+      vi.stubEnv("TERM", "dumb");
+      const failure = new Error(
+        "pty\x1b[31m red\x1b[0m\x1b]0;pwnd\x07spoof\x00\x7f\u0081\u202E\u2028real\nline",
+      );
+      const close = vi.fn();
+      let output = "";
+      mockCreateInterface.mockReturnValue({
+        close,
+        question: vi.fn().mockRejectedValue(failure),
+      });
+
+      await expect(
+        promptForTopic({
+          isNonInteractiveFn: () => false,
+          write: (s) => {
+            output += s;
+          },
+        }),
+      ).rejects.toMatchObject({
+        message: "Topic input failed: pty redspoof real line",
+        cause: failure,
+      });
+      expect(output).toBe("Topic input failed: pty redspoof real line\n");
+      expect([...output.slice(0, -1)].some(hasUnsafeTerminalCodePoint)).toBe(false);
       expect(close).toHaveBeenCalledOnce();
     });
 
