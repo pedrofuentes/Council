@@ -3,7 +3,7 @@ import { createInterface } from "node:readline/promises";
 
 import { CliUserError } from "./cli-user-error.js";
 import { isNonInteractive } from "./non-interactive.js";
-import { stripControlChars } from "./strip-control-chars.js";
+import { stripControlChars, toSingleLineDisplay } from "./strip-control-chars.js";
 
 export interface KeypressEvent {
   readonly sequence: string;
@@ -17,6 +17,24 @@ export interface TopicInputOptions {
   readonly keypressSource?: AsyncIterable<KeypressEvent>;
   readonly write?: (s: string) => void;
   readonly isNonInteractiveFn?: () => boolean;
+}
+
+interface TopicInputStdin {
+  readonly isRaw?: boolean;
+  setRawMode?(enabled: boolean): unknown;
+  resume(): unknown;
+  pause(): unknown;
+  isPaused(): boolean;
+  on(
+    eventName: "keypress",
+    listener: (sequence: string, key: Partial<KeypressEvent> | undefined) => void,
+  ): unknown;
+  once(eventName: "end" | "close", listener: () => void): unknown;
+  off(
+    eventName: "keypress",
+    listener: (sequence: string, key: Partial<KeypressEvent> | undefined) => void,
+  ): unknown;
+  off(eventName: "end" | "close", listener: () => void): unknown;
 }
 
 const PROMPT = "Topic (Enter submits, Alt+Enter/Ctrl+J inserts newline): ";
@@ -177,7 +195,7 @@ export async function processKeypressStream(
   throw new CliUserError("Aborted");
 }
 
-function keypressEventsFromStdin(stdin: NodeJS.ReadStream): AsyncIterable<KeypressEvent> {
+function keypressEventsFromStdin(stdin: TopicInputStdin): AsyncIterable<KeypressEvent> {
   return {
     async *[Symbol.asyncIterator](): AsyncGenerator<KeypressEvent, void, void> {
       const queue: KeypressEvent[] = [];
@@ -257,15 +275,64 @@ async function promptWithQuestion(write: (s: string) => void): Promise<string> {
       }
       write(EMPTY_PROMPT);
     }
-  } catch {
-    throw new CliUserError("Aborted");
+  } catch (err) {
+    if (isReadlineAbort(err)) {
+      throw new CliUserError("Aborted");
+    }
+    const message = `Topic input failed: ${toSingleLineDisplay(sanitizeErrorMessage(err))}`;
+    write(`${message}\n`);
+    throw new CliUserError(message, { cause: err });
   } finally {
     rl.close();
   }
 }
 
+function isReadlineAbort(err: unknown): boolean {
+  if (!(err instanceof Error)) {
+    return false;
+  }
+  return (
+    err.name === "AbortError" ||
+    err.message === "readline was closed" ||
+    err.message.includes("readline was closed")
+  );
+}
+
+function sanitizeErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const oneLine = raw.replace(/\s+/g, " ").trim();
+  return oneLine.length > 200 ? `${oneLine.slice(0, 197)}...` : oneLine;
+}
+
 function shouldUseQuestionFallback(): boolean {
   return process.env.TERM === "dumb" || process.env.NO_COLOR === "dumb";
+}
+
+export async function promptForTopicFromStdin(
+  stdin: TopicInputStdin,
+  source: AsyncIterable<KeypressEvent>,
+  write: (s: string) => void,
+): Promise<string> {
+  const canSetRawMode = typeof stdin.setRawMode === "function";
+  const wasRaw = stdin.isRaw === true;
+  const wasPaused = stdin.isPaused();
+
+  if (canSetRawMode) {
+    stdin.setRawMode?.(true);
+  }
+  stdin.resume();
+  write("\x1b[?2004h");
+  try {
+    return await processKeypressStream(source, write);
+  } finally {
+    write("\x1b[?2004l");
+    if (canSetRawMode) {
+      stdin.setRawMode?.(wasRaw);
+    }
+    if (wasPaused) {
+      stdin.pause();
+    }
+  }
 }
 
 export async function promptForTopic(options: TopicInputOptions = {}): Promise<string> {
@@ -283,21 +350,6 @@ export async function promptForTopic(options: TopicInputOptions = {}): Promise<s
   }
 
   const stdin = process.stdin;
-  const canSetRawMode = typeof stdin.setRawMode === "function";
-  const wasRaw = stdin.isRaw === true;
-
   readline.emitKeypressEvents(stdin);
-  if (canSetRawMode) {
-    stdin.setRawMode(true);
-  }
-  stdin.resume();
-  write("\x1b[?2004h");
-  try {
-    return await processKeypressStream(keypressEventsFromStdin(stdin), write);
-  } finally {
-    write("\x1b[?2004l");
-    if (canSetRawMode) {
-      stdin.setRawMode(wasRaw);
-    }
-  }
+  return promptForTopicFromStdin(stdin, keypressEventsFromStdin(stdin), write);
 }

@@ -13,8 +13,8 @@ export class CliUserError extends Error {
   /** Optional semantic exit code override (see `exit-codes.ts`). */
   exitCode?: number;
 
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "CliUserError";
   }
 }
