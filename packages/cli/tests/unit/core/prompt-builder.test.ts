@@ -15,6 +15,7 @@ import {
   buildSystemPrompt,
   renderPanelMemberships,
   GENERIC_EXPERT_DOMAIN_FRAMING,
+  DEFAULT_FORBIDDEN_PHRASES,
   type PanelMembership,
 } from "../../../src/core/prompt-builder.js";
 import type { ExpertDefinition } from "../../../src/core/expert.js";
@@ -914,5 +915,35 @@ describe("buildSystemPrompt() — generic expert domain framing (F17)", () => {
     );
     expect(identitySection).toContain("You are Generic Economist. Macroeconomics expert.");
     expect(identitySection).not.toMatch(/deliberation panel|subject-matter expert|panelist/i);
+  });
+});
+
+describe("DEFAULT_FORBIDDEN_PHRASES — documented-ban coverage", () => {
+  // The phrases the user-facing docs present as authoritative Layer-1 bans
+  // (packages/site/src/content/docs/explanation/anti-sycophancy.mdx,
+  // §"Layer 1: Forbidden Phrases"). The code list MUST be a superset: any
+  // response a reader is promised will be blocked has to actually be blocked.
+  const DOCUMENTED_BANS = [
+    "I agree with",
+    "great point",
+    "solid analysis",
+    "well said",
+    "echoing",
+    "building on that",
+  ];
+
+  // Mirrors the production matching used by both consumers (quality-gate.ts
+  // `findForbiddenPhrases` and panel-lint.ts): a case-insensitive substring
+  // test. A documented ban is "covered" when some forbidden phrase is a
+  // case-insensitive substring of it, so a response equal to that documented
+  // phrase trips the gate. This lets broader entries (e.g. "Building on")
+  // cover narrower documented phrases (e.g. "building on that") without
+  // demanding redundant list entries.
+  const isCovered = (ban: string): boolean =>
+    DEFAULT_FORBIDDEN_PHRASES.some((p) => ban.toLowerCase().includes(p.toLowerCase()));
+
+  it("is a superset of every phrase the anti-sycophancy docs present as banned", () => {
+    const uncovered = DOCUMENTED_BANS.filter((ban) => !isCovered(ban));
+    expect(uncovered).toEqual([]);
   });
 });
