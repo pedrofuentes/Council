@@ -1,3 +1,5 @@
+import type { DebatePhase } from "./types.js";
+
 /**
  * Soft per-response word-budget instruction.
  *
@@ -33,4 +35,33 @@ export function appendWordBudget(task: string, maxWords: number): string {
     `cut preamble and filler, but do not drop your strongest disagreement or ` +
     `a specific, falsifiable claim just to hit the target.`
   );
+}
+
+/**
+ * Per-phase scaling of the soft word budget for STRUCTURED debate.
+ *
+ * The architecture doc and deliberation research want different lengths per
+ * phase: an opening establishes a claim, cross-examination is sharp questions,
+ * a rebuttal is point-by-point contestation, and a synthesis integrates the
+ * whole debate. Rather than add per-phase config knobs, we keep `--max-words`
+ * as the single user anchor (= the opening budget) and scale it with fixed,
+ * research-derived multipliers (Khan et al. 2024 use ~150 words/turn for
+ * rebuttal-style turns; synthesis is allowed more room).
+ *
+ * Freeform mode has no semantic phases, so it does NOT use this — it keeps the
+ * uniform base budget. The `0`/non-finite sentinel is passed through unchanged
+ * so `chat` (structured, base `0`) stays uncapped.
+ */
+const PHASE_BUDGET_MULTIPLIER: Readonly<Record<DebatePhase, number>> = {
+  opening: 1.0,
+  "cross-examination": 0.6,
+  rebuttal: 0.8,
+  synthesis: 1.5,
+};
+
+export function resolvePhaseWordBudget(base: number, phase: DebatePhase): number {
+  if (!Number.isFinite(base) || base <= 0) {
+    return base;
+  }
+  return Math.round(base * PHASE_BUDGET_MULTIPLIER[phase]);
 }

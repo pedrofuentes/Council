@@ -55,7 +55,7 @@ import {
 } from "./documents/reference-block.js";
 import type { DocumentSnippet } from "./documents/retriever.js";
 import type { DebateEvent, DebatePhase } from "./types.js";
-import { appendWordBudget } from "./word-budget.js";
+import { appendWordBudget, resolvePhaseWordBudget } from "./word-budget.js";
 
 export type DebateMode = "freeform" | "structured";
 
@@ -416,7 +416,15 @@ export class Debate {
           if (refreshed !== undefined) prompt = refreshed.prompt;
         }
 
-        const captured = yield* this.#runTurn(expert, prompt, round, seq, counters, signal);
+        const captured = yield* this.#runTurn(
+          expert,
+          prompt,
+          this.config.maxWordsPerResponse,
+          round,
+          seq,
+          counters,
+          signal,
+        );
 
         if (captured !== null) {
           priorTurns.push({
@@ -487,7 +495,15 @@ export class Debate {
           continue;
         }
 
-        const captured = yield* this.#runTurn(expert, phasePrompt, phaseIdx, seq, counters, signal);
+        const captured = yield* this.#runTurn(
+          expert,
+          phasePrompt,
+          resolvePhaseWordBudget(this.config.maxWordsPerResponse, phase),
+          phaseIdx,
+          seq,
+          counters,
+          signal,
+        );
 
         if (captured !== null) {
           const turn: PriorTurn = {
@@ -553,6 +569,7 @@ export class Debate {
   async *#runTurn(
     expert: ExpertSpec,
     prompt: string,
+    wordBudget: number,
     round: number,
     seq: number,
     counters: RunCounters,
@@ -567,7 +584,7 @@ export class Debate {
       return yield* this.#runHumanTurn(expert, prompt, round, seq, counters);
     }
 
-    return yield* this.#runAiTurn(expert, prompt, round, seq, counters, signal);
+    return yield* this.#runAiTurn(expert, prompt, wordBudget, round, seq, counters, signal);
   }
 
   async *#runHumanTurn(
@@ -644,6 +661,7 @@ export class Debate {
   async *#runAiTurn(
     expert: ExpertSpec,
     prompt: string,
+    wordBudget: number,
     _round: number,
     _seq: number,
     counters: RunCounters,
@@ -662,7 +680,7 @@ export class Debate {
     // Soft per-response word budget (#max-words). Appended last so it is the
     // final instruction the model sees; a non-positive budget (chat passes 0)
     // is the "no cap" sentinel and leaves the prompt untouched.
-    const finalPrompt = appendWordBudget(withReferences, this.config.maxWordsPerResponse);
+    const finalPrompt = appendWordBudget(withReferences, wordBudget);
 
     let content = "";
     let turnFailed = false;
