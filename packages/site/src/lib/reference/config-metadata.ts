@@ -59,7 +59,7 @@ export const CONFIG_DESCRIPTIONS: Readonly<Record<string, string>> = {
   qualityGate:
     "Anti-sycophancy quality gate governing whether expert responses that fail the heuristic quality check are flagged or regenerated before they enter the transcript.",
   "qualityGate.mode":
-    "Quality-gate behavior: off disables it, warn flags failing responses without regenerating, regenerate re-prompts them up to maxRegenerations.",
+    "Quality-gate behavior: off disables it, warn flags failing responses without regenerating, regenerate re-prompts them up to maxRegenerations (each re-prompt incurs an extra premium request).",
   "qualityGate.maxRegenerations":
     "Maximum regeneration attempts per response when mode is regenerate.",
 

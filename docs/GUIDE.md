@@ -1485,7 +1485,7 @@ Set these with `council config set <key> <value>`:
 | `documents.aiExtractionAllowedExtensions` | Extensions allowed for AI extraction                       | `[]`                                                                                      |
 | `documents.maxFileSizeMB`                 | Maximum document file size                                 | `50`                                                                                      |
 | `conclude.maxTranscriptChars`             | Max transcript chars for conclusion                        | `50000`                                                                                   |
-| `qualityGate.mode`                        | Anti-sycophancy quality-gate mode                          | `warn` (`off`, `warn`, `regenerate`)                                                      |
+| `qualityGate.mode`                        | Anti-sycophancy quality-gate mode (`regenerate` incurs up to `maxRegenerations` extra premium requests per flagged response) | `warn` (`off`, `warn`, `regenerate`)                                                      |
 | `qualityGate.maxRegenerations`            | Max regeneration attempts when mode is `regenerate`        | `1` (0–3)                                                                                 |
 | `expert.recencyHalfLifeDays`              | Document recency half-life                                 | `90`                                                                                      |
 | `expert.supportedFormats`                 | Supported doc formats                                      | 14 extensions (`md, txt, html, pdf, csv, tsv, rtf, docx, pptx, xlsx, xls, odt, ods, odp`) |

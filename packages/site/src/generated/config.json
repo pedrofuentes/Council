@@ -312,7 +312,7 @@
             ],
             "hasDefault": true,
             "default": "warn",
-            "description": "Quality-gate behavior: off disables it, warn flags failing responses without regenerating, regenerate re-prompts them up to maxRegenerations."
+            "description": "Quality-gate behavior: off disables it, warn flags failing responses without regenerating, regenerate re-prompts them up to maxRegenerations (each re-prompt incurs an extra premium request)."
           },
           {
             "path": "qualityGate.maxRegenerations",

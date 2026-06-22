@@ -928,7 +928,7 @@ describe("DEFAULT_FORBIDDEN_PHRASES — documented-ban coverage", () => {
   // ("echoing the"/"echoing your"/"just echoing") so it no longer over-matches
   // innocent prose like "an echoing concern" (issue #1506). The documented
   // example below therefore uses a full performative phrase; the docs Layer-1
-  // list is aligned to match in a separate docs-only change.
+  // list is aligned to match (docs/qualitygate-alignment, #1525/#1527).
   const DOCUMENTED_BANS = [
     "I agree with",
     "great point",
