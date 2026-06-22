@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { firstPixelRGBA } from "./png";
+
 /**
  * Favicon / PWA icon set guards.
  *
@@ -28,6 +30,7 @@ interface WebmanifestIcon {
 interface Webmanifest {
   readonly name?: string;
   readonly icons?: readonly WebmanifestIcon[];
+  readonly background_color?: string;
 }
 
 describe("favicon + PWA head tags", () => {
@@ -62,6 +65,11 @@ describe("web app manifest", () => {
     expect(sizes).toContain("192x192");
     expect(sizes).toContain("512x512");
   });
+
+  it("declares the dark brand background color (not white)", () => {
+    const manifest = JSON.parse(read("../../public/site.webmanifest")) as Webmanifest;
+    expect(manifest.background_color).toBe("#0e1a20");
+  });
 });
 
 describe("favicon assets", () => {
@@ -79,4 +87,28 @@ describe("favicon assets", () => {
       expect(existsSync(resolve(`../../public/${file}`))).toBe(true);
     });
   }
+});
+
+describe("app icon backgrounds", () => {
+  // iOS home-screen and maskable PWA icons need an opaque fill, but it must be
+  // the dark brand tone — never the washed-out near-white background that made
+  // the dark emblem look bad.
+  const appIcons = [
+    "apple-touch-icon.png",
+    "web-app-manifest-192x192.png",
+    "web-app-manifest-512x512.png",
+  ] as const;
+
+  for (const file of appIcons) {
+    it(`${file} has an opaque, dark (non-white) background`, () => {
+      const [r, g, b, a] = firstPixelRGBA(readFileSync(resolve(`../../public/${file}`)));
+      expect(a).toBeGreaterThan(200);
+      expect(Math.max(r, g, b)).toBeLessThan(100);
+    });
+  }
+
+  it("favicon-96x96.png keeps a transparent background", () => {
+    const [, , , alpha] = firstPixelRGBA(readFileSync(resolve("../../public/favicon-96x96.png")));
+    expect(alpha).toBe(0);
+  });
 });

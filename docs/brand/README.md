@@ -12,7 +12,8 @@ Council's logo features a circuit-board "council table" emblem with a pixel COUN
 - `council-logo-1k-no-b.svg` — Logo without background border (SVG)
 - `council-logo-1k-no-b-no-text.svg` — Icon only, no text (SVG)
 - `council-logo-1k-no-bw.svg` — Logo without background or wordmark (SVG)
-- `council-logo-1k-no-background-no-logo.svg` — Emblem only, transparent, no wordmark (SVG). Canonical source for the website logo (`packages/site`) and its rasterized favicon/PWA icon set.
+- `council-logo-1k-no-background-no-logo.svg` — Emblem only, transparent, no wordmark (SVG).
+- `Council-logo-only-transparent.png` — Emblem only, transparent, no wordmark (PNG). **Canonical source for the website logo (`packages/site`) and its rasterized favicon/PWA icon set** — preferred over the SVG because it rasterizes with alpha preserved.
 
 ## Color Palette
 

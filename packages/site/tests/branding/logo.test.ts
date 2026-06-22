@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { firstPixelRGBA, pngSize } from "./png";
+
 /**
  * Branding guards for the Council logo.
  *
@@ -65,5 +67,19 @@ describe("logo PNG assets", () => {
 
   it("removes the malformed source SVG", () => {
     expect(existsSync(resolve("../../public/brand/council-logo.svg"))).toBe(false);
+  });
+});
+
+describe("main logo PNG shape", () => {
+  it("is square so the fixed-size hero/BrandMark render without distortion", () => {
+    const { width, height } = pngSize(readFileSync(resolve("../../public/brand/council-logo.png")));
+    expect(width).toBe(height);
+  });
+
+  it("keeps a transparent background", () => {
+    const [, , , alpha] = firstPixelRGBA(
+      readFileSync(resolve("../../public/brand/council-logo.png")),
+    );
+    expect(alpha).toBe(0);
   });
 });
