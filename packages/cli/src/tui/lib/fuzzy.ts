@@ -20,8 +20,7 @@ export function fuzzyMatch(query: string, text: string): FuzzyResult | null {
   let ti = 0;
   let score = 0;
   let prev = -2;
-  for (let qi = 0; qi < q.length; qi += 1) {
-    const ch = q[qi];
+  for (const ch of q) {
     let found = -1;
     for (; ti < t.length; ti += 1) {
       if (t[ti] === ch) {
