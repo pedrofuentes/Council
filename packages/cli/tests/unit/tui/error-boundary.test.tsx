@@ -24,7 +24,7 @@ describe("ErrorBoundary", () => {
 
   it("renders children normally when there is no error", () => {
     const { lastFrame, unmount } = render(
-      <ErrorBoundary onError={() => {}}>
+      <ErrorBoundary onError={() => { /* no-op */ }}>
         <Text>healthy</Text>
       </ErrorBoundary>,
     );
@@ -34,7 +34,7 @@ describe("ErrorBoundary", () => {
 
   it("shows a default fallback message when no fallback prop is given", () => {
     const { lastFrame, unmount } = render(
-      <ErrorBoundary onError={() => {}}>
+      <ErrorBoundary onError={() => { /* no-op */ }}>
         <Boom />
       </ErrorBoundary>,
     );
