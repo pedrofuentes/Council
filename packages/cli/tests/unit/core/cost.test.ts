@@ -18,10 +18,7 @@ import {
 
 describe("estimateDebateCost", () => {
   it("3 experts × 4 rounds + 4 moderator turns = 16 premium requests", () => {
-    const estimate: CostEstimate = estimateDebateCost(
-      { maxRounds: 4, maxWordsPerResponse: 250, mode: "freeform" },
-      3,
-    );
+    const estimate: CostEstimate = estimateDebateCost({ maxRounds: 4, mode: "freeform" }, 3);
     expect(estimate.premiumRequests).toBe(16);
     expect(estimate.breakdown).toContainEqual({ phase: "Expert turns", count: 12 });
     expect(estimate.breakdown).toContainEqual({ phase: "Moderator summaries", count: 4 });
@@ -29,7 +26,7 @@ describe("estimateDebateCost", () => {
 
   it("counts 0 moderator turns when moderator is disabled", () => {
     const estimate = estimateDebateCost(
-      { maxRounds: 4, maxWordsPerResponse: 250, mode: "freeform", includeModerator: false },
+      { maxRounds: 4, mode: "freeform", includeModerator: false },
       3,
     );
     expect(estimate.premiumRequests).toBe(12);
@@ -38,35 +35,23 @@ describe("estimateDebateCost", () => {
   });
 
   it("handles edge case: 1 round, 2 experts", () => {
-    const estimate = estimateDebateCost(
-      { maxRounds: 1, maxWordsPerResponse: 250, mode: "freeform" },
-      2,
-    );
+    const estimate = estimateDebateCost({ maxRounds: 1, mode: "freeform" }, 2);
     expect(estimate.premiumRequests).toBe(3); // 2 expert + 1 moderator
   });
 
   it("breakdown counts sum exactly to premiumRequests", () => {
-    const estimate = estimateDebateCost(
-      { maxRounds: 6, maxWordsPerResponse: 250, mode: "structured" },
-      4,
-    );
+    const estimate = estimateDebateCost({ maxRounds: 6, mode: "structured" }, 4);
     const sum = estimate.breakdown.reduce((acc, b) => acc + b.count, 0);
     expect(sum).toBe(estimate.premiumRequests);
   });
 
   it("rejects non-positive expert count", () => {
-    expect(() =>
-      estimateDebateCost({ maxRounds: 4, maxWordsPerResponse: 250, mode: "freeform" }, 0),
-    ).toThrow(/expert/i);
-    expect(() =>
-      estimateDebateCost({ maxRounds: 4, maxWordsPerResponse: 250, mode: "freeform" }, -1),
-    ).toThrow(/expert/i);
+    expect(() => estimateDebateCost({ maxRounds: 4, mode: "freeform" }, 0)).toThrow(/expert/i);
+    expect(() => estimateDebateCost({ maxRounds: 4, mode: "freeform" }, -1)).toThrow(/expert/i);
   });
 
   it("rejects non-positive maxRounds", () => {
-    expect(() =>
-      estimateDebateCost({ maxRounds: 0, maxWordsPerResponse: 250, mode: "freeform" }, 3),
-    ).toThrow(/round/i);
+    expect(() => estimateDebateCost({ maxRounds: 0, mode: "freeform" }, 3)).toThrow(/round/i);
   });
 });
 

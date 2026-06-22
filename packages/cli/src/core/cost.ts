@@ -14,7 +14,6 @@
 
 export interface CostInput {
   readonly maxRounds: number;
-  readonly maxWordsPerResponse: number;
   readonly mode: "freeform" | "structured";
   /** Whether to include moderator summary turns. Defaults to true. */
   readonly includeModerator?: boolean;
