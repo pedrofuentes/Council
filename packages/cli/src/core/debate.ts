@@ -776,6 +776,7 @@ export class Debate {
         round,
         priorSpeakers,
         maxRegenerations,
+        counters,
         signal,
       );
       // Emit the accepted content as a single delta so renderers that build
@@ -791,6 +792,9 @@ export class Debate {
       yield { kind: "turn.end", expertSlug: expert.slug, turnId, content, speakerKind: "expert" };
     }
 
+    // Count the original send for this turn. In `regenerate` mode any extra
+    // regeneration sends were already counted inside #regenerateUntilPass
+    // (#1513), so this single cost.update reflects original + regenerations.
     counters.premiumRequests += 1;
     yield {
       kind: "cost.update",
@@ -991,6 +995,12 @@ export class Debate {
    *
    * Engine-error retries inside each regeneration send still fire
    * (`turn.retry`) — that budget is SEPARATE from the regeneration budget.
+   *
+   * Billing (#1513): every regeneration issues a real premium-incurring
+   * `engine.send`, so each one increments `counters.premiumRequests`. The
+   * caller counts the original send separately. Engine-error retries WITHIN
+   * a single regeneration are the same logical send and are NOT counted —
+   * the increment fires once per `#streamWithRetry` call, not per attempt.
    */
   async *#regenerateUntilPass(
     expert: ExpertSpec,
@@ -999,6 +1009,7 @@ export class Debate {
     round: number,
     priorSpeakers: readonly string[],
     maxRegenerations: number,
+    counters: RunCounters,
     signal?: AbortSignal,
   ): AsyncGenerator<DebateEvent, string> {
     let current = original;
@@ -1024,6 +1035,10 @@ export class Debate {
       // failed regeneration must not surface a turn-level error because we
       // already hold a valid earlier candidate to fall back on.
       const outcome = yield* this.#streamWithRetry(expert, regenPrompt, false, false, signal);
+      // This regeneration issued a premium-incurring send (#1513) — count it.
+      // Engine-error retries inside #streamWithRetry are the same logical send
+      // and are intentionally NOT counted here.
+      counters.premiumRequests += 1;
       if (outcome.turnFailed || outcome.emptyAfterRetry || outcome.content.length === 0) {
         break; // keep the best candidate so far
       }
