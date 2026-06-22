@@ -96,12 +96,24 @@ rule, but the suite must stay green.
 Run `pnpm test`, `pnpm lint`, and `pnpm typecheck` and ensure they are green
 with zero warnings before opening a pull request.
 
-### 4. Mandatory Sentinel review
+### 4. Code review — Sentinel as review of record
 
-Every change — including one-line fixes and docs-only changes — must pass a
-**Sentinel** review before it is merged to `main`. See
-[`docs/SENTINEL.md`](./docs/SENTINEL.md) for the full specification. You do not
-review your own code.
+All merges to `main` require two gates:
+
+1. **Branch protection** — the `Typecheck, Lint & Test` CI check must pass, and
+   an approving review must be recorded on the pull request.
+
+2. **Sentinel review (mandatory quality gate)** — every change — including
+   one-line fixes, documentation, and configuration — must receive an **APPROVED**
+   or **CONDITIONAL** verdict from Sentinel before it is merged. Sentinel is an
+   independent, non-author, read-only automated reviewer that verifies TDD
+   compliance, runs the full test suite, and performs multi-dimension
+   security/quality analysis. Its verdict is persisted to the PR as the
+   authoritative review record. No code merges without a passing Sentinel verdict.
+   You do not review your own code.
+
+Sentinel is the project's **code review of record**. See
+[`docs/SENTINEL.md`](./docs/SENTINEL.md) for the full specification.
 
 ## Commit Messages
 
