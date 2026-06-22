@@ -19,6 +19,14 @@
 
 <!-- Add new learnings below this line, most recent first -->
 
+### [2026-06-21] TUI spike (9.1) — Ink 7 testing gotchas & Sentinel test-coverage patterns
+**Context**: Building the interactive-TUI de-risk primitives under `packages/cli/src/tui/` (milestone 9.1, PRs #1556–#1563). Several component PRs drew Sentinel REJECTED/CONDITIONAL verdicts — all on **test quality**, not implementation bugs.
+**Learning**:
+1. **Ink 7 buffers a lone Esc (`\x1b`)** and fires `key.escape` only after a real-time disambiguation timeout. `ink-testing-library` Esc tests must `await` a real `setTimeout` (~100–120ms); the standard `setImmediate`-based `flush()` helper does NOT deliver it. (Complete CSI sequences like the arrow keys `\x1b[A`/`\x1b[B` are delivered immediately and work with `flush()`.)
+2. **Test the exported hook/component, not just its pure core.** A reducer-only test for `useMode` was rejected 🔴 — render the hook via an ink-testing-library harness and assert its behavior. Likewise cover EVERY keyboard branch (each arrow, backspace, esc); partial coverage (e.g. `cursor=0` only, or down-arrow only) is rejected for leaving branches untested.
+3. **Sanitize untrusted strings before the terminal `<Text>` sink.** Typed/pasted input and parent-controlled `value` must pass through `toSingleLineDisplay` (single-line render) / `stripControlChars` (append) or Sentinel rejects 🔴 for escape/OSC injection — the same class as the 2026-06-17 line-injection learning, now applied to Ink components.
+**Impact**: For all later TUI milestones (9.2–9.10): write ink-testing-library **behavior** tests with **full keyboard-branch coverage** up front, use a **real-timer wait** for Esc, and **sanitize** any model/file/user string before rendering. Read this before each TUI PR to avoid repeat reject cycles.
+
 ### [2026-06-20] npm rejects publishing a name "too similar" to an existing package
 **Context**: After publishing the unscoped `council-ai` placeholder, an attempt to publish a second placeholder named `councilai` (no hyphen) failed: `403 Forbidden — Package name too similar to existing package council-ai; try renaming your package to '@pedrofuentes/councilai'`.
 **Learning**: npm enforces a package-name **similarity guard** at publish time — a new unscoped name that is too close to an existing one (hyphen/spacing/punctuation variants) is rejected with 403. So once `council-ai` exists, `councilai` is unclaimable **by anyone**; npm itself auto-defends the typo. Defensive near-duplicate placeholder packages are therefore both unnecessary and impossible (only a *scoped* `@you/councilai` is allowed, which doesn't defend the unscoped name and adds no value).

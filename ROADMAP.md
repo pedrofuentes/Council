@@ -157,7 +157,7 @@
 > **Status**: Current focus. Full design: [docs/designs/interactive-tui.md](./docs/designs/interactive-tui.md).
 > Built milestone-by-milestone behind `COUNCIL_TUI=1`; released as a complete experience at 9.10.
 
-- ⬜ **9.1 Spike & De-risk** — Add deps (`react-router`, `ink-text-input`, `ink-select-input`, `ink-testing-library`); build + test the riskiest Ink primitives in isolation (alt-screen + ErrorBoundary, `useMode` nav/typing gate, windowed ScrollView, MultilineInput, command-palette focus, non-TTY guard)
+- ✅ **9.1 Spike & De-risk** — Deps added (`react-router`, `ink-text-input`, `ink-select-input`, `ink-testing-library`); riskiest Ink primitives built + tested in isolation (ErrorBoundary, `useMode` nav/typing gate, windowed ScrollView, MultilineInput, command palette, non-TTY guard) in `packages/cli/src/tui/`; vendor/router smoke confirms compatibility under Ink 7 / React 19
 - ⬜ **9.2 App Shell & Navigation** — 3-zone alternate-screen layout, collapsible left nav, `MemoryRouter`, semantic colors + NO_COLOR, responsive + resize, contextual footer hints, `?` help overlay, Home dashboard. Entry behind `COUNCIL_TUI=1`; non-TTY falls back to help
 - ⬜ **9.3 Library Browse/Detail** — Panels / Experts / Sessions list + detail (read-only), convened/concluded status, `Ctrl-K` command palette
 - ⬜ **9.4 Settings Overlay** — All config sections with Tab navigation, inline Zod validation, Save/Cancel
