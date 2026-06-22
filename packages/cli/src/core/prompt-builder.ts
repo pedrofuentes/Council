@@ -35,6 +35,12 @@ import { sanitizePromptBlock, sanitizePromptField } from "./prompt-sanitize.js";
  * Matching is case-insensitive substring (quality-gate.ts) / word-boundary
  * (panel-lint.ts), so a broader entry like "Building on" already covers the
  * documented "building on that".
+ *
+ * The echo ban is ANCHORED to its agreement-echo forms ("just echoing",
+ * "echoing your", "echoing the") rather than the bare word "echoing": within
+ * those forms both matchers stay unanchored, but a lone "echoing" substring
+ * over-matched innocent prose such as "an echoing concern" or "re-echoing"
+ * (issue #1506). The docs' Layer-1 list is aligned to these forms separately.
  */
 export const DEFAULT_FORBIDDEN_PHRASES: readonly string[] = [
   "Great point",
@@ -42,7 +48,9 @@ export const DEFAULT_FORBIDDEN_PHRASES: readonly string[] = [
   "Building on",
   "solid analysis",
   "well said",
-  "echoing",
+  "just echoing",
+  "echoing your",
+  "echoing the",
   "holistic",
   "synergy",
   "leverage",
