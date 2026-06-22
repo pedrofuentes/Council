@@ -509,7 +509,9 @@ Generic experts get debate memory only; persona experts get document + debate me
 > `COUNCIL_TUI=1` and released as a complete experience at 9.10. Approved dependencies: `react-router`,
 > `ink-text-input`, `ink-select-input`, `ink-testing-library` (dev).
 
-### 9.1 Spike & De-risk ⬜
+### 9.1 Spike & De-risk ✅
+
+**Status**: Done — 7 PRs (#1556 deps; #1557 pure libs `isInteractive`/`fuzzyMatch`/`computeScrollWindow`; #1558 `useMode`; #1561 `ScrollView`; #1559 `MultilineInput`; #1562 `CommandPalette`; #1563 `ErrorBoundary` + vendor/router smoke). All primitives live in `packages/cli/src/tui/` with `ink-testing-library` tests (42 tests). The vendor smoke confirmed `react-router`, `ink-text-input`, and `ink-select-input` work under Ink 7 / React 19. De-risk findings captured in `LEARNINGS.md`. Follow-ups: #1560, #1564–#1568.
 
 **Goal**: Prove the riskiest Ink 7 primitives in isolation before any screen depends on them.
 
