@@ -3,7 +3,7 @@ title: Anti-Sycophancy Design
 description: How Council prevents expert agents from agreeing generically and enforces genuine, substantive disagreement.
 ---
 
-The core risk in multi-agent systems is **sycophancy** — models that agree with each other performatively instead of reasoning independently. Council uses a **3-layer quality gate** to detect and reject sycophantic responses.
+The core risk in multi-agent systems is **sycophancy** — models that agree with each other performatively instead of reasoning independently. Council combats this with **two complementary mechanisms**: proactive prompt-level enforcement (always active) and a configurable post-generation quality gate.
 
 ## The Problem
 
@@ -14,57 +14,9 @@ Large language models are trained on human conversations where politeness and ag
 
 This defeats the purpose of a panel. You pay for multiple expert turns and get one perspective echoed back with minor variations.
 
-## Council's 3-Layer Quality Gate
+## Mechanism 1: Prompt-Level Enforcement (Always On)
 
-Every expert response is inspected **before** it lands in the transcript. If it fails the quality gate, Council regenerates the response with a hint about what to fix.
-
-### Layer 1: Forbidden Phrases
-Hard-blocks responses containing phrases like:
-- "I agree with"
-- "great point"
-- "solid analysis"
-- "well said"
-- "echoing"
-- "building on that"
-
-These phrases are **never** substantive. They're social glue, not reasoning. Council strips them.
-
-### Layer 2: Disagreement Budget
-Each expert must include **at least one** of these signals per response:
-- "I disagree with..."
-- "Weak claim..."
-- "Scenario where this fails..."
-- "Omitted consideration..."
-- "Counter-argument..."
-
-Or the explicit stand-down marker: "I've **stress-tested** this and cannot find a material weakness."
-
-If an expert neither disagrees nor explicitly concedes, the gate rejects the response.
-
-### Layer 3: Specificity Check
-Responses under **12 words** are rejected as too short to be substantive. (12 words ≈ two short sentences — the minimum to encode a position.)
-
-## The Stand-Down Rule
-
-Disagreement for its own sake is also worthless. When an expert genuinely cannot find a weakness, they can say:
-> "I've stress-tested [expert]'s argument and cannot find a material weakness."
-
-This is **explicit intellectual honesty** — the expert tried, failed, and is signaling confidence in the claim. It's the only acceptable form of agreement.
-
-## Why Heuristics Instead of LLM Judges?
-
-Council's quality gate is **purely heuristic** (substring matching, word counts). Why not use another LLM to judge quality?
-
-1. **Latency**: heuristic checks run in &lt;1ms; LLM judges add 1-3 seconds per response
-2. **Cost**: every regeneration would double token spend
-3. **Reliability**: LLM judges can be gamed or confused by meta-level reasoning ("I agree, but only to set up a counter...")
-4. **Sufficiency**: the heuristic gate catches 90%+ of sycophancy in practice
-
-An LLM-based judge layer could be added later (see ADR-012), but heuristics are the first line of defense.
-
-## Prompt-Level Enforcement
-
-The quality gate is **reactive** (catches bad responses). Council also proactively discourages sycophancy in the system prompt:
+Every expert's system prompt contains the DEBATE PROTOCOL, which proactively discourages sycophancy before any response is generated:
 
 ```
 DEBATE PROTOCOL:
@@ -74,15 +26,103 @@ If you cannot find a material weakness, say explicitly:
 "I've stress-tested [expert]'s argument and cannot find a material weakness."
 ```
 
+The system prompt also lists the forbidden phrases directly as explicit prohibitions. This enforcement is **unconditional** — it runs for every expert in every panel debate.
+
 Every expert receives this instruction in section [4] of their system prompt (see [Architecture Overview](/Council/explanation/architecture-overview) for the 8-section structure).
+
+## Mechanism 2: Post-Generation Quality Gate (Configurable)
+
+After an expert responds, the quality gate (`quality-gate.ts`) checks the assembled response against three heuristic layers. What happens when a response fails depends on `qualityGate.mode`:
+
+| Mode | Default? | Behavior |
+|------|----------|----------|
+| `off` | | The gate does nothing. |
+| `warn` | ✓ | The response is **flagged** with a visible one-line notice but still lands in the transcript. Nothing is regenerated or removed. |
+| `regenerate` | | A failing response triggers a re-prompt with a corrective hint, up to `qualityGate.maxRegenerations` (default 1) extra attempts. If it still fails after the cap, the last candidate is kept. |
+
+The gate runs only in panel debates (`convene`/`review`). Single-expert `council ask` calls are not gated.
+
+### Layer 1: Forbidden Phrases
+
+Checks whether the response contains phrases like:
+- "I agree with"
+- "great point"
+- "solid analysis"
+- "well said"
+- "echoing"
+- "building on that"
+
+These phrases are **never** substantive — they're social glue, not reasoning. A response containing them fails Layer 1.
+
+### Layer 2: Disagreement Budget
+
+When prior speakers have already spoken in the current round, the expert must include **at least one** disagreement signal:
+- "I disagree with..."
+- "Weak claim..."
+- "Scenario where this fails..."
+- "Omitted consideration..."
+- "Counter-argument..."
+
+Or the explicit stand-down marker: "I've **stress-tested** this and cannot find a material weakness."
+
+Layer 2 is **only evaluated when there are prior speakers in the round** — the first expert to speak has no one to disagree with yet.
+
+### Layer 3: Specificity Check
+
+Responses under **12 words** fail as too short to be substantive. (12 words ≈ two short sentences — the minimum to encode a position.)
+
+### What Happens on Failure
+
+- **`off`** — gate is disabled; no action.
+- **`warn`** (default) — a `turn.quality_gate` notice appears in the debate output; the response lands in the transcript unchanged.
+- **`regenerate`** — the expert is re-prompted with a hint describing the specific failure. A rejected candidate does **not** land in the transcript if a passing regeneration is produced; if still failing after the cap, the last candidate is kept.
+
+## The Stand-Down Rule
+
+Disagreement for its own sake is also worthless. When an expert genuinely cannot find a weakness, they can say:
+> "I've stress-tested [expert]'s argument and cannot find a material weakness."
+
+This is **explicit intellectual honesty** — the expert tried, evaluated, and is signaling confidence in the claim. It's the only acceptable form of agreement in a panel.
+
+## Why Heuristics Instead of LLM Judges?
+
+Council's quality gate is **purely heuristic** (substring matching, word counts). Why not use another LLM to judge quality?
+
+1. **Latency**: heuristic checks run in &lt;1ms; LLM judges add 1-3 seconds per response
+2. **Cost**: every regeneration would double token spend
+3. **Reliability**: LLM judges can be gamed or confused by meta-level reasoning ("I agree, but only to set up a counter...")
+
+An LLM-based judge layer could be added later, but heuristics are the cheap, deterministic first line of defense.
+
+## Configuring the Quality Gate
+
+```bash
+# Default: flag failures, keep the response in the transcript
+council config set qualityGate.mode warn
+
+# Disable the gate entirely (prompt-level enforcement still runs)
+council config set qualityGate.mode off
+
+# Re-prompt failing responses (up to N extra attempts)
+council config set qualityGate.mode regenerate
+council config set qualityGate.maxRegenerations 2
+```
+
+In `warn` mode you will see a one-line notice in the debate output when the gate fires — for example:
+
+```
+⚠ [aria] quality gate: no_disagreement_signal — response kept
+```
+
+The response still appears in the debate. The notice is informational.
 
 ## Trade-offs
 
-**False positives**: occasionally, a substantive response that happens to lack a disagreement signal is rejected. The regeneration prompt fixes this by telling the expert what's missing.
+**False positives**: occasionally, a substantive response that happens to lack a disagreement signal fails the gate. In `warn` mode this surfaces as a notice but doesn't affect the transcript. In `regenerate` mode the expert is re-prompted and may produce a stronger response.
 
 **False negatives**: sophisticated models can fake disagreement with vague objections. The specificity check (layer 3) mitigates this but doesn't eliminate it.
 
-**User override**: Council doesn't expose a flag to disable the quality gate. If you need unfiltered responses, use a single expert (`council ask`) instead of a panel debate.
+**Gate scope**: the post-generation gate runs only in panel debates. For single-expert `council ask`, only the prompt-level enforcement applies — there are no peers to disagree with.
 
 ## Relation to Other Concepts
 
