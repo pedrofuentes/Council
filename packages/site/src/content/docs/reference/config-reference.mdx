@@ -83,7 +83,7 @@ Anti-sycophancy quality gate governing whether expert responses that fail the he
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `qualityGate.mode` | `off` \| `warn` \| `regenerate` | `warn` | Quality-gate behavior: off disables it, warn flags failing responses without regenerating, regenerate re-prompts them up to maxRegenerations. |
+| `qualityGate.mode` | `off` \| `warn` \| `regenerate` | `warn` | Quality-gate behavior: off disables it, warn flags failing responses without regenerating, regenerate re-prompts them up to maxRegenerations (each re-prompt incurs an extra premium request). |
 | `qualityGate.maxRegenerations` | `integer` (0–3) | `1` | Maximum regeneration attempts per response when mode is regenerate. |
 
 ### `paths`

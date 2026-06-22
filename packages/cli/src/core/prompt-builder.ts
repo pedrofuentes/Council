@@ -40,7 +40,8 @@ import { sanitizePromptBlock, sanitizePromptField } from "./prompt-sanitize.js";
  * "echoing your", "echoing the") rather than the bare word "echoing": within
  * those forms both matchers stay unanchored, but a lone "echoing" substring
  * over-matched innocent prose such as "an echoing concern" or "re-echoing"
- * (issue #1506). The docs' Layer-1 list is aligned to these forms separately.
+ * (issue #1506). The docs' Layer-1 list is aligned to these forms
+ * (anti-sycophancy.mdx §"Layer 1: Forbidden Phrases", #1525/#1527).
  */
 export const DEFAULT_FORBIDDEN_PHRASES: readonly string[] = [
   "Great point",

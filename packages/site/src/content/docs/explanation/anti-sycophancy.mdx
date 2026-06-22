@@ -49,7 +49,9 @@ Checks whether the response contains phrases like:
 - "great point"
 - "solid analysis"
 - "well said"
-- "echoing"
+- "just echoing"
+- "echoing your"
+- "echoing the"
 - "building on that"
 
 These phrases are **never** substantive — they're social glue, not reasoning. A response containing them fails Layer 1.
@@ -111,7 +113,7 @@ council config set qualityGate.maxRegenerations 2
 In `warn` mode you will see a one-line notice in the debate output when the gate fires — for example:
 
 ```
-⚠ [aria] quality gate: no_disagreement_signal — response kept
+⚠ quality gate: aria response flagged (no_disagreement_signal)
 ```
 
 The response still appears in the debate. The notice is informational.
