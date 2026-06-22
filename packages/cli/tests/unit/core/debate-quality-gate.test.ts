@@ -139,8 +139,12 @@ class ScriptedEngine implements CouncilEngine {
     this.#failures = new Map(Object.entries(opts.failures ?? {}));
   }
 
-  async start(): Promise<void> {}
-  async stop(): Promise<void> {}
+  async start(): Promise<void> {
+    // no-op for tests
+  }
+  async stop(): Promise<void> {
+    // no-op for tests
+  }
   async addExpert(spec: ExpertSpec): Promise<void> {
     this.#experts.add(spec.id);
   }

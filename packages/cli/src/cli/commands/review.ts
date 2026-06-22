@@ -257,6 +257,7 @@ export function buildReviewCommand(deps: ReviewCommandDeps = {}): Command {
             maxRounds,
             maxWordsPerResponse: maxWords,
             mode,
+            qualityGate: config.qualityGate,
           },
           prompt: reviewPrompt,
           panelId: panel.id,

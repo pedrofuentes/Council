@@ -830,6 +830,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
               maxRounds: opts.maxRounds,
               maxWordsPerResponse: opts.maxWords,
               mode: opts.mode,
+              qualityGate: config.qualityGate,
               ...(strategy !== undefined ? { strategy } : {}),
               ...(contextConfig !== undefined ? { contextConfig } : {}),
               ...(referenceDocuments.length > 0 ? { referenceDocuments } : {}),

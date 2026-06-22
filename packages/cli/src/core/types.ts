@@ -117,4 +117,34 @@ export type DebateEvent =
       readonly expertSlug: string;
       readonly attempt: number;
       readonly reason: string;
+    }
+  | {
+      /**
+       * Emitted when the anti-sycophancy quality gate (see
+       * `core/quality-gate.ts`) flags an assembled expert response. The
+       * event carries NO response text — only the discriminating metadata
+       * renderers need for a concise notice.
+       *
+       *   - `mode: "warn"`   — the response was flagged but kept as-is
+       *     (`action: "warned"`). The orchestrator does NOT regenerate.
+       *   - `mode: "regenerate"` — one event per regeneration attempt
+       *     (`action: "regenerating"`, 1-indexed `regenerationAttempt`).
+       *     If the cap is reached and the response still fails, the last
+       *     candidate is accepted with `action: "accepted_after_cap"`.
+       *
+       * `failures` lists the failing check kinds (e.g. `forbidden_phrase`).
+       * `priorSpeakers` is the set of slugs that already spoke this round
+       * at gate time (empty for the round's first speaker). Renderers MUST
+       * sanitize any model-derived text (e.g. expert display names) before
+       * display; persistence ignores this event (it is not a turn).
+       */
+      readonly kind: "turn.quality_gate";
+      readonly expertSlug: string;
+      readonly round: number;
+      readonly mode: "warn" | "regenerate";
+      readonly action: "warned" | "regenerating" | "accepted_after_cap";
+      readonly failures: readonly string[];
+      readonly regenerationAttempt?: number;
+      readonly maxRegenerations?: number;
+      readonly priorSpeakers: readonly string[];
     };
