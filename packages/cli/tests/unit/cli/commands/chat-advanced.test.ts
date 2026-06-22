@@ -1520,7 +1520,7 @@ describe("persona expert — on-demand document processing", () => {
 });
 
 // ──────────────────────────────────────────────────────────────────────
-// Config wiring — `chat.longConversationWarning` & `expert.backgroundProcessing`
+// Config wiring — `chat.longConversationWarning`
 // ──────────────────────────────────────────────────────────────────────
 
 async function writeConfigYaml(env: TestEnv, body: string): Promise<void> {
@@ -1915,68 +1915,6 @@ describe("long conversation warning (chat.longConversationWarning)", () => {
 
     const failureMatches = out.match(/Long-conversation check failed/g) ?? [];
     expect(failureMatches.length).toBe(1);
-  });
-});
-
-describe("background processing config warning (expert.backgroundProcessing)", () => {
-  let env: TestEnv;
-  beforeEach(async () => {
-    env = await makeEnv();
-  });
-  afterEach(async () => {
-    await teardown(env);
-  });
-
-  it("1:1 chat: warns once at startup when expert.backgroundProcessing is true", async () => {
-    await seedExpert(env);
-    await writeConfigYaml(env, "expert:\n  backgroundProcessing: true\n");
-
-    let out = "";
-    const cmd = buildChatCommand({
-      write: (s) => (out += s),
-      writeError: () => undefined,
-      engineFactory: () => new MockEngine(),
-      inputProvider: () => scriptedInput(["hello", "again", "/quit"]),
-    });
-    await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
-
-    expect(out).toMatch(/Background document processing is not yet implemented/);
-    const matches = out.match(/Background document processing is not yet implemented/g) ?? [];
-    expect(matches.length).toBe(1);
-  });
-
-  it("1:1 chat: no warning when expert.backgroundProcessing is false (default)", async () => {
-    await seedExpert(env);
-    let out = "";
-    const cmd = buildChatCommand({
-      write: (s) => (out += s),
-      writeError: () => undefined,
-      engineFactory: () => new MockEngine(),
-      inputProvider: () => scriptedInput(["/quit"]),
-    });
-    await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "mock"]);
-
-    expect(out).not.toMatch(/Background document processing is not yet implemented/);
-  });
-
-  it("panel chat: warns once at startup when expert.backgroundProcessing is true", async () => {
-    await seedExpert(env, PANEL_EXPERT_A);
-    await seedExpert(env, PANEL_EXPERT_B);
-    await writeUserPanel(env, "bg-panel", ["panel-a", "panel-b"]);
-    await writeConfigYaml(env, "expert:\n  backgroundProcessing: true\n");
-
-    let out = "";
-    const cmd = buildChatCommand({
-      write: (s) => (out += s),
-      writeError: () => undefined,
-      engineFactory: () => new MockEngine(),
-      inputProvider: () => scriptedInput(["hello", "again", "/quit"]),
-    });
-    await cmd.parseAsync(["node", "council-chat", "bg-panel", "--engine", "mock"]);
-
-    expect(out).toMatch(/Background document processing is not yet implemented/);
-    const matches = out.match(/Background document processing is not yet implemented/g) ?? [];
-    expect(matches.length).toBe(1);
   });
 });
 

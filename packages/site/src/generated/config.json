@@ -134,18 +134,6 @@
         "description": "Expert-library settings governing document ingestion and memory decay.",
         "keys": [
           {
-            "path": "expert.backgroundProcessing",
-            "segments": [
-              "expert",
-              "backgroundProcessing"
-            ],
-            "section": "expert",
-            "type": "boolean",
-            "hasDefault": true,
-            "default": false,
-            "description": "Enable background document indexing for expert libraries."
-          },
-          {
             "path": "expert.recencyHalfLifeDays",
             "segments": [
               "expert",

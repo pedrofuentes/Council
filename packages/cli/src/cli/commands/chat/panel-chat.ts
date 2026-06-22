@@ -16,7 +16,6 @@ import {
   safeGetContext,
   seedLongConversationCount,
   maybeWarnLongConversation,
-  warnIfBackgroundProcessingEnabled,
   createSummarizationGate,
   rewriteRotateError,
   makeSink,
@@ -117,8 +116,6 @@ export async function runPanelChat(opts: PanelChatOptions): Promise<void> {
     sink: makeSink(write, writeError),
     experts: expertNames,
   });
-
-  warnIfBackgroundProcessingEnabled(config, renderer);
 
   const engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(engineKind);
   const inputProvider = (deps.inputProvider ?? defaultInputProvider)();

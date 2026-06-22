@@ -84,7 +84,6 @@ describe("ConfigSchema", () => {
 
   it("applies defaults for new expert/chat/paths sections from empty input", () => {
     const config = ConfigSchema.parse({});
-    expect(config.expert.backgroundProcessing).toBe(false);
     expect(config.expert.recencyHalfLifeDays).toBe(90);
     expect(config.expert.supportedFormats).toEqual([
       ".md",
@@ -111,7 +110,6 @@ describe("ConfigSchema", () => {
   it("parses fully populated expert/chat/paths sections", () => {
     const config = ConfigSchema.parse({
       expert: {
-        backgroundProcessing: true,
         recencyHalfLifeDays: 30,
         supportedFormats: [".md", ".pdf"],
       },
@@ -122,7 +120,6 @@ describe("ConfigSchema", () => {
       },
       paths: { dataHome: "/var/lib/council" },
     });
-    expect(config.expert.backgroundProcessing).toBe(true);
     expect(config.expert.recencyHalfLifeDays).toBe(30);
     expect(config.expert.supportedFormats).toEqual([".md", ".pdf"]);
     expect(config.chat.recentTurnCount).toBe(20);
@@ -147,7 +144,7 @@ describe("ConfigSchema", () => {
   });
 
   it("rejects wrong types in expert section", () => {
-    expect(() => ConfigSchema.parse({ expert: { backgroundProcessing: "yes" } })).toThrow();
+    expect(() => ConfigSchema.parse({ expert: { recencyHalfLifeDays: "soon" } })).toThrow();
   });
 });
 

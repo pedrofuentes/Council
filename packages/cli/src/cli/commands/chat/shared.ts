@@ -578,22 +578,6 @@ export async function maybeWarnLongConversation(
 }
 
 /**
- * Roadmap 6.5 — `expert.backgroundProcessing: true` is reserved for a
- * future async-indexing pipeline.
- */
-export function warnIfBackgroundProcessingEnabled(
-  config: CouncilConfig,
-  renderer: ChatRenderer,
-): void {
-  if (config.expert.backgroundProcessing) {
-    renderer.showSystem(
-      "Background document processing is not yet implemented. Documents are processed on-demand when you start a chat.",
-      "warn",
-    );
-  }
-}
-
-/**
  * Translate a {@link RotateActiveSessionError} into a user-facing Error
  * with rollback-aware guidance (#333, #538).
  */

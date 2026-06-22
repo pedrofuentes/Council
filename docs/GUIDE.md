@@ -1485,7 +1485,6 @@ Set these with `council config set <key> <value>`:
 | `documents.aiExtractionAllowedExtensions` | Extensions allowed for AI extraction                       | `[]`                                                                                      |
 | `documents.maxFileSizeMB`                 | Maximum document file size                                 | `50`                                                                                      |
 | `conclude.maxTranscriptChars`             | Max transcript chars for conclusion                        | `50000`                                                                                   |
-| `expert.backgroundProcessing`             | Process docs in background                                 | `false`                                                                                   |
 | `expert.recencyHalfLifeDays`              | Document recency half-life                                 | `90`                                                                                      |
 | `expert.supportedFormats`                 | Supported doc formats                                      | 14 extensions (`md, txt, html, pdf, csv, tsv, rtf, docx, pptx, xlsx, xls, odt, ods, odp`) |
 | `chat.recentTurnCount`                    | Recent turns to include                                    | `10`                                                                                      |
