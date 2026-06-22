@@ -22,17 +22,26 @@
      inkscape:pageopacity="0"
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#505050"
-     inkscape:zoom="0.57275391"
-     inkscape:cx="1571.3555"
-     inkscape:cy="463.54987"
+     inkscape:zoom="4.5820313"
+     inkscape:cx="263.20204"
+     inkscape:cy="699.7988"
      inkscape:window-width="3440"
      inkscape:window-height="1369"
      inkscape:window-x="2152"
-     inkscape:window-y="1233"
+     inkscape:window-y="1279"
      inkscape:window-maximized="1"
      inkscape:current-layer="svg63" />
   <defs
      id="defs10">
+    <inkscape:path-effect
+       effect="powerclip"
+       id="path-effect1"
+       is_visible="true"
+       lpeversion="1"
+       inverse="true"
+       flatten="false"
+       hide_clip="false"
+       message="Use fill-rule evenodd on &lt;b&gt;fill and stroke&lt;/b&gt; dialog if no flatten result after convert clip to paths." />
     <linearGradient
        id="Gradient1"
        gradientUnits="userSpaceOnUse"
@@ -133,6 +142,20 @@
          stop-color="rgb(238,234,228)"
          id="stop10" />
     </linearGradient>
+    <clipPath
+       clipPathUnits="userSpaceOnUse"
+       id="clipPath1">
+      <path
+         fill="#e6e9e6"
+         d="m 716.202,1467.21 c 24.509,0.48 49.023,0.59 73.535,0.32 -1.257,21.91 -0.523,49.98 -0.463,72.44 l -72.437,0.3 c -1.194,-23.43 -0.625,-49.39 -0.635,-73.06 z"
+         id="path1"
+         style="display:none;stroke-width:1" />
+      <path
+         id="lpe_path-effect1"
+         style="stroke-width:1"
+         class="powerclip"
+         d="M 684.32936,1435.1582 H 821.304 V 1572.06 H 684.32936 Z M 716.202,1467.21 c 0.01,23.67 -0.559,49.63 0.635,73.06 l 72.437,-0.3 c -0.06,-22.46 -0.794,-50.53 0.463,-72.44 -24.512,0.27 -49.026,0.16 -73.535,-0.32 z" />
+    </clipPath>
   </defs>
   <path
      transform="translate(0,0)"
@@ -217,13 +240,11 @@
   <path
      transform="translate(0,0)"
      fill="rgb(27,44,50)"
-     d="M 716.174 1440.81 C 738.109 1439.83 768.07 1440.12 790.155 1440.61 L 790.126 1467.28 L 816.257 1467.41 L 816.304 1540.05 L 789.827 1540.45 L 790.132 1567.06 L 716.464 1566.93 C 716.209 1558.26 716.351 1549.11 716.345 1540.4 C 707.913 1539.97 698.095 1540.11 689.554 1540.02 C 689.983 1515.85 689.009 1491.58 689.444 1467.21 L 716.202 1467.21 L 716.174 1440.81 z"
-     id="path25" />
-  <path
-     transform="translate(0,0)"
-     fill="rgb(230,233,230)"
-     d="M 716.202 1467.21 C 740.711 1467.69 765.225 1467.8 789.737 1467.53 C 788.48 1489.44 789.214 1517.51 789.274 1539.97 L 716.837 1540.27 C 715.643 1516.84 716.212 1490.88 716.202 1467.21 z"
-     id="path26" />
+     d="m 716.174,1440.81 c 21.935,-0.98 51.896,-0.69 73.981,-0.2 l -0.029,26.67 26.131,0.13 0.047,72.64 -26.477,0.4 0.305,26.61 -73.668,-0.13 c -0.255,-8.67 -0.113,-17.82 -0.119,-26.53 -8.432,-0.43 -18.25,-0.29 -26.791,-0.38 0.429,-24.17 -0.545,-48.44 -0.11,-72.81 h 26.758 z"
+     id="path25"
+     clip-path="url(#clipPath1)"
+     inkscape:path-effect="#path-effect1"
+     inkscape:original-d="M 716.174 1440.81 C 738.109 1439.83 768.07 1440.12 790.155 1440.61 L 790.126 1467.28 L 816.257 1467.41 L 816.304 1540.05 L 789.827 1540.45 L 790.132 1567.06 L 716.464 1566.93 C 716.209 1558.26 716.351 1549.11 716.345 1540.4 C 707.913 1539.97 698.095 1540.11 689.554 1540.02 C 689.983 1515.85 689.009 1491.58 689.444 1467.21 L 716.202 1467.21 L 716.174 1440.81 z" />
   <path
      transform="translate(0,0)"
      fill="rgb(27,44,50)"
