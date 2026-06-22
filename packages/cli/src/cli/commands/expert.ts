@@ -40,7 +40,7 @@ import {
 import { PanelLibraryRepository } from "../../memory/repositories/panel-library-repo.js";
 import { ProfileRepository } from "../../memory/repositories/profile-repository.js";
 import { ENGINE_KINDS, type EngineKind, makeEngineFromKind } from "../run-with-engine.js";
-import { stripControlChars } from "../strip-control-chars.js";
+import { toSingleLineDisplay } from "../strip-control-chars.js";
 import { sanitizeDisplayName } from "../sanitize-display-name.js";
 import { suggestMatch } from "../fuzzy-match.js";
 import { isNonInteractive } from "../non-interactive.js";
@@ -692,9 +692,9 @@ function buildDeleteCommand(write: Writer, writeError: Writer): Command {
           throw new CliUserError(msg);
         }
         if (panels.length > 0 && opts.force) {
-          const safePanels = panels.map((p) => stripControlChars(p));
+          const safePanels = panels.map((p) => toSingleLineDisplay(p));
           write(
-            `Expert "${stripControlChars(slug)}" is used in ${panels.length} panel${panels.length === 1 ? "" : "s"}: ${safePanels.join(", ")}\n` +
+            `Expert "${toSingleLineDisplay(slug)}" is used in ${panels.length} panel${panels.length === 1 ? "" : "s"}: ${safePanels.join(", ")}\n` +
               "Deleting will remove it from these panels.\n",
           );
         }
@@ -710,7 +710,7 @@ function buildDeleteCommand(write: Writer, writeError: Writer): Command {
             for (const panelName of affectedPanels) {
               const remaining = await panelRepo.getMembers(panelName);
               if (remaining.length === 0) {
-                const safe = stripControlChars(panelName);
+                const safe = toSingleLineDisplay(panelName);
                 write(
                   `⚠ Panel "${safe}" now has 0 members and may not function correctly. ` +
                     `Consider deleting it with \`council panel delete ${safe}\`.\n`,
@@ -719,14 +719,14 @@ function buildDeleteCommand(write: Writer, writeError: Writer): Command {
             }
           } catch (warnErr) {
             writeError(
-              `warning: empty-panel check failed after deleting "${stripControlChars(slug)}": ${
+              `warning: empty-panel check failed after deleting "${toSingleLineDisplay(slug)}": ${
                 warnErr instanceof Error ? warnErr.message : String(warnErr)
               }\n`,
             );
           }
         }
 
-        write(`✓ Expert "${stripControlChars(slug)}" deleted.\n`);
+        write(`✓ Expert "${toSingleLineDisplay(slug)}" deleted.\n`);
         write("\x1b[2mRun 'council expert list' to verify.\x1b[0m\n");
       });
     });

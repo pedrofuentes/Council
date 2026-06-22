@@ -20,7 +20,7 @@
  */
 import { ulid } from "ulid";
 
-import { stripControlChars } from "../cli/strip-control-chars.js";
+import { stripControlChars, toSingleLineDisplay } from "../cli/strip-control-chars.js";
 import { DEFAULT_MODEL } from "../config/schema.js";
 import type { CouncilEngine, ExpertSpec } from "../engine/index.js";
 import { sanitizePromptField } from "./prompt-sanitize.js";
@@ -420,7 +420,7 @@ function sanitizeComposedPanel(
   // rather than silently drop, so the user sees the broken response.
   const slugRefs = panel.experts.filter((e): e is string => typeof e === "string");
   if (slugRefs.length > 0) {
-    const safeSlugs = slugRefs.map((s) => stripControlChars(s)).join(", ");
+    const safeSlugs = slugRefs.map((s) => toSingleLineDisplay(s)).join(", ");
     throw new Error(
       `Auto-compose failed: composer returned slug references (${safeSlugs}) ` +
         `but inline expert definitions are required. The composer must produce a ` +

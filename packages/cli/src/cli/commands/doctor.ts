@@ -29,7 +29,7 @@ import {
 import { getSymbols } from "../renderers/symbols.js";
 import { renderBanner } from "../renderers/banner.js";
 import { createSpinner, type Spinner } from "../renderers/spinner.js";
-import { stripControlChars } from "../strip-control-chars.js";
+import { stripControlChars, toSingleLineDisplay } from "../strip-control-chars.js";
 
 import packageJson from "../../../package.json" with { type: "json" };
 
@@ -254,9 +254,7 @@ function statusIcon(status: CheckResult["status"]): string {
 }
 
 function sanitizeModelId(id: string): string {
-  return stripControlChars(id)
-    .replace(/[\r\n]+/g, " ")
-    .trim();
+  return toSingleLineDisplay(id).trim();
 }
 
 function isValidModelId(id: string): boolean {

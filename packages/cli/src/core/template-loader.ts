@@ -26,7 +26,7 @@ import { z } from "zod";
 
 import type { ExpertLibrary } from "./expert-library.js";
 import { ExpertDefinitionSchema, type ExpertDefinition } from "./expert.js";
-import { stripControlChars } from "../cli/strip-control-chars.js";
+import { toSingleLineDisplay } from "../cli/strip-control-chars.js";
 
 const NonEmptyString = z.string().min(1);
 
@@ -360,8 +360,8 @@ export async function loadTemplate(name: string): Promise<ResolvedPanelDefinitio
 export function assertAllInline(panel: PanelDefinition, source: string): ResolvedPanelDefinition {
   const slugRefs = panel.experts.filter((e): e is string => typeof e === "string");
   if (slugRefs.length > 0) {
-    const safeSource = stripControlChars(source);
-    const safeSlugs = slugRefs.map((s) => stripControlChars(s)).join(", ");
+    const safeSource = toSingleLineDisplay(source);
+    const safeSlugs = slugRefs.map((s) => toSingleLineDisplay(s)).join(", ");
     throw new Error(
       `Panel ${safeSource} contains slug references (${safeSlugs}). ` +
         `Built-in templates must use inline expert definitions. ` +

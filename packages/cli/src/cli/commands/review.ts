@@ -41,7 +41,7 @@ import { defaultErrorWriter, defaultWriter, isQuiet, type Writer } from "./write
 import { ENGINE_KINDS, type EngineKind, runWithEngine } from "../run-with-engine.js";
 import { RENDERER_FORMATS, type RendererFormat } from "../renderers/select.js";
 import { readTextInput } from "../read-text-input.js";
-import { stripControlChars } from "../strip-control-chars.js";
+import { toSingleLineDisplay } from "../strip-control-chars.js";
 
 /** Built-in panel template this command always runs. */
 const REVIEW_TEMPLATE = "code-review";
@@ -268,8 +268,10 @@ export function buildReviewCommand(deps: ReviewCommandDeps = {}): Command {
           quiet: isQuiet(),
           db,
           preamble: () => {
-            write(`\n# Code review — ${stripControlChars(template.name)}\n`);
-            write(`Experts: ${experts.map((e) => stripControlChars(e.displayName)).join(", ")}\n`);
+            write(`\n# Code review — ${toSingleLineDisplay(template.name)}\n`);
+            write(
+              `Experts: ${experts.map((e) => toSingleLineDisplay(e.displayName)).join(", ")}\n`,
+            );
             write(`Rounds: ${maxRounds} | Engine: ${resolvedEngine}\n\n`);
           },
         });
