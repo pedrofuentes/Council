@@ -39,7 +39,10 @@ const SETTABLE_CONFIG_KEYS = [
   "documents.aiExtraction",
   "documents.aiExtractionAllowedExtensions",
   "documents.maxFileSizeMB",
+  "expert.recencyHalfLifeDays",
+  "expert.supportedFormats",
   "conclude.maxTranscriptChars",
+  "paths.dataHome",
 ] as const;
 
 type SettableConfigKey = (typeof SETTABLE_CONFIG_KEYS)[number];
@@ -178,12 +181,12 @@ function buildShowCommand(write: Writer): Command {
     const panelsDir = path.join(dataHome, "panels");
     const dbPath = path.join(councilHome, "council.db");
 
-    write(`Config path: ${configFilePath}\n`);
-    write(`Council home: ${councilHome}  (config file, database)\n`);
-    write(`Data home: ${dataHome}  (experts, panels, documents)\n`);
-    write(`Experts directory: ${expertsDir}\n`);
-    write(`Panels directory: ${panelsDir}\n`);
-    write(`Database: ${dbPath}\n\n`);
+    write(`Config path: ${toSingleLineDisplay(configFilePath)}\n`);
+    write(`Council home: ${toSingleLineDisplay(councilHome)}  (config file, database)\n`);
+    write(`Data home: ${toSingleLineDisplay(dataHome)}  (experts, panels, documents)\n`);
+    write(`Experts directory: ${toSingleLineDisplay(expertsDir)}\n`);
+    write(`Panels directory: ${toSingleLineDisplay(panelsDir)}\n`);
+    write(`Database: ${toSingleLineDisplay(dbPath)}\n\n`);
     write("Effective values:\n");
 
     const allowedExts = config.documents.aiExtractionAllowedExtensions;
@@ -249,7 +252,7 @@ function buildShowCommand(write: Writer): Command {
 
     const keyWidth = Math.max(...entries.map(([k]) => k.length));
     for (const [key, value, source] of entries) {
-      write(`  ${key.padEnd(keyWidth)}  ${value.padEnd(24)} (${source})\n`);
+      write(`  ${key.padEnd(keyWidth)}  ${toSingleLineDisplay(value).padEnd(24)} (${source})\n`);
     }
   });
   return cmd;
@@ -258,7 +261,7 @@ function buildShowCommand(write: Writer): Command {
 function buildPathCommand(write: Writer): Command {
   const cmd = new Command("path");
   cmd.description("Print the config file path (useful for scripts)").action(() => {
-    write(getConfigFilePath() + "\n");
+    write(toSingleLineDisplay(getConfigFilePath()) + "\n");
   });
   return cmd;
 }
@@ -355,7 +358,8 @@ function coerceConfigValue(
     case "defaults.maxWordsPerResponse":
     case "chat.recentTurnCount":
     case "chat.summaryMaxWords":
-    case "chat.longConversationWarning": {
+    case "chat.longConversationWarning":
+    case "expert.recencyHalfLifeDays": {
       const parsed = Number(rawValue);
       if (!Number.isInteger(parsed)) {
         throw new CliUserError(`Config value for ${toSingleLineDisplay(key)} must be an integer.`);
@@ -387,8 +391,27 @@ function coerceConfigValue(
       }
       return rawValue;
     }
-    case "documents.aiExtractionAllowedExtensions": {
+    case "documents.aiExtractionAllowedExtensions":
+    case "expert.supportedFormats": {
       return normalizeExtensionList(rawValue);
+    }
+    case "paths.dataHome": {
+      const trimmed = rawValue.trim();
+      if (trimmed.length === 0) {
+        throw new CliUserError(
+          `Config value for ${toSingleLineDisplay(key)} must be a non-empty path.`,
+        );
+      }
+      // A filesystem path must never carry terminal-control bytes (ANSI/OSC
+      // sequences, C0/C1 controls, DEL, CR/LF/TAB, U+2028/U+2029). Persisting
+      // one would let it survive into `council config show` and detonate later
+      // as a stored terminal-injection.
+      if (toSingleLineDisplay(trimmed) !== trimmed) {
+        throw new CliUserError(
+          `Config value for ${toSingleLineDisplay(key)} must not contain control characters.`,
+        );
+      }
+      return trimmed;
     }
     case "documents.maxFileSizeMB": {
       const parsed = Number(rawValue);
@@ -625,7 +648,7 @@ function buildSetCommand(write: Writer, writeError: Writer): Command {
     .argument("<value>", "Value to write")
     .action(async (key: string, rawValue: string) => {
       if (!isSettableConfigKey(key)) {
-        const msg = `Unsupported config key "${key}". Valid keys:\n  - ${SETTABLE_CONFIG_KEYS.join("\n  - ")}`;
+        const msg = `Unsupported config key "${toSingleLineDisplay(key)}". Valid keys:\n  - ${SETTABLE_CONFIG_KEYS.join("\n  - ")}`;
         writeError(`${msg}\n`);
         throw new CliUserError(msg);
       }
@@ -650,9 +673,21 @@ function buildSetCommand(write: Writer, writeError: Writer): Command {
       const displayValue = Array.isArray(value)
         ? value.length === 0
           ? "(none)"
-          : value.join(", ")
-        : String(value);
+          : value.map((item) => toSingleLineDisplay(item)).join(", ")
+        : typeof value === "string"
+          ? toSingleLineDisplay(value)
+          : String(value);
       write(`Set ${key} = ${displayValue}\n`);
+
+      if (key === "paths.dataHome") {
+        // `value` is the user-supplied path string; it must be sanitized
+        // before being echoed to the terminal (terminal-injection safety).
+        const safePath = toSingleLineDisplay(String(value));
+        write(
+          `Note: existing data at the previous location is not moved automatically. ` +
+            `Council will use '${safePath}' for new data — move any existing files there manually if needed.\n`,
+        );
+      }
     });
   return cmd;
 }
