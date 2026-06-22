@@ -152,7 +152,7 @@ The structure is **stable** — Council can evolve individual sections without b
    - Moderator strategy plans turn order
    - For each expert: build prompt (8-section structure + prior turns)
    - Call `engine.sendMessage()` → `AsyncIterable<EngineEvent>`
-   - Quality gate inspects response, regenerates if sycophantic
+   - Quality gate inspects response; flags it (`warn`, default) or re-prompts (`regenerate`)
    - Emit `DebateEvent` (turn.delta, turn.end, round.end, ...)
 4. **Memory** (`persister.ts`) listens to `turn.end` events, writes to SQLite
 5. **Renderer** (Ink/JSON/Plain) consumes `DebateEvent` stream, displays output
