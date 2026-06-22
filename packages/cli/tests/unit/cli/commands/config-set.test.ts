@@ -166,6 +166,32 @@ describe("buildConfigCommand config set", () => {
     });
   });
 
+  describe("strict integer coercion", () => {
+    // `defaults.maxRounds` is the representative integer key for #1509. Every
+    // integer-valued key must reject input that `Number()` silently coerces —
+    // empty/whitespace (→0), hex (`0x2`), exponent (`1e0`), and fractional
+    // (`1.5`) forms — at the input boundary, before it can reach config.yaml.
+    it.each(["", "   ", "0x2", "1e0", "1.5"])(
+      "rejects %j for defaults.maxRounds as a user error",
+      async (rawValue) => {
+        const { stderr, error } = await runConfig(["set", "defaults.maxRounds", rawValue]);
+
+        expect(error).toBeInstanceOf(CliUserError);
+        expect(stderr).toContain("Config value for defaults.maxRounds must be an integer.");
+      },
+    );
+
+    it("accepts a plain decimal integer for defaults.maxRounds", async () => {
+      const { stdout, stderr, error } = await runConfig(["set", "defaults.maxRounds", "7"]);
+
+      expect(error).toBeUndefined();
+      expect(stderr).toBe("");
+      expect(stdout).toContain("Set defaults.maxRounds = 7");
+      const config = await loadConfig();
+      expect(config.defaults.maxRounds).toBe(7);
+    });
+  });
+
   it("rejects unsupported keys with the valid key list", async () => {
     const { stderr } = await runConfig(["set", "providers.openai.apiKeyEnvVar", "OPENAI_API_KEY"]);
 
