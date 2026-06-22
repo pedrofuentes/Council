@@ -110,6 +110,14 @@ function turnEndContents(events: readonly DebateEvent[]): string[] {
     .map((e) => e.content);
 }
 
+/** premiumRequests from the LAST cost.update — the run's final billed count. */
+function finalPremiumRequests(events: readonly DebateEvent[]): number {
+  const costs = events.filter(
+    (e): e is Extract<DebateEvent, { kind: "cost.update" }> => e.kind === "cost.update",
+  );
+  return costs[costs.length - 1]?.premiumRequests ?? 0;
+}
+
 /**
  * Minimal CouncilEngine that returns a SEQUENCE of responses per expert
  * (indexed by send-count, clamped to the last entry) and can inject a
@@ -359,5 +367,124 @@ describe("Debate quality gate — mode: regenerate", () => {
     // The passing regeneration is persisted; no turn-level error leaked.
     expect(turnEndContents(events)).toEqual([PASSING]);
     expect(events.some((e) => e.kind === "error")).toBe(false);
+  });
+});
+
+describe("Debate quality gate — premium-request counting (#1513)", () => {
+  it("counts the original send PLUS each regeneration send (cap hit)", async () => {
+    // maxRegenerations: 2, every candidate fails the gate → cap is hit after 2
+    // regeneration sends. Real engine.send calls: original + 2 regenerations = 3.
+    const engine = new ScriptedEngine({
+      responses: { [cto.id]: [SYCO1, SYCO2, SYCO3] },
+    });
+    await engine.start();
+    await engine.addExpert(cto);
+
+    const config: DebateConfig = {
+      ...FREEFORM_1R,
+      qualityGate: { mode: "regenerate", maxRegenerations: 2 },
+    };
+    const events = await collect(new Debate(engine, [cto], config).run("topic"));
+
+    // Three real premium-incurring sends were issued to the engine...
+    expect(engine.prompts.get(cto.id)).toHaveLength(3);
+    // ...and the final cost.update reflects every one of them (original + 2).
+    expect(finalPremiumRequests(events)).toBe(3);
+  });
+
+  it("counts the original send PLUS a single passing regeneration", async () => {
+    // original fails, regeneration #1 passes → original + 1 regeneration = 2 sends.
+    const engine = new ScriptedEngine({ responses: { [cto.id]: [SYCO1, PASSING] } });
+    await engine.start();
+    await engine.addExpert(cto);
+
+    const config: DebateConfig = {
+      ...FREEFORM_1R,
+      qualityGate: { mode: "regenerate", maxRegenerations: 2 },
+    };
+    const events = await collect(new Debate(engine, [cto], config).run("topic"));
+
+    expect(engine.prompts.get(cto.id)).toHaveLength(2);
+    expect(finalPremiumRequests(events)).toBe(2);
+  });
+
+  it("a passing first response in regenerate mode counts exactly one send", async () => {
+    const engine = new ScriptedEngine({ responses: { [cto.id]: [PASSING] } });
+    await engine.start();
+    await engine.addExpert(cto);
+
+    const config: DebateConfig = {
+      ...FREEFORM_1R,
+      qualityGate: { mode: "regenerate", maxRegenerations: 3 },
+    };
+    const events = await collect(new Debate(engine, [cto], config).run("topic"));
+
+    // No regeneration happened — exactly one premium request, as before.
+    expect(gateEvents(events)).toHaveLength(0);
+    expect(engine.prompts.get(cto.id)).toHaveLength(1);
+    expect(finalPremiumRequests(events)).toBe(1);
+  });
+
+  it("off mode counts exactly one premium request per turn (unchanged)", async () => {
+    const engine = new MockEngine({ responses: { [cto.id]: SYCO1 } });
+    await engine.start();
+    await engine.addExpert(cto);
+
+    const config: DebateConfig = {
+      ...FREEFORM_1R,
+      qualityGate: { mode: "off", maxRegenerations: 2 },
+    };
+    const events = await collect(new Debate(engine, [cto], config).run("topic"));
+
+    expect(engine.sentPrompts).toHaveLength(1);
+    expect(finalPremiumRequests(events)).toBe(1);
+  });
+
+  it("warn mode flags a failure but adds NO premium requests (still 1/turn)", async () => {
+    // SYCO1 fails the gate even with no prior speakers, so warn mode engages —
+    // but warn never re-sends, so the premium count must stay at 1.
+    const engine = new MockEngine({ responses: { [cto.id]: SYCO1 } });
+    await engine.start();
+    await engine.addExpert(cto);
+
+    const config: DebateConfig = {
+      ...FREEFORM_1R,
+      qualityGate: { mode: "warn", maxRegenerations: 2 },
+    };
+    const events = await collect(new Debate(engine, [cto], config).run("topic"));
+
+    const gates = gateEvents(events);
+    expect(gates).toHaveLength(1);
+    expect(gates[0]?.action).toBe("warned");
+    expect(engine.sentPrompts).toHaveLength(1);
+    expect(finalPremiumRequests(events)).toBe(1);
+  });
+
+  it("an engine-error retry during regeneration does NOT inflate the premium count", async () => {
+    // send #0 → SYCO1 (gate fails) → regenerate attempt 1.
+    // send #1 → NETWORK (recoverable) → engine-error retry (turn.retry), SAME
+    //           logical regeneration send.
+    // send #2 → PASSING (gate passes) → accepted.
+    // Three real engine.send calls, but only ONE regeneration send → premium = 2.
+    const engine = new ScriptedEngine({
+      responses: { [cto.id]: [SYCO1, PASSING, PASSING] },
+      failures: {
+        [cto.id]: [null, { code: "NETWORK", message: "connection reset", recoverable: true }, null],
+      },
+    });
+    await engine.start();
+    await engine.addExpert(cto);
+
+    const config: DebateConfig = {
+      ...FREEFORM_1R,
+      qualityGate: { mode: "regenerate", maxRegenerations: 2 },
+    };
+    const events = await collect(new Debate(engine, [cto], config).run("topic"));
+
+    // The engine was hit three times (the middle one being the retried send)...
+    expect(engine.prompts.get(cto.id)).toHaveLength(3);
+    // ...yet only original + one logical regeneration are billed: the
+    // engine-error retry does NOT bump the premium counter.
+    expect(finalPremiumRequests(events)).toBe(2);
   });
 });
