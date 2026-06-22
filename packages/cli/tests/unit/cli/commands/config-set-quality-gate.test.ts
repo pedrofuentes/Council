@@ -115,6 +115,32 @@ describe("buildConfigCommand config set qualityGate.*", () => {
       expect(stderr).toMatch(/between 0 and 3/);
     });
 
+    // #1509: `Number()` silently coerces these forms (empty/whitespace → 0,
+    // hex `0x2`, exponent `1e0`), which let invalid input reach config.yaml —
+    // most notably `""` was stored as `0`. They must be rejected up front.
+    it.each(["", "   ", "0x2", "1e0"])(
+      "rejects %j as a non-integer user error",
+      async (rawValue) => {
+        const { stderr, error } = await runConfig([
+          "set",
+          "qualityGate.maxRegenerations",
+          rawValue,
+        ]);
+
+        expect(error).toBeInstanceOf(CliUserError);
+        expect(stderr).toContain("qualityGate.maxRegenerations");
+        expect(stderr).toMatch(/integer/i);
+      },
+    );
+
+    it("rejects a value below the minimum (-1) as a user error", async () => {
+      const { stderr, error } = await runConfig(["set", "qualityGate.maxRegenerations", "-1"]);
+
+      expect(error).toBeInstanceOf(CliUserError);
+      expect(stderr).toContain("qualityGate.maxRegenerations");
+      expect(stderr).toMatch(/between 0 and 3/);
+    });
+
     it("rejects a value above the maximum (3) as a user error", async () => {
       const { stderr, error } = await runConfig(["set", "qualityGate.maxRegenerations", "4"]);
 
