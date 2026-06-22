@@ -402,6 +402,43 @@ describe("panel chat mode", () => {
     expect(err).not.toContain("\u2028");
   });
 
+  it("collapses legacy fallback panel targets to one terminal line", async () => {
+    const maliciousTarget = "legacy\r\n\u001B[31mspoof\u2028panel";
+    const db = await createDatabase(path.join(env.home, "council.db"));
+    try {
+      const repo = new PanelRepository(db);
+      await repo.create({
+        name: maliciousTarget,
+        topic: "Choose the launch plan",
+        copilotHome: path.join(env.home, "copilot"),
+        configJson: JSON.stringify({
+          template: "missing-malicious-target-template",
+          mode: "structured",
+          engine: "mock",
+        }),
+      });
+    } finally {
+      await db.destroy();
+    }
+
+    let err = "";
+    const cmd = buildChatCommand({
+      write: () => undefined,
+      writeError: (s) => (err += s),
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput([]),
+    });
+
+    await expect(
+      cmd.parseAsync(["node", "council-chat", maliciousTarget, "--engine", "mock"]),
+    ).rejects.toThrow(/Failed to load panel template for "legacy spoof panel"/);
+    expect(err).toContain('panel "legacy spoof panel" exists in database');
+    expect(err).not.toContain("\r");
+    expect(err).not.toContain("\u001B");
+    expect(err).not.toContain("\u2028");
+    expect(err).not.toContain("legacy\r\n");
+  });
+
   it("errors when a persisted panel has an invalid stored definition", async () => {
     const db = await createDatabase(path.join(env.home, "council.db"));
     try {
@@ -475,6 +512,47 @@ describe("panel chat mode", () => {
     ).rejects.toThrow(/Failed to load panel template/);
     expect(err).not.toContain("\u001B");
     expect(err).toContain('Stored panel definition for "evilpanel" is invalid');
+  });
+
+  it("collapses invalid stored-definition panel targets to one terminal line", async () => {
+    const maliciousTarget = "stored\r\n\u001B[31mspoof\u2028panel";
+    const db = await createDatabase(path.join(env.home, "council.db"));
+    try {
+      const repo = new PanelRepository(db);
+      await repo.create({
+        name: maliciousTarget,
+        topic: "Choose the launch plan",
+        copilotHome: path.join(env.home, "copilot"),
+        configJson: JSON.stringify({
+          template: "missing-malicious-stored-template",
+          mode: "structured",
+          engine: "mock",
+          definition: {
+            name: "Invalid Stored Panel",
+            experts: [],
+          },
+        }),
+      });
+    } finally {
+      await db.destroy();
+    }
+
+    let err = "";
+    const cmd = buildChatCommand({
+      write: () => undefined,
+      writeError: (s) => (err += s),
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput([]),
+    });
+
+    await expect(
+      cmd.parseAsync(["node", "council-chat", maliciousTarget, "--engine", "mock"]),
+    ).rejects.toThrow(/Failed to load panel template/);
+    expect(err).toContain('Stored panel definition for "stored spoof panel" is invalid');
+    expect(err).not.toContain("\r");
+    expect(err).not.toContain("\u001B");
+    expect(err).not.toContain("\u2028");
+    expect(err).not.toContain("stored\r\n");
   });
 
   it("errors when target is neither an expert slug nor a panel", async () => {
