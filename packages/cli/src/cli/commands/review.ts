@@ -47,7 +47,7 @@ import { toSingleLineDisplay } from "../strip-control-chars.js";
 const REVIEW_TEMPLATE = "code-review";
 /** Default git ref to diff the working tree against. */
 const DEFAULT_BASE_REF = "HEAD";
-/** Soft per-response word cap, matching sibling commands. */
+/** Soft per-response word budget (opening-phase anchor), matching sibling commands. */
 const DEFAULT_MAX_WORDS = 250;
 /** Used only if the template omits its own `defaults.maxRounds`. */
 const FALLBACK_MAX_ROUNDS = 3;
@@ -149,7 +149,7 @@ export function buildReviewCommand(deps: ReviewCommandDeps = {}): Command {
     )
     .option(
       "--max-words <n>",
-      "Soft per-response word cap",
+      "Soft per-response word budget (opening-phase anchor; structured mode scales the other phases)",
       (v) => {
         const parsed = Number(v);
         if (!Number.isInteger(parsed)) {

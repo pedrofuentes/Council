@@ -28,4 +28,4 @@ council ask [options] <panel> [question]
 | `--engine <kind>` | Engine to use (default: from config) (choices: `copilot`, `mock`, `openai`, `anthropic`) | — |
 | `--expert <slug>` | Expert slug to ask (default: first expert in the panel) | — |
 | `--format <kind>` | Output format (choices: `auto`, `json`, `plain`) | `auto` |
-| `--max-words <n>` | Soft per-response word cap | `250` |
+| `--max-words <n>` | Soft per-response word budget (opening-phase anchor; structured mode scales the other phases) | `250` |

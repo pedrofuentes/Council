@@ -27,7 +27,7 @@ council resume [options] [panel]
 | `--prompt <prompt>` | Run a new debate against the same panel with this prompt | — |
 | `--engine <kind>` | Engine for continue mode (choices: `copilot`, `mock`, `openai`, `anthropic`) | — |
 | `--max-rounds <n>` | Max rounds for --prompt mode (default: 1) | — |
-| `--max-words <n>` | Soft per-response word cap for --prompt mode | `250` |
+| `--max-words <n>` | Soft per-response word budget for --prompt mode (opening-phase anchor; structured mode scales the other phases) | `250` |
 | `--strategy <name>` | Moderator strategy for --prompt freeform mode (round-robin \| devils-advocate \| consensus-check). devils-advocate accepts an optional ":\<slug\>" suffix. | `round-robin` |
 | `--heuristic-memory` | Skip post-debate LLM extraction — for offline/air-gapped use. Useful for offline tests and air-gapped environments. | — |
 | `--latest` | Resume the most recent panel session | — |

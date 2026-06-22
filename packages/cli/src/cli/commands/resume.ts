@@ -75,7 +75,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
     )
     .option(
       "--max-words <n>",
-      "Soft per-response word cap for --prompt mode",
+      "Soft per-response word budget for --prompt mode (opening-phase anchor; structured mode scales the other phases)",
       (v) => Number.parseInt(v, 10),
       DEFAULT_MAX_WORDS,
     )
@@ -214,9 +214,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
             panelId: resolved.panel.id,
             expertSlugToId,
             moderator:
-              panelMode === "structured"
-                ? "structured-phases"
-                : (strategy?.name ?? "round-robin"),
+              panelMode === "structured" ? "structured-phases" : (strategy?.name ?? "round-robin"),
             format: opts.format,
             write,
             writeError,

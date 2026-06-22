@@ -17,7 +17,11 @@ import {
   resolveEngine,
   type CouncilConfig,
 } from "../../config/index.js";
-import { PanelNotFoundError, TEMPLATE_NAME_PATTERN, loadPanel } from "../../core/template-loader.js";
+import {
+  PanelNotFoundError,
+  TEMPLATE_NAME_PATTERN,
+  loadPanel,
+} from "../../core/template-loader.js";
 import {
   checkTopicAdmission,
   detectShellExpansion,
@@ -69,10 +73,7 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
       "Panel name from a previous debate (as shown by `council sessions`). " +
         "For library experts, use `council chat`.",
     )
-    .argument(
-      "[question]",
-      "The question to ask (optional when --prompt-file is used)",
-    )
+    .argument("[question]", "The question to ask (optional when --prompt-file is used)")
     .option(
       "--prompt-file <path>",
       "Read the question VERBATIM from a file (or `-` for stdin) instead of the positional argument. " +
@@ -90,7 +91,7 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
     )
     .option(
       "--max-words <n>",
-      "Soft per-response word cap",
+      "Soft per-response word budget (opening-phase anchor; structured mode scales the other phases)",
       (v) => Number.parseInt(v, 10),
       DEFAULT_MAX_WORDS,
     )
@@ -165,11 +166,7 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
         // single-expert call. Skipped for --quiet and non-interactive shells
         // (warn-and-proceed). File and stdin input never reach the shell, so
         // they are never gated here.
-        if (
-          questionSource === "arg" &&
-          !isQuiet() &&
-          detectShellExpansion(question, "arg")
-        ) {
+        if (questionSource === "arg" && !isQuiet() && detectShellExpansion(question, "arg")) {
           const confirmQuestion = async (provider: ConfirmProvider): Promise<void> => {
             writeError(`Received question: ${truncatePrompt(toSingleLineDisplay(question))}\n`);
             const proceed = await provider.confirm("Proceed with this question? [y/N] ");
@@ -213,7 +210,7 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
           if (!panel) {
             const dataHome = process.env["COUNCIL_DATA_HOME"]?.length
               ? getCouncilDataHome()
-              : getCouncilDataHome(loadedConfig ?? await getConfig());
+              : getCouncilDataHome(loadedConfig ?? (await getConfig()));
             const templateOnlyMessage = await buildTemplateOnlyMessage(panelName, dataHome);
             throw new Error(
               templateOnlyMessage ??

@@ -22,4 +22,4 @@ council review [options]
 | `--engine <kind>` | Engine to use (default: from config) (choices: `copilot`, `mock`, `openai`, `anthropic`) | — |
 | `--format <kind>` | Output format (choices: `auto`, `json`, `plain`) | `auto` |
 | `--max-rounds <n>` | Max debate rounds (default: the code-review panel's own default) | — |
-| `--max-words <n>` | Soft per-response word cap | `250` |
+| `--max-words <n>` | Soft per-response word budget (opening-phase anchor; structured mode scales the other phases) | `250` |
