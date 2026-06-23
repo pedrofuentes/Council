@@ -20,9 +20,10 @@ export interface MultiSelectListProps {
 }
 
 export function MultiSelectList(props: MultiSelectListProps): React.ReactElement {
+  const isActive = props.isActive ?? true;
   const { cursor } = useListSelection({
     count: props.items.length,
-    ...(props.isActive === undefined ? {} : { isActive: props.isActive }),
+    isActive,
     onActivate: () => props.onSubmit?.(props.selected),
   });
 
@@ -38,7 +39,7 @@ export function MultiSelectList(props: MultiSelectListProps): React.ReactElement
         : [...props.selected, item.value];
       props.onChange?.(next);
     },
-    { isActive: props.isActive ?? false },
+    { isActive },
   );
 
   const rows = props.items.map(
