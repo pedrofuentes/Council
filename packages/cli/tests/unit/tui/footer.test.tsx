@@ -36,4 +36,12 @@ describe("Footer", () => {
     expect(lastFrame() ?? "").not.toContain("\u0007");
     unmount();
   });
+
+  it("defaults to showing labels when showLabels is undefined", () => {
+    const { lastFrame, unmount } = render(<Footer hints={hints} mode="NAV" theme={theme} />);
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("j/k");
+    expect(frame).toContain("move");
+    unmount();
+  });
 });
