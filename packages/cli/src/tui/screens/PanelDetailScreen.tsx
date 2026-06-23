@@ -45,6 +45,9 @@ export function PanelDetailScreen(props: PanelDetailScreenProps): React.ReactEle
       if (input === "m" && source === "saved" && name !== undefined) {
         navigate(`/panels/${encodeURIComponent(name)}/members`, { state: { source: "saved" } });
       }
+      if (input === "d" && source === "saved" && name !== undefined) {
+        navigate(`/panels/${encodeURIComponent(name)}/delete`, { state: { source: "saved" } });
+      }
     },
     { isActive: props.isActive ?? true },
   );
@@ -81,7 +84,7 @@ export function PanelDetailScreen(props: PanelDetailScreenProps): React.ReactEle
         <Text key={slug}>{props.theme.warn(toSingleLineDisplay(`⚠ ${slug} (missing)`))}</Text>
       ))}
       {source === "saved" ? (
-        <Text>{props.theme.muted(toSingleLineDisplay("m edit members"))}</Text>
+        <Text>{props.theme.muted(toSingleLineDisplay("m edit members · d delete"))}</Text>
       ) : undefined}
     </Box>
   );

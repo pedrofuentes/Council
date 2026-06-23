@@ -141,4 +141,65 @@ describe("PanelDetailScreen", () => {
     expect(lastFrame()).not.toContain("EDIT MEMBERS");
     expect(lastFrame()).toContain("starter");
   });
+
+  it("navigates to the delete confirm screen when d is pressed on a saved panel", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withDetail(async () => ({
+          name: "acme",
+          description: "",
+          source: "saved",
+          members: [],
+          missing: [],
+        }))}
+      >
+        <MemoryRouter initialEntries={[{ pathname: "/panels/acme", state: { source: "saved" } }]}>
+          <Routes>
+            <Route path="/panels/:name" element={<PanelDetailScreen theme={theme} isActive />} />
+            <Route path="/panels/:name/delete" element={<Text>DELETE PANEL</Text>} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    expect(lastFrame()).toContain("d delete");
+
+    stdin.write("d");
+    await flush();
+
+    expect(lastFrame()).toContain("DELETE PANEL");
+  });
+
+  it("does not navigate to the delete confirm screen when d is pressed on a template panel", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withDetail(async () => ({
+          name: "starter",
+          description: "",
+          source: "template",
+          members: [],
+          missing: [],
+        }))}
+      >
+        <MemoryRouter
+          initialEntries={[{ pathname: "/panels/starter", state: { source: "template" } }]}
+        >
+          <Routes>
+            <Route path="/panels/:name" element={<PanelDetailScreen theme={theme} isActive />} />
+            <Route path="/panels/:name/delete" element={<Text>DELETE PANEL</Text>} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    expect(lastFrame()).not.toContain("d delete");
+
+    stdin.write("d");
+    await flush();
+
+    expect(lastFrame()).not.toContain("DELETE PANEL");
+    expect(lastFrame()).toContain("starter");
+  });
 });

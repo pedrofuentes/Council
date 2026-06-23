@@ -288,6 +288,22 @@ describe("AppRouter", () => {
     expect(lastFrame()).not.toContain("Coming soon");
   });
 
+  it("renders the PanelDeleteScreen on the panel delete route", async () => {
+    const { lastFrame } = render(
+      <DataProvider value={withPanelCreate()}>
+        <MemoryRouter initialEntries={["/panels/strategy/delete"]}>
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+
+    expect(lastFrame()).toContain('Delete panel "strategy"?');
+    expect(lastFrame()).toContain("0 saved session");
+    expect(lastFrame()).not.toContain("Coming soon");
+  });
+
   it("renders the PanelMembersScreen on the panel members route", async () => {
     const { lastFrame } = render(
       <DataProvider value={withPanelMembers()}>
