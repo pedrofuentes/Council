@@ -106,7 +106,9 @@ export function createConveneSource(deps: ConveneDeps): ConveneDataSource {
 
         return { debateId: persister.debateId, reason };
       } finally {
-        await engine.stop();
+        // A cleanup failure must never replace the debate's primary result or
+        // error (mirrors runWithEngine). Swallow engine.stop() rejections.
+        await engine.stop().catch(() => undefined);
       }
     },
   };
