@@ -65,7 +65,7 @@ export function SessionDetailScreen(props: SessionDetailScreenProps): React.Reac
   }
 
   if (state.data === undefined) {
-    return <Text>{props.theme.warn("Session not found")}</Text>;
+    return <Text>{props.theme.warn("No transcript available")}</Text>;
   }
 
   return renderDetail(state.data, props.theme);
