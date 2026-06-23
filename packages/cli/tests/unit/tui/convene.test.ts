@@ -375,7 +375,7 @@ describe("createConveneSource", () => {
     const source = makeSource(db, engine);
 
     await expect(
-      source.streamDebate("launch-panel", "Register experts", {}, () => {}),
+      source.streamDebate("launch-panel", "Register experts", {}, () => undefined),
     ).rejects.toThrow("could not register all experts (1/2 failed): cannot add PM");
 
     expect(engine.removedExpertIds).toEqual([cto.id]);
@@ -387,7 +387,7 @@ describe("createConveneSource", () => {
     const source = makeSource(db, engine);
 
     await expect(
-      source.streamDebate("launch-panel", "Register experts", {}, () => {}),
+      source.streamDebate("launch-panel", "Register experts", {}, () => undefined),
     ).rejects.toThrow("could not register all experts (1/2 failed): string failure");
 
     expect(engine.stopCount).toBe(1);
