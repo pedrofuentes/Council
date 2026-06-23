@@ -65,6 +65,22 @@ class TrackingScriptedEngine extends ScriptedEngine {
   }
 }
 
+class FailingAddExpertEngine extends TrackingScriptedEngine {
+  readonly removedExpertIds: string[] = [];
+
+  override async addExpert(spec: ExpertSpec): Promise<void> {
+    if (spec.id === pm.id) {
+      throw new Error("cannot add PM");
+    }
+    await super.addExpert(spec);
+  }
+
+  override async removeExpert(expertId: string): Promise<void> {
+    this.removedExpertIds.push(expertId);
+    await super.removeExpert(expertId);
+  }
+}
+
 class AbortAfterDeltaEngine implements CouncilEngine {
   stopCount = 0;
   readonly sends: SendOptions[] = [];
@@ -342,6 +358,18 @@ describe("createConveneSource", () => {
 
     expect(result.reason).toBe("completed");
     expect(events).toContainEqual({ kind: "error", message: "bad error" });
+    expect(engine.stopCount).toBe(1);
+  });
+
+  it("removes already-registered experts and stops the engine when registration fails", async () => {
+    const engine = new FailingAddExpertEngine({ scripts: {} });
+    const source = makeSource(db, engine);
+
+    await expect(
+      source.streamDebate("launch-panel", "Register experts", {}, () => {}),
+    ).rejects.toThrow("could not register all experts (1/2 failed): cannot add PM");
+
+    expect(engine.removedExpertIds).toEqual([cto.id]);
     expect(engine.stopCount).toBe(1);
   });
 
