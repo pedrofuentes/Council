@@ -82,4 +82,29 @@ describe("CouncilTUI", () => {
     expect(afterHelp.toLowerCase()).not.toContain("keyboard shortcuts");
     unmount();
   });
+
+  it("handles quit key (q) without throwing", async () => {
+    const { stdin, unmount } = render(
+      <CouncilTUI homeData={homeData} model="m" env={{ NO_COLOR: "1" }} initialColumns={140} initialRows={40} />,
+    );
+    await flush();
+    // The q key invokes app.exit() but doesn't actually exit in tests
+    stdin.write("q");
+    await flush();
+    // Test passes if no error is thrown
+    unmount();
+  });
+
+  it("handles Escape in nav mode without throwing", async () => {
+    const { stdin, unmount } = render(
+      <CouncilTUI homeData={homeData} model="m" env={{ NO_COLOR: "1" }} initialColumns={140} initialRows={40} />,
+    );
+    await flush();
+    // Esc in nav mode (not help) invokes app.exit() but doesn't actually exit in tests
+    await sleep(20);
+    stdin.write("\u001b");
+    await sleep(120);
+    // Test passes if no error is thrown
+    unmount();
+  });
 });
