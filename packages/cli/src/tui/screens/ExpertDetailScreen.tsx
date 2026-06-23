@@ -88,6 +88,14 @@ export function ExpertDetailScreen(props: ExpertDetailScreenProps): React.ReactE
       ) {
         navigate(`/experts/${encodeURIComponent(slug)}/docs`);
       }
+      if (
+        input === "t" &&
+        slug !== undefined &&
+        state.status === "loaded" &&
+        state.data?.kind === "persona"
+      ) {
+        navigate(`/experts/${encodeURIComponent(slug)}/train`);
+      }
     },
     { isActive: props.isActive ?? false },
   );
@@ -108,7 +116,7 @@ export function ExpertDetailScreen(props: ExpertDetailScreenProps): React.ReactE
     <Box flexDirection="column">
       {renderDetail(state.data, props.theme)}
       {state.data.kind === "persona" ? (
-        <Text>{props.theme.muted(toSingleLineDisplay("o documents"))}</Text>
+        <Text>{props.theme.muted(toSingleLineDisplay("o documents · t train"))}</Text>
       ) : undefined}
     </Box>
   );

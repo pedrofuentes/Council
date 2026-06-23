@@ -3,6 +3,7 @@ import React from "react";
 import type { ExpertsDataSource } from "../adapters/experts-data.js";
 import type { ExpertAuthoringSource } from "../adapters/expert-authoring.js";
 import type { ExpertDocumentsDataSource } from "../adapters/expert-documents.js";
+import type { ExpertTrainingDataSource } from "../adapters/expert-training.js";
 import type { PanelsDataSource } from "../adapters/panels-data.js";
 import type { SettingsDataSource } from "../adapters/config-settings.js";
 import type { SessionsDataSource } from "../adapters/sessions-data.js";
@@ -12,6 +13,7 @@ export interface TuiDataSources {
   readonly experts?: ExpertsDataSource;
   readonly expertAuthoring?: ExpertAuthoringSource;
   readonly documents?: ExpertDocumentsDataSource;
+  readonly training?: ExpertTrainingDataSource;
   readonly settings?: SettingsDataSource;
   readonly sessions?: SessionsDataSource;
 }

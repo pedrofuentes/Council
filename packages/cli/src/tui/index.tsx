@@ -21,6 +21,7 @@ import { createExpertsDataSource } from "./adapters/experts-data.js";
 import { createPanelsDataSource } from "./adapters/panels-data.js";
 import { createSettingsDataSource } from "./adapters/config-settings.js";
 import { createSessionsDataSource } from "./adapters/sessions-data.js";
+import { createTuiTrainingSource } from "./training-source-factory.js";
 import { createHomeDataSources } from "./adapters/home-data-sources.js";
 import { loadHomeData } from "./adapters/home-data.js";
 import { DataProvider, type TuiDataSources } from "./components/DataProvider.js";
@@ -53,6 +54,12 @@ export async function launchTui(): Promise<void> {
     documents: createExpertDocumentsSource({
       repo: new DocumentRepository(db),
       indexer: createDocumentIndexer(db),
+    }),
+    training: createTuiTrainingSource({
+      config,
+      dataHome,
+      db,
+      expertLibrary,
     }),
     settings: createSettingsDataSource({ loadConfig, updateConfigFields }),
     sessions: createSessionsDataSource({
