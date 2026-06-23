@@ -53,6 +53,7 @@ describe("PanelsScreen", () => {
     );
     await flush();
     expect(lastFrame()).toMatch(/No panels/i);
+    expect(lastFrame()).toContain("create one with n");
   });
 
   it("shows an error state", async () => {
@@ -92,5 +93,47 @@ describe("PanelsScreen", () => {
     await flush();
 
     expect(lastFrame()).toContain("DETAIL acme");
+  });
+
+  it("navigates to panel creation with n in the non-empty state", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withPanels(async () => [
+          { name: "acme", description: "Exec panel", memberCount: 1, source: "saved" },
+        ])}
+      >
+        <MemoryRouter initialEntries={["/panels"]}>
+          <Routes>
+            <Route path="/panels" element={<PanelsScreen theme={theme} isActive />} />
+            <Route path="/panels/new" element={<Text>NEW PANEL</Text>} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("n");
+    await flush();
+
+    expect(lastFrame()).toContain("NEW PANEL");
+  });
+
+  it("navigates to panel creation with n in the empty state", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider value={withPanels(async () => [])}>
+        <MemoryRouter initialEntries={["/panels"]}>
+          <Routes>
+            <Route path="/panels" element={<PanelsScreen theme={theme} isActive />} />
+            <Route path="/panels/new" element={<Text>NEW PANEL</Text>} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("n");
+    await flush();
+
+    expect(lastFrame()).toContain("NEW PANEL");
   });
 });

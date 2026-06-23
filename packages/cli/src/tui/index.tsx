@@ -20,6 +20,7 @@ import { updateConfigFields } from "../config/loader.js";
 import { createExpertAuthoringSource } from "./adapters/expert-authoring.js";
 import { createExpertDocumentsSource } from "./adapters/expert-documents.js";
 import { createExpertsDataSource } from "./adapters/experts-data.js";
+import { createPanelAuthoringSource } from "./adapters/panel-authoring.js";
 import { createPanelsDataSource } from "./adapters/panels-data.js";
 import { createSettingsDataSource } from "./adapters/config-settings.js";
 import { createSessionsDataSource } from "./adapters/sessions-data.js";
@@ -52,6 +53,20 @@ export async function launchTui(): Promise<void> {
       experts: expertLibrary,
       listTemplates,
       loadTemplate,
+    }),
+    panelAuthoring: createPanelAuthoringSource({
+      panelRepo: new PanelLibraryRepository(db),
+      expertExists: async (slug) => (await expertLibrary.get(slug)) !== null,
+      dataHome,
+      countDebates: async (name) => {
+        const runtime = await new PanelRepository(db).findByNamePrefix(name);
+        const exact = runtime.filter((panel) => panel.name === name);
+        let total = 0;
+        for (const panel of exact) {
+          total += (await new DebateRepository(db).findByPanelId(panel.id)).length;
+        }
+        return total;
+      },
     }),
     experts: createExpertsDataSource({ library: expertLibrary }),
     expertAuthoring: createExpertAuthoringSource({ library: expertLibrary }),
