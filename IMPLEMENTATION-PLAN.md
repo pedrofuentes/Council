@@ -557,19 +557,20 @@ harness. Validate `ink-text-input` / `ink-select-input` under Ink 7 / React 19 v
 
 **Key files**: `src/tui/screens/{Panels,PanelDetail,Experts,ExpertDetail,Sessions,SessionDetail}.tsx`, `src/tui/components/overlays/CommandPalette.tsx`, `src/tui/adapters/*`
 
-### 9.4 Settings Overlay ⬜
+### 9.4 Settings Overlay ✅
 
 **Goal**: Edit Council configuration from an overlay.
 
-**Scope**: `SettingsDialog` with collapsible sections for `ConfigSchema` (defaults, expert, documents,
-chat, conclude, telemetry, providers env-var names, paths), Tab navigation, inline Zod validation,
-Save/Cancel via `loadConfigWithMeta` + `updateConfigFields`.
+**Scope**: `SettingsScreen` (route `/settings`) with sectioned fields for `ConfigSchema` (defaults, expert, documents,
+chat, conclude, qualityGate, telemetry, providers env-var names, paths), ↑↓/Tab field navigation, inline validation,
+Save (Ctrl+S) via `loadConfig` + `updateConfigFields`. A `config-settings` adapter holds the field descriptors + per-field
+validation (mirroring the CLI coercion); an input-capture context gates the app-shell global keys while editing.
 
 **Acceptance criteria**:
 - Edits persist to `config.yaml`; invalid values blocked with inline messages.
 - Secrets are never written — only provider env-var names.
 
-**Key files**: `src/tui/components/overlays/SettingsDialog.tsx`, `src/config/*` (reuse)
+**Key files**: `src/tui/screens/SettingsScreen.tsx`, `src/tui/adapters/config-settings.ts`, `src/tui/components/InputCaptureProvider.tsx`, `src/config/*` (reuse)
 
 ### 9.5 Expert Authoring & Training ⬜
 
@@ -691,5 +692,6 @@ checks; opt-in TUI telemetry events.
 | Published to npm as `@council-ai/cli` | 8 | ⬜ Planned |
 | Interactive TUI shell (alt-screen console) | 9.2 | ✅ Done |
 | TUI library browse/detail + command palette | 9.3 | ✅ Done |
+| TUI editable settings screen | 9.4 | ✅ Done |
 | Live convene + conclude in the TUI | 9.8 | ⬜ Planned |
 | TUI default on bare `council` (TTY) | 9.10 | ⬜ Planned |
