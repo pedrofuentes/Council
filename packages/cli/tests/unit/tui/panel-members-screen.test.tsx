@@ -290,4 +290,34 @@ describe("PanelMembersScreen — cancel during in-flight save", () => {
     expect(lastFrame()).toContain("Members:");
     unmount();
   });
+
+  it("ignores a second submit while a save is in flight (single setMembers call)", async () => {
+    const setMembers = vi.fn<Parameters<PanelAuthoringDataSource["setMembers"]>, Promise<void>>(
+      () => new Promise<void>(() => undefined),
+    );
+    const { stdin, unmount } = renderScreen({ panelAuthoring: createAuthoring(setMembers) });
+
+    await flush();
+    stdin.write("\r");
+    await flush();
+    stdin.write("\r");
+    await flush();
+
+    expect(setMembers).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
+  it("renders a sanitized error when loading the panel members fails", async () => {
+    const { lastFrame, unmount } = renderScreen({
+      loadDetail: async () => {
+        throw new Error("db down\u001B[31m");
+      },
+    });
+
+    await flush();
+
+    expect(lastFrame()).toContain("Failed to load panel members");
+    expect(lastFrame()).not.toContain("\u001B[31m");
+    unmount();
+  });
 });
