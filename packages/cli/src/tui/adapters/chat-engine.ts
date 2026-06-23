@@ -22,6 +22,10 @@ export async function streamTurn(
   input: StreamTurnInput,
   onDelta: (chunk: string) => void,
 ): Promise<StreamTurnResult> {
+  if (isAborted(input.signal)) {
+    return { text: "", aborted: true };
+  }
+
   const options: SendOptions =
     input.signal === undefined
       ? { expertId: input.expertId, prompt: input.prompt }
@@ -46,12 +50,21 @@ export async function streamTurn(
     throw new Error(toSingleLineDisplay(event.error.message));
   }
 
-  return { text, aborted: input.signal?.aborted === true };
+  return { text, aborted: isAborted(input.signal) };
+}
+
+/**
+ * Read an abort signal's current state through a function boundary so the
+ * TS control-flow analyzer does not narrow a later read away after the
+ * early-return guard — the signal is live and can flip to aborted mid-stream.
+ */
+function isAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
 }
 
 function isAbortEvent(
   event: Extract<EngineEvent, { readonly kind: "error" }>,
   signal: AbortSignal | undefined,
 ): boolean {
-  return signal?.aborted === true || event.error.code === ABORTED_ENGINE_ERROR_CODE;
+  return isAborted(signal) || event.error.code === ABORTED_ENGINE_ERROR_CODE;
 }
