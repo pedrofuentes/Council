@@ -69,6 +69,19 @@ function SlugProbe(): React.ReactElement {
   return <Text>DETAIL {params.slug}</Text>;
 }
 
+const loadedCtoForm = (): ExpertFormValues => ({
+  slug: "cto",
+  displayName: "Chief Technology Officer",
+  role: "Technology strategy",
+  weightedEvidence: "architecture reviews",
+  referenceCases: "platform scaling",
+  notExpertIn: "tax law",
+  epistemicStance: "evidence first",
+  kind: "generic",
+  personaDescription: "",
+  model: "gpt-4o",
+});
+
 function renderForm(source: ExpertAuthoringSource): ReturnType<typeof render> {
   return render(
     <InputCaptureProvider>
@@ -77,6 +90,24 @@ function renderForm(source: ExpertAuthoringSource): ReturnType<typeof render> {
           <Routes>
             <Route path="/" element={<Text>PARENT</Text>} />
             <Route path="/experts/new" element={<ExpertFormScreen theme={theme} />} />
+            <Route path="/experts/:slug" element={<SlugProbe />} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>
+    </InputCaptureProvider>,
+  );
+}
+
+function renderEditForm(source: ExpertAuthoringSource): ReturnType<typeof render> {
+  return render(
+    <InputCaptureProvider>
+      <DataProvider value={withAuthoring(source)}>
+        <MemoryRouter initialEntries={["/experts/cto/edit"]}>
+          <Routes>
+            <Route
+              path="/experts/:slug/edit"
+              element={<ExpertFormScreen formMode="edit" theme={theme} />}
+            />
             <Route path="/experts/:slug" element={<SlugProbe />} />
           </Routes>
         </MemoryRouter>
@@ -282,6 +313,71 @@ describe("ExpertFormScreen", () => {
       }),
     );
     expect(lastFrame()).toContain("DETAIL alpha");
+    unmount();
+  });
+
+  it("loads an expert for editing, keeps the slug read-only, updates values, and returns to detail", async () => {
+    const update = vi.fn<
+      Parameters<ExpertAuthoringSource["update"]>,
+      ReturnType<ExpertAuthoringSource["update"]>
+    >(async (_slug, values) => ({ ok: true, definition: definitionFor(values) }));
+    const source: ExpertAuthoringSource = {
+      loadForEdit: async () => loadedCtoForm(),
+      create: async (values) => ({ ok: true, definition: definitionFor(values) }),
+      update,
+      remove: async () => ({ affectedPanels: [] }),
+      affectedPanels: async () => [],
+    };
+    const { stdin, lastFrame, unmount } = renderEditForm(source);
+    await flush();
+
+    expect(lastFrame()).toContain("Display name: Chief Technology Officer");
+    expect(highlightedRow(lastFrame() ?? "")).toContain("Slug: cto");
+
+    stdin.write("\r");
+    await flush();
+    stdin.write("mutated");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    expect(lastFrame()).toContain("Slug: cto");
+    expect(lastFrame()).not.toContain("Slug: ctomutated");
+
+    stdin.write("\u001B[B");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    stdin.write(" / Platform");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    stdin.write("\u0013");
+    await flush();
+
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledWith(
+      "cto",
+      expect.objectContaining({
+        slug: "cto",
+        displayName: "Chief Technology Officer / Platform",
+      }),
+    );
+    expect(lastFrame()).toContain("DETAIL cto");
+    unmount();
+  });
+
+  it("renders an edit not found state when the expert cannot be loaded", async () => {
+    const source: ExpertAuthoringSource = {
+      loadForEdit: async () => undefined,
+      create: async (values) => ({ ok: true, definition: definitionFor(values) }),
+      update: async (_slug, values) => ({ ok: true, definition: definitionFor(values) }),
+      remove: async () => ({ affectedPanels: [] }),
+      affectedPanels: async () => [],
+    };
+    const { lastFrame, unmount } = renderEditForm(source);
+    await flush();
+
+    expect(lastFrame()).toMatch(/not found/i);
     unmount();
   });
 

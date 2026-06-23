@@ -223,6 +223,10 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
           />
           <Route path={ROUTES.expertNew} element={<ExpertFormScreen theme={theme} />} />
           <Route
+            path={ROUTES.expertEdit}
+            element={<ExpertFormScreen formMode="edit" theme={theme} />}
+          />
+          <Route
             path={ROUTES.expertDetail}
             element={<ExpertDetailScreen theme={theme} isActive={mainActive} />}
           />

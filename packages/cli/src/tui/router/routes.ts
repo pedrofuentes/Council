@@ -4,6 +4,7 @@ export const ROUTES = {
   panelDetail: "/panels/:name",
   experts: "/experts",
   expertNew: "/experts/new",
+  expertEdit: "/experts/:slug/edit",
   expertDetail: "/experts/:slug",
   sessions: "/sessions",
   sessionDetail: "/sessions/:id",

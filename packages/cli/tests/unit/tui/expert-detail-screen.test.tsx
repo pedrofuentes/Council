@@ -1,4 +1,5 @@
 import React from "react";
+import { Text } from "ink";
 import { render } from "ink-testing-library";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { describe, expect, it } from "vitest";
@@ -109,5 +110,38 @@ describe("ExpertDetailScreen", () => {
     expect(lastFrame()).toContain("Operations Lead");
     expect(lastFrame()).toContain("Operations [generic]");
     expect(lastFrame()).toContain("(none)");
+  });
+
+  it("navigates to the edit route when e is pressed while active", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withDetail(async () => ({
+          slug: "cto",
+          displayName: "CTO",
+          role: "Technology",
+          kind: "generic",
+          epistemicStance: "Evidence first",
+          expertise: {
+            weightedEvidence: [],
+            referenceCases: [],
+            notExpertIn: [],
+          },
+          panels: [],
+        }))}
+      >
+        <MemoryRouter initialEntries={[{ pathname: "/experts/cto" }]}>
+          <Routes>
+            <Route path="/experts/:slug" element={<ExpertDetailScreen theme={theme} isActive />} />
+            <Route path="/experts/:slug/edit" element={<Text>EDIT ROUTE</Text>} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("e");
+    await flush();
+
+    expect(lastFrame()).toContain("EDIT ROUTE");
   });
 });
