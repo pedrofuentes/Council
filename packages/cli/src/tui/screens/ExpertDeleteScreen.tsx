@@ -56,10 +56,12 @@ export function ExpertDeleteScreen(props: ExpertDeleteScreenProps): React.ReactE
   }, [expertAuthoring, navigate, slug]);
 
   useInput((input, key) => {
-    if (input === "y") {
-      void confirmDelete();
-    } else if (input === "n" || key.escape) {
+    if (input === "n" || key.escape) {
       navigate(-1);
+      return;
+    }
+    if (input === "y" && state.status === "loaded") {
+      void confirmDelete();
     }
   });
 
