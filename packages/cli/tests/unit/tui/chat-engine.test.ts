@@ -101,17 +101,35 @@ describe("streamTurn", () => {
     expect(onDelta).toHaveBeenCalledExactlyOnceWith("partial");
   });
 
-  it("returns an empty aborted result for a pre-aborted signal", async () => {
+  it("does not invoke send for a pre-aborted signal", async () => {
     const controller = new AbortController();
     controller.abort();
-    const send = createScriptedSend({ events: [delta("ignored"), complete()] });
+    const send = vi.fn<ChatSendFn>(createScriptedSend({ events: [delta("ignored"), complete()] }));
     const onDelta = vi.fn<(chunk: string) => void>();
 
     await expect(
       streamTurn(send, { expertId, prompt: "already stopped", signal: controller.signal }, onDelta),
     ).resolves.toEqual({ text: "", aborted: true });
 
+    expect(send).not.toHaveBeenCalled();
     expect(onDelta).not.toHaveBeenCalled();
+  });
+
+  it("prefers abort over a simultaneous non-abort error once the signal has fired", async () => {
+    const controller = new AbortController();
+    const send = createScriptedSend({
+      events: [delta("partial"), error("PROVIDER_ERROR", "late failure")],
+      beforeEvent: (index) => {
+        if (index === 1) {
+          controller.abort();
+        }
+      },
+    });
+    const onDelta = vi.fn<(chunk: string) => void>();
+
+    await expect(
+      streamTurn(send, { expertId, prompt: "stop", signal: controller.signal }, onDelta),
+    ).resolves.toEqual({ text: "partial", aborted: true });
   });
 
   it("throws a sanitized Error for a non-abort stream error after preserving raw deltas", async () => {
