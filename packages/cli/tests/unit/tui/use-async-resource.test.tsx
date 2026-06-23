@@ -55,29 +55,51 @@ describe("useAsyncResource", () => {
     await flush();
     expect(lastFrame()).toContain("oops");
   });
-  it("does not publish loaded data after unmount", async () => {
-    let resolveValue: ((value: number) => void) | undefined;
-    const loader = (): Promise<number> =>
+  it("drops a stale resolution after the loader changes", async () => {
+    let resolveStale: ((value: number) => void) | undefined;
+    const stale = (): Promise<number> =>
       new Promise((resolve) => {
-        resolveValue = resolve;
+        resolveStale = resolve;
       });
-    const { unmount } = render(<Probe loader={loader} render={(state) => state.status} />);
-    unmount();
-    resolveValue?.(7);
+    const fresh = (): Promise<number> => Promise.resolve(2);
+    const renderState = (state: ReturnType<typeof useAsyncResource<number>>): string =>
+      state.status === "loaded" ? `n=${state.data}` : state.status;
+
+    const { rerender, lastFrame } = render(<Probe loader={stale} render={renderState} />);
+    expect(lastFrame()).toContain("loading");
+
+    // Switching loaders cancels the first effect (cleanup sets cancelled=true).
+    rerender(<Probe loader={fresh} render={renderState} />);
     await flush();
-    expect(resolveValue).toBeDefined();
+    expect(lastFrame()).toContain("n=2");
+
+    // The now-stale first loader resolving late must NOT overwrite the fresh state.
+    resolveStale?.(1);
+    await flush();
+    expect(lastFrame()).toContain("n=2");
   });
 
-  it("does not publish errors after unmount", async () => {
-    let rejectValue: ((reason: unknown) => void) | undefined;
-    const loader = (): Promise<number> =>
+  it("drops a stale rejection after the loader changes", async () => {
+    let rejectStale: ((reason: unknown) => void) | undefined;
+    const stale = (): Promise<number> =>
       new Promise((_, reject) => {
-        rejectValue = reject;
+        rejectStale = reject;
       });
-    const { unmount } = render(<Probe loader={loader} render={(state) => state.status} />);
-    unmount();
-    rejectValue?.(new Error("late"));
+    const fresh = (): Promise<number> => Promise.resolve(5);
+    const renderState = (state: ReturnType<typeof useAsyncResource<number>>): string => {
+      if (state.status === "loaded") return `n=${state.data}`;
+      if (state.status === "error") return `err=${state.error.message}`;
+      return state.status;
+    };
+
+    const { rerender, lastFrame } = render(<Probe loader={stale} render={renderState} />);
+    rerender(<Probe loader={fresh} render={renderState} />);
     await flush();
-    expect(rejectValue).toBeDefined();
+    expect(lastFrame()).toContain("n=5");
+
+    // The now-stale first loader rejecting late must NOT surface an error.
+    rejectStale?.(new Error("late"));
+    await flush();
+    expect(lastFrame()).toContain("n=5");
   });
 });
