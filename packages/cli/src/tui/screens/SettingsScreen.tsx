@@ -193,9 +193,6 @@ export function SettingsScreen(props: SettingsScreenProps): React.ReactElement {
       }
 
       if (selected.kind === "string" || selected.kind === "number") {
-        if ((key.ctrl && input === "s") || input === "\u0013") {
-          return;
-        }
         if (key.return) {
           commitText(selected);
           return;
