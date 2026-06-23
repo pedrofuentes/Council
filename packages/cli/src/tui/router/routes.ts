@@ -2,6 +2,7 @@ export const ROUTES = {
   home: "/",
   panels: "/panels",
   panelNew: "/panels/new",
+  panelCompose: "/panels/compose",
   panelMembers: "/panels/:name/members",
   panelDelete: "/panels/:name/delete",
   panelDetail: "/panels/:name",

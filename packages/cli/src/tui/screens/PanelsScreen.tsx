@@ -22,6 +22,10 @@ export function PanelsScreen(props: PanelsScreenProps): React.ReactElement {
     (input) => {
       if (input === "n") {
         navigate("/panels/new");
+        return;
+      }
+      if (input === "c") {
+        navigate("/panels/compose");
       }
     },
     { isActive: props.isActive ?? false },

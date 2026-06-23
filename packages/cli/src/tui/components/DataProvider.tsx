@@ -5,6 +5,7 @@ import type { ExpertAuthoringSource } from "../adapters/expert-authoring.js";
 import type { ExpertDocumentsDataSource } from "../adapters/expert-documents.js";
 import type { ExpertTrainingDataSource } from "../adapters/expert-training.js";
 import type { PanelAuthoringDataSource } from "../adapters/panel-authoring.js";
+import type { PanelComposeDataSource } from "../adapters/panel-compose.js";
 import type { PanelsDataSource } from "../adapters/panels-data.js";
 import type { SettingsDataSource } from "../adapters/config-settings.js";
 import type { SessionsDataSource } from "../adapters/sessions-data.js";
@@ -12,6 +13,7 @@ import type { SessionsDataSource } from "../adapters/sessions-data.js";
 export interface TuiDataSources {
   readonly panels: PanelsDataSource;
   readonly panelAuthoring?: PanelAuthoringDataSource;
+  readonly panelCompose?: PanelComposeDataSource;
   readonly experts?: ExpertsDataSource;
   readonly expertAuthoring?: ExpertAuthoringSource;
   readonly documents?: ExpertDocumentsDataSource;
