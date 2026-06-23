@@ -3,10 +3,12 @@ import { render } from "ink";
 
 import { getCouncilDataHome, getCouncilHome, loadConfig } from "../config/index.js";
 import { FileExpertLibrary } from "../core/expert-library.js";
+import { createDocumentIndexer } from "../core/documents/indexer.js";
 import { listTemplates, loadTemplate } from "../core/template-loader.js";
 import { createDatabase } from "../memory/db.js";
 import { ChatRepository } from "../memory/repositories/chat-repository.js";
 import { DebateRepository } from "../memory/repositories/debates.js";
+import { DocumentRepository } from "../memory/repositories/document-repository.js";
 import { ExpertRepository } from "../memory/repositories/experts.js";
 import { PanelLibraryRepository } from "../memory/repositories/panel-library-repo.js";
 import { PanelRepository } from "../memory/repositories/panels.js";
@@ -14,6 +16,7 @@ import { TurnRepository } from "../memory/repositories/turns.js";
 import { loadTranscript } from "../memory/transcript.js";
 import { updateConfigFields } from "../config/loader.js";
 import { createExpertAuthoringSource } from "./adapters/expert-authoring.js";
+import { createExpertDocumentsSource } from "./adapters/expert-documents.js";
 import { createExpertsDataSource } from "./adapters/experts-data.js";
 import { createPanelsDataSource } from "./adapters/panels-data.js";
 import { createSettingsDataSource } from "./adapters/config-settings.js";
@@ -47,6 +50,10 @@ export async function launchTui(): Promise<void> {
     }),
     experts: createExpertsDataSource({ library: expertLibrary }),
     expertAuthoring: createExpertAuthoringSource({ library: expertLibrary }),
+    documents: createExpertDocumentsSource({
+      repo: new DocumentRepository(db),
+      indexer: createDocumentIndexer(db),
+    }),
     settings: createSettingsDataSource({ loadConfig, updateConfigFields }),
     sessions: createSessionsDataSource({
       panels: new PanelRepository(db),

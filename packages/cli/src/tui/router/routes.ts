@@ -6,6 +6,7 @@ export const ROUTES = {
   expertNew: "/experts/new",
   expertEdit: "/experts/:slug/edit",
   expertDelete: "/experts/:slug/delete",
+  expertDocs: "/experts/:slug/docs",
   expertDetail: "/experts/:slug",
   sessions: "/sessions",
   sessionDetail: "/sessions/:id",

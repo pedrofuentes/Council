@@ -11,6 +11,7 @@ import type {
 } from "../../../src/tui/adapters/sessions-data.js";
 import type { SettingsFieldState } from "../../../src/tui/adapters/config-settings.js";
 import type { ExpertAuthoringSource } from "../../../src/tui/adapters/expert-authoring.js";
+import type { ExpertDocumentsDataSource } from "../../../src/tui/adapters/expert-documents.js";
 import { DataProvider, type TuiDataSources } from "../../../src/tui/components/DataProvider.js";
 import { AppRouter } from "../../../src/tui/router/AppRouter.js";
 import { CouncilTUI } from "../../../src/tui/CouncilTUI.js";
@@ -90,6 +91,25 @@ const withExpertAuthoring = (): TuiDataSources => {
   return {
     panels: { loadList: async () => [], loadDetail: async () => undefined },
     expertAuthoring: authoring,
+  };
+};
+const withExpertDocuments = (): TuiDataSources => {
+  const documents: ExpertDocumentsDataSource = {
+    list: async () => [
+      {
+        id: "doc-1",
+        filename: "roadmap.md",
+        sizeBytes: 42,
+        wordCount: 7,
+        status: "processed",
+        processedAt: "2026-06-23T00:00:00.000Z",
+      },
+    ],
+    remove: async () => ({ ftsCleanupFailed: false }),
+  };
+  return {
+    panels: { loadList: async () => [], loadDetail: async () => undefined },
+    documents,
   };
 };
 
@@ -201,6 +221,21 @@ describe("AppRouter", () => {
 
     expect(lastFrame()).toContain('Delete expert "cto"?');
     expect(lastFrame()).toContain("Not used in any panels.");
+    expect(lastFrame()).not.toContain("Expert not found");
+  });
+
+  it("renders the ExpertDocumentsScreen on the specific expert docs route", async () => {
+    const { lastFrame } = render(
+      <DataProvider value={withExpertDocuments()}>
+        <MemoryRouter initialEntries={["/experts/cto/docs"]}>
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+
+    expect(lastFrame()).toContain("roadmap.md");
     expect(lastFrame()).not.toContain("Expert not found");
   });
 

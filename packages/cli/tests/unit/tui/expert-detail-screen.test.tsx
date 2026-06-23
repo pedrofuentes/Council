@@ -21,6 +21,21 @@ const withDetail = (
   experts: { loadList: async () => [], loadDetail },
 });
 
+const detailFor = (overrides: Partial<ExpertDetailView>): ExpertDetailView => ({
+  slug: "cto",
+  displayName: "CTO",
+  role: "Technology",
+  kind: "persona",
+  epistemicStance: "Evidence first",
+  expertise: {
+    weightedEvidence: [],
+    referenceCases: [],
+    notExpertIn: [],
+  },
+  panels: [],
+  ...overrides,
+});
+
 describe("ExpertDetailScreen", () => {
   it("renders persona detail with sanitized expertise, personality, and panels", async () => {
     const { lastFrame } = render(
@@ -176,5 +191,71 @@ describe("ExpertDetailScreen", () => {
     await flush();
 
     expect(lastFrame()).toContain("DELETE ROUTE");
+  });
+
+  it("navigates to the documents route when o is pressed for a persona expert", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider value={withDetail(async () => detailFor({ kind: "persona" }))}>
+        <MemoryRouter initialEntries={[{ pathname: "/experts/cto" }]}>
+          <Routes>
+            <Route path="/experts/:slug" element={<ExpertDetailScreen theme={theme} isActive />} />
+            <Route path="/experts/:slug/docs" element={<Text>DOCS ROUTE</Text>} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("o");
+    await flush();
+
+    expect(lastFrame()).toContain("DOCS ROUTE");
+  });
+
+  it("does not navigate to documents when o is pressed for a generic expert", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider value={withDetail(async () => detailFor({ kind: "generic" }))}>
+        <MemoryRouter initialEntries={[{ pathname: "/experts/ops" }]}>
+          <Routes>
+            <Route path="/experts/:slug" element={<ExpertDetailScreen theme={theme} isActive />} />
+            <Route path="/experts/:slug/docs" element={<Text>DOCS ROUTE</Text>} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("o");
+    await flush();
+
+    expect(lastFrame()).toContain("Technology [generic]");
+    expect(lastFrame()).not.toContain("DOCS ROUTE");
+  });
+
+  it("does not navigate to documents when o is pressed while loading", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withDetail(
+          () =>
+            new Promise<ExpertDetailView | undefined>(() => {
+              /* keep loading */
+            }),
+        )}
+      >
+        <MemoryRouter initialEntries={[{ pathname: "/experts/cto" }]}>
+          <Routes>
+            <Route path="/experts/:slug" element={<ExpertDetailScreen theme={theme} isActive />} />
+            <Route path="/experts/:slug/docs" element={<Text>DOCS ROUTE</Text>} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("o");
+    await flush();
+
+    expect(lastFrame()).toContain("Loading expert…");
+    expect(lastFrame()).not.toContain("DOCS ROUTE");
   });
 });
