@@ -18,6 +18,7 @@ import { HomeScreen } from "../screens/HomeScreen.js";
 import { PanelDetailScreen } from "../screens/PanelDetailScreen.js";
 import { PanelsScreen } from "../screens/PanelsScreen.js";
 import { SessionDetailScreen } from "../screens/SessionDetailScreen.js";
+import { SettingsScreen } from "../screens/SettingsScreen.js";
 import { SessionsScreen } from "../screens/SessionsScreen.js";
 import { PlaceholderScreen } from "../screens/PlaceholderScreen.js";
 import { resolveTheme } from "../theme/tokens.js";
@@ -232,10 +233,7 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
             element={<SessionDetailScreen theme={theme} isActive={mainActive} />}
           />
           <Route path={ROUTES.chats} element={<PlaceholderScreen title="Chats" theme={theme} />} />
-          <Route
-            path={ROUTES.settings}
-            element={<PlaceholderScreen title="Settings" theme={theme} />}
-          />
+          <Route path={ROUTES.settings} element={<SettingsScreen theme={theme} />} />
         </Routes>
       )}
     </AppShell>
