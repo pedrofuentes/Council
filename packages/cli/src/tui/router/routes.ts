@@ -1,6 +1,7 @@
 export const ROUTES = {
   home: "/",
   panels: "/panels",
+  panelNew: "/panels/new",
   panelDetail: "/panels/:name",
   experts: "/experts",
   expertNew: "/experts/new",

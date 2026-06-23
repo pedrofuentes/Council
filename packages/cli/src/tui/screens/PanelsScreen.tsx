@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text, useInput } from "ink";
 import { useNavigate } from "react-router";
 
 import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
@@ -18,6 +18,15 @@ export function PanelsScreen(props: PanelsScreenProps): React.ReactElement {
   const state = useAsyncResource(data.panels.loadList);
   const navigate = useNavigate();
 
+  useInput(
+    (input) => {
+      if (input === "n") {
+        navigate("/panels/new");
+      }
+    },
+    { isActive: props.isActive ?? false },
+  );
+
   if (state.status === "loading") {
     return <Text>{props.theme.muted("Loading panels…")}</Text>;
   }
@@ -29,7 +38,9 @@ export function PanelsScreen(props: PanelsScreenProps): React.ReactElement {
   if (state.data.length === 0) {
     return (
       <Box justifyContent="center">
-        <Text>{props.theme.accent("No panels yet — create one with c")}</Text>
+        <Text>
+          {props.theme.accent("No panels yet — create one with n (or auto-compose with c)")}
+        </Text>
       </Box>
     );
   }
