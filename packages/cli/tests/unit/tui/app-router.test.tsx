@@ -26,6 +26,16 @@ describe("AppRouter", () => {
     expect(lastFrame()).toContain("Panels");
   });
 
+  it("renders the Chats placeholder on the /chats route", () => {
+    const { lastFrame } = render(
+      <MemoryRouter initialEntries={["/chats"]}>
+        <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+      </MemoryRouter>,
+    );
+    expect(lastFrame()).toContain("Chats");
+    expect(lastFrame()).toContain("Coming soon");
+  });
+
   it("focuses the nav with Tab and navigates to the chosen section on Enter", async () => {
     const { stdin, lastFrame } = render(
       <CouncilTUI homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />,
