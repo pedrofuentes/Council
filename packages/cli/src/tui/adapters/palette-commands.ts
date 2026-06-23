@@ -21,6 +21,7 @@ const NAVIGATE_ACTIONS: readonly NavigatePaletteAction[] = [
   { id: "go-panels", label: "Go to Panels", route: ROUTES.panels, kind: "navigate" },
   { id: "go-experts", label: "Go to Experts", route: ROUTES.experts, kind: "navigate" },
   { id: "go-sessions", label: "Go to Sessions", route: ROUTES.sessions, kind: "navigate" },
+  { id: "go-chats", label: "Go to Chats", route: ROUTES.chats, kind: "navigate" },
   { id: "go-settings", label: "Go to Settings", route: ROUTES.settings, kind: "navigate" },
 ];
 
