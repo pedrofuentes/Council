@@ -76,6 +76,27 @@ describe("MultiSelectList", () => {
     expect(onChange).toHaveBeenCalledWith([]);
   });
 
+  it("toggles on Space even when isActive is omitted (defaults to active like the cursor)", async () => {
+    const onChange = vi.fn();
+    const { stdin } = render(<MultiSelectList items={items} selected={[]} onChange={onChange} />);
+
+    await flush(stdin, " ");
+
+    expect(onChange).toHaveBeenCalledWith(["a"]);
+  });
+
+  it("toggles the item at the current cursor after navigation", async () => {
+    const onChange = vi.fn();
+    const { stdin } = render(
+      <MultiSelectList items={items} selected={[]} isActive onChange={onChange} />,
+    );
+
+    await flush(stdin, "j");
+    await flush(stdin, " ");
+
+    expect(onChange).toHaveBeenCalledWith(["b"]);
+  });
+
   it("submits the current selected values on Enter", async () => {
     const onSubmit = vi.fn();
     const selected = ["b"] as const;
