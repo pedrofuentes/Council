@@ -79,6 +79,10 @@ export function PanelCreateScreen(props: PanelCreateScreenProps): React.ReactEle
 
   useInput(
     (_input, key) => {
+      if (key.escape) {
+        navigate(-1);
+        return;
+      }
       if (key.tab) {
         setField((current) => (current === "name" ? "members" : "name"));
       }
