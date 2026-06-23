@@ -599,7 +599,7 @@ URL ingest and a full CRUD-service extraction from `commands/expert.ts` are defe
 
 **Key files**: `src/tui/screens/Expert{Form,Detail,Delete,Documents,Train}Screen.tsx`, `src/tui/adapters/expert-{authoring,documents,training}.ts`, `src/core/documents/*`
 
-### 9.6 Panel Authoring ⬜
+### 9.6 Panel Authoring ✅
 
 **Goal**: Compose panels inside the TUI.
 
@@ -607,11 +607,24 @@ URL ingest and a full CRUD-service extraction from `commands/expert.ts` are defe
 (`PanelLibraryRepository.setMembers`); auto-compose from a topic (`autoComposePanel`) with confirmation.
 Extract a panel CRUD service from `commands/panel.ts`.
 
+**Delivered** (PRs #1641 MultiSelectList, #1642 panel-authoring adapter, #1646 create, #1650 edit-members,
+#1651 delete, #1652 auto-compose; plan #1640): a reusable `MultiSelectList` checkbox component (the TUI had
+only single-select); a 100%-covered `panel-authoring` adapter (`create`/`setMembers`/`countRetainedDebates`/
+`delete`) mirroring the CLI's `persistPanelArtifacts` (DB row → exclusive YAML → members → docs dir, with
+rollback) and delete flow (unlink YAML + rm dir + DB row; **debate sessions preserved**); create
+(`/panels/new`), edit-members (`/panels/:name/members`), and a gated delete confirm (`/panels/:name/delete`,
+showing retained-session count); and an engine-backed auto-compose screen (`/panels/compose`) over
+`autoComposePanel` (MockEngine-tested offline) that materializes the inline experts (collision-resolved
+slugs, with rollback) then creates the panel, pinning the **trusted** default model rather than the
+composer-supplied one. Shortcuts `n`/`m`/`d`/`c` on the panel screens; forms cancel via idle-gated Esc. The
+"extract a panel CRUD service from `commands/panel.ts`" refactor is deferred (the adapter replicates the CLI
+flow); tracked as a follow-up.
+
 **Acceptance criteria**:
 - Panels created from selected experts persist (library + YAML + members).
 - Auto-compose preview + confirm works; existing CLI panel tests stay green.
 
-**Key files**: `src/tui/screens/{Panels,PanelDetail}.tsx` (+ forms), `src/core/auto-compose.ts`, panel CRUD service
+**Key files**: `src/tui/screens/Panel{Create,Members,Delete,Compose}Screen.tsx`, `src/tui/adapters/panel-{authoring,compose}.ts`, `src/tui/components/lists/MultiSelectList.tsx`, `src/core/auto-compose.ts`
 
 ### 9.7 Chat (1:1 & Panel) ⬜
 
@@ -704,5 +717,6 @@ checks; opt-in TUI telemetry events.
 | TUI library browse/detail + command palette | 9.3 | ✅ Done |
 | TUI editable settings screen | 9.4 | ✅ Done |
 | TUI expert authoring & training | 9.5 | ✅ Done |
+| TUI panel authoring & auto-compose | 9.6 | ✅ Done |
 | Live convene + conclude in the TUI | 9.8 | ⬜ Planned |
 | TUI default on bare `council` (TTY) | 9.10 | ⬜ Planned |
