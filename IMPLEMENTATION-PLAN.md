@@ -552,7 +552,7 @@ harness. Validate `ink-text-input` / `ink-select-input` under Ink 7 / React 19 v
 (global + contextual, fuzzy). Read-only view-model layer in `tui/adapters/`.
 
 **Acceptance criteria**:
-- Lists render from real data; detail shows definition/status; session detail shows convened/concluded.
+- Lists render from real data; detail shows definition; session detail shows the transcript with the honest persisted `debate.status` (no fabricated "concluded").
 - `Ctrl-K` opens the palette and runs navigation commands.
 
 **Key files**: `src/tui/screens/{Panels,PanelDetail,Experts,ExpertDetail,Sessions,SessionDetail}.tsx`, `src/tui/components/overlays/CommandPalette.tsx`, `src/tui/adapters/*`
