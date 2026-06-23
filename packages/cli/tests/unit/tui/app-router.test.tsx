@@ -188,6 +188,22 @@ describe("AppRouter", () => {
     expect(lastFrame()).not.toContain("Expert not found");
   });
 
+  it("renders the ExpertDeleteScreen on the expert delete route", async () => {
+    const { lastFrame } = render(
+      <DataProvider value={withExpertAuthoring()}>
+        <MemoryRouter initialEntries={["/experts/cto/delete"]}>
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+
+    expect(lastFrame()).toContain('Delete expert "cto"?');
+    expect(lastFrame()).toContain("Not used in any panels.");
+    expect(lastFrame()).not.toContain("Expert not found");
+  });
+
   it("focuses the nav with Tab and navigates to the chosen section on Enter", async () => {
     const { stdin, lastFrame } = render(
       <DataProvider value={withPanels()}>

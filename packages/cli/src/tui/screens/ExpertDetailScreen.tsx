@@ -77,6 +77,9 @@ export function ExpertDetailScreen(props: ExpertDetailScreenProps): React.ReactE
       if (input === "e" && slug !== undefined) {
         navigate(`/experts/${encodeURIComponent(slug)}/edit`);
       }
+      if (input === "d" && slug !== undefined) {
+        navigate(`/experts/${encodeURIComponent(slug)}/delete`);
+      }
     },
     { isActive: props.isActive ?? false },
   );

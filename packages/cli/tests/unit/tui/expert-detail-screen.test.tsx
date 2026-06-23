@@ -144,4 +144,37 @@ describe("ExpertDetailScreen", () => {
 
     expect(lastFrame()).toContain("EDIT ROUTE");
   });
+
+  it("navigates to the delete route when d is pressed while active", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withDetail(async () => ({
+          slug: "cto",
+          displayName: "CTO",
+          role: "Technology",
+          kind: "generic",
+          epistemicStance: "Evidence first",
+          expertise: {
+            weightedEvidence: [],
+            referenceCases: [],
+            notExpertIn: [],
+          },
+          panels: [],
+        }))}
+      >
+        <MemoryRouter initialEntries={[{ pathname: "/experts/cto" }]}>
+          <Routes>
+            <Route path="/experts/:slug" element={<ExpertDetailScreen theme={theme} isActive />} />
+            <Route path="/experts/:slug/delete" element={<Text>DELETE ROUTE</Text>} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("d");
+    await flush();
+
+    expect(lastFrame()).toContain("DELETE ROUTE");
+  });
 });
