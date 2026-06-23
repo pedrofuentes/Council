@@ -47,7 +47,21 @@ const withSettings = (load: () => Promise<readonly SettingsFieldState[]>): TuiDa
   }) as TuiDataSources;
 const withExpertAuthoring = (): TuiDataSources => {
   const authoring: ExpertAuthoringSource = {
-    loadForEdit: async () => undefined,
+    loadForEdit: async (slug) =>
+      slug === "cto"
+        ? {
+            slug: "cto",
+            displayName: "Chief Technology Officer",
+            role: "Technology strategy",
+            weightedEvidence: "architecture reviews",
+            referenceCases: "platform scaling",
+            notExpertIn: "tax law",
+            epistemicStance: "evidence first",
+            kind: "generic",
+            personaDescription: "",
+            model: "gpt-4o",
+          }
+        : undefined,
     create: async (values) => ({
       ok: true,
       definition: {
@@ -155,6 +169,22 @@ describe("AppRouter", () => {
     expect(lastFrame()).toContain("Slug:");
     expect(lastFrame()).toContain("Kind: generic");
     expect(lastFrame()).toContain("↑↓ move · Enter edit · Ctrl+S save · Esc back");
+    expect(lastFrame()).not.toContain("Expert not found");
+  });
+
+  it("renders the ExpertFormScreen edit mode on the expert edit route", async () => {
+    const { lastFrame } = render(
+      <DataProvider value={withExpertAuthoring()}>
+        <MemoryRouter initialEntries={["/experts/cto/edit"]}>
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+
+    expect(lastFrame()).toContain("Display name: Chief Technology Officer");
+    expect(lastFrame()).toContain("Slug: cto");
     expect(lastFrame()).not.toContain("Expert not found");
   });
 
