@@ -6,11 +6,14 @@ import { FileExpertLibrary } from "../core/expert-library.js";
 import { listTemplates, loadTemplate } from "../core/template-loader.js";
 import { createDatabase } from "../memory/db.js";
 import { ChatRepository } from "../memory/repositories/chat-repository.js";
+import { DebateRepository } from "../memory/repositories/debates.js";
 import { ExpertRepository } from "../memory/repositories/experts.js";
 import { PanelLibraryRepository } from "../memory/repositories/panel-library-repo.js";
 import { PanelRepository } from "../memory/repositories/panels.js";
+import { TurnRepository } from "../memory/repositories/turns.js";
 import { createExpertsDataSource } from "./adapters/experts-data.js";
 import { createPanelsDataSource } from "./adapters/panels-data.js";
+import { createSessionsDataSource } from "./adapters/sessions-data.js";
 import { createHomeDataSources } from "./adapters/home-data-sources.js";
 import { loadHomeData } from "./adapters/home-data.js";
 import { DataProvider, type TuiDataSources } from "./components/DataProvider.js";
@@ -39,6 +42,11 @@ export async function launchTui(): Promise<void> {
       loadTemplate,
     }),
     experts: createExpertsDataSource({ library: expertLibrary }),
+    sessions: createSessionsDataSource({
+      panels: new PanelRepository(db),
+      debates: new DebateRepository(db),
+      turns: new TurnRepository(db),
+    }),
   };
   const model = config.defaults.model;
 
