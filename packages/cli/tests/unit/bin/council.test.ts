@@ -283,5 +283,50 @@ describe("buildProgram", () => {
       expect(commands).toContain("convene");
       expect(commands).toContain("chat");
     });
+
+    it("launches the TUI and signals skip-parse when the guard passes", async () => {
+      const { maybeLaunchTui } = await loadCouncilModule();
+      let launched = 0;
+      const result = await maybeLaunchTui({
+        argv: ["node", "council"],
+        stdout: { isTTY: true },
+        env: { COUNCIL_TUI: "1" },
+        launchTui: async () => {
+          launched += 1;
+        },
+      });
+      expect(result).toBe(true);
+      expect(launched).toBe(1);
+    });
+
+    it("does not launch the TUI for an explicit subcommand", async () => {
+      const { maybeLaunchTui } = await loadCouncilModule();
+      let launched = 0;
+      const result = await maybeLaunchTui({
+        argv: ["node", "council", "doctor"],
+        stdout: { isTTY: true },
+        env: { COUNCIL_TUI: "1" },
+        launchTui: async () => {
+          launched += 1;
+        },
+      });
+      expect(result).toBe(false);
+      expect(launched).toBe(0);
+    });
+
+    it("does not launch the TUI when COUNCIL_TUI is unset", async () => {
+      const { maybeLaunchTui } = await loadCouncilModule();
+      let launched = 0;
+      const result = await maybeLaunchTui({
+        argv: ["node", "council"],
+        stdout: { isTTY: true },
+        env: {},
+        launchTui: async () => {
+          launched += 1;
+        },
+      });
+      expect(result).toBe(false);
+      expect(launched).toBe(0);
+    });
   });
 });
