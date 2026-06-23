@@ -55,4 +55,29 @@ describe("useAsyncResource", () => {
     await flush();
     expect(lastFrame()).toContain("oops");
   });
+  it("does not publish loaded data after unmount", async () => {
+    let resolveValue: ((value: number) => void) | undefined;
+    const loader = (): Promise<number> =>
+      new Promise((resolve) => {
+        resolveValue = resolve;
+      });
+    const { unmount } = render(<Probe loader={loader} render={(state) => state.status} />);
+    unmount();
+    resolveValue?.(7);
+    await flush();
+    expect(resolveValue).toBeDefined();
+  });
+
+  it("does not publish errors after unmount", async () => {
+    let rejectValue: ((reason: unknown) => void) | undefined;
+    const loader = (): Promise<number> =>
+      new Promise((_, reject) => {
+        rejectValue = reject;
+      });
+    const { unmount } = render(<Probe loader={loader} render={(state) => state.status} />);
+    unmount();
+    rejectValue?.(new Error("late"));
+    await flush();
+    expect(rejectValue).toBeDefined();
+  });
 });
