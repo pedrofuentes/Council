@@ -13,8 +13,8 @@ export interface SelectableListProps {
 export function SelectableList(props: SelectableListProps): React.ReactElement {
   const { cursor } = useListSelection({
     count: props.items.length,
-    isActive: props.isActive,
-    onActivate: props.onActivate,
+    ...(props.isActive === undefined ? {} : { isActive: props.isActive }),
+    ...(props.onActivate === undefined ? {} : { onActivate: props.onActivate }),
   });
   return <ScrollView items={props.items} height={props.height ?? props.items.length} cursor={cursor} />;
 }
