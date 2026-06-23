@@ -1,7 +1,7 @@
 import path from "node:path";
 import { render } from "ink";
 
-import { getCouncilDataHome, getCouncilHome, loadConfig } from "../config/index.js";
+import { DEFAULT_MODEL, getCouncilDataHome, getCouncilHome, loadConfig } from "../config/index.js";
 import { FileExpertLibrary } from "../core/expert-library.js";
 import { createDocumentIndexer } from "../core/documents/indexer.js";
 import { createDocumentProcessor } from "../core/documents/processor.js";
@@ -21,6 +21,7 @@ import { createExpertAuthoringSource } from "./adapters/expert-authoring.js";
 import { createExpertDocumentsSource } from "./adapters/expert-documents.js";
 import { createExpertsDataSource } from "./adapters/experts-data.js";
 import { createPanelAuthoringSource } from "./adapters/panel-authoring.js";
+import { createPanelComposeSource } from "./adapters/panel-compose.js";
 import { createPanelsDataSource } from "./adapters/panels-data.js";
 import { createSettingsDataSource } from "./adapters/config-settings.js";
 import { createSessionsDataSource } from "./adapters/sessions-data.js";
@@ -46,6 +47,20 @@ export async function launchTui(): Promise<void> {
 
   const homeData = await loadHomeData(sources);
   const expertLibrary = new FileExpertLibrary(dataHome, db);
+  const panelAuthoring = createPanelAuthoringSource({
+    panelRepo: new PanelLibraryRepository(db),
+    expertExists: async (slug) => (await expertLibrary.get(slug)) !== null,
+    dataHome,
+    countDebates: async (name) => {
+      const runtime = await new PanelRepository(db).findByNamePrefix(name);
+      const exact = runtime.filter((panel) => panel.name === name);
+      let total = 0;
+      for (const panel of exact) {
+        total += (await new DebateRepository(db).findByPanelId(panel.id)).length;
+      }
+      return total;
+    },
+  });
   const docsDirFor = (slug: string): string => path.join(dataHome, "experts", slug, "docs");
   const dataSources: TuiDataSources = {
     panels: createPanelsDataSource({
@@ -54,19 +69,12 @@ export async function launchTui(): Promise<void> {
       listTemplates,
       loadTemplate,
     }),
-    panelAuthoring: createPanelAuthoringSource({
-      panelRepo: new PanelLibraryRepository(db),
-      expertExists: async (slug) => (await expertLibrary.get(slug)) !== null,
-      dataHome,
-      countDebates: async (name) => {
-        const runtime = await new PanelRepository(db).findByNamePrefix(name);
-        const exact = runtime.filter((panel) => panel.name === name);
-        let total = 0;
-        for (const panel of exact) {
-          total += (await new DebateRepository(db).findByPanelId(panel.id)).length;
-        }
-        return total;
-      },
+    panelAuthoring,
+    panelCompose: createPanelComposeSource({
+      engineFactory: () => makeEngineFromKind(config.defaults.engine),
+      defaultModel: config.defaults.model ?? DEFAULT_MODEL,
+      library: expertLibrary,
+      createPanel: panelAuthoring.create,
     }),
     experts: createExpertsDataSource({ library: expertLibrary }),
     expertAuthoring: createExpertAuthoringSource({ library: expertLibrary }),

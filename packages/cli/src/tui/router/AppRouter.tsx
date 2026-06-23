@@ -20,6 +20,7 @@ import { ExpertTrainScreen } from "../screens/ExpertTrainScreen.js";
 import { ExpertsScreen } from "../screens/ExpertsScreen.js";
 import { HomeScreen } from "../screens/HomeScreen.js";
 import { PanelCreateScreen } from "../screens/PanelCreateScreen.js";
+import { PanelComposeScreen } from "../screens/PanelComposeScreen.js";
 import { PanelDeleteScreen } from "../screens/PanelDeleteScreen.js";
 import { PanelDetailScreen } from "../screens/PanelDetailScreen.js";
 import { PanelMembersScreen } from "../screens/PanelMembersScreen.js";
@@ -222,6 +223,10 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
           <Route
             path={ROUTES.panelNew}
             element={<PanelCreateScreen theme={theme} isActive={mainActive} />}
+          />
+          <Route
+            path={ROUTES.panelCompose}
+            element={<PanelComposeScreen theme={theme} isActive={mainActive} />}
           />
           <Route
             path={ROUTES.panelMembers}

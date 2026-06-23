@@ -136,4 +136,46 @@ describe("PanelsScreen", () => {
 
     expect(lastFrame()).toContain("NEW PANEL");
   });
+
+  it("navigates to panel auto-compose with c in the non-empty state", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withPanels(async () => [
+          { name: "acme", description: "Exec panel", memberCount: 1, source: "saved" },
+        ])}
+      >
+        <MemoryRouter initialEntries={["/panels"]}>
+          <Routes>
+            <Route path="/panels" element={<PanelsScreen theme={theme} isActive />} />
+            <Route path="/panels/compose" element={<Text>COMPOSE PANEL</Text>} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("c");
+    await flush();
+
+    expect(lastFrame()).toContain("COMPOSE PANEL");
+  });
+
+  it("navigates to panel auto-compose with c in the empty state", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider value={withPanels(async () => [])}>
+        <MemoryRouter initialEntries={["/panels"]}>
+          <Routes>
+            <Route path="/panels" element={<PanelsScreen theme={theme} isActive />} />
+            <Route path="/panels/compose" element={<Text>COMPOSE PANEL</Text>} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("c");
+    await flush();
+
+    expect(lastFrame()).toContain("COMPOSE PANEL");
+  });
 });
