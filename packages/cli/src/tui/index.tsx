@@ -11,6 +11,7 @@ import { ExpertRepository } from "../memory/repositories/experts.js";
 import { PanelLibraryRepository } from "../memory/repositories/panel-library-repo.js";
 import { PanelRepository } from "../memory/repositories/panels.js";
 import { TurnRepository } from "../memory/repositories/turns.js";
+import { loadTranscript } from "../memory/transcript.js";
 import { createExpertsDataSource } from "./adapters/experts-data.js";
 import { createPanelsDataSource } from "./adapters/panels-data.js";
 import { createSessionsDataSource } from "./adapters/sessions-data.js";
@@ -46,6 +47,13 @@ export async function launchTui(): Promise<void> {
       panels: new PanelRepository(db),
       debates: new DebateRepository(db),
       turns: new TurnRepository(db),
+      loadTranscript: async (panelName: string) => {
+        try {
+          return await loadTranscript(db, panelName);
+        } catch {
+          return undefined;
+        }
+      },
     }),
   };
   const model = config.defaults.model;
