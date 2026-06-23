@@ -1,7 +1,8 @@
 import path from "node:path";
 import { render } from "ink";
 
-import { getCouncilHome, loadConfig } from "../config/index.js";
+import { getCouncilDataHome, getCouncilHome, loadConfig } from "../config/index.js";
+import { FileExpertLibrary } from "../core/expert-library.js";
 import { listTemplates, loadTemplate } from "../core/template-loader.js";
 import { createDatabase } from "../memory/db.js";
 import { ChatRepository } from "../memory/repositories/chat-repository.js";
@@ -17,6 +18,7 @@ import { CouncilTUI } from "./CouncilTUI.js";
 
 export async function launchTui(): Promise<void> {
   const config = await loadConfig();
+  const dataHome = getCouncilDataHome(config);
   const dbPath = path.join(getCouncilHome(), "council.db");
   const db = await createDatabase(dbPath);
 
@@ -30,6 +32,7 @@ export async function launchTui(): Promise<void> {
   const dataSources: TuiDataSources = {
     panels: createPanelsDataSource({
       library: new PanelLibraryRepository(db),
+      experts: new FileExpertLibrary(dataHome, db),
       listTemplates,
       loadTemplate,
     }),

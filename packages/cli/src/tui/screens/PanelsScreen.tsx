@@ -1,5 +1,6 @@
 import React from "react";
 import { Box, Text } from "ink";
+import { useNavigate } from "react-router";
 
 import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
 import { SelectableList } from "../components/lists/SelectableList.js";
@@ -15,6 +16,7 @@ export interface PanelsScreenProps {
 export function PanelsScreen(props: PanelsScreenProps): React.ReactElement {
   const data = useData();
   const state = useAsyncResource(data.panels.loadList);
+  const navigate = useNavigate();
 
   if (state.status === "loading") {
     return <Text>{props.theme.muted("Loading panels…")}</Text>;
@@ -39,5 +41,19 @@ export function PanelsScreen(props: PanelsScreenProps): React.ReactElement {
     return description === "" ? prefix : `${prefix}  ${description}`;
   });
 
-  return <SelectableList items={rows} isActive={props.isActive ?? false} height={10} />;
+  return (
+    <SelectableList
+      items={rows}
+      isActive={props.isActive ?? false}
+      height={10}
+      onActivate={(index) => {
+        const panel = state.data[index];
+        if (panel) {
+          navigate(`/panels/${encodeURIComponent(panel.name)}`, {
+            state: { source: panel.source },
+          });
+        }
+      }}
+    />
+  );
 }
