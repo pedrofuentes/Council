@@ -13,6 +13,7 @@ import { CommandPalette } from "../components/overlays/CommandPalette.js";
 import { HelpModal } from "../components/overlays/HelpModal.js";
 import { computeLayout, type NavState } from "../lib/breakpoints.js";
 import { ExpertDetailScreen } from "../screens/ExpertDetailScreen.js";
+import { ExpertChatScreen } from "../screens/ExpertChatScreen.js";
 import { ExpertDeleteScreen } from "../screens/ExpertDeleteScreen.js";
 import { ExpertDocumentsScreen } from "../screens/ExpertDocumentsScreen.js";
 import { ExpertFormScreen } from "../screens/ExpertFormScreen.js";
@@ -271,6 +272,10 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
             element={<SessionDetailScreen theme={theme} isActive={mainActive} />}
           />
           <Route path={ROUTES.chats} element={<PlaceholderScreen title="Chats" theme={theme} />} />
+          <Route
+            path={ROUTES.chatExpert}
+            element={<ExpertChatScreen theme={theme} isActive={mainActive} />}
+          />
           <Route path={ROUTES.settings} element={<SettingsScreen theme={theme} />} />
         </Routes>
       )}
