@@ -272,4 +272,16 @@ describe("buildProgram", () => {
       expect(commandNames[18]).toBe("models");
     });
   });
+
+  describe("TUI entry guard", () => {
+    it("does not interfere with subcommand execution", async () => {
+      const { buildProgram } = await loadCouncilModule();
+      const program = buildProgram();
+      const commands = program.commands.map((c) => c.name());
+      // Ensure all commands are still registered despite the TUI entry guard
+      expect(commands).toContain("doctor");
+      expect(commands).toContain("convene");
+      expect(commands).toContain("chat");
+    });
+  });
 });
