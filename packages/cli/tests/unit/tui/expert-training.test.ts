@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
+import * as fs from "node:fs/promises";
+import path from "node:path";
+
 import type { ProcessingResult } from "../../../src/core/documents/processor.js";
 import type {
   CouncilEngine,
@@ -9,8 +12,10 @@ import type {
 } from "../../../src/engine/index.js";
 import {
   createExpertTrainingSource,
+  stageDocumentFiles,
   type ExpertTrainingDeps,
 } from "../../../src/tui/adapters/expert-training.js";
+import { mkCanonicalTempDir } from "../../helpers/tmp.js";
 
 class StubEngine implements CouncilEngine {
   readonly started = vi.fn(async (): Promise<void> => undefined);
@@ -198,5 +203,67 @@ describe("createExpertTrainingSource", () => {
     ).resolves.toMatchObject({
       filesProcessed: 1,
     });
+  });
+});
+
+describe("stageDocumentFiles", () => {
+  it("copies regular files into a freshly created docs directory", async () => {
+    const home = await mkCanonicalTempDir("council-stage-");
+    try {
+      const src = path.join(home, "notes.md");
+      await fs.writeFile(src, "hello", "utf8");
+      const docsPath = path.join(home, "experts", "cto", "docs");
+
+      await stageDocumentFiles(docsPath, [src]);
+
+      expect(await fs.readFile(path.join(docsPath, "notes.md"), "utf8")).toBe("hello");
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects symlinked source paths instead of following them", async () => {
+    const home = await mkCanonicalTempDir("council-stage-");
+    try {
+      const secret = path.join(home, "secret.txt");
+      await fs.writeFile(secret, "top-secret", "utf8");
+      const link = path.join(home, "link.md");
+      await fs.symlink(secret, link);
+      const docsPath = path.join(home, "docs");
+
+      await expect(stageDocumentFiles(docsPath, [link])).rejects.toThrow(/not a (regular )?file/i);
+      await expect(fs.readFile(path.join(docsPath, "link.md"), "utf8")).rejects.toThrow();
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects directory source paths", async () => {
+    const home = await mkCanonicalTempDir("council-stage-");
+    try {
+      const dir = path.join(home, "a-dir");
+      await fs.mkdir(dir, { recursive: true });
+      await expect(stageDocumentFiles(path.join(home, "docs"), [dir])).rejects.toThrow(
+        /not a (regular )?file/i,
+      );
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to overwrite an existing staged document", async () => {
+    const home = await mkCanonicalTempDir("council-stage-");
+    try {
+      const docsPath = path.join(home, "docs");
+      await fs.mkdir(docsPath, { recursive: true });
+      await fs.writeFile(path.join(docsPath, "notes.md"), "original", "utf8");
+      const src = path.join(home, "notes.md");
+      await fs.writeFile(src, "replacement", "utf8");
+
+      await expect(stageDocumentFiles(docsPath, [src])).rejects.toThrow(/already exists/i);
+      expect(await fs.readFile(path.join(docsPath, "notes.md"), "utf8")).toBe("original");
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
   });
 });
