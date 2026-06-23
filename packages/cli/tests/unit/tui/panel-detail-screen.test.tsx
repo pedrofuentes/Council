@@ -1,4 +1,5 @@
 import React from "react";
+import { Text } from "ink";
 import { render } from "ink-testing-library";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { describe, expect, it } from "vitest";
@@ -78,5 +79,66 @@ describe("PanelDetailScreen", () => {
     await flush();
 
     expect(lastFrame()).toMatch(/not found/i);
+  });
+
+  it("navigates to the members editor when m is pressed on a saved panel", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withDetail(async () => ({
+          name: "acme",
+          description: "",
+          source: "saved",
+          members: [],
+          missing: [],
+        }))}
+      >
+        <MemoryRouter initialEntries={[{ pathname: "/panels/acme", state: { source: "saved" } }]}>
+          <Routes>
+            <Route path="/panels/:name" element={<PanelDetailScreen theme={theme} isActive />} />
+            <Route path="/panels/:name/members" element={<Text>EDIT MEMBERS</Text>} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    expect(lastFrame()).toContain("m edit members");
+
+    stdin.write("m");
+    await flush();
+
+    expect(lastFrame()).toContain("EDIT MEMBERS");
+  });
+
+  it("does not navigate to the members editor when m is pressed on a template panel", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withDetail(async () => ({
+          name: "starter",
+          description: "",
+          source: "template",
+          members: [],
+          missing: [],
+        }))}
+      >
+        <MemoryRouter
+          initialEntries={[{ pathname: "/panels/starter", state: { source: "template" } }]}
+        >
+          <Routes>
+            <Route path="/panels/:name" element={<PanelDetailScreen theme={theme} isActive />} />
+            <Route path="/panels/:name/members" element={<Text>EDIT MEMBERS</Text>} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    expect(lastFrame()).not.toContain("m edit members");
+
+    stdin.write("m");
+    await flush();
+
+    expect(lastFrame()).not.toContain("EDIT MEMBERS");
+    expect(lastFrame()).toContain("starter");
   });
 });
