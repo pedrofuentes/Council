@@ -222,14 +222,31 @@ describe("PanelComposeScreen", () => {
   });
 
   it("ignores Esc while compose is in flight", async () => {
-    const { stdin, lastFrame, unmount } = renderScreen(
-      createSource({ compose: async () => new Promise(() => undefined) }),
+    const value = {
+      panels: { loadList: async () => [], loadDetail: async () => undefined },
+      panelCompose: createSource({ compose: async () => new Promise(() => undefined) }),
+    } as TuiDataSources;
+    const { stdin, lastFrame, unmount } = render(
+      <InputCaptureProvider>
+        <DataProvider value={value}>
+          <MemoryRouter initialEntries={["/panels", "/panels/compose"]}>
+            <Routes>
+              <Route path="/panels" element={<Text>PANELS LIST</Text>} />
+              <Route
+                path="/panels/compose"
+                element={<PanelComposeScreen theme={theme} isActive />}
+              />
+            </Routes>
+          </MemoryRouter>
+        </DataProvider>
+      </InputCaptureProvider>,
     );
 
     await submitTopic(stdin, "topic");
     stdin.write("\u001B");
     await new Promise((r) => setTimeout(r, 140));
 
+    expect(lastFrame()).not.toContain("PANELS LIST");
     expect(lastFrame()).toContain("Composing");
     unmount();
   });

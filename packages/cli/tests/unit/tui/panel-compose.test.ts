@@ -143,6 +143,29 @@ describe("createPanelComposeSource", () => {
     expect(engine.stop).toHaveBeenCalledOnce();
   });
 
+  it("forces the trusted default model and ignores the composer-supplied model", async () => {
+    const library = createLibrary();
+    const createPanel = vi.fn<Parameters<PanelAuthoringDataSource["create"]>, Promise<void>>(
+      async () => undefined,
+    );
+    const source = createPanelComposeSource({
+      engineFactory: createEngine,
+      defaultModel: "trusted-default",
+      library,
+      createPanel,
+      composeFn: vi.fn(async () => definition()),
+    });
+
+    await source.persist(
+      definition({ defaults: { mode: "structured", maxRounds: 4, model: "untrusted-model" } }),
+    );
+
+    expect(createPanel).toHaveBeenCalledWith(expect.objectContaining({ model: "trusted-default" }));
+    expect(createPanel).not.toHaveBeenCalledWith(
+      expect.objectContaining({ model: "untrusted-model" }),
+    );
+  });
+
   it("persists inline experts then creates a panel with the materialized slugs", async () => {
     const library = createLibrary();
     const createPanel = vi.fn<Parameters<PanelAuthoringDataSource["create"]>, Promise<void>>(
