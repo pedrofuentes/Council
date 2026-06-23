@@ -1,7 +1,7 @@
 import React from "react";
 import { Text } from "ink";
 import { render } from "ink-testing-library";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
 import type { EngineEvent, SendOptions } from "../../../src/engine/index.js";
@@ -121,6 +121,20 @@ function createSources(options: FakeOptions = {}): FakeSources {
   };
 }
 
+interface MutableNavigateProbe {
+  navigate(path: string): void;
+}
+
+function NavigateProbe(props: { readonly probe: MutableNavigateProbe }): null {
+  const navigate = useNavigate();
+  React.useEffect(() => {
+    props.probe.navigate = (path: string): void => {
+      void navigate(path);
+    };
+  }, [navigate, props.probe]);
+  return null;
+}
+
 function renderScreen(sources: Partial<FakeSources> = {}): ReturnType<typeof render> {
   const defaults = createSources();
   const value = {
@@ -175,6 +189,269 @@ describe("ExpertChatScreen", () => {
     expect(lastFrame()).toContain("cto: prior answer");
     expect(lastFrame()).not.toContain("\u001B[31m");
     unmount();
+  });
+
+  it("closes an opened engine handle when history loading fails", async () => {
+    const close = vi.fn<[], Promise<void>>(async () => undefined);
+    const handle: ChatEngineHandle = {
+      expertId: "expert-ulid",
+      send: vi.fn<[SendOptions], AsyncIterable<EngineEvent>>(),
+      close,
+    };
+    const open = vi.fn<[string], Promise<ChatEngineHandle>>(async () => handle);
+    const chat: ChatSessionDataSource = {
+      loadHistory: async () => {
+        throw new Error("history failed[31m");
+      },
+      ensureSession: vi.fn<
+        Parameters<ChatSessionDataSource["ensureSession"]>,
+        Promise<{ id: string }>
+      >(async () => ({ id: "session-1" })),
+      route: (input) => ({ type: "general", targetSlugs: [], content: input.trim() }),
+      persistTurn: vi.fn<Parameters<ChatSessionDataSource["persistTurn"]>, Promise<void>>(
+        async () => undefined,
+      ),
+    };
+
+    const { lastFrame, unmount } = renderScreen({ chat, chatEngine: { open } });
+    await flush();
+
+    expect(open).toHaveBeenCalledExactlyOnceWith("cto");
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(lastFrame()).toContain("history failed");
+    expect(lastFrame()).not.toContain("[31m");
+    unmount();
+  });
+
+  it("does not persist a completed turn after moving to a new route context", async () => {
+    const ensureGate = deferred();
+    const probe: MutableNavigateProbe = { navigate: () => undefined };
+    const send = vi.fn<[SendOptions], AsyncIterable<EngineEvent>>(() => ({
+      async *[Symbol.asyncIterator](): AsyncGenerator<EngineEvent> {
+        yield delta("old answer");
+        yield complete();
+      },
+    }));
+    const close = vi.fn<[], Promise<void>>(async () => undefined);
+    const open = vi.fn<[string], Promise<ChatEngineHandle>>(async (targetSlug) => ({
+      expertId: `expert-${targetSlug}`,
+      send,
+      close,
+    }));
+    const persistTurn = vi.fn<Parameters<ChatSessionDataSource["persistTurn"]>, Promise<void>>(
+      async () => undefined,
+    );
+    const chat: ChatSessionDataSource = {
+      loadHistory: async (_targetType, targetSlug) => ({
+        session: targetSlug === "cfo" ? { id: "session-cfo" } : undefined,
+        turns:
+          targetSlug === "cfo"
+            ? [
+                {
+                  id: "cfo-prior",
+                  role: "expert",
+                  expertSlug: "cfo",
+                  content: "new context answer",
+                  isMention: false,
+                },
+              ]
+            : [],
+      }),
+      ensureSession: vi.fn<
+        Parameters<ChatSessionDataSource["ensureSession"]>,
+        Promise<{ id: string }>
+      >(async () => {
+        await ensureGate.promise;
+        return { id: "session-cto-created" };
+      }),
+      route: (input) => ({ type: "general", targetSlugs: [], content: input.trim() }),
+      persistTurn,
+    };
+    const value = {
+      panels: { loadList: async () => [], loadDetail: async () => undefined },
+      chat,
+      chatEngine: { open },
+    } as TuiDataSources;
+    const { stdin, lastFrame, unmount } = render(
+      <InputCaptureProvider>
+        <DataProvider value={value}>
+          <MemoryRouter initialEntries={["/chat/expert/cto"]}>
+            <NavigateProbe probe={probe} />
+            <Routes>
+              <Route
+                path="/chat/expert/:slug"
+                element={<ExpertChatScreen theme={theme} isActive />}
+              />
+            </Routes>
+          </MemoryRouter>
+        </DataProvider>
+      </InputCaptureProvider>,
+    );
+
+    await flush();
+    stdin.write("slow old turn");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    probe.navigate("/chat/expert/cfo");
+    await flush();
+
+    expect(lastFrame()).toContain("Chat with cfo");
+    expect(lastFrame()).toContain("cfo: new context answer");
+
+    ensureGate.resolve();
+    await flush();
+
+    expect(lastFrame()).toContain("Chat with cfo");
+    expect(lastFrame()).toContain("cfo: new context answer");
+    expect(persistTurn).not.toHaveBeenCalledWith("session-cto-created", {
+      userContent: "slow old turn",
+      expertSlug: "cto",
+      expertContent: "old answer",
+      isMention: false,
+    });
+    unmount();
+  });
+
+  it("aborts streaming Esc without navigating to the back-stack route", async () => {
+    const observedSignals: AbortSignal[] = [];
+    const sources = createSources({
+      send: (options) => {
+        if (options.signal !== undefined) observedSignals.push(options.signal);
+        return {
+          async *[Symbol.asyncIterator](): AsyncGenerator<EngineEvent> {
+            yield delta("waiting");
+            await new Promise<void>(() => undefined);
+          },
+        };
+      },
+    });
+    const value = {
+      panels: { loadList: async () => [], loadDetail: async () => undefined },
+      chat: sources.chat,
+      chatEngine: sources.chatEngine,
+    } as TuiDataSources;
+    const { stdin, lastFrame, unmount } = render(
+      <InputCaptureProvider>
+        <DataProvider value={value}>
+          <MemoryRouter initialEntries={["/back", "/chat/expert/x"]} initialIndex={1}>
+            <Routes>
+              <Route path="/back" element={<Text>BACK ROUTE</Text>} />
+              <Route
+                path="/chat/expert/:slug"
+                element={<ExpertChatScreen theme={theme} isActive />}
+              />
+            </Routes>
+          </MemoryRouter>
+        </DataProvider>
+      </InputCaptureProvider>,
+    );
+
+    await flush();
+    stdin.write("cancel navigation");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    stdin.write("");
+    await waitForEsc();
+
+    expect(observedSignals[0]?.aborted).toBe(true);
+    expect(lastFrame()).toContain("Chat with x");
+    expect(lastFrame()).toContain("waiting");
+    expect(lastFrame()).not.toContain("BACK ROUTE");
+    unmount();
+  });
+
+  it("does not persist a completed turn when ensureSession resolves after unmount", async () => {
+    const ensureGate = deferred();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const sources = createSources({
+      send: () => ({
+        async *[Symbol.asyncIterator](): AsyncGenerator<EngineEvent> {
+          yield delta("done");
+          yield complete();
+        },
+      }),
+    });
+    const chat: ChatSessionDataSource = {
+      ...sources.chat,
+      loadHistory: async () => ({ session: undefined, turns: [] }),
+      ensureSession: vi.fn<
+        Parameters<ChatSessionDataSource["ensureSession"]>,
+        Promise<{ id: string }>
+      >(async () => {
+        await ensureGate.promise;
+        return { id: "late-session" };
+      }),
+    };
+    const { stdin, unmount } = renderScreen({ chat, chatEngine: sources.chatEngine });
+
+    await flush();
+    stdin.write("persist late");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    unmount();
+    ensureGate.resolve();
+    await flush();
+
+    expect(chat.persistTurn).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("does not update transcript when history resolves after unmount", async () => {
+    const gate = deferred();
+    let didUnmount = false;
+    const transcriptSetAfterUnmount = vi.fn<[], undefined>(() => undefined);
+    const originalUseState: typeof React.useState = React.useState;
+    const useStateSpy = vi.spyOn(React, "useState");
+    useStateSpy.mockImplementation(
+      <S,>(initialState: S | (() => S)): [S, React.Dispatch<React.SetStateAction<S>>] => {
+        const [state, setState] = originalUseState(initialState);
+        if (Array.isArray(initialState)) {
+          const wrappedSetState: React.Dispatch<React.SetStateAction<S>> = (value) => {
+            if (didUnmount) transcriptSetAfterUnmount();
+            setState(value);
+          };
+          return [state, wrappedSetState];
+        }
+        return [state, setState];
+      },
+    );
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const sources = createSources();
+    const chat: ChatSessionDataSource = {
+      ...sources.chat,
+      loadHistory: async () => {
+        await gate.promise;
+        return {
+          session: { id: "late-session" },
+          turns: [
+            {
+              id: "late-turn",
+              role: "expert",
+              expertSlug: "cto",
+              content: "late history",
+              isMention: false,
+            },
+          ],
+        };
+      },
+    };
+
+    const { unmount } = renderScreen({ chat, chatEngine: sources.chatEngine });
+    await flush();
+    didUnmount = true;
+    unmount();
+    gate.resolve();
+    await flush();
+
+    expect(sources.close).toHaveBeenCalledTimes(1);
+    expect(transcriptSetAfterUnmount).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+    useStateSpy.mockRestore();
   });
 
   it("streams a submitted prompt token-by-token and persists only after completion", async () => {
