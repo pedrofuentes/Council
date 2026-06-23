@@ -22,6 +22,7 @@ export function ExpertDocumentsScreen(props: ExpertDocumentsScreenProps): React.
   const [reloadKey, setReloadKey] = React.useState(0);
   const [confirmIndex, setConfirmIndex] = React.useState<number | null>(null);
   const [removeError, setRemoveError] = React.useState<string | undefined>(undefined);
+  const [removeWarning, setRemoveWarning] = React.useState<string | undefined>(undefined);
   const removingRef = React.useRef(false);
   const loader = React.useCallback(
     () => (documents ? documents.list(slugValue) : Promise.resolve([])),
@@ -36,16 +37,26 @@ export function ExpertDocumentsScreen(props: ExpertDocumentsScreenProps): React.
       if (input === "n") {
         setConfirmIndex(null);
         setRemoveError(undefined);
+        setRemoveWarning(undefined);
         return;
       }
       if (input === "y" && document !== undefined && !removingRef.current) {
         removingRef.current = true;
         setRemoveError(undefined);
+        setRemoveWarning(undefined);
         void (async (): Promise<void> => {
           try {
-            await documents?.remove(slugValue, document.id);
+            const result = await documents?.remove(slugValue, document.id);
             setConfirmIndex(null);
             setReloadKey((key) => key + 1);
+            if (result?.ftsCleanupFailed === true) {
+              setRemoveWarning(
+                toSingleLineDisplay(
+                  `"${document.filename}" removed from tracking, but the search index ` +
+                    `could not be cleaned up. Re-train this persona to repair the index.`,
+                ),
+              );
+            }
           } catch (error) {
             setRemoveError(toSingleLineDisplay(String(error)));
           } finally {
@@ -65,35 +76,40 @@ export function ExpertDocumentsScreen(props: ExpertDocumentsScreenProps): React.
     return <Text>{props.theme.error("Failed to load documents")}</Text>;
   }
 
-  if (state.data.length === 0) {
-    return <Text>{props.theme.muted("No indexed documents for this persona.")}</Text>;
-  }
-
-  const rows = state.data.map((document) =>
+  const documentsList = state.data;
+  const rows = documentsList.map((document) =>
     toSingleLineDisplay(
       `${document.filename}  ${String(document.sizeBytes)}B  [${document.status}]`,
     ),
   );
-  const confirmingDocument = confirmIndex === null ? undefined : state.data[confirmIndex];
+  const confirmingDocument = confirmIndex === null ? undefined : documentsList[confirmIndex];
 
   return (
     <Box flexDirection="column">
-      <SelectableList
-        items={rows}
-        isActive={(props.isActive ?? false) && confirmIndex === null}
-        height={10}
-        onActivate={(index) => {
-          setRemoveError(undefined);
-          setConfirmIndex(index);
-        }}
-      />
+      {documentsList.length === 0 ? (
+        <Text>{props.theme.muted("No indexed documents for this persona.")}</Text>
+      ) : (
+        <SelectableList
+          items={rows}
+          isActive={(props.isActive ?? false) && confirmIndex === null}
+          height={10}
+          onActivate={(index) => {
+            setRemoveError(undefined);
+            setRemoveWarning(undefined);
+            setConfirmIndex(index);
+          }}
+        />
+      )}
       {confirmingDocument !== undefined ? (
         <Text>
           {props.theme.warn(toSingleLineDisplay(`Remove "${confirmingDocument.filename}"? [y/n]`))}
         </Text>
       ) : undefined}
       {removeError !== undefined ? <Text>{props.theme.error(removeError)}</Text> : undefined}
-      <Text>{props.theme.muted("Enter remove · n cancel")}</Text>
+      {removeWarning !== undefined ? <Text>{props.theme.warn(removeWarning)}</Text> : undefined}
+      {documentsList.length > 0 ? (
+        <Text>{props.theme.muted("Enter remove · n cancel")}</Text>
+      ) : undefined}
     </Box>
   );
 }
