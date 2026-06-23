@@ -57,4 +57,38 @@ describe("AppRouter", () => {
     await flush();
     expect(lastFrame()).toMatch(/No panels/i);
   });
+
+  it("returns to the list on Escape from a detail route instead of exiting", async () => {
+    const value: TuiDataSources = {
+      panels: {
+        loadList: async () => [],
+        loadDetail: async () => ({
+          name: "acme",
+          description: "",
+          source: "saved",
+          members: [],
+          missing: [],
+        }),
+      },
+    };
+    const { stdin, lastFrame } = render(
+      <DataProvider value={value}>
+        <MemoryRouter
+          initialEntries={["/panels", { pathname: "/panels/acme", state: { source: "saved" } }]}
+          initialIndex={1}
+        >
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+    await flush();
+    // On the detail route the Members header is shown.
+    expect(lastFrame()).toContain("Members");
+    // A lone Esc needs a real-timer wait (Ink buffers it behind a disambiguation timeout).
+    stdin.write("\u001b");
+    await new Promise((r) => setTimeout(r, 140));
+    await flush();
+    // Back on the panels list (navigate(-1)); the app did NOT exit.
+    expect(lastFrame()).toMatch(/No panels/i);
+  });
 });

@@ -1,5 +1,4 @@
 import React from "react";
-import { Text } from "ink";
 import { render } from "ink-testing-library";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { describe, expect, it } from "vitest";
@@ -79,36 +78,5 @@ describe("PanelDetailScreen", () => {
     await flush();
 
     expect(lastFrame()).toMatch(/not found/i);
-  });
-
-  it("returns to the list on Escape", async () => {
-    const { stdin, lastFrame } = render(
-      <DataProvider
-        value={withDetail(async () => ({
-          name: "acme",
-          description: "",
-          source: "saved",
-          members: [],
-          missing: [],
-        }))}
-      >
-        <MemoryRouter
-          initialEntries={["/panels", { pathname: "/panels/acme", state: { source: "saved" } }]}
-          initialIndex={1}
-        >
-          <Routes>
-            <Route path="/panels" element={<Text>LIST</Text>} />
-            <Route path="/panels/:name" element={<PanelDetailScreen theme={theme} isActive />} />
-          </Routes>
-        </MemoryRouter>
-      </DataProvider>,
-    );
-
-    await flush();
-    stdin.write("\u001B");
-    await new Promise((r) => setTimeout(r, 120));
-    await flush();
-
-    expect(lastFrame()).toContain("LIST");
   });
 });
