@@ -4,6 +4,7 @@ import { Route, Routes, useLocation, useNavigate } from "react-router";
 
 import type { HomeData } from "../adapters/home-data.js";
 import { buildPaletteCommands, type PaletteAction } from "../adapters/palette-commands.js";
+import { useInputCapture } from "../components/InputCaptureProvider.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { Footer } from "../components/layout/Footer.js";
 import { Header } from "../components/layout/Header.js";
@@ -74,6 +75,7 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
   const app = useApp();
   const location = useLocation();
   const navigate = useNavigate();
+  const { captured } = useInputCapture();
   const navId = routeToNavId(location.pathname);
   const paletteCommands = buildPaletteCommands({ navId });
 
@@ -129,7 +131,7 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
         app.exit();
       }
     },
-    { isActive: mode !== "palette" },
+    { isActive: mode !== "palette" && !captured },
   );
 
   const onPaletteSelect = (id: string): void => {
