@@ -90,6 +90,13 @@ class StringFailingAddExpertEngine extends TrackingScriptedEngine {
   }
 }
 
+class StopRejectingEngine extends TrackingScriptedEngine {
+  override async stop(): Promise<void> {
+    this.stopCount += 1;
+    throw new Error("stop failed");
+  }
+}
+
 class AbortAfterDeltaEngine implements CouncilEngine {
   stopCount = 0;
   readonly sends: SendOptions[] = [];
@@ -311,6 +318,27 @@ describe("createConveneSource", () => {
       "CTO says\nhello \u001B[31mred",
       "PM counters with more than twelve words so the quality gate passes cleanly.",
     ]);
+  });
+
+  it("preserves the debate result even when engine.stop() rejects", async () => {
+    const engine = new StopRejectingEngine({
+      scripts: {
+        [cto.id]: [{ kind: "content", text: "CTO ships it." }],
+        [pm.id]: [
+          {
+            kind: "content",
+            text: "PM counters with more than twelve words so the quality gate passes cleanly.",
+          },
+        ],
+      },
+    });
+    const source = makeSource(db, engine);
+
+    const result = await source.streamDebate("launch-panel", "Ship it?", {}, () => undefined);
+
+    expect(result.reason).toBe("completed");
+    expect(result.debateId).toEqual(expect.any(String));
+    expect(engine.stopCount).toBe(1);
   });
 
   it("returns aborted and persists a partial turn when the signal aborts mid-stream", async () => {
