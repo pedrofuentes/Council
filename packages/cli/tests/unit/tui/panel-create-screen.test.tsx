@@ -217,3 +217,38 @@ describe("PanelCreateScreen", () => {
     unmount();
   });
 });
+
+describe("PanelCreateScreen — cancel", () => {
+  it("navigates back to the previous screen on Esc", async () => {
+    const value = {
+      panels: { loadList: async () => [], loadDetail: async () => undefined },
+      experts: {
+        loadList: async () => experts,
+        loadDetail: async () => undefined,
+      },
+      panelAuthoring: createAuthoring(),
+    } as TuiDataSources;
+
+    const { stdin, lastFrame, unmount } = render(
+      <InputCaptureProvider>
+        <DataProvider value={value}>
+          <MemoryRouter initialEntries={["/panels", "/panels/new"]}>
+            <Routes>
+              <Route path="/panels" element={<Text>PANELS LIST</Text>} />
+              <Route path="/panels/new" element={<PanelCreateScreen theme={theme} isActive />} />
+            </Routes>
+          </MemoryRouter>
+        </DataProvider>
+      </InputCaptureProvider>,
+    );
+
+    await flush();
+    expect(lastFrame()).toContain("Name:");
+
+    stdin.write("\u001B");
+    await new Promise((r) => setTimeout(r, 140));
+
+    expect(lastFrame()).toContain("PANELS LIST");
+    unmount();
+  });
+});
