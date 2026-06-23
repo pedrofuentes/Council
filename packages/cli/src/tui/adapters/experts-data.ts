@@ -11,15 +11,15 @@ export interface ExpertDetailView {
   readonly displayName: string;
   readonly role: string;
   readonly kind: "generic" | "persona";
-  readonly model?: string;
+  readonly model?: string | undefined;
   readonly epistemicStance: string;
   readonly expertise: {
     readonly weightedEvidence: readonly string[];
     readonly referenceCases: readonly string[];
     readonly notExpertIn: readonly string[];
   };
-  readonly personality?: string;
-  readonly personaDescription?: string;
+  readonly personality?: string | undefined;
+  readonly personaDescription?: string | undefined;
   readonly panels: readonly string[];
 }
 
@@ -28,15 +28,15 @@ export interface ExpertDefLike {
   readonly displayName: string;
   readonly role: string;
   readonly kind: "generic" | "persona";
-  readonly model?: string;
+  readonly model?: string | undefined;
   readonly epistemicStance: string;
   readonly expertise: {
     readonly weightedEvidence: readonly string[];
     readonly referenceCases: readonly string[];
     readonly notExpertIn: readonly string[];
   };
-  readonly personality?: string;
-  readonly personaDescription?: string;
+  readonly personality?: string | undefined;
+  readonly personaDescription?: string | undefined;
 }
 
 export interface ExpertsRepos {
