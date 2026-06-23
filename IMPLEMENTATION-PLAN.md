@@ -572,7 +572,7 @@ validation (mirroring the CLI coercion); an input-capture context gates the app-
 
 **Key files**: `src/tui/screens/SettingsScreen.tsx`, `src/tui/adapters/config-settings.ts`, `src/tui/components/InputCaptureProvider.tsx`, `src/config/*` (reuse)
 
-### 9.5 Expert Authoring & Training ⬜
+### 9.5 Expert Authoring & Training ✅
 
 **Goal**: Full expert lifecycle and persona training inside the TUI.
 
@@ -582,12 +582,22 @@ with affected-panel warnings (`FileExpertLibrary`). Training: add docs by path/U
 refresh profile (`analyzeDocuments` + `ProfileRepository`). Extract an expert CRUD service from
 `commands/expert.ts`.
 
+**Delivered** (PRs #1619 create-adapter, #1622 create-form, #1625 edit, #1628 delete, #1631 documents
+list/remove, #1633 training; plan #1617): a 100%-covered `expert-authoring` adapter (`validateExpertForm`
+mirroring the CLI/schema) drives create/edit/delete forms reusing the 9.4 input-capture pattern; delete
+shows affected-panel warnings and is gated until they load. Documents live at `/experts/:slug/docs`
+(list/remove over `DocumentRepository` + `createDocumentIndexer`, surfacing partial FTS-cleanup failure).
+Training lives at `/experts/:slug/train`: a path-input form runs `createDocumentProcessor().process`
+under an injectable engine (MockEngine offline in tests) with streamed progress and profile refresh.
+Document staging rejects symlinks (`lstat`) and refuses to overwrite (`COPYFILE_EXCL` + pre-check).
+URL ingest and a full CRUD-service extraction from `commands/expert.ts` are deferred follow-ups.
+
 **Acceptance criteria**:
 - Experts created/edited/deleted from the UI round-trip to YAML.
 - Training indexes docs with visible progress and refreshes the profile.
 - Existing CLI expert tests stay green after the service extraction.
 
-**Key files**: `src/tui/screens/ExpertDetail.tsx` (+ forms), `src/core/expert*.ts` (service extraction), `src/core/documents/*`
+**Key files**: `src/tui/screens/Expert{Form,Detail,Delete,Documents,Train}Screen.tsx`, `src/tui/adapters/expert-{authoring,documents,training}.ts`, `src/core/documents/*`
 
 ### 9.6 Panel Authoring ⬜
 
@@ -693,5 +703,6 @@ checks; opt-in TUI telemetry events.
 | Interactive TUI shell (alt-screen console) | 9.2 | ✅ Done |
 | TUI library browse/detail + command palette | 9.3 | ✅ Done |
 | TUI editable settings screen | 9.4 | ✅ Done |
+| TUI expert authoring & training | 9.5 | ✅ Done |
 | Live convene + conclude in the TUI | 9.8 | ⬜ Planned |
 | TUI default on bare `council` (TTY) | 9.10 | ⬜ Planned |
