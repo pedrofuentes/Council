@@ -530,17 +530,18 @@ describe("PanelChatScreen", () => {
     unmount();
   });
 
-  it("closes an opened panel handle when panel loading fails", async () => {
+  it("closes an opened panel handle when history loading fails", async () => {
     const sources = createSources({
-      loadDetail: async () => {
-        throw new Error("panel failed[31m");
+      loadHistory: async () => {
+        throw new Error("history failed[31m");
       },
     });
     const { lastFrame, unmount } = renderScreen(sources);
     await flush();
 
     expect(sources.close).toHaveBeenCalledTimes(1);
-    expect(lastFrame()).toContain("panel failed");
+    expect(sources.openPanel).toHaveBeenCalledExactlyOnceWith(["cto", "cfo"]);
+    expect(lastFrame()).toContain("history failed");
     expect(lastFrame()).not.toContain("[31m");
     unmount();
   });
