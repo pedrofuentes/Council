@@ -57,6 +57,44 @@ const withPanelCreate = (): TuiDataSources =>
       delete: async () => undefined,
     } satisfies PanelAuthoringDataSource,
   }) as TuiDataSources;
+const withPanelMembers = (): TuiDataSources =>
+  ({
+    panels: {
+      loadList: async () => [],
+      loadDetail: async () => ({
+        name: "strategy",
+        description: "",
+        source: "saved",
+        members: [
+          {
+            slug: "cto",
+            displayName: "Chief Technology Officer",
+            role: "Technology strategy",
+            kind: "generic",
+          },
+        ],
+        missing: [],
+      }),
+    },
+    experts: {
+      loadList: async () => [
+        {
+          slug: "cto",
+          displayName: "Chief Technology Officer",
+          role: "Technology strategy",
+          kind: "generic",
+          panelCount: 1,
+        },
+      ],
+      loadDetail: async () => undefined,
+    },
+    panelAuthoring: {
+      create: async () => undefined,
+      setMembers: async () => undefined,
+      countRetainedDebates: async () => 0,
+      delete: async () => undefined,
+    } satisfies PanelAuthoringDataSource,
+  }) as TuiDataSources;
 const withSessions = (
   loadList: () => Promise<readonly SessionListItem[]> = async () => [],
   loadTranscript: (panelName: string) => Promise<SessionTranscriptView | undefined> = async () =>
@@ -247,6 +285,22 @@ describe("AppRouter", () => {
 
     expect(lastFrame()).toContain("Name:");
     expect(lastFrame()).toContain("Chief Technology Officer");
+    expect(lastFrame()).not.toContain("Coming soon");
+  });
+
+  it("renders the PanelMembersScreen on the panel members route", async () => {
+    const { lastFrame } = render(
+      <DataProvider value={withPanelMembers()}>
+        <MemoryRouter initialEntries={["/panels/strategy/members"]}>
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+
+    expect(lastFrame()).toContain("Members:");
+    expect(lastFrame()).toContain("[x] Chief Technology Officer");
     expect(lastFrame()).not.toContain("Coming soon");
   });
 
