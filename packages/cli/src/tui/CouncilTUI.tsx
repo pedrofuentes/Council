@@ -52,7 +52,11 @@ export function CouncilTUI(props: CouncilTUIProps): React.ReactElement {
   const [mode, setMode] = useState<FocusMode>("nav");
   const [activeRoute] = useState<string>("home");
 
-  const layout = computeLayout({ columns: actualColumns, rows: actualRows, navOverride });
+  const layout = computeLayout(
+    navOverride !== undefined
+      ? { columns: actualColumns, rows: actualRows, navOverride }
+      : { columns: actualColumns, rows: actualRows },
+  );
 
   useInput((input, key) => {
     if (input === "\\") {

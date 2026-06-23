@@ -1,8 +1,7 @@
-import React from "react";
 import path from "node:path";
 import { render } from "ink";
 
-import { getCouncilDataHome, getCouncilHome, loadConfig } from "../config/index.js";
+import { getCouncilHome, loadConfig } from "../config/index.js";
 import { createDatabase } from "../memory/db.js";
 import { ChatRepository } from "../memory/repositories/chat-repository.js";
 import { ExpertRepository } from "../memory/repositories/experts.js";
@@ -28,7 +27,6 @@ function formatRelativeTime(isoDate: string): string {
 
 export async function launchTui(): Promise<void> {
   const config = await loadConfig();
-  const dataHome = getCouncilDataHome(config);
   const dbPath = path.join(getCouncilHome(), "council.db");
   const db = await createDatabase(dbPath);
 
@@ -38,8 +36,8 @@ export async function launchTui(): Promise<void> {
 
   const sources: HomeDataSources = {
     listSessions: async () => {
-      const sessions = await chatRepo.listSessions({ limit: 10 });
-      return sessions.map((s) => ({
+      const sessions = await chatRepo.listSessions();
+      return sessions.slice(0, 10).map((s) => ({
         id: s.id,
         title: s.summary ?? s.targetSlug,
         when: formatRelativeTime(s.updatedAt),
@@ -62,7 +60,7 @@ export async function launchTui(): Promise<void> {
   };
 
   const homeData = await loadHomeData(sources);
-  const model = config.defaultModel ?? "claude-sonnet-4.5";
+  const model = config.defaults.model;
 
   const { waitUntilExit } = render(
     <ErrorBoundary onError={(error: Error) => {
