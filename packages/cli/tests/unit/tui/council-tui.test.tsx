@@ -107,4 +107,18 @@ describe("CouncilTUI", () => {
     // Test passes if no error is thrown
     unmount();
   });
+
+  it("invokes a nav selection (Enter) in nav mode without disrupting the shell", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <CouncilTUI homeData={homeData} model="m" env={{ NO_COLOR: "1" }} initialColumns={140} initialRows={40} />,
+    );
+    await flush();
+    // Enter while in nav mode reaches the active LeftNav and fires its onSelect handler.
+    stdin.write("\r");
+    await flush();
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("Build vs buy"); // Home still rendered
+    expect(frame).toContain("Panels"); // nav still rendered
+    unmount();
+  });
 });
