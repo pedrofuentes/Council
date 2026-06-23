@@ -1,5 +1,7 @@
 import React from "react";
+import { Text } from "ink";
 import { render } from "ink-testing-library";
+import { MemoryRouter, Route, Routes, useParams } from "react-router";
 import { describe, expect, it } from "vitest";
 
 import type { PanelListItem } from "../../../src/tui/adapters/panels-data.js";
@@ -12,8 +14,13 @@ const flush = async (): Promise<void> => {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setImmediate(r));
 };
 const withPanels = (loadList: () => Promise<readonly PanelListItem[]>): TuiDataSources => ({
-  panels: { loadList },
+  panels: { loadList, loadDetail: async () => undefined },
 });
+
+function DetailProbe(): React.ReactElement {
+  const params = useParams();
+  return <Text>DETAIL {params.name}</Text>;
+}
 
 describe("PanelsScreen", () => {
   it("renders loaded panels", async () => {
@@ -24,7 +31,9 @@ describe("PanelsScreen", () => {
           { name: "startup-board", description: "tpl", memberCount: 3, source: "template" },
         ])}
       >
-        <PanelsScreen theme={theme} isActive />
+        <MemoryRouter initialEntries={["/panels"]}>
+          <PanelsScreen theme={theme} isActive />
+        </MemoryRouter>
       </DataProvider>,
     );
     await flush();
@@ -37,7 +46,9 @@ describe("PanelsScreen", () => {
   it("shows an empty state", async () => {
     const { lastFrame } = render(
       <DataProvider value={withPanels(async () => [])}>
-        <PanelsScreen theme={theme} isActive />
+        <MemoryRouter initialEntries={["/panels"]}>
+          <PanelsScreen theme={theme} isActive />
+        </MemoryRouter>
       </DataProvider>,
     );
     await flush();
@@ -51,10 +62,35 @@ describe("PanelsScreen", () => {
           throw new Error("x");
         })}
       >
-        <PanelsScreen theme={theme} isActive />
+        <MemoryRouter initialEntries={["/panels"]}>
+          <PanelsScreen theme={theme} isActive />
+        </MemoryRouter>
       </DataProvider>,
     );
     await flush();
     expect(lastFrame()).toMatch(/Failed to load panels/i);
+  });
+
+  it("navigates to the selected panel detail on Enter", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withPanels(async () => [
+          { name: "acme", description: "Exec panel", memberCount: 1, source: "saved" },
+        ])}
+      >
+        <MemoryRouter initialEntries={["/panels"]}>
+          <Routes>
+            <Route path="/panels" element={<PanelsScreen theme={theme} isActive />} />
+            <Route path="/panels/:name" element={<DetailProbe />} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("\r");
+    await flush();
+
+    expect(lastFrame()).toContain("DETAIL acme");
   });
 });

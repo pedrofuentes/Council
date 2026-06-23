@@ -10,6 +10,7 @@ import { LeftNav } from "../components/navigation/LeftNav.js";
 import { HelpModal } from "../components/overlays/HelpModal.js";
 import { computeLayout, type NavState } from "../lib/breakpoints.js";
 import { HomeScreen } from "../screens/HomeScreen.js";
+import { PanelDetailScreen } from "../screens/PanelDetailScreen.js";
 import { PanelsScreen } from "../screens/PanelsScreen.js";
 import { PlaceholderScreen } from "../screens/PlaceholderScreen.js";
 import { resolveTheme } from "../theme/tokens.js";
@@ -105,6 +106,10 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
         setMode("nav");
         return;
       }
+      if (location.pathname !== ROUTES.home) {
+        navigate(-1);
+        return;
+      }
       app.exit();
       return;
     }
@@ -168,6 +173,10 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
           <Route
             path={ROUTES.panels}
             element={<PanelsScreen theme={theme} isActive={mainActive} />}
+          />
+          <Route
+            path={ROUTES.panelDetail}
+            element={<PanelDetailScreen theme={theme} isActive={mainActive} />}
           />
           <Route
             path={ROUTES.experts}
