@@ -2,7 +2,7 @@ import React from "react";
 import { Text } from "ink";
 import { render } from "ink-testing-library";
 import { MemoryRouter, Route, Routes } from "react-router";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { SettingsFieldState } from "../../../src/tui/adapters/config-settings.js";
 import { DataProvider, type TuiDataSources } from "../../../src/tui/components/DataProvider.js";
@@ -60,10 +60,15 @@ const waitForEscape = async (): Promise<void> => {
 };
 const ansiPattern = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 
-const withSettings = (load: () => Promise<readonly SettingsFieldState[]>): TuiDataSources =>
+const withSettings = (
+  load: () => Promise<readonly SettingsFieldState[]>,
+  save: (
+    changes: readonly { readonly path: string; readonly value: string | number | boolean }[],
+  ) => Promise<void> = async () => undefined,
+): TuiDataSources =>
   ({
     panels: { loadList: async () => [], loadDetail: async () => undefined },
-    settings: { load, save: async () => undefined },
+    settings: { load, save },
   }) as TuiDataSources;
 
 function CaptureProbe(): React.ReactElement {
@@ -73,10 +78,13 @@ function CaptureProbe(): React.ReactElement {
 
 function renderSettings(
   load: () => Promise<readonly SettingsFieldState[]>,
+  save?: (
+    changes: readonly { readonly path: string; readonly value: string | number | boolean }[],
+  ) => Promise<void>,
 ): ReturnType<typeof render> {
   return render(
     <InputCaptureProvider>
-      <DataProvider value={withSettings(load)}>
+      <DataProvider value={withSettings(load, save)}>
         <MemoryRouter initialEntries={["/settings"]}>
           <Routes>
             <Route
@@ -113,7 +121,7 @@ describe("SettingsScreen", () => {
     expect(frame).toContain("  Max rounds: 3");
     expect(frame).toContain("Telemetry");
     expect(frame).toContain("  Telemetry enabled: false");
-    expect(frame).toContain("↑↓ move · Esc back");
+    expect(frame).toContain("↑↓ move · Enter edit · Ctrl+S save · Esc back");
     expect(frame).toContain("CAPTURED yes");
     expect(frame).not.toContain("\u001B[31m");
     expect(frame).not.toContain("\u001B[32m");
@@ -191,7 +199,7 @@ describe("SettingsScreen", () => {
     await flush();
 
     const frame = lastFrame() ?? "";
-    expect(frame).toContain("↑↓ move · Esc back");
+    expect(frame).toContain("↑↓ move · Enter edit · Ctrl+S save · Esc back");
     expect(frame).not.toContain("\u001B[7m");
     unmount();
   });
@@ -215,6 +223,241 @@ describe("SettingsScreen", () => {
     await waitForEscape();
 
     expect(lastFrame()).toContain("HOME");
+    unmount();
+  });
+
+  it("edits a number with inline validation, keeps editing on invalid submit, then stages a valid value", async () => {
+    const { stdin, lastFrame, unmount } = renderSettings(async () => fields);
+    await flush();
+
+    stdin.write("\u001B[B");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    stdin.write("9");
+    await flush();
+    stdin.write("\r");
+    await flush();
+
+    expect(lastFrame() ?? "").toContain("Must be between 1 and 20");
+    expect((lastFrame() ?? "").replace(ansiPattern, "")).toContain("Max rounds: 39");
+
+    stdin.write("\u007F");
+    stdin.write("\u007F");
+    stdin.write("12");
+    await flush();
+    stdin.write("\r");
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("  *Max rounds: 12");
+    expect(frame).not.toContain("Must be between 1 and 20");
+    expect(highlightedRow(frame)).toContain("  *Max rounds: 12");
+    unmount();
+  });
+
+  it("ignores Ctrl+S while editing a field instead of inserting it or saving", async () => {
+    const save = vi.fn(async () => undefined);
+    const { stdin, lastFrame, unmount } = renderSettings(async () => fields, save);
+    await flush();
+
+    // Select the number field and enter edit mode.
+    stdin.write("\u001B[B");
+    await flush();
+    stdin.write("\r");
+    await flush();
+
+    // Replace the seeded "3" with a valid value.
+    stdin.write("\u007F");
+    stdin.write("5");
+    await flush();
+
+    // Ctrl+S while still editing must be ignored: not typed into the buffer, not a save.
+    stdin.write("\u0013");
+    await flush();
+    const editingFrame = (lastFrame() ?? "").replace(ansiPattern, "");
+    expect(editingFrame).toContain("Max rounds: 5");
+    expect(editingFrame).not.toContain("Max rounds: 5s");
+    expect(save).not.toHaveBeenCalled();
+
+    // Commit the valid value; Ctrl+S in nav mode then saves the staged change.
+    stdin.write("\r");
+    await flush();
+    expect((lastFrame() ?? "").replace(ansiPattern, "")).toContain("*Max rounds: 5");
+    stdin.write("\u0013");
+    await flush();
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save).toHaveBeenCalledWith([{ path: "defaults.maxRounds", value: 5 }]);
+    unmount();
+  });
+
+  it("toggles a boolean field and marks it dirty", async () => {
+    const { stdin, lastFrame, unmount } = renderSettings(async () => fields);
+    await flush();
+
+    stdin.write("\u001B[B");
+    stdin.write("\u001B[B");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    stdin.write(" ");
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("  *Telemetry enabled: true");
+    expect(highlightedRow(frame)).toContain("  *Telemetry enabled: true");
+    unmount();
+  });
+
+  it("cycles an enum field and stages the confirmed option", async () => {
+    const { stdin, lastFrame, unmount } = renderSettings(async () => fields);
+    await flush();
+
+    stdin.write("\u001B[B");
+    stdin.write("\u001B[B");
+    stdin.write("\u001B[B");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    stdin.write("\u001B[C");
+    await flush();
+    expect(lastFrame() ?? "").toContain("Telemetry mode: auto");
+    stdin.write("\r");
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("  *Telemetry mode: auto");
+    expect(highlightedRow(frame)).toContain("  *Telemetry mode: auto");
+    unmount();
+  });
+
+  it("cancels editing on Escape without staging the edit", async () => {
+    const { stdin, lastFrame, unmount } = renderSettings(async () => fields);
+    await flush();
+
+    stdin.write("\r");
+    await flush();
+    stdin.write("-preview");
+    await flush();
+    expect((lastFrame() ?? "").replace(ansiPattern, "")).toContain("Default model: gpt-4o-preview");
+    stdin.write("\u001B");
+    await waitForEscape();
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("  Default model: gpt-4o");
+    expect(frame).not.toContain("*Default model");
+    expect(frame).not.toContain("gpt-4o-preview");
+    unmount();
+  });
+
+  it("saves a valid dirty draft with coerced values, shows Saved, and clears dirty markers", async () => {
+    const save = vi.fn<
+      Parameters<NonNullable<TuiDataSources["settings"]>["save"]>,
+      ReturnType<NonNullable<TuiDataSources["settings"]>["save"]>
+    >(async () => undefined);
+    const { stdin, lastFrame, unmount } = renderSettings(async () => fields, save);
+    await flush();
+
+    stdin.write("\u001B[B");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    stdin.write("9");
+    await flush();
+    stdin.write("\u007F");
+    stdin.write("\u007F");
+    await flush();
+    stdin.write("12");
+    await flush();
+    stdin.write("\r");
+    await flush();
+
+    stdin.write("\u001B[B");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    stdin.write(" ");
+    await flush();
+
+    stdin.write("\u001B[B");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    stdin.write("\u001B[C");
+    await flush();
+    stdin.write("\r");
+    await flush();
+
+    stdin.write("\u0013");
+    await flush();
+
+    expect(save).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledWith([
+      { path: "defaults.maxRounds", value: 12 },
+      { path: "telemetry.enabled", value: true },
+      { path: "telemetry.mode", value: "auto" },
+    ]);
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("Saved");
+    expect(frame).not.toContain("*Max rounds");
+    expect(frame).not.toContain("*Telemetry enabled");
+    expect(frame).not.toContain("*Telemetry mode");
+    unmount();
+  });
+
+  it("does not save while the selected edit has invalid input and shows the field error", async () => {
+    const save = vi.fn<
+      Parameters<NonNullable<TuiDataSources["settings"]>["save"]>,
+      ReturnType<NonNullable<TuiDataSources["settings"]>["save"]>
+    >(async () => undefined);
+    const { stdin, lastFrame, unmount } = renderSettings(async () => fields, save);
+    await flush();
+
+    stdin.write("\u001B[B");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    stdin.write("9");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    expect(save).not.toHaveBeenCalled();
+    expect(lastFrame() ?? "").toContain("Must be between 1 and 20");
+    expect((lastFrame() ?? "").replace(ansiPattern, "")).toContain("Max rounds: 39");
+    unmount();
+  });
+
+  it("shows a sanitized save error and keeps the dirty draft when saving throws", async () => {
+    const save = vi.fn<
+      Parameters<NonNullable<TuiDataSources["settings"]>["save"]>,
+      ReturnType<NonNullable<TuiDataSources["settings"]>["save"]>
+    >(async () => {
+      throw new Error("schema\n\u001B[31mboom");
+    });
+    const { stdin, lastFrame, unmount } = renderSettings(async () => fields, save);
+    await flush();
+
+    stdin.write("\u001B[B");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    stdin.write("9");
+    await flush();
+    stdin.write("\u007F");
+    stdin.write("\u007F");
+    await flush();
+    stdin.write("12");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    stdin.write("\u0013");
+    await flush();
+
+    expect(save).toHaveBeenCalledOnce();
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("Error: schema boom");
+    expect(frame).toContain("  *Max rounds: 12");
+    expect(frame).not.toContain("\u001B[31mboom");
     unmount();
   });
 

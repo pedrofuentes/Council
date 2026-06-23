@@ -103,7 +103,7 @@ describe("AppRouter", () => {
 
     expect(lastFrame()).toContain("Defaults");
     expect(lastFrame()).toContain("Default model: gpt-4o");
-    expect(lastFrame()).toContain("↑↓ move · Esc back");
+    expect(lastFrame()).toContain("↑↓ move · Enter edit · Ctrl+S save · Esc back");
     expect(lastFrame()).not.toContain("Coming soon");
   });
 
