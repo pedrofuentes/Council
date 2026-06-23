@@ -9,6 +9,8 @@ import { Header } from "../components/layout/Header.js";
 import { LeftNav } from "../components/navigation/LeftNav.js";
 import { HelpModal } from "../components/overlays/HelpModal.js";
 import { computeLayout, type NavState } from "../lib/breakpoints.js";
+import { ExpertDetailScreen } from "../screens/ExpertDetailScreen.js";
+import { ExpertsScreen } from "../screens/ExpertsScreen.js";
 import { HomeScreen } from "../screens/HomeScreen.js";
 import { PanelDetailScreen } from "../screens/PanelDetailScreen.js";
 import { PanelsScreen } from "../screens/PanelsScreen.js";
@@ -180,7 +182,11 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
           />
           <Route
             path={ROUTES.experts}
-            element={<PlaceholderScreen title="Experts" theme={theme} />}
+            element={<ExpertsScreen theme={theme} isActive={mainActive} />}
+          />
+          <Route
+            path={ROUTES.expertDetail}
+            element={<ExpertDetailScreen theme={theme} isActive={mainActive} />}
           />
           <Route
             path={ROUTES.sessions}
