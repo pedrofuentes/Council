@@ -13,6 +13,7 @@ describe("buildPaletteCommands", () => {
       "go-sessions",
       "go-chats",
       "go-settings",
+      "new-expert",
       "help",
       "quit",
     ]);
@@ -25,6 +26,7 @@ describe("buildPaletteCommands", () => {
       "go-sessions",
       "go-chats",
       "go-settings",
+      "new-expert",
       "help",
       "quit",
     ]);
@@ -37,6 +39,7 @@ describe("buildPaletteCommands", () => {
       "go-experts",
       "go-sessions",
       "go-settings",
+      "new-expert",
       "help",
       "quit",
     ]);
@@ -59,8 +62,15 @@ describe("buildPaletteCommands", () => {
       expect.objectContaining({ id: "go-sessions", kind: "navigate" }),
       expect.objectContaining({ id: "go-chats", kind: "navigate" }),
       expect.objectContaining({ id: "go-settings", kind: "navigate" }),
+      expect.objectContaining({ id: "new-expert", kind: "navigate", route: "/experts/new" }),
       expect.objectContaining({ id: "help", kind: "help" }),
       expect.objectContaining({ id: "quit", kind: "quit" }),
     ]);
+  });
+
+  it("keeps the new expert action even when the current section is experts", () => {
+    expect(buildPaletteCommands({ navId: "experts" })).toContainEqual(
+      expect.objectContaining({ id: "new-expert", label: "New expert", route: "/experts/new" }),
+    );
   });
 });

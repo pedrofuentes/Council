@@ -13,6 +13,7 @@ import { PanelRepository } from "../memory/repositories/panels.js";
 import { TurnRepository } from "../memory/repositories/turns.js";
 import { loadTranscript } from "../memory/transcript.js";
 import { updateConfigFields } from "../config/loader.js";
+import { createExpertAuthoringSource } from "./adapters/expert-authoring.js";
 import { createExpertsDataSource } from "./adapters/experts-data.js";
 import { createPanelsDataSource } from "./adapters/panels-data.js";
 import { createSettingsDataSource } from "./adapters/config-settings.js";
@@ -45,6 +46,7 @@ export async function launchTui(): Promise<void> {
       loadTemplate,
     }),
     experts: createExpertsDataSource({ library: expertLibrary }),
+    expertAuthoring: createExpertAuthoringSource({ library: expertLibrary }),
     settings: createSettingsDataSource({ loadConfig, updateConfigFields }),
     sessions: createSessionsDataSource({
       panels: new PanelRepository(db),

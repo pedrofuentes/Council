@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text, useInput } from "ink";
 import { useNavigate } from "react-router";
 
 import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
@@ -23,6 +23,15 @@ export function ExpertsScreen(props: ExpertsScreenProps): React.ReactElement {
   const state = useAsyncResource(loadList);
   const navigate = useNavigate();
 
+  useInput(
+    (input) => {
+      if (input === "n") {
+        navigate("/experts/new");
+      }
+    },
+    { isActive: props.isActive ?? false },
+  );
+
   if (state.status === "loading") {
     return <Text>{props.theme.muted("Loading experts…")}</Text>;
   }
@@ -34,7 +43,7 @@ export function ExpertsScreen(props: ExpertsScreenProps): React.ReactElement {
   if (state.data.length === 0) {
     return (
       <Box justifyContent="center">
-        <Text>{props.theme.accent("No experts yet — create one with e")}</Text>
+        <Text>{props.theme.accent("No experts yet — create one with n")}</Text>
       </Box>
     );
   }

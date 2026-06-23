@@ -26,6 +26,7 @@ const NAVIGATE_ACTIONS: readonly NavigatePaletteAction[] = [
 ];
 
 const GLOBAL_ACTIONS: readonly PaletteAction[] = [
+  { id: "new-expert", label: "New expert", route: ROUTES.expertNew, kind: "navigate" },
   { id: "help", label: "Help", kind: "help" },
   { id: "quit", label: "Quit", kind: "quit" },
 ];
