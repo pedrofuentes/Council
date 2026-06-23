@@ -19,6 +19,14 @@
 
 <!-- Add new learnings below this line, most recent first -->
 
+### [2026-06-23] TUI settings (9.4) — input-capture for forms, CLI-coercion fidelity, dead-code-as-fix
+**Context**: Building the editable Settings screen (milestone 9.4, PRs #1612–#1615; plan #1611). The plan was REJECTED twice for config-coercion inaccuracy and PR-D once for an untested branch.
+**Learning**:
+1. **A focused in-screen form (text/enum/boolean editing) needs an input-capture mechanism**, not per-screen key handlers. `InputCaptureProvider`/`useInputCapture` lets a screen `setCaptured(true)` on mount; `AppRouter` gates its top-level `useInput` `{ isActive: mode !== "palette" && !captured }`, so the form owns ALL keys (incl. `Esc`) without double-dispatch. Within the screen, split input into mode-gated handlers (`{ isActive: mode === "nav" }` vs `{ isActive: mode === "edit" }`) so navigation and typing never both fire. Reuse this for chat/convene input (9.7/9.8).
+2. **Mirror the CLI's coercion EXACTLY when validating config in the TUI.** The plan was rejected twice for using permissive `Number()`: integer fields (`config.ts parseIntegerConfigValue`) require `^[+-]?[0-9]+$`+`parseInt` (reject empty/hex/exponent/fractional); only `documents.maxFileSizeMB` and `conclude.maxTranscriptChars` use `Number()` (the latter is `z.number().int()` in the schema but the CLI uses `Number()` — mirror the CLI, the schema rejects fractions at save). Keep this coercion in a 100%-covered adapter (`config-settings.validateField`); `updateConfigFields` re-validates via Zod as the final guard.
+3. **Removing mutation-verified dead code is a legitimate fix for an "untested branch" 🔴.** PR-D's edit-mode `Ctrl+S` suppression was redundant — Ink delivers `Ctrl+S` as `key.ctrl + "s"` (already excluded by the typing append's `!key.ctrl`), and save is gated by `mode === "nav"`. A mutation check (replace with a no-op → all tests pass) proved it dead; removing it (plus a contract test that `Ctrl+S` during edit neither types nor saves) resolved the finding without re-adding untestable code.
+**Impact**: For 9.5–9.10: build editable surfaces over input-capture + mode-gated handlers; keep all coercion/validation in tested `.ts` adapters that mirror the established CLI behavior; when a flagged branch is genuinely dead, mutation-prove it and remove it rather than papering over with a non-biting test.
+
 ### [2026-06-23] TUI library browse (9.3) — Ink keyboard dispatch, route wiring, and test-bite patterns
 **Context**: Building the read-only Panels/Experts/Sessions list+detail screens + Ctrl-K palette (milestone 9.3, PRs #1597–#1609). Five of seven feature PRs drew a Sentinel REJECT first; all were real correctness/test-quality issues, and several repeat across PRs — internalize them before each TUI PR.
 **Learning**:
