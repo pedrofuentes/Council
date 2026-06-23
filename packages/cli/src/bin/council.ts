@@ -56,6 +56,8 @@ import { selectModelInteractively } from "../cli/first-run-model-select.js";
 import { renderBanner } from "../cli/renderers/banner.js";
 import { loadConfigWithMeta } from "../config/index.js";
 import { maybeNotifyUpdate } from "../core/version/index.js";
+import { shouldLaunchTui } from "../tui/lib/should-launch-tui.js";
+import { launchTui } from "../tui/index.js";
 
 type WriteCallback = (error?: Error | null) => void;
 
@@ -360,6 +362,13 @@ if (isMainModule) {
 
   const runCli = async (): Promise<void> => {
     try {
+      // TUI entry guard: bare `council` on a TTY with COUNCIL_TUI=1 launches
+      // the full-screen TUI. All other invocations (subcommands, non-TTY,
+      // missing COUNCIL_TUI) fall through to the existing CLI.
+      if (shouldLaunchTui(process.argv, { stdout: process.stdout, env: process.env })) {
+        await launchTui();
+        return;
+      }
       await buildProgram({ firstRunSetup: {} }).parseAsync(process.argv);
     } catch (err: unknown) {
       process.exitCode = handleCliError(err, defaultErrorWriter);
