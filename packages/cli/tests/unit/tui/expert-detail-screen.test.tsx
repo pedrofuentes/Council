@@ -258,4 +258,70 @@ describe("ExpertDetailScreen", () => {
     expect(lastFrame()).toContain("Loading expert…");
     expect(lastFrame()).not.toContain("DOCS ROUTE");
   });
+
+  it("navigates to the train route when t is pressed for a persona expert", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider value={withDetail(async () => detailFor({ kind: "persona" }))}>
+        <MemoryRouter initialEntries={[{ pathname: "/experts/cto" }]}>
+          <Routes>
+            <Route path="/experts/:slug" element={<ExpertDetailScreen theme={theme} isActive />} />
+            <Route path="/experts/:slug/train" element={<Text>TRAIN ROUTE</Text>} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("t");
+    await flush();
+
+    expect(lastFrame()).toContain("TRAIN ROUTE");
+  });
+
+  it("does not navigate to train when t is pressed for a generic expert", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider value={withDetail(async () => detailFor({ kind: "generic" }))}>
+        <MemoryRouter initialEntries={[{ pathname: "/experts/ops" }]}>
+          <Routes>
+            <Route path="/experts/:slug" element={<ExpertDetailScreen theme={theme} isActive />} />
+            <Route path="/experts/:slug/train" element={<Text>TRAIN ROUTE</Text>} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("t");
+    await flush();
+
+    expect(lastFrame()).toContain("Technology [generic]");
+    expect(lastFrame()).not.toContain("TRAIN ROUTE");
+  });
+
+  it("does not navigate to train when t is pressed while loading", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withDetail(
+          () =>
+            new Promise<ExpertDetailView | undefined>(() => {
+              /* keep loading */
+            }),
+        )}
+      >
+        <MemoryRouter initialEntries={[{ pathname: "/experts/cto" }]}>
+          <Routes>
+            <Route path="/experts/:slug" element={<ExpertDetailScreen theme={theme} isActive />} />
+            <Route path="/experts/:slug/train" element={<Text>TRAIN ROUTE</Text>} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("t");
+    await flush();
+
+    expect(lastFrame()).toContain("Loading expert…");
+    expect(lastFrame()).not.toContain("TRAIN ROUTE");
+  });
 });

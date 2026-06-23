@@ -12,6 +12,7 @@ import type {
 import type { SettingsFieldState } from "../../../src/tui/adapters/config-settings.js";
 import type { ExpertAuthoringSource } from "../../../src/tui/adapters/expert-authoring.js";
 import type { ExpertDocumentsDataSource } from "../../../src/tui/adapters/expert-documents.js";
+import type { ExpertTrainingDataSource } from "../../../src/tui/adapters/expert-training.js";
 import { DataProvider, type TuiDataSources } from "../../../src/tui/components/DataProvider.js";
 import { AppRouter } from "../../../src/tui/router/AppRouter.js";
 import { CouncilTUI } from "../../../src/tui/CouncilTUI.js";
@@ -93,6 +94,24 @@ const withExpertAuthoring = (): TuiDataSources => {
     expertAuthoring: authoring,
   };
 };
+const withExpertTraining = (): TuiDataSources => {
+  const training: ExpertTrainingDataSource = {
+    train: async () => ({
+      filesProcessed: 0,
+      filesFailed: 0,
+      filesSkipped: 0,
+      filesNeedingReview: 0,
+      totalWords: 0,
+      profileUpdated: false,
+      profileError: null,
+    }),
+  };
+  return {
+    panels: { loadList: async () => [], loadDetail: async () => undefined },
+    training,
+  };
+};
+
 const withExpertDocuments = (): TuiDataSources => {
   const documents: ExpertDocumentsDataSource = {
     list: async () => [
@@ -236,6 +255,21 @@ describe("AppRouter", () => {
     await flush();
 
     expect(lastFrame()).toContain("roadmap.md");
+    expect(lastFrame()).not.toContain("Expert not found");
+  });
+
+  it("renders the ExpertTrainScreen on the specific expert train route", async () => {
+    const { lastFrame } = render(
+      <DataProvider value={withExpertTraining()}>
+        <MemoryRouter initialEntries={["/experts/cto/train"]}>
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+
+    expect(lastFrame()).toContain("Document file path:");
     expect(lastFrame()).not.toContain("Expert not found");
   });
 
