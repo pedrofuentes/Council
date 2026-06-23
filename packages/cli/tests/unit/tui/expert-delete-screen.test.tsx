@@ -129,6 +129,72 @@ describe("ExpertDeleteScreen", () => {
     unmount();
   });
 
+  it("does not delete while the affected-panel warning is still loading", async () => {
+    const remove = vi.fn(async () => ({ affectedPanels: [] as readonly string[] }));
+    const source: ExpertAuthoringSource = {
+      loadForEdit: async () => emptyForm,
+      create: async () => okResult,
+      update: async () => okResult,
+      remove,
+      affectedPanels: () =>
+        new Promise<readonly string[]>(() => {
+          /* never resolves — keeps the screen in the loading state */
+        }),
+    };
+    const { stdin, lastFrame, unmount } = render(
+      <InputCaptureProvider>
+        <DataProvider value={withAuthoring(source)}>
+          <MemoryRouter initialEntries={["/experts", "/experts/cto/delete"]} initialIndex={1}>
+            <Routes>
+              <Route path="/experts" element={<Text>LIST</Text>} />
+              <Route path="/experts/:slug/delete" element={<ExpertDeleteScreen theme={theme} />} />
+            </Routes>
+          </MemoryRouter>
+        </DataProvider>
+      </InputCaptureProvider>,
+    );
+
+    await flush();
+    expect(lastFrame() ?? "").toContain("Loading");
+    stdin.write("y");
+    await flush();
+    expect(remove).not.toHaveBeenCalled();
+    expect(lastFrame() ?? "").toContain("Loading");
+    unmount();
+  });
+
+  it("shows an error and does not delete when the affected-panel load fails", async () => {
+    const remove = vi.fn(async () => ({ affectedPanels: [] as readonly string[] }));
+    const source: ExpertAuthoringSource = {
+      loadForEdit: async () => emptyForm,
+      create: async () => okResult,
+      update: async () => okResult,
+      remove,
+      affectedPanels: async () => {
+        throw new Error("boom");
+      },
+    };
+    const { stdin, lastFrame, unmount } = render(
+      <InputCaptureProvider>
+        <DataProvider value={withAuthoring(source)}>
+          <MemoryRouter initialEntries={["/experts", "/experts/cto/delete"]} initialIndex={1}>
+            <Routes>
+              <Route path="/experts" element={<Text>LIST</Text>} />
+              <Route path="/experts/:slug/delete" element={<ExpertDeleteScreen theme={theme} />} />
+            </Routes>
+          </MemoryRouter>
+        </DataProvider>
+      </InputCaptureProvider>,
+    );
+
+    await flush();
+    expect(lastFrame() ?? "").toMatch(/Failed to load/i);
+    stdin.write("y");
+    await flush();
+    expect(remove).not.toHaveBeenCalled();
+    unmount();
+  });
+
   it("deletes once on y and navigates to the experts list", async () => {
     const { stdin, lastFrame, remove, unmount } = renderDelete();
 
