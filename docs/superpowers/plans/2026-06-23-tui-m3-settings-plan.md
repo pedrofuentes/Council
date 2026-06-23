@@ -135,7 +135,10 @@ export const SETTINGS_FIELDS: readonly SettingsFieldDescriptor[] = [
 
 **`validateField(field, raw)`** (mirror the CLI coercion):
 - `string`: `const v = raw.trim();` if `v === "" && !field.optional` → `{ ok:false, error:"Required" }`; reject control chars (`/[\u0000-\u001f]/` → `{ ok:false, error:"No control characters" }`); else `{ ok:true, value:v }`.
-- `number`: parse `Number(raw.trim())`; `Number.isNaN` → `{ ok:false, error:"Must be a number" }`; if `field.integer && !Number.isInteger(n)` → `{ ok:false, error:"Must be a whole number" }`; if `n < min || n > max` → `{ ok:false, error:`Must be between ${min} and ${max}` }`; else `{ ok:true, value:n }`.
+- `number` (mirror the CLI's `parseIntegerConfigValue` for integer fields; `Number()` for the non-int `z.number()` fields):
+  - if `field.integer` (e.g. `defaults.maxRounds`, `chat.*`, `conclude.maxTranscriptChars`, `qualityGate.maxRegenerations`): require the trimmed input to match a plain optionally-signed decimal integer (the regex `^[+-]?[0-9]+$`) — this rejects empty/whitespace, hex (`0x2`), exponent (`1e3`), and fractional (`1.0`) forms exactly as the CLI's `parseIntegerConfigValue` does — else `{ ok:false, error:"Must be a whole number" }`; then `const n = Number.parseInt(raw.trim(), 10)`.
+  - else (non-integer `z.number()`, i.e. `documents.maxFileSizeMB`): `const t = raw.trim(); if (t === "") → { ok:false, error:"Must be a number" }` (guard, since `Number("")` is `0`); `const n = Number(t); if (!Number.isFinite(n)) → { ok:false, error:"Must be a number" }`.
+  - then range: `if (n < field.min! || n > field.max!) → { ok:false, error:`Must be between ${field.min} and ${field.max}` }`; else `{ ok:true, value:n }`.
 - `boolean`: accept `true/yes/y/on/1` → true and `false/no/n/off/0` → false (case-insensitive, trimmed); else `{ ok:false, error:"Must be true or false" }`.
 - `enum`: `field.options!.includes(raw.trim())` → `{ ok:true, value:raw.trim() }` else `{ ok:false, error:`Must be one of: ${options.join(", ")}` }`.
 
@@ -143,7 +146,7 @@ export const SETTINGS_FIELDS: readonly SettingsFieldDescriptor[] = [
 
 **`createSettingsDataSource(deps)`**: `load: async () => buildSettingsFields(await deps.loadConfig())`; `save: async (changes) => deps.updateConfigFields(changes.map((c) => ({ key: c.path, value: c.value })))`.
 
-- [ ] **Step 1 (test, RED):** cover EVERY branch — `readFieldValue` (nested hit, missing path, boolean/number/string rendering); `validateField` for each kind incl. each failure (empty-required vs optional-empty, control char, NaN, non-integer, out-of-range, bad-boolean, bad-enum) AND each success; `buildSettingsFields` (assert it returns 18 fields with current values from a sample config); `createSettingsDataSource` with fakes (load maps; save forwards `path→key`). Run targeted coverage → 100%. Commit `test(tui): add failing tests for config-settings adapter`.
+- [ ] **Step 1 (test, RED):** cover EVERY branch — `readFieldValue` (nested hit, missing path, boolean/number/string rendering); `validateField` for each kind incl. each failure (empty-required vs optional-empty, control char, **integer field rejecting empty/hex `0x2`/exponent `1e3`/fractional `1.0`**, non-integer field rejecting empty + non-finite, out-of-range for both integer and non-integer, bad-boolean, bad-enum) AND each success (incl. a valid fractional for `documents.maxFileSizeMB`); `buildSettingsFields` (assert it returns 18 fields with current values from a sample config); `createSettingsDataSource` with fakes (load maps; save forwards `path→key`). Run targeted coverage → 100%. Commit `test(tui): add failing tests for config-settings adapter`.
 - [ ] **Step 2 (feat):** implement; targeted coverage 100%; `feat(tui): add config-settings adapter`.
 
 ---
