@@ -9,6 +9,7 @@ import { ChatRepository } from "../memory/repositories/chat-repository.js";
 import { ExpertRepository } from "../memory/repositories/experts.js";
 import { PanelLibraryRepository } from "../memory/repositories/panel-library-repo.js";
 import { PanelRepository } from "../memory/repositories/panels.js";
+import { createExpertsDataSource } from "./adapters/experts-data.js";
 import { createPanelsDataSource } from "./adapters/panels-data.js";
 import { createHomeDataSources } from "./adapters/home-data-sources.js";
 import { loadHomeData } from "./adapters/home-data.js";
@@ -29,13 +30,15 @@ export async function launchTui(): Promise<void> {
   });
 
   const homeData = await loadHomeData(sources);
+  const expertLibrary = new FileExpertLibrary(dataHome, db);
   const dataSources: TuiDataSources = {
     panels: createPanelsDataSource({
       library: new PanelLibraryRepository(db),
-      experts: new FileExpertLibrary(dataHome, db),
+      experts: expertLibrary,
       listTemplates,
       loadTemplate,
     }),
+    experts: createExpertsDataSource({ library: expertLibrary }),
   };
   const model = config.defaults.model;
 

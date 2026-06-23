@@ -1,10 +1,11 @@
 import React from "react";
 
+import type { ExpertsDataSource } from "../adapters/experts-data.js";
 import type { PanelsDataSource } from "../adapters/panels-data.js";
 
 export interface TuiDataSources {
   readonly panels: PanelsDataSource;
-  readonly experts?: unknown;
+  readonly experts?: ExpertsDataSource;
   readonly sessions?: unknown;
 }
 

@@ -3,6 +3,7 @@ import { render } from "ink-testing-library";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 
+import type { ExpertListItem } from "../../../src/tui/adapters/experts-data.js";
 import type { PanelListItem } from "../../../src/tui/adapters/panels-data.js";
 import { DataProvider, type TuiDataSources } from "../../../src/tui/components/DataProvider.js";
 import { AppRouter } from "../../../src/tui/router/AppRouter.js";
@@ -17,7 +18,13 @@ const flush = async (stdin?: { write: (s: string) => void }, input?: string): Pr
 const withPanels = (
   loadList: () => Promise<readonly PanelListItem[]> = async () => [],
 ): TuiDataSources => ({
-  panels: { loadList },
+  panels: { loadList, loadDetail: async () => undefined },
+});
+const withExperts = (
+  loadList: () => Promise<readonly ExpertListItem[]> = async () => [],
+): TuiDataSources => ({
+  panels: { loadList: async () => [], loadDetail: async () => undefined },
+  experts: { loadList, loadDetail: async () => undefined },
 });
 
 describe("AppRouter", () => {
@@ -31,6 +38,18 @@ describe("AppRouter", () => {
     );
     await flush();
     expect(lastFrame()).toMatch(/No panels/i);
+  });
+
+  it("renders the Experts empty state on the /experts route", async () => {
+    const { lastFrame } = render(
+      <DataProvider value={withExperts()}>
+        <MemoryRouter initialEntries={["/experts"]}>
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+    await flush();
+    expect(lastFrame()).toMatch(/No experts/i);
   });
 
   it("renders the Chats placeholder on the /chats route", () => {
