@@ -80,7 +80,9 @@ export function PanelCreateScreen(props: PanelCreateScreenProps): React.ReactEle
   useInput(
     (_input, key) => {
       if (key.escape) {
-        navigate(-1);
+        if (!inFlight.current) {
+          navigate(-1);
+        }
         return;
       }
       if (key.tab) {
