@@ -2,12 +2,16 @@ import path from "node:path";
 import { render } from "ink";
 
 import { getCouncilHome, loadConfig } from "../config/index.js";
+import { listTemplates, loadTemplate } from "../core/template-loader.js";
 import { createDatabase } from "../memory/db.js";
 import { ChatRepository } from "../memory/repositories/chat-repository.js";
 import { ExpertRepository } from "../memory/repositories/experts.js";
+import { PanelLibraryRepository } from "../memory/repositories/panel-library-repo.js";
 import { PanelRepository } from "../memory/repositories/panels.js";
+import { createPanelsDataSource } from "./adapters/panels-data.js";
 import { createHomeDataSources } from "./adapters/home-data-sources.js";
 import { loadHomeData } from "./adapters/home-data.js";
+import { DataProvider, type TuiDataSources } from "./components/DataProvider.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { CouncilTUI } from "./CouncilTUI.js";
 
@@ -23,6 +27,13 @@ export async function launchTui(): Promise<void> {
   });
 
   const homeData = await loadHomeData(sources);
+  const dataSources: TuiDataSources = {
+    panels: createPanelsDataSource({
+      library: new PanelLibraryRepository(db),
+      listTemplates,
+      loadTemplate,
+    }),
+  };
   const model = config.defaults.model;
 
   const { waitUntilExit } = render(
@@ -32,7 +43,9 @@ export async function launchTui(): Promise<void> {
         process.exit(1);
       }}
     >
-      <CouncilTUI homeData={homeData} model={model} />
+      <DataProvider value={dataSources}>
+        <CouncilTUI homeData={homeData} model={model} />
+      </DataProvider>
     </ErrorBoundary>,
     { alternateScreen: true, incrementalRendering: true },
   );

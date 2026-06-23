@@ -10,6 +10,7 @@ import { LeftNav } from "../components/navigation/LeftNav.js";
 import { HelpModal } from "../components/overlays/HelpModal.js";
 import { computeLayout, type NavState } from "../lib/breakpoints.js";
 import { HomeScreen } from "../screens/HomeScreen.js";
+import { PanelsScreen } from "../screens/PanelsScreen.js";
 import { PlaceholderScreen } from "../screens/PlaceholderScreen.js";
 import { resolveTheme } from "../theme/tokens.js";
 import { routeToNavId, ROUTES } from "./routes.js";
@@ -74,6 +75,8 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
   const [navOverride, setNavOverride] = useState<NavState | undefined>(undefined);
   const [mode, setMode] = useState<FocusMode>("nav");
   const [focus, setFocus] = useState<FocusTarget>("main");
+
+  const mainActive = mode === "nav" && focus === "main";
 
   const layout = computeLayout(
     navOverride !== undefined
@@ -164,7 +167,7 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
           <Route path={ROUTES.home} element={<HomeScreen data={props.homeData} theme={theme} />} />
           <Route
             path={ROUTES.panels}
-            element={<PlaceholderScreen title="Panels" theme={theme} />}
+            element={<PanelsScreen theme={theme} isActive={mainActive} />}
           />
           <Route
             path={ROUTES.experts}
