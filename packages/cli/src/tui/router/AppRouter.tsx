@@ -174,6 +174,7 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
             path={ROUTES.sessions}
             element={<PlaceholderScreen title="Sessions" theme={theme} />}
           />
+          <Route path={ROUTES.chats} element={<PlaceholderScreen title="Chats" theme={theme} />} />
           <Route
             path={ROUTES.settings}
             element={<PlaceholderScreen title="Settings" theme={theme} />}
