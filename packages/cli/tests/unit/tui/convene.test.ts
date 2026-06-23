@@ -81,6 +81,15 @@ class FailingAddExpertEngine extends TrackingScriptedEngine {
   }
 }
 
+class StringFailingAddExpertEngine extends TrackingScriptedEngine {
+  override async addExpert(spec: ExpertSpec): Promise<void> {
+    if (spec.id === pm.id) {
+      throw "string failure";
+    }
+    await super.addExpert(spec);
+  }
+}
+
 class AbortAfterDeltaEngine implements CouncilEngine {
   stopCount = 0;
   readonly sends: SendOptions[] = [];
@@ -370,6 +379,17 @@ describe("createConveneSource", () => {
     ).rejects.toThrow("could not register all experts (1/2 failed): cannot add PM");
 
     expect(engine.removedExpertIds).toEqual([cto.id]);
+    expect(engine.stopCount).toBe(1);
+  });
+
+  it("reports non-Error expert registration failures without wrapping them as sanitized view events", async () => {
+    const engine = new StringFailingAddExpertEngine({ scripts: {} });
+    const source = makeSource(db, engine);
+
+    await expect(
+      source.streamDebate("launch-panel", "Register experts", {}, () => {}),
+    ).rejects.toThrow("could not register all experts (1/2 failed): string failure");
+
     expect(engine.stopCount).toBe(1);
   });
 
