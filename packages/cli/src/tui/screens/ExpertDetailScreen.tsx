@@ -80,6 +80,14 @@ export function ExpertDetailScreen(props: ExpertDetailScreenProps): React.ReactE
       if (input === "d" && slug !== undefined) {
         navigate(`/experts/${encodeURIComponent(slug)}/delete`);
       }
+      if (
+        input === "o" &&
+        slug !== undefined &&
+        state.status === "loaded" &&
+        state.data?.kind === "persona"
+      ) {
+        navigate(`/experts/${encodeURIComponent(slug)}/docs`);
+      }
     },
     { isActive: props.isActive ?? false },
   );
@@ -96,5 +104,12 @@ export function ExpertDetailScreen(props: ExpertDetailScreenProps): React.ReactE
     return <Text>{props.theme.warn("Expert not found")}</Text>;
   }
 
-  return renderDetail(state.data, props.theme);
+  return (
+    <Box flexDirection="column">
+      {renderDetail(state.data, props.theme)}
+      {state.data.kind === "persona" ? (
+        <Text>{props.theme.muted(toSingleLineDisplay("o documents"))}</Text>
+      ) : undefined}
+    </Box>
+  );
 }
