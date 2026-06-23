@@ -8,7 +8,7 @@ import { buildSystemPrompt } from "../core/prompt-builder.js";
 import { resolveModel } from "../core/model-resolver.js";
 import { createDocumentIndexer } from "../core/documents/indexer.js";
 import { createDocumentProcessor } from "../core/documents/processor.js";
-import { listTemplates, loadTemplate } from "../core/template-loader.js";
+import { listTemplates, loadPanel, loadTemplate } from "../core/template-loader.js";
 import { createDatabase } from "../memory/db.js";
 import { ChatRepository } from "../memory/repositories/chat-repository.js";
 import { DebateRepository } from "../memory/repositories/debates.js";
@@ -18,6 +18,7 @@ import { ProfileRepository } from "../memory/repositories/profile-repository.js"
 import { PanelLibraryRepository } from "../memory/repositories/panel-library-repo.js";
 import { PanelRepository } from "../memory/repositories/panels.js";
 import { TurnRepository } from "../memory/repositories/turns.js";
+import type { ExpertSpec } from "../engine/index.js";
 import { loadTranscript } from "../memory/transcript.js";
 import { updateConfigFields } from "../config/loader.js";
 import { createExpertAuthoringSource } from "./adapters/expert-authoring.js";
@@ -33,6 +34,10 @@ import {
   type ConveneDataSource,
   type ResolvedConvenePanel,
 } from "./adapters/convene.js";
+import {
+  createConvenePanelResolver,
+  type ConvenePanelRuntimeInput,
+} from "./adapters/convene-resolve.js";
 import { createExpertTrainingSource, stageDocumentFiles } from "./adapters/expert-training.js";
 import { makeEngineFromKind } from "../cli/run-with-engine.js";
 import { createHomeDataSources } from "./adapters/home-data-sources.js";
@@ -74,109 +79,92 @@ export async function launchTui(): Promise<void> {
   });
   const docsDirFor = (slug: string): string => path.join(dataHome, "experts", slug, "docs");
 
-  const buildConvenePanel = async (
-    panelName: string,
-    topic: string,
-    persistRuntimeRows: boolean,
-  ): Promise<ResolvedConvenePanel> => {
-    const libraryPanel = await panelLibrary.findByName(panelName);
-    if (libraryPanel === undefined) {
-      throw new Error(`Panel "${panelName}" not found`);
-    }
-
-    const slugs = await panelLibrary.getMembers(panelName);
-    if (slugs.length === 0) {
-      throw new Error(`Panel "${panelName}" has no experts`);
-    }
-
-    const definitions = [];
-    for (const slug of slugs) {
+  const createBuildSpec =
+    (
+      topic: string,
+    ): ((slug: string, panelDefaultModel: string | undefined) => Promise<ExpertSpec>) =>
+    async (slug, panelDefaultModel) => {
       const definition = await expertLibrary.get(slug);
       if (definition === null) {
-        throw new Error(`Panel "${panelName}" references missing expert "${slug}"`);
+        throw new Error(`Panel references missing expert "${slug}"`);
       }
-      definitions.push(definition);
-    }
-
-    const experts = definitions.map((definition) => ({
-      id: ulid(),
-      slug: definition.slug,
-      displayName: definition.displayName,
-      model: resolveModel({
-        expertModel: definition.model,
-        configDefaultModel: config.defaults.model ?? DEFAULT_MODEL,
-      }),
-      systemMessage: buildSystemPrompt(definition, undefined, topic),
-    }));
-
-    const mode = "freeform" as const;
-    const debateConfig = {
-      maxRounds: config.defaults.maxRounds,
-      maxWordsPerResponse: config.defaults.maxWordsPerResponse,
-      mode,
-      qualityGate: config.qualityGate,
-    };
-
-    if (!persistRuntimeRows) {
       return {
-        experts,
-        debateConfig,
-        panelId: "estimate-only",
-        expertSlugToId: {},
-        moderator: "round-robin",
-        mode,
-        phaseCount: experts.length === 1 ? 3 : 4,
+        id: ulid(),
+        slug: definition.slug,
+        displayName: definition.displayName,
+        model: resolveModel({
+          expertModel: definition.model,
+          panelDefaultModel,
+          configDefaultModel: config.defaults.model ?? DEFAULT_MODEL,
+        }),
+        systemMessage: buildSystemPrompt(definition, undefined, topic),
       };
-    }
-
-    const panel = await runtimePanels.create({
-      name: `${panelName}-${new Date().toISOString().slice(0, 19)}`,
-      topic,
-      copilotHome: path.join(getCouncilHome(), "copilot"),
-      configJson: JSON.stringify({
-        template: panelName,
-        mode,
-        maxRounds: debateConfig.maxRounds,
-        maxWords: debateConfig.maxWordsPerResponse,
-        engine: config.defaults.engine,
-      }),
-    });
-
-    const expertSlugToId: Record<string, string> = {};
-    for (const expert of experts) {
-      const row = await runtimeExperts.create({
-        panelId: panel.id,
-        slug: expert.slug,
-        displayName: expert.displayName,
-        model: expert.model,
-        systemMessage: expert.systemMessage,
-      });
-      expertSlugToId[expert.slug] = row.id;
-    }
-
-    return {
-      experts,
-      debateConfig,
-      panelId: panel.id,
-      expertSlugToId,
-      moderator: "round-robin",
-      mode,
-      phaseCount: experts.length === 1 ? 3 : 4,
     };
-  };
+
+  const createResolvePanelId =
+    (topic: string, persistRuntimeRows: boolean) =>
+    async (
+      input: ConvenePanelRuntimeInput,
+    ): Promise<{
+      readonly panelId: string;
+      readonly expertSlugToId: Readonly<Record<string, string>>;
+    }> => {
+      if (!persistRuntimeRows) {
+        return { panelId: "estimate-only", expertSlugToId: {} };
+      }
+
+      const panel = await runtimePanels.create({
+        name: `${input.panelName}-${new Date().toISOString().slice(0, 19)}`,
+        topic,
+        copilotHome: path.join(getCouncilHome(), "copilot"),
+        configJson: JSON.stringify({
+          template: input.panelName,
+          mode: input.mode,
+          maxRounds: input.debateConfig.maxRounds,
+          maxWords: input.debateConfig.maxWordsPerResponse,
+          engine: config.defaults.engine,
+        }),
+      });
+
+      const expertSlugToId: Record<string, string> = {};
+      for (const expert of input.experts) {
+        const row = await runtimeExperts.create({
+          panelId: panel.id,
+          slug: expert.slug,
+          displayName: expert.displayName,
+          model: expert.model,
+          systemMessage: expert.systemMessage,
+        });
+        expertSlugToId[expert.slug] = row.id;
+      }
+
+      return { panelId: panel.id, expertSlugToId };
+    };
+
+  const buildConveneResolver = (
+    topic: string,
+    persistRuntimeRows: boolean,
+  ): ((panelName: string) => Promise<ResolvedConvenePanel>) =>
+    createConvenePanelResolver({
+      loadPanel,
+      dataHome,
+      config,
+      buildSpec: createBuildSpec(topic),
+      resolvePanelId: createResolvePanelId(topic, persistRuntimeRows),
+    });
 
   const convene: ConveneDataSource = {
     estimateCost: async (panelName) =>
       createConveneSource({
         engineFactory: () => makeEngineFromKind(config.defaults.engine),
         db,
-        resolvePanel: async (name) => buildConvenePanel(name, "", false),
+        resolvePanel: buildConveneResolver("", false),
       }).estimateCost(panelName),
     streamDebate: async (panelName, topic, options, onEvent) =>
       createConveneSource({
         engineFactory: () => makeEngineFromKind(config.defaults.engine),
         db,
-        resolvePanel: async (name) => buildConvenePanel(name, topic, true),
+        resolvePanel: buildConveneResolver(topic, true),
       }).streamDebate(panelName, topic, options, onEvent),
   };
   const dataSources: TuiDataSources = {
