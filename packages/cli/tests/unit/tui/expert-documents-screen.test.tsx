@@ -169,4 +169,48 @@ describe("ExpertDocumentsScreen", () => {
     expect(lastFrame()).toContain("Loading documents…");
     unmount();
   });
+
+  it("warns when removal reports a failed index cleanup", async () => {
+    const remove = vi.fn(async () => ({ ftsCleanupFailed: true }));
+    const list = vi
+      .fn<ExpertDocumentsDataSource["list"]>()
+      .mockResolvedValueOnce([docFor({ id: "doc-1", filename: "roadmap.md" })])
+      .mockResolvedValueOnce([]);
+    const { stdin, lastFrame, unmount } = renderScreen({ list, remove });
+
+    await flush();
+    stdin.write("\r");
+    await flush();
+    stdin.write("y");
+    await flush();
+
+    expect(remove).toHaveBeenCalledWith("cto", "doc-1");
+    expect(lastFrame()).toContain("Re-train");
+    expect(lastFrame()).toContain("repair");
+    unmount();
+  });
+
+  it("shows a sanitized error when removal rejects", async () => {
+    const remove = vi.fn(
+      async (): Promise<{ readonly ftsCleanupFailed: boolean }> => {
+        throw new Error("\u001b[31mboom\nlater");
+      },
+    );
+    const documents: ExpertDocumentsDataSource = {
+      list: async () => [docFor({ id: "doc-1", filename: "roadmap.md" })],
+      remove,
+    };
+    const { stdin, lastFrame, unmount } = renderScreen(documents);
+
+    await flush();
+    stdin.write("\r");
+    await flush();
+    stdin.write("y");
+    await flush();
+
+    expect(remove).toHaveBeenCalledWith("cto", "doc-1");
+    expect(lastFrame()).toContain("Error: boom later");
+    expect(lastFrame()).not.toContain("\u001b[31m");
+    unmount();
+  });
 });
