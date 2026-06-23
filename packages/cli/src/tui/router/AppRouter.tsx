@@ -3,10 +3,12 @@ import { useApp, useInput, useStdout } from "ink";
 import { Route, Routes, useLocation, useNavigate } from "react-router";
 
 import type { HomeData } from "../adapters/home-data.js";
+import { buildPaletteCommands, type PaletteAction } from "../adapters/palette-commands.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { Footer } from "../components/layout/Footer.js";
 import { Header } from "../components/layout/Header.js";
 import { LeftNav } from "../components/navigation/LeftNav.js";
+import { CommandPalette } from "../components/overlays/CommandPalette.js";
 import { HelpModal } from "../components/overlays/HelpModal.js";
 import { computeLayout, type NavState } from "../lib/breakpoints.js";
 import { ExpertDetailScreen } from "../screens/ExpertDetailScreen.js";
@@ -28,7 +30,7 @@ export interface CouncilTUIProps {
   readonly initialRows?: number;
 }
 
-type FocusMode = "nav" | "help";
+type FocusMode = "nav" | "help" | "palette";
 type FocusTarget = "nav" | "main";
 
 const NAV_ITEMS = [
@@ -73,6 +75,7 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
   const location = useLocation();
   const navigate = useNavigate();
   const navId = routeToNavId(location.pathname);
+  const paletteCommands = buildPaletteCommands({ navId });
 
   const actualColumns = props.initialColumns ?? stdout?.columns ?? 80;
   const actualRows = props.initialRows ?? stdout?.rows ?? 24;
@@ -89,38 +92,58 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
       : { columns: actualColumns, rows: actualRows },
   );
 
-  useInput((input, key) => {
-    if (input === "\\") {
-      setNavOverride((current) => {
-        const currentNav = current ?? layout.navState;
-        return currentNav === "hidden" ? "expanded" : "hidden";
-      });
-      return;
-    }
-    if (key.tab) {
-      if (mode === "nav") setFocus((f) => (f === "nav" ? "main" : "nav"));
-      return;
-    }
-    if (input === "?") {
+  useInput(
+    (input, key) => {
+      if (key.ctrl && input === "k") {
+        setMode("palette");
+        return;
+      }
+      if (input === "\\") {
+        setNavOverride((current) => {
+          const currentNav = current ?? layout.navState;
+          return currentNav === "hidden" ? "expanded" : "hidden";
+        });
+        return;
+      }
+      if (key.tab) {
+        if (mode === "nav") setFocus((f) => (f === "nav" ? "main" : "nav"));
+        return;
+      }
+      if (input === "?") {
+        setMode("help");
+        return;
+      }
+      if (key.escape) {
+        if (mode === "help") {
+          setMode("nav");
+          return;
+        }
+        if (location.pathname !== ROUTES.home) {
+          navigate(-1);
+          return;
+        }
+        app.exit();
+        return;
+      }
+      if (input === "q") {
+        app.exit();
+      }
+    },
+    { isActive: mode !== "palette" },
+  );
+
+  const onPaletteSelect = (id: string): void => {
+    const action: PaletteAction | undefined = paletteCommands.find((c) => c.id === id);
+    if (action === undefined) return;
+    if (action.kind === "navigate" && action.route !== undefined) {
+      setMode("nav");
+      navigate(action.route);
+    } else if (action.kind === "help") {
       setMode("help");
-      return;
-    }
-    if (key.escape) {
-      if (mode === "help") {
-        setMode("nav");
-        return;
-      }
-      if (location.pathname !== ROUTES.home) {
-        navigate(-1);
-        return;
-      }
-      app.exit();
-      return;
-    }
-    if (input === "q") {
+    } else if (action.kind === "quit") {
       app.exit();
     }
-  });
+  };
 
   const header = (
     <Header
@@ -138,6 +161,7 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
         { key: "↑↓", label: "Nav" },
         { key: "Enter", label: "Select" },
         { key: "\\", label: "Toggle" },
+        { key: "^K", label: "Palette" },
         { key: "?", label: "Help" },
         { key: "q", label: "Quit" },
       ]}
@@ -170,6 +194,13 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
           onClose={() => setMode("nav")}
           isActive={mode === "help"}
           theme={theme}
+        />
+      ) : mode === "palette" ? (
+        <CommandPalette
+          commands={paletteCommands.map((c) => ({ id: c.id, label: c.label }))}
+          onSelect={onPaletteSelect}
+          onClose={() => setMode("nav")}
+          isActive={mode === "palette"}
         />
       ) : (
         <Routes>
