@@ -49,4 +49,23 @@ describe("HomeScreen", () => {
     expect(frame).not.toContain("[31m");
     unmount();
   });
+
+  it("shows ✓ for concluded sessions and • for convened", () => {
+    const { lastFrame, unmount } = render(
+      <HomeScreen
+        theme={theme}
+        data={{
+          counts: { sessions: 2, experts: 0, panels: 0 },
+          recent: [
+            { id: "s1", title: "Concluded session", when: "3d", status: "concluded" },
+            { id: "s2", title: "Active session", when: "1d", status: "convened" },
+          ],
+        }}
+      />,
+    );
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("✓");
+    expect(frame).toContain("•");
+    unmount();
+  });
 });
