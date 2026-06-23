@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ExpertListItem } from "../../../src/tui/adapters/experts-data.js";
 import type { PanelListItem } from "../../../src/tui/adapters/panels-data.js";
+import type { SessionListItem } from "../../../src/tui/adapters/sessions-data.js";
 import { DataProvider, type TuiDataSources } from "../../../src/tui/components/DataProvider.js";
 import { AppRouter } from "../../../src/tui/router/AppRouter.js";
 import { CouncilTUI } from "../../../src/tui/CouncilTUI.js";
@@ -25,6 +26,12 @@ const withExperts = (
 ): TuiDataSources => ({
   panels: { loadList: async () => [], loadDetail: async () => undefined },
   experts: { loadList, loadDetail: async () => undefined },
+});
+const withSessions = (
+  loadList: () => Promise<readonly SessionListItem[]> = async () => [],
+): TuiDataSources => ({
+  panels: { loadList: async () => [], loadDetail: async () => undefined },
+  sessions: { loadList },
 });
 
 describe("AppRouter", () => {
@@ -109,5 +116,33 @@ describe("AppRouter", () => {
     await flush();
     // Back on the panels list (navigate(-1)); the app did NOT exit.
     expect(lastFrame()).toMatch(/No panels/i);
+  });
+
+  it("wires the session detail route so activating a session row is not blank", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withSessions(async () => [
+          {
+            panelId: "p1",
+            panelName: "Acme",
+            topic: "",
+            debateCount: 1,
+            turnCount: 2,
+            latestStatus: "completed",
+            updatedAt: "2026-01-01T00:00:00Z",
+          },
+        ])}
+      >
+        <MemoryRouter initialEntries={["/sessions"]}>
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+    await flush();
+    // The sessions list renders the panel name.
+    expect(lastFrame()).toContain("Acme");
+    // Activating the row navigates to /sessions/:id, which AppRouter must render.
+    await flush(stdin, "\r");
+    expect(lastFrame()).toMatch(/Coming soon/i);
   });
 });
