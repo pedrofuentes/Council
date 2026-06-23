@@ -543,7 +543,7 @@ harness. Validate `ink-text-input` / `ink-select-input` under Ink 7 / React 19 v
 
 **Key files**: `src/tui/index.tsx`, `src/tui/CouncilTUI.tsx`, `src/tui/components/layout/*`, `src/tui/components/navigation/LeftNav.tsx`, `src/tui/screens/HomeScreen.tsx`, `src/bin/council.ts`
 
-### 9.3 Library Browse/Detail (read-only) ⬜
+### 9.3 Library Browse/Detail (read-only) ✅
 
 **Goal**: Browse and inspect Panels, Experts, and Sessions; discover actions via the command palette.
 
@@ -690,5 +690,6 @@ checks; opt-in TUI telemetry events.
 | Direct provider APIs | 8.4 | ⬜ Planned |
 | Published to npm as `@council-ai/cli` | 8 | ⬜ Planned |
 | Interactive TUI shell (alt-screen console) | 9.2 | ✅ Done |
+| TUI library browse/detail + command palette | 9.3 | ✅ Done |
 | Live convene + conclude in the TUI | 9.8 | ⬜ Planned |
 | TUI default on bare `council` (TTY) | 9.10 | ⬜ Planned |
