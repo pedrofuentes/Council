@@ -1,6 +1,6 @@
 import React from "react";
-import { Box, Text, useInput } from "ink";
-import { useLocation, useNavigate, useParams } from "react-router";
+import { Box, Text } from "ink";
+import { useLocation, useParams } from "react-router";
 
 import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
 import { useData } from "../components/DataProvider.js";
@@ -38,14 +38,6 @@ export function PanelDetailScreen(props: PanelDetailScreenProps): React.ReactEle
     [panels, name, source],
   );
   const state = useAsyncResource(loader);
-  const navigate = useNavigate();
-
-  useInput(
-    (_, key) => {
-      if (key.escape) navigate(-1);
-    },
-    { isActive: props.isActive ?? false },
-  );
 
   if (state.status === "loading") {
     return <Text>{props.theme.muted("Loading panel…")}</Text>;

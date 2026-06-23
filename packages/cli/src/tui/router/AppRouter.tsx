@@ -106,6 +106,10 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
         setMode("nav");
         return;
       }
+      if (location.pathname !== ROUTES.home) {
+        navigate(-1);
+        return;
+      }
       app.exit();
       return;
     }
