@@ -48,6 +48,7 @@ export function ExpertChatScreen(props: ExpertChatScreenProps): React.ReactEleme
   const streamingRef = React.useRef(false);
   const controllerRef = React.useRef<AbortController | undefined>(undefined);
   const unmountedRef = React.useRef(false);
+  const generationRef = React.useRef(0);
   const turnIdRef = React.useRef(0);
 
   React.useEffect(() => {
@@ -58,14 +59,28 @@ export function ExpertChatScreen(props: ExpertChatScreenProps): React.ReactEleme
   }, [setCaptured]);
 
   const setTranscriptIfMounted = React.useCallback(
-    (update: React.SetStateAction<readonly TranscriptTurn[]>): void => {
-      if (!unmountedRef.current) setTranscript(update);
+    (update: React.SetStateAction<readonly TranscriptTurn[]>, generation?: number): void => {
+      if (
+        !unmountedRef.current &&
+        (generation === undefined || generationRef.current === generation)
+      ) {
+        setTranscript(update);
+      }
     },
     [],
   );
 
+  const isCurrentGeneration = React.useCallback((generation: number): boolean => {
+    return !unmountedRef.current && generationRef.current === generation;
+  }, []);
+
   React.useEffect(() => {
     unmountedRef.current = false;
+    const generation = generationRef.current + 1;
+    generationRef.current = generation;
+    streamingRef.current = false;
+    controllerRef.current = undefined;
+    setIsStreaming(false);
     let cancelled = false;
 
     if (chat === undefined || chatEngine === undefined) {
@@ -74,14 +89,12 @@ export function ExpertChatScreen(props: ExpertChatScreenProps): React.ReactEleme
         unmountedRef.current = true;
       };
     }
-
     void (async (): Promise<void> => {
+      const openPromise = chatEngine.open(slug);
       try {
-        const [history, handle] = await Promise.all([
-          chat.loadHistory("expert", slug),
-          chatEngine.open(slug),
-        ]);
-        if (cancelled || unmountedRef.current) {
+        const history = await chat.loadHistory("expert", slug);
+        const handle = await openPromise;
+        if (cancelled || !isCurrentGeneration(generation)) {
           await handle.close();
           return;
         }
@@ -96,7 +109,8 @@ export function ExpertChatScreen(props: ExpertChatScreenProps): React.ReactEleme
           })),
         );
       } catch (loadError) {
-        if (!cancelled && !unmountedRef.current) {
+        await openPromise.then((handle) => handle.close()).catch(() => undefined);
+        if (!cancelled && isCurrentGeneration(generation)) {
           setError(toSingleLineDisplay(errorMessage(loadError)));
         }
       }
@@ -110,7 +124,7 @@ export function ExpertChatScreen(props: ExpertChatScreenProps): React.ReactEleme
       handleRef.current = undefined;
       if (handle !== undefined) void handle.close();
     };
-  }, [chat, chatEngine, slug]);
+  }, [chat, chatEngine, isCurrentGeneration, slug]);
 
   const submit = React.useCallback(
     (value: string): void => {
@@ -133,6 +147,8 @@ export function ExpertChatScreen(props: ExpertChatScreenProps): React.ReactEleme
       controllerRef.current = controller;
       const turnId = turnIdRef.current;
       turnIdRef.current += 1;
+      const generation = generationRef.current + 1;
+      generationRef.current = generation;
       const assistantId = `assistant-${String(turnId)}`;
       setTranscriptIfMounted((current) => [
         ...current,
@@ -146,19 +162,24 @@ export function ExpertChatScreen(props: ExpertChatScreenProps): React.ReactEleme
             handle.send,
             { expertId: handle.expertId, prompt, signal: controller.signal },
             (chunk) => {
-              setTranscriptIfMounted((current) =>
-                current.map((turn) =>
-                  turn.id === assistantId ? { ...turn, content: `${turn.content}${chunk}` } : turn,
-                ),
+              setTranscriptIfMounted(
+                (current) =>
+                  current.map((turn) =>
+                    turn.id === assistantId
+                      ? { ...turn, content: `${turn.content}${chunk}` }
+                      : turn,
+                  ),
+                generation,
               );
             },
           );
-          if (!result.aborted && !unmountedRef.current) {
+          if (!isCurrentGeneration(generation)) return;
+          if (!result.aborted) {
             const session =
               sessionIdRef.current === undefined
                 ? await chat.ensureSession("expert", slug)
                 : { id: sessionIdRef.current };
-            if (unmountedRef.current) return;
+            if (!isCurrentGeneration(generation)) return;
             sessionIdRef.current = session.id;
             await chat.persistTurn(session.id, {
               userContent: prompt,
@@ -168,11 +189,11 @@ export function ExpertChatScreen(props: ExpertChatScreenProps): React.ReactEleme
             });
           }
         } catch (streamError) {
-          if (!unmountedRef.current) {
+          if (isCurrentGeneration(generation)) {
             setError(toSingleLineDisplay(`Stream failed: ${errorMessage(streamError)}`));
           }
         } finally {
-          if (!unmountedRef.current) {
+          if (isCurrentGeneration(generation)) {
             streamingRef.current = false;
             controllerRef.current = undefined;
             setIsStreaming(false);
@@ -180,7 +201,7 @@ export function ExpertChatScreen(props: ExpertChatScreenProps): React.ReactEleme
         }
       })();
     },
-    [chat, setTranscriptIfMounted, slug],
+    [chat, isCurrentGeneration, setTranscriptIfMounted, slug],
   );
 
   useInput(
