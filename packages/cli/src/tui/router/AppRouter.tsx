@@ -19,6 +19,7 @@ import { ExpertFormScreen } from "../screens/ExpertFormScreen.js";
 import { ExpertTrainScreen } from "../screens/ExpertTrainScreen.js";
 import { ExpertsScreen } from "../screens/ExpertsScreen.js";
 import { HomeScreen } from "../screens/HomeScreen.js";
+import { ConvenePromptScreen } from "../screens/ConvenePromptScreen.js";
 import { PanelCreateScreen } from "../screens/PanelCreateScreen.js";
 import { PanelComposeScreen } from "../screens/PanelComposeScreen.js";
 import { PanelDeleteScreen } from "../screens/PanelDeleteScreen.js";
@@ -239,6 +240,14 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
           <Route
             path={ROUTES.panelDetail}
             element={<PanelDetailScreen theme={theme} isActive={mainActive} />}
+          />
+          <Route
+            path={ROUTES.convenePrompt}
+            element={<ConvenePromptScreen theme={theme} isActive={mainActive} />}
+          />
+          <Route
+            path={ROUTES.debateRun}
+            element={<PlaceholderScreen title="Debate run" theme={theme} />}
           />
           <Route
             path={ROUTES.experts}
