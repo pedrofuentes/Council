@@ -1,7 +1,7 @@
 import React from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
-import { useNavigate } from "react-router";
+import { useNavigate, useParams } from "react-router";
 
 import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
 import {
@@ -16,9 +16,11 @@ import type { SemanticTheme } from "../theme/tokens.js";
 
 export interface ExpertFormScreenProps {
   readonly theme: SemanticTheme;
+  readonly formMode?: "create" | "edit";
 }
 
-type FormMode = "nav" | "edit";
+type InputMode = "nav" | "edit";
+type LoadState = "loading" | "loaded" | "notfound";
 type FieldKind = "text" | "enum";
 
 interface FormField {
@@ -58,15 +60,21 @@ const FIELDS: readonly FormField[] = [
 ];
 
 export function ExpertFormScreen(props: ExpertFormScreenProps): React.ReactElement {
+  const formMode = props.formMode ?? "create";
   const data = useData();
   const expertAuthoring =
     (data.expertAuthoring as ExpertAuthoringSource | undefined) ?? CREATE_UNAVAILABLE;
   const { setCaptured } = useInputCapture();
   const navigate = useNavigate();
+  const params = useParams();
+  const editSlug = formMode === "edit" ? params.slug : undefined;
   const [values, setValues] = React.useState<ExpertFormValues>(() => emptyExpertForm());
   const [cursor, setCursor] = React.useState(0);
-  const [mode, setMode] = React.useState<FormMode>("nav");
+  const [mode, setMode] = React.useState<InputMode>("nav");
   const [editBuffer, setEditBuffer] = React.useState("");
+  const [loadState, setLoadState] = React.useState<LoadState>(
+    formMode === "edit" ? "loading" : "loaded",
+  );
   const [errors, setErrors] = React.useState<
     Readonly<Partial<Record<keyof ExpertFormValues, string>>>
   >({});
@@ -77,6 +85,32 @@ export function ExpertFormScreen(props: ExpertFormScreenProps): React.ReactEleme
       setCaptured(false);
     };
   }, [setCaptured]);
+
+  React.useEffect(() => {
+    if (formMode !== "edit") {
+      setLoadState("loaded");
+      return;
+    }
+
+    let cancelled = false;
+    setLoadState("loading");
+    void expertAuthoring.loadForEdit(editSlug ?? "").then((form) => {
+      if (cancelled) {
+        return;
+      }
+      if (form === undefined) {
+        setLoadState("notfound");
+        return;
+      }
+      setValues(form);
+      setErrors({});
+      setLoadState("loaded");
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [editSlug, expertAuthoring, formMode]);
 
   const visibleKind =
     mode === "edit" && editBuffer === "persona"
@@ -117,10 +151,14 @@ export function ExpertFormScreen(props: ExpertFormScreenProps): React.ReactEleme
   );
 
   const save = React.useCallback(async (): Promise<void> => {
-    const result = await expertAuthoring.create(values);
+    const result =
+      formMode === "edit"
+        ? await expertAuthoring.update(editSlug ?? "", values)
+        : await expertAuthoring.create(values);
     if (result.ok) {
       setErrors({});
-      navigate(`/experts/${encodeURIComponent(values.slug.trim())}`);
+      const destinationSlug = formMode === "edit" ? (editSlug ?? "") : values.slug.trim();
+      navigate(`/experts/${encodeURIComponent(destinationSlug)}`);
       return;
     }
     const nextErrors = errorsToRecord(result);
@@ -132,7 +170,7 @@ export function ExpertFormScreen(props: ExpertFormScreenProps): React.ReactEleme
         setCursor(index);
       }
     }
-  }, [expertAuthoring, navigate, values, visibleFields]);
+  }, [editSlug, expertAuthoring, formMode, navigate, values, visibleFields]);
 
   useInput(
     (input, key) => {
@@ -165,6 +203,9 @@ export function ExpertFormScreen(props: ExpertFormScreenProps): React.ReactEleme
       }
 
       if (key.return && selected.kind === "text") {
+        if (formMode === "edit" && selected.key === "slug") {
+          return;
+        }
         setEditBuffer(values[selected.key]);
         setMode("edit");
         setErrors((previous) => ({ ...previous, [selected.key]: undefined }));
@@ -180,7 +221,7 @@ export function ExpertFormScreen(props: ExpertFormScreenProps): React.ReactEleme
         setCursor((current) => Math.max(0, current - 1));
       }
     },
-    { isActive: mode === "nav" },
+    { isActive: mode === "nav" && loadState === "loaded" },
   );
 
   useInput(
@@ -231,8 +272,16 @@ export function ExpertFormScreen(props: ExpertFormScreenProps): React.ReactEleme
         setEditBuffer((value) => value + input);
       }
     },
-    { isActive: mode === "edit" },
+    { isActive: mode === "edit" && loadState === "loaded" },
   );
+
+  if (loadState === "loading") {
+    return <Text>{props.theme.muted("Loading expert…")}</Text>;
+  }
+
+  if (loadState === "notfound") {
+    return <Text>{props.theme.warn("Expert not found")}</Text>;
+  }
 
   return (
     <Box flexDirection="column">

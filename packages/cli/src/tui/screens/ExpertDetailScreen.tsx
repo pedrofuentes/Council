@@ -1,6 +1,6 @@
 import React from "react";
-import { Box, Text } from "ink";
-import { useParams } from "react-router";
+import { Box, Text, useInput } from "ink";
+import { useNavigate, useParams } from "react-router";
 
 import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
 import type { ExpertDetailView, ExpertsDataSource } from "../adapters/experts-data.js";
@@ -61,6 +61,7 @@ function renderDetail(detail: ExpertDetailView, theme: SemanticTheme): React.Rea
 
 export function ExpertDetailScreen(props: ExpertDetailScreenProps): React.ReactElement {
   const { slug } = useParams();
+  const navigate = useNavigate();
   const data = useData();
   const experts = data.experts as ExpertsDataSource | undefined;
   const loader = React.useCallback(
@@ -71,6 +72,14 @@ export function ExpertDetailScreen(props: ExpertDetailScreenProps): React.ReactE
     [experts, slug],
   );
   const state = useAsyncResource(loader);
+  useInput(
+    (input) => {
+      if (input === "e" && slug !== undefined) {
+        navigate(`/experts/${encodeURIComponent(slug)}/edit`);
+      }
+    },
+    { isActive: props.isActive ?? false },
+  );
 
   if (state.status === "loading") {
     return <Text>{props.theme.muted("Loading expert…")}</Text>;
