@@ -1,8 +1,26 @@
 export const ROUTES = {
   home: "/",
   panels: "/panels",
+  panelDetail: "/panels/:name",
   experts: "/experts",
+  expertDetail: "/experts/:slug",
   sessions: "/sessions",
+  sessionDetail: "/sessions/:id",
   chats: "/chats",
   settings: "/settings",
 } as const;
+
+const NAV_PREFIXES: readonly { readonly prefix: string; readonly id: string }[] = [
+  { prefix: "/panels", id: "panels" },
+  { prefix: "/experts", id: "experts" },
+  { prefix: "/sessions", id: "sessions" },
+  { prefix: "/chats", id: "chats" },
+  { prefix: "/settings", id: "settings" },
+];
+
+export function routeToNavId(pathname: string): string {
+  for (const { prefix, id } of NAV_PREFIXES) {
+    if (pathname === prefix || pathname.startsWith(`${prefix}/`)) return id;
+  }
+  return "home";
+}
