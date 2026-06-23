@@ -56,7 +56,7 @@ import { selectModelInteractively } from "../cli/first-run-model-select.js";
 import { renderBanner } from "../cli/renderers/banner.js";
 import { loadConfigWithMeta } from "../config/index.js";
 import { maybeNotifyUpdate } from "../core/version/index.js";
-import { shouldLaunchTui } from "../tui/lib/should-launch-tui.js";
+import { shouldLaunchTui, type LaunchStreams } from "../tui/lib/should-launch-tui.js";
 import { launchTui } from "../tui/index.js";
 
 type WriteCallback = (error?: Error | null) => void;
@@ -339,6 +339,33 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
   return program;
 }
 
+/**
+ * Dependencies for {@link maybeLaunchTui}. The `shouldLaunchTui`/`launchTui`
+ * seams are injectable so the entry-guard branch can be unit-tested without a
+ * real TTY or rendering the Ink app.
+ */
+export interface MaybeLaunchTuiDeps extends LaunchStreams {
+  readonly argv: readonly string[];
+  readonly shouldLaunchTui?: typeof shouldLaunchTui;
+  readonly launchTui?: () => Promise<void>;
+}
+
+/**
+ * TUI entry guard. When {@link shouldLaunchTui} accepts the invocation (bare
+ * `council` on a TTY with `COUNCIL_TUI=1`), launches the full-screen TUI and
+ * returns `true` so the caller skips command parsing. Otherwise returns
+ * `false` and the caller falls through to the existing CLI program.
+ */
+export async function maybeLaunchTui(deps: MaybeLaunchTuiDeps): Promise<boolean> {
+  const guard = deps.shouldLaunchTui ?? shouldLaunchTui;
+  const launch = deps.launchTui ?? launchTui;
+  if (guard(deps.argv, deps)) {
+    await launch();
+    return true;
+  }
+  return false;
+}
+
 // Only auto-parse when invoked as a script (not when imported by tests).
 const isMainModule =
   import.meta.url === new URL(`file://${process.argv[1] ?? ""}`).href ||
@@ -365,8 +392,7 @@ if (isMainModule) {
       // TUI entry guard: bare `council` on a TTY with COUNCIL_TUI=1 launches
       // the full-screen TUI. All other invocations (subcommands, non-TTY,
       // missing COUNCIL_TUI) fall through to the existing CLI.
-      if (shouldLaunchTui(process.argv, { stdout: process.stdout, env: process.env })) {
-        await launchTui();
+      if (await maybeLaunchTui({ argv: process.argv })) {
         return;
       }
       await buildProgram({ firstRunSetup: {} }).parseAsync(process.argv);
