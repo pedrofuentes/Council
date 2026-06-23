@@ -101,7 +101,7 @@ describe("ConvenePromptScreen", () => {
     });
 
     await flush();
-    stdin.write("Launch\u001B[31m roadmap");
+    stdin.write("Launch\u0007 roadmap");
     await flush();
     stdin.write("\r");
     await flush();
@@ -109,7 +109,7 @@ describe("ConvenePromptScreen", () => {
     await flush();
 
     expect(lastFrame()).toContain("RUN acme TOPIC Launch roadmap");
-    expect(lastFrame()).not.toContain("\u001B[31m");
+    expect(lastFrame()).not.toContain("\u0007");
   });
 
   it("cancels to the back-stack route on n or idle Escape", async () => {
