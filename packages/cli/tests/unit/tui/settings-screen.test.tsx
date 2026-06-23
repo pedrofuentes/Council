@@ -256,6 +256,41 @@ describe("SettingsScreen", () => {
     unmount();
   });
 
+  it("ignores Ctrl+S while editing a field instead of inserting it or saving", async () => {
+    const save = vi.fn(async () => undefined);
+    const { stdin, lastFrame, unmount } = renderSettings(async () => fields, save);
+    await flush();
+
+    // Select the number field and enter edit mode.
+    stdin.write("\u001B[B");
+    await flush();
+    stdin.write("\r");
+    await flush();
+
+    // Replace the seeded "3" with a valid value.
+    stdin.write("\u007F");
+    stdin.write("5");
+    await flush();
+
+    // Ctrl+S while still editing must be ignored: not typed into the buffer, not a save.
+    stdin.write("\u0013");
+    await flush();
+    const editingFrame = (lastFrame() ?? "").replace(ansiPattern, "");
+    expect(editingFrame).toContain("Max rounds: 5");
+    expect(editingFrame).not.toContain("Max rounds: 5s");
+    expect(save).not.toHaveBeenCalled();
+
+    // Commit the valid value; Ctrl+S in nav mode then saves the staged change.
+    stdin.write("\r");
+    await flush();
+    expect((lastFrame() ?? "").replace(ansiPattern, "")).toContain("*Max rounds: 5");
+    stdin.write("\u0013");
+    await flush();
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save).toHaveBeenCalledWith([{ path: "defaults.maxRounds", value: 5 }]);
+    unmount();
+  });
+
   it("toggles a boolean field and marks it dirty", async () => {
     const { stdin, lastFrame, unmount } = renderSettings(async () => fields);
     await flush();
