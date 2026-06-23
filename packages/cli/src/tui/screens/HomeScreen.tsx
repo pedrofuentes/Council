@@ -11,7 +11,7 @@ export interface HomeScreenProps {
   readonly theme: SemanticTheme;
 }
 
-const QUICK_ACTIONS: ReadonlyArray<{ key: string; label: string }> = [
+const QUICK_ACTIONS: readonly { key: string; label: string }[] = [
   { key: "c", label: "Convene" },
   { key: "e", label: "New expert" },
   { key: "p", label: "New panel" },
