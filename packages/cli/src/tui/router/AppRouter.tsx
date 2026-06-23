@@ -16,6 +16,7 @@ import { ExpertDetailScreen } from "../screens/ExpertDetailScreen.js";
 import { ExpertDeleteScreen } from "../screens/ExpertDeleteScreen.js";
 import { ExpertDocumentsScreen } from "../screens/ExpertDocumentsScreen.js";
 import { ExpertFormScreen } from "../screens/ExpertFormScreen.js";
+import { ExpertTrainScreen } from "../screens/ExpertTrainScreen.js";
 import { ExpertsScreen } from "../screens/ExpertsScreen.js";
 import { HomeScreen } from "../screens/HomeScreen.js";
 import { PanelDetailScreen } from "../screens/PanelDetailScreen.js";
@@ -232,6 +233,10 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
           <Route
             path={ROUTES.expertDocs}
             element={<ExpertDocumentsScreen theme={theme} isActive={mainActive} />}
+          />
+          <Route
+            path={ROUTES.expertTrain}
+            element={<ExpertTrainScreen theme={theme} isActive={mainActive} />}
           />
           <Route
             path={ROUTES.expertDetail}

@@ -4,12 +4,14 @@ import { render } from "ink";
 import { getCouncilDataHome, getCouncilHome, loadConfig } from "../config/index.js";
 import { FileExpertLibrary } from "../core/expert-library.js";
 import { createDocumentIndexer } from "../core/documents/indexer.js";
+import { createDocumentProcessor } from "../core/documents/processor.js";
 import { listTemplates, loadTemplate } from "../core/template-loader.js";
 import { createDatabase } from "../memory/db.js";
 import { ChatRepository } from "../memory/repositories/chat-repository.js";
 import { DebateRepository } from "../memory/repositories/debates.js";
 import { DocumentRepository } from "../memory/repositories/document-repository.js";
 import { ExpertRepository } from "../memory/repositories/experts.js";
+import { ProfileRepository } from "../memory/repositories/profile-repository.js";
 import { PanelLibraryRepository } from "../memory/repositories/panel-library-repo.js";
 import { PanelRepository } from "../memory/repositories/panels.js";
 import { TurnRepository } from "../memory/repositories/turns.js";
@@ -21,6 +23,8 @@ import { createExpertsDataSource } from "./adapters/experts-data.js";
 import { createPanelsDataSource } from "./adapters/panels-data.js";
 import { createSettingsDataSource } from "./adapters/config-settings.js";
 import { createSessionsDataSource } from "./adapters/sessions-data.js";
+import { createExpertTrainingSource, stageDocumentFiles } from "./adapters/expert-training.js";
+import { makeEngineFromKind } from "../cli/run-with-engine.js";
 import { createHomeDataSources } from "./adapters/home-data-sources.js";
 import { loadHomeData } from "./adapters/home-data.js";
 import { DataProvider, type TuiDataSources } from "./components/DataProvider.js";
@@ -41,6 +45,7 @@ export async function launchTui(): Promise<void> {
 
   const homeData = await loadHomeData(sources);
   const expertLibrary = new FileExpertLibrary(dataHome, db);
+  const docsDirFor = (slug: string): string => path.join(dataHome, "experts", slug, "docs");
   const dataSources: TuiDataSources = {
     panels: createPanelsDataSource({
       library: new PanelLibraryRepository(db),
@@ -53,6 +58,28 @@ export async function launchTui(): Promise<void> {
     documents: createExpertDocumentsSource({
       repo: new DocumentRepository(db),
       indexer: createDocumentIndexer(db),
+    }),
+    training: createExpertTrainingSource({
+      loadExpertKind: async (slug) => (await expertLibrary.get(slug))?.kind,
+      stageFiles: (slug, paths) => stageDocumentFiles(docsDirFor(slug), paths),
+      docsPathFor: docsDirFor,
+      createProcessor: (engine) =>
+        createDocumentProcessor({
+          engine,
+          documentRepo: new DocumentRepository(db),
+          profileRepo: new ProfileRepository(db),
+          indexer: createDocumentIndexer(db),
+          config: {
+            supportedFormats: config.expert.supportedFormats,
+            recencyHalfLifeDays: config.expert.recencyHalfLifeDays,
+            maxFileSizeBytes: config.documents.maxFileSizeMB * 1024 * 1024,
+            aiFallback: {
+              mode: config.documents.aiExtraction,
+              allowedExtensions: config.documents.aiExtractionAllowedExtensions,
+            },
+          },
+        }),
+      engineFactory: () => makeEngineFromKind(config.defaults.engine),
     }),
     settings: createSettingsDataSource({ loadConfig, updateConfigFields }),
     sessions: createSessionsDataSource({
