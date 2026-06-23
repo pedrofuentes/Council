@@ -193,6 +193,10 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
             path={ROUTES.sessions}
             element={<SessionsScreen theme={theme} isActive={mainActive} />}
           />
+          <Route
+            path={ROUTES.sessionDetail}
+            element={<PlaceholderScreen title="Session" theme={theme} />}
+          />
           <Route path={ROUTES.chats} element={<PlaceholderScreen title="Chats" theme={theme} />} />
           <Route
             path={ROUTES.settings}
