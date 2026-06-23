@@ -126,7 +126,10 @@ export function createPanelComposeSource(deps: PanelComposeDeps): PanelComposeDa
           ...(definition.defaults?.maxRounds !== undefined
             ? { maxRounds: definition.defaults.maxRounds }
             : {}),
-          ...(definition.defaults?.model !== undefined ? { model: definition.defaults.model } : {}),
+          // The composer is untrusted: never persist a model it chose (a
+          // prompt-injected defaults.model would silently reroute the panel).
+          // Always pin the trusted, config-derived default model.
+          model: deps.defaultModel,
         });
         return { panelName: definition.name };
       } catch (err) {
