@@ -63,7 +63,7 @@ describe("SessionDetailScreen", () => {
     expect(lastFrame()).not.toContain("second\nline");
   });
 
-  it("renders not found when the transcript loader returns undefined", async () => {
+  it("renders a no-transcript message when the loader returns undefined", async () => {
     const { lastFrame } = render(
       <DataProvider value={withTranscript(async () => undefined)}>
         <MemoryRouter initialEntries={[{ pathname: "/sessions/p1", state: { panelName: "Acme" } }]}>
@@ -76,10 +76,10 @@ describe("SessionDetailScreen", () => {
 
     await flush();
 
-    expect(lastFrame()).toMatch(/not found/i);
+    expect(lastFrame()).toMatch(/No transcript available/i);
   });
 
-  it("renders not found when router state has no panelName", async () => {
+  it("renders a no-transcript message when router state has no panelName", async () => {
     const { lastFrame } = render(
       <DataProvider
         value={withTranscript(async () => {
@@ -96,7 +96,27 @@ describe("SessionDetailScreen", () => {
 
     await flush();
 
-    expect(lastFrame()).toMatch(/not found/i);
+    expect(lastFrame()).toMatch(/No transcript available/i);
+  });
+
+  it("renders an error state when the transcript loader rejects", async () => {
+    const { lastFrame } = render(
+      <DataProvider
+        value={withTranscript(async () => {
+          throw new Error("db blew up");
+        })}
+      >
+        <MemoryRouter initialEntries={[{ pathname: "/sessions/p1", state: { panelName: "Acme" } }]}>
+          <Routes>
+            <Route path="/sessions/:id" element={<SessionDetailScreen theme={theme} isActive />} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+
+    expect(lastFrame()).toMatch(/Failed to load session/i);
   });
 
   it("renders an empty transcript message", async () => {
