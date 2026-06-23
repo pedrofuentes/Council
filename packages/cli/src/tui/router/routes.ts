@@ -16,6 +16,7 @@ export const ROUTES = {
   sessions: "/sessions",
   sessionDetail: "/sessions/:id",
   chats: "/chats",
+  chatExpert: "/chat/expert/:slug",
   settings: "/settings",
 } as const;
 
@@ -24,6 +25,7 @@ const NAV_PREFIXES: readonly { readonly prefix: string; readonly id: string }[] 
   { prefix: "/experts", id: "experts" },
   { prefix: "/sessions", id: "sessions" },
   { prefix: "/chats", id: "chats" },
+  { prefix: "/chat", id: "chats" },
   { prefix: "/settings", id: "settings" },
 ];
 

@@ -26,7 +26,12 @@ import { createPanelsDataSource } from "./adapters/panels-data.js";
 import { createSettingsDataSource } from "./adapters/config-settings.js";
 import { createSessionsDataSource } from "./adapters/sessions-data.js";
 import { createExpertTrainingSource, stageDocumentFiles } from "./adapters/expert-training.js";
+import { createChatSessionSource } from "./adapters/chat-session.js";
+import { createChatEngineSource } from "./adapters/chat-engine-session.js";
 import { makeEngineFromKind } from "../cli/run-with-engine.js";
+import { buildExpertSpec, CHAT_TASK_DESCRIPTION } from "../cli/commands/chat/shared.js";
+import { getExpertPanelMemberships } from "../core/panel-membership-query.js";
+import type { PanelMembership } from "../core/prompt-builder.js";
 import { createHomeDataSources } from "./adapters/home-data-sources.js";
 import { loadHomeData } from "./adapters/home-data.js";
 import { DataProvider, type TuiDataSources } from "./components/DataProvider.js";
@@ -47,6 +52,7 @@ export async function launchTui(): Promise<void> {
 
   const homeData = await loadHomeData(sources);
   const expertLibrary = new FileExpertLibrary(dataHome, db);
+  const profileRepo = new ProfileRepository(db);
   const panelAuthoring = createPanelAuthoringSource({
     panelRepo: new PanelLibraryRepository(db),
     expertExists: async (slug) => (await expertLibrary.get(slug)) !== null,
@@ -115,6 +121,28 @@ export async function launchTui(): Promise<void> {
         } catch {
           return undefined;
         }
+      },
+    }),
+    chat: createChatSessionSource({ chat: new ChatRepository(db) }),
+    chatEngine: createChatEngineSource({
+      engineFactory: () => makeEngineFromKind(config.defaults.engine),
+      buildSpec: async (slug) => {
+        const expert = await expertLibrary.get(slug);
+        if (expert === null) {
+          throw new Error(`Expert "${slug}" not found`);
+        }
+        const profile =
+          expert.kind === "persona"
+            ? ((await profileRepo.findBySlug(slug)) ?? undefined)
+            : undefined;
+        let memberships: readonly PanelMembership[] = [];
+        try {
+          memberships = await getExpertPanelMemberships(expert.slug, db);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.warn(`Could not load panel memberships for cross-panel context: ${message}`);
+        }
+        return buildExpertSpec(expert, config, CHAT_TASK_DESCRIPTION, profile, memberships);
       },
     }),
   };

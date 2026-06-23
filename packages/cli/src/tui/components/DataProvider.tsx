@@ -9,6 +9,8 @@ import type { PanelComposeDataSource } from "../adapters/panel-compose.js";
 import type { PanelsDataSource } from "../adapters/panels-data.js";
 import type { SettingsDataSource } from "../adapters/config-settings.js";
 import type { SessionsDataSource } from "../adapters/sessions-data.js";
+import type { ChatSessionDataSource } from "../adapters/chat-session.js";
+import type { ChatEngineSource } from "../adapters/chat-engine-session.js";
 
 export interface TuiDataSources {
   readonly panels: PanelsDataSource;
@@ -20,6 +22,8 @@ export interface TuiDataSources {
   readonly training?: ExpertTrainingDataSource;
   readonly settings?: SettingsDataSource;
   readonly sessions?: SessionsDataSource;
+  readonly chat?: ChatSessionDataSource;
+  readonly chatEngine?: ChatEngineSource;
 }
 
 export interface DataProviderProps {
