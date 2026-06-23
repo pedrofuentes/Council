@@ -526,7 +526,7 @@ harness. Validate `ink-text-input` / `ink-select-input` under Ink 7 / React 19 v
 
 **Key files**: `src/tui/components/`, `src/tui/hooks/`, `tests/unit/tui/`
 
-### 9.2 App Shell & Navigation ⬜
+### 9.2 App Shell & Navigation ✅
 
 **Goal**: A navigable full-screen shell with the collapsible left nav and a Home dashboard.
 
@@ -689,6 +689,6 @@ checks; opt-in TUI telemetry events.
 | GitHub Action | 8.2 | ⬜ Planned |
 | Direct provider APIs | 8.4 | ⬜ Planned |
 | Published to npm as `@council-ai/cli` | 8 | ⬜ Planned |
-| Interactive TUI shell (alt-screen console) | 9.2 | ⬜ Planned |
+| Interactive TUI shell (alt-screen console) | 9.2 | ✅ Done |
 | Live convene + conclude in the TUI | 9.8 | ⬜ Planned |
 | TUI default on bare `council` (TTY) | 9.10 | ⬜ Planned |

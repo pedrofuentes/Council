@@ -19,6 +19,14 @@
 
 <!-- Add new learnings below this line, most recent first -->
 
+### [2026-06-23] TUI app shell (9.2) — entry files must be thin glue; extract testable seams
+**Context**: Closing milestone 9.2 (App Shell & Navigation, PRs #1571–#1585). The final PR (#1585, `CouncilTUI` root + `launchTui` entry + bare-`council` launch guard) was Sentinel-REJECTED with two 🔴, both for **untested behavior-bearing logic living in entry files**: (1) the launch guard was inline inside `bin/council.ts`'s `if (isMainModule)` block (never executed under test), and (2) `tui/index.tsx` held `formatRelativeTime` + the session→view-model mapping + count wiring with no tests.
+**Learning**:
+1. **Entry files (`tui/index.tsx` `launchTui`, `bin/council.ts` `isMainModule`) must contain ONLY thin I/O glue.** Any data-mapping, view-model wiring, or decision logic must be extracted into a tested `.ts` module — Sentinel treats untested logic there as 🔴, NOT exempt "glue". The fix extracted `createHomeDataSources`/`formatRelativeTime`/`toRecentSession` into `src/tui/adapters/home-data-sources.ts` (100% covered) and a `maybeLaunchTui(deps)` seam into `bin/council.ts`, both test-first.
+2. **`.tsx` files and `src/bin/**` are OUTSIDE the coverage gate** (`vitest.config.ts` `include: ["src/**/*.ts"]`, `exclude: [..., "src/bin/**"]`). Logic left in them is neither measured nor easily unit-tested — another reason to move it into a coverage-measured `.ts` adapter.
+3. **For guards trapped in non-testable blocks, export an injectable seam.** `maybeLaunchTui({ argv, stdout?, env?, shouldLaunchTui?, launchTui? })` returns `boolean` (true → launched, skip parse), letting a unit test drive the real guard with a fake `launchTui` instead of rendering.
+**Impact**: For 9.3–9.10, build each screen's data wiring as a tested `tui/adapters/*.ts` from the start and keep `index.tsx`/route components as thin shells. Extract a testable seam for any logic that would otherwise sit in an entry/`isMainModule` block.
+
 ### [2026-06-21] TUI spike (9.1) — Ink 7 testing gotchas & Sentinel test-coverage patterns
 **Context**: Building the interactive-TUI de-risk primitives under `packages/cli/src/tui/` (milestone 9.1, PRs #1556–#1563). Several component PRs drew Sentinel REJECTED/CONDITIONAL verdicts — all on **test quality**, not implementation bugs.
 **Learning**:
