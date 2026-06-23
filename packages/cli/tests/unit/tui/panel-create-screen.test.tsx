@@ -252,3 +252,52 @@ describe("PanelCreateScreen — cancel", () => {
     unmount();
   });
 });
+
+describe("PanelCreateScreen — cancel during in-flight create", () => {
+  it("ignores Esc while a create is in flight (does not navigate back)", async () => {
+    const create = vi.fn<
+      Parameters<PanelAuthoringDataSource["create"]>,
+      ReturnType<PanelAuthoringDataSource["create"]>
+    >(() => new Promise<void>(() => undefined));
+    const value = {
+      panels: { loadList: async () => [], loadDetail: async () => undefined },
+      experts: {
+        loadList: async () => experts,
+        loadDetail: async () => undefined,
+      },
+      panelAuthoring: createAuthoring(create),
+    } as TuiDataSources;
+
+    const { stdin, lastFrame, unmount } = render(
+      <InputCaptureProvider>
+        <DataProvider value={value}>
+          <MemoryRouter initialEntries={["/panels", "/panels/new"]}>
+            <Routes>
+              <Route path="/panels" element={<Text>PANELS LIST</Text>} />
+              <Route path="/panels/new" element={<PanelCreateScreen theme={theme} isActive />} />
+            </Routes>
+          </MemoryRouter>
+        </DataProvider>
+      </InputCaptureProvider>,
+    );
+
+    await flush();
+    stdin.write("p1");
+    await flush();
+    stdin.write("\t");
+    await flush();
+    stdin.write(" ");
+    await flush();
+    stdin.write("\r");
+    await flush();
+
+    expect(create).toHaveBeenCalledTimes(1);
+
+    stdin.write("\u001B");
+    await new Promise((r) => setTimeout(r, 140));
+
+    expect(lastFrame()).not.toContain("PANELS LIST");
+    expect(lastFrame()).toContain("Members:");
+    unmount();
+  });
+});
