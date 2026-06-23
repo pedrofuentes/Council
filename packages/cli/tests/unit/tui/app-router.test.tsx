@@ -10,6 +10,7 @@ import type {
   SessionTranscriptView,
 } from "../../../src/tui/adapters/sessions-data.js";
 import type { SettingsFieldState } from "../../../src/tui/adapters/config-settings.js";
+import type { ExpertAuthoringSource } from "../../../src/tui/adapters/expert-authoring.js";
 import { DataProvider, type TuiDataSources } from "../../../src/tui/components/DataProvider.js";
 import { AppRouter } from "../../../src/tui/router/AppRouter.js";
 import { CouncilTUI } from "../../../src/tui/CouncilTUI.js";
@@ -44,6 +45,39 @@ const withSettings = (load: () => Promise<readonly SettingsFieldState[]>): TuiDa
     panels: { loadList: async () => [], loadDetail: async () => undefined },
     settings: { load, save: async () => undefined },
   }) as TuiDataSources;
+const withExpertAuthoring = (): TuiDataSources => {
+  const authoring: ExpertAuthoringSource = {
+    loadForEdit: async () => undefined,
+    create: async (values) => ({
+      ok: true,
+      definition: {
+        slug: values.slug.trim(),
+        displayName: values.displayName.trim(),
+        role: values.role.trim(),
+        expertise: { weightedEvidence: ["evidence"], referenceCases: [], notExpertIn: [] },
+        epistemicStance: "stance",
+        kind: values.kind,
+      },
+    }),
+    update: async (_slug, values) => ({
+      ok: true,
+      definition: {
+        slug: values.slug.trim(),
+        displayName: values.displayName.trim(),
+        role: values.role.trim(),
+        expertise: { weightedEvidence: ["evidence"], referenceCases: [], notExpertIn: [] },
+        epistemicStance: "stance",
+        kind: values.kind,
+      },
+    }),
+    remove: async () => ({ affectedPanels: [] }),
+    affectedPanels: async () => [],
+  };
+  return {
+    panels: { loadList: async () => [], loadDetail: async () => undefined },
+    expertAuthoring: authoring,
+  };
+};
 
 describe("AppRouter", () => {
   it("renders the Panels empty state on the /panels route", async () => {
@@ -105,6 +139,23 @@ describe("AppRouter", () => {
     expect(lastFrame()).toContain("Default model: gpt-4o");
     expect(lastFrame()).toContain("↑↓ move · Enter edit · Ctrl+S save · Esc back");
     expect(lastFrame()).not.toContain("Coming soon");
+  });
+
+  it("renders the ExpertFormScreen on the static /experts/new route", async () => {
+    const { lastFrame } = render(
+      <DataProvider value={withExpertAuthoring()}>
+        <MemoryRouter initialEntries={["/experts/new"]}>
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+
+    expect(lastFrame()).toContain("Slug:");
+    expect(lastFrame()).toContain("Kind: generic");
+    expect(lastFrame()).toContain("↑↓ move · Enter edit · Ctrl+S save · Esc back");
+    expect(lastFrame()).not.toContain("Expert not found");
   });
 
   it("focuses the nav with Tab and navigates to the chosen section on Enter", async () => {

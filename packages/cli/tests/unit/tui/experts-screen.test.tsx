@@ -24,6 +24,10 @@ function SlugProbe(): React.ReactElement {
   return <Text>EXPERT {params.slug}</Text>;
 }
 
+function NewExpertProbe(): React.ReactElement {
+  return <Text>NEW EXPERT</Text>;
+}
+
 describe("ExpertsScreen", () => {
   it("renders loaded experts with panel counts", async () => {
     const { lastFrame } = render(
@@ -120,6 +124,49 @@ describe("ExpertsScreen", () => {
     await flush();
 
     expect(lastFrame()).toContain("EXPERT cto/lead");
+  });
+
+  it("navigates to the new expert route on n only when active", async () => {
+    const experts: readonly ExpertListItem[] = [
+      {
+        slug: "cto",
+        displayName: "Chief Tech",
+        role: "Technology",
+        kind: "generic",
+        panelCount: 2,
+      },
+    ];
+    const inactive = render(
+      <DataProvider value={withExperts(async () => experts)}>
+        <MemoryRouter initialEntries={["/experts"]}>
+          <Routes>
+            <Route path="/experts" element={<ExpertsScreen theme={theme} isActive={false} />} />
+            <Route path="/experts/new" element={<NewExpertProbe />} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+    await flush();
+    inactive.stdin.write("n");
+    await flush();
+    expect(inactive.lastFrame()).not.toContain("NEW EXPERT");
+    inactive.unmount();
+
+    const active = render(
+      <DataProvider value={withExperts(async () => experts)}>
+        <MemoryRouter initialEntries={["/experts"]}>
+          <Routes>
+            <Route path="/experts" element={<ExpertsScreen theme={theme} isActive />} />
+            <Route path="/experts/new" element={<NewExpertProbe />} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+    await flush();
+    active.stdin.write("n");
+    await flush();
+    expect(active.lastFrame()).toContain("NEW EXPERT");
+    active.unmount();
   });
 
   it("uses an empty list when the experts source is absent", async () => {
