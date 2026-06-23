@@ -43,4 +43,43 @@ describe("CouncilTUI", () => {
     expect((lastFrame() ?? "").toLowerCase()).not.toContain("keyboard shortcuts");
     unmount();
   });
+
+  it("toggles nav with \\ key", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <CouncilTUI homeData={homeData} model="m" env={{ NO_COLOR: "1" }} initialColumns={140} initialRows={40} />,
+    );
+    await flush();
+    const initial = lastFrame() ?? "";
+    expect(initial).toContain("Panels"); // nav visible
+    stdin.write("\\");
+    await flush();
+    const toggled = lastFrame() ?? "";
+    expect(toggled).not.toContain("Panels"); // nav hidden
+    stdin.write("\\");
+    await flush();
+    const restored = lastFrame() ?? "";
+    expect(restored).toContain("Panels"); // nav visible again
+    unmount();
+  });
+
+  it("handles mode state correctly (help vs nav focus)", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <CouncilTUI homeData={homeData} model="m" env={{ NO_COLOR: "1" }} initialColumns={140} initialRows={40} />,
+    );
+    await flush();
+    // Open help - mode switches to "help"
+    stdin.write("?");
+    await flush();
+    expect((lastFrame() ?? "").toLowerCase()).toContain("keyboard shortcuts");
+    // Nav should be inactive while help is open
+    stdin.write("j"); // nav key should be ignored in help mode
+    await flush();
+    // Close help - mode switches back to "nav"
+    await sleep(20);
+    stdin.write("\u001b");
+    await sleep(120);
+    const afterHelp = lastFrame() ?? "";
+    expect(afterHelp.toLowerCase()).not.toContain("keyboard shortcuts");
+    unmount();
+  });
 });
