@@ -14,6 +14,7 @@ import type { ExpertAuthoringSource } from "../../../src/tui/adapters/expert-aut
 import type { ExpertDocumentsDataSource } from "../../../src/tui/adapters/expert-documents.js";
 import type { ExpertTrainingDataSource } from "../../../src/tui/adapters/expert-training.js";
 import type { PanelAuthoringDataSource } from "../../../src/tui/adapters/panel-authoring.js";
+import type { PanelComposeDataSource } from "../../../src/tui/adapters/panel-compose.js";
 import { DataProvider, type TuiDataSources } from "../../../src/tui/components/DataProvider.js";
 import { AppRouter } from "../../../src/tui/router/AppRouter.js";
 import { CouncilTUI } from "../../../src/tui/CouncilTUI.js";
@@ -57,6 +58,21 @@ const withPanelCreate = (): TuiDataSources =>
       delete: async () => undefined,
     } satisfies PanelAuthoringDataSource,
   }) as TuiDataSources;
+
+const withPanelCompose = (): TuiDataSources =>
+  ({
+    panels: { loadList: async () => [], loadDetail: async () => undefined },
+    panelCompose: {
+      compose: async () => ({
+        name: "Composed Panel",
+        description: null,
+        experts: [],
+        definition: { name: "composed-panel", experts: [] },
+      }),
+      persist: async () => ({ panelName: "composed-panel" }),
+    } satisfies PanelComposeDataSource,
+  }) as TuiDataSources;
+
 const withPanelMembers = (): TuiDataSources =>
   ({
     panels: {
@@ -204,6 +220,18 @@ describe("AppRouter", () => {
     );
     await flush();
     expect(lastFrame()).toMatch(/No panels/i);
+  });
+
+  it("renders the panel compose screen on the literal /panels/compose route", async () => {
+    const { lastFrame } = render(
+      <DataProvider value={withPanelCompose()}>
+        <MemoryRouter initialEntries={["/panels/compose"]}>
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+    await flush();
+    expect(lastFrame()).toMatch(/Auto-compose panel/i);
   });
 
   it("renders the Experts empty state on the /experts route", async () => {
