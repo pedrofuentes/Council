@@ -2,7 +2,7 @@ import React from "react";
 import { Box, Text, useInput } from "ink";
 import { useNavigate, useParams } from "react-router";
 
-import { stripControlChars, toSingleLineDisplay } from "../../cli/strip-control-chars.js";
+import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
 import type { ExpertMemoryDataSource, ExpertMemoryView } from "../adapters/expert-memory.js";
 import type { ExpertDetailView, ExpertsDataSource } from "../adapters/experts-data.js";
 import { useData } from "../components/DataProvider.js";
@@ -71,7 +71,7 @@ function renderMemoryList(
     <>
       <Text>{theme.accent(toSingleLineDisplay(label))}</Text>
       {items.map((item, index) => (
-        <Text key={`${label}-${String(index)}`}>{stripControlChars(`  ${item}`)}</Text>
+        <Text key={`${label}-${String(index)}`}>{toSingleLineDisplay(`  ${item}`)}</Text>
       ))}
     </>
   );
@@ -106,7 +106,7 @@ function renderMemorySection(
     <Box flexDirection="column">
       <Text>{theme.accent("Memory")}</Text>
       <Text>{theme.accent(toSingleLineDisplay("Communication Style"))}</Text>
-      <Text>{stripControlChars(view.communicationStyle)}</Text>
+      <Text>{toSingleLineDisplay(view.communicationStyle)}</Text>
       {renderMemoryList("Decision Patterns", view.decisionPatterns, theme)}
       {renderMemoryList("Biases", view.biases, theme)}
       {renderMemoryList("Vocabulary", view.vocabulary, theme)}
