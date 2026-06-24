@@ -3,7 +3,7 @@ import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { useNavigate, useParams } from "react-router";
 
-import { stripControlChars, toSingleLineDisplay } from "../../cli/strip-control-chars.js";
+import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
 import { streamTurn } from "../adapters/chat-engine.js";
 import type { PanelChatHandle } from "../adapters/chat-engine-session.js";
 import { useData } from "../components/DataProvider.js";
@@ -33,9 +33,9 @@ function errorMessage(error: unknown): string {
 }
 
 function renderTurn(turn: TranscriptTurn): string {
-  if (turn.role === "notice") return stripControlChars(turn.content);
+  if (turn.role === "notice") return toSingleLineDisplay(turn.content);
   const label = turn.role === "user" ? "You" : (turn.expertSlug ?? "panel");
-  return `${toSingleLineDisplay(label)}: ${stripControlChars(turn.content)}`;
+  return `${toSingleLineDisplay(label)}: ${toSingleLineDisplay(turn.content)}`;
 }
 
 function findMember(handle: PanelChatHandle, targetSlug: string): PanelMember | undefined {
