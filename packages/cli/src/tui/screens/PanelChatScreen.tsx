@@ -18,7 +18,7 @@ export interface PanelChatScreenProps {
 
 interface TranscriptTurn {
   readonly id: string;
-  readonly role: "user" | "expert" | "notice";
+  readonly role: "user" | "expert";
   readonly expertSlug: string | null;
   readonly content: string;
 }
@@ -33,7 +33,6 @@ function errorMessage(error: unknown): string {
 }
 
 function renderTurn(turn: TranscriptTurn): string {
-  if (turn.role === "notice") return toSingleLineDisplay(turn.content);
   const label = turn.role === "user" ? "You" : (turn.expertSlug ?? "panel");
   return `${toSingleLineDisplay(label)}: ${toSingleLineDisplay(turn.content)}`;
 }
@@ -167,16 +166,7 @@ export function PanelChatScreen(props: PanelChatScreenProps): React.ReactElement
       }
       if (parsed.type === "convene") {
         setMessage("");
-        setTranscriptIfMounted((current) => [
-          ...current,
-          {
-            id: `notice-${String(turnIdRef.current)}`,
-            role: "notice",
-            expertSlug: null,
-            content: "convene from chat is coming in 9.8",
-          },
-        ]);
-        turnIdRef.current += 1;
+        navigate(`/convene/${encodeURIComponent(name)}`);
         return;
       }
 
@@ -256,7 +246,7 @@ export function PanelChatScreen(props: PanelChatScreenProps): React.ReactElement
         }
       })();
     },
-    [chat, isCurrentGeneration, name, setTranscriptIfMounted],
+    [chat, isCurrentGeneration, name, navigate, setTranscriptIfMounted],
   );
 
   useInput(

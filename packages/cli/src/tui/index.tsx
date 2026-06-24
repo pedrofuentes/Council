@@ -41,6 +41,7 @@ import {
 } from "./adapters/convene-resolve.js";
 import { createExpertTrainingSource, stageDocumentFiles } from "./adapters/expert-training.js";
 import { createChatSessionSource } from "./adapters/chat-session.js";
+import { createChatsDataSource } from "./adapters/chats-data.js";
 import { createChatEngineSource } from "./adapters/chat-engine-session.js";
 import { makeEngineFromKind } from "../cli/run-with-engine.js";
 import { buildExpertSpec, CHAT_TASK_DESCRIPTION } from "../cli/commands/chat/shared.js";
@@ -236,6 +237,7 @@ export async function launchTui(): Promise<void> {
       },
     }),
     chat: createChatSessionSource({ chat: new ChatRepository(db) }),
+    chats: createChatsDataSource({ chat: new ChatRepository(db) }),
     chatEngine: createChatEngineSource({
       engineFactory: () => makeEngineFromKind(config.defaults.engine),
       buildSpec: async (slug) => {
