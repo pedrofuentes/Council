@@ -46,13 +46,18 @@ function makePanel(overrides: Partial<PanelDefinition> = {}): PanelDefinition {
   };
 }
 
-function createResolver(panel: PanelDefinition): ReturnType<typeof createConvenePanelResolver> {
+function createResolver(
+  panel: PanelDefinition,
+  getMembers: (panelName: string) => Promise<readonly string[]> = async () =>
+    panel.experts.map((entry) => (typeof entry === "string" ? entry : entry.slug)),
+): ReturnType<typeof createConvenePanelResolver> {
   return createConvenePanelResolver({
     loadPanel: async (name, dataHome) => {
       expect(name).toBe("launch-panel");
       expect(dataHome).toBe("/council-data");
       return panel;
     },
+    getMembers,
     dataHome: "/council-data",
     config,
     buildSpec: async (slug, panelDefaultModel) => expert(slug, panelDefaultModel),
@@ -62,6 +67,20 @@ function createResolver(panel: PanelDefinition): ReturnType<typeof createConvene
     }),
   });
 }
+
+describe("createConvenePanelResolver — membership source", () => {
+  it("sources members from the live DB (getMembers), not the stale YAML experts", async () => {
+    // YAML still lists [cto, pm] but the panel's members were edited in the DB to [cto, solo].
+    const resolve = createResolver(makePanel({ experts: ["cto", "pm"] }), async () => [
+      "cto",
+      "solo",
+    ]);
+
+    const resolved = await resolve("launch-panel");
+
+    expect(resolved.experts.map((spec) => spec.slug)).toEqual(["cto", "solo"]);
+  });
+});
 
 describe("createConvenePanelResolver", () => {
   it("uses saved structured panel defaults for config, model threading, and multi-expert phases", async () => {
