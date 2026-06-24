@@ -1,4 +1,5 @@
 import path from "node:path";
+import * as fs from "node:fs/promises";
 import { ulid } from "ulid";
 import { render } from "ink";
 
@@ -31,6 +32,9 @@ import { createPanelsDataSource } from "./adapters/panels-data.js";
 import { createSettingsDataSource } from "./adapters/config-settings.js";
 import { createSessionsDataSource } from "./adapters/sessions-data.js";
 import { createConcludeSource } from "./adapters/conclude.js";
+import { createExportSource } from "./adapters/export-view.js";
+import { renderAdr, renderJson, renderMarkdown } from "../cli/commands/export.js";
+import { renderShare } from "../cli/commands/export-share.js";
 import {
   createConveneSource,
   type ConveneDataSource,
@@ -244,6 +248,22 @@ export async function launchTui(): Promise<void> {
       model: config.defaults.model ?? DEFAULT_MODEL,
       maxTranscriptChars: config.conclude.maxTranscriptChars,
     }),
+    export: {
+      ...createExportSource({
+        loadTranscript: async (panelName: string, debateId?: string) => {
+          try {
+            return await loadTranscript(db, panelName, debateId);
+          } catch {
+            return null;
+          }
+        },
+        renderMarkdown,
+        renderJson,
+        renderAdr,
+        renderShare,
+      }),
+      writeFile: (filePath: string, content: string) => fs.writeFile(filePath, content, "utf8"),
+    },
     chat: createChatSessionSource({ chat: new ChatRepository(db) }),
     chats: createChatsDataSource({ chat: new ChatRepository(db) }),
     chatEngine: createChatEngineSource({

@@ -43,6 +43,23 @@ export interface ExportDataSource {
 }
 
 /**
+ * The one impure capability the export overlay needs: persist a rendered
+ * preview to a file. It is kept OUT of {@link ExportDataSource} (and out of the
+ * pure {@link createExportSource} mapper) so the adapter core stays
+ * fs-free and 100%-branch testable; the screen composes a writer in at the
+ * wiring layer and gates the call on a loaded, not-in-flight preview.
+ */
+export interface ExportFileWriter {
+  readonly writeFile: (path: string, content: string) => Promise<void>;
+}
+
+/**
+ * What the TUI `data.export` source exposes to the overlay screen: the pure
+ * renderer plus the gated file writer.
+ */
+export interface ExportViewSource extends ExportDataSource, ExportFileWriter {}
+
+/**
  * Collapse every line of `rendered` to a single safe display line while
  * preserving the newlines that separate lines. Splitting first means the only
  * surviving `\n`s are the structural ones we re-add, so untrusted content can
