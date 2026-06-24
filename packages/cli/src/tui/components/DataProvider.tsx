@@ -13,6 +13,7 @@ import type { SessionsDataSource } from "../adapters/sessions-data.js";
 import type { ConveneDataSource } from "../adapters/convene.js";
 import type { ChatSessionDataSource } from "../adapters/chat-session.js";
 import type { ChatEngineSource } from "../adapters/chat-engine-session.js";
+import type { ChatsDataSource } from "../adapters/chats-data.js";
 
 export interface TuiDataSources {
   readonly panels: PanelsDataSource;
@@ -28,6 +29,7 @@ export interface TuiDataSources {
   readonly convene?: ConveneDataSource;
   readonly chat?: ChatSessionDataSource;
   readonly chatEngine?: ChatEngineSource;
+  readonly chats?: ChatsDataSource;
 }
 
 export interface DataProviderProps {
