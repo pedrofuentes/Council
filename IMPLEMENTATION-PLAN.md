@@ -726,5 +726,5 @@ checks; opt-in TUI telemetry events.
 | TUI editable settings screen | 9.4 | ✅ Done |
 | TUI expert authoring & training | 9.5 | ✅ Done |
 | TUI panel authoring & auto-compose | 9.6 | ✅ Done |
-| Live convene + conclude in the TUI | 9.8 | ⬜ Planned |
-| TUI default on bare `council` (TTY) | 9.10 | ⬜ Planned |
+| Live convene + conclude in the TUI | 9.8 | ✅ Done |
+| TUI default on bare `council` (TTY) | 9.10 | ✅ Done |
