@@ -121,7 +121,38 @@ These defenses **raise the bar** against casual and opportunistic injection but 
 
 ## Telemetry
 
-Council telemetry is **opt-in and off by default**. When enabled, the allowed fields are:
+Council telemetry is **opt-in and off by default**. Enable or inspect it with
+the [`council telemetry`](/Council/reference/commands/telemetry/) command:
+
+```bash
+council telemetry status     # show whether telemetry is enabled
+council telemetry enable      # opt in
+council telemetry disable     # opt out
+council telemetry explain      # print exactly what is and isn't recorded
+```
+
+### Local usage counters
+
+When telemetry is enabled, [Council Console](/Council/how-to/use-the-terminal-ui/)
+(the terminal UI) keeps a **local, content-free** count of which screens and
+features are used — for example `screen.view:home` or `feature.used:export`.
+These counters are:
+
+- **Local only** — written to a single file at `~/.council/telemetry-counters.json`. There is **no network endpoint**; nothing is ever transmitted.
+- **Content-free by construction** — the labels are a fixed, closed set of static identifiers. Prompts, responses, topics, panel/expert names, and file paths can never become a counter key.
+
+The file is created only after you opt in and only once a counter is recorded.
+Disable telemetry to stop updating it, and delete the collected counts at any
+time by removing the file:
+
+```bash
+council telemetry disable
+rm ~/.council/telemetry-counters.json
+```
+
+### Collection policy
+
+When enabled, the allowed fields are:
 - Command name (e.g., `convene`, `ask`)
 - App version (e.g., `0.3.0`)
 - OS family (e.g., `darwin`, `linux`)
@@ -133,7 +164,10 @@ Council telemetry is **opt-in and off by default**. When enabled, the allowed fi
 - Tokens, API keys, environment variables
 - SQLite contents, chat transcripts, expert definitions
 
-No outbound telemetry endpoint is enabled yet. This is a **policy spec only** — selecting a vendor or sink is a separate future decision. See `docs/TELEMETRY.md` for the full specification.
+No outbound telemetry endpoint is enabled yet — today the only thing telemetry
+does is update the local counter file described above. Selecting a vendor or
+sink is a separate future decision. See `docs/TELEMETRY.md` for the full
+specification.
 
 ## Recommendations
 
