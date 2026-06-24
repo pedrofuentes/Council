@@ -36,8 +36,15 @@ const CONTROL_CHAR_PATTERN =
   // character class, otherwise the class would consume the leading ESC
   // (\x1B is in the \x0E-\x1F range) and leave the rest of the sequence
   // visible.
+  //
+  // The OSC branch uses a linear, non-backtracking body (`[^\x07\x1B]*`) and an
+  // OPTIONAL terminator (BEL `\x07` or ST `ESC \`). The previous `.*?\x07`
+  // form backtracked quadratically on many unterminated `ESC]` introducers
+  // (a ReDoS DoS vector), and left unterminated OSC sequences only partially
+  // stripped. The negated class stops at the next ESC so a following CSI is
+  // still matched by its own branch.
   // eslint-disable-next-line no-control-regex
-  /\x1B\[[0-?]*[ -/]*[@-~]|\x1B\].*?\x07|[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]|[\u202A-\u202E\u2066-\u2069]/gs;
+  /\x1B\[[0-?]*[ -/]*[@-~]|\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)?|[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]|[\u202A-\u202E\u2066-\u2069]/gs;
 
 export function stripControlChars(text: string): string {
   return text
