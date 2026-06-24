@@ -46,6 +46,25 @@ describe("stripControlChars", () => {
     expect(stripControlChars(dirty)).toBe("beforeafter");
   });
 
+  it("strips an unterminated OSC sequence (no BEL/ST terminator)", () => {
+    const dirty = "before\x1B]0;unterminated evil title that never ends";
+    expect(stripControlChars(dirty)).toBe("before");
+  });
+
+  it("strips an OSC sequence terminated by ST (ESC backslash)", () => {
+    const dirty = "a\x1B]8;;https://evil.example/\x1B\\b";
+    expect(stripControlChars(dirty)).toBe("ab");
+  });
+
+  it("sanitizes many unterminated OSC introducers in linear time (ReDoS guard)", () => {
+    const dirty = "\x1B]".repeat(100000);
+    const start = performance.now();
+    const result = stripControlChars(dirty);
+    const elapsed = performance.now() - start;
+    expect(result).toBe("");
+    expect(elapsed).toBeLessThan(1000);
+  });
+
   it("strips CSI sequences with private and intermediate bytes", () => {
     const dirty = "before\x1B[?25lhide\x1B[>4;2mprivate\x1B[1 qcursor";
     expect(stripControlChars(dirty)).toBe("beforehideprivatecursor");
