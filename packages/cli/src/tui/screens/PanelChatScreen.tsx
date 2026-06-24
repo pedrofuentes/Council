@@ -158,7 +158,13 @@ export function PanelChatScreen(props: PanelChatScreenProps): React.ReactElement
         return;
       }
 
-      const parsed = chat.route(prompt, memberSlugsRef.current);
+      let parsed;
+      try {
+        parsed = chat.route(prompt, memberSlugsRef.current);
+      } catch (routeError) {
+        setError(toSingleLineDisplay(errorMessage(routeError)));
+        return;
+      }
       if (parsed.type === "convene") {
         setMessage("");
         setTranscriptIfMounted((current) => [
