@@ -18,26 +18,28 @@ export interface ConvenePanelRuntimeIds {
 
 export interface ConvenePanelResolverDeps {
   readonly loadPanel: (name: string, dataHome: string) => Promise<PanelDefinition>;
+  readonly getMembers: (panelName: string) => Promise<readonly string[]>;
   readonly dataHome: string;
   readonly config: CouncilConfig;
   readonly buildSpec: (slug: string, panelDefaultModel: string | undefined) => Promise<ExpertSpec>;
   readonly resolvePanelId: (input: ConvenePanelRuntimeInput) => Promise<ConvenePanelRuntimeIds>;
 }
 
-function panelExpertSlug(entry: PanelDefinition["experts"][number]): string {
-  return typeof entry === "string" ? entry : entry.slug;
-}
-
 export function createConvenePanelResolver(
   deps: ConvenePanelResolverDeps,
 ): (panelName: string) => Promise<ResolvedConvenePanel> {
   return async (panelName: string): Promise<ResolvedConvenePanel> => {
+    // Defaults (mode/maxRounds/model) come from the panel YAML, but the CURRENT
+    // membership is the DB panel_members rows — the TUI's setMembers edits the DB
+    // (not the YAML), so the YAML `experts` list can be stale. Source members from
+    // getMembers so a debate always runs the panel's current experts.
     const panel = await deps.loadPanel(panelName, deps.dataHome);
+    const memberSlugs = await deps.getMembers(panelName);
     const mode = panel.defaults?.mode ?? "freeform";
     const maxRounds = panel.defaults?.maxRounds ?? deps.config.defaults.maxRounds;
     const panelDefaultModel = panel.defaults?.model ?? deps.config.defaults.model;
     const experts = await Promise.all(
-      panel.experts.map((entry) => deps.buildSpec(panelExpertSlug(entry), panelDefaultModel)),
+      memberSlugs.map((slug) => deps.buildSpec(slug, panelDefaultModel)),
     );
     const debateConfig: DebateConfig = {
       maxRounds,

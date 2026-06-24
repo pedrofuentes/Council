@@ -147,6 +147,7 @@ export async function launchTui(): Promise<void> {
   ): ((panelName: string) => Promise<ResolvedConvenePanel>) =>
     createConvenePanelResolver({
       loadPanel,
+      getMembers: (name) => panelLibrary.getMembers(name),
       dataHome,
       config,
       buildSpec: createBuildSpec(topic),
