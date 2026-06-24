@@ -119,3 +119,71 @@ describe("ExpertDetailScreen memory section", () => {
     expect(frame).not.toContain("Communication Style");
   });
 });
+
+describe("ExpertDetailScreen memory section collapses line-control injection", () => {
+  // A run of CR, U+2028 line separator, TAB and LF. `stripControlChars`
+  // deliberately PRESERVES every one of these, so a sink that only strips
+  // control chars lets untrusted memory forge rows / CR-overwrite labels.
+  // `toSingleLineDisplay` collapses the whole run to a single space.
+  const SEP = "\r\u2028\t\n";
+
+  it("collapses CR/LF/TAB/U+2028 in communicationStyle prose", async () => {
+    const { lastFrame } = renderScreen(
+      withSources(detailFor({ kind: "persona" }), async () =>
+        memoryFor({ communicationStyle: `commStyleAlpha${SEP}commStyleOmega` }),
+      ),
+    );
+
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("commStyleAlpha commStyleOmega");
+    expect(frame).not.toContain("\u2028");
+    expect(frame).not.toContain("commStyleAlpha\r");
+  });
+
+  it("collapses CR/LF/TAB/U+2028 in a decisionPatterns list item", async () => {
+    const { lastFrame } = renderScreen(
+      withSources(detailFor({ kind: "persona" }), async () =>
+        memoryFor({ decisionPatterns: [`decisionAlpha${SEP}decisionOmega`] }),
+      ),
+    );
+
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("decisionAlpha decisionOmega");
+    expect(frame).not.toContain("\u2028");
+    expect(frame).not.toContain("decisionAlpha\r");
+  });
+
+  it("collapses CR/LF/TAB/U+2028 in a biases list item", async () => {
+    const { lastFrame } = renderScreen(
+      withSources(detailFor({ kind: "persona" }), async () =>
+        memoryFor({ biases: [`biasAlpha${SEP}biasOmega`] }),
+      ),
+    );
+
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("biasAlpha biasOmega");
+    expect(frame).not.toContain("\u2028");
+    expect(frame).not.toContain("biasAlpha\r");
+  });
+
+  it("collapses CR/LF/TAB/U+2028 in a vocabulary list item", async () => {
+    const { lastFrame } = renderScreen(
+      withSources(detailFor({ kind: "persona" }), async () =>
+        memoryFor({ vocabulary: [`vocabAlpha${SEP}vocabOmega`] }),
+      ),
+    );
+
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("vocabAlpha vocabOmega");
+    expect(frame).not.toContain("\u2028");
+    expect(frame).not.toContain("vocabAlpha\r");
+  });
+});
