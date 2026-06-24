@@ -6,6 +6,8 @@ export const ROUTES = {
   panelMembers: "/panels/:name/members",
   panelDelete: "/panels/:name/delete",
   panelDetail: "/panels/:name",
+  convenePrompt: "/convene/:panel",
+  debateRun: "/convene/:panel/run",
   experts: "/experts",
   expertNew: "/experts/new",
   expertEdit: "/experts/:slug/edit",

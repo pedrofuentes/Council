@@ -1,11 +1,14 @@
 import path from "node:path";
+import { ulid } from "ulid";
 import { render } from "ink";
 
 import { DEFAULT_MODEL, getCouncilDataHome, getCouncilHome, loadConfig } from "../config/index.js";
 import { FileExpertLibrary } from "../core/expert-library.js";
+import { buildSystemPrompt } from "../core/prompt-builder.js";
+import { resolveModel } from "../core/model-resolver.js";
 import { createDocumentIndexer } from "../core/documents/indexer.js";
 import { createDocumentProcessor } from "../core/documents/processor.js";
-import { listTemplates, loadTemplate } from "../core/template-loader.js";
+import { listTemplates, loadPanel, loadTemplate } from "../core/template-loader.js";
 import { createDatabase } from "../memory/db.js";
 import { ChatRepository } from "../memory/repositories/chat-repository.js";
 import { DebateRepository } from "../memory/repositories/debates.js";
@@ -15,6 +18,7 @@ import { ProfileRepository } from "../memory/repositories/profile-repository.js"
 import { PanelLibraryRepository } from "../memory/repositories/panel-library-repo.js";
 import { PanelRepository } from "../memory/repositories/panels.js";
 import { TurnRepository } from "../memory/repositories/turns.js";
+import type { ExpertSpec } from "../engine/index.js";
 import { loadTranscript } from "../memory/transcript.js";
 import { updateConfigFields } from "../config/loader.js";
 import { createExpertAuthoringSource } from "./adapters/expert-authoring.js";
@@ -26,6 +30,15 @@ import { createPanelComposeSource } from "./adapters/panel-compose.js";
 import { createPanelsDataSource } from "./adapters/panels-data.js";
 import { createSettingsDataSource } from "./adapters/config-settings.js";
 import { createSessionsDataSource } from "./adapters/sessions-data.js";
+import {
+  createConveneSource,
+  type ConveneDataSource,
+  type ResolvedConvenePanel,
+} from "./adapters/convene.js";
+import {
+  createConvenePanelResolver,
+  type ConvenePanelRuntimeInput,
+} from "./adapters/convene-resolve.js";
 import { createExpertTrainingSource, stageDocumentFiles } from "./adapters/expert-training.js";
 import { createChatSessionSource } from "./adapters/chat-session.js";
 import { createChatEngineSource } from "./adapters/chat-engine-session.js";
@@ -53,9 +66,12 @@ export async function launchTui(): Promise<void> {
 
   const homeData = await loadHomeData(sources);
   const expertLibrary = new FileExpertLibrary(dataHome, db);
+  const panelLibrary = new PanelLibraryRepository(db);
+  const runtimePanels = new PanelRepository(db);
+  const runtimeExperts = new ExpertRepository(db);
   const profileRepo = new ProfileRepository(db);
   const panelAuthoring = createPanelAuthoringSource({
-    panelRepo: new PanelLibraryRepository(db),
+    panelRepo: panelLibrary,
     expertExists: async (slug) => (await expertLibrary.get(slug)) !== null,
     dataHome,
     countDebates: async (name) => {
@@ -69,9 +85,99 @@ export async function launchTui(): Promise<void> {
     },
   });
   const docsDirFor = (slug: string): string => path.join(dataHome, "experts", slug, "docs");
+
+  const createBuildSpec =
+    (
+      topic: string,
+    ): ((slug: string, panelDefaultModel: string | undefined) => Promise<ExpertSpec>) =>
+    async (slug, panelDefaultModel) => {
+      const definition = await expertLibrary.get(slug);
+      if (definition === null) {
+        throw new Error(`Panel references missing expert "${slug}"`);
+      }
+      return {
+        id: ulid(),
+        slug: definition.slug,
+        displayName: definition.displayName,
+        model: resolveModel({
+          expertModel: definition.model,
+          panelDefaultModel,
+          configDefaultModel: config.defaults.model ?? DEFAULT_MODEL,
+        }),
+        systemMessage: buildSystemPrompt(definition, undefined, topic),
+      };
+    };
+
+  const createResolvePanelId =
+    (topic: string, persistRuntimeRows: boolean) =>
+    async (
+      input: ConvenePanelRuntimeInput,
+    ): Promise<{
+      readonly panelId: string;
+      readonly expertSlugToId: Readonly<Record<string, string>>;
+    }> => {
+      if (!persistRuntimeRows) {
+        return { panelId: "estimate-only", expertSlugToId: {} };
+      }
+
+      const panel = await runtimePanels.create({
+        name: `${input.panelName}-${new Date().toISOString().slice(0, 19)}`,
+        topic,
+        copilotHome: path.join(getCouncilHome(), "copilot"),
+        configJson: JSON.stringify({
+          template: input.panelName,
+          mode: input.mode,
+          maxRounds: input.debateConfig.maxRounds,
+          maxWords: input.debateConfig.maxWordsPerResponse,
+          engine: config.defaults.engine,
+        }),
+      });
+
+      const expertSlugToId: Record<string, string> = {};
+      for (const expert of input.experts) {
+        const row = await runtimeExperts.create({
+          panelId: panel.id,
+          slug: expert.slug,
+          displayName: expert.displayName,
+          model: expert.model,
+          systemMessage: expert.systemMessage,
+        });
+        expertSlugToId[expert.slug] = row.id;
+      }
+
+      return { panelId: panel.id, expertSlugToId };
+    };
+
+  const buildConveneResolver = (
+    topic: string,
+    persistRuntimeRows: boolean,
+  ): ((panelName: string) => Promise<ResolvedConvenePanel>) =>
+    createConvenePanelResolver({
+      loadPanel,
+      getMembers: (name) => panelLibrary.getMembers(name),
+      dataHome,
+      config,
+      buildSpec: createBuildSpec(topic),
+      resolvePanelId: createResolvePanelId(topic, persistRuntimeRows),
+    });
+
+  const convene: ConveneDataSource = {
+    estimateCost: async (panelName) =>
+      createConveneSource({
+        engineFactory: () => makeEngineFromKind(config.defaults.engine),
+        db,
+        resolvePanel: buildConveneResolver("", false),
+      }).estimateCost(panelName),
+    streamDebate: async (panelName, topic, options, onEvent) =>
+      createConveneSource({
+        engineFactory: () => makeEngineFromKind(config.defaults.engine),
+        db,
+        resolvePanel: buildConveneResolver(topic, true),
+      }).streamDebate(panelName, topic, options, onEvent),
+  };
   const dataSources: TuiDataSources = {
     panels: createPanelsDataSource({
-      library: new PanelLibraryRepository(db),
+      library: panelLibrary,
       experts: expertLibrary,
       listTemplates,
       loadTemplate,
@@ -116,6 +222,7 @@ export async function launchTui(): Promise<void> {
       engineFactory: () => makeEngineFromKind(config.defaults.engine),
     }),
     settings: createSettingsDataSource({ loadConfig, updateConfigFields }),
+    convene,
     sessions: createSessionsDataSource({
       panels: new PanelRepository(db),
       debates: new DebateRepository(db),

@@ -51,6 +51,9 @@ export function PanelDetailScreen(props: PanelDetailScreenProps): React.ReactEle
       if (input === "c" && source === "saved" && name !== undefined) {
         navigate(`/chat/panel/${encodeURIComponent(name)}`);
       }
+      if (input === "v" && source === "saved" && name !== undefined) {
+        navigate(`/convene/${encodeURIComponent(name)}`, { state: { source: "saved" } });
+      }
     },
     { isActive: props.isActive ?? true },
   );
@@ -87,7 +90,11 @@ export function PanelDetailScreen(props: PanelDetailScreenProps): React.ReactEle
         <Text key={slug}>{props.theme.warn(toSingleLineDisplay(`⚠ ${slug} (missing)`))}</Text>
       ))}
       {source === "saved" ? (
-        <Text>{props.theme.muted(toSingleLineDisplay("c chat · m edit members · d delete"))}</Text>
+        <Text>
+          {props.theme.muted(
+            toSingleLineDisplay("c chat · m edit members · d delete · v convene"),
+          )}
+        </Text>
       ) : undefined}
     </Box>
   );

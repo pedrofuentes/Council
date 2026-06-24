@@ -21,6 +21,7 @@ import { DataProvider, type TuiDataSources } from "../../../src/tui/components/D
 import { AppRouter } from "../../../src/tui/router/AppRouter.js";
 import { CouncilTUI } from "../../../src/tui/CouncilTUI.js";
 import type { HomeData } from "../../../src/tui/adapters/home-data.js";
+import type { ConveneDataSource } from "../../../src/tui/adapters/convene.js";
 
 const homeData: HomeData = { counts: { sessions: 0, experts: 0, panels: 0 }, recent: [] };
 const flush = async (stdin?: { write: (s: string) => void }, input?: string): Promise<void> => {
@@ -121,6 +122,18 @@ const withSessions = (
   panels: { loadList: async () => [], loadDetail: async () => undefined },
   sessions: { loadList, loadTranscript },
 });
+
+const withConvenePrompt = (): TuiDataSources => {
+  const convene: ConveneDataSource = {
+    estimateCost: async () => ({ experts: 2, rounds: 3, estimatedPremiumRequests: 6 }),
+    streamDebate: async () => ({ debateId: undefined, reason: "completed" }),
+  };
+  return {
+    panels: { loadList: async () => [], loadDetail: async () => undefined },
+    convene,
+  } as TuiDataSources;
+};
+
 const withSettings = (load: () => Promise<readonly SettingsFieldState[]>): TuiDataSources =>
   ({
     panels: { loadList: async () => [], loadDetail: async () => undefined },
@@ -311,6 +324,22 @@ describe("AppRouter", () => {
     );
     await flush();
     expect(lastFrame()).toMatch(/No experts/i);
+  });
+
+  it("renders the ConvenePromptScreen on the convene prompt route", async () => {
+    const { lastFrame } = render(
+      <DataProvider value={withConvenePrompt()}>
+        <MemoryRouter initialEntries={["/convene/acme"]}>
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+
+    expect(lastFrame()).toContain("Convene acme");
+    expect(lastFrame()).toContain("Topic:");
+    expect(lastFrame()).not.toContain("Coming soon");
   });
 
   it("renders the Chats placeholder on the /chats route", () => {
