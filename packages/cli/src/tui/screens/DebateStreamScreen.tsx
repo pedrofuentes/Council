@@ -2,7 +2,7 @@ import React from "react";
 import { Box, Text, useInput } from "ink";
 import { useLocation, useNavigate, useParams } from "react-router";
 
-import { stripControlChars, toSingleLineDisplay } from "../../cli/strip-control-chars.js";
+import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
 import type { ConveneDataSource, ConveneViewEvent } from "../adapters/convene.js";
 import { useData } from "../components/DataProvider.js";
 import { useInputCapture } from "../components/InputCaptureProvider.js";
@@ -90,11 +90,12 @@ function transcriptLines(view: DebateView): readonly string[] {
       lastRound = turn.round;
     }
     lines.push(toSingleLineDisplay(`${turn.expert}:`));
-    const body = stripControlChars(turn.body);
+    // Untrusted streamed body: toSingleLineDisplay strips control chars AND
+    // collapses CR/LF/U+2028/U+2029 runs, so a turn cannot CR-overwrite a row
+    // or forge a new transcript line. Each turn body renders as one row.
+    const body = toSingleLineDisplay(turn.body);
     if (body.length > 0) {
-      for (const bodyLine of body.split("\n")) {
-        lines.push(`  ${bodyLine}`);
-      }
+      lines.push(`  ${body}`);
     }
   }
   return lines;
