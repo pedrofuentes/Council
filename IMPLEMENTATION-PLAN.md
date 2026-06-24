@@ -660,7 +660,7 @@ tensions / recommendation).
 
 **Delivered** (PRs #1661, #1664, #1686): 100%-covered `convene`/`convene-resolve`/`conclude` adapters; `ConvenePromptScreen` + `CostConfirmModal`; a live engine-in-screen `DebateStreamScreen` (streamed turns, round/phase markers, in-screen cost meter, `Esc` cancel preserving the partial via the persister); members sourced from the live DB; launched from a panel detail (`v`). An engine-backed `ConclusionScreen` renders the decision matrix + consensus/tensions/recommendation/confidence (recomputed from the transcript, not persisted). All untrusted content renders via `toSingleLineDisplay`.
 
-### 9.9 Inspection, Memory, Export & A11y Polish ⬜
+### 9.9 Inspection, Memory, Export & A11y Polish ✅
 
 **Goal**: Round out inspection and accessibility.
 
@@ -673,6 +673,8 @@ error display + startup warnings, screen-reader / ASCII / NO_COLOR + responsive 
 - Screen-reader mode produces linear frames; narrow-terminal degradation verified.
 
 **Key files**: `src/tui/screens/ExpertDetail.tsx`, `src/tui/components/overlays/ExportDialog.tsx`, `src/tui/theme/*`
+
+**Delivered** (PRs #1671, #1690, #1692, #1693, #1701): 100%-covered `expert-memory`, `export-view`, `onboarding`, `startup-warnings`, `shortcuts` adapters/helpers. Memory section on the persona detail; an `ExportOverlay` (`x`) writing all four formats via an exclusive `writeFileExclusive` (no overwrite / no symlink-follow); first-run `OnboardingScreen` that restarts the session (`runTuiSessions` loop) so the model choice applies; a tiered sanitized `ErrorBoundary` + startup-warnings banner; contextual `?` help with per-route shortcut legends + a NO_COLOR/responsive audit across every screen. Cross-cutting: fixed a shared-sanitizer OSC **ReDoS** (linear `stripControlChars`) and enforced `toSingleLineDisplay` for all untrusted TUI sinks.
 
 ### 9.10 Make Default & Release ⬜
 
