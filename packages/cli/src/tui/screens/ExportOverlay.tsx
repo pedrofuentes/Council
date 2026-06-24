@@ -163,6 +163,9 @@ export function ExportOverlay(props: ExportOverlayProps): React.ReactElement {
       .writeFile(path, content)
       .then(() => {
         if (unmounted.current) return;
+        // LOCAL, content-free counter: an export was actually written. No path,
+        // panel name, or content is recorded — only the static feature label.
+        data.telemetry?.record({ name: "feature.used", label: "export" });
         setPhase({ status: "saved", format, content, path });
       })
       .catch((error: unknown) => {

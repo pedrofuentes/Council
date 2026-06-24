@@ -145,6 +145,9 @@ export function DebateStreamScreen(props: DebateStreamScreenProps): React.ReactE
 
     startedRef.current = true;
     unmountedRef.current = false;
+    // LOCAL, content-free counter: a convene/debate was actually started. No
+    // topic, panel name, or transcript content is recorded — only the label.
+    data.telemetry?.record({ name: "feature.used", label: "convene" });
     const controller = new AbortController();
     controllerRef.current = controller;
     setStatus("streaming");

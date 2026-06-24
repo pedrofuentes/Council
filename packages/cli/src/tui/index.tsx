@@ -60,6 +60,8 @@ import { createHomeDataSources } from "./adapters/home-data-sources.js";
 import { loadHomeData } from "./adapters/home-data.js";
 import { selectStartupWarnings } from "./lib/startup-warnings.js";
 import { writeFileExclusive } from "./lib/safe-write.js";
+import { createTelemetry } from "./lib/telemetry.js";
+import { createFileCounterStore, telemetryCountersPath } from "./lib/telemetry-store.js";
 import { DataProvider, type TuiDataSources } from "./components/DataProvider.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { CouncilTUI } from "./CouncilTUI.js";
@@ -69,11 +71,24 @@ export async function launchTui(): Promise<void> {
   const dbPath = path.join(getCouncilHome(), "council.db");
   const db = await createDatabase(dbPath);
 
+  // LOCAL, content-free telemetry counter store. Built once per process so
+  // content-free counters accumulate across in-process session restarts (e.g.
+  // after first-run onboarding). Persisted on shutdown; only ever written when
+  // telemetry is enabled and something was actually recorded.
+  const counterStore = await createFileCounterStore(telemetryCountersPath(getCouncilHome()));
+
   // Render one TUI session from a freshly-loaded config snapshot. Re-invoked by
   // runTuiSessions after first-run onboarding so the chosen default model
   // (persisted to config.yaml) is rebuilt into the live session.
   const renderSession = async ({ config, isFirstRun }: ConfigLoadResult): Promise<boolean> => {
     const dataHome = getCouncilDataHome(config);
+
+    // Gate the LOCAL telemetry sink on the opt-in flag (off by default). When
+    // disabled, `record` is a strict no-op and nothing is ever written.
+    const telemetry = createTelemetry({
+      enabled: config.telemetry.enabled,
+      store: counterStore,
+    });
 
     const sources = createHomeDataSources({
       chat: new ChatRepository(db),
@@ -303,6 +318,7 @@ export async function launchTui(): Promise<void> {
         discoverModels: discoverAvailableModels,
         updateConfig: updateConfigField,
       }),
+      telemetry,
     };
     const model = config.defaults.model;
 
@@ -355,6 +371,9 @@ export async function launchTui(): Promise<void> {
   try {
     await runTuiSessions({ loadConfigWithMeta, renderSession });
   } finally {
+    // Best-effort persist of the local content-free counters; a flush failure
+    // must never affect the CLI's outcome or block shutdown.
+    await counterStore.flush().catch(() => undefined);
     await db.destroy();
   }
 }
