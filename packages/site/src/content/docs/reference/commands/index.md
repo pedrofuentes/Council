@@ -17,6 +17,7 @@ Persistent AI expert panels for deliberation and decision-making
 | [`council telemetry`](./telemetry/) | Manage telemetry settings |
 | [`council docs`](./docs/) | Document format reference and discoverability helpers |
 | [`council update`](./update/) | Upgrade the globally-installed Council CLI to the latest version |
+| [`council ui`](./ui/) | Launch the interactive terminal UI |
 | [`council convene`](./convene/) | Run a panel debate on a topic and persist results to the local DB. |
 | [`council resume`](./resume/) | Reopen a panel: show transcript, or continue with a new prompt |
 | [`council conclude`](./conclude/) | Synthesize a panel's most substantive debate into a structured decision framework. |
@@ -37,3 +38,4 @@ Persistent AI expert panels for deliberation and decision-making
 | --- | --- | --- |
 | `-V, --version` | output the version number | — |
 | `-q, --quiet` | Suppress informational stderr output | — |
+| `--no-tui` | Skip the interactive terminal UI and use the classic CLI | — |

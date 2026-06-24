@@ -31,6 +31,15 @@
         "optional": false,
         "variadic": false,
         "negate": false
+      },
+      {
+        "flags": "--no-tui",
+        "description": "Skip the interactive terminal UI and use the classic CLI",
+        "long": "--no-tui",
+        "required": false,
+        "optional": false,
+        "variadic": false,
+        "negate": true
       }
     ],
     "subcommands": [
@@ -435,6 +444,20 @@
             "negate": false
           }
         ],
+        "subcommands": []
+      },
+      {
+        "name": "ui",
+        "path": [
+          "council",
+          "ui"
+        ],
+        "commandPath": "council ui",
+        "description": "Launch the interactive terminal UI",
+        "aliases": [],
+        "usage": "[options]",
+        "arguments": [],
+        "options": [],
         "subcommands": []
       },
       {
