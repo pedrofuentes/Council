@@ -42,6 +42,7 @@ import { buildReviewCommand } from "../cli/commands/review.js";
 import { buildSessionsCommand } from "../cli/commands/sessions.js";
 import { buildTelemetryCommand } from "../cli/commands/telemetry.js";
 import { buildTemplatesCommand } from "../cli/commands/templates.js";
+import { buildUiCommand } from "../cli/commands/ui.js";
 import { buildUpdateCommand } from "../cli/commands/update.js";
 
 import { handleCliError } from "../cli/handle-cli-error.js";
@@ -151,7 +152,7 @@ export function configureOutputEncoding(
 
 // Command categories for grouped help output
 const COMMAND_CATEGORIES = {
-  "Getting Started": ["doctor", "demo", "config", "telemetry", "docs", "update"],
+  "Getting Started": ["doctor", "demo", "config", "telemetry", "docs", "update", "ui"],
   Deliberation: ["convene", "resume", "conclude", "review"],
   Conversation: ["ask", "chat"],
   Library: ["expert", "panel", "templates"],
@@ -262,6 +263,7 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
   program.addCommand(buildTelemetryCommand());
   program.addCommand(buildDocsCommand());
   program.addCommand(buildUpdateCommand());
+  program.addCommand(buildUiCommand());
   program.addCommand(buildConveneCommand());
   program.addCommand(buildResumeCommand());
   program.addCommand(buildConcludeCommand());
