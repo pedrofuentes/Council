@@ -1,7 +1,7 @@
 import React from "react";
 import { Text } from "ink";
 import { render } from "ink-testing-library";
-import { MemoryRouter, Route, Routes, useNavigate } from "react-router";
+import { MemoryRouter, Route, Routes, useNavigate, useParams } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
 import type { EngineEvent, SendOptions } from "../../../src/engine/index.js";
@@ -177,6 +177,11 @@ function NavigateProbe(props: { readonly probe: MutableNavigateProbe }): null {
     };
   }, [navigate, props.probe]);
   return null;
+}
+
+function ConveneProbe(): React.ReactElement {
+  const { panel } = useParams();
+  return <Text>CONVENE {panel}</Text>;
 }
 
 describe("PanelChatScreen", () => {
@@ -570,11 +575,30 @@ describe("PanelChatScreen", () => {
     unmount();
   });
 
-  it("shows a sanitized deferred notice for convene directives", async () => {
+  it("navigates to the convene flow for convene directives", async () => {
     const sources = createSources({
       route: () => ({ type: "convene", targetSlugs: [], content: "topic" }),
     });
-    const { stdin, lastFrame, unmount } = renderScreen(sources);
+    const value: TuiDataSources = {
+      panels: sources.panels,
+      chat: sources.chat,
+      chatEngine: sources.chatEngine,
+    };
+    const { stdin, lastFrame, unmount } = render(
+      <InputCaptureProvider>
+        <DataProvider value={value}>
+          <MemoryRouter initialEntries={["/chat/panel/strategy"]}>
+            <Routes>
+              <Route
+                path="/chat/panel/:name"
+                element={<PanelChatScreen theme={theme} isActive />}
+              />
+              <Route path="/convene/:panel" element={<ConveneProbe />} />
+            </Routes>
+          </MemoryRouter>
+        </DataProvider>
+      </InputCaptureProvider>,
+    );
 
     await flush();
     stdin.write("@convene topic");
@@ -582,7 +606,8 @@ describe("PanelChatScreen", () => {
     stdin.write("\r");
     await flush();
 
-    expect(lastFrame()).toContain("convene from chat is coming in 9.8");
+    expect(lastFrame()).toContain("CONVENE strategy");
+    expect(lastFrame()).not.toContain("convene from chat is coming in 9.8");
     expect(sources.send).not.toHaveBeenCalled();
     expect(sources.persistTurn).not.toHaveBeenCalled();
     unmount();

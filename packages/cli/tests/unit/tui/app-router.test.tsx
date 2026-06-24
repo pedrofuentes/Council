@@ -9,6 +9,7 @@ import type {
   SessionListItem,
   SessionTranscriptView,
 } from "../../../src/tui/adapters/sessions-data.js";
+import type { ChatListItem } from "../../../src/tui/adapters/chats-data.js";
 import type { SettingsFieldState } from "../../../src/tui/adapters/config-settings.js";
 import type { ExpertAuthoringSource } from "../../../src/tui/adapters/expert-authoring.js";
 import type { ExpertDocumentsDataSource } from "../../../src/tui/adapters/expert-documents.js";
@@ -342,14 +343,31 @@ describe("AppRouter", () => {
     expect(lastFrame()).not.toContain("Coming soon");
   });
 
-  it("renders the Chats placeholder on the /chats route", () => {
+  it("renders the chats list screen on the /chats route", async () => {
+    const chats: readonly ChatListItem[] = [
+      {
+        id: "c1",
+        targetType: "expert",
+        targetSlug: "cto",
+        title: "Roadmap review",
+        when: "2h",
+        status: "active",
+      },
+    ];
+    const value = {
+      panels: { loadList: async () => [], loadDetail: async () => undefined },
+      chats: { list: async () => chats },
+    } as TuiDataSources;
     const { lastFrame } = render(
-      <MemoryRouter initialEntries={["/chats"]}>
-        <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
-      </MemoryRouter>,
+      <DataProvider value={value}>
+        <MemoryRouter initialEntries={["/chats"]}>
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
     );
-    expect(lastFrame()).toContain("Chats");
-    expect(lastFrame()).toContain("Coming soon");
+    await flush();
+    expect(lastFrame()).toContain("Roadmap review");
+    expect(lastFrame()).not.toContain("Coming soon");
   });
 
   it("renders the expert chat screen on the /chat/expert/:slug route", async () => {
