@@ -39,6 +39,47 @@ council expert list
 2. `config.paths.dataHome` in `~/.council/config.yaml`
 3. Default: `~/Council/`
 
+## Terminal UI
+
+On an interactive terminal, a bare `council` (no subcommand) launches
+[Council Console](/Council/how-to/use-the-terminal-ui/), the full-screen TUI, by
+default. These variables control that behavior.
+
+### `COUNCIL_NO_TUI`
+
+When set (any non-empty value), a bare `council` skips the TUI and uses the
+classic CLI. Equivalent to passing `--no-tui`. Subcommands (`council convene …`)
+are unaffected — they never launch the TUI.
+
+**Default:** `(unset)` — bare `council` launches the TUI on an interactive TTY
+
+**Example:**
+
+```bash
+export COUNCIL_NO_TUI=1
+council            # classic CLI banner + help, no TUI
+```
+
+### `COUNCIL_TUI`
+
+Legacy opt-in that forces the TUI for a bare `council` when set to `1`. Now that
+the TUI is the default, this is redundant but still honored so older setups keep
+working. `COUNCIL_NO_TUI` and `--no-tui` take precedence.
+
+**Default:** `(unset)`
+
+**Example:**
+
+```bash
+COUNCIL_TUI=1 council   # force the TUI (redundant with the default)
+```
+
+:::note[Non-interactive environments]
+The TUI never launches when stdout is not a TTY (piped or redirected output) or
+when `CI` is set, so scripts and CI fall back to the classic CLI automatically —
+no flag required.
+:::
+
 ## Rendering & Accessibility
 
 ### `NO_COLOR`
@@ -123,6 +164,7 @@ The complete, always-up-to-date table of every environment variable — includin
 ## Related
 
 - [Config & Environment Reference](/Council/reference/config-reference/) — Auto-generated config + env table
+- [Use the terminal UI](/Council/how-to/use-the-terminal-ui/) — `COUNCIL_NO_TUI` / `COUNCIL_TUI` in context
 - [Configuration](/Council/reference/configuration/) — `config.yaml` settings
 - [Data Locations](/Council/reference/data-locations/) — Directory structure
 - [Troubleshooting](/Council/reference/troubleshooting/) — Common issues

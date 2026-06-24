@@ -26,6 +26,7 @@ Contains ephemeral runtime state and should **not** be version-controlled.
 ~/.council/
 ├── config.yaml          # User configuration
 ├── council.db           # SQLite database (panels, experts, chat history, memory)
+├── telemetry-counters.json  # Local, content-free usage counts (only if telemetry is enabled)
 ├── logs/                # Error logs and debug traces
 └── cache/               # Temporary download cache (update checks, etc.)
 ```
@@ -36,6 +37,7 @@ Contains ephemeral runtime state and should **not** be version-controlled.
 |----------------|-------------|
 | `config.yaml` | User configuration. Edit via `council config set` or manually. |
 | `council.db` | SQLite database. Stores panels, experts, document indexes, chat history, memory. |
+| `telemetry-counters.json` | Local, content-free usage counters (e.g. `screen.view:home`). Created only when telemetry is enabled; never sent anywhere. Safe to delete. See [Use the terminal UI](/Council/how-to/use-the-terminal-ui/#telemetry--privacy). |
 | `logs/` | Error logs and stack traces. Check here when debugging failures. |
 | `cache/` | Ephemeral cache (update notifier, etc.). Safe to delete. |
 
