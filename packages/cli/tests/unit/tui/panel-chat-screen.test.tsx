@@ -588,6 +588,25 @@ describe("PanelChatScreen", () => {
     unmount();
   });
 
+  it("shows a sanitized error when routing throws on malformed input", async () => {
+    const sources = createSources({
+      route: () => {
+        throw new Error("Unknown expert: ghost\rINJECT");
+      },
+    });
+    const { stdin, lastFrame, unmount } = renderScreen(sources);
+
+    await flush();
+    stdin.write("@ghost hi");
+    await flush();
+    stdin.write("\r");
+    await flush();
+
+    expect(lastFrame()).toContain("Unknown expert: ghost INJECT");
+    expect(sources.send).not.toHaveBeenCalled();
+    unmount();
+  });
+
   it("never updates the transcript from a stream delta delivered after unmount", async () => {
     let capturedOnDelta: ((chunk: string) => void) | undefined;
     const streamTurnSpy = vi
