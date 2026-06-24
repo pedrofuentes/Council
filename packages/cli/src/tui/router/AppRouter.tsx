@@ -13,6 +13,7 @@ import { LeftNav } from "../components/navigation/LeftNav.js";
 import { CommandPalette } from "../components/overlays/CommandPalette.js";
 import { HelpModal } from "../components/overlays/HelpModal.js";
 import { computeLayout, type NavState } from "../lib/breakpoints.js";
+import { shortcutsForRoute } from "../lib/shortcuts.js";
 import type { StartupWarning } from "../lib/startup-warnings.js";
 import { ExpertDetailScreen } from "../screens/ExpertDetailScreen.js";
 import { ExpertChatScreen } from "../screens/ExpertChatScreen.js";
@@ -220,6 +221,7 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
       {mode === "help" ? (
         <HelpModal
           entries={HELP_ENTRIES}
+          contextEntries={shortcutsForRoute(location.pathname)}
           onClose={() => setMode("nav")}
           isActive={mode === "help"}
           theme={theme}
