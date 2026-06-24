@@ -146,6 +146,15 @@ const withConclude = (view: ConclusionView): TuiDataSources => {
   } as TuiDataSources;
 };
 
+const withExport = (): TuiDataSources =>
+  ({
+    panels: { loadList: async () => [], loadDetail: async () => undefined },
+    export: {
+      render: async () => "# Export preview\n> hello",
+      writeFile: async () => undefined,
+    },
+  }) as TuiDataSources;
+
 const withSettings = (load: () => Promise<readonly SettingsFieldState[]>): TuiDataSources =>
   ({
     panels: { loadList: async () => [], loadDetail: async () => undefined },
@@ -685,6 +694,25 @@ describe("AppRouter", () => {
     // The route must resolve to the conclusion view, not silently dead-end (#1678).
     expect(lastFrame()).toContain("Risk vs Innovation");
     expect(lastFrame()).toContain("Adopt a phased rollout");
+    expect(lastFrame()).not.toContain("Coming soon");
+  });
+
+  it("renders the ExportOverlay on the /sessions/:id/export route", async () => {
+    const { lastFrame } = render(
+      <DataProvider value={withExport()}>
+        <MemoryRouter
+          initialEntries={[{ pathname: "/sessions/p1/export", state: { panelName: "Acme" } }]}
+        >
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+
+    // The export route must resolve to the overlay (its format picker), not a
+    // silent dead-end / placeholder (known gap class #1678).
+    expect(lastFrame()).toMatch(/markdown/i);
     expect(lastFrame()).not.toContain("Coming soon");
   });
 });
