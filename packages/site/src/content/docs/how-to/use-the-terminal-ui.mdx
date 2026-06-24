@@ -1,0 +1,219 @@
+---
+title: Use the terminal UI
+description: Launch and navigate Council Console — the full-screen interactive terminal UI that opens by default.
+---
+
+**Council Console** is the full-screen interactive terminal UI (TUI). On an
+interactive terminal it now opens by default when you run `council` with no
+arguments — browse panels and experts, chat, convene a debate, conclude, and
+export without remembering a single subcommand. Everything you can do from the
+classic CLI is reachable here, with live navigation and contextual help.
+
+## Launch the TUI
+
+On an interactive terminal, just run:
+
+```bash
+council
+```
+
+A bare `council` with no subcommand launches Council Console. To launch it
+explicitly — for example from a script alias, or after you've opted bare
+invocations out — use the dedicated command:
+
+```bash
+council ui
+```
+
+`council ui` always launches the TUI, regardless of the auto-launch default.
+See [`council ui`](/Council/reference/commands/ui/) in the command reference.
+
+### Stay in the classic CLI
+
+The TUI only takes over a bare, interactive invocation. Any of the following
+keeps you on the classic line-oriented CLI:
+
+| Escape hatch | Effect |
+|--------------|--------|
+| Run any subcommand (`council convene …`, `council ask …`) | Subcommands never launch the TUI |
+| `council --no-tui` | Per-invocation opt-out for a bare `council` |
+| `COUNCIL_NO_TUI=1` | Environment opt-out for every bare `council` |
+| Non-interactive stdout (piped, redirected, or no TTY) | Falls back to the classic CLI automatically |
+| `CI` is set | Continuous-integration environments never launch the TUI |
+
+Because Council detects a non-interactive stream, piping or redirecting works
+the way you'd expect — no flag required:
+
+```bash
+council | cat            # non-TTY stdout → classic CLI
+COUNCIL_NO_TUI=1 council # explicit opt-out → classic CLI
+```
+
+:::note[`COUNCIL_TUI=1` still works]
+Before the TUI became the default, `COUNCIL_TUI=1` was the opt-in to force it
+on. It still forces the TUI for a bare `council`, so existing setups keep
+working — but it's now redundant with the default-on behavior.
+:::
+
+## Find your way around
+
+Council Console is keyboard-driven. The left sidebar lists the main
+destinations (Home, Panels, Experts, Sessions, Chats, Settings); the footer
+always shows the keys available on the current screen.
+
+| Key | Action |
+|-----|--------|
+| **↑** **↓** / **j** **k** | Move within a list |
+| **Enter** | Select / confirm |
+| **Tab** | Switch focus between the sidebar and the main pane |
+| **\\** | Show or hide the sidebar |
+| **Ctrl+K** | Open the command palette (jump anywhere by name) |
+| **?** | Open contextual help |
+| **Esc** | Go back one screen — and quit from Home |
+| **q** | Quit |
+
+### Contextual help (`?`)
+
+Press **?** on any screen to open the help overlay. It lists the global keys
+above **plus** the shortcuts specific to where you are — for example, on a
+panel's detail screen it shows **c** Chat, **m** Edit members, **d** Delete, and
+**v** Convene. Press **?** again or **Esc** to close it. If you ever feel lost,
+**?** is the fastest way to see what the current screen can do.
+
+### Command palette (`Ctrl+K`)
+
+Press **Ctrl+K** to open the command palette, type to filter, and press
+**Enter** to jump straight to a destination or action.
+
+## A tour of the flows
+
+Council Console covers the full Council workflow. Each area exposes its actions
+through the contextual **?** help, so this is a map rather than a script.
+
+### Home dashboard
+
+The landing screen summarizes your recent activity and offers quick actions:
+**c** convene, **e** new expert, **p** new panel, and **,** settings.
+
+### Panels
+
+Browse and inspect your panels, then create or curate them in place:
+
+- **Create** a panel and pick its members, or **auto-compose** one from a topic.
+- From a panel's detail screen: **chat** with the panel, **edit members**,
+  **delete**, or **convene** a debate.
+
+### Experts
+
+Browse experts and open one to see its definition and what it remembers:
+
+- **Create** a generic or persona expert and **edit** it. For example, a persona
+  for *Pedro Fuentes (VP of Engineering)* with the slug `pedro-fuentes`.
+- Manage a persona's **documents** and **train** it on them to build its memory.
+- An expert's **memory** — its synthesized profile and extracted highlights — is
+  shown inline on the detail screen.
+
+See [Persona Experts](/Council/explanation/persona-experts) and the
+[Memory Model](/Council/explanation/memory-model) for the concepts behind this.
+
+### Chat
+
+Open a streaming conversation with a single expert (1:1) or with a whole panel:
+
+- In a panel chat, every expert responds by default. Address specific experts
+  with `@mention` (for example `@pedro-fuentes`) to fan a message out to just
+  them.
+- Trigger a structured debate inline with `@convene` — Council Console jumps
+  straight into the convene flow for that panel.
+- Conversations persist, so you can resume them from the **Chats** list later.
+
+The same directives work in the classic CLI — see
+[In-Chat Directives](/Council/reference/in-chat-directives/).
+
+### Convene → debate → conclude
+
+Starting from a panel, Council estimates the cost first:
+
+1. A **cost-confirmation** modal shows the experts, rounds, and estimated
+   premium requests — press **y** (or **Enter**) to run, or **n** to cancel.
+2. The **debate streams live**, round by round. Press **Esc** to cancel
+   mid-stream; the partial transcript is preserved.
+3. From a session, **conclude** to synthesize the debate into a decision matrix.
+
+### Sessions & export
+
+The **Sessions** list shows your past debates. Open one to read its transcript,
+then **conclude** (**c**) or **export** (**x**) it. The export overlay previews a
+sanitized render before writing a file and supports four formats:
+
+- **Markdown** — readable transcript
+- **JSON (NDJSON)** — one record per line, for tooling
+- **ADR** — an Architecture Decision Record
+- **Share** — a redacted, shareable summary
+
+See [Output Formats](/Council/reference/output-formats/) for details.
+
+### First-run onboarding
+
+The very first time you open Council Console, a short onboarding step helps you
+pick a default model. Use **↑**/**↓** to choose and **Enter** to confirm, or
+**Esc** to skip and keep the default. Your choice is saved to `config.yaml` and
+applied to the running session immediately.
+
+### Settings
+
+Open **Settings** (or press **,** from Home) to view and edit your configuration
+without leaving the app. Move with **↑**/**↓**, edit a field with **Enter**, and
+save with **Ctrl+S**.
+
+## Telemetry & privacy
+
+Council Console can keep a small **local usage counter** to help understand
+which screens and features get used. It is **opt-in, off by default, local
+only, and content-free**:
+
+- **No network.** Nothing is ever sent anywhere — there is no endpoint.
+- **No content.** It records only static counters such as `screen.view:home`
+  and `feature.used:export`. It never records your prompts, responses, topics,
+  panel or expert names, or file paths.
+
+When enabled, the counters are written to a single local file at
+`~/.council/telemetry-counters.json`.
+
+```bash
+council telemetry status     # show whether telemetry is enabled
+council telemetry enable      # opt in
+council telemetry disable     # opt out (the file simply stops being updated)
+council telemetry explain      # print exactly what is and isn't recorded
+```
+
+To delete the collected counts, remove the file:
+
+```bash
+rm ~/.council/telemetry-counters.json
+```
+
+For the full privacy posture, see
+[Security and Privacy](/Council/explanation/security-and-privacy/#telemetry) and
+the [`council telemetry`](/Council/reference/commands/telemetry/) reference.
+
+## Accessibility & responsive layout
+
+Council Console honors the same accessibility switches as the classic CLI and
+adapts to your terminal size:
+
+- **`NO_COLOR`** disables ANSI colors; **`COUNCIL_ASCII=1`** (or `TERM=dumb`)
+  forces an ASCII-only charset.
+- The layout is **responsive** — the sidebar collapses on narrow terminals, and
+  below ~60 columns Council Console prompts you to widen the window.
+
+See [Environment Variables](/Council/reference/environment-variables/) for the
+full list of rendering and launch switches.
+
+## Related
+
+- [`council ui`](/Council/reference/commands/ui/) — launch the TUI explicitly
+- [Environment Variables](/Council/reference/environment-variables/) — `COUNCIL_NO_TUI`, `COUNCIL_TUI`, and rendering switches
+- [Data Locations](/Council/reference/data-locations/) — where Council stores runtime data
+- [Security and Privacy](/Council/explanation/security-and-privacy/) — what stays local and what reaches your AI provider
+- [In-Chat Directives](/Council/reference/in-chat-directives/) — `@mention` and `@convene`
