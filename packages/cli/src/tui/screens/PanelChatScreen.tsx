@@ -223,20 +223,19 @@ export function PanelChatScreen(props: PanelChatScreenProps): React.ReactElement
               },
             );
             if (!isCurrentGeneration(generation)) return;
-            if (!result.aborted) {
-              const session =
-                sessionIdRef.current === undefined
-                  ? await chat.ensureSession("panel", name)
-                  : { id: sessionIdRef.current };
-              if (!isCurrentGeneration(generation)) return;
-              sessionIdRef.current = session.id;
-              await chat.persistTurn(session.id, {
-                userContent: prompt,
-                expertSlug: target.slug,
-                expertContent: result.text,
-                isMention: parsed.type === "mention",
-              });
-            }
+            if (result.aborted) break;
+            const session =
+              sessionIdRef.current === undefined
+                ? await chat.ensureSession("panel", name)
+                : { id: sessionIdRef.current };
+            if (!isCurrentGeneration(generation)) return;
+            sessionIdRef.current = session.id;
+            await chat.persistTurn(session.id, {
+              userContent: prompt,
+              expertSlug: target.slug,
+              expertContent: result.text,
+              isMention: parsed.type === "mention",
+            });
           }
         } catch (streamError) {
           if (isCurrentGeneration(generation)) {
