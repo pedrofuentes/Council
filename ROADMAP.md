@@ -148,7 +148,7 @@
 
 ---
 
-## Phase 9: Interactive TUI ("Council Console") 🚧
+## Phase 9: Interactive TUI ("Council Console") ✅
 
 > **Goal**: Running bare `council` on a TTY opens a full-screen interactive terminal UI where a
 > regular user can do everything — settings, panels, experts, training, chat, convene, sessions —
@@ -166,7 +166,7 @@
 - ✅ **9.7 Chat (1:1 & Panel)** — streaming chat in the TUI over 100%-covered `chat-engine`/`chat-session` adapters: a 1:1 `ExpertChatScreen` and a `PanelChatScreen` with `@mention` fan-out, follow-scroll `ScrollView`, thinking indicator, and history/resume. Both are **engine-in-screen** surfaces — a long-lived engine opened on mount, a per-run `AbortController`, generation-gated async continuations, `Esc`-abort (partial preserved), and clean unmount/no-setState-after-unmount; routing errors are caught and shown sanitized. A `ChatsScreen` lists and resumes prior chat sessions, and an inline `@convene` directive navigates into the 9.8 convene flow. All untrusted transcript content renders through `toSingleLineDisplay` (terminal-injection-safe)
 - ✅ **9.8 Convene & Conclude** — run and conclude a debate from inside the TUI over a 100%-covered `convene` adapter: a topic prompt + **cost-confirmation modal** (`ConvenePromptScreen`/`CostConfirmModal`), then a live **engine-in-screen** `DebateStreamScreen` (token-streamed expert turns, round/phase markers, an in-screen cost meter, `Esc` cancel that preserves the partial transcript via the existing persister). Convene members come from the live DB (not stale YAML); launched from a panel detail (`v`). An engine-backed `ConclusionScreen` (from a session detail) renders the **decision matrix** (dimensions × expert stances) plus consensus / tensions / recommendation / confidence — recomputed from the transcript, never persisted
 - ✅ **9.9 Inspection, Memory, Export & A11y Polish** — round out the TUI over 100%-covered adapters: **expert memory** inspection on the persona detail (`expert-memory`), a **session export overlay** (markdown/json/adr/share via `export-view`, written with an exclusive no-overwrite/no-symlink-follow `writeFileExclusive`), **first-run onboarding** (model pick that restarts the session so the choice takes effect via a new `runTuiSessions` loop), a **tiered sanitized `ErrorBoundary`** fallback + a startup-warnings banner, and a **contextual `?` help** (per-route shortcut legends) plus an accessibility/responsive audit (NO_COLOR + tooNarrow/rail/expanded across every screen). As part of this milestone a shared-sanitizer **OSC ReDoS** was fixed (linear `stripControlChars`) and the terminal-injection rule (untrusted TUI sinks use `toSingleLineDisplay`) was enforced across all screens
-- ⬜ **9.10 Make Default & Release** — Flip bare `council` on a TTY to launch the TUI (`--no-tui` / `COUNCIL_NO_TUI` escape; non-TTY fallback); add `council ui`; docs; smoke / platform / performance QA; opt-in TUI telemetry
+- ✅ **9.10 Make Default & Release** — bare `council` on an interactive TTY now **launches the TUI by default** (`shouldLaunchTui`, 100% branch), with `--no-tui` / `COUNCIL_NO_TUI` escapes, a non-TTY/CI CLI fallback, and `COUNCIL_TUI=1` as a legacy force; a `council ui` command launches it explicitly; user-facing docs cover the launch + flows + privacy; CI smoke verifies the non-TTY/`--no-tui` fallback (SHA-pinned, cross-platform); and an **opt-in, LOCAL, content-free** telemetry counter (off by default, no network, no content) was added
 
 ---
 
@@ -203,4 +203,4 @@
 | UX polish: 106 findings from cross-model audit         | 7.5   | ✅ Done                |
 | PM-driven QA fixes (45 findings, 28 fixed)             | 7.6   | ✅ Done                |
 | Published to npm as `@council-ai/cli`                  | 8     | ✅ Done (v0.3.0)       |
-| Interactive TUI shell (`council` console)              | 9     | 🚧 In Progress         |
+| Interactive TUI shell (`council` console)              | 9     | ✅ Done                |

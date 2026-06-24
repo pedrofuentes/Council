@@ -499,7 +499,7 @@ Generic experts get debate memory only; persona experts get document + debate me
 
 ---
 
-## Phase 9: Interactive TUI ("Council Console") 🚧
+## Phase 9: Interactive TUI ("Council Console") ✅
 
 > **Goal**: Bare `council` on a TTY opens a full-screen interactive terminal UI covering every
 > workflow (settings, panels, experts, training, chat, convene, sessions). The CLI is unchanged for
@@ -676,7 +676,7 @@ error display + startup warnings, screen-reader / ASCII / NO_COLOR + responsive 
 
 **Delivered** (PRs #1671, #1690, #1692, #1693, #1701): 100%-covered `expert-memory`, `export-view`, `onboarding`, `startup-warnings`, `shortcuts` adapters/helpers. Memory section on the persona detail; an `ExportOverlay` (`x`) writing all four formats via an exclusive `writeFileExclusive` (no overwrite / no symlink-follow); first-run `OnboardingScreen` that restarts the session (`runTuiSessions` loop) so the model choice applies; a tiered sanitized `ErrorBoundary` + startup-warnings banner; contextual `?` help with per-route shortcut legends + a NO_COLOR/responsive audit across every screen. Cross-cutting: fixed a shared-sanitizer OSC **ReDoS** (linear `stripControlChars`) and enforced `toSingleLineDisplay` for all untrusted TUI sinks.
 
-### 9.10 Make Default & Release ⬜
+### 9.10 Make Default & Release ✅
 
 **Goal**: Ship the TUI as the default experience.
 
@@ -690,6 +690,8 @@ checks; opt-in TUI telemetry events.
 - All existing CLI commands unchanged; smoke + platform-smoke green.
 
 **Key files**: `src/bin/council.ts`, `src/cli/commands/` (new `ui` command), `README.md`, `docs/UX_DESIGN.md`
+
+**Delivered** (PRs #1697, #1705, #1706, #1712, #1711): `shouldLaunchTui` flipped to default-ON on a TTY (100% branch, exhaustive truth table) with `--no-tui`/`COUNCIL_NO_TUI` escapes + non-TTY/CI fallback + `COUNCIL_TUI=1` legacy force (and a `runCli` seam that dedupes the update notice, closing #1691); a `council ui` command; user-facing TUI docs + command reference + telemetry/privacy docs; a cross-platform (SHA-pinned) CI smoke verifying the non-TTY/`--no-tui` CLI fallback; and an opt-in, LOCAL, content-free telemetry counter (off by default, no network, no content). **Phase 9 (the interactive "Council Console" TUI) is complete.**
 
 ---
 
