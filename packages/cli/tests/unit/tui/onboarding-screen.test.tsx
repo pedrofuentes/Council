@@ -44,13 +44,19 @@ function HomeProbe(): React.ReactElement {
   return <Text>HOME SCREEN</Text>;
 }
 
-function renderScreen(source?: OnboardingDataSource): ReturnType<typeof render> {
+function renderScreen(
+  source?: OnboardingDataSource,
+  onComplete?: () => void,
+): ReturnType<typeof render> {
   return render(
     <InputCaptureProvider>
       <DataProvider value={sourcesWith(source)}>
         <MemoryRouter initialEntries={["/onboarding"]}>
           <Routes>
-            <Route path="/onboarding" element={<OnboardingScreen theme={theme} isActive />} />
+            <Route
+              path="/onboarding"
+              element={<OnboardingScreen theme={theme} isActive onComplete={onComplete} />}
+            />
             <Route path="/" element={<HomeProbe />} />
           </Routes>
         </MemoryRouter>
@@ -110,6 +116,30 @@ describe("OnboardingScreen", () => {
 
     expect(complete).toHaveBeenCalledWith("claude-sonnet-4.5");
     expect(lastFrame()).toContain("HOME SCREEN");
+    unmount();
+  });
+
+  it("invokes the onComplete restart hook after persisting instead of navigating home", async () => {
+    const order: string[] = [];
+    const complete = vi.fn(async () => {
+      order.push("complete");
+    });
+    const onComplete = vi.fn(() => {
+      order.push("restart");
+    });
+    const { stdin, lastFrame, unmount } = renderScreen(createSource({ complete }), onComplete);
+
+    await flush();
+    stdin.write("\r");
+    await flush();
+
+    expect(complete).toHaveBeenCalledWith("claude-sonnet-4.5");
+    // The restart hook fires once, only after persistence resolves.
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(["complete", "restart"]);
+    // With a restart hook wired, the screen defers to it (launchTui rebuilds the
+    // session from the new config) rather than client-routing home itself.
+    expect(lastFrame()).not.toContain("HOME SCREEN");
     unmount();
   });
 
