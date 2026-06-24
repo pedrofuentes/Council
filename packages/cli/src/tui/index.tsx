@@ -34,6 +34,9 @@ import { createSettingsDataSource } from "./adapters/config-settings.js";
 import { createSessionsDataSource } from "./adapters/sessions-data.js";
 import { createConcludeSource } from "./adapters/conclude.js";
 import { createOnboardingSource } from "./adapters/onboarding.js";
+import { createExportSource } from "./adapters/export-view.js";
+import { renderAdr, renderJson, renderMarkdown } from "../cli/commands/export.js";
+import { renderShare } from "../cli/commands/export-share.js";
 import {
   createConveneSource,
   type ConveneDataSource,
@@ -55,6 +58,7 @@ import type { PanelMembership } from "../core/prompt-builder.js";
 import { createHomeDataSources } from "./adapters/home-data-sources.js";
 import { loadHomeData } from "./adapters/home-data.js";
 import { selectStartupWarnings } from "./lib/startup-warnings.js";
+import { writeFileExclusive } from "./lib/safe-write.js";
 import { DataProvider, type TuiDataSources } from "./components/DataProvider.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { CouncilTUI } from "./CouncilTUI.js";
@@ -249,6 +253,22 @@ export async function launchTui(): Promise<void> {
       model: config.defaults.model ?? DEFAULT_MODEL,
       maxTranscriptChars: config.conclude.maxTranscriptChars,
     }),
+    export: {
+      ...createExportSource({
+        loadTranscript: async (panelName: string, debateId?: string) => {
+          try {
+            return await loadTranscript(db, panelName, debateId);
+          } catch {
+            return null;
+          }
+        },
+        renderMarkdown,
+        renderJson,
+        renderAdr,
+        renderShare,
+      }),
+      writeFile: writeFileExclusive,
+    },
     chat: createChatSessionSource({ chat: new ChatRepository(db) }),
     chats: createChatsDataSource({ chat: new ChatRepository(db) }),
     chatEngine: createChatEngineSource({

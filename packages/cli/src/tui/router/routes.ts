@@ -19,6 +19,7 @@ export const ROUTES = {
   sessions: "/sessions",
   sessionDetail: "/sessions/:id",
   sessionConclude: "/sessions/:id/conclude",
+  sessionExport: "/sessions/:id/export",
   chats: "/chats",
   chatExpert: "/chat/expert/:slug",
   chatPanel: "/chat/panel/:name",

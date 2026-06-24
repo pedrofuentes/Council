@@ -38,7 +38,7 @@ function renderDetail(detail: SessionTranscriptView, theme: SemanticTheme): Reac
       ) : (
         <ScrollView items={rows} height={12} />
       )}
-      <Text>{theme.muted(toSingleLineDisplay("c conclude"))}</Text>
+      <Text>{theme.muted(toSingleLineDisplay("c conclude · x export"))}</Text>
     </Box>
   );
 }
@@ -63,6 +63,10 @@ export function SessionDetailScreen(props: SessionDetailScreenProps): React.Reac
     (input) => {
       if (input === "c" && id !== undefined && panelName !== undefined) {
         navigate(`/sessions/${encodeURIComponent(id)}/conclude`, { state: { panelName } });
+        return;
+      }
+      if (input === "x" && id !== undefined && panelName !== undefined) {
+        navigate(`/sessions/${encodeURIComponent(id)}/export`, { state: { panelName } });
       }
     },
     { isActive: props.isActive ?? false },
