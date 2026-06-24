@@ -15,6 +15,8 @@ import type { ExpertDocumentsDataSource } from "../../../src/tui/adapters/expert
 import type { ExpertTrainingDataSource } from "../../../src/tui/adapters/expert-training.js";
 import type { PanelAuthoringDataSource } from "../../../src/tui/adapters/panel-authoring.js";
 import type { PanelComposeDataSource } from "../../../src/tui/adapters/panel-compose.js";
+import type { ChatEngineSource } from "../../../src/tui/adapters/chat-engine-session.js";
+import type { ChatSessionDataSource } from "../../../src/tui/adapters/chat-session.js";
 import { DataProvider, type TuiDataSources } from "../../../src/tui/components/DataProvider.js";
 import { AppRouter } from "../../../src/tui/router/AppRouter.js";
 import { CouncilTUI } from "../../../src/tui/CouncilTUI.js";
@@ -137,6 +139,71 @@ const withSettings = (load: () => Promise<readonly SettingsFieldState[]>): TuiDa
     panels: { loadList: async () => [], loadDetail: async () => undefined },
     settings: { load, save: async () => undefined },
   }) as TuiDataSources;
+const withPanelChat = (): TuiDataSources => {
+  const chat: ChatSessionDataSource = {
+    loadHistory: async () => ({ session: undefined, turns: [] }),
+    ensureSession: async () => ({ id: "session-1" }),
+    route: (input, availableSlugs) => ({
+      type: "general",
+      targetSlugs: availableSlugs,
+      content: input.trim(),
+    }),
+    persistTurn: async () => undefined,
+  };
+  const chatEngine: ChatEngineSource = {
+    open: async () => {
+      throw new Error("unexpected expert open");
+    },
+    openPanel: async () => ({
+      members: [{ slug: "cto", expertId: "expert-cto" }],
+      send: () => ({
+        async *[Symbol.asyncIterator]() {
+          yield { kind: "message.complete", expertId: "expert-cto", response: { latencyMs: 1 } };
+        },
+      }),
+      close: async () => undefined,
+    }),
+  };
+  return {
+    panels: {
+      loadList: async () => [],
+      loadDetail: async () => ({
+        name: "strategy",
+        description: "",
+        source: "saved",
+        members: [{ slug: "cto", displayName: "CTO", role: "Tech", kind: "generic" }],
+        missing: [],
+      }),
+    },
+    chat,
+    chatEngine,
+  } as TuiDataSources;
+};
+
+const withExpertChat = (): TuiDataSources => {
+  const chat: ChatSessionDataSource = {
+    loadHistory: async () => ({ session: undefined, turns: [] }),
+    ensureSession: async () => ({ id: "session-1" }),
+    route: (input) => ({ type: "general", targetSlugs: [], content: input.trim() }),
+    persistTurn: async () => undefined,
+  };
+  const chatEngine: ChatEngineSource = {
+    open: async () => ({
+      expertId: "expert-ulid",
+      send: () => ({
+        async *[Symbol.asyncIterator]() {
+          yield { kind: "message.complete", expertId: "expert-ulid", response: { latencyMs: 1 } };
+        },
+      }),
+      close: async () => undefined,
+    }),
+  };
+  return {
+    panels: { loadList: async () => [], loadDetail: async () => undefined },
+    chat,
+    chatEngine,
+  } as TuiDataSources;
+};
 const withExpertAuthoring = (): TuiDataSources => {
   const authoring: ExpertAuthoringSource = {
     loadForEdit: async (slug) =>
@@ -283,6 +350,38 @@ describe("AppRouter", () => {
     );
     expect(lastFrame()).toContain("Chats");
     expect(lastFrame()).toContain("Coming soon");
+  });
+
+  it("renders the expert chat screen on the /chat/expert/:slug route", async () => {
+    const { lastFrame } = render(
+      <DataProvider value={withExpertChat()}>
+        <MemoryRouter initialEntries={["/chat/expert/cto"]}>
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+
+    expect(lastFrame()).toContain("Chat with cto");
+    expect(lastFrame()).toContain("Message:");
+    expect(lastFrame()).not.toContain("Coming soon");
+  });
+
+  it("renders the panel chat screen on the /chat/panel/:name route", async () => {
+    const { lastFrame } = render(
+      <DataProvider value={withPanelChat()}>
+        <MemoryRouter initialEntries={["/chat/panel/strategy"]}>
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+
+    expect(lastFrame()).toContain("Panel chat strategy");
+    expect(lastFrame()).toContain("Message:");
+    expect(lastFrame()).not.toContain("Coming soon");
   });
 
   it("renders the Settings screen on the /settings route", async () => {

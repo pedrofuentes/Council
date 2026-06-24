@@ -23,6 +23,7 @@ import { loadTranscript } from "../memory/transcript.js";
 import { updateConfigFields } from "../config/loader.js";
 import { createExpertAuthoringSource } from "./adapters/expert-authoring.js";
 import { createExpertDocumentsSource } from "./adapters/expert-documents.js";
+import { createExpertMemorySource } from "./adapters/expert-memory.js";
 import { createExpertsDataSource } from "./adapters/experts-data.js";
 import { createPanelAuthoringSource } from "./adapters/panel-authoring.js";
 import { createPanelComposeSource } from "./adapters/panel-compose.js";
@@ -39,7 +40,12 @@ import {
   type ConvenePanelRuntimeInput,
 } from "./adapters/convene-resolve.js";
 import { createExpertTrainingSource, stageDocumentFiles } from "./adapters/expert-training.js";
+import { createChatSessionSource } from "./adapters/chat-session.js";
+import { createChatEngineSource } from "./adapters/chat-engine-session.js";
 import { makeEngineFromKind } from "../cli/run-with-engine.js";
+import { buildExpertSpec, CHAT_TASK_DESCRIPTION } from "../cli/commands/chat/shared.js";
+import { getExpertPanelMemberships } from "../core/panel-membership-query.js";
+import type { PanelMembership } from "../core/prompt-builder.js";
 import { createHomeDataSources } from "./adapters/home-data-sources.js";
 import { loadHomeData } from "./adapters/home-data.js";
 import { DataProvider, type TuiDataSources } from "./components/DataProvider.js";
@@ -63,6 +69,7 @@ export async function launchTui(): Promise<void> {
   const panelLibrary = new PanelLibraryRepository(db);
   const runtimePanels = new PanelRepository(db);
   const runtimeExperts = new ExpertRepository(db);
+  const profileRepo = new ProfileRepository(db);
   const panelAuthoring = createPanelAuthoringSource({
     panelRepo: panelLibrary,
     expertExists: async (slug) => (await expertLibrary.get(slug)) !== null,
@@ -188,6 +195,10 @@ export async function launchTui(): Promise<void> {
       repo: new DocumentRepository(db),
       indexer: createDocumentIndexer(db),
     }),
+    expertMemory: createExpertMemorySource({
+      profileRepo: new ProfileRepository(db),
+      documentRepo: new DocumentRepository(db),
+    }),
     training: createExpertTrainingSource({
       loadExpertKind: async (slug) => (await expertLibrary.get(slug))?.kind,
       stageFiles: (slug, paths) => stageDocumentFiles(docsDirFor(slug), paths),
@@ -222,6 +233,28 @@ export async function launchTui(): Promise<void> {
         } catch {
           return undefined;
         }
+      },
+    }),
+    chat: createChatSessionSource({ chat: new ChatRepository(db) }),
+    chatEngine: createChatEngineSource({
+      engineFactory: () => makeEngineFromKind(config.defaults.engine),
+      buildSpec: async (slug) => {
+        const expert = await expertLibrary.get(slug);
+        if (expert === null) {
+          throw new Error(`Expert "${slug}" not found`);
+        }
+        const profile =
+          expert.kind === "persona"
+            ? ((await profileRepo.findBySlug(slug)) ?? undefined)
+            : undefined;
+        let memberships: readonly PanelMembership[] = [];
+        try {
+          memberships = await getExpertPanelMemberships(expert.slug, db);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.warn(`Could not load panel memberships for cross-panel context: ${message}`);
+        }
+        return buildExpertSpec(expert, config, CHAT_TASK_DESCRIPTION, profile, memberships);
       },
     }),
   };

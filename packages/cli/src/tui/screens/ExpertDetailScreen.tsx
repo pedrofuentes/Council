@@ -3,9 +3,10 @@ import { Box, Text, useInput } from "ink";
 import { useNavigate, useParams } from "react-router";
 
 import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
+import type { ExpertMemoryDataSource, ExpertMemoryView } from "../adapters/expert-memory.js";
 import type { ExpertDetailView, ExpertsDataSource } from "../adapters/experts-data.js";
 import { useData } from "../components/DataProvider.js";
-import { useAsyncResource } from "../hooks/use-async-resource.js";
+import { useAsyncResource, type AsyncState } from "../hooks/use-async-resource.js";
 import type { SemanticTheme } from "../theme/tokens.js";
 
 export interface ExpertDetailScreenProps {
@@ -59,6 +60,67 @@ function renderDetail(detail: ExpertDetailView, theme: SemanticTheme): React.Rea
   );
 }
 
+function renderMemoryList(
+  label: string,
+  items: readonly string[],
+  theme: SemanticTheme,
+): React.ReactElement | undefined {
+  if (items.length === 0) return undefined;
+
+  return (
+    <>
+      <Text>{theme.accent(toSingleLineDisplay(label))}</Text>
+      {items.map((item, index) => (
+        <Text key={`${label}-${String(index)}`}>{toSingleLineDisplay(`  ${item}`)}</Text>
+      ))}
+    </>
+  );
+}
+
+function renderMemorySection(
+  memory: AsyncState<ExpertMemoryView | undefined>,
+  theme: SemanticTheme,
+): React.ReactElement {
+  if (memory.status === "loading") {
+    return <Text>{theme.muted("Loading memory…")}</Text>;
+  }
+  if (memory.status === "error" || memory.data === undefined) {
+    return <Text>{theme.muted("Memory unavailable")}</Text>;
+  }
+
+  const view = memory.data;
+  if (!view.hasMemory) {
+    return (
+      <Box flexDirection="column">
+        <Text>{theme.accent("Memory")}</Text>
+        <Text>
+          {theme.muted(
+            toSingleLineDisplay("No learned memory yet. Train this expert to build memory."),
+          )}
+        </Text>
+      </Box>
+    );
+  }
+
+  return (
+    <Box flexDirection="column">
+      <Text>{theme.accent("Memory")}</Text>
+      <Text>{theme.accent(toSingleLineDisplay("Communication Style"))}</Text>
+      <Text>{toSingleLineDisplay(view.communicationStyle)}</Text>
+      {renderMemoryList("Decision Patterns", view.decisionPatterns, theme)}
+      {renderMemoryList("Biases", view.biases, theme)}
+      {renderMemoryList("Vocabulary", view.vocabulary, theme)}
+      <Text>
+        {toSingleLineDisplay(
+          `Documents: ${String(view.documentCount)} trained · ${String(
+            view.totalWords,
+          )} words · updated ${view.lastUpdated}`,
+        )}
+      </Text>
+    </Box>
+  );
+}
+
 export function ExpertDetailScreen(props: ExpertDetailScreenProps): React.ReactElement {
   const { slug } = useParams();
   const navigate = useNavigate();
@@ -72,6 +134,15 @@ export function ExpertDetailScreen(props: ExpertDetailScreenProps): React.ReactE
     [experts, slug],
   );
   const state = useAsyncResource(loader);
+  const expertMemory = data.expertMemory as ExpertMemoryDataSource | undefined;
+  const memoryLoader = React.useCallback(
+    () =>
+      expertMemory
+        ? expertMemory.load(slug ?? "")
+        : Promise.resolve<ExpertMemoryView | undefined>(undefined),
+    [expertMemory, slug],
+  );
+  const memoryState = useAsyncResource(memoryLoader);
   useInput(
     (input) => {
       if (input === "e" && slug !== undefined) {
@@ -115,6 +186,7 @@ export function ExpertDetailScreen(props: ExpertDetailScreenProps): React.ReactE
   return (
     <Box flexDirection="column">
       {renderDetail(state.data, props.theme)}
+      {state.data.kind === "persona" ? renderMemorySection(memoryState, props.theme) : undefined}
       {state.data.kind === "persona" ? (
         <Text>{props.theme.muted(toSingleLineDisplay("o documents · t train"))}</Text>
       ) : undefined}

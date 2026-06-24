@@ -1,0 +1,71 @@
+import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
+import type { ChatSendFn } from "./chat-engine.js";
+
+export interface ChatEngineHandle {
+  readonly send: ChatSendFn;
+  readonly expertId: string;
+  close(): Promise<void>;
+}
+
+export interface PanelChatMember {
+  readonly slug: string;
+  readonly expertId: string;
+}
+
+export interface PanelChatHandle {
+  readonly members: readonly PanelChatMember[];
+  readonly send: ChatSendFn;
+  close(): Promise<void>;
+}
+
+export interface ChatEngineSessionDeps {
+  readonly engineFactory: () => CouncilEngine;
+  readonly buildSpec: (slug: string) => Promise<ExpertSpec>;
+}
+
+export interface ChatEngineSource {
+  open(expertSlug: string): Promise<ChatEngineHandle>;
+  openPanel(memberSlugs: readonly string[]): Promise<PanelChatHandle>;
+}
+
+export function createChatEngineSource(deps: ChatEngineSessionDeps): ChatEngineSource {
+  return {
+    async open(expertSlug: string): Promise<ChatEngineHandle> {
+      const spec = await deps.buildSpec(expertSlug);
+      const engine = deps.engineFactory();
+      try {
+        await engine.start();
+        await engine.addExpert(spec);
+      } catch (error) {
+        await engine.stop();
+        throw error;
+      }
+
+      return {
+        expertId: spec.id,
+        send: (options) => engine.send(options),
+        close: () => engine.stop(),
+      };
+    },
+
+    async openPanel(memberSlugs: readonly string[]): Promise<PanelChatHandle> {
+      const specs = await Promise.all(memberSlugs.map((slug) => deps.buildSpec(slug)));
+      const engine = deps.engineFactory();
+      try {
+        await engine.start();
+        for (const spec of specs) {
+          await engine.addExpert(spec);
+        }
+      } catch (error) {
+        await engine.stop();
+        throw error;
+      }
+
+      return {
+        members: specs.map((memberSpec) => ({ slug: memberSpec.slug, expertId: memberSpec.id })),
+        send: (options) => engine.send(options),
+        close: () => engine.stop(),
+      };
+    },
+  };
+}
