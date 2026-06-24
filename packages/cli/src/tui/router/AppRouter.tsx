@@ -49,6 +49,12 @@ export interface CouncilTUIProps {
   readonly initialRows?: number;
   readonly startupWarnings?: readonly StartupWarning[];
   readonly isFirstRun?: boolean;
+  /**
+   * Invoked after first-run onboarding persists the chosen model. `launchTui`
+   * wires this to a session restart so the new `defaults.model` is rebuilt into
+   * the live session instead of staying stale until the next manual launch.
+   */
+  readonly onOnboardingComplete?: (() => void) | undefined;
 }
 
 type FocusMode = "nav" | "help" | "palette";
@@ -230,7 +236,13 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
           <Route path={ROUTES.home} element={<HomeScreen data={props.homeData} theme={theme} />} />
           <Route
             path={ROUTES.onboarding}
-            element={<OnboardingScreen theme={theme} isActive={mainActive} />}
+            element={
+              <OnboardingScreen
+                theme={theme}
+                isActive={mainActive}
+                onComplete={props.onOnboardingComplete}
+              />
+            }
           />
           <Route
             path={ROUTES.panels}

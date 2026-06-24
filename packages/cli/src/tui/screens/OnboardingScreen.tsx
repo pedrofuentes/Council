@@ -13,6 +13,14 @@ import type { SemanticTheme } from "../theme/tokens.js";
 export interface OnboardingScreenProps {
   readonly theme: SemanticTheme;
   readonly isActive?: boolean;
+  /**
+   * Invoked after the chosen model is persisted, in place of navigating home.
+   * `launchTui` wires this to a full session restart so the freshly persisted
+   * `defaults.model` is applied to the live session (header, engine factories,
+   * data-source default models). When absent — e.g. isolated screen tests —
+   * the screen falls back to client-side navigation home.
+   */
+  readonly onComplete?: (() => void) | undefined;
 }
 
 type PersistState =
@@ -38,6 +46,7 @@ export function OnboardingScreen(props: OnboardingScreenProps): React.ReactEleme
   const [persist, setPersist] = React.useState<PersistState>({ kind: "idle" });
   const inFlight = React.useRef(false);
   const isActive = props.isActive ?? true;
+  const { onComplete } = props;
 
   React.useEffect(() => {
     setCaptured(true);
@@ -57,13 +66,21 @@ export function OnboardingScreen(props: OnboardingScreenProps): React.ReactEleme
     setPersist({ kind: "persisting" });
     try {
       await onboarding.complete(option.id);
-      navigate(ROUTES.home, { replace: true });
+      // Persisting `defaults.model` only updates config.yaml; the running TUI
+      // session was built from the pre-onboarding config. Hand control to the
+      // restart hook so launchTui re-initialises with the new default model.
+      // Without a hook (isolated screen tests), fall back to navigating home.
+      if (onComplete !== undefined) {
+        onComplete();
+      } else {
+        navigate(ROUTES.home, { replace: true });
+      }
     } catch (err) {
       setPersist({ kind: "error", message: errorMessage(err) });
     } finally {
       inFlight.current = false;
     }
-  }, [cursor, models, navigate, onboarding]);
+  }, [cursor, models, navigate, onboarding, onComplete]);
 
   useInput(
     (input, key) => {
