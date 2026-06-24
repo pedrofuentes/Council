@@ -1,6 +1,7 @@
 import React from "react";
+import { Text } from "ink";
 import { render } from "ink-testing-library";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { describe, expect, it } from "vitest";
 
 import type { SessionTranscriptView } from "../../../src/tui/adapters/sessions-data.js";
@@ -20,6 +21,12 @@ const withTranscript = (
   panels: { loadList: async () => [], loadDetail: async () => undefined },
   sessions: { loadList: async () => [], loadTranscript },
 });
+
+function ConcludeProbe(): React.ReactElement {
+  const location = useLocation();
+  const state = location.state as { readonly panelName?: string } | null;
+  return <Text>CONCLUDE {state?.panelName ?? ""}</Text>;
+}
 
 describe("SessionDetailScreen", () => {
   it("renders sanitized transcript headers and rows", async () => {
@@ -141,5 +148,36 @@ describe("SessionDetailScreen", () => {
     await flush();
 
     expect(lastFrame()).toMatch(/No turns/i);
+  });
+
+  it("navigates to the conclusion screen with the panel name when c is pressed", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withTranscript(async () => ({
+          panelName: "Acme",
+          topic: "",
+          prompt: "Decide launch timing",
+          status: "completed",
+          lines: [{ speaker: "moderator", round: 1, content: "Welcome", kind: "moderator" }],
+        }))}
+      >
+        <MemoryRouter initialEntries={[{ pathname: "/sessions/p1", state: { panelName: "Acme" } }]}>
+          <Routes>
+            <Route path="/sessions/:id" element={<SessionDetailScreen theme={theme} isActive />} />
+            <Route path="/sessions/:id/conclude" element={<ConcludeProbe />} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    // The conclude action must be discoverable from the detail screen.
+    expect(lastFrame()).toMatch(/c\b.*conclude/i);
+
+    stdin.write("c");
+    await flush();
+
+    // Navigated to the conclude route, threading the panel name through state.
+    expect(lastFrame()).toContain("CONCLUDE Acme");
   });
 });

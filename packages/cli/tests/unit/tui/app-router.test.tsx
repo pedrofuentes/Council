@@ -23,6 +23,7 @@ import { AppRouter } from "../../../src/tui/router/AppRouter.js";
 import { CouncilTUI } from "../../../src/tui/CouncilTUI.js";
 import type { HomeData } from "../../../src/tui/adapters/home-data.js";
 import type { ConveneDataSource } from "../../../src/tui/adapters/convene.js";
+import type { ConcludeDataSource, ConclusionView } from "../../../src/tui/adapters/conclude.js";
 
 const homeData: HomeData = { counts: { sessions: 0, experts: 0, panels: 0 }, recent: [] };
 const flush = async (stdin?: { write: (s: string) => void }, input?: string): Promise<void> => {
@@ -132,6 +133,16 @@ const withConvenePrompt = (): TuiDataSources => {
   return {
     panels: { loadList: async () => [], loadDetail: async () => undefined },
     convene,
+  } as TuiDataSources;
+};
+
+const withConclude = (view: ConclusionView): TuiDataSources => {
+  const conclude: ConcludeDataSource = {
+    synthesize: async () => view,
+  };
+  return {
+    panels: { loadList: async () => [], loadDetail: async () => undefined },
+    conclude,
   } as TuiDataSources;
 };
 
@@ -641,5 +652,39 @@ describe("AppRouter", () => {
     await flush(stdin, "\r");
     expect(lastFrame()).toContain("Decide launch timing");
     expect(lastFrame()).toContain("[r1] moderator: Welcome");
+  });
+
+  it("renders the ConclusionScreen on the /sessions/:id/conclude route", async () => {
+    const view: ConclusionView = {
+      panelName: "Acme",
+      topic: "Launch timing",
+      consensus: ["Ship in Q3"],
+      tensions: ["Budget vs speed"],
+      decisionMatrix: [
+        {
+          dimension: "Risk vs Innovation",
+          stances: [{ expert: "conservative", stance: "Wait for data" }],
+        },
+      ],
+      recommendation: "Adopt a phased rollout",
+      confidence: "medium",
+      warnings: [],
+    };
+    const { lastFrame } = render(
+      <DataProvider value={withConclude(view)}>
+        <MemoryRouter
+          initialEntries={[{ pathname: "/sessions/p1/conclude", state: { panelName: "Acme" } }]}
+        >
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+
+    // The route must resolve to the conclusion view, not silently dead-end (#1678).
+    expect(lastFrame()).toContain("Risk vs Innovation");
+    expect(lastFrame()).toContain("Adopt a phased rollout");
+    expect(lastFrame()).not.toContain("Coming soon");
   });
 });
