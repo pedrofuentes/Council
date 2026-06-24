@@ -28,6 +28,12 @@ function ConcludeProbe(): React.ReactElement {
   return <Text>CONCLUDE {state?.panelName ?? ""}</Text>;
 }
 
+function ExportProbe(): React.ReactElement {
+  const location = useLocation();
+  const state = location.state as { readonly panelName?: string } | null;
+  return <Text>EXPORT {state?.panelName ?? ""}</Text>;
+}
+
 describe("SessionDetailScreen", () => {
   it("renders sanitized transcript headers and rows", async () => {
     const { lastFrame } = render(
@@ -179,5 +185,36 @@ describe("SessionDetailScreen", () => {
 
     // Navigated to the conclude route, threading the panel name through state.
     expect(lastFrame()).toContain("CONCLUDE Acme");
+  });
+
+  it("navigates to the export overlay with the panel name when x is pressed", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withTranscript(async () => ({
+          panelName: "Acme",
+          topic: "",
+          prompt: "Decide launch timing",
+          status: "completed",
+          lines: [{ speaker: "moderator", round: 1, content: "Welcome", kind: "moderator" }],
+        }))}
+      >
+        <MemoryRouter initialEntries={[{ pathname: "/sessions/p1", state: { panelName: "Acme" } }]}>
+          <Routes>
+            <Route path="/sessions/:id" element={<SessionDetailScreen theme={theme} isActive />} />
+            <Route path="/sessions/:id/export" element={<ExportProbe />} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    // The export action must be discoverable from the detail screen.
+    expect(lastFrame()).toMatch(/x\b.*export/i);
+
+    stdin.write("x");
+    await flush();
+
+    // Navigated to the export route, threading the panel name through state.
+    expect(lastFrame()).toContain("EXPORT Acme");
   });
 });

@@ -188,7 +188,7 @@ function renderForExport(doc: TranscriptDocument, format: ExportFormat): string 
   }
 }
 
-function renderJson(doc: TranscriptDocument): string {
+export function renderJson(doc: TranscriptDocument): string {
   // NDJSON identical to `council resume --format json`.
   return (
     synthesizeEvents(doc)
@@ -197,7 +197,7 @@ function renderJson(doc: TranscriptDocument): string {
   );
 }
 
-function renderMarkdown(doc: TranscriptDocument): string {
+export function renderMarkdown(doc: TranscriptDocument): string {
   const slugById = new Map<string, string>();
   const nameBySlug = new Map<string, string>();
   const modelBySlug = new Map<string, string>();
@@ -265,7 +265,7 @@ function renderMarkdown(doc: TranscriptDocument): string {
 
 const ADR_SHORT_TURN_MAX_CHARS = 40;
 
-function renderAdr(doc: TranscriptDocument): string {
+export function renderAdr(doc: TranscriptDocument): string {
   // Architecture Decision Record — populated from the panel's selected
   // debate. Heuristics: opening turn per expert = their position;
   // last turn per expert = their final synthesis (the Decision).
