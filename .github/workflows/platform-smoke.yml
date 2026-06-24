@@ -54,3 +54,39 @@ jobs:
           node packages/cli/dist/bin/council.js templates || true
           
           echo "✓ CLI smoke tests passed on ${{ matrix.os }}"
+
+      - name: Smoke test TUI fallback (non-TTY → CLI)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Council launches the full-screen TUI by default only on an interactive
+          # TTY (9.10 PR-A). This runner is non-TTY and sets CI=true, so the launch
+          # gate (`shouldLaunchTui`) returns false and bare `council` must fall back
+          # to the classic CLI instead of blocking on the TUI. These assertions guard
+          # the default-flip against silently breaking CI / automation / piped usage.
+          # stdin is redirected from /dev/null so a step can never hang on input, and
+          # stdout is captured/piped (non-TTY) so the fallback path is exercised.
+          bin=packages/cli/dist/bin/council.js
+
+          # 1) Bare `council` on a non-TTY falls back to the classic CLI help and does
+          #    NOT launch the TUI. Commander exits non-zero when no subcommand is
+          #    given, so capture the output and assert the CLI help rendered.
+          bare_out="$(node "$bin" </dev/null 2>&1 || true)"
+          if ! printf '%s\n' "$bare_out" | grep -q "Usage: council"; then
+            echo "ERROR: bare 'council' did not fall back to the CLI on a non-TTY" >&2
+            printf '%s\n' "$bare_out" >&2
+            exit 1
+          fi
+
+          # 2) `--help` on a non-TTY exits 0 with the classic CLI help (pipefail makes
+          #    a non-zero node exit fail the step).
+          node "$bin" --help </dev/null | grep -q "Usage: council"
+
+          # 3) The `--no-tui` escape hatch keeps the classic CLI (exits 0).
+          node "$bin" --no-tui --help </dev/null | grep -q "Usage: council"
+
+          # 4) A subcommand still routes to the CLI, not the TUI (offline, exits 0).
+          node "$bin" doctor --help </dev/null | grep -q "council doctor"
+
+          echo "✓ TUI-fallback smoke tests passed on ${{ matrix.os }} (non-TTY → CLI; --no-tui escape works)"
