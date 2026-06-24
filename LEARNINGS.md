@@ -278,3 +278,18 @@
 **Context**: Designing expert session architecture.
 **Learning**: The SDK multiplexes sessions over a single JSON-RPC channel. Spawning N CLI subprocesses (one per expert) is wasteful. One client handles all expert sessions.
 **Impact**: Use `ExpertSessionPool` pattern — one `CopilotClient.start()` per debate, acquire sessions per expert via `createSession()`.
+
+### [2026-06-24] TUI terminal-injection: use toSingleLineDisplay, never stripControlChars
+**Context**: Sentinel 🔴-rejected PanelChatScreen (#1667), ExpertDetailScreen (#1671), and the latent ExpertChatScreen (#1675) for rendering untrusted (model/file/DB-derived) content to Ink `<Text>`/`ScrollView` rows via `stripControlChars`.
+**Learning**: `stripControlChars` deliberately preserves `\n \r \t` and U+2028/U+2029, which enables forged transcript rows and CR-overwrite spoofing in a row-based TUI. For any untrusted string rendered to a terminal row/label, use `toSingleLineDisplay` (strips control chars AND collapses `[\r\n\t\u2028\u2029]+` → space). `stripControlChars` is only appropriate for non-interactive multi-line stdout renderers.
+**Impact**: Every new TUI screen must `toSingleLineDisplay` all untrusted sinks; `grep -n stripControlChars src/tui/screens/<X>.tsx` should be empty. Sentinel surfaces ONE sink per cycle — audit ALL sinks in a file in one pass to avoid repeat rejections.
+
+### [2026-06-24] stripControlChars OSC regex was a ReDoS (now linear)
+**Context**: PR #1671 — routing untrusted persona memory through `stripControlChars` exposed a quadratic-time DoS.
+**Learning**: The OSC branch `\x1B\].*?\x07` (lazy + `/s`) backtracks O(n²) on many unterminated `ESC]` introducers (32k chars → 245ms; 100k → 2.6s). Replaced with a linear, non-backtracking body `\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)?` (optional BEL/ST terminator), which also fully strips unterminated/ST-terminated OSC. Benchmark after: 100k → 0.5ms.
+**Impact**: When editing `CONTROL_CHAR_PATTERN`, keep every branch non-backtracking (negated classes, disjoint ranges). Add a ReDoS guard test (large repeated introducers must sanitize in linear time).
+
+### [2026-06-24] Engine-in-screen discipline (chat/debate/conclude streaming screens)
+**Context**: PRs #1662/#1664/#1686 each took reject cycles on the long-lived-engine-in-a-screen pattern.
+**Learning**: A screen that owns a streaming engine needs ALL of: a per-run `AbortController`; a `streamingRef`/`startedRef` so a run starts once and no concurrent run; **reset `startedRef` on effect cleanup** or a dependency re-run stalls the screen "streaming" with no active run (#1677); an `unmountedRef` gating every post-await `setState` (no setState after unmount — bite-test it with a `React.useState`-setter-spy, since React 19+Ink silently no-op the warning); close/stop the engine on EVERY failure path (mount load failure, synth error, abort) — no handle leak; `Esc` while streaming ABORTS (stays) and idle `Esc` navigates; persist only on non-aborted completion. Replicate `DebateStreamScreen`/`ConclusionScreen`/`ExpertChatScreen` rather than re-deriving.
+**Impact**: New streaming screens must mirror these guards and ship a biting test per guard.

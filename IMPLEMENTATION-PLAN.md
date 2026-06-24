@@ -626,7 +626,7 @@ flow); tracked as a follow-up.
 
 **Key files**: `src/tui/screens/Panel{Create,Members,Delete,Compose}Screen.tsx`, `src/tui/adapters/panel-{authoring,compose}.ts`, `src/tui/components/lists/MultiSelectList.tsx`, `src/core/auto-compose.ts`
 
-### 9.7 Chat (1:1 & Panel) ⬜
+### 9.7 Chat (1:1 & Panel) ✅
 
 **Goal**: Streaming conversational chat in the TUI.
 
@@ -641,7 +641,9 @@ thinking pill, history load/resume (`ChatRepository`), inline `@convene` (`CONVE
 
 **Key files**: `src/tui/screens/{Chat,PanelChat}.tsx`, `src/tui/components/streaming/*`, `src/cli/commands/chat/*` (extraction), `src/core/chat/*`
 
-### 9.8 Convene & Conclude ⬜
+**Delivered** (PRs #1657, #1658, #1662, #1667, #1682): 100%-covered `chat-engine`/`chat-session`/`chats-data` adapters; `ExpertChatScreen` + `PanelChatScreen` (engine-in-screen: per-run `AbortController`, generation-gated continuations, `Esc`-abort with partial preserved, unmount cleanup with no setState-after-unmount, caught/sanitized routing errors); a `ChatsScreen` list+resume; inline `@convene` navigates to the 9.8 convene flow. All untrusted transcript rows render via `toSingleLineDisplay`.
+
+### 9.8 Convene & Conclude ✅
 
 **Goal**: Run a live debate and synthesize a conclusion in the TUI.
 
@@ -655,6 +657,8 @@ tensions / recommendation).
 - `Esc` aborts via `AbortSignal` with the partial transcript persisted; conclusion renders.
 
 **Key files**: `src/tui/screens/{Convene,Conclude}.tsx`, `src/tui/components/streaming/{DebateStreamView,ExpertPills}.tsx`, `src/core/debate.ts` (reuse), `src/cli/conclusion-synthesis.ts` (reuse)
+
+**Delivered** (PRs #1661, #1664, #1686): 100%-covered `convene`/`convene-resolve`/`conclude` adapters; `ConvenePromptScreen` + `CostConfirmModal`; a live engine-in-screen `DebateStreamScreen` (streamed turns, round/phase markers, in-screen cost meter, `Esc` cancel preserving the partial via the persister); members sourced from the live DB; launched from a panel detail (`v`). An engine-backed `ConclusionScreen` renders the decision matrix + consensus/tensions/recommendation/confidence (recomputed from the transcript, not persisted). All untrusted content renders via `toSingleLineDisplay`.
 
 ### 9.9 Inspection, Memory, Export & A11y Polish ⬜
 
