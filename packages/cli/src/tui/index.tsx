@@ -21,7 +21,8 @@ import { PanelRepository } from "../memory/repositories/panels.js";
 import { TurnRepository } from "../memory/repositories/turns.js";
 import type { ExpertSpec } from "../engine/index.js";
 import { loadTranscript } from "../memory/transcript.js";
-import { updateConfigFields } from "../config/loader.js";
+import { loadConfigWithMeta, updateConfigField, updateConfigFields } from "../config/loader.js";
+import { discoverAvailableModels } from "../engine/copilot/health.js";
 import { createExpertAuthoringSource } from "./adapters/expert-authoring.js";
 import { createExpertDocumentsSource } from "./adapters/expert-documents.js";
 import { createExpertMemorySource } from "./adapters/expert-memory.js";
@@ -32,6 +33,7 @@ import { createPanelsDataSource } from "./adapters/panels-data.js";
 import { createSettingsDataSource } from "./adapters/config-settings.js";
 import { createSessionsDataSource } from "./adapters/sessions-data.js";
 import { createConcludeSource } from "./adapters/conclude.js";
+import { createOnboardingSource } from "./adapters/onboarding.js";
 import {
   createConveneSource,
   type ConveneDataSource,
@@ -58,7 +60,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { CouncilTUI } from "./CouncilTUI.js";
 
 export async function launchTui(): Promise<void> {
-  const config = await loadConfig();
+  const { config, isFirstRun } = await loadConfigWithMeta();
   const dataHome = getCouncilDataHome(config);
   const dbPath = path.join(getCouncilHome(), "council.db");
   const db = await createDatabase(dbPath);
@@ -270,6 +272,11 @@ export async function launchTui(): Promise<void> {
         return buildExpertSpec(expert, config, CHAT_TASK_DESCRIPTION, profile, memberships);
       },
     }),
+    onboarding: createOnboardingSource({
+      isFirstRun,
+      discoverModels: discoverAvailableModels,
+      updateConfig: updateConfigField,
+    }),
   };
   const model = config.defaults.model;
 
@@ -295,7 +302,12 @@ export async function launchTui(): Promise<void> {
       }}
     >
       <DataProvider value={dataSources}>
-        <CouncilTUI homeData={homeData} model={model} startupWarnings={startupWarnings} />
+        <CouncilTUI
+          homeData={homeData}
+          model={model}
+          startupWarnings={startupWarnings}
+          isFirstRun={isFirstRun}
+        />
       </DataProvider>
     </ErrorBoundary>,
     { alternateScreen: true, incrementalRendering: true },

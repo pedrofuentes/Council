@@ -8,9 +8,10 @@ import { ROUTES } from "./router/routes.js";
 export type { CouncilTUIProps };
 
 export function CouncilTUI(props: CouncilTUIProps): React.ReactElement {
+  const initialRoute = props.isFirstRun === true ? ROUTES.onboarding : ROUTES.home;
   return (
     <InputCaptureProvider>
-      <MemoryRouter initialEntries={[ROUTES.home]}>
+      <MemoryRouter initialEntries={[initialRoute]}>
         <AppRouter {...props} />
       </MemoryRouter>
     </InputCaptureProvider>

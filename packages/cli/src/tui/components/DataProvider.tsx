@@ -5,6 +5,7 @@ import type { ExpertAuthoringSource } from "../adapters/expert-authoring.js";
 import type { ExpertDocumentsDataSource } from "../adapters/expert-documents.js";
 import type { ExpertMemoryDataSource } from "../adapters/expert-memory.js";
 import type { ExpertTrainingDataSource } from "../adapters/expert-training.js";
+import type { OnboardingDataSource } from "../adapters/onboarding.js";
 import type { PanelAuthoringDataSource } from "../adapters/panel-authoring.js";
 import type { PanelComposeDataSource } from "../adapters/panel-compose.js";
 import type { PanelsDataSource } from "../adapters/panels-data.js";
@@ -32,6 +33,7 @@ export interface TuiDataSources {
   readonly chat?: ChatSessionDataSource;
   readonly chatEngine?: ChatEngineSource;
   readonly chats?: ChatsDataSource;
+  readonly onboarding?: OnboardingDataSource;
 }
 
 export interface DataProviderProps {

@@ -1,5 +1,6 @@
 export const ROUTES = {
   home: "/",
+  onboarding: "/onboarding",
   panels: "/panels",
   panelNew: "/panels/new",
   panelCompose: "/panels/compose",
