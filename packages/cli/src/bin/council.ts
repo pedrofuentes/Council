@@ -56,7 +56,7 @@ import {
 import { selectModelInteractively } from "../cli/first-run-model-select.js";
 import { renderBanner } from "../cli/renderers/banner.js";
 import { loadConfigWithMeta } from "../config/index.js";
-import { maybeNotifyUpdate } from "../core/version/index.js";
+import { maybeNotifyUpdate, type MaybeNotifyUpdateOptions } from "../core/version/index.js";
 import { shouldLaunchTui, type LaunchStreams } from "../tui/lib/should-launch-tui.js";
 import { launchTui } from "../tui/index.js";
 
@@ -223,6 +223,7 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
     .description("Persistent AI expert panels for deliberation and decision-making")
     .version(packageJson.version)
     .option("-q, --quiet", "Suppress informational stderr output")
+    .option("--no-tui", "Skip the interactive terminal UI and use the classic CLI")
     .showSuggestionAfterError(true)
     .showHelpAfterError("(run `council <command> --help` for usage)");
 
@@ -354,8 +355,9 @@ export interface MaybeLaunchTuiDeps extends LaunchStreams {
 
 /**
  * TUI entry guard. When {@link shouldLaunchTui} accepts the invocation (bare
- * `council` on a TTY with `COUNCIL_TUI=1`), launches the full-screen TUI and
- * returns `true` so the caller skips command parsing. Otherwise returns
+ * `council` on an interactive TTY by default, unless opted out via `--no-tui`
+ * / `COUNCIL_NO_TUI`, CI, or a non-TTY stream), launches the full-screen TUI
+ * and returns `true` so the caller skips command parsing. Otherwise returns
  * `false` and the caller falls through to the existing CLI program.
  */
 export async function maybeLaunchTui(deps: MaybeLaunchTuiDeps): Promise<boolean> {
@@ -366,6 +368,67 @@ export async function maybeLaunchTui(deps: MaybeLaunchTuiDeps): Promise<boolean>
     return true;
   }
   return false;
+}
+
+/**
+ * Dependencies for {@link runCli}. Each seam defaults to the real
+ * implementation but is injectable so the orchestration — in particular the
+ * update-notice suppression on the TUI-launch path (#1691) — can be unit
+ * tested without a real TTY, the Ink app, or the npm registry.
+ */
+export interface RunCliDeps {
+  readonly argv: readonly string[];
+  readonly launchTuiGuard?: (deps: MaybeLaunchTuiDeps) => Promise<boolean>;
+  readonly parseProgram?: (argv: readonly string[]) => Promise<void>;
+  readonly notifyUpdate?: (options: MaybeNotifyUpdateOptions) => Promise<void>;
+  readonly stderrIsTTY?: boolean;
+}
+
+const defaultParseProgram = async (argv: readonly string[]): Promise<void> => {
+  await buildProgram({ firstRunSetup: {} }).parseAsync([...argv]);
+};
+
+/**
+ * Run the CLI: try the TUI entry guard first, otherwise parse the Commander
+ * program, then — on the CLI path only — print the throttled "update
+ * available" notice on exit.
+ *
+ * When the TUI launched, its startup banner already surfaced that notice
+ * (src/tui/index.tsx), so re-running the stderr notifier here would print it a
+ * second time (#1691). The notifier is therefore skipped on the TUI-launch
+ * path and runs only when the CLI handled the invocation.
+ */
+export async function runCli(deps: RunCliDeps): Promise<void> {
+  const launchGuard = deps.launchTuiGuard ?? maybeLaunchTui;
+  const parseProgram = deps.parseProgram ?? defaultParseProgram;
+  const notifyUpdate = deps.notifyUpdate ?? maybeNotifyUpdate;
+  const stderrIsTTY = deps.stderrIsTTY ?? process.stderr.isTTY === true;
+
+  let tuiLaunched = false;
+  try {
+    if (await launchGuard({ argv: deps.argv })) {
+      tuiLaunched = true;
+      return;
+    }
+    await parseProgram(deps.argv);
+  } catch (err: unknown) {
+    process.exitCode = handleCliError(err, defaultErrorWriter);
+  } finally {
+    // Print a throttled "update available" notice at the END of a CLI run
+    // (both success and error paths), gated on a stderr TTY and --quiet so
+    // stdout/JSON output stays clean. Skipped on the TUI-launch path to avoid
+    // duplicating the notice the TUI banner already showed (#1691). The
+    // background registry refresh is fire-and-forget, so it never changes the
+    // exit code, throws, or delays exit.
+    if (!tuiLaunched) {
+      const quiet = isQuiet() || deps.argv.includes("-q") || deps.argv.includes("--quiet");
+      await notifyUpdate({
+        currentVersion: packageJson.version,
+        isTTY: stderrIsTTY,
+        quiet,
+      });
+    }
+  }
 }
 
 // Only auto-parse when invoked as a script (not when imported by tests).
@@ -389,31 +452,5 @@ if (isMainModule) {
   configureOutputEncoding();
   installSqliteExperimentalWarningFilter();
 
-  const runCli = async (): Promise<void> => {
-    try {
-      // TUI entry guard: bare `council` on a TTY with COUNCIL_TUI=1 launches
-      // the full-screen TUI. All other invocations (subcommands, non-TTY,
-      // missing COUNCIL_TUI) fall through to the existing CLI.
-      if (await maybeLaunchTui({ argv: process.argv })) {
-        return;
-      }
-      await buildProgram({ firstRunSetup: {} }).parseAsync(process.argv);
-    } catch (err: unknown) {
-      process.exitCode = handleCliError(err, defaultErrorWriter);
-    } finally {
-      // Print a throttled "update available" notice at the END of a run (both
-      // success and error paths). Gated on a stderr TTY and --quiet; the notice
-      // goes to stderr only so stdout/JSON output stays clean. The background
-      // registry refresh is fired and forgotten (its abort timer is unref'd)
-      // so it never changes the exit code, throws, or delays exit.
-      const quiet = isQuiet() || process.argv.includes("-q") || process.argv.includes("--quiet");
-      await maybeNotifyUpdate({
-        currentVersion: packageJson.version,
-        isTTY: process.stderr.isTTY === true,
-        quiet,
-      });
-    }
-  };
-
-  void runCli();
+  void runCli({ argv: process.argv });
 }
