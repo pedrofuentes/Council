@@ -19,6 +19,7 @@ import { loadTranscript } from "../memory/transcript.js";
 import { updateConfigFields } from "../config/loader.js";
 import { createExpertAuthoringSource } from "./adapters/expert-authoring.js";
 import { createExpertDocumentsSource } from "./adapters/expert-documents.js";
+import { createExpertMemorySource } from "./adapters/expert-memory.js";
 import { createExpertsDataSource } from "./adapters/experts-data.js";
 import { createPanelAuthoringSource } from "./adapters/panel-authoring.js";
 import { createPanelComposeSource } from "./adapters/panel-compose.js";
@@ -87,6 +88,10 @@ export async function launchTui(): Promise<void> {
     documents: createExpertDocumentsSource({
       repo: new DocumentRepository(db),
       indexer: createDocumentIndexer(db),
+    }),
+    expertMemory: createExpertMemorySource({
+      profileRepo: new ProfileRepository(db),
+      documentRepo: new DocumentRepository(db),
     }),
     training: createExpertTrainingSource({
       loadExpertKind: async (slug) => (await expertLibrary.get(slug))?.kind,
