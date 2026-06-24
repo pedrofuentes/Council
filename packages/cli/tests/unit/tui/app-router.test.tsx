@@ -567,6 +567,33 @@ describe("AppRouter", () => {
     expect(lastFrame()).not.toContain("Expert not found");
   });
 
+  it("renders the OnboardingScreen on the /onboarding route", async () => {
+    const value = {
+      panels: { loadList: async () => [], loadDetail: async () => undefined },
+      onboarding: {
+        load: async () => ({
+          isFirstRun: true,
+          usedFallback: false,
+          models: [{ id: "claude-sonnet-4.5", label: "claude-sonnet-4.5", recommended: true }],
+        }),
+        complete: async () => undefined,
+      },
+    } as unknown as TuiDataSources;
+    const { lastFrame } = render(
+      <DataProvider value={value}>
+        <MemoryRouter initialEntries={["/onboarding"]}>
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+
+    expect(lastFrame()).toMatch(/welcome to council/i);
+    expect(lastFrame()).toContain("claude-sonnet-4.5");
+    expect(lastFrame()).not.toContain("Coming soon");
+  });
+
   it("focuses the nav with Tab and navigates to the chosen section on Enter", async () => {
     const { stdin, lastFrame } = render(
       <DataProvider value={withPanels()}>
