@@ -19,11 +19,11 @@ async function loadCouncilModule() {
   return import("../../../src/bin/council.js");
 }
 
-function createWritable(
-  target: string,
-  calls: WriteCall[],
-  isTTY?: boolean,
-): TestWritable {
+async function loadUiCommandModule() {
+  return import("../../../src/cli/commands/ui.js");
+}
+
+function createWritable(target: string, calls: WriteCall[], isTTY?: boolean): TestWritable {
   return {
     isTTY,
     write: (
@@ -247,29 +247,30 @@ describe("buildProgram", () => {
       expect(commandNames[3]).toBe("telemetry");
       expect(commandNames[4]).toBe("docs");
       expect(commandNames[5]).toBe("update");
+      expect(commandNames[6]).toBe("ui");
 
       // Deliberation
-      expect(commandNames[6]).toBe("convene");
-      expect(commandNames[7]).toBe("resume");
-      expect(commandNames[8]).toBe("conclude");
-      expect(commandNames[9]).toBe("review");
+      expect(commandNames[7]).toBe("convene");
+      expect(commandNames[8]).toBe("resume");
+      expect(commandNames[9]).toBe("conclude");
+      expect(commandNames[10]).toBe("review");
 
       // Conversation
-      expect(commandNames[10]).toBe("ask");
-      expect(commandNames[11]).toBe("chat");
+      expect(commandNames[11]).toBe("ask");
+      expect(commandNames[12]).toBe("chat");
 
       // Library
-      expect(commandNames[12]).toBe("expert");
-      expect(commandNames[13]).toBe("panel");
-      expect(commandNames[14]).toBe("templates");
+      expect(commandNames[13]).toBe("expert");
+      expect(commandNames[14]).toBe("panel");
+      expect(commandNames[15]).toBe("templates");
 
       // Inspection
-      expect(commandNames[15]).toBe("sessions");
-      expect(commandNames[16]).toBe("memory");
-      expect(commandNames[17]).toBe("export");
+      expect(commandNames[16]).toBe("sessions");
+      expect(commandNames[17]).toBe("memory");
+      expect(commandNames[18]).toBe("export");
 
       // Other commands (not in categories but registered)
-      expect(commandNames[18]).toBe("models");
+      expect(commandNames[19]).toBe("models");
     });
   });
 
@@ -328,5 +329,27 @@ describe("buildProgram", () => {
       expect(result).toBe(false);
       expect(launched).toBe(0);
     });
+  });
+});
+
+describe("buildUiCommand", () => {
+  it("registers a 'ui' command that launches the interactive terminal UI", async () => {
+    const { buildUiCommand } = await loadUiCommandModule();
+    const cmd = buildUiCommand();
+    expect(cmd.name()).toBe("ui");
+    expect(cmd.description().toLowerCase()).toMatch(/launch|interactive|terminal ui|tui/);
+  });
+
+  it("invokes the injected TUI launcher exactly once when run", async () => {
+    const { buildUiCommand } = await loadUiCommandModule();
+    let launched = 0;
+    const cmd = buildUiCommand({
+      launchTui: async () => {
+        launched += 1;
+      },
+    });
+    cmd.exitOverride();
+    await cmd.parseAsync(["node", "council-ui"]);
+    expect(launched).toBe(1);
   });
 });
