@@ -21,7 +21,9 @@ import { PanelRepository } from "../memory/repositories/panels.js";
 import { TurnRepository } from "../memory/repositories/turns.js";
 import type { ExpertSpec } from "../engine/index.js";
 import { loadTranscript } from "../memory/transcript.js";
-import { updateConfigFields } from "../config/loader.js";
+import { loadConfigWithMeta, updateConfigField, updateConfigFields } from "../config/loader.js";
+import type { ConfigLoadResult } from "../config/loader.js";
+import { discoverAvailableModels } from "../engine/copilot/health.js";
 import { createExpertAuthoringSource } from "./adapters/expert-authoring.js";
 import { createExpertDocumentsSource } from "./adapters/expert-documents.js";
 import { createExpertMemorySource } from "./adapters/expert-memory.js";
@@ -32,6 +34,7 @@ import { createPanelsDataSource } from "./adapters/panels-data.js";
 import { createSettingsDataSource } from "./adapters/config-settings.js";
 import { createSessionsDataSource } from "./adapters/sessions-data.js";
 import { createConcludeSource } from "./adapters/conclude.js";
+import { createOnboardingSource } from "./adapters/onboarding.js";
 import { createExportSource } from "./adapters/export-view.js";
 import { renderAdr, renderJson, renderMarkdown } from "../cli/commands/export.js";
 import { renderShare } from "../cli/commands/export-share.js";
@@ -60,269 +63,297 @@ import { writeFileExclusive } from "./lib/safe-write.js";
 import { DataProvider, type TuiDataSources } from "./components/DataProvider.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { CouncilTUI } from "./CouncilTUI.js";
+import { runTuiSessions } from "./run-sessions.js";
 
 export async function launchTui(): Promise<void> {
-  const config = await loadConfig();
-  const dataHome = getCouncilDataHome(config);
   const dbPath = path.join(getCouncilHome(), "council.db");
   const db = await createDatabase(dbPath);
 
-  const sources = createHomeDataSources({
-    chat: new ChatRepository(db),
-    panels: new PanelRepository(db),
-    experts: new ExpertRepository(db),
-  });
+  // Render one TUI session from a freshly-loaded config snapshot. Re-invoked by
+  // runTuiSessions after first-run onboarding so the chosen default model
+  // (persisted to config.yaml) is rebuilt into the live session.
+  const renderSession = async ({ config, isFirstRun }: ConfigLoadResult): Promise<boolean> => {
+    const dataHome = getCouncilDataHome(config);
 
-  const homeData = await loadHomeData(sources);
-  const expertLibrary = new FileExpertLibrary(dataHome, db);
-  const panelLibrary = new PanelLibraryRepository(db);
-  const runtimePanels = new PanelRepository(db);
-  const runtimeExperts = new ExpertRepository(db);
-  const profileRepo = new ProfileRepository(db);
-  const panelAuthoring = createPanelAuthoringSource({
-    panelRepo: panelLibrary,
-    expertExists: async (slug) => (await expertLibrary.get(slug)) !== null,
-    dataHome,
-    countDebates: async (name) => {
-      const runtime = await new PanelRepository(db).findByNamePrefix(name);
-      const exact = runtime.filter((panel) => panel.name === name);
-      let total = 0;
-      for (const panel of exact) {
-        total += (await new DebateRepository(db).findByPanelId(panel.id)).length;
-      }
-      return total;
-    },
-  });
-  const docsDirFor = (slug: string): string => path.join(dataHome, "experts", slug, "docs");
-
-  const createBuildSpec =
-    (
-      topic: string,
-    ): ((slug: string, panelDefaultModel: string | undefined) => Promise<ExpertSpec>) =>
-    async (slug, panelDefaultModel) => {
-      const definition = await expertLibrary.get(slug);
-      if (definition === null) {
-        throw new Error(`Panel references missing expert "${slug}"`);
-      }
-      return {
-        id: ulid(),
-        slug: definition.slug,
-        displayName: definition.displayName,
-        model: resolveModel({
-          expertModel: definition.model,
-          panelDefaultModel,
-          configDefaultModel: config.defaults.model ?? DEFAULT_MODEL,
-        }),
-        systemMessage: buildSystemPrompt(definition, undefined, topic),
-      };
-    };
-
-  const createResolvePanelId =
-    (topic: string, persistRuntimeRows: boolean) =>
-    async (
-      input: ConvenePanelRuntimeInput,
-    ): Promise<{
-      readonly panelId: string;
-      readonly expertSlugToId: Readonly<Record<string, string>>;
-    }> => {
-      if (!persistRuntimeRows) {
-        return { panelId: "estimate-only", expertSlugToId: {} };
-      }
-
-      const panel = await runtimePanels.create({
-        name: `${input.panelName}-${new Date().toISOString().slice(0, 19)}`,
-        topic,
-        copilotHome: path.join(getCouncilHome(), "copilot"),
-        configJson: JSON.stringify({
-          template: input.panelName,
-          mode: input.mode,
-          maxRounds: input.debateConfig.maxRounds,
-          maxWords: input.debateConfig.maxWordsPerResponse,
-          engine: config.defaults.engine,
-        }),
-      });
-
-      const expertSlugToId: Record<string, string> = {};
-      for (const expert of input.experts) {
-        const row = await runtimeExperts.create({
-          panelId: panel.id,
-          slug: expert.slug,
-          displayName: expert.displayName,
-          model: expert.model,
-          systemMessage: expert.systemMessage,
-        });
-        expertSlugToId[expert.slug] = row.id;
-      }
-
-      return { panelId: panel.id, expertSlugToId };
-    };
-
-  const buildConveneResolver = (
-    topic: string,
-    persistRuntimeRows: boolean,
-  ): ((panelName: string) => Promise<ResolvedConvenePanel>) =>
-    createConvenePanelResolver({
-      loadPanel,
-      getMembers: (name) => panelLibrary.getMembers(name),
-      dataHome,
-      config,
-      buildSpec: createBuildSpec(topic),
-      resolvePanelId: createResolvePanelId(topic, persistRuntimeRows),
+    const sources = createHomeDataSources({
+      chat: new ChatRepository(db),
+      panels: new PanelRepository(db),
+      experts: new ExpertRepository(db),
     });
 
-  const convene: ConveneDataSource = {
-    estimateCost: async (panelName) =>
-      createConveneSource({
-        engineFactory: () => makeEngineFromKind(config.defaults.engine),
-        db,
-        resolvePanel: buildConveneResolver("", false),
-      }).estimateCost(panelName),
-    streamDebate: async (panelName, topic, options, onEvent) =>
-      createConveneSource({
-        engineFactory: () => makeEngineFromKind(config.defaults.engine),
-        db,
-        resolvePanel: buildConveneResolver(topic, true),
-      }).streamDebate(panelName, topic, options, onEvent),
-  };
-  const dataSources: TuiDataSources = {
-    panels: createPanelsDataSource({
-      library: panelLibrary,
-      experts: expertLibrary,
-      listTemplates,
-      loadTemplate,
-    }),
-    panelAuthoring,
-    panelCompose: createPanelComposeSource({
-      engineFactory: () => makeEngineFromKind(config.defaults.engine),
-      defaultModel: config.defaults.model ?? DEFAULT_MODEL,
-      library: expertLibrary,
-      createPanel: panelAuthoring.create,
-    }),
-    experts: createExpertsDataSource({ library: expertLibrary }),
-    expertAuthoring: createExpertAuthoringSource({ library: expertLibrary }),
-    documents: createExpertDocumentsSource({
-      repo: new DocumentRepository(db),
-      indexer: createDocumentIndexer(db),
-    }),
-    expertMemory: createExpertMemorySource({
-      profileRepo: new ProfileRepository(db),
-      documentRepo: new DocumentRepository(db),
-    }),
-    training: createExpertTrainingSource({
-      loadExpertKind: async (slug) => (await expertLibrary.get(slug))?.kind,
-      stageFiles: (slug, paths) => stageDocumentFiles(docsDirFor(slug), paths),
-      docsPathFor: docsDirFor,
-      createProcessor: (engine) =>
-        createDocumentProcessor({
-          engine,
-          documentRepo: new DocumentRepository(db),
-          profileRepo: new ProfileRepository(db),
-          indexer: createDocumentIndexer(db),
-          config: {
-            supportedFormats: config.expert.supportedFormats,
-            recencyHalfLifeDays: config.expert.recencyHalfLifeDays,
-            maxFileSizeBytes: config.documents.maxFileSizeMB * 1024 * 1024,
-            aiFallback: {
-              mode: config.documents.aiExtraction,
-              allowedExtensions: config.documents.aiExtractionAllowedExtensions,
-            },
-          },
-        }),
-      engineFactory: () => makeEngineFromKind(config.defaults.engine),
-    }),
-    settings: createSettingsDataSource({ loadConfig, updateConfigFields }),
-    convene,
-    sessions: createSessionsDataSource({
-      panels: new PanelRepository(db),
-      debates: new DebateRepository(db),
-      turns: new TurnRepository(db),
-      loadTranscript: async (panelName: string) => {
-        try {
-          return await loadTranscript(db, panelName);
-        } catch {
-          return undefined;
+    const homeData = await loadHomeData(sources);
+    const expertLibrary = new FileExpertLibrary(dataHome, db);
+    const panelLibrary = new PanelLibraryRepository(db);
+    const runtimePanels = new PanelRepository(db);
+    const runtimeExperts = new ExpertRepository(db);
+    const profileRepo = new ProfileRepository(db);
+    const panelAuthoring = createPanelAuthoringSource({
+      panelRepo: panelLibrary,
+      expertExists: async (slug) => (await expertLibrary.get(slug)) !== null,
+      dataHome,
+      countDebates: async (name) => {
+        const runtime = await new PanelRepository(db).findByNamePrefix(name);
+        const exact = runtime.filter((panel) => panel.name === name);
+        let total = 0;
+        for (const panel of exact) {
+          total += (await new DebateRepository(db).findByPanelId(panel.id)).length;
         }
+        return total;
       },
-    }),
-    conclude: createConcludeSource({
-      engineFactory: () => makeEngineFromKind(config.defaults.engine),
-      loadTranscript: (panelName: string, debateId?: string) =>
-        loadTranscript(db, panelName, debateId),
-      model: config.defaults.model ?? DEFAULT_MODEL,
-      maxTranscriptChars: config.conclude.maxTranscriptChars,
-    }),
-    export: {
-      ...createExportSource({
-        loadTranscript: async (panelName: string, debateId?: string) => {
+    });
+    const docsDirFor = (slug: string): string => path.join(dataHome, "experts", slug, "docs");
+
+    const createBuildSpec =
+      (
+        topic: string,
+      ): ((slug: string, panelDefaultModel: string | undefined) => Promise<ExpertSpec>) =>
+      async (slug, panelDefaultModel) => {
+        const definition = await expertLibrary.get(slug);
+        if (definition === null) {
+          throw new Error(`Panel references missing expert "${slug}"`);
+        }
+        return {
+          id: ulid(),
+          slug: definition.slug,
+          displayName: definition.displayName,
+          model: resolveModel({
+            expertModel: definition.model,
+            panelDefaultModel,
+            configDefaultModel: config.defaults.model ?? DEFAULT_MODEL,
+          }),
+          systemMessage: buildSystemPrompt(definition, undefined, topic),
+        };
+      };
+
+    const createResolvePanelId =
+      (topic: string, persistRuntimeRows: boolean) =>
+      async (
+        input: ConvenePanelRuntimeInput,
+      ): Promise<{
+        readonly panelId: string;
+        readonly expertSlugToId: Readonly<Record<string, string>>;
+      }> => {
+        if (!persistRuntimeRows) {
+          return { panelId: "estimate-only", expertSlugToId: {} };
+        }
+
+        const panel = await runtimePanels.create({
+          name: `${input.panelName}-${new Date().toISOString().slice(0, 19)}`,
+          topic,
+          copilotHome: path.join(getCouncilHome(), "copilot"),
+          configJson: JSON.stringify({
+            template: input.panelName,
+            mode: input.mode,
+            maxRounds: input.debateConfig.maxRounds,
+            maxWords: input.debateConfig.maxWordsPerResponse,
+            engine: config.defaults.engine,
+          }),
+        });
+
+        const expertSlugToId: Record<string, string> = {};
+        for (const expert of input.experts) {
+          const row = await runtimeExperts.create({
+            panelId: panel.id,
+            slug: expert.slug,
+            displayName: expert.displayName,
+            model: expert.model,
+            systemMessage: expert.systemMessage,
+          });
+          expertSlugToId[expert.slug] = row.id;
+        }
+
+        return { panelId: panel.id, expertSlugToId };
+      };
+
+    const buildConveneResolver = (
+      topic: string,
+      persistRuntimeRows: boolean,
+    ): ((panelName: string) => Promise<ResolvedConvenePanel>) =>
+      createConvenePanelResolver({
+        loadPanel,
+        getMembers: (name) => panelLibrary.getMembers(name),
+        dataHome,
+        config,
+        buildSpec: createBuildSpec(topic),
+        resolvePanelId: createResolvePanelId(topic, persistRuntimeRows),
+      });
+
+    const convene: ConveneDataSource = {
+      estimateCost: async (panelName) =>
+        createConveneSource({
+          engineFactory: () => makeEngineFromKind(config.defaults.engine),
+          db,
+          resolvePanel: buildConveneResolver("", false),
+        }).estimateCost(panelName),
+      streamDebate: async (panelName, topic, options, onEvent) =>
+        createConveneSource({
+          engineFactory: () => makeEngineFromKind(config.defaults.engine),
+          db,
+          resolvePanel: buildConveneResolver(topic, true),
+        }).streamDebate(panelName, topic, options, onEvent),
+    };
+    const dataSources: TuiDataSources = {
+      panels: createPanelsDataSource({
+        library: panelLibrary,
+        experts: expertLibrary,
+        listTemplates,
+        loadTemplate,
+      }),
+      panelAuthoring,
+      panelCompose: createPanelComposeSource({
+        engineFactory: () => makeEngineFromKind(config.defaults.engine),
+        defaultModel: config.defaults.model ?? DEFAULT_MODEL,
+        library: expertLibrary,
+        createPanel: panelAuthoring.create,
+      }),
+      experts: createExpertsDataSource({ library: expertLibrary }),
+      expertAuthoring: createExpertAuthoringSource({ library: expertLibrary }),
+      documents: createExpertDocumentsSource({
+        repo: new DocumentRepository(db),
+        indexer: createDocumentIndexer(db),
+      }),
+      expertMemory: createExpertMemorySource({
+        profileRepo: new ProfileRepository(db),
+        documentRepo: new DocumentRepository(db),
+      }),
+      training: createExpertTrainingSource({
+        loadExpertKind: async (slug) => (await expertLibrary.get(slug))?.kind,
+        stageFiles: (slug, paths) => stageDocumentFiles(docsDirFor(slug), paths),
+        docsPathFor: docsDirFor,
+        createProcessor: (engine) =>
+          createDocumentProcessor({
+            engine,
+            documentRepo: new DocumentRepository(db),
+            profileRepo: new ProfileRepository(db),
+            indexer: createDocumentIndexer(db),
+            config: {
+              supportedFormats: config.expert.supportedFormats,
+              recencyHalfLifeDays: config.expert.recencyHalfLifeDays,
+              maxFileSizeBytes: config.documents.maxFileSizeMB * 1024 * 1024,
+              aiFallback: {
+                mode: config.documents.aiExtraction,
+                allowedExtensions: config.documents.aiExtractionAllowedExtensions,
+              },
+            },
+          }),
+        engineFactory: () => makeEngineFromKind(config.defaults.engine),
+      }),
+      settings: createSettingsDataSource({ loadConfig, updateConfigFields }),
+      convene,
+      sessions: createSessionsDataSource({
+        panels: new PanelRepository(db),
+        debates: new DebateRepository(db),
+        turns: new TurnRepository(db),
+        loadTranscript: async (panelName: string) => {
           try {
-            return await loadTranscript(db, panelName, debateId);
+            return await loadTranscript(db, panelName);
           } catch {
-            return null;
+            return undefined;
           }
         },
-        renderMarkdown,
-        renderJson,
-        renderAdr,
-        renderShare,
       }),
-      writeFile: writeFileExclusive,
-    },
-    chat: createChatSessionSource({ chat: new ChatRepository(db) }),
-    chats: createChatsDataSource({ chat: new ChatRepository(db) }),
-    chatEngine: createChatEngineSource({
-      engineFactory: () => makeEngineFromKind(config.defaults.engine),
-      buildSpec: async (slug) => {
-        const expert = await expertLibrary.get(slug);
-        if (expert === null) {
-          throw new Error(`Expert "${slug}" not found`);
-        }
-        const profile =
-          expert.kind === "persona"
-            ? ((await profileRepo.findBySlug(slug)) ?? undefined)
-            : undefined;
-        let memberships: readonly PanelMembership[] = [];
-        try {
-          memberships = await getExpertPanelMemberships(expert.slug, db);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          console.warn(`Could not load panel memberships for cross-panel context: ${message}`);
-        }
-        return buildExpertSpec(expert, config, CHAT_TASK_DESCRIPTION, profile, memberships);
+      conclude: createConcludeSource({
+        engineFactory: () => makeEngineFromKind(config.defaults.engine),
+        loadTranscript: (panelName: string, debateId?: string) =>
+          loadTranscript(db, panelName, debateId),
+        model: config.defaults.model ?? DEFAULT_MODEL,
+        maxTranscriptChars: config.conclude.maxTranscriptChars,
+      }),
+      export: {
+        ...createExportSource({
+          loadTranscript: async (panelName: string, debateId?: string) => {
+            try {
+              return await loadTranscript(db, panelName, debateId);
+            } catch {
+              return null;
+            }
+          },
+          renderMarkdown,
+          renderJson,
+          renderAdr,
+          renderShare,
+        }),
+        writeFile: writeFileExclusive,
       },
-    }),
+      chat: createChatSessionSource({ chat: new ChatRepository(db) }),
+      chats: createChatsDataSource({ chat: new ChatRepository(db) }),
+      chatEngine: createChatEngineSource({
+        engineFactory: () => makeEngineFromKind(config.defaults.engine),
+        buildSpec: async (slug) => {
+          const expert = await expertLibrary.get(slug);
+          if (expert === null) {
+            throw new Error(`Expert "${slug}" not found`);
+          }
+          const profile =
+            expert.kind === "persona"
+              ? ((await profileRepo.findBySlug(slug)) ?? undefined)
+              : undefined;
+          let memberships: readonly PanelMembership[] = [];
+          try {
+            memberships = await getExpertPanelMemberships(expert.slug, db);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.warn(`Could not load panel memberships for cross-panel context: ${message}`);
+          }
+          return buildExpertSpec(expert, config, CHAT_TASK_DESCRIPTION, profile, memberships);
+        },
+      }),
+      onboarding: createOnboardingSource({
+        isFirstRun,
+        discoverModels: discoverAvailableModels,
+        updateConfig: updateConfigField,
+      }),
+    };
+    const model = config.defaults.model;
+
+    // Surface the throttled "update available" notice in the TUI's startup banner
+    // instead of writing it to stderr (which would corrupt the alternate screen).
+    // Config-load warnings flow through the same helper once loadConfigWithMeta
+    // surfaces them.
+    let updateNotice: string | undefined;
+    await maybeNotifyUpdate({
+      currentVersion: packageJson.version,
+      isTTY: process.stdout.isTTY === true,
+      write: (notice) => {
+        updateNotice = notice;
+      },
+    });
+    const startupWarnings = selectStartupWarnings(
+      updateNotice !== undefined ? { updateNotice } : {},
+    );
+
+    let restartRequested = false;
+    let unmount: () => void = () => undefined;
+    const instance = render(
+      <ErrorBoundary
+        onError={(error: Error) => {
+          console.error("Council TUI error:", error);
+          process.exit(1);
+        }}
+      >
+        <DataProvider value={dataSources}>
+          <CouncilTUI
+            homeData={homeData}
+            model={model}
+            startupWarnings={startupWarnings}
+            isFirstRun={isFirstRun}
+            onOnboardingComplete={() => {
+              restartRequested = true;
+              unmount();
+            }}
+          />
+        </DataProvider>
+      </ErrorBoundary>,
+      { alternateScreen: true, incrementalRendering: true },
+    );
+    unmount = instance.unmount;
+
+    await instance.waitUntilExit();
+    return restartRequested;
   };
-  const model = config.defaults.model;
-
-  // Surface the throttled "update available" notice in the TUI's startup banner
-  // instead of writing it to stderr (which would corrupt the alternate screen).
-  // Config-load warnings flow through the same helper once loadConfigWithMeta
-  // surfaces them.
-  let updateNotice: string | undefined;
-  await maybeNotifyUpdate({
-    currentVersion: packageJson.version,
-    isTTY: process.stdout.isTTY === true,
-    write: (notice) => {
-      updateNotice = notice;
-    },
-  });
-  const startupWarnings = selectStartupWarnings(updateNotice !== undefined ? { updateNotice } : {});
-
-  const { waitUntilExit } = render(
-    <ErrorBoundary
-      onError={(error: Error) => {
-        console.error("Council TUI error:", error);
-        process.exit(1);
-      }}
-    >
-      <DataProvider value={dataSources}>
-        <CouncilTUI homeData={homeData} model={model} startupWarnings={startupWarnings} />
-      </DataProvider>
-    </ErrorBoundary>,
-    { alternateScreen: true, incrementalRendering: true },
-  );
 
   try {
-    await waitUntilExit();
+    await runTuiSessions({ loadConfigWithMeta, renderSession });
   } finally {
     await db.destroy();
   }
