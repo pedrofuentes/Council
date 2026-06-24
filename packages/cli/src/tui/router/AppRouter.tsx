@@ -30,6 +30,7 @@ import { PanelDetailScreen } from "../screens/PanelDetailScreen.js";
 import { PanelMembersScreen } from "../screens/PanelMembersScreen.js";
 import { PanelsScreen } from "../screens/PanelsScreen.js";
 import { SessionDetailScreen } from "../screens/SessionDetailScreen.js";
+import { ConclusionScreen } from "../screens/ConclusionScreen.js";
 import { SettingsScreen } from "../screens/SettingsScreen.js";
 import { SessionsScreen } from "../screens/SessionsScreen.js";
 import { ChatsScreen } from "../screens/ChatsScreen.js";
@@ -281,6 +282,10 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
           <Route
             path={ROUTES.sessionDetail}
             element={<SessionDetailScreen theme={theme} isActive={mainActive} />}
+          />
+          <Route
+            path={ROUTES.sessionConclude}
+            element={<ConclusionScreen theme={theme} isActive={mainActive} />}
           />
           <Route
             path={ROUTES.chats}
