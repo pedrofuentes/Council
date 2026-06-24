@@ -1,6 +1,6 @@
 import React from "react";
-import { Box, Text } from "ink";
-import { useLocation } from "react-router";
+import { Box, Text, useInput } from "ink";
+import { useLocation, useNavigate, useParams } from "react-router";
 
 import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
 import type {
@@ -38,12 +38,15 @@ function renderDetail(detail: SessionTranscriptView, theme: SemanticTheme): Reac
       ) : (
         <ScrollView items={rows} height={12} />
       )}
+      <Text>{theme.muted(toSingleLineDisplay("c conclude"))}</Text>
     </Box>
   );
 }
 
 export function SessionDetailScreen(props: SessionDetailScreenProps): React.ReactElement {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { id } = useParams();
   const panelName = (location.state as { panelName?: string } | null)?.panelName;
   const data = useData();
   const sessions = data.sessions as SessionsDataSource | undefined;
@@ -55,6 +58,15 @@ export function SessionDetailScreen(props: SessionDetailScreenProps): React.Reac
     [sessions, panelName],
   );
   const state = useAsyncResource(loader);
+
+  useInput(
+    (input) => {
+      if (input === "c" && id !== undefined && panelName !== undefined) {
+        navigate(`/sessions/${encodeURIComponent(id)}/conclude`, { state: { panelName } });
+      }
+    },
+    { isActive: props.isActive ?? false },
+  );
 
   if (state.status === "loading") {
     return <Text>{props.theme.muted("Loading session…")}</Text>;

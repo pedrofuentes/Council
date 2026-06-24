@@ -30,6 +30,7 @@ import { createPanelComposeSource } from "./adapters/panel-compose.js";
 import { createPanelsDataSource } from "./adapters/panels-data.js";
 import { createSettingsDataSource } from "./adapters/config-settings.js";
 import { createSessionsDataSource } from "./adapters/sessions-data.js";
+import { createConcludeSource } from "./adapters/conclude.js";
 import {
   createConveneSource,
   type ConveneDataSource,
@@ -235,6 +236,13 @@ export async function launchTui(): Promise<void> {
           return undefined;
         }
       },
+    }),
+    conclude: createConcludeSource({
+      engineFactory: () => makeEngineFromKind(config.defaults.engine),
+      loadTranscript: (panelName: string, debateId?: string) =>
+        loadTranscript(db, panelName, debateId),
+      model: config.defaults.model ?? DEFAULT_MODEL,
+      maxTranscriptChars: config.conclude.maxTranscriptChars,
     }),
     chat: createChatSessionSource({ chat: new ChatRepository(db) }),
     chats: createChatsDataSource({ chat: new ChatRepository(db) }),

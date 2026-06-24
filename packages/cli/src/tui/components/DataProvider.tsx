@@ -10,6 +10,7 @@ import type { PanelComposeDataSource } from "../adapters/panel-compose.js";
 import type { PanelsDataSource } from "../adapters/panels-data.js";
 import type { SettingsDataSource } from "../adapters/config-settings.js";
 import type { SessionsDataSource } from "../adapters/sessions-data.js";
+import type { ConcludeDataSource } from "../adapters/conclude.js";
 import type { ConveneDataSource } from "../adapters/convene.js";
 import type { ChatSessionDataSource } from "../adapters/chat-session.js";
 import type { ChatEngineSource } from "../adapters/chat-engine-session.js";
@@ -27,6 +28,7 @@ export interface TuiDataSources {
   readonly settings?: SettingsDataSource;
   readonly sessions?: SessionsDataSource;
   readonly convene?: ConveneDataSource;
+  readonly conclude?: ConcludeDataSource;
   readonly chat?: ChatSessionDataSource;
   readonly chatEngine?: ChatEngineSource;
   readonly chats?: ChatsDataSource;
