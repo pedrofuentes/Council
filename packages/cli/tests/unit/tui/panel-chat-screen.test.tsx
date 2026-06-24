@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes, useNavigate } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
 import type { EngineEvent, SendOptions } from "../../../src/engine/index.js";
+import * as chatEngineAdapter from "../../../src/tui/adapters/chat-engine.js";
 import type {
   ChatEngineSource,
   PanelChatHandle,
@@ -561,6 +562,92 @@ describe("PanelChatScreen", () => {
     expect(lastFrame()).toContain("convene from chat is coming in 9.8");
     expect(sources.send).not.toHaveBeenCalled();
     expect(sources.persistTurn).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it("never updates the transcript from a stream delta delivered after unmount", async () => {
+    let capturedOnDelta: ((chunk: string) => void) | undefined;
+    const streamTurnSpy = vi
+      .spyOn(chatEngineAdapter, "streamTurn")
+      .mockImplementation((_send, _input, onDelta) => {
+        capturedOnDelta = onDelta;
+        return new Promise<chatEngineAdapter.StreamTurnResult>(() => undefined);
+      });
+    let didUnmount = false;
+    const setAfterUnmount = vi.fn<[], undefined>(() => undefined);
+    const originalUseState: typeof React.useState = React.useState;
+    const useStateSpy = vi.spyOn(React, "useState");
+    useStateSpy.mockImplementation(
+      <S,>(initialState: S | (() => S)): [S, React.Dispatch<React.SetStateAction<S>>] => {
+        const [state, setState] = originalUseState(initialState);
+        if (Array.isArray(initialState)) {
+          const wrapped: React.Dispatch<React.SetStateAction<S>> = (value) => {
+            if (didUnmount) setAfterUnmount();
+            setState(value);
+          };
+          return [state, wrapped];
+        }
+        return [state, setState];
+      },
+    );
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const sources = createSources();
+    const { stdin, lastFrame, unmount } = renderScreen(sources);
+
+    await flush();
+    stdin.write("hello");
+    await flush();
+    stdin.write("\r");
+    await flush();
+
+    expect(capturedOnDelta).toBeDefined();
+    capturedOnDelta?.("early");
+    await flush();
+    expect(lastFrame()).toContain("cto: early");
+
+    didUnmount = true;
+    unmount();
+    capturedOnDelta?.("late");
+    await flush();
+
+    expect(setAfterUnmount).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    streamTurnSpy.mockRestore();
+    useStateSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  it("halts the entire fan-out on Esc and never starts a later expert's turn", async () => {
+    const streamTurnSpy = vi.spyOn(chatEngineAdapter, "streamTurn");
+    const observedSignals: AbortSignal[] = [];
+    const sources = createSources({
+      send: (options) => {
+        if (options.signal !== undefined) observedSignals.push(options.signal);
+        return {
+          async *[Symbol.asyncIterator](): AsyncGenerator<EngineEvent> {
+            yield delta(options.expertId, "partial");
+            await new Promise<void>(() => undefined);
+          },
+        };
+      },
+    });
+    const { stdin, lastFrame, unmount } = renderScreen(sources);
+
+    await flush();
+    stdin.write("plan");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    stdin.write("\u001B");
+    await waitForEsc();
+
+    const startedExpertIds = streamTurnSpy.mock.calls.map((call) => call[1].expertId);
+    expect(startedExpertIds).toEqual(["expert-cto"]);
+    expect(observedSignals[0]?.aborted).toBe(true);
+    expect(sources.send).toHaveBeenCalledTimes(1);
+    expect(sources.persistTurn).not.toHaveBeenCalled();
+    expect(lastFrame()).toContain("Panel chat strategy");
+    streamTurnSpy.mockRestore();
     unmount();
   });
 
