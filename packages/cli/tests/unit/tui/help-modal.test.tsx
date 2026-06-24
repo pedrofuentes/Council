@@ -30,7 +30,13 @@ describe("HelpModal", () => {
   it("closes on Esc (real-timer wait — Ink buffers a lone Esc)", async () => {
     let closed = false;
     const { stdin, unmount } = render(
-      <HelpModal entries={entries} onClose={() => { closed = true; }} theme={theme} />,
+      <HelpModal
+        entries={entries}
+        onClose={() => {
+          closed = true;
+        }}
+        theme={theme}
+      />,
     );
     await sleep(20);
     stdin.write("\u001b");
@@ -42,12 +48,48 @@ describe("HelpModal", () => {
   it("closes on ? as well", async () => {
     let closed = false;
     const { stdin, unmount } = render(
-      <HelpModal entries={entries} onClose={() => { closed = true; }} theme={theme} />,
+      <HelpModal
+        entries={entries}
+        onClose={() => {
+          closed = true;
+        }}
+        theme={theme}
+      />,
     );
     await new Promise((r) => setImmediate(r));
     stdin.write("?");
     await new Promise((r) => setImmediate(r));
     expect(closed).toBe(true);
+    unmount();
+  });
+
+  it("renders a contextual 'This screen' section above the global list", () => {
+    const context = [
+      { keys: "m", description: "Edit members" },
+      { keys: "v", description: "Convene" },
+    ];
+    const { lastFrame, unmount } = render(
+      <HelpModal entries={entries} contextEntries={context} onClose={noop} theme={theme} />,
+    );
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("This screen");
+    expect(frame).toContain("Edit members");
+    expect(frame).toContain("Convene");
+    // the global list is still present
+    expect(frame).toContain("Keyboard shortcuts");
+    expect(frame).toContain("move");
+    // the contextual section is rendered ahead of the global heading
+    expect(frame.indexOf("This screen")).toBeLessThan(frame.indexOf("Keyboard shortcuts"));
+    unmount();
+  });
+
+  it("omits the contextual section when there are no context entries", () => {
+    const { lastFrame, unmount } = render(
+      <HelpModal entries={entries} contextEntries={[]} onClose={noop} theme={theme} />,
+    );
+    const frame = lastFrame() ?? "";
+    expect(frame).not.toContain("This screen");
+    expect(frame).toContain("Keyboard shortcuts");
     unmount();
   });
 });

@@ -10,6 +10,11 @@ export interface HelpEntry {
 
 export interface HelpModalProps {
   readonly entries: readonly HelpEntry[];
+  /**
+   * Shortcuts for the screen the user opened help from. Rendered as a "This
+   * screen" section ahead of the global list; an empty legend hides it.
+   */
+  readonly contextEntries?: readonly HelpEntry[];
   readonly onClose: () => void;
   readonly isActive?: boolean;
   readonly theme: SemanticTheme;
@@ -17,6 +22,7 @@ export interface HelpModalProps {
 
 export function HelpModal(props: HelpModalProps): React.ReactElement {
   const isActive = props.isActive ?? true;
+  const contextEntries = props.contextEntries ?? [];
   useInput(
     (input, key) => {
       if (key.escape || input === "?") props.onClose();
@@ -25,6 +31,14 @@ export function HelpModal(props: HelpModalProps): React.ReactElement {
   );
   return (
     <Box flexDirection="column" borderStyle="round" paddingX={1}>
+      {contextEntries.length > 0 ? (
+        <Box flexDirection="column" marginBottom={1}>
+          <Text>{props.theme.accent("This screen")}</Text>
+          {contextEntries.map((e) => (
+            <Text key={`ctx-${e.keys}`}>{`  ${e.keys}  ${e.description}`}</Text>
+          ))}
+        </Box>
+      ) : null}
       <Text>{props.theme.accent("Keyboard shortcuts")}</Text>
       {props.entries.map((e) => (
         <Text key={e.keys}>{`  ${e.keys}  ${e.description}`}</Text>
