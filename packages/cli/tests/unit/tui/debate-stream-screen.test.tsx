@@ -4,7 +4,7 @@ import { render } from "ink-testing-library";
 import { MemoryRouter, Route, Routes, useLocation, useParams } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
-import type { ConveneDataSource } from "../../../src/tui/adapters/convene.js";
+import type { ConveneDataSource, ConveneViewEvent } from "../../../src/tui/adapters/convene.js";
 import { DataProvider, type TuiDataSources } from "../../../src/tui/components/DataProvider.js";
 import { InputCaptureProvider } from "../../../src/tui/components/InputCaptureProvider.js";
 import { DebateStreamScreen } from "../../../src/tui/screens/DebateStreamScreen.js";
@@ -225,11 +225,93 @@ describe("DebateStreamScreen", () => {
     await flush();
 
     const frame = lastFrame() ?? "";
-    // Body sink (stripControlChars): the BEL between "safe" and "payload" is gone.
+    // Body sink: the BEL between "safe" and "payload" is stripped.
     expect(frame).toContain("safepayload");
     // Label sink (toSingleLineDisplay): the turn header collapses to "QuillBot:".
     // Only the header emits the trailing colon, so the responder line cannot mask it.
     expect(frame).toContain("QuillBot:");
     expect(frame).not.toContain("\u0007");
+  });
+
+  it("collapses CR and line-separator controls in streamed turn bodies to one transcript row", async () => {
+    const streamDebate = vi.fn<
+      Parameters<ConveneDataSource["streamDebate"]>,
+      ReturnType<ConveneDataSource["streamDebate"]>
+    >(async (_panel, _topic, _options, onEvent) => {
+      onEvent({ kind: "panel", experts: ["Alice"] });
+      onEvent({ kind: "turn-start", expert: "Alice", round: 1 });
+      onEvent({ kind: "turn-delta", expert: "Alice", text: "safe\rSPOOF\u2028row\nmore" });
+      await new Promise<void>(() => undefined);
+    });
+
+    const { lastFrame } = renderScreen({ convene: { estimateCost: estimateStub, streamDebate } });
+
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    // stripControlChars PRESERVES CR (\r), LF (\n) and U+2028, so a streamed body
+    // could CR-overwrite a row or forge a fake transcript line. toSingleLineDisplay
+    // collapses every separator run to a single space → one tamper-proof row.
+    expect(frame).toContain("safe SPOOF row more");
+    expect(frame).not.toContain("\u2028");
+    expect(frame).not.toContain("safe\rSPOOF");
+  });
+
+  it("never invokes the view state setter after unmount when a late event reaches the guard", async () => {
+    let didUnmount = false;
+    const setAfterUnmount = vi.fn();
+    const realUseState = React.useState;
+    // Wrap React's setter so we can observe whether applyIfMounted reaches setView
+    // AFTER unmount. React 19 + ink silently no-op a post-unmount setState (no
+    // console.error), so a naive "deliver a late event" assertion cannot bite —
+    // observing the setter directly is the only thing that proves the guard works.
+    const spiedUseState = (<S,>(
+      init: S | (() => S),
+    ): [S, React.Dispatch<React.SetStateAction<S>>] => {
+      const [state, setState] = realUseState(init);
+      // Wrap ONLY the `view` setter (the one applyIfMounted drives). Key on the
+      // DebateView shape (has `turns`), never the `status` string state.
+      if (init !== null && typeof init === "object" && !Array.isArray(init) && "turns" in init) {
+        const wrapped: React.Dispatch<React.SetStateAction<S>> = (next) => {
+          if (didUnmount) setAfterUnmount();
+          setState(next);
+        };
+        return [state, wrapped];
+      }
+      return [state, setState];
+    }) as typeof React.useState;
+    const useStateSpy = vi.spyOn(React, "useState").mockImplementation(spiedUseState);
+
+    let capturedOnEvent: ((event: ConveneViewEvent) => void) | undefined;
+    const streamDebate = vi.fn<
+      Parameters<ConveneDataSource["streamDebate"]>,
+      ReturnType<ConveneDataSource["streamDebate"]>
+    >(async (_panel, _topic, _options, onEvent) => {
+      capturedOnEvent = onEvent;
+      onEvent({ kind: "panel", experts: ["Alice"] });
+      await new Promise<void>(() => undefined);
+    });
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const { unmount } = renderScreen({ convene: { estimateCost: estimateStub, streamDebate } });
+
+      await flush();
+      expect(capturedOnEvent).toBeTypeOf("function");
+
+      didUnmount = true;
+      unmount();
+
+      // Deliver a late event straight into applyIfMounted (== captured onEvent).
+      // The unmountedRef guard must short-circuit BEFORE setView runs.
+      capturedOnEvent?.({ kind: "turn-delta", expert: "Alice", text: "late" });
+      await flush();
+
+      expect(setAfterUnmount).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+      useStateSpy.mockRestore();
+    }
   });
 });
