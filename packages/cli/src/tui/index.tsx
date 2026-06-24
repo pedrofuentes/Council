@@ -1,5 +1,4 @@
 import path from "node:path";
-import * as fs from "node:fs/promises";
 import { ulid } from "ulid";
 import { render } from "ink";
 
@@ -57,6 +56,7 @@ import type { PanelMembership } from "../core/prompt-builder.js";
 import { createHomeDataSources } from "./adapters/home-data-sources.js";
 import { loadHomeData } from "./adapters/home-data.js";
 import { selectStartupWarnings } from "./lib/startup-warnings.js";
+import { writeFileExclusive } from "./lib/safe-write.js";
 import { DataProvider, type TuiDataSources } from "./components/DataProvider.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { CouncilTUI } from "./CouncilTUI.js";
@@ -265,7 +265,7 @@ export async function launchTui(): Promise<void> {
         renderAdr,
         renderShare,
       }),
-      writeFile: (filePath: string, content: string) => fs.writeFile(filePath, content, "utf8"),
+      writeFile: writeFileExclusive,
     },
     chat: createChatSessionSource({ chat: new ChatRepository(db) }),
     chats: createChatsDataSource({ chat: new ChatRepository(db) }),
