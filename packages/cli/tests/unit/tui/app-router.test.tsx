@@ -1,7 +1,7 @@
 import React from "react";
 import { render } from "ink-testing-library";
 import { MemoryRouter } from "react-router";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { ExpertListItem } from "../../../src/tui/adapters/experts-data.js";
 import type { PanelListItem } from "../../../src/tui/adapters/panels-data.js";
@@ -19,6 +19,7 @@ import type { PanelComposeDataSource } from "../../../src/tui/adapters/panel-com
 import type { ChatEngineSource } from "../../../src/tui/adapters/chat-engine-session.js";
 import type { ChatSessionDataSource } from "../../../src/tui/adapters/chat-session.js";
 import { DataProvider, type TuiDataSources } from "../../../src/tui/components/DataProvider.js";
+import { InputCaptureProvider } from "../../../src/tui/components/InputCaptureProvider.js";
 import { AppRouter } from "../../../src/tui/router/AppRouter.js";
 import { CouncilTUI } from "../../../src/tui/CouncilTUI.js";
 import type { HomeData } from "../../../src/tui/adapters/home-data.js";
@@ -311,6 +312,44 @@ const withExpertDocuments = (): TuiDataSources => {
 };
 
 describe("AppRouter", () => {
+  it("threads onOnboardingComplete to the onboarding route so completing restarts the session", async () => {
+    const onOnboardingComplete = vi.fn();
+    const complete = vi.fn(async () => undefined);
+    const sources = {
+      panels: { loadList: async () => [], loadDetail: async () => undefined },
+      onboarding: {
+        load: async () => ({
+          isFirstRun: true,
+          usedFallback: false,
+          models: [{ id: "claude-sonnet-4.5", label: "claude-sonnet-4.5", recommended: true }],
+        }),
+        complete,
+      },
+    } as unknown as TuiDataSources;
+    const { stdin } = render(
+      <InputCaptureProvider>
+        <DataProvider value={sources}>
+          <MemoryRouter initialEntries={["/onboarding"]}>
+            <AppRouter
+              homeData={homeData}
+              model="gpt-4o"
+              onOnboardingComplete={onOnboardingComplete}
+              initialColumns={120}
+              initialRows={30}
+            />
+          </MemoryRouter>
+        </DataProvider>
+      </InputCaptureProvider>,
+    );
+
+    await flush();
+    stdin.write("\r");
+    await flush();
+
+    expect(complete).toHaveBeenCalledWith("claude-sonnet-4.5");
+    expect(onOnboardingComplete).toHaveBeenCalled();
+  });
+
   it("renders the Panels empty state on the /panels route", async () => {
     const { lastFrame } = render(
       <DataProvider value={withPanels()}>
