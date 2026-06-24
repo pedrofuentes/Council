@@ -17,6 +17,7 @@ import type { ConveneDataSource } from "../adapters/convene.js";
 import type { ChatSessionDataSource } from "../adapters/chat-session.js";
 import type { ChatEngineSource } from "../adapters/chat-engine-session.js";
 import type { ChatsDataSource } from "../adapters/chats-data.js";
+import type { Telemetry } from "../lib/telemetry.js";
 
 export interface TuiDataSources {
   readonly panels: PanelsDataSource;
@@ -36,6 +37,12 @@ export interface TuiDataSources {
   readonly chatEngine?: ChatEngineSource;
   readonly chats?: ChatsDataSource;
   readonly onboarding?: OnboardingDataSource;
+  /**
+   * LOCAL, opt-in, content-free telemetry sink. Present only when
+   * `telemetry.enabled` is set; absent (and thus a no-op via optional chaining)
+   * otherwise. Records content-free screen/feature counters to a local store.
+   */
+  readonly telemetry?: Telemetry;
 }
 
 export interface DataProviderProps {
@@ -55,4 +62,13 @@ export function useData(): TuiDataSources {
     throw new Error("useData must be used within a DataProvider");
   }
   return value;
+}
+
+/**
+ * Non-throwing variant of {@link useData}. Returns `null` when rendered outside
+ * a {@link DataProvider} (e.g. shell-only unit tests). Use this for optional
+ * concerns — like the opt-in telemetry sink — that must not require a provider.
+ */
+export function useOptionalData(): TuiDataSources | null {
+  return React.useContext(DataContext);
 }

@@ -1,9 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useApp, useInput, useStdout } from "ink";
 import { Route, Routes, useLocation, useNavigate } from "react-router";
 
 import type { HomeData } from "../adapters/home-data.js";
 import { buildPaletteCommands, type PaletteAction } from "../adapters/palette-commands.js";
+import { useOptionalData } from "../components/DataProvider.js";
 import { useInputCapture } from "../components/InputCaptureProvider.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { StartupBanner } from "../components/layout/StartupBanner.js";
@@ -14,6 +15,7 @@ import { CommandPalette } from "../components/overlays/CommandPalette.js";
 import { HelpModal } from "../components/overlays/HelpModal.js";
 import { computeLayout, type NavState } from "../lib/breakpoints.js";
 import { shortcutsForRoute } from "../lib/shortcuts.js";
+import { routeToTelemetryLabel } from "../lib/telemetry.js";
 import type { StartupWarning } from "../lib/startup-warnings.js";
 import { ExpertDetailScreen } from "../screens/ExpertDetailScreen.js";
 import { ExpertChatScreen } from "../screens/ExpertChatScreen.js";
@@ -103,8 +105,17 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
   const location = useLocation();
   const navigate = useNavigate();
   const { captured } = useInputCapture();
+  const telemetry = useOptionalData()?.telemetry;
   const navId = routeToNavId(location.pathname);
   const paletteCommands = buildPaletteCommands({ navId });
+
+  // Record a LOCAL, content-free `screen.view` counter on each route change.
+  // `routeToTelemetryLabel` maps to a closed set of static labels, so a
+  // content-bearing path segment can never leak into the counter. No-op when
+  // telemetry is disabled (the sink is absent).
+  useEffect(() => {
+    telemetry?.record({ name: "screen.view", label: routeToTelemetryLabel(location.pathname) });
+  }, [telemetry, location.pathname]);
 
   const actualColumns = props.initialColumns ?? stdout?.columns ?? 80;
   const actualRows = props.initialRows ?? stdout?.rows ?? 24;
