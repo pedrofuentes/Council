@@ -203,9 +203,32 @@ describe("PanelChatScreen", () => {
 
     expect(sources.openPanel).toHaveBeenCalledExactlyOnceWith(["cto", "cfo"]);
     expect(lastFrame()).toContain("Panel chat strategy");
-    expect(lastFrame()).toContain("You: hello\nteam");
+    expect(lastFrame()).toContain("You: hello team");
     expect(lastFrame()).toContain("cto: prior");
     expect(lastFrame()).not.toContain("[31m");
+    unmount();
+  });
+
+  it("collapses CR / newline / line-separator injection in transcript rows", async () => {
+    const sources = createSources({
+      loadHistory: async () => ({
+        session: { id: "session-1" },
+        turns: [
+          {
+            id: "u1",
+            role: "user",
+            expertSlug: null,
+            content: "safe\rSPOOF: forged-row\u2028second\nthird",
+            isMention: false,
+          },
+        ],
+      }),
+    });
+
+    const { lastFrame, unmount } = renderScreen(sources);
+    await flush();
+
+    expect(lastFrame()).toContain("You: safe SPOOF: forged-row second third");
     unmount();
   });
 
