@@ -101,4 +101,69 @@ describe("createChatEngineSource", () => {
 
     expect(engine.calls).toEqual(["start", `addExpert:${spec.id}`, "stop"]);
   });
+
+  it("opens a panel by building each member spec, adding experts in order, and binding send", async () => {
+    const cfoSpec: ExpertSpec = {
+      ...spec,
+      id: "01JCHATCFOSPEC000000000000",
+      slug: "cfo",
+      displayName: "Chief Financial Officer",
+    };
+    const engine = createStubEngine();
+    const buildSpec = vi.fn<(slug: string) => Promise<ExpertSpec>>(async (slug) =>
+      slug === "cto" ? spec : cfoSpec,
+    );
+    const source = createChatEngineSource({
+      buildSpec,
+      engineFactory: () => engine,
+    });
+
+    const handle = await source.openPanel(["cto", "cfo"]);
+    const events = handle.send({ expertId: handle.members[1]?.expertId ?? "", prompt: "hello" });
+    await handle.close();
+
+    expect(buildSpec).toHaveBeenCalledTimes(2);
+    expect(buildSpec).toHaveBeenNthCalledWith(1, "cto");
+    expect(buildSpec).toHaveBeenNthCalledWith(2, "cfo");
+    expect(handle.members).toEqual([
+      { slug: "cto", expertId: spec.id },
+      { slug: "cfo", expertId: cfoSpec.id },
+    ]);
+    expect(events).toBeDefined();
+    expect(engine.sent).toEqual([{ expertId: cfoSpec.id, prompt: "hello" }]);
+    expect(engine.calls).toEqual([
+      "start",
+      `addExpert:${spec.id}`,
+      `addExpert:${cfoSpec.id}`,
+      `send:${cfoSpec.id}`,
+      "stop",
+    ]);
+  });
+
+  it("stops the panel engine and rethrows when adding a later member fails", async () => {
+    const cfoSpec: ExpertSpec = {
+      ...spec,
+      id: "01JCHATCFOSPEC000000000000",
+      slug: "cfo",
+      displayName: "Chief Financial Officer",
+    };
+    const engine = createStubEngine({
+      addExpert: async (expert) => {
+        if (expert.id === cfoSpec.id) throw new Error("panel bind failed");
+      },
+    });
+    const source = createChatEngineSource({
+      buildSpec: async (slug) => (slug === "cto" ? spec : cfoSpec),
+      engineFactory: () => engine,
+    });
+
+    await expect(source.openPanel(["cto", "cfo"])).rejects.toThrow("panel bind failed");
+
+    expect(engine.calls).toEqual([
+      "start",
+      `addExpert:${spec.id}`,
+      `addExpert:${cfoSpec.id}`,
+      "stop",
+    ]);
+  });
 });

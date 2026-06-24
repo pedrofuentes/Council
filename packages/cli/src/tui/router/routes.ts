@@ -17,6 +17,7 @@ export const ROUTES = {
   sessionDetail: "/sessions/:id",
   chats: "/chats",
   chatExpert: "/chat/expert/:slug",
+  chatPanel: "/chat/panel/:name",
   settings: "/settings",
 } as const;
 
