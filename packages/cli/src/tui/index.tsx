@@ -2,6 +2,7 @@ import path from "node:path";
 import { ulid } from "ulid";
 import { render } from "ink";
 
+import packageJson from "../../package.json" with { type: "json" };
 import { DEFAULT_MODEL, getCouncilDataHome, getCouncilHome, loadConfig } from "../config/index.js";
 import { FileExpertLibrary } from "../core/expert-library.js";
 import { buildSystemPrompt } from "../core/prompt-builder.js";
@@ -45,11 +46,13 @@ import { createChatSessionSource } from "./adapters/chat-session.js";
 import { createChatsDataSource } from "./adapters/chats-data.js";
 import { createChatEngineSource } from "./adapters/chat-engine-session.js";
 import { makeEngineFromKind } from "../cli/run-with-engine.js";
+import { maybeNotifyUpdate } from "../core/version/index.js";
 import { buildExpertSpec, CHAT_TASK_DESCRIPTION } from "../cli/commands/chat/shared.js";
 import { getExpertPanelMemberships } from "../core/panel-membership-query.js";
 import type { PanelMembership } from "../core/prompt-builder.js";
 import { createHomeDataSources } from "./adapters/home-data-sources.js";
 import { loadHomeData } from "./adapters/home-data.js";
+import { selectStartupWarnings } from "./lib/startup-warnings.js";
 import { DataProvider, type TuiDataSources } from "./components/DataProvider.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { CouncilTUI } from "./CouncilTUI.js";
@@ -270,6 +273,20 @@ export async function launchTui(): Promise<void> {
   };
   const model = config.defaults.model;
 
+  // Surface the throttled "update available" notice in the TUI's startup banner
+  // instead of writing it to stderr (which would corrupt the alternate screen).
+  // Config-load warnings flow through the same helper once loadConfigWithMeta
+  // surfaces them.
+  let updateNotice: string | undefined;
+  await maybeNotifyUpdate({
+    currentVersion: packageJson.version,
+    isTTY: process.stdout.isTTY === true,
+    write: (notice) => {
+      updateNotice = notice;
+    },
+  });
+  const startupWarnings = selectStartupWarnings(updateNotice !== undefined ? { updateNotice } : {});
+
   const { waitUntilExit } = render(
     <ErrorBoundary
       onError={(error: Error) => {
@@ -278,7 +295,7 @@ export async function launchTui(): Promise<void> {
       }}
     >
       <DataProvider value={dataSources}>
-        <CouncilTUI homeData={homeData} model={model} />
+        <CouncilTUI homeData={homeData} model={model} startupWarnings={startupWarnings} />
       </DataProvider>
     </ErrorBoundary>,
     { alternateScreen: true, incrementalRendering: true },

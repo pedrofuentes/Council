@@ -6,12 +6,14 @@ import type { HomeData } from "../adapters/home-data.js";
 import { buildPaletteCommands, type PaletteAction } from "../adapters/palette-commands.js";
 import { useInputCapture } from "../components/InputCaptureProvider.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import { StartupBanner } from "../components/layout/StartupBanner.js";
 import { Footer } from "../components/layout/Footer.js";
 import { Header } from "../components/layout/Header.js";
 import { LeftNav } from "../components/navigation/LeftNav.js";
 import { CommandPalette } from "../components/overlays/CommandPalette.js";
 import { HelpModal } from "../components/overlays/HelpModal.js";
 import { computeLayout, type NavState } from "../lib/breakpoints.js";
+import type { StartupWarning } from "../lib/startup-warnings.js";
 import { ExpertDetailScreen } from "../screens/ExpertDetailScreen.js";
 import { ExpertChatScreen } from "../screens/ExpertChatScreen.js";
 import { PanelChatScreen } from "../screens/PanelChatScreen.js";
@@ -43,6 +45,7 @@ export interface CouncilTUIProps {
   readonly env?: NodeJS.ProcessEnv;
   readonly initialColumns?: number;
   readonly initialRows?: number;
+  readonly startupWarnings?: readonly StartupWarning[];
 }
 
 type FocusMode = "nav" | "help" | "palette";
@@ -204,6 +207,7 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
 
   return (
     <AppShell layout={layout} header={header} footer={footer} nav={nav}>
+      <StartupBanner warnings={props.startupWarnings ?? []} theme={theme} />
       {mode === "help" ? (
         <HelpModal
           entries={HELP_ENTRIES}
