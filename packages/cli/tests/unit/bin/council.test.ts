@@ -315,11 +315,26 @@ describe("buildProgram", () => {
       expect(launched).toBe(0);
     });
 
-    it("does not launch the TUI when COUNCIL_TUI is unset", async () => {
+    it("launches the TUI by default on a bare TTY invocation (COUNCIL_TUI unset)", async () => {
       const { maybeLaunchTui } = await loadCouncilModule();
       let launched = 0;
       const result = await maybeLaunchTui({
         argv: ["node", "council"],
+        stdout: { isTTY: true },
+        env: {},
+        launchTui: async () => {
+          launched += 1;
+        },
+      });
+      expect(result).toBe(true);
+      expect(launched).toBe(1);
+    });
+
+    it("does not launch the TUI when --no-tui is passed", async () => {
+      const { maybeLaunchTui } = await loadCouncilModule();
+      let launched = 0;
+      const result = await maybeLaunchTui({
+        argv: ["node", "council", "--no-tui"],
         stdout: { isTTY: true },
         env: {},
         launchTui: async () => {
@@ -351,5 +366,47 @@ describe("buildUiCommand", () => {
     cmd.exitOverride();
     await cmd.parseAsync(["node", "council-ui"]);
     expect(launched).toBe(1);
+  });
+});
+
+describe("runCli update-notice suppression (#1691)", () => {
+  it("skips the exit update notifier when the TUI launched", async () => {
+    const { runCli } = await loadCouncilModule();
+    let parsed = 0;
+    let notified = 0;
+    await runCli({
+      argv: ["node", "council"],
+      launchTuiGuard: async () => true,
+      parseProgram: async () => {
+        parsed += 1;
+      },
+      notifyUpdate: async () => {
+        notified += 1;
+      },
+      stderrIsTTY: true,
+    });
+    // The TUI banner already surfaced the notice; the outer CLI notifier must
+    // not re-emit it (and the CLI program is never parsed on the TUI path).
+    expect(parsed).toBe(0);
+    expect(notified).toBe(0);
+  });
+
+  it("still runs the exit update notifier on the CLI path", async () => {
+    const { runCli } = await loadCouncilModule();
+    let parsed = 0;
+    let notified = 0;
+    await runCli({
+      argv: ["node", "council", "doctor"],
+      launchTuiGuard: async () => false,
+      parseProgram: async () => {
+        parsed += 1;
+      },
+      notifyUpdate: async () => {
+        notified += 1;
+      },
+      stderrIsTTY: true,
+    });
+    expect(parsed).toBe(1);
+    expect(notified).toBe(1);
   });
 });
