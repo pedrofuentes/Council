@@ -7,7 +7,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { ConveneDataSource, ConveneViewEvent } from "../../../src/tui/adapters/convene.js";
 import { DataProvider, type TuiDataSources } from "../../../src/tui/components/DataProvider.js";
 import { InputCaptureProvider } from "../../../src/tui/components/InputCaptureProvider.js";
-import { DebateStreamScreen } from "../../../src/tui/screens/DebateStreamScreen.js";
+import {
+  DebateStreamScreen,
+  transcriptLines,
+} from "../../../src/tui/screens/DebateStreamScreen.js";
+import { expertColorIndex, resolveExpertPalette } from "../../../src/tui/theme/expert-palette.js";
 import { resolveTheme } from "../../../src/tui/theme/tokens.js";
 
 const theme = resolveTheme({ NO_COLOR: "1" });
@@ -313,5 +317,93 @@ describe("DebateStreamScreen", () => {
       errorSpy.mockRestore();
       useStateSpy.mockRestore();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pure-helper tests: transcriptLines(view, palette, theme)
+// ---------------------------------------------------------------------------
+
+describe("transcriptLines — pure formatter", () => {
+  const noColorPalette = resolveExpertPalette({ NO_COLOR: "1" });
+  const noColorTheme = resolveTheme({ NO_COLOR: "1" });
+  const colorPalette = resolveExpertPalette({});
+  const colorTheme = resolveTheme({});
+
+  const baseView = {
+    experts: [] as readonly string[],
+    turns: [
+      { expert: "Alice", round: 1, body: "hello world", done: true },
+    ] as readonly { readonly expert: string; readonly round: number; readonly body: string; readonly done: boolean }[],
+    cost: undefined as { readonly premiumRequests: number; readonly estimatedTotal: number } | undefined,
+    error: undefined as string | undefined,
+  };
+
+  it("with NO_COLOR produces plain text — round separator, speaker label, indented body", () => {
+    const lines = transcriptLines(baseView, noColorPalette, noColorTheme);
+    expect(lines).toContain("── Round 1 ──");
+    expect(lines).toContain("Alice:");
+    expect(lines).toContain("  hello world");
+    // No ANSI escape codes anywhere
+    expect(lines.join("")).not.toContain("\u001b[");
+  });
+
+  it("same expert maps to the same color index on every call (determinism)", () => {
+    const idx1 = colorPalette.indexOf("Alice");
+    const idx2 = colorPalette.indexOf("Alice");
+    expect(idx1).toBe(idx2);
+    expect(idx1).toBe(expertColorIndex("Alice"));
+  });
+
+  it("two experts with different palette indices produce distinct label colorization", () => {
+    // Alice = charsum 510 → idx 0 (magenta); Bob = charsum 275 → idx 5 (red)
+    expect(colorPalette.indexOf("Alice")).not.toBe(colorPalette.indexOf("Bob"));
+    // boldColor must produce different ANSI-wrapped output for different indices
+    const aliceColored = colorPalette.boldColor("Alice")("Alice:");
+    const bobColored = colorPalette.boldColor("Bob")("Bob:");
+    expect(aliceColored).not.toBe(bobColored);
+  });
+
+  it("sanitizes malicious body (CR / ESC sequences / line separators) before output", () => {
+    const view = {
+      ...baseView,
+      turns: [
+        {
+          expert: "Alice",
+          round: 1,
+          body: "safe\rSPOOF\u001b[31mred\u001b[0m\u2028newline",
+          done: true,
+        },
+      ] as readonly { readonly expert: string; readonly round: number; readonly body: string; readonly done: boolean }[],
+    };
+    const lines = transcriptLines(view, noColorPalette, noColorTheme);
+    const bodyLine = lines.find((l) => l.startsWith("  "));
+    expect(bodyLine).toBeDefined();
+    // No raw control / injection chars in output
+    expect(bodyLine).not.toContain("\r");
+    expect(bodyLine).not.toContain("\u001b");
+    expect(bodyLine).not.toContain("\u2028");
+    // Content is preserved, collapsed to one line
+    expect(bodyLine).toContain("safe");
+    expect(bodyLine).toContain("SPOOF");
+    expect(bodyLine).toContain("red");
+  });
+
+  it("round separator and speaker label are both present for a two-expert, two-round view", () => {
+    const view = {
+      experts: [] as readonly string[],
+      turns: [
+        { expert: "Alice", round: 1, body: "r1", done: true },
+        { expert: "Bob", round: 1, body: "r1b", done: true },
+        { expert: "Alice", round: 2, body: "r2", done: true },
+      ] as readonly { readonly expert: string; readonly round: number; readonly body: string; readonly done: boolean }[],
+      cost: undefined as { readonly premiumRequests: number; readonly estimatedTotal: number } | undefined,
+      error: undefined as string | undefined,
+    };
+    const lines = transcriptLines(view, noColorPalette, noColorTheme);
+    expect(lines.filter((l) => l.includes("Round 1")).length).toBe(1);
+    expect(lines.filter((l) => l.includes("Round 2")).length).toBe(1);
+    expect(lines.filter((l) => l.includes("Alice:")).length).toBe(2);
+    expect(lines.filter((l) => l.includes("Bob:")).length).toBe(1);
   });
 });
