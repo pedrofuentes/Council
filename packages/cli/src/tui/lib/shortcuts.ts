@@ -163,7 +163,11 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   },
   {
     pattern: ROUTES.sessionConclude,
-    bindings: [{ keys: "Esc", description: "Back" }],
+    bindings: [
+      { keys: "x", description: "Export" },
+      { keys: "r", description: "Re-convene" },
+      { keys: "Esc", description: "Back" },
+    ],
   },
   {
     pattern: ROUTES.sessionExport,
