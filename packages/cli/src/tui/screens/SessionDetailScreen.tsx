@@ -9,6 +9,8 @@ import type {
   TranscriptLine,
 } from "../adapters/sessions-data.js";
 import { useData } from "../components/DataProvider.js";
+import { useInputCapture } from "../components/InputCaptureProvider.js";
+import { ActionMenu, type ActionMenuItem } from "../components/overlays/ActionMenu.js";
 import { ScrollView } from "../components/lists/ScrollView.js";
 import { useAsyncResource } from "../hooks/use-async-resource.js";
 import type { SemanticTheme } from "../theme/tokens.js";
@@ -43,6 +45,11 @@ function renderDetail(detail: SessionTranscriptView, theme: SemanticTheme): Reac
   );
 }
 
+const SESSION_MENU_ITEMS: readonly ActionMenuItem[] = [
+  { key: "c", label: "Conclude" },
+  { key: "x", label: "Export" },
+];
+
 export function SessionDetailScreen(props: SessionDetailScreenProps): React.ReactElement {
   const location = useLocation();
   const navigate = useNavigate();
@@ -58,19 +65,53 @@ export function SessionDetailScreen(props: SessionDetailScreenProps): React.Reac
     [sessions, panelName],
   );
   const state = useAsyncResource(loader);
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const { setCaptured } = useInputCapture();
+
+  React.useEffect(() => {
+    if (!menuOpen) return undefined;
+    setCaptured(true);
+    return () => {
+      setCaptured(false);
+    };
+  }, [menuOpen, setCaptured]);
+
+  const handleAction = (key: string): void => {
+    if (key === "c" && id !== undefined && panelName !== undefined) {
+      navigate(`/sessions/${encodeURIComponent(id)}/conclude`, { state: { panelName } });
+    }
+    if (key === "x" && id !== undefined && panelName !== undefined) {
+      navigate(`/sessions/${encodeURIComponent(id)}/export`, { state: { panelName } });
+    }
+  };
 
   useInput(
     (input) => {
-      if (input === "c" && id !== undefined && panelName !== undefined) {
-        navigate(`/sessions/${encodeURIComponent(id)}/conclude`, { state: { panelName } });
+      if (input === "a") {
+        setMenuOpen(true);
         return;
       }
-      if (input === "x" && id !== undefined && panelName !== undefined) {
-        navigate(`/sessions/${encodeURIComponent(id)}/export`, { state: { panelName } });
-      }
+      handleAction(input);
     },
-    { isActive: props.isActive ?? false },
+    { isActive: (props.isActive ?? false) && !menuOpen },
   );
+
+  if (menuOpen) {
+    return (
+      <ActionMenu
+        items={SESSION_MENU_ITEMS}
+        isActive
+        onSelect={(key) => {
+          setMenuOpen(false);
+          handleAction(key);
+        }}
+        onClose={() => {
+          setMenuOpen(false);
+        }}
+        theme={props.theme}
+      />
+    );
+  }
 
   if (state.status === "loading") {
     return <Text>{props.theme.muted("Loading session…")}</Text>;

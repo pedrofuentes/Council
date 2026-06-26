@@ -6,6 +6,8 @@ import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
 import type { ExpertMemoryDataSource, ExpertMemoryView } from "../adapters/expert-memory.js";
 import type { ExpertDetailView, ExpertsDataSource } from "../adapters/experts-data.js";
 import { useData } from "../components/DataProvider.js";
+import { useInputCapture } from "../components/InputCaptureProvider.js";
+import { ActionMenu, type ActionMenuItem } from "../components/overlays/ActionMenu.js";
 import { useAsyncResource, type AsyncState } from "../hooks/use-async-resource.js";
 import type { SemanticTheme } from "../theme/tokens.js";
 
@@ -143,36 +145,74 @@ export function ExpertDetailScreen(props: ExpertDetailScreenProps): React.ReactE
     [expertMemory, slug],
   );
   const memoryState = useAsyncResource(memoryLoader);
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const { setCaptured } = useInputCapture();
+
+  React.useEffect(() => {
+    if (!menuOpen) return undefined;
+    setCaptured(true);
+    return () => {
+      setCaptured(false);
+    };
+  }, [menuOpen, setCaptured]);
+
+  const isPersona = state.status === "loaded" && state.data?.kind === "persona";
+
+  const BASE_EXPERT_MENU_ITEMS: readonly ActionMenuItem[] = [
+    { key: "c", label: "Chat" },
+    { key: "e", label: "Edit" },
+    { key: "d", label: "Delete" },
+  ];
+
+  const expertMenuItems: readonly ActionMenuItem[] = isPersona
+    ? [...BASE_EXPERT_MENU_ITEMS, { key: "o", label: "Documents" }, { key: "t", label: "Train" }]
+    : BASE_EXPERT_MENU_ITEMS;
+
+  const handleAction = (key: string): void => {
+    if (key === "c" && slug !== undefined) {
+      navigate(`/chat/expert/${encodeURIComponent(slug)}`);
+    }
+    if (key === "e" && slug !== undefined) {
+      navigate(`/experts/${encodeURIComponent(slug)}/edit`);
+    }
+    if (key === "d" && slug !== undefined) {
+      navigate(`/experts/${encodeURIComponent(slug)}/delete`);
+    }
+    if (key === "o" && slug !== undefined && isPersona) {
+      navigate(`/experts/${encodeURIComponent(slug)}/docs`);
+    }
+    if (key === "t" && slug !== undefined && isPersona) {
+      navigate(`/experts/${encodeURIComponent(slug)}/train`);
+    }
+  };
+
   useInput(
     (input) => {
-      if (input === "c" && slug !== undefined) {
-        navigate(`/chat/expert/${encodeURIComponent(slug)}`);
+      if (input === "a") {
+        setMenuOpen(true);
+        return;
       }
-      if (input === "e" && slug !== undefined) {
-        navigate(`/experts/${encodeURIComponent(slug)}/edit`);
-      }
-      if (input === "d" && slug !== undefined) {
-        navigate(`/experts/${encodeURIComponent(slug)}/delete`);
-      }
-      if (
-        input === "o" &&
-        slug !== undefined &&
-        state.status === "loaded" &&
-        state.data?.kind === "persona"
-      ) {
-        navigate(`/experts/${encodeURIComponent(slug)}/docs`);
-      }
-      if (
-        input === "t" &&
-        slug !== undefined &&
-        state.status === "loaded" &&
-        state.data?.kind === "persona"
-      ) {
-        navigate(`/experts/${encodeURIComponent(slug)}/train`);
-      }
+      handleAction(input);
     },
-    { isActive: props.isActive ?? false },
+    { isActive: (props.isActive ?? false) && !menuOpen },
   );
+
+  if (menuOpen) {
+    return (
+      <ActionMenu
+        items={expertMenuItems}
+        isActive
+        onSelect={(key) => {
+          setMenuOpen(false);
+          handleAction(key);
+        }}
+        onClose={() => {
+          setMenuOpen(false);
+        }}
+        theme={props.theme}
+      />
+    );
+  }
 
   if (state.status === "loading") {
     return <Text>{props.theme.muted("Loading expert…")}</Text>;

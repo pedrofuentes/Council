@@ -15,6 +15,8 @@ const flush = async (): Promise<void> => {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setImmediate(r));
 };
 
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
 const withDetail = (
   loadDetail: (name: string, source: "saved" | "template") => Promise<PanelDetailView | undefined>,
 ): TuiDataSources => ({
@@ -262,5 +264,127 @@ describe("PanelDetailScreen", () => {
 
     expect(lastFrame()).not.toContain("CONVENE PANEL");
     expect(lastFrame()).toContain("starter");
+  });
+
+  it("opens the action menu when a is pressed on a saved panel", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withDetail(async () => ({
+          name: "acme",
+          description: "",
+          source: "saved",
+          members: [],
+          missing: [],
+        }))}
+      >
+        <MemoryRouter initialEntries={[{ pathname: "/panels/acme", state: { source: "saved" } }]}>
+          <Routes>
+            <Route path="/panels/:name" element={<PanelDetailScreen theme={theme} isActive />} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("a");
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("Actions");
+    expect(frame).toContain("Chat");
+    expect(frame).toContain("Members");
+    expect(frame).toContain("Delete");
+    expect(frame).toContain("Convene");
+  });
+
+  it("selecting Chat from the action menu navigates the same as pressing c directly", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withDetail(async () => ({
+          name: "acme",
+          description: "",
+          source: "saved",
+          members: [],
+          missing: [],
+        }))}
+      >
+        <MemoryRouter initialEntries={[{ pathname: "/panels/acme", state: { source: "saved" } }]}>
+          <Routes>
+            <Route path="/panels/:name" element={<PanelDetailScreen theme={theme} isActive />} />
+            <Route path="/chat/panel/:name" element={<Text>CHAT PANEL</Text>} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("a"); // open menu
+    await flush();
+    stdin.write("\r"); // select first item (c Chat)
+    await flush();
+
+    expect(lastFrame()).toContain("CHAT PANEL");
+  });
+
+  it("selecting Members from the action menu navigates the same as pressing m directly", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withDetail(async () => ({
+          name: "acme",
+          description: "",
+          source: "saved",
+          members: [],
+          missing: [],
+        }))}
+      >
+        <MemoryRouter initialEntries={[{ pathname: "/panels/acme", state: { source: "saved" } }]}>
+          <Routes>
+            <Route path="/panels/:name" element={<PanelDetailScreen theme={theme} isActive />} />
+            <Route path="/panels/:name/members" element={<Text>EDIT MEMBERS</Text>} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("a"); // open menu
+    await flush();
+    stdin.write("j"); // move to second item (m Members)
+    await flush();
+    stdin.write("\r");
+    await flush();
+
+    expect(lastFrame()).toContain("EDIT MEMBERS");
+  });
+
+  it("pressing Esc in the action menu closes it", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withDetail(async () => ({
+          name: "acme",
+          description: "",
+          source: "saved",
+          members: [],
+          missing: [],
+        }))}
+      >
+        <MemoryRouter initialEntries={[{ pathname: "/panels/acme", state: { source: "saved" } }]}>
+          <Routes>
+            <Route path="/panels/:name" element={<PanelDetailScreen theme={theme} isActive />} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("a");
+    await flush();
+    expect(lastFrame()).toContain("Actions");
+
+    await sleep(20);
+    stdin.write("\u001b"); // Esc — Ink buffers a lone Esc for disambiguation
+    await sleep(120);
+
+    expect(lastFrame()).not.toContain("Actions");
   });
 });
