@@ -307,12 +307,12 @@ describe("ExpertTrainScreen — completion guards", () => {
     await flush();
 
     // Resolve the deferred with a result that should now be stale.
-    resolveDeferred({ completed: "./docs/strategy.md", candidates: ["./docs/strategy.md"] });
+    resolveDeferred({ completed: "./docs/stale-result.md", candidates: ["./docs/stale-result.md"] });
     await flush();
 
     // The user's edited value must win; the stale completion must be discarded.
     expect(lastFrame()).toContain("./docs/string");
-    expect(lastFrame()).not.toContain("./docs/strategy.md");
+    expect(lastFrame()).not.toContain("./docs/stale-result.md");
     unmount();
   });
 
