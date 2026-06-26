@@ -1,7 +1,7 @@
 import React from "react";
 import { Text } from "ink";
 import { render } from "ink-testing-library";
-import { MemoryRouter, Route, Routes, useParams } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation, useParams } from "react-router";
 import { describe, expect, it } from "vitest";
 
 import type { PanelListItem } from "../../../src/tui/adapters/panels-data.js";
@@ -177,5 +177,61 @@ describe("PanelsScreen", () => {
     await flush();
 
     expect(lastFrame()).toContain("COMPOSE PANEL");
+  });
+
+  it("renders the ListViewport count header (position/total)", async () => {
+    const { lastFrame } = render(
+      <DataProvider
+        value={withPanels(async () => [
+          { name: "alpha", description: "", memberCount: 1, source: "saved" },
+          { name: "beta", description: "", memberCount: 2, source: "template" },
+        ])}
+      >
+        <MemoryRouter initialEntries={["/panels"]}>
+          <PanelsScreen theme={theme} isActive />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+    await flush();
+    // ListViewport header must contain "1/2" (cursor=1, total=2)
+    expect(lastFrame()).toMatch(/1\/2/);
+  });
+
+  it("resolves selection to the correct panel when names duplicate across sources", async () => {
+    function DetailSourceProbe(): React.ReactElement {
+      const params = useParams();
+      const location = useLocation();
+      const src = (location.state as { readonly source?: string } | null)?.source ?? "none";
+      return (
+        <Text>
+          DETAIL {params.name} source={src}
+        </Text>
+      );
+    }
+
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withPanels(async () => [
+          { name: "acme", description: "Saved panel", memberCount: 1, source: "saved" },
+          { name: "acme", description: "Template panel", memberCount: 2, source: "template" },
+        ])}
+      >
+        <MemoryRouter initialEntries={["/panels"]}>
+          <Routes>
+            <Route path="/panels" element={<PanelsScreen theme={theme} isActive />} />
+            <Route path="/panels/:name" element={<DetailSourceProbe />} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("j"); // move cursor to second item (template "acme")
+    await flush();
+    stdin.write("\r"); // select
+    await flush();
+
+    expect(lastFrame()).toContain("DETAIL acme");
+    expect(lastFrame()).toContain("source=template");
   });
 });

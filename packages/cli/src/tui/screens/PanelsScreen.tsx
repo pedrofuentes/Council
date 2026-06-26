@@ -1,10 +1,10 @@
-import React from "react";
-import { Box, Text, useInput } from "ink";
+import React, { useState } from "react";
+import { Text, useInput } from "ink";
 import { useNavigate } from "react-router";
 
 import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
-import { SelectableList } from "../components/lists/SelectableList.js";
 import { useData } from "../components/DataProvider.js";
+import { ListViewport, type ListViewportItem } from "../components/lists/ListViewport.js";
 import { useAsyncResource } from "../hooks/use-async-resource.js";
 import type { SemanticTheme } from "../theme/tokens.js";
 
@@ -17,6 +17,7 @@ export function PanelsScreen(props: PanelsScreenProps): React.ReactElement {
   const data = useData();
   const state = useAsyncResource(data.panels.loadList);
   const navigate = useNavigate();
+  const [isFiltering, setIsFiltering] = useState(false);
 
   useInput(
     (input) => {
@@ -28,7 +29,7 @@ export function PanelsScreen(props: PanelsScreenProps): React.ReactElement {
         navigate("/panels/compose");
       }
     },
-    { isActive: props.isActive ?? false },
+    { isActive: (props.isActive ?? false) && !isFiltering },
   );
 
   if (state.status === "loading") {
@@ -39,36 +40,34 @@ export function PanelsScreen(props: PanelsScreenProps): React.ReactElement {
     return <Text>{props.theme.error("Failed to load panels")}</Text>;
   }
 
-  if (state.data.length === 0) {
-    return (
-      <Box justifyContent="center">
-        <Text>
-          {props.theme.accent("No panels yet — create one with n (or auto-compose with c)")}
-        </Text>
-      </Box>
-    );
-  }
-
-  const rows = state.data.map((panel) => {
+  const items: readonly ListViewportItem[] = state.data.map((panel) => {
     const name = toSingleLineDisplay(panel.name);
     const description = toSingleLineDisplay(panel.description);
     const prefix = `${name}  ${panel.memberCount} experts`;
-    return description === "" ? prefix : `${prefix}  ${description}`;
+    return {
+      id: `${panel.source}:${panel.name}`,
+      label: description === "" ? prefix : `${prefix}  ${description}`,
+    };
   });
 
   return (
-    <SelectableList
-      items={rows}
+    <ListViewport
+      items={items}
       isActive={props.isActive ?? false}
-      height={10}
-      onActivate={(index) => {
-        const panel = state.data[index];
-        if (panel) {
+      onSelect={(id) => {
+        const panel = state.data.find((p) => `${p.source}:${p.name}` === id);
+        if (panel !== undefined) {
           navigate(`/panels/${encodeURIComponent(panel.name)}`, {
             state: { source: panel.source },
           });
         }
       }}
+      theme={props.theme}
+      title="Panels"
+      emptyText={props.theme.accent(
+        "No panels yet — create one with n (or auto-compose with c)",
+      )}
+      onFilterModeChange={setIsFiltering}
     />
   );
 }

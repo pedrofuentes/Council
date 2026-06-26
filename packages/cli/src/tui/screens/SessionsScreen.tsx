@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Text } from "ink";
 import { useNavigate } from "react-router";
 
 import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
@@ -9,7 +9,7 @@ import {
   type SessionsDataSource,
 } from "../adapters/sessions-data.js";
 import { useData } from "../components/DataProvider.js";
-import { SelectableList } from "../components/lists/SelectableList.js";
+import { ListViewport, type ListViewportItem } from "../components/lists/ListViewport.js";
 import { useAsyncResource } from "../hooks/use-async-resource.js";
 import type { SemanticTheme } from "../theme/tokens.js";
 
@@ -35,37 +35,32 @@ export function SessionsScreen(props: SessionsScreenProps): React.ReactElement {
     return <Text>{props.theme.error("Failed to load sessions")}</Text>;
   }
 
-  if (state.data.length === 0) {
-    return (
-      <Box justifyContent="center">
-        <Text>{props.theme.accent("No sessions yet — convene a panel with c")}</Text>
-      </Box>
-    );
-  }
-
-  const rows = state.data.map((session) =>
-    toSingleLineDisplay(
+  const items: readonly ListViewportItem[] = state.data.map((session) => ({
+    id: session.panelId,
+    label: toSingleLineDisplay(
       `${sessionStatusSymbol(session.latestStatus)} ${session.panelName}  ${String(
         session.debateCount,
       )} debates · ${String(session.turnCount)} turns${
         session.topic === "" ? "" : `  ${session.topic}`
       }`,
     ),
-  );
+  }));
 
   return (
-    <SelectableList
-      items={rows}
+    <ListViewport
+      items={items}
       isActive={props.isActive ?? false}
-      height={10}
-      onActivate={(index) => {
-        const session = state.data[index];
-        if (session) {
+      onSelect={(id) => {
+        const session = state.data.find((s) => s.panelId === id);
+        if (session !== undefined) {
           navigate(`/sessions/${encodeURIComponent(session.panelId)}`, {
             state: { panelName: session.panelName },
           });
         }
       }}
+      theme={props.theme}
+      title="Sessions"
+      emptyText={props.theme.accent("No sessions yet — convene a panel with c")}
     />
   );
 }
