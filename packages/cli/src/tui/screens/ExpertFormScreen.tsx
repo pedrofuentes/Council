@@ -139,12 +139,9 @@ export function ExpertFormScreen(props: ExpertFormScreenProps): React.ReactEleme
     [visibleKind],
   );
 
-  const isFieldRequired = React.useCallback(
-    (field: FormField): boolean => {
-      return REQUIRED_FIELDS.has(field.key);
-    },
-    [],
-  );
+  const isFieldRequired = React.useCallback((field: FormField): boolean => {
+    return REQUIRED_FIELDS.has(field.key);
+  }, []);
 
   React.useEffect(() => {
     setCursor((current) => Math.min(current, Math.max(0, visibleFields.length - 1)));
@@ -331,9 +328,19 @@ export function ExpertFormScreen(props: ExpertFormScreenProps): React.ReactEleme
           </React.Fragment>
         );
       })}
-      <Text>{props.theme.muted("↑↓ move · Enter edit · Ctrl+S save · Esc back")}</Text>
+      <Text>{props.theme.muted(expertFormHint(mode, selected))}</Text>
     </Box>
   );
+}
+
+function expertFormHint(mode: InputMode, field: FormField | undefined): string {
+  if (mode === "nav" || field === undefined) {
+    return "↑↓ move · Enter edit · Ctrl+S save · Esc back";
+  }
+  if (field.kind === "enum") {
+    return "←/→ change · Enter confirm · Esc cancel";
+  }
+  return "type · Enter confirm · Esc cancel";
 }
 
 interface FieldRowProps {
