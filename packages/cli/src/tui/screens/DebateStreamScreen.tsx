@@ -12,6 +12,7 @@ import type { SemanticTheme } from "../theme/tokens.js";
 export interface DebateStreamScreenProps {
   readonly theme: SemanticTheme;
   readonly isActive?: boolean;
+  readonly maxRows?: number;
 }
 
 interface TurnView {
@@ -210,6 +211,7 @@ export function DebateStreamScreen(props: DebateStreamScreenProps): React.ReactE
 
   const lines = transcriptLines(view);
   const responder = activeExpert(view);
+  const transcriptHeight = props.maxRows ?? 12;
 
   return (
     <Box flexDirection="column">
@@ -220,7 +222,7 @@ export function DebateStreamScreen(props: DebateStreamScreenProps): React.ReactE
       {view.experts.length > 0 ? (
         <Text>{toSingleLineDisplay(`Experts: ${view.experts.join(", ")}`)}</Text>
       ) : null}
-      {lines.length > 0 ? <ScrollView items={lines} height={12} follow /> : null}
+      {lines.length > 0 ? <ScrollView items={lines} height={transcriptHeight} follow /> : null}
       {status === "streaming" ? (
         <Text>
           {props.theme.muted(

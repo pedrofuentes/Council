@@ -46,4 +46,19 @@ describe("computeLayout", () => {
     expect(l.navState).toBe("hidden");
     expect(l.mainWidth).toBe(140);
   });
+
+  it("surfaces the terminal columns and rows", () => {
+    const l = computeLayout({ columns: 140, rows: 40 });
+    expect(l.columns).toBe(140);
+    expect(l.rows).toBe(40);
+  });
+
+  it("derives contentHeight by subtracting header and footer chrome", () => {
+    expect(computeLayout({ columns: 120, rows: 40 }).contentHeight).toBe(38);
+    expect(computeLayout({ columns: 120, rows: 24 }).contentHeight).toBe(22);
+  });
+
+  it("never reports a negative contentHeight", () => {
+    expect(computeLayout({ columns: 120, rows: 1 }).contentHeight).toBe(0);
+  });
 });
