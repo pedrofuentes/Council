@@ -133,18 +133,18 @@ describe("ExpertFormScreen", () => {
     await flush();
 
     const frame = lastFrame() ?? "";
-    expect(frame).toContain("Slug:");
-    expect(frame).toContain("Display name:");
-    expect(frame).toContain("Role:");
-    expect(frame).toContain("Weighted evidence:");
+    expect(frame).toContain("Slug (required):");
+    expect(frame).toContain("Display name (required):");
+    expect(frame).toContain("Role (required):");
+    expect(frame).toContain("Weighted evidence (required):");
     expect(frame).toContain("Reference cases:");
     expect(frame).toContain("Not expert in:");
-    expect(frame).toContain("Epistemic stance:");
+    expect(frame).toContain("Epistemic stance (required):");
     expect(frame).toContain("Kind: generic");
     expect(frame).toContain("Model:");
     expect(frame).not.toContain("Persona description:");
     expect(frame).toContain("↑↓ move · Enter edit · Ctrl+S save · Esc back");
-    expect(highlightedRow(frame)).toContain("Slug:");
+    expect(highlightedRow(frame)).toContain("Kind:");
     unmount();
   });
 
@@ -158,7 +158,13 @@ describe("ExpertFormScreen", () => {
 
     stdin.write("x");
     await flush();
-    expect(highlightedRow(lastFrame() ?? "")).toContain("Slug:");
+    // "x" is a no-op on the Kind enum field — cursor stays at Kind (index 0)
+    expect(highlightedRow(lastFrame() ?? "")).toContain("Kind:");
+
+    // Navigate down to Slug (index 1), enter edit mode, type, commit
+    stdin.write("\u001B[B");
+    await flush();
+    expect(highlightedRow(lastFrame() ?? "")).toContain("Slug");
 
     stdin.write("\r");
     await flush();
@@ -166,26 +172,26 @@ describe("ExpertFormScreen", () => {
     await flush();
     stdin.write("\r");
     await flush();
-    expect(lastFrame()).toContain("*Slug: alpha");
+    expect(lastFrame()).toContain("*Slug (required): alpha");
 
     stdin.write("\u001B[B");
     await flush();
-    expect(highlightedRow(lastFrame() ?? "")).toContain("Display name:");
+    expect(highlightedRow(lastFrame() ?? "")).toContain("Display name");
     stdin.write("j");
     await flush();
-    expect(highlightedRow(lastFrame() ?? "")).toContain("Role:");
+    expect(highlightedRow(lastFrame() ?? "")).toContain("Role");
     stdin.write("\t");
     await flush();
-    expect(highlightedRow(lastFrame() ?? "")).toContain("Weighted evidence:");
+    expect(highlightedRow(lastFrame() ?? "")).toContain("Weighted evidence");
     stdin.write("\u001B[A");
     await flush();
-    expect(highlightedRow(lastFrame() ?? "")).toContain("Role:");
+    expect(highlightedRow(lastFrame() ?? "")).toContain("Role");
     stdin.write("k");
     await flush();
-    expect(highlightedRow(lastFrame() ?? "")).toContain("Display name:");
+    expect(highlightedRow(lastFrame() ?? "")).toContain("Display name");
     stdin.write("\u001B[Z");
     await flush();
-    expect(highlightedRow(lastFrame() ?? "")).toContain("Slug:");
+    expect(highlightedRow(lastFrame() ?? "")).toContain("Slug");
     unmount();
   });
 
@@ -198,6 +204,10 @@ describe("ExpertFormScreen", () => {
     const { stdin, lastFrame, unmount } = renderForm(source);
     await flush();
 
+    // Navigate from Kind (index 0) down to Slug (index 1) before editing
+    stdin.write("\u001B[B");
+    await flush();
+
     stdin.write("\r");
     await flush();
     stdin.write("draft");
@@ -205,11 +215,11 @@ describe("ExpertFormScreen", () => {
     stdin.write("\u0013");
     await flush();
     expect(create).not.toHaveBeenCalled();
-    expect((lastFrame() ?? "").replace(ansiPattern, "")).toContain("Slug: draft");
+    expect((lastFrame() ?? "").replace(ansiPattern, "")).toContain("Slug (required): draft");
 
     stdin.write("\u001B");
     await waitForEscape();
-    expect(lastFrame()).toContain("Slug:");
+    expect(lastFrame()).toContain("Slug (required):");
     expect(lastFrame()).not.toContain("draft");
     unmount();
   });
@@ -222,16 +232,14 @@ describe("ExpertFormScreen", () => {
     const { stdin, lastFrame, unmount } = renderForm(source);
     await flush();
 
-    for (let i = 0; i < 7; i += 1) {
-      stdin.write("\u001B[B");
-      await flush();
-    }
+    // Kind is now first (index 0) — no navigation needed
     expect(highlightedRow(lastFrame() ?? "")).toContain("Kind: generic");
 
     stdin.write("\r");
     await flush();
     expect(lastFrame()).toContain("Kind: persona");
     expect(lastFrame()).toContain("Persona description:");
+    expect(lastFrame()).not.toContain("Persona description (required):");
 
     stdin.write("\r");
     await flush();
@@ -272,7 +280,7 @@ describe("ExpertFormScreen", () => {
     expect(lastFrame()).toContain("Lowercase only");
     expect(lastFrame()).not.toContain("\u001B[31m");
     expect(lastFrame()).not.toContain("DETAIL");
-    expect(highlightedRow(lastFrame() ?? "")).toContain("Slug:");
+    expect(highlightedRow(lastFrame() ?? "")).toContain("Slug (required):");
     unmount();
   });
 
@@ -283,6 +291,10 @@ describe("ExpertFormScreen", () => {
     >(async (values) => ({ ok: true, definition: definitionFor(values) }));
     const { source } = createSource(create);
     const { stdin, lastFrame, unmount } = renderForm(source);
+    await flush();
+
+    // Kind is at index 0 with default "generic" — navigate down to Slug (index 1) first
+    stdin.write("\u001B[B");
     await flush();
 
     for (const value of ["alpha", "Alpha", "advisor", "reports", "cases", "none", "skeptical"]) {
@@ -331,8 +343,14 @@ describe("ExpertFormScreen", () => {
     const { stdin, lastFrame, unmount } = renderEditForm(source);
     await flush();
 
-    expect(lastFrame()).toContain("Display name: Chief Technology Officer");
-    expect(highlightedRow(lastFrame() ?? "")).toContain("Slug: cto");
+    // Kind is first (index 0); loaded expert is "generic"
+    expect(lastFrame()).toContain("Chief Technology Officer");
+    expect(highlightedRow(lastFrame() ?? "")).toContain("Kind:");
+
+    // Navigate to Slug (index 1) and attempt to edit — slug is read-only in edit mode
+    stdin.write("\u001B[B");
+    await flush();
+    expect(highlightedRow(lastFrame() ?? "")).toContain("Slug");
 
     stdin.write("\r");
     await flush();
@@ -340,9 +358,10 @@ describe("ExpertFormScreen", () => {
     await flush();
     stdin.write("\r");
     await flush();
-    expect(lastFrame()).toContain("Slug: cto");
-    expect(lastFrame()).not.toContain("Slug: ctomutated");
+    expect(lastFrame()).toContain("Slug (required): cto");
+    expect(lastFrame()).not.toContain("ctomutated");
 
+    // Navigate to Display name (index 2) and edit it
     stdin.write("\u001B[B");
     await flush();
     stdin.write("\r");
@@ -393,6 +412,86 @@ describe("ExpertFormScreen", () => {
     await waitForEscape();
 
     expect(lastFrame()).toContain("PARENT");
+    unmount();
+  });
+
+  it("first rendered/selected field is Kind (kind-first ordering)", async () => {
+    const { source } = createSource(async (values) => ({
+      ok: true,
+      definition: definitionFor(values),
+    }));
+    const { lastFrame, unmount } = renderForm(source);
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    // Kind must appear before Slug in the rendered output
+    const kindIdx = frame.indexOf("Kind:");
+    const slugIdx = frame.indexOf("Slug");
+    expect(kindIdx).toBeGreaterThan(-1);
+    expect(slugIdx).toBeGreaterThan(-1);
+    expect(kindIdx).toBeLessThan(slugIdx);
+
+    // Kind must be the initially highlighted (selected) field
+    expect(highlightedRow(frame)).toContain("Kind:");
+    unmount();
+  });
+
+  it("required fields show (required) marker, distinct from dirty * prefix", async () => {
+    const { source } = createSource(async (values) => ({
+      ok: true,
+      definition: definitionFor(values),
+    }));
+    const { stdin, lastFrame, unmount } = renderForm(source);
+    await flush();
+
+    const initialFrame = lastFrame() ?? "";
+    // Unchanged required fields show the (required) marker
+    expect(initialFrame).toContain("Slug (required):");
+    expect(initialFrame).toContain("Display name (required):");
+    expect(initialFrame).toContain("Role (required):");
+    // No dirty * marker on unchanged fields
+    expect(initialFrame).not.toContain("*Slug");
+    expect(initialFrame).not.toContain("*Display name");
+
+    // Navigate to Slug (down once from Kind at index 0), then edit it
+    stdin.write("\u001B[B"); // down to Slug
+    await flush();
+    stdin.write("\r"); // enter edit mode
+    await flush();
+    stdin.write("alpha");
+    await flush();
+    stdin.write("\r"); // commit
+    await flush();
+
+    // After editing: dirty (*) prefix AND (required) suffix both present, clearly distinct
+    expect(lastFrame()).toContain("*Slug (required): alpha");
+    unmount();
+  });
+
+  it("personaDescription required marker shown only when kind is persona", async () => {
+    const { source } = createSource(async (values) => ({
+      ok: true,
+      definition: definitionFor(values),
+    }));
+    const { stdin, lastFrame, unmount } = renderForm(source);
+    await flush();
+
+    // Initially generic — personaDescription hidden entirely
+    expect(lastFrame()).not.toContain("Persona description:");
+
+    // With kind-first ordering, Kind is at index 0 — press Enter to cycle to persona
+    stdin.write("\r");
+    await flush();
+
+    // personaDescription now visible — it is OPTIONAL, no (required) marker
+    expect(lastFrame()).toContain("Kind: persona");
+    expect(lastFrame()).toContain("Persona description:");
+    expect(lastFrame()).not.toContain("Persona description (required):");
+
+    // Cycle back to generic — personaDescription hidden again
+    stdin.write("\r");
+    await flush();
+    expect(lastFrame()).not.toContain("Persona description:");
     unmount();
   });
 });
