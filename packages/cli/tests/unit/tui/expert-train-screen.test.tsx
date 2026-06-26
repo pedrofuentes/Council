@@ -225,6 +225,108 @@ describe("ExpertTrainScreen", () => {
   });
 });
 
+describe("ExpertTrainScreen — completion guards", () => {
+  it("does not produce an unhandled rejection when completer rejects", async () => {
+    const unhandledErrors: unknown[] = [];
+    const onUnhandledRejection = (err: unknown): void => {
+      unhandledErrors.push(err);
+    };
+    process.on("unhandledRejection", onUnhandledRejection);
+
+    try {
+      const fakeComplete = vi
+        .fn<(input: string) => Promise<PathCompletion>>()
+        .mockRejectedValue(new Error("fs error"));
+      const { stdin, lastFrame, unmount } = renderScreenWithComplete(fakeComplete);
+
+      stdin.write("\t");
+      await flush();
+
+      expect(unhandledErrors).toHaveLength(0);
+      expect(lastFrame()).toContain("Document file path:");
+      unmount();
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
+  });
+
+  it("does not mutate state after the screen unmounts (unmount guard)", async () => {
+    let resolveDeferred!: (val: PathCompletion) => void;
+    const deferred = new Promise<PathCompletion>((res) => {
+      resolveDeferred = res;
+    });
+    const fakeComplete = vi
+      .fn<(input: string) => Promise<PathCompletion>>()
+      .mockReturnValue(deferred);
+
+    const { stdin, unmount } = renderScreenWithComplete(fakeComplete);
+
+    stdin.write("\t");
+    await flush();
+
+    // Unmount before the completion resolves.
+    unmount();
+    await flush();
+
+    // Use a getter trap: with no guard the .then() handler accesses
+    // completion.completed; with the unmount guard it returns early before
+    // reaching that line, so the getter is never invoked.
+    let completedWasAccessed = false;
+    const completionTrap: PathCompletion = {
+      get completed(): string {
+        completedWasAccessed = true;
+        return "./post-unmount.md";
+      },
+      candidates: [],
+    };
+
+    resolveDeferred(completionTrap);
+    await flush();
+
+    expect(completedWasAccessed).toBe(false);
+  });
+
+  it("uses the latest Tab result and discards stale earlier completions", async () => {
+    let resolveFirst!: (val: PathCompletion) => void;
+    let resolveSecond!: (val: PathCompletion) => void;
+    const first = new Promise<PathCompletion>((res) => {
+      resolveFirst = res;
+    });
+    const second = new Promise<PathCompletion>((res) => {
+      resolveSecond = res;
+    });
+
+    let callCount = 0;
+    const fakeComplete = vi
+      .fn<(input: string) => Promise<PathCompletion>>()
+      .mockImplementation(() => {
+        callCount += 1;
+        return callCount === 1 ? first : second;
+      });
+
+    const { stdin, lastFrame, unmount } = renderScreenWithComplete(fakeComplete);
+
+    stdin.write("./");
+    await flush();
+    stdin.write("\t"); // first Tab → deferred `first`
+    await flush();
+    stdin.write("\t"); // second Tab → deferred `second`
+    await flush();
+
+    // Resolve the SECOND (latest) request first.
+    resolveSecond({ completed: "./second-result.md", candidates: ["./second-result.md"] });
+    await flush();
+
+    // Resolve the FIRST (stale) request last — must be discarded.
+    resolveFirst({ completed: "./first-result.md", candidates: ["./first-result.md"] });
+    await flush();
+
+    expect(lastFrame()).toContain("./second-result.md");
+    expect(lastFrame()).not.toContain("./first-result.md");
+    unmount();
+  });
+});
+
 describe("ExpertTrainScreen — Tab completion and hint", () => {
   it("renders the example hint line", () => {
     const { lastFrame, unmount } = renderScreen();
