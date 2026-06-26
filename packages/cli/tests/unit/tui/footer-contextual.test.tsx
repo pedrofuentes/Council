@@ -16,7 +16,7 @@ const flush = async (stdin?: { write: (s: string) => void }, input?: string): Pr
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setImmediate(r));
 };
 
-const renderAt = (entries: readonly unknown[], value: TuiDataSources) =>
+const renderAt = (entries: readonly unknown[], value: TuiDataSources): ReturnType<typeof render> =>
   render(
     <DataProvider value={value}>
       <InputCaptureProvider>

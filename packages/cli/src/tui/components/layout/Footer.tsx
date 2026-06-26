@@ -4,7 +4,7 @@ import { Box, Text } from "ink";
 import { toSingleLineDisplay } from "../../../cli/strip-control-chars.js";
 import type { SemanticTheme } from "../../theme/tokens.js";
 
-export type FooterMode = "NAV" | "TYPE" | "STREAM";
+export type FooterMode = "NAV" | "MAIN" | "INPUT" | "PALETTE" | "HELP" | "TYPE" | "STREAM";
 
 export interface FooterHint {
   readonly key: string;

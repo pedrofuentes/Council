@@ -8,7 +8,7 @@ import { useOptionalData } from "../components/DataProvider.js";
 import { useInputCapture } from "../components/InputCaptureProvider.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { StartupBanner } from "../components/layout/StartupBanner.js";
-import { Footer } from "../components/layout/Footer.js";
+import { Footer, type FooterMode } from "../components/layout/Footer.js";
 import { Header } from "../components/layout/Header.js";
 import { LeftNav } from "../components/navigation/LeftNav.js";
 import { CommandPalette } from "../components/overlays/CommandPalette.js";
@@ -196,18 +196,33 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
     />
   );
 
+  const contextualHints = shortcutsForRoute(location.pathname);
+  const footerHints =
+    contextualHints.length > 0
+      ? contextualHints.map((b) => ({ key: b.keys, label: b.description }))
+      : [
+          { key: "↑↓", label: "Move" },
+          { key: "Enter", label: "Open" },
+        ];
+
+  const footerMode: FooterMode =
+    mode === "palette"
+      ? "PALETTE"
+      : mode === "help"
+        ? "HELP"
+        : captured
+          ? "INPUT"
+          : focus === "nav"
+            ? "NAV"
+            : "MAIN";
+
+  const footerGlobals = layout.footerLabels ? "^K Palette   ? Help" : "^K   ?";
+
   const footer = (
     <Footer
-      hints={[
-        { key: "Tab", label: "Focus" },
-        { key: "↑↓", label: "Nav" },
-        { key: "Enter", label: "Select" },
-        { key: "\\", label: "Toggle" },
-        { key: "^K", label: "Palette" },
-        { key: "?", label: "Help" },
-        { key: "q", label: "Quit" },
-      ]}
-      mode="NAV"
+      hints={footerHints}
+      status={footerGlobals}
+      mode={footerMode}
       showLabels={layout.footerLabels}
       theme={theme}
     />
