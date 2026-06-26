@@ -175,8 +175,9 @@ export function ListViewport(props: ListViewportProps): React.ReactElement {
         const isSelected = scrollWindow.start + i === safeCursor;
         const displayLabel = toSingleLineDisplay(item.label);
         const displayHint = item.hint !== undefined ? toSingleLineDisplay(item.hint) : undefined;
-        const line = `${isSelected ? SELECTION_PREFIX : PLAIN_PREFIX}${displayLabel}${
-          displayHint !== undefined ? `  ${displayHint}` : ""
+        const prefix = isSelected ? SELECTION_PREFIX : PLAIN_PREFIX;
+        const line = `${prefix}${displayLabel}${
+          displayHint !== undefined ? `  ${props.theme.muted(displayHint)}` : ""
         }`;
         return (
           <Text key={item.id} inverse={isSelected}>

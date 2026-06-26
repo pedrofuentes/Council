@@ -42,15 +42,11 @@ export function PanelsScreen(props: PanelsScreenProps): React.ReactElement {
     return <Text>{props.theme.error("Failed to load panels")}</Text>;
   }
 
-  const items: readonly ListViewportItem[] = state.data.map((panel) => {
-    const name = toSingleLineDisplay(panel.name);
-    const description = toSingleLineDisplay(panel.description);
-    const prefix = `${name}  ${panel.memberCount} experts`;
-    return {
-      id: `${panel.source}:${panel.name}`,
-      label: description === "" ? prefix : `${prefix}  ${description}`,
-    };
-  });
+  const items: readonly ListViewportItem[] = state.data.map((panel) => ({
+    id: `${panel.source}:${panel.name}`,
+    label: toSingleLineDisplay(panel.name),
+    hint: `${panel.memberCount} experts`,
+  }));
 
   const panelData = state.data;
 
