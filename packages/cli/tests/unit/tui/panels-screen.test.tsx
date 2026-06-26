@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import React from "react";
 import { Text } from "ink";
 import { render } from "ink-testing-library";
@@ -7,7 +8,18 @@ import { describe, expect, it } from "vitest";
 import type { PanelListItem } from "../../../src/tui/adapters/panels-data.js";
 import { DataProvider, type TuiDataSources } from "../../../src/tui/components/DataProvider.js";
 import { PanelsScreen } from "../../../src/tui/screens/PanelsScreen.js";
+import { type ResizableStdout } from "../../../src/tui/hooks/use-terminal-size.js";
 import { resolveTheme } from "../../../src/tui/theme/tokens.js";
+
+class FakeStdout extends EventEmitter implements ResizableStdout {
+  public columns: number | undefined;
+  public rows: number | undefined;
+  constructor(columns: number, rows: number) {
+    super();
+    this.columns = columns;
+    this.rows = rows;
+  }
+}
 
 const theme = resolveTheme({});
 const flush = async (): Promise<void> => {
@@ -233,5 +245,27 @@ describe("PanelsScreen", () => {
 
     expect(lastFrame()).toContain("DETAIL acme");
     expect(lastFrame()).toContain("source=template");
+  });
+
+  it("shows a panel preview summary beside the list at wide widths", async () => {
+    const wideStdout = new FakeStdout(140, 24);
+    const { lastFrame } = render(
+      <DataProvider
+        value={withPanels(async () => [
+          // Embed a raw ANSI sequence in the name so we can assert sanitization
+          { name: "alpha\u001B[31m-panel", description: "", memberCount: 3, source: "saved" },
+          { name: "beta-panel", description: "Strategy group", memberCount: 1, source: "template" },
+        ])}
+      >
+        <MemoryRouter initialEntries={["/panels"]}>
+          <PanelsScreen theme={theme} isActive stdout={wideStdout} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+    await flush();
+    // Preview pane must show member count with "members" (distinct from "experts" in list label)
+    expect(lastFrame()).toContain("members");
+    // Raw ANSI escape from untrusted panel name must not bleed into the preview
+    expect(lastFrame()).not.toContain("\u001B[31m");
   });
 });

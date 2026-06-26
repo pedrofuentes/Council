@@ -1,4 +1,6 @@
+import { EventEmitter } from "node:events";
 import React from "react";
+import { Text } from "ink";
 import { render } from "ink-testing-library";
 import { describe, expect, it, vi } from "vitest";
 
@@ -6,7 +8,18 @@ import {
   ListViewport,
   type ListViewportItem,
 } from "../../../src/tui/components/lists/ListViewport.js";
+import { type ResizableStdout } from "../../../src/tui/hooks/use-terminal-size.js";
 import { resolveTheme } from "../../../src/tui/theme/tokens.js";
+
+class FakeStdout extends EventEmitter implements ResizableStdout {
+  public columns: number | undefined;
+  public rows: number | undefined;
+  constructor(columns: number, rows: number) {
+    super();
+    this.columns = columns;
+    this.rows = rows;
+  }
+}
 
 const theme = resolveTheme({});
 
@@ -275,5 +288,78 @@ describe("ListViewport", () => {
 
     await pressEsc(stdin); // exit filter
     expect(onFilterModeChange).toHaveBeenCalledWith(false);
+  });
+
+  describe("preview pane", () => {
+    it("shows the preview for the selected item at wide widths", async () => {
+      const wideStdout = new FakeStdout(140, 24);
+      const { lastFrame } = render(
+        <ListViewport
+          items={ITEMS}
+          isActive
+          height={5}
+          onSelect={vi.fn()}
+          theme={theme}
+          stdout={wideStdout}
+          renderPreview={(id) => <Text>PREVIEW:{id}</Text>}
+        />,
+      );
+      await flush();
+      // Alpha (id="a") is the first/selected item — preview must show
+      expect(lastFrame()).toContain("PREVIEW:a");
+    });
+
+    it("updates the preview when the cursor moves to a different item", async () => {
+      const wideStdout = new FakeStdout(140, 24);
+      const { stdin, lastFrame } = render(
+        <ListViewport
+          items={ITEMS}
+          isActive
+          height={5}
+          onSelect={vi.fn()}
+          theme={theme}
+          stdout={wideStdout}
+          renderPreview={(id) => <Text>PREVIEW:{id}</Text>}
+        />,
+      );
+      await flush();
+      expect(lastFrame()).toContain("PREVIEW:a");
+      await flush(stdin, "j"); // move to Beta (id="b")
+      expect(lastFrame()).toContain("PREVIEW:b");
+      expect(lastFrame()).not.toContain("PREVIEW:a");
+    });
+
+    it("does not show a preview at narrow widths even when renderPreview is provided", async () => {
+      const narrowStdout = new FakeStdout(80, 24);
+      const { lastFrame } = render(
+        <ListViewport
+          items={ITEMS}
+          isActive
+          height={5}
+          onSelect={vi.fn()}
+          theme={theme}
+          stdout={narrowStdout}
+          renderPreview={(id) => <Text>PREVIEW:{id}</Text>}
+        />,
+      );
+      await flush();
+      expect(lastFrame()).not.toContain("PREVIEW:");
+    });
+
+    it("does not show a preview when renderPreview is not provided", async () => {
+      const wideStdout = new FakeStdout(140, 24);
+      const { lastFrame } = render(
+        <ListViewport
+          items={ITEMS}
+          isActive
+          height={5}
+          onSelect={vi.fn()}
+          theme={theme}
+          stdout={wideStdout}
+        />,
+      );
+      await flush();
+      expect(lastFrame()).not.toContain("PREVIEW:");
+    });
   });
 });

@@ -1,5 +1,5 @@
 import React from "react";
-import { Text } from "ink";
+import { Box, Text } from "ink";
 import { useNavigate } from "react-router";
 
 import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
@@ -11,11 +11,13 @@ import {
 import { useData } from "../components/DataProvider.js";
 import { ListViewport, type ListViewportItem } from "../components/lists/ListViewport.js";
 import { useAsyncResource } from "../hooks/use-async-resource.js";
+import { type ResizableStdout } from "../hooks/use-terminal-size.js";
 import type { SemanticTheme } from "../theme/tokens.js";
 
 export interface SessionsScreenProps {
   readonly theme: SemanticTheme;
   readonly isActive?: boolean;
+  readonly stdout?: ResizableStdout | undefined;
 }
 
 const EMPTY_LIST: () => Promise<readonly SessionListItem[]> = async () => [];
@@ -46,12 +48,14 @@ export function SessionsScreen(props: SessionsScreenProps): React.ReactElement {
     ),
   }));
 
+  const sessionData = state.data;
+
   return (
     <ListViewport
       items={items}
       isActive={props.isActive ?? false}
       onSelect={(id) => {
-        const session = state.data.find((s) => s.panelId === id);
+        const session = sessionData.find((s) => s.panelId === id);
         if (session !== undefined) {
           navigate(`/sessions/${encodeURIComponent(session.panelId)}`, {
             state: { panelName: session.panelName },
@@ -60,9 +64,23 @@ export function SessionsScreen(props: SessionsScreenProps): React.ReactElement {
       }}
       theme={props.theme}
       title="Sessions"
-      emptyText={props.theme.accent(
-        "No debates yet — convene a panel to watch them deliberate",
-      )}
+      emptyText={props.theme.accent("No debates yet — convene a panel to watch them deliberate")}
+      stdout={props.stdout}
+      renderPreview={(id) => {
+        const session = sessionData.find((s) => s.panelId === id);
+        if (session === undefined) return null;
+        return (
+          <Box flexDirection="column">
+            <Text bold>
+              {sessionStatusSymbol(session.latestStatus)} {toSingleLineDisplay(session.panelName)}
+            </Text>
+            <Text>
+              {String(session.debateCount)} debates · {String(session.turnCount)} turns
+            </Text>
+            {session.topic !== "" && <Text>{toSingleLineDisplay(session.topic)}</Text>}
+          </Box>
+        );
+      }}
     />
   );
 }
