@@ -69,7 +69,24 @@ describe("shortcutsForRoute", () => {
   it("resolves the session export sub-route distinctly from the detail route", () => {
     const b = shortcutsForRoute("/sessions/p1/export");
     expect(b.some((x) => x.description === "Conclude")).toBe(false);
-    expect(keysOf(b)).toContain("j/k");
+    // Movement uses the canonical ↑↓ glyph, not the screen-specific j/k.
+    expect(keysOf(b)).toContain("↑↓");
+    expect(keysOf(b)).not.toContain("j/k");
+  });
+
+  it("labels movement consistently as ↑↓ / Move across every scrollable route", () => {
+    const movementRoutes = ["/onboarding", "/experts/new", "/settings", "/sessions/p1/export"];
+    for (const route of movementRoutes) {
+      const move = shortcutsForRoute(route).find((x) => x.description === "Move");
+      expect(move, `expected a Move binding on ${route}`).toBeDefined();
+      expect(move?.keys).toBe("↑↓");
+    }
+  });
+
+  it("disambiguates the panel-compose revise action away from the overloaded 'Edit'", () => {
+    const b = shortcutsForRoute("/panels/compose");
+    expect(find(b, "n/e")?.description).toBe("Revise");
+    expect(b.some((x) => x.description === "Edit")).toBe(false);
   });
 
   it("maps the session conclude route to x Export, r Re-convene, and Esc Back", () => {
