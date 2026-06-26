@@ -33,13 +33,13 @@ describe("HomeScreen", () => {
     unmount();
   });
 
-  it("shows an empty-state CTA when there is nothing yet", () => {
+  it("shows an empty-state launchpad with a selectable ▸ Convene a debate action", () => {
     const { lastFrame, unmount } = render(
       <MemoryRouter initialEntries={["/"]}>
         <HomeScreen theme={theme} data={emptyData} />
       </MemoryRouter>,
     );
-    expect((lastFrame() ?? "").toLowerCase()).toContain("start your first");
+    expect(lastFrame() ?? "").toContain("▸ Convene a debate");
     unmount();
   });
 
@@ -237,6 +237,208 @@ describe("HomeScreen — quick-action keys", () => {
     expect(frame).not.toContain("NEW EXPERT");
     expect(frame).not.toContain("NEW PANEL");
     expect(frame).not.toContain("SETTINGS");
+    unmount();
+  });
+});
+
+describe("HomeScreen — launchpad rendering", () => {
+  it("renders a › selection affordance on the focused row", () => {
+    const { lastFrame, unmount } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <HomeScreen theme={theme} data={populatedData} isActive />
+      </MemoryRouter>,
+    );
+    expect(lastFrame() ?? "").toContain("›");
+    unmount();
+  });
+
+  it("↓ arrow moves the cursor (frame changes)", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <HomeScreen theme={theme} data={populatedData} isActive />
+      </MemoryRouter>,
+    );
+    await flush();
+    const before = lastFrame() ?? "";
+    stdin.write("\u001b[B");
+    await flush();
+    expect(lastFrame() ?? "").not.toBe(before);
+    unmount();
+  });
+
+  it("↑ arrow moves the cursor back up (frame differs from mid-state)", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <HomeScreen theme={theme} data={populatedData} isActive />
+      </MemoryRouter>,
+    );
+    await flush();
+    stdin.write("\u001b[B");
+    await flush();
+    const frameMid = lastFrame() ?? "";
+    stdin.write("\u001b[A");
+    await flush();
+    expect(lastFrame() ?? "").not.toBe(frameMid);
+    unmount();
+  });
+
+  it("j / k keys move the cursor", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <HomeScreen theme={theme} data={populatedData} isActive />
+      </MemoryRouter>,
+    );
+    await flush();
+    const before = lastFrame() ?? "";
+    stdin.write("j");
+    await flush();
+    const afterJ = lastFrame() ?? "";
+    expect(afterJ).not.toBe(before);
+    stdin.write("k");
+    await flush();
+    expect(lastFrame() ?? "").toBe(before);
+    unmount();
+  });
+});
+
+describe("HomeScreen — launchpad Enter navigation", () => {
+  it("Enter on row 0 (▸ Convene a debate) navigates to /panels/compose", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<HomeScreen theme={theme} data={populatedData} isActive />} />
+          <Route path="/panels/compose" element={<Text>COMPOSE PANEL</Text>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await flush();
+    stdin.write("\r");
+    await flush();
+    expect(lastFrame()).toContain("COMPOSE PANEL");
+    unmount();
+  });
+
+  it("Enter on row 1 (New expert) navigates to /experts/new", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<HomeScreen theme={theme} data={populatedData} isActive />} />
+          <Route path="/experts/new" element={<Text>NEW EXPERT</Text>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await flush();
+    stdin.write("\u001b[B");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    expect(lastFrame()).toContain("NEW EXPERT");
+    unmount();
+  });
+
+  it("Enter on row 2 (New panel) navigates to /panels/new", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<HomeScreen theme={theme} data={populatedData} isActive />} />
+          <Route path="/panels/new" element={<Text>NEW PANEL</Text>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await flush();
+    stdin.write("\u001b[B");
+    await flush();
+    stdin.write("\u001b[B");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    expect(lastFrame()).toContain("NEW PANEL");
+    unmount();
+  });
+
+  it("Enter on row 3 (Settings) navigates to /settings", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<HomeScreen theme={theme} data={populatedData} isActive />} />
+          <Route path="/settings" element={<Text>SETTINGS</Text>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await flush();
+    for (let i = 0; i < 3; i++) {
+      stdin.write("\u001b[B");
+      await flush();
+    }
+    stdin.write("\r");
+    await flush();
+    expect(lastFrame()).toContain("SETTINGS");
+    unmount();
+  });
+
+  it("Enter on recent session row (index 4) navigates to /sessions/:id", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<HomeScreen theme={theme} data={populatedData} isActive />} />
+          <Route path="/sessions/:id" element={<Text>SESSION DETAIL</Text>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await flush();
+    for (let i = 0; i < 4; i++) {
+      stdin.write("\u001b[B");
+      await flush();
+    }
+    stdin.write("\r");
+    await flush();
+    expect(lastFrame()).toContain("SESSION DETAIL");
+    unmount();
+  });
+});
+
+describe("HomeScreen — launchpad empty state actions", () => {
+  it("Enter on first empty-state item navigates to /panels/compose", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<HomeScreen theme={theme} data={emptyData} isActive />} />
+          <Route path="/panels/compose" element={<Text>COMPOSE PANEL</Text>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await flush();
+    stdin.write("\r");
+    await flush();
+    expect(lastFrame()).toContain("COMPOSE PANEL");
+    unmount();
+  });
+
+  it("↓ then Enter on empty-state item 1 navigates to /experts/new", async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<HomeScreen theme={theme} data={emptyData} isActive />} />
+          <Route path="/experts/new" element={<Text>NEW EXPERT</Text>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await flush();
+    stdin.write("\u001b[B");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    expect(lastFrame()).toContain("NEW EXPERT");
+    unmount();
+  });
+
+  it("empty-state selection affordance › is rendered", () => {
+    const { lastFrame, unmount } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <HomeScreen theme={theme} data={emptyData} isActive />
+      </MemoryRouter>,
+    );
+    expect(lastFrame() ?? "").toContain("›");
     unmount();
   });
 });

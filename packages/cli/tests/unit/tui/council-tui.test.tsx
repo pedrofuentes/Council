@@ -3,7 +3,15 @@ import { describe, expect, it } from "vitest";
 import { render } from "ink-testing-library";
 
 import { CouncilTUI } from "../../../src/tui/CouncilTUI.js";
+import { DataProvider } from "../../../src/tui/components/DataProvider.js";
 import type { HomeData } from "../../../src/tui/adapters/home-data.js";
+import type { PanelsDataSource } from "../../../src/tui/adapters/panels-data.js";
+
+// Minimal stub required by DataProvider so screens that call useData() don't crash.
+const stubPanels: PanelsDataSource = {
+  loadList: async () => [],
+  loadDetail: async () => undefined,
+};
 
 const homeData: HomeData = {
   counts: { sessions: 3, experts: 2, panels: 1 },
@@ -19,7 +27,13 @@ async function flush(): Promise<void> {
 describe("CouncilTUI", () => {
   it("renders the shell with Home content and nav sections", async () => {
     const { lastFrame, unmount } = render(
-      <CouncilTUI homeData={homeData} model="claude-sonnet-4.5" env={{ NO_COLOR: "1" }} initialColumns={140} initialRows={40} />,
+      <CouncilTUI
+        homeData={homeData}
+        model="claude-sonnet-4.5"
+        env={{ NO_COLOR: "1" }}
+        initialColumns={140}
+        initialRows={40}
+      />,
     );
     await flush();
     const frame = lastFrame() ?? "";
@@ -31,7 +45,13 @@ describe("CouncilTUI", () => {
 
   it("opens help with ? and closes it with Esc", async () => {
     const { stdin, lastFrame, unmount } = render(
-      <CouncilTUI homeData={homeData} model="m" env={{ NO_COLOR: "1" }} initialColumns={140} initialRows={40} />,
+      <CouncilTUI
+        homeData={homeData}
+        model="m"
+        env={{ NO_COLOR: "1" }}
+        initialColumns={140}
+        initialRows={40}
+      />,
     );
     await flush();
     stdin.write("?");
@@ -46,7 +66,13 @@ describe("CouncilTUI", () => {
 
   it("toggles nav with \\ key", async () => {
     const { stdin, lastFrame, unmount } = render(
-      <CouncilTUI homeData={homeData} model="m" env={{ NO_COLOR: "1" }} initialColumns={140} initialRows={40} />,
+      <CouncilTUI
+        homeData={homeData}
+        model="m"
+        env={{ NO_COLOR: "1" }}
+        initialColumns={140}
+        initialRows={40}
+      />,
     );
     await flush();
     const initial = lastFrame() ?? "";
@@ -64,7 +90,13 @@ describe("CouncilTUI", () => {
 
   it("handles mode state correctly (help vs nav focus)", async () => {
     const { stdin, lastFrame, unmount } = render(
-      <CouncilTUI homeData={homeData} model="m" env={{ NO_COLOR: "1" }} initialColumns={140} initialRows={40} />,
+      <CouncilTUI
+        homeData={homeData}
+        model="m"
+        env={{ NO_COLOR: "1" }}
+        initialColumns={140}
+        initialRows={40}
+      />,
     );
     await flush();
     // Open help - mode switches to "help"
@@ -85,7 +117,13 @@ describe("CouncilTUI", () => {
 
   it("handles quit key (q) without throwing", async () => {
     const { stdin, unmount } = render(
-      <CouncilTUI homeData={homeData} model="m" env={{ NO_COLOR: "1" }} initialColumns={140} initialRows={40} />,
+      <CouncilTUI
+        homeData={homeData}
+        model="m"
+        env={{ NO_COLOR: "1" }}
+        initialColumns={140}
+        initialRows={40}
+      />,
     );
     await flush();
     // The q key invokes app.exit() but doesn't actually exit in tests
@@ -97,7 +135,13 @@ describe("CouncilTUI", () => {
 
   it("handles Escape in nav mode without throwing", async () => {
     const { stdin, unmount } = render(
-      <CouncilTUI homeData={homeData} model="m" env={{ NO_COLOR: "1" }} initialColumns={140} initialRows={40} />,
+      <CouncilTUI
+        homeData={homeData}
+        model="m"
+        env={{ NO_COLOR: "1" }}
+        initialColumns={140}
+        initialRows={40}
+      />,
     );
     await flush();
     // Esc in nav mode (not help) invokes app.exit() but doesn't actually exit in tests
@@ -110,15 +154,28 @@ describe("CouncilTUI", () => {
 
   it("invokes a nav selection (Enter) in nav mode without disrupting the shell", async () => {
     const { stdin, lastFrame, unmount } = render(
-      <CouncilTUI homeData={homeData} model="m" env={{ NO_COLOR: "1" }} initialColumns={140} initialRows={40} />,
+      <DataProvider value={{ panels: stubPanels }}>
+        <CouncilTUI
+          homeData={homeData}
+          model="m"
+          env={{ NO_COLOR: "1" }}
+          initialColumns={140}
+          initialRows={40}
+        />
+      </DataProvider>,
     );
     await flush();
-    // Enter while in nav mode reaches the active LeftNav and fires its onSelect handler.
+    // Verify the shell is intact before navigation
+    const initialFrame = lastFrame() ?? "";
+    expect(initialFrame).toContain("Build vs buy"); // Home rendered
+    expect(initialFrame).toContain("Panels"); // nav rendered
+    // Enter activates the first launchpad action (▸ Convene a debate → /panels/compose).
+    // PanelComposeScreen renders "Panel auto-compose unavailable" when no data source is
+    // wired — proving CouncilTUI → AppRouter → HomeScreen.isActive → navigate() integration.
     stdin.write("\r");
+    await sleep(120);
     await flush();
-    const frame = lastFrame() ?? "";
-    expect(frame).toContain("Build vs buy"); // Home still rendered
-    expect(frame).toContain("Panels"); // nav still rendered
+    expect(lastFrame()).toContain("Panel auto-compose unavailable");
     unmount();
   });
 });
