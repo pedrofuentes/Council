@@ -66,7 +66,7 @@ describe("SessionsScreen", () => {
     expect(lastFrame()).not.toContain("\u001B[32m");
   });
 
-  it("shows an empty state", async () => {
+  it("shows an empty state with next-step teacher text", async () => {
     const { lastFrame } = render(
       <DataProvider value={withSessions(async () => [])}>
         <MemoryRouter initialEntries={["/sessions"]}>
@@ -77,7 +77,8 @@ describe("SessionsScreen", () => {
 
     await flush();
 
-    expect(lastFrame()).toMatch(/No sessions/i);
+    expect(lastFrame()).toMatch(/No debates/i);
+    expect(lastFrame()).toContain("convene a panel to watch them deliberate");
   });
 
   it("shows an error state", async () => {
@@ -144,6 +145,6 @@ describe("SessionsScreen", () => {
 
     await flush();
 
-    expect(lastFrame()).toMatch(/No sessions/i);
+    expect(lastFrame()).toMatch(/No debates/i);
   });
 });

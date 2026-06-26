@@ -66,9 +66,51 @@ function renderScreen(
 }
 
 describe("OnboardingScreen", () => {
-  it("renders the welcome message and the discovered model options", async () => {
+  it("renders the teaching intro step before the model picker", async () => {
     const { lastFrame, unmount } = renderScreen(createSource());
 
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("Council assembles AI experts into panels");
+    expect(frame).toContain("Experts \u2192 Panel \u2192 Convene \u2192 Debate \u2192 Conclusion");
+    // Model list must NOT be visible on the intro step
+    expect(frame).not.toContain("claude-sonnet-4.5");
+    expect(frame).not.toContain("gpt-5.4");
+    unmount();
+  });
+
+  it("Enter on intro advances to the model picker", async () => {
+    const { stdin, lastFrame, unmount } = renderScreen(createSource());
+
+    await flush();
+    stdin.write("\r"); // advance past intro
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("claude-sonnet-4.5");
+    expect(frame).toContain("gpt-5.4");
+    unmount();
+  });
+
+  it("Esc on intro navigates home without persisting a model", async () => {
+    const complete = vi.fn(async () => undefined);
+    const { stdin, lastFrame, unmount } = renderScreen(createSource({ complete }));
+
+    await flush();
+    stdin.write("\u001B"); // Esc on intro
+    await new Promise((r) => setTimeout(r, 140));
+
+    expect(lastFrame()).toContain("HOME SCREEN");
+    expect(complete).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it("renders the welcome message and the discovered model options after advancing past intro", async () => {
+    const { stdin, lastFrame, unmount } = renderScreen(createSource());
+
+    await flush();
+    stdin.write("\r"); // advance past intro
     await flush();
 
     const frame = lastFrame() ?? "";
@@ -80,10 +122,12 @@ describe("OnboardingScreen", () => {
   });
 
   it("notes when the model list is a built-in fallback", async () => {
-    const { lastFrame, unmount } = renderScreen(
+    const { stdin, lastFrame, unmount } = renderScreen(
       createSource({ load: async () => viewFor({ usedFallback: true }) }),
     );
 
+    await flush();
+    stdin.write("\r"); // advance past intro
     await flush();
 
     expect((lastFrame() ?? "").toLowerCase()).toContain("fallback");
@@ -91,13 +135,15 @@ describe("OnboardingScreen", () => {
   });
 
   it("sanitizes model labels rendered to the Text sink", async () => {
-    const { lastFrame, unmount } = renderScreen(
+    const { stdin, lastFrame, unmount } = renderScreen(
       createSource({
         load: async () =>
           viewFor({ models: [{ id: "raw", label: "ev\u001B[31mil", recommended: true }] }),
       }),
     );
 
+    await flush();
+    stdin.write("\r"); // advance past intro
     await flush();
 
     const frame = lastFrame() ?? "";
@@ -111,7 +157,9 @@ describe("OnboardingScreen", () => {
     const { stdin, lastFrame, unmount } = renderScreen(createSource({ complete }));
 
     await flush();
-    stdin.write("\r");
+    stdin.write("\r"); // advance past intro
+    await flush();
+    stdin.write("\r"); // confirm model
     await flush();
 
     expect(complete).toHaveBeenCalledWith("claude-sonnet-4.5");
@@ -130,7 +178,9 @@ describe("OnboardingScreen", () => {
     const { stdin, lastFrame, unmount } = renderScreen(createSource({ complete }), onComplete);
 
     await flush();
-    stdin.write("\r");
+    stdin.write("\r"); // advance past intro
+    await flush();
+    stdin.write("\r"); // confirm model
     await flush();
 
     expect(complete).toHaveBeenCalledWith("claude-sonnet-4.5");
@@ -148,9 +198,11 @@ describe("OnboardingScreen", () => {
     const { stdin, unmount } = renderScreen(createSource({ complete }));
 
     await flush();
-    stdin.write("\u001B[B");
+    stdin.write("\r"); // advance past intro
     await flush();
-    stdin.write("\r");
+    stdin.write("\u001B[B"); // down arrow
+    await flush();
+    stdin.write("\r"); // confirm second model
     await flush();
 
     expect(complete).toHaveBeenCalledWith("gpt-5.4");
@@ -176,7 +228,9 @@ describe("OnboardingScreen", () => {
     );
 
     await flush();
-    stdin.write("\r");
+    stdin.write("\r"); // advance past intro
+    await flush();
+    stdin.write("\r"); // start persisting (promise never resolves)
     await flush();
     stdin.write("\u001B");
     await new Promise((r) => setTimeout(r, 140));
@@ -195,7 +249,9 @@ describe("OnboardingScreen", () => {
     );
 
     await flush();
-    stdin.write("\r");
+    stdin.write("\r"); // advance past intro
+    await flush();
+    stdin.write("\r"); // trigger confirm (will throw)
     await flush();
 
     const frame = lastFrame() ?? "";
@@ -221,9 +277,11 @@ describe("OnboardingScreen", () => {
     );
 
     await flush();
+    stdin.write("\r"); // advance past intro
+    await flush();
     expect((lastFrame() ?? "").toLowerCase()).toMatch(/no .*models/i);
 
-    stdin.write("\r");
+    stdin.write("\r"); // confirm attempt on empty list — must be no-op
     await flush();
     expect(complete).not.toHaveBeenCalled();
     unmount();
@@ -236,7 +294,7 @@ const homeData: HomeData = {
 };
 
 describe("CouncilTUI first-run onboarding routing", () => {
-  it("starts on the onboarding screen when isFirstRun is true", async () => {
+  it("starts on the onboarding intro step when isFirstRun is true", async () => {
     const { lastFrame, unmount } = render(
       <DataProvider value={sourcesWith(createSource())}>
         <CouncilTUI
@@ -253,7 +311,8 @@ describe("CouncilTUI first-run onboarding routing", () => {
     await flush();
 
     const frame = lastFrame() ?? "";
-    expect(frame).toMatch(/welcome to council/i);
+    // Intro step shows the teaching pipeline, not the model list or home data
+    expect(frame).toContain("Council assembles AI experts into panels");
     expect(frame).not.toContain("Build vs buy");
     unmount();
   });
@@ -295,7 +354,9 @@ describe("CouncilTUI first-run onboarding routing", () => {
     );
 
     await flush();
-    stdin.write("\r");
+    stdin.write("\r"); // advance past intro to model picker
+    await flush();
+    stdin.write("\r"); // confirm model
     await flush();
 
     expect(complete).toHaveBeenCalledWith("claude-sonnet-4.5");
