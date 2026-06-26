@@ -50,8 +50,10 @@ describe("PanelsScreen", () => {
     );
     await flush();
     expect(lastFrame()).toContain("acme");
-    expect(lastFrame()).toContain("Exec Panel");
+    expect(lastFrame()).not.toContain("Exec Panel"); // description dropped from list row
+    expect(lastFrame()).toContain("2 experts"); // expert count in hint
     expect(lastFrame()).toContain("startup-board");
+    expect(lastFrame()).toContain("3 experts"); // expert count in hint
     expect(lastFrame()).not.toContain("\u001B[31m");
   });
 
@@ -207,6 +209,52 @@ describe("PanelsScreen", () => {
     await flush();
     // ListViewport header must contain "1/2" (cursor=1, total=2)
     expect(lastFrame()).toMatch(/1\/2/);
+  });
+
+  it("list row shows panel name and expert count but not description", async () => {
+    const { lastFrame } = render(
+      <DataProvider
+        value={withPanels(async () => [
+          {
+            name: "advisory-board",
+            description: "Finance strategy",
+            memberCount: 4,
+            source: "saved",
+          },
+        ])}
+      >
+        <MemoryRouter initialEntries={["/panels"]}>
+          <PanelsScreen theme={theme} isActive />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+    await flush();
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("advisory-board");
+    expect(frame).toContain("4 experts");
+    expect(frame).not.toContain("Finance strategy"); // description dropped from list row
+  });
+
+  it("description still appears in preview pane at wide widths", async () => {
+    const wideStdout = new FakeStdout(140, 24);
+    const { lastFrame } = render(
+      <DataProvider
+        value={withPanels(async () => [
+          {
+            name: "advisory-board",
+            description: "Finance strategy",
+            memberCount: 4,
+            source: "saved",
+          },
+        ])}
+      >
+        <MemoryRouter initialEntries={["/panels"]}>
+          <PanelsScreen theme={theme} isActive stdout={wideStdout} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+    await flush();
+    expect(lastFrame()).toContain("Finance strategy");
   });
 
   it("resolves selection to the correct panel when names duplicate across sources", async () => {

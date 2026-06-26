@@ -290,6 +290,38 @@ describe("ListViewport", () => {
     expect(onFilterModeChange).toHaveBeenCalledWith(false);
   });
 
+  it("wraps hint text in theme.muted when hint is provided", async () => {
+    const sentinelTheme = { ...theme, muted: (s: string) => `[MUTED:${s}]` };
+    const { lastFrame } = render(
+      <ListViewport
+        items={[{ id: "x", label: "Panel Name", hint: "3 experts" }]}
+        isActive
+        height={5}
+        onSelect={vi.fn()}
+        theme={sentinelTheme}
+      />,
+    );
+    await flush();
+    expect(lastFrame()).toContain("[MUTED:3 experts]");
+  });
+
+  it("renders hint as plain text under NO_COLOR theme (identity muted)", async () => {
+    const noColorTheme = resolveTheme({ NO_COLOR: "1" });
+    const { lastFrame } = render(
+      <ListViewport
+        items={[{ id: "x", label: "Panel Name", hint: "3 experts" }]}
+        isActive
+        height={5}
+        onSelect={vi.fn()}
+        theme={noColorTheme}
+      />,
+    );
+    await flush();
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("3 experts");
+    expect(frame).not.toContain("[MUTED:");
+  });
+
   describe("preview pane", () => {
     it("shows the preview for the selected item at wide widths", async () => {
       const wideStdout = new FakeStdout(140, 24);
