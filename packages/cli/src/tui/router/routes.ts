@@ -75,34 +75,61 @@ interface BreadcrumbRoute {
 // Most-specific-first: static segments precede their `:param` siblings so e.g.
 // `/panels/new` resolves to its own crumb instead of the panel-detail entity.
 const BREADCRUMB_ROUTES: readonly BreadcrumbRoute[] = [
-  { pattern: ROUTES.debateRun, build: (p) => ["Panels", entitySegment(p.panel), "Debate"] },
-  { pattern: ROUTES.convenePrompt, build: (p) => ["Panels", entitySegment(p.panel), "Convene"] },
-  { pattern: ROUTES.panelNew, build: () => ["Panels", "New"] },
-  { pattern: ROUTES.panelCompose, build: () => ["Panels", "Compose"] },
-  { pattern: ROUTES.panelMembers, build: (p) => ["Panels", entitySegment(p.name), "Members"] },
-  { pattern: ROUTES.panelDelete, build: (p) => ["Panels", entitySegment(p.name), "Delete"] },
-  { pattern: ROUTES.panelDetail, build: (p) => ["Panels", entitySegment(p.name)] },
-  { pattern: ROUTES.panels, build: () => ["Panels"] },
-  { pattern: ROUTES.expertNew, build: () => ["Experts", "New"] },
-  { pattern: ROUTES.expertEdit, build: (p) => ["Experts", entitySegment(p.slug), "Edit"] },
-  { pattern: ROUTES.expertDelete, build: (p) => ["Experts", entitySegment(p.slug), "Delete"] },
-  { pattern: ROUTES.expertDocs, build: (p) => ["Experts", entitySegment(p.slug), "Documents"] },
-  { pattern: ROUTES.expertTrain, build: (p) => ["Experts", entitySegment(p.slug), "Train"] },
-  { pattern: ROUTES.expertDetail, build: (p) => ["Experts", entitySegment(p.slug)] },
-  { pattern: ROUTES.experts, build: () => ["Experts"] },
+  {
+    pattern: ROUTES.debateRun,
+    build: (p) => ["Council", "Panels", entitySegment(p.panel), "Debate"],
+  },
+  {
+    pattern: ROUTES.convenePrompt,
+    build: (p) => ["Council", "Panels", entitySegment(p.panel), "Convene"],
+  },
+  { pattern: ROUTES.panelNew, build: () => ["Council", "Panels", "New"] },
+  { pattern: ROUTES.panelCompose, build: () => ["Council", "Panels", "Compose"] },
+  {
+    pattern: ROUTES.panelMembers,
+    build: (p) => ["Council", "Panels", entitySegment(p.name), "Members"],
+  },
+  {
+    pattern: ROUTES.panelDelete,
+    build: (p) => ["Council", "Panels", entitySegment(p.name), "Delete"],
+  },
+  { pattern: ROUTES.panelDetail, build: (p) => ["Council", "Panels", entitySegment(p.name)] },
+  { pattern: ROUTES.panels, build: () => ["Council", "Panels"] },
+  { pattern: ROUTES.expertNew, build: () => ["Council", "Experts", "New"] },
+  {
+    pattern: ROUTES.expertEdit,
+    build: (p) => ["Council", "Experts", entitySegment(p.slug), "Edit"],
+  },
+  {
+    pattern: ROUTES.expertDelete,
+    build: (p) => ["Council", "Experts", entitySegment(p.slug), "Delete"],
+  },
+  {
+    pattern: ROUTES.expertDocs,
+    build: (p) => ["Council", "Experts", entitySegment(p.slug), "Documents"],
+  },
+  {
+    pattern: ROUTES.expertTrain,
+    build: (p) => ["Council", "Experts", entitySegment(p.slug), "Train"],
+  },
+  { pattern: ROUTES.expertDetail, build: (p) => ["Council", "Experts", entitySegment(p.slug)] },
+  { pattern: ROUTES.experts, build: () => ["Council", "Experts"] },
   {
     pattern: ROUTES.sessionConclude,
-    build: (p) => ["Debates", entitySegment(p.id), "Conclusion"],
+    build: (p) => ["Council", "Debates", entitySegment(p.id), "Conclusion"],
   },
-  { pattern: ROUTES.sessionExport, build: (p) => ["Debates", entitySegment(p.id), "Export"] },
-  { pattern: ROUTES.sessionDetail, build: (p) => ["Debates", entitySegment(p.id)] },
-  { pattern: ROUTES.sessions, build: () => ["Debates"] },
-  { pattern: ROUTES.chatExpert, build: (p) => ["Conversations", entitySegment(p.slug)] },
-  { pattern: ROUTES.chatPanel, build: (p) => ["Conversations", entitySegment(p.name)] },
-  { pattern: ROUTES.chats, build: () => ["Conversations"] },
-  { pattern: ROUTES.settings, build: () => ["Settings"] },
-  { pattern: ROUTES.onboarding, build: () => ["Onboarding"] },
-  { pattern: ROUTES.home, build: () => ["Home"] },
+  {
+    pattern: ROUTES.sessionExport,
+    build: (p) => ["Council", "Debates", entitySegment(p.id), "Export"],
+  },
+  { pattern: ROUTES.sessionDetail, build: (p) => ["Council", "Debates", entitySegment(p.id)] },
+  { pattern: ROUTES.sessions, build: () => ["Council", "Debates"] },
+  { pattern: ROUTES.chatExpert, build: (p) => ["Council", "Conversations", entitySegment(p.slug)] },
+  { pattern: ROUTES.chatPanel, build: (p) => ["Council", "Conversations", entitySegment(p.name)] },
+  { pattern: ROUTES.chats, build: () => ["Council", "Conversations"] },
+  { pattern: ROUTES.settings, build: () => ["Council", "Settings"] },
+  { pattern: ROUTES.onboarding, build: () => ["Council", "Onboarding"] },
+  { pattern: ROUTES.home, build: () => ["Council"] },
 ];
 
 /**
