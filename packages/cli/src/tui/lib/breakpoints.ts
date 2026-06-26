@@ -5,6 +5,7 @@ export interface LayoutPlan {
   readonly compactHeader: boolean;
   readonly footerLabels: boolean;
   readonly tooNarrow: boolean;
+  readonly navWidth: number;
   readonly mainWidth: number;
   readonly columns: number;
   readonly rows: number;
@@ -17,7 +18,10 @@ export interface LayoutInput {
   readonly navOverride?: NavState;
 }
 
-const NAV_WIDTH: Readonly<Record<NavState, number>> = { expanded: 14, rail: 3, hidden: 0 };
+// ● 💬 Conversations (marker 1 + space 1 + emoji 2 + space 1 + 13 chars = 18)
+// + paddingX={1} in LeftNav (2) + round border in AppShell (2) = 22 minimum.
+// 24 adds two cols of breathing room so labels never sit flush against the border.
+const NAV_WIDTH: Readonly<Record<NavState, number>> = { expanded: 24, rail: 3, hidden: 0 };
 
 const CHROME_ROWS = 2;
 
@@ -39,13 +43,15 @@ export function computeLayout(input: LayoutInput): LayoutPlan {
   const navState = input.navOverride ?? adaptiveNav(input.columns);
   const compactHeader = input.columns < 120;
   const footerLabels = input.columns >= 80;
-  const mainWidth = Math.max(0, input.columns - NAV_WIDTH[navState]);
+  const navWidth = NAV_WIDTH[navState];
+  const mainWidth = Math.max(0, input.columns - navWidth);
   const contentHeight = Math.max(0, input.rows - CHROME_ROWS - PANE_BORDER_ROWS - PANE_TITLE_ROWS);
   return {
     navState,
     compactHeader,
     footerLabels,
     tooNarrow,
+    navWidth,
     mainWidth,
     columns: input.columns,
     rows: input.rows,

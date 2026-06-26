@@ -9,7 +9,7 @@ describe("computeLayout", () => {
     expect(l.compactHeader).toBe(false);
     expect(l.footerLabels).toBe(true);
     expect(l.tooNarrow).toBe(false);
-    expect(l.mainWidth).toBe(140 - 14);
+    expect(l.mainWidth).toBe(140 - 24);
   });
 
   it("uses the icon rail and compact header at medium width", () => {
@@ -61,5 +61,17 @@ describe("computeLayout", () => {
 
   it("never reports a negative contentHeight", () => {
     expect(computeLayout({ columns: 120, rows: 1 }).contentHeight).toBe(0);
+  });
+
+  it("exposes navWidth matching the active nav state width", () => {
+    const expanded = computeLayout({ columns: 140, rows: 40 });
+    expect(expanded.navWidth).toBe(24);
+    expect(expanded.mainWidth).toBe(140 - 24);
+
+    const rail = computeLayout({ columns: 100, rows: 30 });
+    expect(rail.navWidth).toBe(3);
+
+    const hidden = computeLayout({ columns: 70, rows: 24 });
+    expect(hidden.navWidth).toBe(0);
   });
 });

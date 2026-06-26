@@ -79,7 +79,13 @@ export function AppShell(props: AppShellProps): React.ReactElement {
       {props.header}
       <Box flexGrow={1}>
         {showNav ? (
-          <Box flexDirection="column" borderStyle="round" borderColor={navBorderColor}>
+          <Box
+            flexDirection="column"
+            borderStyle="round"
+            borderColor={navBorderColor}
+            width={props.layout.navWidth}
+            flexShrink={0}
+          >
             <PaneTitle label="Nav" focused={navFocused} theme={props.theme} />
             {props.nav}
           </Box>
