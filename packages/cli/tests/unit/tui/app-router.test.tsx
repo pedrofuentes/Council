@@ -402,6 +402,21 @@ describe("AppRouter", () => {
     expect(lastFrame()).not.toContain("Coming soon");
   });
 
+  it("shows a depth- and entity-aware breadcrumb on the convene route", async () => {
+    const { lastFrame } = render(
+      <DataProvider value={withConvenePrompt()}>
+        <MemoryRouter initialEntries={["/convene/acme"]}>
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+
+    expect(lastFrame()).toContain("Panels › acme › Convene");
+    expect(lastFrame()).not.toContain("🏛 Council");
+  });
+
   it("renders the chats list screen on the /chats route", async () => {
     const chats: readonly ChatListItem[] = [
       {
