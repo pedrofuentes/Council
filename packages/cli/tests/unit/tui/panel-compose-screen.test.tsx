@@ -1,7 +1,7 @@
 import React from "react";
 import { Text } from "ink";
 import { render } from "ink-testing-library";
-import { MemoryRouter, Route, Routes, useParams } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation, useParams } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ResolvedPanelDefinition } from "../../../src/core/template-loader.js";
@@ -47,6 +47,17 @@ function DetailProbe(): React.ReactElement {
   return <Text>DETAIL {params.name}</Text>;
 }
 
+function ConveneRunProbe(): React.ReactElement {
+  const params = useParams<{ panel: string }>();
+  const location = useLocation();
+  const state = location.state as { readonly topic?: string } | null;
+  return (
+    <Text>
+      CONVENE_RUN {params.panel} topic={state?.topic ?? ""}
+    </Text>
+  );
+}
+
 function createSource(overrides: Partial<PanelComposeDataSource> = {}): PanelComposeDataSource {
   return {
     compose: async () => ({
@@ -72,6 +83,7 @@ function renderScreen(source?: PanelComposeDataSource): ReturnType<typeof render
           <Routes>
             <Route path="/panels/compose" element={<PanelComposeScreen theme={theme} isActive />} />
             <Route path="/panels/:name" element={<DetailProbe />} />
+            <Route path="/convene/:panel/run" element={<ConveneRunProbe />} />
           </Routes>
         </MemoryRouter>
       </DataProvider>
@@ -118,19 +130,29 @@ describe("PanelComposeScreen", () => {
     unmount();
   });
 
-  it("persists the preview on y and navigates to the saved panel", async () => {
+  it("navigates to /convene/:panel/run with topic prefilled on y confirm", async () => {
     const persist = vi.fn<
       Parameters<PanelComposeDataSource["persist"]>,
       ReturnType<PanelComposeDataSource["persist"]>
     >(async () => ({ panelName: "safe-panel" }));
     const { stdin, lastFrame, unmount } = renderScreen(createSource({ persist }));
 
-    await submitTopic(stdin, "topic");
+    await submitTopic(stdin, "pricing strategy");
     stdin.write("y");
     await flush();
 
     expect(persist).toHaveBeenCalledWith(definition);
-    expect(lastFrame()).toContain("DETAIL safe-panel");
+    expect(lastFrame()).toContain("CONVENE_RUN safe-panel");
+    expect(lastFrame()).toContain("topic=pricing strategy");
+    unmount();
+  });
+
+  it('shows "y Save & convene" hint on preview', async () => {
+    const { stdin, lastFrame, unmount } = renderScreen(createSource());
+
+    await submitTopic(stdin, "topic");
+
+    expect(lastFrame()).toContain("y Save & convene");
     unmount();
   });
 

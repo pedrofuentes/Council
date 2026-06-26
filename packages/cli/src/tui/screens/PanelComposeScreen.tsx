@@ -69,17 +69,20 @@ export function PanelComposeScreen(props: PanelComposeScreenProps): React.ReactE
       return;
     }
     const preview = state.preview;
+    const submittedTopic = topicRef.current;
     inFlight.current = true;
     setState({ status: "persisting", preview });
     try {
       const result = await panelCompose.persist(preview.definition);
-      navigate(`/panels/${encodeURIComponent(result.panelName)}`, { state: { source: "saved" } });
+      navigate(`/convene/${encodeURIComponent(result.panelName)}/run`, {
+        state: { topic: submittedTopic, panelName: result.panelName },
+      });
     } catch (err) {
       setState({ status: "error", message: errorMessage(err) });
     } finally {
       inFlight.current = false;
     }
-  }, [navigate, panelCompose, state]);
+  }, [navigate, panelCompose, state, topicRef]);
 
   const resetToIdle = React.useCallback((): void => {
     if (inFlight.current) return;
@@ -151,7 +154,7 @@ export function PanelComposeScreen(props: PanelComposeScreenProps): React.ReactE
           <Text>
             {props.theme.muted(
               toSingleLineDisplay(
-                state.status === "persisting" ? "Saving panel…" : "y save · n/e edit · Esc cancel",
+                state.status === "persisting" ? "Saving panel…" : "y Save & convene · n/e edit · Esc cancel",
               ),
             )}
           </Text>
