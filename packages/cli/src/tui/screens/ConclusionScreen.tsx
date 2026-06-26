@@ -1,6 +1,6 @@
 import React from "react";
 import { Box, Text, useInput } from "ink";
-import { useLocation, useNavigate } from "react-router";
+import { useLocation, useNavigate, useParams } from "react-router";
 
 import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
 import type { ConcludeDataSource, ConclusionView } from "../adapters/conclude.js";
@@ -71,6 +71,7 @@ function bodyLines(view: ConclusionView): readonly string[] {
 export function ConclusionScreen(props: ConclusionScreenProps): React.ReactElement {
   const location = useLocation();
   const navigate = useNavigate();
+  const { id } = useParams<{ readonly id: string }>();
   const data = useData();
   const conclude = data.conclude as ConcludeDataSource | undefined;
   const { setCaptured } = useInputCapture();
@@ -130,13 +131,25 @@ export function ConclusionScreen(props: ConclusionScreenProps): React.ReactEleme
   }, [conclude, navigate, panelName]);
 
   useInput(
-    (_input, key) => {
-      if (!key.escape) return;
-      if (state.status === "loading") {
-        controllerRef.current?.abort();
+    (input, key) => {
+      if (key.escape) {
+        if (state.status === "loading") {
+          controllerRef.current?.abort();
+          return;
+        }
+        navigate(-1);
         return;
       }
-      navigate(-1);
+      if (state.status !== "ready") return;
+      if (input === "x") {
+        if (id === undefined || panelName === undefined) return;
+        navigate(`/sessions/${encodeURIComponent(id)}/export`, { state: { panelName } });
+        return;
+      }
+      if (input === "r") {
+        if (panelName === undefined) return;
+        navigate(`/convene/${encodeURIComponent(panelName)}`);
+      }
     },
     { isActive: props.isActive ?? false },
   );
@@ -202,7 +215,7 @@ export function ConclusionScreen(props: ConclusionScreenProps): React.ReactEleme
       {view.warnings.map((warning, index) => (
         <Text key={index}>{props.theme.warn(toSingleLineDisplay(`⚠ ${warning}`))}</Text>
       ))}
-      <Text>{props.theme.muted(toSingleLineDisplay("Esc back"))}</Text>
+      <Text>{props.theme.muted("x Export · r Re-convene · Esc Back")}</Text>
     </Box>
   );
 }
