@@ -448,6 +448,188 @@ describe("DebateStreamScreen — review mode", () => {
     // The newly-appended content is NOT visible (viewport did not jump to bottom)
     expect(lastFrame()).not.toContain("LateContent9999");
   });
+
+  it("pressing k enters review mode and suppresses new-content auto-scroll (like ↑)", async () => {
+    let capturedOnEvent: ((event: ConveneViewEvent) => void) | undefined;
+    const streamDebate = vi.fn<
+      Parameters<ConveneDataSource["streamDebate"]>,
+      ReturnType<ConveneDataSource["streamDebate"]>
+    >(async (_panel, _topic, _options, onEvent) => {
+      capturedOnEvent = onEvent;
+      onEvent({ kind: "panel", experts: ["Alice", "Bob"] });
+      onEvent({ kind: "round", round: 1 });
+      onEvent({ kind: "turn-start", expert: "Alice", round: 1 });
+      onEvent({ kind: "turn-delta", expert: "Alice", text: "AliceFirst" });
+      onEvent({ kind: "turn-end", expert: "Alice" });
+      onEvent({ kind: "turn-start", expert: "Bob", round: 1 });
+      onEvent({ kind: "turn-delta", expert: "Bob", text: "BobFirst" });
+      onEvent({ kind: "turn-end", expert: "Bob" });
+      await new Promise<void>(() => undefined);
+    });
+
+    const { stdin, lastFrame } = renderWithReview({
+      convene: { estimateCost: estimateStub, streamDebate },
+      maxRows: 3,
+    });
+
+    await flush();
+    expect(lastFrame()).not.toContain("Review");
+
+    stdin.write("k");
+    await flush();
+    expect(lastFrame()).toContain("Review");
+
+    capturedOnEvent?.({ kind: "turn-start", expert: "Alice", round: 2 });
+    capturedOnEvent?.({ kind: "turn-delta", expert: "Alice", text: "LateContentK" });
+    await flush();
+    expect(lastFrame()).toContain("Review");
+    expect(lastFrame()).not.toContain("LateContentK");
+  });
+
+  it("pressing PgUp enters review mode and suppresses new-content auto-scroll (like ↑)", async () => {
+    let capturedOnEvent: ((event: ConveneViewEvent) => void) | undefined;
+    const streamDebate = vi.fn<
+      Parameters<ConveneDataSource["streamDebate"]>,
+      ReturnType<ConveneDataSource["streamDebate"]>
+    >(async (_panel, _topic, _options, onEvent) => {
+      capturedOnEvent = onEvent;
+      onEvent({ kind: "panel", experts: ["Alice", "Bob"] });
+      onEvent({ kind: "round", round: 1 });
+      onEvent({ kind: "turn-start", expert: "Alice", round: 1 });
+      onEvent({ kind: "turn-delta", expert: "Alice", text: "AliceFirst" });
+      onEvent({ kind: "turn-end", expert: "Alice" });
+      onEvent({ kind: "turn-start", expert: "Bob", round: 1 });
+      onEvent({ kind: "turn-delta", expert: "Bob", text: "BobFirst" });
+      onEvent({ kind: "turn-end", expert: "Bob" });
+      await new Promise<void>(() => undefined);
+    });
+
+    const { stdin, lastFrame } = renderWithReview({
+      convene: { estimateCost: estimateStub, streamDebate },
+      maxRows: 3,
+    });
+
+    await flush();
+    expect(lastFrame()).not.toContain("Review");
+
+    stdin.write("\x1B[5~"); // PgUp
+    await flush();
+    expect(lastFrame()).toContain("Review");
+
+    capturedOnEvent?.({ kind: "turn-start", expert: "Alice", round: 2 });
+    capturedOnEvent?.({ kind: "turn-delta", expert: "Alice", text: "LateContentPgUp" });
+    await flush();
+    expect(lastFrame()).toContain("Review");
+    expect(lastFrame()).not.toContain("LateContentPgUp");
+  });
+
+  it("pressing ↓ from review mode resumes live (banner clears) when scrolled to end", async () => {
+    const streamDebate = vi.fn<
+      Parameters<ConveneDataSource["streamDebate"]>,
+      ReturnType<ConveneDataSource["streamDebate"]>
+    >(async (_panel, _topic, _options, onEvent) => {
+      onEvent({ kind: "panel", experts: ["Alice"] });
+      onEvent({ kind: "round", round: 1 });
+      onEvent({ kind: "turn-start", expert: "Alice", round: 1 });
+      onEvent({ kind: "turn-delta", expert: "Alice", text: "Content" });
+      onEvent({ kind: "turn-end", expert: "Alice" });
+      await new Promise<void>(() => undefined);
+    });
+
+    const { stdin, lastFrame } = renderWithReview({
+      convene: { estimateCost: estimateStub, streamDebate },
+    });
+
+    await flush();
+    stdin.write("\x1B[A"); // Up → enter review
+    await flush();
+    expect(lastFrame()).toContain("Review");
+
+    stdin.write("\x1B[B"); // Down → cursor reaches end → resume live
+    await flush();
+    expect(lastFrame()).not.toContain("Review");
+  });
+
+  it("pressing j from review mode resumes live (banner clears) when scrolled to end", async () => {
+    const streamDebate = vi.fn<
+      Parameters<ConveneDataSource["streamDebate"]>,
+      ReturnType<ConveneDataSource["streamDebate"]>
+    >(async (_panel, _topic, _options, onEvent) => {
+      onEvent({ kind: "panel", experts: ["Alice"] });
+      onEvent({ kind: "round", round: 1 });
+      onEvent({ kind: "turn-start", expert: "Alice", round: 1 });
+      onEvent({ kind: "turn-delta", expert: "Alice", text: "Content" });
+      onEvent({ kind: "turn-end", expert: "Alice" });
+      await new Promise<void>(() => undefined);
+    });
+
+    const { stdin, lastFrame } = renderWithReview({
+      convene: { estimateCost: estimateStub, streamDebate },
+    });
+
+    await flush();
+    stdin.write("\x1B[A"); // Up → enter review
+    await flush();
+    expect(lastFrame()).toContain("Review");
+
+    stdin.write("j"); // j → cursor reaches end → resume live
+    await flush();
+    expect(lastFrame()).not.toContain("Review");
+  });
+
+  it("pressing PgDn from review mode resumes live (banner clears) when scrolled to end", async () => {
+    const streamDebate = vi.fn<
+      Parameters<ConveneDataSource["streamDebate"]>,
+      ReturnType<ConveneDataSource["streamDebate"]>
+    >(async (_panel, _topic, _options, onEvent) => {
+      onEvent({ kind: "panel", experts: ["Alice"] });
+      onEvent({ kind: "round", round: 1 });
+      onEvent({ kind: "turn-start", expert: "Alice", round: 1 });
+      onEvent({ kind: "turn-delta", expert: "Alice", text: "Content" });
+      onEvent({ kind: "turn-end", expert: "Alice" });
+      await new Promise<void>(() => undefined);
+    });
+
+    const { stdin, lastFrame } = renderWithReview({
+      convene: { estimateCost: estimateStub, streamDebate },
+    });
+
+    await flush();
+    stdin.write("\x1B[A"); // Up → enter review
+    await flush();
+    expect(lastFrame()).toContain("Review");
+
+    stdin.write("\x1B[6~"); // PgDn → cursor reaches end → resume live
+    await flush();
+    expect(lastFrame()).not.toContain("Review");
+  });
+
+  it("pressing G resumes live mode like End (banner clears)", async () => {
+    const streamDebate = vi.fn<
+      Parameters<ConveneDataSource["streamDebate"]>,
+      ReturnType<ConveneDataSource["streamDebate"]>
+    >(async (_panel, _topic, _options, onEvent) => {
+      onEvent({ kind: "panel", experts: ["Alice"] });
+      onEvent({ kind: "round", round: 1 });
+      onEvent({ kind: "turn-start", expert: "Alice", round: 1 });
+      onEvent({ kind: "turn-delta", expert: "Alice", text: "Content" });
+      onEvent({ kind: "turn-end", expert: "Alice" });
+      await new Promise<void>(() => undefined);
+    });
+
+    const { stdin, lastFrame } = renderWithReview({
+      convene: { estimateCost: estimateStub, streamDebate },
+    });
+
+    await flush();
+    stdin.write("\x1B[A"); // Up → enter review
+    await flush();
+    expect(lastFrame()).toContain("Review");
+
+    stdin.write("G"); // G → resume live
+    await flush();
+    expect(lastFrame()).not.toContain("Review");
+  });
 });
 
 // ---------------------------------------------------------------------------
