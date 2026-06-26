@@ -6,12 +6,15 @@ export interface SemanticTheme {
   readonly error: (s: string) => string;
   readonly warn: (s: string) => string;
   readonly success: (s: string) => string;
+  readonly primary: (s: string) => string;
+  readonly secondary: (s: string) => string;
+  readonly info: (s: string) => string;
   readonly enabled: boolean;
 }
 
 const identity = (s: string): string => s;
 
-function colorDisabled(env: NodeJS.ProcessEnv): boolean {
+export function colorDisabled(env: NodeJS.ProcessEnv): boolean {
   if (env["NO_COLOR"] !== undefined && env["NO_COLOR"] !== "") return true;
   if (env["TERM"] === "dumb") return true;
   return false;
@@ -19,7 +22,17 @@ function colorDisabled(env: NodeJS.ProcessEnv): boolean {
 
 export function resolveTheme(env: NodeJS.ProcessEnv = process.env): SemanticTheme {
   if (colorDisabled(env)) {
-    return { accent: identity, muted: identity, error: identity, warn: identity, success: identity, enabled: false };
+    return {
+      accent: identity,
+      muted: identity,
+      error: identity,
+      warn: identity,
+      success: identity,
+      primary: identity,
+      secondary: identity,
+      info: identity,
+      enabled: false,
+    };
   }
   const c = new Chalk({ level: 1 });
   return {
@@ -28,6 +41,9 @@ export function resolveTheme(env: NodeJS.ProcessEnv = process.env): SemanticThem
     error: (s) => c.red(s),
     warn: (s) => c.yellow(s),
     success: (s) => c.green(s),
+    primary: (s) => c.cyan(s),
+    secondary: (s) => c.blue(s),
+    info: (s) => c.blueBright(s),
     enabled: true,
   };
 }
