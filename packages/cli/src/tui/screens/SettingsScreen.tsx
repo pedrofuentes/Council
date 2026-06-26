@@ -284,9 +284,22 @@ export function SettingsScreen(props: SettingsScreenProps): React.ReactElement {
         );
       })}
       {savedAt !== undefined ? <Text>{props.theme.accent("Saved")}</Text> : null}
-      <Text>{props.theme.muted("↑↓ move · Enter edit · Ctrl+S save · Esc back")}</Text>
+      <Text>{props.theme.muted(settingsHint(mode, state.data[cursor]))}</Text>
     </Box>
   );
+}
+
+function settingsHint(mode: SettingsMode, field: SettingsFieldState | undefined): string {
+  if (mode === "nav" || field === undefined) {
+    return "↑↓ move · Enter edit · Ctrl+S save · Esc back";
+  }
+  if (field.kind === "enum") {
+    return "←/→ change · Enter confirm · Esc cancel";
+  }
+  if (field.kind === "boolean") {
+    return "Enter/Space toggle · Esc cancel";
+  }
+  return "type · Enter confirm · Esc cancel";
 }
 
 interface FieldRowProps {

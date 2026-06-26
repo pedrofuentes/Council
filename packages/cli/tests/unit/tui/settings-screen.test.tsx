@@ -476,4 +476,34 @@ describe("SettingsScreen", () => {
     expect(error.lastFrame()).toContain("Failed to load settings");
     error.unmount();
   });
+
+  it("shows ←/→ change hint when editing an enum field", async () => {
+    const { stdin, lastFrame, unmount } = renderSettings(async () => fields);
+    await flush();
+
+    // Navigate to the enum field (index 3: telemetry.mode) — 3 down arrows
+    stdin.write("\u001B[B");
+    await flush();
+    stdin.write("\u001B[B");
+    await flush();
+    stdin.write("\u001B[B");
+    await flush();
+    stdin.write("\r"); // enter edit mode
+    await flush();
+
+    expect(lastFrame() ?? "").toContain("←/→ change · Enter confirm · Esc cancel");
+    unmount();
+  });
+
+  it("does not show ←/→ change hint when editing a string field", async () => {
+    const { stdin, lastFrame, unmount } = renderSettings(async () => fields);
+    await flush();
+
+    // Already at index 0 (defaults.model, a string field)
+    stdin.write("\r"); // enter edit mode
+    await flush();
+
+    expect(lastFrame() ?? "").not.toContain("←/→ change");
+    unmount();
+  });
 });
