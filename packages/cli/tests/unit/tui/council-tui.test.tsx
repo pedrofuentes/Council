@@ -25,7 +25,7 @@ describe("CouncilTUI", () => {
     const frame = lastFrame() ?? "";
     expect(frame).toContain("Build vs buy"); // Home screen
     expect(frame).toContain("Panels"); // left nav
-    expect(frame).toContain("NAV"); // footer mode
+    expect(frame).toContain("MAIN"); // footer mode reflects main-pane focus
     unmount();
   });
 
