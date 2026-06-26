@@ -252,7 +252,8 @@ describe("PanelsScreen", () => {
     const { lastFrame } = render(
       <DataProvider
         value={withPanels(async () => [
-          { name: "alpha-panel", description: "", memberCount: 3, source: "saved" },
+          // Embed a raw ANSI sequence in the name so we can assert sanitization
+          { name: "alpha\u001B[31m-panel", description: "", memberCount: 3, source: "saved" },
           { name: "beta-panel", description: "Strategy group", memberCount: 1, source: "template" },
         ])}
       >
@@ -263,8 +264,8 @@ describe("PanelsScreen", () => {
     );
     await flush();
     // Preview pane must show member count with "members" (distinct from "experts" in list label)
-    // and must not display raw escape codes
     expect(lastFrame()).toContain("members");
-    expect(lastFrame()).not.toContain("\u001B[");
+    // Raw ANSI escape from untrusted panel name must not bleed into the preview
+    expect(lastFrame()).not.toContain("\u001B[31m");
   });
 });
