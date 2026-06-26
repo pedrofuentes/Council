@@ -63,8 +63,8 @@ export function ChatsScreen(props: ChatsScreenProps): React.ReactElement {
         }
       }}
       theme={props.theme}
-      title="Chats"
-      emptyText={props.theme.accent("No chats yet — start one from an expert or panel")}
+      title="Conversations"
+      emptyText={props.theme.accent("No conversations yet — start one from an expert or panel")}
       stdout={props.stdout}
       renderPreview={(id) => {
         const item = chatData.find((c) => c.id === id);
