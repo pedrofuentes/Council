@@ -1,7 +1,7 @@
 import React from "react";
 import { Text } from "ink";
 import { render } from "ink-testing-library";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation, useParams } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
 import type {
@@ -259,5 +259,137 @@ describe("ConclusionScreen", () => {
 
     expect(second).toHaveBeenCalledTimes(1);
     expect(lastFrame() ?? "").toContain("Second pass");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Next-actions tests (RED phase — implementation not yet added)
+// ---------------------------------------------------------------------------
+
+function ExportProbe(): React.ReactElement {
+  const { id } = useParams<{ readonly id: string }>();
+  const location = useLocation();
+  const state = location.state as { readonly panelName?: string } | null;
+  return (
+    <Text>
+      EXPORT {id ?? ""} {state?.panelName ?? ""}
+    </Text>
+  );
+}
+
+function ConveneProbe(): React.ReactElement {
+  const { panel } = useParams<{ readonly panel: string }>();
+  return <Text>CONVENE {panel ?? ""}</Text>;
+}
+
+function buildTreeFull(options: {
+  readonly conclude?: ConcludeDataSource;
+  readonly panelName?: string;
+  readonly omitPanelNameFromState?: boolean;
+}): React.ReactElement {
+  const value = {
+    panels: { loadList: async () => [], loadDetail: async () => undefined },
+    ...(options.conclude !== undefined ? { conclude: options.conclude } : {}),
+  } as TuiDataSources;
+  const panelName = options.panelName ?? "Acme";
+  const initialState = options.omitPanelNameFromState === true ? {} : { panelName };
+
+  return (
+    <InputCaptureProvider>
+      <DataProvider value={value}>
+        <MemoryRouter
+          initialEntries={[
+            "/previous",
+            { pathname: "/sessions/p1/conclude", state: initialState },
+          ]}
+          initialIndex={1}
+        >
+          <Routes>
+            <Route path="/previous" element={<BackProbe />} />
+            <Route
+              path="/sessions/:id/conclude"
+              element={<ConclusionScreen theme={theme} isActive />}
+            />
+            <Route path="/sessions/:id/export" element={<ExportProbe />} />
+            <Route path="/convene/:panel" element={<ConveneProbe />} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>
+    </InputCaptureProvider>
+  );
+}
+
+describe("ConclusionScreen — next-actions", () => {
+  it("pressing x in the ready state navigates to /sessions/:id/export with panelName state", async () => {
+    const synthesize = vi.fn<[string, ConcludeSynthesizeOptions?], Promise<ConclusionView>>(
+      async () => makeView(),
+    );
+    const { stdin, lastFrame } = render(buildTreeFull({ conclude: { synthesize } }));
+    await flush();
+
+    expect(lastFrame()).toContain("Adopt a phased rollout");
+
+    stdin.write("x");
+    await flush();
+
+    expect(lastFrame()).toContain("EXPORT p1 Acme");
+  });
+
+  it("pressing r in the ready state navigates to /convene/:panelName", async () => {
+    const synthesize = vi.fn<[string, ConcludeSynthesizeOptions?], Promise<ConclusionView>>(
+      async () => makeView(),
+    );
+    const { stdin, lastFrame } = render(buildTreeFull({ conclude: { synthesize } }));
+    await flush();
+
+    stdin.write("r");
+    await flush();
+
+    expect(lastFrame()).toContain("CONVENE Acme");
+  });
+
+  it("renders the x Export · r Re-convene hint in the ready state", async () => {
+    const synthesize = vi.fn<[string, ConcludeSynthesizeOptions?], Promise<ConclusionView>>(
+      async () => makeView(),
+    );
+    const { lastFrame } = render(buildTreeFull({ conclude: { synthesize } }));
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("x Export");
+    expect(frame).toContain("r Re-convene");
+  });
+
+  it("does not navigate on x or r while loading (synthesize pending)", async () => {
+    const synthesize = vi.fn<[string, ConcludeSynthesizeOptions?], Promise<ConclusionView>>(
+      async () => new Promise<ConclusionView>(() => undefined),
+    );
+    const { stdin, lastFrame } = render(buildTreeFull({ conclude: { synthesize } }));
+    await flush();
+
+    expect(lastFrame()).toContain("Concluding");
+
+    stdin.write("x");
+    await flush();
+    expect(lastFrame()).not.toContain("EXPORT");
+
+    stdin.write("r");
+    await flush();
+    expect(lastFrame()).not.toContain("CONVENE");
+  });
+
+  it("does not navigate on x or r in the unavailable state (no conclude data source)", async () => {
+    const { stdin, lastFrame } = render(buildTreeFull({ omitPanelNameFromState: true }));
+    await flush();
+
+    expect(lastFrame()).toContain("conclusion unavailable");
+
+    stdin.write("x");
+    await flush();
+    expect(lastFrame()).not.toContain("EXPORT");
+
+    stdin.write("r");
+    await flush();
+    expect(lastFrame()).not.toContain("CONVENE");
   });
 });

@@ -72,6 +72,13 @@ describe("shortcutsForRoute", () => {
     expect(keysOf(b)).toContain("j/k");
   });
 
+  it("maps the session conclude route to x Export, r Re-convene, and Esc Back", () => {
+    const b = shortcutsForRoute("/sessions/p1/conclude");
+    expect(find(b, "x")?.description).toBe("Export");
+    expect(find(b, "r")?.description).toBe("Re-convene");
+    expect(find(b, "Esc")?.description).toBe("Back");
+  });
+
   it("maps the convene prompt route", () => {
     const b = shortcutsForRoute("/convene/acme");
     expect(find(b, "Enter")?.description).toBe("Estimate");
