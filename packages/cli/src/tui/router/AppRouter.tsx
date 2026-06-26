@@ -254,7 +254,10 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
         />
       ) : (
         <Routes>
-          <Route path={ROUTES.home} element={<HomeScreen data={props.homeData} theme={theme} />} />
+          <Route
+            path={ROUTES.home}
+            element={<HomeScreen data={props.homeData} theme={theme} isActive={mainActive} />}
+          />
           <Route
             path={ROUTES.onboarding}
             element={
