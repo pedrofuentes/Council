@@ -21,7 +21,13 @@ const renderAt = (entries: readonly unknown[], value: TuiDataSources): ReturnTyp
     <DataProvider value={value}>
       <InputCaptureProvider>
         <MemoryRouter initialEntries={entries as never}>
-          <AppRouter homeData={homeData} model="gpt-4o" env={{ NO_COLOR: "1" }} initialColumns={120} initialRows={30} />
+          <AppRouter
+            homeData={homeData}
+            model="gpt-4o"
+            env={{ NO_COLOR: "1" }}
+            initialColumns={120}
+            initialRows={30}
+          />
         </MemoryRouter>
       </InputCaptureProvider>
     </DataProvider>,
@@ -29,8 +35,16 @@ const renderAt = (entries: readonly unknown[], value: TuiDataSources): ReturnTyp
 
 const renderTui = (): ReturnType<typeof render> =>
   render(
-    <DataProvider value={{ panels: { loadList: async () => [], loadDetail: async () => undefined } }}>
-      <CouncilTUI homeData={homeData} model="gpt-4o" env={{ NO_COLOR: "1" }} initialColumns={120} initialRows={30} />
+    <DataProvider
+      value={{ panels: { loadList: async () => [], loadDetail: async () => undefined } }}
+    >
+      <CouncilTUI
+        homeData={homeData}
+        model="gpt-4o"
+        env={{ NO_COLOR: "1" }}
+        initialColumns={120}
+        initialRows={30}
+      />
     </DataProvider>,
   );
 
@@ -58,7 +72,6 @@ describe("contextual footer action bar", () => {
     expect(frame).toContain("Delete");
     // The old global static footer must be gone from the left hint area.
     expect(frame).not.toContain("Toggle");
-    expect(frame).not.toContain("Quit");
     unmount();
   });
 

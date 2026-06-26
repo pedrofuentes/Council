@@ -415,8 +415,8 @@ describe("AppRouter", () => {
 
     await flush();
 
-    expect(lastFrame()).toContain("Panels › acme › Convene");
-    expect(lastFrame()).not.toContain("🏛 Council");
+    expect(lastFrame()).toContain("Council › Panels › acme › Convene");
+    expect(lastFrame()).toContain("Council › Panels › acme");
   });
 
   it("renders the chats list screen on the /chats route", async () => {
@@ -846,5 +846,35 @@ describe("AppRouter", () => {
     expect(frame).toContain("Conversations");
     expect(frame).not.toContain("Sessions");
     expect(frame).not.toContain("Chats");
+  });
+});
+
+describe("AppRouter – footer globals (Esc/Quit hints)", () => {
+  it("shows q Quit but not Esc Back in the footer at the home route", async () => {
+    const { lastFrame } = render(
+      <DataProvider value={withPanels()}>
+        <MemoryRouter initialEntries={["/"]}>
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+    await flush();
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("q Quit");
+    expect(frame).not.toContain("Esc Back");
+  });
+
+  it("shows both Esc Back and q Quit in the footer on non-home routes", async () => {
+    const { lastFrame } = render(
+      <DataProvider value={withPanels()}>
+        <MemoryRouter initialEntries={["/panels"]}>
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+    await flush();
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("q Quit");
+    expect(frame).toContain("Esc Back");
   });
 });
