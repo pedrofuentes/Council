@@ -6,6 +6,7 @@ import { Header } from "../../../src/tui/components/layout/Header.js";
 import { resolveTheme } from "../../../src/tui/theme/tokens.js";
 
 const theme = resolveTheme({ NO_COLOR: "1" });
+const coloredTheme = resolveTheme({});
 
 describe("Header", () => {
   it("shows the breadcrumb, model, and cost in full mode", () => {
@@ -34,6 +35,30 @@ describe("Header", () => {
     const frame = lastFrame() ?? "";
     expect(frame).not.toContain("\u0007");
     expect(frame).not.toContain("[31m");
+    unmount();
+  });
+});
+
+describe("Header status-bar visual treatment", () => {
+  it("renders the app-mark as an inverse chip when colors are enabled", () => {
+    const { lastFrame, unmount } = render(
+      <Header breadcrumb="Council ▸ panel" model="claude-sonnet-4.5" theme={coloredTheme} />,
+    );
+    const frame = lastFrame() ?? "";
+    // Ink's inverse prop produces \u001b[7m — present only when chip treatment is applied
+    expect(frame).toContain("\u001b[7m");
+    expect(frame).toContain("Council ▸ panel");
+    unmount();
+  });
+
+  it("renders NO inverse chip in NO_COLOR mode — plain text fallback", () => {
+    const { lastFrame, unmount } = render(
+      <Header breadcrumb="Council ▸ panel" model="claude-sonnet-4.5" theme={theme} />,
+    );
+    const frame = lastFrame() ?? "";
+    expect(frame).not.toContain("\u001b[7m");
+    expect(frame).toContain("🏛");
+    expect(frame).toContain("Council ▸ panel");
     unmount();
   });
 });
