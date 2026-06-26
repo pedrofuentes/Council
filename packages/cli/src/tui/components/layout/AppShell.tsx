@@ -23,6 +23,29 @@ export interface AppShellProps {
 const FOCUSED_BORDER_COLOR = "cyan";
 const UNFOCUSED_BORDER_COLOR = "gray";
 
+const identity = (s: string): string => s;
+const NO_COLOR_THEME: SemanticTheme = {
+  enabled: false,
+  accent: identity,
+  muted: identity,
+  error: identity,
+  warn: identity,
+  success: identity,
+  primary: identity,
+  secondary: identity,
+  info: identity,
+};
+
+/**
+ * Returns the Ink `borderColor` value for a pane based on focus state and theme.
+ * Returns `undefined` when color is disabled (NO_COLOR / TERM=dumb) so no
+ * border color attribute is applied.
+ */
+export function paneBorderColor(focused: boolean, theme: SemanticTheme): string | undefined {
+  if (!theme.enabled) return undefined;
+  return focused ? FOCUSED_BORDER_COLOR : UNFOCUSED_BORDER_COLOR;
+}
+
 function PaneTitle(props: {
   readonly label: string;
   readonly focused: boolean;
@@ -47,17 +70,9 @@ export function AppShell(props: AppShellProps): React.ReactElement {
   const focus = props.focus ?? "main";
   const navFocused = focus === "nav";
   const mainFocused = focus === "main";
-  const colorEnabled = props.theme?.enabled ?? false;
-  const navBorderColor = colorEnabled
-    ? navFocused
-      ? FOCUSED_BORDER_COLOR
-      : UNFOCUSED_BORDER_COLOR
-    : undefined;
-  const mainBorderColor = colorEnabled
-    ? mainFocused
-      ? FOCUSED_BORDER_COLOR
-      : UNFOCUSED_BORDER_COLOR
-    : undefined;
+  const effectiveTheme = props.theme ?? NO_COLOR_THEME;
+  const navBorderColor = paneBorderColor(navFocused, effectiveTheme);
+  const mainBorderColor = paneBorderColor(mainFocused, effectiveTheme);
   const mainTitle = props.mainTitle;
   return (
     <Box flexDirection="column" width={props.layout.columns} height={props.layout.rows}>
