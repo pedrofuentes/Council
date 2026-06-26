@@ -47,4 +47,23 @@ describe("AppShell", () => {
     expect((lastFrame() ?? "").toLowerCase()).toContain("too narrow");
     unmount();
   });
+
+  it("fills the terminal height, pinning the footer to the bottom row", () => {
+    const layout = computeLayout({ columns: 120, rows: 40 });
+    const { lastFrame, unmount } = render(
+      <AppShell
+        layout={layout}
+        header={<Text>HEADER</Text>}
+        footer={<Text>FOOTER</Text>}
+        nav={<Text>NAV</Text>}
+      >
+        <Text>MAIN</Text>
+      </AppShell>,
+    );
+    const lines = (lastFrame() ?? "").split("\n");
+    expect(lines.length).toBe(40);
+    expect(lines[0]).toContain("HEADER");
+    expect(lines[lines.length - 1]).toContain("FOOTER");
+    unmount();
+  });
 });
