@@ -86,7 +86,10 @@ export function PanelCreateScreen(props: PanelCreateScreenProps): React.ReactEle
         return;
       }
       if (key.tab) {
-        setField((current) => (current === "name" ? "members" : "name"));
+        const noExperts = expertState.status === "loaded" && expertState.data.length === 0;
+        if (!noExperts) {
+          setField((current) => (current === "name" ? "members" : "name"));
+        }
       }
     },
     { isActive },
@@ -110,6 +113,8 @@ export function PanelCreateScreen(props: PanelCreateScreenProps): React.ReactEle
     );
   }
 
+  const hasNoExperts = expertState.data.length === 0;
+
   const items = expertState.data.map((expert) => ({
     value: expert.slug,
     label: `${expert.displayName} — ${expert.role} [${expert.kind}]`,
@@ -126,26 +131,36 @@ export function PanelCreateScreen(props: PanelCreateScreenProps): React.ReactEle
             setError(undefined);
           }}
           onSubmit={() => {
-            setField("members");
+            if (!hasNoExperts) {
+              setField("members");
+            }
           }}
           showCursor={field === "name"}
           value={toSingleLineDisplay(name)}
         />
       </Box>
       <Text inverse={field === "members"}>{toSingleLineDisplay("Members:")}</Text>
-      <MultiSelectList
-        items={items}
-        selected={selected}
-        isActive={isActive && field === "members"}
-        height={Math.min(8, Math.max(1, items.length))}
-        onChange={(next) => {
-          setSelected(next);
-          setError(undefined);
-        }}
-        onSubmit={() => {
-          void submit();
-        }}
-      />
+      {hasNoExperts ? (
+        <Text>
+          {props.theme.warn(
+            "No experts yet — press Esc, then create an expert (Experts → n) before building a panel.",
+          )}
+        </Text>
+      ) : (
+        <MultiSelectList
+          items={items}
+          selected={selected}
+          isActive={isActive && field === "members"}
+          height={Math.min(8, Math.max(1, items.length))}
+          onChange={(next) => {
+            setSelected(next);
+            setError(undefined);
+          }}
+          onSubmit={() => {
+            void submit();
+          }}
+        />
+      )}
       {error !== undefined ? <Text>{props.theme.error(toSingleLineDisplay(error))}</Text> : null}
       <Text>{props.theme.muted("Tab focus · Space select · Enter create")}</Text>
     </Box>

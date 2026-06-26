@@ -253,6 +253,60 @@ describe("PanelCreateScreen — cancel", () => {
   });
 });
 
+describe("PanelCreateScreen — no experts", () => {
+  it("shows a no-experts warning when the experts list is empty", async () => {
+    const { lastFrame, unmount } = renderScreen({
+      loadList: async () => [],
+    });
+
+    await flush();
+
+    expect(lastFrame()).toContain("No experts yet");
+    unmount();
+  });
+
+  it("does not render the empty MultiSelectList silently when there are no experts", async () => {
+    const { lastFrame, unmount } = renderScreen({
+      loadList: async () => [],
+    });
+
+    await flush();
+
+    // Should show the warning, not silently show an empty member list
+    expect(lastFrame()).toContain("No experts yet");
+    expect(lastFrame()).toContain("create an expert");
+    unmount();
+  });
+
+  it("renders the member multi-select (not the warning) when there are experts", async () => {
+    const { lastFrame, unmount } = renderScreen();
+
+    await flush();
+
+    expect(lastFrame()).not.toContain("No experts yet");
+    expect(lastFrame()).toContain("[ ] Chief Technology Officer");
+    unmount();
+  });
+
+  it("Tab keeps focus on name when there are no experts", async () => {
+    const { stdin, lastFrame, unmount } = renderScreen({ loadList: async () => [] });
+    await flush();
+
+    // Type into name field, then press Tab — focus must not leak to the absent members control
+    stdin.write("abc");
+    await flush();
+    stdin.write("\t");
+    await flush();
+    // If Tab leaked focus to members, subsequent chars won't reach the name TextInput
+    stdin.write("d");
+    await flush();
+
+    expect(lastFrame()).toContain("abcd");
+    expect(lastFrame()).toContain("No experts yet");
+    unmount();
+  });
+});
+
 describe("PanelCreateScreen — cancel during in-flight create", () => {
   it("ignores Esc while a create is in flight (does not navigate back)", async () => {
     const create = vi.fn<
