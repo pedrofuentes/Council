@@ -53,9 +53,10 @@ describe("computeLayout", () => {
     expect(l.rows).toBe(40);
   });
 
-  it("derives contentHeight by subtracting header and footer chrome", () => {
-    expect(computeLayout({ columns: 120, rows: 40 }).contentHeight).toBe(38);
-    expect(computeLayout({ columns: 120, rows: 24 }).contentHeight).toBe(22);
+  it("derives contentHeight by subtracting header, footer, and pane-border chrome", () => {
+    // rows - header(1) - footer(1) - pane border rows(2) - pane title row(1)
+    expect(computeLayout({ columns: 120, rows: 40 }).contentHeight).toBe(35);
+    expect(computeLayout({ columns: 120, rows: 24 }).contentHeight).toBe(19);
   });
 
   it("never reports a negative contentHeight", () => {
