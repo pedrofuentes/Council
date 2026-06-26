@@ -77,6 +77,7 @@ describe("ExpertsScreen", () => {
     await flush();
 
     expect(lastFrame()).toMatch(/No experts/i);
+    expect(lastFrame()).toContain("Experts are the members of your panels");
   });
 
   it("shows an error state", async () => {

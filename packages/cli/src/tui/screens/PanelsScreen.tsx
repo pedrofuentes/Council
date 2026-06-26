@@ -65,7 +65,7 @@ export function PanelsScreen(props: PanelsScreenProps): React.ReactElement {
       theme={props.theme}
       title="Panels"
       emptyText={props.theme.accent(
-        "No panels yet — create one with n (or auto-compose with c)",
+        "No panels yet — [c] auto-compose from a topic, or [n] build from experts",
       )}
       onFilterModeChange={setIsFiltering}
     />

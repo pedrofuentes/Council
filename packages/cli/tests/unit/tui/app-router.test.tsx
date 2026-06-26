@@ -343,7 +343,9 @@ describe("AppRouter", () => {
     );
 
     await flush();
-    stdin.write("\r");
+    stdin.write("\r"); // advance past intro to model picker
+    await flush();
+    stdin.write("\r"); // confirm model
     await flush();
 
     expect(complete).toHaveBeenCalledWith("claude-sonnet-4.5");
@@ -630,7 +632,7 @@ describe("AppRouter", () => {
     expect(lastFrame()).not.toContain("Expert not found");
   });
 
-  it("renders the OnboardingScreen on the /onboarding route", async () => {
+  it("renders the OnboardingScreen intro step on the /onboarding route", async () => {
     const value = {
       panels: { loadList: async () => [], loadDetail: async () => undefined },
       onboarding: {
@@ -642,7 +644,7 @@ describe("AppRouter", () => {
         complete: async () => undefined,
       },
     } as unknown as TuiDataSources;
-    const { lastFrame } = render(
+    const { stdin, lastFrame } = render(
       <DataProvider value={value}>
         <MemoryRouter initialEntries={["/onboarding"]}>
           <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
@@ -652,9 +654,14 @@ describe("AppRouter", () => {
 
     await flush();
 
-    expect(lastFrame()).toMatch(/welcome to council/i);
-    expect(lastFrame()).toContain("claude-sonnet-4.5");
+    // Intro step shows teaching copy; model picker is not yet visible
+    expect(lastFrame()).toContain("Council assembles AI experts into panels");
     expect(lastFrame()).not.toContain("Coming soon");
+
+    // Advancing past intro reveals the model picker
+    stdin.write("\r");
+    await flush();
+    expect(lastFrame()).toContain("claude-sonnet-4.5");
   });
 
   it("focuses the nav with Tab and navigates to the chosen section on Enter", async () => {

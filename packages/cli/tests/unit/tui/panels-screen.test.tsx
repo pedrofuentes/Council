@@ -43,7 +43,7 @@ describe("PanelsScreen", () => {
     expect(lastFrame()).not.toContain("\u001B[31m");
   });
 
-  it("shows an empty state", async () => {
+  it("shows an empty state with next-step teacher text", async () => {
     const { lastFrame } = render(
       <DataProvider value={withPanels(async () => [])}>
         <MemoryRouter initialEntries={["/panels"]}>
@@ -53,7 +53,7 @@ describe("PanelsScreen", () => {
     );
     await flush();
     expect(lastFrame()).toMatch(/No panels/i);
-    expect(lastFrame()).toContain("create one with n");
+    expect(lastFrame()).toContain("[c] auto-compose from a topic, or [n] build from experts");
   });
 
   it("shows an error state", async () => {

@@ -60,7 +60,9 @@ export function SessionsScreen(props: SessionsScreenProps): React.ReactElement {
       }}
       theme={props.theme}
       title="Sessions"
-      emptyText={props.theme.accent("No sessions yet — convene a panel with c")}
+      emptyText={props.theme.accent(
+        "No debates yet — convene a panel to watch them deliberate",
+      )}
     />
   );
 }

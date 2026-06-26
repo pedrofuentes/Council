@@ -42,6 +42,7 @@ export function OnboardingScreen(props: OnboardingScreenProps): React.ReactEleme
     [onboarding],
   );
   const state = useAsyncResource(loader);
+  const [step, setStep] = React.useState<"intro" | "model">("intro");
   const [cursor, setCursor] = React.useState(0);
   const [persist, setPersist] = React.useState<PersistState>({ kind: "idle" });
   const inFlight = React.useRef(false);
@@ -84,6 +85,18 @@ export function OnboardingScreen(props: OnboardingScreenProps): React.ReactEleme
 
   useInput(
     (input, key) => {
+      if (step === "intro") {
+        if (key.escape) {
+          navigate(ROUTES.home, { replace: true });
+          return;
+        }
+        if (key.return) {
+          setStep("model");
+          return;
+        }
+        return;
+      }
+      // model step
       if (key.escape) {
         if (!inFlight.current) navigate(ROUTES.home, { replace: true });
         return;
@@ -108,6 +121,22 @@ export function OnboardingScreen(props: OnboardingScreenProps): React.ReactEleme
 
   if (onboarding === undefined) {
     return <Text>{props.theme.error(toSingleLineDisplay("Onboarding unavailable"))}</Text>;
+  }
+
+  if (step === "intro") {
+    return (
+      <Box flexDirection="column">
+        <Text>{"Council assembles AI experts into panels."}</Text>
+        <Text>
+          {"Convene a panel on a topic \u2192 watch them debate \u2192 get a decision-matrix conclusion."}
+        </Text>
+        <Text>{"You can also chat with a whole panel or a single expert."}</Text>
+        <Text>
+          {"Experts \u2192 Panel \u2192 Convene \u2192 Debate \u2192 Conclusion"}
+        </Text>
+        <Text>{props.theme.muted("Enter continue \u00b7 Esc skip")}</Text>
+      </Box>
+    );
   }
 
   if (state.status === "loading") {

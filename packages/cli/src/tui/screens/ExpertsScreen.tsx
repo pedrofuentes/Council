@@ -59,7 +59,9 @@ export function ExpertsScreen(props: ExpertsScreenProps): React.ReactElement {
       }}
       theme={props.theme}
       title="Experts"
-      emptyText={props.theme.accent("No experts yet — create one with n")}
+      emptyText={props.theme.accent(
+        "No experts yet — [n] create one. Experts are the members of your panels.",
+      )}
       onFilterModeChange={setIsFiltering}
     />
   );
