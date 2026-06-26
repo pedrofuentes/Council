@@ -43,7 +43,7 @@ import { SettingsScreen } from "../screens/SettingsScreen.js";
 import { SessionsScreen } from "../screens/SessionsScreen.js";
 import { ChatsScreen } from "../screens/ChatsScreen.js";
 import { resolveTheme } from "../theme/tokens.js";
-import { routeToNavId, ROUTES } from "./routes.js";
+import { routeToBreadcrumb, routeToNavId, ROUTES } from "./routes.js";
 
 export interface CouncilTUIProps {
   readonly homeData: HomeData;
@@ -88,15 +88,6 @@ const NAV_ID_TO_ROUTE: Record<string, string> = {
   sessions: ROUTES.sessions,
   chats: ROUTES.chats,
   settings: ROUTES.settings,
-};
-
-const NAV_LABEL: Record<string, string> = {
-  home: "Council",
-  panels: "Panels",
-  experts: "Experts",
-  sessions: "Sessions",
-  chats: "Chats",
-  settings: "Settings",
 };
 
 export function AppRouter(props: CouncilTUIProps): React.ReactElement {
@@ -189,7 +180,7 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
 
   const header = (
     <Header
-      breadcrumb={NAV_LABEL[navId] ?? "Council"}
+      breadcrumb={routeToBreadcrumb(location.pathname)}
       model={props.model}
       compact={layout.compactHeader}
       theme={theme}
