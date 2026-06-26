@@ -10,6 +10,7 @@ import { ScrollView } from "../components/lists/ScrollView.js";
 import type { ExpertPalette } from "../theme/expert-palette.js";
 import { resolveExpertPalette } from "../theme/expert-palette.js";
 import type { SemanticTheme } from "../theme/tokens.js";
+import { reviewScroll } from "../lib/review-scroll.js";
 
 export interface DebateStreamScreenProps {
   readonly theme: SemanticTheme;
@@ -133,6 +134,8 @@ export function DebateStreamScreen(props: DebateStreamScreenProps): React.ReactE
 
   const [view, setView] = React.useState<DebateView>(EMPTY_VIEW);
   const [status, setStatus] = React.useState<RunStatus>("streaming");
+  const [followLive, setFollowLive] = React.useState(true);
+  const [reviewCursor, setReviewCursor] = React.useState(0);
 
   const controllerRef = React.useRef<AbortController | null>(null);
   const startedRef = React.useRef(false);
@@ -196,14 +199,42 @@ export function DebateStreamScreen(props: DebateStreamScreenProps): React.ReactE
     };
   }, [convene, navigate, panel, topic]);
 
+  // Compute lines before useInput so the key handler closes over the current count
+  const lines = transcriptLines(view, resolveExpertPalette(process.env), props.theme);
+
   useInput(
-    (_input, key) => {
-      if (!key.escape) return;
-      if (status === "streaming") {
-        controllerRef.current?.abort();
+    (input, key) => {
+      if (key.escape) {
+        if (status === "streaming") {
+          controllerRef.current?.abort();
+          return;
+        }
+        navigate(-1);
         return;
       }
-      navigate(-1);
+
+      if (lines.length === 0) return;
+
+      if (key.upArrow || key.pageUp || input === "k") {
+        const next = reviewScroll({ followLive, cursor: reviewCursor }, "up", lines.length);
+        setFollowLive(next.followLive);
+        setReviewCursor(next.cursor);
+        return;
+      }
+
+      if (key.downArrow || key.pageDown || input === "j") {
+        const next = reviewScroll({ followLive, cursor: reviewCursor }, "down", lines.length);
+        setFollowLive(next.followLive);
+        setReviewCursor(next.cursor);
+        return;
+      }
+
+      if (key.end || input === "G") {
+        const next = reviewScroll({ followLive, cursor: reviewCursor }, "end", lines.length);
+        setFollowLive(next.followLive);
+        setReviewCursor(next.cursor);
+        return;
+      }
     },
     { isActive: props.isActive ?? false },
   );
@@ -217,7 +248,6 @@ export function DebateStreamScreen(props: DebateStreamScreenProps): React.ReactE
     );
   }
 
-  const lines = transcriptLines(view, resolveExpertPalette(process.env), props.theme);
   const responder = activeExpert(view);
   const transcriptHeight = props.maxRows ?? 12;
 
@@ -230,7 +260,19 @@ export function DebateStreamScreen(props: DebateStreamScreenProps): React.ReactE
       {view.experts.length > 0 ? (
         <Text>{toSingleLineDisplay(`Experts: ${view.experts.join(", ")}`)}</Text>
       ) : null}
-      {lines.length > 0 ? <ScrollView items={lines} height={transcriptHeight} follow /> : null}
+      {lines.length > 0 ? (
+        <ScrollView
+          items={lines}
+          height={transcriptHeight}
+          follow={followLive}
+          {...(!followLive ? { cursor: reviewCursor } : {})}
+        />
+      ) : null}
+      {!followLive ? (
+        <Text>
+          {props.theme.muted(toSingleLineDisplay("⏸ Review — ↓/End to resume live"))}
+        </Text>
+      ) : null}
       {status === "streaming" ? (
         <Text>
           {props.theme.muted(
