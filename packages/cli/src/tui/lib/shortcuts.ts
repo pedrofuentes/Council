@@ -62,7 +62,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
     pattern: ROUTES.panelCompose,
     bindings: [
       { keys: "y", description: "Save" },
-      { keys: "n/e", description: "Edit" },
+      { keys: "n/e", description: "Revise" },
       { keys: "Esc", description: "Cancel" },
     ],
   },
@@ -172,7 +172,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   {
     pattern: ROUTES.sessionExport,
     bindings: [
-      { keys: "j/k", description: "Move" },
+      { keys: "↑↓", description: "Move" },
       { keys: "Enter", description: "Select" },
       { keys: "Esc", description: "Back" },
     ],

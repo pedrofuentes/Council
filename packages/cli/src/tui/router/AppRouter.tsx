@@ -44,6 +44,7 @@ import { SessionsScreen } from "../screens/SessionsScreen.js";
 import { ChatsScreen } from "../screens/ChatsScreen.js";
 import { resolveTheme } from "../theme/tokens.js";
 import { routeToBreadcrumb, routeToNavId, ROUTES } from "./routes.js";
+import { resolveEscape, type FocusMode } from "./resolve-escape.js";
 
 export interface CouncilTUIProps {
   readonly homeData: HomeData;
@@ -61,7 +62,6 @@ export interface CouncilTUIProps {
   readonly onOnboardingComplete?: (() => void) | undefined;
 }
 
-type FocusMode = "nav" | "help" | "palette";
 type FocusTarget = "nav" | "main";
 
 const NAV_ITEMS = [
@@ -147,11 +147,15 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
         return;
       }
       if (key.escape) {
-        if (mode === "help") {
+        const action = resolveEscape({
+          mode,
+          atHome: location.pathname === ROUTES.home,
+        });
+        if (action === "closeHelp") {
           setMode("nav");
           return;
         }
-        if (location.pathname !== ROUTES.home) {
+        if (action === "back") {
           navigate(-1);
           return;
         }
