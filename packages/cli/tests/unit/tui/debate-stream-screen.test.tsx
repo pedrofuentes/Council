@@ -5,9 +5,14 @@ import { MemoryRouter, Route, Routes, useLocation, useParams } from "react-route
 import { describe, expect, it, vi } from "vitest";
 
 import type { ConveneDataSource, ConveneViewEvent } from "../../../src/tui/adapters/convene.js";
+import { toSingleLineDisplay } from "../../../src/cli/strip-control-chars.js";
 import { DataProvider, type TuiDataSources } from "../../../src/tui/components/DataProvider.js";
 import { InputCaptureProvider } from "../../../src/tui/components/InputCaptureProvider.js";
-import { DebateStreamScreen } from "../../../src/tui/screens/DebateStreamScreen.js";
+import {
+  DebateStreamScreen,
+  transcriptLines,
+} from "../../../src/tui/screens/DebateStreamScreen.js";
+import { expertColorIndex, resolveExpertPalette } from "../../../src/tui/theme/expert-palette.js";
 import { resolveTheme } from "../../../src/tui/theme/tokens.js";
 
 const theme = resolveTheme({ NO_COLOR: "1" });
@@ -313,5 +318,145 @@ describe("DebateStreamScreen", () => {
       errorSpy.mockRestore();
       useStateSpy.mockRestore();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pure-helper tests: transcriptLines(view, palette, theme)
+// ---------------------------------------------------------------------------
+
+describe("transcriptLines — pure formatter", () => {
+  const noColorPalette = resolveExpertPalette({ NO_COLOR: "1" });
+  const noColorTheme = resolveTheme({ NO_COLOR: "1" });
+  const colorPalette = resolveExpertPalette({});
+
+  const baseView = {
+    experts: [] as readonly string[],
+    turns: [{ expert: "Alice", round: 1, body: "hello world", done: true }] as readonly {
+      readonly expert: string;
+      readonly round: number;
+      readonly body: string;
+      readonly done: boolean;
+    }[],
+    cost: undefined as
+      | { readonly premiumRequests: number; readonly estimatedTotal: number }
+      | undefined,
+    error: undefined as string | undefined,
+  };
+
+  it("with NO_COLOR produces plain text — round separator, speaker label, indented body", () => {
+    const lines = transcriptLines(baseView, noColorPalette, noColorTheme);
+    expect(lines).toContain("── Round 1 ──");
+    expect(lines).toContain("Alice:");
+    expect(lines).toContain("  hello world");
+    // No ANSI escape codes anywhere
+    expect(lines.join("")).not.toContain("\u001b[");
+  });
+
+  it("same expert maps to the same color index on every call (determinism)", () => {
+    const idx1 = colorPalette.indexOf("Alice");
+    const idx2 = colorPalette.indexOf("Alice");
+    expect(idx1).toBe(idx2);
+    expect(idx1).toBe(expertColorIndex("Alice"));
+  });
+
+  it("transcriptLines applies per-expert bold coloring — positive and negative controls", () => {
+    // Build a two-expert view so the formatter exercises both label slots.
+    const twoExpertView = {
+      experts: [] as readonly string[],
+      turns: [
+        { expert: "Alice", round: 1, body: "hello", done: true },
+        { expert: "Bob", round: 1, body: "world", done: true },
+      ] as readonly {
+        readonly expert: string;
+        readonly round: number;
+        readonly body: string;
+        readonly done: boolean;
+      }[],
+      cost: undefined as
+        | { readonly premiumRequests: number; readonly estimatedTotal: number }
+        | undefined,
+      error: undefined as string | undefined,
+    };
+
+    const colorTheme = resolveTheme({});
+    const lines = transcriptLines(twoExpertView, colorPalette, colorTheme);
+
+    const aliceExpected = colorPalette.boldColor("Alice")(toSingleLineDisplay("Alice:"));
+    const bobExpected = colorPalette.boldColor("Bob")(toSingleLineDisplay("Bob:"));
+    const alicePlain = toSingleLineDisplay("Alice:");
+
+    // 1. The formatter emits the colorized label, not the plain string.
+    expect(lines).toContain(aliceExpected);
+    // Negative control: coloring must actually transform the string.
+    expect(aliceExpected).not.toBe(alicePlain);
+    // Negative control: the plain label must NOT appear as a standalone line element.
+    expect(lines).not.toContain(alicePlain);
+
+    // 2. Alice and Bob receive distinct per-expert colorization.
+    expect(aliceExpected).not.toBe(bobExpected);
+    expect(lines).toContain(bobExpected);
+
+    // 3. Under NO_COLOR=1 the emitted label is the plain string — no ANSI leak.
+    const noColorPal = resolveExpertPalette({ NO_COLOR: "1" });
+    const noColorThm = resolveTheme({ NO_COLOR: "1" });
+    const plainLines = transcriptLines(twoExpertView, noColorPal, noColorThm);
+    expect(plainLines).toContain(alicePlain);
+    expect(plainLines.join("")).not.toContain("\u001b[");
+  });
+
+  it("sanitizes malicious body (CR / ESC sequences / line separators) before output", () => {
+    const view = {
+      ...baseView,
+      turns: [
+        {
+          expert: "Alice",
+          round: 1,
+          body: "safe\rSPOOF\u001b[31mred\u001b[0m\u2028newline",
+          done: true,
+        },
+      ] as readonly {
+        readonly expert: string;
+        readonly round: number;
+        readonly body: string;
+        readonly done: boolean;
+      }[],
+    };
+    const lines = transcriptLines(view, noColorPalette, noColorTheme);
+    const bodyLine = lines.find((l) => l.startsWith("  "));
+    expect(bodyLine).toBeDefined();
+    // No raw control / injection chars in output
+    expect(bodyLine).not.toContain("\r");
+    expect(bodyLine).not.toContain("\u001b");
+    expect(bodyLine).not.toContain("\u2028");
+    // Content is preserved, collapsed to one line
+    expect(bodyLine).toContain("safe");
+    expect(bodyLine).toContain("SPOOF");
+    expect(bodyLine).toContain("red");
+  });
+
+  it("round separator and speaker label are both present for a two-expert, two-round view", () => {
+    const view = {
+      experts: [] as readonly string[],
+      turns: [
+        { expert: "Alice", round: 1, body: "r1", done: true },
+        { expert: "Bob", round: 1, body: "r1b", done: true },
+        { expert: "Alice", round: 2, body: "r2", done: true },
+      ] as readonly {
+        readonly expert: string;
+        readonly round: number;
+        readonly body: string;
+        readonly done: boolean;
+      }[],
+      cost: undefined as
+        | { readonly premiumRequests: number; readonly estimatedTotal: number }
+        | undefined,
+      error: undefined as string | undefined,
+    };
+    const lines = transcriptLines(view, noColorPalette, noColorTheme);
+    expect(lines.filter((l) => l.includes("Round 1")).length).toBe(1);
+    expect(lines.filter((l) => l.includes("Round 2")).length).toBe(1);
+    expect(lines.filter((l) => l.includes("Alice:")).length).toBe(2);
+    expect(lines.filter((l) => l.includes("Bob:")).length).toBe(1);
   });
 });

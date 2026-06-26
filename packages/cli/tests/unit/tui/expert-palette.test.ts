@@ -68,3 +68,34 @@ describe("resolveExpertPalette — color disabled", () => {
     expect(palette.indexOf("alice")).toBe(expertColorIndex("alice"));
   });
 });
+
+describe("resolveExpertPalette — boldColor", () => {
+  it("boldColor(key) returns a callable function that wraps the string", () => {
+    const palette = resolveExpertPalette({});
+    const bold = palette.boldColor("alice");
+    expect(typeof bold).toBe("function");
+    expect(bold("hello")).toContain("hello");
+  });
+
+  it("boldColor(key)(s) !== s when color is enabled (ANSI codes present)", () => {
+    const palette = resolveExpertPalette({});
+    expect(palette.boldColor("alice")("x")).not.toBe("x");
+  });
+
+  it("boldColor(key)(s) === s when NO_COLOR=1 (identity)", () => {
+    const palette = resolveExpertPalette({ NO_COLOR: "1" });
+    expect(palette.boldColor("alice")("hello")).toBe("hello");
+  });
+
+  it("boldColor(key)(s) === s when TERM=dumb (identity)", () => {
+    const palette = resolveExpertPalette({ TERM: "dumb" });
+    expect(palette.boldColor("bob")("world")).toBe("world");
+  });
+
+  it("boldColor produces different output than color for the same key (bold adds codes)", () => {
+    const palette = resolveExpertPalette({});
+    const plain = palette.color("alice")("hello");
+    const bold = palette.boldColor("alice")("hello");
+    expect(bold).not.toBe(plain);
+  });
+});
