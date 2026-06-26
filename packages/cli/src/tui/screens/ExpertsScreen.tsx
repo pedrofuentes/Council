@@ -13,7 +13,7 @@ import type { SemanticTheme } from "../theme/tokens.js";
 export interface ExpertsScreenProps {
   readonly theme: SemanticTheme;
   readonly isActive?: boolean;
-  readonly stdout?: ResizableStdout;
+  readonly stdout?: ResizableStdout | undefined;
 }
 
 const EMPTY_LIST: () => Promise<readonly ExpertListItem[]> = async () => [];

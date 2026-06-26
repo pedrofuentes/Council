@@ -29,13 +29,15 @@ export interface ListViewportProps {
   readonly title?: string;
   readonly onFilterModeChange?: (active: boolean) => void;
   /** Optional preview renderer: called with the highlighted item's id when wide enough. */
-  readonly renderPreview?: (selectedId: string) => React.ReactNode;
+  readonly renderPreview?: ((selectedId: string) => React.ReactNode) | undefined;
   /** Injectable stdout for terminal-size detection (primarily for tests). */
-  readonly stdout?: ResizableStdout;
+  readonly stdout?: ResizableStdout | undefined;
 }
 
 export function ListViewport(props: ListViewportProps): React.ReactElement {
-  const { rows, columns } = useTerminalSize({ stdout: props.stdout });
+  const { rows, columns } = useTerminalSize(
+    props.stdout !== undefined ? { stdout: props.stdout } : {},
+  );
   const [cursor, setCursor] = useState(0);
   const [filterMode, setFilterMode] = useState(false);
   const [filterQuery, setFilterQuery] = useState("");

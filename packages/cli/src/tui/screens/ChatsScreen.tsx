@@ -17,7 +17,7 @@ import type { SemanticTheme } from "../theme/tokens.js";
 export interface ChatsScreenProps {
   readonly theme: SemanticTheme;
   readonly isActive?: boolean;
-  readonly stdout?: ResizableStdout;
+  readonly stdout?: ResizableStdout | undefined;
 }
 
 const EMPTY_LIST: () => Promise<readonly ChatListItem[]> = async () => [];

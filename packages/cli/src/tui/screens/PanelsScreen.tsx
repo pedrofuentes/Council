@@ -12,7 +12,7 @@ import type { SemanticTheme } from "../theme/tokens.js";
 export interface PanelsScreenProps {
   readonly theme: SemanticTheme;
   readonly isActive?: boolean;
-  readonly stdout?: ResizableStdout;
+  readonly stdout?: ResizableStdout | undefined;
 }
 
 export function PanelsScreen(props: PanelsScreenProps): React.ReactElement {
