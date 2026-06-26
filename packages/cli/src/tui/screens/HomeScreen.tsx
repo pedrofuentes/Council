@@ -1,14 +1,17 @@
 // packages/cli/src/tui/screens/HomeScreen.tsx
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text, useInput } from "ink";
+import { useNavigate } from "react-router";
 
 import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
 import type { HomeData } from "../adapters/home-data.js";
 import type { SemanticTheme } from "../theme/tokens.js";
+import { ROUTES } from "../router/routes.js";
 
 export interface HomeScreenProps {
   readonly data: HomeData;
   readonly theme: SemanticTheme;
+  readonly isActive?: boolean;
 }
 
 const QUICK_ACTIONS: readonly { key: string; label: string }[] = [
@@ -20,6 +23,18 @@ const QUICK_ACTIONS: readonly { key: string; label: string }[] = [
 
 export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   const { counts, recent } = props.data;
+  const navigate = useNavigate();
+
+  useInput(
+    (input) => {
+      if (input === "c") navigate(ROUTES.panelCompose);
+      else if (input === "e") navigate(ROUTES.expertNew);
+      else if (input === "p") navigate(ROUTES.panelNew);
+      else if (input === ",") navigate(ROUTES.settings);
+    },
+    { isActive: props.isActive ?? false },
+  );
+
   const empty = counts.sessions === 0 && counts.experts === 0 && counts.panels === 0;
   if (empty) {
     return (
@@ -37,7 +52,11 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
         </Text>
       ))}
       <Box marginTop={1}>
-        <Text>{props.theme.muted(`${counts.sessions} sessions · ${counts.experts} experts · ${counts.panels} panels`)}</Text>
+        <Text>
+          {props.theme.muted(
+            `${counts.sessions} sessions · ${counts.experts} experts · ${counts.panels} panels`,
+          )}
+        </Text>
       </Box>
       <Box marginTop={1}>
         <Text>{QUICK_ACTIONS.map((a) => `${a.key} ${a.label}`).join("   ")}</Text>
