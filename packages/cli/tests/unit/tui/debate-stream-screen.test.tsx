@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes, useLocation, useParams } from "react-route
 import { describe, expect, it, vi } from "vitest";
 
 import type { ConveneDataSource, ConveneViewEvent } from "../../../src/tui/adapters/convene.js";
+import { toSingleLineDisplay } from "../../../src/cli/strip-control-chars.js";
 import { DataProvider, type TuiDataSources } from "../../../src/tui/components/DataProvider.js";
 import { InputCaptureProvider } from "../../../src/tui/components/InputCaptureProvider.js";
 import {
@@ -331,10 +332,15 @@ describe("transcriptLines — pure formatter", () => {
 
   const baseView = {
     experts: [] as readonly string[],
-    turns: [
-      { expert: "Alice", round: 1, body: "hello world", done: true },
-    ] as readonly { readonly expert: string; readonly round: number; readonly body: string; readonly done: boolean }[],
-    cost: undefined as { readonly premiumRequests: number; readonly estimatedTotal: number } | undefined,
+    turns: [{ expert: "Alice", round: 1, body: "hello world", done: true }] as readonly {
+      readonly expert: string;
+      readonly round: number;
+      readonly body: string;
+      readonly done: boolean;
+    }[],
+    cost: undefined as
+      | { readonly premiumRequests: number; readonly estimatedTotal: number }
+      | undefined,
     error: undefined as string | undefined,
   };
 
@@ -354,13 +360,49 @@ describe("transcriptLines — pure formatter", () => {
     expect(idx1).toBe(expertColorIndex("Alice"));
   });
 
-  it("two experts with different palette indices produce distinct label colorization", () => {
-    // Alice = charsum 510 → idx 0 (magenta); Bob = charsum 275 → idx 5 (red)
-    expect(colorPalette.indexOf("Alice")).not.toBe(colorPalette.indexOf("Bob"));
-    // boldColor must produce different ANSI-wrapped output for different indices
-    const aliceColored = colorPalette.boldColor("Alice")("Alice:");
-    const bobColored = colorPalette.boldColor("Bob")("Bob:");
-    expect(aliceColored).not.toBe(bobColored);
+  it("transcriptLines applies per-expert bold coloring — positive and negative controls", () => {
+    // Build a two-expert view so the formatter exercises both label slots.
+    const twoExpertView = {
+      experts: [] as readonly string[],
+      turns: [
+        { expert: "Alice", round: 1, body: "hello", done: true },
+        { expert: "Bob", round: 1, body: "world", done: true },
+      ] as readonly {
+        readonly expert: string;
+        readonly round: number;
+        readonly body: string;
+        readonly done: boolean;
+      }[],
+      cost: undefined as
+        | { readonly premiumRequests: number; readonly estimatedTotal: number }
+        | undefined,
+      error: undefined as string | undefined,
+    };
+
+    const colorTheme = resolveTheme({});
+    const lines = transcriptLines(twoExpertView, colorPalette, colorTheme);
+
+    const aliceExpected = colorPalette.boldColor("Alice")(toSingleLineDisplay("Alice:"));
+    const bobExpected = colorPalette.boldColor("Bob")(toSingleLineDisplay("Bob:"));
+    const alicePlain = toSingleLineDisplay("Alice:");
+
+    // 1. The formatter emits the colorized label, not the plain string.
+    expect(lines).toContain(aliceExpected);
+    // Negative control: coloring must actually transform the string.
+    expect(aliceExpected).not.toBe(alicePlain);
+    // Negative control: the plain label must NOT appear as a standalone line element.
+    expect(lines).not.toContain(alicePlain);
+
+    // 2. Alice and Bob receive distinct per-expert colorization.
+    expect(aliceExpected).not.toBe(bobExpected);
+    expect(lines).toContain(bobExpected);
+
+    // 3. Under NO_COLOR=1 the emitted label is the plain string — no ANSI leak.
+    const noColorPal = resolveExpertPalette({ NO_COLOR: "1" });
+    const noColorThm = resolveTheme({ NO_COLOR: "1" });
+    const plainLines = transcriptLines(twoExpertView, noColorPal, noColorThm);
+    expect(plainLines).toContain(alicePlain);
+    expect(plainLines.join("")).not.toContain("\u001b[");
   });
 
   it("sanitizes malicious body (CR / ESC sequences / line separators) before output", () => {
@@ -373,7 +415,12 @@ describe("transcriptLines — pure formatter", () => {
           body: "safe\rSPOOF\u001b[31mred\u001b[0m\u2028newline",
           done: true,
         },
-      ] as readonly { readonly expert: string; readonly round: number; readonly body: string; readonly done: boolean }[],
+      ] as readonly {
+        readonly expert: string;
+        readonly round: number;
+        readonly body: string;
+        readonly done: boolean;
+      }[],
     };
     const lines = transcriptLines(view, noColorPalette, noColorTheme);
     const bodyLine = lines.find((l) => l.startsWith("  "));
@@ -395,8 +442,15 @@ describe("transcriptLines — pure formatter", () => {
         { expert: "Alice", round: 1, body: "r1", done: true },
         { expert: "Bob", round: 1, body: "r1b", done: true },
         { expert: "Alice", round: 2, body: "r2", done: true },
-      ] as readonly { readonly expert: string; readonly round: number; readonly body: string; readonly done: boolean }[],
-      cost: undefined as { readonly premiumRequests: number; readonly estimatedTotal: number } | undefined,
+      ] as readonly {
+        readonly expert: string;
+        readonly round: number;
+        readonly body: string;
+        readonly done: boolean;
+      }[],
+      cost: undefined as
+        | { readonly premiumRequests: number; readonly estimatedTotal: number }
+        | undefined,
       error: undefined as string | undefined,
     };
     const lines = transcriptLines(view, noColorPalette, noColorTheme);
