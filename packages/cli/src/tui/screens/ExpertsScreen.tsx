@@ -1,11 +1,11 @@
-import React from "react";
-import { Box, Text, useInput } from "ink";
+import React, { useState } from "react";
+import { Text, useInput } from "ink";
 import { useNavigate } from "react-router";
 
 import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
 import type { ExpertListItem, ExpertsDataSource } from "../adapters/experts-data.js";
 import { useData } from "../components/DataProvider.js";
-import { SelectableList } from "../components/lists/SelectableList.js";
+import { ListViewport, type ListViewportItem } from "../components/lists/ListViewport.js";
 import { useAsyncResource } from "../hooks/use-async-resource.js";
 import type { SemanticTheme } from "../theme/tokens.js";
 
@@ -22,6 +22,7 @@ export function ExpertsScreen(props: ExpertsScreenProps): React.ReactElement {
   const loadList = experts?.loadList ?? EMPTY_LIST;
   const state = useAsyncResource(loadList);
   const navigate = useNavigate();
+  const [isFiltering, setIsFiltering] = useState(false);
 
   useInput(
     (input) => {
@@ -29,7 +30,7 @@ export function ExpertsScreen(props: ExpertsScreenProps): React.ReactElement {
         navigate("/experts/new");
       }
     },
-    { isActive: props.isActive ?? false },
+    { isActive: (props.isActive ?? false) && !isFiltering },
   );
 
   if (state.status === "loading") {
@@ -40,33 +41,26 @@ export function ExpertsScreen(props: ExpertsScreenProps): React.ReactElement {
     return <Text>{props.theme.error("Failed to load experts")}</Text>;
   }
 
-  if (state.data.length === 0) {
-    return (
-      <Box justifyContent="center">
-        <Text>{props.theme.accent("No experts yet — create one with n")}</Text>
-      </Box>
-    );
-  }
-
-  const rows = state.data.map((expert) =>
-    toSingleLineDisplay(
+  const items: readonly ListViewportItem[] = state.data.map((expert) => ({
+    id: expert.slug,
+    label: toSingleLineDisplay(
       `${expert.slug}  ${expert.displayName} — ${expert.role} [${expert.kind}]  ${String(
         expert.panelCount,
       )} panels`,
     ),
-  );
+  }));
 
   return (
-    <SelectableList
-      items={rows}
+    <ListViewport
+      items={items}
       isActive={props.isActive ?? false}
-      height={10}
-      onActivate={(index) => {
-        const expert = state.data[index];
-        if (expert) {
-          navigate(`/experts/${encodeURIComponent(expert.slug)}`);
-        }
+      onSelect={(id) => {
+        navigate(`/experts/${encodeURIComponent(id)}`);
       }}
+      theme={props.theme}
+      title="Experts"
+      emptyText={props.theme.accent("No experts yet — create one with n")}
+      onFilterModeChange={setIsFiltering}
     />
   );
 }

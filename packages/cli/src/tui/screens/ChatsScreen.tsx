@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Text } from "ink";
 import { useNavigate } from "react-router";
 
 import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
@@ -9,7 +9,7 @@ import {
   type ChatsDataSource,
 } from "../adapters/chats-data.js";
 import { useData } from "../components/DataProvider.js";
-import { SelectableList } from "../components/lists/SelectableList.js";
+import { ListViewport, type ListViewportItem } from "../components/lists/ListViewport.js";
 import { useAsyncResource } from "../hooks/use-async-resource.js";
 import type { SemanticTheme } from "../theme/tokens.js";
 
@@ -41,29 +41,26 @@ export function ChatsScreen(props: ChatsScreenProps): React.ReactElement {
     return <Text>{props.theme.error("Failed to load chats")}</Text>;
   }
 
-  if (state.data.length === 0) {
-    return (
-      <Box justifyContent="center">
-        <Text>{props.theme.accent("No chats yet — start one from an expert or panel")}</Text>
-      </Box>
-    );
-  }
-
-  const rows = state.data.map((item) =>
-    toSingleLineDisplay(`${chatTargetSymbol(item.targetType)} ${item.title}  ·  ${item.when}`),
-  );
+  const items: readonly ListViewportItem[] = state.data.map((item) => ({
+    id: item.id,
+    label: toSingleLineDisplay(
+      `${chatTargetSymbol(item.targetType)} ${item.title}  ·  ${item.when}`,
+    ),
+  }));
 
   return (
-    <SelectableList
-      items={rows}
+    <ListViewport
+      items={items}
       isActive={props.isActive ?? false}
-      height={10}
-      onActivate={(index) => {
-        const item = state.data[index];
+      onSelect={(id) => {
+        const item = state.data.find((c) => c.id === id);
         if (item !== undefined) {
           navigate(resumeRoute(item));
         }
       }}
+      theme={props.theme}
+      title="Chats"
+      emptyText={props.theme.accent("No chats yet — start one from an expert or panel")}
     />
   );
 }
