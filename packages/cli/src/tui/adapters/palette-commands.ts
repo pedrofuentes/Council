@@ -25,8 +25,13 @@ const NAVIGATE_ACTIONS: readonly NavigatePaletteAction[] = [
   { id: "go-settings", label: "Go to Settings", route: ROUTES.settings, kind: "navigate" },
 ];
 
-const GLOBAL_ACTIONS: readonly PaletteAction[] = [
+const CREATION_ACTIONS: readonly NavigatePaletteAction[] = [
+  { id: "new-panel", label: "New panel", route: ROUTES.panelNew, kind: "navigate" },
+  { id: "compose-panel", label: "Auto-compose a panel", route: ROUTES.panelCompose, kind: "navigate" },
   { id: "new-expert", label: "New expert", route: ROUTES.expertNew, kind: "navigate" },
+];
+
+const GLOBAL_ACTIONS: readonly PaletteAction[] = [
   { id: "help", label: "Help", kind: "help" },
   { id: "quit", label: "Quit", kind: "quit" },
 ];
@@ -34,6 +39,7 @@ const GLOBAL_ACTIONS: readonly PaletteAction[] = [
 export function buildPaletteCommands(ctx: PaletteContext): readonly PaletteAction[] {
   return [
     ...NAVIGATE_ACTIONS.filter((action) => routeToNavId(action.route) !== ctx.navId),
+    ...CREATION_ACTIONS,
     ...GLOBAL_ACTIONS,
   ];
 }
