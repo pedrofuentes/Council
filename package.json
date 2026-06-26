@@ -15,7 +15,8 @@
     "url": "https://github.com/pedrofuentes/Council/issues"
   },
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=24.0.0",
+    "pnpm": ">=10"
   },
   "scripts": {
     "build": "pnpm --filter @council-ai/cli build",
@@ -52,15 +53,5 @@
     "vite": "^8.0.16",
     "vitest": "^4.1.9"
   },
-  "packageManager": "pnpm@9.15.0",
-  "pnpm": {
-    "overrides": {
-      "brace-expansion@>=5": "5.0.6",
-      "ws@>=8": "8.21.0",
-      "uuid@<11.1.1": ">=11.1.1",
-      "js-yaml@<4.2.0": ">=4.2.0 <5",
-      "esbuild@<0.28.1": ">=0.28.1",
-      "yaml@<2.8.3": ">=2.8.3"
-    }
-  }
+  "packageManager": "pnpm@10.30.1"
 }
