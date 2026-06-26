@@ -494,4 +494,20 @@ describe("ExpertFormScreen", () => {
     expect(lastFrame()).not.toContain("Persona description:");
     unmount();
   });
+
+  it("shows ←/→ change hint when editing the Kind enum field", async () => {
+    const { source } = createSource(async (values) => ({
+      ok: true,
+      definition: definitionFor(values),
+    }));
+    const { stdin, lastFrame, unmount } = renderForm(source);
+    await flush();
+
+    // Kind is at index 0 — press right arrow to enter edit mode
+    stdin.write("\u001B[C"); // right arrow
+    await flush();
+
+    expect(lastFrame() ?? "").toContain("←/→ change · Enter confirm · Esc cancel");
+    unmount();
+  });
 });
