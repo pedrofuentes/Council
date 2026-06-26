@@ -46,7 +46,12 @@ describe("AppShell", () => {
   it("omits the nav when navState is hidden", () => {
     const layout = computeLayout({ columns: 70, rows: 24 }); // hidden
     const { lastFrame, unmount } = render(
-      <AppShell layout={layout} header={<Text>H</Text>} footer={<Text>F</Text>} nav={<Text>NAV</Text>}>
+      <AppShell
+        layout={layout}
+        header={<Text>H</Text>}
+        footer={<Text>F</Text>}
+        nav={<Text>NAV</Text>}
+      >
         <Text>MAIN</Text>
       </AppShell>,
     );
@@ -180,5 +185,31 @@ describe("AppShell", () => {
       expect(lines.length).toBeLessThanOrEqual(rows);
       unmount();
     }
+  });
+
+  it("pins the nav pane to navWidth so long labels do not wrap to a second line", () => {
+    const layout = computeLayout({ columns: 140, rows: 40 });
+    // RED: navWidth does not yet exist on LayoutPlan
+    expect(layout.navWidth).toBe(24);
+
+    const { lastFrame, unmount } = render(
+      <AppShell
+        layout={layout}
+        header={<Text>HEADER</Text>}
+        footer={<Text>FOOTER</Text>}
+        nav={<Text>● 💬 Conversations</Text>}
+      >
+        <Text>MAIN</Text>
+      </AppShell>,
+    );
+    const frame = lastFrame() ?? "";
+    const lines = frame.split("\n");
+    // Frame must not exceed the terminal height
+    expect(lines.length).toBeLessThanOrEqual(40);
+    // "Conversations" must appear on the same line as the emoji — not split
+    const conversationsLine = lines.find((l) => l.includes("Conversations"));
+    expect(conversationsLine).toBeDefined();
+    expect(conversationsLine).toContain("💬");
+    unmount();
   });
 });
