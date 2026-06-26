@@ -34,8 +34,11 @@ const KIND_OPTIONS = ["generic", "persona"] as const;
 const EMPTY_VALUES = emptyExpertForm();
 
 /**
- * Fields the adapter treats as required — mirrors validateExpertForm checks.
- * personaDescription is conditionally required (kind=persona) and handled separately.
+ * Source of truth: the exact field set `validateExpertForm` rejects when empty
+ * (see adapters/expert-authoring.ts — slug, displayName, role, epistemicStance,
+ * weightedEvidence). The required marker must mirror validation so it never lies.
+ * personaDescription is OPTIONAL even for persona experts, so it is deliberately
+ * NOT marked required (validation accepts an empty persona description).
  */
 const REQUIRED_FIELDS = new Set<keyof ExpertFormValues>([
   "slug",
