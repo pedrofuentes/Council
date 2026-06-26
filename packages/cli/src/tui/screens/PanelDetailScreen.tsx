@@ -4,6 +4,8 @@ import { useLocation, useNavigate, useParams } from "react-router";
 
 import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
 import { useData } from "../components/DataProvider.js";
+import { useInputCapture } from "../components/InputCaptureProvider.js";
+import { ActionMenu, type ActionMenuItem } from "../components/overlays/ActionMenu.js";
 import { useAsyncResource } from "../hooks/use-async-resource.js";
 import type { SemanticTheme } from "../theme/tokens.js";
 
@@ -28,6 +30,13 @@ function formatDefaults(defaults: {
   return toSingleLineDisplay(parts.join(" · "));
 }
 
+const PANEL_MENU_ITEMS: readonly ActionMenuItem[] = [
+  { key: "c", label: "Chat" },
+  { key: "m", label: "Members" },
+  { key: "d", label: "Delete" },
+  { key: "v", label: "Convene" },
+];
+
 export function PanelDetailScreen(props: PanelDetailScreenProps): React.ReactElement {
   const { name } = useParams();
   const location = useLocation();
@@ -39,24 +48,59 @@ export function PanelDetailScreen(props: PanelDetailScreenProps): React.ReactEle
     [panels, name, source],
   );
   const state = useAsyncResource(loader);
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const { setCaptured } = useInputCapture();
+
+  React.useEffect(() => {
+    if (!menuOpen) return undefined;
+    setCaptured(true);
+    return () => {
+      setCaptured(false);
+    };
+  }, [menuOpen, setCaptured]);
+
+  const handleAction = (key: string): void => {
+    if (key === "c" && source === "saved" && name !== undefined) {
+      navigate(`/chat/panel/${encodeURIComponent(name)}`);
+    }
+    if (key === "m" && source === "saved" && name !== undefined) {
+      navigate(`/panels/${encodeURIComponent(name)}/members`, { state: { source: "saved" } });
+    }
+    if (key === "d" && source === "saved" && name !== undefined) {
+      navigate(`/panels/${encodeURIComponent(name)}/delete`, { state: { source: "saved" } });
+    }
+    if (key === "v" && source === "saved" && name !== undefined) {
+      navigate(`/convene/${encodeURIComponent(name)}`, { state: { source: "saved" } });
+    }
+  };
 
   useInput(
     (input) => {
-      if (input === "m" && source === "saved" && name !== undefined) {
-        navigate(`/panels/${encodeURIComponent(name)}/members`, { state: { source: "saved" } });
+      if (input === "a" && source === "saved") {
+        setMenuOpen(true);
+        return;
       }
-      if (input === "d" && source === "saved" && name !== undefined) {
-        navigate(`/panels/${encodeURIComponent(name)}/delete`, { state: { source: "saved" } });
-      }
-      if (input === "c" && source === "saved" && name !== undefined) {
-        navigate(`/chat/panel/${encodeURIComponent(name)}`);
-      }
-      if (input === "v" && source === "saved" && name !== undefined) {
-        navigate(`/convene/${encodeURIComponent(name)}`, { state: { source: "saved" } });
-      }
+      handleAction(input);
     },
-    { isActive: props.isActive ?? true },
+    { isActive: (props.isActive ?? true) && !menuOpen },
   );
+
+  if (menuOpen) {
+    return (
+      <ActionMenu
+        items={PANEL_MENU_ITEMS}
+        isActive
+        onSelect={(key) => {
+          setMenuOpen(false);
+          handleAction(key);
+        }}
+        onClose={() => {
+          setMenuOpen(false);
+        }}
+        theme={props.theme}
+      />
+    );
+  }
 
   if (state.status === "loading") {
     return <Text>{props.theme.muted("Loading panel…")}</Text>;
@@ -91,9 +135,7 @@ export function PanelDetailScreen(props: PanelDetailScreenProps): React.ReactEle
       ))}
       {source === "saved" ? (
         <Text>
-          {props.theme.muted(
-            toSingleLineDisplay("c chat · m edit members · d delete · v convene"),
-          )}
+          {props.theme.muted(toSingleLineDisplay("c chat · m edit members · d delete · v convene"))}
         </Text>
       ) : undefined}
     </Box>
