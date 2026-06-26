@@ -32,6 +32,19 @@ interface FormField {
 
 const KIND_OPTIONS = ["generic", "persona"] as const;
 const EMPTY_VALUES = emptyExpertForm();
+
+/**
+ * Fields the adapter treats as required — mirrors validateExpertForm checks.
+ * personaDescription is conditionally required (kind=persona) and handled separately.
+ */
+const REQUIRED_FIELDS = new Set<keyof ExpertFormValues>([
+  "slug",
+  "displayName",
+  "role",
+  "epistemicStance",
+  "weightedEvidence",
+]);
+
 const CREATE_UNAVAILABLE: ExpertAuthoringSource = {
   loadForEdit: async () => undefined,
   create: async () => ({
@@ -47,6 +60,7 @@ const CREATE_UNAVAILABLE: ExpertAuthoringSource = {
 };
 
 const FIELDS: readonly FormField[] = [
+  { key: "kind", label: "Kind", kind: "enum", options: KIND_OPTIONS },
   { key: "slug", label: "Slug", kind: "text" },
   { key: "displayName", label: "Display name", kind: "text" },
   { key: "role", label: "Role", kind: "text" },
@@ -54,7 +68,6 @@ const FIELDS: readonly FormField[] = [
   { key: "referenceCases", label: "Reference cases", kind: "text" },
   { key: "notExpertIn", label: "Not expert in", kind: "text" },
   { key: "epistemicStance", label: "Epistemic stance", kind: "text" },
-  { key: "kind", label: "Kind", kind: "enum", options: KIND_OPTIONS },
   { key: "personaDescription", label: "Persona description", kind: "text" },
   { key: "model", label: "Model", kind: "text" },
 ];
@@ -121,6 +134,13 @@ export function ExpertFormScreen(props: ExpertFormScreenProps): React.ReactEleme
   const visibleFields = React.useMemo(
     () => FIELDS.filter((field) => field.key !== "personaDescription" || visibleKind === "persona"),
     [visibleKind],
+  );
+
+  const isFieldRequired = React.useCallback(
+    (field: FormField): boolean => {
+      return REQUIRED_FIELDS.has(field.key);
+    },
+    [],
   );
 
   React.useEffect(() => {
@@ -294,6 +314,7 @@ export function ExpertFormScreen(props: ExpertFormScreenProps): React.ReactEleme
               field={field}
               isDirty={values[field.key] !== EMPTY_VALUES[field.key]}
               isEditing={mode === "edit" && index === cursor}
+              isRequired={isFieldRequired(field)}
               isSelected={index === cursor}
               onSubmit={() => {
                 commitText(field);
@@ -317,6 +338,7 @@ interface FieldRowProps {
   readonly field: FormField;
   readonly isDirty: boolean;
   readonly isEditing: boolean;
+  readonly isRequired: boolean;
   readonly isSelected: boolean;
   readonly onSubmit: () => void;
   readonly setEditBuffer: (value: string) => void;
@@ -325,7 +347,8 @@ interface FieldRowProps {
 
 function FieldRow(props: FieldRowProps): React.ReactElement {
   const labelPrefix = props.isDirty ? "*" : "";
-  const label = toSingleLineDisplay(`${labelPrefix}${props.field.label}`);
+  const requiredSuffix = props.isRequired ? " (required)" : "";
+  const label = toSingleLineDisplay(`${labelPrefix}${props.field.label}${requiredSuffix}`);
   const displayValue = props.isEditing ? props.editBuffer : props.value;
 
   if (props.isEditing && props.field.kind === "text") {
