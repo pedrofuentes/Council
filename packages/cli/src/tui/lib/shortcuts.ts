@@ -147,6 +147,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   {
     pattern: ROUTES.expertDetail,
     bindings: [
+      { keys: "c", description: "Chat" },
       { keys: "e", description: "Edit" },
       { keys: "d", description: "Delete" },
       { keys: "o", description: "Documents" },

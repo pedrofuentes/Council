@@ -145,6 +145,9 @@ export function ExpertDetailScreen(props: ExpertDetailScreenProps): React.ReactE
   const memoryState = useAsyncResource(memoryLoader);
   useInput(
     (input) => {
+      if (input === "c" && slug !== undefined) {
+        navigate(`/chat/expert/${encodeURIComponent(slug)}`);
+      }
       if (input === "e" && slug !== undefined) {
         navigate(`/experts/${encodeURIComponent(slug)}/edit`);
       }
@@ -187,6 +190,7 @@ export function ExpertDetailScreen(props: ExpertDetailScreenProps): React.ReactE
     <Box flexDirection="column">
       {renderDetail(state.data, props.theme)}
       {state.data.kind === "persona" ? renderMemorySection(memoryState, props.theme) : undefined}
+      <Text>{props.theme.muted(toSingleLineDisplay("c chat · e edit · d delete"))}</Text>
       {state.data.kind === "persona" ? (
         <Text>{props.theme.muted(toSingleLineDisplay("o documents · t train"))}</Text>
       ) : undefined}
