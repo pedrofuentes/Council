@@ -21,6 +21,13 @@ const NAV_WIDTH: Readonly<Record<NavState, number>> = { expanded: 14, rail: 3, h
 
 const CHROME_ROWS = 2;
 
+// Each pane (nav/main) is wrapped in a bordered box: the top+bottom border
+// consume two rows, and a single in-pane title label consumes one more. Subtract
+// them so scroll-height consumers (e.g. DebateStreamScreen) never overflow the
+// pinned terminal height.
+const PANE_BORDER_ROWS = 2;
+const PANE_TITLE_ROWS = 1;
+
 function adaptiveNav(columns: number): NavState {
   if (columns >= 120) return "expanded";
   if (columns >= 80) return "rail";
@@ -33,7 +40,7 @@ export function computeLayout(input: LayoutInput): LayoutPlan {
   const compactHeader = input.columns < 120;
   const footerLabels = input.columns >= 80;
   const mainWidth = Math.max(0, input.columns - NAV_WIDTH[navState]);
-  const contentHeight = Math.max(0, input.rows - CHROME_ROWS);
+  const contentHeight = Math.max(0, input.rows - CHROME_ROWS - PANE_BORDER_ROWS - PANE_TITLE_ROWS);
   return {
     navState,
     compactHeader,

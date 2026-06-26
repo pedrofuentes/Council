@@ -28,8 +28,7 @@ describe("LeftNav", () => {
     unmount();
   });
 
-  it("shows only glyphs in rail mode", () => {
-    const { lastFrame, unmount } = render(
+  it("shows only glyphs in rail mode", () => {    const { lastFrame, unmount } = render(
       <LeftNav items={items} activeId="home" state="rail" onSelect={() => undefined} theme={theme} />,
     );
     const frame = lastFrame() ?? "";
@@ -107,6 +106,39 @@ describe("LeftNav", () => {
     stdin.write("\r");
     await flush();
     expect(selected).toBe("experts");
+    unmount();
+  });
+
+  it("marks the active route with a stable marker and no cursor inverse when not focused", () => {
+    const { lastFrame, unmount } = render(
+      <LeftNav
+        items={items}
+        activeId="panels"
+        state="expanded"
+        isActive={false}
+        onSelect={() => undefined}
+        theme={theme}
+      />,
+    );
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("●"); // stable active-route marker
+    expect(frame).not.toContain("\u001b[7m"); // no moving cursor highlight when unfocused
+    unmount();
+  });
+
+  it("shows the moving cursor highlight (inverse) when focused", () => {
+    const { lastFrame, unmount } = render(
+      <LeftNav
+        items={items}
+        activeId="panels"
+        state="expanded"
+        isActive={true}
+        onSelect={() => undefined}
+        theme={theme}
+      />,
+    );
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("\u001b[7m"); // inverse cursor present when focused
     unmount();
   });
 });

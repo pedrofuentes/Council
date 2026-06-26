@@ -234,8 +234,18 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
       />
     ) : undefined;
 
+  const mainTitle = NAV_ITEMS.find((n) => n.id === navId)?.label ?? "";
+
   return (
-    <AppShell layout={layout} header={header} footer={footer} nav={nav}>
+    <AppShell
+      layout={layout}
+      header={header}
+      footer={footer}
+      nav={nav}
+      theme={theme}
+      focus={focus}
+      mainTitle={mainTitle}
+    >
       <StartupBanner warnings={props.startupWarnings ?? []} theme={theme} />
       {mode === "help" ? (
         <HelpModal
