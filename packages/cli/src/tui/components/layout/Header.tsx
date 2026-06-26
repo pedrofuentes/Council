@@ -16,12 +16,23 @@ export function Header(props: HeaderProps): React.ReactElement {
   const breadcrumb = toSingleLineDisplay(props.breadcrumb);
   const model = toSingleLineDisplay(props.model);
   return (
-    <Box justifyContent="space-between" paddingX={1}>
-      <Text>{props.theme.accent(`🏛 ${breadcrumb}`)}</Text>
+    <Box width="100%" justifyContent="space-between" paddingX={1}>
+      <Text>
+        {props.theme.enabled ? (
+          <>
+            <Text inverse>{props.theme.primary(" 🏛 ")}</Text>
+            {props.theme.accent(` ${breadcrumb}`)}
+          </>
+        ) : (
+          `🏛 ${breadcrumb}`
+        )}
+      </Text>
       {props.compact !== true && (
         <Text>
           {props.theme.muted(model)}
-          {props.premiumRequests !== undefined ? props.theme.muted(`  ◷ ${props.premiumRequests} req`) : ""}
+          {props.premiumRequests !== undefined
+            ? props.theme.muted(`  ◷ ${props.premiumRequests} req`)
+            : ""}
         </Text>
       )}
     </Box>

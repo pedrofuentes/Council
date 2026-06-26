@@ -6,6 +6,7 @@ import { Footer } from "../../../src/tui/components/layout/Footer.js";
 import { resolveTheme } from "../../../src/tui/theme/tokens.js";
 
 const theme = resolveTheme({ NO_COLOR: "1" });
+const coloredTheme = resolveTheme({});
 const hints = [
   { key: "j/k", label: "move" },
   { key: "↵", label: "open" },
@@ -42,6 +43,25 @@ describe("Footer", () => {
     const frame = lastFrame() ?? "";
     expect(frame).toContain("j/k");
     expect(frame).toContain("move");
+    unmount();
+  });
+});
+
+describe("Footer mode chip visual treatment", () => {
+  it("renders the mode badge as an inverse chip when colors are enabled", () => {
+    const { lastFrame, unmount } = render(<Footer hints={hints} mode="NAV" showLabels theme={coloredTheme} />);
+    const frame = lastFrame() ?? "";
+    // Ink's inverse prop produces \u001b[7m — present only when chip treatment is applied
+    expect(frame).toContain("\u001b[7m");
+    expect(frame).toContain("NAV");
+    unmount();
+  });
+
+  it("renders NO inverse chip in NO_COLOR mode — plain text fallback", () => {
+    const { lastFrame, unmount } = render(<Footer hints={hints} mode="NAV" showLabels theme={theme} />);
+    const frame = lastFrame() ?? "";
+    expect(frame).not.toContain("\u001b[7m");
+    expect(frame).toContain("NAV");
     unmount();
   });
 });
