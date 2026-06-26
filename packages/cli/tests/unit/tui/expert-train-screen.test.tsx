@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ExpertTrainingDataSource } from "../../../src/tui/adapters/expert-training.js";
 import { DataProvider, type TuiDataSources } from "../../../src/tui/components/DataProvider.js";
 import { InputCaptureProvider } from "../../../src/tui/components/InputCaptureProvider.js";
+import type { PathCompletion } from "../../../src/tui/lib/path-complete.js";
 import { ExpertTrainScreen } from "../../../src/tui/screens/ExpertTrainScreen.js";
 import { resolveTheme } from "../../../src/tui/theme/tokens.js";
 
@@ -28,6 +29,28 @@ function renderScreen(training?: ExpertTrainingDataSource): ReturnType<typeof re
             <Route
               path="/experts/:slug/train"
               element={<ExpertTrainScreen theme={theme} isActive />}
+            />
+          </Routes>
+        </MemoryRouter>
+      </InputCaptureProvider>
+    </DataProvider>,
+  );
+}
+
+function renderScreenWithComplete(
+  fakeCompletePath: (input: string) => Promise<PathCompletion>,
+  training?: ExpertTrainingDataSource,
+): ReturnType<typeof render> {
+  return render(
+    <DataProvider value={withTraining(training)}>
+      <InputCaptureProvider>
+        <MemoryRouter initialEntries={["/experts/cto/train"]}>
+          <Routes>
+            <Route
+              path="/experts/:slug/train"
+              element={
+                <ExpertTrainScreen theme={theme} isActive completePath={fakeCompletePath} />
+              }
             />
           </Routes>
         </MemoryRouter>
@@ -198,6 +221,92 @@ describe("ExpertTrainScreen", () => {
     await flush();
 
     expect(lastFrame()).toContain("Training failed: training unavailable");
+    unmount();
+  });
+});
+
+describe("ExpertTrainScreen — Tab completion and hint", () => {
+  it("renders the example hint line", () => {
+    const { lastFrame, unmount } = renderScreen();
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("Tab complete");
+    expect(frame).toContain("Enter train");
+    unmount();
+  });
+
+  it("Tab applies completion to the input", async () => {
+    const fakeComplete = vi.fn<(input: string) => Promise<PathCompletion>>().mockResolvedValue({
+      completed: "./docs/strategy.md",
+      candidates: ["./docs/strategy.md"],
+    });
+
+    const { stdin, lastFrame, unmount } = renderScreenWithComplete(fakeComplete);
+
+    stdin.write("./docs/str");
+    await flush();
+    stdin.write("\t");
+    await flush();
+
+    expect(fakeComplete).toHaveBeenCalledWith("./docs/str");
+    expect(lastFrame()).toContain("./docs/strategy.md");
+    unmount();
+  });
+
+  it("Tab renders completion candidates", async () => {
+    const fakeComplete = vi.fn<(input: string) => Promise<PathCompletion>>().mockResolvedValue({
+      completed: "./ba",
+      candidates: ["./bar.md", "./baz.md"],
+    });
+
+    const { stdin, lastFrame, unmount } = renderScreenWithComplete(fakeComplete);
+
+    stdin.write("b");
+    await flush();
+    stdin.write("\t");
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("./bar.md");
+    expect(frame).toContain("./baz.md");
+    unmount();
+  });
+
+  it("Tab sanitizes candidates before rendering", async () => {
+    const fakeComplete = vi.fn<(input: string) => Promise<PathCompletion>>().mockResolvedValue({
+      completed: "./",
+      candidates: ["./evil\x1b[31mfile.md", "./ok.md"],
+    });
+
+    const { stdin, lastFrame, unmount } = renderScreenWithComplete(fakeComplete);
+
+    stdin.write(".");
+    await flush();
+    stdin.write("\t");
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    expect(frame).not.toContain("\x1b[31m");
+    expect(frame).toContain("./evilfile.md");
+    expect(frame).toContain("./ok.md");
+    unmount();
+  });
+
+  it("Tab with no match leaves input unchanged and renders no candidates", async () => {
+    const fakeComplete = vi.fn<(input: string) => Promise<PathCompletion>>().mockResolvedValue({
+      completed: "zzz",
+      candidates: [],
+    });
+
+    const { stdin, lastFrame, unmount } = renderScreenWithComplete(fakeComplete);
+
+    stdin.write("zzz");
+    await flush();
+    stdin.write("\t");
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("zzz");
     unmount();
   });
 });
