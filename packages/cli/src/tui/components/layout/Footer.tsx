@@ -21,15 +21,19 @@ export interface FooterProps {
 
 export function Footer(props: FooterProps): React.ReactElement {
   const showLabels = props.showLabels ?? true;
-  const hintText = props.hints
-    .map((h) => (showLabels ? `${h.key} ${h.label}` : h.key))
-    .join("   ");
+  const hintText = props.hints.map((h) => (showLabels ? `${h.key} ${h.label}` : h.key)).join("   ");
   return (
-    <Box justifyContent="space-between" paddingX={1}>
+    <Box width="100%" justifyContent="space-between" paddingX={1}>
       <Text>{props.theme.muted(hintText)}</Text>
       <Text>
-        {props.status !== undefined ? props.theme.muted(toSingleLineDisplay(props.status) + "   ") : ""}
-        {props.theme.accent(props.mode)}
+        {props.status !== undefined
+          ? props.theme.muted(toSingleLineDisplay(props.status) + "   ")
+          : ""}
+        {props.theme.enabled ? (
+          <Text inverse>{props.theme.primary(` ${props.mode} `)}</Text>
+        ) : (
+          props.theme.accent(props.mode)
+        )}
       </Text>
     </Box>
   );
