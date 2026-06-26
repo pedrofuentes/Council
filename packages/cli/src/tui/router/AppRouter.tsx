@@ -68,8 +68,8 @@ const NAV_ITEMS = [
   { id: "home", label: "Home", glyph: "🏠" },
   { id: "panels", label: "Panels", glyph: "📋" },
   { id: "experts", label: "Experts", glyph: "👤" },
-  { id: "sessions", label: "Sessions", glyph: "💬" },
-  { id: "chats", label: "Chats", glyph: "📝" },
+  { id: "sessions", label: "Debates", glyph: "⚖" },
+  { id: "chats", label: "Conversations", glyph: "💬" },
   { id: "settings", label: "Settings", glyph: "⚙" },
 ];
 

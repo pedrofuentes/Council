@@ -147,4 +147,31 @@ describe("SessionsScreen", () => {
 
     expect(lastFrame()).toMatch(/No debates/i);
   });
+
+  it("shows 'Debates' as the list title when items are loaded", async () => {
+    const { lastFrame } = render(
+      <DataProvider
+        value={withSessions(async () => [
+          {
+            panelId: "p1",
+            panelName: "Growth Council",
+            topic: "",
+            debateCount: 1,
+            turnCount: 4,
+            latestStatus: "completed",
+            updatedAt: "2026-06-22T11:00:00.000Z",
+          },
+        ])}
+      >
+        <MemoryRouter initialEntries={["/sessions"]}>
+          <SessionsScreen theme={theme} isActive />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+
+    expect(lastFrame()).toContain("Debates");
+    expect(lastFrame()).not.toContain("Sessions  ");
+  });
 });

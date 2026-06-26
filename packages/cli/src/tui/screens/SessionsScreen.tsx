@@ -63,7 +63,7 @@ export function SessionsScreen(props: SessionsScreenProps): React.ReactElement {
         }
       }}
       theme={props.theme}
-      title="Sessions"
+      title="Debates"
       emptyText={props.theme.accent("No debates yet — convene a panel to watch them deliberate")}
       stdout={props.stdout}
       renderPreview={(id) => {

@@ -76,7 +76,7 @@ mode."* Explicit subcommands bypass the TUI entirely, so agents/scripts/CI are u
 ### 4.2 Navigation — hybrid + collapsible left nav, max 3 levels
 - **Home dashboard** is the landing view: recent sessions (dominant scrollable list), quick-action
   CTAs (Convene, New expert, New panel, Settings), and counts (N sessions / N experts / N panels).
-- **Collapsible left nav** (Home / Panels / Experts / Sessions / Chats / Settings) — combines the
+- **Collapsible left nav** (Home / Panels / Experts / Debates / Conversations / Settings) — combines the
   hybrid model with an optional fixed sidebar. Three states: **expanded** (labels) / **icon rail**
   (~3 cols, orientation kept) / **hidden** (max reading width). Adaptive default by width
   (expanded ≥120 · rail 80–119 · hidden <80) plus a manual toggle on a dedicated configurable key —
@@ -97,8 +97,8 @@ mode."* Explicit subcommands bypass the TUI entirely, so agents/scripts/CI are u
 │ ▸ Home     │  Recent sessions                                Quick actions          │
 │   Panels   │  ┌───────────────────────────────────────────┐  ┌──────────────────┐   │
 │   Experts  │  │ ●  Microservices migration  2d  5 experts │  │ c  Convene       │   │
-│   Sessions │  │ ○  Q1 roadmap planning      1w  4 experts │  │ e  New expert    │   │
-│   Chats    │  │ ○  Security audit review    2w  concluded✓│  │ p  New panel     │   │
+│   Debates  │  │ ○  Q1 roadmap planning      1w  4 experts │  │ e  New expert    │   │
+│   Convs.   │  │ ○  Security audit review    2w  concluded✓│  │ p  New panel     │   │
 │   Settings │  └───────────────────────────────────────────┘  │ ,  Settings      │   │
 │            │                                                  └──────────────────┘   │
 │ 9 experts  │  12 sessions · 9 experts · 5 panels                                     │

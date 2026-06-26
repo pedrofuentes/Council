@@ -21,8 +21,8 @@ describe("routeToBreadcrumb", () => {
     expect(routeToBreadcrumb("/")).toBe("Home");
     expect(routeToBreadcrumb("/panels")).toBe("Panels");
     expect(routeToBreadcrumb("/experts")).toBe("Experts");
-    expect(routeToBreadcrumb("/sessions")).toBe("Sessions");
-    expect(routeToBreadcrumb("/chats")).toBe("Chats");
+    expect(routeToBreadcrumb("/sessions")).toBe("Debates");
+    expect(routeToBreadcrumb("/chats")).toBe("Conversations");
     expect(routeToBreadcrumb("/settings")).toBe("Settings");
     expect(routeToBreadcrumb("/onboarding")).toBe("Onboarding");
   });
@@ -32,9 +32,11 @@ describe("routeToBreadcrumb", () => {
     expect(routeToBreadcrumb("/panels/acme/members")).toBe("Panels › acme › Members");
     expect(routeToBreadcrumb("/experts/cto")).toBe("Experts › cto");
     expect(routeToBreadcrumb("/experts/cto/train")).toBe("Experts › cto › Train");
-    expect(routeToBreadcrumb("/sessions/abc")).toBe("Sessions › abc");
-    expect(routeToBreadcrumb("/sessions/abc/conclude")).toBe("Sessions › abc › Conclusion");
-    expect(routeToBreadcrumb("/chat/expert/cto")).toBe("Chats › cto");
+    expect(routeToBreadcrumb("/sessions/abc")).toBe("Debates › abc");
+    expect(routeToBreadcrumb("/sessions/abc/conclude")).toBe("Debates › abc › Conclusion");
+    expect(routeToBreadcrumb("/sessions/abc/export")).toBe("Debates › abc › Export");
+    expect(routeToBreadcrumb("/chat/expert/cto")).toBe("Conversations › cto");
+    expect(routeToBreadcrumb("/chat/panel/strategy")).toBe("Conversations › strategy");
   });
 
   it("maps the convene flow with the panel entity", () => {
