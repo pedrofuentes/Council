@@ -50,6 +50,8 @@ export function ExpertTrainScreen(props: ExpertTrainScreenProps): React.ReactEle
   const [progress, setProgress] = React.useState<readonly TrainingProgress[]>([]);
   const [candidates, setCandidates] = React.useState<readonly string[]>([]);
   const inFlight = React.useRef(false);
+  const unmountedRef = React.useRef(false);
+  const reqIdRef = React.useRef(0);
   const completer = props.completePath ?? defaultCompletePath;
 
   React.useEffect(() => {
@@ -58,6 +60,13 @@ export function ExpertTrainScreen(props: ExpertTrainScreenProps): React.ReactEle
       setCaptured(false);
     };
   }, [setCaptured]);
+
+  React.useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+    };
+  }, []);
 
   const submit = React.useCallback(
     (value: string): void => {
@@ -96,10 +105,17 @@ export function ExpertTrainScreen(props: ExpertTrainScreenProps): React.ReactEle
         submit(filePath);
       }
       if (key.tab) {
-        void completer(filePath).then((completion) => {
-          setFilePath(completion.completed);
-          setCandidates(completion.candidates);
-        });
+        const myReq = ++reqIdRef.current;
+        void (async (): Promise<void> => {
+          try {
+            const completion = await completer(filePath);
+            if (unmountedRef.current || myReq !== reqIdRef.current) return;
+            setFilePath(completion.completed);
+            setCandidates(completion.candidates);
+          } catch {
+            // Absorbed: completer errors are non-fatal; input stays unchanged.
+          }
+        })();
       }
     },
     { isActive: props.isActive ?? false },
