@@ -211,7 +211,10 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
             ? "NAV"
             : "MAIN";
 
-  const footerGlobals = layout.footerLabels ? "^K Palette   ? Help" : "^K   ?";
+  const atHome = location.pathname === ROUTES.home;
+  const footerGlobals = layout.footerLabels
+    ? `${atHome ? "" : "Esc Back   "}^K Palette   ? Help   q Quit`
+    : `${atHome ? "" : "Esc   "}^K   ?   q`;
 
   const footer = (
     <Footer
