@@ -15,6 +15,8 @@ const flush = async (): Promise<void> => {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setImmediate(r));
 };
 
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
 const withTranscript = (
   loadTranscript: (panelName: string) => Promise<SessionTranscriptView | undefined>,
 ): TuiDataSources => ({
@@ -216,5 +218,94 @@ describe("SessionDetailScreen", () => {
 
     // Navigated to the export route, threading the panel name through state.
     expect(lastFrame()).toContain("EXPORT Acme");
+  });
+
+  it("opens the action menu when a is pressed", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withTranscript(async () => ({
+          panelName: "Acme",
+          topic: "",
+          prompt: "Decide",
+          status: "completed",
+          lines: [],
+        }))}
+      >
+        <MemoryRouter initialEntries={[{ pathname: "/sessions/p1", state: { panelName: "Acme" } }]}>
+          <Routes>
+            <Route path="/sessions/:id" element={<SessionDetailScreen theme={theme} isActive />} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("a");
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("Actions");
+    expect(frame).toContain("Conclude");
+    expect(frame).toContain("Export");
+  });
+
+  it("selecting Conclude from the action menu navigates the same as pressing c directly", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withTranscript(async () => ({
+          panelName: "Acme",
+          topic: "",
+          prompt: "Decide",
+          status: "completed",
+          lines: [],
+        }))}
+      >
+        <MemoryRouter initialEntries={[{ pathname: "/sessions/p1", state: { panelName: "Acme" } }]}>
+          <Routes>
+            <Route path="/sessions/:id" element={<SessionDetailScreen theme={theme} isActive />} />
+            <Route path="/sessions/:id/conclude" element={<ConcludeProbe />} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("a"); // open menu
+    await flush();
+    stdin.write("\r"); // select first item (c Conclude)
+    await flush();
+
+    expect(lastFrame()).toContain("CONCLUDE Acme");
+  });
+
+  it("pressing Esc in the action menu closes it", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withTranscript(async () => ({
+          panelName: "Acme",
+          topic: "",
+          prompt: "Decide",
+          status: "completed",
+          lines: [],
+        }))}
+      >
+        <MemoryRouter initialEntries={[{ pathname: "/sessions/p1", state: { panelName: "Acme" } }]}>
+          <Routes>
+            <Route path="/sessions/:id" element={<SessionDetailScreen theme={theme} isActive />} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("a");
+    await flush();
+    expect(lastFrame()).toContain("Actions");
+
+    await sleep(20);
+    stdin.write("\u001b"); // Esc — Ink buffers a lone Esc for disambiguation
+    await sleep(120);
+
+    expect(lastFrame()).not.toContain("Actions");
   });
 });

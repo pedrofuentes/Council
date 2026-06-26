@@ -14,6 +14,8 @@ const flush = async (): Promise<void> => {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setImmediate(r));
 };
 
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
 const withDetail = (
   loadDetail: (slug: string) => Promise<ExpertDetailView | undefined>,
 ): TuiDataSources => ({
@@ -395,5 +397,95 @@ describe("ExpertDetailScreen", () => {
     expect(lastFrame()).toContain("c chat");
     expect(lastFrame()).toContain("o documents");
     expect(lastFrame()).toContain("t train");
+  });
+
+  it("opens the action menu with base actions when a is pressed for a generic expert", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider value={withDetail(async () => detailFor({ kind: "generic", slug: "ops" }))}>
+        <MemoryRouter initialEntries={[{ pathname: "/experts/ops" }]}>
+          <Routes>
+            <Route path="/experts/:slug" element={<ExpertDetailScreen theme={theme} isActive />} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("a");
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("Actions");
+    expect(frame).toContain("Chat");
+    expect(frame).toContain("Edit");
+    expect(frame).toContain("Delete");
+  });
+
+  it("opens the action menu with persona actions when a is pressed for a persona expert", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider value={withDetail(async () => detailFor({ kind: "persona", slug: "cto" }))}>
+        <MemoryRouter initialEntries={[{ pathname: "/experts/cto" }]}>
+          <Routes>
+            <Route path="/experts/:slug" element={<ExpertDetailScreen theme={theme} isActive />} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("a");
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("Actions");
+    expect(frame).toContain("Chat");
+    expect(frame).toContain("Edit");
+    expect(frame).toContain("Delete");
+    expect(frame).toContain("Documents");
+    expect(frame).toContain("Train");
+  });
+
+  it("selecting Chat from the action menu navigates the same as pressing c directly", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider value={withDetail(async () => detailFor({ kind: "generic", slug: "ops" }))}>
+        <MemoryRouter initialEntries={[{ pathname: "/experts/ops" }]}>
+          <Routes>
+            <Route path="/experts/:slug" element={<ExpertDetailScreen theme={theme} isActive />} />
+            <Route path="/chat/expert/:slug" element={<Text>CHAT ROUTE</Text>} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("a"); // open menu
+    await flush();
+    stdin.write("\r"); // select first item (c Chat)
+    await flush();
+
+    expect(lastFrame()).toContain("CHAT ROUTE");
+  });
+
+  it("pressing Esc in the action menu closes it", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider value={withDetail(async () => detailFor({ kind: "generic", slug: "ops" }))}>
+        <MemoryRouter initialEntries={[{ pathname: "/experts/ops" }]}>
+          <Routes>
+            <Route path="/experts/:slug" element={<ExpertDetailScreen theme={theme} isActive />} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("a");
+    await flush();
+    expect(lastFrame()).toContain("Actions");
+
+    await sleep(20);
+    stdin.write("\u001b"); // Esc — Ink buffers a lone Esc for disambiguation
+    await sleep(120);
+
+    expect(lastFrame()).not.toContain("Actions");
   });
 });
