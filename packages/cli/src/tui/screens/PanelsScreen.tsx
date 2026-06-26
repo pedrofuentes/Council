@@ -45,7 +45,7 @@ export function PanelsScreen(props: PanelsScreenProps): React.ReactElement {
     const description = toSingleLineDisplay(panel.description);
     const prefix = `${name}  ${panel.memberCount} experts`;
     return {
-      id: panel.name,
+      id: `${panel.source}:${panel.name}`,
       label: description === "" ? prefix : `${prefix}  ${description}`,
     };
   });
@@ -55,7 +55,7 @@ export function PanelsScreen(props: PanelsScreenProps): React.ReactElement {
       items={items}
       isActive={props.isActive ?? false}
       onSelect={(id) => {
-        const panel = state.data.find((p) => p.name === id);
+        const panel = state.data.find((p) => `${p.source}:${p.name}` === id);
         if (panel !== undefined) {
           navigate(`/panels/${encodeURIComponent(panel.name)}`, {
             state: { source: panel.source },
