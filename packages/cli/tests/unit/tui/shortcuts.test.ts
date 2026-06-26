@@ -49,6 +49,11 @@ describe("shortcutsForRoute", () => {
     expect(find(b, "t")?.description).toBe("Train");
   });
 
+  it("includes a Chat binding with key c on the expert detail route", () => {
+    const b = shortcutsForRoute("/experts/some-slug");
+    expect(find(b, "c")?.description).toBe("Chat");
+  });
+
   it("resolves the static /experts/new ahead of /experts/:slug", () => {
     const b = shortcutsForRoute("/experts/new");
     expect(b.some((x) => x.description === "Documents")).toBe(false);
