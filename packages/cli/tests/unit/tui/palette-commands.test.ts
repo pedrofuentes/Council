@@ -13,6 +13,8 @@ describe("buildPaletteCommands", () => {
       "go-sessions",
       "go-chats",
       "go-settings",
+      "new-panel",
+      "compose-panel",
       "new-expert",
       "help",
       "quit",
@@ -26,6 +28,8 @@ describe("buildPaletteCommands", () => {
       "go-sessions",
       "go-chats",
       "go-settings",
+      "new-panel",
+      "compose-panel",
       "new-expert",
       "help",
       "quit",
@@ -39,6 +43,8 @@ describe("buildPaletteCommands", () => {
       "go-experts",
       "go-sessions",
       "go-settings",
+      "new-panel",
+      "compose-panel",
       "new-expert",
       "help",
       "quit",
@@ -62,6 +68,8 @@ describe("buildPaletteCommands", () => {
       expect.objectContaining({ id: "go-sessions", kind: "navigate" }),
       expect.objectContaining({ id: "go-chats", kind: "navigate" }),
       expect.objectContaining({ id: "go-settings", kind: "navigate" }),
+      expect.objectContaining({ id: "new-panel", kind: "navigate", route: "/panels/new" }),
+      expect.objectContaining({ id: "compose-panel", kind: "navigate", route: "/panels/compose" }),
       expect.objectContaining({ id: "new-expert", kind: "navigate", route: "/experts/new" }),
       expect.objectContaining({ id: "help", kind: "help" }),
       expect.objectContaining({ id: "quit", kind: "quit" }),
@@ -72,5 +80,46 @@ describe("buildPaletteCommands", () => {
     expect(buildPaletteCommands({ navId: "experts" })).toContainEqual(
       expect.objectContaining({ id: "new-expert", label: "New expert", route: "/experts/new" }),
     );
+  });
+
+  it("includes a New panel creation verb with route /panels/new", () => {
+    const actions = buildPaletteCommands({ navId: "home" });
+    expect(actions).toContainEqual(
+      expect.objectContaining({ id: "new-panel", label: "New panel", route: "/panels/new", kind: "navigate" }),
+    );
+  });
+
+  it("includes an Auto-compose a panel creation verb with route /panels/compose", () => {
+    const actions = buildPaletteCommands({ navId: "home" });
+    expect(actions).toContainEqual(
+      expect.objectContaining({
+        id: "compose-panel",
+        label: "Auto-compose a panel",
+        route: "/panels/compose",
+        kind: "navigate",
+      }),
+    );
+  });
+
+  it("includes creation verbs regardless of current navId", () => {
+    for (const navId of ["home", "panels", "experts", "sessions", "chats", "settings"]) {
+      const ids = buildPaletteCommands({ navId }).map((a) => a.id);
+      expect(ids).toContain("new-panel");
+      expect(ids).toContain("compose-panel");
+      expect(ids).toContain("new-expert");
+    }
+  });
+
+  it("groups creation verbs before help and quit in the returned order", () => {
+    const ids = buildPaletteCommands({ navId: "home" }).map((a) => a.id);
+    const newPanelIdx = ids.indexOf("new-panel");
+    const composePanelIdx = ids.indexOf("compose-panel");
+    const newExpertIdx = ids.indexOf("new-expert");
+    const helpIdx = ids.indexOf("help");
+    const quitIdx = ids.indexOf("quit");
+    expect(newPanelIdx).toBeLessThan(helpIdx);
+    expect(composePanelIdx).toBeLessThan(helpIdx);
+    expect(newExpertIdx).toBeLessThan(helpIdx);
+    expect(helpIdx).toBeLessThan(quitIdx);
   });
 });
