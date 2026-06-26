@@ -49,9 +49,18 @@ export function LeftNav(props: LeftNavProps): React.ReactElement {
     <Box flexDirection="column" paddingX={1}>
       {props.items.map((item, i) => {
         const label = toSingleLineDisplay(item.label);
-        const text = props.state === "rail" ? item.glyph : `${item.glyph} ${label}`;
+        const body = props.state === "rail" ? item.glyph : `${item.glyph} ${label}`;
+        const isCursor = isActive && i === cursor;
+        const isActiveRoute = item.id === props.activeId;
+        // When unfocused, the active route is shown with a stable marker rather
+        // than the moving cursor, so "which route am I on" stays unambiguous.
+        const showMarker = !isActive && isActiveRoute;
+        const marker = showMarker ? "●" : " ";
+        const content = `${marker} ${body}`;
+        const text =
+          showMarker && props.theme.enabled ? props.theme.primary(content) : content;
         return (
-          <Text key={item.id} inverse={i === cursor}>
+          <Text key={item.id} inverse={isCursor}>
             {text}
           </Text>
         );
