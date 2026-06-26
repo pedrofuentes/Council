@@ -324,4 +324,76 @@ describe("ExpertDetailScreen", () => {
     expect(lastFrame()).toContain("Loading expert…");
     expect(lastFrame()).not.toContain("TRAIN ROUTE");
   });
+
+  it("navigates to the chat route when c is pressed for a generic expert", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider value={withDetail(async () => detailFor({ kind: "generic", slug: "ops" }))}>
+        <MemoryRouter initialEntries={[{ pathname: "/experts/ops" }]}>
+          <Routes>
+            <Route path="/experts/:slug" element={<ExpertDetailScreen theme={theme} isActive />} />
+            <Route path="/chat/expert/:slug" element={<Text>CHAT ROUTE</Text>} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("c");
+    await flush();
+
+    expect(lastFrame()).toContain("CHAT ROUTE");
+  });
+
+  it("navigates to the chat route when c is pressed for a persona expert", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider value={withDetail(async () => detailFor({ kind: "persona", slug: "cto" }))}>
+        <MemoryRouter initialEntries={[{ pathname: "/experts/cto" }]}>
+          <Routes>
+            <Route path="/experts/:slug" element={<ExpertDetailScreen theme={theme} isActive />} />
+            <Route path="/chat/expert/:slug" element={<Text>CHAT ROUTE</Text>} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("c");
+    await flush();
+
+    expect(lastFrame()).toContain("CHAT ROUTE");
+  });
+
+  it("renders the c chat hint for a generic expert", async () => {
+    const { lastFrame } = render(
+      <DataProvider value={withDetail(async () => detailFor({ kind: "generic", slug: "ops" }))}>
+        <MemoryRouter initialEntries={[{ pathname: "/experts/ops" }]}>
+          <Routes>
+            <Route path="/experts/:slug" element={<ExpertDetailScreen theme={theme} isActive />} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+
+    expect(lastFrame()).toContain("c chat");
+  });
+
+  it("renders the c chat hint and persona hints for a persona expert", async () => {
+    const { lastFrame } = render(
+      <DataProvider value={withDetail(async () => detailFor({ kind: "persona", slug: "cto" }))}>
+        <MemoryRouter initialEntries={[{ pathname: "/experts/cto" }]}>
+          <Routes>
+            <Route path="/experts/:slug" element={<ExpertDetailScreen theme={theme} isActive />} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+
+    expect(lastFrame()).toContain("c chat");
+    expect(lastFrame()).toContain("o documents");
+    expect(lastFrame()).toContain("t train");
+  });
 });
