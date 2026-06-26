@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Text, useInput } from "ink";
+import { Box, Text, useInput } from "ink";
 import { useNavigate } from "react-router";
 
 import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
@@ -7,11 +7,13 @@ import type { ExpertListItem, ExpertsDataSource } from "../adapters/experts-data
 import { useData } from "../components/DataProvider.js";
 import { ListViewport, type ListViewportItem } from "../components/lists/ListViewport.js";
 import { useAsyncResource } from "../hooks/use-async-resource.js";
+import { type ResizableStdout } from "../hooks/use-terminal-size.js";
 import type { SemanticTheme } from "../theme/tokens.js";
 
 export interface ExpertsScreenProps {
   readonly theme: SemanticTheme;
   readonly isActive?: boolean;
+  readonly stdout?: ResizableStdout;
 }
 
 const EMPTY_LIST: () => Promise<readonly ExpertListItem[]> = async () => [];
@@ -50,6 +52,8 @@ export function ExpertsScreen(props: ExpertsScreenProps): React.ReactElement {
     ),
   }));
 
+  const expertData = state.data;
+
   return (
     <ListViewport
       items={items}
@@ -63,6 +67,20 @@ export function ExpertsScreen(props: ExpertsScreenProps): React.ReactElement {
         "No experts yet — [n] create one. Experts are the members of your panels.",
       )}
       onFilterModeChange={setIsFiltering}
+      stdout={props.stdout}
+      renderPreview={(id) => {
+        const expert = expertData.find((e) => e.slug === id);
+        if (expert === undefined) return null;
+        return (
+          <Box flexDirection="column">
+            <Text bold>{toSingleLineDisplay(expert.displayName)}</Text>
+            <Text>
+              {toSingleLineDisplay(expert.role)} [{expert.kind}]
+            </Text>
+            <Text>{String(expert.panelCount)} panels</Text>
+          </Box>
+        );
+      }}
     />
   );
 }

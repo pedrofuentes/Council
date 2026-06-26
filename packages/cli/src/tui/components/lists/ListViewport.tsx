@@ -4,13 +4,14 @@ import { Box, Text, useInput } from "ink";
 import { toSingleLineDisplay } from "../../../cli/strip-control-chars.js";
 import { fuzzyMatch } from "../../lib/fuzzy.js";
 import { computeScrollWindow } from "../../lib/scroll.js";
-import { useTerminalSize } from "../../hooks/use-terminal-size.js";
+import { useTerminalSize, type ResizableStdout } from "../../hooks/use-terminal-size.js";
 import type { SemanticTheme } from "../../theme/tokens.js";
 
 const CHROME_ALLOWANCE = 6;
 const MIN_HEIGHT = 3;
 const SELECTION_PREFIX = "› ";
 const PLAIN_PREFIX = "  ";
+const PREVIEW_MIN_COLS = 120;
 
 export interface ListViewportItem {
   readonly id: string;
@@ -27,10 +28,14 @@ export interface ListViewportProps {
   readonly emptyText?: string;
   readonly title?: string;
   readonly onFilterModeChange?: (active: boolean) => void;
+  /** Optional preview renderer: called with the highlighted item's id when wide enough. */
+  readonly renderPreview?: (selectedId: string) => React.ReactNode;
+  /** Injectable stdout for terminal-size detection (primarily for tests). */
+  readonly stdout?: ResizableStdout;
 }
 
 export function ListViewport(props: ListViewportProps): React.ReactElement {
-  const { rows } = useTerminalSize();
+  const { rows, columns } = useTerminalSize({ stdout: props.stdout });
   const [cursor, setCursor] = useState(0);
   const [filterMode, setFilterMode] = useState(false);
   const [filterQuery, setFilterQuery] = useState("");
@@ -161,7 +166,7 @@ export function ListViewport(props: ListViewportProps): React.ReactElement {
   const visibleItems = filteredItems.slice(scrollWindow.start, scrollWindow.end);
   const overflowCount = filteredCount - scrollWindow.end;
 
-  return (
+  const listPane = (
     <Box flexDirection="column">
       <Text>{buildHeader()}</Text>
       {visibleItems.map((item, i) => {
@@ -180,4 +185,27 @@ export function ListViewport(props: ListViewportProps): React.ReactElement {
       {overflowCount > 0 && <Text>↓ {overflowCount} more</Text>}
     </Box>
   );
+
+  const selectedId = filteredItems[safeCursor]?.id ?? "";
+  const showPreview = props.renderPreview !== undefined && columns >= PREVIEW_MIN_COLS;
+
+  if (showPreview) {
+    return (
+      <Box flexDirection="row">
+        <Box flexGrow={1}>{listPane}</Box>
+        <Box
+          borderStyle="single"
+          marginLeft={1}
+          flexDirection="column"
+          padding={1}
+          flexBasis={Math.floor(columns * 0.4)}
+          flexShrink={0}
+        >
+          {props.renderPreview(selectedId)}
+        </Box>
+      </Box>
+    );
+  }
+
+  return listPane;
 }
