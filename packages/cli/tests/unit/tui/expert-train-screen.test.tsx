@@ -286,6 +286,36 @@ describe("ExpertTrainScreen — completion guards", () => {
     expect(completedWasAccessed).toBe(false);
   });
 
+  it("discards a stale completion when the user edits the input after pressing Tab", async () => {
+    let resolveDeferred!: (val: PathCompletion) => void;
+    const deferred = new Promise<PathCompletion>((res) => {
+      resolveDeferred = res;
+    });
+    const fakeComplete = vi
+      .fn<(input: string) => Promise<PathCompletion>>()
+      .mockReturnValue(deferred);
+
+    const { stdin, lastFrame, unmount } = renderScreenWithComplete(fakeComplete);
+
+    stdin.write("./docs/str");
+    await flush();
+    stdin.write("\t"); // Tab: starts the deferred completion
+    await flush();
+
+    // User edits the input before the completion resolves.
+    stdin.write("ing");
+    await flush();
+
+    // Resolve the deferred with a result that should now be stale.
+    resolveDeferred({ completed: "./docs/strategy.md", candidates: ["./docs/strategy.md"] });
+    await flush();
+
+    // The user's edited value must win; the stale completion must be discarded.
+    expect(lastFrame()).toContain("./docs/string");
+    expect(lastFrame()).not.toContain("./docs/strategy.md");
+    unmount();
+  });
+
   it("uses the latest Tab result and discards stale earlier completions", async () => {
     let resolveFirst!: (val: PathCompletion) => void;
     let resolveSecond!: (val: PathCompletion) => void;
