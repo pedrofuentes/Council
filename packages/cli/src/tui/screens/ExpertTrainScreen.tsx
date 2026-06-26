@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useCallback } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { useParams } from "react-router";
@@ -11,11 +11,13 @@ import type {
 } from "../adapters/expert-training.js";
 import { useData } from "../components/DataProvider.js";
 import { useInputCapture } from "../components/InputCaptureProvider.js";
+import { completePath as defaultCompletePath, type PathCompletion } from "../lib/path-complete.js";
 import type { SemanticTheme } from "../theme/tokens.js";
 
 export interface ExpertTrainScreenProps {
   readonly theme: SemanticTheme;
   readonly isActive?: boolean;
+  readonly completePath?: (input: string) => Promise<PathCompletion>;
 }
 
 type TrainState =
@@ -46,7 +48,16 @@ export function ExpertTrainScreen(props: ExpertTrainScreenProps): React.ReactEle
   const [filePath, setFilePath] = React.useState("");
   const [state, setState] = React.useState<TrainState>({ status: "idle" });
   const [progress, setProgress] = React.useState<readonly TrainingProgress[]>([]);
+  const [candidates, setCandidates] = React.useState<readonly string[]>([]);
   const inFlight = React.useRef(false);
+  const unmountedRef = React.useRef(false);
+  const reqIdRef = React.useRef(0);
+  const completer = props.completePath ?? defaultCompletePath;
+
+  const handleChange = useCallback((value: string): void => {
+    reqIdRef.current += 1; // any edit supersedes a pending completion
+    setFilePath(value);
+  }, []);
 
   React.useEffect(() => {
     setCaptured(true);
@@ -54,6 +65,13 @@ export function ExpertTrainScreen(props: ExpertTrainScreenProps): React.ReactEle
       setCaptured(false);
     };
   }, [setCaptured]);
+
+  React.useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+    };
+  }, []);
 
   const submit = React.useCallback(
     (value: string): void => {
@@ -91,6 +109,19 @@ export function ExpertTrainScreen(props: ExpertTrainScreenProps): React.ReactEle
       if (key.return) {
         submit(filePath);
       }
+      if (key.tab) {
+        const myReq = ++reqIdRef.current;
+        void (async (): Promise<void> => {
+          try {
+            const completion = await completer(filePath);
+            if (unmountedRef.current || myReq !== reqIdRef.current) return;
+            setFilePath(completion.completed);
+            setCandidates(completion.candidates);
+          } catch {
+            // Absorbed: completer errors are non-fatal; input stays unchanged.
+          }
+        })();
+      }
     },
     { isActive: props.isActive ?? false },
   );
@@ -101,11 +132,23 @@ export function ExpertTrainScreen(props: ExpertTrainScreenProps): React.ReactEle
         <Text>{props.theme.accent("Document file path: ")}</Text>
         <TextInput
           focus={(props.isActive ?? false) && state.status !== "training"}
-          onChange={setFilePath}
+          onChange={handleChange}
           onSubmit={submit}
           value={toSingleLineDisplay(filePath)}
         />
       </Box>
+      <Text>
+        {props.theme.muted(
+          "e.g. ./docs/strategy.md  ·  Tab complete · Enter train · Esc back",
+        )}
+      </Text>
+      {candidates.length > 0 ? (
+        <Box flexDirection="column">
+          {candidates.map((c, i) => (
+            <Text key={`${c}-${String(i)}`}>{toSingleLineDisplay(c)}</Text>
+          ))}
+        </Box>
+      ) : null}
       {state.status === "training" ? <Text>{props.theme.muted("Training persona…")}</Text> : null}
       {progress.map((item, index) => (
         <Text key={`${item.filename}-${String(index)}`}>
