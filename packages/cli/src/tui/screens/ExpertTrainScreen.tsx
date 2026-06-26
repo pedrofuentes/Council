@@ -11,11 +11,13 @@ import type {
 } from "../adapters/expert-training.js";
 import { useData } from "../components/DataProvider.js";
 import { useInputCapture } from "../components/InputCaptureProvider.js";
+import { completePath as defaultCompletePath, type PathCompletion } from "../lib/path-complete.js";
 import type { SemanticTheme } from "../theme/tokens.js";
 
 export interface ExpertTrainScreenProps {
   readonly theme: SemanticTheme;
   readonly isActive?: boolean;
+  readonly completePath?: (input: string) => Promise<PathCompletion>;
 }
 
 type TrainState =
@@ -46,7 +48,9 @@ export function ExpertTrainScreen(props: ExpertTrainScreenProps): React.ReactEle
   const [filePath, setFilePath] = React.useState("");
   const [state, setState] = React.useState<TrainState>({ status: "idle" });
   const [progress, setProgress] = React.useState<readonly TrainingProgress[]>([]);
+  const [candidates, setCandidates] = React.useState<readonly string[]>([]);
   const inFlight = React.useRef(false);
+  const completer = props.completePath ?? defaultCompletePath;
 
   React.useEffect(() => {
     setCaptured(true);
@@ -91,6 +95,12 @@ export function ExpertTrainScreen(props: ExpertTrainScreenProps): React.ReactEle
       if (key.return) {
         submit(filePath);
       }
+      if (key.tab) {
+        void completer(filePath).then((completion) => {
+          setFilePath(completion.completed);
+          setCandidates(completion.candidates);
+        });
+      }
     },
     { isActive: props.isActive ?? false },
   );
@@ -106,6 +116,18 @@ export function ExpertTrainScreen(props: ExpertTrainScreenProps): React.ReactEle
           value={toSingleLineDisplay(filePath)}
         />
       </Box>
+      <Text>
+        {props.theme.muted(
+          "e.g. ./docs/strategy.md  ·  Tab complete · Enter train · Esc back",
+        )}
+      </Text>
+      {candidates.length > 0 ? (
+        <Box flexDirection="column">
+          {candidates.map((c, i) => (
+            <Text key={`${c}-${String(i)}`}>{toSingleLineDisplay(c)}</Text>
+          ))}
+        </Box>
+      ) : null}
       {state.status === "training" ? <Text>{props.theme.muted("Training persona…")}</Text> : null}
       {progress.map((item, index) => (
         <Text key={`${item.filename}-${String(index)}`}>
