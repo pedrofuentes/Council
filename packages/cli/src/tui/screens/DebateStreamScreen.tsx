@@ -7,6 +7,8 @@ import type { ConveneDataSource, ConveneViewEvent } from "../adapters/convene.js
 import { useData } from "../components/DataProvider.js";
 import { useInputCapture } from "../components/InputCaptureProvider.js";
 import { ScrollView } from "../components/lists/ScrollView.js";
+import type { ExpertPalette } from "../theme/expert-palette.js";
+import { resolveExpertPalette } from "../theme/expert-palette.js";
 import type { SemanticTheme } from "../theme/tokens.js";
 
 export interface DebateStreamScreenProps {
@@ -15,14 +17,14 @@ export interface DebateStreamScreenProps {
   readonly maxRows?: number;
 }
 
-interface TurnView {
+export interface TurnView {
   readonly expert: string;
   readonly round: number;
   readonly body: string;
   readonly done: boolean;
 }
 
-interface DebateView {
+export interface DebateView {
   readonly experts: readonly string[];
   readonly turns: readonly TurnView[];
   readonly cost: { readonly premiumRequests: number; readonly estimatedTotal: number } | undefined;
@@ -82,15 +84,21 @@ function applyEvent(view: DebateView, event: ConveneViewEvent): DebateView {
   }
 }
 
-function transcriptLines(view: DebateView): readonly string[] {
+export function transcriptLines(
+  view: DebateView,
+  palette: ExpertPalette,
+  theme: SemanticTheme,
+): readonly string[] {
   const lines: string[] = [];
   let lastRound: number | undefined;
   for (const turn of view.turns) {
     if (turn.round !== lastRound) {
-      lines.push(toSingleLineDisplay(`── Round ${String(turn.round)} ──`));
+      // round number is a trusted integer — toSingleLineDisplay is defensive only
+      lines.push(theme.muted(toSingleLineDisplay(`── Round ${String(turn.round)} ──`)));
       lastRound = turn.round;
     }
-    lines.push(toSingleLineDisplay(`${turn.expert}:`));
+    // Sanitize FIRST, then colorize — never apply color to a raw model string
+    lines.push(palette.boldColor(turn.expert)(toSingleLineDisplay(`${turn.expert}:`)));
     // Untrusted streamed body: toSingleLineDisplay strips control chars AND
     // collapses CR/LF/U+2028/U+2029 runs, so a turn cannot CR-overwrite a row
     // or forge a new transcript line. Each turn body renders as one row.
@@ -209,7 +217,7 @@ export function DebateStreamScreen(props: DebateStreamScreenProps): React.ReactE
     );
   }
 
-  const lines = transcriptLines(view);
+  const lines = transcriptLines(view, resolveExpertPalette(process.env), props.theme);
   const responder = activeExpert(view);
   const transcriptHeight = props.maxRows ?? 12;
 

@@ -328,7 +328,6 @@ describe("transcriptLines — pure formatter", () => {
   const noColorPalette = resolveExpertPalette({ NO_COLOR: "1" });
   const noColorTheme = resolveTheme({ NO_COLOR: "1" });
   const colorPalette = resolveExpertPalette({});
-  const colorTheme = resolveTheme({});
 
   const baseView = {
     experts: [] as readonly string[],
