@@ -514,7 +514,7 @@ describe("AppRouter", () => {
 
     await flush();
 
-    expect(lastFrame()).toContain("Slug:");
+    expect(lastFrame()).toContain("Slug (required):");
     expect(lastFrame()).toContain("Kind: generic");
     expect(lastFrame()).toContain("↑↓ move · Enter edit · Ctrl+S save · Esc back");
     expect(lastFrame()).not.toContain("Expert not found");
@@ -579,8 +579,8 @@ describe("AppRouter", () => {
 
     await flush();
 
-    expect(lastFrame()).toContain("Display name: Chief Technology Officer");
-    expect(lastFrame()).toContain("Slug: cto");
+    expect(lastFrame()).toContain("Chief Technology Officer");
+    expect(lastFrame()).toContain("Slug (required):");
     expect(lastFrame()).not.toContain("Expert not found");
   });
 
