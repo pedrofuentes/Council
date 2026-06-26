@@ -178,4 +178,22 @@ describe("PanelsScreen", () => {
 
     expect(lastFrame()).toContain("COMPOSE PANEL");
   });
+
+  it("renders the ListViewport count header (position/total)", async () => {
+    const { lastFrame } = render(
+      <DataProvider
+        value={withPanels(async () => [
+          { name: "alpha", description: "", memberCount: 1, source: "saved" },
+          { name: "beta", description: "", memberCount: 2, source: "template" },
+        ])}
+      >
+        <MemoryRouter initialEntries={["/panels"]}>
+          <PanelsScreen theme={theme} isActive />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+    await flush();
+    // ListViewport header must contain "1/2" (cursor=1, total=2)
+    expect(lastFrame()).toMatch(/1\/2/);
+  });
 });
