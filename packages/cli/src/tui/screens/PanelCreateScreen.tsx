@@ -86,7 +86,10 @@ export function PanelCreateScreen(props: PanelCreateScreenProps): React.ReactEle
         return;
       }
       if (key.tab) {
-        setField((current) => (current === "name" ? "members" : "name"));
+        const noExperts = expertState.status === "loaded" && expertState.data.length === 0;
+        if (!noExperts) {
+          setField((current) => (current === "name" ? "members" : "name"));
+        }
       }
     },
     { isActive },
