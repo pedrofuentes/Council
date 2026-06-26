@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useCallback } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { useParams } from "react-router";
@@ -53,6 +53,11 @@ export function ExpertTrainScreen(props: ExpertTrainScreenProps): React.ReactEle
   const unmountedRef = React.useRef(false);
   const reqIdRef = React.useRef(0);
   const completer = props.completePath ?? defaultCompletePath;
+
+  const handleChange = useCallback((value: string): void => {
+    reqIdRef.current += 1; // any edit supersedes a pending completion
+    setFilePath(value);
+  }, []);
 
   React.useEffect(() => {
     setCaptured(true);
@@ -127,7 +132,7 @@ export function ExpertTrainScreen(props: ExpertTrainScreenProps): React.ReactEle
         <Text>{props.theme.accent("Document file path: ")}</Text>
         <TextInput
           focus={(props.isActive ?? false) && state.status !== "training"}
-          onChange={setFilePath}
+          onChange={handleChange}
           onSubmit={submit}
           value={toSingleLineDisplay(filePath)}
         />
