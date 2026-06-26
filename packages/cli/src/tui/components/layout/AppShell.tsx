@@ -21,7 +21,7 @@ export function AppShell(props: AppShellProps): React.ReactElement {
   }
   const showNav = props.layout.navState !== "hidden" && props.nav !== undefined;
   return (
-    <Box flexDirection="column" height="100%">
+    <Box flexDirection="column" width={props.layout.columns} height={props.layout.rows}>
       {props.header}
       <Box flexGrow={1}>
         {showNav ? <Box>{props.nav}</Box> : null}

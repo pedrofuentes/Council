@@ -6,6 +6,9 @@ export interface LayoutPlan {
   readonly footerLabels: boolean;
   readonly tooNarrow: boolean;
   readonly mainWidth: number;
+  readonly columns: number;
+  readonly rows: number;
+  readonly contentHeight: number;
 }
 
 export interface LayoutInput {
@@ -15,6 +18,8 @@ export interface LayoutInput {
 }
 
 const NAV_WIDTH: Readonly<Record<NavState, number>> = { expanded: 14, rail: 3, hidden: 0 };
+
+const CHROME_ROWS = 2;
 
 function adaptiveNav(columns: number): NavState {
   if (columns >= 120) return "expanded";
@@ -28,5 +33,15 @@ export function computeLayout(input: LayoutInput): LayoutPlan {
   const compactHeader = input.columns < 120;
   const footerLabels = input.columns >= 80;
   const mainWidth = Math.max(0, input.columns - NAV_WIDTH[navState]);
-  return { navState, compactHeader, footerLabels, tooNarrow, mainWidth };
+  const contentHeight = Math.max(0, input.rows - CHROME_ROWS);
+  return {
+    navState,
+    compactHeader,
+    footerLabels,
+    tooNarrow,
+    mainWidth,
+    columns: input.columns,
+    rows: input.rows,
+    contentHeight,
+  };
 }

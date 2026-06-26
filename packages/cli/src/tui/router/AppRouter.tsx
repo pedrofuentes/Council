@@ -14,6 +14,7 @@ import { LeftNav } from "../components/navigation/LeftNav.js";
 import { CommandPalette } from "../components/overlays/CommandPalette.js";
 import { HelpModal } from "../components/overlays/HelpModal.js";
 import { computeLayout, type NavState } from "../lib/breakpoints.js";
+import { useTerminalSize } from "../hooks/use-terminal-size.js";
 import { shortcutsForRoute } from "../lib/shortcuts.js";
 import { routeToTelemetryLabel } from "../lib/telemetry.js";
 import type { StartupWarning } from "../lib/startup-warnings.js";
@@ -117,8 +118,9 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
     telemetry?.record({ name: "screen.view", label: routeToTelemetryLabel(location.pathname) });
   }, [telemetry, location.pathname]);
 
-  const actualColumns = props.initialColumns ?? stdout?.columns ?? 80;
-  const actualRows = props.initialRows ?? stdout?.rows ?? 24;
+  const live = useTerminalSize({ stdout });
+  const actualColumns = props.initialColumns ?? live.columns;
+  const actualRows = props.initialRows ?? live.rows;
 
   const [navOverride, setNavOverride] = useState<NavState | undefined>(undefined);
   const [mode, setMode] = useState<FocusMode>("nav");
@@ -287,7 +289,13 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
           />
           <Route
             path={ROUTES.debateRun}
-            element={<DebateStreamScreen theme={theme} isActive={mainActive} />}
+            element={
+              <DebateStreamScreen
+                theme={theme}
+                isActive={mainActive}
+                maxRows={Math.max(4, layout.contentHeight - 6)}
+              />
+            }
           />
           <Route
             path={ROUTES.experts}
