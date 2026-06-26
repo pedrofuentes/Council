@@ -803,4 +803,48 @@ describe("AppRouter", () => {
     expect(lastFrame()).toMatch(/markdown/i);
     expect(lastFrame()).not.toContain("Coming soon");
   });
+
+  it("shows 'Debates' breadcrumb on the /sessions route", async () => {
+    const { lastFrame } = render(
+      <DataProvider value={withSessions()}>
+        <MemoryRouter initialEntries={["/sessions"]}>
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+    await flush();
+    expect(lastFrame()).toContain("Debates");
+    expect(lastFrame()).not.toContain("Sessions");
+  });
+
+  it("shows 'Conversations' breadcrumb on the /chats route", async () => {
+    const value = {
+      panels: { loadList: async () => [], loadDetail: async () => undefined },
+      chats: { list: async () => [] },
+    } as TuiDataSources;
+    const { lastFrame } = render(
+      <DataProvider value={value}>
+        <MemoryRouter initialEntries={["/chats"]}>
+          <AppRouter homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+    await flush();
+    expect(lastFrame()).toContain("Conversations");
+    expect(lastFrame()).not.toContain("Chats");
+  });
+
+  it("renders 'Debates' and 'Conversations' labels in the expanded left nav", async () => {
+    const { lastFrame } = render(
+      <DataProvider value={withPanels()}>
+        <CouncilTUI homeData={homeData} model="gpt-4o" initialColumns={120} initialRows={30} />
+      </DataProvider>,
+    );
+    await flush();
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("Debates");
+    expect(frame).toContain("Conversations");
+    expect(frame).not.toContain("Sessions");
+    expect(frame).not.toContain("Chats");
+  });
 });

@@ -81,7 +81,7 @@ describe("ChatsScreen", () => {
 
     await flush();
 
-    expect(lastFrame()).toMatch(/No chats/i);
+    expect(lastFrame()).toMatch(/No conversations/i);
   });
 
   it("shows an error state", async () => {
@@ -179,6 +179,32 @@ describe("ChatsScreen", () => {
 
     await flush();
 
-    expect(lastFrame()).toMatch(/No chats/i);
+    expect(lastFrame()).toMatch(/No conversations/i);
+  });
+
+  it("shows 'Conversations' as the list title when items are loaded", async () => {
+    const { lastFrame } = render(
+      <DataProvider
+        value={withChats(async () => [
+          {
+            id: "c1",
+            targetType: "expert",
+            targetSlug: "cto",
+            title: "Roadmap review",
+            when: "2h",
+            status: "active",
+          },
+        ])}
+      >
+        <MemoryRouter initialEntries={["/chats"]}>
+          <ChatsScreen theme={theme} isActive />
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+
+    expect(lastFrame()).toContain("Conversations");
+    expect(lastFrame()).not.toContain("Chats  ");
   });
 });
