@@ -113,7 +113,10 @@ export function createPanelComposeSource(deps: PanelComposeDeps): PanelComposeDa
       try {
         const memberSlugs: string[] = [];
         for (const expert of definition.experts) {
-          const slug = await resolveCollisionFreeSlug(expert.slug, deps.library.get);
+          const slug = await resolveCollisionFreeSlug(
+            expert.slug,
+            deps.library.get.bind(deps.library),
+          );
           await deps.library.create(allowlistExpertDefinition(expert, slug));
           createdSlugs.push(slug);
           memberSlugs.push(slug);
@@ -133,7 +136,7 @@ export function createPanelComposeSource(deps: PanelComposeDeps): PanelComposeDa
         });
         return { panelName: definition.name };
       } catch (err) {
-        await rollbackCreatedExperts(createdSlugs, deps.library.delete);
+        await rollbackCreatedExperts(createdSlugs, deps.library.delete?.bind(deps.library));
         throw err;
       }
     },

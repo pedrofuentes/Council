@@ -239,6 +239,41 @@ describe("createPanelComposeSource", () => {
     ).rejects.toThrow(error);
   });
 
+  it("preserves receiver when library methods are prototype-based (detached-this regression)", async () => {
+    class ClassLibrary {
+      created: ExpertDefinition[] = [];
+
+      async get(slug: string): Promise<ExpertDefinition | null> {
+        return this.created.find((e) => e.slug === slug) ?? null;
+      }
+
+      async create(def: ExpertDefinition): Promise<void> {
+        this.created.push(def);
+      }
+
+      async delete(slug: string, _options: { readonly force: boolean }): Promise<undefined> {
+        const idx = this.created.findIndex((e) => e.slug === slug);
+        if (idx >= 0) this.created.splice(idx, 1);
+        return undefined;
+      }
+    }
+
+    const library = new ClassLibrary();
+    const createPanel = vi.fn<Parameters<PanelAuthoringDataSource["create"]>, Promise<void>>(
+      async () => undefined,
+    );
+    const source = createPanelComposeSource({
+      engineFactory: createEngine,
+      defaultModel: "mock-model",
+      library,
+      createPanel,
+      composeFn: vi.fn(async () => definition()),
+    });
+
+    await expect(source.persist(definition())).resolves.toEqual({ panelName: "strategy-panel" });
+    expect(library.created).toHaveLength(2);
+  });
+
   it("continues rollback when deleting one created expert fails", async () => {
     const library = createLibrary();
     library.delete.mockRejectedValueOnce(new Error("delete failed"));
