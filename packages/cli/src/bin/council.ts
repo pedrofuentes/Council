@@ -17,12 +17,14 @@
  *   - `doctor`     diagnose Council setup
  */
 import * as childProcess from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 import { Command } from "commander";
 
 import packageJson from "../../package.json" with { type: "json" };
 
 import { installSqliteExperimentalWarningFilter } from "./sqlite-warning-filter.js";
+import { maybeReexecToSuppressSqliteWarning } from "./sqlite-warning-reexec.js";
 
 import { buildAskCommand } from "../cli/commands/ask.js";
 import { buildChatCommand } from "../cli/commands/chat.js";
@@ -441,6 +443,27 @@ if (isMainModule) {
   // point, never on import. (Importing `@council-ai/cli` must stay free of side
   // effects; see tests/unit/bin/import-side-effects.test.ts.)
   //
+  // On Windows the `node:sqlite` ExperimentalWarning escapes the in-process
+  // `process.stderr.write` filter below, so — interactively, when no warning is
+  // already disabled — re-exec once with `--disable-warning=ExperimentalWarning`
+  // (Node never emits it then). The child inherits stdio so the TUI keeps the
+  // real terminal; we exit with its status. macOS/Linux and non-TTY (agent/pipe)
+  // runs skip this and rely on the cheap filter. Done first so the parent exits
+  // before its own deferred warning can fire.
+  const reexec = maybeReexecToSuppressSqliteWarning({
+    platform: process.platform,
+    execPath: process.execPath,
+    execArgv: process.execArgv,
+    argv: process.argv,
+    env: process.env,
+    scriptPath: fileURLToPath(import.meta.url),
+    stderrIsTTY: Boolean(process.stderr.isTTY),
+    spawnSync: childProcess.spawnSync,
+  });
+  if (reexec.reexeced) {
+    process.exit(reexec.status);
+  }
+
   // `installSqliteExperimentalWarningFilter()` patches `process.emitWarning`
   // and `process.stderr.write` to drop Node's `node:sqlite` ExperimentalWarning.
   // That warning is queued when `node:sqlite` is loaded (transitively, while
