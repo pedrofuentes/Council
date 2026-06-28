@@ -64,13 +64,16 @@ export interface CouncilTUIProps {
 
 type FocusTarget = "nav" | "main";
 
-const NAV_ITEMS = [
+// Glyphs use emoji presentation (full-width). U+2696/U+2699 are text-default,
+// single-width symbols, so they need an explicit VS16 (U+FE0F) to match the
+// width of the other emoji — otherwise the icon hugs its label with no gap.
+export const NAV_ITEMS = [
   { id: "home", label: "Home", glyph: "🏠" },
   { id: "panels", label: "Panels", glyph: "📋" },
   { id: "experts", label: "Experts", glyph: "👤" },
-  { id: "sessions", label: "Debates", glyph: "⚖" },
+  { id: "sessions", label: "Debates", glyph: "⚖️" },
   { id: "chats", label: "Conversations", glyph: "💬" },
-  { id: "settings", label: "Settings", glyph: "⚙" },
+  { id: "settings", label: "Settings", glyph: "⚙️" },
 ];
 
 const HELP_ENTRIES = [
