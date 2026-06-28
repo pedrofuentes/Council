@@ -17,3 +17,10 @@ overrides:
 onlyBuiltDependencies:
   - esbuild
   - sharp
+
+# pnpm 11 removed onlyBuiltDependencies (merged into the allowBuilds map). Keep both
+# keys so installs are clean on pnpm 10 (CI / packageManager pin) AND pnpm 11+.
+# See https://pnpm.io/migration. Drop onlyBuiltDependencies once the repo is on pnpm 11.
+allowBuilds:
+  esbuild: true
+  sharp: true
