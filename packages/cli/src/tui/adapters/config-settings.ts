@@ -1,3 +1,5 @@
+import { AVAILABLE_PROVIDER_IDS } from "../../engine/providers.js";
+
 export type SettingsFieldKind = "string" | "number" | "boolean" | "enum";
 
 export interface SettingsFieldDescriptor {
@@ -34,7 +36,7 @@ export const SETTINGS_FIELDS: readonly SettingsFieldDescriptor[] = [
     section: "Defaults",
     label: "Engine",
     kind: "enum",
-    options: ["copilot", "mock", "openai", "anthropic"],
+    options: [...AVAILABLE_PROVIDER_IDS],
   },
   {
     path: "defaults.maxRounds",
@@ -64,20 +66,6 @@ export const SETTINGS_FIELDS: readonly SettingsFieldDescriptor[] = [
     max: 2000,
   },
   { path: "telemetry.enabled", section: "Telemetry", label: "Telemetry enabled", kind: "boolean" },
-  {
-    path: "providers.openai.apiKeyEnvVar",
-    section: "Providers",
-    label: "OpenAI API key env var",
-    kind: "string",
-    optional: true,
-  },
-  {
-    path: "providers.anthropic.apiKeyEnvVar",
-    section: "Providers",
-    label: "Anthropic API key env var",
-    kind: "string",
-    optional: true,
-  },
   {
     path: "expert.recencyHalfLifeDays",
     section: "Expert",
