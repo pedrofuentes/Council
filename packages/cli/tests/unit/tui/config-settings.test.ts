@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { AVAILABLE_PROVIDER_IDS } from "../../../src/engine/providers.js";
 import {
   SETTINGS_FIELDS,
   buildSettingsFields,
@@ -55,11 +56,13 @@ describe("validateField", () => {
       });
     });
 
-    it("accepts empty optional strings", () => {
-      expect(validateField(field("providers.openai.apiKeyEnvVar"), "   ")).toEqual({
-        ok: true,
-        value: "",
-      });
+    it("has no apiKeyEnvVar field for unavailable providers", () => {
+      expect(
+        SETTINGS_FIELDS.find((f) => f.path === "providers.openai.apiKeyEnvVar"),
+      ).toBeUndefined();
+      expect(
+        SETTINGS_FIELDS.find((f) => f.path === "providers.anthropic.apiKeyEnvVar"),
+      ).toBeUndefined();
     });
 
     it("rejects control characters", () => {
@@ -189,8 +192,12 @@ describe("validateField", () => {
     it("rejects values outside the enum options", () => {
       expect(validateField(field("defaults.engine"), "local")).toEqual({
         ok: false,
-        error: "Must be one of: copilot, mock, openai, anthropic",
+        error: "Must be one of: copilot, mock",
       });
+    });
+
+    it("engine options match AVAILABLE_PROVIDER_IDS exactly", () => {
+      expect(field("defaults.engine").options).toEqual(AVAILABLE_PROVIDER_IDS);
     });
   });
 });
@@ -202,7 +209,7 @@ describe("buildSettingsFields", () => {
       telemetry: { enabled: true },
     });
 
-    expect(fields).toHaveLength(18);
+    expect(fields).toHaveLength(16);
     expect(fields.find((candidate) => candidate.path === "defaults.model")?.value).toBe("gpt-5");
     expect(fields.find((candidate) => candidate.path === "defaults.maxRounds")?.value).toBe("7");
     expect(fields.find((candidate) => candidate.path === "telemetry.enabled")?.value).toBe("true");
@@ -219,7 +226,7 @@ describe("createSettingsDataSource", () => {
 
     const fields = await dataSource.load();
 
-    expect(fields).toHaveLength(18);
+    expect(fields).toHaveLength(16);
     expect(fields.find((candidate) => candidate.path === "defaults.model")?.value).toBe("gpt-5");
   });
 
