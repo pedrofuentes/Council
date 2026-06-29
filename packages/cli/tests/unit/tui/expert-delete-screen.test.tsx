@@ -242,6 +242,33 @@ describe("ExpertDeleteScreen", () => {
     unmount();
   });
 
+  it("shows an error and stays on the confirm screen when authoring is unavailable", async () => {
+    const sources: TuiDataSources = {
+      panels: { loadList: async () => [], loadDetail: async () => undefined },
+    };
+    const { stdin, lastFrame, unmount } = render(
+      <InputCaptureProvider>
+        <DataProvider value={sources}>
+          <MemoryRouter initialEntries={["/experts", "/experts/cto/delete"]} initialIndex={1}>
+            <Routes>
+              <Route path="/experts" element={<Text>LIST</Text>} />
+              <Route path="/experts/:slug/delete" element={<ExpertDeleteScreen theme={theme} />} />
+            </Routes>
+          </MemoryRouter>
+        </DataProvider>
+      </InputCaptureProvider>,
+    );
+
+    await flush();
+    stdin.write("y");
+    await flush();
+
+    expect(lastFrame()).not.toContain("LIST");
+    expect(lastFrame()).toContain('Delete expert "cto"?');
+    expect(lastFrame() ?? "").toMatch(/unavailable/i);
+    unmount();
+  });
+
   it("shows a sanitized error and stays on the confirm screen when delete fails", async () => {
     const remove = vi.fn(async () => {
       throw new Error("nope\nbad\u001B[31m");
