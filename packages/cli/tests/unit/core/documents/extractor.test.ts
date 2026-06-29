@@ -619,4 +619,64 @@ describe("extractDocument", () => {
       expect(messages.some((m) => m.includes("ai-fallback"))).toBe(true);
     });
   });
+
+  // #649: the `_realpathOverride` / `_readFileOverride` seams bypass TOCTOU
+  // and torn-read guarantees. They must take effect ONLY under test
+  // (NODE_ENV === "test") so a production caller cannot pass them to defeat
+  // the security sequence. Vitest sets NODE_ENV="test", so the seam works
+  // in-suite; flipping NODE_ENV to "production" must make the extractor fall
+  // back to the real fs path and ignore the override entirely.
+  describe("test-only override gating (#649)", () => {
+    const originalEnv = process.env.NODE_ENV;
+    afterEach(() => {
+      process.env.NODE_ENV = originalEnv;
+    });
+
+    it("honors _realpathOverride when NODE_ENV='test'", async () => {
+      process.env.NODE_ENV = "test";
+      const inside = path.join(dir, "real.txt");
+      const decoy = path.join(dir, "decoy.txt");
+      await fs.writeFile(inside, "real-content");
+      await fs.writeFile(decoy, "decoy-content");
+      await expect(
+        extractDocument(inside, {
+          confinementRoot: dir,
+          _realpathOverride: async (p: string) => {
+            if (path.resolve(p) === path.resolve(inside)) return decoy;
+            return fs.realpath(p);
+          },
+        }),
+      ).rejects.toThrow(/TOCTOU|mismatch|changed/i);
+    });
+
+    it("ignores _realpathOverride in production (real fs path taken)", async () => {
+      process.env.NODE_ENV = "production";
+      const inside = path.join(dir, "real.txt");
+      const decoy = path.join(dir, "decoy.txt");
+      await fs.writeFile(inside, "real-content");
+      await fs.writeFile(decoy, "decoy-content");
+      // If the override were honored it would fake a post-resolve swap and
+      // throw TOCTOU; gated off, the real realpath resolves inside → success.
+      const result = await extractDocument(inside, {
+        confinementRoot: dir,
+        _realpathOverride: async (p: string) => {
+          if (path.resolve(p) === path.resolve(inside)) return decoy;
+          return fs.realpath(p);
+        },
+      });
+      expect(result.content).toBe("real-content");
+    });
+
+    it("ignores _readFileOverride in production (real read taken)", async () => {
+      process.env.NODE_ENV = "production";
+      const filePath = path.join(dir, "doc.txt");
+      await fs.writeFile(filePath, "full content here");
+      // A honored short-read override would trip torn-read detection; gated
+      // off, the real fh.readFile() returns the full bytes → success.
+      const result = await extractDocument(filePath, {
+        _readFileOverride: async (_fh: fs.FileHandle) => Buffer.from("full", "utf-8"),
+      });
+      expect(result.content).toBe("full content here");
+    });
+  });
 });

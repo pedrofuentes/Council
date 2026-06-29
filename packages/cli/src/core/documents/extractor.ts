@@ -109,15 +109,15 @@ export interface ExtractDocumentOptions {
   /**
    * Test seam — replace `fs.realpath` for the duration of a single
    * call. Used by the unit tests to simulate a post-resolve inode swap
-   * without racing the filesystem. Production callers leave this
-   * undefined.
+   * without racing the filesystem. Honored ONLY when NODE_ENV === "test"
+   * (#649); ignored in production so it cannot bypass confinement/TOCTOU.
    */
   readonly _realpathOverride?: (p: string) => Promise<string>;
   /**
    * Test seam — replace the file-handle read operation. Used to simulate
    * short reads (kernel returns fewer bytes than stat reported) for
-   * regression testing of torn-read detection. Production callers leave
-   * this undefined.
+   * regression testing of torn-read detection. Honored ONLY when
+   * NODE_ENV === "test" (#649); ignored in production.
    */
   readonly _readFileOverride?: (fh: fs.FileHandle) => Promise<Buffer>;
   /**
@@ -181,7 +181,12 @@ export async function extractDocument(
   filePath: string,
   options: ExtractDocumentOptions = {},
 ): Promise<DocumentContent> {
-  const realpath = options._realpathOverride ?? fs.realpath;
+  // #649: the `_realpathOverride` / `_readFileOverride` test seams bypass the
+  // TOCTOU / confinement / torn-read guarantees. They are honored ONLY under
+  // test (NODE_ENV === "test"); a production caller passing them is silently
+  // ignored so the security sequence cannot be defeated from outside tests.
+  const isTestEnv = process.env.NODE_ENV === "test";
+  const realpath = (isTestEnv ? options._realpathOverride : undefined) ?? fs.realpath;
   const maxBytes = options.maxFileSizeBytes ?? DEFAULT_MAX_FILE_SIZE_BYTES;
 
   // 1. Open via fd FIRST. The kernel resolves any symlink at this
@@ -239,7 +244,9 @@ export async function extractDocument(
 
     // 6. Read via the file handle (NOT path) so the read targets the
     //    inode bound at step 1, immune to any post-open path swap.
-    const readFile = options._readFileOverride ?? ((fh: fs.FileHandle) => fh.readFile());
+    const readFile =
+      (isTestEnv ? options._readFileOverride : undefined) ??
+      ((fh: fs.FileHandle) => fh.readFile());
     const buf = await readFile(fh);
     const checksum = createHash("sha256").update(buf).digest("hex");
 
