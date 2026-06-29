@@ -498,3 +498,52 @@ describe("attemptAiFallback — magic-byte blocklist gate (🔴 fix)", () => {
     expect(messages.some((m) => /blocklist/i.test(m) && /signature/i.test(m))).toBe(true);
   });
 });
+
+describe("attemptAiFallback — error resilience (#985)", () => {
+  // A buffer whose helpers throw mid-extraction (e.g. corrupted Buffer):
+  // subarray() raises, simulating a hash/slice failure after the gates pass.
+  function corruptCtx(): ExtractionContext {
+    const buffer = Buffer.from([0x01, 0x02, 0x03, 0x04]);
+    Object.defineProperty(buffer, "subarray", {
+      value: (): never => {
+        throw new Error("corrupt buffer");
+      },
+    });
+    return makeCtx(buffer, ".xyz");
+  }
+
+  it("returns null instead of throwing when a helper throws", async () => {
+    await expect(attemptAiFallback(corruptCtx(), AUTO_ANY)).resolves.toBeNull();
+  });
+
+  it("logs a warning when an internal error is caught", async () => {
+    const { logger, messages } = captureLogger();
+    await attemptAiFallback(corruptCtx(), AUTO_ANY, { logger });
+    expect(messages.some((m) => m.startsWith("warn:") && /error|fail/i.test(m))).toBe(true);
+  });
+});
+
+describe("attemptAiFallback — abort signal (#986)", () => {
+  function abortedCtx(): ExtractionContext {
+    const ac = new AbortController();
+    ac.abort();
+    return { ...makeCtx(Buffer.from("data")), signal: ac.signal };
+  }
+
+  it("returns null when ctx.signal is already aborted", async () => {
+    const result = await attemptAiFallback(abortedCtx(), AUTO_ANY);
+    expect(result).toBeNull();
+  });
+
+  it("logs a warning mentioning cancellation when aborted", async () => {
+    const { logger, messages } = captureLogger();
+    await attemptAiFallback(abortedCtx(), AUTO_ANY, { logger });
+    expect(messages.some((m) => m.startsWith("warn:") && /abort|cancel/i.test(m))).toBe(true);
+  });
+
+  it("does not populate the cache when aborted", async () => {
+    const cache = new Map<string, AiFallbackContent>();
+    await attemptAiFallback(abortedCtx(), AUTO_ANY, { cache });
+    expect(cache.size).toBe(0);
+  });
+});
