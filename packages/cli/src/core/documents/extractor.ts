@@ -167,14 +167,33 @@ function unsupportedFormatError(ext: string, filePath: string): ExtractionError 
  * at the security boundary without changing the no-fallback behavior.)
  */
 async function resolveExtractor(ext: string, buf: Buffer): Promise<ContentExtractor | null> {
-  let extractor = await getExtractor(ext).catch(() => null);
+  let extractor = await tryGetExtractor(ext);
   if (extractor === null) {
     const detected = detectFormatByMagicBytes(buf);
     if (detected !== null) {
-      extractor = await getExtractor(detected).catch(() => null);
+      extractor = await tryGetExtractor(detected);
     }
   }
   return extractor;
+}
+
+/**
+ * Look up an extractor, treating ONLY a registered `unsupported-format`
+ * miss as "no extractor" (#932). Every other failure — a loader's dynamic
+ * import failing, an extractor init error, a transient dependency fault —
+ * is a real error and re-thrown unchanged. Swallowing them as `null` (the
+ * old `.catch(() => null)` pattern) masked genuine faults behind a
+ * fallthrough to magic-byte probing or a misleading `unsupported-format`.
+ */
+async function tryGetExtractor(ext: string): Promise<ContentExtractor | null> {
+  try {
+    return await getExtractor(ext);
+  } catch (err) {
+    if (err instanceof ExtractionError && err.kind === "unsupported-format") {
+      return null;
+    }
+    throw err;
+  }
 }
 
 export async function extractDocument(
