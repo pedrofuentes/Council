@@ -30,7 +30,7 @@
 import { ulid } from "ulid";
 
 import { type CouncilEngine, type ExpertSpec, sendWithEmptyRetry } from "../engine/index.js";
-import type { HumanInputProvider } from "./human-input.js";
+import type { HumanInputProvider, HumanInputResult } from "./human-input.js";
 
 import { generateCanary, checkCanaryLeak } from "./canary.js";
 import {
@@ -657,13 +657,33 @@ export class Debate {
       return null;
     }
 
-    const result = await this.#humanInput.getInput({
-      expertSlug: expert.slug,
-      displayName: expert.displayName,
-      round,
-      seq,
-      prompt,
-    });
+    let result: HumanInputResult;
+    try {
+      result = await this.#humanInput.getInput({
+        expertSlug: expert.slug,
+        displayName: expert.displayName,
+        round,
+        seq,
+        prompt,
+      });
+    } catch (err: unknown) {
+      // #208: a throw from getInput() must not propagate unguarded. Emit a
+      // structured error + cost.update (parity with the AI-turn failure path)
+      // and continue the debate with the remaining participants.
+      const message = err instanceof Error ? err.message : String(err);
+      yield {
+        kind: "error",
+        expertSlug: expert.slug,
+        message: `Human input failed: ${message}`,
+        recoverable: false,
+      };
+      yield {
+        kind: "cost.update",
+        premiumRequests: counters.premiumRequests,
+        estimatedTotal: counters.estimatedTotal,
+      };
+      return null;
+    }
 
     if (result.kind === "cancelled") {
       yield {
@@ -680,18 +700,36 @@ export class Debate {
       return null;
     }
 
+    // #206: trim and treat blank/whitespace-only submissions as cancelled so
+    // they are never persisted as a valid turn.
+    const content = result.content.trim();
+    if (content.length === 0) {
+      yield {
+        kind: "error",
+        expertSlug: expert.slug,
+        message: "Human input cancelled: empty submission",
+        recoverable: false,
+      };
+      yield {
+        kind: "cost.update",
+        premiumRequests: counters.premiumRequests,
+        estimatedTotal: counters.estimatedTotal,
+      };
+      return null;
+    }
+
     const turnId = ulid();
     yield {
       kind: "turn.delta",
       expertSlug: expert.slug,
-      text: result.content,
+      text: content,
       speakerKind: "human",
     };
     yield {
       kind: "turn.end",
       expertSlug: expert.slug,
       turnId,
-      content: result.content,
+      content,
       speakerKind: "human",
     };
 
@@ -702,7 +740,7 @@ export class Debate {
       estimatedTotal: counters.estimatedTotal,
     };
 
-    return result.content;
+    return content;
   }
 
   async *#runAiTurn(
@@ -937,6 +975,12 @@ export class Debate {
       // priority over recoverable backoff so we don't sleep + reissue.
       if (lastErrorRecoverable && attempt < maxRetries && !signal?.aborted) {
         const delay = backoffMs[attempt] ?? 0;
+        // #184: a failed attempt may have already streamed partial deltas to
+        // consumers. Signal them to discard that abandoned content before the
+        // retry's fresh deltas arrive, so renderers don't concatenate both.
+        if (emitDeltas && content.length > 0) {
+          yield { kind: "turn.discard", expertSlug: expert.slug };
+        }
         yield {
           kind: "turn.retry",
           expertSlug: expert.slug,

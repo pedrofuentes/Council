@@ -123,6 +123,9 @@ export class PlainRenderer implements Renderer {
             ),
           );
           break;
+        case "turn.discard":
+          this.write(this.gray(`[discard] ${evt.expertSlug} partial response discarded\n`));
+          break;
         case "turn.quality_gate": {
           const name = this.#displayNames.get(evt.expertSlug) ?? evt.expertSlug;
           const failures = this.sanitizeLine(evt.failures.join(", "));

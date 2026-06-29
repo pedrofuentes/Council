@@ -120,6 +120,18 @@ export type DebateEvent =
     }
   | {
       /**
+       * Emitted immediately BEFORE a `turn.retry` when a failed attempt has
+       * already streamed partial `turn.delta`s (#184). It instructs consumers
+       * to DISCARD all accumulated content for this turn so the retry's fresh
+       * deltas are not appended to the abandoned attempt's text. Renderers
+       * that buffer per-turn content MUST clear it; persistence ignores this
+       * event (it only writes on `turn.end`).
+       */
+      readonly kind: "turn.discard";
+      readonly expertSlug: string;
+    }
+  | {
+      /**
        * Emitted when the anti-sycophancy quality gate (see
        * `core/quality-gate.ts`) flags an assembled expert response. The
        * event carries NO response text — only the discriminating metadata

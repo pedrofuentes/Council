@@ -283,6 +283,12 @@ export function reduce(s: DebateState, ev: DebateEvent): DebateState {
           reason: ev.reason,
         },
       };
+    case "turn.discard":
+      // #184: drop a failed attempt's accumulated text before the retry.
+      return {
+        ...s,
+        activeTurn: s.activeTurn ? { ...s.activeTurn, text: "" } : null,
+      };
     case "turn.quality_gate": {
       // Quality-gate notices render inline in the transcript. They carry NO
       // response text — only the failing check kinds and regeneration state.
