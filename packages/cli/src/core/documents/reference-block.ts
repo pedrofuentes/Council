@@ -123,7 +123,8 @@ export function appendReferenceDocuments(
             s.extractionMethod
               .replace(/[\r\n]+/g, " ")
               .replace(/\[/g, "(")
-              .replace(/\]/g, ")"),
+              .replace(/\]/g, ")")
+              .replace(/,/g, ""),
             { onSanitize },
           )
         : null;
