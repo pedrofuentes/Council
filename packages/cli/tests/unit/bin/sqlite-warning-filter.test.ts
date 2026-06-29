@@ -54,6 +54,27 @@ describe("installSqliteExperimentalWarningFilter", () => {
     expect(calls).toEqual([]);
   });
 
+  it("suppresses the SQLite ExperimentalWarning emitted via the options-object overload", () => {
+    const { fakeProcess, calls } = createFakeProcess();
+    installSqliteExperimentalWarningFilter(fakeProcess);
+
+    fakeProcess.emitWarning("SQLite is an experimental feature and might change at any time", {
+      type: "ExperimentalWarning",
+    });
+
+    expect(calls).toEqual([]);
+  });
+
+  it("forwards a custom-constructor ExperimentalWarning unchanged (function ctor overload)", () => {
+    const { fakeProcess, calls } = createFakeProcess();
+    installSqliteExperimentalWarningFilter(fakeProcess);
+
+    function CustomWarning(): void {}
+    fakeProcess.emitWarning("totally unrelated warning", CustomWarning);
+
+    expect(calls).toEqual([["totally unrelated warning", CustomWarning]]);
+  });
+
   it("does not suppress non-SQLite ExperimentalWarning values", () => {
     const { fakeProcess, calls } = createFakeProcess();
     installSqliteExperimentalWarningFilter(fakeProcess);
