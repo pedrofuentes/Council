@@ -1039,6 +1039,38 @@ describe("scanAndIndexPanelDocuments", () => {
         progress.some((p) => p.filename === "notes.xyz" && p.status === "needs-review"),
       ).toBe(true);
     });
+
+    it("auto→ask→modify: evicts the prior FTS row + repo entry instead of leaving stale content searchable (regression #1019)", async () => {
+      const xyz = path.join(managedDir, "notes.xyz");
+      await fs.writeFile(xyz, "original body for xyz", "utf-8");
+
+      // 1) auto mode indexes spec.md + external.md + notes.xyz.
+      await scanAndIndexPanelDocuments({
+        panelName: "arch-review",
+        managedDocsDir: managedDir,
+        db,
+        supportedFormats: [".md", ".txt", ".xyz"],
+        aiFallback: { mode: "auto", allowedExtensions: [] },
+      });
+      expect(await panelFtsCount(db)).toBe(3);
+
+      // 2) operator switches aiExtraction to `ask`, then edits notes.xyz.
+      await fs.writeFile(xyz, "EDITED body for xyz with new content", "utf-8");
+      const result = await scanAndIndexPanelDocuments({
+        panelName: "arch-review",
+        managedDocsDir: managedDir,
+        db,
+        supportedFormats: [".md", ".txt", ".xyz"],
+        aiFallback: { mode: "ask", allowedExtensions: [] },
+      });
+
+      expect(result.needsReview).toBe(1);
+      // Pre-edit content must NOT linger in FTS (spec.md + external.md remain).
+      expect(await panelFtsCount(db)).toBe(2);
+      const docsRepo = new PanelDocumentRepository(db);
+      const tracked = await docsRepo.listDocuments("arch-review");
+      expect(tracked.find((t) => t.filename === "notes.xyz")?.status).toBe("removed");
+    });
   });
 });
 

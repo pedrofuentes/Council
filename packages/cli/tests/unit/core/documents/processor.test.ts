@@ -848,6 +848,48 @@ describe("createDocumentProcessor — AI fallback wiring (T-AIPIPE)", () => {
       progress.some((p) => p.filename === "notes.xyz" && p.status === "needs-review"),
     ).toBe(true);
   });
+
+  it("auto→ask→modify: evicts the prior FTS row + repo entry instead of leaving stale content searchable (regression #1019)", async () => {
+    const dir = await makeDocsDir(env, "alice");
+    const filePath = path.join(dir, "notes.xyz");
+    await fs.writeFile(filePath, "original AI body for xyz", "utf-8");
+
+    // 1) auto mode indexes the AI-fallback file and tracks it.
+    const auto = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: {
+        supportedFormats: AI_FORMATS,
+        recencyHalfLifeDays: 90,
+        aiFallback: { mode: "auto", allowedExtensions: [] },
+      },
+    });
+    await auto.process("alice", dir);
+    expect(await ftsCount("alice")).toBe(1);
+
+    // 2) operator switches aiExtraction to `ask`, then edits the file.
+    await fs.writeFile(filePath, "EDITED ai body for xyz with new content", "utf-8");
+    const ask = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: {
+        supportedFormats: AI_FORMATS,
+        recencyHalfLifeDays: 90,
+        aiFallback: { mode: "ask", allowedExtensions: [] },
+      },
+    });
+    const result = await ask.process("alice", dir);
+
+    expect(result.filesNeedingReview).toBe(1);
+    // Pre-edit content must NOT linger in FTS while UX reports needs-review.
+    expect(await ftsCount("alice")).toBe(0);
+    const tracked = await env.docRepo.findByExpert("alice");
+    expect(tracked.find((d) => d.filePath === filePath)?.status).toBe("removed");
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────
