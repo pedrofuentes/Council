@@ -124,6 +124,22 @@ export function formatPanelSaveHint(sessionName: string): string {
   )} [name]\n`;
 }
 
+/**
+ * Format the best-effort RAG retrieval-failure warning. The raw error
+ * message originates from the document retriever / SQLite layer and is
+ * untrusted: it may span multiple lines, embed terminal control sequences,
+ * or leak unbounded internal detail. Mirroring chat's bounded
+ * `sanitizeErrorMessage`, collapse it to a single line via
+ * {@link toSingleLineDisplay} and cap its length via {@link truncatePrompt}
+ * before it reaches stderr.
+ */
+export function formatRetrievalFailureWarning(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  return `!! document retrieval failed (continuing without reference docs): ${truncatePrompt(
+    toSingleLineDisplay(raw),
+  )}\n`;
+}
+
 export interface ConveneCommandDeps {
   readonly engineFactory?: () => CouncilEngine;
   readonly write?: Writer;
@@ -816,10 +832,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             const snippets = await retriever.retrieve(topic, retrieveOptions);
             referenceDocuments = capSnippetsByChars(snippets, REFERENCE_DOCS_CHAR_CAP);
           } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            writeError(
-              `!! document retrieval failed (continuing without reference docs): ${msg}\n`,
-            );
+            writeError(formatRetrievalFailureWarning(err));
           }
 
           await runWithEngine({
