@@ -119,7 +119,7 @@ describe("extractDocument", () => {
       "<h1>Visible Heading</h1>",
       "<script>var SECRET_SCRIPT_TOKEN = 'do-not-index'; function leak(){return SECRET_SCRIPT_TOKEN;}</script>",
       "<p>Visible body paragraph.</p>",
-      "<script type=\"application/json\">{\"another\":\"SECRET_JSON_TOKEN\"}</script>",
+      '<script type="application/json">{"another":"SECRET_JSON_TOKEN"}</script>',
       "</body></html>",
     ].join("\n");
     await fs.writeFile(filePath, html);
@@ -178,9 +178,9 @@ describe("extractDocument", () => {
       try {
         const filePath = path.join(otherDir, "secret.txt");
         await fs.writeFile(filePath, "secret");
-        await expect(
-          extractDocument(filePath, { confinementRoot: dir }),
-        ).rejects.toThrow(/outside|traversal|confine/i);
+        await expect(extractDocument(filePath, { confinementRoot: dir })).rejects.toThrow(
+          /outside|traversal|confine/i,
+        );
       } finally {
         await fs.rm(otherDir, { recursive: true, force: true });
       }
@@ -199,9 +199,33 @@ describe("extractDocument", () => {
           // rather than fail the whole suite when unsupported.
           return;
         }
+        await expect(extractDocument(link, { confinementRoot: dir })).rejects.toThrow(
+          /outside|traversal|confine/i,
+        );
+      } finally {
+        await fs.rm(otherDir, { recursive: true, force: true });
+      }
+    });
+
+    it("rejects a symlink whose target lives outside confinementRoot (cross-platform, #452)", async () => {
+      // OS-agnostic twin: real symlinks need admin/Developer Mode on
+      // Windows so the test above skips there. The `_realpathOverride`
+      // seam makes an in-root file canonicalize to an out-of-root target,
+      // emulating a symlink escape; the open()-bound inode then differs
+      // from the canonical, so confinement rejection fires on every OS.
+      const otherDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-extract-452-"));
+      try {
+        const target = path.join(otherDir, "secret.txt");
+        await fs.writeFile(target, "secret");
+        const inside = path.join(dir, "link.txt");
+        await fs.writeFile(inside, "decoy");
         await expect(
-          extractDocument(link, { confinementRoot: dir }),
-        ).rejects.toThrow(/outside|traversal|confine/i);
+          extractDocument(inside, {
+            confinementRoot: dir,
+            _realpathOverride: async (p: string) =>
+              path.resolve(p) === path.resolve(inside) ? target : fs.realpath(p),
+          }),
+        ).rejects.toThrow(/outside|traversal|confine|TOCTOU|changed/i);
       } finally {
         await fs.rm(otherDir, { recursive: true, force: true });
       }
@@ -234,9 +258,9 @@ describe("extractDocument", () => {
     it("rejects a directory passed as filePath", async () => {
       const sub = path.join(dir, "subdir");
       await fs.mkdir(sub);
-      await expect(
-        extractDocument(sub, { confinementRoot: dir }),
-      ).rejects.toThrow(/regular file|not a file/i);
+      await expect(extractDocument(sub, { confinementRoot: dir })).rejects.toThrow(
+        /regular file|not a file/i,
+      );
     });
 
     it("works without confinementRoot (back-compat)", async () => {
@@ -308,9 +332,9 @@ describe("extractDocument", () => {
 
       // With post-read consistency checking, the extractor detects the
       // mid-extraction mutation and refuses to return torn content.
-      await expect(
-        extractDocument(filePath, { _realpathOverride: override }),
-      ).rejects.toThrow(/modified during read/i);
+      await expect(extractDocument(filePath, { _realpathOverride: override })).rejects.toThrow(
+        /modified during read/i,
+      );
     });
 
     it("rejects torn reads when file content changes during extraction", async () => {
@@ -324,9 +348,9 @@ describe("extractDocument", () => {
         await fs.writeFile(filePath, "v2 body has more bytes");
         return realpath(p);
       };
-      await expect(
-        extractDocument(filePath, { _realpathOverride: override }),
-      ).rejects.toThrow(/modified during read|inode changed/i);
+      await expect(extractDocument(filePath, { _realpathOverride: override })).rejects.toThrow(
+        /modified during read|inode changed/i,
+      );
     });
 
     // Issue #522: regression test for the fourth torn-read condition
@@ -389,9 +413,9 @@ describe("extractDocument", () => {
         return realpath(p);
       };
 
-      await expect(
-        extractDocument(filePath, { _realpathOverride: override }),
-      ).rejects.toThrow(/modified during read|inode changed/i);
+      await expect(extractDocument(filePath, { _realpathOverride: override })).rejects.toThrow(
+        /modified during read|inode changed/i,
+      );
     });
   });
 
@@ -402,9 +426,7 @@ describe("extractDocument", () => {
     it("rejects files larger than maxFileSizeBytes with oversize-file", async () => {
       const filePath = path.join(dir, "big.txt");
       await fs.writeFile(filePath, "a".repeat(200));
-      const errors = await import(
-        "../../../../src/core/documents/extractors/errors.js"
-      );
+      const errors = await import("../../../../src/core/documents/extractors/errors.js");
       let caught: unknown;
       try {
         await extractDocument(filePath, { maxFileSizeBytes: 100 });
@@ -428,9 +450,7 @@ describe("extractDocument", () => {
     it("throws unsupported-format for unknown extensions", async () => {
       const filePath = path.join(dir, "weird.xyz");
       await fs.writeFile(filePath, "some content");
-      const errors = await import(
-        "../../../../src/core/documents/extractors/errors.js"
-      );
+      const errors = await import("../../../../src/core/documents/extractors/errors.js");
       let caught: unknown;
       try {
         await extractDocument(filePath);
@@ -450,9 +470,7 @@ describe("extractDocument", () => {
       // supported now).
       const filePath = path.join(dir, "mystery.bin");
       await fs.writeFile(filePath, "%PDF-1.7\nfake pdf body");
-      const errors = await import(
-        "../../../../src/core/documents/extractors/errors.js"
-      );
+      const errors = await import("../../../../src/core/documents/extractors/errors.js");
       let caught: unknown;
       try {
         await extractDocument(filePath);

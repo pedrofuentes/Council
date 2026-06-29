@@ -13,9 +13,10 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createDocumentProcessor } from "../../../../src/core/documents/processor.js";
+import * as extractorModule from "../../../../src/core/documents/extractor.js";
 import { createDocumentIndexer } from "../../../../src/core/documents/indexer.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
 import { mkCanonicalTempDir } from "../../../helpers/tmp.js";
@@ -432,6 +433,37 @@ describe("createDocumentProcessor", () => {
       expect(result.filesFailed).toBeGreaterThanOrEqual(1);
     });
 
+    it("passes confinementRoot to extractDocument so symlink escapes are blocked (cross-platform, #452)", async () => {
+      // OS-agnostic confinement guard. The real-symlink test above skips
+      // on unprivileged Windows, leaving confinement unverified there.
+      // Spying on extractDocument proves the processor always confines
+      // every extraction to the (canonical) docs root — so any symlink
+      // resolving outside is rejected by the extractor — without needing
+      // symlink privileges. The docs dir is created canonical, so the
+      // forwarded confinementRoot must equal docsPath exactly.
+      const dir = await makeDocsDir(env, "alice");
+      await fs.writeFile(path.join(dir, "good.md"), "good body");
+      const spy = vi.spyOn(extractorModule, "extractDocument");
+      try {
+        const engine = new StubEngine([VALID_PROFILE_JSON]);
+        const proc = createDocumentProcessor({
+          engine,
+          documentRepo: env.docRepo,
+          profileRepo: env.profileRepo,
+          indexer: env.indexer,
+          config: CONFIG,
+        });
+        await proc.process("alice", dir);
+        expect(spy).toHaveBeenCalled();
+        for (const call of spy.mock.calls) {
+          const opts = call[1] as { confinementRoot?: string } | undefined;
+          expect(opts?.confinementRoot).toBe(dir);
+        }
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
     // ── Sentinel pr373 cycle 3 follow-ups ────────────────────────────
     it("rejects a docs root that is itself a symlink/junction (defense in depth)", async () => {
       const dir = await makeDocsDir(env, "alice");
@@ -702,12 +734,7 @@ describe("createDocumentProcessor", () => {
       });
 
       const warnings: string[] = [];
-      await procWithFault.process(
-        "alice",
-        dir,
-        undefined,
-        (msg) => warnings.push(msg),
-      );
+      await procWithFault.process("alice", dir, undefined, (msg) => warnings.push(msg));
 
       expect(warnings.length).toBeGreaterThan(0);
       // The detector formats per-file warnings mentioning the path.
@@ -844,9 +871,9 @@ describe("createDocumentProcessor — AI fallback wiring (T-AIPIPE)", () => {
     await proc.process("alice", dir, (p) => {
       progress.push({ filename: p.filename, status: p.status });
     });
-    expect(
-      progress.some((p) => p.filename === "notes.xyz" && p.status === "needs-review"),
-    ).toBe(true);
+    expect(progress.some((p) => p.filename === "notes.xyz" && p.status === "needs-review")).toBe(
+      true,
+    );
   });
 
   it("auto→ask→modify: evicts the prior FTS row + repo entry instead of leaving stale content searchable (regression #1019)", async () => {
@@ -981,10 +1008,7 @@ describe("createDocumentProcessor — unsupported-extension files (T2)", () => {
     expect(result.filesUnsupported).toBe(2);
     // indexed + skipped + failed + needs-review covers all discovered files.
     const accounted =
-      result.filesProcessed +
-      result.filesSkipped +
-      result.filesFailed +
-      result.filesNeedingReview;
+      result.filesProcessed + result.filesSkipped + result.filesFailed + result.filesNeedingReview;
     expect(accounted).toBe(3);
   });
 
@@ -1093,9 +1117,9 @@ describe("createDocumentProcessor — ask-mode review for unsupported extensions
     await proc.process("alice", dir, (p) => {
       progress.push({ filename: p.filename, status: p.status });
     });
-    expect(
-      progress.some((p) => p.filename === "deck.key" && p.status === "needs-review"),
-    ).toBe(true);
+    expect(progress.some((p) => p.filename === "deck.key" && p.status === "needs-review")).toBe(
+      true,
+    );
   });
 
   it("off mode: the same unsupported-extension file stays unsupported (T2 regression guard)", async () => {
@@ -1153,10 +1177,7 @@ describe("createDocumentProcessor — ask-mode review for unsupported extensions
     expect(png?.errorKind).toBe("unsupported-format");
     // Every discovered file is accounted for — none disappear.
     const accounted =
-      result.filesProcessed +
-      result.filesSkipped +
-      result.filesFailed +
-      result.filesNeedingReview;
+      result.filesProcessed + result.filesSkipped + result.filesFailed + result.filesNeedingReview;
     expect(accounted).toBe(3);
   });
 });

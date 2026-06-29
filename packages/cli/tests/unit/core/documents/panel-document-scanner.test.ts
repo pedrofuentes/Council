@@ -46,11 +46,7 @@ describe("scanAndIndexPanelDocuments", () => {
     cleanupDirs = [managedDir, linkedDir];
 
     await fs.writeFile(path.join(managedDir, "spec.md"), "# Spec\nhello world\n", "utf-8");
-    await fs.writeFile(
-      path.join(linkedDir, "external.md"),
-      "# External\nlinked notes\n",
-      "utf-8",
-    );
+    await fs.writeFile(path.join(linkedDir, "external.md"), "# External\nlinked notes\n", "utf-8");
 
     const docsRepo = new PanelDocumentRepository(db);
     await docsRepo.addLinkedFolder("arch-review", linkedDir);
@@ -328,6 +324,40 @@ describe("scanAndIndexPanelDocuments", () => {
     }
   });
 
+  it("skips a file the extractor rejects for confinement, indexing the rest (cross-platform, #452)", async () => {
+    // OS-agnostic twin of the real-symlink confinement test: synthesize
+    // a confinement rejection by making extractDocument throw for the
+    // linked file (as it would for a symlink resolving outside the
+    // root). The managed file must still index and the escaped file's
+    // content must never reach the FTS index — verified on every OS,
+    // no symlink privileges required.
+    const realExtract = extractorModule.extractDocument;
+    const spy = vi
+      .spyOn(extractorModule, "extractDocument")
+      .mockImplementation(async (filePath, opts) => {
+        if (path.basename(filePath) === "external.md") {
+          throw new Error(`extractDocument: ${filePath} resolves outside confinement root`);
+        }
+        return realExtract(filePath, opts);
+      });
+    try {
+      await scanAndIndexPanelDocuments({
+        panelName: "arch-review",
+        managedDocsDir: managedDir,
+        db,
+        supportedFormats: [".md", ".txt", ".html"],
+      });
+      const fts = await sql<{
+        content: string;
+      }>`SELECT content FROM document_index WHERE source_type = 'panel'`.execute(db);
+      const joined = fts.rows.map((r) => r.content).join("\n");
+      expect(joined).toContain("hello world");
+      expect(joined).not.toContain("linked notes");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("prunes documents that disappeared from disk (issue #386)", async () => {
     // First scan: both files indexed.
     await scanAndIndexPanelDocuments({
@@ -387,9 +417,7 @@ describe("scanAndIndexPanelDocuments", () => {
 
     const docsRepo = new PanelDocumentRepository(db);
     const after = await docsRepo.listDocuments("arch-review");
-    const removedManaged = after.filter(
-      (d) => d.status === "removed" && d.source === "managed",
-    );
+    const removedManaged = after.filter((d) => d.status === "removed" && d.source === "managed");
     expect(removedManaged).toHaveLength(1);
 
     const fts = await sql<{
@@ -770,10 +798,7 @@ describe("scanAndIndexPanelDocuments", () => {
     let raced = false;
     const spy = vi
       .spyOn(PanelDocumentRepository.prototype, "getLinkedFolders")
-      .mockImplementation(async function (
-        this: PanelDocumentRepository,
-        panelName: string,
-      ) {
+      .mockImplementation(async function (this: PanelDocumentRepository, panelName: string) {
         const result = await realGetLinkedFolders.call(this, panelName);
         // Fire exactly once, on the scan-start `getLinkedFolders` —
         // before per-file writes have begun. The scanner must still
@@ -826,10 +851,7 @@ describe("scanAndIndexPanelDocuments", () => {
     const docsRepo = new PanelDocumentRepository(db);
     const linkedFile = path.join(linkedDir, "external.md");
     const tracked = await docsRepo.listDocuments("arch-review");
-    expect(tracked.map((d) => d.filename).sort()).toEqual([
-      "external.md",
-      "spec.md",
-    ]);
+    expect(tracked.map((d) => d.filename).sort()).toEqual(["external.md", "spec.md"]);
 
     // Replace the tracked linked file with a symlink that escapes the
     // linkedDir confinement root. The detector rejects it (lands in
@@ -1035,9 +1057,9 @@ describe("scanAndIndexPanelDocuments", () => {
         aiFallback: { mode: "ask", allowedExtensions: [] },
         onProgress: (p) => progress.push({ filename: p.filename, status: p.status }),
       });
-      expect(
-        progress.some((p) => p.filename === "notes.xyz" && p.status === "needs-review"),
-      ).toBe(true);
+      expect(progress.some((p) => p.filename === "notes.xyz" && p.status === "needs-review")).toBe(
+        true,
+      );
     });
 
     it("auto→ask→modify: evicts the prior FTS row + repo entry instead of leaving stale content searchable (regression #1019)", async () => {
@@ -1301,9 +1323,9 @@ describe("scanAndIndexPanelDocuments — ask-mode review for unsupported extensi
       onProgress: (p) => progress.push({ filename: p.filename, status: p.status }),
     });
 
-    expect(
-      progress.some((p) => p.filename === "deck.key" && p.status === "needs-review"),
-    ).toBe(true);
+    expect(progress.some((p) => p.filename === "deck.key" && p.status === "needs-review")).toBe(
+      true,
+    );
   });
 
   it("off mode: the same unsupported-extension file stays unsupported (T2 regression guard)", async () => {
@@ -1346,10 +1368,7 @@ describe("scanAndIndexPanelDocuments — ask-mode review for unsupported extensi
     expect(png?.status).toBe("failed");
     expect(png?.errorKind).toBe("unsupported-format");
     // Both files are accounted for in the per-file detail list.
-    expect(result.files.map((f) => f.filename).sort()).toEqual([
-      "deck.key",
-      "shot.png",
-    ]);
+    expect(result.files.map((f) => f.filename).sort()).toEqual(["deck.key", "shot.png"]);
   });
 
   it("auto mode: an eligible unsupported-extension file is AI-extracted, indexed, and tracked", async () => {

@@ -143,6 +143,64 @@ describe("detectDocumentChanges", () => {
       }
     });
 
+    it("rejects symlinks whose target is outside the confinement root (cross-platform, #452)", async () => {
+      // OS-agnostic twin of the test above: real symlinks require
+      // Developer Mode/admin on Windows so that test skips there. Use
+      // the `_lstatOverride` + `_realpathOverride` seams to synthesize a
+      // symlink whose realpath escapes the confinement root — proving
+      // the confinement rejection fires on every platform without a real
+      // symlink. The outside target is a real file so readConfined's
+      // post-open lstat of the canonical path succeeds, and the inode
+      // mismatch vs the in-root fd is what trips the confinement guard.
+      const outside = await fs.mkdtemp(path.join(os.tmpdir(), "council-452-outside-"));
+      try {
+        const secret = path.join(outside, "secret.md");
+        await fs.writeFile(secret, "SECRET");
+        await fs.writeFile(path.join(dir, "trap.md"), "decoy");
+        const trapAbs = path.resolve(dir, "trap.md");
+        const realLstat = fs.lstat;
+        const realRealpath = fs.realpath;
+
+        const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+          confinementRoot: dir,
+          _lstatOverride: async (p: string) => {
+            const stat = await realLstat(p);
+            if (path.resolve(p) === trapAbs) {
+              return new Proxy(stat, {
+                get(target, prop, receiver) {
+                  if (prop === "isSymbolicLink") return () => true;
+                  return Reflect.get(target, prop, receiver);
+                },
+              });
+            }
+            return stat;
+          },
+          _realpathOverride: async (p: string) =>
+            path.resolve(p) === trapAbs ? secret : realRealpath(p),
+        });
+
+        expect(result.newFiles.some((f) => f.filename === "trap.md")).toBe(false);
+        expect((result.rejectedFiles ?? []).some((p) => p.endsWith("trap.md"))).toBe(true);
+      } finally {
+        await fs.rm(outside, { recursive: true, force: true });
+      }
+    });
+
+    it("rejects in-root files that resolve outside the confinement root with no symlink (#452)", async () => {
+      // No symlink at all: confine to a sub-directory while a file lives
+      // in the parent. Its canonical path is inside `dir` but outside the
+      // sub-root, so isPathInside() must reject it. Fully deterministic on
+      // every OS, requiring no symlink privileges.
+      const subRoot = path.join(dir, "root");
+      await fs.mkdir(subRoot, { recursive: true });
+      await fs.writeFile(path.join(dir, "escape.md"), "outside-subroot");
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        confinementRoot: subRoot,
+      });
+      expect(result.newFiles.some((f) => f.filename === "escape.md")).toBe(false);
+      expect((result.rejectedFiles ?? []).some((p) => p.endsWith("escape.md"))).toBe(true);
+    });
+
     it("does NOT read file bytes via the unconfined path (uses fd-based reads)", async () => {
       // Sanity: a regular file inside confinement still produces a checksum.
       await fs.writeFile(path.join(dir, "a.md"), "hello fd");
@@ -497,12 +555,12 @@ describe("detectDocumentChanges", () => {
       // path failed and WHY, with a stable prefix they can recognize.
       const filePath = path.join(dir, "regular-file.md");
       await fs.writeFile(filePath, "x");
-      await expect(
-        detectDocumentChanges(filePath, new Map(), [".md"]),
-      ).rejects.toThrow(/document scan failed/i);
-      await expect(
-        detectDocumentChanges(filePath, new Map(), [".md"]),
-      ).rejects.toThrow(new RegExp(filePath.replace(/\\/g, "\\\\")));
+      await expect(detectDocumentChanges(filePath, new Map(), [".md"])).rejects.toThrow(
+        /document scan failed/i,
+      );
+      await expect(detectDocumentChanges(filePath, new Map(), [".md"])).rejects.toThrow(
+        new RegExp(filePath.replace(/\\/g, "\\\\")),
+      );
     });
 
     it("invokes onWarning and continues when a single file's lstat fails (#342)", async () => {
@@ -522,9 +580,7 @@ describe("detectDocumentChanges", () => {
         onWarning: (msg) => warnings.push(msg),
         _lstatOverride: async (p: string) => {
           if (path.resolve(p) === ghostAbs) {
-            const err: NodeJS.ErrnoException = new Error(
-              "ENOENT: no such file",
-            );
+            const err: NodeJS.ErrnoException = new Error("ENOENT: no such file");
             err.code = "ENOENT";
             throw err;
           }
