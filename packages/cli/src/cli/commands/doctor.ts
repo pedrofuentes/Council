@@ -47,6 +47,9 @@ import { defaultWriter, type Writer } from "./writer.js";
 
 const CONFIG_FILE = "config.yaml";
 
+/** Backstop bound for any injected online probe so doctor never hangs. */
+const DEFAULT_ONLINE_PROBE_TIMEOUT_MS = 20_000;
+
 interface CheckResult {
   readonly name: string;
   readonly status: "pass" | "fail" | "warn";
@@ -64,6 +67,7 @@ export interface DoctorDeps {
   readonly write?: Writer;
   readonly version?: string;
   readonly onlineProbe?: (model: string) => Promise<{ ok: boolean; detail: string }>;
+  readonly onlineProbeTimeoutMs?: number;
   readonly discoverModels?: () => Promise<ModelDiscoveryResult>;
   readonly createSpinner?: () => Spinner;
   readonly resolveCliPath?: () => string | undefined;
@@ -187,6 +191,7 @@ async function checkDiskSpace(): Promise<CheckResult> {
 async function checkDefaultModelAccess(
   onlineProbe: NonNullable<DoctorDeps["onlineProbe"]>,
   discoverModels: NonNullable<DoctorDeps["discoverModels"]>,
+  timeoutMs: number,
 ): Promise<CheckResult> {
   const configPath = getConfigPath();
 
@@ -202,8 +207,24 @@ async function checkDefaultModelAccess(
     };
   }
 
+  const TIMED_OUT = Symbol("doctor-probe-timeout");
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const probe = await onlineProbe(model);
+    const timeout = new Promise<typeof TIMED_OUT>((resolve) => {
+      timer = setTimeout(() => resolve(TIMED_OUT), timeoutMs);
+    });
+    const probe = await Promise.race([onlineProbe(model), timeout]);
+    if (probe === TIMED_OUT) {
+      return {
+        name: "Default model access",
+        status: "fail",
+        detail: await buildModelAccessFailureDetail(
+          `Default model (${model}) probe timed out after ${timeoutMs}ms`,
+          model,
+          discoverModels,
+        ),
+      };
+    }
     if (probe.ok) {
       return {
         name: "Default model access",
@@ -230,6 +251,8 @@ async function checkDefaultModelAccess(
         discoverModels,
       ),
     };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
@@ -305,6 +328,7 @@ function resolveDoctorDeps(input: DoctorDeps | Writer): Required<DoctorDeps> {
     write: deps.write ?? defaultWriter,
     version: deps.version ?? packageJson.version,
     onlineProbe: deps.onlineProbe ?? probeCopilotModel,
+    onlineProbeTimeoutMs: deps.onlineProbeTimeoutMs ?? DEFAULT_ONLINE_PROBE_TIMEOUT_MS,
     discoverModels: deps.discoverModels ?? discoverAvailableModels,
     createSpinner: deps.createSpinner ?? createSpinner,
     resolveCliPath: deps.resolveCliPath ?? resolveCopilotCliPath,
@@ -360,6 +384,7 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
     write,
     version,
     onlineProbe,
+    onlineProbeTimeoutMs,
     discoverModels,
     createSpinner: makeSpinner,
     resolveCliPath,
@@ -389,7 +414,7 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
       if (!options.offline) {
         checks.push({
           label: "Default model access",
-          run: () => checkDefaultModelAccess(onlineProbe, discoverModels),
+          run: () => checkDefaultModelAccess(onlineProbe, discoverModels, onlineProbeTimeoutMs),
         });
       }
 
