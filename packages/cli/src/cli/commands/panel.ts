@@ -146,8 +146,23 @@ function panelYamlPath(dataHome: string, name: string): string {
   return path.join(dataHome, "panels", `${name}.yaml`);
 }
 
-function panelDocsDir(dataHome: string, name: string): string {
-  return path.join(dataHome, "panels", name, "docs");
+/**
+ * Resolve a panel's managed docs dir while guaranteeing it stays under
+ * `<dataHome>/panels/`. The name may originate from `panel_library.name`
+ * (migration/import/DB edit) bypassing create-time validation; without this
+ * guard a traversal name (e.g. `../../etc`) would make sibling scanners index
+ * out-of-tree files. Mirrors `resolveManagedDocsDir` in docs.ts (#1780).
+ */
+export function panelDocsDir(dataHome: string, name: string): string {
+  validatePanelName(name);
+  const panelsRoot = path.resolve(path.join(dataHome, "panels"));
+  const docsDir = path.join(dataHome, "panels", name, "docs");
+  if (!path.resolve(docsDir).startsWith(panelsRoot + path.sep)) {
+    throw new Error(
+      `Refusing to scan: resolved docs path escapes panels directory (name="${name}")`,
+    );
+  }
+  return docsDir;
 }
 
 export function validatePanelName(name: string): void {
