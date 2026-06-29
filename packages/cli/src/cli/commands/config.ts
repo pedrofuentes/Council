@@ -297,23 +297,19 @@ function buildEditCommand(write: Writer, writeError: Writer, editorRunner?: Edit
     try {
       parsed = yaml.parse(rawText);
     } catch (err: unknown) {
-      // Restore original config on YAML parse failure
-      await fs.writeFile(configFilePath, originalContents, "utf-8");
       const msg = `YAML parse error: ${err instanceof Error ? err.message : String(err)}`;
       writeError(`Validation failed: ${msg}\n`);
-      writeError("Original config has been restored.\n");
+      await restoreOriginalConfig(configFilePath, originalContents, writeError);
       throw new CliUserError(msg);
     }
 
     const result = ConfigSchema.safeParse(parsed ?? {});
     if (!result.success) {
-      // Restore original config on schema validation failure
-      await fs.writeFile(configFilePath, originalContents, "utf-8");
       const issues = result.error.issues
         .map((i) => `  - ${i.path.join(".")}: ${i.message}`)
         .join("\n");
       writeError(`Validation failed:\n${issues}\n`);
-      writeError("Original config has been restored.\n");
+      await restoreOriginalConfig(configFilePath, originalContents, writeError);
       throw new CliUserError("Config validation failed after edit");
     }
 
@@ -324,6 +320,28 @@ function buildEditCommand(write: Writer, writeError: Writer, editorRunner?: Edit
 
 function isSettableConfigKey(key: string): key is SettableConfigKey {
   return SETTABLE_CONFIG_KEYS.includes(key as SettableConfigKey);
+}
+
+/**
+ * Restore the original config after a failed edit. The rollback write is
+ * guarded so a secondary failure (disk-full, permission change) surfaces an
+ * explicit warning and a stable {@link CliUserError} rather than leaking a raw
+ * fs error that would mask the validation message and leave the file corrupt.
+ */
+async function restoreOriginalConfig(
+  configFilePath: string,
+  originalContents: string,
+  writeError: Writer,
+): Promise<void> {
+  try {
+    await fs.writeFile(configFilePath, originalContents, "utf-8");
+  } catch (err: unknown) {
+    const reason = err instanceof Error ? err.message : String(err);
+    writeError(`Original config could not be restored: ${reason}\n`);
+    writeError(`Manual recovery may be required: ${configFilePath}\n`);
+    throw new CliUserError(`Original config could not be restored: ${reason}`);
+  }
+  writeError("Original config has been restored.\n");
 }
 
 /**
