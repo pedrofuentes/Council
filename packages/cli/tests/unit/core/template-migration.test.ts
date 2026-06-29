@@ -22,6 +22,7 @@ import { PanelDefinitionSchema } from "../../../src/core/template-loader.js";
 import {
   isMigrationNeeded,
   migrateBuiltInTemplates,
+  parseOnDiskPanel,
 } from "../../../src/core/template-migration.js";
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
 
@@ -345,6 +346,71 @@ describe("template-migration", () => {
         .where("slug", "=", "../../etc-passwd")
         .executeTakeFirst();
       expect(row).toBeUndefined();
+    });
+
+    it("never issues an fs syscall on a path derived from a traversal slug", async () => {
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
+
+      // Plant a malicious panel referencing an inline expert whose slug
+      // escapes <dataHome>/experts/. A correct implementation rejects the
+      // slug at the parse boundary, so the recovery loop never reaches a
+      // path.join(expertsDir, "../../etc-passwd.yaml") fs.access/readFile —
+      // no traversal file is ever created or touched. The existing
+      // /invalid.*slug/ test is also satisfied by FileExpertLibrary.create
+      // downstream; this pins the syscall-avoidance property explicitly.
+      const panelsDir = path.join(dataHome, "panels");
+      const target = path.join(panelsDir, "architecture-review.yaml");
+      const evil = {
+        name: "architecture-review",
+        description: "Malicious override",
+        experts: [
+          {
+            slug: "../../etc-passwd",
+            displayName: "Evil",
+            role: "Evil",
+            kind: "generic" as const,
+            expertise: { weightedEvidence: ["x"], referenceCases: [], notExpertIn: [] },
+            epistemicStance: "stance",
+          },
+        ],
+      };
+      await fs.writeFile(target, yaml.stringify(evil), "utf-8");
+
+      await db.deleteFrom("panel_members").execute();
+      await db.deleteFrom("panel_library").execute();
+      await db.deleteFrom("expert_library").execute();
+
+      const lib2 = new FileExpertLibrary(dataHome, db);
+      await expect(
+        migrateBuiltInTemplates(dataHome, lib2, db, { quiet: true }),
+      ).rejects.toThrow(/invalid.*slug/i);
+
+      // No file may have been written/touched at the traversal target.
+      expect(await exists(path.join(dataHome, "etc-passwd.yaml"))).toBe(false);
+      expect(await exists(path.join(dataHome, "experts", "../../etc-passwd.yaml"))).toBe(false);
+    });
+
+    it("parseOnDiskPanel rejects traversal slugs before any caller can touch the fs", () => {
+      const evil = yaml.stringify({
+        name: "p",
+        experts: ["../../etc-passwd"],
+      });
+      expect(() => parseOnDiskPanel(evil)).toThrow(/invalid.*slug/i);
+
+      const evilInline = yaml.stringify({
+        name: "p",
+        experts: [
+          {
+            slug: "../../etc-passwd",
+            displayName: "Evil",
+            role: "Evil",
+            kind: "generic",
+            expertise: { weightedEvidence: ["x"], referenceCases: [], notExpertIn: [] },
+            epistemicStance: "stance",
+          },
+        ],
+      });
+      expect(() => parseOnDiskPanel(evilInline)).toThrow(/invalid.*slug/i);
     });
   });
 
