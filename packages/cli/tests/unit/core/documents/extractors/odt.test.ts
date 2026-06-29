@@ -320,6 +320,31 @@ describe("odt extractor", () => {
     expect(out.content).toContain("a\\\\\\|b");
   });
 
+  it("throws ExtractionError(corrupt-document) for invalid XML inside a valid ZIP", async () => {
+    const { extractor, errors } = await loadOdtExtractor();
+    // Valid ZIP envelope with a present-but-corrupt content.xml (an
+    // unterminated attribute value). The parser throws; this must surface
+    // as corrupt-document rather than be swallowed into an empty document.
+    const buf = buildZip([
+      {
+        name: "content.xml",
+        data: Buffer.from(
+          `<office:document-content><office:body foo="unterminated>` +
+            `<text:p>hi</text:p></office:body></office:document-content>`,
+          "utf-8",
+        ),
+      },
+    ]);
+    let caught: unknown;
+    try {
+      await extractor(ctx(buf));
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(errors.ExtractionError);
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("corrupt-document");
+  });
+
   it("registers itself for .odt", async () => {
     vi.resetModules();
     await import("../../../../../src/core/documents/extractors/odt.js");
