@@ -230,6 +230,45 @@ describe("buildConfigCommand", () => {
       expect(restored).toContain("model: gpt-4o");
     });
 
+    it("warns and throws CliUserError when YAML-failure rollback write fails", async () => {
+      await fs.mkdir(testHome, { recursive: true });
+      const configPath = path.join(testHome, "config.yaml");
+      await fs.writeFile(configPath, "defaults:\n  model: gpt-4o\n", "utf-8");
+
+      const editorRunner = vi.fn(async () => {
+        await fs.writeFile(configPath, "{{broken yaml: [", "utf-8");
+        // Make the rollback writeFile fail (e.g. disk-full / permission change)
+        await fs.chmod(configPath, 0o444);
+      });
+
+      try {
+        const { stderr } = await runConfig(["edit"], { editorRunner });
+        expect(stderr).toContain("Validation failed");
+        expect(stderr).toContain("could not be restored");
+      } finally {
+        await fs.chmod(configPath, 0o644);
+      }
+    });
+
+    it("warns and throws CliUserError when schema-failure rollback write fails", async () => {
+      await fs.mkdir(testHome, { recursive: true });
+      const configPath = path.join(testHome, "config.yaml");
+      await fs.writeFile(configPath, "defaults:\n  model: gpt-4o\n", "utf-8");
+
+      const editorRunner = vi.fn(async () => {
+        await fs.writeFile(configPath, "defaults:\n  maxRounds: 999\n", "utf-8");
+        await fs.chmod(configPath, 0o444);
+      });
+
+      try {
+        const { stderr } = await runConfig(["edit"], { editorRunner });
+        expect(stderr).toContain("Validation failed");
+        expect(stderr).toContain("could not be restored");
+      } finally {
+        await fs.chmod(configPath, 0o644);
+      }
+    });
+
     it("uses VISUAL env var for editor resolution", async () => {
       const originalVisual = process.env["VISUAL"];
       process.env["VISUAL"] = "custom-editor";
