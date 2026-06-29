@@ -502,24 +502,22 @@ function parseOnDiskPanel(content: string): OnDiskPanel {
     if (typeof entry === "string") {
       entries.push({ kind: "slug", slug: entry });
     } else if (entry && typeof entry === "object") {
-      // Try to parse as a full inline ExpertDefinition. If parsing fails,
-      // fall back to treating it as a slug reference (the runtime
-      // resolveExperts() will surface a clearer error if the slug is
-      // missing).
+      // An object entry is an attempted inline ExpertDefinition. If it
+      // fails schema validation, surface the Zod error instead of
+      // silently downgrading it to a slug reference — a silent downgrade
+      // masks user typos (e.g. a misspelt field) and produces a confusing
+      // "missing slug" failure far downstream. Slug references are plain
+      // strings (handled above), so any failed object is a malformed
+      // inline definition.
       const parsed = ExpertDefinitionSchema.safeParse(entry);
       if (parsed.success) {
         entries.push({ kind: "inline", definition: parsed.data });
-      } else if ("slug" in entry) {
-        // Schema validation failed, but object has a slug field (#563).
-        // Surface the validation error as a warning so the user knows
-        // why the inline expert was treated as a slug reference.
-        const slug = (entry as { slug: unknown }).slug;
-        if (typeof slug === "string") {
-          console.warn(
-            `[template-migration] Inline expert with slug "${slug}" failed schema validation, treating as slug reference. Error: ${JSON.stringify(parsed.error.issues)}`,
-          );
-          entries.push({ kind: "slug", slug });
-        }
+      } else {
+        const slug = (entry as { slug?: unknown }).slug;
+        const label = typeof slug === "string" ? slug : "<unknown>";
+        throw new Error(
+          `[template-migration] inline expert "${label}" failed schema validation: ${JSON.stringify(parsed.error.issues)}`,
+        );
       }
     }
   }
@@ -539,8 +537,13 @@ async function fileExists(p: string): Promise<boolean> {
   try {
     await fs.access(p);
     return true;
-  } catch {
-    return false;
+  } catch (err: unknown) {
+    // Only a missing path counts as "absent". EACCES/EIO/EBUSY etc. are
+    // transient/permission failures — swallowing them would silently route
+    // the migration down the "create" branch and surface a confusing
+    // downstream error. Rethrow anything that isn't ENOENT.
+    if (isENOENT(err)) return false;
+    throw err;
   }
 }
 
