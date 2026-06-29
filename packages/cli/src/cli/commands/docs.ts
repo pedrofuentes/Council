@@ -48,6 +48,7 @@ import {
   createReadlineConfirmProvider,
   type ConfirmProvider,
 } from "./confirm.js";
+import { validatePanelName } from "./panel.js";
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
 /**
@@ -241,12 +242,38 @@ export interface DocsCommandDeps {
   readonly confirmProvider?: () => ConfirmProvider;
 }
 
+/**
+ * Resolve a panel's managed docs directory while guaranteeing it stays
+ * under `<dataHome>/panels/`. The panel name originates from
+ * `panel_library.name`, which could be populated via migration, import,
+ * or direct DB edit that bypassed create-time validation; without this
+ * defense a name with traversal segments (e.g. `../../etc`) would make
+ * the scanner index out-of-tree files. We re-validate the name with the
+ * SAME `validatePanelName`/PANEL_NAME_RE rule used by `panel delete`, then
+ * assert the resolved path is contained even if validation ever weakens.
+ */
+export function resolveManagedDocsDir(
+  dataHome: string,
+  panelName: string,
+): string {
+  validatePanelName(panelName);
+  const panelsRoot = path.resolve(path.join(dataHome, "panels"));
+  const managedDocsDir = path.join(dataHome, "panels", panelName, "docs");
+  if (!path.resolve(managedDocsDir).startsWith(panelsRoot + path.sep)) {
+    throw new Error(
+      `Refusing to scan: resolved docs path escapes panels directory (name="${panelName}")`,
+    );
+  }
+  return managedDocsDir;
+}
+
 async function scanPanelWithMode(
   panelName: string,
   modeOverride?: "off" | "ask" | "auto",
 ): Promise<PanelScanLookupResult> {
   const config = await loadConfig();
   const dataHome = getCouncilDataHome(config);
+  const managedDocsDir = resolveManagedDocsDir(dataHome, panelName);
   await ensureDataDirectories(dataHome);
   const dbPath = path.join(getCouncilHome(), "council.db");
   const db = await createDatabase(dbPath);
@@ -256,7 +283,6 @@ async function scanPanelWithMode(
     if (!panel) {
       return { kind: "not-found" };
     }
-    const managedDocsDir = path.join(dataHome, "panels", panelName, "docs");
     const result = await scanAndIndexPanelDocuments({
       panelName,
       managedDocsDir,
