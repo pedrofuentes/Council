@@ -177,7 +177,7 @@ export async function loadConfigWithMeta(): Promise<ConfigLoadResult> {
       const config = await writeDefaultConfig();
       return { config, isFirstRun: true };
     }
-    throw err;
+    throw wrapReadError(err, file);
   }
 
   let parsed: unknown;
@@ -226,7 +226,7 @@ export async function updateConfigFields(updates: readonly ConfigFieldUpdate[]):
         await writeDefaultConfig();
         raw = await fs.readFile(file, "utf-8");
       } else {
-        throw err;
+        throw wrapReadError(err, file);
       }
     }
 
@@ -287,4 +287,17 @@ function hasErrorCode(err: unknown, code: string): boolean {
 
 function isENOENT(err: unknown): boolean {
   return hasErrorCode(err, "ENOENT");
+}
+
+/**
+ * Wrap a non-ENOENT read failure with the offending config path so callers see
+ * where the I/O error occurred (EACCES, EISDIR, EMFILE, ...). Non-Error values
+ * are normalized; ENOENT is handled separately by writing defaults.
+ */
+function wrapReadError(err: unknown, file: string): Error {
+  if (err instanceof Error && typeof (err as NodeJS.ErrnoException).code === "string") {
+    const code = (err as NodeJS.ErrnoException).code;
+    return new Error(`Failed to read Council config (${file}): ${code} ${err.message}`);
+  }
+  return err instanceof Error ? err : new Error(String(err));
 }
