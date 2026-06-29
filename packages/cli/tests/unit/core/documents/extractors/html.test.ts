@@ -236,6 +236,31 @@ describe("html extractor", () => {
     });
   });
 
+  describe("strips C0 control characters from decoded entities (issue #1215)", () => {
+    // Full HTML5 entity decoding means numeric entities like ESC (&#27;)
+    // survive into extracted content -> SQLite/FTS -> LLM prompt (the
+    // terminal is already protected by stripControlChars, but the indexed
+    // content is not). Strip the C0 control range (except tab/newline/CR)
+    // defensively at the extractor output.
+    it("strips a decoded ESC control char", async () => {
+      const out = await run("<p>safe&#27;[31mtext</p>");
+      expect(out.content).not.toContain("\u001b");
+      expect(out.content).toContain("safe[31mtext");
+    });
+
+    it("strips assorted C0/DEL control chars but keeps surrounding prose", async () => {
+      const out = await run("<p>a&#8;b&#11;c&#12;d&#14;e&#31;f&#127;g</p>");
+      expect(out.content).toBe("abcdefg");
+    });
+
+    it("preserves tab/newline/CR as ordinary whitespace", async () => {
+      const out = await run("<p>one&#9;two</p>");
+      expect(out.content).toContain("one two");
+      // eslint-disable-next-line no-control-regex
+      expect(out.content).not.toMatch(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/);
+    });
+  });
+
   describe("DoS resistance (linear time, no ReDoS / O(n^2))", () => {
     // The old regex/scanner stripping took 15-33s on these adversarial
     // inputs. A tokenizer-based parser is O(n) and completes in well under

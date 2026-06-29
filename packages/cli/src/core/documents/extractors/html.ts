@@ -3,7 +3,8 @@
  *
  * Removes <script> and <style> elements (issue #344 — their bodies are
  * code, not prose, and would pollute the FTS index), then extracts the
- * remaining text, decodes entities, and collapses whitespace.
+ * remaining text, decodes entities, strips C0 control characters, and
+ * collapses whitespace.
  *
  * Extraction uses `node-html-parser`, a maintained, ESM-compatible,
  * tokenizer-based HTML parser. This replaces the previous hand-rolled
@@ -34,6 +35,15 @@ import { parse } from "node-html-parser";
 import { registerExtractor } from "./registry.js";
 import type { ContentExtractor, ExtractedContent, ExtractionContext } from "./types.js";
 
+// Full HTML5 entity decoding means numeric entities (e.g. `&#27;` -> ESC)
+// survive into extracted content, which flows to SQLite/FTS and the LLM
+// prompt. The terminal is protected by stripControlChars, but the indexed
+// content is not, so strip the C0 control range (plus DEL) here as
+// defense-in-depth — keeping tab/newline/CR, which whitespace collapsing
+// normalizes (issue #1215).
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
+
 function normalizeHtml(raw: string): string {
   try {
     const root = parse(raw, { comment: false });
@@ -41,6 +51,7 @@ function normalizeHtml(raw: string): string {
       el.remove();
     }
     return root.structuredText
+      .replace(CONTROL_CHARS, "")
       .replace(/[ \t]+/g, " ")
       .replace(/\s*\n\s*/g, "\n")
       .trim();
