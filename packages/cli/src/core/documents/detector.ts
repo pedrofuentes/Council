@@ -81,7 +81,8 @@ export interface DetectDocumentChangesOptions {
   readonly _rootIsCanonical?: boolean;
   /**
    * Test seam — replace `fs.realpath` for the duration of a single
-   * call. Production callers leave this undefined.
+   * call. Honored ONLY when NODE_ENV === "test" (#649); ignored in
+   * production so it cannot bypass confinement/TOCTOU validation.
    */
   readonly _realpathOverride?: (p: string) => Promise<string>;
   /**
@@ -144,7 +145,8 @@ async function readConfined(
   absolute: string,
   options: DetectDocumentChangesOptions,
 ): Promise<{ buf: Buffer; sizeBytes: number; modifiedAt: string } | null> {
-  const realpath = options._realpathOverride ?? fs.realpath;
+  const realpath =
+    (process.env.NODE_ENV === "test" ? options._realpathOverride : undefined) ?? fs.realpath;
 
   const fh = await fs.open(absolute, "r");
   try {
