@@ -108,17 +108,29 @@ export async function runHistory(target: string, write: Writer, writeError: Writ
     ] as const;
 
     const buildRow = async (s: ChatSession, marker: string): Promise<readonly string[]> => {
-      const count = await repo.getTurnCount(s.id);
-      const topic = await deriveTopic(repo, s);
-      return [
-        marker,
-        s.id,
-        String(count),
-        formatDate(s.createdAt),
-        formatDate(s.updatedAt),
-        s.status,
-        topic,
-      ] as const;
+      try {
+        const count = await repo.getTurnCount(s.id);
+        const topic = await deriveTopic(repo, s);
+        return [
+          marker,
+          s.id,
+          String(count),
+          formatDate(s.createdAt),
+          formatDate(s.updatedAt),
+          s.status,
+          topic,
+        ] as const;
+      } catch {
+        return [
+          marker,
+          s.id,
+          "?",
+          formatDate(s.createdAt),
+          formatDate(s.updatedAt),
+          s.status,
+          "(unavailable)",
+        ] as const;
+      }
     };
 
     const rows: (readonly string[])[] = [];
