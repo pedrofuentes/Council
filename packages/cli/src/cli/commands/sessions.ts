@@ -14,6 +14,7 @@ import { DebateRepository, type DebateStatus } from "../../memory/repositories/d
 import { ExpertRepository } from "../../memory/repositories/experts.js";
 import { type Panel, PanelRepository } from "../../memory/repositories/panels.js";
 import { TurnRepository } from "../../memory/repositories/turns.js";
+import { CliUserError } from "../cli-user-error.js";
 import { toSingleLineDisplay } from "../strip-control-chars.js";
 import { getSymbols } from "../renderers/symbols.js";
 
@@ -128,7 +129,7 @@ async function findPanelByNameOrPrefix(
   if (exactMatches.length > 1) {
     if (options?.rejectExactCollisions === true) {
       const ambiguousLabel = options.ambiguousLabel ?? "panels";
-      throw new Error(
+      throw new CliUserError(
         `Ambiguous name '${requestedName}' matches ${exactMatches.length} ${ambiguousLabel}.`,
       );
     }
@@ -139,7 +140,7 @@ async function findPanelByNameOrPrefix(
   }
   if (prefixMatches.length > 1) {
     const ambiguousLabel = options?.ambiguousLabel ?? "panels";
-    throw new Error(
+    throw new CliUserError(
       `Ambiguous prefix '${requestedName}' matches ${prefixMatches.length} ${ambiguousLabel}.`,
     );
   }
@@ -162,7 +163,7 @@ async function deletePanelIfNoRunningDebates(
   try {
     const debates = await debateRepo.findByPanelId(panelId);
     if (hasRunningDebate(debates)) {
-      throw new Error("Cannot delete a running session. Cancel it first.");
+      throw new CliUserError("Cannot delete a running session. Cancel it first.");
     }
     await panelRepo.delete(panelId);
     await sql`COMMIT`.execute(db);
@@ -299,7 +300,7 @@ export function buildSessionsCommand(depsOrWrite?: SessionsCommandDeps | Writer)
 
         const requestedName = name?.trim();
         if (!requestedName) {
-          throw new Error("Panel name is required unless --all is set.");
+          throw new CliUserError("Panel name is required unless --all is set.");
         }
 
         const panelRepo = new PanelRepository(db);
@@ -344,7 +345,7 @@ export function buildSessionsCommand(depsOrWrite?: SessionsCommandDeps | Writer)
 
         const debates = await debateRepo.findByPanelId(panel.id);
         if (hasRunningDebate(debates)) {
-          throw new Error("Cannot delete a running session. Cancel it first.");
+          throw new CliUserError("Cannot delete a running session. Cancel it first.");
         }
 
         if (options.yes !== true) {
