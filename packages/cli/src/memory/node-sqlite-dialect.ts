@@ -132,21 +132,21 @@ export class NodeSqliteConnection implements DatabaseConnection {
     this.#database = database;
   }
 
-  executeQuery<R>(compiledQuery: CompiledQuery): Promise<QueryResult<R>> {
+  async executeQuery<R>(compiledQuery: CompiledQuery): Promise<QueryResult<R>> {
     const { sql, parameters } = compiledQuery;
     const statement = this.#database.prepare(sql);
     const params = parameters as readonly SqliteBindValue[];
 
     if (isReaderStatement(statement)) {
-      return Promise.resolve({ rows: statement.all(...params) as R[] });
+      return { rows: statement.all(...params) as R[] };
     }
 
     const { changes, lastInsertRowid } = statement.run(...params);
-    return Promise.resolve({
+    return {
       numAffectedRows: toBigInt(changes),
       insertId: toBigInt(lastInsertRowid),
       rows: [],
-    });
+    };
   }
 
   async *streamQuery<R>(
