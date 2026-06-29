@@ -873,6 +873,103 @@ describe("buildSessionsCommand", () => {
       });
     });
 
+    // The top-level handler treats CliUserError as silent (the message was
+    // "already written via writeError"). So every CliUserError site MUST write
+    // its message to stderr first, or the user sees a silent exit (#845).
+    describe("user errors write their message to stderr before throwing (#845)", () => {
+      it("cancel: omitted name writes the message to stderr", async () => {
+        let stderr = "";
+        const cmd = buildSessionsCommand({
+          writeError: (s) => {
+            stderr += s;
+          },
+        });
+
+        await expect(cmd.parseAsync(["node", "council-sessions", "cancel"])).rejects.toThrow();
+
+        expect(stderr).toContain("Panel name is required unless --all is set.");
+      });
+
+      it("cancel: ambiguous prefix writes the message to stderr", async () => {
+        await seedPanelWithDebates(testHome, "amb-cancel-alpha", ["running"]);
+        await seedPanelWithDebates(testHome, "amb-cancel-beta", ["running"]);
+        let stderr = "";
+        const cmd = buildSessionsCommand({
+          writeError: (s) => {
+            stderr += s;
+          },
+        });
+
+        await expect(
+          cmd.parseAsync(["node", "council-sessions", "cancel", "amb-cancel-"]),
+        ).rejects.toThrow();
+
+        expect(stderr).toContain("Ambiguous prefix 'amb-cancel-' matches 2 panels.");
+      });
+
+      it("delete: ambiguous exact-name collision writes the message to stderr", async () => {
+        await seedPanelWithDebates(testHome, "amb-del", ["completed"]);
+        await seedPanelWithDebates(testHome, "amb-del", ["interrupted"]);
+        let stderr = "";
+        const cmd = buildSessionsCommand({
+          writeError: (s) => {
+            stderr += s;
+          },
+          confirmProvider: () => makeConfirmProvider(true),
+        });
+
+        await expect(
+          cmd.parseAsync(["node", "council-sessions", "delete", "amb-del", "--yes"]),
+        ).rejects.toThrow();
+
+        expect(stderr).toContain("Ambiguous name 'amb-del' matches 2 sessions.");
+      });
+
+      it("delete: running session writes the message to stderr", async () => {
+        await seedPanelWithDebates(testHome, "running-user-error", ["running"]);
+        let stderr = "";
+        const cmd = buildSessionsCommand({
+          writeError: (s) => {
+            stderr += s;
+          },
+          confirmProvider: () => makeConfirmProvider(true),
+        });
+
+        await expect(
+          cmd.parseAsync(["node", "council-sessions", "delete", "running-user-error", "--yes"]),
+        ).rejects.toThrow();
+
+        expect(stderr).toContain("Cannot delete a running session. Cancel it first.");
+      });
+
+      it("delete: running detected after confirmation writes the message to stderr", async () => {
+        const seeded = await seedPanelWithDebates(testHome, "race-stderr", ["completed"]);
+        const confirm = {
+          calls: 0,
+          prompts: [] as string[],
+          async confirm(message: string): Promise<boolean> {
+            confirm.calls += 1;
+            confirm.prompts.push(message);
+            await createRunningDebateForPanel(testHome, seeded.panelId, "resumed during confirmation");
+            return true;
+          },
+        } satisfies ConfirmProvider & { calls: number; prompts: string[] };
+        let stderr = "";
+        const cmd = buildSessionsCommand({
+          writeError: (s) => {
+            stderr += s;
+          },
+          confirmProvider: () => confirm,
+        });
+
+        await expect(
+          cmd.parseAsync(["node", "council-sessions", "delete", "race-stderr"]),
+        ).rejects.toThrow();
+
+        expect(stderr).toContain("Cannot delete a running session. Cancel it first.");
+      });
+    });
+
     describe("naming/display consistency (F32, F35)", () => {
       it("shows the human panel name and the resume/export id together (F32)", async () => {
         const { createDatabase } = await import("../../../../src/memory/db.js");
