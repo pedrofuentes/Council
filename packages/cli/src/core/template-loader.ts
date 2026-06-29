@@ -275,16 +275,35 @@ function resolvePanelsDir(): string {
 const PANELS_DIR = resolvePanelsDir();
 
 /**
- * List the names (without `.yaml` extension) of every bundled template.
+ * Read the built-in panels directory, distinguishing "missing" from "empty".
+ *
+ * A missing `panels/` directory is a packaging/installation bug (the dir ships
+ * with the npm package), so we throw with the resolved path rather than
+ * silently returning `[]` — closes issue #38. An existing-but-empty dir
+ * returns `[]` as expected.
  */
-export async function listTemplates(): Promise<readonly string[]> {
-  let entries: string[];
+async function readPanelsDir(dir: string): Promise<string[]> {
   try {
-    entries = await fs.readdir(PANELS_DIR);
+    return await fs.readdir(dir);
   } catch (err: unknown) {
-    if (isENOENT(err)) return [];
+    if (isENOENT(err)) {
+      throw new Error(
+        `Built-in panels directory not found at ${dir}. This indicates a broken ` +
+          `Council installation or packaging bug — reinstall the package to restore the bundled panels.`,
+      );
+    }
     throw err;
   }
+}
+
+/**
+ * List the names (without `.yaml` extension) of every bundled template.
+ *
+ * Throws when `dir` (default {@link PANELS_DIR}) is missing; returns `[]` only
+ * when the directory exists but contains no templates.
+ */
+export async function listTemplates(dir: string = PANELS_DIR): Promise<readonly string[]> {
+  const entries = await readPanelsDir(dir);
   return entries
     .filter((name) => name.endsWith(".yaml") || name.endsWith(".yml"))
     .map((name) => name.replace(/\.ya?ml$/, ""))
@@ -295,19 +314,14 @@ export async function listTemplates(): Promise<readonly string[]> {
  * List the absolute paths of every bundled panel YAML file.
  *
  * Used by `council panel lint --built-ins` to lint the shipped panels in
- * place. Returns an empty array when the panels directory is missing.
+ * place. Throws when `dir` (default {@link PANELS_DIR}) is missing; returns
+ * `[]` only when the directory exists but contains no panels.
  */
-export async function listTemplateFiles(): Promise<readonly string[]> {
-  let entries: string[];
-  try {
-    entries = await fs.readdir(PANELS_DIR);
-  } catch (err: unknown) {
-    if (isENOENT(err)) return [];
-    throw err;
-  }
+export async function listTemplateFiles(dir: string = PANELS_DIR): Promise<readonly string[]> {
+  const entries = await readPanelsDir(dir);
   return entries
     .filter((name) => name.endsWith(".yaml") || name.endsWith(".yml"))
-    .map((name) => path.join(PANELS_DIR, name))
+    .map((name) => path.join(dir, name))
     .sort();
 }
 

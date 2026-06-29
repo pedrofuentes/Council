@@ -22,6 +22,7 @@ import type { ExpertLibrary } from "../../../src/core/expert-library.js";
 import type { ExpertDefinition } from "../../../src/core/expert.js";
 import {
   assertAllInline,
+  listTemplateFiles,
   listTemplates,
   listUserPanels,
   loadPanel,
@@ -234,6 +235,36 @@ describe("loadTemplate() / listTemplates()", () => {
       });
     });
   }
+});
+
+describe("built-in panels directory missing vs empty (issue #38)", () => {
+  it("listTemplates() throws with PANELS_DIR context when the panels dir is missing", async () => {
+    const missing = path.join(os.tmpdir(), "council-no-panels-does-not-exist-38");
+    await expect(listTemplates(missing)).rejects.toThrow(/panels.*director|director.*panels/i);
+  });
+
+  it("listTemplates() returns [] when the panels dir exists but is empty", async () => {
+    const empty = await fs.mkdtemp(path.join(os.tmpdir(), "council-empty-tpl-"));
+    try {
+      await expect(listTemplates(empty)).resolves.toEqual([]);
+    } finally {
+      await fs.rm(empty, { recursive: true, force: true });
+    }
+  });
+
+  it("listTemplateFiles() throws with PANELS_DIR context when the panels dir is missing", async () => {
+    const missing = path.join(os.tmpdir(), "council-no-panels-does-not-exist-38");
+    await expect(listTemplateFiles(missing)).rejects.toThrow(/panels.*director|director.*panels/i);
+  });
+
+  it("listTemplateFiles() returns [] when the panels dir exists but is empty", async () => {
+    const empty = await fs.mkdtemp(path.join(os.tmpdir(), "council-empty-tpl-"));
+    try {
+      await expect(listTemplateFiles(empty)).resolves.toEqual([]);
+    } finally {
+      await fs.rm(empty, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("loadTemplateFromFile()", () => {
