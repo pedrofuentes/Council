@@ -317,6 +317,12 @@ export function isExtensionAiEligible(extension: string, config: AiFallbackConfi
  * The function NEVER calls an AI API. The "content" string is a
  * structured human-readable description; callers may forward it to a
  * model via the engine adapter or surface it directly to the user.
+ *
+ * Resilience: this function never throws. A pre-aborted `ctx.signal`
+ * short-circuits to `null` before hashing (respecting extraction
+ * timeouts), and any unexpected internal error (e.g. a corrupted Buffer
+ * whose hashing/slicing throws) is caught, logged as a warning, and
+ * surfaced as `null` so the caller falls back to the original failure.
  */
 export async function attemptAiFallback(
   ctx: ExtractionContext,
@@ -326,87 +332,105 @@ export async function attemptAiFallback(
   const ext = normalizeExtension(ctx.extension);
   const logger = deps.logger;
 
-  if (config.mode === "off") {
-    logger?.info(`ai-fallback: skipped (mode=off) extension=${ext} size=${ctx.sizeBytes}`);
-    return null;
-  }
-
-  if (BLOCKLIST.has(ext)) {
-    logger?.info(`ai-fallback: skipped (blocklisted) extension=${ext} size=${ctx.sizeBytes}`);
-    return null;
-  }
-
-  // Magic-byte signature gate: detect renamed executables/media that
-  // bypass the extension blocklist.
-  const signatureHint = detectKnownSignature(ctx.buffer);
-  if (signatureHint !== null && SIGNATURE_BLOCKLIST.has(signatureHint)) {
-    logger?.info(
-      `ai-fallback: skipped (blocklisted signature) detected=${signatureHint} extension=${ext} size=${ctx.sizeBytes}`,
-    );
-    return null;
-  }
-
-  if (config.allowedExtensions.length > 0) {
-    const allowed = new Set(config.allowedExtensions.map(normalizeExtension));
-    if (!allowed.has(ext)) {
-      logger?.info(`ai-fallback: skipped (not in allowedExtensions whitelist) extension=${ext}`);
+  try {
+    if (config.mode === "off") {
+      logger?.info(`ai-fallback: skipped (mode=off) extension=${ext} size=${ctx.sizeBytes}`);
       return null;
     }
-  }
 
-  const sha = createHash("sha256").update(ctx.buffer).digest("hex");
-  const cache = deps.cache;
-  if (cache !== undefined) {
-    const cached = cache.get(sha);
-    if (cached !== undefined) {
-      logger?.info(
-        `ai-fallback: cache hit sha=${sha.slice(0, SHA_LOG_PREFIX_LENGTH)} extension=${ext}`,
-      );
-      return cached;
+    // Respect cooperative cancellation (e.g. extraction timeout) before
+    // running SHA-256 over a potentially large buffer.
+    if (ctx.signal?.aborted === true) {
+      logger?.warn(`ai-fallback: aborted (cancelled) extension=${ext} size=${ctx.sizeBytes}`);
+      return null;
     }
-  }
 
-  logger?.info(`ai-fallback: attempted extension=${ext} size=${ctx.sizeBytes} mode=${config.mode}`);
+    if (BLOCKLIST.has(ext)) {
+      logger?.info(`ai-fallback: skipped (blocklisted) extension=${ext} size=${ctx.sizeBytes}`);
+      return null;
+    }
 
-  const signature = magicByteSignature(ctx.buffer);
-  const detectedFormat = describeFormat(ext, ctx.buffer);
-  const mode: "ask" | "auto" = config.mode;
-  const summary = buildSummary(ctx, detectedFormat, signature, mode);
-  const suggestion = buildSuggestion(mode, ext);
+    // Magic-byte signature gate: detect renamed executables/media that
+    // bypass the extension blocklist.
+    const signatureHint = detectKnownSignature(ctx.buffer);
+    if (signatureHint !== null && SIGNATURE_BLOCKLIST.has(signatureHint)) {
+      logger?.info(
+        `ai-fallback: skipped (blocklisted signature) detected=${signatureHint} extension=${ext} size=${ctx.sizeBytes}`,
+      );
+      return null;
+    }
 
-  const metadata: AiFallbackMetadata =
-    mode === "ask"
-      ? {
-          detectedFormat,
-          suggestedAction: suggestion,
-          mode,
-          askUser: true,
-        }
-      : {
-          detectedFormat,
-          suggestedAction: suggestion,
-          mode,
-        };
+    if (config.allowedExtensions.length > 0) {
+      const allowed = new Set(config.allowedExtensions.map(normalizeExtension));
+      if (!allowed.has(ext)) {
+        logger?.info(`ai-fallback: skipped (not in allowedExtensions whitelist) extension=${ext}`);
+        return null;
+      }
+    }
 
-  const result: AiFallbackContent = {
-    content: summary,
-    wordCount: countWords(summary),
-    metadata,
-  };
+    const sha = createHash("sha256").update(ctx.buffer).digest("hex");
+    const cache = deps.cache;
+    if (cache !== undefined) {
+      const cached = cache.get(sha);
+      if (cached !== undefined) {
+        logger?.info(
+          `ai-fallback: cache hit sha=${sha.slice(0, SHA_LOG_PREFIX_LENGTH)} extension=${ext}`,
+        );
+        return cached;
+      }
+    }
 
-  if (cache !== undefined) {
-    cache.set(sha, result);
-  }
-
-  if (mode === "ask") {
     logger?.info(
-      `ai-fallback: ask-user sha=${sha.slice(0, SHA_LOG_PREFIX_LENGTH)} extension=${ext}`,
+      `ai-fallback: attempted extension=${ext} size=${ctx.sizeBytes} mode=${config.mode}`,
     );
-  } else {
-    logger?.info(
-      `ai-fallback: succeeded sha=${sha.slice(0, SHA_LOG_PREFIX_LENGTH)} extension=${ext}`,
-    );
-  }
 
-  return result;
+    const signature = magicByteSignature(ctx.buffer);
+    const detectedFormat = describeFormat(ext, ctx.buffer);
+    const mode: "ask" | "auto" = config.mode;
+    const summary = buildSummary(ctx, detectedFormat, signature, mode);
+    const suggestion = buildSuggestion(mode, ext);
+
+    const metadata: AiFallbackMetadata =
+      mode === "ask"
+        ? {
+            detectedFormat,
+            suggestedAction: suggestion,
+            mode,
+            askUser: true,
+          }
+        : {
+            detectedFormat,
+            suggestedAction: suggestion,
+            mode,
+          };
+
+    const result: AiFallbackContent = {
+      content: summary,
+      wordCount: countWords(summary),
+      metadata,
+    };
+
+    if (cache !== undefined) {
+      cache.set(sha, result);
+    }
+
+    if (mode === "ask") {
+      logger?.info(
+        `ai-fallback: ask-user sha=${sha.slice(0, SHA_LOG_PREFIX_LENGTH)} extension=${ext}`,
+      );
+    } else {
+      logger?.info(
+        `ai-fallback: succeeded sha=${sha.slice(0, SHA_LOG_PREFIX_LENGTH)} extension=${ext}`,
+      );
+    }
+
+    return result;
+  } catch (err) {
+    // Resilience: never propagate an internal failure (e.g. a corrupted
+    // Buffer whose hashing/slicing throws). Log a warning and treat the
+    // file as unhandled so the caller surfaces the original hard failure.
+    const reason = err instanceof Error ? err.message : String(err);
+    logger?.warn(`ai-fallback: error extension=${ext} size=${ctx.sizeBytes} reason=${reason}`);
+    return null;
+  }
 }
