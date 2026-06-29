@@ -20,7 +20,7 @@ export interface ExpertFormScreenProps {
 }
 
 type InputMode = "nav" | "edit";
-type LoadState = "loading" | "loaded" | "notfound";
+type LoadState = "loading" | "loaded" | "notfound" | "error";
 type FieldKind = "text" | "enum";
 
 interface FormField {
@@ -94,6 +94,8 @@ export function ExpertFormScreen(props: ExpertFormScreenProps): React.ReactEleme
   const [errors, setErrors] = React.useState<
     Readonly<Partial<Record<keyof ExpertFormValues, string>>>
   >({});
+  const [formError, setFormError] = React.useState<string | undefined>(undefined);
+  const savingRef = React.useRef(false);
 
   React.useEffect(() => {
     setCaptured(true);
@@ -110,18 +112,26 @@ export function ExpertFormScreen(props: ExpertFormScreenProps): React.ReactEleme
 
     let cancelled = false;
     setLoadState("loading");
-    void expertAuthoring.loadForEdit(editSlug ?? "").then((form) => {
-      if (cancelled) {
-        return;
-      }
-      if (form === undefined) {
-        setLoadState("notfound");
-        return;
-      }
-      setValues(form);
-      setErrors({});
-      setLoadState("loaded");
-    });
+    void expertAuthoring
+      .loadForEdit(editSlug ?? "")
+      .then((form) => {
+        if (cancelled) {
+          return;
+        }
+        if (form === undefined) {
+          setLoadState("notfound");
+          return;
+        }
+        setValues(form);
+        setErrors({});
+        setLoadState("loaded");
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        setLoadState("error");
+      });
 
     return () => {
       cancelled = true;
@@ -171,24 +181,36 @@ export function ExpertFormScreen(props: ExpertFormScreenProps): React.ReactEleme
   );
 
   const save = React.useCallback(async (): Promise<void> => {
-    const result =
-      formMode === "edit"
-        ? await expertAuthoring.update(editSlug ?? "", values)
-        : await expertAuthoring.create(values);
-    if (result.ok) {
-      setErrors({});
-      const destinationSlug = formMode === "edit" ? (editSlug ?? "") : values.slug.trim();
-      navigate(`/experts/${encodeURIComponent(destinationSlug)}`);
+    if (savingRef.current) {
       return;
     }
-    const nextErrors = errorsToRecord(result);
-    setErrors(nextErrors);
-    const firstError = result.errors[0];
-    if (firstError !== undefined) {
-      const index = visibleFields.findIndex((field) => field.key === firstError.field);
-      if (index >= 0) {
-        setCursor(index);
+    savingRef.current = true;
+    try {
+      const result =
+        formMode === "edit"
+          ? await expertAuthoring.update(editSlug ?? "", values)
+          : await expertAuthoring.create(values);
+      if (result.ok) {
+        setErrors({});
+        setFormError(undefined);
+        const destinationSlug = formMode === "edit" ? (editSlug ?? "") : values.slug.trim();
+        navigate(`/experts/${encodeURIComponent(destinationSlug)}`);
+        return;
       }
+      setFormError(undefined);
+      const nextErrors = errorsToRecord(result);
+      setErrors(nextErrors);
+      const firstError = result.errors[0];
+      if (firstError !== undefined) {
+        const index = visibleFields.findIndex((field) => field.key === firstError.field);
+        if (index >= 0) {
+          setCursor(index);
+        }
+      }
+    } catch (error) {
+      setFormError(toSingleLineDisplay(`Save failed: ${describeError(error)}`));
+    } finally {
+      savingRef.current = false;
     }
   }, [editSlug, expertAuthoring, formMode, navigate, values, visibleFields]);
 
@@ -295,12 +317,25 @@ export function ExpertFormScreen(props: ExpertFormScreenProps): React.ReactEleme
     { isActive: mode === "edit" && loadState === "loaded" },
   );
 
+  useInput(
+    (_input, key) => {
+      if (key.escape) {
+        navigate(-1);
+      }
+    },
+    { isActive: loadState === "notfound" || loadState === "error" },
+  );
+
   if (loadState === "loading") {
     return <Text>{props.theme.muted("Loading expert…")}</Text>;
   }
 
   if (loadState === "notfound") {
-    return <Text>{props.theme.warn("Expert not found")}</Text>;
+    return <Text>{props.theme.warn("Expert not found · Esc back")}</Text>;
+  }
+
+  if (loadState === "error") {
+    return <Text>{props.theme.error("Failed to load expert · Esc back")}</Text>;
   }
 
   return (
@@ -329,6 +364,7 @@ export function ExpertFormScreen(props: ExpertFormScreenProps): React.ReactEleme
         );
       })}
       <Text>{props.theme.muted(expertFormHint(mode, selected))}</Text>
+      {formError !== undefined ? <Text>{props.theme.error(formError)}</Text> : null}
     </Box>
   );
 }
@@ -389,4 +425,8 @@ function errorsToRecord(
     next[item.field] = toSingleLineDisplay(item.error);
   }
   return next;
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
