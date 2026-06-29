@@ -43,6 +43,10 @@ const CONTROL_CHAR_PATTERN =
   // (a ReDoS DoS vector), and left unterminated OSC sequences only partially
   // stripped. The negated class stops at the next ESC so a following CSI is
   // still matched by its own branch.
+  //
+  // The `s` (dotAll) flag makes `.` match newlines: an OSC sequence with an
+  // embedded `\n` would bypass stripping if the body were ever rewritten with
+  // `.` instead of the negated class. Keep this flag — do not remove it.
   // eslint-disable-next-line no-control-regex
   /\x1B\[[0-?]*[ -/]*[@-~]|\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)?|[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]|[\u202A-\u202E\u2066-\u2069]/gs;
 
