@@ -47,8 +47,21 @@ const installedProcesses = new WeakSet<WarningEmitterProcess>();
 const installedStderrStreams = new WeakSet<StderrWritable>();
 
 function isExperimentalWarning(warning: string | Error, typeArg: unknown): boolean {
-  return typeArg === "ExperimentalWarning" ||
-    (warning instanceof Error && warning.name === "ExperimentalWarning");
+  return (
+    typeArg === "ExperimentalWarning" ||
+    (warning instanceof Error && warning.name === "ExperimentalWarning")
+  );
+}
+
+// `process.emitWarning` accepts the warning type either as the bare `type`
+// string argument (`emitWarning(msg, "ExperimentalWarning")`) or via the
+// options-object overload (`emitWarning(msg, { type: "ExperimentalWarning" })`).
+// Normalize both so suppression matches Node's full overload contract.
+function resolveWarningType(secondArg: unknown): unknown {
+  if (typeof secondArg === "object" && secondArg !== null && "type" in secondArg) {
+    return (secondArg as { type?: unknown }).type;
+  }
+  return secondArg;
 }
 
 function isNodeSqliteExperimentalWarning(warning: string | Error, typeArg: unknown): boolean {
@@ -115,7 +128,11 @@ export function installSqliteExperimentalWarningStderrFilter(
     }
 
     if (typeof chunk === "string") {
-      return originalWrite(filtered, encoding as BufferEncoding | StderrWriteCallback | undefined, cb);
+      return originalWrite(
+        filtered,
+        encoding as BufferEncoding | StderrWriteCallback | undefined,
+        cb,
+      );
     }
 
     // Binary chunk that contained the warning — re-emit the surviving text
@@ -138,14 +155,17 @@ export function installSqliteExperimentalWarningFilter(
 
   const originalEmitWarning = warningProcess.emitWarning;
   warningProcess.emitWarning = ((warning: string | Error, ...args: unknown[]): void => {
-    if (isNodeSqliteExperimentalWarning(warning, args[0])) {
+    if (isNodeSqliteExperimentalWarning(warning, resolveWarningType(args[0]))) {
       return;
     }
 
-    Reflect.apply(originalEmitWarning as unknown as (...parameters: unknown[]) => void, warningProcess, [
+    // Forward through the original, type-preserving reference so its overloaded
+    // signature is retained (no `as unknown as` erasure). Reflect.apply keeps
+    // any later patcher's `this` binding intact.
+    Reflect.apply(originalEmitWarning, warningProcess, [
       warning,
       ...args,
-    ]);
+    ] as Parameters<EmitWarning>);
   }) as EmitWarning;
 
   installedProcesses.add(warningProcess);
