@@ -240,7 +240,9 @@ function sanitizeXml(xml: string, filename: string): string {
 /**
  * Reads `content.xml` out of an ODF ZIP archive, applies all
  * decompression-bomb defenses, and returns the parsed XML tree.
- * Returns `null` when the archive contains no `content.xml` entry.
+ * Returns `null` only when the archive contains no `content.xml` entry.
+ * A present-but-corrupt `content.xml` throws `ExtractionError(corrupt-document)`
+ * rather than being silently treated as empty.
  */
 export async function readOdfContent(
   buffer: Buffer,
@@ -254,8 +256,14 @@ export async function readOdfContent(
   const sanitized = sanitizeXml(contentBuf.toString("utf-8"), filename);
   try {
     return xmlParser.parse(sanitized);
-  } catch {
-    return null;
+  } catch (cause) {
+    throw new ExtractionError({
+      kind: "corrupt-document",
+      filePath: filename,
+      message: `Failed to parse ${formatLabel} content.xml — the XML is malformed.`,
+      suggestion: `Verify the file is an uncorrupted ${formatLabel} (OpenDocument) document.`,
+      cause,
+    });
   }
 }
 
