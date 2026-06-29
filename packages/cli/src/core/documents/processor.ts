@@ -359,6 +359,16 @@ export function createDocumentProcessor(
           // to the persona analyzer. Recorded as a distinct needs-review
           // outcome for scan UX.
           if (extracted.metadata?.askUser === true) {
+            // Policy-change retention guard (#1019): a file indexed under
+            // `auto` then re-scanned under `ask` after an edit enters
+            // `seenPaths`, so the prune pass skips it. Evict any prior
+            // FTS row + repo entry here so pre-edit content can't stay
+            // searchable while UX reports the file as needs-review.
+            const prior = await documentRepo.findByPath(expertSlug, file.path);
+            if (prior) {
+              await indexer.remove(file.path);
+              await documentRepo.markRemoved(prior.id);
+            }
             needsReview += 1;
             onProgress?.({
               filename: file.filename,
