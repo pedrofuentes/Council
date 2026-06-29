@@ -226,7 +226,11 @@ export class MockEngine implements CouncilEngine {
   };
   readonly #experts = new Map<string, ExpertSpec>();
   readonly #inFlight = new Set<InFlight>();
-  readonly #sentPrompts: { readonly expertId: string; readonly prompt: string }[] = [];
+  readonly #sentPrompts: {
+    readonly expertId: string;
+    readonly prompt: string;
+    readonly turnId?: string;
+  }[] = [];
   readonly #removeExpertCalls: string[] = [];
   readonly #sendCallCounts = new Map<string, number>();
   #stopped = false;
@@ -261,7 +265,11 @@ export class MockEngine implements CouncilEngine {
    * Captured at the synchronous validation boundary so it reflects the
    * caller's intent regardless of stream consumption / cancellation.
    */
-  get sentPrompts(): readonly { readonly expertId: string; readonly prompt: string }[] {
+  get sentPrompts(): readonly {
+    readonly expertId: string;
+    readonly prompt: string;
+    readonly turnId?: string;
+  }[] {
     return this.#sentPrompts;
   }
 
@@ -364,7 +372,11 @@ export class MockEngine implements CouncilEngine {
     }
     // Capture for test verification (see `sentPrompts` getter). Captured
     // before any async work so the order matches the caller's intent.
-    this.#sentPrompts.push({ expertId: options.expertId, prompt: options.prompt });
+    this.#sentPrompts.push({
+      expertId: options.expertId,
+      prompt: options.prompt,
+      ...(options.turnId ? { turnId: options.turnId } : {}),
+    });
     const sendNum = (this.#sendCallCounts.get(options.expertId) ?? 0) + 1;
     this.#sendCallCounts.set(options.expertId, sendNum);
 
