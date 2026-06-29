@@ -37,7 +37,13 @@ describe("Debate retry — stable reasonCode threading (#674)", () => {
   it("turn.retry carries the engine reasonCode for RATE_LIMITED failures", async () => {
     const engine = new MockEngine({
       responses: { [cto.id]: "ok" },
-      failOnSend: { expertId: cto.id, afterN: 0, failures: 1, code: "RATE_LIMITED", message: "throttled" },
+      failOnSend: {
+        expertId: cto.id,
+        afterN: 0,
+        failures: 1,
+        code: "RATE_LIMITED",
+        message: "throttled",
+      },
     });
     await engine.start();
     await engine.addExpert(cto);
@@ -53,7 +59,13 @@ describe("Debate retry — stable reasonCode threading (#674)", () => {
   it("turn.retry carries the engine reasonCode for NETWORK failures", async () => {
     const engine = new MockEngine({
       responses: { [cto.id]: "ok" },
-      failOnSend: { expertId: cto.id, afterN: 0, failures: 1, code: "NETWORK", message: "connection reset" },
+      failOnSend: {
+        expertId: cto.id,
+        afterN: 0,
+        failures: 1,
+        code: "NETWORK",
+        message: "connection reset",
+      },
     });
     await engine.start();
     await engine.addExpert(cto);

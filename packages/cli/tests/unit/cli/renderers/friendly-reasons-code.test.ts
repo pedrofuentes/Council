@@ -6,7 +6,10 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { FRIENDLY_REASONS, friendlyReason } from "../../../../src/cli/renderers/friendly-reasons.js";
+import {
+  FRIENDLY_REASONS,
+  friendlyReason,
+} from "../../../../src/cli/renderers/friendly-reasons.js";
 
 describe("friendlyReason — keyed by EngineErrorCode (#674)", () => {
   it("maps RATE_LIMITED to a human-friendly message", () => {
