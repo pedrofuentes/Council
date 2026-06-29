@@ -14,9 +14,7 @@ async function loadCsvExtractor(ext: string): Promise<{
 }> {
   vi.resetModules();
   await import("../../../../../src/core/documents/extractors/csv.js");
-  const registry = await import(
-    "../../../../../src/core/documents/extractors/registry.js"
-  );
+  const registry = await import("../../../../../src/core/documents/extractors/registry.js");
   const extractor = await registry.getExtractor(ext);
   return { extractor };
 }
@@ -100,9 +98,7 @@ describe("csv extractor", () => {
   it("registers itself for both .csv and .tsv", async () => {
     vi.resetModules();
     await import("../../../../../src/core/documents/extractors/csv.js");
-    const registry = await import(
-      "../../../../../src/core/documents/extractors/registry.js"
-    );
+    const registry = await import("../../../../../src/core/documents/extractors/registry.js");
     const a = await registry.getExtractor(".csv");
     const b = await registry.getExtractor(".tsv");
     expect(a).toBeDefined();
@@ -115,5 +111,41 @@ describe("csv extractor", () => {
     const out = await extractor(ctx(Buffer.from(csv, "utf-8")));
     expect(out.content).toContain("café");
     expect(out.content).toContain("🎉");
+  });
+
+  it("throws ExtractionError(corrupt-document) on an unterminated quote", async () => {
+    const { extractor } = await loadCsvExtractor(".csv");
+    const errors = await import("../../../../../src/core/documents/extractors/errors.js");
+    // The quoted field around "Alice,30 is never closed (mismatched quotes).
+    const csv = 'name,age\n"Alice,30';
+    await expect(extractor(ctx(Buffer.from(csv, "utf-8")))).rejects.toBeInstanceOf(
+      errors.ExtractionError,
+    );
+    try {
+      await extractor(ctx(Buffer.from(csv, "utf-8")));
+      throw new Error("should not reach");
+    } catch (err) {
+      expect(err).toBeInstanceOf(errors.ExtractionError);
+      const e = err as InstanceType<typeof errors.ExtractionError>;
+      expect(e.kind).toBe("corrupt-document");
+    }
+  });
+
+  it("throws ExtractionError(corrupt-document) on inconsistent column counts", async () => {
+    const { extractor } = await loadCsvExtractor(".csv");
+    const errors = await import("../../../../../src/core/documents/extractors/errors.js");
+    // Header has 3 columns; second data row has only 2.
+    const csv = "a,b,c\n1,2,3\n4,5";
+    await expect(extractor(ctx(Buffer.from(csv, "utf-8")))).rejects.toBeInstanceOf(
+      errors.ExtractionError,
+    );
+    try {
+      await extractor(ctx(Buffer.from(csv, "utf-8")));
+      throw new Error("should not reach");
+    } catch (err) {
+      expect(err).toBeInstanceOf(errors.ExtractionError);
+      const e = err as InstanceType<typeof errors.ExtractionError>;
+      expect(e.kind).toBe("corrupt-document");
+    }
   });
 });
