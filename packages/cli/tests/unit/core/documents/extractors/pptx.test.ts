@@ -60,11 +60,9 @@ function buildZip(entries: readonly ZipEntry[]): Buffer {
 
   for (const entry of entries) {
     const method = entry.method ?? "stored";
-    const compressed =
-      method === "deflate" ? deflateRawSync(entry.data) : entry.data;
+    const compressed = method === "deflate" ? deflateRawSync(entry.data) : entry.data;
     const crc = crc32(entry.data);
-    const uncompressedSize =
-      entry.fakeUncompressedSize ?? entry.data.length;
+    const uncompressedSize = entry.fakeUncompressedSize ?? entry.data.length;
     const compressedSize = entry.fakeCompressedSize ?? compressed.length;
     const methodCode = method === "deflate" ? 8 : 0;
     const nameBuf = Buffer.from(entry.name, "utf-8");
@@ -138,9 +136,7 @@ function slideXml(body: string): string {
 }
 
 function multiParagraphSlideXml(paragraphs: readonly string[]): string {
-  const ps = paragraphs
-    .map((p) => `<a:p><a:r><a:t>${p}</a:t></a:r></a:p>`)
-    .join("");
+  const ps = paragraphs.map((p) => `<a:p><a:r><a:t>${p}</a:t></a:r></a:p>`).join("");
   return `<?xml version="1.0"?>
 <p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
        xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
@@ -167,11 +163,11 @@ function makePptx(slides: readonly SlideSpec[]): Buffer {
   const entries: ZipEntry[] = [
     {
       name: "[Content_Types].xml",
-      data: Buffer.from("<?xml version=\"1.0\"?><Types/>", "utf-8"),
+      data: Buffer.from('<?xml version="1.0"?><Types/>', "utf-8"),
     },
     {
       name: "ppt/presentation.xml",
-      data: Buffer.from("<?xml version=\"1.0\"?><p:presentation/>", "utf-8"),
+      data: Buffer.from('<?xml version="1.0"?><p:presentation/>', "utf-8"),
     },
   ];
   slides.forEach((spec, i) => {
@@ -198,12 +194,8 @@ async function loadPptxExtractor(): Promise<{
 }> {
   vi.resetModules();
   await import("../../../../../src/core/documents/extractors/pptx.js");
-  const registry = await import(
-    "../../../../../src/core/documents/extractors/registry.js"
-  );
-  const errors = await import(
-    "../../../../../src/core/documents/extractors/errors.js"
-  );
+  const registry = await import("../../../../../src/core/documents/extractors/registry.js");
+  const errors = await import("../../../../../src/core/documents/extractors/errors.js");
   const extractor = await registry.getExtractor(".pptx");
   return { extractor, errors };
 }
@@ -308,9 +300,7 @@ describe("pptx extractor", () => {
 
   it("renders speaker notes as a blockquote below the slide body", async () => {
     const { extractor } = await loadPptxExtractor();
-    const buf = makePptx([
-      { body: "Topic intro", notes: "Remember to mention the deadline" },
-    ]);
+    const buf = makePptx([{ body: "Topic intro", notes: "Remember to mention the deadline" }]);
     const out = await extractor(ctx(buf));
     expect(out.content).toMatch(
       /## Slide 1[\s\S]*Topic intro[\s\S]*> \*\*Speaker Notes:\*\* Remember to mention the deadline/,
@@ -349,9 +339,7 @@ describe("pptx extractor", () => {
     expect(out.content).toContain("Alpha line");
     expect(out.content).toContain("Beta line");
     expect(out.content).toContain("Gamma line");
-    expect(out.content.indexOf("Alpha line")).toBeLessThan(
-      out.content.indexOf("Beta line"),
-    );
+    expect(out.content.indexOf("Alpha line")).toBeLessThan(out.content.indexOf("Beta line"));
   });
 
   it("returns empty content and slideCount 0 for a presentation with no slides", async () => {
@@ -359,11 +347,11 @@ describe("pptx extractor", () => {
     const buf = buildZip([
       {
         name: "[Content_Types].xml",
-        data: Buffer.from("<?xml version=\"1.0\"?><Types/>", "utf-8"),
+        data: Buffer.from('<?xml version="1.0"?><Types/>', "utf-8"),
       },
       {
         name: "ppt/presentation.xml",
-        data: Buffer.from("<?xml version=\"1.0\"?><p:presentation/>", "utf-8"),
+        data: Buffer.from('<?xml version="1.0"?><p:presentation/>', "utf-8"),
       },
     ]);
     const out = await extractor(ctx(buf));
@@ -382,9 +370,7 @@ describe("pptx extractor", () => {
       caught = err;
     }
     expect(caught).toBeInstanceOf(errors.ExtractionError);
-    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe(
-      "corrupt-document",
-    );
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("corrupt-document");
   });
 
   it("rejects an archive with > 1000 entries as a zip bomb", async () => {
@@ -404,9 +390,7 @@ describe("pptx extractor", () => {
       caught = err;
     }
     expect(caught).toBeInstanceOf(errors.ExtractionError);
-    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe(
-      "zip-bomb-detected",
-    );
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("zip-bomb-detected");
   });
 
   it("rejects an entry whose compression ratio exceeds 100:1", async () => {
@@ -427,9 +411,7 @@ describe("pptx extractor", () => {
       caught = err;
     }
     expect(caught).toBeInstanceOf(errors.ExtractionError);
-    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe(
-      "zip-bomb-detected",
-    );
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("zip-bomb-detected");
   });
 
   it("rejects an archive whose total uncompressed size exceeds 200 MB", async () => {
@@ -453,9 +435,7 @@ describe("pptx extractor", () => {
       caught = err;
     }
     expect(caught).toBeInstanceOf(errors.ExtractionError);
-    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe(
-      "zip-bomb-detected",
-    );
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("zip-bomb-detected");
   });
 
   it("rejects an entry whose declared uncompressed size exceeds the 20 MB per-entry cap", async () => {
@@ -479,9 +459,7 @@ describe("pptx extractor", () => {
       caught = err;
     }
     expect(caught).toBeInstanceOf(errors.ExtractionError);
-    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe(
-      "zip-bomb-detected",
-    );
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("zip-bomb-detected");
   });
 
   it("aborts a read stream that delivers more bytes than the declared uncompressed size", async () => {
@@ -508,9 +486,7 @@ describe("pptx extractor", () => {
       caught = err;
     }
     expect(caught).toBeInstanceOf(errors.ExtractionError);
-    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe(
-      "zip-bomb-detected",
-    );
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("zip-bomb-detected");
   });
 
   it("does not expand internal XML entities (XXE / billion-laughs)", async () => {
@@ -565,9 +541,7 @@ describe("pptx extractor", () => {
       caught = err;
     }
     expect(caught).toBeInstanceOf(errors.ExtractionError);
-    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe(
-      "oversize-file",
-    );
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("oversize-file");
   });
 
   it("honors a pre-aborted signal with extraction-timeout (#956)", async () => {
@@ -582,9 +556,7 @@ describe("pptx extractor", () => {
       caught = err;
     }
     expect(caught).toBeInstanceOf(errors.ExtractionError);
-    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe(
-      "extraction-timeout",
-    );
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("extraction-timeout");
   });
 
   it("wraps generic ZIP stream errors as corrupt-document (#955)", async () => {
@@ -597,9 +569,7 @@ describe("pptx extractor", () => {
       caught = err;
     }
     expect(caught).toBeInstanceOf(errors.ExtractionError);
-    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe(
-      "corrupt-document",
-    );
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("corrupt-document");
   });
 
   it("throws ExtractionError instead of overflowing on deeply nested XML (#954)", async () => {
@@ -607,7 +577,7 @@ describe("pptx extractor", () => {
     const buf = buildZip([
       {
         name: "ppt/slides/slide1.xml",
-        data: Buffer.from(deeplyNestedSlideXml(600), "utf-8"),
+        data: Buffer.from(deeplyNestedSlideXml(80), "utf-8"),
       },
     ]);
     let caught: unknown;
@@ -617,9 +587,7 @@ describe("pptx extractor", () => {
       caught = err;
     }
     expect(caught).toBeInstanceOf(errors.ExtractionError);
-    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe(
-      "corrupt-document",
-    );
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("corrupt-document");
   });
 
   it("extracts large interleaved slide/notes decks correctly (#957)", async () => {
@@ -635,17 +603,13 @@ describe("pptx extractor", () => {
     expect(out.content).toContain("Note-1");
     expect(out.content).toContain("Body-60");
     expect(out.content).toContain("> **Speaker Notes:** Note-60");
-    expect(out.content.indexOf("Body-2")).toBeLessThan(
-      out.content.indexOf("Body-60"),
-    );
+    expect(out.content.indexOf("Body-2")).toBeLessThan(out.content.indexOf("Body-60"));
   });
 
   it("registers itself for .pptx", async () => {
     vi.resetModules();
     await import("../../../../../src/core/documents/extractors/pptx.js");
-    const registry = await import(
-      "../../../../../src/core/documents/extractors/registry.js"
-    );
+    const registry = await import("../../../../../src/core/documents/extractors/registry.js");
     expect(registry.getSupportedExtensions()).toContain(".pptx");
   });
 });

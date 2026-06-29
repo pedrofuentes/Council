@@ -16,7 +16,12 @@
  *     downstream memory use even when individual ZIP entries stay
  *     within their per-entry limits.
  *   - The XML parser runs with entity processing disabled to prevent
- *     XXE and billion-laughs attacks.
+ *     XXE and billion-laughs attacks, and `collectText` recursion is
+ *     depth-bounded to avoid stack exhaustion on pathologically nested
+ *     DrawingML.
+ *   - Matched parts are stream-parsed to text on arrival (buffers are
+ *     not retained simultaneously) and a caller `AbortSignal` is honored
+ *     at the entry and slide loops so timeouts stop work promptly.
  *
  * Self-registers for `.pptx` via the registry's lazy loader.
  */
@@ -25,17 +30,14 @@ import { fromBuffer, type Entry, type ZipFile } from "yauzl";
 
 import { ExtractionError } from "./errors.js";
 import { registerExtractor } from "./registry.js";
-import type {
-  ContentExtractor,
-  ExtractedContent,
-  ExtractionContext,
-} from "./types.js";
+import type { ContentExtractor, ExtractedContent, ExtractionContext } from "./types.js";
 
 const MAX_ENTRIES = 1000;
 const MAX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024;
 const MAX_ENTRY_BYTES = 20 * 1024 * 1024;
 const MAX_COMPRESSION_RATIO = 100;
 const MAX_CONTENT_BYTES = 10 * 1024 * 1024;
+const MAX_NODE_DEPTH = 64;
 
 const SLIDE_PATH = /^ppt\/slides\/slide(\d+)\.xml$/;
 const NOTES_PATH = /^ppt\/notesSlides\/notesSlide(\d+)\.xml$/;
@@ -59,15 +61,11 @@ function openZip(buffer: Buffer): Promise<ZipFile> {
   });
 }
 
-function readEntryBuffer(
-  zip: ZipFile,
-  entry: Entry,
-  filename: string,
-): Promise<Buffer> {
+function readEntryBuffer(zip: ZipFile, entry: Entry, filename: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     zip.openReadStream(entry, (err, stream) => {
       if (err !== null || stream === undefined) {
-        reject(err ?? new Error("yauzl returned no read stream"));
+        reject(corruptError(filename, err ?? new Error("yauzl returned no read stream")));
         return;
       }
       const chunks: Buffer[] = [];
@@ -109,7 +107,7 @@ function readEntryBuffer(
           );
           return;
         }
-        reject(streamErr);
+        reject(corruptError(filename, streamErr));
       });
     });
   });
@@ -120,15 +118,44 @@ function bombError(filename: string, message: string): ExtractionError {
     kind: "zip-bomb-detected",
     filePath: filename,
     message,
-    suggestion:
-      "Refuse to process this archive — it exceeds safe decompression limits.",
+    suggestion: "Refuse to process this archive — it exceeds safe decompression limits.",
   });
 }
 
-async function readZipEntries(
+function corruptError(filename: string, cause: unknown): ExtractionError {
+  return new ExtractionError({
+    kind: "corrupt-document",
+    filePath: filename,
+    message: "Failed to read PPTX archive — a ZIP entry stream is corrupt.",
+    suggestion: "Verify the file is an uncorrupted .pptx (Office Open XML) document.",
+    cause,
+  });
+}
+
+function timeoutError(filename: string, cause: unknown): ExtractionError {
+  return new ExtractionError({
+    kind: "extraction-timeout",
+    filePath: filename,
+    message: "PPTX extraction aborted before completion.",
+    cause,
+  });
+}
+
+interface SlidePart {
+  readonly index: number;
+  readonly text: string;
+}
+
+interface DeckParts {
+  readonly slides: SlidePart[];
+  readonly notes: Map<number, string>;
+}
+
+async function readSlideParts(
   buffer: Buffer,
   filename: string,
-): Promise<ReadonlyMap<string, Buffer>> {
+  signal: AbortSignal | undefined,
+): Promise<DeckParts> {
   let zip: ZipFile;
   try {
     zip = await openZip(buffer);
@@ -137,14 +164,14 @@ async function readZipEntries(
       kind: "corrupt-document",
       filePath: filename,
       message: "Failed to open PPTX archive — not a valid ZIP container.",
-      suggestion:
-        "Verify the file is an uncorrupted .pptx (Office Open XML) document.",
+      suggestion: "Verify the file is an uncorrupted .pptx (Office Open XML) document.",
       cause,
     });
   }
 
-  return new Promise<ReadonlyMap<string, Buffer>>((resolve, reject) => {
-    const collected = new Map<string, Buffer>();
+  return new Promise<DeckParts>((resolve, reject) => {
+    const slides: SlidePart[] = [];
+    const notes = new Map<number, string>();
     let entryCount = 0;
     let totalUncompressed = 0;
     let settled = false;
@@ -163,6 +190,9 @@ async function readZipEntries(
     zip.on("entry", (entry: Entry) => {
       void (async () => {
         try {
+          if (signal?.aborted === true) {
+            throw timeoutError(filename, signal.reason);
+          }
           entryCount++;
           if (entryCount > MAX_ENTRIES) {
             throw bombError(
@@ -178,8 +208,7 @@ async function readZipEntries(
           }
           if (
             entry.compressedSize > 0 &&
-            entry.uncompressedSize / entry.compressedSize >
-              MAX_COMPRESSION_RATIO
+            entry.uncompressedSize / entry.compressedSize > MAX_COMPRESSION_RATIO
           ) {
             throw bombError(
               filename,
@@ -193,12 +222,19 @@ async function readZipEntries(
               `PPTX archive exceeds ${String(MAX_UNCOMPRESSED_BYTES)} bytes uncompressed.`,
             );
           }
-          if (
-            SLIDE_PATH.test(entry.fileName) ||
-            NOTES_PATH.test(entry.fileName)
-          ) {
+          const slideMatch = SLIDE_PATH.exec(entry.fileName);
+          const notesMatch = slideMatch === null ? NOTES_PATH.exec(entry.fileName) : null;
+          if (slideMatch !== null || notesMatch !== null) {
+            // Stream-parse each matched part to text immediately and drop
+            // its buffer so peak heap is bounded by a single entry rather
+            // than the sum of every matched part.
             const data = await readEntryBuffer(zip, entry, filename);
-            collected.set(entry.fileName, data);
+            const text = extractTextFromXml(data.toString("utf-8"), filename);
+            if (slideMatch !== null) {
+              slides.push({ index: Number(slideMatch[1]), text });
+            } else if (notesMatch !== null) {
+              notes.set(Number(notesMatch[1]), text);
+            }
           }
           if (!settled) {
             zip.readEntry();
@@ -208,8 +244,8 @@ async function readZipEntries(
         }
       })();
     });
-    zip.on("end", () => settle(() => resolve(collected)));
-    zip.on("error", (err: Error) => settle(() => reject(err)));
+    zip.on("end", () => settle(() => resolve({ slides, notes })));
+    zip.on("error", (err: Error) => settle(() => reject(corruptError(filename, err))));
     zip.readEntry();
   });
 }
@@ -239,9 +275,20 @@ function collectText(
   node: unknown,
   paragraphs: string[],
   current: string[],
+  filename: string,
+  depth: number,
 ): void {
+  if (depth > MAX_NODE_DEPTH) {
+    throw new ExtractionError({
+      kind: "corrupt-document",
+      filePath: filename,
+      message: `PPTX slide XML nests deeper than ${String(MAX_NODE_DEPTH)} levels.`,
+      suggestion:
+        "The presentation's DrawingML is pathologically nested; re-save it from a clean source.",
+    });
+  }
   if (Array.isArray(node)) {
-    for (const item of node) collectText(item, paragraphs, current);
+    for (const item of node) collectText(item, paragraphs, current, filename, depth + 1);
     return;
   }
   if (!isRecord(node)) return;
@@ -251,7 +298,7 @@ function collectText(
       const items = Array.isArray(value) ? value : [value];
       for (const paragraph of items) {
         const buffer: string[] = [];
-        collectText(paragraph, paragraphs, buffer);
+        collectText(paragraph, paragraphs, buffer, filename, depth + 1);
         const joined = buffer.join("").trim();
         if (joined.length > 0) paragraphs.push(joined);
       }
@@ -262,7 +309,7 @@ function collectText(
       for (const item of items) appendRunText(item, current);
       continue;
     }
-    collectText(value, paragraphs, current);
+    collectText(value, paragraphs, current, filename, depth + 1);
   }
 }
 
@@ -273,14 +320,11 @@ function sanitizeXml(xml: string): string {
   // `processEntities: false` set on the parser, this leaves the XXE
   // payload entirely inert.
   let s = xml.replace(/<!DOCTYPE[^>[]*(\[[\s\S]*?\])?[^>]*>/gi, "");
-  s = s.replace(
-    /&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)[a-zA-Z][a-zA-Z0-9]*;/g,
-    "",
-  );
+  s = s.replace(/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)[a-zA-Z][a-zA-Z0-9]*;/g, "");
   return s;
 }
 
-function extractTextFromXml(xml: string): string {
+function extractTextFromXml(xml: string, filename: string): string {
   let parsed: unknown;
   try {
     parsed = xmlParser.parse(sanitizeXml(xml));
@@ -288,7 +332,7 @@ function extractTextFromXml(xml: string): string {
     return "";
   }
   const paragraphs: string[] = [];
-  collectText(parsed, paragraphs, []);
+  collectText(parsed, paragraphs, [], filename, 0);
   return paragraphs.join("\n");
 }
 
@@ -304,11 +348,8 @@ function countWords(text: string): number {
   for (let i = 0; i < text.length; i++) {
     const code = text.charCodeAt(i);
     // Fast path: ASCII whitespace (space, tab, LF, VT, FF, CR).
-    const isAsciiWs =
-      code === 0x20 || (code >= 0x09 && code <= 0x0d);
-    const isWhitespace =
-      isAsciiWs ||
-      (code > 0x7f && /\s/.test(text.charAt(i)));
+    const isAsciiWs = code === 0x20 || (code >= 0x09 && code <= 0x0d);
+    const isWhitespace = isAsciiWs || (code > 0x7f && /\s/.test(text.charAt(i)));
     if (isWhitespace) {
       inWord = false;
     } else if (!inWord) {
@@ -319,15 +360,11 @@ function countWords(text: string): number {
   return count;
 }
 
-interface SlidePart {
-  readonly index: number;
-  readonly xml: Buffer;
-}
-
 function buildMarkdown(
   slides: readonly SlidePart[],
-  notes: ReadonlyMap<number, Buffer>,
+  notes: ReadonlyMap<number, string>,
   filename: string,
+  signal: AbortSignal | undefined,
 ): string {
   const sections: string[] = [];
   let runningBytes = 0;
@@ -338,22 +375,20 @@ function buildMarkdown(
         kind: "oversize-file",
         filePath: filename,
         message: `Extracted PPTX content exceeds ${String(MAX_CONTENT_BYTES)} bytes.`,
-        suggestion:
-          "Split the presentation into smaller decks or remove oversized text content.",
+        suggestion: "Split the presentation into smaller decks or remove oversized text content.",
       });
     }
   };
   for (const slide of slides) {
-    const body = extractTextFromXml(slide.xml.toString("utf-8"));
+    if (signal?.aborted === true) {
+      throw timeoutError(filename, signal.reason);
+    }
     const lines: string[] = [`## Slide ${String(slide.index)}`, ""];
-    if (body.length > 0) lines.push(body);
-    const noteBuf = notes.get(slide.index);
-    if (noteBuf !== undefined) {
-      const noteText = extractTextFromXml(noteBuf.toString("utf-8"));
-      if (noteText.length > 0) {
-        const flattened = noteText.replace(/\s*\n+\s*/g, " ").trim();
-        lines.push("", `> **Speaker Notes:** ${flattened}`);
-      }
+    if (slide.text.length > 0) lines.push(slide.text);
+    const noteText = notes.get(slide.index);
+    if (noteText !== undefined && noteText.length > 0) {
+      const flattened = noteText.replace(/\s*\n+\s*/g, " ").trim();
+      lines.push("", `> **Speaker Notes:** ${flattened}`);
     }
     const section = lines.join("\n");
     enforceCap(section);
@@ -365,24 +400,19 @@ function buildMarkdown(
 const pptxExtractor: ContentExtractor = async (
   ctx: ExtractionContext,
 ): Promise<ExtractedContent> => {
-  const entries = await readZipEntries(ctx.buffer, ctx.filename);
-
-  const slides: SlidePart[] = [];
-  const notes = new Map<number, Buffer>();
-  for (const [name, data] of entries) {
-    const slideMatch = SLIDE_PATH.exec(name);
-    if (slideMatch !== null) {
-      slides.push({ index: Number(slideMatch[1]), xml: data });
-      continue;
-    }
-    const notesMatch = NOTES_PATH.exec(name);
-    if (notesMatch !== null) {
-      notes.set(Number(notesMatch[1]), data);
-    }
+  if (ctx.signal?.aborted === true) {
+    throw new ExtractionError({
+      kind: "extraction-timeout",
+      filePath: ctx.filename,
+      message: "PPTX extraction aborted before it began.",
+      cause: ctx.signal.reason,
+    });
   }
+
+  const { slides, notes } = await readSlideParts(ctx.buffer, ctx.filename, ctx.signal);
   slides.sort((a, b) => a.index - b.index);
 
-  const content = buildMarkdown(slides, notes, ctx.filename);
+  const content = buildMarkdown(slides, notes, ctx.filename, ctx.signal);
   return {
     content,
     wordCount: countWords(content),
