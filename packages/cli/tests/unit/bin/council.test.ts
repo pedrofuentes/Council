@@ -291,6 +291,7 @@ describe("buildProgram", () => {
       const result = await maybeLaunchTui({
         argv: ["node", "council"],
         stdout: { isTTY: true },
+        stdin: { isTTY: true },
         env: { COUNCIL_TUI: "1" },
         launchTui: async () => {
           launched += 1;
@@ -321,6 +322,7 @@ describe("buildProgram", () => {
       const result = await maybeLaunchTui({
         argv: ["node", "council"],
         stdout: { isTTY: true },
+        stdin: { isTTY: true },
         env: {},
         launchTui: async () => {
           launched += 1;

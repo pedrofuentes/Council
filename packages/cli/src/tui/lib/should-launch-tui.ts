@@ -1,10 +1,12 @@
 export interface LaunchStreams {
   readonly stdout?: { readonly isTTY?: boolean };
+  readonly stdin?: { readonly isTTY?: boolean };
   readonly env?: NodeJS.ProcessEnv;
 }
 
 export function shouldLaunchTui(argv: readonly string[], streams: LaunchStreams = {}): boolean {
   const stdout = streams.stdout ?? process.stdout;
+  const stdin = streams.stdin ?? process.stdin;
   const env = streams.env ?? process.env;
   const args = argv.slice(2);
 
@@ -16,6 +18,10 @@ export function shouldLaunchTui(argv: readonly string[], streams: LaunchStreams 
   // requested; defer to the CLI rather than the full-screen UI.
   if (args.some((a) => !a.startsWith("-"))) return false;
   if (stdout.isTTY !== true) return false;
+  // Both ends must be interactive: a piped stdin (e.g. `echo x | council`) has
+  // no keyboard for the full-screen UI even when stdout is still a TTY, so it
+  // must fall back to the CLI rather than launch a UI that can never read input.
+  if (stdin.isTTY !== true) return false;
   if (env["CI"] !== undefined && env["CI"] !== "") return false;
   if (env["COUNCIL_NO_TUI"] !== undefined && env["COUNCIL_NO_TUI"] !== "") return false;
   // `COUNCIL_TUI=1` stays an explicit force for the transition; it is now
