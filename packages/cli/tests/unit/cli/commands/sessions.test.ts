@@ -142,12 +142,20 @@ async function seedRunningDebateWithTurn(
   }
 }
 
-async function setDebateStartedAt(testHome: string, debateId: string, startedAt: string): Promise<void> {
+async function setDebateStartedAt(
+  testHome: string,
+  debateId: string,
+  startedAt: string,
+): Promise<void> {
   const { createDatabase } = await import("../../../../src/memory/db.js");
 
   const db = await createDatabase(path.join(testHome, "council.db"));
   try {
-    await db.updateTable("debates").set({ started_at: startedAt }).where("id", "=", debateId).execute();
+    await db
+      .updateTable("debates")
+      .set({ started_at: startedAt })
+      .where("id", "=", debateId)
+      .execute();
   } finally {
     await db.destroy();
   }
@@ -190,7 +198,11 @@ async function seedTurnForDebate(testHome: string, debateId: string): Promise<vo
   }
 }
 
-async function createRunningDebateForPanel(testHome: string, panelId: string, prompt: string): Promise<string> {
+async function createRunningDebateForPanel(
+  testHome: string,
+  panelId: string,
+  prompt: string,
+): Promise<string> {
   const { createDatabase } = await import("../../../../src/memory/db.js");
   const { DebateRepository } = await import("../../../../src/memory/repositories/debates.js");
 
@@ -201,7 +213,7 @@ async function createRunningDebateForPanel(testHome: string, panelId: string, pr
       prompt,
       moderator: "round-robin",
     });
-     return debate.id;
+    return debate.id;
   } finally {
     await db.destroy();
   }
@@ -241,7 +253,9 @@ async function loadSessionDeletionState(
   }
 }
 
-function makeConfirmProvider(answer: boolean): ConfirmProvider & { calls: number; prompts: string[] } {
+function makeConfirmProvider(
+  answer: boolean,
+): ConfirmProvider & { calls: number; prompts: string[] } {
   const provider = {
     calls: 0,
     prompts: [] as string[],
@@ -541,9 +555,7 @@ describe("buildSessionsCommand", () => {
 
     it("truncates long topics at ~80 chars in plain format", async () => {
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { PanelRepository } = await import(
-        "../../../../src/memory/repositories/panels.js"
-      );
+      const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
       const db = await createDatabase(path.join(testHome, "council.db"));
       const repo = new PanelRepository(db);
       const longTopic =
@@ -568,9 +580,7 @@ describe("buildSessionsCommand", () => {
 
     it("preserves full topic in JSON format", async () => {
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { PanelRepository } = await import(
-        "../../../../src/memory/repositories/panels.js"
-      );
+      const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
       const db = await createDatabase(path.join(testHome, "council.db"));
       const repo = new PanelRepository(db);
       const longTopic =
@@ -606,7 +616,11 @@ describe("buildSessionsCommand", () => {
       const debates = await listDebatesForPanel(testHome, seeded.panelId);
       expect(captured).toContain("Cancelled running debate for panel 'cancel-target'.");
       expect(debates).toHaveLength(2);
-      expect(debates[0]).toMatchObject({ id: seeded.debateIds[0], status: "running", endedAt: null });
+      expect(debates[0]).toMatchObject({
+        id: seeded.debateIds[0],
+        status: "running",
+        endedAt: null,
+      });
       expect(debates[1]).toMatchObject({ id: seeded.debateIds[1], status: "interrupted" });
       expect(debates[1]?.endedAt).not.toBeNull();
     });
@@ -663,9 +677,9 @@ describe("buildSessionsCommand", () => {
       await seedPanelWithDebates(testHome, "prefix-beta", ["running"]);
       const cmd = buildSessionsCommand();
 
-      await expect(cmd.parseAsync(["node", "council-sessions", "cancel", "prefix-"])).rejects.toThrow(
-        "Ambiguous prefix 'prefix-' matches 2 panels.",
-      );
+      await expect(
+        cmd.parseAsync(["node", "council-sessions", "cancel", "prefix-"]),
+      ).rejects.toThrow("Ambiguous prefix 'prefix-' matches 2 panels.");
     });
 
     it("cancel throws when name is omitted without --all", async () => {
@@ -756,7 +770,11 @@ describe("buildSessionsCommand", () => {
       ).rejects.toThrow("Ambiguous name 'duplicate-delete' matches 2 sessions.");
 
       const firstState = await loadSessionDeletionState(testHome, first.panelId, first.debateIds);
-      const secondState = await loadSessionDeletionState(testHome, second.panelId, second.debateIds);
+      const secondState = await loadSessionDeletionState(
+        testHome,
+        second.panelId,
+        second.debateIds,
+      );
       expect(confirm.calls).toBe(0);
       expect(firstState.panelExists).toBe(true);
       expect(firstState.debateCount).toBe(1);
@@ -772,7 +790,11 @@ describe("buildSessionsCommand", () => {
         async confirm(message: string): Promise<boolean> {
           confirm.calls += 1;
           confirm.prompts.push(message);
-          await createRunningDebateForPanel(testHome, seeded.panelId, "resumed during confirmation");
+          await createRunningDebateForPanel(
+            testHome,
+            seeded.panelId,
+            "resumed during confirmation",
+          );
           return true;
         },
       } satisfies ConfirmProvider & { calls: number; prompts: string[] };
@@ -784,9 +806,9 @@ describe("buildSessionsCommand", () => {
         confirmProvider: () => confirm,
       });
 
-      await expect(cmd.parseAsync(["node", "council-sessions", "delete", "race-delete"])).rejects.toThrow(
-        "Cannot delete a running session. Cancel it first.",
-      );
+      await expect(
+        cmd.parseAsync(["node", "council-sessions", "delete", "race-delete"]),
+      ).rejects.toThrow("Cannot delete a running session. Cancel it first.");
 
       const debates = await listDebatesForPanel(testHome, seeded.panelId);
       const state = await loadSessionDeletionState(testHome, seeded.panelId, seeded.debateIds);
@@ -838,9 +860,9 @@ describe("buildSessionsCommand", () => {
       it("cancel: omitted name throws CliUserError, not a plain Error", async () => {
         const cmd = buildSessionsCommand();
 
-        await expect(
-          cmd.parseAsync(["node", "council-sessions", "cancel"]),
-        ).rejects.toBeInstanceOf(CliUserError);
+        await expect(cmd.parseAsync(["node", "council-sessions", "cancel"])).rejects.toBeInstanceOf(
+          CliUserError,
+        );
       });
 
       it("cancel: ambiguous prefix throws CliUserError, not a plain Error", async () => {
@@ -950,7 +972,11 @@ describe("buildSessionsCommand", () => {
           async confirm(message: string): Promise<boolean> {
             confirm.calls += 1;
             confirm.prompts.push(message);
-            await createRunningDebateForPanel(testHome, seeded.panelId, "resumed during confirmation");
+            await createRunningDebateForPanel(
+              testHome,
+              seeded.panelId,
+              "resumed during confirmation",
+            );
             return true;
           },
         } satisfies ConfirmProvider & { calls: number; prompts: string[] };
