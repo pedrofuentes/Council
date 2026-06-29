@@ -10,6 +10,8 @@
  * consumers — each subscribes by filtering the discriminator (`kind`).
  */
 
+import type { EngineErrorCode } from "../engine/index.js";
+
 /** Snapshot of a panel member emitted at the start of a debate. */
 export interface PanelMemberSnapshot {
   readonly slug: string;
@@ -117,6 +119,13 @@ export type DebateEvent =
       readonly expertSlug: string;
       readonly attempt: number;
       readonly reason: string;
+      /**
+       * Stable engine error code driving the retry, when one is known
+       * (recoverable provider failures). Renderers map this to friendly text
+       * via FRIENDLY_REASONS; falls back to `reason` when absent (e.g. the
+       * empty-response retry, which has no engine code).
+       */
+      readonly reasonCode?: EngineErrorCode;
     }
   | {
       /**

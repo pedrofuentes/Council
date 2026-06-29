@@ -119,7 +119,7 @@ export class PlainRenderer implements Renderer {
         case "turn.retry":
           this.write(
             this.gray(
-              `[retry] ${evt.expertSlug} attempt ${evt.attempt}: ${this.sanitizeLine(friendlyReason(evt.reason))}\n`,
+              `[retry] ${evt.expertSlug} attempt ${evt.attempt}: ${this.sanitizeLine(friendlyReason(evt.reasonCode, evt.reason))}\n`,
             ),
           );
           break;
