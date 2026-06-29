@@ -259,6 +259,53 @@ describe("rollingSummary fencing (T-06)", () => {
   });
 });
 
+describe("empty experts validation (#215)", () => {
+  const emptyCtx = (): ModeratorContext => ({
+    experts: [],
+    round: 0,
+    maxRounds: 2,
+    topic: "Should we ship?",
+    priorTurns: [],
+  });
+
+  it("round-robin rejects an empty expert list", () => {
+    const strategy = createRoundRobinStrategy();
+    expect(() => strategy.planRound(emptyCtx())).toThrowError(/expert/i);
+  });
+
+  it("devils-advocate rejects an empty expert list", () => {
+    const strategy = createDevilsAdvocateStrategy("cto");
+    expect(() => strategy.planRound(emptyCtx())).toThrowError(/expert/i);
+  });
+
+  it("consensus-check rejects an empty expert list", () => {
+    const strategy = createConsensusCheckStrategy();
+    expect(() => strategy.planRound(emptyCtx())).toThrowError(/expert/i);
+  });
+});
+
+describe("devils-advocate advocate membership validation (#214)", () => {
+  const experts = [makeExpert("cto"), makeExpert("pm"), makeExpert("designer")];
+  const ctxWith = (): ModeratorContext => ({
+    experts,
+    round: 0,
+    maxRounds: 2,
+    topic: "Should we ship?",
+    priorTurns: [],
+  });
+
+  it("throws when advocateSlug is not a panel member, listing available slugs", () => {
+    const strategy = createDevilsAdvocateStrategy("ghost");
+    expect(() => strategy.planRound(ctxWith())).toThrowError(/ghost/);
+    expect(() => strategy.planRound(ctxWith())).toThrowError(/cto/);
+  });
+
+  it("does not throw when advocateSlug is a panel member", () => {
+    const strategy = createDevilsAdvocateStrategy("pm");
+    expect(() => strategy.planRound(ctxWith())).not.toThrow();
+  });
+});
+
 describe("TurnAssignment shape", () => {
   it("has expertSlug and prompt fields", () => {
     const strategy = createRoundRobinStrategy();
