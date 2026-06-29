@@ -545,6 +545,16 @@ export async function scanAndIndexPanelDocuments(
         // suppresses pruning of any prior entry while review is pending —
         // matching the expert processor's treatment of modified files.
         if (extracted.metadata?.askUser === true) {
+          // Policy-change retention guard (#1019): a file indexed under
+          // `auto` then re-scanned under `ask` after an edit enters
+          // `seenPaths`, so the prune pass skips it. Evict any prior FTS
+          // row + repo entry here so pre-edit content can't stay
+          // searchable while UX reports the file as needs-review. FTS
+          // deletion MUST precede markRemoved (same ordering as prune).
+          if (known.has(file.path)) {
+            await indexer.remove(file.path);
+            await docsRepo.markRemoved(panelName, file.path);
+          }
           needsReview += 1;
           onProgress?.({
             filename: file.filename,
