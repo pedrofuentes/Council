@@ -50,11 +50,17 @@ export interface ExpertSpec {
  *   `code: "ABORTED"` (see {@link EngineErrorCode}). Adapters MAY also
  *   honor cooperative cancellation when the consumer calls the
  *   AsyncIterator's `return()` method (e.g., breaking out of `for await`).
+ * - `turnId`: optional debate-level turn identifier. The orchestrator mints
+ *   it once per logical turn so adapters can correlate streamed chunks back
+ *   to the `turn.end` it later emits. Adapters MAY ignore it; it never alters
+ *   prompt content. Absent for callers (e.g. chat, summarizer) that have no
+ *   turn to correlate.
  */
 export interface SendOptions {
   readonly prompt: string;
   readonly expertId: string;
   readonly signal?: AbortSignal;
+  readonly turnId?: string;
 }
 
 /**

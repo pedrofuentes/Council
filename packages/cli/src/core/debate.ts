@@ -765,6 +765,11 @@ export class Debate {
     // is the "no cap" sentinel and leaves the prompt untouched.
     const finalPrompt = appendWordBudget(withReferences, wordBudget);
 
+    // Mint the turn id BEFORE streaming so it can be plumbed through
+    // SendOptions to the engine (per-turn correlation, #80) and reused as
+    // the turn.end id below — engine chunks and the debate turn share one id.
+    const turnId = ulid();
+
     const gateMode = this.config.qualityGate?.mode ?? "off";
     // In `regenerate` mode the first response might be rejected, and rejected
     // candidates must NEVER reach a renderer or the transcript. So we buffer
@@ -772,7 +777,14 @@ export class Debate {
     // `off`/`warn` stream live exactly as before.
     const streamLive = gateMode !== "regenerate";
 
-    const outcome = yield* this.#streamWithRetry(expert, finalPrompt, streamLive, true, signal);
+    const outcome = yield* this.#streamWithRetry(
+      expert,
+      finalPrompt,
+      streamLive,
+      true,
+      turnId,
+      signal,
+    );
     let content = outcome.content;
     let turnFailed = outcome.turnFailed;
 
@@ -814,6 +826,7 @@ export class Debate {
         round,
         priorSpeakers,
         maxRegenerations,
+        turnId,
         counters,
         signal,
       );
@@ -826,7 +839,6 @@ export class Debate {
     }
 
     if (!turnFailed) {
-      const turnId = ulid();
       yield { kind: "turn.end", expertSlug: expert.slug, turnId, content, speakerKind: "expert" };
     }
 
@@ -867,6 +879,7 @@ export class Debate {
     finalPrompt: string,
     emitDeltas: boolean,
     emitTerminalError: boolean,
+    turnId: string,
     signal?: AbortSignal,
   ): AsyncGenerator<DebateEvent, StreamOutcome> {
     const backoffMs = this.config.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS;
@@ -901,6 +914,7 @@ export class Debate {
         const stream = sendWithEmptyRetry(this.engine, {
           prompt: finalPrompt,
           expertId: expert.id,
+          turnId,
           ...(signal ? { signal } : {}),
         });
         let step = await stream.next();
@@ -1053,6 +1067,7 @@ export class Debate {
     round: number,
     priorSpeakers: readonly string[],
     maxRegenerations: number,
+    turnId: string,
     counters: RunCounters,
     signal?: AbortSignal,
   ): AsyncGenerator<DebateEvent, string> {
@@ -1078,7 +1093,14 @@ export class Debate {
       // Buffer the candidate (no deltas) and suppress terminal errors — a
       // failed regeneration must not surface a turn-level error because we
       // already hold a valid earlier candidate to fall back on.
-      const outcome = yield* this.#streamWithRetry(expert, regenPrompt, false, false, signal);
+      const outcome = yield* this.#streamWithRetry(
+        expert,
+        regenPrompt,
+        false,
+        false,
+        turnId,
+        signal,
+      );
       // This regeneration issued a premium-incurring send (#1513) — count it.
       // Engine-error retries inside #streamWithRetry are the same logical send
       // and are intentionally NOT counted here.
