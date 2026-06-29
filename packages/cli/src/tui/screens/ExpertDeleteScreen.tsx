@@ -46,8 +46,14 @@ export function ExpertDeleteScreen(props: ExpertDeleteScreenProps): React.ReactE
     deletingRef.current = true;
     setDeleteError(undefined);
 
+    if (!expertAuthoring) {
+      deletingRef.current = false;
+      setDeleteError("Cannot delete: expert authoring is unavailable.");
+      return;
+    }
+
     try {
-      await expertAuthoring?.remove(slug);
+      await expertAuthoring.remove(slug);
       navigate("/experts");
     } catch (error) {
       deletingRef.current = false;
