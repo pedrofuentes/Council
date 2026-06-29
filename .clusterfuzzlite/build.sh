@@ -13,6 +13,15 @@
 # TypeScript compiler and Jazzer.js in isolated temp dirs instead. That avoids
 # both pnpm's symlinked store (which compile_javascript_fuzzer cannot copy into
 # $OUT) and rebuilding the workspace's Jazzer.js (see the version note below).
+#
+# Dependency pinning (OpenSSF Scorecard Pinned-Dependencies): both isolated
+# installs use the repo's pinned versions (typescript to the workspace
+# devDependency, Jazzer.js to exactly 2.1.0) and run --ignore-scripts (no
+# install-time scripts execute). They stay `npm install`, not `npm ci`, because
+# each runs in a fresh `mktemp -d` with no package.json/lockfile, the TS version
+# is read from the repo at build time, and committing per-tool lockfiles would
+# only drift against the real manifests. Full hash pinning is therefore
+# best-effort here — see .clusterfuzzlite/README.md.
 
 SRC_DIR="$SRC/council"
 cd "$SRC_DIR"
@@ -41,7 +50,7 @@ rm -rf "$TS_DIR"
 #    identical across both. Bump this pin once the OSS-Fuzz base moves to a
 #    newer glibc — see .clusterfuzzlite/README.md.
 JAZZER_DIR="$(mktemp -d)"
-( cd "$JAZZER_DIR" && npm install --no-save --no-audit --no-fund "@jazzer.js/core@2.1.0" )
+( cd "$JAZZER_DIR" && npm install --no-save --no-audit --no-fund --ignore-scripts "@jazzer.js/core@2.1.0" )
 mkdir -p "$SRC_DIR/node_modules"
 # Clobbering copy so the pinned Jazzer.js deterministically wins over anything a
 # non-clean checkout might have left behind.
