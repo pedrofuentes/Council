@@ -697,4 +697,30 @@ describe("extractDocument", () => {
       expect(result.content).toBe("full content here");
     });
   });
+
+  // ──────────────────────────────────────────────────────────────────
+  // #932: resolveExtractor must only swallow unsupported-format; a real
+  // loader failure (dynamic import / init error) must propagate, not be
+  // masked as a misleading unsupported-format.
+  // ──────────────────────────────────────────────────────────────────
+  describe("loader-failure propagation (#932)", () => {
+    it("propagates a non-ExtractionError loader failure instead of returning null", async () => {
+      const reg = await import("../../../../src/core/documents/extractors/index.js");
+      const boom = new Error("loader exploded");
+      reg.registerExtractor([".loadfail932"], async () => {
+        throw boom;
+      });
+      const filePath = path.join(dir, "broken.loadfail932");
+      await fs.writeFile(filePath, "plain text body, no magic bytes");
+
+      let caught: unknown;
+      try {
+        await extractDocument(filePath);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBe(boom);
+      expect((caught as Error).message).toBe("loader exploded");
+    });
+  });
 });

@@ -44,17 +44,41 @@ import type { ContentExtractor, ExtractedContent, ExtractionContext } from "./ty
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 
+/**
+ * Collapse whitespace in a single linear pass (issue #933). Each maximal
+ * run of whitespace becomes one newline if it contained a line break, else
+ * a single space; leading/trailing whitespace is dropped. This replaces the
+ * chained space and "\s*\n\s*"-style passes, whose pattern scaled
+ * super-linearly (~4x per doubling) on a long whitespace-only run. The
+ * scanner is O(n) with no regex backtracking.
+ */
+function collapseWhitespace(text: string): string {
+  const parts: string[] = [];
+  let runHasNewline = false;
+  let inRun = false;
+  for (const c of text) {
+    if (c === " " || c === "\t" || c === "\n" || c === "\r" || c === "\f" || c === "\v") {
+      inRun = true;
+      if (c === "\n" || c === "\r") runHasNewline = true;
+      continue;
+    }
+    if (inRun) {
+      if (parts.length > 0) parts.push(runHasNewline ? "\n" : " ");
+      inRun = false;
+      runHasNewline = false;
+    }
+    parts.push(c);
+  }
+  return parts.join("");
+}
+
 function normalizeHtml(raw: string): string {
   try {
     const root = parse(raw, { comment: false });
     for (const el of root.querySelectorAll("script, style")) {
       el.remove();
     }
-    return root.structuredText
-      .replace(CONTROL_CHARS, "")
-      .replace(/[ \t]+/g, " ")
-      .replace(/\s*\n\s*/g, "\n")
-      .trim();
+    return collapseWhitespace(root.structuredText.replace(CONTROL_CHARS, ""));
   } catch {
     // Degrade gracefully on parser failure (e.g. a RangeError from
     // recursion over a pathologically deep document) rather than crashing

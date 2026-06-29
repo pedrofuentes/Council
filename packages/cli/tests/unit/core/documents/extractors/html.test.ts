@@ -307,5 +307,17 @@ describe("html extractor", () => {
       expect(typeof out.content).toBe("string");
       expect(typeof out.wordCount).toBe("number");
     });
+
+    it("collapses whitespace-heavy output in linear time (issue #933)", async () => {
+      // The previous `.replace(/\s*\n\s*/g, "\n")` whitespace pass is
+      // super-linear on a long whitespace-only run, scaling ~4x per
+      // doubling. A single-pass collapse stays linear under doubling.
+      const huge = "<pre>" + " ".repeat(400_000) + "\nX" + "</pre>";
+      const start = performance.now();
+      const out = await run(huge);
+      const elapsed = performance.now() - start;
+      expect(elapsed).toBeLessThan(BUDGET_MS);
+      expect(out.content).toBe("X");
+    });
   });
 });
