@@ -114,9 +114,13 @@ async function withPanelContext<T>(fn: (ctx: PanelContext) => Promise<T>): Promi
   const docsRepo = new PanelDocumentRepository(db);
   const runtimePanelRepo = new PanelRepository(db);
   const debateRepo = new DebateRepository(db);
-  let primaryError: unknown;
+  // Avoid `finally { await db.destroy() }` — a destroy failure there would
+  // replace (mask) the callback's primary error. Run cleanup explicitly so
+  // the root cause survives, surfacing both via AggregateError, mirroring
+  // persistPanelArtifacts' rollback pattern.
+  let result: T;
   try {
-    return await fn({
+    result = await fn({
       library,
       panelRepo,
       docsRepo,
@@ -127,25 +131,18 @@ async function withPanelContext<T>(fn: (ctx: PanelContext) => Promise<T>): Promi
       db,
     });
   } catch (err) {
-    primaryError = err;
-    throw err;
-  } finally {
-    // Preserve the callback's primary error if cleanup also fails — plain
-    // `finally { await db.destroy(); }` would let a destroy failure replace
-    // (mask) the root cause the operator needs. Surface both via
-    // AggregateError, mirroring persistPanelArtifacts' rollback pattern.
     try {
       await db.destroy();
     } catch (destroyErr) {
-      if (primaryError !== undefined) {
-        throw new AggregateError(
-          [primaryError, destroyErr],
-          "panel operation failed and db.destroy() cleanup also failed",
-        );
-      }
-      throw destroyErr;
+      throw new AggregateError(
+        [err, destroyErr],
+        "panel operation failed and db.destroy() cleanup also failed",
+      );
     }
+    throw err;
   }
+  await db.destroy();
+  return result;
 }
 
 function displayPath(absPath: string): string {
