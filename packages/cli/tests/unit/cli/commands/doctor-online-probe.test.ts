@@ -21,10 +21,10 @@ describe("probeCopilotModel timeout", () => {
   });
 
   it("bounds a hung engine.start with a timeout and reports it", async () => {
-    const stop = vi.fn(async () => {});
+    const stop = vi.fn(async () => undefined);
     const engine: FakeEngine = {
-      start: () => new Promise<void>(() => {}),
-      addExpert: async () => {},
+      start: () => new Promise<void>(() => undefined),
+      addExpert: async () => undefined,
       stop,
     };
 
@@ -44,9 +44,9 @@ describe("probeCopilotModel timeout", () => {
 
   it("returns ok when the engine resolves before the timeout", async () => {
     const engine: FakeEngine = {
-      start: async () => {},
-      addExpert: async () => {},
-      stop: async () => {},
+      start: async () => undefined,
+      addExpert: async () => undefined,
+      stop: async () => undefined,
     };
 
     const result = await probeCopilotModel("claude-sonnet-4.5", {

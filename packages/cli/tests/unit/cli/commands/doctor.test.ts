@@ -161,24 +161,17 @@ describe("buildDoctorCommand", () => {
   });
 
   it("doctor bounds a hung online probe with a timeout instead of hanging", async () => {
-    vi.useFakeTimers();
-    try {
-      const onlineProbe = vi.fn(() => new Promise<{ ok: boolean; detail: string }>(() => {}));
-      const discoverModels = vi.fn(async () => ({
-        models: ["claude-sonnet-4.5", "gpt-5.4"],
-        source: "live" as const,
-      }));
+    const onlineProbe = vi.fn(() => new Promise<{ ok: boolean; detail: string }>(() => undefined));
+    const discoverModels = vi.fn(async () => ({
+      models: ["claude-sonnet-4.5", "gpt-5.4"],
+      source: "live" as const,
+    }));
 
-      const pending = runDoctor([], { onlineProbe, discoverModels, onlineProbeTimeoutMs: 50 });
-      await vi.advanceTimersByTimeAsync(60);
-      const output = await pending;
+    const output = await runDoctor([], { onlineProbe, discoverModels, onlineProbeTimeoutMs: 50 });
 
-      expect(onlineProbe).toHaveBeenCalledTimes(1);
-      expect(output).toContain("Default model (claude-sonnet-4.5) probe timed out");
-      expect(output).toContain("Some checks failed");
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(onlineProbe).toHaveBeenCalledTimes(1);
+    expect(output).toContain("Default model (claude-sonnet-4.5) probe timed out");
+    expect(output).toContain("Some checks failed");
   });
 
   it("doctor --offline skips model probe", async () => {
@@ -352,7 +345,8 @@ describe("buildDoctorCommand", () => {
   });
 
   it("doctor shows Configuration section with defaults", async () => {
-    const output = await runDoctor([]);
+    const onlineProbe = vi.fn(async () => ({ ok: true, detail: "ok" }));
+    const output = await runDoctor([], { onlineProbe });
 
     expect(output).toContain("Config");
     expect(output).toContain("Path:");
@@ -369,7 +363,8 @@ describe("buildDoctorCommand", () => {
       "utf-8",
     );
 
-    const output = await runDoctor([]);
+    const onlineProbe = vi.fn(async () => ({ ok: true, detail: "ok" }));
+    const output = await runDoctor([], { onlineProbe });
 
     expect(output).toContain("Engine: mock");
     expect(output).toContain("Rounds: 7");
