@@ -10,7 +10,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildChatCommand,
@@ -345,6 +345,40 @@ describe("buildChatCommand", () => {
       expect(out).not.toContain("\u001b");
       expect(out).not.toContain("\u0007");
       expect(out).toContain("Roadmap planning");
+    });
+
+    it("isolates per-session DB errors so one bad session doesn't blank the view (#1108)", async () => {
+      await seedExpert(env);
+      let goodId = "";
+      let badId = "";
+      await withRepo(env, async (repo) => {
+        const good = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        goodId = good.id;
+        await repo.addTurn({ chatId: good.id, role: "user", content: "healthy conversation" });
+        await repo.archiveSession(good.id);
+        const bad = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        badId = bad.id;
+        await repo.archiveSession(bad.id);
+      });
+      const realGetTurnCount = ChatRepository.prototype.getTurnCount;
+      const spy = vi
+        .spyOn(ChatRepository.prototype, "getTurnCount")
+        .mockImplementation(async function (this: ChatRepository, chatId: string) {
+          if (chatId === badId) throw new Error("simulated getTurnCount failure");
+          return realGetTurnCount.call(this, chatId);
+        });
+      try {
+        let out = "";
+        const cmd = buildChatCommand({ write: (s) => (out += s) });
+        await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--history"]);
+        // Healthy session still renders despite the sibling failure.
+        expect(out).toContain(goodId);
+        // Failing session is shown with a placeholder, not dropped entirely.
+        expect(out).toContain(badId);
+        expect(out).toContain("(unavailable)");
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 
