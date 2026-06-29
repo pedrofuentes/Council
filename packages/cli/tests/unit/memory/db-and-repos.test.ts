@@ -640,6 +640,28 @@ describe("PanelRepository", () => {
     expect(await repo.findById(panel.id)).toBeUndefined();
     expect(await expertRepo.findByPanelId(panel.id)).toEqual([]);
   });
+
+  it("findByNamePrefix() matches only true name prefixes", async () => {
+    await repo.create({ ...SAMPLE_PANEL, name: "arch-review-01" });
+    await repo.create({ ...SAMPLE_PANEL, name: "arch-review-02" });
+    await repo.create({ ...SAMPLE_PANEL, name: "code-review-01" });
+    const matches = await repo.findByNamePrefix("arch-review");
+    expect(matches.map((p) => p.name).sort()).toEqual(["arch-review-01", "arch-review-02"]);
+  });
+
+  it("findByNamePrefix() treats '_' literally, not as a LIKE wildcard (issue #703)", async () => {
+    await repo.create({ ...SAMPLE_PANEL, name: "a_c-panel" });
+    await repo.create({ ...SAMPLE_PANEL, name: "abc-panel" });
+    const matches = await repo.findByNamePrefix("a_c");
+    expect(matches.map((p) => p.name)).toEqual(["a_c-panel"]);
+  });
+
+  it("findByNamePrefix() treats '%' literally, not as a LIKE wildcard (issue #703)", async () => {
+    await repo.create({ ...SAMPLE_PANEL, name: "100%-done" });
+    await repo.create({ ...SAMPLE_PANEL, name: "100-done" });
+    const matches = await repo.findByNamePrefix("100%");
+    expect(matches.map((p) => p.name)).toEqual(["100%-done"]);
+  });
 });
 
 describe("ExpertRepository", () => {
