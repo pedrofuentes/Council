@@ -66,6 +66,14 @@ import type { EngineEvent, ExpertSpec, SendOptions } from "./types.js";
  *   - `addExpert(spec)` with an already-registered `spec.id` MUST throw.
  */
 export interface CouncilEngine {
+  /**
+   * Whether this engine reports real, billable cost/usage metrics worth
+   * surfacing to the user. Drives the renderer's cost counter rather than a
+   * hard-coded provider-name check (#852). Defaults to `true` when omitted
+   * (real providers bill); deterministic/offline engines set it `false`.
+   */
+  readonly supportsCostMetrics?: boolean;
+
   /** Boot the underlying provider. Must complete before any other method. */
   start(): Promise<void>;
 

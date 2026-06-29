@@ -206,6 +206,9 @@ interface InFlight {
 }
 
 export class MockEngine implements CouncilEngine {
+  /** Mock responses carry synthetic, non-billable cost — suppress the counter. */
+  readonly supportsCostMetrics = false;
+
   readonly #options: {
     readonly responses: Readonly<Record<string, string>>;
     readonly failures: Readonly<Record<string, Pick<EngineError, "code" | "message">>>;
