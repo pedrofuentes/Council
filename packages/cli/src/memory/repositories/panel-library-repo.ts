@@ -205,4 +205,19 @@ export class PanelLibraryRepository {
       .execute();
     return rows.map((r) => r.expert_slug);
   }
+
+  /**
+   * Aggregate member count for every panel in a single query (#1599).
+   * Avoids the N+1 of calling getMembers once per saved panel when only
+   * the count is needed. Panels with zero members are absent from the
+   * map; callers treat a missing key as 0.
+   */
+  async getMemberCounts(): Promise<ReadonlyMap<string, number>> {
+    const rows = await this.db
+      .selectFrom("panel_members")
+      .select((eb) => ["panel_name", eb.fn.countAll<number>().as("count")])
+      .groupBy("panel_name")
+      .execute();
+    return new Map(rows.map((r) => [r.panel_name, Number(r.count)]));
+  }
 }

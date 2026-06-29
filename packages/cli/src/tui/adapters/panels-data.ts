@@ -32,6 +32,7 @@ export interface PanelsRepos {
       name: string,
     ): Promise<{ readonly name: string; readonly description: string | null } | undefined>;
     getMembers(name: string): Promise<readonly string[]>;
+    getMemberCounts(): Promise<ReadonlyMap<string, number>>;
   };
   readonly experts: {
     get(slug: string): Promise<{
@@ -86,16 +87,16 @@ function mapTemplateDefaults(
 export function createPanelsDataSource(repos: PanelsRepos): PanelsDataSource {
   return {
     loadList: async (): Promise<readonly PanelListItem[]> => {
-      const savedPanels = await repos.library.findAll();
-      const savedItems = await Promise.all(
-        savedPanels.map(async (panel): Promise<PanelListItem> => {
-          const members = await repos.library.getMembers(panel.name);
-          return {
-            name: panel.name,
-            description: panel.description ?? "",
-            memberCount: members.length,
-            source: "saved",
-          };
+      const [savedPanels, memberCounts] = await Promise.all([
+        repos.library.findAll(),
+        repos.library.getMemberCounts(),
+      ]);
+      const savedItems = savedPanels.map(
+        (panel): PanelListItem => ({
+          name: panel.name,
+          description: panel.description ?? "",
+          memberCount: memberCounts.get(panel.name) ?? 0,
+          source: "saved",
         }),
       );
 

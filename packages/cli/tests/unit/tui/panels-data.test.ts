@@ -13,6 +13,7 @@ describe("createPanelsDataSource.loadList", () => {
         ],
         findByName: async () => undefined,
         getMembers: async (name) => (name === "acme" ? ["cto", "cfo"] : []),
+        getMemberCounts: async () => new Map([["acme", 2]]),
       },
       experts: { get: async () => null },
       listTemplates: async () => ["startup-board", "blank-template"],
@@ -53,6 +54,7 @@ describe("createPanelsDataSource.loadList", () => {
         findAll: async () => [],
         findByName: async () => undefined,
         getMembers: async () => [],
+        getMemberCounts: async () => new Map(),
       },
       experts: { get: async () => null },
       listTemplates: async () => [],
@@ -60,6 +62,45 @@ describe("createPanelsDataSource.loadList", () => {
     });
 
     expect(await ds.loadList()).toEqual([]);
+  });
+
+  it("resolves saved member counts with one aggregate query, not per-panel getMembers (#1599)", async () => {
+    const getMembersCalls: string[] = [];
+    let countCalls = 0;
+    const ds = createPanelsDataSource({
+      library: {
+        findAll: async () => [
+          { name: "acme", description: "Exec panel" },
+          { name: "bare", description: null },
+          { name: "solo", description: "One" },
+        ],
+        findByName: async () => undefined,
+        getMembers: async (name) => {
+          getMembersCalls.push(name);
+          return [];
+        },
+        getMemberCounts: async () => {
+          countCalls += 1;
+          return new Map([
+            ["acme", 4],
+            ["solo", 1],
+          ]);
+        },
+      },
+      experts: { get: async () => null },
+      listTemplates: async () => [],
+      loadTemplate: async () => ({ experts: [] }),
+    });
+
+    const list = await ds.loadList();
+
+    expect(countCalls).toBe(1);
+    expect(getMembersCalls).toEqual([]);
+    expect(list).toEqual([
+      { name: "acme", description: "Exec panel", memberCount: 4, source: "saved" },
+      { name: "bare", description: "", memberCount: 0, source: "saved" },
+      { name: "solo", description: "One", memberCount: 1, source: "saved" },
+    ]);
   });
 });
 
@@ -69,6 +110,7 @@ describe("createPanelsDataSource.loadDetail", () => {
       findAll: async () => [],
       findByName: async () => ({ name: "acme", description: "Exec panel" }),
       getMembers: async () => [],
+      getMemberCounts: async () => new Map(),
     },
     experts: { get: async () => null },
     listTemplates: async () => [],

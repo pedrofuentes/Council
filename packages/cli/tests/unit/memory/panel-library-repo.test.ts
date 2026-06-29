@@ -176,6 +176,24 @@ describe("PanelLibraryRepository", () => {
     expect(members).toEqual([]);
   });
 
+  it("getMemberCounts() returns one entry per panel with members in a single query", async () => {
+    await repo.create(samplePanel("arch-review"));
+    await repo.create(samplePanel("empty-panel"));
+    await seedExpert(db, "cto");
+    await seedExpert(db, "staff");
+    await seedExpert(db, "pm");
+    await repo.setMembers("arch-review", ["cto", "staff", "pm"]);
+
+    const counts = await repo.getMemberCounts();
+    expect(counts.get("arch-review")).toBe(3);
+    expect(counts.has("empty-panel")).toBe(false);
+  });
+
+  it("getMemberCounts() returns an empty map when no panel has members", async () => {
+    const counts = await repo.getMemberCounts();
+    expect(counts.size).toBe(0);
+  });
+
   it("setMembers() rejects unknown expert slug via FK constraint", async () => {
     await repo.create(samplePanel("arch-review"));
     await expect(repo.setMembers("arch-review", ["does-not-exist"])).rejects.toThrow();
