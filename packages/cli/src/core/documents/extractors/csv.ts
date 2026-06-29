@@ -6,16 +6,23 @@
  * The delimiter is selected by extension only — `.csv` uses comma,
  * `.tsv` uses tab — to keep behavior deterministic across files.
  *
+ * Malformed input is rejected with a `corrupt-document` ExtractionError:
+ * unterminated quoted fields (mismatched quotes) and rows whose column
+ * count differs from the header are not silently accepted.
+ *
  * Self-registers for `.csv` and `.tsv`.
  */
+import { ExtractionError } from "./errors.js";
 import { registerExtractor } from "./registry.js";
-import type {
-  ContentExtractor,
-  ExtractedContent,
-  ExtractionContext,
-} from "./types.js";
+import type { ContentExtractor, ExtractedContent, ExtractionContext } from "./types.js";
 
-function parseDelimited(text: string, delimiter: string): string[][] {
+interface ParseResult {
+  readonly rows: string[][];
+  /** True when the input ended while still inside an unterminated quote. */
+  readonly unterminatedQuote: boolean;
+}
+
+function parseDelimited(text: string, delimiter: string): ParseResult {
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";
@@ -68,19 +75,14 @@ function parseDelimited(text: string, delimiter: string): string[][] {
     row.push(field);
     rows.push(row);
   }
-  return rows;
+  return { rows, unterminatedQuote: inQuotes };
 }
 
 function toMarkdownTable(rows: readonly (readonly string[])[]): string {
   const header = rows[0];
   if (header === undefined) return "";
-  const separator = header
-    .map((h) => "-".repeat(Math.max(h.length + 2, 3)))
-    .join("|");
-  const lines: string[] = [
-    `| ${header.join(" | ")} |`,
-    `|${separator}|`,
-  ];
+  const separator = header.map((h) => "-".repeat(Math.max(h.length + 2, 3))).join("|");
+  const lines: string[] = [`| ${header.join(" | ")} |`, `|${separator}|`];
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     if (row === undefined) continue;
@@ -101,7 +103,32 @@ const csvExtractor: ContentExtractor = async (
     return { content: "", wordCount: 0 };
   }
   const delimiter = ctx.extension.toLowerCase() === ".tsv" ? "\t" : ",";
-  const rows = parseDelimited(raw, delimiter);
+  const { rows, unterminatedQuote } = parseDelimited(raw, delimiter);
+  if (unterminatedQuote) {
+    throw new ExtractionError({
+      kind: "corrupt-document",
+      filePath: ctx.filename,
+      message: "CSV/TSV parse failed: unterminated quoted field (mismatched quotes).",
+      suggestion:
+        "Ensure every opening double-quote has a matching closing quote, then re-save the file.",
+    });
+  }
+  const header = rows[0];
+  if (header !== undefined) {
+    const expectedColumns = header.length;
+    for (let r = 1; r < rows.length; r++) {
+      const actual = rows[r]?.length ?? 0;
+      if (actual !== expectedColumns) {
+        throw new ExtractionError({
+          kind: "corrupt-document",
+          filePath: ctx.filename,
+          message: `CSV/TSV parse failed: row ${r + 1} has ${actual} columns but the header has ${expectedColumns}.`,
+          suggestion:
+            "Ensure every row has the same number of columns as the header, then re-save the file.",
+        });
+      }
+    }
+  }
   const content = toMarkdownTable(rows);
   return { content, wordCount: countWords(content) };
 };
