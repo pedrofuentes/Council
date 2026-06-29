@@ -163,6 +163,9 @@ interface ExpertRecord {
  * Concrete implementation of `CouncilEngine` over `@github/copilot-sdk`.
  */
 export class CopilotEngine implements CouncilEngine {
+  /** Copilot bills premium requests — surface real cost metrics. */
+  readonly supportsCostMetrics = true;
+
   readonly #experts = new Map<string, ExpertRecord>();
   #client: CopilotClient | undefined;
   #started = false;
