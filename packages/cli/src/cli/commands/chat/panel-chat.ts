@@ -1,8 +1,6 @@
 /**
  * Panel (multi-expert) chat REPL loop — `council chat <panel-slug>`.
  */
-import * as path from "node:path";
-
 import {
   PANEL_CHAT_TASK_DESCRIPTION,
   isExitCommand,
@@ -137,7 +135,8 @@ export async function runPanelChat(opts: PanelChatOptions): Promise<void> {
       const { renderScanLines } = await import(
         "../../../cli/formatters/scan-summary.js"
       );
-      const managedDocsDir = path.join(dataHome, "panels", target, "docs");
+      const { resolveManagedDocsDir } = await import("../docs.js");
+      const managedDocsDir = resolveManagedDocsDir(dataHome, target);
       const result = await scanAndIndexPanelDocuments({
         panelName: target,
         managedDocsDir,
