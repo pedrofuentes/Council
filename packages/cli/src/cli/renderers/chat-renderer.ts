@@ -16,9 +16,33 @@ import chalk, { type ChalkInstance } from "chalk";
 import { stripControlChars } from "../strip-control-chars.js";
 
 import type { ExpertColor } from "./ink/colors.js";
-import { assignExpertColor, EXPERT_COLOR_PALETTE, formatExpertPrefix } from "./ink/colors.js";
+import {
+  assignExpertColor,
+  EXPERT_COLOR_PALETTE,
+  formatExpertPrefix,
+  HUMAN_COLOR,
+} from "./ink/colors.js";
 import { getSymbols } from "./symbols.js";
 import type { Sink } from "./types.js";
+
+/**
+ * Typed map from every `ExpertColor` to its concrete `ChalkInstance`.
+ * Replaces an unsafe `chalk[name as keyof typeof chalk]` index cast: the
+ * `Record<ExpertColor, ...>` makes coverage total at compile time, so a
+ * palette value that isn't a real Chalk method is a type error rather than
+ * a runtime throw (#711).
+ */
+export const EXPERT_CHALK_COLORS: Record<ExpertColor, ChalkInstance> = {
+  cyan: chalk.cyan,
+  yellow: chalk.yellow,
+  magenta: chalk.magenta,
+  green: chalk.green,
+  blue: chalk.blue,
+  cyanBright: chalk.cyanBright,
+  magentaBright: chalk.magentaBright,
+  yellowBright: chalk.yellowBright,
+  [HUMAN_COLOR]: chalk.whiteBright,
+};
 
 /**
  * Color palette for expert names. Uses the shared unified palette from
@@ -27,7 +51,7 @@ import type { Sink } from "./types.js";
  * than colors.
  */
 const EXPERT_COLORS: readonly ChalkInstance[] = EXPERT_COLOR_PALETTE.map(
-  (name: ExpertColor): ChalkInstance => chalk[name],
+  (name: ExpertColor): ChalkInstance => EXPERT_CHALK_COLORS[name],
 );
 
 export interface ChatRendererOptions {
@@ -85,8 +109,8 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
   for (const slug of experts.keys()) {
     const isHuman = humanSlugs?.has(slug) ?? false;
     const colorName = assignExpertColor(index, { isHuman });
-    const color = chalk[colorName as keyof typeof chalk] as ChalkInstance;
-    if (color) colorBySlug.set(slug, color);
+    const color = EXPERT_CHALK_COLORS[colorName];
+    colorBySlug.set(slug, color);
     indexBySlug.set(slug, index);
     index += 1;
   }
@@ -109,8 +133,7 @@ export function createChatRenderer(options: ChatRendererOptions): ChatRenderer {
    * (`\n`) and tabs (`\t`) are still allowed here — they're legitimate output
    * for multi-paragraph responses.
    */
-  const sanitizeMultiline = (text: string): string =>
-    stripControlChars(text).replace(/\r/g, "");
+  const sanitizeMultiline = (text: string): string => stripControlChars(text).replace(/\r/g, "");
 
   /**
    * Sanitize single-line text (display names, status/system messages, replayed
