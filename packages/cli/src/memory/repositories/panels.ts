@@ -4,6 +4,7 @@
  * Returns Council domain objects (camelCase) regardless of the underlying
  * snake_case column names. The conversion lives in `toDomain()`.
  */
+import { sql } from "kysely";
 import { ulid } from "ulid";
 
 import type { CouncilDatabase, PanelRow } from "../db.js";
@@ -99,12 +100,15 @@ export class PanelRepository {
   /**
    * Find panels whose name starts with the given prefix (case-sensitive).
    * Returns all matches ordered by created_at DESC so the most recent is first.
+   * LIKE metacharacters (`%`, `_`, `\`) in the prefix are escaped so the lookup
+   * matches a literal prefix, not a wildcard pattern (issue #703).
    */
   async findByNamePrefix(prefix: string): Promise<readonly Panel[]> {
+    const escaped = prefix.replace(/[\\%_]/g, "\\$&");
     const rows = await this.db
       .selectFrom("panels")
       .selectAll()
-      .where("name", "like", `${prefix}%`)
+      .where("name", "like", sql<string>`${escaped + "%"} ESCAPE '\\'`)
       .orderBy("created_at", "desc")
       .orderBy("id", "desc")
       .execute();
