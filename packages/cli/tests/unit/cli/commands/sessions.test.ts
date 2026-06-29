@@ -11,6 +11,7 @@ import * as fs from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { ConfirmProvider } from "../../../../src/cli/commands/confirm.js";
+import { CliUserError } from "../../../../src/cli/cli-user-error.js";
 import { buildSessionsCommand } from "../../../../src/cli/commands/sessions.js";
 import { buildProgram } from "../../../../src/bin/council.js";
 import type { DebateStatus } from "../../../../src/memory/repositories/debates.js";
@@ -831,6 +832,45 @@ describe("buildSessionsCommand", () => {
       expect(confirm.calls).toBe(0);
       expect(state.panelExists).toBe(true);
       expect(state.debateCount).toBe(1);
+    });
+
+    describe("user-validation failures throw CliUserError (#845)", () => {
+      it("cancel: omitted name throws CliUserError, not a plain Error", async () => {
+        const cmd = buildSessionsCommand();
+
+        await expect(
+          cmd.parseAsync(["node", "council-sessions", "cancel"]),
+        ).rejects.toBeInstanceOf(CliUserError);
+      });
+
+      it("cancel: ambiguous prefix throws CliUserError, not a plain Error", async () => {
+        await seedPanelWithDebates(testHome, "amb-cancel-alpha", ["running"]);
+        await seedPanelWithDebates(testHome, "amb-cancel-beta", ["running"]);
+        const cmd = buildSessionsCommand();
+
+        await expect(
+          cmd.parseAsync(["node", "council-sessions", "cancel", "amb-cancel-"]),
+        ).rejects.toBeInstanceOf(CliUserError);
+      });
+
+      it("delete: ambiguous exact-name collision throws CliUserError", async () => {
+        await seedPanelWithDebates(testHome, "amb-del", ["completed"]);
+        await seedPanelWithDebates(testHome, "amb-del", ["interrupted"]);
+        const cmd = buildSessionsCommand({ confirmProvider: () => makeConfirmProvider(true) });
+
+        await expect(
+          cmd.parseAsync(["node", "council-sessions", "delete", "amb-del", "--yes"]),
+        ).rejects.toBeInstanceOf(CliUserError);
+      });
+
+      it("delete: running session throws CliUserError, not a plain Error", async () => {
+        await seedPanelWithDebates(testHome, "running-user-error", ["running"]);
+        const cmd = buildSessionsCommand({ confirmProvider: () => makeConfirmProvider(true) });
+
+        await expect(
+          cmd.parseAsync(["node", "council-sessions", "delete", "running-user-error", "--yes"]),
+        ).rejects.toBeInstanceOf(CliUserError);
+      });
     });
 
     describe("naming/display consistency (F32, F35)", () => {
