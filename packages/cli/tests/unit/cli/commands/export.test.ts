@@ -906,6 +906,110 @@ describe("buildExportCommand", () => {
     expect(fileBytes.toString("utf8")).toContain("CTO 🎯");
   });
 
+  it("registers a --force option to allow overwriting --output", () => {
+    const cmd = buildExportCommand();
+    const longs = cmd.options.map((o) => o.long);
+    expect(longs).toContain("--force");
+  });
+
+  it("--output refuses to overwrite an existing file without --force", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    const outPath = path.join(testHome, "existing.md");
+    await fs.writeFile(outPath, "ORIGINAL", "utf-8");
+    let errCaptured = "";
+    const cmd = buildExportCommand({
+      write: () => undefined,
+      writeError: (s) => {
+        errCaptured += s;
+      },
+    });
+    cmd.exitOverride();
+    let thrown = "";
+    try {
+      await cmd.parseAsync([
+        "node",
+        "council-export",
+        seed.panelName,
+        "--format",
+        "markdown",
+        "--output",
+        outPath,
+      ]);
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    expect(`${thrown} ${errCaptured}`.toLowerCase()).toMatch(/exists|overwrite|--force/);
+    // The pre-existing file must be left untouched.
+    expect(await fs.readFile(outPath, "utf-8")).toBe("ORIGINAL");
+  });
+
+  it("--output --force overwrites an existing file", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    const outPath = path.join(testHome, "overwrite-me.md");
+    await fs.writeFile(outPath, "ORIGINAL", "utf-8");
+    const cmd = buildExportCommand({ write: () => undefined });
+    await cmd.parseAsync([
+      "node",
+      "council-export",
+      seed.panelName,
+      "--format",
+      "markdown",
+      "--output",
+      outPath,
+      "--force",
+    ]);
+    const fileContent = await fs.readFile(outPath, "utf-8");
+    expect(fileContent).not.toBe("ORIGINAL");
+    expect(fileContent).toContain("CTO");
+  });
+
+  it("--output refuses a symlink target (no symlink follow)", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    const secret = path.join(testHome, "secret.txt");
+    await fs.writeFile(secret, "SECRET", "utf-8");
+    const linkPath = path.join(testHome, "link.md");
+    await fs.symlink(secret, linkPath);
+    let errCaptured = "";
+    const cmd = buildExportCommand({
+      write: () => undefined,
+      writeError: (s) => {
+        errCaptured += s;
+      },
+    });
+    cmd.exitOverride();
+    let thrown = "";
+    try {
+      await cmd.parseAsync([
+        "node",
+        "council-export",
+        seed.panelName,
+        "--output",
+        linkPath,
+        "--force",
+      ]);
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    expect(`${thrown} ${errCaptured}`.toLowerCase()).toMatch(/regular file|symlink|not.*file/);
+    // The symlink's target must not have been overwritten.
+    expect(await fs.readFile(secret, "utf-8")).toBe("SECRET");
+  });
+
+  it("--output refuses a directory target", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    const dirPath = path.join(testHome, "outdir");
+    await fs.mkdir(dirPath, { recursive: true });
+    const cmd = buildExportCommand({ write: () => undefined });
+    cmd.exitOverride();
+    let thrown = "";
+    try {
+      await cmd.parseAsync(["node", "council-export", seed.panelName, "--output", dirPath]);
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    expect(thrown.toLowerCase()).toMatch(/regular file|directory|not.*file/);
+  });
+
   it("--format garbage rejects with clear error", async () => {
     const seed = await seedPanelWithDebate(testHome);
     const cmd = buildExportCommand({ write: () => undefined });
