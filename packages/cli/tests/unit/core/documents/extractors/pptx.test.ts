@@ -208,18 +208,87 @@ async function loadPptxExtractor(): Promise<{
   return { extractor, errors };
 }
 
-function ctx(buf: Buffer): {
+function ctx(
+  buf: Buffer,
+  signal?: AbortSignal,
+): {
   buffer: Buffer;
   filename: string;
   extension: string;
   sizeBytes: number;
+  signal?: AbortSignal;
 } {
   return {
     buffer: buf,
     filename: "deck.pptx",
     extension: ".pptx",
     sizeBytes: buf.byteLength,
+    signal,
   };
+}
+
+// Builds a single-entry ZIP whose entry claims DEFLATE (method 8) but
+// carries arbitrary non-deflate bytes, so yauzl's inflate stream emits a
+// generic ("incorrect header check") error rather than a "too many bytes"
+// bomb signal. Used to exercise the generic stream-error wrapping path.
+function buildBadDeflateZip(name: string): Buffer {
+  const compressed = Buffer.from([0x00, 0x01, 0x02, 0x03, 0x04, 0x05]);
+  const nameBuf = Buffer.from(name, "utf-8");
+  const uSize = 8;
+  const local = Buffer.alloc(30 + nameBuf.length + compressed.length);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(20, 4);
+  local.writeUInt16LE(0, 6);
+  local.writeUInt16LE(8, 8); // DEFLATE
+  local.writeUInt16LE(0, 10);
+  local.writeUInt16LE(0x21, 12);
+  local.writeUInt32LE(0, 14); // crc (unchecked before inflate fails)
+  local.writeUInt32LE(compressed.length, 18);
+  local.writeUInt32LE(uSize, 22);
+  local.writeUInt16LE(nameBuf.length, 26);
+  local.writeUInt16LE(0, 28);
+  nameBuf.copy(local, 30);
+  compressed.copy(local, 30 + nameBuf.length);
+
+  const central = Buffer.alloc(46 + nameBuf.length);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(20, 4);
+  central.writeUInt16LE(20, 6);
+  central.writeUInt16LE(0, 8);
+  central.writeUInt16LE(8, 10);
+  central.writeUInt16LE(0, 12);
+  central.writeUInt16LE(0x21, 14);
+  central.writeUInt32LE(0, 16);
+  central.writeUInt32LE(compressed.length, 20);
+  central.writeUInt32LE(uSize, 24);
+  central.writeUInt16LE(nameBuf.length, 28);
+  central.writeUInt16LE(0, 30);
+  central.writeUInt16LE(0, 32);
+  central.writeUInt16LE(0, 34);
+  central.writeUInt16LE(0, 36);
+  central.writeUInt32LE(0, 38);
+  central.writeUInt32LE(0, 42);
+  nameBuf.copy(central, 46);
+
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(1, 8);
+  eocd.writeUInt16LE(1, 10);
+  eocd.writeUInt32LE(central.length, 12);
+  eocd.writeUInt32LE(local.length, 16);
+  return Buffer.concat([local, central, eocd]);
+}
+
+// Builds a slide whose <a:t> text is wrapped in `depth` nested generic
+// elements, producing an XML tree deeper than the recursion bound.
+function deeplyNestedSlideXml(depth: number): string {
+  const open = "<a:g>".repeat(depth);
+  const close = "</a:g>".repeat(depth);
+  return `<?xml version="1.0"?>
+<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+       xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld><p:spTree><p:sp><p:txBody><a:p>${open}<a:r><a:t>deep</a:t></a:r>${close}</a:p></p:txBody></p:sp></p:spTree></p:cSld>
+</p:sld>`;
 }
 
 // --- Tests -------------------------------------------------------------
@@ -498,6 +567,76 @@ describe("pptx extractor", () => {
     expect(caught).toBeInstanceOf(errors.ExtractionError);
     expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe(
       "oversize-file",
+    );
+  });
+
+  it("honors a pre-aborted signal with extraction-timeout (#956)", async () => {
+    const { extractor, errors } = await loadPptxExtractor();
+    const buf = makePptx([{ body: "First slide body" }]);
+    const controller = new AbortController();
+    controller.abort();
+    let caught: unknown;
+    try {
+      await extractor(ctx(buf, controller.signal));
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(errors.ExtractionError);
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe(
+      "extraction-timeout",
+    );
+  });
+
+  it("wraps generic ZIP stream errors as corrupt-document (#955)", async () => {
+    const { extractor, errors } = await loadPptxExtractor();
+    const buf = buildBadDeflateZip("ppt/slides/slide1.xml");
+    let caught: unknown;
+    try {
+      await extractor(ctx(buf));
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(errors.ExtractionError);
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe(
+      "corrupt-document",
+    );
+  });
+
+  it("throws ExtractionError instead of overflowing on deeply nested XML (#954)", async () => {
+    const { extractor, errors } = await loadPptxExtractor();
+    const buf = buildZip([
+      {
+        name: "ppt/slides/slide1.xml",
+        data: Buffer.from(deeplyNestedSlideXml(600), "utf-8"),
+      },
+    ]);
+    let caught: unknown;
+    try {
+      await extractor(ctx(buf));
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(errors.ExtractionError);
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe(
+      "corrupt-document",
+    );
+  });
+
+  it("extracts large interleaved slide/notes decks correctly (#957)", async () => {
+    const { extractor } = await loadPptxExtractor();
+    const slides: SlideSpec[] = [];
+    for (let i = 1; i <= 60; i++) {
+      slides.push({ body: `Body-${i}`, notes: `Note-${i}` });
+    }
+    const buf = makePptx(slides);
+    const out = await extractor(ctx(buf));
+    expect(out.metadata?.slideCount).toBe(60);
+    expect(out.content).toContain("Body-1");
+    expect(out.content).toContain("Note-1");
+    expect(out.content).toContain("Body-60");
+    expect(out.content).toContain("> **Speaker Notes:** Note-60");
+    expect(out.content.indexOf("Body-2")).toBeLessThan(
+      out.content.indexOf("Body-60"),
     );
   });
 
