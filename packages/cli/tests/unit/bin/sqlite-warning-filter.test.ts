@@ -69,7 +69,9 @@ describe("installSqliteExperimentalWarningFilter", () => {
     const { fakeProcess, calls } = createFakeProcess();
     installSqliteExperimentalWarningFilter(fakeProcess);
 
-    function CustomWarning(): void {}
+    function CustomWarning(): void {
+      // marker ctor used only to assert overload forwarding
+    }
     fakeProcess.emitWarning("totally unrelated warning", CustomWarning);
 
     expect(calls).toEqual([["totally unrelated warning", CustomWarning]]);
@@ -121,9 +123,7 @@ describe("installSqliteExperimentalWarningStderrFilter", () => {
     fakeStderr.write(
       "(node:12345) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n",
     );
-    fakeStderr.write(
-      "(Use `node --trace-warnings ...` to show where the warning was created)\n",
-    );
+    fakeStderr.write("(Use `node --trace-warnings ...` to show where the warning was created)\n");
 
     expect(writes).toEqual([]);
   });
@@ -206,8 +206,7 @@ describe("installSqliteExperimentalWarningStderrFilter", () => {
 
     const fetchLine =
       "(node:1) ExperimentalWarning: Fetch is an experimental feature and might change at any time\n";
-    const hintLine =
-      "(Use `node --trace-warnings ...` to show where the warning was created)\n";
+    const hintLine = "(Use `node --trace-warnings ...` to show where the warning was created)\n";
 
     fakeStderr.write(fetchLine);
     fakeStderr.write(hintLine);
@@ -226,9 +225,7 @@ describe("installSqliteExperimentalWarningStderrFilter", () => {
         "[CLI subprocess] ready\n",
     );
 
-    expect(writes.join("")).toBe(
-      "[CLI subprocess] starting up\n[CLI subprocess] ready\n",
-    );
+    expect(writes.join("")).toBe("[CLI subprocess] starting up\n[CLI subprocess] ready\n");
   });
 
   it("is idempotent when called twice on the same stream", () => {
