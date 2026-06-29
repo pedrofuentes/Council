@@ -16,6 +16,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildDocsCommand,
+  resolveManagedDocsDir,
   type DocsCommandDeps,
   type PanelScanLookupResult,
 } from "../../../../src/cli/commands/docs.js";
@@ -744,5 +745,33 @@ describe("council docs doctor", () => {
 
     expect(error).toBeUndefined();
     expect(stdout).not.toMatch(/encrypted|password-protected/i);
+  });
+});
+
+describe("resolveManagedDocsDir path containment", () => {
+  const dataHome = "/home/u/.local/share/council";
+
+  it("builds the docs dir for a valid kebab-case panel name", () => {
+    expect(resolveManagedDocsDir(dataHome, "finance")).toBe(
+      `${dataHome}/panels/finance/docs`,
+    );
+  });
+
+  it("rejects a panel name with parent-traversal segments before any scan", () => {
+    expect(() => resolveManagedDocsDir(dataHome, "../../etc")).toThrow();
+  });
+
+  it("rejects a panel name containing a path separator", () => {
+    expect(() => resolveManagedDocsDir(dataHome, "finance/../../etc")).toThrow();
+  });
+
+  it("rejects an absolute panel name", () => {
+    expect(() => resolveManagedDocsDir(dataHome, "/etc/passwd")).toThrow();
+  });
+
+  it("rejects a panel name that resolves outside the panels root", () => {
+    // Even if validation were weakened, the resolved-path assertion must
+    // refuse a dir that escapes <dataHome>/panels/.
+    expect(() => resolveManagedDocsDir(dataHome, "..")).toThrow();
   });
 });

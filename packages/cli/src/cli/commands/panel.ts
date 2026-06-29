@@ -150,7 +150,7 @@ function panelDocsDir(dataHome: string, name: string): string {
   return path.join(dataHome, "panels", name, "docs");
 }
 
-function validatePanelName(name: string): void {
+export function validatePanelName(name: string): void {
   if (!PANEL_NAME_RE.test(name)) {
     throw new Error(
       `Invalid panel name "${name}": must be kebab-case (lowercase letters, digits, hyphens; must start with a letter)`,
