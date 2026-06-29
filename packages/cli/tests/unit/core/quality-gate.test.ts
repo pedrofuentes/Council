@@ -144,6 +144,30 @@ describe("applyQualityGate — disagreement budget (Layer 2)", () => {
   });
 });
 
+describe("applyQualityGate — negation bypass (Layer 2, issue #47)", () => {
+  // A response like "I don't disagree with X" contains "disagree with" as a
+  // substring and previously satisfied Layer 2 via includes(). The gate must
+  // treat a disagreement signal preceded by negation as NOT a disagreement.
+  for (const text of [
+    "I don't disagree with the prior speaker about the migration timeline, and overall I think the plan looks fine.",
+    "I do not disagree with the CTO's framing here, and we should proceed exactly as currently proposed today.",
+    "I no longer disagree with the proposal now that the observability concern has been fully addressed by everyone.",
+  ]) {
+    it(`flags negated pseudo-disagreement: "${text.slice(0, 32)}…"`, () => {
+      const result = applyQualityGate(text, { priorSpeakers: ["cto"] });
+      expect(result.ok).toBe(false);
+      expect(result.failures.some((f) => f.kind === "no_disagreement_signal")).toBe(true);
+    });
+  }
+
+  it("still accepts genuine disagreement adjacent to a negated clause", () => {
+    const text =
+      "I disagree with the rollback plan because it omits database state and will corrupt downstream reads.";
+    const result = applyQualityGate(text, { priorSpeakers: ["cto"] });
+    expect(result.ok).toBe(true);
+  });
+});
+
 describe("applyQualityGate — specificity (Layer 3)", () => {
   it("flags responses that are too short to carry signal", () => {
     const result = applyQualityGate("I disagree.", { priorSpeakers: ["cto"] });

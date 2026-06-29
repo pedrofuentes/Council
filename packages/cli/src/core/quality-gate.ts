@@ -91,10 +91,28 @@ function findForbiddenPhrases(text: string): string[] {
   return DEFAULT_FORBIDDEN_PHRASES.filter((p) => lower.includes(p.toLowerCase()));
 }
 
+/**
+ * Negation openers that flip a disagreement signal into pseudo-agreement.
+ * Includes the explicit forms from issue #47 plus the universal `n't`
+ * contraction tail (don't / doesn't / can't / won't / wouldn't).
+ */
+const NEGATION_PREFIX = /(?:\bnot|n't|\bno longer)\s+$/;
+
 function hasDisagreementSignal(text: string): boolean {
   const lower = text.toLowerCase();
   if (lower.includes(STAND_DOWN_MARKER)) return true;
-  return DISAGREEMENT_SIGNALS.some((s) => lower.includes(s));
+  return DISAGREEMENT_SIGNALS.some((signal) => {
+    let from = 0;
+    let idx = lower.indexOf(signal, from);
+    while (idx !== -1) {
+      // Count the signal only if it is not immediately preceded by a negation
+      // ("I don't disagree with X" must not satisfy the disagreement budget).
+      if (!NEGATION_PREFIX.test(lower.slice(0, idx))) return true;
+      from = idx + signal.length;
+      idx = lower.indexOf(signal, from);
+    }
+    return false;
+  });
 }
 
 function buildRegenerateHint(failures: readonly QualityCheck[]): string {
