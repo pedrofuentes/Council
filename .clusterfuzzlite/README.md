@@ -109,6 +109,27 @@ curl -fsSI -H "Authorization: Bearer $TOKEN" \
 
 Then update the `@sha256:...` in [`Dockerfile`](./Dockerfile).
 
+## npm install pinning is best-effort
+
+Scorecard's Pinned-Dependencies check also flags the two `npm install` lines in
+[`build.sh`](./build.sh) as "not pinned by hash" (the TypeScript compiler and
+`@jazzer.js/core@2.1.0`). Both are hardened as far as practical:
+
+- **Repo-pinned versions** — TypeScript installs the repo's pinned devDependency
+  (`require('./package.json').devDependencies.typescript`) and Jazzer.js is fixed
+  at exactly `2.1.0`. Neither floats to `latest`.
+- **`--ignore-scripts`** on both, so no untrusted install-time scripts run during
+  the OSS-Fuzz build. Jazzer.js ships a prebuilt native addon, so it still loads.
+
+True hash pinning (`npm ci` against a committed `package-lock.json`) is not
+viable here: each tool installs into a throwaway `mktemp -d` with no
+package.json/lockfile, the TypeScript version is resolved from the workspace
+manifest at build time, and committing per-tool lockfiles in this directory would
+duplicate and drift against the real manifests. These two alerts are an accepted,
+documented best-effort residual; the OSS-Fuzz base image itself is the
+digest-pinned trust anchor for the build. Revisit if OSS-Fuzz adds first-class
+lockfile support for isolated installs.
+
 ## Adding a target
 
 1. Write `fuzz_<name>.js` here (CommonJS; `module.exports.fuzz = async (data) => …`).
