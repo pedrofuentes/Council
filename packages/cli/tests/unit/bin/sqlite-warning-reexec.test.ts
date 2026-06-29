@@ -92,13 +92,24 @@ describe("maybeReexecToSuppressSqliteWarning", () => {
     expect(options.env[REEXEC_SENTINEL_ENV]).toBe("1");
   });
 
-  it("forwards the child exit status (and maps a null status to 0)", () => {
+  it("forwards the child exit status", () => {
     expect(
       maybeReexecToSuppressSqliteWarning(baseDeps({ spawnSync: () => ({ status: 3 }) })).status,
     ).toBe(3);
+  });
+
+  it("maps a null status from a signal-terminated child to 128 + signal number", () => {
+    expect(
+      maybeReexecToSuppressSqliteWarning(
+        baseDeps({ spawnSync: () => ({ status: null, signal: "SIGKILL" }) }),
+      ).status,
+    ).toBe(128 + 9);
+  });
+
+  it("maps a null status with no signal to a generic non-zero exit code", () => {
     expect(
       maybeReexecToSuppressSqliteWarning(baseDeps({ spawnSync: () => ({ status: null }) })).status,
-    ).toBe(0);
+    ).toBe(1);
   });
 
   it("does not spawn and reports reexeced:false when re-exec is not warranted", () => {
