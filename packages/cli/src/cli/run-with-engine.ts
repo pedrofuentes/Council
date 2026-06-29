@@ -6,7 +6,8 @@
  *   2. Start it
  *   3. Register experts (Promise.allSettled + fulfilled-only rollback)
  *   4. Build Debate + wrap in DebatePersister + render
- *   5. On engine error: write actionable hint via formatEngineError
+ *   5. On engine-init error: write actionable hint via formatEngineError;
+ *      on persist/render error: write the raw underlying message (#195)
  *   6. In finally: stop engine + destroy DB (log cleanup errors)
  *
  * Extracted per Sentinel pr192 #193 (rule-of-three duplication across
@@ -147,8 +148,10 @@ export interface OnDebateCompleteContext {
  * persist → render → stop. Caller handles DB open/close and panel
  * resolution; this function owns the engine lifecycle.
  *
- * On engine errors: writes actionable hint via `formatEngineError`
- * to `writeError` before re-throwing.
+ * On engine-init errors: writes actionable hint via `formatEngineError`
+ * to `writeError` before re-throwing. On persistence/render errors:
+ * writes the raw underlying message (no engine hint) before re-throwing
+ * (#195).
  *
  * On cleanup errors (engine.stop): writes diagnostic to `writeError`
  * but does NOT re-throw (cleanup is best-effort; the main operation
@@ -158,48 +161,63 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
   const engine = opts.engineFactory ? opts.engineFactory() : makeEngineFromKind(opts.engineKind);
 
   try {
-    await engine.start();
+    // Engine-init phase: start + register experts. Failures here are
+    // engine-originating, so they get the actionable `formatEngineError`
+    // hint (gh auth, rate-limit, model unavailable, etc.). Persist/render
+    // failures are handled separately below — mapping a DB or renderer
+    // error through the engine hints (e.g. "Engine error.") is misleading
+    // (#195).
+    let debate: Debate;
+    try {
+      await engine.start();
 
-    const humanSlugs = opts.humanSlugs ?? new Set<string>();
+      const humanSlugs = opts.humanSlugs ?? new Set<string>();
 
-    // Build the Debate first so canary tokens (T-09) are injected
-    // into each expert's systemMessage. The augmented specs are then
-    // registered with the engine via `debate.experts`, ensuring the
-    // canary actually reaches the LLM — otherwise leak detection in
-    // `#runAiTurn` would be meaningless.
-    const debate = new Debate(engine, opts.experts, opts.debateConfig, {
-      humanSlugs: humanSlugs.size > 0 ? humanSlugs : undefined,
-      humanInput: opts.humanInput,
-    });
+      // Build the Debate first so canary tokens (T-09) are injected
+      // into each expert's systemMessage. The augmented specs are then
+      // registered with the engine via `debate.experts`, ensuring the
+      // canary actually reaches the LLM — otherwise leak detection in
+      // `#runAiTurn` would be meaningless.
+      debate = new Debate(engine, opts.experts, opts.debateConfig, {
+        humanSlugs: humanSlugs.size > 0 ? humanSlugs : undefined,
+        humanInput: opts.humanInput,
+      });
 
-    // Leak-safe parallel addExpert (Sentinel #142 + #151).
-    // Filter out human participants — they don't register with the engine.
-    const aiExperts = debate.experts.filter((e) => !humanSlugs.has(e.slug));
-    const startedEngine = engine;
-    const settled = await Promise.allSettled(aiExperts.map((e) => startedEngine.addExpert(e)));
-    const failures = settled
-      .map((r, i) => ({ result: r, expert: aiExperts[i] }))
-      .filter(
-        (p): p is { result: PromiseRejectedResult; expert: ExpertSpec } =>
-          p.result.status === "rejected" && p.expert !== undefined,
-      );
-    if (failures.length > 0) {
-      const fulfilledIds = settled
+      // Leak-safe parallel addExpert (Sentinel #142 + #151).
+      // Filter out human participants — they don't register with the engine.
+      const aiExperts = debate.experts.filter((e) => !humanSlugs.has(e.slug));
+      const startedEngine = engine;
+      const settled = await Promise.allSettled(aiExperts.map((e) => startedEngine.addExpert(e)));
+      const failures = settled
         .map((r, i) => ({ result: r, expert: aiExperts[i] }))
         .filter(
-          (p): p is { result: PromiseFulfilledResult<void>; expert: ExpertSpec } =>
-            p.result.status === "fulfilled" && p.expert !== undefined,
-        )
-        .map((p) => p.expert.id);
-      await Promise.allSettled(fulfilledIds.map((id) => startedEngine.removeExpert(id)));
-      const firstErr = failures[0]?.result.reason;
-      const firstMsg = firstErr instanceof Error ? firstErr.message : String(firstErr);
-      throw new Error(
-        `could not register all experts (${failures.length}/${aiExperts.length} failed): ${firstMsg}`,
-      );
+          (p): p is { result: PromiseRejectedResult; expert: ExpertSpec } =>
+            p.result.status === "rejected" && p.expert !== undefined,
+        );
+      if (failures.length > 0) {
+        const fulfilledIds = settled
+          .map((r, i) => ({ result: r, expert: aiExperts[i] }))
+          .filter(
+            (p): p is { result: PromiseFulfilledResult<void>; expert: ExpertSpec } =>
+              p.result.status === "fulfilled" && p.expert !== undefined,
+          )
+          .map((p) => p.expert.id);
+        await Promise.allSettled(fulfilledIds.map((id) => startedEngine.removeExpert(id)));
+        const firstErr = failures[0]?.result.reason;
+        const firstMsg = firstErr instanceof Error ? firstErr.message : String(firstErr);
+        throw new Error(
+          `could not register all experts (${failures.length}/${aiExperts.length} failed): ${firstMsg}`,
+        );
+      }
+    } catch (err: unknown) {
+      if (opts.signal?.aborted) return;
+      opts.writeError("\n" + formatEngineError(err as Error) + "\n\n");
+      throw err;
     }
 
-    // Persist + render.
+    // Persist + render. Errors here are persistence- or renderer-origin
+    // (DB write failures, sink errors), NOT engine failures — report the
+    // raw underlying message rather than an engine-specific hint (#195).
     const persister = new DebatePersister({
       debates: new DebateRepository(opts.db),
       turns: new TurnRepository(opts.db),
@@ -214,30 +232,37 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
       ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
     });
 
-    const sink: Sink = { write: opts.write, writeError: opts.writeError };
-    const isTTY = opts.isTTY ?? Boolean(process.stdout.isTTY);
-    const renderer = selectRenderer({
-      format: opts.format,
-      isTTY,
-      sink,
-      showCost: opts.engineKind !== "mock",
-      ...(opts.quiet !== undefined ? { quiet: opts.quiet } : {}),
-    });
+    try {
+      const sink: Sink = { write: opts.write, writeError: opts.writeError };
+      const isTTY = opts.isTTY ?? Boolean(process.stdout.isTTY);
+      const renderer = selectRenderer({
+        format: opts.format,
+        isTTY,
+        sink,
+        showCost: opts.engineKind !== "mock",
+        ...(opts.quiet !== undefined ? { quiet: opts.quiet } : {}),
+      });
 
-    opts.beforeRender?.();
+      opts.beforeRender?.();
 
-    // Preambles are plain-text headers; only emit them when the chosen
-    // renderer is the plain renderer (Ink owns its own framing; JSON
-    // streams must stay machine-parseable).
-    if (renderer instanceof PlainRenderer) {
-      opts.preamble?.();
+      // Preambles are plain-text headers; only emit them when the chosen
+      // renderer is the plain renderer (Ink owns its own framing; JSON
+      // streams must stay machine-parseable).
+      if (renderer instanceof PlainRenderer) {
+        opts.preamble?.();
+      }
+
+      const stream = persister.persist(
+        debate.run(opts.prompt, opts.signal ? { signal: opts.signal } : {}),
+        opts.prompt,
+      );
+      await renderer.render(stream);
+    } catch (err: unknown) {
+      if (opts.signal?.aborted) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      opts.writeError(`\n!! ${msg}\n\n`);
+      throw err;
     }
-
-    const stream = persister.persist(
-      debate.run(opts.prompt, opts.signal ? { signal: opts.signal } : {}),
-      opts.prompt,
-    );
-    await renderer.render(stream);
 
     // Post-debate hook (e.g. LLM ExpertMemory extraction). Best-effort:
     // hook failures are reported but never propagate — the debate
@@ -256,16 +281,6 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
         opts.writeError(`!! onDebateComplete hook failed: ${msg}\n`);
       }
     }
-  } catch (err: unknown) {
-    // #810: when the caller's signal is aborted, the error is a
-    // side-effect of the intentional interrupt — suppress the
-    // user-facing diagnostic and don't re-throw so callers'
-    // `if (debateInterrupted)` check can show the friendly message.
-    if (opts.signal?.aborted) {
-      return;
-    }
-    opts.writeError("\n" + formatEngineError(err as Error) + "\n\n");
-    throw err;
   } finally {
     await engine.stop().catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
