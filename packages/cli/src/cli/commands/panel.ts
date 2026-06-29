@@ -114,8 +114,13 @@ async function withPanelContext<T>(fn: (ctx: PanelContext) => Promise<T>): Promi
   const docsRepo = new PanelDocumentRepository(db);
   const runtimePanelRepo = new PanelRepository(db);
   const debateRepo = new DebateRepository(db);
+  // Avoid `finally { await db.destroy() }` — a destroy failure there would
+  // replace (mask) the callback's primary error. Run cleanup explicitly so
+  // the root cause survives, surfacing both via AggregateError, mirroring
+  // persistPanelArtifacts' rollback pattern.
+  let result: T;
   try {
-    return await fn({
+    result = await fn({
       library,
       panelRepo,
       docsRepo,
@@ -125,9 +130,19 @@ async function withPanelContext<T>(fn: (ctx: PanelContext) => Promise<T>): Promi
       dataHome,
       db,
     });
-  } finally {
-    await db.destroy();
+  } catch (err) {
+    try {
+      await db.destroy();
+    } catch (destroyErr) {
+      throw new AggregateError(
+        [err, destroyErr],
+        "panel operation failed and db.destroy() cleanup also failed",
+      );
+    }
+    throw err;
   }
+  await db.destroy();
+  return result;
 }
 
 function displayPath(absPath: string): string {
@@ -334,15 +349,20 @@ function buildDeleteCommand(
         // debates are NOT deleted by `panel delete`: debates CASCADE off the runtime
         // panels(id), which this command never touches (it only removes the panel_library row,
         // panel_members, the YAML, and the docs dir). They remain available via `council
-        // sessions`.
-        const runtimePanels = await ctx.runtimePanelRepo.findByNamePrefix(name);
-        const exactMatches = runtimePanels.filter((p) => p.name === name);
-        let debateCount = 0;
-        for (const panel of exactMatches) {
-          debateCount += (await ctx.debateRepo.findByPanelId(panel.id)).length;
-        }
-
+        // sessions`. The count is only used in the prompt, so it lives INSIDE the guard and is
+        // contained: a transient read failure (SQLITE_BUSY while a debate runs concurrently)
+        // must not abort a scripted `--yes/--force` delete — default to 0.
         if (opts.yes !== true && opts.force !== true) {
+          let debateCount = 0;
+          try {
+            const runtimePanels = await ctx.runtimePanelRepo.findByNamePrefix(name);
+            const exactMatches = runtimePanels.filter((p) => p.name === name);
+            for (const panel of exactMatches) {
+              debateCount += (await ctx.debateRepo.findByPanelId(panel.id)).length;
+            }
+          } catch {
+            debateCount = 0;
+          }
           const provider = confirmProvider ?? createReadlineConfirmProvider();
           const confirmMessage = buildDeleteConfirmationMessage(name, debateCount);
           const ok = await provider.confirm(confirmMessage);
