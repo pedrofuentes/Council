@@ -297,6 +297,59 @@ describe("buildAskCommand", () => {
     expect(kinds[kinds.length - 1]).toBe("debate.end");
   });
 
+  it("exits non-zero when the only expert fails and no answer is produced (#194)", async () => {
+    const seed = await seedPanel(testHome);
+    // Resolve the default (first) expert id so we can seed a failure for it.
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    let ctoId = "";
+    try {
+      const experts = await new ExpertRepository(db).findByPanelId(seed.panelId);
+      ctoId = experts.find((e) => e.slug === "cto")?.id ?? "";
+    } finally {
+      await db.destroy();
+    }
+    expect(ctoId).not.toBe("");
+
+    const failingFactory = (): CouncilEngine =>
+      new MockEngine({
+        failures: { [ctoId]: { code: "PROVIDER_ERROR", message: "provider exploded" } },
+      });
+    const cmd = buildAskCommand({
+      engineFactory: failingFactory,
+      write: () => undefined,
+      writeError: () => undefined,
+    });
+    cmd.exitOverride();
+    let thrown = "";
+    try {
+      await cmd.parseAsync([
+        "node",
+        "council-ask",
+        seed.panelName,
+        "What should we ship?",
+        "--engine",
+        "mock",
+        "--format",
+        "json",
+      ]);
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    expect(thrown).not.toBe("");
+    expect(thrown.toLowerCase()).toMatch(/no answer|failed|did not respond/);
+
+    // The debate row exists but persisted zero turns (the user got no answer).
+    const verifyDb = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const debates = await new DebateRepository(verifyDb).findByPanelId(seed.panelId);
+      expect(debates).toHaveLength(1);
+      const turns = await new TurnRepository(verifyDb).findByDebateId(debates[0]?.id ?? "");
+      expect(turns).toHaveLength(0);
+    } finally {
+      await verifyDb.destroy();
+    }
+  });
+
   it("--expert picks the specified expert (not the default first)", async () => {
     const seed = await seedPanel(testHome);
     let captured = "";
