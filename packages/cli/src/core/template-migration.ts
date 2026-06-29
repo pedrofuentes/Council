@@ -223,9 +223,9 @@ async function runMigration(
       for (const entry of onDisk.entries) {
         const candidateSlug =
           entry.kind === "slug" ? entry.slug : entry.definition.slug;
-        // Hard slug validation BEFORE any filesystem access. Mirrors
-        // FileExpertLibrary.create()'s SLUG_RE so a maliciously-crafted
-        // user panel YAML cannot escape <dataHome>/experts/ via
+        // Defense in depth: slugs are already confined at the parse
+        // boundary (see parseOnDiskPanel/assertConfinedSlug). This mirrors
+        // that SLUG_RE check so reordering this loop can never feed a
         // path.join("../...") into fs.access / fs.readFile.
         if (!SLUG_RE.test(candidateSlug)) {
           throw new Error(
@@ -490,7 +490,7 @@ type OnDiskEntry =
   | { readonly kind: "slug"; readonly slug: string }
   | { readonly kind: "inline"; readonly definition: ExpertDefinition };
 
-function parseOnDiskPanel(content: string): OnDiskPanel {
+export function parseOnDiskPanel(content: string): OnDiskPanel {
   const raw = yaml.parse(content) as Record<string, unknown> | null;
   const description =
     raw && typeof raw["description"] === "string"
@@ -500,6 +500,7 @@ function parseOnDiskPanel(content: string): OnDiskPanel {
   const entries: OnDiskEntry[] = [];
   for (const entry of experts as unknown[]) {
     if (typeof entry === "string") {
+      assertConfinedSlug(entry);
       entries.push({ kind: "slug", slug: entry });
     } else if (entry && typeof entry === "object") {
       // An object entry is an attempted inline ExpertDefinition. If it
@@ -511,6 +512,7 @@ function parseOnDiskPanel(content: string): OnDiskPanel {
       // inline definition.
       const parsed = ExpertDefinitionSchema.safeParse(entry);
       if (parsed.success) {
+        assertConfinedSlug(parsed.data.slug);
         entries.push({ kind: "inline", definition: parsed.data });
       } else {
         const slug = (entry as { slug?: unknown }).slug;
@@ -522,6 +524,19 @@ function parseOnDiskPanel(content: string): OnDiskPanel {
     }
   }
   return { description, entries };
+}
+
+// Defense in depth: reject any slug that could escape <dataHome>/experts/
+// at the parse boundary, so no caller can ever derive a filesystem path
+// from a traversal slug and pass it to fs.access/fs.readFile. Mirrors
+// FileExpertLibrary.create()'s SLUG_RE; throwing here makes confinement a
+// property of parsing rather than relying on a follow-up check at each use.
+function assertConfinedSlug(slug: string): void {
+  if (!SLUG_RE.test(slug)) {
+    throw new Error(
+      `[template-migration] invalid expert slug: ${JSON.stringify(slug)}`,
+    );
+  }
 }
 
 /**
