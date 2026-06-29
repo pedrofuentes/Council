@@ -59,6 +59,7 @@ import type { PanelMembership } from "../core/prompt-builder.js";
 import { createHomeDataSources } from "./adapters/home-data-sources.js";
 import { loadHomeData } from "./adapters/home-data.js";
 import { selectStartupWarnings } from "./lib/startup-warnings.js";
+import { createTuiErrorHandler } from "./lib/error-handler.js";
 import { writeFileExclusive } from "./lib/safe-write.js";
 import { createTelemetry } from "./lib/telemetry.js";
 import { createFileCounterStore, telemetryCountersPath } from "./lib/telemetry-store.js";
@@ -340,13 +341,12 @@ export async function launchTui(): Promise<void> {
 
     let restartRequested = false;
     let unmount: () => void = () => undefined;
+    // Crash via process.exit(1) skips the `finally` cleanup (counter flush +
+    // db.destroy); instead signal the Ink app to exit so waitUntilExit resolves
+    // and cleanup runs before the process drains. Exit code is preserved.
+    const handleTuiError = createTuiErrorHandler({ signalExit: () => unmount() });
     const instance = render(
-      <ErrorBoundary
-        onError={(error: Error) => {
-          console.error("Council TUI error:", error);
-          process.exit(1);
-        }}
-      >
+      <ErrorBoundary onError={handleTuiError}>
         <DataProvider value={dataSources}>
           <CouncilTUI
             homeData={homeData}
