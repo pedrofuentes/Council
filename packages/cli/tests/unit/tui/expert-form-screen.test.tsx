@@ -495,6 +495,102 @@ describe("ExpertFormScreen", () => {
     unmount();
   });
 
+  it("maps a create rejection to a sanitized form-level error and does not navigate (#1623)", async () => {
+    const create = vi.fn<
+      Parameters<ExpertAuthoringSource["create"]>,
+      ReturnType<ExpertAuthoringSource["create"]>
+    >(async () => {
+      throw new Error("disk\n\u001B[31mfull");
+    });
+    const { source } = createSource(create);
+    const { stdin, lastFrame, unmount } = renderForm(source);
+    await flush();
+
+    stdin.write("\u0013");
+    await flush();
+
+    expect(create).toHaveBeenCalledTimes(1);
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("disk full");
+    expect(frame).not.toContain("\u001B[31m");
+    expect(frame).not.toContain("DETAIL");
+    unmount();
+  });
+
+  it("guards against concurrent Ctrl+S saves, creating once and navigating once (#1624)", async () => {
+    let resolveCreate: ((value: BuildResult) => void) | undefined;
+    const create = vi.fn<
+      Parameters<ExpertAuthoringSource["create"]>,
+      ReturnType<ExpertAuthoringSource["create"]>
+    >(
+      () =>
+        new Promise<BuildResult>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    const { source } = createSource(create);
+    const { stdin, lastFrame, unmount } = renderForm(source);
+    await flush();
+
+    stdin.write("\u001B[B");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    stdin.write("alpha");
+    await flush();
+    stdin.write("\r");
+    await flush();
+
+    stdin.write("\u0013");
+    await flush();
+    stdin.write("\u0013");
+    await flush();
+
+    expect(create).toHaveBeenCalledTimes(1);
+    resolveCreate?.({ ok: true, definition: definitionFor(loadedCtoForm()) });
+    await flush();
+
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(lastFrame()).toContain("DETAIL alpha");
+    unmount();
+  });
+
+  it("shows an error state with Esc recovery when edit load rejects (#1626/#1627)", async () => {
+    const source: ExpertAuthoringSource = {
+      loadForEdit: async () => {
+        throw new Error("library exploded");
+      },
+      create: async (values) => ({ ok: true, definition: definitionFor(values) }),
+      update: async (_slug, values) => ({ ok: true, definition: definitionFor(values) }),
+      remove: async () => ({ affectedPanels: [] }),
+      affectedPanels: async () => [],
+    };
+    const { stdin, lastFrame, unmount } = render(
+      <InputCaptureProvider>
+        <DataProvider value={withAuthoring(source)}>
+          <MemoryRouter initialEntries={["/", "/experts/cto/edit"]} initialIndex={1}>
+            <Routes>
+              <Route path="/" element={<Text>PARENT</Text>} />
+              <Route
+                path="/experts/:slug/edit"
+                element={<ExpertFormScreen formMode="edit" theme={theme} />}
+              />
+            </Routes>
+          </MemoryRouter>
+        </DataProvider>
+      </InputCaptureProvider>,
+    );
+    await flush();
+
+    expect(lastFrame() ?? "").not.toContain("Loading expert");
+    expect(lastFrame() ?? "").toMatch(/failed to load|error/i);
+
+    stdin.write("\u001B");
+    await waitForEscape();
+    expect(lastFrame()).toContain("PARENT");
+    unmount();
+  });
+
   it("shows ←/→ change hint when editing the Kind enum field", async () => {
     const { source } = createSource(async (values) => ({
       ok: true,
