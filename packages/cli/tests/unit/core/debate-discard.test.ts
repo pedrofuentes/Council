@@ -32,10 +32,18 @@ const FREEFORM_1R: DebateConfig = {
 /** Engine that emits partial deltas then a recoverable error on send #1, succeeds on #2. */
 class PartialThenRetryEngine implements CouncilEngine {
   #sends = 0;
-  async start(): Promise<void> {}
-  async stop(): Promise<void> {}
-  async addExpert(): Promise<void> {}
-  async removeExpert(): Promise<void> {}
+  async start(): Promise<void> {
+    return Promise.resolve();
+  }
+  async stop(): Promise<void> {
+    return Promise.resolve();
+  }
+  async addExpert(): Promise<void> {
+    return Promise.resolve();
+  }
+  async removeExpert(): Promise<void> {
+    return Promise.resolve();
+  }
   send(options: SendOptions): AsyncIterable<EngineEvent> {
     this.#sends += 1;
     const first = this.#sends === 1;

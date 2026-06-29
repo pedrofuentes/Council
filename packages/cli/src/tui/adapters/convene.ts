@@ -196,6 +196,7 @@ function toConveneViewEvent(
       return { kind: "end", reason: evt.reason };
     case "round.end":
     case "turn.retry":
+    case "turn.discard":
     case "turn.quality_gate":
       return undefined;
   }

@@ -183,6 +183,13 @@ export class DebatePersister {
             this.#pendingTurns.delete(evt.expertSlug);
             break;
           }
+          case "turn.discard": {
+            // #184: drop a failed attempt's buffered chunks so an abort during
+            // the retry doesn't flush the discarded partial content.
+            const pending = this.#pendingTurns.get(evt.expertSlug);
+            if (pending) pending.chunks = [];
+            break;
+          }
           case "debate.end": {
             if (evt.reason === "aborted" && this.#isInterruptedSignal()) {
               await this.#flushPendingTurns();
