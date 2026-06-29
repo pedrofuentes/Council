@@ -63,6 +63,34 @@ export interface ExportCommandDeps {
 export interface ExportOptions {
   readonly format: ExportFormat;
   readonly output?: string;
+  readonly force?: boolean;
+}
+
+/**
+ * Resolve and validate a user-supplied `--output` path before writing.
+ *
+ * `--output` accepts an arbitrary path, so treat it as hostile: resolve
+ * to an absolute path, refuse a target that already exists unless it is a
+ * regular file the user explicitly opts to overwrite via `--force`, and
+ * refuse non-regular targets (directories, symlinks, devices) outright so
+ * we never follow a symlink to clobber an out-of-tree file.
+ */
+async function resolveOutputPath(outputPath: string, force: boolean): Promise<string> {
+  const resolved = path.resolve(outputPath);
+  const existing = await fs.lstat(resolved).catch(() => undefined);
+  if (existing) {
+    if (!existing.isFile()) {
+      throw new CliUserError(
+        `Refusing to write export to '${sanitizeExportLine(outputPath)}': not a regular file.`,
+      );
+    }
+    if (!force) {
+      throw new CliUserError(
+        `Refusing to overwrite existing file '${sanitizeExportLine(outputPath)}'. Pass --force to overwrite.`,
+      );
+    }
+  }
+  return resolved;
 }
 
 export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
@@ -79,9 +107,11 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
         .default("markdown"),
     )
     .option("--output <path>", "Write to file instead of stdout (default: stdout)")
+    .option("--force", "Overwrite the --output file if it already exists")
     .action(async (panelName: string, raw: ExportOptions) => {
       const opts: ExportOptions = {
         format: raw.format,
+        force: raw.force === true,
         ...(raw.output !== undefined ? { output: raw.output } : {}),
       };
 
@@ -132,8 +162,9 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
         const rendered = renderForExport(doc, opts.format);
 
         if (opts.output !== undefined) {
-          await fs.writeFile(opts.output, rendered, { encoding: "utf8" });
-          writeError(`Wrote ${opts.format} export to ${opts.output}\n`);
+          const resolvedOutput = await resolveOutputPath(opts.output, opts.force === true);
+          await fs.writeFile(resolvedOutput, rendered, { encoding: "utf8" });
+          writeError(`Wrote ${opts.format} export to ${sanitizeExportLine(opts.output)}\n`);
           if (opts.format !== "json") {
             const safeResolvedName = sanitizeExportLine(resolvedName);
             write(
@@ -165,6 +196,7 @@ Examples:
   $ council export my-panel --format adr            # Architecture Decision Record
   $ council export my-panel --format share          # polished, shareable summary
   $ council export my-panel --format json --output transcript.ndjson
+  $ council export my-panel --output transcript.md --force   # overwrite existing
 `,
   );
 
