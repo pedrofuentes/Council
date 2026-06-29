@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 
-import { type Generated, Kysely, sql } from "kysely";
+import { CompiledQuery, type Generated, Kysely, sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -142,6 +142,40 @@ describe("NodeSqliteDialect", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("rejects rather than throwing synchronously when a query fails to prepare", async () => {
+    const conn = new NodeSqliteConnection(raw);
+
+    let promise: Promise<unknown> | undefined;
+    expect(() => {
+      promise = conn.executeQuery(CompiledQuery.raw("this is not valid sql"));
+    }).not.toThrow();
+
+    await expect(promise).rejects.toThrow();
+  });
+
+  it("serializes overlapping connection acquisitions through the mutex", async () => {
+    const driver = new NodeSqliteDriver(raw);
+    await driver.init();
+
+    const first = await driver.acquireConnection();
+
+    let secondAcquired = false;
+    const secondPending = driver.acquireConnection().then((conn) => {
+      secondAcquired = true;
+      return conn;
+    });
+
+    await Promise.resolve();
+    expect(secondAcquired).toBe(false);
+
+    await driver.releaseConnection(first);
+    const second = await secondPending;
+
+    expect(secondAcquired).toBe(true);
+    expect(second).toBe(first);
+    await driver.releaseConnection(second);
   });
 
   it("closes the underlying database when the driver is destroyed", async () => {
