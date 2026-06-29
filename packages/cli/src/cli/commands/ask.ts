@@ -31,6 +31,7 @@ import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import { createDatabase } from "../../memory/db.js";
 import { ExpertRepository } from "../../memory/repositories/experts.js";
 import { PanelRepository } from "../../memory/repositories/panels.js";
+import { TurnRepository } from "../../memory/repositories/turns.js";
 
 import { defaultErrorWriter, defaultWriter, isQuiet, type Writer } from "./writer.js";
 import { ENGINE_KINDS, type EngineKind, runWithEngine } from "../run-with-engine.js";
@@ -247,6 +248,7 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
             quiet: isQuiet(),
           });
           setupProgress.start("Preparing answer");
+          let answeredDebateId: string | undefined;
           try {
             await runWithEngine({
               engineKind: resolvedEngine,
@@ -269,6 +271,10 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
               beforeRender: () => {
                 setupProgress.stop();
               },
+              onDebateComplete: ({ debateId }) => {
+                answeredDebateId = debateId;
+                return Promise.resolve();
+              },
               preamble: () => {
                 write(`\n# Asking ${selectedExpert.displayName} (${selectedExpert.slug})\n`);
                 write(`Panel: ${panel.name}\n`);
@@ -278,6 +284,20 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
           } finally {
             setupProgress.stop();
           }
+
+          // #194: a single-expert debate reports debate.end reason="completed"
+          // even when the lone expert errored out after retries — so a clean
+          // exit 0 would hide that the user got no answer. The expert produced
+          // an answer iff a turn row was persisted; zero turns means failure.
+          const persistedTurns = answeredDebateId
+            ? await new TurnRepository(db).findByDebateId(answeredDebateId)
+            : [];
+          if (persistedTurns.length === 0) {
+            const message = `${selectedExpert.displayName} (${selectedExpert.slug}) did not respond — no answer was produced. The expert failed; see the error above. Retry, or pick another expert with --expert.`;
+            writeError(message + "\n");
+            throw new CliUserError(message);
+          }
+
           if (format !== "json" && !isQuiet()) {
             write(
               "Tip: Use `council convene --template <panel>` for a full debate, or `council chat <panel>` for conversation.\n",
