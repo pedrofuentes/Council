@@ -1,14 +1,21 @@
 /**
  * Cost visibility tests for runWithEngine.
  *
- * RED at this commit: mock-engine debates still stream the human-facing
- * cost counter, even though the values are synthetic and confusing.
+ * Cost visibility is keyed off the engine's `supportsCostMetrics`
+ * capability — NOT a hard-coded `engineKind !== "mock"` string compare
+ * (#852). Both cases below construct via the same engineKind so the only
+ * variable is the engine's declared capability.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { runWithEngine, type EngineKind } from "../../../src/cli/run-with-engine.js";
-import type { ExpertSpec } from "../../../src/engine/index.js";
+import type { CouncilEngine, ExpertSpec } from "../../../src/engine/index.js";
 import { MockEngine } from "../../../src/engine/mock/mock-engine.js";
+
+/** Mock engine that reports billable cost metrics — the copilot capability. */
+class CostCapableEngine extends MockEngine {
+  readonly supportsCostMetrics = true;
+}
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
 import { ExpertRepository } from "../../../src/memory/repositories/experts.js";
 import { PanelRepository } from "../../../src/memory/repositories/panels.js";
@@ -49,12 +56,15 @@ describe("runWithEngine cost visibility", () => {
     await db.destroy();
   });
 
-  async function renderDebate(engineKind: EngineKind): Promise<string> {
+  async function renderDebate(engineFactory: () => CouncilEngine): Promise<string> {
     let stdout = "";
+
+    // engineKind is held constant; only the engine capability varies.
+    const engineKind: EngineKind = "mock";
 
     await runWithEngine({
       engineKind,
-      engineFactory: () => new MockEngine(),
+      engineFactory,
       experts: [{ ...expert, id: expertSlugToId[expert.slug] ?? "" }],
       debateConfig: { maxRounds: 1, maxWordsPerResponse: 50, mode: "freeform" },
       prompt: "What should we do?",
@@ -75,14 +85,15 @@ describe("runWithEngine cost visibility", () => {
     return stdout;
   }
 
-  it("suppresses the cost counter for the mock engine", async () => {
-    const output = await renderDebate("mock");
+  it("suppresses the cost counter when the engine lacks cost metrics", async () => {
+    const output = await renderDebate(() => new MockEngine());
 
     expect(output).not.toContain("[Cost:");
+    expect(output).not.toContain("[Premium requests:");
   });
 
-  it("still shows the cost counter for non-mock engines", async () => {
-    const output = await renderDebate("copilot");
+  it("shows the cost counter when the engine supports cost metrics", async () => {
+    const output = await renderDebate(() => new CostCapableEngine());
 
     expect(output).toContain("[Premium requests: 1 (est. ~1)]");
   });
