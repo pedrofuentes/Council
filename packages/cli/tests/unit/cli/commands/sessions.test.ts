@@ -11,6 +11,7 @@ import * as fs from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { ConfirmProvider } from "../../../../src/cli/commands/confirm.js";
+import { CliUserError } from "../../../../src/cli/cli-user-error.js";
 import { buildSessionsCommand } from "../../../../src/cli/commands/sessions.js";
 import { buildProgram } from "../../../../src/bin/council.js";
 import type { DebateStatus } from "../../../../src/memory/repositories/debates.js";
@@ -141,12 +142,20 @@ async function seedRunningDebateWithTurn(
   }
 }
 
-async function setDebateStartedAt(testHome: string, debateId: string, startedAt: string): Promise<void> {
+async function setDebateStartedAt(
+  testHome: string,
+  debateId: string,
+  startedAt: string,
+): Promise<void> {
   const { createDatabase } = await import("../../../../src/memory/db.js");
 
   const db = await createDatabase(path.join(testHome, "council.db"));
   try {
-    await db.updateTable("debates").set({ started_at: startedAt }).where("id", "=", debateId).execute();
+    await db
+      .updateTable("debates")
+      .set({ started_at: startedAt })
+      .where("id", "=", debateId)
+      .execute();
   } finally {
     await db.destroy();
   }
@@ -189,7 +198,11 @@ async function seedTurnForDebate(testHome: string, debateId: string): Promise<vo
   }
 }
 
-async function createRunningDebateForPanel(testHome: string, panelId: string, prompt: string): Promise<string> {
+async function createRunningDebateForPanel(
+  testHome: string,
+  panelId: string,
+  prompt: string,
+): Promise<string> {
   const { createDatabase } = await import("../../../../src/memory/db.js");
   const { DebateRepository } = await import("../../../../src/memory/repositories/debates.js");
 
@@ -200,7 +213,7 @@ async function createRunningDebateForPanel(testHome: string, panelId: string, pr
       prompt,
       moderator: "round-robin",
     });
-     return debate.id;
+    return debate.id;
   } finally {
     await db.destroy();
   }
@@ -240,7 +253,9 @@ async function loadSessionDeletionState(
   }
 }
 
-function makeConfirmProvider(answer: boolean): ConfirmProvider & { calls: number; prompts: string[] } {
+function makeConfirmProvider(
+  answer: boolean,
+): ConfirmProvider & { calls: number; prompts: string[] } {
   const provider = {
     calls: 0,
     prompts: [] as string[],
@@ -540,9 +555,7 @@ describe("buildSessionsCommand", () => {
 
     it("truncates long topics at ~80 chars in plain format", async () => {
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { PanelRepository } = await import(
-        "../../../../src/memory/repositories/panels.js"
-      );
+      const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
       const db = await createDatabase(path.join(testHome, "council.db"));
       const repo = new PanelRepository(db);
       const longTopic =
@@ -567,9 +580,7 @@ describe("buildSessionsCommand", () => {
 
     it("preserves full topic in JSON format", async () => {
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { PanelRepository } = await import(
-        "../../../../src/memory/repositories/panels.js"
-      );
+      const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
       const db = await createDatabase(path.join(testHome, "council.db"));
       const repo = new PanelRepository(db);
       const longTopic =
@@ -605,7 +616,11 @@ describe("buildSessionsCommand", () => {
       const debates = await listDebatesForPanel(testHome, seeded.panelId);
       expect(captured).toContain("Cancelled running debate for panel 'cancel-target'.");
       expect(debates).toHaveLength(2);
-      expect(debates[0]).toMatchObject({ id: seeded.debateIds[0], status: "running", endedAt: null });
+      expect(debates[0]).toMatchObject({
+        id: seeded.debateIds[0],
+        status: "running",
+        endedAt: null,
+      });
       expect(debates[1]).toMatchObject({ id: seeded.debateIds[1], status: "interrupted" });
       expect(debates[1]?.endedAt).not.toBeNull();
     });
@@ -662,9 +677,9 @@ describe("buildSessionsCommand", () => {
       await seedPanelWithDebates(testHome, "prefix-beta", ["running"]);
       const cmd = buildSessionsCommand();
 
-      await expect(cmd.parseAsync(["node", "council-sessions", "cancel", "prefix-"])).rejects.toThrow(
-        "Ambiguous prefix 'prefix-' matches 2 panels.",
-      );
+      await expect(
+        cmd.parseAsync(["node", "council-sessions", "cancel", "prefix-"]),
+      ).rejects.toThrow("Ambiguous prefix 'prefix-' matches 2 panels.");
     });
 
     it("cancel throws when name is omitted without --all", async () => {
@@ -755,7 +770,11 @@ describe("buildSessionsCommand", () => {
       ).rejects.toThrow("Ambiguous name 'duplicate-delete' matches 2 sessions.");
 
       const firstState = await loadSessionDeletionState(testHome, first.panelId, first.debateIds);
-      const secondState = await loadSessionDeletionState(testHome, second.panelId, second.debateIds);
+      const secondState = await loadSessionDeletionState(
+        testHome,
+        second.panelId,
+        second.debateIds,
+      );
       expect(confirm.calls).toBe(0);
       expect(firstState.panelExists).toBe(true);
       expect(firstState.debateCount).toBe(1);
@@ -771,7 +790,11 @@ describe("buildSessionsCommand", () => {
         async confirm(message: string): Promise<boolean> {
           confirm.calls += 1;
           confirm.prompts.push(message);
-          await createRunningDebateForPanel(testHome, seeded.panelId, "resumed during confirmation");
+          await createRunningDebateForPanel(
+            testHome,
+            seeded.panelId,
+            "resumed during confirmation",
+          );
           return true;
         },
       } satisfies ConfirmProvider & { calls: number; prompts: string[] };
@@ -783,9 +806,9 @@ describe("buildSessionsCommand", () => {
         confirmProvider: () => confirm,
       });
 
-      await expect(cmd.parseAsync(["node", "council-sessions", "delete", "race-delete"])).rejects.toThrow(
-        "Cannot delete a running session. Cancel it first.",
-      );
+      await expect(
+        cmd.parseAsync(["node", "council-sessions", "delete", "race-delete"]),
+      ).rejects.toThrow("Cannot delete a running session. Cancel it first.");
 
       const debates = await listDebatesForPanel(testHome, seeded.panelId);
       const state = await loadSessionDeletionState(testHome, seeded.panelId, seeded.debateIds);
@@ -831,6 +854,146 @@ describe("buildSessionsCommand", () => {
       expect(confirm.calls).toBe(0);
       expect(state.panelExists).toBe(true);
       expect(state.debateCount).toBe(1);
+    });
+
+    describe("user-validation failures throw CliUserError (#845)", () => {
+      it("cancel: omitted name throws CliUserError, not a plain Error", async () => {
+        const cmd = buildSessionsCommand();
+
+        await expect(cmd.parseAsync(["node", "council-sessions", "cancel"])).rejects.toBeInstanceOf(
+          CliUserError,
+        );
+      });
+
+      it("cancel: ambiguous prefix throws CliUserError, not a plain Error", async () => {
+        await seedPanelWithDebates(testHome, "amb-cancel-alpha", ["running"]);
+        await seedPanelWithDebates(testHome, "amb-cancel-beta", ["running"]);
+        const cmd = buildSessionsCommand();
+
+        await expect(
+          cmd.parseAsync(["node", "council-sessions", "cancel", "amb-cancel-"]),
+        ).rejects.toBeInstanceOf(CliUserError);
+      });
+
+      it("delete: ambiguous exact-name collision throws CliUserError", async () => {
+        await seedPanelWithDebates(testHome, "amb-del", ["completed"]);
+        await seedPanelWithDebates(testHome, "amb-del", ["interrupted"]);
+        const cmd = buildSessionsCommand({ confirmProvider: () => makeConfirmProvider(true) });
+
+        await expect(
+          cmd.parseAsync(["node", "council-sessions", "delete", "amb-del", "--yes"]),
+        ).rejects.toBeInstanceOf(CliUserError);
+      });
+
+      it("delete: running session throws CliUserError, not a plain Error", async () => {
+        await seedPanelWithDebates(testHome, "running-user-error", ["running"]);
+        const cmd = buildSessionsCommand({ confirmProvider: () => makeConfirmProvider(true) });
+
+        await expect(
+          cmd.parseAsync(["node", "council-sessions", "delete", "running-user-error", "--yes"]),
+        ).rejects.toBeInstanceOf(CliUserError);
+      });
+    });
+
+    // The top-level handler treats CliUserError as silent (the message was
+    // "already written via writeError"). So every CliUserError site MUST write
+    // its message to stderr first, or the user sees a silent exit (#845).
+    describe("user errors write their message to stderr before throwing (#845)", () => {
+      it("cancel: omitted name writes the message to stderr", async () => {
+        let stderr = "";
+        const cmd = buildSessionsCommand({
+          writeError: (s) => {
+            stderr += s;
+          },
+        });
+
+        await expect(cmd.parseAsync(["node", "council-sessions", "cancel"])).rejects.toThrow();
+
+        expect(stderr).toContain("Panel name is required unless --all is set.");
+      });
+
+      it("cancel: ambiguous prefix writes the message to stderr", async () => {
+        await seedPanelWithDebates(testHome, "amb-cancel-alpha", ["running"]);
+        await seedPanelWithDebates(testHome, "amb-cancel-beta", ["running"]);
+        let stderr = "";
+        const cmd = buildSessionsCommand({
+          writeError: (s) => {
+            stderr += s;
+          },
+        });
+
+        await expect(
+          cmd.parseAsync(["node", "council-sessions", "cancel", "amb-cancel-"]),
+        ).rejects.toThrow();
+
+        expect(stderr).toContain("Ambiguous prefix 'amb-cancel-' matches 2 panels.");
+      });
+
+      it("delete: ambiguous exact-name collision writes the message to stderr", async () => {
+        await seedPanelWithDebates(testHome, "amb-del", ["completed"]);
+        await seedPanelWithDebates(testHome, "amb-del", ["interrupted"]);
+        let stderr = "";
+        const cmd = buildSessionsCommand({
+          writeError: (s) => {
+            stderr += s;
+          },
+          confirmProvider: () => makeConfirmProvider(true),
+        });
+
+        await expect(
+          cmd.parseAsync(["node", "council-sessions", "delete", "amb-del", "--yes"]),
+        ).rejects.toThrow();
+
+        expect(stderr).toContain("Ambiguous name 'amb-del' matches 2 sessions.");
+      });
+
+      it("delete: running session writes the message to stderr", async () => {
+        await seedPanelWithDebates(testHome, "running-user-error", ["running"]);
+        let stderr = "";
+        const cmd = buildSessionsCommand({
+          writeError: (s) => {
+            stderr += s;
+          },
+          confirmProvider: () => makeConfirmProvider(true),
+        });
+
+        await expect(
+          cmd.parseAsync(["node", "council-sessions", "delete", "running-user-error", "--yes"]),
+        ).rejects.toThrow();
+
+        expect(stderr).toContain("Cannot delete a running session. Cancel it first.");
+      });
+
+      it("delete: running detected after confirmation writes the message to stderr", async () => {
+        const seeded = await seedPanelWithDebates(testHome, "race-stderr", ["completed"]);
+        const confirm = {
+          calls: 0,
+          prompts: [] as string[],
+          async confirm(message: string): Promise<boolean> {
+            confirm.calls += 1;
+            confirm.prompts.push(message);
+            await createRunningDebateForPanel(
+              testHome,
+              seeded.panelId,
+              "resumed during confirmation",
+            );
+            return true;
+          },
+        } satisfies ConfirmProvider & { calls: number; prompts: string[] };
+        let stderr = "";
+        const cmd = buildSessionsCommand({
+          writeError: (s) => {
+            stderr += s;
+          },
+          confirmProvider: () => confirm,
+        });
+
+        await expect(
+          cmd.parseAsync(["node", "council-sessions", "delete", "race-stderr"]),
+        ).rejects.toThrow();
+
+        expect(stderr).toContain("Cannot delete a running session. Cancel it first.");
+      });
     });
 
     describe("naming/display consistency (F32, F35)", () => {

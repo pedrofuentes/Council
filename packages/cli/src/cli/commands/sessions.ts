@@ -14,11 +14,12 @@ import { DebateRepository, type DebateStatus } from "../../memory/repositories/d
 import { ExpertRepository } from "../../memory/repositories/experts.js";
 import { type Panel, PanelRepository } from "../../memory/repositories/panels.js";
 import { TurnRepository } from "../../memory/repositories/turns.js";
+import { CliUserError } from "../cli-user-error.js";
 import { toSingleLineDisplay } from "../strip-control-chars.js";
 import { getSymbols } from "../renderers/symbols.js";
 
 import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
-import { defaultWriter, type Writer } from "./writer.js";
+import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
 export interface SessionsCommandOptions {
   readonly format: "json" | "plain";
@@ -26,6 +27,7 @@ export interface SessionsCommandOptions {
 
 export interface SessionsCommandDeps {
   readonly write?: Writer;
+  readonly writeError?: Writer;
   readonly confirmProvider?: () => ConfirmProvider;
 }
 
@@ -114,7 +116,8 @@ function formatStuckSessionHint(panelName: string): string {
 async function findPanelByNameOrPrefix(
   panelRepo: PanelRepository,
   requestedName: string,
-  options?: {
+  options: {
+    readonly writeError: Writer;
     readonly ambiguousLabel?: string;
     readonly rejectExactCollisions?: boolean;
   },
@@ -126,11 +129,11 @@ async function findPanelByNameOrPrefix(
     return exactMatches[0];
   }
   if (exactMatches.length > 1) {
-    if (options?.rejectExactCollisions === true) {
+    if (options.rejectExactCollisions === true) {
       const ambiguousLabel = options.ambiguousLabel ?? "panels";
-      throw new Error(
-        `Ambiguous name '${requestedName}' matches ${exactMatches.length} ${ambiguousLabel}.`,
-      );
+      const message = `Ambiguous name '${requestedName}' matches ${exactMatches.length} ${ambiguousLabel}.`;
+      options.writeError(message + "\n");
+      throw new CliUserError(message);
     }
     return exactMatches[0];
   }
@@ -138,10 +141,10 @@ async function findPanelByNameOrPrefix(
     return prefixMatches[0];
   }
   if (prefixMatches.length > 1) {
-    const ambiguousLabel = options?.ambiguousLabel ?? "panels";
-    throw new Error(
-      `Ambiguous prefix '${requestedName}' matches ${prefixMatches.length} ${ambiguousLabel}.`,
-    );
+    const ambiguousLabel = options.ambiguousLabel ?? "panels";
+    const message = `Ambiguous prefix '${requestedName}' matches ${prefixMatches.length} ${ambiguousLabel}.`;
+    options.writeError(message + "\n");
+    throw new CliUserError(message);
   }
 
   return undefined;
@@ -156,13 +159,16 @@ async function deletePanelIfNoRunningDebates(
   panelRepo: PanelRepository,
   debateRepo: DebateRepository,
   panelId: string,
+  writeError: Writer,
 ): Promise<void> {
   let committed = false;
   await sql`BEGIN IMMEDIATE`.execute(db);
   try {
     const debates = await debateRepo.findByPanelId(panelId);
     if (hasRunningDebate(debates)) {
-      throw new Error("Cannot delete a running session. Cancel it first.");
+      const message = "Cannot delete a running session. Cancel it first.";
+      writeError(message + "\n");
+      throw new CliUserError(message);
     }
     await panelRepo.delete(panelId);
     await sql`COMMIT`.execute(db);
@@ -181,23 +187,26 @@ async function deletePanelIfNoRunningDebates(
 
 function resolveSessionsCommandDeps(depsOrWrite: SessionsCommandDeps | Writer | undefined): {
   write: Writer;
+  writeError: Writer;
   confirmProvider: () => ConfirmProvider;
 } {
   if (typeof depsOrWrite === "function") {
     return {
       write: depsOrWrite,
+      writeError: defaultErrorWriter,
       confirmProvider: createReadlineConfirmProvider,
     };
   }
 
   return {
     write: depsOrWrite?.write ?? defaultWriter,
+    writeError: depsOrWrite?.writeError ?? defaultErrorWriter,
     confirmProvider: depsOrWrite?.confirmProvider ?? createReadlineConfirmProvider,
   };
 }
 
 export function buildSessionsCommand(depsOrWrite?: SessionsCommandDeps | Writer): Command {
-  const { write, confirmProvider } = resolveSessionsCommandDeps(depsOrWrite);
+  const { write, writeError, confirmProvider } = resolveSessionsCommandDeps(depsOrWrite);
   const cmd = new Command("sessions");
   cmd.alias("history");
   cmd
@@ -299,11 +308,13 @@ export function buildSessionsCommand(depsOrWrite?: SessionsCommandDeps | Writer)
 
         const requestedName = name?.trim();
         if (!requestedName) {
-          throw new Error("Panel name is required unless --all is set.");
+          const message = "Panel name is required unless --all is set.";
+          writeError(message + "\n");
+          throw new CliUserError(message);
         }
 
         const panelRepo = new PanelRepository(db);
-        const panel = await findPanelByNameOrPrefix(panelRepo, requestedName);
+        const panel = await findPanelByNameOrPrefix(panelRepo, requestedName, { writeError });
         if (!panel) {
           write(`No panel found matching '${requestedName}'.\n`);
           return;
@@ -334,6 +345,7 @@ export function buildSessionsCommand(depsOrWrite?: SessionsCommandDeps | Writer)
         const panelRepo = new PanelRepository(db);
         const debateRepo = new DebateRepository(db);
         const panel = await findPanelByNameOrPrefix(panelRepo, requestedName, {
+          writeError,
           ambiguousLabel: "sessions",
           rejectExactCollisions: true,
         });
@@ -344,7 +356,9 @@ export function buildSessionsCommand(depsOrWrite?: SessionsCommandDeps | Writer)
 
         const debates = await debateRepo.findByPanelId(panel.id);
         if (hasRunningDebate(debates)) {
-          throw new Error("Cannot delete a running session. Cancel it first.");
+          const message = "Cannot delete a running session. Cancel it first.";
+          writeError(message + "\n");
+          throw new CliUserError(message);
         }
 
         if (options.yes !== true) {
@@ -357,7 +371,7 @@ export function buildSessionsCommand(depsOrWrite?: SessionsCommandDeps | Writer)
           }
         }
 
-        await deletePanelIfNoRunningDebates(db, panelRepo, debateRepo, panel.id);
+        await deletePanelIfNoRunningDebates(db, panelRepo, debateRepo, panel.id, writeError);
         write(`Deleted session '${panel.name}'.\n`);
       } finally {
         await db.destroy();
