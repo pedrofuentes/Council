@@ -26,6 +26,10 @@ import {
   loadConfig,
 } from "../../../src/config/index.js";
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 describe("ConfigSchema", () => {
   it("parses an empty object and applies all defaults", () => {
     const config: CouncilConfig = ConfigSchema.parse({});
@@ -302,5 +306,15 @@ describe("loadConfig() / getCouncilHome() — file I/O", () => {
     await fs.writeFile(configPath, "defaults:\n\tmaxRounds: 8\n", "utf-8");
 
     await expect(loadConfig()).rejects.toThrow();
+  });
+
+  it("loadConfig() wraps non-ENOENT read errors with the config file path", async () => {
+    const configPath = path.join(testHome, "config.yaml");
+    // Make config.yaml a directory so readFile fails with EISDIR (non-ENOENT).
+    await fs.mkdir(configPath, { recursive: true });
+
+    await expect(loadConfig()).rejects.toThrow(
+      new RegExp(`Failed to read Council config \\(${escapeRegExp(configPath)}\\): EISDIR`),
+    );
   });
 });

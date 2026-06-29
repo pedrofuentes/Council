@@ -23,6 +23,10 @@ import { loadConfig, updateConfigField } from "../../../src/config/index.js";
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function isUniqueTempPath(filePath: unknown, expectedConfigPath: string): filePath is string {
   return (
     typeof filePath === "string" &&
@@ -245,6 +249,15 @@ describe("updateConfigField", () => {
       /Failed to parse Council config/i,
     );
     await expect(fs.readFile(configPath, "utf-8")).resolves.toBe(original);
+  });
+
+  it("wraps non-ENOENT read errors with the config file path", async () => {
+    // Make config.yaml a directory so readFile fails with EISDIR (non-ENOENT).
+    await fs.mkdir(configPath, { recursive: true });
+
+    await expect(updateConfigField("defaults.model", "gpt-5")).rejects.toThrow(
+      new RegExp(`Failed to read Council config \\(${escapeRegExp(configPath)}\\): EISDIR`),
+    );
   });
 
   it("retries on EPERM from fs.open (Windows NTFS lock contention)", async () => {
