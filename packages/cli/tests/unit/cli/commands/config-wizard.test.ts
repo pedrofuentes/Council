@@ -122,6 +122,10 @@ describe("buildConfigCommand config wizard", () => {
         ".pdf, docx",
         "75",
         "120000",
+        "regenerate",
+        "2",
+        "30",
+        "~/CustomCouncil",
       ].join("\n") + "\n",
     );
 
@@ -157,6 +161,12 @@ describe("buildConfigCommand config wizard", () => {
       maxFileSizeMB: 75,
     });
     expect(config.conclude.maxTranscriptChars).toBe(120000);
+    expect(config.qualityGate).toMatchObject({
+      mode: "regenerate",
+      maxRegenerations: 2,
+    });
+    expect(config.expert.recencyHalfLifeDays).toBe(30);
+    expect(config.paths.dataHome).toBe("~/CustomCouncil");
   });
 
   it("aborts on EOF without changing persisted config", async () => {
@@ -217,7 +227,7 @@ describe("buildConfigCommand config wizard", () => {
       source: "live" as const,
     }));
     const input = createInput(
-      ["1", "", "", "", "", "", "", "", "", "", "", "", ""].join("\n") + "\n",
+      ["1", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""].join("\n") + "\n",
     );
 
     const { stderr } = await runConfig(["wizard"], {
@@ -253,7 +263,9 @@ describe("buildConfigCommand config wizard", () => {
       source: "live" as const,
     }));
     const input = createInput(
-      ["", "", "", "", "", "", "", "", "", "", rawSelectedExtension, "", ""].join("\n") + "\n",
+      ["", "", "", "", "", "", "", "", "", "", rawSelectedExtension, "", "", "", "", "", ""].join(
+        "\n",
+      ) + "\n",
     );
 
     const { stderr } = await runConfig(["wizard"], {
@@ -297,7 +309,7 @@ describe("buildConfigCommand config wizard", () => {
       source: "live" as const,
     }));
     const input = createInput(
-      ["1", "", "", "", "", "", "", "", "", "", "", "", ""].join("\n") + "\n",
+      ["1", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""].join("\n") + "\n",
     );
 
     const { stderr } = await runConfig(["wizard"], {
@@ -348,5 +360,57 @@ describe("buildConfigCommand config wizard", () => {
     expect(stderr).not.toContain("\u001B");
     expect(stderr).not.toContain("\r");
     expect(stderr).not.toContain("gpt\nEVIL");
+  });
+
+  it("prompts for and persists the quality gate, expert recency, and paths groups", async () => {
+    const output = createCapturedOutput();
+    const discoverModels = vi.fn(async () => ({
+      models: ["claude-sonnet-4.5"],
+      source: "live" as const,
+    }));
+    // Model + 12 existing prompts left blank, then the four new prompts.
+    const input = createInput(
+      [
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "regenerate",
+        "3",
+        "45",
+        "~/PromptedCouncil",
+      ].join("\n") + "\n",
+    );
+
+    const { stderr } = await runConfig(["wizard"], {
+      write: (text) => output.stream.write(text),
+      wizard: {
+        input,
+        output: output.stream,
+        discoverModels,
+      },
+    });
+
+    const text = output.text();
+    expect(stderr).toBe("");
+    expect(text).toContain("Quality gate mode");
+    expect(text).toContain("Quality gate max regenerations");
+    expect(text).toContain("Expert source recency half-life");
+    expect(text).toContain("Data home directory");
+    expect(text).toContain("Config wizard complete.");
+
+    const config = await loadConfig();
+    expect(config.qualityGate).toMatchObject({ mode: "regenerate", maxRegenerations: 3 });
+    expect(config.expert.recencyHalfLifeDays).toBe(45);
+    expect(config.paths.dataHome).toBe("~/PromptedCouncil");
   });
 });
