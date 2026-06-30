@@ -625,6 +625,8 @@ council config show                         # Print effective config values with
 council config path                         # Print config file path
 council config edit                         # Open config in $EDITOR
 council config set <key> <value>            # Set a single config value (dot-notation key)
+council config model [name]                 # Set the default AI model (interactive picker, or pass a name)
+council config wizard                        # Guided interactive setup for common config values
 
 # Inspection & diagnostics
 council sessions                            # List all debate sessions (with status/turns/experts)
