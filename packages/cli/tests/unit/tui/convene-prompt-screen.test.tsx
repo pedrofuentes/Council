@@ -20,9 +20,11 @@ function RunProbe(): React.ReactElement {
   const params = useParams();
   const location = useLocation();
   const state = location.state as { readonly topic?: string } | null;
+  // Render newlines as a visible "|" marker so tests can assert that
+  // multi-line topics are forwarded with their newlines preserved.
   return (
     <Text>
-      RUN {params.panel} TOPIC {state?.topic ?? ""}
+      RUN {params.panel} TOPIC {(state?.topic ?? "").replace(/\n/g, "|")}
     </Text>
   );
 }
@@ -134,6 +136,67 @@ describe("ConvenePromptScreen", () => {
     await new Promise((r) => setTimeout(r, 140));
     await flush();
     expect(second.lastFrame()).toContain("BACK ROUTE");
+  });
+
+  it("inserts a newline on Ctrl+J without submitting, then submits on Enter", async () => {
+    const estimateCost = vi.fn<
+      Parameters<ConveneDataSource["estimateCost"]>,
+      Promise<{ experts: number; rounds: number; estimatedPremiumRequests: number }>
+    >(async () => ({
+      experts: 1,
+      rounds: 1,
+      estimatedPremiumRequests: 1,
+    }));
+    const { stdin, lastFrame } = renderScreen({
+      convene: {
+        estimateCost,
+        streamDebate: async () => ({ debateId: undefined, reason: "completed" }),
+      },
+    });
+
+    await flush();
+    stdin.write("line one");
+    await flush();
+    stdin.write("\n"); // Ctrl+J / LF inserts a newline rather than submitting
+    await flush();
+    stdin.write("line two");
+    await flush();
+    // The newline-insert must NOT submit the topic.
+    expect(estimateCost).not.toHaveBeenCalled();
+
+    stdin.write("\r"); // Enter submits the multi-line topic
+    await flush();
+    expect(estimateCost).toHaveBeenCalledWith("acme");
+
+    stdin.write("y");
+    await flush();
+    // Newlines are preserved (rendered as "|") and there is no stray CR.
+    expect(lastFrame()).toContain("RUN acme TOPIC line one|line two");
+  });
+
+  it("normalizes CR/LF in a submitted multi-line topic to plain newlines", async () => {
+    const { stdin, lastFrame } = renderScreen({
+      convene: {
+        estimateCost: async () => ({ experts: 1, rounds: 1, estimatedPremiumRequests: 1 }),
+        streamDebate: async () => ({ debateId: undefined, reason: "completed" }),
+      },
+    });
+
+    await flush();
+    stdin.write("alpha");
+    await flush();
+    stdin.write("\n");
+    await flush();
+    stdin.write("beta");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    stdin.write("y");
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("RUN acme TOPIC alpha|beta");
+    expect(frame).not.toContain("\r");
   });
 
   it("does not submit an empty topic", async () => {
