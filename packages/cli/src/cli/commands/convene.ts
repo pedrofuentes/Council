@@ -892,17 +892,35 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
                       writeError(
                         "Generating conclusion (1 more premium request; may retry once if JSON is unparseable; use --no-conclude to skip)\n",
                       );
-                      const conclusion = await synthesizeConclusion({
-                        doc,
-                        panelName: panel.name,
-                        engine: ctx.engine,
-                        model: defaultModel,
-                        maxTranscriptChars: config.conclude.maxTranscriptChars,
+                      // TTY-gated live status during the conclusion-synthesis
+                      // wait. Suppressed for non-TTY (CI/pipes), --quiet, and
+                      // JSON output so machine consumers and CI logs stay clean.
+                      const concludeProgress = createProgress({
+                        stream: { write: writeError, isTTY: process.stderr.isTTY },
+                        quiet: isQuiet(),
                       });
-                      if (opts.format === "json") {
-                        write(JSON.stringify({ kind: "conclusion", conclusion }) + "\n");
-                      } else {
-                        write(renderConclusionPlain(conclusion));
+                      const showConcludeProgress =
+                        process.stderr.isTTY === true && opts.format !== "json" && !isQuiet();
+                      if (showConcludeProgress) {
+                        concludeProgress.start("Generating conclusion");
+                      }
+                      try {
+                        const conclusion = await synthesizeConclusion({
+                          doc,
+                          panelName: panel.name,
+                          engine: ctx.engine,
+                          model: defaultModel,
+                          maxTranscriptChars: config.conclude.maxTranscriptChars,
+                        });
+                        if (opts.format === "json") {
+                          write(JSON.stringify({ kind: "conclusion", conclusion }) + "\n");
+                        } else {
+                          write(renderConclusionPlain(conclusion));
+                        }
+                      } finally {
+                        if (showConcludeProgress) {
+                          concludeProgress.stop();
+                        }
                       }
                     }
                   } catch (err: unknown) {
