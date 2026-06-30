@@ -966,6 +966,15 @@ Wrap topics containing $, !, or backticks in SINGLE quotes to keep them literal:
 Bulletproof option — read the topic VERBATIM from a file or stdin (no shell):
   $ council convene --prompt-file topic.txt --engine copilot
   $ echo 'We have $180K in runway' | council convene --prompt-file - --engine copilot
+
+Premium Requests:
+  The "[Premium requests: N (est. ~T)]" counter shown during a debate is an
+  ESTIMATE — T ≈ experts × rounds (freeform) or experts × phases (structured).
+  The debate does NOT stop when the count reaches T; the display is informational only.
+  Reduce usage:
+    --max-rounds <n>   Fewer rounds → fewer total turns
+    --max-experts <n>  Smaller panel → fewer concurrent turns per round
+    --panel <name>     Pick a purpose-built panel with fewer experts
 `,
   );
 
