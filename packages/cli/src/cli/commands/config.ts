@@ -19,6 +19,7 @@ import {
 } from "../../config/index.js";
 import { updateConfigFields } from "../../config/loader.js";
 import { discoverAvailableModels, type ModelDiscoveryResult } from "../../engine/copilot/health.js";
+import { isSupportedModel, SUPPORTED_MODELS } from "../../engine/models.js";
 import { orderModelsByPreference, writeModelList } from "../first-run-model-select.js";
 import { CliUserError } from "../cli-user-error.js";
 import { toSingleLineDisplay } from "../strip-control-chars.js";
@@ -583,7 +584,9 @@ async function promptForValue(
       ? selectChoice(rawValue, ENGINE_CHOICES, String(current), key)
       : key === "documents.aiExtraction"
         ? selectChoice(rawValue, ["off", "ask", "auto"], String(current), key)
-        : coerceConfigValue(key, rawValue);
+        : key === "qualityGate.mode"
+          ? selectChoice(rawValue, ["off", "warn", "regenerate"], String(current), key)
+          : coerceConfigValue(key, rawValue);
   return value;
 }
 
@@ -673,6 +676,18 @@ async function runWizard(write: Writer, deps: ConfigWizardDependencies | undefin
         "Conclude transcript character budget (1000-1000000)",
         config.conclude.maxTranscriptChars,
       ],
+      ["qualityGate.mode", "Quality gate mode (off/warn/regenerate)", config.qualityGate.mode],
+      [
+        "qualityGate.maxRegenerations",
+        "Quality gate max regenerations (0-3)",
+        config.qualityGate.maxRegenerations,
+      ],
+      [
+        "expert.recencyHalfLifeDays",
+        "Expert source recency half-life in days (1-365)",
+        config.expert.recencyHalfLifeDays,
+      ],
+      ["paths.dataHome", "Data home directory for experts and panels", config.paths.dataHome],
     ];
 
     const updates: ConfigUpdate[] = [];
@@ -773,6 +788,120 @@ function buildWizardCommand(
   return cmd;
 }
 
+/** Persist an explicitly named model after validating it against the registry. */
+async function setModelByName(name: string, write: Writer, writeError: Writer): Promise<void> {
+  if (!isSupportedModel(name)) {
+    const msg = `Unsupported model "${toSingleLineDisplay(name)}". Valid models:\n  - ${SUPPORTED_MODELS.join("\n  - ")}`;
+    writeError(`${msg}\n`);
+    throw new CliUserError(msg);
+  }
+  try {
+    await updateConfigField("defaults.model", name);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    writeError(`${msg}\n`);
+    throw new CliUserError(msg);
+  }
+  write(`Set defaults.model = ${toSingleLineDisplay(name)}\n`);
+}
+
+/**
+ * No TTY and no argument: never block on a prompt that can't be answered.
+ * Surface the current and available models, then fail with guidance to pass an
+ * explicit `<name>` so automation gets an actionable, non-zero result.
+ */
+async function reportModelsNonInteractive(
+  write: Writer,
+  writeError: Writer,
+  discoverModels: typeof discoverAvailableModels,
+): Promise<never> {
+  const config = await loadConfig();
+  write(`Current default model: ${toSingleLineDisplay(config.defaults.model)}\n\n`);
+
+  const discovery: ModelDiscoveryResult = await discoverModels();
+  const models = orderModelsByPreference(discovery.models);
+  if (discovery.source === "static") {
+    write(
+      "Warning: Live model discovery failed, so Council is showing a built-in fallback list.\n\n",
+    );
+  }
+  writeModelList(
+    write,
+    models.map((model) => toSingleLineDisplay(model)),
+  );
+
+  const msg = "Non-interactive mode: run 'council config model <name>' with an explicit model id.";
+  writeError(`${msg}\n`);
+  throw new CliUserError(msg);
+}
+
+/** Run the same numbered model picker the wizard uses and persist the choice. */
+async function runModelPicker(
+  write: Writer,
+  output: NodeJS.WritableStream,
+  input: TtyReadableStream | undefined,
+  discoverModels: typeof discoverAvailableModels,
+): Promise<void> {
+  const rl = createInterface({
+    input: input ?? process.stdin,
+    output,
+    terminal: false,
+  });
+  const lines = rl[Symbol.asyncIterator]();
+  const nextLine = async (): Promise<string> => {
+    const next = await lines.next();
+    if (next.done === true) {
+      throw new CliUserError("Model selection aborted before completion.");
+    }
+    return next.value;
+  };
+
+  try {
+    const model = await promptForModel(nextLine, write, output, discoverModels);
+    await updateConfigField("defaults.model", model);
+  } finally {
+    rl.close();
+  }
+}
+
+function buildModelCommand(
+  write: Writer,
+  writeError: Writer,
+  wizardDeps?: ConfigWizardDependencies,
+): Command {
+  const cmd = new Command("model");
+  cmd
+    .description(
+      "Set the default AI model — pass <name>, or omit it on a terminal for an interactive picker",
+    )
+    .argument("[name]", "Model id to set (omit on a TTY to pick interactively)")
+    .action(async (name: string | undefined) => {
+      const discoverModels = wizardDeps?.discoverModels ?? discoverAvailableModels;
+
+      if (name !== undefined) {
+        await setModelByName(name, write, writeError);
+        return;
+      }
+
+      const input = wizardDeps?.input;
+      if (!isInteractiveInput(input)) {
+        await reportModelsNonInteractive(write, writeError, discoverModels);
+        return;
+      }
+
+      const output = wizardDeps?.output ?? process.stdout;
+      try {
+        await runModelPicker(write, output, input, discoverModels);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const displayMsg = toSingleLineDisplay(msg);
+        writeError(`${displayMsg}\n`);
+        throw err instanceof CliUserError ? err : new CliUserError(displayMsg);
+      }
+    });
+  return cmd;
+}
+
 export function buildConfigCommand(
   write: Writer = defaultWriter,
   writeError: Writer = defaultErrorWriter,
@@ -785,6 +914,7 @@ export function buildConfigCommand(
   cmd.addCommand(buildPathCommand(write));
   cmd.addCommand(buildEditCommand(write, writeError, editorRunner));
   cmd.addCommand(buildSetCommand(write, writeError));
+  cmd.addCommand(buildModelCommand(write, writeError, wizardDeps));
   cmd.addCommand(buildWizardCommand(write, writeError, wizardDeps));
   return cmd;
 }
