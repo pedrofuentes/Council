@@ -44,6 +44,7 @@ import {
   type ResolvedConvenePanel,
 } from "./adapters/convene.js";
 import {
+  buildConveneSessionConfigJson,
   createConvenePanelResolver,
   type ConvenePanelRuntimeInput,
 } from "./adapters/convene-resolve.js";
@@ -157,12 +158,13 @@ export async function launchTui(): Promise<void> {
           name: `${input.panelName}-${new Date().toISOString().slice(0, 19)}`,
           topic,
           copilotHome: path.join(getCouncilHome(), "copilot"),
-          configJson: JSON.stringify({
-            template: input.panelName,
+          configJson: buildConveneSessionConfigJson({
+            panelName: input.panelName,
             mode: input.mode,
             maxRounds: input.debateConfig.maxRounds,
             maxWords: input.debateConfig.maxWordsPerResponse,
             engine: config.defaults.engine,
+            definition: input.definition,
           }),
         });
 
@@ -188,6 +190,13 @@ export async function launchTui(): Promise<void> {
       createConvenePanelResolver({
         loadPanel,
         getMembers: (name) => panelLibrary.getMembers(name),
+        getExpertDefinition: async (slug) => {
+          const definition = await expertLibrary.get(slug);
+          if (definition === null) {
+            throw new Error(`Panel references missing expert "${slug}"`);
+          }
+          return definition;
+        },
         dataHome,
         config,
         buildSpec: createBuildSpec(topic),
