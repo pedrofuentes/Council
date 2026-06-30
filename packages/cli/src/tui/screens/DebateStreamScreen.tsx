@@ -3,6 +3,7 @@ import { Box, Text, useInput } from "ink";
 import { useLocation, useNavigate, useParams } from "react-router";
 
 import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
+import type { DebateEndReason } from "../../core/types.js";
 import type { ConveneDataSource, ConveneViewEvent } from "../adapters/convene.js";
 import { useData } from "../components/DataProvider.js";
 import { useInputCapture } from "../components/InputCaptureProvider.js";
@@ -38,6 +39,13 @@ const EMPTY_VIEW: DebateView = { experts: [], turns: [], cost: undefined, error:
 
 function errorMessage(err: unknown): string {
   return toSingleLineDisplay(err instanceof Error ? err.message : String(err));
+}
+
+// A debate that ends with one of these reasons persists as status "completed"
+// (see persister.ts reasonToStatus), which is the same gate the classic CLI
+// uses to auto-conclude by default. Aborted/failed debates are NOT concluded.
+function isAutoConcludeReason(reason: DebateEndReason): boolean {
+  return reason === "completed" || reason === "consensus" || reason === "limit";
 }
 
 function applyEvent(view: DebateView, event: ConveneViewEvent): DebateView {
@@ -180,9 +188,21 @@ export function DebateStreamScreen(props: DebateStreamScreenProps): React.ReactE
         if (unmountedRef.current) return;
         setStatus("done");
         if (result.debateId !== undefined) {
-          navigate(`/sessions/${encodeURIComponent(result.debateId)}`, {
-            state: { panelName: panel },
-          });
+          if (isAutoConcludeReason(result.reason)) {
+            // Successful debate: mirror the classic CLI default and run the
+            // existing conclusion flow inline (same route SessionDetailScreen
+            // uses for the `c` key), so the decision matrix is generated without
+            // the user manually opening it.
+            navigate(`/sessions/${encodeURIComponent(result.debateId)}/conclude`, {
+              state: { panelName: panel },
+            });
+          } else {
+            // Aborted/failed debate: keep the partial transcript on the session
+            // detail and do NOT synthesize a conclusion.
+            navigate(`/sessions/${encodeURIComponent(result.debateId)}`, {
+              state: { panelName: panel },
+            });
+          }
         } else {
           navigate(-1);
         }
@@ -269,9 +289,7 @@ export function DebateStreamScreen(props: DebateStreamScreenProps): React.ReactE
         />
       ) : null}
       {!followLive ? (
-        <Text>
-          {props.theme.muted(toSingleLineDisplay("⏸ Review — ↓/End to resume live"))}
-        </Text>
+        <Text>{props.theme.muted(toSingleLineDisplay("⏸ Review — ↓/End to resume live"))}</Text>
       ) : null}
       {status === "streaming" ? (
         <Text>

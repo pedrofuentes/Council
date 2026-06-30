@@ -38,6 +38,17 @@ function SessionProbe(): React.ReactElement {
   );
 }
 
+function ConcludeProbe(): React.ReactElement {
+  const params = useParams();
+  const location = useLocation();
+  const state = location.state as { readonly panelName?: string } | null;
+  return (
+    <Text>
+      CONCLUDE {params.id ?? ""} PANEL {state?.panelName ?? ""}
+    </Text>
+  );
+}
+
 function BackProbe(): React.ReactElement {
   return <Text>BACK ROUTE</Text>;
 }
@@ -68,6 +79,7 @@ function renderScreen(options: {
               element={<DebateStreamScreen theme={theme} isActive />}
             />
             <Route path="/sessions/:id" element={<SessionProbe />} />
+            <Route path="/sessions/:id/conclude" element={<ConcludeProbe />} />
           </Routes>
         </MemoryRouter>
       </DataProvider>
@@ -76,7 +88,7 @@ function renderScreen(options: {
 }
 
 describe("DebateStreamScreen", () => {
-  it("streams the transcript and cost, then navigates to the session detail with the debateId", async () => {
+  it("streams the transcript and cost, then auto-concludes into the conclusion route on success", async () => {
     let resolveEnd: () => void = () => undefined;
     const ended = new Promise<void>((resolve) => {
       resolveEnd = resolve;
@@ -118,7 +130,40 @@ describe("DebateStreamScreen", () => {
     resolveEnd();
     await flush();
 
-    expect(lastFrame()).toContain("SESSION deb-123 PANEL acme");
+    // On a successful debate the screen mirrors the classic CLI default and
+    // navigates straight into the existing conclusion flow (decision matrix).
+    expect(lastFrame()).toContain("CONCLUDE deb-123 PANEL acme");
+    expect(lastFrame()).not.toContain("SESSION deb-123");
+  });
+
+  it("does not auto-conclude when the debate ends in a non-success reason", async () => {
+    let resolveEnd: () => void = () => undefined;
+    const ended = new Promise<void>((resolve) => {
+      resolveEnd = resolve;
+    });
+    const streamDebate = vi.fn<
+      Parameters<ConveneDataSource["streamDebate"]>,
+      ReturnType<ConveneDataSource["streamDebate"]>
+    >(async (_panel, _topic, _options, onEvent) => {
+      onEvent({ kind: "panel", experts: ["Alice"] });
+      onEvent({ kind: "turn-start", expert: "Alice", round: 1 });
+      onEvent({ kind: "turn-delta", expert: "Alice", text: "Partial thought" });
+      onEvent({ kind: "turn-end", expert: "Alice" });
+      onEvent({ kind: "end", reason: "aborted" });
+      await ended;
+      return { debateId: "deb-789", reason: "aborted" };
+    });
+
+    const { lastFrame } = renderScreen({ convene: { estimateCost: estimateStub, streamDebate } });
+
+    await flush();
+    resolveEnd();
+    await flush();
+
+    // An aborted/failed debate keeps the partial transcript and lands on the
+    // session detail — it must NOT trigger conclusion synthesis.
+    expect(lastFrame()).toContain("SESSION deb-789 PANEL acme");
+    expect(lastFrame()).not.toContain("CONCLUDE deb-789");
   });
 
   it("cancels the in-flight debate on Escape and returns to the previous route", async () => {
