@@ -1,12 +1,12 @@
 import React from "react";
 import { Box, Text, useInput } from "ink";
-import TextInput from "ink-text-input";
 import { useNavigate, useParams } from "react-router";
 
-import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
+import { stripControlChars, toSingleLineDisplay } from "../../cli/strip-control-chars.js";
 import type { ConveneDataSource, CostEstimate } from "../adapters/convene.js";
 import { CostConfirmModal } from "../components/CostConfirmModal.js";
 import { useData } from "../components/DataProvider.js";
+import { MultilineInput } from "../components/inputs/MultilineInput.js";
 import { useInputCapture } from "../components/InputCaptureProvider.js";
 import type { SemanticTheme } from "../theme/tokens.js";
 
@@ -23,6 +23,13 @@ type PromptState =
 
 function errorMessage(err: unknown): string {
   return toSingleLineDisplay(err instanceof Error ? err.message : String(err));
+}
+
+// Sanitize a user-entered topic while PRESERVING intended newlines: strip
+// terminal control/escape sequences, normalize CR/LF to plain "\n", and trim.
+// Parity with the classic-CLI topic editor (interactive-topic-input.ts).
+function normalizeTopic(text: string): string {
+  return stripControlChars(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
 }
 
 export function ConvenePromptScreen(props: ConvenePromptScreenProps): React.ReactElement {
@@ -46,7 +53,7 @@ export function ConvenePromptScreen(props: ConvenePromptScreenProps): React.Reac
   }, [setCaptured]);
 
   const submitTopic = React.useCallback(async (): Promise<void> => {
-    const trimmed = toSingleLineDisplay(topicRef.current.trim());
+    const trimmed = normalizeTopic(topicRef.current);
     if (trimmed.length === 0 || inFlight.current) return;
     if (convene === undefined || panel === undefined) {
       setState({ status: "error", message: toSingleLineDisplay("convene unavailable") });
@@ -72,7 +79,7 @@ export function ConvenePromptScreen(props: ConvenePromptScreenProps): React.Reac
 
   const confirm = React.useCallback((): void => {
     if (state.status !== "confirm" || inFlight.current || panel === undefined) return;
-    const trimmed = toSingleLineDisplay(topicRef.current.trim());
+    const trimmed = normalizeTopic(topicRef.current);
     if (trimmed.length === 0) return;
     inFlight.current = true;
     navigate(`/convene/${encodeURIComponent(panel)}/run`, { state: { topic: trimmed } });
@@ -98,8 +105,8 @@ export function ConvenePromptScreen(props: ConvenePromptScreenProps): React.Reac
       {state.status === "idle" || state.status === "error" ? (
         <Box>
           <Text>{toSingleLineDisplay("Topic: ")}</Text>
-          <TextInput
-            focus={isActive && !inFlight.current}
+          <MultilineInput
+            isActive={isActive && !inFlight.current}
             onChange={(value) => {
               topicRef.current = value;
               setTopic(value);
@@ -108,8 +115,7 @@ export function ConvenePromptScreen(props: ConvenePromptScreenProps): React.Reac
             onSubmit={() => {
               void submitTopic();
             }}
-            showCursor={isActive && !inFlight.current}
-            value={toSingleLineDisplay(topic)}
+            value={topic}
           />
         </Box>
       ) : null}
@@ -128,7 +134,9 @@ export function ConvenePromptScreen(props: ConvenePromptScreenProps): React.Reac
         />
       ) : null}
       {state.status === "error" ? <Text>{props.theme.error(state.message)}</Text> : null}
-      <Text>{props.theme.muted(toSingleLineDisplay("Enter estimate · Esc cancel"))}</Text>
+      <Text>
+        {props.theme.muted(toSingleLineDisplay("Enter estimate · Ctrl+J newline · Esc cancel"))}
+      </Text>
     </Box>
   );
 }
