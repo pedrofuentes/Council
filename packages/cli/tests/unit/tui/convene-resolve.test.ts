@@ -58,6 +58,7 @@ function createResolver(
       return panel;
     },
     getMembers,
+    getExpertDefinition: async (slug) => inlineExpert(slug),
     dataHome: "/council-data",
     config,
     buildSpec: async (slug, panelDefaultModel) => expert(slug, panelDefaultModel),
