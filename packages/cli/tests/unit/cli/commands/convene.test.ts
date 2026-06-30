@@ -439,6 +439,156 @@ describe("buildConveneCommand", () => {
     }
   });
 
+  describe("TTY-gated conclusion-synthesis progress", () => {
+    /**
+     * Runs `fn` with `process.stderr.isTTY` forced to `value`, restoring the
+     * original descriptor afterward. The conclusion progress is gated on the
+     * real `process.stderr.isTTY`, so tests must simulate an interactive
+     * terminal to exercise the emit path.
+     */
+    async function withStderrTTY(value: boolean, fn: () => Promise<void>): Promise<void> {
+      const original = Object.getOwnPropertyDescriptor(process.stderr, "isTTY");
+      Object.defineProperty(process.stderr, "isTTY", {
+        configurable: true,
+        value,
+      });
+      try {
+        await fn();
+      } finally {
+        if (original === undefined) {
+          delete (process.stderr as unknown as { isTTY?: boolean }).isTTY;
+        } else {
+          Object.defineProperty(process.stderr, "isTTY", original);
+        }
+      }
+    }
+
+    it("shows a 'Generating conclusion…' progress status on a plain TTY run", async () => {
+      let errors = "";
+      const cmd = buildConveneCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: () => undefined,
+        writeError: (s) => {
+          errors += s;
+        },
+      });
+
+      await withStderrTTY(true, async () => {
+        await cmd.parseAsync([
+          "node",
+          "council-convene",
+          "Should we ship the MVP?",
+          "--template",
+          "code-review",
+          "--max-rounds",
+          "1",
+          "--engine",
+          "mock",
+          "--heuristic-memory",
+        ]);
+      });
+
+      // The progress status writes the label followed by an ellipsis. The
+      // pre-existing static notice ("Generating conclusion (1 more …") does
+      // not, so this assertion is specific to the new progress indicator.
+      expect(errors).toContain("Generating conclusion…");
+    });
+
+    it("suppresses the conclusion progress status when stderr is not a TTY", async () => {
+      let errors = "";
+      const cmd = buildConveneCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: () => undefined,
+        writeError: (s) => {
+          errors += s;
+        },
+      });
+
+      await withStderrTTY(false, async () => {
+        await cmd.parseAsync([
+          "node",
+          "council-convene",
+          "Should we ship the MVP?",
+          "--template",
+          "code-review",
+          "--max-rounds",
+          "1",
+          "--engine",
+          "mock",
+          "--heuristic-memory",
+        ]);
+      });
+
+      expect(errors).not.toContain("Generating conclusion…");
+      // The pre-existing one-line notice is unaffected.
+      expect(errors).toContain("Generating conclusion (1 more premium request");
+    });
+
+    it("suppresses the conclusion progress status under --quiet on a TTY", async () => {
+      let errors = "";
+      const cmd = buildConveneCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: () => undefined,
+        writeError: (s) => {
+          errors += s;
+        },
+      });
+
+      await withStderrTTY(true, async () => {
+        await cmd.parseAsync([
+          "node",
+          "council-convene",
+          "Should we ship the MVP?",
+          "--template",
+          "code-review",
+          "--max-rounds",
+          "1",
+          "--engine",
+          "mock",
+          "--heuristic-memory",
+          "--quiet",
+        ]);
+      });
+
+      expect(errors).not.toContain("Generating conclusion…");
+    });
+
+    it("suppresses the conclusion progress status under --format json on a TTY", async () => {
+      let errors = "";
+      let stdout = "";
+      const cmd = buildConveneCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: (s) => {
+          stdout += s;
+        },
+        writeError: (s) => {
+          errors += s;
+        },
+      });
+
+      await withStderrTTY(true, async () => {
+        await cmd.parseAsync([
+          "node",
+          "council-convene",
+          "Should we ship the MVP?",
+          "--template",
+          "code-review",
+          "--max-rounds",
+          "1",
+          "--engine",
+          "mock",
+          "--heuristic-memory",
+          "--format",
+          "json",
+        ]);
+      });
+
+      expect(errors).not.toContain("Generating conclusion…");
+      // Machine-consumed stdout must never carry the progress label.
+      expect(stdout).not.toContain("Generating conclusion…");
+    });
+  });
+
   it("uses config.defaults.model (not hardcoded DEFAULT_MODEL) for expert registration", async () => {
     // Write a config file that overrides the default model
     const configPath = path.join(testHome, "config.yaml");
