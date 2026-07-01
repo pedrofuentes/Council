@@ -25,3 +25,4 @@ council export [options] <panel>
 | --- | --- | --- |
 | `--format <kind>` | Output format (choices: `markdown`, `json`, `adr`, `share`) | `markdown` |
 | `--output <path>` | Write to file instead of stdout (default: stdout) | — |
+| `--force` | Overwrite the --output file if it already exists | — |

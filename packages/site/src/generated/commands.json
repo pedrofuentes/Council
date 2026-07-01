@@ -213,6 +213,29 @@
             "subcommands": []
           },
           {
+            "name": "model",
+            "path": [
+              "council",
+              "config",
+              "model"
+            ],
+            "commandPath": "council config model",
+            "description": "Set the default AI model — pass <name>, or omit it on a terminal for an interactive picker",
+            "aliases": [],
+            "usage": "[options] [name]",
+            "arguments": [
+              {
+                "name": "name",
+                "display": "[name]",
+                "description": "Model id to set (omit on a TTY to pick interactively)",
+                "required": false,
+                "variadic": false
+              }
+            ],
+            "options": [],
+            "subcommands": []
+          },
+          {
             "name": "wizard",
             "path": [
               "council",
@@ -2195,6 +2218,15 @@
             "description": "Write to file instead of stdout (default: stdout)",
             "long": "--output",
             "required": true,
+            "optional": false,
+            "variadic": false,
+            "negate": false
+          },
+          {
+            "flags": "--force",
+            "description": "Overwrite the --output file if it already exists",
+            "long": "--force",
+            "required": false,
             "optional": false,
             "variadic": false,
             "negate": false
