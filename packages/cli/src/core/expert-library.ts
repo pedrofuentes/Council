@@ -17,6 +17,7 @@ import * as path from "node:path";
 import * as yaml from "yaml";
 
 import { ExpertDefinitionSchema, type ExpertDefinition } from "./expert.js";
+import { toSingleLineDisplay } from "../cli/strip-control-chars.js";
 import type { CouncilDatabase } from "../memory/db.js";
 import {
   ExpertLibraryRepository,
@@ -150,7 +151,22 @@ export class FileExpertLibrary implements ExpertLibrary {
       return parseYaml(content, row.yamlPath);
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") return null;
+      if (code === "ENOENT") {
+        // The DB cache row exists but its backing YAML source-of-truth is
+        // gone — a storage inconsistency, not a genuinely-absent expert.
+        // Surface an observable diagnostic (#288) instead of silently
+        // hiding the mismatch, while preserving the read contract: the
+        // record still reads as absent (caller gets null / row skipped) so
+        // it stays recoverable via create(). The slug and path are
+        // file-derived / DB-derived and may be tampered, so sanitize them
+        // for the terminal sink before display.
+        const slug = toSingleLineDisplay(row.slug);
+        const yamlPath = toSingleLineDisplay(row.yamlPath);
+        console.warn(
+          `[expert-library] Integrity: expert "${slug}" has a library record but its backing YAML file is missing (${yamlPath}). Treating it as absent until the file is restored or the record is removed.`,
+        );
+        return null;
+      }
       throw err;
     }
   }
