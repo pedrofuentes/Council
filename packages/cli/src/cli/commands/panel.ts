@@ -172,12 +172,32 @@ export function panelDocsDir(dataHome: string, name: string): string {
   validatePanelName(name);
   const panelsRoot = path.resolve(path.join(dataHome, "panels"));
   const docsDir = path.join(dataHome, "panels", name, "docs");
-  if (!path.resolve(docsDir).startsWith(panelsRoot + path.sep)) {
-    throw new Error(
+  assertContainedInPanelsRoot(docsDir, panelsRoot, name);
+  return docsDir;
+}
+
+/**
+ * Assert `candidate` resolves to a path strictly under `panelsRoot`.
+ *
+ * Defense-in-depth behind `validatePanelName`: a panel name sourced from
+ * `panel_library.name` (migration/import/DB edit) that bypassed create-time
+ * validation must never let a sibling scanner read out-of-tree files. Exported
+ * so the containment `startsWith` branch is directly testable — because
+ * `validatePanelName` shields `panelDocsDir`, no reachable name exercises this
+ * throw through the public helper. Throws `CliUserError` (a config/state
+ * problem → exit 1) rather than a bare `Error` (which the top-level handler
+ * maps to exit 4, "internal"). #1795.
+ */
+export function assertContainedInPanelsRoot(
+  candidate: string,
+  panelsRoot: string,
+  name: string,
+): void {
+  if (!path.resolve(candidate).startsWith(panelsRoot + path.sep)) {
+    throw new CliUserError(
       `Refusing to scan: resolved docs path escapes panels directory (name="${name}")`,
     );
   }
-  return docsDir;
 }
 
 export function validatePanelName(name: string): void {
@@ -425,8 +445,24 @@ function buildDeleteCommand(
         }
 
         // Filesystem cleanup succeeded — now safe to drop the DB row
-        // (ON DELETE CASCADE wipes panel_members atomically).
-        await ctx.panelRepo.delete(name);
+        // (ON DELETE CASCADE wipes panel_members atomically). If this fails,
+        // the YAML and docs are already gone, leaving a stale panel_library
+        // row. Surface actionable recovery guidance: re-running `panel delete`
+        // tolerates the now-missing YAML (unlink ENOENT) and directory (fs.rm
+        // force) and retries the DB delete, clearing the orphan. #1643.
+        try {
+          await ctx.panelRepo.delete(name);
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
+          writeError(
+            `Removed the panel files for "${name}" but failed to delete its library record: ${detail}\n` +
+              `The on-disk YAML and docs are gone; a stale entry still exists. ` +
+              `Re-run \`council panel delete ${name}\` to clear it.\n`,
+          );
+          throw new CliUserError(`Failed to delete panel "${name}" library record: ${detail}`, {
+            cause: err,
+          });
+        }
 
         write(`✓ Panel "${name}" deleted.\n`);
         write("\x1b[2mRun 'council panel list' to verify.\x1b[0m\n");
@@ -1301,12 +1337,16 @@ function buildEditCommand(write: Writer, writeError: Writer): Command {
         await assertExpertsExist(slugRefs, ctx.library, writeError);
 
         const checksum = sha256(onDisk);
+        // Persist membership BEFORE the row/checksum. If setMembers throws, the
+        // OLD checksum stays in place (signalling drift for a later re-sync)
+        // rather than a new checksum that would falsely claim to match the
+        // now-unwritten membership. #308.
+        await ctx.panelRepo.setMembers(name, slugRefs);
         await ctx.panelRepo.update(name, {
           description: parsed.description ?? null,
           yamlPath,
           yamlChecksum: checksum,
         });
-        await ctx.panelRepo.setMembers(name, slugRefs);
 
         write(`✓ Panel "${name}" saved and validated.\n`);
       });
@@ -1402,18 +1442,36 @@ async function runDocsList(name: string, write: Writer, writeError: Writer): Pro
     // Trigger indexing before listing so freshly-dropped files appear
     // (fixes #14 — lazy indexing was misleading). This makes `list`
     // consistent with other docs commands that show current disk state.
+    // Indexing is best-effort: capture the outcome and warn on partial
+    // failures, and if the scan itself throws, degrade to the last known DB
+    // state rather than crashing a listing. #1055.
     const managedDocsDir = panelDocsDir(ctx.dataHome, name);
-    await scanAndIndexPanelDocuments({
-      panelName: name,
-      managedDocsDir,
-      db: ctx.db,
-      supportedFormats: ctx.config.expert.supportedFormats,
-      maxFileSizeBytes: ctx.config.documents.maxFileSizeMB * 1024 * 1024,
-      aiFallback: {
-        mode: ctx.config.documents.aiExtraction,
-        allowedExtensions: ctx.config.documents.aiExtractionAllowedExtensions,
-      },
-    });
+    try {
+      const scan = await scanAndIndexPanelDocuments({
+        panelName: name,
+        managedDocsDir,
+        db: ctx.db,
+        supportedFormats: ctx.config.expert.supportedFormats,
+        maxFileSizeBytes: ctx.config.documents.maxFileSizeMB * 1024 * 1024,
+        aiFallback: {
+          mode: ctx.config.documents.aiExtraction,
+          allowedExtensions: ctx.config.documents.aiExtractionAllowedExtensions,
+        },
+      });
+      if (scan.failed > 0 || scan.foldersFailed > 0) {
+        writeError(
+          `Warning: indexing completed with problems for panel "${name}" ` +
+            `(${scan.failed} document(s) failed, ${scan.foldersFailed} folder(s) failed). ` +
+            `The list below may be incomplete — run "council panel docs doctor ${name}" for details.\n`,
+        );
+      }
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      writeError(
+        `Warning: could not refresh the document index for panel "${name}": ${detail}\n` +
+          `Showing the last known state; results may be stale.\n`,
+      );
+    }
 
     const docs = await ctx.docsRepo.listDocuments(name);
     const folders = await ctx.docsRepo.getLinkedFolders(name);
@@ -1511,7 +1569,10 @@ function buildDocsLinkCommand(
         );
         if (!ok) {
           writeError(`Aborted: declined to link ${displayPath(absolute)}.\n`);
-          throw new Error(`Aborted: declined to link ${absolute}`);
+          // CliUserError (not a generic Error): the message is already written,
+          // so the top-level handler stays silent (no duplicate) and exits 1,
+          // not 4. Mirrors the `panel delete` declined path. #655.
+          throw new CliUserError(`Aborted: declined to link ${absolute}`);
         }
       }
 
