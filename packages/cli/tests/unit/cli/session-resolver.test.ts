@@ -8,6 +8,7 @@ import { copyTemplateDb } from "../../helpers/template-db.js";
 import { CliUserError } from "../../../src/cli/cli-user-error.js";
 import { resolveSession } from "../../../src/cli/session-resolver.js";
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
+import { DebateRepository } from "../../../src/memory/repositories/debates.js";
 import { PanelRepository } from "../../../src/memory/repositories/panels.js";
 
 describe("resolveSession", () => {
@@ -299,6 +300,55 @@ describe("resolveSession", () => {
       expect(stderr).not.toContain(ESC);
       expect(stderr).not.toContain(BEL);
       expect(stderr).toContain("No panel found matching 'ghostphantom'");
+    });
+  });
+
+  // The most-recently-debated fallback (used by `conclude` with no panel arg)
+  // must resolve the panel of the newest debate without an N+1 scan (#705).
+  describe("most-recently-debated resolution (#705)", () => {
+    async function seedDebate(panelName: string): Promise<void> {
+      const panel = await new PanelRepository(db).findByName(panelName);
+      if (!panel) throw new Error(`Expected seeded panel '${panelName}'.`);
+      await new DebateRepository(db).create({
+        panelId: panel.id,
+        prompt: `Prompt for ${panelName}`,
+        moderator: "round-robin",
+      });
+    }
+
+    it("selects the panel with the newest debate, not the newest panel", async () => {
+      await seedPanel("panel-a");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await seedPanel("panel-b");
+
+      // panel-b is newer by creation, but panel-a gets the more recent debate.
+      await seedDebate("panel-b");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await seedDebate("panel-a");
+
+      const resolved = await resolveSession({
+        db,
+        dataHome: testHome,
+        writeError: () => undefined,
+        isNonInteractive: () => true,
+        missingPanelMode: "most-recently-debated",
+      });
+
+      expect(resolved).toBe("panel-a");
+    });
+
+    it("errors when panels exist but none have any debates", async () => {
+      await seedPanel("no-debates-here");
+
+      await expect(
+        resolveSession({
+          db,
+          dataHome: testHome,
+          writeError: () => undefined,
+          isNonInteractive: () => true,
+          missingPanelMode: "most-recently-debated",
+        }),
+      ).rejects.toThrow(/no panels with debates/i);
     });
   });
 });

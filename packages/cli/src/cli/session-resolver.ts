@@ -230,21 +230,15 @@ async function buildSuggestions(
 async function findMostRecentlyDebatedPanel(db: CouncilDatabase): Promise<Panel | undefined> {
   const panelRepo = new PanelRepository(db);
   const debateRepo = new DebateRepository(db);
-  const panels = await panelRepo.findAll();
-  if (panels.length === 0) return undefined;
 
-  let bestPanel: Panel | undefined;
-  let bestStartedAt: string | undefined;
+  // Resolve the panel of the single most recent debate across all panels with
+  // one indexed query instead of scanning every panel's debates (an N+1).
+  // `findMostRecentlyActive` falls back to the newest panel when the debates
+  // table is empty, so confirm the resolved panel actually has a debate before
+  // returning it — this mode wants a debated panel or nothing.
+  const candidate = await panelRepo.findMostRecentlyActive();
+  if (!candidate) return undefined;
 
-  for (const panel of panels) {
-    const debates = await debateRepo.findByPanelId(panel.id);
-    const latestDebate = debates[debates.length - 1];
-    if (!latestDebate) continue;
-    if (bestStartedAt === undefined || latestDebate.startedAt > bestStartedAt) {
-      bestStartedAt = latestDebate.startedAt;
-      bestPanel = panel;
-    }
-  }
-
-  return bestPanel;
+  const debates = await debateRepo.findByPanelId(candidate.id);
+  return debates.length > 0 ? candidate : undefined;
 }
