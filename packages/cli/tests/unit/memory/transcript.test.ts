@@ -252,6 +252,94 @@ describe("loadTranscript", () => {
     }
   });
 
+  it("selects the later debate when turn counts are equal (tie-break: latest wins)", async () => {
+    // Two debates with EQUAL turn counts (2 each). The later-created debate must win.
+    // If the tie-break were reversed (earlier wins), `doc.latestDebate.id` would equal
+    // `earlierDebateId` and this test would fail — making the oracle discriminating.
+    const seeded = await seed(dir, { withTurns: false });
+    let earlierDebateId = "";
+    let laterDebateId = "";
+
+    const setupDb = await createDatabase(path.join(dir, "council.db"));
+    try {
+      const debateRepo = new DebateRepository(setupDb);
+      const turnRepo = new TurnRepository(setupDb);
+
+      const earlierDebate = await debateRepo.create({
+        panelId: seeded.panelId,
+        prompt: "Earlier debate prompt",
+        moderator: "round-robin",
+      });
+      earlierDebateId = earlierDebate.id;
+      await turnRepo.create({
+        debateId: earlierDebate.id,
+        round: 0,
+        seq: 0,
+        speakerKind: "expert",
+        expertId: seeded.ctoId,
+        content: "Earlier debate — CTO turn",
+      });
+      await turnRepo.create({
+        debateId: earlierDebate.id,
+        round: 0,
+        seq: 1,
+        speakerKind: "expert",
+        expertId: seeded.pmId,
+        content: "Earlier debate — PM turn",
+      });
+      await debateRepo.update(earlierDebate.id, {
+        status: "completed",
+        endedAt: new Date().toISOString(),
+      });
+
+      // Created after earlierDebate → higher rowid, same or later started_at.
+      // findByPanelId orders ASC so it arrives last in the iteration; the
+      // `turnCount === selectedTurnCount` branch must replace `selected` with it.
+      const laterDebate = await debateRepo.create({
+        panelId: seeded.panelId,
+        prompt: "Later debate prompt",
+        moderator: "round-robin",
+      });
+      laterDebateId = laterDebate.id;
+      await turnRepo.create({
+        debateId: laterDebate.id,
+        round: 0,
+        seq: 0,
+        speakerKind: "expert",
+        expertId: seeded.ctoId,
+        content: "Later debate — CTO turn",
+      });
+      await turnRepo.create({
+        debateId: laterDebate.id,
+        round: 0,
+        seq: 1,
+        speakerKind: "expert",
+        expertId: seeded.pmId,
+        content: "Later debate — PM turn",
+      });
+      await debateRepo.update(laterDebate.id, {
+        status: "completed",
+        endedAt: new Date().toISOString(),
+      });
+    } finally {
+      await setupDb.destroy();
+    }
+
+    const fresh = await createDatabase(path.join(dir, "council.db"));
+    try {
+      const doc = await loadTranscript(fresh, seeded.panelName);
+      expect(doc.latestDebate.id).toBe(laterDebateId);
+      expect(doc.latestDebate.prompt).toBe("Later debate prompt");
+      expect(doc.latestDebate.id).not.toBe(earlierDebateId);
+      expect(doc.turns.map((t) => t.content)).toEqual([
+        "Later debate — CTO turn",
+        "Later debate — PM turn",
+      ]);
+    } finally {
+      await fresh.destroy();
+    }
+  });
+
   it("accepts an explicit debateId override", async () => {
     const seeded = await seed(dir);
     let explicitDebateId = "";
