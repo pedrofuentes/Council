@@ -88,6 +88,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
       { keys: "m", description: "Edit members" },
       { keys: "d", description: "Delete" },
       { keys: "v", description: "Convene" },
+      { keys: "a", description: "Actions" },
     ],
   },
   {
@@ -152,6 +153,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
       { keys: "d", description: "Delete" },
       { keys: "o", description: "Documents" },
       { keys: "t", description: "Train" },
+      { keys: "a", description: "Actions" },
     ],
   },
   {
@@ -159,6 +161,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
     bindings: [
       { keys: "c", description: "Conclude" },
       { keys: "x", description: "Export" },
+      { keys: "a", description: "Actions" },
     ],
   },
   {
