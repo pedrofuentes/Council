@@ -733,14 +733,48 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             defaultModel,
           );
 
-          // Build human expert specs from --human flags
-          const humanExperts: ExpertSpec[] = humanNames.map((name) => ({
-            id: ulid(),
-            slug: slugify(name),
-            displayName: name,
-            model: "human",
-            systemMessage: "(human participant)",
-          }));
+          // Build human expert specs from --human flags. A human's identity
+          // key is slugify(displayName); reject any name that produces an
+          // empty slug (punctuation/emoji-only) or one that collides with an
+          // AI expert already on the panel — or with another --human. The
+          // experts table is UNIQUE(panel_id, slug), so a duplicate would
+          // otherwise break turn attribution or surface as a raw DB error
+          // AFTER a panel row was already persisted (#207).
+          const aiSlugs = new Set(aiExperts.map((e) => e.slug));
+          const seenHumanSlugs = new Set<string>();
+          const humanExperts: ExpertSpec[] = humanNames.map((name) => {
+            const slug = slugify(name);
+            const safeName = toSingleLineDisplay(name);
+            if (slug.length === 0) {
+              const msg =
+                `--human "${safeName}" has no letters or digits to build a slug from. ` +
+                `Give the participant a name containing at least one letter or number.`;
+              writeError(`${msg}\n`);
+              throw new CliUserError(msg);
+            }
+            if (aiSlugs.has(slug)) {
+              const msg =
+                `--human "${safeName}" maps to the slug "${slug}", which already belongs to an ` +
+                `expert on this panel. Rename the human participant so its slug is distinct.`;
+              writeError(`${msg}\n`);
+              throw new CliUserError(msg);
+            }
+            if (seenHumanSlugs.has(slug)) {
+              const msg =
+                `--human "${safeName}" maps to the slug "${slug}", which duplicates another ` +
+                `--human participant. Give each human a name with a distinct slug.`;
+              writeError(`${msg}\n`);
+              throw new CliUserError(msg);
+            }
+            seenHumanSlugs.add(slug);
+            return {
+              id: ulid(),
+              slug,
+              displayName: name,
+              model: "human",
+              systemMessage: "(human participant)",
+            };
+          });
 
           const allExperts = [...aiExperts, ...humanExperts];
           const humanSlugs = new Set(humanExperts.map((e) => e.slug));
