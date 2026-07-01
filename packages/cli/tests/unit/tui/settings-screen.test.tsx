@@ -506,4 +506,46 @@ describe("SettingsScreen", () => {
     expect(lastFrame() ?? "").not.toContain("←/→ change");
     unmount();
   });
+
+  it("shows Enter/Space toggle hint when editing a boolean field", async () => {
+    const { stdin, lastFrame, unmount } = renderSettings(async () => fields);
+    await flush();
+
+    // Navigate to the boolean field (index 2: telemetry.enabled) — 2 down arrows
+    stdin.write("\u001B[B");
+    await flush();
+    stdin.write("\u001B[B");
+    await flush();
+    stdin.write("\r"); // enter edit mode
+    await flush();
+
+    expect(lastFrame() ?? "").toContain("Enter/Space toggle · Esc cancel");
+    unmount();
+  });
+
+  it("shows type hint when editing a string field", async () => {
+    const { stdin, lastFrame, unmount } = renderSettings(async () => fields);
+    await flush();
+
+    // Already at index 0 (defaults.model, a string field)
+    stdin.write("\r"); // enter edit mode
+    await flush();
+
+    expect(lastFrame() ?? "").toContain("type · Enter confirm · Esc cancel");
+    unmount();
+  });
+
+  it("shows type hint when editing a number field", async () => {
+    const { stdin, lastFrame, unmount } = renderSettings(async () => fields);
+    await flush();
+
+    // Navigate to the number field (index 1: defaults.maxRounds)
+    stdin.write("\u001B[B");
+    await flush();
+    stdin.write("\r"); // enter edit mode
+    await flush();
+
+    expect(lastFrame() ?? "").toContain("type · Enter confirm · Esc cancel");
+    unmount();
+  });
 });
