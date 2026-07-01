@@ -8,6 +8,7 @@ import { copyTemplateDb } from "../../helpers/template-db.js";
 import { CliUserError } from "../../../src/cli/cli-user-error.js";
 import { resolveSession } from "../../../src/cli/session-resolver.js";
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
+import { DebateRepository } from "../../../src/memory/repositories/debates.js";
 import { PanelRepository } from "../../../src/memory/repositories/panels.js";
 
 describe("resolveSession", () => {
@@ -192,5 +193,162 @@ describe("resolveSession", () => {
         isNonInteractive: () => true,
       }),
     ).rejects.toThrow(/did you mean|finance-review/i);
+  });
+
+  // Terminal-safety: untrusted panel metadata (names/topics) and the requested
+  // string must be single-line sanitized before being written to stderr, or a
+  // malicious value could spoof lines / inject ANSI escapes (#779).
+  describe("sanitizes untrusted values written to stderr (#779)", () => {
+    const ESC = "\u001b";
+    const BEL = "\u0007";
+    const LINE_SEP = "\u2028";
+
+    it("strips CR/LF/ANSI/control sequences from ambiguous-match topics", async () => {
+      await seedPanel("amb-alpha", "Alpha\r\n  99. spoofed entry");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await seedPanel("amb-beta", `Beta${ESC}[31mred${ESC}[0m${BEL}${LINE_SEP}sneaky`);
+
+      let stderr = "";
+      await expect(
+        resolveSession({
+          db,
+          dataHome: testHome,
+          panelArg: "amb",
+          writeError: (chunk) => {
+            stderr += chunk;
+          },
+          isNonInteractive: () => true,
+        }),
+      ).rejects.toBeInstanceOf(CliUserError);
+
+      expect(stderr).not.toContain(ESC);
+      expect(stderr).not.toContain(BEL);
+      expect(stderr).not.toContain("\r");
+      expect(stderr).not.toContain(LINE_SEP);
+      // The injected "  99. spoofed entry" must NOT become its own numbered
+      // line — there are exactly two matches, so exactly two numbered entries.
+      const numberedEntries = stderr.split("\n").filter((line) => /^\s*\d+\.\s/.test(line));
+      expect(numberedEntries).toHaveLength(2);
+    });
+
+    it("strips ANSI escapes from ambiguous-match panel names", async () => {
+      await seedPanel(`clr-${ESC}[31mred`, "topic one");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await seedPanel(`clr-${ESC}[32mgreen`, "topic two");
+
+      let stderr = "";
+      await expect(
+        resolveSession({
+          db,
+          dataHome: testHome,
+          panelArg: "clr-",
+          writeError: (chunk) => {
+            stderr += chunk;
+          },
+          isNonInteractive: () => true,
+        }),
+      ).rejects.toBeInstanceOf(CliUserError);
+
+      expect(stderr).not.toContain(ESC);
+      // Visible text (with escapes removed) is preserved.
+      expect(stderr).toContain("clr-red");
+      expect(stderr).toContain("clr-green");
+    });
+
+    it("keeps the raw (unsanitized) name in picker input and the resolved value", async () => {
+      const rawName = `clr-${ESC}[31mred`;
+      await seedPanel(rawName, "topic one");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await seedPanel(`clr-${ESC}[32mgreen`, "topic two");
+
+      let sawRawName = false;
+      const resolved = await resolveSession({
+        db,
+        dataHome: testHome,
+        panelArg: "clr-",
+        writeError: () => undefined,
+        isNonInteractive: () => false,
+        picker: async (matches) => {
+          sawRawName = matches.some((match) => match.name.includes(ESC));
+          const selected = matches.find((match) => match.name === rawName);
+          if (selected) return selected;
+          throw new Error("Expected the raw panel name to be present in picker matches.");
+        },
+      });
+
+      // Sanitization is display-only: the loadable panel name must stay intact.
+      expect(sawRawName).toBe(true);
+      expect(resolved).toBe(rawName);
+    });
+
+    it("strips control sequences from the requested value echoed on no-match", async () => {
+      await seedPanel("finance-review");
+
+      let stderr = "";
+      await expect(
+        resolveSession({
+          db,
+          dataHome: testHome,
+          panelArg: `ghost${ESC}[31m${BEL}phantom`,
+          writeError: (chunk) => {
+            stderr += chunk;
+          },
+          isNonInteractive: () => true,
+        }),
+      ).rejects.toBeInstanceOf(CliUserError);
+
+      expect(stderr).not.toContain(ESC);
+      expect(stderr).not.toContain(BEL);
+      expect(stderr).toContain("No panel found matching 'ghostphantom'");
+    });
+  });
+
+  // The most-recently-debated fallback (used by `conclude` with no panel arg)
+  // must resolve the panel of the newest debate without an N+1 scan (#705).
+  describe("most-recently-debated resolution (#705)", () => {
+    async function seedDebate(panelName: string): Promise<void> {
+      const panel = await new PanelRepository(db).findByName(panelName);
+      if (!panel) throw new Error(`Expected seeded panel '${panelName}'.`);
+      await new DebateRepository(db).create({
+        panelId: panel.id,
+        prompt: `Prompt for ${panelName}`,
+        moderator: "round-robin",
+      });
+    }
+
+    it("selects the panel with the newest debate, not the newest panel", async () => {
+      await seedPanel("panel-a");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await seedPanel("panel-b");
+
+      // panel-b is newer by creation, but panel-a gets the more recent debate.
+      await seedDebate("panel-b");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await seedDebate("panel-a");
+
+      const resolved = await resolveSession({
+        db,
+        dataHome: testHome,
+        writeError: () => undefined,
+        isNonInteractive: () => true,
+        missingPanelMode: "most-recently-debated",
+      });
+
+      expect(resolved).toBe("panel-a");
+    });
+
+    it("errors when panels exist but none have any debates", async () => {
+      await seedPanel("no-debates-here");
+
+      await expect(
+        resolveSession({
+          db,
+          dataHome: testHome,
+          writeError: () => undefined,
+          isNonInteractive: () => true,
+          missingPanelMode: "most-recently-debated",
+        }),
+      ).rejects.toThrow(/no panels with debates/i);
+    });
   });
 });
