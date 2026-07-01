@@ -8,7 +8,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildExportCommand,
@@ -24,6 +24,15 @@ import { ExpertRepository } from "../../../../src/memory/repositories/experts.js
 import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
 import { TurnRepository } from "../../../../src/memory/repositories/turns.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
+
+// Wrap only fs.rename so a single test can force the atomic rename-into-place to
+// fail deterministically; every other fs call (and rename by default) passes
+// through to the real implementation. ESM namespaces cannot be spied, so the
+// failure must be injected via vi.mock (see template-migration-fileexists.test).
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const real = (await importOriginal()) as typeof fs;
+  return { ...real, rename: vi.fn(real.rename) };
+});
 
 const ESC = String.fromCharCode(0x1b);
 const BEL = String.fromCharCode(0x07);
@@ -1433,6 +1442,76 @@ describe("buildExportCommand", () => {
     expect(stderr).not.toMatch(TERMINAL_CONTROL_BYTES);
 
     // (b) The error's own message is single-line and free of control bytes.
+    const message = caught instanceof Error ? caught.message : String(caught);
+    expectNoTerminalControls(message);
+    expect(message).not.toMatch(TERMINAL_CONTROL_BYTES);
+    expect(message.split("\n")).toHaveLength(1);
+  });
+
+  it("writeExportArtifact --force wraps a non-ENOENT lstat error (ENOTDIR) as a sanitized CliUserError (exit 1) (#1887)", async () => {
+    // A regular file used as a parent directory makes the --force pre-write
+    // lstat on a child fail with ENOTDIR — a non-ENOENT error the write path
+    // used to raw-rethrow, exiting 4 (INTERNAL) and leaking the un-sanitized
+    // target path (ANSI/control bytes) through handleCliError's `Error: <msg>`.
+    const notDir = path.join(testHome, "force-not-a-dir");
+    await fs.writeFile(notDir, "x", "utf-8");
+    const ansiLeaf = `${ESC}[31m${C1_CSI}child${BIDI_OVERRIDE}${ZERO_WIDTH_SPACE}.md`;
+    const target = path.join(notDir, ansiLeaf);
+
+    let caught: unknown;
+    try {
+      await writeExportArtifact(target, "CONTENT", true);
+    } catch (err) {
+      caught = err;
+    }
+    // (a) User error → exit 1, not the raw-Node internal-error code 4.
+    expect(caught).toBeInstanceOf(CliUserError);
+
+    let stderr = "";
+    const exit = handleCliError(caught, (s) => {
+      stderr += s;
+    });
+    expect(exit).toBe(EXIT_USER_ERROR);
+    expectNoTerminalControls(stderr);
+    expect(stderr).not.toMatch(TERMINAL_CONTROL_BYTES);
+
+    // (b) The error's own message is single-line and free of control bytes.
+    const message = caught instanceof Error ? caught.message : String(caught);
+    expectNoTerminalControls(message);
+    expect(message).not.toMatch(TERMINAL_CONTROL_BYTES);
+    expect(message.split("\n")).toHaveLength(1);
+  });
+
+  it("writeExportArtifact --force wraps a rename failure as a sanitized CliUserError (exit 1) (#1887)", async () => {
+    // Force the atomic rename-into-place to fail with a non-ENOENT fs error
+    // whose raw Node message embeds terminal-control bytes. The write path used
+    // to raw-rethrow it, exiting 4 (INTERNAL) and printing the message verbatim.
+    const target = path.join(testHome, "rename-fail.md");
+    const renameErr = Object.assign(
+      new Error(`EACCES: permission denied, rename '${ESC}[31m${C1_CSI}${BIDI_OVERRIDE}victim'`),
+      { code: "EACCES" },
+    );
+    vi.mocked(fs.rename).mockRejectedValueOnce(renameErr);
+
+    let caught: unknown;
+    try {
+      await writeExportArtifact(target, "CONTENT", true);
+    } catch (err) {
+      caught = err;
+    }
+    // (a) User error → exit 1, not the raw-Node internal-error code 4.
+    expect(caught).toBeInstanceOf(CliUserError);
+
+    let stderr = "";
+    const exit = handleCliError(caught, (s) => {
+      stderr += s;
+    });
+    expect(exit).toBe(EXIT_USER_ERROR);
+    expectNoTerminalControls(stderr);
+    expect(stderr).not.toMatch(TERMINAL_CONTROL_BYTES);
+
+    // (b) The wrapped message never interpolates the raw fs error message, so the
+    // control bytes it carried are absent; it stays single-line and sanitized.
     const message = caught instanceof Error ? caught.message : String(caught);
     expectNoTerminalControls(message);
     expect(message).not.toMatch(TERMINAL_CONTROL_BYTES);
