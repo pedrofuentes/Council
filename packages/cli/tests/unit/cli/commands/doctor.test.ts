@@ -45,6 +45,11 @@ async function runDoctor(args: readonly string[], deps: DoctorDepsLike = {}): Pr
   return captured;
 }
 
+// Permission-based tests are meaningless when the process can bypass the mode
+// bits (root) or when POSIX permissions do not apply (Windows).
+const isPrivileged =
+  process.platform === "win32" || (typeof process.getuid === "function" && process.getuid() === 0);
+
 describe("buildDoctorCommand", () => {
   let testHome: string;
   let originalHome: string | undefined;
@@ -206,6 +211,92 @@ describe("buildDoctorCommand", () => {
     expect(output).toContain(`Council home\n   ${customDataHome}`);
     expect(output).toContain(`Council data home\n   ${customDataHome}`);
     expect(output).toContain(`Path: ${path.join(customDataHome, "config.yaml")}`);
+  });
+
+  it("doctor creates the experts/ and panels/ directories under COUNCIL_DATA_HOME (#792)", async () => {
+    const customDataHome = path.join(testHome, "custom-data-home");
+    process.env["COUNCIL_DATA_HOME"] = customDataHome;
+
+    await runDoctor(["--offline"]);
+
+    const experts = await fs.stat(path.join(customDataHome, "experts"));
+    const panels = await fs.stat(path.join(customDataHome, "panels"));
+    expect(experts.isDirectory()).toBe(true);
+    expect(panels.isDirectory()).toBe(true);
+  });
+
+  it("doctor falls back to the env data home when config load fails (#785)", async () => {
+    const customDataHome = path.join(testHome, "fallback-data-home");
+    process.env["COUNCIL_DATA_HOME"] = customDataHome;
+    await fs.mkdir(testHome, { recursive: true });
+    await fs.writeFile(path.join(testHome, "config.yaml"), "{{invalid yaml", "utf-8");
+
+    const output = await runDoctor(["--offline"]);
+
+    // loadConfig() throws on the broken YAML, so resolveDoctorDataHome() takes the
+    // catch branch and still resolves the data home from COUNCIL_DATA_HOME.
+    expect(output).toContain(`Council data home\n   ${customDataHome}`);
+    expect(output).toContain("Could not load configuration");
+    const experts = await fs.stat(path.join(customDataHome, "experts"));
+    expect(experts.isDirectory()).toBe(true);
+  });
+
+  it("doctor reports failure when the Council data home cannot be created (#785)", async () => {
+    await fs.mkdir(testHome, { recursive: true });
+    const blocker = path.join(testHome, "blocker-file");
+    await fs.writeFile(blocker, "not a directory", "utf-8");
+    const unmakeableDataHome = path.join(blocker, "nested-data-home");
+    process.env["COUNCIL_DATA_HOME"] = unmakeableDataHome;
+
+    const output = await runDoctor(["--offline"]);
+
+    expect(output).toContain(`cannot create ${unmakeableDataHome}`);
+    expect(output).toContain("Some checks failed");
+  });
+
+  it.skipIf(isPrivileged)(
+    "doctor fails the data home check when the directory exists but is not writable (#793)",
+    async () => {
+      const customDataHome = path.join(testHome, "readonly-data-home");
+      await fs.mkdir(path.join(customDataHome, "experts"), { recursive: true });
+      await fs.mkdir(path.join(customDataHome, "panels"), { recursive: true });
+      process.env["COUNCIL_DATA_HOME"] = customDataHome;
+      await fs.chmod(customDataHome, 0o500);
+
+      try {
+        const output = await runDoctor(["--offline"]);
+
+        // ensureDataDirectories() is a no-op on the existing subdirs, so creation
+        // "passes"; only a real write probe surfaces the read-only directory.
+        expect(output).toContain(`cannot write under ${customDataHome}`);
+        expect(output).toContain("Some checks failed");
+      } finally {
+        await fs.chmod(customDataHome, 0o700);
+      }
+    },
+  );
+
+  it("doctor collapses control characters in Terminal env values onto one line (#1483)", async () => {
+    const customDataHome = path.join(testHome, "term-data-home");
+    process.env["COUNCIL_DATA_HOME"] = customDataHome;
+    const originalTerm = process.env["TERM"];
+    process.env["TERM"] = "xterm\tTAB\u2028LS\u2029PS\r\nCRLF\u001b[31mANSI";
+
+    try {
+      const output = await runDoctor(["--offline"]);
+      const termLine =
+        output.split("\n").find((line) => line.trimStart().startsWith("TERM:")) ?? "";
+
+      // tab, U+2028, U+2029, CR/LF and ANSI must all collapse/strip to one line.
+      expect(termLine).toBe("   TERM: xterm TAB LS PS CRLFANSI");
+      expect(termLine).not.toContain("\t");
+      expect(termLine).not.toContain("\u2028");
+      expect(termLine).not.toContain("\u2029");
+      expect(termLine).not.toContain("\u001b");
+    } finally {
+      if (originalTerm === undefined) delete process.env["TERM"];
+      else process.env["TERM"] = originalTerm;
+    }
   });
 
   it("doctor --models lists live discovered models", async () => {
