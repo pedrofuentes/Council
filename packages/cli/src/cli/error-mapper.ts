@@ -19,6 +19,7 @@
  * use so users can copy-paste into bug reports.
  */
 import type { EngineError, EngineErrorCode } from "../engine/index.js";
+import { toSingleLineDisplay } from "./strip-control-chars.js";
 
 interface ErrorLike {
   readonly code?: EngineErrorCode | string;
@@ -60,12 +61,28 @@ export function formatEngineError(input: EngineError | ErrorLike | Error): strin
   let model: string | undefined;
 
   if (input instanceof Error) {
-    // Thrown Error path — may have a tagged `code` we attached upstream,
-    // otherwise fall through to the generic INTERNAL hint.
-    const maybeCoded = input as Error & { code?: string; model?: string };
+    // Thrown Error path — may have a tagged `code` we attached upstream.
+    // When it doesn't (the common case for engine.start() lifecycle
+    // failures from CopilotEngine), recover structure from the `cause`
+    // chain before falling back to message inference in `hintForCode`
+    // (#188).
+    const maybeCoded = input as Error & {
+      code?: string;
+      model?: string;
+      cause?: unknown;
+    };
     code = maybeCoded.code;
     message = input.message;
     model = maybeCoded.model;
+    if (code === undefined) {
+      const fromCause = findEngineErrorInCause(maybeCoded.cause);
+      if (fromCause) {
+        code = fromCause.code;
+        retryAfterMs = fromCause.retryAfterMs;
+        provider = fromCause.provider;
+        model = model ?? fromCause.model;
+      }
+    }
   } else {
     code = input.code;
     message = input.message ?? String(input);
@@ -87,7 +104,10 @@ function hintForCode(
     readonly model?: string | undefined;
   },
 ): string {
-  switch (code) {
+  // When no code was supplied (untagged Error), infer one from well-known
+  // message substrings so the user still gets an actionable hint (#188).
+  const resolvedCode = code ?? inferCodeFromMessage(ctx.message);
+  switch (resolvedCode) {
     case "NOT_AUTHENTICATED":
       return (
         "Council couldn't authenticate with the engine. " +
@@ -102,8 +122,12 @@ function hintForCode(
         const modelMatch = ctx.message.match(/\b(?:claude|gpt|gemini)-[a-z0-9.-]+\b/i);
         model = modelMatch ? modelMatch[0] : "(unknown)";
       }
+      // Sanitize before interpolating into stderr: a crafted model
+      // identifier could otherwise smuggle ANSI/OSC escapes, C0 controls,
+      // or CR/LF into the terminal (spoofing, title injection) (#668).
+      const safeModel = toSingleLineDisplay(model);
       return (
-        `Model ${model} isn't available on your Copilot tier. ` +
+        `Model ${safeModel} isn't available on your Copilot tier. ` +
         "Fix: council config set defaults.model <available-model>\n" +
         "Run 'council doctor --models' to see available models."
       );
@@ -145,7 +169,45 @@ function hintForCode(
         "If this persists, file an issue with the underlying message below so the adapter can be improved."
       );
     default:
-      // No code — generic fallback. Keep the original message visible.
+      // No recognized code and no inferable signal — generic fallback.
+      // Keep the original message visible for bug reports.
       return "Engine error.";
   }
+}
+
+/**
+ * Walk an error's `cause` chain looking for the first EngineError-shaped
+ * object (any object exposing a string `code`). Depth is bounded to guard
+ * against cyclic `cause` references. Returns `undefined` when none is found.
+ */
+function findEngineErrorInCause(cause: unknown, depth = 0): ErrorLike | undefined {
+  if (depth > 8 || cause === null || typeof cause !== "object") return undefined;
+  const candidate = cause as { readonly code?: unknown; readonly cause?: unknown };
+  if (typeof candidate.code === "string") return cause as ErrorLike;
+  return findEngineErrorInCause(candidate.cause, depth + 1);
+}
+
+/**
+ * Best-effort classification of an untagged error message into a known
+ * `EngineErrorCode` by matching common provider/runtime substrings. Only
+ * high-confidence auth/network/timeout signals are mapped; anything else
+ * returns `undefined` so the caller keeps the generic fallback (#188).
+ */
+function inferCodeFromMessage(message: string): EngineErrorCode | undefined {
+  const lower = message.toLowerCase();
+  if (
+    /\b(?:unauthenticated|unauthorized|not\s+authenticated|not\s+authorized|authentication|forbidden|401|403|invalid\s+token|missing\s+token|expired\s+token|credentials?|gh\s+auth|sign\s?in|log\s?in)\b/.test(
+      lower,
+    )
+  ) {
+    return "NOT_AUTHENTICATED";
+  }
+  if (
+    /\b(?:network|offline|unreachable|dns|timed?\s*out|timeout|econnrefused|econnreset|enotfound|etimedout|eai_again|socket\s+hang\s+up|connection\s+(?:refused|reset|closed|failed|timed\s+out))\b/.test(
+      lower,
+    )
+  ) {
+    return "NETWORK";
+  }
+  return undefined;
 }
