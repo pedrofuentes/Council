@@ -59,6 +59,30 @@ const createLibrary = (existing: readonly string[] = []) => {
   };
 };
 
+// Prototype-based (class) library whose methods read/mutate instance state via
+// `this`. An unbound (detached) call — e.g. `deps.library.delete` passed without
+// `.bind(deps.library)` — throws when it dereferences `this.experts`/`this.deletedSlugs`,
+// instead of silently no-op'ing. That is what makes tests built on this class
+// discriminating against a regression to a detached receiver.
+class ClassBasedLibrary {
+  private readonly experts = new Map<string, ExpertDefinition>();
+  readonly deletedSlugs: string[] = [];
+
+  async get(slug: string): Promise<ExpertDefinition | null> {
+    return this.experts.get(slug) ?? null;
+  }
+
+  async create(def: ExpertDefinition): Promise<void> {
+    this.experts.set(def.slug, def);
+  }
+
+  async delete(slug: string, _options: { readonly force: boolean }): Promise<undefined> {
+    this.experts.delete(slug);
+    this.deletedSlugs.push(slug);
+    return undefined;
+  }
+}
+
 describe("createPanelComposeSource", () => {
   it("composes with an engine, stops it, and returns a sanitized preview", async () => {
     const engine = createEngine();
@@ -309,5 +333,62 @@ describe("createPanelComposeSource", () => {
 
     expect(library.delete).toHaveBeenCalledWith("optimist", { force: true });
     expect(library.delete).toHaveBeenCalledWith("skeptic", { force: true });
+  });
+
+  it("rolls back every created expert via bound delete when createPanel throws (prototype-based library)", async () => {
+    const library = new ClassBasedLibrary();
+    const error = new Error("panel create failed");
+    const threeExperts = definition({
+      name: "detached-receiver-panel",
+      experts: [expert("alpha"), expert("beta"), expert("gamma")],
+    });
+    const source = createPanelComposeSource({
+      engineFactory: createEngine,
+      defaultModel: "mock-model",
+      library,
+      createPanel: vi.fn(async () => {
+        throw error;
+      }),
+      composeFn: vi.fn(async () => threeExperts),
+    });
+
+    await expect(source.persist(threeExperts)).rejects.toThrow(error);
+
+    // Exact set of rollback deletes (in creation order) — a bare
+    // `toHaveBeenCalled()` would not catch a rollback that silently dropped
+    // some experts. If `delete` were invoked detached (unbound `this`), each
+    // call would throw inside `rollbackCreatedExperts`'s `.catch(() => undefined)`
+    // and `deletedSlugs` would stay empty instead of matching this list.
+    expect(library.deletedSlugs).toEqual(["alpha", "beta", "gamma"]);
+
+    // Final state: no partial experts survive the failed persist.
+    await expect(library.get("alpha")).resolves.toBeNull();
+    await expect(library.get("beta")).resolves.toBeNull();
+    await expect(library.get("gamma")).resolves.toBeNull();
+  });
+
+  it("does not invoke delete on the prototype-based library when persist succeeds", async () => {
+    const library = new ClassBasedLibrary();
+    const createPanel = vi.fn<Parameters<PanelAuthoringDataSource["create"]>, Promise<void>>(
+      async () => undefined,
+    );
+    const source = createPanelComposeSource({
+      engineFactory: createEngine,
+      defaultModel: "mock-model",
+      library,
+      createPanel,
+      composeFn: vi.fn(async () => definition()),
+    });
+
+    await expect(source.persist(definition())).resolves.toEqual({ panelName: "strategy-panel" });
+
+    // No spurious rollback: nothing was deleted, and both experts persist.
+    expect(library.deletedSlugs).toEqual([]);
+    await expect(library.get("optimist")).resolves.toEqual(
+      expect.objectContaining({ slug: "optimist" }),
+    );
+    await expect(library.get("skeptic")).resolves.toEqual(
+      expect.objectContaining({ slug: "skeptic" }),
+    );
   });
 });
