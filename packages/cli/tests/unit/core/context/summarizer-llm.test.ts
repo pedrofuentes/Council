@@ -474,7 +474,7 @@ describe("buildLLMSummary — best-effort failure observability (#268)", () => {
 
   it("falls back to console.warn when no onWarning sink is provided", async () => {
     const engine = new CleanupFailEngine(["done"]);
-    const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const spy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const out = await buildLLMSummary(baseTurns, 2, cfg, engine, "gpt-test");
       expect(out).toBe("done");
