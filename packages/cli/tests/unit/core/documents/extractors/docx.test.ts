@@ -161,9 +161,7 @@ async function loadDocxExtractor(): Promise<{
 }> {
   vi.resetModules();
   await import("../../../../../src/core/documents/extractors/docx.js");
-  const registry = await import(
-    "../../../../../src/core/documents/extractors/registry.js"
-  );
+  const registry = await import("../../../../../src/core/documents/extractors/registry.js");
   const extractor = await registry.getExtractor(".docx");
   if (!extractor) {
     throw new Error("docx extractor not registered");
@@ -264,9 +262,7 @@ describe("docx extractor", () => {
       { name: "[Content_Types].xml", data: Buffer.from(CONTENT_TYPES, "utf-8") },
       { name: "_rels/.rels", data: Buffer.from(ROOT_RELS, "utf-8") },
     ]);
-    await expect(
-      extractor(ctx(buf, "missing-doc.docx")),
-    ).rejects.toMatchObject({
+    await expect(extractor(ctx(buf, "missing-doc.docx"))).rejects.toMatchObject({
       name: "ExtractionError",
       kind: "corrupt-document",
       filePath: "missing-doc.docx",
@@ -341,9 +337,68 @@ describe("docx extractor — DoS guards and cancellation", () => {
     });
   });
 
+  it("accepts an entry declaring exactly the per-entry cap (20 MiB) — strict > boundary accept-side (#1896)", async () => {
+    const { extractor } = await loadDocxExtractor();
+    // The guard is `entry.uncompressedSize > MAX_ENTRY_BYTES` (strict >),
+    // where MAX_ENTRY_BYTES = 20 * 1024 * 1024.  An entry declaring exactly
+    // 20 MiB must NOT be rejected by the per-entry cap.
+    //
+    // fakeCompressedSize is omitted so the central-directory compressed size
+    // equals the actual deflated bytes (~30 bytes).  That makes the ratio
+    // (~700 000:1) exceed MAX_RATIO (100:1), so the ratio guard fires next.
+    // The rejection message therefore contains "ratio", not "per-entry".
+    //
+    // Discriminating: if MAX_ENTRY_BYTES is tightened below 20 MiB, or >
+    // is changed to >=, the per-entry guard fires first and the message
+    // switches to "per-entry" — this assertion fails.
+    const buf = buildZip([
+      {
+        name: "word/document.xml",
+        data: Buffer.from("<w:document/>", "utf-8"),
+        fakeUncompressedSize: 20 * 1024 * 1024,
+      },
+    ]);
+    await expect(extractor(ctx(buf, "exact-cap.docx"))).rejects.toMatchObject({
+      name: "ExtractionError",
+      kind: "zip-bomb-detected",
+      filePath: "exact-cap.docx",
+      message: expect.stringContaining("ratio"),
+    });
+  });
+
+  it("rejects with zip-bomb-detected(per-entry) when a single entry is one byte over the cap (20 MiB + 1) — strict > boundary reject-side (#1896)", async () => {
+    const { extractor } = await loadDocxExtractor();
+    // Tight complement to the accept-side test above.  20 MiB + 1 is the
+    // smallest value that satisfies entry.uncompressedSize > MAX_ENTRY_BYTES,
+    // pinning the exact constant 20 * 1024 * 1024.
+    //
+    // Discriminating: if MAX_ENTRY_BYTES is loosened above 20 MiB, this
+    // entry is no longer rejected by the per-entry guard — the assertion fails.
+    const buf = buildZip([
+      {
+        name: "word/document.xml",
+        data: Buffer.from("<w:document/>", "utf-8"),
+        fakeUncompressedSize: 20 * 1024 * 1024 + 1,
+        fakeCompressedSize: 20 * 1024 * 1024 + 1,
+      },
+    ]);
+    await expect(extractor(ctx(buf, "entry-bomb-boundary.docx"))).rejects.toMatchObject({
+      name: "ExtractionError",
+      kind: "zip-bomb-detected",
+      filePath: "entry-bomb-boundary.docx",
+      message: expect.stringContaining("per-entry"),
+    });
+  });
+
   it("honors a pre-aborted signal with extraction-timeout before preflight (#949)", async () => {
     const { extractor } = await loadDocxExtractor();
-    const buf = buildDocx("<w:p><w:r><w:t>Hello world</w:t></w:r></w:p>");
+    // A non-ZIP buffer is used intentionally: if the pre-preflight abort
+    // checkpoint (docx.ts ~188-190) were removed, execution would fall
+    // through to preflightZip(), which would throw corrupt-document on this
+    // buffer instead of extraction-timeout.  A valid docx buffer cannot
+    // provide that isolation because the post-preflight checkpoint would
+    // still yield extraction-timeout, letting the mutation survive.
+    const buf = Buffer.from("not-a-zip");
     const controller = new AbortController();
     controller.abort();
     await expect(extractor(ctx(buf, "aborted.docx", controller.signal))).rejects.toMatchObject({
