@@ -1,10 +1,21 @@
 import { buildPersistedPanelDefinition } from "../../cli/commands/convene.js";
+import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
 import type { CouncilConfig } from "../../config/index.js";
 import type { DebateConfig, DebateMode } from "../../core/debate.js";
 import type { ExpertDefinition } from "../../core/expert.js";
 import type { PanelDefinition, ResolvedPanelDefinition } from "../../core/template-loader.js";
 import type { ExpertSpec } from "../../engine/index.js";
 import type { ResolvedConvenePanel } from "./convene.js";
+
+/**
+ * Canonical panel cardinality — mirrors `PanelDefinitionSchema.experts`
+ * (`.min(1).max(8)`) in `core/template-loader.ts`, the single source of truth
+ * for how many experts a panel/debate supports. Duplicated as plain constants
+ * (not imported) to keep this adapter's validation self-contained; if the
+ * template-loader bound ever changes, update both together.
+ */
+const MIN_PANEL_EXPERTS = 1;
+const MAX_PANEL_EXPERTS = 8;
 
 export interface ConvenePanelRuntimeInput {
   readonly panelName: string;
@@ -51,6 +62,22 @@ export function createConvenePanelResolver(
     // getMembers so a debate always runs the panel's current experts.
     const panel = await deps.loadPanel(panelName, deps.dataHome);
     const memberSlugs = await deps.getMembers(panelName);
+    // The live DB membership can drift from the panel YAML (the TUI's setMembers
+    // edits the DB, not the YAML), so a DB-edited panel could hold a member count
+    // the debate runtime can't support. Revalidate against the canonical 1-8
+    // panel cardinality (template-loader.ts PanelDefinitionSchema) BEFORE building
+    // any specs, so an out-of-range panel fails fast with a clear, sanitized error
+    // instead of estimating/running an unsupported number of experts. #1680.
+    if (memberSlugs.length < MIN_PANEL_EXPERTS || memberSlugs.length > MAX_PANEL_EXPERTS) {
+      // panelName is DB/user-derived and echoed to a single-line terminal error
+      // surface, so sanitize it (parity with the rest of this adapter layer).
+      const safeName = toSingleLineDisplay(panelName);
+      throw new Error(
+        `Panel "${safeName}" has ${memberSlugs.length} members, but a council debate ` +
+          `requires between ${MIN_PANEL_EXPERTS} and ${MAX_PANEL_EXPERTS} experts. ` +
+          `Edit the panel membership to continue.`,
+      );
+    }
     const mode = panel.defaults?.mode ?? "freeform";
     const maxRounds = panel.defaults?.maxRounds ?? deps.config.defaults.maxRounds;
     const panelDefaultModel = panel.defaults?.model ?? deps.config.defaults.model;
