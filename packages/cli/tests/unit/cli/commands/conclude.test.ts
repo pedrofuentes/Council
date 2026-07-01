@@ -209,6 +209,8 @@ function makeMockEngine(jsonResponse: string): MockEngine {
 class RecordingSynthEngine implements CouncilEngine {
   readonly #responses: string[];
   #sends = 0;
+  readonly #addedExpertIds: string[] = [];
+  readonly #sentExpertIds: string[] = [];
 
   constructor(responses: readonly string[]) {
     this.#responses = [...responses];
@@ -219,14 +221,24 @@ class RecordingSynthEngine implements CouncilEngine {
     return this.#sends;
   }
 
+  /** Expert ids registered via `addExpert()`, in call order — one per synthesizer session. */
+  get addedExpertIds(): readonly string[] {
+    return this.#addedExpertIds;
+  }
+
+  /** Expert ids targeted by `send()`, in call order — one per synthesis attempt. */
+  get sentExpertIds(): readonly string[] {
+    return this.#sentExpertIds;
+  }
+
   async start(): Promise<void> {
     /* no-op */
   }
   async stop(): Promise<void> {
     /* no-op */
   }
-  async addExpert(_spec: ExpertSpec): Promise<void> {
-    /* no-op */
+  async addExpert(spec: ExpertSpec): Promise<void> {
+    this.#addedExpertIds.push(spec.id);
   }
   async removeExpert(_expertId: string): Promise<void> {
     /* no-op */
@@ -238,6 +250,7 @@ class RecordingSynthEngine implements CouncilEngine {
   send(opts: SendOptions): AsyncIterable<EngineEvent> {
     this.#sends += 1;
     const expertId = opts.expertId;
+    this.#sentExpertIds.push(expertId);
     const idx = Math.min(this.#sends - 1, this.#responses.length - 1);
     const text = this.#responses[idx] ?? "";
     return (async function* (): AsyncGenerator<EngineEvent, void, void> {
@@ -581,10 +594,13 @@ describe("buildConcludeCommand", () => {
 
   it("emits a clear error when the engine response is not valid JSON", async () => {
     const seed = await seedPanelWithDebate(testHome);
+    // Every synthesizer session — the first attempt and the fresh-session
+    // retry (#1133) — returns the same non-JSON text, so synthesis stays
+    // unparseable through the retry and surfaces the error.
     const cmd = buildConcludeCommand({
       write: () => undefined,
       writeError: () => undefined,
-      engineFactory: () => makeMockEngine("this is not JSON at all"),
+      engineFactory: () => new RecordingSynthEngine(["this is not JSON at all"]),
       synthesizerId: SYNTH_ID,
     });
     cmd.exitOverride();
@@ -772,10 +788,13 @@ describe("buildConcludeCommand", () => {
 
   it("rejects malformed (non-JSON) engine response with a clear error", async () => {
     const seed = await seedPanelWithDebate(testHome);
+    // Every synthesizer session — the first attempt and the fresh-session
+    // retry (#1133) — returns the same non-JSON text, so synthesis stays
+    // unparseable through the retry and surfaces the error.
     const cmd = buildConcludeCommand({
       write: () => undefined,
       writeError: () => undefined,
-      engineFactory: () => makeMockEngine("this is not json at all"),
+      engineFactory: () => new RecordingSynthEngine(["this is not json at all"]),
       synthesizerId: SYNTH_ID,
     });
     cmd.exitOverride();
@@ -828,7 +847,7 @@ describe("buildConcludeCommand", () => {
     expect(parsed.confidence).toBe("medium");
   });
 
-  it("retries the synthesizer once when the first response is unparseable, then emits a decision framework", async () => {
+  it("re-samples the synthesizer from a FRESH session when the first response is unparseable, then emits a decision framework (#1133)", async () => {
     const seed = await seedPanelWithDebate(testHome);
     // First send: a JSON syntax error (unescaped inner quotes) that no
     // repair heuristic can fix. Second send: clean JSON. This mirrors the
@@ -862,12 +881,56 @@ describe("buildConcludeCommand", () => {
     // The synthesizer was called twice: the broken first attempt and the
     // successful retry.
     expect(engine.sendCount).toBe(2);
+    // #1133: the retry must run in a FRESH synthesizer session so the
+    // re-sample is not polluted by the first attempt's own malformed output.
+    // Two distinct sessions must have been created (one addExpert per attempt),
+    // and the retry's send() must target the NEW session — not the pinned
+    // first-attempt id whose context now holds the broken response.
+    expect(engine.addedExpertIds).toHaveLength(2);
+    expect(engine.addedExpertIds[0]).toBe(SYNTH_ID);
+    expect(engine.addedExpertIds[1]).not.toBe(SYNTH_ID);
+    expect(engine.sentExpertIds).toEqual([SYNTH_ID, engine.addedExpertIds[1]]);
+    expect(engine.sentExpertIds[1]).not.toBe(engine.sentExpertIds[0]);
+  });
+
+  it("does NOT open a second synthesizer session when the first response parses (no spurious fresh session)", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    const engine = new RecordingSynthEngine([JSON.stringify(SAMPLE_OUTPUT)]);
+    let captured = "";
+    const cmd = buildConcludeCommand({
+      write: (s) => {
+        captured += s;
+      },
+      writeError: () => undefined,
+      engineFactory: () => engine,
+      synthesizerId: SYNTH_ID,
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-conclude",
+      seed.panelName,
+      "--engine",
+      "mock",
+      "--format",
+      "json",
+    ]);
+
+    const parsed = JSON.parse(captured.trim()) as ConcludeOutput;
+    expect(parsed.recommendation).toBe(SAMPLE_OUTPUT.recommendation);
+    // Happy path: exactly one synthesizer session, one send — the fresh-session
+    // retry path must not fire when the first response already parses.
+    expect(engine.sendCount).toBe(1);
+    expect(engine.addedExpertIds).toEqual([SYNTH_ID]);
+    expect(engine.sentExpertIds).toEqual([SYNTH_ID]);
   });
 
   it("degrades gracefully with a clear, actionable error (no raw crash) when JSON stays unparseable after retry", async () => {
     const seed = await seedPanelWithDebate(testHome);
     // Unescaped inner quotes are unrepairable by fence/brace/trailing-comma
-    // heuristics, and the mock returns the same broken text on the retry.
+    // heuristics, and every synthesizer session — the first attempt AND the
+    // fresh-session retry (#1133) — returns the same broken text, so synthesis
+    // stays unparseable end-to-end.
     const broken =
       '{"consensus":[],"tensions":[],"decisionMatrix":[],' +
       '"recommendation":"He said "ship it" loudly","confidence":"low"}';
@@ -877,7 +940,7 @@ describe("buildConcludeCommand", () => {
       writeError: (s) => {
         errOutput += s;
       },
-      engineFactory: () => makeMockEngine(broken),
+      engineFactory: () => new RecordingSynthEngine([broken]),
       synthesizerId: SYNTH_ID,
     });
     cmd.exitOverride();
