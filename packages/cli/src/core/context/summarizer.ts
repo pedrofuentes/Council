@@ -54,10 +54,13 @@ export interface SummarizerConfig {
    */
   readonly mode?: SummarizerMode;
   /**
-   * #271: hard cap on the cumulative serialized size (in characters) of
-   * the prior-turn transcript fed to the LLM summarizer. The most recent
-   * turns that fit are kept and older turns are dropped, so prompt size
-   * and token cost stay bounded as a debate grows. Optional — defaults to
+   * #271: hard cap on the cumulative *escaped, serialized* size (in
+   * characters) of the prior-turn transcript fed to the LLM summarizer.
+   * The most recent turns whose escaped serialization fits are kept and
+   * older turns are dropped (#1939), so prompt size and token cost stay
+   * bounded as a debate grows. The fixed fence framing (the preamble and
+   * the `<transcript>`/`</transcript>` delimiters) is a small constant on
+   * top of this budget. Optional — defaults to
    * {@link DEFAULT_MAX_TRANSCRIPT_CHARS}. Ignored by the heuristic
    * summarizer, which never sends a transcript to a model.
    */
@@ -296,13 +299,11 @@ function formatTurnsForLLM(turns: readonly PriorTurnRecord[], config: Summarizer
     "<transcript>",
   ];
   for (const t of windowed) {
-    // Every interpolated field is sanitized — hostile displayName or
-    // expertSlug must not be able to close the fence.
-    const displayName = escapeFenceContent(t.displayName);
-    const slug = escapeFenceContent(t.expertSlug);
-    lines.push(`[Round ${t.round}] ${displayName} (${slug}):`);
-    lines.push(escapeFenceContent(t.content));
-    lines.push("");
+    // Every interpolated field is escaped — a hostile displayName or
+    // expertSlug must not be able to close the fence. serializeTurnLines
+    // is the single source of truth shared with the windowing budget so
+    // the cost accounting matches the emitted prompt exactly (#1939).
+    lines.push(...serializeTurnLines(t));
   }
   lines.push("</transcript>");
   return lines.join("\n");
@@ -310,11 +311,11 @@ function formatTurnsForLLM(turns: readonly PriorTurnRecord[], config: Summarizer
 
 /**
  * #271: bound the transcript fed to the LLM summarizer. Keeps the most
- * recent turns whose cumulative serialized size fits within `maxChars`
- * and drops older turns, so prompt size and token cost cannot grow
- * without bound. If the single most recent turn alone exceeds the budget
- * its content is truncated, so at least the latest turn is always
- * represented.
+ * recent turns whose cumulative *escaped* serialized size fits within
+ * `maxChars` and drops older turns, so prompt size and token cost cannot
+ * grow without bound. If the single most recent turn alone exceeds the
+ * budget its content is truncated on its escaped length (#1939), so at
+ * least the latest turn is always represented.
  */
 function windowTranscript(
   turns: readonly PriorTurnRecord[],
@@ -343,22 +344,68 @@ function windowTranscript(
 }
 
 /**
- * Approximate serialized cost of a turn: the header line plus its
- * content. Charging the header (never zero) also bounds the number of
- * kept turns, so an unbounded run of empty-content turns cannot inflate
- * the prompt.
+ * Number of newline characters each serialized turn contributes to the
+ * joined transcript — one terminating each of the three lines it emits
+ * (escaped header, escaped content, blank spacer). `formatTurnsForLLM`
+ * always appends `</transcript>` after the turns, so every one of those
+ * lines is followed by a newline in the joined output.
  */
-function turnCost(t: PriorTurnRecord): number {
-  return turnHeader(t).length + t.content.length;
+const PER_TURN_FRAMING_CHARS = 3;
+
+/** The three lines a turn contributes inside the transcript fence. */
+function serializeTurnLines(t: PriorTurnRecord): readonly string[] {
+  return [turnHeader(t), escapeFenceContent(t.content), ""];
 }
 
+/**
+ * Exact serialized cost of a turn as it appears inside the transcript
+ * fence: the ESCAPED header line, the ESCAPED content, and the blank
+ * spacer, plus the newline terminating each of the three lines (#1939).
+ * Budgeting on the escaped serialization — not the raw field lengths —
+ * keeps the windowed transcript within `maxTranscriptChars`, since
+ * `escapeFenceContent` can only expand a field (`<` → `&lt;`). Charging
+ * the header (never zero) also bounds the number of kept turns, so an
+ * unbounded run of empty-content turns cannot inflate the prompt.
+ */
+function turnCost(t: PriorTurnRecord): number {
+  return turnHeader(t).length + escapeFenceContent(t.content).length + PER_TURN_FRAMING_CHARS;
+}
+
+/**
+ * Truncate a turn so its escaped serialization fits `budget`. Reserves the
+ * escaped header + per-turn framing, then truncates the raw content so its
+ * ESCAPED length fits the remaining room (#1939). A pathological header
+ * that alone exceeds the budget is still emitted with empty content —
+ * headers are short metadata in practice.
+ */
 function truncateTurnContent(t: PriorTurnRecord, budget: number): PriorTurnRecord {
-  const room = Math.max(0, budget - turnHeader(t).length);
-  return { ...t, content: t.content.slice(0, room) };
+  const room = budget - turnHeader(t).length - PER_TURN_FRAMING_CHARS;
+  return { ...t, content: truncateToEscapedLength(t.content, room) };
+}
+
+/**
+ * Longest prefix of `content` whose {@link escapeFenceContent} expansion
+ * fits within `room` UTF-16 code units. Walks by code point so a surrogate
+ * pair is never split, and charges `<` (→ `&lt;`) its escaped width.
+ * Returns "" when `room` is non-positive.
+ */
+function truncateToEscapedLength(content: string, room: number): string {
+  if (room <= 0) return "";
+  let used = 0;
+  let end = 0;
+  for (const ch of content) {
+    const cost = ch === "<" ? 4 : ch.length;
+    if (used + cost > room) break;
+    used += cost;
+    end += ch.length;
+  }
+  return content.slice(0, end);
 }
 
 function turnHeader(t: PriorTurnRecord): string {
-  return `[Round ${t.round}] ${t.displayName} (${t.expertSlug}):`;
+  // Escaped exactly as serialized (displayName/expertSlug can only expand),
+  // so budgeting and serialization agree on the header's real size (#1939).
+  return `[Round ${t.round}] ${escapeFenceContent(t.displayName)} (${escapeFenceContent(t.expertSlug)}):`;
 }
 
 /**
@@ -385,10 +432,17 @@ function mergeSignals(
  */
 function warnSummarizer(onWarning: ((message: string) => void) | undefined, message: string): void {
   const safe = toSingleLineDisplay(message);
-  if (onWarning) {
-    onWarning(safe);
-  } else {
-    console.warn(safe);
+  try {
+    if (onWarning) {
+      onWarning(safe);
+    } else {
+      console.warn(safe);
+    }
+  } catch {
+    // A throwing sink (e.g. a logger that fails under backpressure or a
+    // full disk) must NOT propagate: observability is best-effort and must
+    // never break the summarizer's "never throws" contract (#1938) nor
+    // abort the parent debate round.
   }
 }
 
