@@ -11,7 +11,7 @@
  */
 import { deflateRawSync } from "node:zlib";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
   ContentExtractor,
@@ -21,6 +21,10 @@ import type {
 interface ZipEntry {
   readonly name: string;
   readonly data: Buffer;
+  /** Override the uncompressed size written to the ZIP headers (bomb tests). */
+  readonly fakeUncompressedSize?: number;
+  /** Override the compressed size written to the ZIP headers (bomb tests). */
+  readonly fakeCompressedSize?: number;
 }
 
 function crc32(buf: Buffer): number {
@@ -52,6 +56,8 @@ function buildZip(entries: readonly ZipEntry[]): Buffer {
     const compressed = deflateRawSync(uncompressed);
     const crc = crc32(uncompressed);
     const method = 8; // DEFLATE
+    const declaredCompressedSize = entry.fakeCompressedSize ?? compressed.length;
+    const declaredUncompressedSize = entry.fakeUncompressedSize ?? uncompressed.length;
 
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
@@ -61,8 +67,8 @@ function buildZip(entries: readonly ZipEntry[]): Buffer {
     local.writeUInt16LE(0, 10); // time
     local.writeUInt16LE(0, 12); // date
     local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(compressed.length, 18);
-    local.writeUInt32LE(uncompressed.length, 22);
+    local.writeUInt32LE(declaredCompressedSize, 18);
+    local.writeUInt32LE(declaredUncompressedSize, 22);
     local.writeUInt16LE(nameBuf.length, 26);
     local.writeUInt16LE(0, 28);
 
@@ -79,8 +85,8 @@ function buildZip(entries: readonly ZipEntry[]): Buffer {
     central.writeUInt16LE(0, 12); // time
     central.writeUInt16LE(0, 14); // date
     central.writeUInt32LE(crc, 16);
-    central.writeUInt32LE(compressed.length, 20);
-    central.writeUInt32LE(uncompressed.length, 24);
+    central.writeUInt32LE(declaredCompressedSize, 20);
+    central.writeUInt32LE(declaredUncompressedSize, 24);
     central.writeUInt16LE(nameBuf.length, 28);
     central.writeUInt16LE(0, 30); // extra
     central.writeUInt16LE(0, 32); // comment
@@ -165,12 +171,13 @@ async function loadDocxExtractor(): Promise<{
   return { extractor };
 }
 
-function ctx(buf: Buffer, filename = "doc.docx"): ExtractionContext {
+function ctx(buf: Buffer, filename = "doc.docx", signal?: AbortSignal): ExtractionContext {
   return {
     buffer: buf,
     filename,
     extension: ".docx",
     sizeBytes: buf.byteLength,
+    ...(signal !== undefined ? { signal } : {}),
   };
 }
 
@@ -263,6 +270,127 @@ describe("docx extractor", () => {
       name: "ExtractionError",
       kind: "corrupt-document",
       filePath: "missing-doc.docx",
+    });
+  });
+});
+
+describe("docx extractor — DoS guards and cancellation", () => {
+  afterEach(() => {
+    // A per-test mammoth mock (see the encrypted-document case) must not
+    // leak into sibling tests that rely on the real converter.
+    vi.doUnmock("mammoth");
+    vi.resetModules();
+  });
+
+  it("throws ExtractionError(zip-bomb-detected) when the archive has more than 1000 entries (#952)", async () => {
+    const { extractor } = await loadDocxExtractor();
+    const entries: ZipEntry[] = [];
+    for (let i = 0; i < 1001; i++) {
+      entries.push({ name: `part/e${i}.xml`, data: Buffer.from("x", "utf-8") });
+    }
+    await expect(extractor(ctx(buildZip(entries), "many-entries.docx"))).rejects.toMatchObject({
+      name: "ExtractionError",
+      kind: "zip-bomb-detected",
+      filePath: "many-entries.docx",
+      message: expect.stringContaining("more than 1000"),
+    });
+  });
+
+  it("throws ExtractionError(zip-bomb-detected) when the uncompressed total exceeds the cap (#952)", async () => {
+    const { extractor } = await loadDocxExtractor();
+    // 11 entries × 19 MiB declared = 209 MiB, past the 200 MiB total cap.
+    // Each entry stays under the per-entry cap at a 1:1 ratio, so only the
+    // aggregate uncompressed-total guard can reject the archive. Faked
+    // header sizes avoid allocating 200 MiB of real data.
+    const entries: ZipEntry[] = [];
+    for (let i = 0; i < 11; i++) {
+      entries.push({
+        name: `pad/blob${i}.bin`,
+        data: Buffer.from([0]),
+        fakeUncompressedSize: 19 * 1024 * 1024,
+        fakeCompressedSize: 19 * 1024 * 1024,
+      });
+    }
+    await expect(extractor(ctx(buildZip(entries), "oversize-total.docx"))).rejects.toMatchObject({
+      name: "ExtractionError",
+      kind: "zip-bomb-detected",
+      filePath: "oversize-total.docx",
+      message: expect.stringContaining("uncompressed total exceeds"),
+    });
+  });
+
+  it("throws ExtractionError(zip-bomb-detected) when a single entry exceeds the per-entry uncompressed cap (#950)", async () => {
+    const { extractor } = await loadDocxExtractor();
+    // One entry declaring 21 MiB uncompressed at a 1:1 ratio: it is the
+    // only entry, sits below the 200 MiB aggregate cap, and is under the
+    // 100:1 ratio limit, so a per-entry uncompressed cap is the only guard
+    // that can reject it.
+    const buf = buildZip([
+      {
+        name: "word/document.xml",
+        data: Buffer.from("<w:document/>", "utf-8"),
+        fakeUncompressedSize: 21 * 1024 * 1024,
+        fakeCompressedSize: 21 * 1024 * 1024,
+      },
+    ]);
+    await expect(extractor(ctx(buf, "entry-bomb.docx"))).rejects.toMatchObject({
+      name: "ExtractionError",
+      kind: "zip-bomb-detected",
+      filePath: "entry-bomb.docx",
+      message: expect.stringContaining("per-entry"),
+    });
+  });
+
+  it("honors a pre-aborted signal with extraction-timeout before preflight (#949)", async () => {
+    const { extractor } = await loadDocxExtractor();
+    const buf = buildDocx("<w:p><w:r><w:t>Hello world</w:t></w:r></w:p>");
+    const controller = new AbortController();
+    controller.abort();
+    await expect(extractor(ctx(buf, "aborted.docx", controller.signal))).rejects.toMatchObject({
+      name: "ExtractionError",
+      kind: "extraction-timeout",
+      filePath: "aborted.docx",
+    });
+  });
+
+  it("re-checks the abort signal after preflight, before invoking mammoth (#949)", async () => {
+    const { extractor } = await loadDocxExtractor();
+    const buf = buildDocx("<w:p><w:r><w:t>Hello world</w:t></w:r></w:p>");
+    // Reports "not aborted" for the pre-preflight check and "aborted" for
+    // the pre-mammoth check, proving the extractor inspects the signal a
+    // second time after a successful preflight.
+    let reads = 0;
+    const signal = {
+      get aborted(): boolean {
+        reads += 1;
+        return reads > 1;
+      },
+      reason: new Error("cancelled after preflight"),
+    } as unknown as AbortSignal;
+    await expect(extractor(ctx(buf, "aborted-late.docx", signal))).rejects.toMatchObject({
+      name: "ExtractionError",
+      kind: "extraction-timeout",
+      filePath: "aborted-late.docx",
+    });
+    expect(reads).toBeGreaterThanOrEqual(2);
+  });
+
+  it("classifies a mammoth password/encryption failure as encrypted-document (#951)", async () => {
+    vi.resetModules();
+    vi.doMock("mammoth", () => ({
+      convertToMarkdown: vi.fn().mockRejectedValue(new Error("Document is password protected")),
+    }));
+    await import("../../../../../src/core/documents/extractors/docx.js");
+    const registry = await import("../../../../../src/core/documents/extractors/registry.js");
+    const extractor = await registry.getExtractor(".docx");
+    if (!extractor) {
+      throw new Error("docx extractor not registered");
+    }
+    const buf = buildDocx("<w:p><w:r><w:t>secret</w:t></w:r></w:p>");
+    await expect(extractor(ctx(buf, "locked.docx"))).rejects.toMatchObject({
+      name: "ExtractionError",
+      kind: "encrypted-document",
+      filePath: "locked.docx",
     });
   });
 });
