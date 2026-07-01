@@ -297,6 +297,39 @@ describe("PanelDetailScreen", () => {
     expect(frame).toContain("Convene");
   });
 
+  it("does not open the action menu when a is pressed on a template panel", async () => {
+    const { stdin, lastFrame } = render(
+      <DataProvider
+        value={withDetail(async () => ({
+          name: "starter",
+          description: "",
+          source: "template",
+          members: [],
+          missing: [],
+        }))}
+      >
+        <MemoryRouter
+          initialEntries={[{ pathname: "/panels/starter", state: { source: "template" } }]}
+        >
+          <Routes>
+            <Route path="/panels/:name" element={<PanelDetailScreen theme={theme} isActive />} />
+          </Routes>
+        </MemoryRouter>
+      </DataProvider>,
+    );
+
+    await flush();
+    stdin.write("a");
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    expect(frame).not.toContain("Actions");
+    expect(frame).not.toContain("Chat");
+    expect(frame).not.toContain("Delete");
+    expect(frame).not.toContain("Convene");
+    expect(frame).toContain("starter");
+  });
+
   it("selecting Chat from the action menu navigates the same as pressing c directly", async () => {
     const { stdin, lastFrame } = render(
       <DataProvider
