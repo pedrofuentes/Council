@@ -99,9 +99,11 @@ describe("buildConfigCommand config set", () => {
   );
 
   it("rejects invalid telemetry.enabled values as a user error", async () => {
-    const { stderr, error } = await runConfig(["set", "telemetry.enabled", "maybe"]);
+    const { stdout, stderr, error } = await runConfig(["set", "telemetry.enabled", "maybe"]);
 
+    expect(stdout).toBe("");
     expect(error).toBeInstanceOf(CliUserError);
+    expect((error as CliUserError).message).toContain("must be true or false");
     expect(stderr).toContain("Config value for telemetry.enabled must be true or false.");
   });
 
@@ -116,9 +118,11 @@ describe("buildConfigCommand config set", () => {
   });
 
   it("rejects invalid defaults.engine values as a user error", async () => {
-    const { stderr, error } = await runConfig(["set", "defaults.engine", "ollama"]);
+    const { stdout, stderr, error } = await runConfig(["set", "defaults.engine", "ollama"]);
 
+    expect(stdout).toBe("");
     expect(error).toBeInstanceOf(CliUserError);
+    expect((error as CliUserError).message).toContain("must be one of");
     expect(stderr).toContain(
       "Config value for defaults.engine must be one of: copilot, mock, openai, anthropic",
     );
@@ -150,18 +154,22 @@ describe("buildConfigCommand config set", () => {
       ["chat.summaryMaxWords", "99", ">=100"],
       ["chat.longConversationWarning", "49", ">=50"],
     ] as const)("rejects out-of-range %s values as user errors", async (key, rawValue, bound) => {
-      const { stderr, error } = await runConfig(["set", key, rawValue]);
+      const { stdout, stderr, error } = await runConfig(["set", key, rawValue]);
 
+      expect(stdout).toBe("");
       expect(error).toBeInstanceOf(CliUserError);
+      expect((error as CliUserError).message).toContain("Invalid Council config");
       expect(stderr).toContain("Invalid Council config");
       expect(stderr).toContain(key);
       expect(stderr).toContain(bound);
     });
 
     it("rejects non-integer chat values as a user error", async () => {
-      const { stderr, error } = await runConfig(["set", "chat.recentTurnCount", "10.5"]);
+      const { stdout, stderr, error } = await runConfig(["set", "chat.recentTurnCount", "10.5"]);
 
+      expect(stdout).toBe("");
       expect(error).toBeInstanceOf(CliUserError);
+      expect((error as CliUserError).message).toContain("must be an integer");
       expect(stderr).toContain("Config value for chat.recentTurnCount must be an integer.");
     });
   });
@@ -174,9 +182,11 @@ describe("buildConfigCommand config set", () => {
     it.each(["", "   ", "0x2", "1e0", "1.5"])(
       "rejects %j for defaults.maxRounds as a user error",
       async (rawValue) => {
-        const { stderr, error } = await runConfig(["set", "defaults.maxRounds", rawValue]);
+        const { stdout, stderr, error } = await runConfig(["set", "defaults.maxRounds", rawValue]);
 
+        expect(stdout).toBe("");
         expect(error).toBeInstanceOf(CliUserError);
+        expect((error as CliUserError).message).toContain("must be an integer");
         expect(stderr).toContain("Config value for defaults.maxRounds must be an integer.");
       },
     );
@@ -193,8 +203,11 @@ describe("buildConfigCommand config set", () => {
   });
 
   it("rejects unsupported keys with the valid key list", async () => {
-    const { stderr } = await runConfig(["set", "providers.openai.apiKeyEnvVar", "OPENAI_API_KEY"]);
+    const { stdout, stderr, error } = await runConfig(["set", "providers.openai.apiKeyEnvVar", "OPENAI_API_KEY"]);
 
+    expect(stdout).toBe("");
+    expect(error).toBeInstanceOf(CliUserError);
+    expect((error as CliUserError).message).toContain("Unsupported config key");
     expect(stderr).toContain("Unsupported config key");
     expect(stderr).toContain("defaults.model");
     expect(stderr).toContain("defaults.maxWordsPerResponse");
@@ -206,8 +219,11 @@ describe("buildConfigCommand config set", () => {
     await fs.mkdir(testHome, { recursive: true });
     await fs.writeFile(configPath, "defaults:\n  maxExperts: 3\n", "utf-8");
 
-    const { stderr } = await runConfig(["set", "defaults.maxExperts", "1"]);
+    const { stdout, stderr, error } = await runConfig(["set", "defaults.maxExperts", "1"]);
 
+    expect(stdout).toBe("");
+    expect(error).toBeInstanceOf(CliUserError);
+    expect((error as CliUserError).message).toContain("Invalid Council config");
     expect(stderr).toContain("Invalid Council config");
     expect(stderr).toContain("defaults.maxExperts");
     await expect(fs.readFile(configPath, "utf-8")).resolves.toBe("defaults:\n  maxExperts: 3\n");
