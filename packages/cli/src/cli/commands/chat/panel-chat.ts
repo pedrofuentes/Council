@@ -442,7 +442,10 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
         { panelName, maxResults: 5 },
         (msg) => renderer.showSystem(msg, "warn"),
       );
-      const userMessageWithRefs = appendReferenceDocuments(parsed.content, snippets, (info) =>
+      // #1091: apply the shared per-turn char budget (as convene/debate does)
+      // so multi-chunk RAG retrieval can't bloat the model prompt.
+      const referenceDocs = capSnippetsByChars(snippets, REFERENCE_DOCS_CHAR_CAP);
+      const userMessageWithRefs = appendReferenceDocuments(parsed.content, referenceDocs, (info) =>
         renderer.showSystem(
           `Neutralized ${info.count} potential prompt-injection marker${
             info.count === 1 ? "" : "s"
