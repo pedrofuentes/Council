@@ -151,7 +151,11 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
         let unsubscribeInterrupt: () => void = () => undefined;
         const onInterrupt = (): void => {
           debateInterrupted = true;
-          unsubscribeInterrupt();
+          // Do NOT unsubscribe here: the interrupted debate still has to flush
+          // partial results, and unsubscribing now would let a second Ctrl+C
+          // during that window fall through to the OS default and terminate
+          // the process mid-write (#811). The handler stays registered until
+          // the `finally` below runs, after persistence/cleanup completes.
           debateController.abort();
         };
         const subscribeInterrupt = deps.subscribeInterrupt ?? defaultSubscribeInterrupt;

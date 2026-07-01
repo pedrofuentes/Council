@@ -599,14 +599,40 @@ describe("buildResumeCommand", () => {
 
     let captured = "";
     let errored = "";
-    let unsubscribed = false;
-    let fireInterrupt: (() => void) | undefined;
+    // Model the SIGINT subscription as a LIVE registration (not a bare
+    // "unsubscribed" boolean) so the test can discriminate handler LIVENESS
+    // across the whole interrupted-debate window, not just at t=0 (#812):
+    //   - `handlerLive` tracks whether a handler is currently registered.
+    //   - Every SIGINT that arrives while a handler is live is "delivered";
+    //     one that arrives after teardown is "lost" — in a real terminal an
+    //     unhandled SIGINT terminates the process, so a lost signal models the
+    //     Ctrl+C that kills the flush mid-write (the #811 hazard).
+    //   - `unsubscribeCount` proves the handler is removed exactly ONCE, and
+    //     only after cleanup completes.
+    let handlerLive = false;
+    let unsubscribeCount = 0;
+    let interruptsDelivered = 0;
+    let interruptsLostAfterTeardown = 0;
+    let rawHandler: (() => void) | undefined;
     const registeredExperts = new Set<string>();
     const subscribeInterrupt = (handler: () => void): (() => void) => {
-      fireInterrupt = handler;
+      handlerLive = true;
+      rawHandler = handler;
       return () => {
-        unsubscribed = true;
+        unsubscribeCount += 1;
+        handlerLive = false;
       };
+    };
+    // Simulate the OS delivering a SIGINT: it reaches the handler only while
+    // one is registered. A signal that arrives after teardown is counted as
+    // lost (would have killed the process).
+    const fireInterrupt = (): void => {
+      if (handlerLive) {
+        interruptsDelivered += 1;
+        rawHandler?.();
+      } else {
+        interruptsLostAfterTeardown += 1;
+      }
     };
     const engineFactory = (): CouncilEngine => ({
       start: async () => undefined,
@@ -624,7 +650,12 @@ describe("buildResumeCommand", () => {
         }
         return (async function* () {
           yield { kind: "message.delta", expertId, text: "Partial response. " };
-          fireInterrupt?.();
+          // Two rapid Ctrl+C: the first requests the graceful stop; the second
+          // arrives during the interrupted-persistence/flush window and MUST
+          // still reach a live handler (#811) instead of falling through to the
+          // OS default that would kill the process mid-write.
+          fireInterrupt();
+          fireInterrupt();
           await Promise.resolve();
           if (signal?.aborted) {
             yield {
@@ -671,7 +702,17 @@ describe("buildResumeCommand", () => {
     expect(errored).toMatch(/resuming interrupted debate/i);
     expect(errored).toMatch(/interrupted/i);
     expect(errored).toMatch(/partial/i);
-    expect(unsubscribed).toBe(true);
+    // #811: the handler must survive the interrupted-persistence window, so
+    // BOTH rapid Ctrl+C reach a live handler and NONE fall through to the OS
+    // default that would kill the flush mid-write. With the pre-fix code
+    // (unsubscribe inside onInterrupt) the second signal is lost.
+    expect(interruptsDelivered).toBeGreaterThanOrEqual(2);
+    expect(interruptsLostAfterTeardown).toBe(0);
+    // #812: exactly one unsubscribe, performed only after cleanup completed —
+    // the pre-fix code unsubscribes twice (once in onInterrupt, once in the
+    // finally).
+    expect(unsubscribeCount).toBe(1);
+    expect(handlerLive).toBe(false);
 
     const verifyDb = await createDatabase(path.join(testHome, "council.db"));
     try {
@@ -1042,5 +1083,148 @@ describe("buildResumeCommand", () => {
 
     // With 2 experts and 2 rounds, we expect 4 turn.end events.
     expect(turnEndCount).toBe(4);
+  });
+
+  // ── #247: resume-path strategy EXECUTION (not just the moderator label) ──
+  //
+  // The pre-existing continuation tests only assert `debates.moderator`, which
+  // proves the strategy NAME was recorded but not that the strategy actually
+  // ran. These tests capture the prompt routed to each expert via `engine.send`
+  // and assert the strategy-specific turn assignments, so a regression that
+  // stops forwarding the resolved strategy into the debate would be caught.
+  describe("--strategy execution (#247)", () => {
+    interface SentPrompt {
+      readonly expertId: string;
+      readonly prompt: string;
+    }
+
+    // Wrap a MockEngine so every prompt handed to `send()` is recorded in
+    // temporal order — the observable proof that a strategy executed.
+    function makeCapturingFactory(sink: SentPrompt[]): () => CouncilEngine {
+      return () => {
+        const real = new MockEngine({ responses: {} });
+        const wrapped: CouncilEngine = {
+          start: () => real.start(),
+          stop: () => real.stop(),
+          addExpert: (spec: ExpertSpec) => real.addExpert(spec),
+          removeExpert: (id: string) => real.removeExpert(id),
+          listModels: () => real.listModels(),
+          send: (opts) => {
+            sink.push({ expertId: opts.expertId, prompt: opts.prompt });
+            return real.send(opts);
+          },
+        };
+        return wrapped;
+      };
+    }
+
+    it("devils-advocate:<slug> routes the contrarian instruction to the designated advocate only", async () => {
+      const seed = await seedPanelWithDebate(testHome);
+      const sent: SentPrompt[] = [];
+      const cmd = buildResumeCommand({
+        engineFactory: makeCapturingFactory(sent),
+        write: () => undefined,
+        writeError: () => undefined,
+      });
+
+      await cmd.parseAsync([
+        "node",
+        "council-resume",
+        seed.panelName,
+        "--prompt",
+        "Should we adopt a monorepo?",
+        "--engine",
+        "mock",
+        "--strategy",
+        "devils-advocate:cto",
+        "--max-rounds",
+        "1",
+      ]);
+
+      const ctoPrompts = sent.filter((s) => s.expertId === seed.expertIds.cto).map((s) => s.prompt);
+      const pmPrompts = sent.filter((s) => s.expertId === seed.expertIds.pm).map((s) => s.prompt);
+      // One round → exactly one turn assignment per expert.
+      expect(ctoPrompts).toHaveLength(1);
+      expect(pmPrompts).toHaveLength(1);
+      // The designated advocate (cto) receives createDevilsAdvocateStrategy's
+      // contrarian framing — proof the strategy EXECUTED, not merely that
+      // "devils-advocate" was written to debates.moderator.
+      expect(ctoPrompts[0]).toMatch(/devil's advocate/i);
+      expect(ctoPrompts[0]).toMatch(/challenge|oppose|contrarian/i);
+      // Inverse: the non-advocate (pm) must NOT receive the contrarian framing;
+      // it gets the neutral opening instead.
+      expect(pmPrompts[0]).not.toMatch(/devil's advocate/i);
+      expect(pmPrompts[0]).toMatch(/deliver your position/i);
+    });
+
+    it("round-robin gives every expert the same neutral opening and casts no advocate", async () => {
+      const seed = await seedPanelWithDebate(testHome);
+      const sent: SentPrompt[] = [];
+      const cmd = buildResumeCommand({
+        engineFactory: makeCapturingFactory(sent),
+        write: () => undefined,
+        writeError: () => undefined,
+      });
+
+      await cmd.parseAsync([
+        "node",
+        "council-resume",
+        seed.panelName,
+        "--prompt",
+        "Should we adopt a monorepo?",
+        "--engine",
+        "mock",
+        "--strategy",
+        "round-robin",
+        "--max-rounds",
+        "1",
+      ]);
+
+      const ctoPrompts = sent.filter((s) => s.expertId === seed.expertIds.cto).map((s) => s.prompt);
+      const pmPrompts = sent.filter((s) => s.expertId === seed.expertIds.pm).map((s) => s.prompt);
+      expect(ctoPrompts).toHaveLength(1);
+      expect(pmPrompts).toHaveLength(1);
+      // Round-robin hands every expert the same neutral opening instruction...
+      expect(ctoPrompts[0]).toMatch(/deliver your position/i);
+      expect(pmPrompts[0]).toMatch(/deliver your position/i);
+      // ...and casts NO devil's advocate (inverse of the devils-advocate case).
+      expect(ctoPrompts[0]).not.toMatch(/devil's advocate/i);
+      expect(pmPrompts[0]).not.toMatch(/devil's advocate/i);
+    });
+
+    it("consensus-check emits its distinctive agree/disagree prompt in later rounds", async () => {
+      const seed = await seedPanelWithDebate(testHome);
+      const sent: SentPrompt[] = [];
+      const cmd = buildResumeCommand({
+        engineFactory: makeCapturingFactory(sent),
+        write: () => undefined,
+        writeError: () => undefined,
+      });
+
+      await cmd.parseAsync([
+        "node",
+        "council-resume",
+        seed.panelName,
+        "--prompt",
+        "Should we adopt a monorepo?",
+        "--engine",
+        "mock",
+        "--strategy",
+        "consensus-check",
+        "--max-rounds",
+        "2",
+      ]);
+
+      const ctoPrompts = sent.filter((s) => s.expertId === seed.expertIds.cto).map((s) => s.prompt);
+      // Two rounds → two turn assignments for the expert.
+      expect(ctoPrompts).toHaveLength(2);
+      // Round 0 is a neutral opening ("initial position"); round 1 carries the
+      // consensus-check's signature agree/disagree instruction that no other
+      // built-in strategy emits — a discriminating oracle for this strategy.
+      expect(ctoPrompts[0]).toMatch(/initial position/i);
+      expect(ctoPrompts[0]).not.toMatch(/consensus check/i);
+      expect(ctoPrompts[1]).toMatch(/consensus check/i);
+      expect(ctoPrompts[1]).toMatch(/agree or disagree/i);
+    });
   });
 });
