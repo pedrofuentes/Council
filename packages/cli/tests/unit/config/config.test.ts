@@ -192,6 +192,34 @@ describe("loadConfig() / getCouncilHome() — file I/O", () => {
     expect(getCouncilHome()).toBe(path.join(os.homedir(), ".council"));
   });
 
+  // #784 — precedence regression: COUNCIL_HOME must win over COUNCIL_DATA_HOME.
+  it("getCouncilHome() prefers COUNCIL_HOME over COUNCIL_DATA_HOME when both are set", () => {
+    const dataHome = path.join(testHome, "data-home");
+    process.env["COUNCIL_HOME"] = testHome;
+    process.env["COUNCIL_DATA_HOME"] = dataHome;
+    expect(getCouncilHome()).toBe(testHome);
+  });
+
+  // #794 — normalize env-var paths (trim, reject empty-after-trim, resolve abs).
+  it("getCouncilHome() trims surrounding whitespace from COUNCIL_HOME", () => {
+    process.env["COUNCIL_HOME"] = `  ${testHome}  `;
+    expect(getCouncilHome()).toBe(testHome);
+  });
+
+  it("getCouncilHome() treats an all-whitespace COUNCIL_HOME as unset", () => {
+    process.env["COUNCIL_HOME"] = "   \t ";
+    const dataHome = path.join(testHome, "data-home");
+    process.env["COUNCIL_DATA_HOME"] = dataHome;
+    expect(getCouncilHome()).toBe(dataHome);
+  });
+
+  it("getCouncilHome() trims and resolves the COUNCIL_DATA_HOME fallback", () => {
+    delete process.env["COUNCIL_HOME"];
+    const dataHome = path.join(testHome, "dh");
+    process.env["COUNCIL_DATA_HOME"] = `  ${dataHome}  `;
+    expect(getCouncilHome()).toBe(dataHome);
+  });
+
   it("loadConfig() creates a default config file when missing", async () => {
     const configPath = path.join(testHome, "config.yaml");
     await expect(fs.access(configPath)).rejects.toThrow();
@@ -284,6 +312,25 @@ describe("loadConfig() / getCouncilHome() — file I/O", () => {
         process.env["COUNCIL_DATA_HOME"] = originalDataHome;
       }
     }
+  });
+
+  // #794 — normalize COUNCIL_DATA_HOME before path resolution.
+  it("getCouncilDataHome() trims surrounding whitespace from COUNCIL_DATA_HOME", () => {
+    process.env["COUNCIL_DATA_HOME"] = `  ${testHome}  `;
+    expect(getCouncilDataHome()).toBe(testHome);
+  });
+
+  it("getCouncilDataHome() treats an all-whitespace COUNCIL_DATA_HOME as unset", () => {
+    delete process.env["COUNCIL_HOME"];
+    process.env["COUNCIL_DATA_HOME"] = "   ";
+    expect(getCouncilDataHome()).toBe(path.join(os.homedir(), "Council"));
+  });
+
+  it("getCouncilDataHome() resolves a relative COUNCIL_DATA_HOME to an absolute path", () => {
+    process.env["COUNCIL_DATA_HOME"] = "relative/data-dir";
+    const resolved = getCouncilDataHome();
+    expect(path.isAbsolute(resolved)).toBe(true);
+    expect(resolved).toBe(path.resolve("relative/data-dir"));
   });
 
   it("ensureDataDirectories() creates experts/ and panels/ subdirs", async () => {
