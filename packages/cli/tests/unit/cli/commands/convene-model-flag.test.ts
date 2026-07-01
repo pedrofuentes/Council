@@ -117,11 +117,7 @@ describe("buildConveneCommand — --model flag", () => {
     } else {
       delete process.env.COUNCIL_HOME;
     }
-    try {
-      await fs.rm(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-    } catch {
-      /* best effort */
-    }
+    await fs.rm(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it("passes --model value to auto-composed experts", async () => {
