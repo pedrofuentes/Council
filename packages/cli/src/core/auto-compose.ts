@@ -6,14 +6,18 @@
  * expert and parsing its JSON response into a `PanelDefinition`.
  *
  * Flow:
- *   1. Register a temporary composer expert primed with the meta-prompt
- *   2. Send the topic via `engine.send()` and accumulate `message.delta`
- *      events into the full response text
- *   3. Strip optional Markdown code fences and extract the first JSON object
+ *   1. If the engine is the deterministic MockEngine (trusted identity, never
+ *      response text — see #728), return the canned fallback panel immediately
+ *   2. Register a temporary composer expert primed with the meta-prompt
+ *   3. Send the topic via `engine.send()` and accumulate `message.delta`
+ *      events into the full response text, retrying recoverable engine errors
+ *      with backoff (§3.7)
+ *   4. Strip optional Markdown code fences and extract the first JSON object
  *      if the model prefixes it with prose
- *   4. Parse as JSON
- *   5. Validate against `PanelDefinitionSchema`
- *   6. Remove the composer expert (cleanup)
+ *   5. Parse as JSON
+ *   6. Validate against `PanelDefinitionSchema`
+ *   7. Remove the composer expert (cleanup — its failure never masks a primary
+ *      error, see #289)
  *
  * Engine lifecycle (`start()` / `stop()`) is the caller's responsibility —
  * this function is small and stateless w.r.t. the engine session.
@@ -22,7 +26,7 @@ import { ulid } from "ulid";
 
 import { stripControlChars, toSingleLineDisplay } from "../cli/strip-control-chars.js";
 import { DEFAULT_MODEL } from "../config/schema.js";
-import type { CouncilEngine, ExpertSpec } from "../engine/index.js";
+import type { CouncilEngine, EngineErrorCode, ExpertSpec } from "../engine/index.js";
 import { sanitizePromptField } from "./prompt-sanitize.js";
 
 import type { PanelDefinition, ResolvedPanelDefinition } from "./template-loader.js";
@@ -31,6 +35,8 @@ import { PanelDefinitionSchema } from "./template-loader.js";
 const DEFAULT_MIN_EXPERTS = 3;
 const DEFAULT_MAX_EXPERTS = 5;
 const DEFAULT_TIMEOUT_MS = 120_000;
+/** Retry backoff for recoverable composer-send errors (§3.7): 250ms, then 1s. */
+const DEFAULT_RETRY_BACKOFF_MS: readonly number[] = [250, 1000];
 const COMPOSER_RETRY_INSTRUCTION =
   "You MUST respond with ONLY a JSON object. No explanation, no preamble.";
 
@@ -46,6 +52,14 @@ export interface AutoComposeOptions {
    * thrown. Defaults to 120 seconds.
    */
   readonly timeoutMs?: number;
+  /**
+   * Backoff delays (ms) between retries when the composer send fails with a
+   * recoverable engine error (RATE_LIMITED / NETWORK). The number of entries
+   * is the retry cap; `[]` disables retries. Defaults to `[250, 1000]`,
+   * mirroring the debate turn loop (§3.7). Non-recoverable errors and aborts
+   * are never retried.
+   */
+  readonly retryBackoffMs?: readonly number[];
 }
 
 export async function autoComposePanel(
@@ -57,6 +71,15 @@ export async function autoComposePanel(
   const maxExperts = options?.maxExperts ?? DEFAULT_MAX_EXPERTS;
   const model = options?.defaultModel ?? DEFAULT_MODEL;
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const retryBackoffMs = options?.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS;
+
+  // #728: the deterministic fallback panel is gated on trusted engine
+  // IDENTITY, never on response text. A forgeable "[mock response from ...]"
+  // prefix in untrusted composer output (which the user's topic can influence)
+  // must not bypass JSON parsing/validation to substitute the canned panel.
+  if (isDeterministicMockEngine(engine)) {
+    return capPanelExperts(createMockFallbackPanel(model), maxExperts);
+  }
 
   const composer: ExpertSpec = {
     id: ulid(),
@@ -68,11 +91,12 @@ export async function autoComposePanel(
 
   await engine.addExpert(composer);
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  const signal = options?.signal
-    ? AbortSignal.any([options.signal, timeoutSignal])
-    : timeoutSignal;
+  const signal = options?.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
 
   let parsed: unknown;
+  // Capture the primary error (timeout / parse / engine failure) so a failing
+  // removeExpert() cleanup below cannot mask it (#289).
+  let primaryError: unknown;
   try {
     let response = await collectComposerResponse(
       engine,
@@ -80,15 +104,11 @@ export async function autoComposePanel(
       buildComposerUserPrompt(topic),
       signal,
       timeoutSignal,
-      options?.signal,
       model,
       timeoutMs,
+      retryBackoffMs,
     );
     let parseResult = parseComposerResponse(response);
-
-    if (parseResult.kind === "mock") {
-      return capPanelExperts(createMockFallbackPanel(model), maxExperts);
-    }
 
     if (parseResult.kind === "empty" || parseResult.kind === "no-json") {
       response = await collectComposerResponse(
@@ -97,14 +117,11 @@ export async function autoComposePanel(
         buildComposerUserPrompt(topic, { strictJsonOnly: true }),
         signal,
         timeoutSignal,
-        options?.signal,
         model,
         timeoutMs,
+        retryBackoffMs,
       );
       parseResult = parseComposerResponse(response);
-      if (parseResult.kind === "mock") {
-        return capPanelExperts(createMockFallbackPanel(model), maxExperts);
-      }
     }
 
     if (parseResult.kind === "empty") {
@@ -116,16 +133,27 @@ export async function autoComposePanel(
     }
 
     parsed = parseResult.value;
+  } catch (err) {
+    primaryError = err;
   } finally {
-    await engine.removeExpert(composer.id);
+    // #289: isolate cleanup. A rejecting removeExpert() must not replace the
+    // primary error propagating from the try block; when there is no primary
+    // error, the cleanup failure is surfaced instead.
+    try {
+      await engine.removeExpert(composer.id);
+    } catch (cleanupError) {
+      primaryError ??= cleanupError;
+    }
+  }
+
+  if (primaryError !== undefined) {
+    throw primaryError;
   }
 
   const result = PanelDefinitionSchema.safeParse(parsed);
   if (!result.success) {
     const lines = result.error.issues.map((i) => {
-      const fieldPath = sanitizeModelForDisplay(
-        i.path.length > 0 ? i.path.join(".") : "(root)",
-      );
+      const fieldPath = sanitizeModelForDisplay(i.path.length > 0 ? i.path.join(".") : "(root)");
       return `  - ${fieldPath}: ${sanitizeModelForDisplay(i.message)}`;
     });
     throw new Error(`Auto-compose produced an invalid panel definition:\n${lines.join("\n")}`);
@@ -148,15 +176,10 @@ interface MissingJsonComposerResponse {
   readonly preview: string;
 }
 
-interface MockComposerResponse {
-  readonly kind: "mock";
-}
-
 type ComposerResponseParseResult =
   | ParsedComposerResponse
   | EmptyComposerResponse
-  | MissingJsonComposerResponse
-  | MockComposerResponse;
+  | MissingJsonComposerResponse;
 
 interface ComposerPromptOptions {
   readonly strictJsonOnly?: boolean;
@@ -168,32 +191,131 @@ async function collectComposerResponse(
   prompt: string,
   signal: AbortSignal,
   timeoutSignal: AbortSignal,
-  callerSignal: AbortSignal | undefined,
   model: string,
   timeoutMs: number,
+  retryBackoffMs: readonly number[],
 ): Promise<string> {
+  const maxRetries = retryBackoffMs.length;
+  for (let attempt = 0; ; attempt += 1) {
+    const outcome = await consumeComposerSend(engine, expertId, prompt, signal);
+    if (outcome.kind === "text") {
+      return outcome.text;
+    }
+
+    // A terminal ABORTED on an aborted signal is a cancellation, never a
+    // transport hiccup — classify it (#722) and fail fast without retrying.
+    if (outcome.code === "ABORTED" && signal.aborted) {
+      throw createAbortOrTimeoutError(signal, timeoutSignal, model, timeoutMs);
+    }
+
+    // #260: retry recoverable transport errors (RATE_LIMITED / NETWORK) with
+    // backoff, mirroring the debate turn loop. Everything else fails fast.
+    const canRetry = outcome.recoverable && attempt < maxRetries && !signal.aborted;
+    if (!canRetry) {
+      throw createEngineError(outcome.code, outcome.message, model);
+    }
+
+    const backoff = retryBackoffMs[attempt] ?? 0;
+    if (backoff > 0) {
+      await abortableSleep(backoff, signal);
+    }
+    if (signal.aborted) {
+      // Aborted (caller or wall-clock cap) during the backoff — surface the
+      // cancellation rather than reissuing the send.
+      throw createAbortOrTimeoutError(signal, timeoutSignal, model, timeoutMs);
+    }
+  }
+}
+
+interface ComposerSendText {
+  readonly kind: "text";
+  readonly text: string;
+}
+
+interface ComposerSendError {
+  readonly kind: "error";
+  readonly code: EngineErrorCode;
+  readonly message: string;
+  readonly recoverable: boolean;
+}
+
+type ComposerSendOutcome = ComposerSendText | ComposerSendError;
+
+/** Consume exactly one composer send stream into its terminal outcome. */
+async function consumeComposerSend(
+  engine: CouncilEngine,
+  expertId: string,
+  prompt: string,
+  signal: AbortSignal,
+): Promise<ComposerSendOutcome> {
   let raw = "";
   const stream = engine.send({ expertId, prompt, signal });
   for await (const event of stream) {
     if (event.kind === "message.delta") {
       raw += event.text;
     } else if (event.kind === "error") {
-      if (event.error.code === "ABORTED" && signal.aborted) {
-        if (callerSignal?.aborted === true && timeoutSignal.aborted === false) {
-          throw new Error(
-            `Auto-compose was aborted while using model ${sanitizeModelForDisplay(model)}.`,
-          );
-        }
-        throw new Error(
-          `Auto-compose timed out after ${timeoutMs}ms for model ${sanitizeModelForDisplay(model)} — the engine did not respond in time.`,
-        );
-      }
-      throw new Error(
-        `Auto-compose engine error (${event.error.code}) for model ${sanitizeModelForDisplay(model)}: ${sanitizeModelForDisplay(event.error.message)}`,
-      );
+      return {
+        kind: "error",
+        code: event.error.code,
+        message: event.error.message,
+        recoverable: event.recoverable,
+      };
     }
   }
-  return raw;
+  return { kind: "text", text: raw };
+}
+
+/**
+ * Classify a terminal ABORTED as a caller cancellation vs. the wall-clock
+ * timeout (#722). The composed signal latches the reason of whichever source
+ * aborted FIRST, so comparing its reason to the timeout signal's reason is
+ * race-proof — unlike re-reading `.aborted` booleans, which can both be true
+ * when a caller cancel and the timeout fire close together.
+ */
+function createAbortOrTimeoutError(
+  signal: AbortSignal,
+  timeoutSignal: AbortSignal,
+  model: string,
+  timeoutMs: number,
+): Error {
+  if (signal.reason === timeoutSignal.reason) {
+    return createTimeoutError(timeoutMs, model);
+  }
+  return createAbortError(model);
+}
+
+function createTimeoutError(timeoutMs: number, model: string): Error {
+  return new Error(
+    `Auto-compose timed out after ${timeoutMs}ms for model ${sanitizeModelForDisplay(model)} — the engine did not respond in time.`,
+  );
+}
+
+function createAbortError(model: string): Error {
+  return new Error(`Auto-compose was aborted while using model ${sanitizeModelForDisplay(model)}.`);
+}
+
+function createEngineError(code: EngineErrorCode, message: string, model: string): Error {
+  return new Error(
+    `Auto-compose engine error (${code}) for model ${sanitizeModelForDisplay(model)}: ${sanitizeModelForDisplay(message)}`,
+  );
+}
+
+/** Resolve after `ms`, or immediately when `signal` aborts. */
+function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function buildComposerUserPrompt(topic: string, options?: ComposerPromptOptions): string {
@@ -207,10 +329,6 @@ function parseComposerResponse(raw: string): ComposerResponseParseResult {
   const cleaned = stripCodeFences(raw).trim();
   if (cleaned.length === 0) {
     return { kind: "empty" };
-  }
-
-  if (isMockComposerResponse(cleaned)) {
-    return { kind: "mock" };
   }
 
   const directParse = tryParseJsonObject(cleaned);
@@ -246,7 +364,11 @@ function tryParseJsonObject(text: string): unknown | undefined {
 }
 
 function extractFirstJsonObject(text: string): string | undefined {
-  for (let startIndex = text.indexOf("{"); startIndex !== -1; startIndex = text.indexOf("{", startIndex + 1)) {
+  for (
+    let startIndex = text.indexOf("{");
+    startIndex !== -1;
+    startIndex = text.indexOf("{", startIndex + 1)
+  ) {
     const candidate = extractBalancedJsonObject(text, startIndex);
     if (candidate === undefined) {
       continue;
@@ -310,8 +432,8 @@ function extractBalancedJsonObject(text: string, startIndex: number): string | u
   return undefined;
 }
 
-function isMockComposerResponse(text: string): boolean {
-  return /^\[mock response from /.test(text);
+function isDeterministicMockEngine(engine: CouncilEngine): boolean {
+  return engine.constructor.name === "MockEngine";
 }
 
 function createEmptyComposerResponseError(): Error {
@@ -385,10 +507,7 @@ function createMockFallbackPanel(model: string): ResolvedPanelDefinition {
  * C0/C1 controls, bidi overrides, zero-width chars, Unicode line/paragraph separators.
  */
 function sanitizeModelForDisplay(raw: string): string {
-  return raw.replace(
-    /[\p{Cc}\p{Cf}\u2028\u2029]/gu,
-    "",
-  );
+  return raw.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, "");
 }
 
 /**
@@ -449,9 +568,7 @@ function sanitizeComposedPanel(
       },
       epistemicStance: sanitizeField(e.epistemicStance, 1000),
       kind: e.kind,
-      ...(e.personality !== undefined
-        ? { personality: sanitizeField(e.personality, 200) }
-        : {}),
+      ...(e.personality !== undefined ? { personality: sanitizeField(e.personality, 200) } : {}),
     })),
   };
 }
