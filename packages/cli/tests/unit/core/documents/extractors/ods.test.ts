@@ -231,6 +231,67 @@ describe("ods extractor", () => {
     expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("zip-bomb-detected");
   });
 
+  it("rejects a content.xml entry that decodes to more bytes than its declared uncompressed size", async () => {
+    const { extractor, errors } = await loadOdsExtractor();
+    // A deflate-compressed content.xml whose real inflated size (50 KB)
+    // far exceeds the under-declared uncompressedSize written into the
+    // ZIP headers (1 KB). The declared size stays under the 20 MB
+    // per-entry cap and within the 100:1 ratio, so the count/ratio/
+    // per-entry preflight guards all pass — the only defense that can
+    // fire is the over-decode byte-counter in `readEntryBuffer`
+    // (odf-archive.ts:72-104), which aborts the stream once the inflated
+    // output exceeds the declared size. Assert it surfaces as
+    // zip-bomb-detected (regression guard: removing the byte-counter lets
+    // an under-declared bomb through).
+    const realData = Buffer.alloc(50 * 1024, 0x41);
+    const buf = buildZip([
+      {
+        name: "content.xml",
+        data: realData,
+        method: "deflate",
+        fakeUncompressedSize: 1024,
+      },
+    ]);
+    let caught: unknown;
+    try {
+      await extractor(ctx(buf));
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(errors.ExtractionError);
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("zip-bomb-detected");
+  });
+
+  it("rejects an archive whose entries individually fit but cumulatively exceed the 200 MB aggregate cap", async () => {
+    const { extractor, errors } = await loadOdsExtractor();
+    // 11 padding entries each declaring 19 MB uncompressed: individually
+    // under the 20 MB per-entry cap and within the 100:1 ratio (compressed
+    // size declared as 1 MB → 19:1), so neither the per-entry nor the
+    // ratio nor the entry-count guard trips. Their running sum (~209 MB)
+    // exceeds the 200 MB aggregate cap (odf-archive.ts:169-175), the only
+    // defense that can fire. Regression guard: removing the cumulative
+    // accumulator lets a sharded bomb through.
+    const entries: ZipEntry[] = [];
+    for (let i = 0; i < 11; i++) {
+      entries.push({
+        name: `pad/large${i}.bin`,
+        data: Buffer.from([0]),
+        method: "deflate",
+        fakeUncompressedSize: 19 * 1024 * 1024,
+        fakeCompressedSize: 1 * 1024 * 1024,
+      });
+    }
+    const buf = buildZip(entries);
+    let caught: unknown;
+    try {
+      await extractor(ctx(buf));
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(errors.ExtractionError);
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("zip-bomb-detected");
+  });
+
   it("does not expand internal XML entities (XXE / billion-laughs)", async () => {
     const { extractor } = await loadOdsExtractor();
     const malicious = `<?xml version="1.0"?>
