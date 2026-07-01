@@ -220,6 +220,12 @@ describe("PanelLibraryRepository", () => {
       expect(err.rollbackFailed).toBe(false);
       expect(err.message).not.toMatch(/inconsistent/i);
       expect(err.cause).toBeInstanceOf(Error);
+      // #311: the original FK/insert error must survive aggregation — assert
+      // its message is discriminably present, not just that cause is an Error.
+      const messages = [err.cause, err.rollbackError]
+        .filter((e): e is Error => e instanceof Error)
+        .map((e) => e.message);
+      expect(messages.some((m) => /SQLITE|foreign|constraint|does-not-exist/i.test(m))).toBe(true);
 
       const after = await repo.getMembers("arch-review");
       expect(after).toEqual(["cto", "staff"]);
