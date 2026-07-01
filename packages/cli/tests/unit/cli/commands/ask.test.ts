@@ -50,6 +50,38 @@ async function seedPanel(testHome: string): Promise<{ panelName: string; panelId
   }
 }
 
+/**
+ * Seed a panel whose sole (default) expert carries an attacker-controlled,
+ * LLM-sourced identity. Auto-composed panels derive `displayName`/`slug` from
+ * model output, so a malicious or compromised provider can smuggle ANSI escape
+ * sequences and CR/LF into them. Returns the expert id so callers can force a
+ * failure keyed by that id.
+ */
+async function seedExpertPanel(
+  testHome: string,
+  expert: { readonly slug: string; readonly displayName: string },
+): Promise<{ panelName: string; panelId: string; expertId: string }> {
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    const panel = await new PanelRepository(db).create({
+      name: "ask-sanitize-panel",
+      topic: "General",
+      copilotHome: path.join(testHome, "copilot"),
+      configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+    });
+    const created = await new ExpertRepository(db).create({
+      panelId: panel.id,
+      slug: expert.slug,
+      displayName: expert.displayName,
+      model: "claude-sonnet-4",
+      systemMessage: "[1] IDENTITY\nYou are an expert.",
+    });
+    return { panelName: panel.name, panelId: panel.id, expertId: created.id };
+  } finally {
+    await db.destroy();
+  }
+}
+
 describe("buildAskCommand", () => {
   let testHome: string;
   let originalHome: string | undefined;
@@ -531,5 +563,91 @@ describe("buildAskCommand", () => {
       thrown = err instanceof Error ? err.message : String(err);
     }
     expect(thrown.toLowerCase()).toMatch(/unknown.*engine|expected.*mock.*copilot|allowed choices/);
+  });
+
+  it("sanitizes an LLM-sourced expert displayName/slug in the stderr failure notice (#1811)", async () => {
+    // The zero-answer failure notice interpolates the LLM-sourced expert
+    // identity straight into stderr. A crafted displayName/slug carrying ANSI
+    // escapes + CR/LF could forge or overwrite terminal lines (spoof a fake
+    // "OK", hide the real error). It must be sanitized the same way the echoed
+    // question already is (ask.ts:172) — one line, no control sequences.
+    const seed = await seedExpertPanel(testHome, {
+      slug: "ev\x1B[0mil",
+      displayName: "Evil\x1B[31m\r\nName",
+    });
+    const failingFactory = (): CouncilEngine =>
+      new MockEngine({
+        failures: { [seed.expertId]: { code: "PROVIDER_ERROR", message: "provider exploded" } },
+      });
+    let stderr = "";
+    const cmd = buildAskCommand({
+      engineFactory: failingFactory,
+      write: () => undefined,
+      writeError: (s) => {
+        stderr += s;
+      },
+    });
+    cmd.exitOverride();
+    let thrown = "";
+    try {
+      await cmd.parseAsync([
+        "node",
+        "council-ask",
+        seed.panelName,
+        "What?",
+        "--engine",
+        "mock",
+        "--format",
+        "json",
+      ]);
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    expect(thrown).not.toBe("");
+
+    // The notice must render on a single sanitized line: CR/LF collapsed to a
+    // space (so the name cannot break out of its line) and ANSI stripped.
+    const failureLine = stderr.split("\n").find((line) => line.includes("did not respond"));
+    expect(failureLine).toBeDefined();
+    expect(failureLine).toContain("Evil Name"); // LF no longer splits the name
+    expect(failureLine).toContain("(evil)"); // slug ANSI stripped
+    expect(failureLine).not.toContain("\x1B"); // no escape sequences
+    expect(failureLine).not.toContain("\r"); // no carriage returns
+  });
+
+  it("sanitizes an LLM-sourced expert displayName/slug in the stdout preamble (#1811)", async () => {
+    // The "# Asking …" preamble is written directly by ask.ts (bypassing the
+    // renderer's own sanitization), so it must sanitize the LLM-sourced
+    // identity itself before it reaches the terminal.
+    const seed = await seedExpertPanel(testHome, {
+      slug: "ev\x1B[0mil",
+      displayName: "Evil\x1B[31m\r\nName",
+    });
+    let stdout = "";
+    const cmd = buildAskCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (s) => {
+        stdout += s;
+      },
+      writeError: () => undefined,
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-ask",
+      seed.panelName,
+      "What?",
+      "--engine",
+      "mock",
+      "--format",
+      "plain",
+    ]);
+
+    const askingLine = stdout.split("\n").find((line) => line.startsWith("# Asking"));
+    expect(askingLine).toBeDefined();
+    expect(askingLine).toContain("Evil Name");
+    expect(askingLine).toContain("(evil)");
+    expect(askingLine).not.toContain("\x1B");
+    expect(askingLine).not.toContain("\r");
   });
 });
