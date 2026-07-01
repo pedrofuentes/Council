@@ -495,6 +495,21 @@ function buildDeleteCommand(
 // create
 // ──────────────────────────────────────────────────────────────────────
 
+/**
+ * Shared guidance for the variadic `--experts <slugs...>` ordering foot-gun
+ * (#1059): a panel `<name>` placed AFTER `--experts` is greedily consumed as
+ * another slug, leaving the positional empty. Mirrors convene's
+ * `VARIADIC_ORDERING_HINT` so the two commands speak with one voice. The SAFE
+ * orderings are name-first and `--slug`; quoting a comma-list alone does NOT
+ * rescue a TRAILING name — the variadic still swallows it (Commander 15). The
+ * hint is static (it never echoes the absorbed slug), so no user-supplied byte
+ * can reach the terminal sink.
+ */
+const PANEL_NAME_ORDERING_HINT =
+  "Note: --experts is variadic, so a panel name placed AFTER it is consumed as an " +
+  "expert slug — put the name FIRST (`panel create <name> --experts a b`) or pass it " +
+  "with --slug (`panel create --experts a b --slug <name>`).";
+
 interface CreateOptions {
   readonly slug?: string;
   readonly experts?: string | readonly string[];
@@ -504,6 +519,15 @@ interface CreateOptions {
   readonly description?: string;
 }
 
+/**
+ * `council panel create [name] --experts <slugs...>` — create a library panel
+ * from existing library experts (or interactively when the flags are omitted).
+ *
+ * Note: `--experts <slugs...>` is a variadic option, so a positional `[name]`
+ * placed AFTER it is consumed as another slug, leaving the panel name empty
+ * (#1059). Pass the name BEFORE `--experts`, or via `--slug <name>`, to avoid
+ * the ordering foot-gun (see the after-help "Expert ordering" section).
+ */
 function buildCreateCommand(write: Writer, writeError: Writer): Command {
   const cmd = new Command("create");
   cmd
@@ -517,7 +541,9 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
     .option("--slug <slug>", "Panel name (kebab-case). Alias for the positional <name> argument.")
     .option(
       "--experts <slugs...>",
-      "Expert slugs from the library (space- or comma-separated, repeatable)",
+      "Expert slugs from the library (space- or comma-separated, repeatable). " +
+        "Because --experts is variadic, put the <name> BEFORE it (or pass the name " +
+        "with --slug) so a trailing panel name is not consumed as a slug.",
     )
     .option("--mode <mode>", `Debate mode: ${DEBATE_MODES.join(" | ")}`)
     .option("--max-rounds <n>", "Maximum debate rounds (1-20)")
@@ -533,7 +559,15 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
       }
       const name = positionalName ?? opts.slug;
       if (name === undefined || name.length === 0) {
-        writeError("Panel name is required. Pass it as the positional argument or with --slug.\n");
+        // The variadic --experts greedily consumes a <name> placed AFTER it,
+        // leaving the positional empty (#1059). When --experts was supplied,
+        // point the user at the ordering foot-gun explicitly.
+        const orderingHint = opts.experts !== undefined ? " " + PANEL_NAME_ORDERING_HINT : "";
+        writeError(
+          "Panel name is required. Pass it as the positional argument or with --slug." +
+            orderingHint +
+            "\n",
+        );
         throw new CliUserError("panel create: missing panel name (positional <name> or --slug).");
       }
       validatePanelName(name);
@@ -567,6 +601,16 @@ function buildCreateCommand(write: Writer, writeError: Writer): Command {
         write(`  Experts: ${fields.expertSlugs.join(", ")}\n`);
       });
     });
+  cmd.addHelpText(
+    "after",
+    `
+Expert ordering: --experts is variadic, so a <name> placed AFTER it is
+consumed as another slug (leaving the panel name empty). Put the name FIRST,
+or pass it with --slug:
+  $ council panel create my-panel --experts senior security       # name first — safe
+  $ council panel create --experts senior security --slug my-panel # --slug — safe
+`,
+  );
   return cmd;
 }
 
