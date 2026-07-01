@@ -8,8 +8,10 @@
  * expand to many gigabytes of memory during DEFLATE inflation. To
  * defend against that we run a `yauzl` preflight over the central
  * directory and reject archives that exceed conservative entry-count,
- * uncompressed-total, and per-entry ratio limits before mammoth ever
- * touches the buffer.
+ * uncompressed-total, per-entry-size, and per-entry ratio limits before
+ * mammoth ever touches the buffer. The extractor also honors
+ * `ctx.signal`, aborting with `extraction-timeout` before the preflight
+ * and again before handing the buffer to mammoth.
  *
  * Failures are mapped to the typed taxonomy: preflight rejections are
  * `zip-bomb-detected`; unparseable archives and parse-time errors
@@ -31,6 +33,13 @@ import { ExtractionError } from "./errors.js";
 
 const MAX_ENTRIES = 1000;
 const MAX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024; // 200 MiB
+// Per-entry uncompressed cap. The 100:1 ratio guard below is skipped for
+// entries declaring a zero compressed size, and even a legitimate ratio
+// lets a single ~2 MiB member inflate toward the 200 MiB aggregate cap.
+// Bounding every entry to 20 MiB (matching the PPTX extractor) shrinks
+// that single-entry amplification window without rejecting real .docx
+// parts, whose largest member is comfortably smaller.
+const MAX_ENTRY_BYTES = 20 * 1024 * 1024; // 20 MiB
 const MAX_RATIO = 100;
 
 function countWords(text: string): number {
@@ -43,6 +52,21 @@ function isEncryptedError(error: unknown): boolean {
   }
   const msg = error.message.toLowerCase();
   return msg.includes("encrypt") || msg.includes("password");
+}
+
+function abortTimeout(
+  signal: AbortSignal | undefined,
+  filename: string,
+): ExtractionError | undefined {
+  if (signal?.aborted !== true) {
+    return undefined;
+  }
+  return new ExtractionError({
+    kind: "extraction-timeout",
+    filePath: filename,
+    message: `DOCX extraction aborted: ${filename}`,
+    cause: signal.reason,
+  });
 }
 
 function openZipBuffer(buffer: Buffer): Promise<yauzl.ZipFile> {
@@ -88,6 +112,18 @@ async function preflightZip(buffer: Buffer, filename: string): Promise<void> {
             filePath: filename,
             message: `DOCX archive has more than ${MAX_ENTRIES} entries`,
             suggestion: "File has suspicious structure.",
+          }),
+        );
+        return;
+      }
+
+      if (entry.uncompressedSize > MAX_ENTRY_BYTES) {
+        reject(
+          new ExtractionError({
+            kind: "zip-bomb-detected",
+            filePath: filename,
+            message: `DOCX entry "${entry.fileName}" uncompressed size ${entry.uncompressedSize} exceeds per-entry limit ${MAX_ENTRY_BYTES} bytes`,
+            suggestion: "File has suspicious compression characteristics.",
           }),
         );
         return;
@@ -148,7 +184,17 @@ async function preflightZip(buffer: Buffer, filename: string): Promise<void> {
 const docxExtractor: ContentExtractor = async (
   ctx: ExtractionContext,
 ): Promise<ExtractedContent> => {
+  const preflightAbort = abortTimeout(ctx.signal, ctx.filename);
+  if (preflightAbort !== undefined) {
+    throw preflightAbort;
+  }
+
   await preflightZip(ctx.buffer, ctx.filename);
+
+  const mammothAbort = abortTimeout(ctx.signal, ctx.filename);
+  if (mammothAbort !== undefined) {
+    throw mammothAbort;
+  }
 
   const mammoth = await import("mammoth");
 
