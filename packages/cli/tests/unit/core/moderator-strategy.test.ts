@@ -417,3 +417,225 @@ describe("TurnAssignment shape", () => {
     expect(typeof a?.prompt).toBe("string");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Coverage additions for issue #217
+// ---------------------------------------------------------------------------
+
+describe("round-robin round > 0 prompt (#217)", () => {
+  const experts = [makeExpert("cto"), makeExpert("pm")];
+  const priorTurns = [
+    { expertSlug: "cto", displayName: "CTO", content: "Ship it.", round: 0 },
+    { expertSlug: "pm", displayName: "PM", content: "Wait two weeks.", round: 0 },
+  ] as const;
+
+  it("uses the 'Build on the discussion' variant for round > 0", () => {
+    const strategy = createRoundRobinStrategy();
+    const ctx: ModeratorContext = {
+      experts,
+      round: 1,
+      maxRounds: 3,
+      topic: "Should we ship?",
+      priorTurns,
+    };
+    const prompt = strategy.planRound(ctx)[0]?.prompt ?? "";
+    expect(prompt).toContain("Build on the discussion so far");
+    expect(prompt).not.toContain("Deliver your position");
+  });
+
+  it("embeds formatted prior turn content under 'Prior discussion:' for round > 0", () => {
+    const strategy = createRoundRobinStrategy();
+    const ctx: ModeratorContext = {
+      experts,
+      round: 1,
+      maxRounds: 3,
+      topic: "Should we ship?",
+      priorTurns,
+    };
+    const prompt = strategy.planRound(ctx)[0]?.prompt ?? "";
+    expect(prompt).toContain("Prior discussion:");
+    expect(prompt).toContain("CTO (round 1):");
+    expect(prompt).toContain("> Ship it.");
+    expect(prompt).toContain("PM (round 1):");
+    expect(prompt).toContain("> Wait two weeks.");
+  });
+});
+
+describe("devils-advocate shouldContinue (#217)", () => {
+  const experts = [makeExpert("cto"), makeExpert("pm")];
+
+  it("returns true when round is less than maxRounds", () => {
+    const strategy = createDevilsAdvocateStrategy("pm");
+    const ctx: ModeratorContext = {
+      experts,
+      round: 1,
+      maxRounds: 3,
+      topic: "Topic",
+      priorTurns: [],
+    };
+    expect(strategy.shouldContinue(ctx)).toBe(true);
+  });
+
+  it("returns false when round equals maxRounds", () => {
+    const strategy = createDevilsAdvocateStrategy("pm");
+    const ctx: ModeratorContext = {
+      experts,
+      round: 3,
+      maxRounds: 3,
+      topic: "Topic",
+      priorTurns: [],
+    };
+    expect(strategy.shouldContinue(ctx)).toBe(false);
+  });
+
+  it("returns false when round exceeds maxRounds", () => {
+    const strategy = createDevilsAdvocateStrategy("pm");
+    const ctx: ModeratorContext = {
+      experts,
+      round: 5,
+      maxRounds: 3,
+      topic: "Topic",
+      priorTurns: [],
+    };
+    expect(strategy.shouldContinue(ctx)).toBe(false);
+  });
+});
+
+describe("consensus-check shouldContinue (#217)", () => {
+  const experts = [makeExpert("cto"), makeExpert("pm")];
+
+  it("returns true when round is less than maxRounds", () => {
+    const strategy = createConsensusCheckStrategy();
+    const ctx: ModeratorContext = {
+      experts,
+      round: 0,
+      maxRounds: 2,
+      topic: "Topic",
+      priorTurns: [],
+    };
+    expect(strategy.shouldContinue(ctx)).toBe(true);
+  });
+
+  it("returns false when round equals maxRounds", () => {
+    const strategy = createConsensusCheckStrategy();
+    const ctx: ModeratorContext = {
+      experts,
+      round: 2,
+      maxRounds: 2,
+      topic: "Topic",
+      priorTurns: [],
+    };
+    expect(strategy.shouldContinue(ctx)).toBe(false);
+  });
+});
+
+describe("formatPriorTurns edge cases — tested via round>0 prompt (#217)", () => {
+  const experts = [makeExpert("cto"), makeExpert("pm")];
+
+  it("produces '(no prior discussion)' when priorTurns is empty", () => {
+    const strategy = createRoundRobinStrategy();
+    const ctx: ModeratorContext = {
+      experts,
+      round: 1,
+      maxRounds: 3,
+      topic: "Topic",
+      priorTurns: [],
+    };
+    const prompt = strategy.planRound(ctx)[0]?.prompt ?? "";
+    expect(prompt).toContain("(no prior discussion)");
+  });
+
+  it("formats a single prior turn as 'DisplayName (round N):\\n> content'", () => {
+    const strategy = createRoundRobinStrategy();
+    const ctx: ModeratorContext = {
+      experts,
+      round: 1,
+      maxRounds: 3,
+      topic: "Topic",
+      priorTurns: [{ expertSlug: "cto", displayName: "CTO", content: "Ship it.", round: 0 }],
+    };
+    const prompt = strategy.planRound(ctx)[0]?.prompt ?? "";
+    expect(prompt).toContain("CTO (round 1):\n> Ship it.");
+  });
+
+  it("joins multiple prior turns with a double newline", () => {
+    const strategy = createRoundRobinStrategy();
+    const ctx: ModeratorContext = {
+      experts,
+      round: 1,
+      maxRounds: 3,
+      topic: "Topic",
+      priorTurns: [
+        { expertSlug: "cto", displayName: "CTO", content: "Ship it.", round: 0 },
+        { expertSlug: "pm", displayName: "PM", content: "Wait two weeks.", round: 0 },
+      ],
+    };
+    const prompt = strategy.planRound(ctx)[0]?.prompt ?? "";
+    expect(prompt).toContain("CTO (round 1):\n> Ship it.\n\nPM (round 1):\n> Wait two weeks.");
+  });
+
+  it("trims whitespace in turn content", () => {
+    const strategy = createRoundRobinStrategy();
+    const ctx: ModeratorContext = {
+      experts,
+      round: 1,
+      maxRounds: 3,
+      topic: "Topic",
+      priorTurns: [
+        { expertSlug: "cto", displayName: "CTO", content: "  Ship it.  \n", round: 0 },
+      ],
+    };
+    const prompt = strategy.planRound(ctx)[0]?.prompt ?? "";
+    expect(prompt).toContain("CTO (round 1):\n> Ship it.");
+    expect(prompt).not.toContain("  Ship it.  ");
+  });
+
+  it("renders 1-based round numbers (round field 0 → 'round 1', round field 1 → 'round 2')", () => {
+    const strategy = createRoundRobinStrategy();
+    const ctx: ModeratorContext = {
+      experts,
+      round: 2,
+      maxRounds: 3,
+      topic: "Topic",
+      priorTurns: [
+        { expertSlug: "cto", displayName: "CTO", content: "First.", round: 0 },
+        { expertSlug: "cto", displayName: "CTO", content: "Second.", round: 1 },
+      ],
+    };
+    const prompt = strategy.planRound(ctx)[0]?.prompt ?? "";
+    expect(prompt).toContain("CTO (round 1):");
+    expect(prompt).toContain("CTO (round 2):");
+  });
+});
+
+describe("devils-advocate advocateSlug-not-in-experts error detail (#217)", () => {
+  const experts = [makeExpert("cto"), makeExpert("pm"), makeExpert("designer")];
+  const baseCtx = (): ModeratorContext => ({
+    experts,
+    round: 0,
+    maxRounds: 2,
+    topic: "Topic",
+    priorTurns: [],
+  });
+
+  it("error message lists ALL available expert slugs joined by ', '", () => {
+    const strategy = createDevilsAdvocateStrategy("ghost");
+    expect(() => strategy.planRound(baseCtx())).toThrowError(/Available: cto, pm, designer/);
+  });
+
+  it("error message quotes the missing advocate slug", () => {
+    const strategy = createDevilsAdvocateStrategy("ghost");
+    expect(() => strategy.planRound(baseCtx())).toThrowError(/"ghost"/);
+  });
+
+  it("throws even when round > 0 (validation is not skipped after round 0)", () => {
+    const strategy = createDevilsAdvocateStrategy("ghost");
+    expect(() =>
+      strategy.planRound({
+        ...baseCtx(),
+        round: 1,
+        priorTurns: [{ expertSlug: "cto", displayName: "CTO", content: "x", round: 0 }],
+      }),
+    ).toThrowError(/ghost/);
+  });
+});
