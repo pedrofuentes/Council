@@ -11,31 +11,59 @@
  *
  * The `core/prompt-builder.ts` function is what turns one into the other.
  */
+import * as path from "node:path";
+
 import { z } from "zod";
 
 const NonEmptyString = z.string().min(1);
 
+/** The two ways a `docsPath` can escape its confinement root (#287, A2). */
+type DocsPathViolation = "traversal" | "non-relative";
+
 /**
- * Path-traversal gate for `docsPath` (issue #287, Sentinel dimension A2).
+ * Classify a `docsPath` override against its confinement contract, returning
+ * the violation kind or `null` for a safe in-root relative path (issue #287,
+ * Sentinel dimension A2).
  *
- * `docsPath` overrides a persona expert's default docs location. Both relative
- * paths (resolved under the per-expert docs root `<dataHome>/experts/<slug>/docs`)
- * and absolute paths — a documented "custom location" feature (see the
- * data-locations reference) — are valid, supported values. This rule does NOT
- * restrict the location; it is a defense-in-depth front door that rejects only
- * the one unambiguous attack shape, a `..` path-traversal segment, before any
- * consumer reads the value. Absolute and relative locations are permitted here
- * and are confined at the READ sites, which realpath-resolve the docs root and
- * refuse to follow symlinks (see `core/documents/processor.ts` and
- * `core/documents/detector.ts`).
+ * `docsPath` overrides a persona expert's default docs location, which BY
+ * DESIGN lives under the per-expert docs root `<dataHome>/experts/<slug>/docs`
+ * (see DECISIONS.md). An unconfined override is a path-traversal / arbitrary-
+ * read surface: a `..` segment or an absolute/UNC/drive-letter path could
+ * redirect the document scanner, indexer, and engine at files outside the data
+ * home before any consumer reads the value. This schema rule is the front door
+ * (mirroring the section-marker gate and the `resolveManagedDocsDir`
+ * `startsWith(root + path.sep)` idiom in `cli/commands/docs.ts`); the read
+ * sites still realpath-confine as defense-in-depth (see
+ * `core/documents/processor.ts` and `core/documents/detector.ts`).
  *
- * Rejects any `..` path segment (leading, embedded, or trailing; split on both
- * `/` and `\` separators). Accepts absolute (POSIX / Windows / UNC), Windows
- * drive-prefixed, home-anchored (`~/Council/...`), and plain relative paths.
+ *   - "traversal": any `..` path segment — leading, embedded, or trailing;
+ *     split on both `/` and `\`. Checked first: it is the more specific,
+ *     higher-signal attack shape.
+ *   - "non-relative": a POSIX or Windows absolute path, a UNC path, or a
+ *     Windows drive-letter prefix (including the drive-relative `C:foo` form).
+ *
+ * Accepts plain relative paths (resolved under the docs root) and the
+ * home-anchored `~/Council/...` default form.
  */
-function isDocsPathConfined(value: string): boolean {
-  return !value.split(/[/\\]/).some((segment) => segment === "..");
+function classifyDocsPath(value: string): DocsPathViolation | null {
+  if (value.split(/[/\\]/).some((segment) => segment === "..")) return "traversal";
+  if (path.posix.isAbsolute(value) || path.win32.isAbsolute(value) || /^[A-Za-z]:/.test(value)) {
+    return "non-relative";
+  }
+  return null;
 }
+
+/**
+ * Discriminating rejection messages — distinct per violation so callers (and
+ * tests) can tell the two escape classes apart. Neither echoes the offending
+ * path, so no terminal sanitization is required.
+ */
+const DOCS_PATH_VIOLATION_MESSAGE: Readonly<Record<DocsPathViolation, string>> = {
+  traversal: `Field "docsPath" must not contain ".." path-traversal segments.`,
+  "non-relative":
+    `Field "docsPath" must be a relative path under the expert docs root; ` +
+    `absolute, UNC, and drive-letter paths are not allowed.`,
+};
 
 export const ExpertiseSchema = z.object({
   /**
@@ -94,11 +122,11 @@ export const ExpertDefinitionSchema = z
      */
     personaDescription: NonEmptyString.optional(),
     /**
-     * For persona experts: override the default docs location. May be a
-     * relative path (resolved under the per-expert docs root) or an absolute
-     * "custom location"; must not contain `..` path-traversal segments
-     * (enforced in the superRefine below, #287). Absolute and relative
-     * locations are confined at read time.
+     * For persona experts: override the default docs location. MUST be a
+     * relative path (resolved under the per-expert docs root
+     * `<dataHome>/experts/<slug>/docs`); `..` traversal segments and absolute
+     * / UNC / drive-letter paths are rejected by the superRefine below so the
+     * override cannot escape the docs root (#287, Sentinel A2).
      */
     docsPath: NonEmptyString.optional(),
   })
@@ -124,16 +152,20 @@ export const ExpertDefinitionSchema = z
       }
     }
 
-    // Guard `docsPath` against path traversal: reject any `..` segment so an
-    // authored/imported expert cannot walk the document pipeline out of its
-    // resolved root (#287). Absolute and relative locations are both permitted
-    // here and confined at the read sites (realpath + symlink refusal).
-    if (val.docsPath !== undefined && !isDocsPathConfined(val.docsPath)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `Field "docsPath" must not contain ".." path-traversal segments.`,
-        path: ["docsPath"],
-      });
+    // Confine `docsPath` to its per-expert docs root: reject `..` traversal
+    // segments AND absolute / UNC / drive-letter paths so an authored or
+    // imported expert cannot redirect the document pipeline outside its
+    // resolved root (#287, Sentinel A2). Read sites realpath-confine as
+    // defense-in-depth (see core/documents/processor.ts, detector.ts).
+    if (val.docsPath !== undefined) {
+      const violation = classifyDocsPath(val.docsPath);
+      if (violation !== null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: DOCS_PATH_VIOLATION_MESSAGE[violation],
+          path: ["docsPath"],
+        });
+      }
     }
   });
 
