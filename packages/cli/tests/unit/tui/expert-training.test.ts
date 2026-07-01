@@ -192,17 +192,56 @@ describe("createExpertTrainingSource", () => {
 
     expect(progress).toEqual([{ filename: "clean.md", wordCount: 9, status: "success" }]);
     expect(result.profileError).toBeNull();
+    // A successful train + successful stop must not fabricate a stop warning.
+    expect(result.stopWarning).toBeUndefined();
   });
 
-  it("ignores stop failures while preserving the training result", async () => {
+  it("surfaces a failing engine.stop() as a warning while preserving the training result", async () => {
     const { deps, engine } = makeDeps();
     engine.stopped.mockRejectedValueOnce(new Error("stop failed"));
 
-    await expect(
-      createExpertTrainingSource(deps).train("cto", { files: [] }),
-    ).resolves.toMatchObject({
-      filesProcessed: 1,
+    const result = await createExpertTrainingSource(deps).train("cto", { files: [] });
+
+    // Secondary signal: the shutdown failure is reported, not silently swallowed.
+    expect(result.stopWarning).toBe("Engine shutdown failed: stop failed");
+    // Primary outcome is preserved exactly.
+    expect(result.filesProcessed).toBe(1);
+    expect(result.totalWords).toBe(42);
+    expect(result.profileUpdated).toBe(true);
+    expect(engine.stopped).toHaveBeenCalledTimes(1);
+  });
+
+  it("collapses control characters in the surfaced stop() warning to a single safe line", async () => {
+    const { deps, engine } = makeDeps();
+    const nasty =
+      "stop\u001b[31m\u0000\u009b\u007f\u202e\u2066\u2069fail\r\ned\u2028now\u2029end\ttail";
+    engine.stopped.mockRejectedValueOnce(new Error(nasty));
+
+    const result = await createExpertTrainingSource(deps).train("cto", { files: [] });
+
+    const warning = result.stopWarning ?? "";
+    expect(warning).toBe("Engine shutdown failed: stopfail ed now end tail");
+    expect(warning).not.toMatch(
+      // eslint-disable-next-line no-control-regex
+      /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/,
+    );
+    expect(warning.split("\n")).toHaveLength(1);
+  });
+
+  it("propagates the primary training error and never lets a failing stop() mask it", async () => {
+    const boom = new Error("training boom");
+    const { deps, engine } = makeDeps({
+      createProcessor: () => ({
+        process: async () => {
+          throw boom;
+        },
+        needsProcessing: async () => true,
+      }),
     });
+    engine.stopped.mockRejectedValueOnce(new Error("stop failed too"));
+
+    await expect(createExpertTrainingSource(deps).train("cto", { files: [] })).rejects.toBe(boom);
+    expect(engine.stopped).toHaveBeenCalledTimes(1);
   });
 });
 
