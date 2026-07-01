@@ -27,6 +27,13 @@ import type {
   ExpertSpec,
   SendOptions,
 } from "../../../../src/engine/index.js";
+// `parseAnalyzerJSON` recovers trailing-comma-tolerant JSON via the shared
+// `stripTrailingCommas`/`tryParseJSON` primitives extracted to
+// `src/core/robust-json.ts` (PR #1118 / PM-04). #1122 lives in that shared
+// fallback, so the string-aware oracles below exercise it directly — mirroring
+// the existing convention of covering robust-json's trailing-comma behavior
+// through this consumer's test file.
+import { stripTrailingCommas, tryParseJSON } from "../../../../src/core/robust-json.js";
 
 interface RecordedSend {
   readonly expertId: string;
@@ -85,8 +92,7 @@ const sampleDocs = [
   {
     path: "/tmp/sarah/docs/older-memo.md",
     filename: "older-memo.md",
-    content:
-      "I prefer data over opinions. Bring me numbers. Customer commitments come first.",
+    content: "I prefer data over opinions. Bring me numbers. Customer commitments come first.",
     wordCount: 12,
   },
 ] as const;
@@ -94,8 +100,7 @@ const sampleDocs = [
 const defaultOptions: AnalyzeOptions = { recencyWeightHalfLife: 30, model: "gpt-test" };
 
 const validProfileJSON = JSON.stringify({
-  communicationStyle:
-    "Direct, declarative, and time-pressured. Short sentences. Action-oriented.",
+  communicationStyle: "Direct, declarative, and time-pressured. Short sentences. Action-oriented.",
   decisionPatterns: [
     "Prioritizes customer-facing commitments over internal polish",
     "Demands quantitative evidence before reversing course",
@@ -117,11 +122,7 @@ describe("analyzeDocuments() — engine-backed profile extraction", () => {
       "Demands quantitative evidence before reversing course",
     ]);
     expect(out.biases).toEqual(["Recency bias toward most-recent customer escalation"]);
-    expect(out.vocabulary).toEqual([
-      "ship now",
-      "customer commitments",
-      "bring me numbers",
-    ]);
+    expect(out.vocabulary).toEqual(["ship now", "customer commitments", "bring me numbers"]);
     expect(out.epistemicStance).toMatch(/measured outcomes/);
     expect(out.documentCount).toBe(2);
     expect(out.totalWords).toBe(26);
@@ -237,9 +238,9 @@ describe("analyzeDocuments() — engine-backed profile extraction", () => {
 
   it("throws if JSON parse fails on retry as well", async () => {
     const engine = new RecordingEngine(["garbage one", "garbage two"]);
-    await expect(
-      analyzeDocuments(sampleDocs, null, engine, defaultOptions),
-    ).rejects.toThrow(/profile|parse|json/i);
+    await expect(analyzeDocuments(sampleDocs, null, engine, defaultOptions)).rejects.toThrow(
+      /profile|parse|json/i,
+    );
     // Cleanup happens even on failure.
     expect(engine.removed.length).toBe(1);
   });
@@ -260,9 +261,7 @@ describe("analyzeDocuments() — engine-backed profile extraction", () => {
       }
     }
     const engine = new ThrowingEngine([]);
-    await expect(
-      analyzeDocuments(sampleDocs, null, engine, defaultOptions),
-    ).rejects.toThrow();
+    await expect(analyzeDocuments(sampleDocs, null, engine, defaultOptions)).rejects.toThrow();
     expect(engine.removed.length).toBe(1);
   });
 
@@ -425,9 +424,7 @@ describe("analyzeDocuments() — engine-backed profile extraction", () => {
       }
     }
     const engine = new PartialThenErrorEngine([]);
-    await expect(
-      analyzeDocuments(sampleDocs, null, engine, defaultOptions),
-    ).rejects.toThrow();
+    await expect(analyzeDocuments(sampleDocs, null, engine, defaultOptions)).rejects.toThrow();
     // Cleanup must still happen.
     expect(engine.removed.length).toBe(1);
   });
@@ -590,7 +587,6 @@ describe("analyzeDocuments() — engine-backed profile extraction", () => {
   });
 });
 
-
 describe("analyzeDocuments() — error handling (#359 #360 #361)", () => {
   it("retries once when the first send yields an engine error event (#359)", async () => {
     // A stream error must trigger the same single retry as malformed JSON,
@@ -653,12 +649,7 @@ describe("analyzeDocuments() — error handling (#359 #360 #361)", () => {
       }
     }
     const engine = new AlwaysErrorEngine([]);
-    const thrown: unknown = await analyzeDocuments(
-      sampleDocs,
-      null,
-      engine,
-      defaultOptions,
-    ).then(
+    const thrown: unknown = await analyzeDocuments(sampleDocs, null, engine, defaultOptions).then(
       () => {
         throw new Error("expected analyzeDocuments to reject");
       },
@@ -779,9 +770,7 @@ describe("parseAnalyzerJSON() — robust recovery of analyzer JSON (F16)", () =>
   });
 
   it("parses a fenced JSON block surrounded by prose on both sides", () => {
-    const parsed = parseAnalyzerJSON(
-      "Here you go:\n```json\n" + valid + "\n```\nHope that helps!",
-    );
+    const parsed = parseAnalyzerJSON("Here you go:\n```json\n" + valid + "\n```\nHope that helps!");
     expect(parsed?.communicationStyle).toBe("Direct and declarative.");
   });
 
@@ -800,6 +789,19 @@ describe("parseAnalyzerJSON() — robust recovery of analyzer JSON (F16)", () =>
     const parsed = parseAnalyzerJSON(withTrailingCommas);
     expect(parsed?.communicationStyle).toBe("Direct and declarative.");
     expect(parsed?.decisionPatterns).toEqual(["data-first", "ship-incrementally"]);
+  });
+
+  it("preserves an in-string comma while stripping the structural trailing comma (#1122)", () => {
+    // Otherwise-invalid JSON (structural trailing comma before `}`) whose
+    // communicationStyle value contains an in-string `comma + space + ]`.
+    // The pre-fix regex fallback mangled the in-string comma
+    // ("uses lists, ]" -> "uses lists ]"); the string-aware fallback removes
+    // ONLY the structural trailing comma.
+    const raw = '{"communicationStyle":"uses lists, ]","epistemicStance":"Empirical",}';
+    const parsed = parseAnalyzerJSON(raw);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.communicationStyle).toBe("uses lists, ]");
+    expect(parsed?.epistemicStance).toBe("Empirical");
   });
 
   it("returns null for genuinely unparsable input (graceful failure, no throw)", () => {
@@ -821,6 +823,76 @@ describe("parseAnalyzerJSON() — robust recovery of analyzer JSON (F16)", () =>
 
   it("does not throw on a top-level JSON array (returns null)", () => {
     expect(parseAnalyzerJSON("[1, 2, 3]")).toBeNull();
+  });
+});
+
+describe("stripTrailingCommas() — string-aware trailing-comma removal (#1122)", () => {
+  // Structural trailing commas (outside string literals) MUST still be
+  // stripped — this is the load-bearing behavior the fallback exists for.
+  it("strips a structural trailing comma before }", () => {
+    expect(stripTrailingCommas('{"a":1,}')).toBe('{"a":1}');
+  });
+
+  it("strips a structural trailing comma before ]", () => {
+    expect(stripTrailingCommas("[1,2,]")).toBe("[1,2]");
+  });
+
+  it("strips a structural trailing comma separated by whitespace, keeping the whitespace", () => {
+    expect(stripTrailingCommas('{"a":1,\n}')).toBe('{"a":1\n}');
+    expect(stripTrailingCommas("[1, 2, ]")).toBe("[1, 2 ]");
+  });
+
+  it("strips nested structural trailing commas but leaves element/member separators", () => {
+    expect(stripTrailingCommas('{"a":[1,2,],"b":3,}')).toBe('{"a":[1,2],"b":3}');
+  });
+
+  // In-string commas that merely LOOK like trailing commas (comma +
+  // optional whitespace + `}`/`]`) MUST be preserved — this is #1122.
+  it("preserves an in-string comma before ] (does not mangle the value)", () => {
+    expect(stripTrailingCommas('{"x":"a, ]"}')).toBe('{"x":"a, ]"}');
+  });
+
+  it("preserves an in-string comma before }", () => {
+    expect(stripTrailingCommas('{"x":"a, }"}')).toBe('{"x":"a, }"}');
+  });
+
+  it("preserves the in-string comma while stripping the structural trailing comma (#1122 exact case)", () => {
+    expect(stripTrailingCommas('{"x":"a, ]",}')).toBe('{"x":"a, ]"}');
+  });
+
+  it("respects escaped quotes: an in-string comma after an escaped quote is preserved", () => {
+    // Value is `a",]` — the escaped quote must NOT be treated as a string
+    // terminator, so the following `,]` stays inside the string.
+    const result = stripTrailingCommas('{"x":"a\\",]",}');
+    expect(result).toBe('{"x":"a\\",]"}');
+    const recovered = JSON.parse(result) as { readonly x: string };
+    expect(recovered.x).toBe('a",]');
+  });
+
+  it("preserves an in-string comma inside a nested string value", () => {
+    expect(stripTrailingCommas('{"a":{"b":"c, ]"},}')).toBe('{"a":{"b":"c, ]"}}');
+  });
+
+  // Inverse / over-correction guards: well-formed JSON is returned unchanged.
+  it("leaves valid JSON without trailing commas byte-for-byte unchanged", () => {
+    expect(stripTrailingCommas('{"a":1,"b":[2,3]}')).toBe('{"a":1,"b":[2,3]}');
+    expect(stripTrailingCommas('{"a":"hello, world"}')).toBe('{"a":"hello, world"}');
+    expect(stripTrailingCommas('{"a":"x,y","b":[1,2]}')).toBe('{"a":"x,y","b":[1,2]}');
+  });
+});
+
+describe("tryParseJSON() — trailing-comma recovery is string-aware (#1122)", () => {
+  it("recovers a structural trailing comma", () => {
+    expect(tryParseJSON('{"a":1,}')).toEqual({ a: 1 });
+    expect(tryParseJSON("[1,2,]")).toEqual([1, 2]);
+  });
+
+  it("recovers a structural trailing comma without corrupting an in-string comma (#1122)", () => {
+    expect(tryParseJSON('{"x":"a, ]",}')).toEqual({ x: "a, ]" });
+  });
+
+  it("returns the parsed value unchanged for already-valid JSON", () => {
+    expect(tryParseJSON('{"x":"a, ]"}')).toEqual({ x: "a, ]" });
   });
 });
 

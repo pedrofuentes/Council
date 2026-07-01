@@ -79,14 +79,62 @@ export function isolateBalancedObject(s: string): string | null {
   return null;
 }
 
+/** Insignificant whitespace between JSON tokens. Mirrors the `\s` the
+ *  original trailing-comma regex used, so structural stripping stays
+ *  behavior-preserving outside string literals. */
+const TOKEN_WHITESPACE = /\s/;
+
 /**
- * Remove trailing commas before a closing `}` or `]`. LLMs frequently
- * emit JSON5-style trailing commas that strict `JSON.parse` rejects.
- * Applied only as a fallback after a strict parse fails, so well-formed
- * responses are never touched.
+ * Remove *structural* trailing commas before a closing `}` or `]`. LLMs
+ * frequently emit JSON5-style trailing commas that strict `JSON.parse`
+ * rejects. Applied only as a fallback after a strict parse fails, so
+ * well-formed responses are never touched.
+ *
+ * String-aware (#1122): a comma is dropped only when it sits OUTSIDE any
+ * JSON string literal AND the next non-whitespace character is `}` or `]`.
+ * A naive `/,(\s*[}\]])/g` regex is not string-aware — on already-invalid
+ * input it rewrites an in-string `comma + whitespace + }/]`
+ * (e.g. `{"x":"a, ]",}` → `{"x":"a ]"}`), corrupting the recovered value.
+ * This scan tracks in-string state and honors backslash escapes so `\"`
+ * never terminates a string. Only the comma itself is removed; surrounding
+ * whitespace and the bracket are preserved, exactly as the original
+ * regex's `$1` replacement did.
  */
 export function stripTrailingCommas(s: string): string {
-  return s.replace(/,(\s*[}\]])/g, "$1");
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s.charAt(i);
+    if (inString) {
+      out += ch;
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+    if (ch === ",") {
+      // Look past insignificant whitespace: drop this comma only when the
+      // next non-whitespace character is a structural close (`}` or `]`).
+      let j = i + 1;
+      while (j < s.length && TOKEN_WHITESPACE.test(s.charAt(j))) j++;
+      const next = s.charAt(j);
+      if (next === "}" || next === "]") {
+        continue;
+      }
+    }
+    out += ch;
+  }
+  return out;
 }
 
 /**
