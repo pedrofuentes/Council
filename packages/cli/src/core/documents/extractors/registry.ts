@@ -51,7 +51,13 @@ export async function getExtractor(ext: string): Promise<ContentExtractor> {
   }
   let pending = resolved.get(loader);
   if (pending === undefined) {
-    pending = loader();
+    // Evict the memoized promise if the loader rejects so a later lookup
+    // retries the loader instead of re-serving a permanently poisoned
+    // cache entry. Successful loads stay memoized (#924).
+    pending = loader().catch((cause: unknown): never => {
+      resolved.delete(loader);
+      throw cause;
+    });
     resolved.set(loader, pending);
   }
   return pending;

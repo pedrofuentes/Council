@@ -75,6 +75,22 @@ describe("registerExtractor / getExtractor", () => {
     expect(err.suggestion).toContain(".md");
   });
 
+  it("suggests that no extractors are registered when the registry is empty", async () => {
+    const { registry, errors } = await loadRegistry();
+
+    let caught: unknown;
+    try {
+      await registry.getExtractor(".md");
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(errors.ExtractionError);
+    const err = caught as InstanceType<typeof errors.ExtractionError>;
+    expect(err.kind).toBe("unsupported-format");
+    expect(err.suggestion).toBe("No extractors are currently registered.");
+  });
+
   it("memoizes resolution: loader called once for repeated lookups", async () => {
     const { registry } = await loadRegistry();
     const loader = vi.fn<ExtractorLoader>(async () => makeExtractor("md"));
@@ -107,6 +123,48 @@ describe("registerExtractor / getExtractor", () => {
     registry.registerExtractor([".pdf"], async () => extractor);
 
     await expect(registry.getExtractor(".PDF")).resolves.toBe(extractor);
+  });
+});
+
+describe("getExtractor retry after loader rejection", () => {
+  it("re-invokes the loader after a rejected load and succeeds on retry", async () => {
+    const { registry } = await loadRegistry();
+    const extractor = makeExtractor("md");
+    const failure = new Error("transient load failure");
+    const loader = vi.fn<ExtractorLoader>();
+    loader.mockRejectedValueOnce(failure).mockResolvedValueOnce(extractor);
+    registry.registerExtractor([".md"], loader);
+
+    await expect(registry.getExtractor(".md")).rejects.toBe(failure);
+    await expect(registry.getExtractor(".md")).resolves.toBe(extractor);
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps retrying after repeated rejections without wedging the cache", async () => {
+    const { registry } = await loadRegistry();
+    const first = new Error("fail 1");
+    const second = new Error("fail 2");
+    const loader = vi.fn<ExtractorLoader>();
+    loader.mockRejectedValueOnce(first).mockRejectedValueOnce(second);
+    registry.registerExtractor([".md"], loader);
+
+    await expect(registry.getExtractor(".md")).rejects.toBe(first);
+    await expect(registry.getExtractor(".md")).rejects.toBe(second);
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps memoizing a successfully resolved loader (eviction is rejection-scoped)", async () => {
+    const { registry } = await loadRegistry();
+    const extractor = makeExtractor("md");
+    const loader = vi.fn<ExtractorLoader>(async () => extractor);
+    registry.registerExtractor([".md"], loader);
+
+    const a = await registry.getExtractor(".md");
+    const b = await registry.getExtractor(".md");
+
+    expect(a).toBe(extractor);
+    expect(a).toBe(b);
+    expect(loader).toHaveBeenCalledTimes(1);
   });
 });
 
