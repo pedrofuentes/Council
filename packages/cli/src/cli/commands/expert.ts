@@ -266,6 +266,25 @@ interface GatheredFields {
   readonly personaDescription?: string;
 }
 
+/**
+ * Sanitize a display name, surfacing the failure reason on stderr before
+ * re-throwing when the value reduces to empty. `sanitizeDisplayName` throws a
+ * `CliUserError` whose message the top-level handler intentionally does not
+ * print, so without this an empty `--name` (or an edited YAML whose
+ * displayName is only whitespace/control characters) would fail with a silent
+ * non-zero exit (#1050).
+ */
+function sanitizeDisplayNameOrExplain(raw: string, writeError: Writer): string {
+  try {
+    return sanitizeDisplayName(raw);
+  } catch (err) {
+    if (err instanceof CliUserError) {
+      writeError(`${err.message}\n`);
+    }
+    throw err;
+  }
+}
+
 async function gatherCreateFields(
   opts: CreateOptions,
   write: Writer,
@@ -283,7 +302,7 @@ async function gatherCreateFields(
   ) {
     return {
       slug: opts.slug,
-      name: sanitizeDisplayName(opts.name),
+      name: sanitizeDisplayNameOrExplain(opts.name, writeError),
       role: opts.role,
       expertise: opts.expertise,
       stance: opts.stance,
@@ -340,7 +359,7 @@ async function gatherCreateFields(
     write(formatPrefilledLines(opts));
     const slug = await promptFor("slug (lowercase alphanumeric + hyphens)", opts.slug, true);
     const rawName = await promptFor('displayName (e.g. "Dahlia Renner (CTO)")', opts.name, true);
-    const name = sanitizeDisplayName(rawName);
+    const name = sanitizeDisplayNameOrExplain(rawName, writeError);
     const role = await promptFor("role (one-line)", opts.role, true);
     const expertise = await promptFor(
       "expertise / weighted evidence (comma-separated)",
@@ -615,8 +634,11 @@ function buildEditCommand(write: Writer, writeError: Writer): Command {
 
         // Persist the freshly-parsed definition through the library so the
         // expert_library row (kind, displayName, yaml_checksum) catches up
-        // with the on-disk YAML.
-        await library.update(slug, parsed);
+        // with the on-disk YAML. The display name is sanitized here too so an
+        // edited YAML cannot reintroduce control/bidi characters that
+        // `expert create` would have stripped (#1050).
+        const sanitizedDisplayName = sanitizeDisplayNameOrExplain(parsed.displayName, writeError);
+        await library.update(slug, { ...parsed, displayName: sanitizedDisplayName });
         write(`✓ Expert "${slug}" saved and validated.\n`);
       });
     });
@@ -906,23 +928,59 @@ const URL_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
 const URL_FETCH_TIMEOUT_MS = 30_000;
 
 /**
- * Derive a filesystem-safe filename from an http(s) URL.
+ * Windows reserved device basenames (case-insensitive, extension aside).
+ * Creating a file whose base is one of these is unsafe/undefined on Windows,
+ * so a URL-derived filename that resolves to one is rejected (#1029).
+ */
+const WINDOWS_RESERVED_BASENAME_RE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
+/**
+ * Reject a URL-derived filename that is unsafe to create on disk or to echo
+ * to a terminal. Guards against control characters (#764), characters that
+ * are illegal in filenames on common filesystems — notably Windows — trailing
+ * dots/spaces, and Windows reserved device names (#1029). `displayUrl` is the
+ * already credential-redacted URL; the untrusted filename itself is never
+ * echoed back in the error message.
+ */
+function assertSafeDerivedFilename(filename: string, displayUrl: string): void {
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(filename)) {
+    throw new CliUserError(`URL-derived filename contains control characters: ${displayUrl}`);
+  }
+  if (/[<>:"/\\|?*]/.test(filename)) {
+    throw new CliUserError(`Invalid filename derived from URL: ${displayUrl}`);
+  }
+  if (/[. ]$/.test(filename)) {
+    throw new CliUserError(`Invalid filename derived from URL: ${displayUrl}`);
+  }
+  const base = filename.split(".", 1)[0] ?? filename;
+  if (WINDOWS_RESERVED_BASENAME_RE.test(base)) {
+    throw new CliUserError(`URL-derived filename uses a reserved device name: ${displayUrl}`);
+  }
+}
+
+/**
+ * Derive a filename from an http(s) URL and validate that it is safe to
+ * create on disk and to display.
  *
  * For URLs with a path (e.g., https://example.com/doc.pdf), returns the
  * last path segment (decoded). For path-less URLs (e.g., https://example.com),
- * derives a filename from the hostname (T8 fix).
+ * derives a filename from the hostname (T8 fix). The result is validated by
+ * `assertSafeDerivedFilename`, so a hostile URL cannot smuggle control
+ * characters or filesystem-unsafe names through (#764, #1029).
  *
  * @param rawUrl - The URL string to derive a filename from
- * @returns A valid, filesystem-safe filename
+ * @returns A validated filename safe to create on disk
  * @throws {CliUserError} If the URL is invalid, uses an unsupported protocol,
- *   has invalid encoding, or would produce an invalid filename
+ *   has invalid encoding, or would produce an unsafe filename. The raw URL is
+ *   never echoed in the parse-failure message (#763).
  */
 export function deriveFilenameFromUrl(rawUrl: string): string {
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
   } catch {
-    throw new CliUserError(`Invalid URL: ${rawUrl}`);
+    throw new CliUserError("Invalid URL: the provided value is not a well-formed http(s) URL.");
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new CliUserError(
@@ -942,7 +1000,9 @@ export function deriveFilenameFromUrl(rawUrl: string): string {
         `Cannot derive filename from URL pathname (no last segment): ${displayUrl}`,
       );
     }
-    return `${hostnameWithoutPort}.html`;
+    const hostFilename = `${hostnameWithoutPort}.html`;
+    assertSafeDerivedFilename(hostFilename, displayUrl);
+    return hostFilename;
   }
 
   let filename: string;
@@ -954,6 +1014,7 @@ export function deriveFilenameFromUrl(rawUrl: string): string {
   if (filename === "" || filename === "." || filename === ".." || /[\\/]/.test(filename)) {
     throw new CliUserError(`Invalid filename derived from URL: ${displayUrl}`);
   }
+  assertSafeDerivedFilename(filename, displayUrl);
   return filename;
 }
 
@@ -972,7 +1033,7 @@ export function deriveFilenameFromUrl(rawUrl: string): string {
 async function ingestUrlIntoDocs(rawUrl: string, destDir: string, write: Writer): Promise<string> {
   const filename = deriveFilenameFromUrl(rawUrl);
   const displayUrl = redactUrlForLog(new URL(rawUrl));
-  write(`Downloading ${displayUrl} to ${filename}...\n`);
+  write(`Downloading ${displayUrl} to ${toSingleLineDisplay(filename)}...\n`);
   let resp: Response;
   try {
     resp = await fetch(rawUrl, { signal: AbortSignal.timeout(URL_FETCH_TIMEOUT_MS) });
@@ -1035,20 +1096,41 @@ async function ingestUrlIntoDocs(rawUrl: string, destDir: string, write: Writer)
   return filename;
 }
 
+/** Extract a human-readable detail string from an unknown thrown value. */
+function errorDetail(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 /**
  * Atomically commit staged files into the docs dir. Files are copied
- * one-by-one, but the operation is all-or-nothing: a pre-existing doc that
+ * one-by-one, but the operation is all-or-nothing: a pre-existing entry that
  * would be overwritten is first moved aside, and if any copy fails the
- * already-committed files are removed and overwritten originals restored,
- * so docs/ is never left in a partial state (#1084). Backups use a unique
- * suffix the processor never scans and are cleaned up on success.
+ * already-committed files are removed and moved-aside originals restored, so
+ * docs/ is never left in a partial state (#1084). A destination that is a
+ * symlink (or other non-regular file) is also moved aside before copying —
+ * `fs.copyFile` follows symlinks, so without this the copy would silently
+ * overwrite whatever the link targets outside docs/ (#1880).
+ *
+ * Rollback is best-effort: filesystem errors during restore are collected
+ * rather than swallowed, and the thrown message says "rollback attempted"
+ * (surfacing any orphaned `.train-bak-*` backups) instead of unconditionally
+ * claiming a completed restore (#1881). Backups use a unique suffix the
+ * processor never scans and are cleaned up on success.
+ *
+ * Exported for unit testing of the rollback/restore paths, which the CLI
+ * cannot deterministically trigger from a pre-existing regular file.
  */
-async function commitStagedDocs(
+export async function commitStagedDocs(
   stagingPath: string,
   docsPath: string,
   staged: readonly string[],
 ): Promise<void> {
-  const committed: { readonly dest: string; readonly backup: string | undefined }[] = [];
+  interface CommitItem {
+    readonly dest: string;
+    readonly backup: string | undefined;
+    copied: boolean;
+  }
+  const applied: CommitItem[] = [];
   try {
     for (const filename of staged) {
       const dest = path.join(docsPath, filename);
@@ -1059,26 +1141,54 @@ async function commitStagedDocs(
       } catch {
         existing = undefined;
       }
-      if (existing?.isFile()) {
+      // Move aside anything already at the destination — a regular file OR a
+      // symlink — so the copy cannot follow a link and overwrite an external
+      // target (#1880). Mirrors the symlink guard in `expert edit`.
+      if (existing !== undefined && (existing.isFile() || existing.isSymbolicLink())) {
         backup = `${dest}.train-bak-${process.pid}-${Date.now()}`;
         await fs.rename(dest, backup);
       }
+      // Record the in-flight item BEFORE copying so a copy that throws still
+      // has its moved-aside original restored on rollback — otherwise the
+      // backup is orphaned (#1881).
+      const item: CommitItem = { dest, backup, copied: false };
+      applied.push(item);
       await fs.copyFile(path.join(stagingPath, filename), dest);
-      committed.push({ dest, backup });
+      item.copied = true;
     }
   } catch (err) {
-    for (const { dest, backup } of committed.reverse()) {
-      await fs.rm(dest, { force: true }).catch(() => undefined);
-      if (backup !== undefined) {
-        await fs.rename(backup, dest).catch(() => undefined);
+    const rollbackErrors: string[] = [];
+    const orphanedBackups: string[] = [];
+    for (const item of [...applied].reverse()) {
+      if (item.copied) {
+        // Remove the file we wrote so the original can move back into place.
+        try {
+          await fs.rm(item.dest, { force: true });
+        } catch (rmErr) {
+          rollbackErrors.push(errorDetail(rmErr));
+        }
+      }
+      if (item.backup !== undefined) {
+        try {
+          await fs.rename(item.backup, item.dest);
+        } catch (renameErr) {
+          rollbackErrors.push(errorDetail(renameErr));
+          orphanedBackups.push(item.backup);
+        }
       }
     }
-    const detail = err instanceof Error ? err.message : String(err);
-    throw new CliUserError(
-      `Failed to commit ingested files; rolled back to prior state: ${detail}`,
-    );
+    let message = `Failed to commit ingested files; rollback attempted to restore the prior state: ${errorDetail(
+      err,
+    )}`;
+    if (rollbackErrors.length > 0) {
+      message += ` Rollback did not fully complete: ${rollbackErrors.join("; ")}.`;
+    }
+    if (orphanedBackups.length > 0) {
+      message += ` Original files may remain in these backups: ${orphanedBackups.join(", ")}.`;
+    }
+    throw new CliUserError(message);
   }
-  for (const { backup } of committed) {
+  for (const { backup } of applied) {
     if (backup !== undefined) await fs.rm(backup, { force: true }).catch(() => undefined);
   }
 }

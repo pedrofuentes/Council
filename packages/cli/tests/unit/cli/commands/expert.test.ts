@@ -13,7 +13,11 @@ import * as fs from "node:fs/promises";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { buildExpertCommand } from "../../../../src/cli/commands/expert.js";
+import {
+  buildExpertCommand,
+  commitStagedDocs,
+  deriveFilenameFromUrl,
+} from "../../../../src/cli/commands/expert.js";
 import { CliUserError } from "../../../../src/cli/cli-user-error.js";
 import type { ExpertDefinition } from "../../../../src/core/expert.js";
 import type {
@@ -252,9 +256,8 @@ describe("buildExpertCommand", () => {
       await seedExpert(env, PERSONA);
 
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { ProfileRepository } = await import(
-        "../../../../src/memory/repositories/profile-repository.js"
-      );
+      const { ProfileRepository } =
+        await import("../../../../src/memory/repositories/profile-repository.js");
       {
         const db = await createDatabase(path.join(env.home, "council.db"));
         try {
@@ -301,9 +304,8 @@ describe("buildExpertCommand", () => {
       await seedExpert(env, PERSONA);
 
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { ProfileRepository } = await import(
-        "../../../../src/memory/repositories/profile-repository.js"
-      );
+      const { ProfileRepository } =
+        await import("../../../../src/memory/repositories/profile-repository.js");
       {
         const db = await createDatabase(path.join(env.home, "council.db"));
         try {
@@ -326,14 +328,7 @@ describe("buildExpertCommand", () => {
       const cmd = buildExpertCommand((s) => {
         captured += s;
       });
-      await cmd.parseAsync([
-        "node",
-        "council-expert",
-        "inspect",
-        "boss",
-        "--format",
-        "json",
-      ]);
+      await cmd.parseAsync(["node", "council-expert", "inspect", "boss", "--format", "json"]);
       const parsed = JSON.parse(captured) as { profile?: { communicationStyle?: string } };
       expect(parsed.profile?.communicationStyle).toBe("Terse, metrics-driven, action-oriented.");
     });
@@ -375,6 +370,40 @@ describe("buildExpertCommand", () => {
     });
     afterEach(async () => {
       await teardown(env);
+    });
+
+    it("writes a stderr message when --name sanitizes to empty (#1050)", async () => {
+      // A whitespace-only name reduces to empty in sanitizeDisplayName, which
+      // throws CliUserError. The top-level handler does NOT print that
+      // message, so the command must surface the reason on stderr itself —
+      // otherwise the user sees a silent non-zero exit with no explanation.
+      let erred = "";
+      const cmd = buildExpertCommand(
+        () => {
+          /* noop */
+        },
+        (s) => {
+          erred += s;
+        },
+      );
+      await expect(
+        cmd.parseAsync([
+          "node",
+          "council-expert",
+          "create",
+          "--slug",
+          "ws-name",
+          "--name",
+          "   ",
+          "--role",
+          "R",
+          "--expertise",
+          "E",
+          "--stance",
+          "S",
+        ]),
+      ).rejects.toBeInstanceOf(CliUserError);
+      expect(erred.toLowerCase()).toMatch(/display name|empty|whitespace/);
     });
 
     it("creates an expert from flags", async () => {
@@ -1007,6 +1036,80 @@ fs.writeFileSync(p, body, 'utf-8');`,
         await expect(
           cmd.parseAsync(["node", "council-expert", "edit", "dahlia-cto"]),
         ).rejects.toThrow(/editor/i);
+      } finally {
+        if (originalEditor === undefined) delete process.env["EDITOR"];
+        else process.env["EDITOR"] = originalEditor;
+      }
+    });
+
+    it("rejects when the editor is terminated by a signal (#293)", async () => {
+      await seedExpert(env, SAMPLE);
+      const originalEditor = process.env["EDITOR"];
+      // The editor stub kills itself with SIGTERM, so the child exits with
+      // (code=null, signal="SIGTERM") — exercising runEditor's signal branch,
+      // which a plain non-zero-exit test never reaches.
+      process.env["EDITOR"] = `node -e "process.kill(process.pid,'SIGTERM')"`;
+      try {
+        const cmd = buildExpertCommand(
+          () => {
+            /* noop */
+          },
+          () => {
+            /* noop */
+          },
+        );
+        await expect(
+          cmd.parseAsync(["node", "council-expert", "edit", "dahlia-cto"]),
+        ).rejects.toThrow(/terminated by signal/i);
+      } finally {
+        if (originalEditor === undefined) delete process.env["EDITOR"];
+        else process.env["EDITOR"] = originalEditor;
+      }
+    });
+
+    it("sanitizes the edited display name before persisting it (#1050)", async () => {
+      await seedExpert(env, SAMPLE);
+      // Editor stub rewrites displayName with padded + internally-collapsed
+      // whitespace. `expert edit` must run it through sanitizeDisplayName (as
+      // `expert create` does) so the stored name is trimmed and collapsed.
+      const stubPath = path.join(env.home, "edit-sanitize.cjs");
+      await fs.writeFile(
+        stubPath,
+        `const fs = require('fs');
+const p = process.argv[2];
+let body = fs.readFileSync(p, 'utf-8');
+body = body.replace(/^displayName:.*/m, 'displayName: "  Padded   Name  "');
+fs.writeFileSync(p, body, 'utf-8');`,
+        "utf-8",
+      );
+      const originalEditor = process.env["EDITOR"];
+      process.env["EDITOR"] = `node "${stubPath}"`;
+      try {
+        const cmd = buildExpertCommand(
+          () => {
+            /* noop */
+          },
+          () => {
+            /* noop */
+          },
+        );
+        await cmd.parseAsync(["node", "council-expert", "edit", "dahlia-cto"]);
+
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { FileExpertLibrary } = await import("../../../../src/core/expert-library.js");
+        const db = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          const reloaded = await new FileExpertLibrary(env.dataHome, db).get("dahlia-cto");
+          expect(reloaded?.displayName).toBe("Padded Name");
+        } finally {
+          await db.destroy();
+        }
+        const onDisk = await fs.readFile(
+          path.join(env.dataHome, "experts", "dahlia-cto.yaml"),
+          "utf-8",
+        );
+        expect(onDisk).toContain("Padded Name");
+        expect(onDisk).not.toContain("Padded   Name");
       } finally {
         if (originalEditor === undefined) delete process.env["EDITOR"];
         else process.env["EDITOR"] = originalEditor;
@@ -1710,14 +1813,7 @@ fs.writeFileSync(p, body, 'utf-8');`,
         { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
       );
       try {
-        await cmd.parseAsync([
-          "node",
-          "council-expert",
-          "train",
-          "boss",
-          "--file",
-          srcPath,
-        ]);
+        await cmd.parseAsync(["node", "council-expert", "train", "boss", "--file", srcPath]);
         // File copied into docs dir.
         const dest = path.join(env.dataHome, "experts", "boss", "docs", "external-notes.md");
         const body = await fs.readFile(dest, "utf-8");
@@ -1748,16 +1844,7 @@ fs.writeFileSync(p, body, 'utf-8');`,
         { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
       );
       try {
-        await cmd.parseAsync([
-          "node",
-          "council-expert",
-          "train",
-          "boss",
-          "--file",
-          a,
-          "--file",
-          b,
-        ]);
+        await cmd.parseAsync(["node", "council-expert", "train", "boss", "--file", a, "--file", b]);
         const docsDir = path.join(env.dataHome, "experts", "boss", "docs");
         expect(await fs.readFile(path.join(docsDir, "a.md"), "utf-8")).toBe("alpha");
         expect(await fs.readFile(path.join(docsDir, "b.md"), "utf-8")).toBe("beta");
@@ -1868,14 +1955,7 @@ fs.writeFileSync(p, body, 'utf-8');`,
         { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
       );
       await expect(
-        cmd.parseAsync([
-          "node",
-          "council-expert",
-          "train",
-          "boss",
-          "--url",
-          "file:///etc/passwd",
-        ]),
+        cmd.parseAsync(["node", "council-expert", "train", "boss", "--url", "file:///etc/passwd"]),
       ).rejects.toThrow(/http|url/i);
       expect(erred.toLowerCase()).toMatch(/http|url/);
     });
@@ -1957,9 +2037,8 @@ fs.writeFileSync(p, body, 'utf-8');`,
 
         // Training never recorded any document for the expert.
         const { createDatabase } = await import("../../../../src/memory/db.js");
-        const { DocumentRepository } = await import(
-          "../../../../src/memory/repositories/document-repository.js"
-        );
+        const { DocumentRepository } =
+          await import("../../../../src/memory/repositories/document-repository.js");
         const db = await createDatabase(path.join(env.home, "council.db"));
         try {
           const docs = await new DocumentRepository(db).findByExpert("boss");
@@ -2109,6 +2188,199 @@ fs.writeFileSync(p, body, 'utf-8');`,
       }
     });
 
+    it("surfaces a clean error when the URL fetch times out (#765)", async () => {
+      await seedExpert(env, PERSONA);
+      let sawSignal = false;
+      const fakeFetch = vi.fn(
+        async (_url: string | URL, init?: { signal?: AbortSignal }): Promise<Response> => {
+          // The download guard must pass an AbortSignal (the fetch timeout).
+          sawSignal = init?.signal instanceof AbortSignal;
+          // Simulate AbortSignal.timeout(...) firing mid-fetch.
+          throw Object.assign(new Error("The operation was aborted due to timeout"), {
+            name: "TimeoutError",
+          });
+        },
+      );
+      vi.stubGlobal("fetch", fakeFetch);
+      try {
+        let erred = "";
+        const cmd = buildExpertCommand(
+          () => {
+            /* noop */
+          },
+          (s) => {
+            erred += s;
+          },
+          { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+        );
+        await expect(
+          cmd.parseAsync([
+            "node",
+            "council-expert",
+            "train",
+            "boss",
+            "--url",
+            "https://example.com/report.md",
+          ]),
+        ).rejects.toThrow(/failed to download|timeout|aborted/i);
+        expect(sawSignal).toBe(true);
+        expect(erred.toLowerCase()).toMatch(/failed to download|timeout|aborted/);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it(
+      "aborts and unlinks a streamed download that exceeds the size cap (#766)",
+      { timeout: 30_000 },
+      async () => {
+        await seedExpert(env, PERSONA);
+        const CAP = 50 * 1024 * 1024;
+        const small = new Uint8Array(1024 * 1024); // 1 MB, written before the cap trips
+        const huge = new Uint8Array(CAP); // pushes the running total over the cap
+        let idx = 0;
+        const stream = new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (idx === 0) {
+              idx += 1;
+              controller.enqueue(small);
+            } else if (idx === 1) {
+              idx += 1;
+              controller.enqueue(huge);
+            } else {
+              controller.close();
+            }
+          },
+        });
+        // No Content-Length header → the streaming byte-counter must enforce
+        // the cap and unlink the partial file.
+        const fakeFetch = vi.fn(
+          async (): Promise<Response> => new Response(stream, { status: 200 }),
+        );
+        vi.stubGlobal("fetch", fakeFetch);
+        try {
+          let erred = "";
+          const cmd = buildExpertCommand(
+            () => {
+              /* noop */
+            },
+            (s) => {
+              erred += s;
+            },
+            { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+          );
+          await expect(
+            cmd.parseAsync([
+              "node",
+              "council-expert",
+              "train",
+              "boss",
+              "--url",
+              "https://example.com/stream.md",
+            ]),
+          ).rejects.toThrow(/exceeds|limit|size/i);
+          expect(erred.toLowerCase()).toMatch(/exceeds|limit|size/);
+          const dest = path.join(env.dataHome, "experts", "boss", "docs", "stream.md");
+          await expect(fs.access(dest)).rejects.toBeTruthy();
+        } finally {
+          vi.unstubAllGlobals();
+        }
+      },
+    );
+
+    it.skipIf(process.platform === "win32")(
+      "does not follow a symlink at the commit destination (#1880)",
+      async () => {
+        await seedExpert(env, PERSONA);
+        const docsDir = path.join(env.dataHome, "experts", "boss", "docs");
+        await fs.mkdir(docsDir, { recursive: true });
+        // External file the docs entry symlinks to — it must NOT be written
+        // through by the commit copy (copyFile follows symlinks).
+        const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-outside-"));
+        const target = path.join(outsideDir, "secret.txt");
+        await fs.writeFile(target, "PROTECTED", "utf-8");
+        await fs.symlink(target, path.join(docsDir, "report.md"));
+
+        const srcDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-src-"));
+        const src = path.join(srcDir, "report.md");
+        await fs.writeFile(src, "NEW DOC", "utf-8");
+        try {
+          const cmd = buildExpertCommand(
+            () => {
+              /* noop */
+            },
+            () => {
+              /* noop */
+            },
+            { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+          );
+          await cmd.parseAsync(["node", "council-expert", "train", "boss", "--file", src]);
+
+          // The external target must be untouched, and the docs entry must now
+          // be a regular file holding the new content (not a symlink).
+          expect(await fs.readFile(target, "utf-8")).toBe("PROTECTED");
+          const dest = path.join(docsDir, "report.md");
+          expect((await fs.lstat(dest)).isFile()).toBe(true);
+          expect(await fs.readFile(dest, "utf-8")).toBe("NEW DOC");
+        } finally {
+          await fs.rm(srcDir, { recursive: true, force: true });
+          await fs.rm(outsideDir, { recursive: true, force: true });
+        }
+      },
+    );
+
+    it("reports a best-effort 'rollback attempted' message when a commit fails (#1881)", async () => {
+      await seedExpert(env, PERSONA);
+      const docsDir = path.join(env.dataHome, "experts", "boss", "docs");
+      await fs.mkdir(docsDir, { recursive: true });
+      // A pre-existing directory at a target name makes the commit copy fail.
+      await fs.mkdir(path.join(docsDir, "collide.md"), { recursive: true });
+      const srcDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-src-"));
+      const collide = path.join(srcDir, "collide.md");
+      await fs.writeFile(collide, "body", "utf-8");
+      try {
+        let erred = "";
+        const cmd = buildExpertCommand(
+          () => {
+            /* noop */
+          },
+          (s) => {
+            erred += s;
+          },
+          { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+        );
+        await expect(
+          cmd.parseAsync(["node", "council-expert", "train", "boss", "--file", collide]),
+        ).rejects.toThrow(/rollback attempted/i);
+        expect(erred).toMatch(/rollback attempted/i);
+        // Rollback is best-effort — the message must NOT claim a guaranteed
+        // restore it did not verify.
+        expect(erred).not.toMatch(/rolled back to prior state/i);
+      } finally {
+        await fs.rm(srcDir, { recursive: true, force: true });
+      }
+    });
+
+    it("restores a moved-aside original when the commit copy fails, leaving no orphan (#1881)", async () => {
+      const docsPath = path.join(env.dataHome, "commit-docs");
+      const stagingPath = path.join(env.dataHome, "commit-staging");
+      await fs.mkdir(docsPath, { recursive: true });
+      await fs.mkdir(stagingPath, { recursive: true });
+      // Pre-existing doc that must survive a failed commit.
+      await fs.writeFile(path.join(docsPath, "report.md"), "IMPORTANT", "utf-8");
+      // Staging entry is a directory → copyFile fails, triggering rollback
+      // AFTER the original was moved aside to a .train-bak-* file.
+      await fs.mkdir(path.join(stagingPath, "report.md"));
+
+      await expect(commitStagedDocs(stagingPath, docsPath, ["report.md"])).rejects.toThrow(
+        /rollback attempted/i,
+      );
+      // The original must be restored in place, not orphaned in a backup.
+      expect(await fs.readFile(path.join(docsPath, "report.md"), "utf-8")).toBe("IMPORTANT");
+      const leftovers = (await fs.readdir(docsPath)).filter((f) => f.includes(".train-bak-"));
+      expect(leftovers).toEqual([]);
+    });
+
     // F15: training summary counter wording
     // ──────────────────────────────────────────────────────────────────
 
@@ -2202,5 +2474,50 @@ fs.writeFileSync(p, body, 'utf-8');`,
         }
       },
     );
+  });
+});
+
+describe("deriveFilenameFromUrl hardening (#763, #764, #1029)", () => {
+  it("does not echo the raw URL when it fails to parse (#763)", () => {
+    const secret = "not a url user:s3cr3t@host/p?token=abc123";
+    let thrown: unknown;
+    try {
+      deriveFilenameFromUrl(secret);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(CliUserError);
+    const message = (thrown as Error).message;
+    expect(message).toMatch(/invalid url/i);
+    expect(message).not.toContain("s3cr3t");
+    expect(message).not.toContain("abc123");
+    expect(message).not.toContain(secret);
+  });
+
+  it("rejects a decoded filename containing control characters (#764)", () => {
+    expect(() => deriveFilenameFromUrl("https://example.com/%0A%1Bevil.md")).toThrow(
+      /control character/i,
+    );
+  });
+
+  it("rejects a decoded filename with filesystem-illegal characters (#1029)", () => {
+    // %3C decodes to "<", which is illegal in a filename on Windows.
+    expect(() => deriveFilenameFromUrl("https://example.com/a%3Cb.md")).toThrow(
+      /invalid|filename/i,
+    );
+  });
+
+  it("rejects hostname-derived Windows reserved device names (#1029)", () => {
+    expect(() => deriveFilenameFromUrl("http://nul")).toThrow(/reserved device/i);
+  });
+
+  it("rejects IPv6 hostname-derived names that contain illegal characters (#1029)", () => {
+    expect(() => deriveFilenameFromUrl("http://[::1]")).toThrow(/invalid|filename|reserved/i);
+  });
+
+  it("still accepts ordinary path- and host-derived filenames", () => {
+    expect(deriveFilenameFromUrl("https://example.com/my%20file.txt")).toBe("my file.txt");
+    expect(deriveFilenameFromUrl("https://example.com")).toBe("example.com.html");
+    expect(deriveFilenameFromUrl("https://example.com/docs/")).toBe("docs");
   });
 });
