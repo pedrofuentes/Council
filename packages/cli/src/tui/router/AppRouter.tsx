@@ -93,6 +93,27 @@ const NAV_ID_TO_ROUTE: Record<string, string> = {
   settings: ROUTES.settings,
 };
 
+// Rows the DebateStreamScreen renders around its transcript viewport within the
+// main pane (title, topic, experts, live-status and the Esc hint). Subtract them
+// from the pane's `contentHeight` so the scrolling transcript never pushes that
+// surrounding chrome off-screen.
+const DEBATE_TRANSCRIPT_CHROME_ROWS = 6;
+
+// Smallest usable transcript viewport. On very small terminals the subtraction
+// above can go non-positive, so clamp to a floor that still shows a few lines
+// instead of collapsing the transcript (or handing ScrollView a <= 0 height).
+const DEBATE_TRANSCRIPT_MIN_ROWS = 4;
+
+/**
+ * Derive the debate transcript viewport height from the main pane's
+ * `contentHeight`. Pure and total: reserves rows for the screen's own chrome and
+ * clamps to a floor so small/degenerate terminal heights still yield a usable,
+ * non-collapsing viewport. See issue #1725.
+ */
+export function debateTranscriptMaxRows(contentHeight: number): number {
+  return Math.max(DEBATE_TRANSCRIPT_MIN_ROWS, contentHeight - DEBATE_TRANSCRIPT_CHROME_ROWS);
+}
+
 export function AppRouter(props: CouncilTUIProps): React.ReactElement {
   const theme = resolveTheme(props.env ?? process.env);
   const { stdout } = useStdout();
@@ -322,7 +343,7 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
               <DebateStreamScreen
                 theme={theme}
                 isActive={mainActive}
-                maxRows={Math.max(4, layout.contentHeight - 6)}
+                maxRows={debateTranscriptMaxRows(layout.contentHeight)}
               />
             }
           />
