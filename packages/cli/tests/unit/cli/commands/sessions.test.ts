@@ -300,6 +300,42 @@ describe("buildSessionsCommand", () => {
     expect(help).toContain("supports unique prefix matching");
   });
 
+  it("describes 'cancel' without the undefined term 'stale' (#846)", () => {
+    const cmd = buildSessionsCommand();
+    const cancelCommand = cmd.commands.find((subcommand) => subcommand.name() === "cancel");
+    const description = cancelCommand?.description() ?? "";
+    // The prior wording "Mark stale running debates as interrupted" leaned on
+    // the undefined term "stale". The command actually cancels running debates
+    // (the latest for a named panel, or every one with --all), so the
+    // description must say so plainly and never mention "stale".
+    expect(description).toMatch(/cancel/i);
+    expect(description).toMatch(/running/i);
+    expect(description).not.toMatch(/stale/i);
+  });
+
+  it("documents delete safeguards (prefix, confirmation/--yes, running guard) in help (#872)", () => {
+    const cmd = buildSessionsCommand();
+    const deleteCommand = cmd.commands.find((subcommand) => subcommand.name() === "delete");
+    let help = "";
+    deleteCommand?.configureOutput({
+      writeOut: (chunk) => {
+        help += chunk;
+      },
+      writeErr: (chunk) => {
+        help += chunk;
+      },
+    });
+    deleteCommand?.outputHelp();
+    // All three safeguards must be discoverable from `council sessions delete --help`:
+    // unique-prefix matching, the confirmation prompt / --yes escape hatch, and
+    // the running-session guard (with the remediation to cancel first).
+    expect(help).toMatch(/unique prefix/i);
+    expect(help).toMatch(/--yes/);
+    expect(help).toMatch(/confirm/i);
+    expect(help).toMatch(/running sessions? cannot be deleted/i);
+    expect(help).toMatch(/council sessions cancel/);
+  });
+
   describe("action behavior (with isolated COUNCIL_HOME)", () => {
     let testHome: string;
     let originalHome: string | undefined;
@@ -553,7 +589,7 @@ describe("buildSessionsCommand", () => {
       expect(captured).toContain("env-var topic");
     });
 
-    it("truncates long topics at ~80 chars in plain format", async () => {
+    it("truncates long topics to exactly 80 chars (slice(0,77) + '...') in plain format (#801)", async () => {
       const { createDatabase } = await import("../../../../src/memory/db.js");
       const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
       const db = await createDatabase(path.join(testHome, "council.db"));
@@ -573,9 +609,120 @@ describe("buildSessionsCommand", () => {
         captured += s;
       });
       await cmd.parseAsync(["node", "council-sessions"]);
-      expect(captured).toContain("long-topic-session");
-      expect(captured).toContain("...");
+
+      // Pin the exact contract: the first 77 code units plus a literal ellipsis,
+      // for a total display width of exactly 80. Anything else (a different cut
+      // point or width) is a regression, not just "some truncation happened".
+      const expectedTruncated =
+        "This is a very long topic that should be truncated at approximately 80 charac...";
+      expect(expectedTruncated).toHaveLength(80);
+      expect(captured).toContain(`— ${expectedTruncated}\n`);
+      // The full, untruncated topic must never reach the plain listing.
       expect(captured).not.toContain(longTopic);
+      // Off-by-one guards: a cutoff of 76 or 78 would change the visible text.
+      expect(captured).not.toContain("chara...");
+      expect(captured).not.toContain("charact...");
+    });
+
+    it("keeps a topic of exactly 80 characters intact (no ellipsis) in plain format (#801)", async () => {
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
+      const db = await createDatabase(path.join(testHome, "council.db"));
+      const repo = new PanelRepository(db);
+      // Exactly at the 80-char boundary: must be shown verbatim, never truncated.
+      const exactTopic = "exactly-eighty-character-boundary-topic".padEnd(80, "-");
+      expect(exactTopic).toHaveLength(80);
+      await repo.create({
+        name: "boundary-80-session",
+        topic: exactTopic,
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: "{}",
+      });
+      await db.destroy();
+
+      let captured = "";
+      const cmd = buildSessionsCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-sessions"]);
+
+      expect(captured).toContain(`— ${exactTopic}\n`);
+      // Inverse of the truncation invariant: the slice(0,77)+"..." form is absent.
+      expect(captured).not.toContain(`${exactTopic.slice(0, 77)}...`);
+    });
+
+    it("truncates a topic of 81 characters to exactly 80 (just over the limit) in plain format (#801)", async () => {
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
+      const db = await createDatabase(path.join(testHome, "council.db"));
+      const repo = new PanelRepository(db);
+      // One character over the limit: the smallest input that must truncate.
+      const eightyOneCharTopic = "z".repeat(81);
+      const expectedTruncated = `${"z".repeat(77)}...`;
+      expect(eightyOneCharTopic).toHaveLength(81);
+      expect(expectedTruncated).toHaveLength(80);
+      await repo.create({
+        name: "boundary-81-session",
+        topic: eightyOneCharTopic,
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: "{}",
+      });
+      await db.destroy();
+
+      let captured = "";
+      const cmd = buildSessionsCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-sessions"]);
+
+      expect(captured).toContain(`— ${expectedTruncated}\n`);
+      // Off-by-one guard: at most 77 topic characters survive before the ellipsis.
+      expect(captured).not.toContain("z".repeat(78));
+    });
+
+    it("renders an adversarial topic as a single sanitized line in plain format (#801)", async () => {
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
+      const db = await createDatabase(path.join(testHome, "council.db"));
+      const repo = new PanelRepository(db);
+      // The topic is untrusted terminal-bound text. TAB, C0 (SOH/BS/ESC-CSI),
+      // C1 (0x9B), DEL, bidi override/isolate, CR/LF, and U+2028/U+2029 must
+      // never survive to the display line — otherwise a crafted topic could
+      // forge extra lines or inject terminal escapes. (NUL is omitted: SQLite
+      // TEXT truncates at an embedded NUL, so it can never reach this sink from
+      // a persisted topic; the strip-control-chars unit tests cover NUL directly.)
+      const adversarialTopic =
+        "start\u0009\u0001\u0008\u001b[31m\u009b\u007f\u202e\u2066mid\r\n\u2028\u2029end";
+      await repo.create({
+        name: "adversarial-topic-session",
+        topic: adversarialTopic,
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: "{}",
+      });
+      await db.destroy();
+
+      let captured = "";
+      const cmd = buildSessionsCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-sessions"]);
+
+      const headerLines = captured
+        .split("\n")
+        .filter((line) => line.includes("adversarial-topic-session") && line.includes("—"));
+      // Single display line: the CR/LF and line/paragraph separators inside the
+      // topic must not break it across multiple rows.
+      expect(headerLines).toHaveLength(1);
+      const headerLine = headerLines[0] ?? "";
+      // Every visible fragment of the topic stays on that one line.
+      expect(headerLine).toContain("start");
+      expect(headerLine).toContain("mid");
+      expect(headerLine).toContain("end");
+      // No C0/C1, DEL, bidi override/isolate, or line/paragraph separators leak.
+      expect(headerLine).not.toMatch(
+        // eslint-disable-next-line no-control-regex
+        /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/,
+      );
     });
 
     it("preserves full topic in JSON format", async () => {
