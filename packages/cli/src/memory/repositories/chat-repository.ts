@@ -219,6 +219,22 @@ export class ChatRepository {
     return rows.map(sessionToDomain);
   }
 
+  /**
+   * Total number of chat sessions (active + archived), via a single
+   * aggregate COUNT. Preferred over `listSessions().length` when only the
+   * tally is needed — e.g. the TUI Home screen (#1589) — because the count
+   * stays correct even if `listSessions` later paginates or applies a limit
+   * (#1582). Mirrors {@link TurnRepository.countByExpertId}: returns 0 for
+   * an empty table (COUNT always yields a row).
+   */
+  async countSessions(): Promise<number> {
+    const row = await this.db
+      .selectFrom("chat_sessions")
+      .select((eb) => eb.fn.countAll<number>().as("count"))
+      .executeTakeFirstOrThrow();
+    return Number(row.count);
+  }
+
   async archiveSession(id: string): Promise<void> {
     const now = new Date().toISOString();
     await this.db
