@@ -16,25 +16,33 @@ import { autoComposePanel } from "../../../src/core/auto-compose.js";
 import { PanelDefinitionSchema } from "../../../src/core/template-loader.js";
 import type {
   CouncilEngine,
+  EngineErrorCode,
   EngineEvent,
   ExpertSpec,
   SendOptions,
 } from "../../../src/engine/index.js";
+import { MockEngine } from "../../../src/engine/mock/mock-engine.js";
+
+interface StubSendOutcome {
+  readonly text?: string;
+  readonly error?: {
+    readonly code: EngineErrorCode;
+    readonly message: string;
+    readonly recoverable?: boolean;
+  };
+}
 
 interface StubEngineOptions {
   readonly response?: string;
   readonly responses?: readonly string[];
   readonly errorEvent?: {
-    readonly code:
-      | "NOT_AUTHENTICATED"
-      | "MODEL_UNAVAILABLE"
-      | "NETWORK"
-      | "RATE_LIMITED"
-      | "CONTEXT_OVERFLOW"
-      | "ABORTED"
-      | "INTERNAL";
+    readonly code: EngineErrorCode;
     readonly message: string;
   };
+  /** Per-send scripted outcomes (text or error) for retry/backoff tests (#260). */
+  readonly sendSequence?: readonly StubSendOutcome[];
+  /** When set, `removeExpert` rejects with this message to exercise cleanup isolation (#289). */
+  readonly failOnRemoveExpert?: string;
 }
 
 class StubEngine implements CouncilEngine {
@@ -49,13 +57,23 @@ class StubEngine implements CouncilEngine {
   readonly #fallbackResponse: string;
   readonly #errorEvent: StubEngineOptions["errorEvent"];
   readonly #hang: boolean;
+  readonly #abortYieldDelayMs: number;
+  readonly #sendSequence: StubSendOutcome[] | undefined;
+  readonly #sendSequenceFallback: StubSendOutcome;
+  readonly #failOnRemoveExpert: string | undefined;
 
-  constructor(opts: StubEngineOptions & { readonly hang?: boolean }) {
+  constructor(
+    opts: StubEngineOptions & { readonly hang?: boolean; readonly abortYieldDelayMs?: number },
+  ) {
     const responses = opts.responses ?? [opts.response ?? ""];
     this.#responses = [...responses];
     this.#fallbackResponse = responses.at(-1) ?? "";
     this.#errorEvent = opts.errorEvent;
     this.#hang = opts.hang ?? false;
+    this.#abortYieldDelayMs = opts.abortYieldDelayMs ?? 0;
+    this.#sendSequence = opts.sendSequence ? [...opts.sendSequence] : undefined;
+    this.#sendSequenceFallback = opts.sendSequence?.at(-1) ?? { text: "" };
+    this.#failOnRemoveExpert = opts.failOnRemoveExpert;
   }
 
   async start(): Promise<void> {
@@ -78,8 +96,11 @@ class StubEngine implements CouncilEngine {
   }
 
   async removeExpert(expertId: string): Promise<void> {
-    this.#experts.delete(expertId);
     this.removedExperts.push(expertId);
+    if (this.#failOnRemoveExpert !== undefined) {
+      throw new Error(this.#failOnRemoveExpert);
+    }
+    this.#experts.delete(expertId);
   }
 
   async listModels(): Promise<readonly string[]> {
@@ -92,8 +113,33 @@ class StubEngine implements CouncilEngine {
     }
     this.sentPrompts.push({ expertId: options.expertId, prompt: options.prompt });
     this.sendSignals.push(options.signal);
+    if (this.#sendSequence !== undefined) {
+      const outcome = this.#sendSequence.shift() ?? this.#sendSequenceFallback;
+      return this.#streamOutcome(options.expertId, outcome);
+    }
     const response = this.#responses.shift() ?? this.#fallbackResponse;
     return this.#stream(options.expertId, response, options.signal);
+  }
+
+  async *#streamOutcome(
+    expertId: string,
+    outcome: StubSendOutcome,
+  ): AsyncGenerator<EngineEvent, void, void> {
+    if (outcome.error !== undefined) {
+      yield {
+        kind: "error",
+        expertId,
+        error: { code: outcome.error.code, message: outcome.error.message },
+        recoverable: outcome.error.recoverable ?? false,
+      };
+      return;
+    }
+    yield { kind: "message.delta", expertId, text: outcome.text ?? "" };
+    yield {
+      kind: "message.complete",
+      expertId,
+      response: { latencyMs: 1, tokensIn: 1, tokensOut: 1 },
+    };
   }
 
   async *#stream(
@@ -111,6 +157,11 @@ class StubEngine implements CouncilEngine {
         }
         signal.addEventListener("abort", () => resolve(), { once: true });
       });
+      // Optionally stall AFTER the abort fires so a racing timeout signal can
+      // also latch before the ABORTED error is observed (#722 race repro).
+      if (this.#abortYieldDelayMs > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, this.#abortYieldDelayMs));
+      }
       yield {
         kind: "error",
         expertId,
@@ -336,9 +387,9 @@ describe("autoComposePanel", () => {
 
     setTimeout(() => controller.abort(), 0);
 
-    await expect(
-      autoComposePanel("topic", engine, { signal: controller.signal }),
-    ).rejects.toThrow(/aborted/i);
+    await expect(autoComposePanel("topic", engine, { signal: controller.signal })).rejects.toThrow(
+      /aborted/i,
+    );
   });
 
   it("throws a descriptive error when the engine emits an error event mid-stream", async () => {
@@ -823,14 +874,14 @@ describe("autoComposePanel", () => {
   });
 
   describe("mock engine fallback", () => {
-    it("returns a deterministic fallback panel when engine returns mock response format", async () => {
-      // MockEngine returns "[mock response from <expertId>]" which is not
-      // JSON. Auto-compose should detect this pattern and return a
-      // deterministic fallback panel instead of trying to parse it as JSON.
-      const engine = new StubEngine({ response: "[mock response from composer-123]" });
+    it("returns a deterministic fallback panel for a MockEngine (identity, not response text)", async () => {
+      // The fallback is gated on trusted engine IDENTITY (#728) — a real
+      // MockEngine — never on a forgeable "[mock response from …]" prefix in
+      // the (untrusted) composer output.
+      const engine = new MockEngine();
       await engine.start();
       const result = await autoComposePanel("Mock Panel Topic", engine);
-      
+
       // Fallback panel should have a valid structure
       expect(result.name).toBeTruthy();
       expect(result.experts).toHaveLength(3);
@@ -838,14 +889,23 @@ describe("autoComposePanel", () => {
       expect(result.experts.every((e) => e.expertise.weightedEvidence.length > 0)).toBe(true);
     });
 
-    it("uses DEFAULT_MODEL for all experts in mock fallback panel", async () => {
-      const engine = new StubEngine({ response: "[mock response from test-id]" });
+    it("uses the configured defaultModel for all experts in the mock fallback panel", async () => {
+      const engine = new MockEngine();
       await engine.start();
       const result = await autoComposePanel("topic", engine, { defaultModel: "test-model" });
-      
+
       for (const expert of result.experts) {
         expect(expert.model).toBe("test-model");
       }
+    });
+
+    it("does NOT substitute the fallback when a non-mock engine emits forgeable mock-style text (#728)", async () => {
+      // A real engine (or a composer influenced by user-controlled topic text)
+      // could emit "[mock response from …]". That forgeable prefix must NOT
+      // bypass JSON parsing/validation — only genuine MockEngine identity does.
+      const engine = new StubEngine({ response: "[mock response from composer-123]" });
+      await engine.start();
+      await expect(autoComposePanel("topic", engine)).rejects.toThrow(/JSON object/i);
     });
 
     it("still throws for genuinely malformed JSON (not mock response)", async () => {
@@ -887,7 +947,7 @@ describe("autoComposePanel", () => {
     });
 
     it("caps the deterministic mock fallback panel to maxExperts", async () => {
-      const engine = new StubEngine({ response: "[mock response from composer-1]" });
+      const engine = new MockEngine();
       await engine.start();
       const result = await autoComposePanel("topic", engine, { minExperts: 2, maxExperts: 2 });
       // The mock fallback always proposes 3 experts; the cap must apply to it
@@ -903,6 +963,101 @@ describe("autoComposePanel", () => {
       // common (no `--max-experts`) path keeps its existing behavior.
       expect(result.experts).toHaveLength(3);
       expect(result.experts.map((e) => e.slug)).toEqual(["expert-a", "expert-b", "expert-c"]);
+    });
+  });
+
+  describe("retries recoverable engine errors (#260)", () => {
+    it("retries the composer send after a recoverable engine error, then succeeds", async () => {
+      const engine = new StubEngine({
+        sendSequence: [
+          { error: { code: "NETWORK", message: "connection reset", recoverable: true } },
+          { text: JSON.stringify(validPanel) },
+        ],
+      });
+      await engine.start();
+      const result = await autoComposePanel("topic", engine, { retryBackoffMs: [0] });
+      expect(result.name).toBe("test-panel");
+      // One failed attempt + one successful retry = two sends.
+      expect(engine.sentPrompts).toHaveLength(2);
+    });
+
+    it("retries up to the backoff length, then surfaces the final engine error", async () => {
+      const rateLimited = {
+        error: { code: "RATE_LIMITED" as const, message: "slow down", recoverable: true },
+      };
+      const engine = new StubEngine({ sendSequence: [rateLimited, rateLimited, rateLimited] });
+      await engine.start();
+      await expect(autoComposePanel("topic", engine, { retryBackoffMs: [0, 0] })).rejects.toThrow(
+        /Auto-compose engine error \(RATE_LIMITED\)/,
+      );
+      // Initial attempt + two retries (backoff length 2) = three sends.
+      expect(engine.sentPrompts).toHaveLength(3);
+    });
+
+    it("does not retry a non-recoverable engine error", async () => {
+      const engine = new StubEngine({
+        sendSequence: [
+          { error: { code: "NOT_AUTHENTICATED", message: "no credentials", recoverable: false } },
+          { text: JSON.stringify(validPanel) },
+        ],
+      });
+      await engine.start();
+      await expect(autoComposePanel("topic", engine, { retryBackoffMs: [0, 0] })).rejects.toThrow(
+        /Auto-compose engine error \(NOT_AUTHENTICATED\)/,
+      );
+      // Fail-fast: exactly one send, no retry.
+      expect(engine.sentPrompts).toHaveLength(1);
+    });
+  });
+
+  describe("preserves the primary failure when cleanup fails (#289)", () => {
+    it("surfaces the primary engine error even when removeExpert() also throws", async () => {
+      const engine = new StubEngine({
+        response: "",
+        errorEvent: { code: "INTERNAL", message: "primary boom" },
+        failOnRemoveExpert: "cleanup exploded",
+      });
+      await engine.start();
+
+      let thrown: unknown;
+      try {
+        await autoComposePanel("topic", engine);
+      } catch (err) {
+        thrown = err;
+      }
+
+      expect(thrown).toBeInstanceOf(Error);
+      const message = (thrown as Error).message;
+      // The primary engine error must win; the cleanup failure must not mask it.
+      expect(message).toMatch(/Auto-compose engine error \(INTERNAL\).*primary boom/);
+      expect(message).not.toContain("cleanup exploded");
+      // Cleanup was still attempted despite failing.
+      expect(engine.removedExperts).toContain(engine.addedSpecs[0]?.id ?? "");
+    });
+  });
+
+  describe("classifies a cancel that races the timeout (#722)", () => {
+    it("reports caller cancellation, not a timeout, when an abort races the timeout", async () => {
+      const controller = new AbortController();
+      // Caller cancels FIRST, so the composed signal latches the caller's
+      // reason. A short timeout ALSO fires before the engine observes the
+      // ABORTED event — the exact race the old `.aborted`-boolean check
+      // mislabeled as a timeout.
+      controller.abort();
+      const engine = new StubEngine({ response: "", hang: true, abortYieldDelayMs: 50 });
+      await engine.start();
+
+      let thrown: unknown;
+      try {
+        await autoComposePanel("topic", engine, { signal: controller.signal, timeoutMs: 10 });
+      } catch (err) {
+        thrown = err;
+      }
+
+      expect(thrown).toBeInstanceOf(Error);
+      const message = (thrown as Error).message;
+      expect(message).toMatch(/aborted/i);
+      expect(message).not.toMatch(/timed out/i);
     });
   });
 });
