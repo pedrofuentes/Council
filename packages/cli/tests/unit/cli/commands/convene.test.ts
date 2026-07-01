@@ -877,19 +877,18 @@ describe("buildConveneCommand", () => {
     });
 
     it("unsubscribes the SIGINT handler even if setup throws before the debate runs", async () => {
-      // Regression for Sentinel pr769 finding 1: any throw on the
-      // setup path AFTER the SIGINT handler is subscribed must not
-      // leak the process-level listener. We trigger the literal
-      // finding-1 scenario — a throw from inside the expertRepo.create
-      // loop, which is now inside the protected `try { ... } finally
-      // { unsubscribeInterrupt() }` block (it was NOT in commit b07f02b,
-      // hence the original leak).
+      // Regression for Sentinel pr769 finding 1: any throw on the setup
+      // path AFTER the SIGINT handler is subscribed must not leak the
+      // process-level listener. The handler is subscribed immediately
+      // before the protected `try { ... } finally { unsubscribeInterrupt() }`
+      // block that wraps panel/expert persistence and runWithEngine.
       //
-      // Mechanism: two `--human` participants with the same display
-      // name slugify to the same slug. The first expertRepo.create
-      // for the human succeeds; the second violates UNIQUE(panel_id,
-      // slug) (see src/memory/migrations/001_init.sql) and throws
-      // inside the setup loop, well before `runWithEngine` is reached.
+      // Mechanism: an engineFactory that throws during engine construction.
+      // The throw surfaces inside runWithEngine — after the subscribe and
+      // before the debate streams — so it exercises the finally path. (This
+      // previously tripped a UNIQUE(panel_id, slug) violation via two
+      // identically-named --human participants, but convene now rejects a
+      // duplicate --human slug up front, before the subscribe — see #207.)
       let subscribed = false;
       let unsubscribed = false;
       const subscribeInterrupt = (_handler: () => void): (() => void) => {
@@ -900,7 +899,9 @@ describe("buildConveneCommand", () => {
       };
 
       const cmd = buildConveneCommand({
-        engineFactory: makeMockEngineFactory(),
+        engineFactory: () => {
+          throw new Error("engine construction failed (test)");
+        },
         write: () => undefined,
         writeError: () => undefined,
         subscribeInterrupt,
@@ -915,10 +916,6 @@ describe("buildConveneCommand", () => {
           "code-review",
           "--engine",
           "mock",
-          "--human",
-          "Alex",
-          "--human",
-          "Alex",
         ]),
       ).rejects.toThrow();
 
