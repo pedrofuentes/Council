@@ -300,6 +300,139 @@ describe("csv extractor", () => {
     });
   });
 
+  // Regression (#2004): in a MULTI-column file, blank line(s) before a genuine
+  // column-count-mismatch row are filtered out before the column check runs, so
+  // the loop index no longer equals the row's position in the source. The
+  // corrupt-document message must still report the row's TRUE 1-based source
+  // line (its position in the original, pre-filter parse), not its index in the
+  // post-filter array — otherwise the reported line understates the real one by
+  // the number of preceding skipped blanks. The #1801 blank-line leniency and
+  // the genuine-mismatch guard must both stay intact (see the inverse tests).
+  describe("corrupt-document source-line reporting (#2004)", () => {
+    // Parse the diagnostic so the oracle asserts the EXACT reported source line,
+    // never a bare toThrow(). The column counts are captured too, so a match
+    // proves it is the real mismatch message (not a coincidental digit).
+    function parseColumnMismatch(message: string): {
+      line: number;
+      actual: number;
+      expected: number;
+    } {
+      const m = /row (\d+) has (\d+) columns but the header has (\d+)\./.exec(message);
+      if (m === null) {
+        throw new Error(`message not in column-mismatch form: ${message}`);
+      }
+      return { line: Number(m[1]), actual: Number(m[2]), expected: Number(m[3]) };
+    }
+
+    async function corruptMismatch(
+      extractor: ContentExtractor,
+      csv: string,
+      ext = ".csv",
+    ): Promise<{ line: number; actual: number; expected: number }> {
+      const errors = await import("../../../../../src/core/documents/extractors/errors.js");
+      try {
+        await extractor(ctx(Buffer.from(csv, "utf-8"), ext));
+      } catch (err) {
+        expect(err).toBeInstanceOf(errors.ExtractionError);
+        const e = err as InstanceType<typeof errors.ExtractionError>;
+        expect(e.kind).toBe("corrupt-document");
+        return parseColumnMismatch(e.message);
+      }
+      throw new Error("expected a corrupt-document ExtractionError, but none was thrown");
+    }
+
+    it("reports the true source line when ONE blank line precedes the bad row", async () => {
+      const { extractor } = await loadCsvExtractor(".csv");
+      // Source lines: 1=header, 2=blank(filtered), 3=bad row → must report 3.
+      const { line, actual, expected } = await corruptMismatch(
+        extractor,
+        "name,age\n\nAlice,30,extra\n",
+      );
+      expect(line).toBe(3);
+      expect(actual).toBe(3);
+      expect(expected).toBe(2);
+    });
+
+    it("reports the true source line when TWO blank lines precede the bad row", async () => {
+      const { extractor } = await loadCsvExtractor(".csv");
+      // Source lines: 1=header, 2&3=blank(filtered), 4=bad row → must report 4.
+      const { line, actual, expected } = await corruptMismatch(
+        extractor,
+        "name,age\n\n\nBob,25,30,extra\n",
+      );
+      expect(line).toBe(4);
+      expect(actual).toBe(4);
+      expect(expected).toBe(2);
+    });
+
+    it("reports the true source line for a bad row after an INTERIOR blank between valid rows", async () => {
+      const { extractor } = await loadCsvExtractor(".csv");
+      // 1=header, 2=Alice(valid), 3=blank(filtered), 4=bad row → must report 4.
+      const { line, actual, expected } = await corruptMismatch(
+        extractor,
+        "name,age\nAlice,30\n\nBob,25,extra\n",
+      );
+      expect(line).toBe(4);
+      expect(actual).toBe(3);
+      expect(expected).toBe(2);
+    });
+
+    it("reports the true source line when a LEADING blank precedes the header and bad row", async () => {
+      const { extractor } = await loadCsvExtractor(".csv");
+      // 1=blank(filtered), 2=header, 3=bad row → must report 3.
+      const { line, actual, expected } = await corruptMismatch(
+        extractor,
+        "\nname,age\nAlice,30,extra\n",
+      );
+      expect(line).toBe(3);
+      expect(actual).toBe(3);
+      expect(expected).toBe(2);
+    });
+
+    it("reports the true source line for a TSV file with a preceding blank line", async () => {
+      const { extractor } = await loadCsvExtractor(".tsv");
+      // Tab-delimited: 1=header, 2=blank(filtered), 3=bad row → must report 3.
+      const { line, actual, expected } = await corruptMismatch(
+        extractor,
+        "name\tage\n\nAlice\t30\textra\n",
+        ".tsv",
+      );
+      expect(line).toBe(3);
+      expect(actual).toBe(3);
+      expect(expected).toBe(2);
+    });
+
+    it("control: with NO preceding blanks the reported line is already correct (no regression)", async () => {
+      const { extractor } = await loadCsvExtractor(".csv");
+      // 1=header, 2=bad row → reports 2 both before and after the fix.
+      const { line, actual, expected } = await corruptMismatch(
+        extractor,
+        "name,age\nAlice,30,extra\n",
+      );
+      expect(line).toBe(2);
+      expect(actual).toBe(3);
+      expect(expected).toBe(2);
+    });
+
+    // --- Inverse / load-bearing #1801 guarantees remain green (no regression) ---
+
+    it("still skips a multi-column blank line and extracts real rows without throwing (#1801)", async () => {
+      const { extractor } = await loadCsvExtractor(".csv");
+      const out = await extractor(ctx(Buffer.from("name,age\nAlice,30\n\nBob,25\n", "utf-8")));
+      expect(out.content).toContain("| Alice | 30 |");
+      expect(out.content).toContain("| Bob | 25 |");
+      expect(out.content).not.toMatch(/^\|\s+\|$/m);
+    });
+
+    it("still preserves a single-column empty value rather than reporting a mismatch (#1801)", async () => {
+      const { extractor } = await loadCsvExtractor(".csv");
+      const out = await extractor(ctx(Buffer.from("id\n1\n\n3\n", "utf-8")));
+      expect(out.content).toContain("| 1 |");
+      expect(out.content).toContain("| 3 |");
+      expect(out.content).toMatch(/^\|\s+\|$/m);
+    });
+  });
+
   it("parses CRLF line endings identically to LF, with no stray carriage returns (#946)", async () => {
     const { extractor } = await loadCsvExtractor(".csv");
     const lfOut = await extractor(ctx(Buffer.from("name,age\nAlice,30\nBob,25\n", "utf-8")));

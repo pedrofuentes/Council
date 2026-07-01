@@ -28,6 +28,17 @@ interface ParseResult {
   readonly unterminatedQuote: boolean;
 }
 
+/**
+ * A parsed row paired with its 1-based line number in the original input. The
+ * source line is captured BEFORE blank-line filtering so a column-count
+ * mismatch is reported against the row's true position in the file rather than
+ * its index in the (possibly shorter) post-filter array.
+ */
+interface IndexedRow {
+  readonly row: readonly string[];
+  readonly sourceLine: number;
+}
+
 function parseDelimited(text: string, delimiter: string): ParseResult {
   const rows: string[][] = [];
   let row: string[] = [];
@@ -151,26 +162,34 @@ const csvExtractor: ContentExtractor = async (
         "Ensure every opening double-quote has a matching closing quote, then re-save the file.",
     });
   }
+  // Pair each row with its 1-based source line BEFORE any blank-line filtering,
+  // so a genuine column-count mismatch is reported against its true position in
+  // the file rather than its index in the (possibly shorter) filtered array.
+  const indexedRows: readonly IndexedRow[] = parsedRows.map((row, index) => ({
+    row,
+    sourceLine: index + 1,
+  }));
   const rows = headerIsMultiColumn(parsedRows)
-    ? parsedRows.filter((row) => !isBlankRow(row))
-    : parsedRows;
-  const header = rows[0];
+    ? indexedRows.filter((entry) => !isBlankRow(entry.row))
+    : indexedRows;
+  const header = rows[0]?.row;
   if (header !== undefined) {
     const expectedColumns = header.length;
     for (let r = 1; r < rows.length; r++) {
-      const actual = rows[r]?.length ?? 0;
+      const entry = rows[r];
+      const actual = entry?.row.length ?? 0;
       if (actual !== expectedColumns) {
         throw new ExtractionError({
           kind: "corrupt-document",
           filePath: ctx.filename,
-          message: `CSV/TSV parse failed: row ${r + 1} has ${actual} columns but the header has ${expectedColumns}.`,
+          message: `CSV/TSV parse failed: row ${entry?.sourceLine ?? r + 1} has ${actual} columns but the header has ${expectedColumns}.`,
           suggestion:
             "Ensure every row has the same number of columns as the header, then re-save the file.",
         });
       }
     }
   }
-  const content = toMarkdownTable(rows);
+  const content = toMarkdownTable(rows.map((entry) => entry.row));
   return { content, wordCount: countWords(content) };
 };
 
