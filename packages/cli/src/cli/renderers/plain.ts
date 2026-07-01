@@ -206,7 +206,7 @@ export class PlainRenderer implements Renderer {
 
   /** Sanitize untrusted single-line text for terminal display. */
   private sanitizeLine(text: string): string {
-    return stripControlChars(text).replace(/[\r\n\v\f\u0085\u2028\u2029]+/g, " ");
+    return stripControlChars(text).replace(/[\r\n\t\v\f\u0085\u2028\u2029]+/g, " ");
   }
 
   private colorForExpert(slug: string): (text: string) => string {
