@@ -11,7 +11,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildDocsCommand } from "../../../../src/cli/commands/docs.js";
 import { getSupportedExtensions } from "../../../../src/core/documents/extractors/index.js";
@@ -177,6 +177,48 @@ describe("buildDocsCommand", () => {
       // The raw ANSI escape sequence must not appear in output
       expect(stdout).not.toContain("\x1b[31m");
       expect(stdout).not.toContain("\x1b[0m");
+    });
+
+    it("falls back to the uppercased extension when no explicit label is registered (#981)", async () => {
+      // describeExtension() (docs.ts) is `EXTENSION_LABELS[ext] ?? ext.toUpperCase()`
+      // and is not exported, so the fallback arm is driven through the public
+      // `docs formats` command instead. The extractor registry is process-wide
+      // module state (see tests/unit/core/documents/extractors/registry.test.ts),
+      // so reset the module graph and dynamically re-import both the registry
+      // and docs.js to register a throwaway, deliberately unlabeled extension
+      // without leaking it into the registry shared by the other tests in this
+      // file (which keep using the statically-imported originals).
+      vi.resetModules();
+      const registry = await import(
+        "../../../../src/core/documents/extractors/registry.js"
+      );
+      const fakeExtractor = async () => ({ content: "", wordCount: 0 });
+      // ".xyz" has no entry in docs.ts's EXTENSION_LABELS map.
+      registry.registerExtractor([".xyz"], async () => fakeExtractor);
+
+      const { buildDocsCommand: freshBuildDocsCommand } = await import(
+        "../../../../src/cli/commands/docs.js"
+      );
+      let stdout = "";
+      const cmd = freshBuildDocsCommand(
+        (s: string) => {
+          stdout += s;
+        },
+        () => undefined,
+      );
+      cmd.exitOverride();
+      await cmd
+        .parseAsync(["node", "council-docs", "formats"])
+        .catch(() => undefined);
+
+      // Fallback branch: unlabeled extension -> exactly its uppercased form.
+      const xyzLine = /^ {2}\.xyz\s+(.+)$/m.exec(stdout);
+      expect(xyzLine?.[1]).toBe("XYZ");
+
+      // Labeled branch stays distinct from its uppercased form, proving this
+      // exercises the fallback arm specifically and not just any extension.
+      const mdLine = /^ {2}\.md\s+(.+)$/m.exec(stdout);
+      expect(mdLine?.[1]).toBe("Markdown");
     });
   });
 });
