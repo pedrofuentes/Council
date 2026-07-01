@@ -219,6 +219,44 @@ function ctx(
   };
 }
 
+// An AbortSignal-like stub whose `aborted` getter flips to true on the
+// `threshold`-th synchronous read and stays true thereafter (monotonic,
+// like a real signal). The extractor polls `signal.aborted` at each
+// cancellation checkpoint in source order — the pre-work guard, the
+// per-entry loop guard (readSlideParts, pptx.ts ~193), the per-chunk guard
+// inside `readEntryBuffer`, and the per-slide guard in `buildMarkdown`
+// (pptx.ts ~383). A counting getter drives the abort to one *specific*
+// checkpoint deterministically (no timing races), so each guard can be
+// exercised in isolation. `reads()` reports how many times it was polled.
+function abortingSignalAfter(threshold: number): {
+  readonly signal: AbortSignal;
+  readonly reads: () => number;
+} {
+  let count = 0;
+  const reason = new Error("extraction timed out");
+  const signal = {
+    get aborted(): boolean {
+      count += 1;
+      return count >= threshold;
+    },
+    reason,
+  } as unknown as AbortSignal;
+  return { signal, reads: () => count };
+}
+
+// A single-slide ZIP whose entry lies about its uncompressed size (declares
+// 8 bytes but deflates to 1 MB), so an unaborted read trips the mid-stream
+// zip-bomb guard. Aborting *before* the read completes must preempt that
+// guard with extraction-timeout, which is what makes the abort observable.
+function buildBombSlideZip(name: string): ZipEntry {
+  return {
+    name,
+    data: Buffer.alloc(1024 * 1024, 0x20),
+    method: "deflate",
+    fakeUncompressedSize: 8,
+  };
+}
+
 // Builds a single-entry ZIP whose entry claims DEFLATE (method 8) but
 // carries arbitrary non-deflate bytes, so yauzl's inflate stream emits a
 // generic ("incorrect header check") error rather than a "too many bytes"
@@ -557,6 +595,107 @@ describe("pptx extractor", () => {
     }
     expect(caught).toBeInstanceOf(errors.ExtractionError);
     expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("extraction-timeout");
+  });
+
+  it("aborts inside readEntryBuffer before the entry read completes (#1810)", async () => {
+    const { extractor, errors } = await loadPptxExtractor();
+    // A single slide whose XML nests deeper than the recursion bound. If the
+    // entry is read to completion it is parsed and `collectText` throws
+    // corrupt-document (see the deep-nesting test above). The signal is polled
+    // false at the pre-work guard (#1) and the entry-loop guard (#2), then
+    // true at the first per-chunk poll inside readEntryBuffer (#3) — so a
+    // signal-aware readEntryBuffer must stop draining the stream and reject
+    // with extraction-timeout BEFORE the buffer is assembled and parsed.
+    // Asserting extraction-timeout (never corrupt-document) is the
+    // discriminator: corrupt-document would prove the read/parse ran to
+    // completion, i.e. that readEntryBuffer ignored the signal.
+    const buf = buildZip([
+      {
+        name: "ppt/slides/slide1.xml",
+        data: Buffer.from(deeplyNestedSlideXml(80), "utf-8"),
+      },
+    ]);
+    const { signal, reads } = abortingSignalAfter(3);
+    let caught: unknown;
+    try {
+      await extractor(ctx(buf, signal));
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(errors.ExtractionError);
+    const kind = (caught as InstanceType<typeof errors.ExtractionError>).kind;
+    expect(kind).toBe("extraction-timeout");
+    expect(kind).not.toBe("corrupt-document");
+    // The abort must have been observed at readEntryBuffer's per-chunk poll,
+    // i.e. after the pre-work and entry-loop guards let it through.
+    expect(reads()).toBeGreaterThanOrEqual(3);
+  });
+
+  it("aborts at the per-entry loop guard mid-stream with extraction-timeout (#1810)", async () => {
+    const { extractor, errors } = await loadPptxExtractor();
+    // slide1 is empty (0 bytes → readEntryBuffer streams nothing, no per-chunk
+    // poll); slide2 lies about its size and would trip the zip-bomb guard if
+    // read. The signal is false at the pre-work guard (#1) and slide1's
+    // entry guard (#2), then true at slide2's entry guard (#3) — so the loop
+    // must stop at pptx.ts ~193 with extraction-timeout, after slide1 was
+    // processed and BEFORE slide2's bytes are decoded. extraction-timeout
+    // (never zip-bomb-detected) proves the loop halted at the guard instead
+    // of reading slide2.
+    const buf = buildZip([
+      { name: "ppt/slides/slide1.xml", data: Buffer.alloc(0) },
+      buildBombSlideZip("ppt/slides/slide2.xml"),
+    ]);
+    const { signal } = abortingSignalAfter(3);
+    let caught: unknown;
+    try {
+      await extractor(ctx(buf, signal));
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(errors.ExtractionError);
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("extraction-timeout");
+  });
+
+  it("aborts at the buildMarkdown slide guard mid-stream with extraction-timeout (#1810)", async () => {
+    const { extractor, errors } = await loadPptxExtractor();
+    // Two empty slides: both read during readSlideParts (polls #1 pre-work,
+    // #2 slide1 entry guard, #3 slide2 entry guard), then buildMarkdown polls
+    // once per slide (#4 slide1, #5 slide2). Aborting at #5 stops the loop at
+    // pptx.ts ~383 after slide1's section is built but before slide2's — so a
+    // present guard yields extraction-timeout, whereas a missing guard would
+    // let buildMarkdown finish and return content.
+    const buf = buildZip([
+      { name: "ppt/slides/slide1.xml", data: Buffer.alloc(0) },
+      { name: "ppt/slides/slide2.xml", data: Buffer.alloc(0) },
+    ]);
+    const { signal } = abortingSignalAfter(5);
+    let caught: unknown;
+    let output: Awaited<ReturnType<typeof extractor>> | undefined;
+    try {
+      output = await extractor(ctx(buf, signal));
+    } catch (err) {
+      caught = err;
+    }
+    expect(output).toBeUndefined();
+    expect(caught).toBeInstanceOf(errors.ExtractionError);
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("extraction-timeout");
+  });
+
+  it("extracts normally when a signal is supplied but never aborted (#1810)", async () => {
+    const { extractor } = await loadPptxExtractor();
+    // Load-bearing inverse: the new per-chunk signal poll must not disturb the
+    // happy path. A live (never-aborted) signal is threaded through the full
+    // read + build, and the deck must extract completely.
+    const buf = makePptx([{ body: "Alpha slide" }, { body: "Beta slide" }]);
+    const controller = new AbortController();
+    const out = await extractor(ctx(buf, controller.signal));
+    expect(controller.signal.aborted).toBe(false);
+    expect(out.content).toContain("## Slide 1");
+    expect(out.content).toContain("Alpha slide");
+    expect(out.content).toContain("## Slide 2");
+    expect(out.content).toContain("Beta slide");
+    expect(out.metadata?.slideCount).toBe(2);
+    expect(out.wordCount).toBeGreaterThan(0);
   });
 
   it("wraps generic ZIP stream errors as corrupt-document (#955)", async () => {
