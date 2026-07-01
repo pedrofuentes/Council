@@ -134,8 +134,7 @@ export function resolveCopilotCliPath(): string | undefined {
     const cliPackage = JSON.parse(readFileSync(cliPackageJsonPath, "utf8")) as {
       readonly bin?: string | Record<string, string>;
     };
-    const binEntry =
-      typeof cliPackage.bin === "string" ? cliPackage.bin : cliPackage.bin?.copilot;
+    const binEntry = typeof cliPackage.bin === "string" ? cliPackage.bin : cliPackage.bin?.copilot;
     if (binEntry === undefined) {
       return undefined;
     }
@@ -162,9 +161,9 @@ export function ensureCopilotCliPath(): void {
   }
 }
 
-const STATIC_MODEL_LIST = (Object.isFrozen(SUPPORTED_MODELS)
-  ? SUPPORTED_MODELS
-  : Object.freeze(SUPPORTED_MODELS)) as readonly string[];
+const STATIC_MODEL_LIST = (
+  Object.isFrozen(SUPPORTED_MODELS) ? SUPPORTED_MODELS : Object.freeze(SUPPORTED_MODELS)
+) as readonly string[];
 
 function freezeDiscoveredModels(models: readonly { readonly id: string }[]): readonly string[] {
   return Object.freeze(models.map(({ id }) => id)) as readonly string[];
@@ -207,6 +206,19 @@ export async function discoverAvailableModels(
     const c = new CopilotClient();
     client = c;
     // #721: bound start() + listModels() so a stalled SDK can't hang callers.
+    //
+    // #1899 caveat — SUBPROCESS LIFETIME: withTimeout() bounds only the
+    // *caller's* wait. The raced IIFE below is not cancellable: `c.start()`
+    // spawns the `@github/copilot` CLI subprocess via the SDK, and neither
+    // start() nor listModels() accepts an AbortSignal. On timeout we fall back
+    // to the static list and the `finally` issues a best-effort `client.stop()`,
+    // but the SDK does not guarantee stop() reaps a child that has not finished
+    // starting — so the spawned binary may live until its own I/O round-trip
+    // completes. For a single-shot `doctor`/startup call this is immaterial (the
+    // child is reaped on process exit); callers that invoke discovery in a
+    // RETRY LOOP should space calls out to avoid accumulating unreaped children
+    // and pressuring OS process/fd limits. Full fix needs an upstream
+    // `@github/copilot-sdk` cancellation/kill path (AbortSignal or stop({force})).
     const models = await withTimeout(
       (async (): Promise<readonly string[]> => {
         await c.start();
@@ -577,12 +589,16 @@ function classifyError(message: string, cause?: unknown): EngineError {
     code = "ABORTED";
   } else if (lower.includes("auth") || lower.includes("unauthor") || lower.includes("login")) {
     code = "NOT_AUTHENTICATED";
+  } else if (lower.includes("context") || lower.includes("token limit")) {
+    // Checked BEFORE RATE_LIMITED (#59): a context-overflow message such as
+    // "token limit exceeded" also contains the substring "limit", so the
+    // RATE_LIMITED branch below would otherwise shadow it and misclassify a
+    // context overflow as a rate limit. Keep this branch above RATE_LIMITED.
+    code = "CONTEXT_OVERFLOW";
   } else if (lower.includes("rate") || lower.includes("quota") || lower.includes("limit")) {
     code = "RATE_LIMITED";
   } else if (lower.includes("model") && (lower.includes("not") || lower.includes("unavailable"))) {
     code = "MODEL_UNAVAILABLE";
-  } else if (lower.includes("context") || lower.includes("token limit")) {
-    code = "CONTEXT_OVERFLOW";
   } else if (lower.includes("network") || lower.includes("fetch") || lower.includes("econn")) {
     code = "NETWORK";
   } else {
