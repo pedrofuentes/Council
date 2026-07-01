@@ -13,7 +13,7 @@
  * RED at this commit: src/core/documents/extractors/ai-fallback.ts does
  * not exist yet.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   attemptAiFallback,
@@ -545,5 +545,187 @@ describe("attemptAiFallback — abort signal (#986)", () => {
     const cache = new Map<string, AiFallbackContent>();
     await attemptAiFallback(abortedCtx(), AUTO_ANY, { cache });
     expect(cache.size).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Perf: SHA-256 must only be computed when a cache is wired (#983).
+//
+// Hashing a potentially large buffer purely to key or log a digest that is
+// never stored is wasted CPU. The digest is observable through the success /
+// ask-user audit log (its 8-char prefix). When no cache is provided, no
+// digest is computed, so `sha=` must be absent from those logs; when a cache
+// IS provided, hashing (and caching) still happens.
+// ─────────────────────────────────────────────────────────────────────
+describe("attemptAiFallback — SHA-256 computed only when caching (#983)", () => {
+  it("omits the SHA digest from the success log when no cache is provided", async () => {
+    const { logger, messages } = captureLogger();
+    const result = await attemptAiFallback(makeCtx(Buffer.from("payload-bytes"), ".xyz"), AUTO_ANY, {
+      logger,
+    });
+    expect(result).not.toBeNull();
+    const successLog = messages.find((m) => /succeeded/.test(m));
+    expect(successLog).toBeDefined();
+    // Without a cache the digest is never computed, so it cannot appear.
+    expect(successLog).not.toContain("sha=");
+  });
+
+  it("omits the SHA digest from the ask-user log when no cache is provided", async () => {
+    const { logger, messages } = captureLogger();
+    await attemptAiFallback(makeCtx(Buffer.from("payload-bytes"), ".xyz"), ASK_ANY, { logger });
+    const askLog = messages.find((m) => /ask-user/.test(m));
+    expect(askLog).toBeDefined();
+    expect(askLog).not.toContain("sha=");
+  });
+
+  it("still hashes and caches (digest present in the log) when a cache IS provided", async () => {
+    const cache = new Map<string, AiFallbackContent>();
+    const { logger, messages } = captureLogger();
+    const first = await attemptAiFallback(makeCtx(Buffer.from("payload-bytes"), ".xyz"), AUTO_ANY, {
+      cache,
+      logger,
+    });
+    expect(first).not.toBeNull();
+    expect(cache.size).toBe(1);
+    const successLog = messages.find((m) => /succeeded/.test(m));
+    expect(successLog).toContain("sha=");
+    // Identical content resolves to the cached reference (hashing still works).
+    const second = await attemptAiFallback(makeCtx(Buffer.from("payload-bytes"), ".xyz"), AUTO_ANY, {
+      cache,
+    });
+    expect(second).toBe(first);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Perf: the normalized allowedExtensions Set must be memoized per config
+// reference rather than rebuilt on every call (#984). We observe the rebuild
+// by spying on the backing array's `.map`, which the normalization calls.
+// ─────────────────────────────────────────────────────────────────────
+describe("attemptAiFallback — allowedExtensions normalization memoized (#984)", () => {
+  it("normalizes the allowlist once across repeated calls with the same config", async () => {
+    const exts = [".xyz", ".abc"];
+    const mapSpy = vi.spyOn(exts, "map");
+    const config: AiFallbackConfig = { mode: "auto", allowedExtensions: exts };
+    try {
+      await attemptAiFallback(makeCtx(Buffer.from("a"), ".xyz"), config);
+      await attemptAiFallback(makeCtx(Buffer.from("b"), ".xyz"), config);
+      await attemptAiFallback(makeCtx(Buffer.from("c"), ".xyz"), config);
+      // Rebuilt on every call → 3; memoized by config reference → 1.
+      expect(mapSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      mapSpy.mockRestore();
+    }
+  });
+
+  it("rebuilds the normalized allowlist for a different config reference", async () => {
+    const exts1 = [".xyz"];
+    const spy1 = vi.spyOn(exts1, "map");
+    const exts2 = [".xyz"];
+    const spy2 = vi.spyOn(exts2, "map");
+    try {
+      await attemptAiFallback(makeCtx(Buffer.from("a"), ".xyz"), {
+        mode: "auto",
+        allowedExtensions: exts1,
+      });
+      await attemptAiFallback(makeCtx(Buffer.from("b"), ".xyz"), {
+        mode: "auto",
+        allowedExtensions: exts2,
+      });
+      // Distinct config references must each build their own set exactly once.
+      expect(spy1).toHaveBeenCalledTimes(1);
+      expect(spy2).toHaveBeenCalledTimes(1);
+    } finally {
+      spy1.mockRestore();
+      spy2.mockRestore();
+    }
+  });
+
+  it("still enforces the allowlist correctly after memoization", async () => {
+    const config: AiFallbackConfig = { mode: "auto", allowedExtensions: [".xyz"] };
+    // Listed extension is accepted.
+    expect(await attemptAiFallback(makeCtx(Buffer.from("a"), ".xyz"), config)).not.toBeNull();
+    // An unlisted extension against the SAME (now memoized) config must still
+    // be rejected — the cached set must not accept everything.
+    expect(await attemptAiFallback(makeCtx(Buffer.from("b"), ".abc"), config)).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Perf: word counting must not build the two intermediate arrays that
+// `split(/\s+/).filter(...)` allocates (#987). The refactored counter uses a
+// regex match approach, so `String.prototype.split` must not be called.
+// ─────────────────────────────────────────────────────────────────────
+describe("attemptAiFallback — word counting without intermediate arrays (#987)", () => {
+  it("counts content words without calling String.prototype.split", async () => {
+    const splitSpy = vi.spyOn(String.prototype, "split");
+    try {
+      splitSpy.mockClear();
+      const result = await attemptAiFallback(makeCtx(Buffer.from("data"), ".xyz"), AUTO_ANY);
+      // Discriminator: the refactored counter must not fall back to split().
+      expect(splitSpy).not.toHaveBeenCalled();
+      expect(result).not.toBeNull();
+      // Correctness preserved: the count equals the number of \S+ runs.
+      const expected = (result?.content.match(/\S+/g) ?? []).length;
+      expect(result?.wordCount).toBe(expected);
+      expect(result?.wordCount).toBeGreaterThan(0);
+    } finally {
+      splitSpy.mockRestore();
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Sanitization hardening for the filename display sink (#988).
+//
+// Positive coverage: safe characters survive C0/C1/DEL stripping and
+// reassemble into the exact expected summary structure. Adversarial oracle:
+// a payload spanning the full control/bidi class collapses to a single line
+// with no dangerous codepoints surviving.
+// ─────────────────────────────────────────────────────────────────────
+describe("attemptAiFallback — filename sanitization hardening (#988)", () => {
+  it("preserves safe filename characters while stripping C0/C1/DEL controls", async () => {
+    // SOH(0x01), BS(0x08), DEL(0x7f), NEL(0x85), CSI(0x9b) — no tab/newline —
+    // so the safe characters reassemble into the exact expected structure.
+    const ctx: ExtractionContext = {
+      buffer: Buffer.from("data"),
+      filename: "re\u0001po\u0008rt\u007f\u0085\u009b.xyz",
+      extension: ".xyz",
+      sizeBytes: 4,
+    };
+    const result = await attemptAiFallback(ctx, AUTO_ANY);
+    expect(result).not.toBeNull();
+    const firstLine = result?.content.split("\n")[0];
+    expect(firstLine).toBe(
+      "File report.xyz (4 bytes, extension .xyz) was not handled by any native extractor.",
+    );
+  });
+
+  it("neutralizes an adversarial control/bidi payload to a single safe line", async () => {
+    // Full adversarial class: TAB(U+0009), C0, C1 (U+009B/U+009D/U+0085), DEL,
+    // bidi override (U+202A–U+202E), bidi isolate (U+2066–U+2069), CR/LF, and
+    // Unicode line/paragraph separators (U+2028/U+2029).
+    const payload =
+      "safe\u0009name\u0001\u009b\u009d\u0085\u007f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069core\r\nx\u2028y\u2029z.xyz";
+    const ctx: ExtractionContext = {
+      buffer: Buffer.from("data"),
+      filename: payload,
+      extension: ".xyz",
+      sizeBytes: 4,
+    };
+    const result = await attemptAiFallback(ctx, AUTO_ANY);
+    expect(result).not.toBeNull();
+    const lines = result?.content.split("\n") ?? [];
+    // Single-line invariant: the filename injected no extra lines (the auto-mode
+    // summary is always exactly four lines).
+    expect(lines).toHaveLength(4);
+    const firstLine = lines[0] ?? "";
+    // No control, DEL, C1, line/paragraph-separator, or bidi codepoint survives.
+    expect(firstLine).not.toMatch(
+      /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/,
+    );
+    // The safe alphabetic runs are preserved (order retained).
+    expect(firstLine).toContain("name");
+    expect(firstLine).toContain("core");
   });
 });
