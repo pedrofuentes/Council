@@ -276,6 +276,61 @@ describe("buildDoctorCommand", () => {
     },
   );
 
+  it.skipIf(isPrivileged)(
+    "doctor fails the data home check when the experts/ write target is not writable (#1914)",
+    async () => {
+      const customDataHome = path.join(testHome, "experts-readonly-data-home");
+      await fs.mkdir(path.join(customDataHome, "experts"), { recursive: true });
+      await fs.mkdir(path.join(customDataHome, "panels"), { recursive: true });
+      process.env["COUNCIL_DATA_HOME"] = customDataHome;
+      // Root and panels/ stay writable; only the experts/ runtime write target
+      // is read-only. A root-only probe would report a false-green here even
+      // though the first real expert save would fail at runtime.
+      await fs.chmod(path.join(customDataHome, "experts"), 0o500);
+
+      try {
+        const output = await runDoctor(["--offline"]);
+
+        expect(output).toContain(`cannot write under ${path.join(customDataHome, "experts")}`);
+        expect(output).toContain("Some checks failed");
+      } finally {
+        await fs.chmod(path.join(customDataHome, "experts"), 0o700);
+      }
+    },
+  );
+
+  it.skipIf(isPrivileged)(
+    "doctor fails the data home check when the panels/ write target is not writable (#1914)",
+    async () => {
+      const customDataHome = path.join(testHome, "panels-readonly-data-home");
+      await fs.mkdir(path.join(customDataHome, "experts"), { recursive: true });
+      await fs.mkdir(path.join(customDataHome, "panels"), { recursive: true });
+      process.env["COUNCIL_DATA_HOME"] = customDataHome;
+      // Root and experts/ stay writable; only the panels/ runtime write target
+      // is read-only, exercising the second subdirectory in the write class.
+      await fs.chmod(path.join(customDataHome, "panels"), 0o500);
+
+      try {
+        const output = await runDoctor(["--offline"]);
+
+        expect(output).toContain(`cannot write under ${path.join(customDataHome, "panels")}`);
+        expect(output).toContain("Some checks failed");
+      } finally {
+        await fs.chmod(path.join(customDataHome, "panels"), 0o700);
+      }
+    },
+  );
+
+  it("doctor passes the data home check when root, experts/ and panels/ are all writable (#1914)", async () => {
+    const customDataHome = path.join(testHome, "writable-data-home");
+    process.env["COUNCIL_DATA_HOME"] = customDataHome;
+
+    const output = await runDoctor(["--offline"]);
+
+    expect(output).toContain(`Council data home\n   ${customDataHome}`);
+    expect(output).not.toContain("cannot write under");
+  });
+
   it("doctor collapses control characters in Terminal env values onto one line (#1483)", async () => {
     const customDataHome = path.join(testHome, "term-data-home");
     process.env["COUNCIL_DATA_HOME"] = customDataHome;
@@ -296,6 +351,56 @@ describe("buildDoctorCommand", () => {
     } finally {
       if (originalTerm === undefined) delete process.env["TERM"];
       else process.env["TERM"] = originalTerm;
+    }
+  });
+
+  it("doctor sanitizes adversarial control bytes in Terminal env values to a single control-free line (#1483)", async () => {
+    const customDataHome = path.join(testHome, "adversarial-term-data-home");
+    process.env["COUNCIL_DATA_HOME"] = customDataHome;
+    const original = process.env["COLORTERM"];
+    // One marker letter after each adversarial byte class so the surviving
+    // output is easy to assert exactly: TAB, C0 (SOH/BEL), ANSI CSI, C1 (CSI),
+    // DEL, bidi override + isolate, CR/LF, and U+2028/U+2029 separators.
+    process.env["COLORTERM"] =
+      "A\tB" + // TAB (U+0009)
+      "\u0001C" + // C0 control (SOH)
+      "\u0007D" + // C0 control (BEL)
+      "\u001b[31mE" + // ANSI CSI escape
+      "\u009bF" + // C1 control (CSI)
+      "\u007fG" + // DEL
+      "\u202eH" + // bidi override
+      "\u2066I" + // bidi isolate
+      "\r\nJ" + // CR/LF
+      "\u2028K" + // line separator
+      "\u2029L"; // paragraph separator
+
+    try {
+      const output = await runDoctor(["--offline"]);
+      const colorLine =
+        output.split("\n").find((line) => line.trimStart().startsWith("COLORTERM:")) ?? "";
+
+      // Every adversarial byte is stripped or collapsed to a space, leaving a
+      // single control-free line whose printable markers survive in order.
+      expect(colorLine).toBe("   COLORTERM: A BCDEFGHI J K L");
+      for (const forbidden of [
+        "\t",
+        "\r",
+        "\n",
+        "\u2028",
+        "\u2029",
+        "\u0001",
+        "\u0007",
+        "\u001b",
+        "\u009b",
+        "\u007f",
+        "\u202e",
+        "\u2066",
+      ]) {
+        expect(colorLine).not.toContain(forbidden);
+      }
+    } finally {
+      if (original === undefined) delete process.env["COLORTERM"];
+      else process.env["COLORTERM"] = original;
     }
   });
 
