@@ -13,6 +13,7 @@ import { Command } from "commander";
 import { listTemplates, loadTemplate } from "../../core/template-loader.js";
 import { PanelNotFoundError } from "../../core/template-loader.js";
 import { CliUserError } from "../cli-user-error.js";
+import { toSingleLineDisplay } from "../strip-control-chars.js";
 
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
@@ -29,12 +30,27 @@ export function buildTemplatesCommand(
     }
     write("Built-in templates:\n");
     for (const name of names) {
-      const panel = await loadTemplate(name);
-      const desc = panel.description ?? "";
-      if (desc) {
-        write(`  • ${name}\n    ${desc}\n`);
-      } else {
-        write(`  • ${name}\n`);
+      // Isolate per-template load failures (#770): `listTemplates()` is a bare
+      // readdir, so `loadTemplate(name)` may throw on YAML-parse / schema /
+      // TOCTOU (briefly-missing file) errors. A single bad template must NOT
+      // abort the whole listing — degrade it to a name-only bullet and surface
+      // the error on stderr so it is not silently lost.
+      try {
+        const panel = await loadTemplate(name);
+        const desc = panel.description ?? "";
+        if (desc) {
+          write(`  • ${name}\n    ${desc}\n`);
+        } else {
+          write(`  • ${name}\n`);
+        }
+      } catch (err: unknown) {
+        // Both the name (from a file-derived readdir entry) and the error
+        // detail (may echo untrusted file content) are sanitized to a single
+        // control-free line before hitting the terminal sinks.
+        const safeName = toSingleLineDisplay(name);
+        const detail = toSingleLineDisplay(err instanceof Error ? err.message : String(err));
+        writeError(`Warning: failed to load template "${safeName}": ${detail}\n`);
+        write(`  • ${safeName}\n`);
       }
     }
     write("\nUse with: council convene --template <name>\n");
