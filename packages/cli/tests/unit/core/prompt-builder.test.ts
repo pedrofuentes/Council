@@ -803,8 +803,8 @@ describe("buildSystemPrompt() — sanitization of multi-line block fields (T-04)
 });
 
 describe("buildSystemPrompt() — anti-tool-seeking constraints (T-11)", () => {
-  it("includes explicit no-tool-access constraint in FORBIDDEN MOVES section", () => {
-    const def: ExpertDefinition = {
+  const makeGeneric = (overrides: Partial<ExpertDefinition> = {}): ExpertDefinition =>
+    ({
       slug: "security",
       displayName: "Security Auditor",
       role: "Security expert",
@@ -815,43 +815,85 @@ describe("buildSystemPrompt() — anti-tool-seeking constraints (T-11)", () => {
       },
       epistemicStance: "Trust but verify.",
       kind: "generic",
-    } as ExpertDefinition;
+      ...overrides,
+    }) as ExpertDefinition;
 
+  const forbiddenSectionOf = (def: ExpertDefinition): string => {
     const prompt = buildSystemPrompt(def, undefined, "Analyze this design.");
-    const forbiddenSection = prompt.slice(
-      prompt.indexOf("[6] FORBIDDEN MOVES"),
-      prompt.indexOf("[7] MEMORY"),
-    );
+    return prompt.slice(prompt.indexOf("[6] FORBIDDEN MOVES"), prompt.indexOf("[7] MEMORY"));
+  };
 
-    // Must steer experts to rely on the injected reference-document block
-    // instead of requesting file/web/tool access they cannot use.
-    expect(forbiddenSection).toMatch(/reference documents/i);
-    // Must prohibit requesting information instead of answering
-    expect(forbiddenSection).toMatch(/request.*information|need to examine|must answer based/i);
+  // Every forbidden move is emitted as its own "  - <move>" bullet, so we can
+  // assert on individual rules rather than the whole blob. This is what makes
+  // the oracles below *discriminating*: weakening one rule fails only its own
+  // assertion instead of being masked by a sibling rule (issue #734).
+  const bulletsOf = (section: string): readonly string[] =>
+    section.split("\n").filter((line) => line.trimStart().startsWith("- "));
+
+  it("states the no-tool-access constraint as a distinct, self-contained forbidden move", () => {
+    const bullets = bulletsOf(forbiddenSectionOf(makeGeneric()));
+    const noToolBullets = bullets.filter((line) => /you have NO tool access/i.test(line));
+
+    // Exactly one bullet carries the no-tool-access rule (not folded into another).
+    expect(noToolBullets).toHaveLength(1);
+    const noTool = noToolBullets.join("\n");
+    // It names the disallowed request…
+    expect(noTool).toMatch(/ask for tools, file access, or web access/i);
+    // …explicitly enumerates the capabilities the expert lacks…
+    expect(noTool).toMatch(/cannot read files, execute code, or browse the web/i);
+    // …and redirects to the inline reference-document fallback (RAG, #1046).
+    expect(noTool).toMatch(/reference documents/i);
+    // Discriminating: this rule must NOT be satisfied by the deferral rule's text.
+    expect(noTool).not.toMatch(/need to examine/i);
   });
 
-  it("prevents 'I need to examine X first' without analysis pattern", () => {
-    const def: ExpertDefinition = {
-      slug: "analyst",
-      displayName: "Code Analyst",
-      role: "Analyzes code quality",
-      expertise: {
-        weightedEvidence: ["Code metrics"],
-        referenceCases: [],
-        notExpertIn: [],
-      },
-      epistemicStance: "Data-driven.",
-      kind: "generic",
-    } as ExpertDefinition;
+  it("states the no-deferral-without-analysis constraint as a distinct forbidden move", () => {
+    const bullets = bulletsOf(forbiddenSectionOf(makeGeneric()));
+    const deferralBullets = bullets.filter((line) => /need to examine/i.test(line));
 
-    const prompt = buildSystemPrompt(def, undefined, "Review this approach.");
-    const forbiddenSection = prompt.slice(
-      prompt.indexOf("[6] FORBIDDEN MOVES"),
-      prompt.indexOf("[7] MEMORY"),
-    );
+    expect(deferralBullets).toHaveLength(1);
+    const deferral = deferralBullets.join("\n");
+    // Forbids stalling ("I need to examine X first") without real analysis…
+    expect(deferral).toMatch(/i need to examine x first/i);
+    expect(deferral).toMatch(/without providing actual analysis/i);
+    // …and points the expert at the topic + their own expertise instead.
+    expect(deferral).toMatch(/topic and your expertise/i);
+    // Discriminating: this rule must NOT be satisfied by the no-tool-access text.
+    expect(deferral).not.toMatch(/tool access|reference documents/i);
+  });
 
-    // Must explicitly forbid the "need to examine" pattern
-    expect(forbiddenSection).toMatch(/need to examine.*without providing|saying.*need to examine/i);
+  it("keeps the two anti-tool-seeking rules as independent bullets (weakening one is caught) — #734", () => {
+    const bullets = bulletsOf(forbiddenSectionOf(makeGeneric()));
+    const noTool = bullets.filter((line) => /you have NO tool access/i.test(line)).join("\n");
+    const deferral = bullets.filter((line) => /need to examine/i.test(line)).join("\n");
+
+    // They are two different bullets, so one cannot masquerade as the other.
+    expect(noTool).not.toEqual(deferral);
+
+    // Inverse guard: dropping ONLY the no-tool-access rule leaves the deferral
+    // rule intact yet is still observable — exactly the regression the old
+    // coupled assertion (`/request.*information|need to examine.../`) missed.
+    const withoutNoTool = bullets.filter((line) => !/you have NO tool access/i.test(line));
+    expect(withoutNoTool.join("\n")).toMatch(/need to examine.*without providing/i);
+    expect(withoutNoTool.filter((line) => /you have NO tool access/i.test(line))).toHaveLength(0);
+
+    // …and symmetrically for the deferral rule.
+    const withoutDeferral = bullets.filter((line) => !/need to examine/i.test(line));
+    expect(withoutDeferral.join("\n")).toMatch(/you have NO tool access/i);
+    expect(withoutDeferral.filter((line) => /need to examine/i.test(line))).toHaveLength(0);
+  });
+
+  it("orders forbidden moves: default phrases → no-tool-access → no-deferral → profile moves", () => {
+    const section = forbiddenSectionOf(makeGeneric({ forbiddenMoves: ["fabricate a statistic"] }));
+    const idxPhrase = section.search(/Begin or include the phrase/i);
+    const idxNoTool = section.search(/you have NO tool access/i);
+    const idxDeferral = section.search(/need to examine/i);
+    const idxProfile = section.indexOf("fabricate a statistic");
+
+    expect(idxPhrase).toBeGreaterThanOrEqual(0);
+    expect(idxNoTool).toBeGreaterThan(idxPhrase);
+    expect(idxDeferral).toBeGreaterThan(idxNoTool);
+    expect(idxProfile).toBeGreaterThan(idxDeferral);
   });
 });
 
