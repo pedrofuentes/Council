@@ -151,4 +151,45 @@ describe("formatEngineError", () => {
     expect(out).not.toContain("(copilot)");
     expect(out).toContain("504 timeout");
   });
+
+  // --- Untagged Error robustness (issue #188) ---------------------------
+  // engine.start() lifecycle failures from CopilotEngine surface as thrown
+  // Errors that lack a `code` property. Rather than degrade every one of
+  // them to the bare "Engine error." fallback, recover structure from the
+  // error's `cause` chain and, failing that, infer a hint from well-known
+  // message substrings (auth / network / timeout).
+
+  it("recovers the code from an EngineError-shaped cause chain", () => {
+    const err = new Error("engine.start() failed", {
+      cause: { code: "NOT_AUTHENTICATED", message: "missing Copilot token" },
+    });
+    const out = formatEngineError(err);
+    expect(out.toLowerCase()).toContain("gh auth login");
+    expect(out).toContain("engine.start() failed");
+  });
+
+  it("recovers the code from a nested (grand-parent) cause chain", () => {
+    const inner = new Error("DNS lookup failed", {
+      cause: { code: "NETWORK", message: "ENOTFOUND api.githubcopilot.com" },
+    });
+    const outer = new Error("could not start engine", { cause: inner });
+    const out = formatEngineError(outer);
+    expect(out.toLowerCase()).toMatch(/network|connection/);
+  });
+
+  it("infers an auth hint from an untagged Error message", () => {
+    const out = formatEngineError(new Error("Request failed: 401 Unauthorized"));
+    expect(out.toLowerCase()).toContain("gh auth login");
+    expect(out).toContain("401 Unauthorized");
+  });
+
+  it("infers a network hint from an untagged Error message", () => {
+    const out = formatEngineError(new Error("connect ECONNREFUSED 127.0.0.1:443"));
+    expect(out.toLowerCase()).toMatch(/network|connection/);
+  });
+
+  it("infers a network hint from a timeout message", () => {
+    const out = formatEngineError(new Error("socket hang up: request timed out"));
+    expect(out.toLowerCase()).toMatch(/network|connection/);
+  });
 });

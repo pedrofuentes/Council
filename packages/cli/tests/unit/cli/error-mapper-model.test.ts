@@ -52,3 +52,43 @@ describe("formatEngineError — model field (DX-15)", () => {
     expect(out).toContain("(unknown)");
   });
 });
+
+/**
+ * Security: the `model` field is interpolated into a stderr message. A crafted
+ * model identifier could smuggle ANSI/OSC escapes, C0 controls, or CR/LF into
+ * the terminal (spoofing, title injection, line-break forgery). Sanitize the
+ * value with `toSingleLineDisplay` before interpolation (issue #668).
+ *
+ * RED before the fix: the raw escape/control bytes flow straight through.
+ */
+describe("formatEngineError — model sanitization (#668)", () => {
+  it("strips ANSI escape sequences from the model field", () => {
+    const out = formatEngineError({
+      code: "MODEL_UNAVAILABLE",
+      message: "model unavailable",
+      model: "claude\u001b[31mHACKED\u001b[0m",
+    });
+    expect(out).not.toContain("\u001b");
+    expect(out).toContain("claudeHACKED");
+  });
+
+  it("collapses CR/LF in the model field onto a single line", () => {
+    const out = formatEngineError({
+      code: "MODEL_UNAVAILABLE",
+      message: "model unavailable",
+      model: "gpt-4\r\nInjected: approved",
+    });
+    expect(out).not.toContain("\r");
+    expect(out).toContain("gpt-4 Injected: approved");
+  });
+
+  it("strips C0 control characters (e.g. BEL) from the model field", () => {
+    const out = formatEngineError({
+      code: "MODEL_UNAVAILABLE",
+      message: "model unavailable",
+      model: "gpt\u00074o",
+    });
+    expect(out).not.toContain("\u0007");
+    expect(out).toContain("gpt4o");
+  });
+});
