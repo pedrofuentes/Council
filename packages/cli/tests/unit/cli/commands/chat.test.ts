@@ -391,6 +391,106 @@ describe("buildChatCommand", () => {
         spy.mockRestore();
       }
     });
+
+    it("truncates a topic longer than 60 characters with a trailing ellipsis, leaving a boundary-length topic intact (#1109)", async () => {
+      await seedExpert(env);
+      // Realistic, non-repeating text: a homogeneous run (e.g. "A".repeat(n))
+      // would let an off-by-one-shifted slice masquerade as the correct one
+      // (the shifted substring would still `toContain`-match), silently
+      // defeating this assertion. Natural prose has no such run, so any
+      // shift by one character changes the string and is caught.
+      const base =
+        "We must finalize the production database migration rollback plan before the freeze on Friday, no exceptions";
+      const longTopic = base.slice(0, 75);
+      // The boundary fixture must reach deriveTopic as a TRUE 60-char string
+      // *after* its trim + `\s+`→" " collapse (history.ts:44). The prior
+      // `base.slice(0, 60)` ended in a space, so the SUT collapsed it to 59
+      // chars and never exercised the `=== 60` boundary — the assertion only
+      // passed because writeTable pads the topic cell back out to width 60.
+      // This standalone sentence has no leading/trailing whitespace and no
+      // internal whitespace runs (so it survives collapse unchanged at exactly
+      // 60 chars) and a 59-char prefix distinct from longTopic's, so their
+      // truncated forms cannot alias. `overTopic` is a 61-char sibling that
+      // pins the truncating side of the comparison.
+      const boundaryTopic = "Confirm the incident response runbook covers the paging flow";
+      const overTopic = "Escalate the cache eviction regression to on-call SRE tonight";
+      // Guard the fixtures against silent drift: they must reach the length
+      // check post-collapse as exactly 60 and 61 characters respectively.
+      const collapse = (s: string): string => s.trim().replace(/\s+/g, " ").trim();
+      expect(collapse(boundaryTopic).length).toBe(60);
+      expect(collapse(overTopic).length).toBe(61);
+      await withRepo(env, async (repo) => {
+        const long = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        await repo.addTurn({ chatId: long.id, role: "user", content: "seed turn" });
+        await repo.updateSummary(long.id, longTopic, 1);
+        await repo.archiveSession(long.id);
+        const boundary = await repo.createSession({
+          targetType: "expert",
+          targetSlug: "dahlia-cto",
+        });
+        await repo.addTurn({ chatId: boundary.id, role: "user", content: "seed turn" });
+        await repo.updateSummary(boundary.id, boundaryTopic, 1);
+        await repo.archiveSession(boundary.id);
+        const over = await repo.createSession({
+          targetType: "expert",
+          targetSlug: "dahlia-cto",
+        });
+        await repo.addTurn({ chatId: over.id, role: "user", content: "seed turn" });
+        await repo.updateSummary(over.id, overTopic, 1);
+        await repo.archiveSession(over.id);
+      });
+      let out = "";
+      const cmd = buildChatCommand({ write: (s) => (out += s) });
+      await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--history"]);
+
+      // >60-char topic: sliced to exactly TOPIC_MAX_LENGTH - 1 (59) source
+      // characters plus a trailing ellipsis. An off-by-one in the slice
+      // bound would shift this by a character and fail the exact match.
+      const expectedTruncated = `${longTopic.slice(0, 59)}…`;
+      expect(expectedTruncated.length).toBe(60);
+      expect(out).toContain(expectedTruncated);
+      expect(out).not.toContain(longTopic);
+      // Directly pin against an off-by-one that keeps one extra source
+      // character (a 60-char slice instead of 59) before the ellipsis.
+      expect(out).not.toContain(`${longTopic.slice(0, 60)}…`);
+
+      // Exactly-60-char topic (post-collapse) is the boundary: `60 > 60` is
+      // false, so it MUST render in full. Assert both that the full 60-char
+      // topic appears AND that it is NOT rendered as the truncated form
+      // `slice(0, 59) + "…"`. A `>`→`>=` off-by-one would truncate this exact
+      // topic — its non-space 60th char replaced by the ellipsis, which
+      // writeTable padding cannot reconstruct — flipping BOTH assertions. So
+      // this genuinely discriminates the boundary instead of relying on the
+      // padded cell width.
+      const truncatedBoundary = `${boundaryTopic.slice(0, 59)}…`;
+      expect(out).toContain(boundaryTopic);
+      expect(out).not.toContain(truncatedBoundary);
+
+      // 61-char topic (post-collapse) sits just over the boundary: `61 > 60`
+      // is true, so it MUST be truncated to `slice(0, 59) + "…"` and its full
+      // form must not appear — pinning the truncating side of the comparison.
+      const truncatedOver = `${overTopic.slice(0, 59)}…`;
+      expect(truncatedOver.length).toBe(60);
+      expect(out).toContain(truncatedOver);
+      expect(out).not.toContain(overTopic);
+    });
+
+    it("renders the literal '(no messages yet)' fallback topic for a session with no messages (#1109)", async () => {
+      await seedExpert(env);
+      let archivedId = "";
+      await withRepo(env, async (repo) => {
+        const a = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        archivedId = a.id;
+        // No turn added and no summary set: deriveTopic must fall back to
+        // the literal placeholder rather than an empty/blank topic cell.
+        await repo.archiveSession(a.id);
+      });
+      let out = "";
+      const cmd = buildChatCommand({ write: (s) => (out += s) });
+      await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--history"]);
+      expect(out).toContain(archivedId);
+      expect(out).toContain("(no messages yet)");
+    });
   });
 
   describe("expert resolution", () => {
