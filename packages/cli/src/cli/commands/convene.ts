@@ -942,7 +942,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
                       doc.latestDebate.status === "completed"
                     ) {
                       writeError(
-                        "Generating conclusion (1 more premium request; may retry once if JSON is unparseable; use --no-conclude to skip)\n",
+                        "Generating conclusion (1–2 premium requests; may retry once if JSON is unparseable; use --no-conclude to skip)\n",
                       );
                       // TTY-gated live status during the conclusion-synthesis
                       // wait. Suppressed for non-TTY (CI/pipes), --quiet, and
