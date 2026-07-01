@@ -1,14 +1,15 @@
 /**
  * `panel docs list` — resilient to scan failures (#1055, finding #2).
  *
- * Sentinel SNTL-1043 🟡#2: `docs list` triggers a full scan before reading the
+ * Sentinel SNTL-1043 🟡#2: `docs list` triggered a full scan before reading the
  * DB, but discarded the scan result and let scan errors propagate uncaught. A
  * folder/AI-extraction failure could make a formerly read-only `list` throw,
  * or silently present stale results as authoritative.
  *
- * `list` must degrade gracefully: capture the scan outcome, warn when files or
- * folders failed, and — if the scan itself throws — still render the last
- * known DB state with a warning instead of crashing.
+ * Scanning is now opt-in via `--refresh` (#1055), and on that path `list` must
+ * degrade gracefully: capture the scan outcome, warn when files or folders
+ * failed, and — if the scan itself throws — still render the last known DB
+ * state with a warning instead of crashing.
  *
  * The scanner is mocked so we can force both failure shapes deterministically.
  */
@@ -126,10 +127,15 @@ async function runList(): Promise<{ out: string; err: string; error: unknown }> 
       err += s;
     },
   );
-  const error = await cmd.parseAsync(["node", "council-panel", "docs", "list", "arch-review"]).then(
-    () => null,
-    (e: unknown) => e,
-  );
+  // `--refresh` opts into the filesystem scan+index (#1055). The default
+  // `list` is now a pure DB read that never scans, so the degradation contract
+  // this suite covers only applies on the explicit refresh path.
+  const error = await cmd
+    .parseAsync(["node", "council-panel", "docs", "list", "arch-review", "--refresh"])
+    .then(
+      () => null,
+      (e: unknown) => e,
+    );
   return { out, err, error };
 }
 

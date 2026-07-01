@@ -33,6 +33,7 @@ import {
   PanelDefinitionSchema,
   PanelExpertEntrySchema,
   PanelNotFoundError,
+  parseStoredPanelDefinition,
   resolveExperts,
   type PanelDefinition,
 } from "../../../src/core/template-loader.js";
@@ -687,6 +688,42 @@ experts:
       expect(() => assertAllInline(panel, file)).toThrow(/slug references|some-slug/i);
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("parseStoredPanelDefinition() — corrupt vs absent (#1063)", () => {
+  it("reports malformed (non-JSON) config_json as invalid, NOT absent", () => {
+    // A truncated / corrupted config_json must be distinguishable from a
+    // legacy session that simply predates the panel-save feature — otherwise
+    // the operator sees a misleading "this session predates the feature"
+    // message instead of a corruption diagnostic (#1063).
+    const result = parseStoredPanelDefinition("{ definition: <truncated");
+    expect(result.kind).toBe("invalid");
+    if (result.kind === "invalid") {
+      expect(result.message).toMatch(/json/i);
+    }
+  });
+
+  it("reports empty-string config_json as invalid (JSON.parse throws), NOT absent", () => {
+    const result = parseStoredPanelDefinition("");
+    expect(result.kind).toBe("invalid");
+  });
+
+  it("still reports a well-formed config_json WITHOUT a definition key as absent", () => {
+    // Genuine legacy sessions store valid JSON (template/mode/engine) but no
+    // `definition` — that MUST remain `absent`, not be re-labelled corrupt.
+    const result = parseStoredPanelDefinition(
+      JSON.stringify({ template: "architecture-review", mode: "freeform", engine: "mock" }),
+    );
+    expect(result.kind).toBe("absent");
+  });
+
+  it("reports a present-but-schema-invalid definition as invalid with a message", () => {
+    const result = parseStoredPanelDefinition(JSON.stringify({ definition: { name: "" } }));
+    expect(result.kind).toBe("invalid");
+    if (result.kind === "invalid") {
+      expect(result.message.length).toBeGreaterThan(0);
     }
   });
 });

@@ -19,6 +19,7 @@ import * as fs from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildPanelCommand } from "../../../../src/cli/commands/panel.js";
+import { CliUserError } from "../../../../src/cli/cli-user-error.js";
 import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
 import { Kysely } from "kysely";
 import type { ExpertDefinition } from "../../../../src/core/expert.js";
@@ -128,7 +129,10 @@ describe("panel.ts robustness (#309, #1048)", () => {
 
   it("#309: db.destroy() failure does not mask the callback error", async () => {
     // Make the in-context callback throw (unknown panel) AND db.destroy()
-    // throw. The primary error must remain reachable via AggregateError.
+    // throw. The primary CliUserError must remain the thrown error so its exit
+    // code survives (#1825) — a bare AggregateError would map to
+    // EXIT_INTERNAL_ERROR instead of the user-error code. Both failures stay
+    // reachable via `.cause`.
     vi.spyOn(Kysely.prototype, "destroy").mockRejectedValue(new Error("destroy boom"));
 
     const cmd = buildPanelCommand(
@@ -145,8 +149,14 @@ describe("panel.ts robustness (#309, #1048)", () => {
     } catch (err) {
       caught = err;
     }
-    expect(caught).toBeInstanceOf(AggregateError);
-    const messages = (caught as AggregateError).errors.map((e) => String((e as Error).message));
+    // The primary error is surfaced as a CliUserError (preserving user-error
+    // exit semantics), not masked behind a bare AggregateError (#1825).
+    expect(caught).toBeInstanceOf(CliUserError);
+    expect((caught as CliUserError).message).toMatch(/not found/i);
+    // Both the primary and cleanup failures remain reachable via `.cause`.
+    const cause = (caught as CliUserError).cause;
+    expect(cause).toBeInstanceOf(AggregateError);
+    const messages = (cause as AggregateError).errors.map((e) => String((e as Error).message));
     expect(messages.some((m) => /not found/i.test(m))).toBe(true);
     expect(messages.some((m) => /destroy boom/i.test(m))).toBe(true);
   });

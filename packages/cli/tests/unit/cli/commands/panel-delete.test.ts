@@ -147,9 +147,8 @@ describe("buildPanelCommand: delete subcommand (T2)", () => {
       await expect(fs.access(docsDir)).rejects.toThrow();
 
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { PanelLibraryRepository } = await import(
-        "../../../../src/memory/repositories/panel-library-repo.js"
-      );
+      const { PanelLibraryRepository } =
+        await import("../../../../src/memory/repositories/panel-library-repo.js");
       const db = await createDatabase(path.join(env.home, "council.db"));
       try {
         const repo = new PanelLibraryRepository(db);
@@ -190,18 +189,17 @@ describe("buildPanelCommand: delete subcommand (T2)", () => {
         },
         { confirm: async () => false },
       );
-      await expect(
-        cmd.parseAsync(["node", "council-panel", "delete", "keep-me"]),
-      ).rejects.toThrow(/abort|not deleted|cancel/i);
+      await expect(cmd.parseAsync(["node", "council-panel", "delete", "keep-me"])).rejects.toThrow(
+        /abort|not deleted|cancel/i,
+      );
       expect(errored).toMatch(/abort|not deleted|cancel/i);
 
       const yamlPath = path.join(env.dataHome, "panels", "keep-me.yaml");
       await expect(fs.access(yamlPath)).resolves.toBeUndefined();
 
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { PanelLibraryRepository } = await import(
-        "../../../../src/memory/repositories/panel-library-repo.js"
-      );
+      const { PanelLibraryRepository } =
+        await import("../../../../src/memory/repositories/panel-library-repo.js");
       const db = await createDatabase(path.join(env.home, "council.db"));
       try {
         const repo = new PanelLibraryRepository(db);
@@ -328,9 +326,8 @@ describe("buildPanelCommand: delete subcommand (T2)", () => {
       expect(captured).toMatch(/deleted/i);
 
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { PanelLibraryRepository } = await import(
-        "../../../../src/memory/repositories/panel-library-repo.js"
-      );
+      const { PanelLibraryRepository } =
+        await import("../../../../src/memory/repositories/panel-library-repo.js");
       const db = await createDatabase(path.join(env.home, "council.db"));
       try {
         const repo = new PanelLibraryRepository(db);
@@ -370,9 +367,8 @@ describe("buildPanelCommand: delete subcommand (T2)", () => {
       // DB row must still be present so the user can retry after
       // clearing the obstructing directory.
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { PanelLibraryRepository } = await import(
-        "../../../../src/memory/repositories/panel-library-repo.js"
-      );
+      const { PanelLibraryRepository } =
+        await import("../../../../src/memory/repositories/panel-library-repo.js");
       const db = await createDatabase(path.join(env.home, "council.db"));
       try {
         const repo = new PanelLibraryRepository(db);
@@ -383,6 +379,156 @@ describe("buildPanelCommand: delete subcommand (T2)", () => {
 
       // Cleanup the obstructing directory before teardown.
       await fs.rm(yamlPath, { recursive: true, force: true });
+    });
+
+    it("surfaces a non-ENOENT fs.rm failure on the docs dir and preserves the DB row for retry (#758)", async () => {
+      // POSIX-only: make the panel directory un-removable by removing its
+      // write bit so `fs.rm(panelDir, {recursive, force})` cannot unlink the
+      // `docs` child (EACCES). `force:true` tolerates ENOENT but NOT EACCES,
+      // so this exercises the distinct fs.rm catch branch (different message,
+      // different partial-cleanup state) without ESM-blocked vi.spyOn on
+      // node:fs. Windows chmod semantics differ and root bypasses perms.
+      if (process.platform === "win32" || process.getuid?.() === 0) return;
+
+      await seedExpert(env, expertDef("cto"));
+      await createPanel(env, "locked-docs", ["cto"]);
+
+      const panelDir = path.join(env.dataHome, "panels", "locked-docs");
+      // A child must exist so removing the dir requires unlinking it.
+      await fs.mkdir(path.join(panelDir, "docs"), { recursive: true });
+      await fs.writeFile(path.join(panelDir, "docs", "keep.md"), "x", "utf-8");
+      await fs.chmod(panelDir, 0o500);
+
+      let errored = "";
+      const cmd = buildPanelCommand(
+        () => {
+          /* noop */
+        },
+        (s) => {
+          errored += s;
+        },
+      );
+      try {
+        // The YAML (a sibling of panelDir) unlinks fine; only the docs-dir
+        // removal fails, so the fs.rm branch — not the unlink branch — runs.
+        await expect(
+          cmd.parseAsync(["node", "council-panel", "delete", "locked-docs", "--yes"]),
+        ).rejects.toThrow(/EACCES|EPERM|permission/i);
+        // Distinct fs.rm branch: "failed to clean up" (not "Failed to delete
+        // YAML"), and the DB row is preserved with retry guidance.
+        expect(errored).toMatch(/failed to clean up/i);
+        expect(errored).toMatch(/locked-docs/);
+        expect(errored).toMatch(/DB rows preserved/i);
+        // The YAML unlink already succeeded before the fs.rm failure.
+        await expect(
+          fs.access(path.join(env.dataHome, "panels", "locked-docs.yaml")),
+        ).rejects.toThrow();
+
+        // DB row must still be present so the operator can retry after fixing.
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { PanelLibraryRepository } =
+          await import("../../../../src/memory/repositories/panel-library-repo.js");
+        const db = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          const repo = new PanelLibraryRepository(db);
+          expect(await repo.findByName("locked-docs")).toBeDefined();
+        } finally {
+          await db.destroy();
+        }
+      } finally {
+        // Restore perms so teardown can clean up.
+        await fs.chmod(panelDir, 0o700);
+      }
+    });
+
+    it("preserves the CliUserError exit code when db cleanup (destroy) also fails (#1825)", async () => {
+      // When the command callback throws a CliUserError (exit 1) AND db.destroy
+      // also fails, the failures must NOT collapse into a bare AggregateError
+      // that handleCliError maps to EXIT_INTERNAL_ERROR (4). The primary user
+      // error's exit code must survive while both errors remain reachable.
+      const { vi } = await import("vitest");
+      const { Kysely } = await import("kysely");
+      const { CliUserError } = await import("../../../../src/cli/cli-user-error.js");
+      const { handleCliError } = await import("../../../../src/cli/handle-cli-error.js");
+
+      const destroySpy = vi
+        .spyOn(Kysely.prototype, "destroy")
+        .mockImplementationOnce(() => Promise.reject(new Error("simulated destroy failure")));
+
+      let errored = "";
+      const cmd = buildPanelCommand(
+        () => {
+          /* noop */
+        },
+        (s) => {
+          errored += s;
+        },
+      );
+      try {
+        // "ghost" does not exist → the callback throws a CliUserError; the
+        // withPanelContext cleanup then hits the mocked destroy failure.
+        const err = await cmd
+          .parseAsync(["node", "council-panel", "delete", "ghost", "--yes"])
+          .then(
+            () => null,
+            (e: unknown) => e,
+          );
+        // The user-facing "not found" diagnostic was still surfaced.
+        expect(errored).toMatch(/not found/i);
+        // Primary error type/exit code preserved (not masked by cleanup).
+        expect(err).toBeInstanceOf(CliUserError);
+        expect(handleCliError(err, () => undefined)).toBe(1);
+        // Both failures remain reachable via the cause chain.
+        const cause = (err as CliUserError).cause;
+        expect(cause).toBeInstanceOf(AggregateError);
+        const messages = (cause as AggregateError).errors.map((e) =>
+          e instanceof Error ? e.message : String(e),
+        );
+        expect(messages.some((m) => m.includes("simulated destroy failure"))).toBe(true);
+        expect(messages.some((m) => /not found/i.test(m))).toBe(true);
+      } finally {
+        destroySpy.mockRestore();
+      }
+    });
+
+    it("warns (does not silently swallow) when counting past debate sessions fails (#1825)", async () => {
+      await seedExpert(env, expertDef("cto"));
+      await createPanel(env, "count-fails", ["cto"]);
+
+      const { vi } = await import("vitest");
+      const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
+      const spy = vi
+        .spyOn(PanelRepository.prototype, "findByNamePrefix")
+        .mockImplementationOnce(() =>
+          Promise.reject(new Error("simulated debate-count read failure")),
+        );
+
+      let errored = "";
+      // Decline the prompt so the delete aborts AFTER the (failing) count read.
+      const declineProvider = { confirm: (): Promise<boolean> => Promise.resolve(false) };
+      const cmd = buildPanelCommand(
+        () => {
+          /* noop */
+        },
+        (s) => {
+          errored += s;
+        },
+        declineProvider,
+      );
+      try {
+        // No --yes: the interactive path runs the debate-count read (fails).
+        await expect(
+          cmd.parseAsync(["node", "council-panel", "delete", "count-fails"]),
+        ).rejects.toThrow();
+        // #1825: the transient/non-transient read failure is surfaced, not
+        // silently swallowed to a bare debateCount = 0.
+        expect(errored).toMatch(/could not count past debate sessions/i);
+        expect(errored).toMatch(/simulated debate-count read failure/);
+        // The delete still degrades gracefully (prompt shown, then declined).
+        expect(errored).toMatch(/Aborted: panel "count-fails" not deleted/);
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 });
@@ -404,14 +550,7 @@ describe("expert delete cascade warning (T2)", () => {
     const cmd = buildExpertCommand((s) => {
       captured += s;
     });
-    await cmd.parseAsync([
-      "node",
-      "council-expert",
-      "delete",
-      "only-member",
-      "--force",
-      "--yes",
-    ]);
+    await cmd.parseAsync(["node", "council-expert", "delete", "only-member", "--force", "--yes"]);
 
     // Lock the full contract: panel name + "0 members" + "may not
     // function" + remediation hint with the exact panel name.

@@ -83,4 +83,55 @@ describe("DebateRepository", () => {
     expect(updated?.endedAt).toBe(endedAt);
     expect(updated?.costEstimate).toBe(0.42);
   });
+
+  describe("countByPanelIds() — batched debate count (#1825)", () => {
+    it("returns 0 for an empty id list without issuing an invalid `IN ()` query", async () => {
+      // The empty-array short-circuit avoids a malformed `WHERE panel_id IN ()`
+      // that some SQLite builds reject; it must resolve to 0, not throw.
+      await expect(repo.countByPanelIds([])).resolves.toBe(0);
+    });
+
+    it("counts every debate across the supplied panel ids in a single call", async () => {
+      const panelB = await new PanelRepository(db).create({
+        name: "second-panel",
+        copilotHome: "test-copilot-home",
+        configJson: "{}",
+      });
+      await repo.create({ panelId, prompt: "a1", moderator: "round-robin" });
+      await repo.create({ panelId, prompt: "a2", moderator: "round-robin" });
+      await repo.create({ panelId: panelB.id, prompt: "b1", moderator: "round-robin" });
+
+      // Sum across BOTH ids (2 + 1) — the whole class, not one panel.
+      await expect(repo.countByPanelIds([panelId, panelB.id])).resolves.toBe(3);
+    });
+
+    it("excludes debates whose panel id is not in the supplied list", async () => {
+      const panelB = await new PanelRepository(db).create({
+        name: "second-panel",
+        copilotHome: "test-copilot-home",
+        configJson: "{}",
+      });
+      await repo.create({ panelId, prompt: "a1", moderator: "round-robin" });
+      await repo.create({ panelId: panelB.id, prompt: "b1", moderator: "round-robin" });
+      await repo.create({ panelId: panelB.id, prompt: "b2", moderator: "round-robin" });
+
+      // Only panelId's single debate is counted; panelB's two are excluded.
+      await expect(repo.countByPanelIds([panelId])).resolves.toBe(1);
+    });
+
+    it("matches the sum of per-panel findByPanelId lengths (parity with the old N+1 path)", async () => {
+      const panelB = await new PanelRepository(db).create({
+        name: "second-panel",
+        copilotHome: "test-copilot-home",
+        configJson: "{}",
+      });
+      await repo.create({ panelId, prompt: "a1", moderator: "round-robin" });
+      await repo.create({ panelId, prompt: "a2", moderator: "round-robin" });
+      await repo.create({ panelId: panelB.id, prompt: "b1", moderator: "round-robin" });
+
+      const perPanel =
+        (await repo.findByPanelId(panelId)).length + (await repo.findByPanelId(panelB.id)).length;
+      await expect(repo.countByPanelIds([panelId, panelB.id])).resolves.toBe(perPanel);
+    });
+  });
 });
