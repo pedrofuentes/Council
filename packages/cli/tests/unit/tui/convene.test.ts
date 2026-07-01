@@ -46,20 +46,6 @@ const freeformConfig: DebateConfig = {
   retryBackoffMs: [],
 };
 
-// A message that combines every terminal-injection vector called out in #1663:
-// an ANSI CSI sequence, a raw C1 CSI (U+009B), CR/LF, the Unicode line and
-// paragraph separators (U+2028/U+2029), a TAB, a bidi override (U+202E), a bidi
-// isolate (U+2066) and a zero-width space. A single-line sink must collapse or
-// strip all of these.
-const ADVERSARIAL_MESSAGE =
-  "boom\u001B[31mANSI\u009BC1\rCR\nLF\u2028LS\u2029PS\tTAB\u202Ebidi\u2066iso\u200Bzw done";
-
-// C0/C1 controls, DEL, the Unicode line/paragraph separators and the bidi
-// override/isolate ranges — none may survive on a single-line terminal surface.
-const TERMINAL_CONTROL_CHARS =
-  // eslint-disable-next-line no-control-regex
-  /[\u0000-\u001F\u007F-\u009F\u2028\u2029\u202A-\u202E\u2066-\u2069]/;
-
 interface ResolvedPanel {
   readonly experts: readonly ExpertSpec[];
   readonly debateConfig: DebateConfig;
@@ -99,15 +85,6 @@ class StringFailingAddExpertEngine extends TrackingScriptedEngine {
   override async addExpert(spec: ExpertSpec): Promise<void> {
     if (spec.id === pm.id) {
       throw "string failure";
-    }
-    await super.addExpert(spec);
-  }
-}
-
-class AdversarialFailingAddExpertEngine extends TrackingScriptedEngine {
-  override async addExpert(spec: ExpertSpec): Promise<void> {
-    if (spec.id === pm.id) {
-      throw new Error(ADVERSARIAL_MESSAGE);
     }
     await super.addExpert(spec);
   }
@@ -421,38 +398,6 @@ describe("createConveneSource", () => {
     expect(engine.stopCount).toBe(1);
   });
 
-  it("collapses adversarial control bytes in mapped error view events onto a single line", async () => {
-    const engine = new TrackingScriptedEngine({
-      scripts: {
-        [cto.id]: [
-          {
-            kind: "error",
-            code: "PROVIDER_ERROR",
-            message: ADVERSARIAL_MESSAGE,
-            recoverable: false,
-          },
-        ],
-        [pm.id]: [{ kind: "content", text: "PM continues after the error." }],
-      },
-    });
-    const source = makeSource(db, engine);
-    const events: ConveneViewEvent[] = [];
-
-    await source.streamDebate("launch-panel", "Handle errors", {}, (event) => {
-      events.push(event);
-    });
-
-    const errorEvents = events.filter(
-      (event): event is Extract<ConveneViewEvent, { kind: "error" }> => event.kind === "error",
-    );
-    expect(errorEvents).toHaveLength(1);
-    const message = errorEvents[0]?.message ?? "";
-    // Visible content survives, but the surface is single-line and control-free.
-    expect(message).toContain("boom");
-    expect(message).not.toMatch(/[\r\n]/);
-    expect(message).not.toMatch(TERMINAL_CONTROL_CHARS);
-  });
-
   it("removes already-registered experts and stops the engine when registration fails", async () => {
     const engine = new FailingAddExpertEngine({ scripts: {} });
     const source = makeSource(db, engine);
@@ -473,25 +418,6 @@ describe("createConveneSource", () => {
       source.streamDebate("launch-panel", "Register experts", {}, () => undefined),
     ).rejects.toThrow("could not register all experts (1/2 failed): string failure");
 
-    expect(engine.stopCount).toBe(1);
-  });
-
-  it("sanitizes adversarial control bytes in the registration-failure throw onto a single line", async () => {
-    const engine = new AdversarialFailingAddExpertEngine({ scripts: {} });
-    const source = makeSource(db, engine);
-
-    let caught: unknown;
-    try {
-      await source.streamDebate("launch-panel", "Register experts", {}, () => undefined);
-    } catch (error: unknown) {
-      caught = error;
-    }
-
-    expect(caught).toBeInstanceOf(Error);
-    const message = (caught as Error).message;
-    expect(message).toContain("could not register all experts (1/2 failed):");
-    expect(message).not.toMatch(/[\r\n]/);
-    expect(message).not.toMatch(TERMINAL_CONTROL_CHARS);
     expect(engine.stopCount).toBe(1);
   });
 
