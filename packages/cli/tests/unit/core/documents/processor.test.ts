@@ -648,14 +648,12 @@ describe("createDocumentProcessor", () => {
 
       // Capture the real indexer BEFORE spying so the mock can delegate.
       const realIndex = env.indexer.index.bind(env.indexer);
-      const indexSpy = vi
-        .spyOn(env.indexer, "index")
-        .mockImplementation(async (opts) => {
-          // Runs after extraction captured modifiedAt, before analysis —
-          // the exact TOCTOU window #445 guards against.
-          await fs.utimes(probe, agedTime, agedTime);
-          await realIndex(opts);
-        });
+      const indexSpy = vi.spyOn(env.indexer, "index").mockImplementation(async (opts) => {
+        // Runs after extraction captured modifiedAt, before analysis —
+        // the exact TOCTOU window #445 guards against.
+        await fs.utimes(probe, agedTime, agedTime);
+        await realIndex(opts);
+      });
 
       try {
         const engine = new StubEngine([VALID_PROFILE_JSON]);
@@ -1088,9 +1086,7 @@ describe("createDocumentProcessor — AI fallback wiring (T-AIPIPE)", () => {
     const adversarial =
       "boom\tTAB\u0001C0\u001B[31mANSI\u009BC1\u009D\u0085\u007FDEL" +
       "\u202Ebidi\u2066iso\u2069\r\nCRLF\u2028LS\u2029PS";
-    const removeSpy = vi
-      .spyOn(env.indexer, "remove")
-      .mockRejectedValue(new Error(adversarial));
+    const removeSpy = vi.spyOn(env.indexer, "remove").mockRejectedValue(new Error(adversarial));
     const warnings: string[] = [];
     try {
       const ask = createDocumentProcessor({

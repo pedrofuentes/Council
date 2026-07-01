@@ -150,10 +150,7 @@ export interface DocumentProcessorOptions {
  * log lines. No-op when no sink is provided; never throws, so observability
  * cannot break the best-effort pipeline contract.
  */
-function warnProcessor(
-  onWarning: ((message: string) => void) | undefined,
-  message: string,
-): void {
+function warnProcessor(onWarning: ((message: string) => void) | undefined, message: string): void {
   if (onWarning === undefined) return;
   onWarning(toSingleLineDisplay(message));
 }
