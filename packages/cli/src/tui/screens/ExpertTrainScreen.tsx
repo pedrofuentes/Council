@@ -56,6 +56,7 @@ export function ExpertTrainScreen(props: ExpertTrainScreenProps): React.ReactEle
 
   const handleChange = useCallback((value: string): void => {
     reqIdRef.current += 1; // any edit supersedes a pending completion
+    setCandidates([]); // clear stale suggestions for the previous input
     setFilePath(value);
   }, []);
 
