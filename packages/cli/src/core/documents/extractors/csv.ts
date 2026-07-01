@@ -8,10 +8,13 @@
  *
  * Malformed input is rejected with a `corrupt-document` ExtractionError:
  * unterminated quoted fields (mismatched quotes) and rows whose column
- * count differs from the header are not silently accepted. Blank lines
- * (including CRLF `\r\n\r\n` gaps and leading/trailing newlines) are not
- * malformed — they are skipped rather than treated as zero/one-column
- * data rows, so a valid file containing blank lines is never rejected.
+ * count differs from the header are not silently accepted. In multi-column
+ * files, blank lines (including CRLF `\r\n\r\n` gaps and leading/trailing
+ * newlines) are not malformed — they are skipped rather than treated as
+ * zero/one-column data rows, so a valid file containing blank lines is never
+ * rejected. In a single-column file an empty row is instead a legitimate
+ * empty value (including an explicit RFC 4180 quoted `""` field) and is
+ * always preserved, never dropped as a blank line.
  *
  * Self-registers for `.csv` and `.tsv`.
  */
@@ -99,17 +102,35 @@ function countWords(text: string): number {
 }
 
 /**
- * A blank line yields a phantom single-column row holding only an empty
- * field: the delimiter parser has nothing to split, so it produces `[""]`
- * (or `[]` defensively). Such a row is not real data and must be skipped
- * before the column-count check, otherwise a valid file that merely
- * contains blank lines (e.g. a trailing double newline, an interior blank
- * line, or a CRLF `\r\n\r\n` gap) is falsely rejected as corrupt. Genuine
- * multi-column rows always have `length >= 2`, so this never masks a real
- * column-count mismatch.
+ * A blank source line yields a phantom row holding a single empty field: the
+ * delimiter parser has nothing to split, so it produces `[""]` (or `[]`
+ * defensively). This predicate identifies that shape.
+ *
+ * It is only safe to DROP such a row in a MULTI-column file, where real rows
+ * carry `length >= 2` fields and a lone `[""]` is therefore unambiguously a
+ * formatting blank line (a trailing double newline, an interior blank line, or
+ * a CRLF `\r\n\r\n` gap) — dropping it stops a valid file from being falsely
+ * rejected as corrupt, and never masks a genuine column-count mismatch.
+ *
+ * In a SINGLE-column file a `[""]` row is indistinguishable from a genuine
+ * empty value (including an explicit RFC 4180 quoted `""` field), so callers
+ * MUST gate any drop on header arity; see {@link csvExtractor}.
  */
 function isBlankRow(row: readonly string[]): boolean {
   return row.length <= 1 && (row[0] ?? "") === "";
+}
+
+/**
+ * The header defines the file's column arity. It is the first row carrying
+ * real data, so any leading blank line is skipped to find it. Only a header
+ * with `>= 2` columns lets {@link isBlankRow} safely drop lone `[""]` rows as
+ * formatting blank lines — in a single-column file that same row is a
+ * legitimate (possibly empty) value and must survive. An all-blank or empty
+ * input has no header and is treated as single-column (nothing to drop).
+ */
+function headerIsMultiColumn(rows: readonly (readonly string[])[]): boolean {
+  const header = rows.find((row) => !isBlankRow(row));
+  return header !== undefined && header.length >= 2;
 }
 
 const csvExtractor: ContentExtractor = async (
@@ -130,7 +151,9 @@ const csvExtractor: ContentExtractor = async (
         "Ensure every opening double-quote has a matching closing quote, then re-save the file.",
     });
   }
-  const rows = parsedRows.filter((row) => !isBlankRow(row));
+  const rows = headerIsMultiColumn(parsedRows)
+    ? parsedRows.filter((row) => !isBlankRow(row))
+    : parsedRows;
   const header = rows[0];
   if (header !== undefined) {
     const expectedColumns = header.length;
