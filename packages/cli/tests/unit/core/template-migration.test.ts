@@ -951,4 +951,170 @@ describe("template-migration", () => {
       expect(laterRow).toBeDefined();
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // #1918 (sentinel:important, security): the per-panel classification
+  // boundary isolates only PanelMigrationError; every other error was
+  // re-thrown RAW. Two on-disk *data* reads of user-editable files produce
+  // non-PanelMigrationError errors:
+  //   - the expert create/recovery read `ExpertDefinitionSchema.parse(
+  //     yaml.parse(content))` (YAMLParseError / on-disk ZodError), and
+  //   - the panel read via parseOnDiskPanel's `yaml.parse(content)`.
+  // A `yaml` YAMLParseError.message embeds a code-frame of the offending
+  // source line, so raw C1 (U+0080–U+009F, incl. 0x9B CSI / 0x9D OSC), DEL
+  // (0x7F), bidi (U+202A–U+202E, U+2066–U+2069) and raw CR/LF survive into
+  // the message and reach handleCliError → process.stderr.write (a bare TTY
+  // sink) — a terminal escape-injection / Trojan-source vector. It also
+  // aborts the loop, skipping alphabetically-later panels (residual #1807
+  // lock-out). These reads must become sanitized, per-panel-isolatable
+  // PanelMigrationErrors while genuine fs infra errors still propagate.
+  // ─────────────────────────────────────────────────────────────────────
+  describe("malformed on-disk YAML/schema is sanitized + isolated per panel (#1918)", () => {
+    // C0 (except tab) / C1 / DEL / bidi override + isolate ranges — any of
+    // these reaching a TTY is a terminal-injection vector.
+    // eslint-disable-next-line no-control-regex
+    const DANGEROUS = /[\u0000-\u0008\u000A-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/;
+
+    // Syntactically-invalid YAML (tab indentation) whose offending source
+    // line — which `yaml` embeds verbatim into YAMLParseError.message's code
+    // frame — carries a C1 CSI introducer (0x9B), a C1 OSC introducer (0x9D),
+    // DEL (0x7F), an RLO bidi override (U+202E) and a raw CRLF.
+    const MALFORMED_YAML = "experts:\n\t- slug: evil\u009b31m\u009d\u007f\u202eINJECTED\r\n";
+
+    function makeExpert(slug: string): ExpertDefinition {
+      return {
+        slug,
+        displayName: "Valid Expert",
+        role: "A schema-valid inline expert supplied by the built-in loader",
+        kind: "generic",
+        expertise: { weightedEvidence: ["evidence"], referenceCases: [], notExpertIn: [] },
+        epistemicStance: "stance",
+      };
+    }
+
+    it("parseOnDiskPanel surfaces a terminal-safe error (not a raw YAMLParseError) for malformed YAML", () => {
+      let caught: unknown;
+      try {
+        parseOnDiskPanel(MALFORMED_YAML);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      const message = (caught as Error).message;
+      // No raw C1 / DEL / bidi / CR / LF may survive to the terminal...
+      expect(message).not.toMatch(DANGEROUS);
+      // ...and the message must render on a single physical line.
+      expect(message.split("\n")).toHaveLength(1);
+      expect(message).not.toContain("\r");
+    });
+
+    it("isolates + sanitizes a malformed on-disk PANEL YAML so later panels still migrate", async () => {
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
+
+      const firstName = BUILTIN_PANELS[0];
+      const laterName = BUILTIN_PANELS[BUILTIN_PANELS.length - 1];
+      const panelsDir = path.join(dataHome, "panels");
+      // Replace the alphabetically-first panel with syntactically-invalid
+      // YAML carrying terminal-injection bytes in its code frame.
+      await fs.writeFile(path.join(panelsDir, `${firstName}.yaml`), MALFORMED_YAML, "utf-8");
+
+      // Wipe panel rows so DB-reset recovery re-reads every panel from disk
+      // (the parseOnDiskPanel path); keep expert rows so the malformed panel
+      // read is the only failure.
+      await db.deleteFrom("panel_members").execute();
+      await db.deleteFrom("panel_library").execute();
+
+      let caught: unknown;
+      try {
+        await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      const message = (caught as Error).message;
+      expect(message).not.toMatch(DANGEROUS);
+      expect(message.split("\n")).toHaveLength(1);
+
+      // The malformed panel must NOT have aborted the run: an
+      // alphabetically-later panel is still re-registered.
+      const laterRow = await db
+        .selectFrom("panel_library")
+        .selectAll()
+        .where("name", "=", laterName)
+        .executeTakeFirst();
+      expect(laterRow).toBeDefined();
+    });
+
+    it("isolates + sanitizes a malformed on-disk EXPERT YAML (create/recovery read) per panel", async () => {
+      const expertsDir = path.join(dataHome, "experts");
+      await fs.mkdir(expertsDir, { recursive: true });
+      // A user-editable expert file that is syntactically-invalid YAML with
+      // terminal-injection bytes. The built-in loader still yields a valid
+      // inline definition; the on-disk file is what is corrupt, so the
+      // create-branch read at ExpertDefinitionSchema.parse(yaml.parse(...))
+      // is exercised (library.get returns null → action "create").
+      await fs.writeFile(path.join(expertsDir, "alpha-expert.yaml"), MALFORMED_YAML, "utf-8");
+
+      const stubLoader = async (name: string) =>
+        name === "panel-a"
+          ? { name, experts: [makeExpert("alpha-expert")] }
+          : { name, experts: [makeExpert("beta-expert")] };
+
+      let caught: unknown;
+      try {
+        await migrateBuiltInTemplates(dataHome, lib, db, {
+          quiet: true,
+          panelNames: ["panel-a", "panel-b"],
+          loadPanel: stubLoader,
+        });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      const message = (caught as Error).message;
+      expect(message).not.toMatch(DANGEROUS);
+      expect(message.split("\n")).toHaveLength(1);
+
+      // panel-b's expert (whose on-disk file does not exist and is freshly
+      // created) must still have been registered despite panel-a's failure.
+      const betaRow = await db
+        .selectFrom("expert_library")
+        .selectAll()
+        .where("slug", "=", "beta-expert")
+        .executeTakeFirst();
+      expect(betaRow).toBeDefined();
+    });
+
+    it("isolates a schema-invalid on-disk EXPERT YAML (ExpertDefinitionSchema.parse) per panel", async () => {
+      const expertsDir = path.join(dataHome, "experts");
+      await fs.mkdir(expertsDir, { recursive: true });
+      // Syntactically-valid YAML that fails ExpertDefinitionSchema (missing
+      // required fields / invalid kind enum). Before the fix the ZodError is
+      // re-thrown raw at the loop boundary, aborting later panels.
+      const schemaInvalid = yaml.stringify({ slug: "alpha-expert", kind: "not-a-valid-kind" });
+      await fs.writeFile(path.join(expertsDir, "alpha-expert.yaml"), schemaInvalid, "utf-8");
+
+      const stubLoader = async (name: string) =>
+        name === "panel-a"
+          ? { name, experts: [makeExpert("alpha-expert")] }
+          : { name, experts: [makeExpert("beta-expert")] };
+
+      await expect(
+        migrateBuiltInTemplates(dataHome, lib, db, {
+          quiet: true,
+          panelNames: ["panel-a", "panel-b"],
+          loadPanel: stubLoader,
+        }),
+      ).rejects.toThrow();
+
+      // Isolation: panel-b's freshly-created expert row survives the
+      // schema-invalid alpha-expert read.
+      const betaRow = await db
+        .selectFrom("expert_library")
+        .selectAll()
+        .where("slug", "=", "beta-expert")
+        .executeTakeFirst();
+      expect(betaRow).toBeDefined();
+    });
+  });
 });

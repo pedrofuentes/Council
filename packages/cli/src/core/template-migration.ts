@@ -213,7 +213,7 @@ async function runMigration(
               // user-edited) files instead of clobbering metadata with the
               // bundled template.
               const content = await fs.readFile(yamlPath, "utf-8");
-              const onDisk = ExpertDefinitionSchema.parse(yaml.parse(content) as unknown);
+              const onDisk = parseOnDiskExpert(content, decision.slug);
               await expertRepo.create({
                 slug: onDisk.slug,
                 kind: onDisk.kind,
@@ -542,8 +542,56 @@ type OnDiskEntry =
   | { readonly kind: "slug"; readonly slug: string }
   | { readonly kind: "inline"; readonly definition: ExpertDefinition };
 
+/**
+ * Parse untrusted on-disk YAML, converting any parser failure into a
+ * sanitized, per-panel-isolatable {@link PanelMigrationError}. `yaml.parse`
+ * runs purely on the in-memory string (it never touches the filesystem), so
+ * every error it throws is a *data* error — never an fs infra error
+ * (EACCES/EIO/ENOSPC) — and is safe to reclassify. A `YAMLParseError` message
+ * embeds a code-frame of the offending source line, so raw C1/DEL/bidi/CRLF
+ * bytes from a user-edited file would otherwise reach handleCliError →
+ * process.stderr.write (a bare TTY sink) as a terminal escape-injection /
+ * Trojan-source vector; `sanitizeForError` strips them (#1918). The caller
+ * keeps the `fs.readFile` outside this helper so a genuine read failure still
+ * propagates immediately (#301/#303).
+ */
+function parseOnDiskYaml(content: string, context: string): unknown {
+  try {
+    return yaml.parse(content);
+  } catch (err: unknown) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new PanelMigrationError(`[template-migration] ${context}: ${sanitizeForError(detail)}`);
+  }
+}
+
+/**
+ * Parse an on-disk expert YAML file's content into an {@link ExpertDefinition},
+ * converting a YAML-syntax or schema-validation failure into a sanitized,
+ * per-panel-isolatable {@link PanelMigrationError}. Both `yaml.parse` and
+ * `ExpertDefinitionSchema` operate purely on in-memory data, so any failure is
+ * a data error (never an fs infra error) whose message — a YAMLParseError
+ * code-frame or a Zod-issue blob derived from the user-edited file — must be
+ * sanitized before it can reach the terminal (#1918).
+ */
+function parseOnDiskExpert(content: string, slug: string): ExpertDefinition {
+  const raw = parseOnDiskYaml(
+    content,
+    `on-disk expert "${sanitizeForError(slug, 100)}" is not valid YAML`,
+  );
+  const parsed = ExpertDefinitionSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new PanelMigrationError(
+      `[template-migration] on-disk expert "${sanitizeForError(slug, 100)}" failed schema validation: ${sanitizeForError(JSON.stringify(parsed.error.issues))}`,
+    );
+  }
+  return parsed.data;
+}
+
 export function parseOnDiskPanel(content: string): OnDiskPanel {
-  const raw = yaml.parse(content) as Record<string, unknown> | null;
+  const raw = parseOnDiskYaml(content, "malformed on-disk panel YAML") as Record<
+    string,
+    unknown
+  > | null;
   const description =
     raw && typeof raw["description"] === "string" ? (raw["description"] as string) : null;
   const experts = raw && Array.isArray(raw["experts"]) ? raw["experts"] : [];
