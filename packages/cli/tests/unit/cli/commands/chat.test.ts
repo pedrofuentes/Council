@@ -391,6 +391,69 @@ describe("buildChatCommand", () => {
         spy.mockRestore();
       }
     });
+
+    it("truncates a topic longer than 60 characters with a trailing ellipsis, leaving a boundary-length topic intact (#1109)", async () => {
+      await seedExpert(env);
+      // Realistic, non-repeating text: a homogeneous run (e.g. "A".repeat(n))
+      // would let an off-by-one-shifted slice masquerade as the correct one
+      // (the shifted substring would still `toContain`-match), silently
+      // defeating this assertion. Natural prose has no such run, so any
+      // shift by one character changes the string and is caught.
+      const base =
+        "We must finalize the production database migration rollback plan before the freeze on Friday, no exceptions";
+      const longTopic = base.slice(0, 75);
+      const boundaryTopic = base.slice(0, 60);
+      await withRepo(env, async (repo) => {
+        const long = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        await repo.addTurn({ chatId: long.id, role: "user", content: "seed turn" });
+        await repo.updateSummary(long.id, longTopic, 1);
+        await repo.archiveSession(long.id);
+        const boundary = await repo.createSession({
+          targetType: "expert",
+          targetSlug: "dahlia-cto",
+        });
+        await repo.addTurn({ chatId: boundary.id, role: "user", content: "seed turn" });
+        await repo.updateSummary(boundary.id, boundaryTopic, 1);
+        await repo.archiveSession(boundary.id);
+      });
+      let out = "";
+      const cmd = buildChatCommand({ write: (s) => (out += s) });
+      await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--history"]);
+
+      // >60-char topic: sliced to exactly TOPIC_MAX_LENGTH - 1 (59) source
+      // characters plus a trailing ellipsis. An off-by-one in the slice
+      // bound would shift this by a character and fail the exact match.
+      const expectedTruncated = `${longTopic.slice(0, 59)}…`;
+      expect(expectedTruncated.length).toBe(60);
+      expect(out).toContain(expectedTruncated);
+      expect(out).not.toContain(longTopic);
+      // Directly pin against an off-by-one that keeps one extra source
+      // character (a 60-char slice instead of 59) before the ellipsis.
+      expect(out).not.toContain(`${longTopic.slice(0, 60)}…`);
+
+      // Exactly-60-char topic (the boundary) must render in full,
+      // untruncated — pinning the other side of the `> TOPIC_MAX_LENGTH`
+      // comparison so neither direction of an off-by-one slips through.
+      expect(out).toContain(boundaryTopic);
+      expect(out).not.toContain(`${boundaryTopic}…`);
+    });
+
+    it("renders the literal '(no messages yet)' fallback topic for a session with no messages (#1109)", async () => {
+      await seedExpert(env);
+      let archivedId = "";
+      await withRepo(env, async (repo) => {
+        const a = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        archivedId = a.id;
+        // No turn added and no summary set: deriveTopic must fall back to
+        // the literal placeholder rather than an empty/blank topic cell.
+        await repo.archiveSession(a.id);
+      });
+      let out = "";
+      const cmd = buildChatCommand({ write: (s) => (out += s) });
+      await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--history"]);
+      expect(out).toContain(archivedId);
+      expect(out).toContain("(no messages yet)");
+    });
   });
 
   describe("expert resolution", () => {
