@@ -313,7 +313,7 @@ describe("buildConveneCommand", () => {
     ).toBe(true);
   });
 
-  it("warns that auto-conclusion spends one more premium request before synthesis", async () => {
+  it("warns that auto-conclusion may spend one or two premium requests before synthesis", async () => {
     let errors = "";
     const cmd = buildConveneCommand({
       engineFactory: makeMockEngineFactory(),
@@ -336,7 +336,7 @@ describe("buildConveneCommand", () => {
       "--heuristic-memory",
     ]);
 
-    expect(errors).toContain("Generating conclusion (1 more premium request");
+    expect(errors).toContain("Generating conclusion (1–2 premium requests");
     expect(errors).toContain("may retry once if JSON is unparseable");
     expect(errors).toContain("use --no-conclude to skip");
   });
@@ -489,7 +489,7 @@ describe("buildConveneCommand", () => {
       });
 
       // The progress status writes the label followed by an ellipsis. The
-      // pre-existing static notice ("Generating conclusion (1 more …") does
+      // pre-existing static notice ("Generating conclusion (1–2 …") does
       // not, so this assertion is specific to the new progress indicator.
       expect(errors).toContain("Generating conclusion…");
     });
@@ -521,7 +521,7 @@ describe("buildConveneCommand", () => {
 
       expect(errors).not.toContain("Generating conclusion…");
       // The pre-existing one-line notice is unaffected.
-      expect(errors).toContain("Generating conclusion (1 more premium request");
+      expect(errors).toContain("Generating conclusion (1–2 premium requests");
     });
 
     it("suppresses the conclusion progress status under --quiet on a TTY", async () => {
