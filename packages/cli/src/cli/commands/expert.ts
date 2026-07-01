@@ -941,10 +941,18 @@ const WINDOWS_RESERVED_BASENAME_RE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
  * dots/spaces, and Windows reserved device names (#1029). `displayUrl` is the
  * already credential-redacted URL; the untrusted filename itself is never
  * echoed back in the error message.
+ *
+ * The control-character class mirrors what `toSingleLineDisplay` strips: C0
+ * controls + DEL (U+0000–U+001F, U+007F), the C1 block (U+0080–U+009F, which
+ * includes NEL U+0085 and the 8-bit CSI/OSC escape introducers U+009B/U+009D),
+ * and the Unicode line/paragraph separators (U+2028/U+2029). A narrower guard
+ * would let a decoded name carrying one of those bytes reach a raw
+ * (unsanitized) error/listing sink and inject terminal escapes or spoof lines
+ * (#1902).
  */
 function assertSafeDerivedFilename(filename: string, displayUrl: string): void {
   // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f]/.test(filename)) {
+  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(filename)) {
     throw new CliUserError(`URL-derived filename contains control characters: ${displayUrl}`);
   }
   if (/[<>:"/\\|?*]/.test(filename)) {
@@ -1106,16 +1114,26 @@ function errorDetail(err: unknown): string {
  * one-by-one, but the operation is all-or-nothing: a pre-existing entry that
  * would be overwritten is first moved aside, and if any copy fails the
  * already-committed files are removed and moved-aside originals restored, so
- * docs/ is never left in a partial state (#1084). A destination that is a
- * symlink (or other non-regular file) is also moved aside before copying —
- * `fs.copyFile` follows symlinks, so without this the copy would silently
- * overwrite whatever the link targets outside docs/ (#1880).
+ * docs/ is never left in a partial state (#1084).
+ *
+ * Destination safety (#1880, #1903): a destination that is a regular file OR a
+ * symlink is moved aside before writing — `fs.copyFile` follows symlinks, so
+ * without this the copy would silently overwrite whatever the link targets
+ * outside docs/. Any *other* existing entry (FIFO, socket, device node,
+ * directory, …) is rejected fail-closed rather than handed to `copyFile` —
+ * opening a FIFO O_WRONLY would block the CLI indefinitely and a device node
+ * would receive the copied bytes. Each file is then written to a uniquely
+ * named temp file in the same directory and `fs.rename`d onto the destination;
+ * `rename` acts on the link itself (never follows a symlink), so a process
+ * that recreates the destination as a symlink in the copy window cannot
+ * redirect the final swap to an external target (TOCTOU close).
  *
  * Rollback is best-effort: filesystem errors during restore are collected
  * rather than swallowed, and the thrown message says "rollback attempted"
  * (surfacing any orphaned `.train-bak-*` backups) instead of unconditionally
- * claiming a completed restore (#1881). Backups use a unique suffix the
- * processor never scans and are cleaned up on success.
+ * claiming a completed restore (#1881). Backups and temp files use a unique
+ * suffix the processor never scans and are cleaned up on success (or on a
+ * failed copy).
  *
  * Exported for unit testing of the rollback/restore paths, which the CLI
  * cannot deterministically trigger from a pre-existing regular file.
@@ -1131,6 +1149,7 @@ export async function commitStagedDocs(
     copied: boolean;
   }
   const applied: CommitItem[] = [];
+  let tmpSeq = 0;
   try {
     for (const filename of staged) {
       const dest = path.join(docsPath, filename);
@@ -1141,10 +1160,17 @@ export async function commitStagedDocs(
       } catch {
         existing = undefined;
       }
-      // Move aside anything already at the destination — a regular file OR a
-      // symlink — so the copy cannot follow a link and overwrite an external
-      // target (#1880). Mirrors the symlink guard in `expert edit`.
-      if (existing !== undefined && (existing.isFile() || existing.isSymbolicLink())) {
+      if (existing !== undefined) {
+        // Fail closed: only a regular file or a symlink may be moved aside and
+        // replaced. A FIFO/socket/device node would make `fs.copyFile` block
+        // or write to a special file; a directory would fail with EISDIR. Any
+        // of these is rejected before it can reach the copy (#1903).
+        if (!existing.isFile() && !existing.isSymbolicLink()) {
+          throw new Error(`Refusing to overwrite a non-regular file at destination: ${dest}`);
+        }
+        // Move aside the regular file OR symlink so the copy cannot follow a
+        // link and overwrite an external target (#1880). Mirrors the symlink
+        // guard in `expert edit`.
         backup = `${dest}.train-bak-${process.pid}-${Date.now()}`;
         await fs.rename(dest, backup);
       }
@@ -1153,7 +1179,20 @@ export async function commitStagedDocs(
       // backup is orphaned (#1881).
       const item: CommitItem = { dest, backup, copied: false };
       applied.push(item);
-      await fs.copyFile(path.join(stagingPath, filename), dest);
+      // Write to a uniquely named temp file in the SAME directory, then swap
+      // it into place with an atomic `rename` (never follows a symlink at the
+      // destination — closes the copyFile TOCTOU, #1903). `COPYFILE_EXCL`
+      // fails closed if the temp path was somehow pre-planted.
+      const tmp = `${dest}.train-tmp-${process.pid}-${Date.now()}-${tmpSeq++}`;
+      try {
+        await fs.copyFile(path.join(stagingPath, filename), tmp, fs.constants.COPYFILE_EXCL);
+        await fs.rename(tmp, dest);
+      } catch (copyErr) {
+        // Never leave a partial temp file behind; best-effort remove, then
+        // rethrow so the outer catch runs the rollback.
+        await fs.rm(tmp, { force: true }).catch(() => undefined);
+        throw copyErr;
+      }
       item.copied = true;
     }
   } catch (err) {

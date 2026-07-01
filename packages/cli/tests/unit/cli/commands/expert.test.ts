@@ -10,6 +10,8 @@
 import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { execFileSync } from "node:child_process";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -2381,6 +2383,85 @@ fs.writeFileSync(p, body, 'utf-8');`,
       expect(leftovers).toEqual([]);
     });
 
+    it.skipIf(process.platform === "win32")(
+      "fails closed (throws) when the commit destination is a FIFO, never blocking on copyFile (#1903)",
+      async () => {
+        const docsPath = path.join(env.dataHome, "fifo-docs");
+        const stagingPath = path.join(env.dataHome, "fifo-staging");
+        await fs.mkdir(docsPath, { recursive: true });
+        await fs.mkdir(stagingPath, { recursive: true });
+        await fs.writeFile(path.join(stagingPath, "report.md"), "NEW DOC", "utf-8");
+
+        // Plant a FIFO where the doc would land. `fs.copyFile` opens the dest
+        // O_WRONLY, and opening a FIFO O_WRONLY blocks until a reader appears —
+        // the un-hardened code hangs here (local DoS). Hold a *non-blocking*
+        // reader so even the pre-fix copy path cannot deadlock this run; the
+        // hardened code rejects the FIFO right after `lstat`, before any open.
+        const fifo = path.join(docsPath, "report.md");
+        execFileSync("mkfifo", [fifo]);
+        const reader = await fs.open(fifo, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+        try {
+          await expect(commitStagedDocs(stagingPath, docsPath, ["report.md"])).rejects.toThrow(
+            /non-regular file/i,
+          );
+          // The special file must be left untouched — not overwritten, and no
+          // doc content copied through it.
+          expect((await fs.lstat(fifo)).isFIFO()).toBe(true);
+        } finally {
+          await reader.close();
+        }
+      },
+    );
+
+    it.skipIf(process.platform === "win32")(
+      "copies via a temp file + atomic rename without following a symlink at the destination (#1903)",
+      async () => {
+        const docsPath = path.join(env.dataHome, "sym-docs");
+        const stagingPath = path.join(env.dataHome, "sym-staging");
+        const outsideDir = path.join(env.dataHome, "sym-outside");
+        await fs.mkdir(docsPath, { recursive: true });
+        await fs.mkdir(stagingPath, { recursive: true });
+        await fs.mkdir(outsideDir, { recursive: true });
+        const target = path.join(outsideDir, "secret.txt");
+        await fs.writeFile(target, "PROTECTED", "utf-8");
+        // A symlink at the destination: the atomic swap must replace the link
+        // itself, never write through it to `target`.
+        await fs.symlink(target, path.join(docsPath, "report.md"));
+        await fs.writeFile(path.join(stagingPath, "report.md"), "NEW DOC", "utf-8");
+
+        await commitStagedDocs(stagingPath, docsPath, ["report.md"]);
+
+        const dest = path.join(docsPath, "report.md");
+        expect((await fs.lstat(dest)).isFile()).toBe(true);
+        expect(await fs.readFile(dest, "utf-8")).toBe("NEW DOC");
+        expect(await fs.readFile(target, "utf-8")).toBe("PROTECTED");
+        // No temp or backup artifacts left behind on success.
+        const artifacts = (await fs.readdir(docsPath)).filter(
+          (f) => f.includes(".train-tmp-") || f.includes(".train-bak-"),
+        );
+        expect(artifacts).toEqual([]);
+      },
+    );
+
+    it("overwrites an existing regular file via the temp+rename path, leaving no artifacts (#1903)", async () => {
+      const docsPath = path.join(env.dataHome, "reg-docs");
+      const stagingPath = path.join(env.dataHome, "reg-staging");
+      await fs.mkdir(docsPath, { recursive: true });
+      await fs.mkdir(stagingPath, { recursive: true });
+      await fs.writeFile(path.join(docsPath, "report.md"), "OLD", "utf-8");
+      await fs.writeFile(path.join(stagingPath, "report.md"), "NEW DOC", "utf-8");
+
+      await commitStagedDocs(stagingPath, docsPath, ["report.md"]);
+
+      const dest = path.join(docsPath, "report.md");
+      expect((await fs.lstat(dest)).isFile()).toBe(true);
+      expect(await fs.readFile(dest, "utf-8")).toBe("NEW DOC");
+      const artifacts = (await fs.readdir(docsPath)).filter(
+        (f) => f.includes(".train-tmp-") || f.includes(".train-bak-"),
+      );
+      expect(artifacts).toEqual([]);
+    });
+
     // F15: training summary counter wording
     // ──────────────────────────────────────────────────────────────────
 
@@ -2513,6 +2594,48 @@ describe("deriveFilenameFromUrl hardening (#763, #764, #1029)", () => {
 
   it("rejects IPv6 hostname-derived names that contain illegal characters (#1029)", () => {
     expect(() => deriveFilenameFromUrl("http://[::1]")).toThrow(/invalid|filename|reserved/i);
+  });
+
+  // #1902: the control-char guard must also reject the C1 block
+  // (U+0080–U+009F, including NEL, 8-bit CSI and OSC introducers) and the
+  // Unicode line/paragraph separators (U+2028/U+2029) — the same class
+  // `toSingleLineDisplay` strips. Each case pins one specific offending
+  // codepoint so a future narrowing of the guard is caught.
+  it.each([
+    { label: "U+0085 NEL", enc: "%C2%85" },
+    { label: "U+009B C1 CSI", enc: "%C2%9B" },
+    { label: "U+009D C1 OSC", enc: "%C2%9D" },
+    { label: "U+2028 line separator", enc: "%E2%80%A8" },
+    { label: "U+2029 paragraph separator", enc: "%E2%80%A9" },
+  ])("rejects a decoded filename containing $label (#1902)", ({ enc }) => {
+    expect(() => deriveFilenameFromUrl(`https://example.com/a${enc}b.md`)).toThrow(
+      /control character/i,
+    );
+  });
+
+  // #1904: lock the trailing-dot/space branch, which had no regression test.
+  it.each([
+    { label: "trailing dot", url: "https://example.com/report." },
+    { label: "trailing space (%20)", url: "https://example.com/report%20" },
+    { label: "path-derived trailing dot", url: "https://example.com/docs/report." },
+  ])("rejects a filename with a $label (#1904)", ({ url }) => {
+    expect(() => deriveFilenameFromUrl(url)).toThrow(/invalid|filename/i);
+  });
+
+  // #1904: lock every reserved-device family (con/prn/aux/comN/lptN) plus a
+  // case variant, an `.ext` form, and a path-derived reserved name — the
+  // pre-existing coverage exercised only host-derived `nul`.
+  it.each([
+    { label: "con", url: "https://example.com/con" },
+    { label: "prn", url: "https://example.com/prn" },
+    { label: "aux", url: "https://example.com/aux" },
+    { label: "com1", url: "https://example.com/com1" },
+    { label: "lpt1", url: "https://example.com/lpt1" },
+    { label: "CON (case variant)", url: "https://example.com/CON" },
+    { label: "com1.txt (.ext form)", url: "https://example.com/com1.txt" },
+    { label: "path-derived nul", url: "https://example.com/nul" },
+  ])("rejects the Windows reserved device name $label (#1904)", ({ url }) => {
+    expect(() => deriveFilenameFromUrl(url)).toThrow(/reserved device/i);
   });
 
   it("still accepts ordinary path- and host-derived filenames", () => {
