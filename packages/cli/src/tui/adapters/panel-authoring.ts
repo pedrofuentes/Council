@@ -5,6 +5,7 @@ import * as path from "node:path";
 import * as yaml from "yaml";
 
 import { PanelDefinitionSchema } from "../../core/template-loader.js";
+import { panelDeleteRecoveryMessage } from "../../cli/panel-delete-recovery.js";
 
 const PANEL_NAME_RE = /^[a-z][a-z0-9-]*$/;
 
@@ -171,7 +172,17 @@ export function createPanelAuthoringSource(deps: PanelAuthoringDeps): PanelAutho
         }
       }
       await fs.rm(panelDir(deps.dataHome, name), { recursive: true, force: true });
-      await deps.panelRepo.delete(name);
+      // FS-first ordering is deliberate: a filesystem failure keeps the row
+      // authoritative for a retry. If the DB delete is the step that fails, the
+      // YAML/docs are already gone but the panel_library row remains — surface
+      // actionable recovery guidance (re-run to clear the stale row) instead of
+      // a bare rejection, mirroring the CLI `panel delete`. #1643.
+      try {
+        await deps.panelRepo.delete(name);
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new Error(panelDeleteRecoveryMessage(name, detail), { cause: err });
+      }
     },
   };
 }
