@@ -2,6 +2,9 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import councilPackageJson from "../../../package.json" with { type: "json" };
+import type { MaybeNotifyUpdateOptions } from "../../../src/core/version/index.js";
+
 interface WriteCall {
   readonly target: string;
   readonly chunk: string;
@@ -278,6 +281,114 @@ describe("buildProgram", () => {
     });
   });
 
+  describe("command placement under section headers (#681)", () => {
+    // Mirror of COMMAND_CATEGORIES in src/bin/council.ts: each rendered section
+    // label paired with the commands that must appear beneath it, in order.
+    const EXPECTED_SECTIONS: readonly (readonly [string, readonly string[]])[] = [
+      ["Getting Started", ["doctor", "demo", "config", "telemetry", "docs", "update", "ui"]],
+      ["Deliberation", ["convene", "resume", "conclude", "review"]],
+      ["Conversation", ["ask", "chat"]],
+      ["Library", ["expert", "panel", "templates"]],
+      ["Inspection", ["sessions", "memory", "export"]],
+    ];
+
+    async function renderHelpLines(): Promise<string[]> {
+      const { buildProgram } = await loadCouncilModule();
+      return buildProgram().helpInformation().split("\n");
+    }
+
+    function headerIndex(lines: readonly string[], label: string): number {
+      return lines.findIndex((line) => line === `${label}:`);
+    }
+
+    // Index of the rendered line whose first token is `command` (2-space
+    // indented under a section), searched within the half-open [from, to) range.
+    function commandLineIndex(
+      lines: readonly string[],
+      command: string,
+      from: number,
+      to: number,
+    ): number {
+      for (let i = from; i < to; i += 1) {
+        if (new RegExp(`^\\s+${command}\\b`).test(lines[i] ?? "")) {
+          return i;
+        }
+      }
+      return -1;
+    }
+
+    it("renders each command between its own section header and the next section", async () => {
+      const lines = await renderHelpLines();
+
+      EXPECTED_SECTIONS.forEach(([label, commands], sectionIdx) => {
+        const start = headerIndex(lines, label);
+        expect(start, `"${label}:" header missing`).toBeGreaterThanOrEqual(0);
+
+        const nextLabel = EXPECTED_SECTIONS[sectionIdx + 1]?.[0];
+        const end = nextLabel === undefined ? lines.length : headerIndex(lines, nextLabel);
+        expect(end, `"${label}" section is not before the following section`).toBeGreaterThan(
+          start,
+        );
+
+        let previousIdx = start;
+        for (const command of commands) {
+          const idx = commandLineIndex(lines, command, start + 1, end);
+          expect(idx, `"${command}" not listed under "${label}"`).toBeGreaterThan(start);
+          expect(idx, `"${command}" listed past the "${label}" section`).toBeLessThan(end);
+          expect(idx, `"${command}" out of order under "${label}"`).toBeGreaterThan(previousIdx);
+          previousIdx = idx;
+        }
+      });
+    });
+
+    it("keeps every command out of foreign section blocks (inverse)", async () => {
+      const lines = await renderHelpLines();
+
+      const bounds = EXPECTED_SECTIONS.map(([label], idx) => {
+        const start = headerIndex(lines, label);
+        const nextLabel = EXPECTED_SECTIONS[idx + 1]?.[0];
+        const end = nextLabel === undefined ? lines.length : headerIndex(lines, nextLabel);
+        return { label, start, end };
+      });
+
+      EXPECTED_SECTIONS.forEach(([ownLabel, commands]) => {
+        for (const command of commands) {
+          for (const { label, start, end } of bounds) {
+            const present = commandLineIndex(lines, command, start + 1, end) >= 0;
+            if (label === ownLabel) {
+              expect(present, `"${command}" should appear under "${label}"`).toBe(true);
+            } else {
+              expect(present, `"${command}" must not appear under "${label}"`).toBe(false);
+            }
+          }
+        }
+      });
+    });
+
+    it("orders the section headers as documented", async () => {
+      const lines = await renderHelpLines();
+      let previous = -1;
+      for (const [label] of EXPECTED_SECTIONS) {
+        const idx = headerIndex(lines, label);
+        expect(idx, `"${label}:" header missing`).toBeGreaterThanOrEqual(0);
+        expect(idx, `"${label}:" header out of documented order`).toBeGreaterThan(previous);
+        previous = idx;
+      }
+    });
+
+    it("places the getting-started hint after the final Inspection command", async () => {
+      const lines = await renderHelpLines();
+      const inspectionStart = headerIndex(lines, "Inspection");
+      const exportIdx = commandLineIndex(lines, "export", inspectionStart + 1, lines.length);
+      const hintIdx = lines.findIndex(
+        (line) => line === "New to Council? Start with: council doctor",
+      );
+
+      expect(exportIdx).toBeGreaterThan(inspectionStart);
+      expect(hintIdx).toBeGreaterThan(exportIdx);
+    });
+  });
+
   describe("TUI entry guard", () => {
     it("does not interfere with subcommand execution", async () => {
       const { buildProgram } = await loadCouncilModule();
@@ -414,6 +525,144 @@ describe("runCli update-notice suppression (#1691)", () => {
     });
     expect(parsed).toBe(1);
     expect(notified).toBe(1);
+  });
+});
+
+describe("resolveUpdateNoticeQuiet (#1286)", () => {
+  it("is not quiet when neither the parsed state nor argv requests it (inverse)", async () => {
+    const { resolveUpdateNoticeQuiet } = await loadCouncilModule();
+    expect(resolveUpdateNoticeQuiet(["node", "council", "doctor"], false)).toBe(false);
+  });
+
+  it("is quiet when the parsed --quiet state is set, even without an argv flag", async () => {
+    const { resolveUpdateNoticeQuiet } = await loadCouncilModule();
+    expect(resolveUpdateNoticeQuiet(["node", "council", "doctor"], true)).toBe(true);
+  });
+
+  it("is quiet when argv carries --quiet even if the parsed state is false", async () => {
+    const { resolveUpdateNoticeQuiet } = await loadCouncilModule();
+    expect(
+      resolveUpdateNoticeQuiet(["node", "council", "convene", "topic", "--quiet"], false),
+    ).toBe(true);
+  });
+
+  it("is quiet when argv carries the -q short flag even if the parsed state is false", async () => {
+    const { resolveUpdateNoticeQuiet } = await loadCouncilModule();
+    expect(resolveUpdateNoticeQuiet(["node", "council", "convene", "topic", "-q"], false)).toBe(
+      true,
+    );
+  });
+
+  it("matches the quiet flags by exact token, not as a substring (discriminating)", async () => {
+    const { resolveUpdateNoticeQuiet } = await loadCouncilModule();
+    // A lookalike flag or a bare positional must never trip quiet mode.
+    expect(resolveUpdateNoticeQuiet(["node", "council", "ask", "--quiets"], false)).toBe(false);
+    expect(resolveUpdateNoticeQuiet(["node", "council", "ask", "-quiet"], false)).toBe(false);
+    expect(resolveUpdateNoticeQuiet(["node", "council", "ask", "quiet"], false)).toBe(false);
+  });
+});
+
+describe("runCli update-notice wiring (#1286)", () => {
+  async function runCliCapturingNotice(input: {
+    readonly argv: readonly string[];
+    readonly launched: boolean;
+    readonly stderrIsTTY: boolean;
+  }): Promise<MaybeNotifyUpdateOptions[]> {
+    const { runCli } = await loadCouncilModule();
+    const captured: MaybeNotifyUpdateOptions[] = [];
+    await runCli({
+      argv: input.argv,
+      launchTuiGuard: async () => input.launched,
+      parseProgram: async () => undefined,
+      notifyUpdate: async (options) => {
+        captured.push(options);
+      },
+      stderrIsTTY: input.stderrIsTTY,
+    });
+    return captured;
+  }
+
+  it("invokes the notifier once with the resolved args on the CLI (non-quiet) path", async () => {
+    const captured = await runCliCapturingNotice({
+      argv: ["node", "council", "doctor"],
+      launched: false,
+      stderrIsTTY: true,
+    });
+    expect(captured).toEqual([
+      { currentVersion: councilPackageJson.version, isTTY: true, quiet: false },
+    ]);
+  });
+
+  it("passes quiet:true to the notifier when --quiet is in argv", async () => {
+    const captured = await runCliCapturingNotice({
+      argv: ["node", "council", "convene", "topic", "--quiet"],
+      launched: false,
+      stderrIsTTY: true,
+    });
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.quiet).toBe(true);
+  });
+
+  it("passes quiet:true to the notifier when the -q short flag is in argv", async () => {
+    const captured = await runCliCapturingNotice({
+      argv: ["node", "council", "convene", "topic", "-q"],
+      launched: false,
+      stderrIsTTY: true,
+    });
+    expect(captured[0]?.quiet).toBe(true);
+  });
+
+  it("threads the stderr TTY state through to the notifier (isTTY:false)", async () => {
+    const captured = await runCliCapturingNotice({
+      argv: ["node", "council", "doctor"],
+      launched: false,
+      stderrIsTTY: false,
+    });
+    expect(captured[0]?.isTTY).toBe(false);
+  });
+
+  it("still invokes the notifier with correct args when parsing throws (error path)", async () => {
+    const { runCli } = await loadCouncilModule();
+    // Import CliUserError from the same post-reset module graph as runCli so
+    // `instanceof` holds inside handleCliError and the error path stays silent.
+    const { CliUserError } = await import("../../../src/cli/cli-user-error.js");
+    const captured: MaybeNotifyUpdateOptions[] = [];
+    const previousExitCode = process.exitCode;
+
+    try {
+      await expect(
+        runCli({
+          argv: ["node", "council", "doctor"],
+          launchTuiGuard: async () => false,
+          parseProgram: async () => {
+            throw new CliUserError("boom");
+          },
+          notifyUpdate: async (options) => {
+            captured.push(options);
+          },
+          stderrIsTTY: true,
+        }),
+      ).resolves.toBeUndefined();
+
+      // The finally-block notifier runs even though parsing rejected.
+      expect(captured).toEqual([
+        { currentVersion: councilPackageJson.version, isTTY: true, quiet: false },
+      ]);
+      // The thrown CliUserError was handled (mapped to the user-error exit code),
+      // proving the notifier fired from the catch/finally path, not a clean exit.
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it("does not invoke the notifier on the TUI-launch path", async () => {
+    const captured = await runCliCapturingNotice({
+      argv: ["node", "council"],
+      launched: true,
+      stderrIsTTY: true,
+    });
+    expect(captured).toEqual([]);
   });
 });
 

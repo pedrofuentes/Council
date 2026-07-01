@@ -421,6 +421,20 @@ const defaultParseProgram = async (argv: readonly string[]): Promise<void> => {
 };
 
 /**
+ * Resolve whether the end-of-run "update available" notice should run in quiet
+ * mode. Quiet wins when the parsed `--quiet` state is set OR when `-q`/`--quiet`
+ * appears directly in argv — the argv check is a belt-and-suspenders guard for
+ * runs that error out before Commander's `preAction` hook records the flag, so
+ * the notice never leaks onto stderr under `--quiet`/JSON output. Extracted as a
+ * pure function (mirroring {@link resolveWindowsCodePageCommand} for #843) so the
+ * wiring is directly unit-testable and a regression in the calc can't slip
+ * through silently (#1286).
+ */
+export function resolveUpdateNoticeQuiet(argv: readonly string[], quietState: boolean): boolean {
+  return quietState || argv.includes("-q") || argv.includes("--quiet");
+}
+
+/**
  * Run the CLI: try the TUI entry guard first, otherwise parse the Commander
  * program, then — on the CLI path only — print the throttled "update
  * available" notice on exit.
@@ -453,7 +467,7 @@ export async function runCli(deps: RunCliDeps): Promise<void> {
     // background registry refresh is fire-and-forget, so it never changes the
     // exit code, throws, or delays exit.
     if (!tuiLaunched) {
-      const quiet = isQuiet() || deps.argv.includes("-q") || deps.argv.includes("--quiet");
+      const quiet = resolveUpdateNoticeQuiet(deps.argv, isQuiet());
       await notifyUpdate({
         currentVersion: packageJson.version,
         isTTY: stderrIsTTY,
