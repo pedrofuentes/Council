@@ -45,6 +45,7 @@ import {
 import type { DocumentRepository } from "../../memory/repositories/document-repository.js";
 import type { ProfileRepository } from "../../memory/repositories/profile-repository.js";
 import type { CouncilEngine } from "../../engine/index.js";
+import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
 
 export interface ProcessingResult {
   readonly filesProcessed: number;
@@ -52,13 +53,17 @@ export interface ProcessingResult {
   readonly filesFailed: number;
   readonly filesRemoved: number;
   /**
-   * Count of files dropped because their extension is not in
-   * `config.supportedFormats` (e.g. `.png`, `.zip`). The detector filters
-   * these out before extraction; the processor surfaces them as a
-   * distinct outcome instead of dropping them silently. Also counted in
-   * `filesFailed` (and present in `files` as `status: "failed"` /
-   * `errorKind: "unsupported-format"`) so failure-driven surfaces such as
-   * `expert train` reflect them.
+   * Count of files that resolved to no usable extractor, via EITHER of two
+   * distinct paths (#1039):
+   *   1. Extension not in `config.supportedFormats` (e.g. `.png`, `.zip`) —
+   *      the detector filters these out up front, before extraction.
+   *   2. Extension IS supported but has no native extractor and AI fallback
+   *      is off/declined, so extraction throws and is classified
+   *      `unsupported-format` (see the `toProcess` catch below).
+   * Both paths increment this counter, so it equals the TOTAL
+   * unsupported-format outcomes. Also counted in `filesFailed` (and present
+   * in `files` as `status: "failed"` / `errorKind: "unsupported-format"`)
+   * so failure-driven surfaces such as `expert train` reflect them.
    */
   readonly filesUnsupported: number;
   /**
@@ -135,6 +140,22 @@ export interface DocumentProcessorOptions {
    * are non-configurable on V8).
    */
   readonly _detectorLstatOverride?: (p: string) => Promise<Stats>;
+}
+
+/**
+ * Emit a best-effort processor warning. The message may embed untrusted
+ * text (on-disk filenames, underlying error strings), so it is collapsed to
+ * a single sanitized line (`toSingleLineDisplay`, a display sink) before
+ * reaching the terminal — preventing control-sequence injection or forged
+ * log lines. No-op when no sink is provided; never throws, so observability
+ * cannot break the best-effort pipeline contract.
+ */
+function warnProcessor(
+  onWarning: ((message: string) => void) | undefined,
+  message: string,
+): void {
+  if (onWarning === undefined) return;
+  onWarning(toSingleLineDisplay(message));
 }
 
 export function createDocumentProcessor(
@@ -268,9 +289,19 @@ export function createDocumentProcessor(
         // also suppress prune so a flaky filesystem moment doesn't
         // delete persisted state.
         ...detection.unknownStateFiles,
-        // Unsupported-extension files are still present on disk; keep
-        // them out of the prune set so a previously-tracked file that
-        // became unsupported (config change) isn't silently deleted.
+        // Unsupported-extension files are still present on disk; keep them
+        // out of the prune set so a previously-tracked file that became
+        // unsupported (e.g. an operator removed its extension from
+        // `supportedFormats`) isn't silently deleted.
+        //
+        // Index-lifecycle policy (#1039): retention, NOT deletion, is
+        // intended. A now-unsupported file keeps its prior FTS row +
+        // `expert_documents` entry (still retrievable) and is surfaced as
+        // an `unsupported` outcome rather than pruned — mirroring the
+        // retention convention for `rejectedFiles` (#447) and
+        // `unknownStateFiles` (#342). Re-adding the extension restores the
+        // file without a re-index, and a transient config change cannot
+        // destroy persisted state.
         ...detection.unsupportedFiles,
       ]);
       for (const trackedPath of known.keys()) {
@@ -364,10 +395,30 @@ export function createDocumentProcessor(
             // `seenPaths`, so the prune pass skips it. Evict any prior
             // FTS row + repo entry here so pre-edit content can't stay
             // searchable while UX reports the file as needs-review.
-            const prior = await documentRepo.findByPath(expertSlug, file.path);
-            if (prior) {
-              await indexer.remove(file.path);
-              await documentRepo.markRemoved(prior.id);
+            //
+            // Gate the lookup behind the in-memory `known` checksum map
+            // (#1831): only a previously-tracked path can carry a prior FTS
+            // row, so an untracked ask-mode file skips the per-file
+            // `findByPath` query (avoids an N+1). Error-isolate the eviction
+            // (#1831): a transient FTS/repo failure must NOT bubble up and
+            // misclassify the file as a hard extraction failure — surface it
+            // via `onWarning` and keep the needs-review outcome. FTS
+            // deletion precedes markRemoved (same ordering as prune).
+            if (known.has(file.path)) {
+              try {
+                const prior = await documentRepo.findByPath(expertSlug, file.path);
+                if (prior) {
+                  await indexer.remove(file.path);
+                  await documentRepo.markRemoved(prior.id);
+                }
+              } catch (err: unknown) {
+                warnProcessor(
+                  onWarning,
+                  `documents: failed to evict prior index for ${file.filename} during ask-mode review: ${
+                    err instanceof Error ? err.message : String(err)
+                  }`,
+                );
+              }
             }
             needsReview += 1;
             onProgress?.({
