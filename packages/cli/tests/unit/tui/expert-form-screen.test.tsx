@@ -555,6 +555,53 @@ describe("ExpertFormScreen", () => {
     unmount();
   });
 
+  it("ignores Esc while a save is in flight, then resumes Esc navigation once it settles (#1655)", async () => {
+    let resolveCreate: ((value: BuildResult) => void) | undefined;
+    const create = vi.fn<
+      Parameters<ExpertAuthoringSource["create"]>,
+      ReturnType<ExpertAuthoringSource["create"]>
+    >(
+      () =>
+        new Promise<BuildResult>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    const { source } = createSource(create);
+    const { stdin, lastFrame, unmount } = renderForm(source);
+    await flush();
+
+    // Kick off a save (Ctrl+S). The deferred create keeps savingRef in flight so
+    // the mid-flight state can be asserted deterministically.
+    stdin.write("\u0013");
+    await flush();
+    expect(create).toHaveBeenCalledTimes(1);
+    // Save is pending: zero navigations so far — still on the form, not the
+    // back-stack route ("PARENT" at "/").
+    expect(lastFrame()).not.toContain("PARENT");
+    expect(lastFrame()).toContain("Esc back");
+
+    // BITING: Esc DURING the in-flight save must be ignored — it must NOT
+    // navigate back (the exact race fixed for the panel forms in #1646).
+    stdin.write("\u001B");
+    await waitForEscape();
+    expect(lastFrame()).not.toContain("PARENT");
+    expect(lastFrame()).toContain("Esc back");
+
+    // Settle the save with a rejection so the form stays mounted (no self
+    // navigation) and the in-flight window closes.
+    resolveCreate?.({ ok: false, errors: [{ field: "slug", error: "nope" }] });
+    await flush();
+    expect(lastFrame()).not.toContain("PARENT");
+    expect(lastFrame()).toContain("Esc back");
+
+    // INVERSE: once the save settles the guard releases — Esc navigates again,
+    // proving the guard is scoped strictly to the in-flight window.
+    stdin.write("\u001B");
+    await waitForEscape();
+    expect(lastFrame()).toContain("PARENT");
+    unmount();
+  });
+
   it("shows an error state with Esc recovery when edit load rejects (#1626/#1627)", async () => {
     const source: ExpertAuthoringSource = {
       loadForEdit: async () => {
