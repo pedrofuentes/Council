@@ -656,6 +656,17 @@ async function listUnindexedDocFiles(docsPath: string): Promise<readonly string[
 }
 
 /**
+ * Managed-expert slug shape gate. Mirrors the canonical `SLUG_RE` enforced by
+ * `FileExpertLibrary` (see `core/expert-library.ts`); kept as a module-local
+ * copy in keeping with the other local copies (`core/template-migration.ts`,
+ * `cli/commands/expert.ts`) so this security-critical sink carries no
+ * cross-module coupling. A conforming slug is lowercase alphanumeric plus
+ * hyphens, 1-64 chars, so it can contain no path separators, `..` segments, or
+ * control bytes.
+ */
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/**
  * Generic (non-persona) experts never index documents. If such an expert has
  * files in its `experts/<slug>/docs/` folder they would be silently ignored,
  * so emit a clear warning naming the expert and the remedy (F01).
@@ -666,6 +677,15 @@ async function listUnindexedDocFiles(docsPath: string): Promise<readonly string[
  * whose docs folder is empty or absent. The `renderer.showSystem` sink applies
  * the single-line terminal sanitization, so the display name / slug are safe
  * even when model-derived — matching the 1:1 path exactly.
+ *
+ * Path-traversal gate (Sentinel A2): on the panel/convene path a member may be
+ * an INLINE `ExpertDefinition` whose `slug` is only schema-validated as a
+ * non-empty string, so a hand-authored/shared panel YAML can smuggle a
+ * traversal slug (e.g. `../../../../etc`) into this filesystem sink. Before
+ * building or reading any path we confine the slug to the managed shape and
+ * re-assert the resolved docs dir stays under `<dataHome>/experts/`. A
+ * foreign/invalid slug has no legitimate managed docs dir, so the warning is
+ * skipped WITHOUT touching the filesystem and WITHOUT disclosing any path.
  */
 export async function warnIfGenericExpertHasUnindexedDocs(
   expert: ExpertDefinition,
@@ -673,7 +693,14 @@ export async function warnIfGenericExpertHasUnindexedDocs(
   renderer: ChatRenderer,
 ): Promise<void> {
   if (expert.kind === "persona") return;
+  // Primary defense: reject any slug that is not a valid managed-expert slug
+  // before it is ever joined into a filesystem path.
+  if (!SLUG_RE.test(expert.slug)) return;
+  const expertsRoot = path.resolve(dataHome, "experts");
   const docsPath = path.join(dataHome, "experts", expert.slug, "docs");
+  // Defense-in-depth: refuse to read or disclose a resolved path that escapes
+  // the per-expert docs root even if the shape gate is ever weakened.
+  if (!path.resolve(docsPath).startsWith(expertsRoot + path.sep)) return;
   const unindexed = await listUnindexedDocFiles(docsPath);
   if (unindexed.length === 0) return;
   renderer.showSystem(
