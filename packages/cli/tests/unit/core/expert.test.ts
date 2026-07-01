@@ -161,13 +161,13 @@ describe("ExpertDefinitionSchema", () => {
   });
 
   describe("docsPath path-confinement (#287, Sentinel A2)", () => {
-    // `docsPath` overrides an expert's default docs location, which by design
-    // lives UNDER the per-expert docs root `<dataHome>/experts/<slug>/docs`
-    // (DECISIONS.md). An unconfined override is a path-traversal surface: a
-    // `..` segment or an absolute path could point the document scanner /
-    // indexer at arbitrary files outside the data home. This schema rule is
-    // the front door (mirroring the [NN] marker gate above); it must reject
-    // traversal and absolute paths before any consumer reads the value.
+    // `docsPath` overrides an expert's default docs location. Both relative
+    // paths (resolved under the per-expert docs root) and absolute paths — a
+    // documented "custom location" feature — are valid, supported values. The
+    // schema rule does NOT restrict the location; it is a defense-in-depth
+    // front door that rejects only the unambiguous attack shape: a `..`
+    // path-traversal segment. Absolute/relative locations are confined at the
+    // read sites (realpath-resolve + symlink refusal in documents/*).
     const parseWithDocsPath = (docsPath: string): ExpertDefinition =>
       ExpertDefinitionSchema.parse({ ...baseDefinition, kind: "persona", docsPath });
 
@@ -188,27 +188,35 @@ describe("ExpertDefinitionSchema", () => {
       expect(() => parseWithDocsPath("..\\..\\secrets")).toThrow(/docsPath/);
     });
 
-    // --- Rejections: absolute paths outside the allowed root ---
-    it("rejects an absolute POSIX docsPath outside the allowed root", () => {
-      expect(() => parseWithDocsPath("/etc/passwd")).toThrow(/docsPath/);
+    // --- Acceptances: absolute "custom location" paths ---
+    // The schema does NOT location-block: absolute paths are a documented
+    // feature and are confined at the READ sites (realpath + symlink refusal),
+    // not by this rule. So even a sensitive-looking absolute path passes the
+    // schema gate — confinement is deliberately deferred to read time.
+    it("accepts an absolute POSIX docsPath (location confined at read time, not by schema)", () => {
+      expect(parseWithDocsPath("/etc/passwd").docsPath).toBe("/etc/passwd");
     });
 
-    it("rejects an absolute Windows drive docsPath", () => {
-      expect(() => parseWithDocsPath("C:\\Windows\\System32")).toThrow(/docsPath/);
-    });
-
-    it("rejects a Windows drive-relative docsPath", () => {
-      expect(() => parseWithDocsPath("C:docs")).toThrow(/docsPath/);
-    });
-
-    it("rejects a UNC docsPath", () => {
-      expect(() => parseWithDocsPath("\\\\server\\share\\docs")).toThrow(/docsPath/);
-    });
-
-    it("surfaces a descriptive confinement error naming the field and the rule", () => {
-      expect(() => parseWithDocsPath("../escape")).toThrow(
-        /docsPath[\s\S]*(relative|traversal|absolute|within)/i,
+    it("accepts the documented absolute custom-location example", () => {
+      expect(parseWithDocsPath("/shared/team-docs/architecture").docsPath).toBe(
+        "/shared/team-docs/architecture",
       );
+    });
+
+    it("accepts an absolute Windows drive docsPath", () => {
+      expect(parseWithDocsPath("C:\\Windows\\System32").docsPath).toBe("C:\\Windows\\System32");
+    });
+
+    it("accepts a Windows drive-relative docsPath", () => {
+      expect(parseWithDocsPath("C:docs").docsPath).toBe("C:docs");
+    });
+
+    it("accepts a UNC docsPath", () => {
+      expect(parseWithDocsPath("\\\\server\\share\\docs").docsPath).toBe("\\\\server\\share\\docs");
+    });
+
+    it("surfaces a descriptive traversal error naming the field and the rule", () => {
+      expect(() => parseWithDocsPath("../escape")).toThrow(/docsPath[\s\S]*traversal/i);
     });
 
     // --- Acceptances: valid in-root relative paths ---
