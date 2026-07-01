@@ -656,12 +656,43 @@ async function listUnindexedDocFiles(docsPath: string): Promise<readonly string[
 }
 
 /**
+ * Generic (non-persona) experts never index documents. If such an expert has
+ * files in its `experts/<slug>/docs/` folder they would be silently ignored,
+ * so emit a clear warning naming the expert and the remedy (F01).
+ *
+ * Shared by the 1:1 chat startup (via {@link maybeProcessPersonaDocs}) and the
+ * panel/convene startup (#1103) so both paths surface the identical warning.
+ * No-op for persona experts (their docs ARE indexed) and for generic experts
+ * whose docs folder is empty or absent. The `renderer.showSystem` sink applies
+ * the single-line terminal sanitization, so the display name / slug are safe
+ * even when model-derived — matching the 1:1 path exactly.
+ */
+export async function warnIfGenericExpertHasUnindexedDocs(
+  expert: ExpertDefinition,
+  dataHome: string,
+  renderer: ChatRenderer,
+): Promise<void> {
+  if (expert.kind === "persona") return;
+  const docsPath = path.join(dataHome, "experts", expert.slug, "docs");
+  const unindexed = await listUnindexedDocFiles(docsPath);
+  if (unindexed.length === 0) return;
+  renderer.showSystem(
+    `Expert "${expert.displayName}" (${expert.slug}) is a generic expert — ` +
+      `${unindexed.length} document(s) in ${docsPath} are NOT indexed and will be ignored. ` +
+      `To ground answers in these documents, recreate the expert as a persona ` +
+      `(council expert create --persona ...) and train it with \`council expert train\`.`,
+    "warn",
+  );
+}
+
+/**
  * If the expert is a persona, scan its docs folder for new/changed files,
  * extract + index them, and refresh the persona profile (Roadmap 6.4).
  *
  * Generic (non-persona) experts never index documents. If such an expert has
  * files in its docs folder they would be silently ignored, so emit a clear,
- * one-time warning naming the expert and the remedy (F01).
+ * one-time warning naming the expert and the remedy (F01) via
+ * {@link warnIfGenericExpertHasUnindexedDocs}.
  */
 export async function maybeProcessPersonaDocs(
   opts: MaybeProcessPersonaDocsOptions,
@@ -670,16 +701,7 @@ export async function maybeProcessPersonaDocs(
   const docsPath = path.join(dataHome, "experts", expert.slug, "docs");
 
   if (expert.kind !== "persona") {
-    const unindexed = await listUnindexedDocFiles(docsPath);
-    if (unindexed.length > 0) {
-      renderer.showSystem(
-        `Expert "${expert.displayName}" (${expert.slug}) is a generic expert — ` +
-          `${unindexed.length} document(s) in ${docsPath} are NOT indexed and will be ignored. ` +
-          `To ground answers in these documents, recreate the expert as a persona ` +
-          `(council expert create --persona ...) and train it with \`council expert train\`.`,
-        "warn",
-      );
-    }
+    await warnIfGenericExpertHasUnindexedDocs(expert, dataHome, renderer);
     return undefined;
   }
 
