@@ -563,6 +563,28 @@ export class Debate {
           else if (phase === "rebuttal") rebuttalTurns.push(turn);
           // synthesis turns aren't fed back into any later prompt.
           spokenThisPhase.push(expert.slug);
+        } else if (!signal?.aborted) {
+          // #108: the turn failed / errored / stayed empty and was NOT
+          // recovered by retry (#runTurn already emitted the user-visible
+          // `error` event). Record an explicit placeholder so subsequent
+          // phase prompts surface the gap ("<name> did not respond ...")
+          // instead of treating the expert as if they never spoke — other
+          // experts can then address the absence. Skipped on abort: the
+          // debate ends at the next turn boundary with no later prompt to
+          // surface into. NOT added to `spokenThisPhase` — a failed expert
+          // did not speak, so the quality gate must not count them. The
+          // phase-prompt builders defang this content (`sanitizeFenced`)
+          // and the name attribute (`safeAttrName`) before the model sees it.
+          const marker: PriorTurn = {
+            expertSlug: expert.slug,
+            displayName: expert.displayName,
+            content: failedTurnPlaceholder(expert.displayName, phase),
+          };
+          if (phase === "opening") openingTurns.push(marker);
+          else if (phase === "cross-examination") crossExamTurns.push(marker);
+          else if (phase === "rebuttal") rebuttalTurns.push(marker);
+          // A synthesis failure has no later phase to surface into; the
+          // already-emitted `error` event is its only (sufficient) trace.
         }
         seq += 1;
       }
@@ -1160,6 +1182,16 @@ interface StreamOutcome {
 /** Failing quality-check kinds for a `turn.quality_gate` event payload. */
 function failureKinds(result: QualityResult): readonly string[] {
   return result.failures.map((f) => f.kind);
+}
+
+/**
+ * Prior-turn placeholder recorded when a structured-debate turn fails and
+ * is not recovered by retry (#108). Surfaced verbatim into later phase
+ * prompts (defanged by the phase-prompt builders) so the gap is visible to
+ * the other experts instead of the expert appearing to have never spoken.
+ */
+function failedTurnPlaceholder(displayName: string, phase: DebatePhase): string {
+  return `(${displayName} did not respond in the ${phase} phase.)`;
 }
 
 /**
