@@ -402,7 +402,23 @@ describe("buildChatCommand", () => {
       const base =
         "We must finalize the production database migration rollback plan before the freeze on Friday, no exceptions";
       const longTopic = base.slice(0, 75);
-      const boundaryTopic = base.slice(0, 60);
+      // The boundary fixture must reach deriveTopic as a TRUE 60-char string
+      // *after* its trim + `\s+`→" " collapse (history.ts:44). The prior
+      // `base.slice(0, 60)` ended in a space, so the SUT collapsed it to 59
+      // chars and never exercised the `=== 60` boundary — the assertion only
+      // passed because writeTable pads the topic cell back out to width 60.
+      // This standalone sentence has no leading/trailing whitespace and no
+      // internal whitespace runs (so it survives collapse unchanged at exactly
+      // 60 chars) and a 59-char prefix distinct from longTopic's, so their
+      // truncated forms cannot alias. `overTopic` is a 61-char sibling that
+      // pins the truncating side of the comparison.
+      const boundaryTopic = "Confirm the incident response runbook covers the paging flow";
+      const overTopic = "Escalate the cache eviction regression to on-call SRE tonight";
+      // Guard the fixtures against silent drift: they must reach the length
+      // check post-collapse as exactly 60 and 61 characters respectively.
+      const collapse = (s: string): string => s.trim().replace(/\s+/g, " ").trim();
+      expect(collapse(boundaryTopic).length).toBe(60);
+      expect(collapse(overTopic).length).toBe(61);
       await withRepo(env, async (repo) => {
         const long = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
         await repo.addTurn({ chatId: long.id, role: "user", content: "seed turn" });
@@ -415,6 +431,13 @@ describe("buildChatCommand", () => {
         await repo.addTurn({ chatId: boundary.id, role: "user", content: "seed turn" });
         await repo.updateSummary(boundary.id, boundaryTopic, 1);
         await repo.archiveSession(boundary.id);
+        const over = await repo.createSession({
+          targetType: "expert",
+          targetSlug: "dahlia-cto",
+        });
+        await repo.addTurn({ chatId: over.id, role: "user", content: "seed turn" });
+        await repo.updateSummary(over.id, overTopic, 1);
+        await repo.archiveSession(over.id);
       });
       let out = "";
       const cmd = buildChatCommand({ write: (s) => (out += s) });
@@ -431,11 +454,25 @@ describe("buildChatCommand", () => {
       // character (a 60-char slice instead of 59) before the ellipsis.
       expect(out).not.toContain(`${longTopic.slice(0, 60)}…`);
 
-      // Exactly-60-char topic (the boundary) must render in full,
-      // untruncated — pinning the other side of the `> TOPIC_MAX_LENGTH`
-      // comparison so neither direction of an off-by-one slips through.
+      // Exactly-60-char topic (post-collapse) is the boundary: `60 > 60` is
+      // false, so it MUST render in full. Assert both that the full 60-char
+      // topic appears AND that it is NOT rendered as the truncated form
+      // `slice(0, 59) + "…"`. A `>`→`>=` off-by-one would truncate this exact
+      // topic — its non-space 60th char replaced by the ellipsis, which
+      // writeTable padding cannot reconstruct — flipping BOTH assertions. So
+      // this genuinely discriminates the boundary instead of relying on the
+      // padded cell width.
+      const truncatedBoundary = `${boundaryTopic.slice(0, 59)}…`;
       expect(out).toContain(boundaryTopic);
-      expect(out).not.toContain(`${boundaryTopic}…`);
+      expect(out).not.toContain(truncatedBoundary);
+
+      // 61-char topic (post-collapse) sits just over the boundary: `61 > 60`
+      // is true, so it MUST be truncated to `slice(0, 59) + "…"` and its full
+      // form must not appear — pinning the truncating side of the comparison.
+      const truncatedOver = `${overTopic.slice(0, 59)}…`;
+      expect(truncatedOver.length).toBe(60);
+      expect(out).toContain(truncatedOver);
+      expect(out).not.toContain(overTopic);
     });
 
     it("renders the literal '(no messages yet)' fallback topic for a session with no messages (#1109)", async () => {
