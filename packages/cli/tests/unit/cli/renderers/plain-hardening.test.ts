@@ -37,10 +37,11 @@ async function* events(...evts: DebateEvent[]): AsyncIterable<DebateEvent> {
 }
 
 /**
- * Adversarial `displayName` exercising the FULL class `sanitizeLine` handles:
- * ANSI CSI, C1 CSI (U+009B) / OSC (U+009D), CR/LF, Unicode line/paragraph
- * separators, a bidi override (U+202E, Trojan Source), a zero-width space
- * (U+200B), and vertical-tab / form-feed C0 controls.
+ * Adversarial `displayName` exercising the FULL control class the header
+ * sanitizer must neutralize: ANSI CSI, C1 CSI (U+009B) / OSC (U+009D), CR/LF,
+ * Unicode line/paragraph separators, a bidi override (U+202E, Trojan Source),
+ * a zero-width space (U+200B), a horizontal tab (U+0009), and vertical-tab /
+ * form-feed C0 controls.
  */
 const EVIL_DISPLAY_NAME =
   "Evil" +
@@ -51,6 +52,7 @@ const EVIL_DISPLAY_NAME =
   "\u2028X\u2029Y" + // U+2028 line sep, U+2029 paragraph sep
   "\u202Ereversed" + // U+202E right-to-left override (bidi)
   "\u200Bzw" + // U+200B zero-width space
+  "\u0009TAB" + // U+0009 horizontal tab — must collapse so the header stays one line
   "\u000B\u000C"; // vertical tab, form feed
 
 // Control (C0/C1/DEL), U+2028/U+2029, and bidi override/isolate code points.

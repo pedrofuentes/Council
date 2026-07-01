@@ -17,7 +17,7 @@ import { friendlyReason } from "./friendly-reasons.js";
 import { assignExpertColor, formatExpertPrefix } from "./ink/colors.js";
 import { getSymbols } from "./symbols.js";
 import type { Renderer, Sink } from "./types.js";
-import { stripControlChars } from "../strip-control-chars.js";
+import { stripControlChars, toSingleLineDisplay } from "../strip-control-chars.js";
 
 export interface PlainRendererOptions {
   /** Whether to emit ANSI color codes. Defaults to true; tests pass false. */
@@ -83,7 +83,7 @@ export class PlainRenderer implements Renderer {
           const isHuman = evt.speakerKind === "human" || this.#humanSlugs.has(evt.expertSlug);
           const isSynthesis = this.#currentPhase === "synthesis";
           const idx = this.#expertIndex.get(evt.expertSlug) ?? 0;
-          const prefix = formatExpertPrefix(idx, this.sanitizeLine(name));
+          const prefix = formatExpertPrefix(idx, toSingleLineDisplay(name));
           if (isSynthesis) {
             const synthPrefix = `${sym.synthesis} [Synthesis] ${prefix}`;
             this.write(`\n${this.yellow(synthPrefix)}\n`);
@@ -164,7 +164,7 @@ export class PlainRenderer implements Renderer {
     experts.forEach((expert, i) => {
       this.#displayNames.set(expert.slug, expert.displayName);
       this.#expertIndex.set(expert.slug, i);
-      const prefix = formatExpertPrefix(i, this.sanitizeLine(expert.displayName));
+      const prefix = formatExpertPrefix(i, toSingleLineDisplay(expert.displayName));
       if (expert.participantKind === "human") {
         this.#humanSlugs.add(expert.slug);
         this.write(`  ${bullet} ${prefix} ${this.gray("(human)")}\n`);
