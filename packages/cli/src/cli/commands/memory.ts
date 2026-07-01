@@ -287,12 +287,7 @@ async function renderExpertDetail(
   format: "plain" | "json",
   write: Writer,
 ): Promise<void> {
-  const debates = await new DebateRepository(db).findByPanelId(panel.id);
-  let expertTurnCount = 0;
-  for (const d of debates) {
-    const turns = await new TurnRepository(db).findByDebateId(d.id);
-    expertTurnCount += turns.filter((t) => t.expertId === expert.id).length;
-  }
+  const expertTurnCount = await new TurnRepository(db).countByExpertId(expert.id);
 
   const recalled = await recallMemoryWithProvenance(db, panel.id, expert.slug);
 
