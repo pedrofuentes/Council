@@ -102,6 +102,10 @@ export function ExportOverlay(props: ExportOverlayProps): React.ReactElement {
   const [phase, setPhase] = React.useState<Phase>({ status: "pick" });
   const inFlight = React.useRef(false);
   const unmounted = React.useRef(false);
+  // Monotonic id of the latest preview request. A render that settles after a
+  // newer request was dispatched is stale and must not publish (Sentinel
+  // #1694 §3) — mirrors the `reqIdRef` stale-guard used elsewhere in the TUI.
+  const requestIdRef = React.useRef(0);
 
   // Keep a ref in lockstep with the cursor so a burst of nav keys followed by
   // Enter in the same render tick selects the latest position (state reads in
@@ -131,11 +135,14 @@ export function ExportOverlay(props: ExportOverlayProps): React.ReactElement {
         setPhase({ status: "unavailable", message: "Export source unavailable." });
         return;
       }
+      // Claim the newest request id: any earlier render that settles after this
+      // point is superseded and must be dropped rather than publish stale content.
+      const myReq = ++requestIdRef.current;
       setPhase({ status: "loading" });
       void exportSource
         .render(panelName, format, debateId)
         .then((content) => {
-          if (unmounted.current) return;
+          if (unmounted.current || myReq !== requestIdRef.current) return;
           if (content === null) {
             setPhase({ status: "unavailable", message: "No transcript to export." });
             return;
@@ -143,7 +150,7 @@ export function ExportOverlay(props: ExportOverlayProps): React.ReactElement {
           setPhase({ status: "preview", format, content });
         })
         .catch((error: unknown) => {
-          if (unmounted.current) return;
+          if (unmounted.current || myReq !== requestIdRef.current) return;
           setPhase({ status: "unavailable", message: errorMessage(error) });
         });
     },
