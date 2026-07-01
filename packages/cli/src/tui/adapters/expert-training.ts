@@ -18,6 +18,13 @@ export interface TrainingResultView {
   readonly totalWords: number;
   readonly profileUpdated: boolean;
   readonly profileError: string | null;
+  /**
+   * A display-safe warning when the engine failed to shut down after an
+   * otherwise-successful training run, or `undefined` when shutdown succeeded.
+   * Surfaced as a secondary signal so a teardown failure is never hidden yet
+   * never masks the primary training result (#1635).
+   */
+  readonly stopWarning?: string;
 }
 
 export interface TrainingProgress {
@@ -93,7 +100,7 @@ function sanitizeProgress(progress: ProcessingProgress): TrainingProgress {
   };
 }
 
-function mapResult(result: ProcessingResult): TrainingResultView {
+function mapResult(result: ProcessingResult, stopWarning: string | undefined): TrainingResultView {
   return {
     filesProcessed: result.filesProcessed,
     filesFailed: result.filesFailed,
@@ -102,7 +109,25 @@ function mapResult(result: ProcessingResult): TrainingResultView {
     totalWords: result.totalWords,
     profileUpdated: result.profileUpdated,
     profileError: result.profileError === null ? null : toSingleLineDisplay(result.profileError),
+    ...(stopWarning === undefined ? {} : { stopWarning }),
   };
+}
+
+/**
+ * Stop the engine, turning a shutdown failure into a display-safe warning
+ * instead of silently swallowing it (#1635). The engine's error message can
+ * carry provider/model-derived text, so it is passed through
+ * {@link toSingleLineDisplay} before it can reach a single-line terminal sink.
+ * Returns `undefined` when shutdown succeeds.
+ */
+async function stopWithWarning(engine: CouncilEngine): Promise<string | undefined> {
+  try {
+    await engine.stop();
+    return undefined;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return toSingleLineDisplay(`Engine shutdown failed: ${message}`);
+  }
 }
 
 export function createExpertTrainingSource(deps: ExpertTrainingDeps): ExpertTrainingDataSource {
@@ -134,9 +159,14 @@ export function createExpertTrainingSource(deps: ExpertTrainingDeps): ExpertTrai
         const result = await processor.process(slug, deps.docsPathFor(slug), (progress) => {
           onProgress?.(sanitizeProgress(progress));
         });
-        return mapResult(result);
-      } finally {
+        // Success path: surface a shutdown failure as a secondary warning on the
+        // otherwise-successful result rather than swallowing it (#1635).
+        return mapResult(result, await stopWithWarning(engine));
+      } catch (error) {
+        // Error path: a shutdown failure must never replace the primary training
+        // error, so engine.stop() is best-effort and its rejection is dropped.
         await engine.stop().catch(() => undefined);
+        throw error;
       }
     },
   };
