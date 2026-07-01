@@ -135,8 +135,15 @@ export function parseStoredPanelDefinition(configJson: string): StoredPanelDefin
   let parsed: unknown;
   try {
     parsed = JSON.parse(configJson);
-  } catch {
-    return { kind: "absent" };
+  } catch (err) {
+    // Malformed JSON is corruption (truncation, a direct DB edit, etc.) — NOT
+    // a legacy session that predates the feature. The `config_json` column is
+    // TEXT NOT NULL and is always written via JSON.stringify, so a value that
+    // fails to parse cannot be a genuine "no definition stored" case. Surface
+    // it as `invalid` so callers show a corruption diagnostic instead of the
+    // misleading "this session predates panel save" message. #1063.
+    const detail = err instanceof Error ? err.message : String(err);
+    return { kind: "invalid", message: `config_json is not valid JSON: ${detail}` };
   }
   if (parsed === null || typeof parsed !== "object" || !("definition" in parsed)) {
     return { kind: "absent" };
