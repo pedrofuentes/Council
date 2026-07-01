@@ -560,9 +560,13 @@ describe("attemptAiFallback — abort signal (#986)", () => {
 describe("attemptAiFallback — SHA-256 computed only when caching (#983)", () => {
   it("omits the SHA digest from the success log when no cache is provided", async () => {
     const { logger, messages } = captureLogger();
-    const result = await attemptAiFallback(makeCtx(Buffer.from("payload-bytes"), ".xyz"), AUTO_ANY, {
-      logger,
-    });
+    const result = await attemptAiFallback(
+      makeCtx(Buffer.from("payload-bytes"), ".xyz"),
+      AUTO_ANY,
+      {
+        logger,
+      },
+    );
     expect(result).not.toBeNull();
     const successLog = messages.find((m) => /succeeded/.test(m));
     expect(successLog).toBeDefined();
@@ -590,9 +594,13 @@ describe("attemptAiFallback — SHA-256 computed only when caching (#983)", () =
     const successLog = messages.find((m) => /succeeded/.test(m));
     expect(successLog).toContain("sha=");
     // Identical content resolves to the cached reference (hashing still works).
-    const second = await attemptAiFallback(makeCtx(Buffer.from("payload-bytes"), ".xyz"), AUTO_ANY, {
-      cache,
-    });
+    const second = await attemptAiFallback(
+      makeCtx(Buffer.from("payload-bytes"), ".xyz"),
+      AUTO_ANY,
+      {
+        cache,
+      },
+    );
     expect(second).toBe(first);
   });
 });
@@ -722,6 +730,7 @@ describe("attemptAiFallback — filename sanitization hardening (#988)", () => {
     const firstLine = lines[0] ?? "";
     // No control, DEL, C1, line/paragraph-separator, or bidi codepoint survives.
     expect(firstLine).not.toMatch(
+      // eslint-disable-next-line no-control-regex
       /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/,
     );
     // The safe alphabetic runs are preserved (order retained).

@@ -35,6 +35,7 @@
  */
 import { createHash } from "node:crypto";
 
+import { toSingleLineDisplay } from "../../../cli/strip-control-chars.js";
 import type { DocumentMetadata, ExtractedContent, ExtractionContext } from "./types.js";
 
 /**
@@ -161,14 +162,36 @@ function normalizeExtension(ext: string): string {
 }
 
 /**
- * Strip control characters (U+0000–U+001F, U+007F–U+009F) and Unicode
- * line/paragraph separators (U+2028, U+2029) then cap length so
- * untrusted filenames cannot inject newlines, tabs, or prompt-fragment
- * text into the structured output.
+ * Per-config memo of the normalized `allowedExtensions` Set. Keyed by config
+ * *reference* (a WeakMap, so an entry is collected once its config is), this
+ * avoids rebuilding the Set on every call during a batch scan where the same
+ * config object is reused (#984). Configs are treated as immutable, so a
+ * reference hit always yields an equivalent set.
+ */
+const normalizedAllowedExtensionsCache = new WeakMap<AiFallbackConfig, ReadonlySet<string>>();
+
+function normalizedAllowedExtensions(config: AiFallbackConfig): ReadonlySet<string> {
+  const cached = normalizedAllowedExtensionsCache.get(config);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const normalized = new Set(config.allowedExtensions.map(normalizeExtension));
+  normalizedAllowedExtensionsCache.set(config, normalized);
+  return normalized;
+}
+
+/**
+ * Collapse an untrusted filename to a single safe display line, then cap its
+ * length. Delegates to {@link toSingleLineDisplay} — the shared terminal-sink
+ * sanitizer — which strips C0/C1 controls, DEL, bidi override/isolate marks
+ * (Trojan Source, CVE-2021-42574), zero-width and hidden format characters,
+ * and collapses newlines, tabs and Unicode line/paragraph separators to a
+ * single space. This stops untrusted filenames from injecting newlines,
+ * tabs, or prompt-fragment text into the structured output. The length cap
+ * then bounds oversized names.
  */
 function sanitizeFilename(raw: string): string {
-  // eslint-disable-next-line no-control-regex
-  const cleaned = raw.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]/g, "");
+  const cleaned = toSingleLineDisplay(raw);
   if (cleaned.length <= MAX_FILENAME_LENGTH) return cleaned;
   return cleaned.slice(0, MAX_FILENAME_LENGTH) + "…";
 }
@@ -241,7 +264,14 @@ function describeFormat(extension: string, buffer: Buffer): string {
 }
 
 function countWords(text: string): number {
-  return text.split(/\s+/).filter((t) => t.length > 0).length;
+  // Count runs of non-whitespace directly rather than materializing the two
+  // intermediate arrays that `split(/\s+/).filter(...)` allocates (#987).
+  const wordPattern = /\S+/g;
+  let count = 0;
+  while (wordPattern.exec(text) !== null) {
+    count += 1;
+  }
+  return count;
 }
 
 function buildSummary(
@@ -302,8 +332,7 @@ export function isExtensionAiEligible(extension: string, config: AiFallbackConfi
     return false;
   }
   if (config.allowedExtensions.length > 0) {
-    const allowed = new Set(config.allowedExtensions.map(normalizeExtension));
-    return allowed.has(ext);
+    return normalizedAllowedExtensions(config).has(ext);
   }
   return true;
 }
@@ -361,16 +390,19 @@ export async function attemptAiFallback(
     }
 
     if (config.allowedExtensions.length > 0) {
-      const allowed = new Set(config.allowedExtensions.map(normalizeExtension));
-      if (!allowed.has(ext)) {
+      if (!normalizedAllowedExtensions(config).has(ext)) {
         logger?.info(`ai-fallback: skipped (not in allowedExtensions whitelist) extension=${ext}`);
         return null;
       }
     }
 
-    const sha = createHash("sha256").update(ctx.buffer).digest("hex");
     const cache = deps.cache;
-    if (cache !== undefined) {
+    // Only hash the buffer when a cache is actually wired — hashing a
+    // potentially large buffer purely to key/log a digest we never store is
+    // wasted CPU (#983).
+    const sha =
+      cache !== undefined ? createHash("sha256").update(ctx.buffer).digest("hex") : undefined;
+    if (cache !== undefined && sha !== undefined) {
       const cached = cache.get(sha);
       if (cached !== undefined) {
         logger?.info(
@@ -410,18 +442,15 @@ export async function attemptAiFallback(
       metadata,
     };
 
-    if (cache !== undefined) {
+    if (cache !== undefined && sha !== undefined) {
       cache.set(sha, result);
     }
 
+    const shaLog = sha !== undefined ? ` sha=${sha.slice(0, SHA_LOG_PREFIX_LENGTH)}` : "";
     if (mode === "ask") {
-      logger?.info(
-        `ai-fallback: ask-user sha=${sha.slice(0, SHA_LOG_PREFIX_LENGTH)} extension=${ext}`,
-      );
+      logger?.info(`ai-fallback: ask-user${shaLog} extension=${ext}`);
     } else {
-      logger?.info(
-        `ai-fallback: succeeded sha=${sha.slice(0, SHA_LOG_PREFIX_LENGTH)} extension=${ext}`,
-      );
+      logger?.info(`ai-fallback: succeeded${shaLog} extension=${ext}`);
     }
 
     return result;
