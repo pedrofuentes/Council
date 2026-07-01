@@ -123,6 +123,20 @@ describe("ChatRepository", () => {
     expect(archived.map((s) => s.targetSlug)).toEqual(["cto"]);
   });
 
+  it("countSessions() aggregates every session regardless of status (#1589, #1582)", async () => {
+    // Empty table aggregates to exactly 0 (a COUNT row, never undefined/NaN).
+    expect(await repo.countSessions()).toBe(0);
+
+    // Mix of active and archived across different targets: the count is a
+    // full-table aggregate, decoupled from any listSessions filter or limit.
+    const a = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+    await repo.createSession({ targetType: "expert", targetSlug: "pm" });
+    await repo.createSession({ targetType: "panel", targetSlug: "arch-review" });
+    await repo.archiveSession(a.id);
+
+    expect(await repo.countSessions()).toBe(3);
+  });
+
   it("archiveSession() flips status to archived and refreshes updatedAt", async () => {
     const session = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
     await new Promise((r) => setTimeout(r, 10));

@@ -141,6 +141,21 @@ export class ExpertRepository {
     return rows.map(toDomain);
   }
 
+  /**
+   * Total number of experts across every panel, via a single aggregate
+   * COUNT. Preferred over `findByPanelId`-per-panel summing (an N+1) when
+   * only the tally is needed — e.g. the TUI Home screen (#1589). Mirrors
+   * {@link TurnRepository.countByExpertId}: parameter-free, returns 0 for an
+   * empty table (COUNT always yields a row).
+   */
+  async countAll(): Promise<number> {
+    const row = await this.db
+      .selectFrom("experts")
+      .select((eb) => eb.fn.countAll<number>().as("count"))
+      .executeTakeFirstOrThrow();
+    return Number(row.count);
+  }
+
   async update(id: string, patch: ExpertUpdate): Promise<Expert | undefined> {
     const updates: Record<string, unknown> = {};
     if (patch.displayName !== undefined) updates["display_name"] = patch.displayName;

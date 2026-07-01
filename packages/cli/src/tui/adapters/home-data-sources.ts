@@ -9,11 +9,20 @@ export interface SessionRow {
   readonly status: string;
 }
 
-/** Repositories the Home data sources read from (structural — accepts the real repos). */
+/**
+ * Repositories the Home data sources read from (structural — accepts the real
+ * repos). Counts come from single aggregate COUNT methods so startup neither
+ * materialises every row nor issues a per-panel N+1 (#1589); the session count
+ * is a dedicated aggregate rather than a list length so it stays correct if
+ * `listSessions` ever paginates (#1582).
+ */
 export interface HomeRepos {
-  readonly chat: { listSessions(): Promise<readonly SessionRow[]> };
-  readonly panels: { findAll(): Promise<readonly { readonly id: string }[]> };
-  readonly experts: { findByPanelId(panelId: string): Promise<readonly unknown[]> };
+  readonly chat: {
+    listSessions(): Promise<readonly SessionRow[]>;
+    countSessions(): Promise<number>;
+  };
+  readonly panels: { countAll(): Promise<number> };
+  readonly experts: { countAll(): Promise<number> };
 }
 
 /** Formats an ISO timestamp as a compact relative age (e.g. "3d", "5h", "10m", "now"). */
@@ -47,18 +56,8 @@ export function createHomeDataSources(repos: HomeRepos): HomeDataSources {
       const sessions = await repos.chat.listSessions();
       return sessions.map(toRecentSession);
     },
-    countExperts: async () => {
-      const panels = await repos.panels.findAll();
-      let total = 0;
-      for (const panel of panels) {
-        const experts = await repos.experts.findByPanelId(panel.id);
-        total += experts.length;
-      }
-      return total;
-    },
-    countPanels: async () => {
-      const panels = await repos.panels.findAll();
-      return panels.length;
-    },
+    countSessions: () => repos.chat.countSessions(),
+    countExperts: () => repos.experts.countAll(),
+    countPanels: () => repos.panels.countAll(),
   };
 }

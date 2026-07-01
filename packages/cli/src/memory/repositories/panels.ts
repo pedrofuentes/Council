@@ -147,6 +147,21 @@ export class PanelRepository {
     return rows.map(toDomain);
   }
 
+  /**
+   * Total number of panels, via a single aggregate COUNT. Preferred over
+   * `findAll().length` when only the tally is needed — e.g. the TUI Home
+   * screen (#1589) — since it avoids materialising every row. Mirrors
+   * {@link TurnRepository.countByExpertId}: returns 0 for an empty table
+   * (COUNT always yields a row).
+   */
+  async countAll(): Promise<number> {
+    const row = await this.db
+      .selectFrom("panels")
+      .select((eb) => eb.fn.countAll<number>().as("count"))
+      .executeTakeFirstOrThrow();
+    return Number(row.count);
+  }
+
   async update(id: string, patch: PanelUpdate): Promise<Panel | undefined> {
     const now = new Date().toISOString();
     const updates: Record<string, unknown> = { updated_at: now };

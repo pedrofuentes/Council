@@ -662,6 +662,15 @@ describe("PanelRepository", () => {
     const matches = await repo.findByNamePrefix("100%");
     expect(matches.map((p) => p.name)).toEqual(["100%-done"]);
   });
+
+  it("countAll() returns the total number of panels via a single aggregate (#1589)", async () => {
+    // Empty table aggregates to exactly 0 (a COUNT row, never undefined/NaN).
+    expect(await repo.countAll()).toBe(0);
+    await repo.create(SAMPLE_PANEL);
+    await repo.create({ ...SAMPLE_PANEL, name: "code-review" });
+    await repo.create({ ...SAMPLE_PANEL, name: "security-review" });
+    expect(await repo.countAll()).toBe(3);
+  });
 });
 
 describe("ExpertRepository", () => {
@@ -719,6 +728,23 @@ describe("ExpertRepository", () => {
     const expert = await repo.create(sampleExpert(panelId));
     await repo.delete(expert.id);
     expect(await repo.findById(expert.id)).toBeUndefined();
+  });
+
+  it("countAll() sums experts across every panel via a single aggregate (#1589)", async () => {
+    // Empty experts table (only the beforeEach panel exists) aggregates to 0.
+    expect(await repo.countAll()).toBe(0);
+
+    // Spread experts across MULTIPLE panels so the aggregate genuinely spans
+    // panels — this is exactly what the old per-panel findByPanelId loop summed.
+    // panelId: 2 experts, otherPanel: 3 experts → 5 total.
+    const otherPanel = await panelRepo.create({ ...SAMPLE_PANEL, name: "code-review" });
+    await repo.create(sampleExpert(panelId, "cto"));
+    await repo.create(sampleExpert(panelId, "pm"));
+    await repo.create(sampleExpert(otherPanel.id, "designer"));
+    await repo.create(sampleExpert(otherPanel.id, "sre"));
+    await repo.create(sampleExpert(otherPanel.id, "qa"));
+
+    expect(await repo.countAll()).toBe(5);
   });
 });
 
