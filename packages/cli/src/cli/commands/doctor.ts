@@ -119,6 +119,15 @@ async function resolveDoctorDataHome(): Promise<string> {
   }
 }
 
+/**
+ * Runtime write targets that `ensureDataDirectories` provisions under the data
+ * home. Council's expert/panel saves land in these subdirectories, so `doctor`
+ * must probe each one — not just the data-home root — to avoid a false-green
+ * when a pre-existing subdir is read-only (`mkdir` is a silent no-op on an
+ * existing directory, so creation alone never surfaces the permission split).
+ */
+const DATA_HOME_WRITE_SUBDIRS = ["experts", "panels"] as const;
+
 async function checkCouncilDataHome(): Promise<CheckResult> {
   const dataHome = await resolveDoctorDataHome();
   try {
@@ -130,14 +139,23 @@ async function checkCouncilDataHome(): Promise<CheckResult> {
       detail: `cannot create ${dataHome}: ${formatError(err)}`,
     };
   }
-  try {
-    await probeDirectoryWritable(dataHome);
-  } catch (err: unknown) {
-    return {
-      name: "Council data home",
-      status: "fail",
-      detail: `cannot write under ${dataHome}: ${formatError(err)}`,
-    };
+  // Probe the data-home root and every runtime write target so a read-only
+  // experts/ or panels/ subdirectory surfaces here instead of only failing at
+  // the first real expert/panel save.
+  const writeTargets = [
+    dataHome,
+    ...DATA_HOME_WRITE_SUBDIRS.map((subdir) => path.join(dataHome, subdir)),
+  ];
+  for (const target of writeTargets) {
+    try {
+      await probeDirectoryWritable(target);
+    } catch (err: unknown) {
+      return {
+        name: "Council data home",
+        status: "fail",
+        detail: `cannot write under ${target}: ${formatError(err)}`,
+      };
+    }
   }
   return { name: "Council data home", status: "pass", detail: dataHome };
 }
