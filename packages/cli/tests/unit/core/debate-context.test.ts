@@ -10,6 +10,11 @@
  *      content would otherwise exceed the cap.
  *   4. Default behaviour (no `contextConfig`) is unchanged — strategies
  *      see every prior turn and no summary is attached.
+ *   5. (#2014) The configured `summarizer.maxSummaryLength` is threaded
+ *      end-to-end into `ModeratorContext.maxSummaryLength` by
+ *      `Debate.buildCtx`, including values ABOVE `sanitizeFenced`'s
+ *      hardcoded 4000-char default (#635) — the case where a dropped
+ *      threading regression would otherwise go undetected.
  */
 import { describe, expect, it } from "vitest";
 
@@ -161,6 +166,71 @@ describe("Debate — context window management (§2.6)", () => {
     expect(captured[5]?.rollingSummary ?? "").not.toBe("");
     expect(captured[4]?.rollingSummary ?? "").toContain("A");
     expect(captured[4]?.rollingSummary ?? "").toContain("B");
+  });
+
+  it("threads a configured maxSummaryLength >4000 into ModeratorContext (#2014)", async () => {
+    // Regression test for #2014 (Sentinel 🟡 on PR #2009/#635): the 6
+    // strategy-layer tests in moderator-strategy.test.ts construct
+    // `ModeratorContext` BY HAND and set `ctx.maxSummaryLength` manually,
+    // so they never exercise `Debate.buildCtx` at debate.ts:357-359,
+    // which is the ONLY place that threads the configured
+    // `SummarizerConfig.maxSummaryLength` from `contextConfig.summarizer`
+    // into the context handed to a moderator strategy. The other debate
+    // tests that DO exercise buildCtx (this file's "injects a rolling
+    // summary" test above, and debate-abort.test.ts) only use caps below
+    // sanitizeFenced's hardcoded 4000-char default, where "threaded
+    // correctly" and "silently dropped and fell back to the default" are
+    // indistinguishable. A cap ABOVE 4000 is required to discriminate:
+    // if `maxSummaryLength: summarizer.maxSummaryLength` were ever
+    // dropped from the object spread, `ctx.maxSummaryLength` would be
+    // `undefined` here instead of the configured 6000, and this
+    // assertion would fail.
+    const experts = [expert("a"), expert("b")];
+    const engine = await makeEngine(
+      { "id-a": "A position statement.", "id-b": "B position statement." },
+      experts,
+    );
+
+    const captured: ModeratorContext[] = [];
+    const strategy = recordingStrategy(captured);
+    const configuredMaxSummaryLength = 6000; // > sanitizeFenced's 4000 default (#635).
+
+    const config: DebateConfig = {
+      maxRounds: 3,
+      maxWordsPerResponse: 50,
+      mode: "freeform",
+      strategy,
+      contextConfig: {
+        summarizer: {
+          summarizeAfterRound: 1,
+          maxSummaryLength: configuredMaxSummaryLength,
+          mode: "heuristic",
+        },
+      },
+    };
+
+    await collect(new Debate(engine, experts, config).run("Topic"));
+
+    // Per-turn re-plan ordering: [r0_a, r0_b, r1_a, r1_b, r2_a, r2_b].
+    // Round 0 is below summarizeAfterRound(1) — no summary is attached,
+    // so debate.ts's `rollingSummary !== "" && summarizer` gate must
+    // omit maxSummaryLength entirely (mirrors the "no contextConfig"
+    // and "below threshold" assertions elsewhere in this file).
+    expect(captured[0]?.rollingSummary ?? "").toBe("");
+    expect(captured[1]?.rollingSummary ?? "").toBe("");
+    expect(captured[0]?.maxSummaryLength).toBeUndefined();
+    expect(captured[1]?.maxSummaryLength).toBeUndefined();
+
+    // Round 1+ has a non-empty rolling summary, so buildCtx must thread
+    // the CONFIGURED cap — the discriminating assertion for #2014.
+    expect(captured[2]?.rollingSummary ?? "").not.toBe("");
+    expect(captured[3]?.rollingSummary ?? "").not.toBe("");
+    expect(captured[4]?.rollingSummary ?? "").not.toBe("");
+    expect(captured[5]?.rollingSummary ?? "").not.toBe("");
+    expect(captured[2]?.maxSummaryLength).toBe(configuredMaxSummaryLength);
+    expect(captured[3]?.maxSummaryLength).toBe(configuredMaxSummaryLength);
+    expect(captured[4]?.maxSummaryLength).toBe(configuredMaxSummaryLength);
+    expect(captured[5]?.maxSummaryLength).toBe(configuredMaxSummaryLength);
   });
 
   it("'same-round' visibility lets later experts see earlier intra-round turns", async () => {
