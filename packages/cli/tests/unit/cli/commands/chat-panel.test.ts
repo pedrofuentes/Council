@@ -555,6 +555,57 @@ describe("panel chat mode", () => {
     expect(err).not.toContain("stored\r\n");
   });
 
+  it("sanitizes target and topic when a persisted panel omits its template name (#1481)", async () => {
+    // Regression for the legacy branch where configJson has NO `template` key
+    // (readTemplateName returns undefined), which is distinct from the
+    // missing-template-FILE and invalid-stored-definition branches already
+    // covered above. Both the echoed target and the recovery-hint topic must
+    // be collapsed to a single terminal line — dropping `toSingleLineDisplay`
+    // from either the target echo or `legacyPanelRecoveryHint` breaks this.
+    const maliciousTarget = "omitted\r\n\u001B[31mspoof\u2028panel";
+    const maliciousTopic = "Launch\r\n\u001B[32mfake OK\u2028next line";
+    const db = await createDatabase(path.join(env.home, "council.db"));
+    try {
+      const repo = new PanelRepository(db);
+      await repo.create({
+        name: maliciousTarget,
+        topic: maliciousTopic,
+        copilotHome: path.join(env.home, "copilot"),
+        // No `template` key — exercises the omitted-template recovery branch.
+        configJson: JSON.stringify({
+          mode: "structured",
+          engine: "mock",
+        }),
+      });
+    } finally {
+      await db.destroy();
+    }
+
+    let err = "";
+    const cmd = buildChatCommand({
+      write: () => undefined,
+      writeError: (s) => (err += s),
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput([]),
+    });
+
+    await expect(
+      cmd.parseAsync(["node", "council-chat", maliciousTarget, "--engine", "mock"]),
+    ).rejects.toThrow(/Failed to load panel template for "omitted spoof panel"/);
+    // Proves this hit the omitted-template branch specifically.
+    expect(err).toContain("has no template name in configJson");
+    // Target echo sanitized + collapsed to one line.
+    expect(err).toContain('panel "omitted spoof panel" exists in database');
+    // Recovery-hint topic sanitized + collapsed to one line.
+    expect(err).toContain('Re-run `council convene "Launch fake OK next line"`');
+    // No raw control/terminal sequences survive in the diagnostic.
+    expect(err).not.toContain("\u001B");
+    expect(err).not.toContain("\r");
+    expect(err).not.toContain("\u2028");
+    expect(err).not.toContain("omitted\r\n");
+    expect(err).not.toContain("Launch\r\n");
+  });
+
   it("errors when target is neither an expert slug nor a panel", async () => {
     let err = "";
     const cmd = buildChatCommand({

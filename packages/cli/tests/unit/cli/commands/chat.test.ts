@@ -233,6 +233,17 @@ describe("buildChatCommand", () => {
       );
     });
 
+    it("describes --history as covering active and archived conversations (#1110)", () => {
+      // `--history` lists the ACTIVE session (marked "→") in addition to the
+      // archived ones (see runHistory), so its help text must not advertise
+      // "archived" only.
+      const cmd = buildChatCommand();
+      const historyOption = cmd.options.find((o) => o.long === "--history");
+      expect(historyOption).toBeDefined();
+      expect(historyOption?.description).toMatch(/active/i);
+      expect(historyOption?.description).toMatch(/archived/i);
+    });
+
     it("lists archived sessions for the target, excluding foreign-target rows", async () => {
       await seedExpert(env);
       await seedExpert(env, {
