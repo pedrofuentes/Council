@@ -210,6 +210,61 @@ describe("buildProgram first-run hook", () => {
     expect(loadConfigWithMeta).not.toHaveBeenCalled();
     expect(selectModelInteractively).not.toHaveBeenCalled();
   });
+
+  it("skips first-run setup for the docs command (read-only discoverability)", async () => {
+    const loadConfigWithMeta = vi.fn(async () => ({
+      config: ConfigSchema.parse({}),
+      isFirstRun: true,
+    }));
+    const selectModelInteractively = vi.fn(async () => "claude-sonnet-4.5");
+    const action = vi.fn();
+
+    const program = buildProgram({
+      firstRunSetup: {
+        loadConfigWithMeta,
+        selectModelInteractively,
+        write: () => undefined,
+      },
+    });
+    const docsCmd = program.commands.find((c) => c.name() === "docs");
+    if (docsCmd === undefined) throw new Error("docs command not registered");
+    const formatsCmd = docsCmd.commands.find((c) => c.name() === "formats");
+    if (formatsCmd === undefined) throw new Error("docs formats subcommand not registered");
+    formatsCmd.action(action);
+
+    await program.parseAsync(["node", "council", "docs", "formats"]);
+
+    expect(action).toHaveBeenCalledTimes(1);
+    expect(loadConfigWithMeta).not.toHaveBeenCalled();
+    expect(selectModelInteractively).not.toHaveBeenCalled();
+  });
+
+  it("skips first-run setup for the ui command (the TUI runs its own onboarding)", async () => {
+    const loadConfigWithMeta = vi.fn(async () => ({
+      config: ConfigSchema.parse({}),
+      isFirstRun: true,
+    }));
+    const selectModelInteractively = vi.fn(async () => "claude-sonnet-4.5");
+    const action = vi.fn();
+
+    const program = buildProgramWithStubbedAction(
+      "ui",
+      {
+        firstRunSetup: {
+          loadConfigWithMeta,
+          selectModelInteractively,
+          write: () => undefined,
+        },
+      },
+      action,
+    );
+
+    await program.parseAsync(["node", "council", "ui"]);
+
+    expect(action).toHaveBeenCalledTimes(1);
+    expect(loadConfigWithMeta).not.toHaveBeenCalled();
+    expect(selectModelInteractively).not.toHaveBeenCalled();
+  });
 });
 
 describe("unknown option handling", () => {
