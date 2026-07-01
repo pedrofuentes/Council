@@ -13,6 +13,7 @@ export interface HomeData {
 
 export interface HomeDataSources {
   readonly listSessions: () => Promise<readonly RecentSession[]>;
+  readonly countSessions: () => Promise<number>;
   readonly countExperts: () => Promise<number>;
   readonly countPanels: () => Promise<number>;
 }
@@ -20,13 +21,14 @@ export interface HomeDataSources {
 const RECENT_LIMIT = 10;
 
 export async function loadHomeData(sources: HomeDataSources): Promise<HomeData> {
-  const [sessions, experts, panels] = await Promise.all([
+  const [sessions, sessionCount, experts, panels] = await Promise.all([
     sources.listSessions(),
+    sources.countSessions(),
     sources.countExperts(),
     sources.countPanels(),
   ]);
   return {
-    counts: { sessions: sessions.length, experts, panels },
+    counts: { sessions: sessionCount, experts, panels },
     recent: sessions.slice(0, RECENT_LIMIT),
   };
 }
