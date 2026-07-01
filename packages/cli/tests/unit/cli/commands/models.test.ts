@@ -56,15 +56,41 @@ describe("formatAvailableModels", () => {
     expect(result).toContain("OpenAI   : gpt-5.4");
   });
 
-  it("includes known model identifiers from the real catalog", () => {
+  it("groups real catalog identifiers under their provider label (grouped form)", () => {
     const result = formatAvailableModels(
       ["claude-sonnet-4.5", "gpt-4.1", "gemini-2.5-pro"],
       "live",
     );
 
-    // Test known model IDs from requirements
-    expect(result).toContain("claude-sonnet-4.5");
-    expect(result).toContain("gpt-4.1");
+    // Assert grouped form — a naive `return models.join(",")` impl fails these
+    expect(result).toContain("Anthropic: claude-sonnet-4.5");
+    expect(result).toContain("OpenAI   : gpt-4.1");
+    expect(result).toContain("Google   : gemini-2.5-pro");
+  });
+
+  it("produces header and note with no provider lines when model list is empty", () => {
+    const result = formatAvailableModels([], "live");
+
+    expect(result).toContain("Available models:");
+    expect(result).toContain("Note: Known models: Availability depends on your Copilot tier");
+    expect(result).not.toContain("Anthropic:");
+    expect(result).not.toContain("OpenAI   :");
+    expect(result).not.toContain("Google   :");
+    expect(result).not.toContain("Other    :");
+  });
+
+  it("produces header and note with no provider lines when all model IDs are invalid", () => {
+    const result = formatAvailableModels(
+      ["   ", "\u001b[31m\u001b[0m", "invalid!id"],
+      "live",
+    );
+
+    expect(result).toContain("Available models:");
+    expect(result).toContain("Note: Known models: Availability depends on your Copilot tier");
+    expect(result).not.toContain("Anthropic:");
+    expect(result).not.toContain("OpenAI   :");
+    expect(result).not.toContain("Google   :");
+    expect(result).not.toContain("Other    :");
   });
 
   it("preserves discovered order within provider groups", () => {
