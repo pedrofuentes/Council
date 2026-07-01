@@ -340,7 +340,7 @@ describe("ConvenePromptScreen", () => {
   it("drops a superseded estimate's late result but still applies the fresh estimate", async () => {
     // Each estimate is deferred so we can resolve them out of order and assert
     // on the mid-flight state deterministically.
-    const resolvers: Array<(value: CostEstimate) => void> = [];
+    const resolvers: ((value: CostEstimate) => void)[] = [];
     const estimateCost = vi.fn<
       Parameters<ConveneDataSource["estimateCost"]>,
       Promise<CostEstimate>
