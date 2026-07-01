@@ -10,7 +10,11 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { buildExportCommand } from "../../../../src/cli/commands/export.js";
+import {
+  buildExportCommand,
+  resolveOutputPath,
+  writeExportArtifact,
+} from "../../../../src/cli/commands/export.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import { DebateRepository } from "../../../../src/memory/repositories/debates.js";
 import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
@@ -225,6 +229,103 @@ async function seedPanelWithUnsafeLineBreakContent(
       endedAt: new Date().toISOString(),
     });
     return { panelName: panel.name };
+  } finally {
+    await db.destroy();
+  }
+}
+
+async function seedPanelWithAdrInjectionContent(
+  testHome: string,
+  maliciousContent: string,
+): Promise<{ panelName: string }> {
+  // One expert with TWO turns → turns.length (2) > expertContribs (1), so the
+  // ADR Discussion renders the "Full transcript" list branch (the sink for
+  // issue #1475). The malicious multi-line payload is the second turn.
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    const panel = await new PanelRepository(db).create({
+      name: "export-adr-injection",
+      topic: "ADR discussion injection safety",
+      copilotHome: path.join(testHome, "copilot"),
+      configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+    });
+    const expert = await new ExpertRepository(db).create({
+      panelId: panel.id,
+      slug: "cto",
+      displayName: "CTO",
+      model: "claude-sonnet-4",
+      systemMessage: "You are a CTO.",
+    });
+    const debate = await new DebateRepository(db).create({
+      panelId: panel.id,
+      prompt: "ADR discussion injection safety prompt",
+      moderator: "round-robin",
+    });
+    const turnRepo = new TurnRepository(db);
+    await turnRepo.create({
+      debateId: debate.id,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId: expert.id,
+      content: "Benign opening statement.",
+    });
+    await turnRepo.create({
+      debateId: debate.id,
+      round: 1,
+      seq: 0,
+      speakerKind: "expert",
+      expertId: expert.id,
+      content: maliciousContent,
+    });
+    await new DebateRepository(db).update(debate.id, {
+      status: "completed",
+      endedAt: new Date().toISOString(),
+    });
+    return { panelName: panel.name };
+  } finally {
+    await db.destroy();
+  }
+}
+
+async function seedPanelWithUnsafeName(testHome: string): Promise<{ panelName: string }> {
+  // The panel NAME itself carries terminal-escape, line-break and C1 control
+  // chars. The export "Next:" hint echoes the resolved name and must sanitize
+  // it to a single control-free line — see issue #1476.
+  const name = `boardroom${ESC}[31m\r\nInjected${BEL}${C1_CSI}31m${BIDI_OVERRIDE}x`;
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    const panel = await new PanelRepository(db).create({
+      name,
+      topic: "Panel name sanitization safety",
+      copilotHome: path.join(testHome, "copilot"),
+      configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+    });
+    const expert = await new ExpertRepository(db).create({
+      panelId: panel.id,
+      slug: "cto",
+      displayName: "CTO",
+      model: "claude-sonnet-4",
+      systemMessage: "You are a CTO.",
+    });
+    const debate = await new DebateRepository(db).create({
+      panelId: panel.id,
+      prompt: "Panel name sanitization prompt",
+      moderator: "round-robin",
+    });
+    await new TurnRepository(db).create({
+      debateId: debate.id,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId: expert.id,
+      content: "Opening statement.",
+    });
+    await new DebateRepository(db).update(debate.id, {
+      status: "completed",
+      endedAt: new Date().toISOString(),
+    });
+    return { panelName: name };
   } finally {
     await db.destroy();
   }
@@ -1008,6 +1109,132 @@ describe("buildExportCommand", () => {
       thrown = err instanceof Error ? err.message : String(err);
     }
     expect(thrown.toLowerCase()).toMatch(/regular file|directory|not.*file/);
+  });
+
+  it("resolveOutputPath rejects a relative --output that escapes the working directory (#173)", async () => {
+    const escapeTarget = path.join(
+      "..",
+      "..",
+      "..",
+      "..",
+      "..",
+      "..",
+      `council-nope-${process.pid}`,
+      "passwd-probe",
+    );
+    await expect(resolveOutputPath(escapeTarget, false)).rejects.toThrow(
+      /outside|working directory|refus/i,
+    );
+  });
+
+  it("--output rejects a ../.. path-traversal escape without writing (regression #173)", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    const escapeTarget = path.join(
+      "..",
+      "..",
+      "..",
+      "..",
+      "..",
+      "..",
+      `council-nope-${process.pid}`,
+      "passwd-probe.md",
+    );
+    const cmd = buildExportCommand({ write: () => undefined, writeError: () => undefined });
+    cmd.exitOverride();
+    let thrown = "";
+    try {
+      await cmd.parseAsync(["node", "council-export", seed.panelName, "--output", escapeTarget]);
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+    expect(thrown.toLowerCase()).toMatch(/outside|working directory|refus/);
+    // The traversal target must never be created.
+    const exists = await fs.access(path.resolve(escapeTarget)).then(
+      () => true,
+      () => false,
+    );
+    expect(exists).toBe(false);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "resolveOutputPath surfaces a non-ENOENT lstat error instead of swallowing it (#1792)",
+    async () => {
+      const noAccessDir = path.join(testHome, "noaccess");
+      await fs.mkdir(noAccessDir);
+      await fs.chmod(noAccessDir, 0o000);
+      try {
+        await expect(resolveOutputPath(path.join(noAccessDir, "child.md"), false)).rejects.toThrow(
+          /EACCES|permission/i,
+        );
+      } finally {
+        await fs.chmod(noAccessDir, 0o755);
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "writeExportArtifact refuses to follow a symlink target even with force (#1792)",
+    async () => {
+      const secret = path.join(testHome, "secret.txt");
+      await fs.writeFile(secret, "SECRET", "utf-8");
+      const link = path.join(testHome, "attacker-link.md");
+      await fs.symlink(secret, link);
+      await expect(writeExportArtifact(link, "CLOBBERED", true)).rejects.toThrow();
+      // The symlink's target must not have been overwritten.
+      expect(await fs.readFile(secret, "utf-8")).toBe("SECRET");
+    },
+  );
+
+  it("writeExportArtifact refuses to clobber a file that appears after the pre-check without force (#1792)", async () => {
+    const target = path.join(testHome, "raced.md");
+    await fs.writeFile(target, "PREEXISTING", "utf-8");
+    await expect(writeExportArtifact(target, "NEW-CONTENT", false)).rejects.toThrow(/exist/i);
+    expect(await fs.readFile(target, "utf-8")).toBe("PREEXISTING");
+  });
+
+  it("--format adr per-line-prefixes multi-line Discussion turns so content cannot forge sections (#1475)", async () => {
+    const maliciousContent = [
+      "I vote to ship.",
+      "## Pwned Section",
+      "",
+      "FORGED-PWNED-BODY here.",
+    ].join("\n");
+    const seed = await seedPanelWithAdrInjectionContent(testHome, maliciousContent);
+    let captured = "";
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
+    await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "adr"]);
+
+    // The forged heading/body must never appear at column 0, where it would
+    // forge a top-level ADR section; it survives only as indented list content.
+    expect(captured).not.toMatch(/^## Pwned Section/m);
+    expect(captured).not.toMatch(/^FORGED-PWNED-BODY/m);
+    expect(captured).toContain("  ## Pwned Section");
+    expect(captured).toContain("  FORGED-PWNED-BODY here.");
+    // The first line stays on the list bullet.
+    expect(captured).toContain("- **CTO**: I vote to ship.");
+  });
+
+  it("--format markdown sanitizes the resolved panel name in the 'Next:' hint (#1476)", async () => {
+    const seed = await seedPanelWithUnsafeName(testHome);
+    let captured = "";
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
+    await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "markdown"]);
+
+    const nextLine = captured.split("\n").find((l) => l.startsWith("Next:")) ?? "";
+    expect(nextLine).toContain("Next: council conclude ");
+    expect(nextLine).toContain("council resume ");
+    expectNoTerminalControls(nextLine);
+    // Control/line-break chars collapsed away; legible name fragments remain.
+    expect(nextLine).toContain("boardroom");
+    expect(nextLine).toContain("Injected");
   });
 
   it("--format garbage rejects with clear error", async () => {
