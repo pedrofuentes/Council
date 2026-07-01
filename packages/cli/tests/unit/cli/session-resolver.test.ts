@@ -2,7 +2,34 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// #1817 (from Sentinel review of PR #1813): `buildSuggestions` fans out to
+// three suggestion sources via Promise.all; a single rejection (e.g. a
+// `listTemplates` failure) used to mask the not-found guidance entirely. This
+// mock forces `listTemplates` to fail (or return a controlled list) on demand
+// while spreading the real module, so every other export (loadPanel,
+// PanelNotFoundError, listUserPanels, …) keeps its real behavior and the rest
+// of this suite is unaffected.
+const templateLoaderControl = vi.hoisted(() => ({
+  listTemplatesFails: false,
+  listTemplatesOverride: undefined as readonly string[] | undefined,
+}));
+
+import type * as TemplateLoaderModule from "../../../src/core/template-loader.js";
+
+vi.mock("../../../src/core/template-loader.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof TemplateLoaderModule>();
+  return {
+    ...actual,
+    listTemplates: async (dir?: string): Promise<readonly string[]> => {
+      if (templateLoaderControl.listTemplatesFails) {
+        throw new Error("simulated listTemplates failure (#1817)");
+      }
+      return templateLoaderControl.listTemplatesOverride ?? actual.listTemplates(dir);
+    },
+  };
+});
 
 import { copyTemplateDb } from "../../helpers/template-db.js";
 import { CliUserError } from "../../../src/cli/cli-user-error.js";
@@ -16,6 +43,8 @@ describe("resolveSession", () => {
   let db: CouncilDatabase;
 
   beforeEach(async () => {
+    templateLoaderControl.listTemplatesFails = false;
+    templateLoaderControl.listTemplatesOverride = undefined;
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-session-resolver-"));
     await copyTemplateDb(path.join(testHome, "council.db"));
     db = await createDatabase(path.join(testHome, "council.db"));
@@ -193,6 +222,101 @@ describe("resolveSession", () => {
         isNonInteractive: () => true,
       }),
     ).rejects.toThrow(/did you mean|finance-review/i);
+  });
+
+  // #1817: buildSuggestions() aggregates panels, user panels and built-in
+  // templates via Promise.all. A single rejecting source (a `listTemplates`
+  // throw ripple from PR #1813) used to reject the whole aggregation, masking
+  // the not-found guidance the user actually needs. The guidance must survive a
+  // failed source, and any suggestions from the *fulfilled* sources must still
+  // be surfaced.
+  describe("resilient suggestions when a source fails (#1817)", () => {
+    it("still surfaces not-found guidance and surviving suggestions when a source rejects", async () => {
+      // Seed a DB panel that is a near-miss of the request — it is a *fulfilled*
+      // suggestion source. `listTemplates` (a sibling source) is forced to fail.
+      await seedPanel("finance-review");
+      templateLoaderControl.listTemplatesFails = true;
+
+      let stderr = "";
+      const resolving = resolveSession({
+        db,
+        dataHome: testHome,
+        panelArg: "financ-review",
+        writeError: (chunk) => {
+          stderr += chunk;
+        },
+        isNonInteractive: () => true,
+      });
+
+      // Before the fix the rejected `listTemplates` bubbled out of Promise.all
+      // as a raw Error (not a CliUserError) and no guidance was written. After
+      // the fix the guidance is surfaced and the fulfilled source still suggests.
+      await expect(resolving).rejects.toBeInstanceOf(CliUserError);
+      expect(stderr).toContain("No panel found matching 'financ-review'");
+      expect(stderr).toContain("Did you mean 'finance-review'");
+      expect(stderr).toContain("council sessions");
+    });
+
+    it("surfaces suggestions sourced from listTemplates on the all-valid path (inverse)", async () => {
+      // The only candidate close to the request comes from listTemplates; its
+      // fulfilled value must still flow through the settled aggregation — the
+      // guard must not drop valid template data on the happy path.
+      templateLoaderControl.listTemplatesOverride = ["finance-review"];
+
+      let stderr = "";
+      await expect(
+        resolveSession({
+          db,
+          dataHome: testHome,
+          panelArg: "financ-review",
+          writeError: (chunk) => {
+            stderr += chunk;
+          },
+          isNonInteractive: () => true,
+        }),
+      ).rejects.toBeInstanceOf(CliUserError);
+
+      expect(stderr).toContain("No panel found matching 'financ-review'");
+      expect(stderr).toContain("Did you mean 'finance-review'");
+    });
+
+    it("sanitizes the requested value echoed in the guidance surfaced on the degraded path", async () => {
+      // The surfaced not-found guidance is a single-line stderr sink that echoes
+      // the user-supplied request. Even on the degraded path (a source failed)
+      // it must be single-line and free of control/bidi/separator bytes.
+      templateLoaderControl.listTemplatesFails = true;
+      const ESC = "\u001b";
+      const BEL = "\u0007";
+      const LINE_SEP = "\u2028";
+      const PARA_SEP = "\u2029";
+      const rawRequested = `zz${ESC}[31m${BEL}\ttop${LINE_SEP}${PARA_SEP}\r\nsecret`;
+
+      let stderr = "";
+      await expect(
+        resolveSession({
+          db,
+          dataHome: testHome,
+          panelArg: rawRequested,
+          writeError: (chunk) => {
+            stderr += chunk;
+          },
+          isNonInteractive: () => true,
+        }),
+      ).rejects.toBeInstanceOf(CliUserError);
+
+      // Guidance is surfaced (not masked by the failed source) and sanitized.
+      expect(stderr).toContain("No panel found matching 'zz top secret'");
+      expect(stderr).toContain("council sessions");
+      expect(stderr).not.toContain(ESC);
+      expect(stderr).not.toContain(BEL);
+      expect(stderr).not.toContain(LINE_SEP);
+      expect(stderr).not.toContain(PARA_SEP);
+      expect(stderr).not.toContain("\r");
+      expect(stderr).not.toContain("\t");
+      // A single logical line — the injected separators did not break it apart.
+      const nonEmptyLines = stderr.split("\n").filter((line) => line.length > 0);
+      expect(nonEmptyLines).toHaveLength(1);
+    });
   });
 
   // Terminal-safety: untrusted panel metadata (names/topics) and the requested
