@@ -212,10 +212,35 @@ async function collectComposerResponse(
     // backoff, mirroring the debate turn loop. Everything else fails fast.
     const canRetry = outcome.recoverable && attempt < maxRetries && !signal.aborted;
     if (!canRetry) {
+      // #1927: a recoverable error that has used up its retry budget (at least
+      // one retry performed, not aborted) is a genuine exhaustion. Log it and
+      // thread the retry count into the thrown error so operators can tell a
+      // transient-and-retried failure apart from an immediate fail-fast. A
+      // non-recoverable error, an abort, or retries-disabled falls through to
+      // the plain fail-fast error with no retry claim.
+      if (outcome.recoverable && !signal.aborted && attempt > 0) {
+        console.warn(
+          `[auto-compose] composer send exhausted after ${retryCountLabel(attempt)}; ` +
+            `giving up on recoverable error (${outcome.code}) for model ` +
+            `${sanitizeModelForDisplay(model)}: ${toSingleLineDisplay(outcome.message)}`,
+        );
+        throw createRetryExhaustedError(outcome.code, outcome.message, model, attempt);
+      }
       throw createEngineError(outcome.code, outcome.message, model);
     }
 
+    // #1927: surface every recoverable retry (code, attempt N/maxRetries,
+    // backoff ms, error text). autoComposePanel resolves a Promise rather than
+    // yielding a generator, so unlike the debate turn loop's `turn.retry`
+    // event a console.warn is the only progress/observability channel —
+    // matching the core/ convention (debate.ts canary handling,
+    // expert-library.ts) and avoiding direct TTY writes.
     const backoff = retryBackoffMs[attempt] ?? 0;
+    console.warn(
+      `[auto-compose] composer send failed with a recoverable error (${outcome.code}); ` +
+        `retrying (${attempt + 1}/${maxRetries}) after ${backoff}ms for model ` +
+        `${sanitizeModelForDisplay(model)}: ${toSingleLineDisplay(outcome.message)}`,
+    );
     if (backoff > 0) {
       await abortableSleep(backoff, signal);
     }
@@ -297,6 +322,30 @@ function createAbortError(model: string): Error {
 function createEngineError(code: EngineErrorCode, message: string, model: string): Error {
   return new Error(
     `Auto-compose engine error (${code}) for model ${sanitizeModelForDisplay(model)}: ${sanitizeModelForDisplay(message)}`,
+  );
+}
+
+/** Pluralize a retry count for human-readable logs / error context (#1927). */
+function retryCountLabel(retries: number): string {
+  return retries === 1 ? "1 retry" : `${retries} retries`;
+}
+
+/**
+ * Engine error thrown when recoverable composer-send retries are exhausted
+ * (#1927). Mirrors `createEngineError`'s prefix so existing matchers keep
+ * working, then appends the retry count so the exhaustion is distinguishable
+ * from an immediate fail-fast during triage. The untrusted engine `message`
+ * is collapsed to a single control-free line for terminal safety.
+ */
+function createRetryExhaustedError(
+  code: EngineErrorCode,
+  message: string,
+  model: string,
+  retries: number,
+): Error {
+  return new Error(
+    `Auto-compose engine error (${code}) for model ${sanitizeModelForDisplay(model)}: ` +
+      `${toSingleLineDisplay(message)} (exhausted after ${retryCountLabel(retries)})`,
   );
 }
 
