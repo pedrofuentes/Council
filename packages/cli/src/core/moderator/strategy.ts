@@ -35,6 +35,16 @@ export interface ModeratorContext {
    * a compact view of debate history without every verbatim turn.
    */
   readonly rollingSummary?: string;
+  /**
+   * Character cap the strategy applies when sanitizing {@link rollingSummary}
+   * into a prompt fence (#635). Mirrors `SummarizerConfig.maxSummaryLength`,
+   * which the summarizer already applied when producing the summary, so the
+   * render-time bound honors the configured cap instead of a hardcoded
+   * default that could silently re-truncate a larger summary. Present only
+   * when a summarizer is configured; when omitted the strategy falls back to
+   * `sanitizeFenced`'s own conservative default so bounding is never removed.
+   */
+  readonly maxSummaryLength?: number;
 }
 
 /** An assignment: which expert speaks and what prompt they receive. */

@@ -5,9 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import type {
-  ModeratorContext,
-} from "../../../src/core/moderator/strategy.js";
+import type { ModeratorContext, ModeratorStrategy } from "../../../src/core/moderator/strategy.js";
 import {
   createRoundRobinStrategy,
   createDevilsAdvocateStrategy,
@@ -256,6 +254,101 @@ describe("rollingSummary fencing (T-06)", () => {
       expect(closing.length).toBe(1);
       expect(prompt).toContain("&lt;/summary>");
     });
+  });
+});
+
+describe("rollingSummary render cap honors configured maxSummaryLength (#635)", () => {
+  const experts = [makeExpert("cto"), makeExpert("pm")];
+  const priorTurns = [{ expertSlug: "cto", displayName: "CTO", content: "Ship it.", round: 0 }];
+
+  /** Extract the sanitized text rendered between the <summary> fences. */
+  function extractSummary(prompt: string): string {
+    const match = prompt.match(/<summary>\n([\s\S]*?)\n<\/summary>/);
+    if (match?.[1] === undefined) {
+      throw new Error(`no <summary> fence in prompt: ${prompt.slice(0, 120)}`);
+    }
+    return match[1];
+  }
+
+  const strategies = [
+    { name: "round-robin", factory: (): ModeratorStrategy => createRoundRobinStrategy() },
+    {
+      name: "devils-advocate",
+      factory: (): ModeratorStrategy => createDevilsAdvocateStrategy("cto"),
+    },
+    { name: "consensus-check", factory: (): ModeratorStrategy => createConsensusCheckStrategy() },
+  ] as const;
+
+  // A configured cap ABOVE the historical 4000 default must be honored: the
+  // summary — already bounded to maxSummaryLength by the summarizer — must NOT
+  // be silently re-truncated to 4000 at render time (#635). Parameterized so
+  // every strategy's sanitizeFenced call site is covered.
+  describe.each(strategies)("$name honors a cap larger than the 4000 default", ({ factory }) => {
+    it("does not re-truncate a 4507-char summary to 4000 when maxSummaryLength is 8000", () => {
+      const strategy = factory();
+      // 4507 chars, single line, unique marker past char 4000.
+      const summary = `${"A".repeat(4500)}ENDMARK`;
+      const ctx: ModeratorContext = {
+        experts,
+        round: 1,
+        maxRounds: 3,
+        topic: "Topic",
+        priorTurns,
+        rollingSummary: summary,
+        maxSummaryLength: 8000,
+      };
+      const rendered = extractSummary(strategy.planRound(ctx)[0]?.prompt ?? "");
+      expect(rendered).toContain("ENDMARK");
+      expect(rendered.length).toBe(4507);
+      expect(rendered.endsWith("…")).toBe(false);
+    });
+  });
+
+  it("honors a configured cap TIGHTER than 4000 (round-robin)", () => {
+    const strategy = createRoundRobinStrategy();
+    const ctx: ModeratorContext = {
+      experts,
+      round: 1,
+      maxRounds: 3,
+      topic: "Topic",
+      priorTurns,
+      rollingSummary: "B".repeat(3000),
+      maxSummaryLength: 2000,
+    };
+    const rendered = extractSummary(strategy.planRound(ctx)[0]?.prompt ?? "");
+    expect(rendered.length).toBe(2000);
+    expect(rendered.endsWith("…")).toBe(true);
+  });
+
+  it("keeps the 4000 default bound when no cap is configured — bounding is NOT removed (round-robin)", () => {
+    const strategy = createRoundRobinStrategy();
+    const ctx: ModeratorContext = {
+      experts,
+      round: 1,
+      maxRounds: 3,
+      topic: "Topic",
+      priorTurns,
+      rollingSummary: "C".repeat(5000),
+    };
+    const rendered = extractSummary(strategy.planRound(ctx)[0]?.prompt ?? "");
+    expect(rendered.length).toBe(4000);
+    expect(rendered.endsWith("…")).toBe(true);
+  });
+
+  it("leaves a summary shorter than the configured cap untouched (round-robin)", () => {
+    const strategy = createRoundRobinStrategy();
+    const ctx: ModeratorContext = {
+      experts,
+      round: 1,
+      maxRounds: 3,
+      topic: "Topic",
+      priorTurns,
+      rollingSummary: "Short summary text.",
+      maxSummaryLength: 8000,
+    };
+    const rendered = extractSummary(strategy.planRound(ctx)[0]?.prompt ?? "");
+    expect(rendered).toBe("Short summary text.");
+    expect(rendered).not.toContain("…");
   });
 });
 
