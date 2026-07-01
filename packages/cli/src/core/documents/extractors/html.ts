@@ -26,12 +26,23 @@
  * nesting levels) overflows the call stack and throws `RangeError`. A
  * single crafted untrusted file must not crash the extractor, so parsing
  * and text extraction are guarded and degrade gracefully to empty content
- * on any parse/extraction failure.
+ * on `RangeError` (the stack-overflow signal) ONLY. Any other parse failure
+ * is a genuinely corrupt document and is surfaced through the same
+ * `ExtractionError` (`corrupt-document`) taxonomy the peer extractors (pdf,
+ * pptx, docx) use, rather than being silently swallowed to empty content
+ * (issue #1214).
+ *
+ * Extraction also honors `ctx.signal`: a pre-aborted signal short-circuits
+ * with `ExtractionError` (`extraction-timeout`) before the synchronous parse
+ * runs, so an upstream-timed-out extraction does not perform the work
+ * (issue #1216) — matching the cooperative-cancellation contract of the peer
+ * extractors.
  *
  * Self-registers for `.html` and `.htm`.
  */
 import { parse } from "node-html-parser";
 
+import { ExtractionError } from "./errors.js";
 import { registerExtractor } from "./registry.js";
 import type { ContentExtractor, ExtractedContent, ExtractionContext } from "./types.js";
 
@@ -72,18 +83,31 @@ function collapseWhitespace(text: string): string {
   return parts.join("");
 }
 
-function normalizeHtml(raw: string): string {
+function normalizeHtml(raw: string, filename: string): string {
   try {
     const root = parse(raw, { comment: false });
     for (const el of root.querySelectorAll("script, style")) {
       el.remove();
     }
     return collapseWhitespace(root.structuredText.replace(CONTROL_CHARS, ""));
-  } catch {
-    // Degrade gracefully on parser failure (e.g. a RangeError from
-    // recursion over a pathologically deep document) rather than crashing
-    // the whole extraction on one crafted untrusted file.
-    return "";
+  } catch (err) {
+    // A pathologically deep document overflows the parser's recursive DOM
+    // walk and throws `RangeError`; that single crafted untrusted file must
+    // not crash extraction, so degrade gracefully to empty content on
+    // `RangeError` ONLY. Any other failure is a genuinely corrupt document
+    // and is surfaced through the same `corrupt-document` taxonomy the peer
+    // extractors use, never silently swallowed to empty content (issue
+    // #1214).
+    if (err instanceof RangeError) {
+      return "";
+    }
+    throw new ExtractionError({
+      kind: "corrupt-document",
+      filePath: filename,
+      message: `Failed to parse HTML: ${err instanceof Error ? err.message : String(err)}`,
+      suggestion: "The file may be corrupt or not valid HTML.",
+      cause: err,
+    });
   }
 }
 
@@ -94,8 +118,20 @@ function countWords(text: string): number {
 const htmlExtractor: ContentExtractor = async (
   ctx: ExtractionContext,
 ): Promise<ExtractedContent> => {
+  // Honor cooperative cancellation before running the synchronous parse, so
+  // an upstream-timed-out extraction does no work (issue #1216). Matches the
+  // pre-work abort checkpoint of the peer extractors (pdf, pptx, ai-fallback).
+  if (ctx.signal?.aborted === true) {
+    throw new ExtractionError({
+      kind: "extraction-timeout",
+      filePath: ctx.filename,
+      message: "HTML extraction aborted before it began.",
+      cause: ctx.signal.reason,
+    });
+  }
+
   const raw = ctx.buffer.toString("utf-8");
-  const content = normalizeHtml(raw);
+  const content = normalizeHtml(raw, ctx.filename);
   return { content, wordCount: countWords(content) };
 };
 
