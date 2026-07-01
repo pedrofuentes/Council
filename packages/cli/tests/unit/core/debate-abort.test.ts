@@ -395,11 +395,18 @@ describe("Debate.run() — AbortSignal threading (#503)", () => {
     }
   });
 
-  it("forwards the run() signal through to the LLM summarizer's engine.send", async () => {
+  it("propagates the run() signal through to the LLM summarizer's engine.send", async () => {
     // Two-round freeform with LLM summarization enabled — the
     // per-round buildLLMSummary() runs at the top of round 1 (after
-    // round 0 has produced prior turns). The summarizer's send MUST
-    // receive the same signal as the per-turn sends.
+    // round 0 has produced prior turns). The per-turn sends forward the
+    // caller's signal directly, while the summarizer send forwards a
+    // composite `AbortSignal.any([callerSignal, timeoutSignal])` (#267):
+    // the summarizer must NOT be able to abort the whole debate, so it
+    // deliberately does not reuse the caller's signal identity. The real
+    // #503 contract is therefore *propagation*, not identity — aborting
+    // the caller MUST abort every forwarded signal (and propagate the
+    // reason) so an upstream Ctrl+C still cancels the in-flight
+    // summarizer request.
     const engine = new RecordingEngine();
     await engine.start();
     await engine.addExpert(cto);
@@ -416,10 +423,24 @@ describe("Debate.run() — AbortSignal threading (#503)", () => {
     await collect(debate.run("topic", { signal: controller.signal }));
 
     // sends include: round-0 cto turn, round-1 summarizer (temp expert),
-    // and round-1 cto turn. All must carry the caller's signal.
+    // and round-1 cto turn. Every send must have received a defined,
+    // not-yet-aborted signal wired to the caller's controller.
     expect(engine.sends.length).toBeGreaterThanOrEqual(2);
-    for (const s of engine.sends) {
-      expect(s.signal).toBe(controller.signal);
+    const forwarded = engine.sends.map((s) => s.signal);
+    for (const signal of forwarded) {
+      expect(signal).toBeDefined();
+      expect(signal?.aborted).toBe(false);
+    }
+
+    // Aborting the caller MUST thread through to every forwarded signal —
+    // including the summarizer's composite — cancelling the in-flight
+    // request and propagating the abort reason. Strictly stronger than the
+    // previous identity assertion, which over-specified the #503 contract.
+    const reason = new Error("caller aborted");
+    controller.abort(reason);
+    for (const signal of forwarded) {
+      expect(signal?.aborted).toBe(true);
+      expect(signal?.reason).toBe(reason);
     }
   });
 
