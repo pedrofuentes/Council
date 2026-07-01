@@ -63,8 +63,11 @@ export type ContentExtractor = (
 ) => Promise<ExtractedContent>;
 
 /**
- * Lazy factory thunk returning a `ContentExtractor`. Loaders are invoked
- * at most once per extension by the registry and the resulting extractor
- * is memoized.
+ * Lazy factory thunk returning a `ContentExtractor`. The registry
+ * invokes a loader at most once per loader instance for a given
+ * successful resolution, and the resulting extractor is memoized.
+ * A rejected load is evicted from the cache so a later lookup
+ * re-invokes the loader — loaders MUST tolerate being called more
+ * than once.
  */
 export type ExtractorLoader = () => Promise<ContentExtractor>;
