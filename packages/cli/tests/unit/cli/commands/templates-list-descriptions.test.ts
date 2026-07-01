@@ -227,6 +227,36 @@ describe("templates list — graceful degradation on per-template load failure (
     },
   );
 
+  // #2018 — the parameterized assertion above (and the pre-#2018 test suite
+  // as a whole) only pins the warning UP TO the trailing colon. It never
+  // checks what — if anything — follows it, so a future refactor that
+  // dropped or emptied the `${detail}` interpolation in templates.ts (e.g.
+  // `Warning: failed to load template "broken":\n`) would satisfy every
+  // existing assertion while silently discarding the one piece of
+  // information — the actual error — the warning exists to surface. This
+  // test pins a concrete, recognizable token of the sanitized error DETAIL
+  // in the stderr line, not just its name-and-colon prefix.
+  it("surfaces the sanitized error detail — not just the template name — in the stderr warning", async () => {
+    const { stdout, stderr, error } = await runTemplatesListing({
+      listTemplates: async () => ["good-a", "broken"] as readonly string[],
+      loadTemplate: async (name: string) => {
+        if (name === "good-a") return validPanel("good-a", "Alpha panel");
+        throw new Error("boom: disk read failed");
+      },
+    });
+
+    expect(error).toBeUndefined();
+    expect(stdout).toMatch(/• good-a\n {4}Alpha panel/);
+
+    // Positive oracle: BOTH the failing template's name AND a recognizable
+    // token of its sanitized error detail must reach the SAME stderr
+    // diagnostic line. This is discriminating: it FAILS if templates.ts ever
+    // stops interpolating `${detail}` into the warning, which the
+    // name-only-up-to-the-colon assertion above cannot detect.
+    expect(stderr).toContain('template "broken":');
+    expect(stderr).toContain("boom: disk read failed");
+  });
+
   it("does not swallow valid entries or emit spurious warnings when every template loads", async () => {
     const { stdout, stderr, error } = await runTemplatesListing({
       listTemplates: async () => ["good-a", "good-b"] as readonly string[],
@@ -283,6 +313,14 @@ describe("templates list — graceful degradation on per-template load failure (
     expect(stderr).not.toMatch(/[\u2028\u2029]/);
     expect(stderr).not.toContain("\t");
     expect(stderr).not.toContain("\r");
+
+    // Positive oracle (#2018): sanitization must SCRUB dangerous bytes
+    // WITHOUT discarding the underlying message. `ADVERSARIAL_DETAIL` starts
+    // with the recognizable, printable token "boom" — none of the
+    // control-freeness assertions above can tell "sanitized" apart from
+    // "silently dropped/emptied", so assert the token itself survives into
+    // the same single-line stderr diagnostic.
+    expect(stderr).toContain("boom");
 
     // The name-only bullet on stdout is likewise sanitized: the raw bidi/DEL
     // bytes from the filename never reach the terminal.
