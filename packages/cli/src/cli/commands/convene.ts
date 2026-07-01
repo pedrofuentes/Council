@@ -9,6 +9,11 @@
  * prompt-builder, panel + expert row insertion. The engine lifecycle
  * (init → addExpert → Debate → persist → render → cleanup) is delegated
  * to the shared `runWithEngine()` helper.
+ *
+ * Note: `--experts <slugs...>` is a variadic option, so a positional
+ * `[topic]` placed AFTER it is consumed as another slug. Pass the topic
+ * BEFORE `--experts` (or quote a comma-list) to avoid the ordering
+ * foot-gun (see the after-help "Expert ordering" section).
  */
 import * as path from "node:path";
 import { ulid } from "ulid";
@@ -248,7 +253,10 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
     )
     .option(
       "--experts <slugs...>",
-      "Expert slugs from the library (space- or comma-separated, repeatable). Bypasses both --template and auto-compose.",
+      "Expert slugs from the library (space- or comma-separated, repeatable). " +
+        "Bypasses both --template and auto-compose. Because --experts is variadic, " +
+        "put the <topic> BEFORE it (or quote a comma-list) so a trailing topic is " +
+        "not consumed as a slug.",
     )
     .addOption(
       new Option("--engine <kind>", "Engine to use (default: from config)").choices([
@@ -397,8 +405,18 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           topicSource = "interactive";
           topic = await (deps.topicInputProvider ?? promptForTopic)();
         } else {
+          // The variadic --experts greedily consumes a <topic> placed AFTER
+          // it, leaving the positional empty (#1059). When --experts was
+          // supplied, point the user at the ordering foot-gun explicitly.
+          const orderingHint =
+            raw.experts !== undefined
+              ? " Note: --experts is variadic, so a topic placed AFTER it is consumed as a slug — " +
+                'put the topic FIRST (e.g. `convene "<topic>" --experts a b`) or quote a comma-list ' +
+                '(`--experts "a,b"`).'
+              : "";
           const message =
-            "No topic provided. Pass a positional <topic>, or use --prompt-file <path> (or --prompt-file - to read stdin). When running in a terminal, omit the topic argument to enter it interactively.";
+            "No topic provided. Pass a positional <topic>, or use --prompt-file <path> (or --prompt-file - to read stdin). When running in a terminal, omit the topic argument to enter it interactively." +
+            orderingHint;
           writeError(message + "\n");
           throw new CliUserError(message);
         }
@@ -733,14 +751,48 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             defaultModel,
           );
 
-          // Build human expert specs from --human flags
-          const humanExperts: ExpertSpec[] = humanNames.map((name) => ({
-            id: ulid(),
-            slug: slugify(name),
-            displayName: name,
-            model: "human",
-            systemMessage: "(human participant)",
-          }));
+          // Build human expert specs from --human flags. A human's identity
+          // key is slugify(displayName); reject any name that produces an
+          // empty slug (punctuation/emoji-only) or one that collides with an
+          // AI expert already on the panel — or with another --human. The
+          // experts table is UNIQUE(panel_id, slug), so a duplicate would
+          // otherwise break turn attribution or surface as a raw DB error
+          // AFTER a panel row was already persisted (#207).
+          const aiSlugs = new Set(aiExperts.map((e) => e.slug));
+          const seenHumanSlugs = new Set<string>();
+          const humanExperts: ExpertSpec[] = humanNames.map((name) => {
+            const slug = slugify(name);
+            const safeName = toSingleLineDisplay(name);
+            if (slug.length === 0) {
+              const msg =
+                `--human "${safeName}" has no letters or digits to build a slug from. ` +
+                `Give the participant a name containing at least one letter or number.`;
+              writeError(`${msg}\n`);
+              throw new CliUserError(msg);
+            }
+            if (aiSlugs.has(slug)) {
+              const msg =
+                `--human "${safeName}" maps to the slug "${slug}", which already belongs to an ` +
+                `expert on this panel. Rename the human participant so its slug is distinct.`;
+              writeError(`${msg}\n`);
+              throw new CliUserError(msg);
+            }
+            if (seenHumanSlugs.has(slug)) {
+              const msg =
+                `--human "${safeName}" maps to the slug "${slug}", which duplicates another ` +
+                `--human participant. Give each human a name with a distinct slug.`;
+              writeError(`${msg}\n`);
+              throw new CliUserError(msg);
+            }
+            seenHumanSlugs.add(slug);
+            return {
+              id: ulid(),
+              slug,
+              displayName: name,
+              model: "human",
+              systemMessage: "(human participant)",
+            };
+          });
 
           const allExperts = [...aiExperts, ...humanExperts];
           const humanSlugs = new Set(humanExperts.map((e) => e.slug));
@@ -890,7 +942,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
                       doc.latestDebate.status === "completed"
                     ) {
                       writeError(
-                        "Generating conclusion (1 more premium request; may retry once if JSON is unparseable; use --no-conclude to skip)\n",
+                        "Generating conclusion (1–2 premium requests; may retry once if JSON is unparseable; use --no-conclude to skip)\n",
                       );
                       // TTY-gated live status during the conclusion-synthesis
                       // wait. Suppressed for non-TTY (CI/pipes), --quiet, and
@@ -984,6 +1036,12 @@ Wrap topics containing $, !, or backticks in SINGLE quotes to keep them literal:
 Bulletproof option — read the topic VERBATIM from a file or stdin (no shell):
   $ council convene --prompt-file topic.txt --engine copilot
   $ echo 'We have $180K in runway' | council convene --prompt-file - --engine copilot
+
+Expert ordering: --experts is variadic, so a <topic> placed AFTER it is
+consumed as another slug (leaving the topic empty). Put the topic FIRST, or
+quote a comma-list:
+  $ council convene "Ship now?" --experts senior security   # topic first — safe
+  $ council convene --experts "senior,security" "Ship now?" # quoted comma-list
 
 Premium Requests:
   The "[Premium requests: N (est. ~T)]" counter shown during a debate is an
