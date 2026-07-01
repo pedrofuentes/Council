@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type * as MemoryDbModule from "../../src/memory/db.js";
 import type { E2EContext } from "./helpers.js";
+import { isBestEffortCleanupError } from "./helpers.js";
 
 interface HelpersModule {
   readonly cleanupE2EContext: (ctx: E2EContext) => Promise<void>;
@@ -201,5 +202,38 @@ describe("E2E cleanup helpers", () => {
 
     await expect(destroyTestDb(db as never)).rejects.toThrow(/kapow/);
     expect(db.destroy).toHaveBeenCalledOnce();
+  });
+});
+
+describe("isBestEffortCleanupError word-boundary regression guard (#647)", () => {
+  it.each([
+    { label: "EBUSY via .code", error: Object.assign(new Error("file in use"), { code: "EBUSY" }) },
+    {
+      label: "EPERM via .code",
+      error: Object.assign(new Error("operation not permitted"), { code: "EPERM" }),
+    },
+    {
+      label: "ENOTEMPTY via .code",
+      error: Object.assign(new Error("directory not empty"), { code: "ENOTEMPTY" }),
+    },
+    { label: "sqlite_busy in message", error: new Error("SqliteError: sqlite_busy") },
+    { label: "database is locked in message", error: new Error("database is locked") },
+  ])("returns true — $label", ({ error }) => {
+    expect(isBestEffortCleanupError(error)).toBe(true);
+  });
+
+  // These cases contain an allowlisted token as a substring of a larger word.
+  // A regex without \b word-boundary anchoring would incorrectly return true.
+  it.each([
+    {
+      label: "EPERMISSIVE (EPERM is a prefix, not a standalone token)",
+      error: new Error("EPERMISSIVE: access denied"),
+    },
+    {
+      label: "sqlite_busy_lock (sqlite_busy is a prefix, not a standalone token)",
+      error: new Error("sqlite_busy_lock: timeout exceeded"),
+    },
+  ])("returns false — $label", ({ error }) => {
+    expect(isBestEffortCleanupError(error)).toBe(false);
   });
 });

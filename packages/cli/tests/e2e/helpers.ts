@@ -66,7 +66,7 @@ function normalizeTempPath(dirPath: string): string {
  * @param error - The error to classify
  * @returns `true` if the error is expected during Windows cleanup and can be safely ignored
  */
-function isBestEffortCleanupError(error: unknown): boolean {
+export function isBestEffortCleanupError(error: unknown): boolean {
   const code =
     typeof error === "object" && error !== null && "code" in error
       ? String((error as { readonly code?: unknown }).code ?? "")
