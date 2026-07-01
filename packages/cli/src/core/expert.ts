@@ -11,9 +11,36 @@
  *
  * The `core/prompt-builder.ts` function is what turns one into the other.
  */
+import * as path from "node:path";
+
 import { z } from "zod";
 
 const NonEmptyString = z.string().min(1);
+
+/**
+ * Path-confinement gate for `docsPath` (issue #287, Sentinel dimension A2).
+ *
+ * `docsPath` overrides a persona expert's default docs location, which by
+ * design lives UNDER the per-expert docs root `<dataHome>/experts/<slug>/docs`
+ * (see DECISIONS.md). An unconfined override is a path-traversal surface: a
+ * `..` segment or an absolute path could point the document scanner / indexer
+ * / engine at arbitrary files outside the data home before any consumer reads
+ * the value. This schema rule is the front door (mirroring the section-marker
+ * gate and the `rel.startsWith("..") || path.isAbsolute(rel)` idiom used at
+ * the filesystem read sites); a future read-site that resolves the path
+ * against the real data home should still realpath-confine it as
+ * defense-in-depth (see `core/documents/detector.ts`).
+ *
+ * Rejects any `..` segment (leading, embedded, or trailing; both `/` and `\`
+ * separators), POSIX and Windows absolute paths, UNC paths, and Windows
+ * drive-letter prefixes (including the drive-relative `C:foo` form). Accepts
+ * plain relative paths and the home-anchored `~/Council/...` default form.
+ */
+function isDocsPathConfined(value: string): boolean {
+  if (path.posix.isAbsolute(value) || path.win32.isAbsolute(value)) return false;
+  if (/^[A-Za-z]:/.test(value)) return false;
+  return !value.split(/[/\\]/).some((segment) => segment === "..");
+}
 
 export const ExpertiseSchema = z.object({
   /**
@@ -71,7 +98,11 @@ export const ExpertDefinitionSchema = z
      * (e.g. "VP of Engineering I report to").
      */
     personaDescription: NonEmptyString.optional(),
-    /** For persona experts: override default docs location. */
+    /**
+     * For persona experts: override the default docs location. Confined to the
+     * per-expert docs root — must be a relative path with no `..` traversal and
+     * no absolute/UNC/drive prefix (enforced in the superRefine below, #287).
+     */
     docsPath: NonEmptyString.optional(),
   })
   .superRefine((val, ctx) => {
@@ -94,6 +125,19 @@ export const ExpertDefinitionSchema = z
           path: [field],
         });
       }
+    }
+
+    // Confine `docsPath` to the per-expert docs root: reject `..` traversal
+    // and absolute paths so an authored/imported expert cannot redirect the
+    // document pipeline outside `<dataHome>/experts/<slug>/docs` (#287).
+    if (val.docsPath !== undefined && !isDocsPathConfined(val.docsPath)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          `Field "docsPath" must be a relative path within the expert docs root ` +
+          `(no ".." traversal, no absolute paths).`,
+        path: ["docsPath"],
+      });
     }
   });
 
