@@ -58,6 +58,7 @@ import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.j
 import { resolveSession } from "../session-resolver.js";
 import { suggestMatch } from "../fuzzy-match.js";
 import { toSingleLineDisplay } from "../strip-control-chars.js";
+import { panelDeleteRecoveryMessage } from "../panel-delete-recovery.js";
 
 const PANEL_NAME_RE = /^[a-z][a-z0-9-]*$/;
 
@@ -477,11 +478,7 @@ function buildDeleteCommand(
           await ctx.panelRepo.delete(name);
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
-          writeError(
-            `Removed the panel files for "${name}" but failed to delete its library record: ${detail}\n` +
-              `The on-disk YAML and docs are gone; a stale entry still exists. ` +
-              `Re-run \`council panel delete ${name}\` to clear it.\n`,
-          );
+          writeError(panelDeleteRecoveryMessage(name, detail) + "\n");
           throw new CliUserError(`Failed to delete panel "${name}" library record: ${detail}`, {
             cause: err,
           });

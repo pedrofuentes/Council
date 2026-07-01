@@ -10,9 +10,32 @@
  */
 import * as os from "node:os";
 import * as path from "node:path";
-import * as fs from "node:fs/promises";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// Passive fs spy: record every rm/unlink call (delegating to the real impl) so
+// the invalid-name test can prove a rejected path-traversal name never reaches
+// a destructive filesystem call. #757.
+const fsCalls = vi.hoisted(() => ({ rm: [] as unknown[][], unlink: [] as unknown[][] }));
+
+import type FsPromisesModule from "node:fs/promises";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof FsPromisesModule>();
+  return {
+    ...actual,
+    rm: ((...args: unknown[]) => {
+      fsCalls.rm.push(args);
+      return (actual.rm as (...a: unknown[]) => Promise<void>)(...args);
+    }) as typeof actual.rm,
+    unlink: ((...args: unknown[]) => {
+      fsCalls.unlink.push(args);
+      return (actual.unlink as (...a: unknown[]) => Promise<void>)(...args);
+    }) as typeof actual.unlink,
+  };
+});
+
+import * as fs from "node:fs/promises";
 
 import { buildPanelCommand } from "../../../../src/cli/commands/panel.js";
 import { buildExpertCommand } from "../../../../src/cli/commands/expert.js";
@@ -310,6 +333,73 @@ describe("buildPanelCommand: delete subcommand (T2)", () => {
       // The errors do NOT need to come from writeError — Commander may
       // surface them directly — but they MUST never trigger a delete.
       void errored;
+    });
+
+    it("touches no DB row, on-disk YAML, or out-of-tree path when the name fails validation (#757)", async () => {
+      // Threat model: a `panel_library` row whose name bypassed PANEL_NAME_RE
+      // (via a migration/import/direct DB edit) must never let `panel delete`
+      // drive a path-traversal name into fs.rm/fs.unlink. Seed such a row plus
+      // a sentinel YAML at the location the traversal name resolves to OUTSIDE
+      // panels/ — panelYamlPath(dataHome, "../etc") => <dataHome>/etc.yaml.
+      const badName = "../etc";
+      const now = new Date().toISOString();
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { PanelLibraryRepository } = await import(
+        "../../../../src/memory/repositories/panel-library-repo.js"
+      );
+      {
+        const db = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          await db
+            .insertInto("panel_library")
+            .values({
+              name: badName,
+              description: null,
+              yaml_path: `${badName}.yaml`,
+              yaml_checksum: "x",
+              created_at: now,
+              updated_at: now,
+            })
+            .execute();
+        } finally {
+          await db.destroy();
+        }
+      }
+      const escapeYaml = path.join(env.dataHome, "etc.yaml");
+      await fs.writeFile(escapeYaml, "sentinel — must survive", "utf-8");
+
+      fsCalls.rm.length = 0;
+      fsCalls.unlink.length = 0;
+
+      const cmd = buildPanelCommand(
+        () => {
+          /* noop */
+        },
+        () => {
+          /* noop */
+        },
+      );
+      await expect(
+        cmd.parseAsync(["node", "council-panel", "delete", badName, "--yes"]),
+      ).rejects.toThrow(/kebab|invalid/i);
+
+      // (c) No destructive filesystem call ran for the rejected name — assert
+      //     BEFORE any further DB/FS work in this test can add records.
+      expect(fsCalls.rm).toEqual([]);
+      expect(fsCalls.unlink).toEqual([]);
+
+      // (a) The seeded row is still present — the delete never reached the DB.
+      {
+        const db = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          const repo = new PanelLibraryRepository(db);
+          await expect(repo.findByName(badName)).resolves.toMatchObject({ name: badName });
+        } finally {
+          await db.destroy();
+        }
+      }
+      // (b) The out-of-tree YAML the traversal name would resolve to is untouched.
+      await expect(fs.access(escapeYaml)).resolves.toBeUndefined();
     });
 
     it("tolerates a missing YAML on disk and still removes the DB row", async () => {
