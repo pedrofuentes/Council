@@ -261,6 +261,45 @@ describe("csv extractor", () => {
     });
   });
 
+  // Regression (Sentinel sentinel-2026-07-01T15:45:53Z-bbf446a): in a
+  // SINGLE-column file a phantom [""] row is indistinguishable from a genuine
+  // empty value — a blank source line and an explicit RFC 4180 quoted "" field
+  // both parse to [""]. The blank-line skip must therefore be header-arity
+  // aware: it may only drop [""] rows when the header has >= 2 columns.
+  // A 1-column empty value is legitimate data and MUST be preserved, otherwise
+  // single-column files silently lose rows.
+  describe("single-column empty-value preservation (regression)", () => {
+    // An empty value renders as a bare "|  |" cell: the same shape the
+    // multi-column tests reject as a phantom row, but here it is real data.
+    const EMPTY_CELL = /^\|\s+\|$/m;
+
+    it("preserves an interior empty value in a single-column CSV", async () => {
+      const { extractor } = await loadCsvExtractor(".csv");
+      const csv = "id\n1\n\n3\n";
+      const out = await extractor(ctx(Buffer.from(csv, "utf-8")));
+      expect(out.content).toContain("| id |");
+      expect(out.content).toContain("| 1 |");
+      expect(out.content).toContain("| 3 |");
+      // header + separator + three data rows (1, empty, 3); the empty value
+      // survives rather than being dropped as a blank line.
+      expect(tableRowLines(out.content)).toHaveLength(5);
+      expect(out.content).toMatch(EMPTY_CELL);
+    });
+
+    it("preserves an explicit quoted-empty field in a single-column CSV", async () => {
+      const { extractor } = await loadCsvExtractor(".csv");
+      const csv = 'fruit\napple\n""\nbanana\n';
+      const out = await extractor(ctx(Buffer.from(csv, "utf-8")));
+      expect(out.content).toContain("| fruit |");
+      expect(out.content).toContain("| apple |");
+      expect(out.content).toContain("| banana |");
+      // header + separator + three data rows (apple, empty, banana): the RFC
+      // 4180 quoted-empty field is preserved, matching pre-fix behavior.
+      expect(tableRowLines(out.content)).toHaveLength(5);
+      expect(out.content).toMatch(EMPTY_CELL);
+    });
+  });
+
   it("parses CRLF line endings identically to LF, with no stray carriage returns (#946)", async () => {
     const { extractor } = await loadCsvExtractor(".csv");
     const lfOut = await extractor(ctx(Buffer.from("name,age\nAlice,30\nBob,25\n", "utf-8")));
