@@ -131,10 +131,15 @@ describe("Debate.run() — turn ordering and delta accumulation", () => {
   });
 
   it("experts speak sequentially within a round (no interleaving)", async () => {
-    // Use a delay so deltas would interleave if the implementation was parallel
+    // Multi-sentence responses produce 3+ deltas per expert; combined with a
+    // generous deltaDelayMs they open a real interleaving window that would
+    // expose any parallel execution in the orchestrator (CI-flake guard).
     const engine = new MockEngine({
-      responses: { "01HZ-cto": "C-only.", "01HZ-pm": "P-only." },
-      deltaDelayMs: 5,
+      responses: {
+        "01HZ-cto": "C-first. C-second. C-third.",
+        "01HZ-pm": "P-first. P-second. P-third.",
+      },
+      deltaDelayMs: 25,
     });
     await engine.start();
     await engine.addExpert(cto);
@@ -190,11 +195,66 @@ describe("Debate.run() — error path", () => {
     await engine.start();
     await engine.addExpert(cto);
     await engine.addExpert(pm);
-    const debate = new Debate(engine, [cto, pm], { ...FREEFORM_2R, maxRounds: 1 });
+    // retryBackoffMs: [1, 2] keeps the test fast; default [250, 1000] adds ~1.26s
+    const debate = new Debate(engine, [cto, pm], {
+      ...FREEFORM_2R,
+      maxRounds: 1,
+      retryBackoffMs: [1, 2],
+    });
     const events = await collect(debate.run("topic"));
     const errors = events.filter((e) => e.kind === "error");
     expect(errors.length).toBeGreaterThanOrEqual(1);
+    // Error payload shape: expertSlug pinned to the failing expert; recoverable
+    // reflects isRecoverable(RATE_LIMITED) === true from the engine contract.
+    const firstError = errors[0];
+    expect(firstError?.kind).toBe("error");
+    if (firstError?.kind === "error") {
+      expect(firstError.expertSlug).toBe("pm");
+      expect(firstError.recoverable).toBe(true);
+    }
+    // A failed turn must NOT emit turn.end — it would persist an empty row.
+    const pmTurnEnds = events.filter((e) => e.kind === "turn.end" && e.expertSlug === "pm");
+    expect(pmTurnEnds).toHaveLength(0);
+    // The debate continues past the error and closes normally.
     const last = events[events.length - 1];
     expect(last?.kind).toBe("debate.end");
+  });
+});
+
+describe("Debate.run() — edge cases", () => {
+  it("emits panel.assembled then throws when experts is empty (round-robin guard)", async () => {
+    const engine = new MockEngine({});
+    await engine.start();
+    const debate = new Debate(engine, [], { ...FREEFORM_2R, maxRounds: 1 });
+    const collected: DebateEvent[] = [];
+    // The round-robin strategy calls assertNonEmptyExperts() inside planRound(),
+    // which fires AFTER round.start. The throw propagates through the generator.
+    await expect(async () => {
+      for await (const evt of debate.run("topic")) {
+        collected.push(evt);
+      }
+    }).rejects.toThrow(/round-robin.*requires at least one expert/);
+    // panel.assembled is always the first event, even for an empty panel.
+    expect(collected[0]?.kind).toBe("panel.assembled");
+    if (collected[0]?.kind === "panel.assembled") {
+      expect(collected[0].experts).toHaveLength(0);
+    }
+    // round.start fires before planRound() — verify it was emitted.
+    expect(collected[1]?.kind).toBe("round.start");
+  });
+
+  it("emits only panel.assembled and debate.end when maxRounds is 0", async () => {
+    const engine = new MockEngine({ responses: { "01HZ-cto": "ok." } });
+    await engine.start();
+    await engine.addExpert(cto);
+    const debate = new Debate(engine, [cto], { ...FREEFORM_2R, maxRounds: 0 });
+    const events = await collect(debate.run("topic"));
+    // The for-loop condition (round < 0) is immediately false — no rounds run.
+    const kinds = events.map((e) => e.kind);
+    expect(kinds).toEqual(["panel.assembled", "debate.end"]);
+    const last = events[events.length - 1];
+    if (last?.kind === "debate.end") {
+      expect(last.reason).toBe("completed");
+    }
   });
 });
