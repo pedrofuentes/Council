@@ -155,6 +155,77 @@ describe("NodeSqliteDialect", () => {
     await expect(promise).rejects.toThrow();
   });
 
+  describe("streamQuery (#1259)", () => {
+    it("streams SELECT rows in insertion order, one row per yielded chunk", async () => {
+      await db
+        .insertInto("widgets")
+        .values([
+          { name: "alpha", qty: 1 },
+          { name: "beta", qty: 2 },
+          { name: "gamma", qty: 3 },
+        ])
+        .execute();
+
+      const conn = new NodeSqliteConnection(raw);
+      const compiled = db.selectFrom("widgets").selectAll().orderBy("id").compile();
+
+      const chunks: unknown[] = [];
+      for await (const result of conn.streamQuery(compiled)) {
+        chunks.push(result.rows);
+      }
+
+      expect(chunks).toEqual([
+        [{ id: 1, name: "alpha", qty: 1 }],
+        [{ id: 2, name: "beta", qty: 2 }],
+        [{ id: 3, name: "gamma", qty: 3 }],
+      ]);
+    });
+
+    it("binds positional parameters when streaming a filtered SELECT", async () => {
+      await db
+        .insertInto("widgets")
+        .values([
+          { name: "alpha", qty: 1 },
+          { name: "beta", qty: 2 },
+          { name: "gamma", qty: 3 },
+        ])
+        .execute();
+
+      const conn = new NodeSqliteConnection(raw);
+      const compiled = db
+        .selectFrom("widgets")
+        .selectAll()
+        .where("qty", ">", 1)
+        .orderBy("id")
+        .compile();
+
+      const rows: unknown[] = [];
+      for await (const result of conn.streamQuery(compiled)) {
+        rows.push(...result.rows);
+      }
+
+      expect(rows).toEqual([
+        { id: 2, name: "beta", qty: 2 },
+        { id: 3, name: "gamma", qty: 3 },
+      ]);
+    });
+
+    it("rejects with a specific error rather than executing a non-select query", async () => {
+      const conn = new NodeSqliteConnection(raw);
+      const compiled = db.insertInto("widgets").values({ name: "nope", qty: 1 }).compile();
+
+      const iterator = conn.streamQuery(compiled);
+
+      await expect(iterator.next()).rejects.toThrow(
+        "node:sqlite driver only supports streaming select queries",
+      );
+
+      // The guard must fire before any statement is prepared/executed.
+      const rows = await db.selectFrom("widgets").selectAll().execute();
+      expect(rows).toEqual([]);
+    });
+  });
+
   it("serializes overlapping connection acquisitions through the mutex", async () => {
     const driver = new NodeSqliteDriver(raw);
     await driver.init();
