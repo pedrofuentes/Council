@@ -484,3 +484,322 @@ describe("buildLLMSummary — best-effort failure observability (#268)", () => {
     }
   });
 });
+
+/** Extract the text between the `<transcript>` and `</transcript>` fence. */
+function transcriptRegion(prompt: string): string {
+  const open = "<transcript>";
+  const close = "</transcript>";
+  const start = prompt.indexOf(open);
+  const end = prompt.indexOf(close);
+  if (start < 0 || end < 0 || end < start) {
+    throw new Error("prompt is missing a well-formed transcript fence");
+  }
+  return prompt.slice(start + open.length, end);
+}
+
+/** A warning sink that records the message it received and then throws. */
+function recordingThrowingSink(record: string[]): (message: string) => void {
+  return (message: string): void => {
+    record.push(message);
+    throw new Error("sink boom");
+  };
+}
+
+describe("buildLLMSummary — a throwing warning sink never breaks the best-effort contract (#1938)", () => {
+  class ThrowingStreamEngine extends RecordingEngine {
+    override send(opts: SendOptions): AsyncIterable<EngineEvent> {
+      this.sends.push({ expertId: opts.expertId, prompt: opts.prompt, signal: opts.signal });
+      const expertId = opts.expertId;
+      return (async function* (): AsyncGenerator<EngineEvent, void, void> {
+        yield { kind: "message.delta", expertId, text: "partial-before-throw" };
+        throw new Error("stream exploded");
+      })();
+    }
+  }
+
+  class StreamErrorEngine extends RecordingEngine {
+    override send(opts: SendOptions): AsyncIterable<EngineEvent> {
+      this.sends.push({ expertId: opts.expertId, prompt: opts.prompt, signal: opts.signal });
+      const expertId = opts.expertId;
+      return (async function* (): AsyncGenerator<EngineEvent, void, void> {
+        yield { kind: "message.delta", expertId, text: "partial" };
+        yield {
+          kind: "error",
+          expertId,
+          error: { code: "PROVIDER_ERROR", message: "boom" },
+          recoverable: false,
+        };
+      })();
+    }
+  }
+
+  class CleanupFailEngine extends RecordingEngine {
+    override async removeExpert(expertId: string): Promise<void> {
+      this.removed.push(expertId);
+      throw new Error("cleanup boom");
+    }
+  }
+
+  class FailingRegisterEngine extends RecordingEngine {
+    override async addExpert(_spec: ExpertSpec): Promise<void> {
+      throw new Error("registration unavailable");
+    }
+  }
+
+  class StallingEngine extends RecordingEngine {
+    override send(opts: SendOptions): AsyncIterable<EngineEvent> {
+      this.sends.push({ expertId: opts.expertId, prompt: opts.prompt, signal: opts.signal });
+      const expertId = opts.expertId;
+      const signal = opts.signal;
+      return (async function* (): AsyncGenerator<EngineEvent, void, void> {
+        yield { kind: "message.delta", expertId, text: "partial" };
+        await new Promise<void>((resolve) => {
+          if (signal?.aborted) {
+            resolve();
+            return;
+          }
+          signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        yield {
+          kind: "error",
+          expertId,
+          error: { code: "ABORTED", message: "aborted" },
+          recoverable: false,
+        };
+      })();
+    }
+  }
+
+  it("swallows a sink that throws on the registration-failure warning", async () => {
+    const engine = new FailingRegisterEngine(["unused"]);
+    const attempts: string[] = [];
+    // Best-effort contract: a throwing sink must NOT propagate out of the
+    // summarizer. The round continues with no rolling summary.
+    await expect(
+      buildLLMSummary(baseTurns, 2, cfg, engine, "gpt-test", {
+        onWarning: recordingThrowingSink(attempts),
+      }),
+    ).resolves.toBe("");
+    expect(attempts.some((m) => /registration/i.test(m))).toBe(true);
+    expect(engine.sends.length).toBe(0);
+  });
+
+  it("swallows a sink that throws on the stream-error warning and returns the partial summary", async () => {
+    const engine = new StreamErrorEngine([]);
+    const attempts: string[] = [];
+    await expect(
+      buildLLMSummary(baseTurns, 2, cfg, engine, "gpt-test", {
+        onWarning: recordingThrowingSink(attempts),
+      }),
+    ).resolves.toBe("partial");
+    expect(attempts.some((m) => /stream error|PROVIDER_ERROR/i.test(m))).toBe(true);
+    expect(engine.removed.length).toBe(1);
+  });
+
+  it("swallows a sink that throws on the thrown-stream warning and returns the partial summary", async () => {
+    const engine = new ThrowingStreamEngine([]);
+    const attempts: string[] = [];
+    await expect(
+      buildLLMSummary(baseTurns, 2, cfg, engine, "gpt-test", {
+        onWarning: recordingThrowingSink(attempts),
+      }),
+    ).resolves.toBe("partial-before-throw");
+    expect(attempts.some((m) => /stream failed/i.test(m))).toBe(true);
+    expect(engine.removed.length).toBe(1);
+  });
+
+  it("swallows a sink that throws on the cleanup-failure warning and returns the summary", async () => {
+    const engine = new CleanupFailEngine(["done"]);
+    const attempts: string[] = [];
+    await expect(
+      buildLLMSummary(baseTurns, 2, cfg, engine, "gpt-test", {
+        onWarning: recordingThrowingSink(attempts),
+      }),
+    ).resolves.toBe("done");
+    expect(attempts.some((m) => /cleanup/i.test(m))).toBe(true);
+    expect(engine.removed.length).toBe(1);
+  });
+
+  it(
+    "swallows a sink that throws on the timeout warning and returns the partial summary",
+    async () => {
+      const engine = new StallingEngine([]);
+      const attempts: string[] = [];
+      await expect(
+        buildLLMSummary(baseTurns, 2, cfg, engine, "gpt-test", {
+          timeoutMs: 50,
+          onWarning: recordingThrowingSink(attempts),
+        }),
+      ).resolves.toBe("partial");
+      expect(attempts.some((m) => /timed out/i.test(m))).toBe(true);
+      expect(engine.removed.length).toBe(1);
+    },
+    2000,
+  );
+
+  it("swallows a throwing console.warn fallback when no onWarning sink is wired", async () => {
+    const engine = new FailingRegisterEngine(["unused"]);
+    const spy = vi.spyOn(console, "warn").mockImplementation(() => {
+      throw new Error("console sink boom");
+    });
+    try {
+      await expect(buildLLMSummary(baseTurns, 2, cfg, engine, "gpt-test")).resolves.toBe("");
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("buildLLMSummary — warning sink is a hardened single-line display sink (#1938)", () => {
+  class NastyErrorEngine extends RecordingEngine {
+    private readonly nasty: string;
+    constructor(nasty: string) {
+      super([]);
+      this.nasty = nasty;
+    }
+    override send(opts: SendOptions): AsyncIterable<EngineEvent> {
+      this.sends.push({ expertId: opts.expertId, prompt: opts.prompt, signal: opts.signal });
+      const expertId = opts.expertId;
+      const message = this.nasty;
+      return (async function* (): AsyncGenerator<EngineEvent, void, void> {
+        yield {
+          kind: "error",
+          expertId,
+          error: { code: "PROVIDER_ERROR", message },
+          recoverable: false,
+        };
+      })();
+    }
+  }
+
+  it("collapses adversarial control/bidi bytes in provider error text to a single control-free line", async () => {
+    // Provider-controlled error text laced with TAB, C0 (BEL), an ANSI CSI
+    // erase-screen, C1 (U+009B), DEL, a bidi override, CR/LF, and the
+    // Unicode line/paragraph separators. The warning sink must receive a
+    // single, control-free line.
+    const nasty =
+      "boom\r\nFAKE: injected\t\u0007\u001B[2Jclear\u009Bmore\u007Fdel\u202Ereversed\u2028\u2029next";
+    const engine = new NastyErrorEngine(nasty);
+    const messages: string[] = [];
+    await buildLLMSummary(baseTurns, 2, cfg, engine, "gpt-test", {
+      onWarning: (m) => messages.push(m),
+    });
+    const msg = messages.find((m) => /stream error/i.test(m));
+    if (msg === undefined) throw new Error("expected a stream-error warning");
+    // Single line: no CR/LF/TAB or Unicode line/paragraph separators survive.
+    expect(msg).not.toMatch(/[\r\n\t\u2028\u2029]/);
+    // Control-free: no C0, DEL, or C1 bytes survive.
+    // eslint-disable-next-line no-control-regex
+    expect(msg).not.toMatch(/[\u0000-\u001F\u007F-\u009F]/);
+    // No bidi override/isolate characters (Trojan-Source) survive.
+    expect(msg).not.toMatch(/[\u202A-\u202E\u2066-\u2069]/);
+    // The readable core is preserved for observability.
+    expect(msg).toContain("boom");
+    expect(msg).toMatch(/stream error/i);
+  });
+});
+
+describe("buildLLMSummary — transcript cap is measured on the ESCAPED serialization (#1939)", () => {
+  it("keeps the cumulative escaped transcript within maxTranscriptChars even when content is escape-heavy", async () => {
+    // Content dense with '<' — escapeFenceContent expands each 1 → 4 chars.
+    // Budgeting on RAW field lengths would let the serialized transcript
+    // balloon ~4x past the cap.
+    const turns: PriorTurnRecord[] = [];
+    for (let i = 0; i < 40; i++) {
+      turns.push({
+        expertSlug: `e${i}`,
+        displayName: `Ex<${i}>`,
+        content: "<".repeat(80),
+        round: i,
+      });
+    }
+    const maxTranscriptChars = 600;
+    const engine = new RecordingEngine(["ok"]);
+    await buildLLMSummary(turns, 2, { ...cfg, maxTranscriptChars }, engine, "gpt-test");
+
+    const prompt = engine.sends[0]?.prompt;
+    if (prompt === undefined) throw new Error("expected one send");
+    const region = transcriptRegion(prompt);
+    // The serialized (escaped) transcript stays within the cap (+1 for the
+    // single newline immediately after the opening fence).
+    expect(region.length).toBeLessThanOrEqual(maxTranscriptChars + 1);
+    // Discriminating: the most recent turn always survives the window.
+    expect(prompt).toContain("[Round 39]");
+    // The content is escaped, never emitted as raw fence-breaking '<'.
+    expect(region).toContain("&lt;");
+    expect(region).not.toContain("<".repeat(5));
+  });
+
+  it("truncates an oversized latest turn on its ESCAPED length so the fence stays within budget", async () => {
+    const maxTranscriptChars = 400;
+    const turns: readonly PriorTurnRecord[] = [
+      { expertSlug: "solo", displayName: "Solo", content: "<".repeat(2000), round: 7 },
+    ];
+    const engine = new RecordingEngine(["ok"]);
+    await buildLLMSummary(turns, 2, { ...cfg, maxTranscriptChars }, engine, "gpt-test");
+    const prompt = engine.sends[0]?.prompt;
+    if (prompt === undefined) throw new Error("expected one send");
+    const region = transcriptRegion(prompt);
+    expect(region.length).toBeLessThanOrEqual(maxTranscriptChars + 1);
+    // The latest turn is still represented (its header survives).
+    expect(prompt).toContain("[Round 7]");
+    // Only escaped fragments appear; the raw 2000-'<' body never does.
+    expect(region).not.toContain("<".repeat(2));
+    expect(region).toContain("&lt;");
+  });
+});
+
+describe("buildLLMSummary — thrown engine stream is caught best-effort (#1940)", () => {
+  class ThrowingStreamEngine extends RecordingEngine {
+    override send(opts: SendOptions): AsyncIterable<EngineEvent> {
+      this.sends.push({ expertId: opts.expertId, prompt: opts.prompt, signal: opts.signal });
+      const expertId = opts.expertId;
+      return (async function* (): AsyncGenerator<EngineEvent, void, void> {
+        yield { kind: "message.delta", expertId, text: "partial-A" };
+        yield { kind: "message.delta", expertId, text: "partial-B" };
+        throw new Error("stream exploded after partial");
+      })();
+    }
+  }
+
+  it("returns the collected partial summary and warns when the stream iterator throws", async () => {
+    const engine = new ThrowingStreamEngine([]);
+    const warnings: string[] = [];
+    const out = await buildLLMSummary(baseTurns, 2, cfg, engine, "gpt-test", {
+      onWarning: (m) => warnings.push(m),
+    });
+    // Best-effort: whatever was collected before the throw is returned.
+    expect(out).toBe("partial-Apartial-B");
+    expect(warnings.some((w) => /stream failed/i.test(w))).toBe(true);
+    // The thrown provider reason is surfaced (truncated) in the warning.
+    expect(warnings.some((w) => /stream exploded/i.test(w))).toBe(true);
+    // The summarizer expert is still torn down after the thrown stream.
+    expect(engine.removed.length).toBe(1);
+  });
+});
+
+describe("buildLLMSummary — degenerate transcript budgets (#1940)", () => {
+  it.each([
+    ["zero", 0],
+    ["negative", -128],
+    ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
+  ] as const)("bounds the prompt when maxTranscriptChars is %s", async (_label, maxTranscriptChars) => {
+    const marker = `MARKER_${"A".repeat(5000)}`;
+    const turns: readonly PriorTurnRecord[] = [
+      { expertSlug: "old", displayName: "Old", content: "stale", round: 0 },
+      { expertSlug: "solo", displayName: "Solo", content: marker, round: 9 },
+    ];
+    const engine = new RecordingEngine(["ok"]);
+    await buildLLMSummary(turns, 2, { ...cfg, maxTranscriptChars }, engine, "gpt-test");
+    const prompt = engine.sends[0]?.prompt;
+    if (prompt === undefined) throw new Error("expected one send");
+    // A non-positive/non-finite budget collapses to zero content: the huge
+    // latest body is dropped and the prompt stays tiny and well-formed.
+    expect(prompt.length).toBeLessThan(500);
+    expect(prompt).not.toContain(marker);
+    expect(prompt).toContain("<transcript>");
+    expect(prompt).toContain("</transcript>");
+  });
+});
