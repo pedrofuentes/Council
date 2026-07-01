@@ -1973,6 +1973,101 @@ fs.writeFileSync(p, body, 'utf-8');`,
       }
     });
 
+    it("rolls back already-committed files when a later commit copy fails (#1084)", async () => {
+      await seedExpert(env, PERSONA);
+      // Two valid local files. The staging phase succeeds for both; the
+      // commit phase then copies them into docs/ one-by-one. We force the
+      // SECOND copy to fail by pre-seeding docs/second.md as a DIRECTORY
+      // (copyFile onto a dir throws). With a non-atomic commit, first.md is
+      // left orphaned in docs/; an atomic commit must roll it back.
+      const srcDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-src-"));
+      const first = path.join(srcDir, "first.md");
+      const second = path.join(srcDir, "second.md");
+      await fs.writeFile(first, "first body", "utf-8");
+      await fs.writeFile(second, "second body", "utf-8");
+      const docsDir = path.join(env.dataHome, "experts", "boss", "docs");
+      await fs.mkdir(path.join(docsDir, "second.md"), { recursive: true });
+
+      try {
+        let erred = "";
+        const cmd = buildExpertCommand(
+          () => {
+            /* noop */
+          },
+          (s) => {
+            erred += s;
+          },
+          { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+        );
+        await expect(
+          cmd.parseAsync([
+            "node",
+            "council-expert",
+            "train",
+            "boss",
+            "--file",
+            first,
+            "--file",
+            second,
+          ]),
+        ).rejects.toThrow();
+        expect(erred.length).toBeGreaterThan(0);
+
+        // No orphaned commit: first.md must have been rolled back.
+        const entries = await fs.readdir(docsDir).catch(() => [] as string[]);
+        expect(entries).not.toContain("first.md");
+        // No staging dir left behind, and no committed (non-dot) files.
+        expect(entries.filter((e) => !e.startsWith(".") && e !== "second.md")).toEqual([]);
+      } finally {
+        await fs.rm(srcDir, { recursive: true, force: true });
+      }
+    });
+
+    it("restores a pre-existing doc overwritten by the commit when a later copy fails (#1084)", async () => {
+      await seedExpert(env, PERSONA);
+      // keep.md already exists in docs/. The commit overwrites it with new
+      // content, then a later copy fails. An atomic commit must restore the
+      // ORIGINAL content rather than leave the half-applied overwrite.
+      const docsDir = path.join(env.dataHome, "experts", "boss", "docs");
+      await fs.mkdir(docsDir, { recursive: true });
+      await fs.writeFile(path.join(docsDir, "keep.md"), "ORIGINAL", "utf-8");
+      await fs.mkdir(path.join(docsDir, "collide.md"), { recursive: true });
+
+      const srcDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-src-"));
+      const keep = path.join(srcDir, "keep.md");
+      const collide = path.join(srcDir, "collide.md");
+      await fs.writeFile(keep, "NEW CONTENT", "utf-8");
+      await fs.writeFile(collide, "collide body", "utf-8");
+
+      try {
+        const cmd = buildExpertCommand(
+          () => {
+            /* noop */
+          },
+          () => {
+            /* noop */
+          },
+          { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+        );
+        await expect(
+          cmd.parseAsync([
+            "node",
+            "council-expert",
+            "train",
+            "boss",
+            "--file",
+            keep,
+            "--file",
+            collide,
+          ]),
+        ).rejects.toThrow();
+        // The pre-existing doc must be restored to its original content.
+        expect(await fs.readFile(path.join(docsDir, "keep.md"), "utf-8")).toBe("ORIGINAL");
+      } finally {
+        await fs.rm(srcDir, { recursive: true, force: true });
+      }
+    });
+
     it("--url rejects responses whose Content-Length exceeds the size cap", async () => {
       await seedExpert(env, PERSONA);
       const tooBig = 100 * 1024 * 1024; // 100 MB

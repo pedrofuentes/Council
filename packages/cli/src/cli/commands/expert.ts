@@ -156,9 +156,7 @@ export function formatPrefilledLines(opts: CreateOptions): string {
     ["personality", opts.personality],
     ["personaDescription", opts.personaDescription],
   ];
-  const provided = entries.filter(
-    (e): e is readonly [string, string] => e[1] !== undefined,
-  );
+  const provided = entries.filter((e): e is readonly [string, string] => e[1] !== undefined);
   if (provided.length === 0) return "";
   return provided.map(([label, value]) => `  ✓ ${label}: ${value}\n`).join("") + "\n";
 }
@@ -416,7 +414,9 @@ async function runExpertList(write: Writer, format: "table" | "json"): Promise<v
       }),
     );
     const header = ["slug", "display name", "role", "kind", "panels"] as const;
-    const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)));
+    const widths = header.map((h, i) =>
+      Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)),
+    );
     const pad = (s: string, w: number): string => s + " ".repeat(Math.max(0, w - s.length));
     write(header.map((h, i) => pad(h, widths[i] ?? 0)).join("  ") + "\n");
     write(widths.map((w) => "-".repeat(w)).join("  ") + "\n");
@@ -536,9 +536,7 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
             write(`  Vocabulary:          ${profile.vocabulary.join(", ")}\n`);
           }
           write(`  Epistemic Stance:    ${profile.epistemicStance}\n`);
-          write(
-            `  Documents:           ${profile.documentCount} (${profile.totalWords} words)\n`,
-          );
+          write(`  Documents:           ${profile.documentCount} (${profile.totalWords} words)\n`);
           write(`  Last Updated:        ${profile.lastUpdated}\n`);
         }
       });
@@ -685,9 +683,10 @@ function buildDeleteCommand(write: Writer, writeError: Writer): Command {
           throw new CliUserError(msg);
         }
         if (!opts.yes && isNonInteractive()) {
-          const msg = panels.length > 0 && opts.force
-            ? `Non-interactive mode: --force requires --yes to confirm deletion of "${slug}" (used in ${panels.length} panel${panels.length === 1 ? "" : "s"}).`
-            : `Non-interactive mode: deleting "${slug}" requires --yes to confirm.`;
+          const msg =
+            panels.length > 0 && opts.force
+              ? `Non-interactive mode: --force requires --yes to confirm deletion of "${slug}" (used in ${panels.length} panel${panels.length === 1 ? "" : "s"}).`
+              : `Non-interactive mode: deleting "${slug}" requires --yes to confirm.`;
           writeError(msg + "\n");
           throw new CliUserError(msg);
         }
@@ -970,11 +969,7 @@ export function deriveFilenameFromUrl(rawUrl: string): string {
  * size cap (rejecting via Content-Length when present, otherwise
  * tracking bytes as they stream and unlinking the partial file).
  */
-async function ingestUrlIntoDocs(
-  rawUrl: string,
-  destDir: string,
-  write: Writer,
-): Promise<string> {
+async function ingestUrlIntoDocs(rawUrl: string, destDir: string, write: Writer): Promise<string> {
   const filename = deriveFilenameFromUrl(rawUrl);
   const displayUrl = redactUrlForLog(new URL(rawUrl));
   write(`Downloading ${displayUrl} to ${filename}...\n`);
@@ -1038,6 +1033,54 @@ async function ingestUrlIntoDocs(
   }
   await handle.close();
   return filename;
+}
+
+/**
+ * Atomically commit staged files into the docs dir. Files are copied
+ * one-by-one, but the operation is all-or-nothing: a pre-existing doc that
+ * would be overwritten is first moved aside, and if any copy fails the
+ * already-committed files are removed and overwritten originals restored,
+ * so docs/ is never left in a partial state (#1084). Backups use a unique
+ * suffix the processor never scans and are cleaned up on success.
+ */
+async function commitStagedDocs(
+  stagingPath: string,
+  docsPath: string,
+  staged: readonly string[],
+): Promise<void> {
+  const committed: { readonly dest: string; readonly backup: string | undefined }[] = [];
+  try {
+    for (const filename of staged) {
+      const dest = path.join(docsPath, filename);
+      let backup: string | undefined;
+      let existing: Stats | undefined;
+      try {
+        existing = await fs.lstat(dest);
+      } catch {
+        existing = undefined;
+      }
+      if (existing?.isFile()) {
+        backup = `${dest}.train-bak-${process.pid}-${Date.now()}`;
+        await fs.rename(dest, backup);
+      }
+      await fs.copyFile(path.join(stagingPath, filename), dest);
+      committed.push({ dest, backup });
+    }
+  } catch (err) {
+    for (const { dest, backup } of committed.reverse()) {
+      await fs.rm(dest, { force: true }).catch(() => undefined);
+      if (backup !== undefined) {
+        await fs.rename(backup, dest).catch(() => undefined);
+      }
+    }
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new CliUserError(
+      `Failed to commit ingested files; rolled back to prior state: ${detail}`,
+    );
+  }
+  for (const { backup } of committed) {
+    if (backup !== undefined) await fs.rm(backup, { force: true }).catch(() => undefined);
+  }
 }
 
 function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertCommandDeps): Command {
@@ -1108,11 +1151,10 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
             }
             // Commit: every input succeeded, so copy the staged files into
             // the docs dir. This phase only touches local files we just
-            // created and runs immediately before training, eliminating the
-            // orphan window.
-            for (const filename of staged) {
-              await fs.copyFile(path.join(stagingPath, filename), path.join(docsPath, filename));
-            }
+            // created and runs immediately before training. The commit is
+            // atomic — a mid-loop copy failure rolls back already-copied
+            // files (#1084) — so docs/ never ends up in a partial state.
+            await commitStagedDocs(stagingPath, docsPath, staged);
           } catch (err) {
             if (err instanceof CliUserError) {
               writeError(err.message + "\n");
