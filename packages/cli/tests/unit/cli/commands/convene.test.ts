@@ -21,6 +21,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { sql } from "kysely";
 
 import { buildConveneCommand } from "../../../../src/cli/commands/convene.js";
 import { setQuiet } from "../../../../src/cli/commands/writer.js";
@@ -920,12 +921,125 @@ describe("buildConveneCommand", () => {
       ).rejects.toThrow();
 
       expect(subscribed).toBe(true);
-      // The critical assertion: even though expertRepo.create threw
-      // mid-loop (before runWithEngine started), the finally block
-      // fired and the listener was removed. Against commit b07f02b
-      // (which put the subscribe INSIDE a narrower try wrapping only
-      // runWithEngine) this assertion is false — the listener leaks.
+      // Even though engine construction threw INSIDE runWithEngine (before the
+      // debate streamed), the shared `finally { unsubscribeInterrupt() }` fired
+      // and the listener was removed. This throw originates inside
+      // runWithEngine, so it does NOT discriminate the historical b07f02b
+      // structure (a narrow `try` wrapping only runWithEngine would still
+      // unsubscribe it). The setup-path throw BETWEEN subscribe and
+      // runWithEngine — during panel/expert persistence — is covered by the
+      // companion test below (#1936).
       expect(unsubscribed).toBe(true);
+    });
+
+    it("unsubscribes the SIGINT handler when persistence throws between subscribe and runWithEngine (#1936)", async () => {
+      // Regression for Sentinel pr769 finding 1, retargeted by #1936: a throw
+      // that occurs AFTER the SIGINT handler is subscribed but BEFORE
+      // runWithEngine — i.e. during panel/expert persistence — must still reach
+      // the outer `finally { unsubscribeInterrupt() }` so the process-level
+      // listener is not leaked. If a future refactor narrows the inner `try`
+      // (convene.ts) to wrap only runWithEngine (re-introducing the b07f02b
+      // structure), this persistence throw would escape without unsubscribing
+      // and this assertion would fail — which the sibling engineFactory-throw
+      // test can no longer catch.
+      //
+      // Mechanism: drop the `panels` table so `panelRepo.create` — the FIRST
+      // statement inside the protected `try`, immediately after the subscribe —
+      // rejects with "no such table: panels". createDatabase() re-opens the DB
+      // but its migrations are gated on schema_version (already recorded), so
+      // the dropped table is NOT recreated.
+      const seedDb = await createDatabase(path.join(testHome, "council.db"));
+      try {
+        await sql`DROP TABLE panels`.execute(seedDb);
+      } finally {
+        await seedDb.destroy();
+      }
+
+      let subscribed = false;
+      let unsubscribed = false;
+      const subscribeInterrupt = (_handler: () => void): (() => void) => {
+        subscribed = true;
+        return () => {
+          unsubscribed = true;
+        };
+      };
+
+      const cmd = buildConveneCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: () => undefined,
+        writeError: () => undefined,
+        subscribeInterrupt,
+      });
+
+      await expect(
+        cmd.parseAsync([
+          "node",
+          "council-convene",
+          "topic",
+          "--template",
+          "code-review",
+          "--engine",
+          "mock",
+          "--max-rounds",
+          "1",
+        ]),
+        // The error names the `panels` table, proving the throw happened during
+        // panel PERSISTENCE (between subscribe and runWithEngine), not inside
+        // the debate — the discriminating property the sibling test lost.
+      ).rejects.toThrow(/no such table: panels/i);
+
+      expect(subscribed).toBe(true);
+      expect(unsubscribed).toBe(true);
+    });
+  });
+
+  describe("variadic --experts ordering foot-gun (#1059)", () => {
+    it("surfaces the variadic ordering hint when --experts is supplied but no topic resolves", async () => {
+      // `convene --experts a b c "topic"` lets the variadic --experts greedily
+      // absorb the trailing "topic", leaving the positional empty (#1059). In a
+      // non-interactive context (tests: stdin is not a TTY) the no-topic branch
+      // must name the foot-gun explicitly instead of a generic "no topic" error.
+      let stderr = "";
+      const cmd = buildConveneCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: () => undefined,
+        writeError: (chunk) => {
+          stderr += chunk;
+        },
+      });
+      cmd.exitOverride();
+
+      await expect(
+        cmd.parseAsync(["node", "council-convene", "--experts", "senior", "--engine", "mock"]),
+      ).rejects.toThrow(/no topic provided/i);
+
+      // Discriminating: the ordering foot-gun is named (not just "no topic").
+      expect(stderr).toMatch(/--experts is variadic/i);
+      expect(stderr).toMatch(/put the topic FIRST/i);
+      // Recovery guidance: quote a comma-list.
+      expect(stderr).toMatch(/quote a comma-list/i);
+    });
+
+    it("does NOT emit the variadic ordering hint when no --experts flag is present", async () => {
+      // Inverse: without --experts, the absorbed-topic foot-gun cannot occur, so
+      // the ordering hint must stay silent (guards against the hint over-firing
+      // on every empty-topic error).
+      let stderr = "";
+      const cmd = buildConveneCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: () => undefined,
+        writeError: (chunk) => {
+          stderr += chunk;
+        },
+      });
+      cmd.exitOverride();
+
+      await expect(cmd.parseAsync(["node", "council-convene", "--engine", "mock"])).rejects.toThrow(
+        /no topic provided/i,
+      );
+
+      expect(stderr).not.toMatch(/--experts is variadic/i);
+      expect(stderr).not.toMatch(/put the topic FIRST/i);
     });
   });
 
@@ -1777,5 +1891,199 @@ describe("buildConveneCommand — user panels with slug references", () => {
     // Raw Zod jargon must NOT leak to the user
     expect(stderr).not.toContain("Too small");
     expect(stderr).not.toContain("expected array");
+  });
+
+  it("#1077: --experts near-miss slug suggests the closest library slug (did you mean)", async () => {
+    // F06's headline enhancement: a lexically-close unknown slug must surface a
+    // `(did you mean '<slug>'?)` suggestion. The existing F06 test uses a
+    // lexically-distant slug, so the suggestion BRANCH (convene.ts, suggestMatch
+    // wiring) was never exercised — a regression there would go unnoticed.
+    await seedLibraryExpert("my-expert", "MyExpert");
+
+    let stderr = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (chunk) => {
+        stderr += chunk;
+      },
+    });
+    cmd.exitOverride();
+
+    await expect(
+      cmd.parseAsync([
+        "node",
+        "council-convene",
+        "topic",
+        "--experts",
+        "my-exprt",
+        "--engine",
+        "mock",
+      ]),
+    ).rejects.toThrow(/not in the library/i);
+
+    // Discriminating: the suggestion branch fired and named the near-match.
+    expect(stderr).toMatch(/did you mean/i);
+    expect(stderr).toContain("my-expert");
+  });
+
+  it("#1077: the unknown-slug / did-you-mean line neutralizes adversarial terminal bytes", async () => {
+    // The unknown-slug echo (toSingleLineDisplay(slug)) and the suggestion echo
+    // are file/CLI-derived terminal sinks. A crafted slug packed with control,
+    // C1, DEL, bidi, CR/LF and line/paragraph-separator bytes must be collapsed
+    // to a single, control-free line — never break out of the one-line error.
+    await seedLibraryExpert("library-known", "Known");
+
+    // TAB, C0, C1 (CSI/OSC/NEL), DEL, bidi override/isolate, CR, LF, LS, PS —
+    // all embedded BETWEEN two safe letters so trimming/splitting cannot drop
+    // them and the fragment survives as one missing slug.
+    const adversarialSlug = "a\t\u0001\u001b\u009b\u009d\u0085\u007f\u202e\u2066\r\n\u2028\u2029b";
+
+    let stderr = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (chunk) => {
+        stderr += chunk;
+      },
+    });
+    cmd.exitOverride();
+
+    await expect(
+      cmd.parseAsync([
+        "node",
+        "council-convene",
+        "topic",
+        "--experts",
+        adversarialSlug,
+        "--engine",
+        "mock",
+      ]),
+    ).rejects.toThrow(/not in the library/i);
+
+    // The sink fired (it is the not-in-library error) ...
+    expect(stderr).toMatch(/not in the library/i);
+    // ... and NO raw control / bidi / line-separator byte survived to the TTY.
+    // Drop the writer's single trailing newline; any byte the regex then finds
+    // is an INTERNAL leak — including a line break the slug used to escape the
+    // one-line echo (the regex covers CR, LF, U+2028 and U+2029).
+    expect(stderr.trimEnd()).not.toMatch(
+      // eslint-disable-next-line no-control-regex
+      /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/,
+    );
+  });
+
+  it("#1078: a malformed-YAML panel load error propagates unchanged (not relabeled 'no experts')", async () => {
+    // loadPanelFriendly translates ONLY the zero-expert Zod failure into a
+    // friendly message; every other load failure (bad YAML, traversal
+    // rejection) must re-throw untouched so the user keeps the real diagnostic.
+    // Inverse of the F11 zero-expert case above.
+    await writeUserPanel("broken-yaml", "name: broken\nexperts: {unterminated");
+
+    let stderr = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (chunk) => {
+        stderr += chunk;
+      },
+    });
+    cmd.exitOverride();
+
+    await expect(
+      cmd.parseAsync([
+        "node",
+        "council-convene",
+        "topic",
+        "--template",
+        "broken-yaml",
+        "--engine",
+        "mock",
+      ]),
+      // The ORIGINAL parse error surfaces verbatim ...
+    ).rejects.toThrow(/failed to parse panel YAML/i);
+
+    // ... and is NOT masked by the zero-expert friendly branch.
+    await expect(
+      cmd.parseAsync([
+        "node",
+        "council-convene",
+        "topic",
+        "--template",
+        "broken-yaml",
+        "--engine",
+        "mock",
+      ]),
+    ).rejects.not.toThrow(/no experts|at least one expert/i);
+    expect(stderr).not.toMatch(/no experts/i);
+    expect(stderr).not.toMatch(/at least one expert/i);
+  });
+
+  it("#1059: a not-in-library --experts slug containing whitespace surfaces the variadic ordering hint", async () => {
+    // The variadic --experts greedily absorbs a trailing topic; a slug with
+    // whitespace (never valid in a kebab-case slug) is almost certainly an
+    // absorbed topic. The not-in-library error must then point at the ordering
+    // foot-gun so the user can recover (#1059).
+    await seedLibraryExpert("library-known", "Known");
+
+    let stderr = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (chunk) => {
+        stderr += chunk;
+      },
+    });
+    cmd.exitOverride();
+
+    await expect(
+      cmd.parseAsync([
+        "node",
+        "council-convene",
+        "Ship the release now?",
+        "--experts",
+        "ship it now",
+        "--engine",
+        "mock",
+      ]),
+    ).rejects.toThrow(/not in the library/i);
+
+    // Names the absorbed-topic slug ...
+    expect(stderr).toContain("ship it now");
+    // ... and points at the variadic ordering foot-gun with recovery guidance.
+    expect(stderr).toMatch(/--experts is variadic/i);
+    expect(stderr).toMatch(/put the topic FIRST/i);
+  });
+
+  it("#1059: a not-in-library --experts slug WITHOUT whitespace does not emit the ordering hint", async () => {
+    // Inverse guard: a normal kebab-case typo is not an absorbed topic, so the
+    // variadic hint must stay silent and not add noise to every unknown slug.
+    await seedLibraryExpert("library-known", "Known");
+
+    let stderr = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (chunk) => {
+        stderr += chunk;
+      },
+    });
+    cmd.exitOverride();
+
+    await expect(
+      cmd.parseAsync([
+        "node",
+        "council-convene",
+        "topic",
+        "--experts",
+        "definitely-unknown",
+        "--engine",
+        "mock",
+      ]),
+    ).rejects.toThrow(/not in the library/i);
+
+    expect(stderr).toContain("definitely-unknown");
+    expect(stderr).not.toMatch(/--experts is variadic/i);
+    expect(stderr).not.toMatch(/put the topic FIRST/i);
   });
 });
