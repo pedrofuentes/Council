@@ -20,7 +20,7 @@ import type { ChatEngineSource } from "../../../src/tui/adapters/chat-engine-ses
 import type { ChatSessionDataSource } from "../../../src/tui/adapters/chat-session.js";
 import { DataProvider, type TuiDataSources } from "../../../src/tui/components/DataProvider.js";
 import { InputCaptureProvider } from "../../../src/tui/components/InputCaptureProvider.js";
-import { AppRouter } from "../../../src/tui/router/AppRouter.js";
+import { AppRouter, debateTranscriptMaxRows } from "../../../src/tui/router/AppRouter.js";
 import { CouncilTUI } from "../../../src/tui/CouncilTUI.js";
 import type { HomeData } from "../../../src/tui/adapters/home-data.js";
 import type { ConveneDataSource } from "../../../src/tui/adapters/convene.js";
@@ -876,5 +876,203 @@ describe("AppRouter – footer globals (Esc/Quit hints)", () => {
     const frame = lastFrame() ?? "";
     expect(frame).toContain("q Quit");
     expect(frame).toContain("Esc Back");
+  });
+});
+
+// The debate transcript viewport height is derived from `layout.contentHeight`
+// via `debateTranscriptMaxRows`. Small terminals must still yield a usable
+// (>= floor) row count so the transcript never collapses or overflows the
+// surrounding chrome. See issue #1725.
+describe("debateTranscriptMaxRows – debate transcript height formula (#1725)", () => {
+  it("clamps to the floor of 4 rows at and below the knee (small terminals)", () => {
+    // contentHeight - 6 <= 4  ⟺  contentHeight <= 10, so the clamp floor governs.
+    expect(debateTranscriptMaxRows(0)).toBe(4);
+    expect(debateTranscriptMaxRows(6)).toBe(4);
+    expect(debateTranscriptMaxRows(9)).toBe(4);
+    expect(debateTranscriptMaxRows(10)).toBe(4); // knee: contentHeight - 6 === floor
+  });
+
+  it("grows one transcript row per content row above the knee", () => {
+    expect(debateTranscriptMaxRows(11)).toBe(5); // first row above the floor
+    expect(debateTranscriptMaxRows(16)).toBe(10);
+    expect(debateTranscriptMaxRows(30)).toBe(24);
+  });
+
+  it("never drops below the floor for degenerate or negative content heights (inverse invariant)", () => {
+    for (const contentHeight of [-1000, -6, -1, 0, 1, 5, 9, 10]) {
+      expect(debateTranscriptMaxRows(contentHeight)).toBe(4);
+    }
+  });
+
+  it("stays a monotonic, non-decreasing integer across the floor→linear transition", () => {
+    let previous = Number.NEGATIVE_INFINITY;
+    for (let contentHeight = 0; contentHeight <= 40; contentHeight += 1) {
+      const rows = debateTranscriptMaxRows(contentHeight);
+      expect(Number.isInteger(rows)).toBe(true);
+      expect(rows).toBeGreaterThanOrEqual(4);
+      expect(rows).toBeGreaterThanOrEqual(previous);
+      previous = rows;
+    }
+  });
+});
+
+// Read the mode badge from the footer line (identified by the global "^K"
+// palette shortcut, which only appears in the AppShell footer chrome — never in
+// the help/palette overlays) so the oracle discriminates the actual badge from
+// incidental substrings elsewhere in the frame. Colors are disabled so the
+// badge renders as plain text.
+const footerBadgeLine = (frame: string): string =>
+  frame.split("\n").find((line) => line.includes("^K")) ?? "";
+
+describe("AppRouter – footer mode badge (#1728/#1729)", () => {
+  const renderHome = (): ReturnType<typeof render> =>
+    render(
+      <InputCaptureProvider>
+        <DataProvider value={withPanels()}>
+          <MemoryRouter initialEntries={["/"]}>
+            <AppRouter
+              homeData={homeData}
+              model="gpt-4o"
+              env={{ NO_COLOR: "1" }}
+              initialColumns={120}
+              initialRows={30}
+            />
+          </MemoryRouter>
+        </DataProvider>
+      </InputCaptureProvider>,
+    );
+
+  it("shows the MAIN badge by default, and neither NAV nor INPUT (inverse baseline)", async () => {
+    const { lastFrame, unmount } = renderHome();
+    await flush();
+    const line = footerBadgeLine(lastFrame() ?? "");
+    expect(line).toContain("MAIN");
+    expect(line).not.toContain("NAV");
+    expect(line).not.toContain("INPUT");
+    unmount();
+  });
+
+  it("renders the NAV badge after Tab moves focus to the nav (#1728)", async () => {
+    const { stdin, lastFrame, unmount } = renderHome();
+    await flush();
+    expect(footerBadgeLine(lastFrame() ?? "")).toContain("MAIN");
+    await flush(stdin, "\t");
+    const line = footerBadgeLine(lastFrame() ?? "");
+    expect(line).toContain("NAV");
+    expect(line).not.toContain("MAIN");
+    expect(line).not.toContain("INPUT");
+    unmount();
+  });
+
+  it("renders the INPUT badge on an input-capturing route (#1729)", async () => {
+    const { lastFrame, unmount } = render(
+      <InputCaptureProvider>
+        <DataProvider value={withPanelCompose()}>
+          <MemoryRouter initialEntries={["/panels/compose"]}>
+            <AppRouter
+              homeData={homeData}
+              model="gpt-4o"
+              env={{ NO_COLOR: "1" }}
+              initialColumns={120}
+              initialRows={30}
+            />
+          </MemoryRouter>
+        </DataProvider>
+      </InputCaptureProvider>,
+    );
+    await flush();
+    const line = footerBadgeLine(lastFrame() ?? "");
+    expect(line).toContain("INPUT");
+    expect(line).not.toContain("MAIN");
+    expect(line).not.toContain("NAV");
+    unmount();
+  });
+
+  it("shows the PALETTE badge while the command palette is open (Ctrl+K)", async () => {
+    const { stdin, lastFrame, unmount } = renderHome();
+    await flush();
+    await flush(stdin, "\u000b"); // Ctrl+K
+    const line = footerBadgeLine(lastFrame() ?? "");
+    expect(line).toContain("PALETTE");
+    expect(line).not.toContain("MAIN");
+    unmount();
+  });
+
+  it("shows the HELP badge while the help modal is open (?)", async () => {
+    const { stdin, lastFrame, unmount } = renderHome();
+    await flush();
+    await flush(stdin, "?");
+    const line = footerBadgeLine(lastFrame() ?? "");
+    expect(line).toContain("HELP");
+    expect(line).not.toContain("MAIN");
+    unmount();
+  });
+});
+
+describe("AppRouter – debate route transcript sink (#1725 render boundary + adversarial bytes)", () => {
+  // TAB, C0 (BEL/BS), DEL, C1, bidi override, CR/LF and U+2028/U+2029 must not
+  // survive to the terminal nor break the untrusted topic/transcript out of a
+  // single line.
+  const ADVERSARIAL_TOPIC = "A\tB\u0007C\u0008D\u007fE\u009bF\u202eG\r\nH\u2028I\u2029J";
+  const ADVERSARIAL_BODY = "X\u0007Y\u202eZ\r\nW";
+  // eslint-disable-next-line no-control-regex -- the oracle must literally match the control bytes it forbids
+  const FORBIDDEN = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
+
+  it("renders the debate transcript at a tiny terminal without leaking control bytes or extra lines", async () => {
+    const convene: ConveneDataSource = {
+      estimateCost: async () => ({ experts: 1, rounds: 1, estimatedPremiumRequests: 1 }),
+      streamDebate: async (_panel, _topic, _options, onEvent) => {
+        onEvent({ kind: "panel", experts: ["Alice"] });
+        onEvent({ kind: "turn-start", expert: "Alice", round: 1 });
+        onEvent({ kind: "turn-delta", expert: "Alice", text: ADVERSARIAL_BODY });
+        onEvent({ kind: "turn-end", expert: "Alice" });
+        // Never resolve: keep the screen streaming so the transcript stays
+        // mounted while we assert against the rendered frame.
+        await new Promise<void>(() => undefined);
+        return { debateId: undefined, reason: "completed" };
+      },
+    };
+    const value = {
+      panels: { loadList: async () => [], loadDetail: async () => undefined },
+      convene,
+    } as TuiDataSources;
+
+    const { lastFrame, unmount } = render(
+      <InputCaptureProvider>
+        <DataProvider value={value}>
+          <MemoryRouter
+            initialEntries={[
+              { pathname: "/convene/acme/run", state: { topic: ADVERSARIAL_TOPIC } },
+            ]}
+          >
+            <AppRouter
+              homeData={homeData}
+              model="gpt-4o"
+              env={{ NO_COLOR: "1" }}
+              initialColumns={120}
+              initialRows={12}
+            />
+          </MemoryRouter>
+        </DataProvider>
+      </InputCaptureProvider>,
+    );
+
+    await flush();
+    const lines = (lastFrame() ?? "").split("\n");
+
+    // The untrusted topic renders on exactly ONE line (no CR/LF/U+2028/U+2029
+    // break-out) with all control bytes stripped.
+    const topicLines = lines.filter((line) => line.includes("Topic:"));
+    expect(topicLines).toHaveLength(1);
+    const topicLine = topicLines[0] ?? "";
+    expect(topicLine).toContain("Topic: A BCDEFG H I J");
+    expect(topicLine).not.toMatch(FORBIDDEN);
+
+    // The untrusted streamed turn body renders sanitized and control-byte-free.
+    const bodyLine = lines.find((line) => line.includes("XYZ W")) ?? "";
+    expect(bodyLine).not.toBe("");
+    expect(bodyLine).not.toMatch(FORBIDDEN);
+
+    unmount();
   });
 });
