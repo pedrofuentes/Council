@@ -119,7 +119,7 @@ export function buildChatCommand(deps: ChatCommandDeps = {}): Command {
     )
     .option("--new", "Archive the active conversation and start a fresh one")
     .option("--list", "List all chat conversations and exit")
-    .option("--history", "Show archived conversations for the target")
+    .option("--history", "Show active and archived conversations for the target")
     .action(async (target: string | undefined, raw: ChatRunOptions) => {
       if (raw.list) {
         await runList(write);
