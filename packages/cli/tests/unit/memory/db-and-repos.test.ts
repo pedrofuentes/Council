@@ -829,16 +829,58 @@ describe("TurnRepository", () => {
     const designer = await expertRepo.create(sampleExpert(panelId, "designer"));
 
     // Target expert (cto): 2 turns in debate 1 + 1 turn in debate 2 = 3.
-    await turnRepo.create({ debateId, round: 0, seq: 0, speakerKind: "expert", expertId, content: "cto d1 a" });
-    await turnRepo.create({ debateId, round: 0, seq: 1, speakerKind: "expert", expertId, content: "cto d1 b" });
-    await turnRepo.create({ debateId: debateId2, round: 0, seq: 0, speakerKind: "expert", expertId, content: "cto d2 a" });
+    await turnRepo.create({
+      debateId,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId,
+      content: "cto d1 a",
+    });
+    await turnRepo.create({
+      debateId,
+      round: 0,
+      seq: 1,
+      speakerKind: "expert",
+      expertId,
+      content: "cto d1 b",
+    });
+    await turnRepo.create({
+      debateId: debateId2,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId,
+      content: "cto d2 a",
+    });
 
     // Another expert (pm): 1 turn per debate = 2. Must NOT leak into cto's count.
-    await turnRepo.create({ debateId, round: 0, seq: 2, speakerKind: "expert", expertId: pm.id, content: "pm d1" });
-    await turnRepo.create({ debateId: debateId2, round: 0, seq: 1, speakerKind: "expert", expertId: pm.id, content: "pm d2" });
+    await turnRepo.create({
+      debateId,
+      round: 0,
+      seq: 2,
+      speakerKind: "expert",
+      expertId: pm.id,
+      content: "pm d1",
+    });
+    await turnRepo.create({
+      debateId: debateId2,
+      round: 0,
+      seq: 1,
+      speakerKind: "expert",
+      expertId: pm.id,
+      content: "pm d2",
+    });
 
     // A moderator turn with a null expert_id must never be attributed to anyone.
-    await turnRepo.create({ debateId, round: 0, seq: 3, speakerKind: "moderator", expertId: null, content: "synthesis" });
+    await turnRepo.create({
+      debateId,
+      round: 0,
+      seq: 3,
+      speakerKind: "moderator",
+      expertId: null,
+      content: "synthesis",
+    });
 
     // Exact counts (discriminating): cto spans both debates, pm is excluded,
     // and the null-expert moderator turn is counted for nobody.

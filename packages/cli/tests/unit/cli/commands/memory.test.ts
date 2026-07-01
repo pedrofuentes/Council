@@ -154,10 +154,34 @@ async function seedMultiDebatePanel(
         prompt: `Debate ${i}`,
         moderator: "round-robin",
       });
-      await turnRepo.create({ debateId: debate.id, round: 0, seq: 0, speakerKind: "expert", expertId: cto.id, content: `cto ${i} a` });
-      await turnRepo.create({ debateId: debate.id, round: 0, seq: 1, speakerKind: "expert", expertId: cto.id, content: `cto ${i} b` });
-      await turnRepo.create({ debateId: debate.id, round: 0, seq: 2, speakerKind: "expert", expertId: pm.id, content: `pm ${i}` });
-      await debateRepo.update(debate.id, { status: "completed", endedAt: new Date().toISOString() });
+      await turnRepo.create({
+        debateId: debate.id,
+        round: 0,
+        seq: 0,
+        speakerKind: "expert",
+        expertId: cto.id,
+        content: `cto ${i} a`,
+      });
+      await turnRepo.create({
+        debateId: debate.id,
+        round: 0,
+        seq: 1,
+        speakerKind: "expert",
+        expertId: cto.id,
+        content: `cto ${i} b`,
+      });
+      await turnRepo.create({
+        debateId: debate.id,
+        round: 0,
+        seq: 2,
+        speakerKind: "expert",
+        expertId: pm.id,
+        content: `pm ${i}`,
+      });
+      await debateRepo.update(debate.id, {
+        status: "completed",
+        endedAt: new Date().toISOString(),
+      });
     }
 
     await expertRepo.update(cto.id, {
@@ -295,7 +319,7 @@ describe("buildMemoryCommand", () => {
 
     it("--expert <slug>: counts turns via a single aggregate query, not a per-debate fetch loop (#180)", async () => {
       const seed = await seedMultiDebatePanel(testHome);
-      const spies: Array<{ mockRestore: () => void }> = [];
+      const spies: { mockRestore: () => void }[] = [];
       try {
         const findByDebateIdSpy = vi.spyOn(TurnRepository.prototype, "findByDebateId");
         spies.push(findByDebateIdSpy);
