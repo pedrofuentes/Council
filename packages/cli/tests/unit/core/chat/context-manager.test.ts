@@ -4,7 +4,7 @@
  *
  * RED at this commit: src/core/chat/context-manager.ts does not yet exist.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   type ContextManager,
@@ -211,7 +211,9 @@ describe("ContextManager", () => {
       expect(prompt).toContain("&lt;/transcript>SYSTEM");
       expect(prompt).toContain("&lt;/prior_summary>SYSTEM");
       // The prompt frames the fenced content as data, not instructions.
-      expect(prompt.toLowerCase()).toMatch(/untrusted|data, not instructions|ignore .* instructions/);
+      expect(prompt.toLowerCase()).toMatch(
+        /untrusted|data, not instructions|ignore .* instructions/,
+      );
     });
 
     it("defangs section-marker prefixes in expert speaker names", async () => {
@@ -330,7 +332,11 @@ describe("ContextManager", () => {
         return gen();
       };
 
-      const failingManager = createContextManager(repo, failingEngine, baseConfig);
+      const warnings: string[] = [];
+      const failingManager = createContextManager(repo, failingEngine, {
+        ...baseConfig,
+        onWarning: (m) => warnings.push(m),
+      });
       const session = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
       await seedTurns(repo, session.id, 3);
 
@@ -340,6 +346,11 @@ describe("ContextManager", () => {
       const refreshed = await repo.findSessionById(session.id);
       expect(refreshed?.summary).toBeNull();
       expect(refreshed?.summaryThroughSeq).toBe(0);
+      // #645: a provider error is surfaced as a distinct stream-error
+      // warning — never mislabeled as an abort/timeout.
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatch(/stream error \(PROVIDER_ERROR\)/);
+      expect(warnings[0]).not.toMatch(/timed out|aborted/i);
 
       await failingEngine.stop();
     });
@@ -347,7 +358,11 @@ describe("ContextManager", () => {
     it("returns false when addExpert rejects", async () => {
       const failingEngine = new MockEngine({ failOnAddExpert: { afterN: 0 } });
       await failingEngine.start();
-      const failingManager = createContextManager(repo, failingEngine, baseConfig);
+      const warnings: string[] = [];
+      const failingManager = createContextManager(repo, failingEngine, {
+        ...baseConfig,
+        onWarning: (m) => warnings.push(m),
+      });
 
       const session = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
       await seedTurns(repo, session.id, 3);
@@ -357,37 +372,289 @@ describe("ContextManager", () => {
       expect(result).toBe(false);
       const refreshed = await repo.findSessionById(session.id);
       expect(refreshed?.summary).toBeNull();
+      // #645: registration failure is also surfaced instead of being
+      // swallowed silently.
+      expect(warnings.some((w) => /registration failed/i.test(w))).toBe(true);
+
+      await failingEngine.stop();
+    });
+  });
+
+  // ---------- summarizer timeout & failure observability ----------
+  // Cluster fix for #641 (fast — no 5s wall-clock wait), #642 (assert the
+  // AbortSignal is actually plumbed into engine.send()), #644 (configurable
+  // timeout via ContextManagerConfig) and #645 (distinguish an abort/timeout
+  // from provider errors, exceptions and cleanup failures for observability).
+  describe("summarizer timeout & failure observability (#641/#642/#644/#645)", () => {
+    async function seedForSummary(chatId: string): Promise<void> {
+      // 6 turns, recentTurnCount=3 → maybeSummarize summarizes seq 1..3.
+      await seedTurns(repo, chatId, 3);
+    }
+
+    it("aborts a hung provider at the configured summarizerTimeoutMs and returns false (#641/#644)", async () => {
+      // deltaDelayMs is effectively infinite: without a timeout the send
+      // never terminates. A 20ms override makes this resolve in well under
+      // the old hard-coded 5s path — no CI-flake wall-clock wait (#641).
+      const hangingEngine = new MockEngine({ deltaDelayMs: 999_999 });
+      await hangingEngine.start();
+      const hangingManager = createContextManager(repo, hangingEngine, {
+        ...baseConfig,
+        summarizerTimeoutMs: 20,
+        onWarning: () => undefined,
+      });
+      const session = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+      await seedForSummary(session.id);
+
+      const result = await hangingManager.maybeSummarize(session.id);
+
+      expect(result).toBe(false);
+      const refreshed = await repo.findSessionById(session.id);
+      expect(refreshed?.summary).toBeNull();
+      expect(refreshed?.summaryThroughSeq).toBe(0);
+
+      await hangingEngine.stop();
+    }, 2_000);
+
+    it("plumbs the timeout AbortSignal into engine.send() so the send is bounded (#642)", async () => {
+      const hangingEngine = new MockEngine({ deltaDelayMs: 999_999 });
+      await hangingEngine.start();
+      let captured: { readonly signal: AbortSignal | undefined } | undefined;
+      const original = hangingEngine.send.bind(hangingEngine);
+      hangingEngine.send = (opts) => {
+        captured = { signal: opts.signal };
+        return original(opts);
+      };
+      const hangingManager = createContextManager(repo, hangingEngine, {
+        ...baseConfig,
+        summarizerTimeoutMs: 20,
+        onWarning: () => undefined,
+      });
+      const session = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+      await seedForSummary(session.id);
+
+      const result = await hangingManager.maybeSummarize(session.id);
+
+      expect(result).toBe(false);
+      // #642: the send must receive a real AbortSignal, not undefined...
+      expect(captured).toBeDefined();
+      expect(captured?.signal).toBeInstanceOf(AbortSignal);
+      // ...and it must be the one that actually fired at the configured
+      // timeout — proving the plumbed signal bounds the send.
+      expect(captured?.signal?.aborted).toBe(true);
+
+      await hangingEngine.stop();
+    }, 2_000);
+
+    it("surfaces an abort/timeout as a distinct warning, not a generic failure (#645)", async () => {
+      const hangingEngine = new MockEngine({ deltaDelayMs: 999_999 });
+      await hangingEngine.start();
+      const warnings: string[] = [];
+      const hangingManager = createContextManager(repo, hangingEngine, {
+        ...baseConfig,
+        summarizerTimeoutMs: 20,
+        onWarning: (m) => warnings.push(m),
+      });
+      const session = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+      await seedForSummary(session.id);
+
+      const result = await hangingManager.maybeSummarize(session.id);
+
+      expect(result).toBe(false);
+      // Exactly one degradation warning, and it names the timeout — an
+      // abort must NOT be mislabeled as a provider/stream error.
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatch(/timed out after 20ms/);
+      expect(warnings[0]).not.toMatch(/stream error|PROVIDER_ERROR/i);
+
+      await hangingEngine.stop();
+    }, 2_000);
+
+    it("distinguishes a provider error from an abort in the emitted warning (#645)", async () => {
+      const failingEngine = new MockEngine();
+      await failingEngine.start();
+      failingEngine.send = function patchedSend(opts) {
+        async function* gen(): AsyncGenerator<EngineEvent, void, void> {
+          yield {
+            kind: "error",
+            expertId: opts.expertId,
+            error: { code: "PROVIDER_ERROR", message: "upstream 500", provider: "mock" },
+            recoverable: false,
+          };
+        }
+        return gen();
+      };
+      const warnings: string[] = [];
+      const failingManager = createContextManager(repo, failingEngine, {
+        ...baseConfig,
+        onWarning: (m) => warnings.push(m),
+      });
+      const session = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+      await seedForSummary(session.id);
+
+      const result = await failingManager.maybeSummarize(session.id);
+
+      expect(result).toBe(false);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatch(/stream error \(PROVIDER_ERROR\)/);
+      expect(warnings[0]).toContain("upstream 500");
+      expect(warnings[0]).not.toMatch(/timed out|aborted/i);
 
       await failingEngine.stop();
     });
 
-    it(
-      "passes AbortSignal with timeout to engine.send() to prevent indefinite hangs (#330)",
-      async () => {
-        // A MockEngine configured to hang indefinitely (never respond).
-        // If the summarizer does NOT wire an AbortSignal, this test will
-        // hang forever. Once the fix is in place, the AbortSignal will fire
-        // after SUMMARIZER_TIMEOUT_MS and the summarizer will return false.
-        const hangingEngine = new MockEngine({ deltaDelayMs: 999_999 });
-        await hangingEngine.start();
-        const hangingManager = createContextManager(repo, hangingEngine, baseConfig);
+    it("collapses adversarial control bytes in a provider error message to one safe line (#645)", async () => {
+      // A hostile/compromised provider could embed ANSI/C0/C1/DEL/bidi and
+      // newline bytes in its error text to forge log lines or inject terminal
+      // escape sequences. The warning is a display sink, so it MUST render as
+      // a single line free of control/bidi codepoints.
+      const hostileMessage =
+        "boom\u0009\u0000\u001b[31m\u009b\u007f\u2028\u2029\r\nFORGED: ok\u202e\u2066evil";
+      const failingEngine = new MockEngine();
+      await failingEngine.start();
+      failingEngine.send = function patchedSend(opts) {
+        async function* gen(): AsyncGenerator<EngineEvent, void, void> {
+          yield {
+            kind: "error",
+            expertId: opts.expertId,
+            error: { code: "PROVIDER_ERROR", message: hostileMessage, provider: "mock" },
+            recoverable: false,
+          };
+        }
+        return gen();
+      };
+      const warnings: string[] = [];
+      const failingManager = createContextManager(repo, failingEngine, {
+        ...baseConfig,
+        onWarning: (m) => warnings.push(m),
+      });
+      const session = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+      await seedForSummary(session.id);
 
-        const session = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
-        await seedTurns(repo, session.id, 3);
+      await failingManager.maybeSummarize(session.id);
 
-        // This should complete after ~5s when the AbortSignal times out.
-        // Without the fix, it would hang for 999_999ms.
+      expect(warnings).toHaveLength(1);
+      const warning = warnings[0] ?? "";
+      // Single line: no raw CR/LF/paragraph separators survive.
+      expect(warning.split("\n")).toHaveLength(1);
+      // No C0/C1, DEL, bidi override/isolate, or line/paragraph separators.
+      expect(warning).not.toMatch(
+        /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/,
+      );
+      // The human-readable prefix is still intact after sanitization.
+      expect(warning).toMatch(/stream error \(PROVIDER_ERROR\)/);
+
+      await failingEngine.stop();
+    });
+
+    it("falls back to console.warn when no onWarning sink is configured (#645)", async () => {
+      const hangingEngine = new MockEngine({ deltaDelayMs: 999_999 });
+      await hangingEngine.start();
+      const hangingManager = createContextManager(repo, hangingEngine, {
+        ...baseConfig,
+        summarizerTimeoutMs: 20,
+      });
+      const session = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+      await seedForSummary(session.id);
+
+      const spy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      try {
         const result = await hangingManager.maybeSummarize(session.id);
-
-        // The summarizer should fail gracefully and return false when aborted.
         expect(result).toBe(false);
-        const refreshed = await repo.findSessionById(session.id);
-        expect(refreshed?.summary).toBeNull();
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(String(spy.mock.calls[0]?.[0])).toMatch(/timed out after 20ms/);
+      } finally {
+        spy.mockRestore();
+      }
 
-        await hangingEngine.stop();
-      },
-      10_000,
-    ); // 10s test timeout (2× the 5s abort timeout + overhead)
+      await hangingEngine.stop();
+    }, 2_000);
+
+    it("disables the timeout when summarizerTimeoutMs is non-positive or non-finite (#644 boundary)", async () => {
+      // Boundary/inverse: 0, negative and non-finite all disable the guard,
+      // so NO AbortSignal is forwarded and a normal provider still summarizes.
+      const disablingValues = [0, -1, Number.POSITIVE_INFINITY, Number.NaN];
+      for (const [index, disabling] of disablingValues.entries()) {
+        const engine = new MockEngine();
+        await engine.start();
+        let captured: { readonly signal: AbortSignal | undefined } | undefined;
+        const original = engine.send.bind(engine);
+        engine.send = (opts) => {
+          captured = { signal: opts.signal };
+          return original(opts);
+        };
+        const mgr = createContextManager(repo, engine, {
+          ...baseConfig,
+          summarizerTimeoutMs: disabling,
+        });
+        const session = await repo.createSession({
+          targetType: "expert",
+          targetSlug: `cto-disable-${index}`,
+        });
+        await seedForSummary(session.id);
+
+        const result = await mgr.maybeSummarize(session.id);
+
+        expect(result).toBe(true);
+        expect(captured).toBeDefined();
+        expect(captured?.signal).toBeUndefined();
+
+        await engine.stop();
+      }
+    });
+
+    it("uses a live timeout signal by default when summarizerTimeoutMs is omitted (#644 default)", async () => {
+      // Default path: a signal is still plumbed with a normal (fast) provider,
+      // so the hang-guard is on by default without any configuration.
+      const engine = new MockEngine();
+      await engine.start();
+      let captured: { readonly signal: AbortSignal | undefined } | undefined;
+      const original = engine.send.bind(engine);
+      engine.send = (opts) => {
+        captured = { signal: opts.signal };
+        return original(opts);
+      };
+      const mgr = createContextManager(repo, engine, baseConfig); // no override
+      const session = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+      await seedForSummary(session.id);
+
+      const result = await mgr.maybeSummarize(session.id);
+
+      expect(result).toBe(true);
+      expect(captured?.signal).toBeInstanceOf(AbortSignal);
+      // The default 5s guard has not fired for a fast provider.
+      expect(captured?.signal?.aborted).toBe(false);
+
+      await engine.stop();
+    });
+
+    it("surfaces a best-effort expert cleanup failure as a warning (#645)", async () => {
+      // Cleanup runs in `finally`; its failure must be observable, not
+      // swallowed, so long-lived engines don't accumulate orphan experts.
+      const engine = new MockEngine();
+      await engine.start();
+      const originalRemove = engine.removeExpert.bind(engine);
+      engine.removeExpert = async (id: string) => {
+        await originalRemove(id);
+        throw new Error("cleanup boom");
+      };
+      const warnings: string[] = [];
+      const mgr = createContextManager(repo, engine, {
+        ...baseConfig,
+        onWarning: (m) => warnings.push(m),
+      });
+      const session = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+      await seedForSummary(session.id);
+
+      // Cleanup failure must NOT propagate — summarization still succeeds.
+      const result = await mgr.maybeSummarize(session.id);
+
+      expect(result).toBe(true);
+      const refreshed = await repo.findSessionById(session.id);
+      expect(refreshed?.summary).not.toBeNull();
+      expect(warnings.some((w) => /cleanup failed/i.test(w))).toBe(true);
+
+      await engine.stop();
+    });
   });
 
   // ---------- forceSummarize ----------
