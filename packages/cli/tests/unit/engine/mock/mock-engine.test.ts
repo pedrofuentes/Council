@@ -10,7 +10,7 @@
  * RED at this commit: ../../../src/engine/mock/mock-engine.js does not
  * yet exist; the import fails to resolve.
  */
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 
 import type {
   EngineEvent,
@@ -264,6 +264,51 @@ describe("MockEngine — cancellation contract", () => {
     if (last?.kind === "error") {
       expect(last.error.code).toBe("ABORTED");
     }
+  });
+});
+
+describe("MockEngine — caller AbortSignal listener cleanup", () => {
+  it("removes the same number of 'abort' listeners as it adds across ~100 sequential sends on one reused signal (regression for #21)", async () => {
+    // Regression coverage for Sentinel pr16 finding #1 (#21): send()
+    // wires an internal `onAbort` listener onto the caller-supplied
+    // signal and MUST remove it in the stream's `finally` block once the
+    // stream is fully drained. Without that cleanup, listeners
+    // accumulate unboundedly whenever a caller reuses one AbortSignal
+    // across many sends. Because the signal here is never aborted, the
+    // `{ once: true }` native auto-removal never fires — the explicit
+    // `removeCallerSignalListener?.()` call is the ONLY thing that can
+    // remove each listener, so this test fails if that call is deleted.
+    const engine = new MockEngine({
+      responses: { "01HZ-cto": "short response" },
+    });
+    await engine.start();
+    await engine.addExpert(expertSpec);
+
+    const controller = new AbortController();
+    // `AbortController.signal` is a stable getter returning the same
+    // AbortSignal instance every time, so spying on it here observes
+    // every addEventListener/removeEventListener call MockEngine makes
+    // across all iterations below.
+    const addSpy = vi.spyOn(controller.signal, "addEventListener");
+    const removeSpy = vi.spyOn(controller.signal, "removeEventListener");
+
+    const ITERATIONS = 100;
+    for (let i = 0; i < ITERATIONS; i += 1) {
+      // Fully drain each stream so the generator's `finally` block runs
+      // before the next iteration reuses the same signal — the leak
+      // only manifests on reuse of one signal across many sends.
+      await collect(
+        engine.send({ prompt: `turn ${i}`, expertId: "01HZ-cto", signal: controller.signal }),
+      );
+    }
+
+    expect(addSpy).toHaveBeenCalledTimes(ITERATIONS);
+    // Net listener count must return to baseline (0 added remain): add
+    // and remove counts must match exactly, never drift apart as sends
+    // accumulate. This is the assertion that pins the `finally` cleanup.
+    expect(removeSpy).toHaveBeenCalledTimes(addSpy.mock.calls.length);
+
+    await engine.stop();
   });
 });
 
