@@ -25,7 +25,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DefaultQueryExecutor } from "kysely";
 
 import { buildMemoryCommand } from "../../../../src/cli/commands/memory.js";
@@ -100,6 +100,99 @@ async function seedPanel(testHome: string, panelName = "memory-test"): Promise<S
       endedAt: new Date().toISOString(),
     });
     return { name: panel.name, panelId: panel.id, ctoId: cto.id, pmId: pm.id, debateId: debate.id };
+  } finally {
+    await db.destroy();
+  }
+}
+
+/**
+ * Seed a panel whose `cto` expert has turns spread across MULTIPLE debates,
+ * to exercise the aggregate turn-count path in `renderExpertDetail` (#180).
+ *
+ * The expert is also given a non-empty cached LLM memory so that
+ * `recallMemoryWithProvenance` short-circuits and never itself calls
+ * `TurnRepository.findByDebateId` — isolating that spy to the turn-count
+ * loop under test.
+ */
+async function seedMultiDebatePanel(
+  testHome: string,
+  panelName = "multi-debate",
+): Promise<{ readonly name: string; readonly ctoTurnCount: number; readonly debateCount: number }> {
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    const panelRepo = new PanelRepository(db);
+    const expertRepo = new ExpertRepository(db);
+    const debateRepo = new DebateRepository(db);
+    const turnRepo = new TurnRepository(db);
+
+    const panel = await panelRepo.create({
+      name: panelName,
+      topic: "Ship or wait?",
+      copilotHome: path.join(testHome, "copilot"),
+      configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+    });
+    const cto = await expertRepo.create({
+      panelId: panel.id,
+      slug: "cto",
+      displayName: "CTO",
+      model: "claude-sonnet-4",
+      systemMessage: "[1] IDENTITY\nYou are a CTO with deep distributed-systems experience.",
+    });
+    const pm = await expertRepo.create({
+      panelId: panel.id,
+      slug: "pm",
+      displayName: "PM",
+      model: "claude-sonnet-4",
+      systemMessage: "[1] IDENTITY\nYou are a PM focused on user value.",
+    });
+
+    // Three debates, each with 2 CTO turns + 1 PM turn: CTO total = 6.
+    const debateCount = 3;
+    for (let i = 0; i < debateCount; i++) {
+      const debate = await debateRepo.create({
+        panelId: panel.id,
+        prompt: `Debate ${i}`,
+        moderator: "round-robin",
+      });
+      await turnRepo.create({
+        debateId: debate.id,
+        round: 0,
+        seq: 0,
+        speakerKind: "expert",
+        expertId: cto.id,
+        content: `cto ${i} a`,
+      });
+      await turnRepo.create({
+        debateId: debate.id,
+        round: 0,
+        seq: 1,
+        speakerKind: "expert",
+        expertId: cto.id,
+        content: `cto ${i} b`,
+      });
+      await turnRepo.create({
+        debateId: debate.id,
+        round: 0,
+        seq: 2,
+        speakerKind: "expert",
+        expertId: pm.id,
+        content: `pm ${i}`,
+      });
+      await debateRepo.update(debate.id, {
+        status: "completed",
+        endedAt: new Date().toISOString(),
+      });
+    }
+
+    await expertRepo.update(cto.id, {
+      extractedMemoryJson: JSON.stringify({
+        positions: ["Ship the MVP behind a feature flag."],
+        updatedPriors: [],
+        unresolved: [],
+      }),
+    });
+
+    return { name: panel.name, ctoTurnCount: 2 * debateCount, debateCount };
   } finally {
     await db.destroy();
   }
@@ -222,6 +315,34 @@ describe("buildMemoryCommand", () => {
       expect(captured).toMatch(/Source debate:/);
       expect(captured).toMatch(/Derivation:/);
       expect(captured).toMatch(/Trust score:/);
+    });
+
+    it("--expert <slug>: counts turns via a single aggregate query, not a per-debate fetch loop (#180)", async () => {
+      const seed = await seedMultiDebatePanel(testHome);
+      const spies: { mockRestore: () => void }[] = [];
+      try {
+        const findByDebateIdSpy = vi.spyOn(TurnRepository.prototype, "findByDebateId");
+        spies.push(findByDebateIdSpy);
+        const countByExpertIdSpy = vi.spyOn(TurnRepository.prototype, "countByExpertId");
+        spies.push(countByExpertIdSpy);
+
+        let captured = "";
+        const cmd = buildMemoryCommand({ write: (s) => { captured += s; } });
+        await cmd.parseAsync(["node", "council-memory", "inspect", seed.name, "--expert", "cto"]);
+
+        // Rendered count is exact and unchanged for the user (6 turns).
+        expect(captured).toContain(`Turns by this expert: ${seed.ctoTurnCount}`);
+
+        // The N+1 is eliminated: exactly ONE aggregate COUNT call regardless
+        // of debate count...
+        expect(countByExpertIdSpy).toHaveBeenCalledTimes(1);
+        // ...and the per-debate turn-fetch loop is gone entirely. Cached
+        // memory makes recall short-circuit, so ANY findByDebateId call here
+        // would be the old counting loop (which fetched turns per debate).
+        expect(findByDebateIdSpy).not.toHaveBeenCalled();
+      } finally {
+        for (const s of spies) s.mockRestore();
+      }
     });
 
     it("--expert <unknown-slug>: errors with a clear message", async () => {
