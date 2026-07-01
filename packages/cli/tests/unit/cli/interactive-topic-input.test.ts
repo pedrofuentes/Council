@@ -255,21 +255,46 @@ describe("processKeypressStream", () => {
       const failure = new Error("pty read failed");
       let output = "";
 
+      // Unlike a source that never touches stdin, this double mirrors the real
+      // keypressEventsFromStdin contract: attach a "keypress" listener while
+      // iterating, and detach it in `finally` when the stream fails. Gating the
+      // throw behind `failureGate` lets the test observe the listener attached
+      // (non-vacuously) before triggering the failure and asserting cleanup.
+      let releaseFailure: (() => void) | undefined;
+      const failureGate = new Promise<void>((resolve) => {
+        releaseFailure = resolve;
+      });
+
       const failingSource: AsyncIterable<KeypressEvent> = {
         [Symbol.asyncIterator](): AsyncIterator<KeypressEvent> {
+          const onKeypress = (): void => undefined;
+          stdin.on("keypress", onKeypress);
           return {
             async next(): Promise<IteratorResult<KeypressEvent>> {
-              throw failure;
+              try {
+                await failureGate;
+                throw failure;
+              } finally {
+                stdin.off("keypress", onKeypress);
+              }
             },
           };
         },
       };
 
-      await expect(
-        promptForTopicFromStdin(stdin, failingSource, (s) => {
-          output += s;
-        }),
-      ).rejects.toBe(failure);
+      const promise = promptForTopicFromStdin(stdin, failingSource, (s) => {
+        output += s;
+      });
+
+      await waitForKeypressListener(stdin);
+      expect(stdin.listenerCount("keypress")).toBeGreaterThanOrEqual(1);
+
+      if (releaseFailure === undefined) {
+        throw new Error("releaseFailure was not assigned");
+      }
+      releaseFailure();
+
+      await expect(promise).rejects.toBe(failure);
 
       expect(stdin.pause).toHaveBeenCalledOnce();
       expect(stdin.setRawMode).toHaveBeenLastCalledWith(false);
@@ -378,6 +403,38 @@ describe("processKeypressStream", () => {
           },
         }),
       ).rejects.toMatchObject({ message: "Aborted" });
+      expect(output).toBe("");
+      expect(close).toHaveBeenCalledOnce();
+    });
+
+    it("maps dumb-terminal closed-readline errors with extra message text to silent abort", async () => {
+      // Pins the `.includes("readline was closed")` substring semantics: this
+      // message strictly contains, but is not equal to, "readline was closed".
+      // Must fail if the mapping regressed to exact-equality (`===`) matching.
+      vi.stubEnv("TERM", "dumb");
+      const failure = new Error("Error: readline was closed unexpectedly during prompt");
+      const close = vi.fn();
+      let output = "";
+      mockCreateInterface.mockReturnValue({
+        close,
+        question: vi.fn().mockRejectedValue(failure),
+      });
+
+      let thrown: unknown;
+      try {
+        await promptForTopic({
+          isNonInteractiveFn: () => false,
+          write: (s) => {
+            output += s;
+          },
+        });
+      } catch (err) {
+        thrown = err;
+      }
+
+      expect(thrown).toBeInstanceOf(CliUserError);
+      expect(thrown).toMatchObject({ message: "Aborted" });
+      expect("cause" in (thrown as object)).toBe(false);
       expect(output).toBe("");
       expect(close).toHaveBeenCalledOnce();
     });
