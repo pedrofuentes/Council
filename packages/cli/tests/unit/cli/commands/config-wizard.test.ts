@@ -413,4 +413,35 @@ describe("buildConfigCommand config wizard", () => {
     expect(config.expert.recencyHalfLifeDays).toBe(45);
     expect(config.paths.dataHome).toBe("~/PromptedCouncil");
   });
+
+  it("rejects an invalid quality gate mode entered in the wizard (#1864)", async () => {
+    await updateConfigField("defaults.model", "previous-model");
+    await updateConfigField("qualityGate.mode", "warn");
+    const before = await loadConfig();
+    const output = createCapturedOutput();
+    const discoverModels = vi.fn(async () => ({
+      models: ["claude-sonnet-4.5"],
+      source: "live" as const,
+    }));
+    // Model pick, then 12 blank answers, then an invalid qualityGate.mode value.
+    const input = createInput(
+      ["1", "", "", "", "", "", "", "", "", "", "", "", "", "bogus"].join("\n") + "\n",
+    );
+
+    const { stderr } = await runConfig(["wizard"], {
+      write: (text) => output.stream.write(text),
+      wizard: {
+        input,
+        output: output.stream,
+        discoverModels,
+      },
+    });
+
+    expect(stderr).toContain(
+      "Config value for qualityGate.mode must be one of: off, warn, regenerate",
+    );
+    expect(output.text()).not.toContain("Config wizard complete.");
+    // The invalid answer must not mutate persisted config.
+    expect(await loadConfig()).toEqual(before);
+  });
 });

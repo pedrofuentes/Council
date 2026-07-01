@@ -173,4 +173,158 @@ describe("buildConfigCommand config model", () => {
       expect(stderr).toMatch(/config model <name>/);
     });
   });
+
+  // Sentinel PR #1856 follow-ups: config model error/echo hygiene (#1863) and
+  // model-branch coverage (#1864).
+  describe("non-interactive load + fallback handling", () => {
+    it("normalizes a corrupt-config load failure into a clean CliUserError (#1863)", async () => {
+      // Corrupt config so loadConfig() throws before model discovery runs.
+      await fs.writeFile(path.join(testHome, "config.yaml"), "defaults: {model: [oops\n", "utf-8");
+      const discoverModels = vi.fn(async () => ({
+        models: ["claude-sonnet-4.5"],
+        source: "live" as const,
+      }));
+
+      const { stderr, error } = await runConfig(["model"], {
+        modelDeps: { input: createNonTtyInput(), discoverModels },
+      });
+
+      expect(error).toBeInstanceOf(CliUserError);
+      expect(stderr).toContain("Failed to parse Council config");
+      // Discovery must not run when the config itself cannot be loaded.
+      expect(discoverModels).not.toHaveBeenCalled();
+    });
+
+    it("warns when the model list comes from the static fallback (#1864)", async () => {
+      await updateConfigField("defaults.model", "claude-sonnet-4.5");
+      const discoverModels = vi.fn(async () => ({
+        models: ["claude-sonnet-4.5", "gpt-5.4"],
+        source: "static" as const,
+      }));
+
+      const { stdout, error } = await runConfig(["model"], {
+        modelDeps: { input: createNonTtyInput(), discoverModels },
+      });
+
+      expect(error).toBeInstanceOf(CliUserError);
+      expect(stdout).toContain(
+        "Warning: Live model discovery failed, so Council is showing a built-in fallback list.",
+      );
+    });
+
+    it("sanitizes control characters from an explicit-name write error (#1863)", async () => {
+      // A YAML syntax error drags the offending bytes into updateConfigField's
+      // message; setModelByName must sanitize before echoing to the terminal.
+      const raw =
+        "defaults: {model: \tA\u001B[31m\u009B\u009D\u0085\u007F\u202Ex\u2066\u2028\u2029\rEVIL\n";
+      await fs.writeFile(path.join(testHome, "config.yaml"), raw, "utf-8");
+
+      const { stderr, error } = await runConfig(["model", "auto"]);
+
+      expect(error).toBeInstanceOf(CliUserError);
+      expect(stderr).toContain("Failed to parse Council config");
+      const line = stderr.replace(/\n$/, "");
+      expect(line).not.toContain("\n");
+      expect(line).not.toMatch(
+        // eslint-disable-next-line no-control-regex
+        /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/,
+      );
+    });
+  });
+
+  describe("interactive picker write boundary", () => {
+    const ADVERSARIAL = "gpt\t\u001B[31m\u009B\u009D\u0085\u007F\u202Ea\u2066b\u2028\u2029\rX";
+
+    it("prints the confirmation only after the write succeeds (#1863)", async () => {
+      const discoverModels = vi.fn(async () => ({
+        models: ["claude-sonnet-4.5", "gpt-5.4"],
+        source: "live" as const,
+      }));
+      const output = new PassThrough();
+      output.resume();
+
+      const { stdout, error } = await runConfig(["model"], {
+        modelDeps: { input: createTtyInput("2\n"), output, discoverModels },
+      });
+
+      expect(error).toBeUndefined();
+      expect(stdout).toContain("Set defaults.model = gpt-5.4");
+      const config = await loadConfig();
+      expect(config.defaults.model).toBe("gpt-5.4");
+    });
+
+    it("does not print the confirmation when the picker's write fails (#1863)", async () => {
+      // A schema-invalid on-disk config makes updateConfigField reject the write.
+      await fs.writeFile(
+        path.join(testHome, "config.yaml"),
+        "defaults:\n  maxRounds: 999\n",
+        "utf-8",
+      );
+      const discoverModels = vi.fn(async () => ({
+        models: ["claude-sonnet-4.5", "gpt-5.4"],
+        source: "live" as const,
+      }));
+      const output = new PassThrough();
+      output.resume();
+
+      const { stdout, stderr, error } = await runConfig(["model"], {
+        modelDeps: { input: createTtyInput("1\n"), output, discoverModels },
+      });
+
+      expect(error).toBeInstanceOf(CliUserError);
+      // The write failed → the user must never have seen a success confirmation.
+      expect(stdout).not.toContain("Set defaults.model =");
+      expect(stderr).toContain("defaults.maxRounds");
+    });
+
+    it("refuses to persist a discovered id carrying terminal-control bytes (#1863)", async () => {
+      await updateConfigField("defaults.model", "claude-sonnet-4.5");
+      // Sole discovered id so the numbered pick lands on the adversarial value
+      // regardless of preference ordering.
+      const discoverModels = vi.fn(async () => ({
+        models: [ADVERSARIAL],
+        source: "live" as const,
+      }));
+      const output = new PassThrough();
+      output.resume();
+
+      const { stderr, error } = await runConfig(["model"], {
+        modelDeps: { input: createTtyInput("1\n"), output, discoverModels },
+      });
+
+      expect(error).toBeInstanceOf(CliUserError);
+      // The malicious id must never reach persisted config.
+      const config = await loadConfig();
+      expect(config.defaults.model).toBe("claude-sonnet-4.5");
+      // The rejection echo is a single, control-free line.
+      const line = stderr.replace(/\n$/, "");
+      expect(line).toContain("control characters");
+      expect(line).not.toContain(ADVERSARIAL);
+      expect(line).not.toContain("\n");
+      expect(line).not.toMatch(
+        // eslint-disable-next-line no-control-regex
+        /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/,
+      );
+    });
+
+    it("aborts with a clean error on EOF before a selection is made (#1864)", async () => {
+      await updateConfigField("defaults.model", "claude-sonnet-4.5");
+      const discoverModels = vi.fn(async () => ({
+        models: ["claude-sonnet-4.5", "gpt-5.4"],
+        source: "live" as const,
+      }));
+      const output = new PassThrough();
+      output.resume();
+
+      const { stderr, error } = await runConfig(["model"], {
+        modelDeps: { input: createTtyInput(""), output, discoverModels },
+      });
+
+      expect(error).toBeInstanceOf(CliUserError);
+      expect(stderr).toContain("Model selection aborted before completion.");
+      // An aborted selection must leave the persisted model untouched.
+      const config = await loadConfig();
+      expect(config.defaults.model).toBe("claude-sonnet-4.5");
+    });
+  });
 });
