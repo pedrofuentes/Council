@@ -217,7 +217,9 @@ export function ExpertFormScreen(props: ExpertFormScreenProps): React.ReactEleme
   useInput(
     (input, key) => {
       if (key.escape) {
-        navigate(-1);
+        if (!savingRef.current) {
+          navigate(-1);
+        }
         return;
       }
 
