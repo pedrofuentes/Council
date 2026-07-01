@@ -3,7 +3,7 @@ import { Debate, type DebateConfig } from "../../core/debate.js";
 import type { DebateEndReason, DebateEvent } from "../../core/types.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
 import type { CouncilDatabase } from "../../memory/db.js";
-import { DebatePersister } from "../../memory/persister.js";
+import { DebatePersister, type DebatePersisterLogger } from "../../memory/persister.js";
 import { DebateRepository } from "../../memory/repositories/debates.js";
 import { TurnRepository } from "../../memory/repositories/turns.js";
 
@@ -85,6 +85,7 @@ export function createConveneSource(deps: ConveneDeps): ConveneDataSource {
           panelId: panel.panelId,
           expertSlugToId: panel.expertSlugToId,
           moderator: panel.moderator,
+          logger: createPersisterLogger(onEvent),
           ...(options.signal !== undefined ? { signal: options.signal } : {}),
         });
 
@@ -110,6 +111,23 @@ export function createConveneSource(deps: ConveneDeps): ConveneDataSource {
         // error (mirrors runWithEngine). Swallow engine.stop() rejections.
         await engine.stop().catch(() => undefined);
       }
+    },
+  };
+}
+
+/**
+ * Build a {@link DebatePersisterLogger} that surfaces persister
+ * protocol-violation warnings (#119) as convene error view events instead of
+ * silently swallowing them. Warning text can embed untrusted, LLM-derived
+ * slugs, so it is passed through {@link toSingleLineDisplay}: the error view is
+ * a single-line terminal surface.
+ */
+export function createPersisterLogger(
+  onEvent: (event: ConveneViewEvent) => void,
+): DebatePersisterLogger {
+  return {
+    warn: (message: string): void => {
+      onEvent({ kind: "error", message: toSingleLineDisplay(message) });
     },
   };
 }
@@ -142,9 +160,13 @@ async function registerExperts(
 
   await Promise.allSettled(fulfilledIds.map((id) => engine.removeExpert(id)));
   const firstReason = failures[0]?.result.reason;
-  const firstMessage = firstReason instanceof Error ? firstReason.message : String(firstReason);
+  const rawFirstMessage = firstReason instanceof Error ? firstReason.message : String(firstReason);
+  // The rejection message can carry untrusted, LLM-derived text; the thrown
+  // error is surfaced on a single-line terminal error view, so sanitize it.
   throw new Error(
-    `could not register all experts (${failures.length}/${experts.length} failed): ${firstMessage}`,
+    `could not register all experts (${failures.length}/${experts.length} failed): ${toSingleLineDisplay(
+      rawFirstMessage,
+    )}`,
   );
 }
 
@@ -191,7 +213,7 @@ function toConveneViewEvent(
         estimatedTotal: evt.estimatedTotal,
       };
     case "error":
-      return { kind: "error", message: stripControlChars(evt.message) };
+      return { kind: "error", message: toSingleLineDisplay(evt.message) };
     case "debate.end":
       return { kind: "end", reason: evt.reason };
     case "round.end":
