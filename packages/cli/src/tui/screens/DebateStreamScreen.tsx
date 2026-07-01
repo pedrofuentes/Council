@@ -216,6 +216,11 @@ export function DebateStreamScreen(props: DebateStreamScreenProps): React.ReactE
     return () => {
       unmountedRef.current = true;
       controller.abort();
+      // Reset the mount guard so a dependency re-run (e.g. navigating to another
+      // panel on this same route, which React Router reconciles onto the SAME
+      // instance) starts a fresh run instead of being blocked by a stale `true`
+      // guard — which would leave the screen "streaming" with no active stream.
+      startedRef.current = false;
     };
   }, [convene, navigate, panel, topic]);
 
