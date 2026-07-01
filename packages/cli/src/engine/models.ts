@@ -18,8 +18,14 @@
  * offered, and omitted ids discovery advertised). The special selector `auto`
  * (delegate model choice to Copilot) is a routable selector and lives here too,
  * so it validates and is advertised like any other id.
+ *
+ * The list is frozen AT DEFINITION via {@link Object.freeze} so its runtime
+ * immutability is intrinsic and independent of import order (#1095). `as const`
+ * alone is only a compile-time guarantee; freezing here means no consumer can
+ * mutate the shared registry and immutability never depends on some other
+ * module being evaluated first to apply the freeze.
  */
-export const SUPPORTED_MODELS = [
+export const SUPPORTED_MODELS = Object.freeze([
   // Anthropic via Copilot
   "claude-haiku-4.5",
   "claude-sonnet-4.5",
@@ -41,7 +47,7 @@ export const SUPPORTED_MODELS = [
   // Other Copilot-routable selectors
   "mai-code-1-flash-internal",
   "auto",
-] as const;
+] as const);
 
 /** A model identifier known to the canonical {@link SUPPORTED_MODELS} registry. */
 export type ModelId = (typeof SUPPORTED_MODELS)[number];
