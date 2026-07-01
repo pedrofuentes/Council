@@ -20,6 +20,8 @@ import * as fs from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildPanelCommand } from "../../../../src/cli/commands/panel.js";
+import { CliUserError } from "../../../../src/cli/cli-user-error.js";
+import { panelDeleteRecoveryMessage } from "../../../../src/cli/panel-delete-recovery.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import { PanelLibraryRepository } from "../../../../src/memory/repositories/panel-library-repo.js";
 import type { ExpertDefinition } from "../../../../src/core/expert.js";
@@ -125,15 +127,40 @@ describe("panel delete — DB-delete failure recovery (#1643)", () => {
       );
 
     expect(delSpy).toHaveBeenCalledTimes(1);
-    // The command must fail (the row was NOT removed) ...
-    expect(err).toBeInstanceOf(Error);
+    // The command must fail (the row was NOT removed) with a CliUserError so
+    // the top-level handler exits non-zero without a stack dump (#1930).
+    expect(err).toBeInstanceOf(CliUserError);
     // ... the FS artifacts are already gone (FS-first ordering) ...
     await expect(fs.access(yamlPath)).rejects.toThrow();
     await expect(fs.access(panelDir)).rejects.toThrow();
     // ... it must NOT print a success line ...
     expect(out).not.toMatch(/deleted/i);
-    // ... and it must guide the operator to re-run to clear the stale row.
-    expect(errored).toMatch(/re-run|retry|again|stale|still exists|remove/i);
-    expect(errored).toMatch(/arch-review/);
+    // ... and it must guide the operator with the *actionable* recovery
+    // phrase. A broad alternation like /…|remove/i is non-discriminating: it
+    // is satisfied by the "Removed the panel files…" prefix alone, so a
+    // regression that dropped the "Re-run `council panel delete <name>`"
+    // sentence would still pass. Pin that specific phrase instead (#1930).
+    expect(errored).toMatch(/re-run[^]*council panel delete[^]*arch-review/i);
+  });
+});
+
+describe("panelDeleteRecoveryMessage (shared #1643 recovery guidance)", () => {
+  it("pins the actionable re-run guidance including the panel name and failure detail", () => {
+    const msg = panelDeleteRecoveryMessage("arch-review", "EIO: i/o error");
+    expect(msg).toContain("Re-run `council panel delete arch-review` to clear it");
+    expect(msg).toMatch(/re-run[^]*council panel delete[^]*arch-review/i);
+    expect(msg).toContain("EIO: i/o error");
+  });
+
+  it("neutralizes adversarial control/ANSI/bidi bytes and collapses to a single line", () => {
+    // TAB, BEL, C1 (0x9B = CSI), DEL, bidi override/isolate, CR/LF, LS/PS —
+    // both the interpolated name and the failure detail are sanitized.
+    const hostileName = "a\u0009b\u0007\u009bc\u007f\u202e\u2066d\r\ne\u2028f\u2029g";
+    const msg = panelDeleteRecoveryMessage(hostileName, "d\u0000e\u2028t\u202aail");
+    // eslint-disable-next-line no-control-regex -- deliberately asserts C0/C1/DEL/bidi bytes are absent
+    expect(msg).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/);
+    expect(msg.split("\n")).toHaveLength(1);
+    // The literal guidance survives sanitization.
+    expect(msg).toContain("council panel delete");
   });
 });

@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import * as yaml from "yaml";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createPanelAuthoringSource,
@@ -124,6 +124,7 @@ describe("createPanelAuthoringSource", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await teardown(env);
   });
 
@@ -312,5 +313,41 @@ describe("createPanelAuthoringSource", () => {
     await expect(sourceFor(env).delete("alpha")).rejects.toThrow();
 
     await expect(env.panelRepo.findByName("alpha")).resolves.toMatchObject({ name: "alpha" });
+  });
+
+  it("surfaces actionable recovery guidance and preserves the row when the DB delete fails after FS removal (#1643)", async () => {
+    await createExistingPanel(env, "arch-review");
+    const yamlPath = path.join(env.home, "panels", "arch-review.yaml");
+    const dir = path.join(env.home, "panels", "arch-review");
+
+    const delSpy = vi
+      .spyOn(PanelLibraryRepository.prototype, "delete")
+      .mockRejectedValueOnce(new Error("EIO: simulated DB delete failure"));
+
+    const source = sourceFor(env);
+    const err = await source.delete("arch-review").then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+    // The DB delete was attempted only after the FS artifacts were removed
+    // (FS-first ordering keeps the row authoritative for a retry) ...
+    expect(delSpy).toHaveBeenCalledTimes(1);
+    await expect(fs.access(yamlPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.access(dir)).rejects.toMatchObject({ code: "ENOENT" });
+    // ... the panel_library row is NOT silently lost — it remains for a retry ...
+    await expect(env.panelRepo.findByName("arch-review")).resolves.toMatchObject({
+      name: "arch-review",
+    });
+    // ... and the surfaced error carries the actionable recovery phrase so the
+    // operator can clear the stale row (mirrors the CLI `panel delete`).
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/re-run[^]*council panel delete[^]*arch-review/i);
+
+    // Re-runnable to a clean state: with the DB healthy, a second delete
+    // tolerates the now-missing YAML/dir and clears the stale row.
+    delSpy.mockRestore();
+    await source.delete("arch-review");
+    await expect(env.panelRepo.findByName("arch-review")).resolves.toBeUndefined();
   });
 });
