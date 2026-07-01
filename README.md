@@ -346,8 +346,9 @@ council chat <persona-slug>                         # auto-processes ~/Council/e
 # walks every managed + linked folder, indexes new/changed files into
 # the FTS5 corpus under source_type='panel', and prunes any tracked
 # documents that have disappeared from disk.
-council panel docs <name>                                  # list managed + linked folders + doc counts
-council panel docs link <name> --path <folder>             # link an external folder (symlinks rejected)
+council panel docs <name>                                  # list indexed docs (DB read — no scan)
+council panel docs list <name> --refresh                   # re-scan managed + linked folders, then list
+council panel docs link <name> --path <folder> [--yes]     # link an external folder (symlinks rejected; prompts unless --yes)
 council panel docs unlink <name> --path <folder>           # remove a linked folder + its FTS entries
 ```
 
@@ -616,8 +617,8 @@ council panel list [--format json]          # Browse panels in the library
 council panel inspect <name>                # Panel metadata + resolved expert roster
 council panel edit <name>                   # Open YAML in $EDITOR; re-validates on save
 council panel delete <name> [--yes]         # Remove panel YAML + docs dir + DB rows (--yes skips prompt; hidden --force alias still works)
-council panel docs <name>                   # List a panel's managed + linked doc folders
-council panel docs link <name> --path <p>   # Link an external folder into a panel's RAG corpus
+council panel docs <name>                   # List a panel's indexed docs (DB read; add `list <name> --refresh` to re-scan)
+council panel docs link <name> --path <p>   # Link an external folder into a panel's RAG corpus (prompts; --yes to skip)
 council panel docs unlink <name> --path <p> # Unlink a folder + clean up its FTS entries
 
 # Configuration

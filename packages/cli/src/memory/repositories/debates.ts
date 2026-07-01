@@ -101,6 +101,26 @@ export class DebateRepository {
     return rows.map(toDomain);
   }
 
+  /**
+   * Count debates across multiple panels in a single aggregate query.
+   *
+   * Replaces the per-panel `findByPanelId(id).length` loop (an N+1 that also
+   * materialised every row just to read `.length`) used when reporting how
+   * many past debate sessions a `panel delete` will preserve. An empty id list
+   * short-circuits to 0 to avoid emitting an invalid `WHERE panel_id IN ()`.
+   */
+  async countByPanelIds(panelIds: readonly string[]): Promise<number> {
+    if (panelIds.length === 0) {
+      return 0;
+    }
+    const row = await this.db
+      .selectFrom("debates")
+      .select((eb) => eb.fn.countAll<number>().as("count"))
+      .where("panel_id", "in", panelIds)
+      .executeTakeFirst();
+    return Number(row?.count ?? 0);
+  }
+
   async cancelRunning(panelId: string, endedAt: string = new Date().toISOString()): Promise<Debate | undefined> {
     const row = await this.db
       .selectFrom("debates")

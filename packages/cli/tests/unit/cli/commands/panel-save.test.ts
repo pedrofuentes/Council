@@ -238,7 +238,14 @@ describe("panel save (T9)", () => {
       () => undefined,
       () => undefined,
     );
-    await createCmd.parseAsync(["node", "council-panel", "create", "mypanel", "--experts", "alpha"]);
+    await createCmd.parseAsync([
+      "node",
+      "council-panel",
+      "create",
+      "mypanel",
+      "--experts",
+      "alpha",
+    ]);
 
     const sessionName = await seedSession(env, {
       name: "auto-panel-2026-06-15T13:00:00",
@@ -447,15 +454,16 @@ describe("panel save (T9)", () => {
     // created and the operation aborts mid-way through promotion.
     const realCreate = FileExpertLibrary.prototype.create;
     let createCalls = 0;
-    const spy = vi
-      .spyOn(FileExpertLibrary.prototype, "create")
-      .mockImplementation(async function (this: FileExpertLibrary, def: ExpertDefinition) {
-        createCalls += 1;
-        if (createCalls >= 2) {
-          throw new Error("simulated persistence failure after first expert created");
-        }
-        await realCreate.call(this, def);
-      });
+    const spy = vi.spyOn(FileExpertLibrary.prototype, "create").mockImplementation(async function (
+      this: FileExpertLibrary,
+      def: ExpertDefinition,
+    ) {
+      createCalls += 1;
+      if (createCalls >= 2) {
+        throw new Error("simulated persistence failure after first expert created");
+      }
+      await realCreate.call(this, def);
+    });
 
     const cmd = buildPanelCommand(
       () => undefined,
@@ -476,6 +484,134 @@ describe("panel save (T9)", () => {
       // The expert created during this failed save must NOT be orphaned.
       expect(await lib.get("alpha")).toBeNull();
       expect(await lib.get("beta")).toBeNull();
+      // The panel itself was not persisted.
+      expect(await new PanelLibraryRepository(db).findByName("mypanel")).toBeUndefined();
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  // #1063 (Dim B): a corrupt (non-JSON / truncated) `config_json` must be
+  // surfaced as invalid/corrupt, NOT mislabelled as a legacy session that
+  // "predates the feature" (which maps to the `absent` branch).
+  it("errors that a corrupt config_json is invalid/corrupt, not 'predates the feature' (#1063)", async () => {
+    // Seed a session whose config_json is corrupt (non-JSON), as would happen
+    // via truncation or a direct DB edit — bypassing the JSON.stringify path.
+    const db = await createDatabase(path.join(env.home, "council.db"));
+    let sessionName: string;
+    try {
+      const repo = new PanelRepository(db);
+      const panel = await repo.create({
+        name: "corrupt-2026-06-15T18:00:00",
+        topic: "Should we adopt event sourcing?",
+        copilotHome: path.join(env.home, "copilot"),
+        configJson: "{ definition: <truncated",
+      });
+      sessionName = panel.name;
+    } finally {
+      await db.destroy();
+    }
+
+    let stderr = "";
+    const cmd = buildPanelCommand(
+      () => undefined,
+      (s) => {
+        stderr += s;
+      },
+    );
+    cmd.exitOverride();
+    const err = await cmd.parseAsync(["node", "council-panel", "save", sessionName, "foo"]).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(CliUserError);
+    expect((err as CliUserError).message).toMatch(/invalid stored panel definition/i);
+    // Discriminating oracle: corrupt config surfaces an "invalid/corrupt"
+    // diagnostic and NOT the misleading legacy "predates/no stored" message.
+    expect(stderr).toMatch(/invalid or corrupt/i);
+    expect(stderr).not.toMatch(/predates|no stored panel definition/i);
+  });
+
+  // #1114: the reuse path where the BASE slug is a DIFFERENT expert but an
+  // EQUIVALENT clone exists at a SUFFIX (e.g. reuse `vc-2` while `vc` differs).
+  it("reuses an equivalent clone at a non-base suffix (vc-2) when the base slug is a different expert (#1114)", async () => {
+    // `vc` is occupied by a DIFFERENT expert; `vc-2` is an equivalent clone of
+    // the session's `vc`. Saving must REUSE `vc-2`, not mint a fresh `vc-3`.
+    await seedLibraryExpert(env, expertDef("vc", { displayName: "A different VC entirely" }));
+    await seedLibraryExpert(env, { ...expertDef("vc"), slug: "vc-2" });
+
+    const sessionName = await seedSession(env, {
+      name: "auto-panel-2026-06-15T19:00:00",
+      definition: autoDefinition(["vc"]),
+    });
+
+    const cmd = buildPanelCommand(
+      () => undefined,
+      () => undefined,
+    );
+    await cmd.parseAsync(["node", "council-panel", "save", sessionName, "mypanel"]);
+
+    const db = await createDatabase(path.join(env.home, "council.db"));
+    try {
+      const expertRepo = new ExpertLibraryRepository(db);
+      // No fresh `vc-3` was created — the equivalent `vc-2` was reused.
+      expect(await expertRepo.findBySlug("vc-3")).toBeUndefined();
+      // The differing base `vc` is untouched.
+      expect((await expertRepo.findBySlug("vc"))?.displayName).toBe("A different VC entirely");
+      // Expert count is unchanged (still exactly `vc` + `vc-2`).
+      expect((await expertRepo.findAll()).length).toBe(2);
+      // The saved panel references the reused suffix clone.
+      expect([...(await new PanelLibraryRepository(db).getMembers("mypanel"))]).toEqual(["vc-2"]);
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  // #1115: the KEY data-integrity invariant — a mid-save failure's rollback
+  // deletes ONLY experts CREATED in this operation; a reused / pre-existing
+  // expert must NEVER be deleted.
+  it("rollback after a later failure deletes only newly-created experts, never a reused one (#1115)", async () => {
+    // Pre-seed `alpha` IDENTICAL to the session's alpha so it is REUSED (not
+    // created). `beta` is CREATED. A failure AFTER both are processed must
+    // roll back only `beta`, leaving the reused `alpha` intact.
+    await seedLibraryExpert(env, expertDef("alpha"));
+
+    const sessionName = await seedSession(env, {
+      name: "auto-panel-2026-06-15T20:00:00",
+      definition: autoDefinition(["alpha", "beta"]),
+    });
+
+    // Fail the panel member-write (setMembers) — this runs AFTER both experts
+    // are resolved and `beta` has been created, triggering the compensating
+    // rollback of experts created in THIS operation.
+    const spy = vi
+      .spyOn(PanelLibraryRepository.prototype, "setMembers")
+      .mockImplementationOnce(() =>
+        Promise.reject(new Error("simulated persist failure after reuse+create")),
+      );
+
+    const cmd = buildPanelCommand(
+      () => undefined,
+      () => undefined,
+    );
+    cmd.exitOverride();
+    try {
+      await expect(
+        cmd.parseAsync(["node", "council-panel", "save", sessionName, "mypanel"]),
+      ).rejects.toThrow(/simulated persist failure after reuse\+create/);
+    } finally {
+      spy.mockRestore();
+    }
+
+    const db = await createDatabase(path.join(env.home, "council.db"));
+    try {
+      const lib = new FileExpertLibrary(env.dataHome, db);
+      // The PRE-EXISTING / reused expert MUST survive the rollback.
+      expect(await lib.get("alpha")).not.toBeNull();
+      // The expert CREATED in this operation MUST be rolled back.
+      expect(await lib.get("beta")).toBeNull();
+      // No `alpha-2` duplicate was minted (alpha was reused, not re-cloned).
+      expect(await lib.get("alpha-2")).toBeNull();
       // The panel itself was not persisted.
       expect(await new PanelLibraryRepository(db).findByName("mypanel")).toBeUndefined();
     } finally {

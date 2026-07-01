@@ -296,6 +296,10 @@ describe("buildPanelCommand", () => {
         const errors = (err as AggregateError).errors;
         const messages = errors.map((e) => (e instanceof Error ? e.message : String(e)));
         expect(messages.some((m) => m.includes("simulated rollback delete failure"))).toBe(true);
+        // #312: the PRIMARY setMembers cause must be preserved in the
+        // AggregateError, not just the secondary rollback-delete failure —
+        // otherwise the root cause of the create failure is lost.
+        expect(messages.some((m) => m.includes("simulated setMembers failure"))).toBe(true);
         expect(messages.length).toBeGreaterThanOrEqual(2);
       } finally {
         setSpy.mockRestore();
@@ -678,8 +682,8 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
       }
       expect(caughtError).toBeDefined();
       expect(caughtError?.message).toContain("No experts found in the library");
-      expect(caughtError?.message).toContain('council expert create');
-      expect(caughtError?.message).toContain('council convene');
+      expect(caughtError?.message).toContain("council expert create");
+      expect(caughtError?.message).toContain("council convene");
     });
   });
 
@@ -718,7 +722,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
       expect(captured.toLowerCase()).toMatch(/no documents|empty/);
     });
 
-    it("`panel docs list` indexes and shows freshly-dropped files (#14)", async () => {
+    it("`panel docs list --refresh` indexes and shows freshly-dropped files (#14)", async () => {
       await createPanel();
       // Drop a Markdown file straight into the panel's managed docs dir,
       // simulating a user adding a file without running an explicit re-scan.
@@ -734,13 +738,94 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
       const cmd = buildPanelCommand((s) => {
         captured += s;
       });
-      await cmd.parseAsync(["node", "council-panel", "docs", "list", "arch-review"]);
+      // #1055: indexing is now opt-in via --refresh (default `list` is an
+      // O(1) DB read). `--refresh` must trigger a scan so the freshly-dropped
+      // file appears immediately instead of the misleading empty-state (#14).
+      await cmd.parseAsync(["node", "council-panel", "docs", "list", "arch-review", "--refresh"]);
 
-      // `list` must trigger indexing before querying the database, so the
-      // freshly-dropped file appears immediately instead of the misleading
-      // "No documents found" empty-state path (#14).
       expect(captured).toContain("fresh-note.md");
       expect(captured.toLowerCase()).not.toMatch(/no documents found/);
+    });
+
+    it("`panel docs list` does NOT scan on every call — default is a DB read (#1055)", async () => {
+      await createPanel();
+      // Drop a Markdown file WITHOUT running --refresh. The default `list`
+      // must NOT scan/hash the filesystem (that O(total-bytes) work is the
+      // #1055 perf regression), so the un-indexed file must not appear yet.
+      const docsDir = path.join(env.dataHome, "panels", "arch-review", "docs");
+      await fs.mkdir(docsDir, { recursive: true });
+      await fs.writeFile(
+        path.join(docsDir, "unindexed.md"),
+        "# Unindexed\nNot scanned because no --refresh was passed.",
+        "utf-8",
+      );
+
+      let captured = "";
+      const cmd = buildPanelCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-panel", "docs", "list", "arch-review"]);
+
+      // Default read must not surface the un-scanned file …
+      expect(captured).not.toContain("unindexed.md");
+      // … and must tell the operator how to pick up new/changed files.
+      expect(captured).toMatch(/--refresh/);
+
+      // A subsequent --refresh must then surface it (proving the file was
+      // only ever skipped due to the default DB-read, not a broken scan).
+      let refreshed = "";
+      const cmd2 = buildPanelCommand((s) => {
+        refreshed += s;
+      });
+      await cmd2.parseAsync(["node", "council-panel", "docs", "list", "arch-review", "--refresh"]);
+      expect(refreshed).toContain("unindexed.md");
+    });
+
+    it("`panel docs list --refresh` warns and degrades when a linked folder scan fails, pointing at the real `council docs doctor` command (#1055/#1929)", async () => {
+      await createPanel();
+      // Link a folder, then delete it from disk so the --refresh scan hits a
+      // folder-read failure (foldersFailed > 0) — the #1055 degradation path.
+      const linkDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-doclink-"));
+      await fs.writeFile(path.join(linkDir, "note.md"), "# Note\nhello world", "utf-8");
+      const linkCmd = buildPanelCommand(
+        () => {
+          /* noop */
+        },
+        () => {
+          /* noop */
+        },
+      );
+      await linkCmd.parseAsync([
+        "node",
+        "council-panel",
+        "docs",
+        "link",
+        "arch-review",
+        "--path",
+        linkDir,
+        "--yes",
+      ]);
+      await fs.rm(linkDir, { recursive: true, force: true });
+
+      let stderr = "";
+      const cmd = buildPanelCommand(
+        () => {
+          /* stdout ignored — this test only asserts the degradation warning */
+        },
+        (s) => {
+          stderr += s;
+        },
+      );
+      // The scan must NOT crash the listing (graceful degrade) — the command
+      // resolves and still prints whatever the DB knows.
+      await cmd.parseAsync(["node", "council-panel", "docs", "list", "arch-review", "--refresh"]);
+
+      // #1055: partial-failure warning is surfaced (not swallowed).
+      expect(stderr).toMatch(/indexing completed with problems|could not refresh/i);
+      // #1929: the recovery hint must point at the REAL command
+      // (`council docs doctor`), not the non-existent `council panel docs doctor`.
+      expect(stderr).toContain("council docs doctor arch-review");
+      expect(stderr).not.toContain("council panel docs doctor");
     });
 
     it("`panel docs <name>` errors when the panel does not exist", async () => {
@@ -1373,7 +1458,8 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
         // `DELETE FROM document_index WHERE file_path = ?` throws.
         // This is the same interception strategy used by the indexer
         // atomicity test and survives the cmd's internal `db` instance.
-        const { NodeSqliteConnection } = await import("../../../../src/memory/node-sqlite-dialect.js");
+        const { NodeSqliteConnection } =
+          await import("../../../../src/memory/node-sqlite-dialect.js");
         const originalExecute = NodeSqliteConnection.prototype.executeQuery;
         let ftsDeleteCount = 0;
         NodeSqliteConnection.prototype.executeQuery = async function (

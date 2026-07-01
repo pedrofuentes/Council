@@ -134,10 +134,23 @@ async function withPanelContext<T>(fn: (ctx: PanelContext) => Promise<T>): Promi
     try {
       await db.destroy();
     } catch (destroyErr) {
-      throw new AggregateError(
+      const aggregate = new AggregateError(
         [err, destroyErr],
         "panel operation failed and db.destroy() cleanup also failed",
       );
+      // A cleanup failure must not mask the primary error's semantics. When the
+      // callback raised a CliUserError, re-wrap so its exit code survives —
+      // handleCliError would otherwise map a bare AggregateError to
+      // EXIT_INTERNAL_ERROR (4) instead of the intended user-error code (1).
+      // Both failures remain reachable via `.cause`. #1825.
+      if (err instanceof CliUserError) {
+        const wrapped = new CliUserError(err.message, { cause: aggregate });
+        if (err.exitCode !== undefined) {
+          wrapped.exitCode = err.exitCode;
+        }
+        throw wrapped;
+      }
+      throw aggregate;
     }
     throw err;
   }
@@ -376,11 +389,21 @@ function buildDeleteCommand(
           let debateCount = 0;
           try {
             const runtimePanels = await ctx.runtimePanelRepo.findByNamePrefix(name);
-            const exactMatches = runtimePanels.filter((p) => p.name === name);
-            for (const panel of exactMatches) {
-              debateCount += (await ctx.debateRepo.findByPanelId(panel.id)).length;
-            }
-          } catch {
+            const exactIds = runtimePanels.filter((p) => p.name === name).map((p) => p.id);
+            debateCount = await ctx.debateRepo.countByPanelIds(exactIds);
+          } catch (countErr) {
+            // The count is advisory (it only enriches the prompt), so a read
+            // failure must not abort the delete — default to 0. But it must
+            // NOT be silently swallowed: a persistent failure (not just a
+            // transient SQLITE_BUSY) is worth surfacing so the operator knows
+            // the "N debate sessions preserved" figure may be unavailable. The
+            // name is CLI-arg-validated kebab-case (validatePanelName above),
+            // so it is safe to echo directly. #1825.
+            const detail = countErr instanceof Error ? countErr.message : String(countErr);
+            writeError(
+              `Warning: could not count past debate sessions for "${name}": ${detail}\n` +
+                `Proceeding with the deletion prompt as if there are none.\n`,
+            );
             debateCount = 0;
           }
           const provider = confirmProvider ?? createReadlineConfirmProvider();
@@ -1407,7 +1430,10 @@ function buildDocsCommand(
   cmd.addCommand(buildDocsUnlinkCommand(write, writeError));
   // Allow `council panel docs <name>` to fall through to the list action
   // without forcing users to type `docs list`. Commander treats the
-  // default argument as the panel name.
+  // default argument as the panel name. This shorthand always performs the
+  // cheap DB read; `--refresh` scanning is available on the explicit
+  // `docs list <name> --refresh` subcommand (a parent-level `--refresh`
+  // option would shadow the subcommand's option). #1055.
   cmd
     .argument("[name]", "Panel name (when omitted, prints usage)")
     .action(async (name: string | undefined) => {
@@ -1415,7 +1441,7 @@ function buildDocsCommand(
         write(cmd.helpInformation());
         return;
       }
-      await runDocsList(name, write, writeError);
+      await runDocsList(name, write, writeError, false);
     });
   return cmd;
 }
@@ -1423,15 +1449,27 @@ function buildDocsCommand(
 function buildDocsListCommand(write: Writer, writeError: Writer): Command {
   const cmd = new Command("list");
   cmd
-    .description("List all documents accessible to a panel (managed + linked)")
+    .description(
+      "List a panel's indexed documents from the database (read-only). " +
+        "Use --refresh to re-scan managed + linked folders and index new/changed files first.",
+    )
     .argument("<name>", "Panel name")
-    .action(async (name: string) => {
-      await runDocsList(name, write, writeError);
+    .option(
+      "--refresh",
+      "Re-scan managed + linked folders and index new/changed files before listing",
+    )
+    .action(async (name: string, opts: { refresh?: boolean }) => {
+      await runDocsList(name, write, writeError, opts.refresh === true);
     });
   return cmd;
 }
 
-async function runDocsList(name: string, write: Writer, writeError: Writer): Promise<void> {
+async function runDocsList(
+  name: string,
+  write: Writer,
+  writeError: Writer,
+  refresh: boolean,
+): Promise<void> {
   await withPanelContext(async (ctx) => {
     const panel = await ctx.panelRepo.findByName(name);
     if (!panel) {
@@ -1439,38 +1477,49 @@ async function runDocsList(name: string, write: Writer, writeError: Writer): Pro
       throw new CliUserError(`Panel "${name}" not found.`);
     }
 
-    // Trigger indexing before listing so freshly-dropped files appear
-    // (fixes #14 — lazy indexing was misleading). This makes `list`
-    // consistent with other docs commands that show current disk state.
-    // Indexing is best-effort: capture the outcome and warn on partial
-    // failures, and if the scan itself throws, degrade to the last known DB
-    // state rather than crashing a listing. #1055.
-    const managedDocsDir = panelDocsDir(ctx.dataHome, name);
-    try {
-      const scan = await scanAndIndexPanelDocuments({
-        panelName: name,
-        managedDocsDir,
-        db: ctx.db,
-        supportedFormats: ctx.config.expert.supportedFormats,
-        maxFileSizeBytes: ctx.config.documents.maxFileSizeMB * 1024 * 1024,
-        aiFallback: {
-          mode: ctx.config.documents.aiExtraction,
-          allowedExtensions: ctx.config.documents.aiExtractionAllowedExtensions,
-        },
-      });
-      if (scan.failed > 0 || scan.foldersFailed > 0) {
+    // `list` defaults to an O(1) DB read. Filesystem indexing (a full scan +
+    // checksum hash — O(total bytes)) is opt-in via `--refresh` so a routine
+    // listing of a panel with large managed/linked folders stays cheap and
+    // never mutates state as a side effect of viewing it. #1055.
+    //
+    // The panel name is echoed into warnings below; collapse it to a single
+    // display line first because `panel_library.name` can be populated via
+    // migration/import/direct edit and is therefore untrusted. #1929.
+    const display = toSingleLineDisplay(name);
+    if (refresh) {
+      // Trigger indexing so freshly-dropped files appear (#14). Best-effort:
+      // capture the outcome and warn on partial failures, and if the scan
+      // itself throws, degrade to the last known DB state rather than crashing
+      // a listing. #1055.
+      const managedDocsDir = panelDocsDir(ctx.dataHome, name);
+      try {
+        const scan = await scanAndIndexPanelDocuments({
+          panelName: name,
+          managedDocsDir,
+          db: ctx.db,
+          supportedFormats: ctx.config.expert.supportedFormats,
+          maxFileSizeBytes: ctx.config.documents.maxFileSizeMB * 1024 * 1024,
+          aiFallback: {
+            mode: ctx.config.documents.aiExtraction,
+            allowedExtensions: ctx.config.documents.aiExtractionAllowedExtensions,
+          },
+        });
+        if (scan.failed > 0 || scan.foldersFailed > 0) {
+          // The `doctor` diagnostic lives under the top-level `council docs`
+          // command, NOT `council panel docs` (which has no doctor). #1929.
+          writeError(
+            `Warning: indexing completed with problems for panel "${display}" ` +
+              `(${scan.failed} document(s) failed, ${scan.foldersFailed} folder(s) failed). ` +
+              `The list below may be incomplete — run "council docs doctor ${display}" for details.\n`,
+          );
+        }
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
         writeError(
-          `Warning: indexing completed with problems for panel "${name}" ` +
-            `(${scan.failed} document(s) failed, ${scan.foldersFailed} folder(s) failed). ` +
-            `The list below may be incomplete — run "council panel docs doctor ${name}" for details.\n`,
+          `Warning: could not refresh the document index for panel "${display}": ${detail}\n` +
+            `Showing the last known state; results may be stale.\n`,
         );
       }
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      writeError(
-        `Warning: could not refresh the document index for panel "${name}": ${detail}\n` +
-          `Showing the last known state; results may be stale.\n`,
-      );
     }
 
     const docs = await ctx.docsRepo.listDocuments(name);
@@ -1479,8 +1528,13 @@ async function runDocsList(name: string, write: Writer, writeError: Writer): Pro
     if (docs.length === 0 && folders.length === 0) {
       const docsDir = panelDocsDir(ctx.dataHome, name);
       write(
-        `No documents found for panel "${name}". Drop files into ${displayPath(docsDir)} or run "council panel docs link ${name} --path <dir>".\n`,
+        `No documents found for panel "${display}". Drop files into ${displayPath(docsDir)} or run "council panel docs link ${display} --path <dir>".\n`,
       );
+      if (!refresh) {
+        write(
+          `Then run "council panel docs list ${display} --refresh" to scan and index new or changed files.\n`,
+        );
+      }
       return;
     }
 
@@ -1492,6 +1546,11 @@ async function runDocsList(name: string, write: Writer, writeError: Writer): Pro
 
     if (docs.length === 0) {
       write("No documents indexed yet.\n");
+      if (!refresh) {
+        write(
+          `Run "council panel docs list ${display} --refresh" to scan the linked folder(s) and index new or changed files.\n`,
+        );
+      }
       return;
     }
 
@@ -1511,6 +1570,12 @@ async function runDocsList(name: string, write: Writer, writeError: Writer): Pro
     write(widths.map((w) => "-".repeat(w)).join("  ") + "\n");
     for (const row of rows) {
       write(row.map((c, i) => pad(c, widths[i] ?? 0)).join("  ") + "\n");
+    }
+
+    if (!refresh) {
+      write(
+        `\nShowing indexed state (DB read). Run "council panel docs list ${display} --refresh" to re-scan folders for new or changed files.\n`,
+      );
     }
   });
 }

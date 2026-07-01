@@ -140,6 +140,33 @@ describe("scanAndIndexPanelDocuments", () => {
     expect(sources).toEqual(["linked", "managed"]);
   });
 
+  it("computes and persists word counts reachable via getWordCountMap (#1055)", async () => {
+    // Pin the #17 word-count data path end-to-end: the scanner extracts a
+    // real word count and stores it so `getWordCountMap` (consumed by the
+    // doctor) reflects the on-disk body — not a placeholder 0. Uses the
+    // outer-describe fixture (panel "arch-review" + managedDir).
+    await fs.writeFile(
+      path.join(managedDir, "wc-test.md"),
+      "alpha beta gamma delta epsilon\n",
+      "utf-8",
+    );
+
+    const result = await scanAndIndexPanelDocuments({
+      panelName: "arch-review",
+      managedDocsDir: managedDir,
+      db,
+      supportedFormats: [".md", ".txt", ".html"],
+    });
+    expect(result.indexed).toBeGreaterThanOrEqual(1);
+
+    const docsRepo = new PanelDocumentRepository(db);
+    const wordCounts = await docsRepo.getWordCountMap("arch-review");
+    const wcEntry = [...wordCounts.entries()].find(([p]) => p.endsWith("wc-test.md"));
+    expect(wcEntry).toBeDefined();
+    // Exactly the five whitespace-delimited words in the plain-text body.
+    expect(wcEntry?.[1]).toBe(5);
+  });
+
   it("re-running with unchanged files is a no-op", async () => {
     await scanAndIndexPanelDocuments({
       panelName: "arch-review",

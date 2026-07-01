@@ -244,4 +244,36 @@ describe("PanelDocumentRepository", () => {
       expect(docs).toEqual([]);
     });
   });
+
+  describe("getWordCountMap() — doctor word-count data path (#1055)", () => {
+    it("maps each tracked file path to its stored word count", async () => {
+      await repo.trackDocument(sampleDoc({ filePath: "/docs/a.md", wordCount: 11 }));
+      await repo.trackDocument(sampleDoc({ filePath: "/docs/b.md", wordCount: 22 }));
+      const map = await repo.getWordCountMap("arch-review");
+      expect(map.get("/docs/a.md")).toBe(11);
+      expect(map.get("/docs/b.md")).toBe(22);
+      expect(map.size).toBe(2);
+    });
+
+    it("excludes documents marked removed (inverse of the status!='removed' filter)", async () => {
+      await repo.trackDocument(sampleDoc({ filePath: "/docs/live.md", wordCount: 5 }));
+      await repo.trackDocument(sampleDoc({ filePath: "/docs/gone.md", wordCount: 9 }));
+      await repo.markRemoved("arch-review", "/docs/gone.md");
+      const map = await repo.getWordCountMap("arch-review");
+      expect(map.get("/docs/live.md")).toBe(5);
+      expect(map.has("/docs/gone.md")).toBe(false);
+      expect(map.size).toBe(1);
+    });
+
+    it("scopes word counts to the requested panel", async () => {
+      await seedPanel(db, "other-panel");
+      await repo.trackDocument(sampleDoc({ filePath: "/docs/mine.md", wordCount: 7 }));
+      await repo.trackDocument(
+        sampleDoc({ panelName: "other-panel", filePath: "/docs/theirs.md", wordCount: 99 }),
+      );
+      const map = await repo.getWordCountMap("arch-review");
+      expect(map.get("/docs/mine.md")).toBe(7);
+      expect(map.has("/docs/theirs.md")).toBe(false);
+    });
+  });
 });
