@@ -7,6 +7,8 @@ import {
   getStartupHelpText,
   buildChatTurnPrompt,
   appendReferenceDocuments,
+  capSnippetsByChars,
+  REFERENCE_DOCS_CHAR_CAP,
   safeRetrieveSnippets,
   safeGetContext,
   seedLongConversationCount,
@@ -292,7 +294,10 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
         },
         (msg) => renderer.showSystem(msg, "warn"),
       );
-      const userMessageWithRefs = appendReferenceDocuments(trimmed, snippets, (info) =>
+      // #1091: apply the shared per-turn char budget (as convene/debate does)
+      // so multi-chunk RAG retrieval can't bloat the model prompt.
+      const referenceDocs = capSnippetsByChars(snippets, REFERENCE_DOCS_CHAR_CAP);
+      const userMessageWithRefs = appendReferenceDocuments(trimmed, referenceDocs, (info) =>
         renderer.showSystem(
           `Neutralized ${info.count} potential prompt-injection marker${
             info.count === 1 ? "" : "s"
