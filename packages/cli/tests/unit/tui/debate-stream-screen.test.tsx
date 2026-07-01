@@ -1,7 +1,7 @@
 import React from "react";
 import { Text } from "ink";
 import { render } from "ink-testing-library";
-import { MemoryRouter, Route, Routes, useLocation, useParams } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation, useNavigate, useParams } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ConveneDataSource, ConveneViewEvent } from "../../../src/tui/adapters/convene.js";
@@ -363,6 +363,149 @@ describe("DebateStreamScreen", () => {
       errorSpy.mockRestore();
       useStateSpy.mockRestore();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Effect re-run lifecycle (#1677)
+//
+// The mount effect guards its single start with `startedRef`. When an effect
+// dependency changes WITHOUT a remount — e.g. navigating to a different panel
+// on the same `/convene/:panel/run` route, which React Router reconciles onto
+// the SAME component instance so refs persist — the cleanup aborts the old run
+// but must ALSO reset `startedRef`. Otherwise the stale `true` guard blocks the
+// re-run: the screen is left "streaming" with no active stream. These tests
+// assert the run-start (streamDebate) CALL COUNT: exactly one per lifecycle,
+// and one additional start on a legitimate dependency re-run.
+// ---------------------------------------------------------------------------
+
+describe("DebateStreamScreen — effect re-run restarts streaming", () => {
+  let navigateFn: ReturnType<typeof useNavigate> | null = null;
+
+  function NavCapture(): null {
+    navigateFn = useNavigate();
+    return null;
+  }
+
+  function renderReRun(convene: ConveneDataSource): ReturnType<typeof render> {
+    navigateFn = null;
+    const value = {
+      panels: { loadList: async () => [], loadDetail: async () => undefined },
+      convene,
+    } as TuiDataSources;
+    return render(
+      <InputCaptureProvider>
+        <DataProvider value={value}>
+          <MemoryRouter
+            initialEntries={[{ pathname: "/convene/acme/run", state: { topic: "Roadmap" } }]}
+          >
+            <NavCapture />
+            <Routes>
+              <Route
+                path="/convene/:panel/run"
+                element={<DebateStreamScreen theme={theme} isActive />}
+              />
+              <Route path="/sessions/:id" element={<SessionProbe />} />
+              <Route path="/sessions/:id/conclude" element={<ConcludeProbe />} />
+            </Routes>
+          </MemoryRouter>
+        </DataProvider>
+      </InputCaptureProvider>,
+    );
+  }
+
+  it("restarts the run when the panel dependency changes after cleanup (not left stuck)", async () => {
+    // Each run's event sink is captured so the test can drive the SPECIFIC run
+    // it wants; each run stays pending for the lifetime of the test.
+    const sinks: ((e: ConveneViewEvent) => void)[] = [];
+    const streamDebate = vi.fn<
+      Parameters<ConveneDataSource["streamDebate"]>,
+      ReturnType<ConveneDataSource["streamDebate"]>
+    >(async (_panel, _topic, _options, onEvent) => {
+      sinks.push(onEvent);
+      await new Promise<void>(() => undefined);
+    });
+
+    const { lastFrame } = renderReRun({ estimateCost: estimateStub, streamDebate });
+
+    await flush();
+
+    // Mount starts EXACTLY ONE run for the initial panel.
+    expect(streamDebate).toHaveBeenCalledTimes(1);
+    expect(streamDebate).toHaveBeenNthCalledWith(
+      1,
+      "acme",
+      "Roadmap",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      expect.any(Function),
+    );
+
+    // Navigate to a DIFFERENT panel on the same route. React Router reconciles the
+    // same DebateStreamScreen instance (no remount → refs persist), so the effect's
+    // `panel` dependency changes: cleanup (abort) runs, then the effect re-runs.
+    expect(navigateFn).toBeTypeOf("function");
+    navigateFn?.("/convene/beta/run", { state: { topic: "Roadmap" } });
+    await flush();
+
+    // With `startedRef` reset on cleanup the guard passes, so a fresh run starts
+    // for the new panel. Before the fix the stale `true` guard blocks this and the
+    // count stays at 1 — the screen would be stuck "streaming" with no active run.
+    expect(streamDebate).toHaveBeenCalledTimes(2);
+    expect(streamDebate).toHaveBeenNthCalledWith(
+      2,
+      "beta",
+      "Roadmap",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      expect.any(Function),
+    );
+
+    // Prove the screen is genuinely LIVE on the second run — the fresh sink drives
+    // the transcript (unmountedRef was reset, so events are not swallowed).
+    const secondSink = sinks[1];
+    expect(secondSink).toBeTypeOf("function");
+    secondSink?.({ kind: "panel", experts: ["Zed"] });
+    await flush();
+    expect(lastFrame() ?? "").toContain("Experts: Zed");
+  });
+
+  it("starts exactly one run on a single mount and never double-starts within one lifecycle", async () => {
+    const streamDebate = vi.fn<
+      Parameters<ConveneDataSource["streamDebate"]>,
+      ReturnType<ConveneDataSource["streamDebate"]>
+    >(async (_panel, _topic, _options, onEvent) => {
+      onEvent({ kind: "panel", experts: ["Alice"] });
+      await new Promise<void>(() => undefined);
+    });
+
+    renderReRun({ estimateCost: estimateStub, streamDebate });
+
+    // Repeated flushes exercise multiple render/commit passes: the mount guard
+    // must keep a single lifecycle to exactly one run (no self-inflicted restart).
+    await flush();
+    await flush();
+
+    expect(streamDebate).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not start another run when the effect cleans up without a re-run (unmount)", async () => {
+    const streamDebate = vi.fn<
+      Parameters<ConveneDataSource["streamDebate"]>,
+      ReturnType<ConveneDataSource["streamDebate"]>
+    >(async (_panel, _topic, _options, onEvent) => {
+      onEvent({ kind: "panel", experts: ["Alice"] });
+      await new Promise<void>(() => undefined);
+    });
+
+    const { unmount } = renderReRun({ estimateCost: estimateStub, streamDebate });
+
+    await flush();
+    expect(streamDebate).toHaveBeenCalledTimes(1);
+
+    unmount();
+    await flush();
+
+    // Resetting `startedRef` on cleanup must NOT itself kick off another run.
+    expect(streamDebate).toHaveBeenCalledTimes(1);
   });
 });
 
