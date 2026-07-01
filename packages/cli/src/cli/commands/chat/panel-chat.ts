@@ -16,6 +16,7 @@ import {
   maybeWarnLongConversation,
   createSummarizationGate,
   rewriteRotateError,
+  warnIfGenericExpertHasUnindexedDocs,
   makeSink,
   defaultInputProvider,
   defaultSubscribeInterrupt,
@@ -124,6 +125,12 @@ export async function runPanelChat(opts: PanelChatOptions): Promise<void> {
     for (const expert of resolved) {
       const spec = buildExpertSpec(expert, config, PANEL_CHAT_TASK_DESCRIPTION);
       await engine.addExpert(spec);
+      // #1103: surface the same generic-expert unindexed-docs warning the 1:1
+      // chat path emits, so a generic member's experts/<slug>/docs/ files are
+      // not silently ignored on the panel/convene startup path. This is a
+      // no-op for persona members and for generics with no docs; it does not
+      // touch the panel's managed-docs (panels/<name>/docs) scan below.
+      await warnIfGenericExpertHasUnindexedDocs(expert, dataHome, renderer);
       members.push({ expert, spec });
     }
 

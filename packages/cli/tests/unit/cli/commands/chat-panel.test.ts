@@ -1770,3 +1770,178 @@ describe("panel chat — @convene structured debate", () => {
     });
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────
+// Generic-expert unindexed-docs warning at panel/convene startup (#1103)
+//
+// The 1:1 chat path (expert-chat.ts -> maybeProcessPersonaDocs) warns when a
+// GENERIC expert has files in experts/<slug>/docs/ that will never be indexed
+// (generic experts do not run the document pipeline). Panel/convene startup
+// must surface the SAME warning per generic member — previously it did not,
+// because panel-chat only scans the panel's own managed docs dir
+// (panels/<name>/docs) and never inspected each member's per-expert docs.
+// ──────────────────────────────────────────────────────────────────────
+
+const PANEL_PERSONA: ExpertDefinition = {
+  slug: "persona-vp",
+  displayName: "Persona VP",
+  role: "VP of Engineering",
+  expertise: {
+    weightedEvidence: ["delivery commitments"],
+    referenceCases: [],
+    notExpertIn: [],
+  },
+  epistemicStance: "Pragmatist focused on customer outcomes",
+  kind: "persona",
+  personaDescription: "VP of Engineering I report to",
+};
+
+describe("panel chat — generic expert unindexed-docs warning (#1103)", () => {
+  let env: TestEnv;
+  beforeEach(async () => {
+    env = await makeEnv();
+  });
+  afterEach(async () => {
+    await teardown(env);
+  });
+
+  async function seedExpertWithDocs(
+    def: ExpertDefinition,
+    files: Readonly<Record<string, string>>,
+  ): Promise<void> {
+    await seedExpert(env, def);
+    const docsDir = path.join(env.dataHome, "experts", def.slug, "docs");
+    await fs.mkdir(docsDir, { recursive: true });
+    for (const [name, content] of Object.entries(files)) {
+      await fs.writeFile(path.join(docsDir, name), content);
+    }
+  }
+
+  function runPanel(target: string): { parse: () => Promise<void>; out: () => string } {
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+    return {
+      parse: () => cmd.parseAsync(["node", "council-chat", target, "--engine", "mock"]),
+      out: () => out,
+    };
+  }
+
+  it("warns that a generic panel member's docs are unindexed and names the expert + remedy", async () => {
+    // PANEL_EXPERT_A is generic and has files in its per-expert docs folder;
+    // PANEL_EXPERT_B is generic with no docs (must not warn).
+    await seedExpertWithDocs(PANEL_EXPERT_A, {
+      "memo.md": "# Memo\n\nThis content is ignored by a generic expert.",
+    });
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "docwarn-panel", ["panel-a", "panel-b"]);
+
+    const run = runPanel("docwarn-panel");
+    await run.parse();
+    const out = run.out();
+
+    // Same discriminating warning as the 1:1 chat path: it names the offending
+    // expert by slug, states the docs are NOT indexed, and points at --persona.
+    expect(out).toMatch(/\(panel-a\) is a generic expert/);
+    expect(out).toMatch(/are NOT indexed and will be ignored/);
+    expect(out).toMatch(/--persona/);
+    // The panel's managed-docs flow is untouched — no persona doc processing.
+    expect(out).not.toMatch(/processing persona documents/i);
+    // Only the qualifying member warns — panel-b (no docs) must not appear.
+    expect(out).not.toMatch(/\(panel-b\) is a generic expert/);
+  });
+
+  it("emits the unindexed-docs warning exactly once for a single qualifying member", async () => {
+    // Two files in ONE generic member's docs folder => still exactly ONE
+    // warning (per-expert, reporting the file count), never one per file.
+    await seedExpertWithDocs(PANEL_EXPERT_A, { "a.md": "alpha", "b.md": "beta" });
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "once-panel", ["panel-a", "panel-b"]);
+
+    const run = runPanel("once-panel");
+    await run.parse();
+    const out = run.out();
+
+    const matches = out.match(/is a generic expert/g) ?? [];
+    expect(matches.length).toBe(1);
+    // The single warning reports the count of ignored files for that expert.
+    expect(out).toMatch(/2 document\(s\)/);
+  });
+
+  it("warns once per qualifying generic member when several members have docs", async () => {
+    await seedExpertWithDocs(PANEL_EXPERT_A, { "a.md": "alpha" });
+    await seedExpertWithDocs(PANEL_EXPERT_B, { "b.md": "beta" });
+    await writeUserPanel(env, "multi-panel", ["panel-a", "panel-b"]);
+
+    const run = runPanel("multi-panel");
+    await run.parse();
+    const out = run.out();
+
+    // Exactly one warning per qualifying member, each naming its own expert.
+    const matches = out.match(/is a generic expert/g) ?? [];
+    expect(matches.length).toBe(2);
+    expect(out).toMatch(/\(panel-a\) is a generic expert/);
+    expect(out).toMatch(/\(panel-b\) is a generic expert/);
+  });
+
+  it("does not warn when a panel's generic members have no docs", async () => {
+    await seedExpert(env, PANEL_EXPERT_A);
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "nodocs-panel", ["panel-a", "panel-b"]);
+
+    const run = runPanel("nodocs-panel");
+    await run.parse();
+    const out = run.out();
+
+    expect(out).not.toMatch(/is a generic expert/);
+    expect(out).not.toMatch(/not indexed/i);
+  });
+
+  it("does not warn for a persona (trained) panel member that has docs", async () => {
+    // A persona member's docs ARE indexable by the pipeline — this is NOT the
+    // generic-ignored case, so the generic-unindexed warning must not fire.
+    await seedExpertWithDocs(PANEL_PERSONA, { "memo.md": "# Memo\n\nPersona content." });
+    await seedExpert(env, PANEL_EXPERT_B);
+    await writeUserPanel(env, "persona-panel", ["persona-vp", "panel-b"]);
+
+    const run = runPanel("persona-panel");
+    await run.parse();
+    const out = run.out();
+
+    expect(out).not.toMatch(/is a generic expert/);
+    expect(out).not.toMatch(/not indexed/i);
+  });
+
+  it("sanitizes an adversarial generic member displayName in the unindexed-docs warning", async () => {
+    // The displayName is model/user-derived. It must be collapsed to a single
+    // control-free terminal line by the same renderer sink the 1:1 path uses.
+    // Bytes: BEL, bare ESC, C1 CSI, DEL, RTL-override (bidi), U+2028 line
+    // separator, CR and LF — all stripped/collapsed to spaces => "ALPHA BETA
+    // GAMMA".
+    const adversarial: ExpertDefinition = {
+      ...PANEL_EXPERT_A,
+      slug: "adv-generic",
+      displayName: "ALPHA\u0007\u001B\u009B\u007F\u202E\u2028\rBETA\nGAMMA",
+    };
+    await seedExpertWithDocs(adversarial, { "memo.md": "ignored" });
+    await writeUserPanel(env, "adv-panel", ["adv-generic"]);
+
+    const run = runPanel("adv-panel");
+    await run.parse();
+    const out = run.out();
+
+    // Rendered as one line with all control bytes stripped/collapsed.
+    expect(out).toContain('Expert "ALPHA BETA GAMMA"');
+    expect(out).toMatch(/\(adv-generic\) is a generic expert/);
+    // No terminal-hostile bytes leak. (ESC is intentionally excluded: chalk
+    // legitimately emits SGR color codes around the "warn" symbol under
+    // FORCE_COLOR, so an ESC in the buffer is not from the display name.)
+    for (const ch of ["\u0007", "\u009B", "\u007F", "\u202E", "\u2028"]) {
+      expect(out).not.toContain(ch);
+    }
+  });
+});
