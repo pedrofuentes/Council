@@ -447,6 +447,30 @@ describe("extractDocument", () => {
       expect(result.content).toBe("hello");
     });
 
+    it("accepts a file whose size is exactly maxFileSizeBytes (boundary accept)", async () => {
+      const maxFileSizeBytes = 64;
+      const filePath = path.join(dir, "exact-boundary.txt");
+      await fs.writeFile(filePath, "a".repeat(maxFileSizeBytes));
+      const result = await extractDocument(filePath, { maxFileSizeBytes });
+      expect(result.content).toBe("a".repeat(maxFileSizeBytes));
+    });
+
+    it("rejects a file whose size is maxFileSizeBytes + 1 (boundary reject)", async () => {
+      const maxFileSizeBytes = 64;
+      const filePath = path.join(dir, "over-boundary.txt");
+      await fs.writeFile(filePath, "a".repeat(maxFileSizeBytes + 1));
+      const errors = await import("../../../../src/core/documents/extractors/errors.js");
+      let caught: unknown;
+      try {
+        await extractDocument(filePath, { maxFileSizeBytes });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(errors.ExtractionError);
+      const e = caught as InstanceType<typeof errors.ExtractionError>;
+      expect(e.kind).toBe("oversize-file");
+    });
+
     it("throws unsupported-format for unknown extensions", async () => {
       const filePath = path.join(dir, "weird.xyz");
       await fs.writeFile(filePath, "some content");
