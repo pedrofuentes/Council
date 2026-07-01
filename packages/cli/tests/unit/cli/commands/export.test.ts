@@ -8,13 +8,16 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildExportCommand,
   resolveOutputPath,
   writeExportArtifact,
 } from "../../../../src/cli/commands/export.js";
+import { CliUserError } from "../../../../src/cli/cli-user-error.js";
+import { EXIT_USER_ERROR } from "../../../../src/cli/exit-codes.js";
+import { handleCliError } from "../../../../src/cli/handle-cli-error.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import { DebateRepository } from "../../../../src/memory/repositories/debates.js";
 import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
@@ -22,11 +25,28 @@ import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
 import { TurnRepository } from "../../../../src/memory/repositories/turns.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
 
+// Wrap only fs.rename so a single test can force the atomic rename-into-place to
+// fail deterministically; every other fs call (and rename by default) passes
+// through to the real implementation. ESM namespaces cannot be spied, so the
+// failure must be injected via vi.mock (see template-migration-fileexists.test).
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const real = (await importOriginal()) as typeof fs;
+  return { ...real, rename: vi.fn(real.rename) };
+});
+
 const ESC = String.fromCharCode(0x1b);
 const BEL = String.fromCharCode(0x07);
 const C1_CSI = String.fromCharCode(0x9b);
 const BIDI_OVERRIDE = "\u202E";
 const ZERO_WIDTH_SPACE = "\u200B";
+const WIN32 = process.platform === "win32";
+
+// Terminal-hostile bytes that must never reach stderr: C0 controls (0x00-0x1f),
+// DEL + C1 (0x7f-0x9f), Unicode line/paragraph separators, bidi overrides
+// (202a-202e) and bidi isolates (2066-2069). A discriminating check that the
+// export error path is sanitized, beyond the specific bytes fed in.
+// eslint-disable-next-line no-control-regex
+const TERMINAL_CONTROL_BYTES = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
 
 function expectNoTerminalControls(out: string): void {
   expect(out).not.toContain(ESC);
@@ -563,6 +583,44 @@ async function seedPanelWithShortTurns(testHome: string): Promise<{ panelName: s
       status: "completed",
       endedAt: new Date().toISOString(),
     });
+    return { panelName: panel.name };
+  } finally {
+    await db.destroy();
+  }
+}
+
+async function seedPanelWithIncompleteDebate(testHome: string): Promise<{ panelName: string }> {
+  // A substantive but NON-completed debate (status "interrupted") so the ADR
+  // exercises the `${status} (incomplete)` branch of deriveAdrStatus (#717).
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    const panel = await new PanelRepository(db).create({
+      name: "incomplete-panel",
+      topic: "Unfinished deliberation",
+      copilotHome: path.join(testHome, "copilot"),
+      configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+    });
+    const cto = await new ExpertRepository(db).create({
+      panelId: panel.id,
+      slug: "cto",
+      displayName: "CTO",
+      model: "claude-sonnet-4",
+      systemMessage: "You are a CTO.",
+    });
+    const debate = await new DebateRepository(db).create({
+      panelId: panel.id,
+      prompt: "Unfinished deliberation prompt",
+      moderator: "round-robin",
+    });
+    await new TurnRepository(db).create({
+      debateId: debate.id,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId: cto.id,
+      content: "CTO opening: we need substantially more analysis before deciding anything here.",
+    });
+    await new DebateRepository(db).update(debate.id, { status: "interrupted" });
     return { panelName: panel.name };
   } finally {
     await db.destroy();
@@ -1192,7 +1250,7 @@ describe("buildExportCommand", () => {
     expect(await fs.readFile(target, "utf-8")).toBe("PREEXISTING");
   });
 
-  it("--format adr per-line-prefixes multi-line Discussion turns so content cannot forge sections (#1475)", async () => {
+  it("--format adr escapes leading block markers on multi-line Discussion turns so content cannot forge sections (#1475/#1884)", async () => {
     const maliciousContent = [
       "I vote to ship.",
       "## Pwned Section",
@@ -1208,14 +1266,285 @@ describe("buildExportCommand", () => {
     });
     await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "adr"]);
 
-    // The forged heading/body must never appear at column 0, where it would
-    // forge a top-level ADR section; it survives only as indented list content.
-    expect(captured).not.toMatch(/^## Pwned Section/m);
+    // The forged heading must never render as an ATX heading at ANY legal
+    // leading indent (CommonMark allows 0-3 spaces before the hashes), so it
+    // can neither forge a top-level ADR section nor spoof the heading outline.
+    expect(captured).not.toMatch(/^ {0,3}#{1,6}\s+Pwned Section/m);
+    // The forged body must not break out to column 0 as its own top-level block.
     expect(captured).not.toMatch(/^FORGED-PWNED-BODY/m);
-    expect(captured).toContain("  ## Pwned Section");
+    // The leading hash is backslash-escaped, so it survives only as literal
+    // text inside the list item — never as structure.
+    expect(captured).toContain("  \\## Pwned Section");
     expect(captured).toContain("  FORGED-PWNED-BODY here.");
     // The first line stays on the list bullet.
     expect(captured).toContain("- **CTO**: I vote to ship.");
+  });
+
+  it("--format adr neutralizes the full block-injection class in Discussion continuations (#1884)", async () => {
+    // A single multi-line turn that tries to open every kind of CommonMark
+    // block from a continuation line: ATX heading, thematic break, fenced
+    // code, and a raw-HTML block. None may render as structure.
+    const payload = [
+      "Position stated for the record.",
+      "## Injected Heading",
+      "----",
+      "```js",
+      "exfiltrate()",
+      "```",
+      "<h2>Injected HTML</h2>",
+    ].join("\n");
+    const seed = await seedPanelWithAdrInjectionContent(testHome, payload);
+    let captured = "";
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
+    await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "adr"]);
+
+    // ATX heading: no valid heading survives at any legal 0-3 space indent.
+    expect(captured).not.toMatch(/^ {0,3}#{1,6}\s+Injected Heading/m);
+    expect(captured).toContain("  \\## Injected Heading");
+    // Thematic break: the real ADR footer is exactly '---'; the injected
+    // '----' (4 dashes) must never appear as an un-escaped break line.
+    expect(captured).not.toMatch(/^ {0,3}-{4,}\s*$/m);
+    expect(captured).toContain("  \\----");
+    // Fenced code: no fence may open (which would swallow later sections).
+    expect(captured).not.toMatch(/^ {0,3}`{3}/m);
+    expect(captured).toContain("  \\```js");
+    // Raw-HTML block: no HTML block may open at line start.
+    expect(captured).not.toMatch(/^ {0,3}<h2>/m);
+    expect(captured).toContain("  \\<h2>Injected HTML");
+    // The benign first line still rides the list bullet.
+    expect(captured).toContain("- **CTO**: Position stated for the record.");
+  });
+
+  it.skipIf(WIN32)(
+    "resolveOutputPath rejects a relative --output whose parent symlink escapes the tree (#1885)",
+    async () => {
+      const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-export-outside-"));
+      const originalCwd = process.cwd();
+      try {
+        process.chdir(testHome);
+        // Pre-plant an in-CWD symlink pointing OUT of the tree. Lexically
+        // `evil/out.md` stays under CWD, but its real parent is `outsideDir`.
+        await fs.symlink(outsideDir, path.join(testHome, "evil"));
+        await expect(resolveOutputPath(path.join("evil", "out.md"), false)).rejects.toThrow(
+          /outside|working directory|refus/i,
+        );
+        // Inverse: a genuinely in-tree relative path still resolves cleanly.
+        await expect(resolveOutputPath("in-tree.md", false)).resolves.toContain("in-tree.md");
+      } finally {
+        process.chdir(originalCwd);
+        await fs.rm(outsideDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(WIN32)(
+    "resolveOutputPath rejects a relative --output with an intermediate-dir symlink escape (#1885)",
+    async () => {
+      const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-export-outside-"));
+      const originalCwd = process.cwd();
+      try {
+        process.chdir(testHome);
+        await fs.mkdir(path.join(testHome, "nested"));
+        await fs.symlink(outsideDir, path.join(testHome, "nested", "link"));
+        await expect(
+          resolveOutputPath(path.join("nested", "link", "out.md"), false),
+        ).rejects.toThrow(/outside|working directory|refus/i);
+      } finally {
+        process.chdir(originalCwd);
+        await fs.rm(outsideDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("resolveOutputPath returns a target whose parent is realpath-resolved (#1883)", async () => {
+    // Runs on every platform (no symlink needed): the parent dereference is
+    // the guard that protects platforms where O_NOFOLLOW is unavailable
+    // (Windows), by ensuring the final open/rename only faces the last
+    // path component.
+    const dir = path.join(testHome, "plain-parent");
+    await fs.mkdir(dir);
+    const resolved = await resolveOutputPath(path.join(dir, "out.md"), false);
+    expect(path.dirname(resolved)).toBe(await fs.realpath(dir));
+    expect(path.basename(resolved)).toBe("out.md");
+  });
+
+  it.skipIf(WIN32)(
+    "resolveOutputPath dereferences a symlinked parent so no symlinked ancestor remains (#1883)",
+    async () => {
+      const realDir = path.join(testHome, "real-dir");
+      await fs.mkdir(realDir);
+      const linkDir = path.join(testHome, "link-dir");
+      await fs.symlink(realDir, linkDir);
+      // An absolute --output through an IN-TREE symlinked parent is allowed,
+      // but the returned target must be dereferenced to the real directory.
+      const resolved = await resolveOutputPath(path.join(linkDir, "out.md"), false);
+      expect(path.dirname(resolved)).toBe(await fs.realpath(realDir));
+      expect(path.basename(resolved)).toBe("out.md");
+    },
+  );
+
+  it.skipIf(WIN32)(
+    "writeExportArtifact --force replaces via atomic rename, never truncating a hard-linked sibling (#1886)",
+    async () => {
+      const victim = path.join(testHome, "victim.txt");
+      await fs.writeFile(victim, "IMPORTANT-DO-NOT-TRUNCATE", "utf-8");
+      const target = path.join(testHome, "target.md");
+      // A hard link models a regular file swapped in at the target between the
+      // pre-check and the write: it shares the victim's inode.
+      await fs.link(victim, target);
+      const before = await fs.stat(target);
+
+      await writeExportArtifact(target, "NEW EXPORT CONTENT", true);
+
+      // The target now holds the export...
+      expect(await fs.readFile(target, "utf-8")).toBe("NEW EXPORT CONTENT");
+      // ...but the hard-linked sibling is untouched. An in-place O_TRUNC would
+      // have truncated the shared inode; rename-into-place swaps the name.
+      expect(await fs.readFile(victim, "utf-8")).toBe("IMPORTANT-DO-NOT-TRUNCATE");
+      // Inode changed → proves rename-into-place rather than truncate-in-place.
+      expect((await fs.stat(target)).ino).not.toBe(before.ino);
+      // The temp sibling is renamed away, not left behind.
+      const leftovers = (await fs.readdir(testHome)).filter((e) => e.includes(".tmp"));
+      expect(leftovers).toEqual([]);
+    },
+  );
+
+  it("resolveOutputPath wraps a non-ENOENT lstat error as a sanitized CliUserError (exit 1) (#1887)", async () => {
+    // An intermediate path component that is a regular file makes lstat on a
+    // child fail with ENOTDIR — a non-ENOENT error whose raw Node message would
+    // otherwise embed the un-sanitized --output path (with ANSI/control bytes).
+    const notDir = path.join(testHome, "not-a-dir");
+    await fs.writeFile(notDir, "x", "utf-8");
+    const ansiLeaf = `${ESC}[31m${C1_CSI}child${BIDI_OVERRIDE}${ZERO_WIDTH_SPACE}.md`;
+    const outPath = path.join(notDir, ansiLeaf);
+
+    let caught: unknown;
+    try {
+      await resolveOutputPath(outPath, true);
+    } catch (err) {
+      caught = err;
+    }
+    // (a) User error → exit 1, not the raw-Node internal-error code 4.
+    expect(caught).toBeInstanceOf(CliUserError);
+
+    // Production stderr path: handleCliError must not emit raw ANSI/control
+    // bytes and must return the user-error exit code.
+    let stderr = "";
+    const exit = handleCliError(caught, (s) => {
+      stderr += s;
+    });
+    expect(exit).toBe(EXIT_USER_ERROR);
+    expectNoTerminalControls(stderr);
+    expect(stderr).not.toMatch(TERMINAL_CONTROL_BYTES);
+
+    // (b) The error's own message is single-line and free of control bytes.
+    const message = caught instanceof Error ? caught.message : String(caught);
+    expectNoTerminalControls(message);
+    expect(message).not.toMatch(TERMINAL_CONTROL_BYTES);
+    expect(message.split("\n")).toHaveLength(1);
+  });
+
+  it("writeExportArtifact --force wraps a non-ENOENT lstat error (ENOTDIR) as a sanitized CliUserError (exit 1) (#1887)", async () => {
+    // A regular file used as a parent directory makes the --force pre-write
+    // lstat on a child fail with ENOTDIR — a non-ENOENT error the write path
+    // used to raw-rethrow, exiting 4 (INTERNAL) and leaking the un-sanitized
+    // target path (ANSI/control bytes) through handleCliError's `Error: <msg>`.
+    const notDir = path.join(testHome, "force-not-a-dir");
+    await fs.writeFile(notDir, "x", "utf-8");
+    const ansiLeaf = `${ESC}[31m${C1_CSI}child${BIDI_OVERRIDE}${ZERO_WIDTH_SPACE}.md`;
+    const target = path.join(notDir, ansiLeaf);
+
+    let caught: unknown;
+    try {
+      await writeExportArtifact(target, "CONTENT", true);
+    } catch (err) {
+      caught = err;
+    }
+    // (a) User error → exit 1, not the raw-Node internal-error code 4.
+    expect(caught).toBeInstanceOf(CliUserError);
+
+    let stderr = "";
+    const exit = handleCliError(caught, (s) => {
+      stderr += s;
+    });
+    expect(exit).toBe(EXIT_USER_ERROR);
+    expectNoTerminalControls(stderr);
+    expect(stderr).not.toMatch(TERMINAL_CONTROL_BYTES);
+
+    // (b) The error's own message is single-line and free of control bytes.
+    const message = caught instanceof Error ? caught.message : String(caught);
+    expectNoTerminalControls(message);
+    expect(message).not.toMatch(TERMINAL_CONTROL_BYTES);
+    expect(message.split("\n")).toHaveLength(1);
+  });
+
+  it("writeExportArtifact --force wraps a rename failure as a sanitized CliUserError (exit 1) (#1887)", async () => {
+    // Force the atomic rename-into-place to fail with a non-ENOENT fs error
+    // whose raw Node message embeds terminal-control bytes. The write path used
+    // to raw-rethrow it, exiting 4 (INTERNAL) and printing the message verbatim.
+    const target = path.join(testHome, "rename-fail.md");
+    const renameErr = Object.assign(
+      new Error(`EACCES: permission denied, rename '${ESC}[31m${C1_CSI}${BIDI_OVERRIDE}victim'`),
+      { code: "EACCES" },
+    );
+    vi.mocked(fs.rename).mockRejectedValueOnce(renameErr);
+
+    let caught: unknown;
+    try {
+      await writeExportArtifact(target, "CONTENT", true);
+    } catch (err) {
+      caught = err;
+    }
+    // (a) User error → exit 1, not the raw-Node internal-error code 4.
+    expect(caught).toBeInstanceOf(CliUserError);
+
+    let stderr = "";
+    const exit = handleCliError(caught, (s) => {
+      stderr += s;
+    });
+    expect(exit).toBe(EXIT_USER_ERROR);
+    expectNoTerminalControls(stderr);
+    expect(stderr).not.toMatch(TERMINAL_CONTROL_BYTES);
+
+    // (b) The wrapped message never interpolates the raw fs error message, so the
+    // control bytes it carried are absent; it stays single-line and sanitized.
+    const message = caught instanceof Error ? caught.message : String(caught);
+    expectNoTerminalControls(message);
+    expect(message).not.toMatch(TERMINAL_CONTROL_BYTES);
+    expect(message.split("\n")).toHaveLength(1);
+  });
+
+  it("--format adr: marks a substantive completed debate as Accepted (#717)", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    let captured = "";
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
+    await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "adr"]);
+
+    expect(captured).toMatch(/## Status\s+\s*Accepted/m);
+    expect(captured).not.toMatch(/## Status\s+\s*Proposed/m);
+    expect(captured).not.toContain("(incomplete)");
+  });
+
+  it("--format adr: renders a non-completed debate status as incomplete (#717)", async () => {
+    const seed = await seedPanelWithIncompleteDebate(testHome);
+    let captured = "";
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
+    await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "adr"]);
+
+    expect(captured).toMatch(/## Status\s+\s*interrupted \(incomplete\)/m);
+    expect(captured).not.toContain("Accepted");
   });
 
   it("--format markdown sanitizes the resolved panel name in the 'Next:' hint (#1476)", async () => {

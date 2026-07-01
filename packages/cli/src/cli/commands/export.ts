@@ -29,6 +29,7 @@
  * exact-then-prefix fallback so `council export cfo` works when only
  * one panel name starts with `cfo`.
  */
+import { randomBytes } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -76,6 +77,69 @@ function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
 }
 
 /**
+ * A short, path-free label for a Node system error, safe to print on a terminal.
+ * `err.code` is an errno constant (e.g. `EACCES`, `ELOOP`) and never carries
+ * user-controlled bytes — unlike `err.message`, which embeds the raw,
+ * un-sanitized path. Never interpolate `err.message` into user-facing output.
+ */
+function errnoLabel(err: unknown): string {
+  return isErrnoException(err) && typeof err.code === "string" ? err.code : "unknown error";
+}
+
+/**
+ * Reject a relative `--output` whose resolved `target` escapes `root`.
+ * `path.relative` yields a leading `..` (or an absolute path on Windows drive
+ * changes) exactly when `target` is not contained by `root`.
+ */
+function assertWithinRoot(root: string, target: string, outputPath: string): void {
+  const rel = path.relative(root, target);
+  if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+    throw new CliUserError(
+      `Refusing to write export outside the working directory: '${sanitizeExportLine(outputPath)}'.`,
+    );
+  }
+}
+
+/**
+ * `realpath` a target's parent directory so a symlinked ancestor cannot smuggle
+ * the write out of the tree and so the final open/rename only has to guard the
+ * LAST path component. A not-yet-existing parent has nothing to dereference, so
+ * fall back to the lexical parent (the subsequent write surfaces a clean
+ * `ENOENT`). Any other error (`EACCES`, `ELOOP`, ...) is surfaced as a sanitized
+ * user error so the exit code is `EXIT_USER_ERROR` and no raw path leaks.
+ */
+async function realpathParentDir(parentDir: string, outputPath: string): Promise<string> {
+  try {
+    return await fs.realpath(parentDir);
+  } catch (err: unknown) {
+    if (isErrnoException(err) && err.code === "ENOENT") {
+      return parentDir;
+    }
+    throw new CliUserError(
+      `Cannot access export target '${sanitizeExportLine(outputPath)}': ${errnoLabel(err)}.`,
+      { cause: err },
+    );
+  }
+}
+
+/**
+ * Neutralize any leading block-level Markdown construct on a single line so
+ * untrusted transcript text can never open a new block and forge document
+ * structure (outline spoofing / section forgery). Covers the whole CommonMark
+ * block-start class — ATX headings (`#`), setext underlines (`=`/`-`), thematic
+ * breaks (`-`/`*`/`_`), list bullets (`-`/`*`/`+`), blockquotes (`>`), fenced
+ * code (`` ` ``/`~`) and raw-HTML blocks (`<`). CommonMark permits up to three
+ * leading spaces before a block marker; a backslash before that first
+ * ASCII-punctuation marker makes the line parse as a literal paragraph while
+ * preserving the visible text. (A blockquote prefix does NOT suppress a nested
+ * ATX heading — CommonMark renders `> # Foo` as a heading — so escaping, not
+ * quoting, is the robust fix.)
+ */
+function escapeBlockLeadingMarkdown(line: string): string {
+  return line.replace(/^(\s{0,3})([#>=~`*+_<-])/, "$1\\$2");
+}
+
+/**
  * Resolve and validate a user-supplied `--output` path before writing.
  *
  * `--output` accepts an arbitrary path, so treat it as hostile:
@@ -84,30 +148,54 @@ function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
  *     the tree, so reject any relative input whose resolved target is not under
  *     `process.cwd()`. An absolute `--output` is an explicit, user-chosen
  *     location and is allowed (still subject to the guards below).
+ *   - Lexical containment is not enough: a pre-planted symlink in the parent
+ *     chain (e.g. `foo -> /etc` for a relative `foo/out.md`) stays lexically
+ *     "inside" while pointing out of tree. Dereference the parent with
+ *     `realpath`, re-check containment against the REAL parent, and return the
+ *     dereferenced path so the final open/rename only faces the last component
+ *     (this also closes the Windows gap where `O_NOFOLLOW` is unavailable).
  *   - Refuse a target that already exists unless it is a regular file the user
  *     explicitly opts to overwrite via `--force`, and refuse non-regular
  *     targets (directories, symlinks, devices) so we never follow a symlink to
  *     clobber an out-of-tree file.
- *   - Only `ENOENT` means "nothing is there yet"; every other `lstat` error
- *     (EACCES, ELOOP, ENOTDIR, ...) is real and must surface rather than be
- *     swallowed and mistaken for a clean create target.
+ *   - Only `ENOENT` means "nothing is there yet"; every other `lstat`/`realpath`
+ *     error (EACCES, ELOOP, ENOTDIR, ...) is real and is surfaced as a sanitized
+ *     `CliUserError` (exit 1, no raw path/ANSI in stderr) rather than swallowed
+ *     or rethrown as a raw Node error (which would exit 4 and leak the path).
  */
 export async function resolveOutputPath(outputPath: string, force: boolean): Promise<string> {
   const resolved = path.resolve(outputPath);
+  const isRelative = !path.isAbsolute(outputPath);
 
-  if (!path.isAbsolute(outputPath)) {
-    const root = path.resolve(process.cwd());
-    const rel = path.relative(root, resolved);
-    if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
-      throw new CliUserError(
-        `Refusing to write export outside the working directory: '${sanitizeExportLine(outputPath)}'.`,
-      );
-    }
+  // Cheap lexical pre-filter: reject an obvious `../` escape before touching the
+  // filesystem so a non-existent escape target never reaches realpath/lstat.
+  if (isRelative) {
+    assertWithinRoot(path.resolve(process.cwd()), resolved, outputPath);
   }
 
-  const existing = await fs.lstat(resolved).catch((err: unknown) => {
-    if (isErrnoException(err) && err.code === "ENOENT") return undefined;
-    throw err;
+  const realParent = await realpathParentDir(path.dirname(resolved), outputPath);
+  const derefResolved = path.join(realParent, path.basename(resolved));
+
+  // Re-check containment against the DEREFERENCED parent so a symlinked ancestor
+  // that escapes the tree is caught even though it looked lexically contained.
+  if (isRelative) {
+    const realRoot = await fs
+      .realpath(path.resolve(process.cwd()))
+      .catch(() => path.resolve(process.cwd()));
+    assertWithinRoot(realRoot, derefResolved, outputPath);
+  }
+
+  const existing = await fs.lstat(derefResolved).catch((err: unknown) => {
+    if (isErrnoException(err) && err.code === "ENOENT") {
+      return undefined;
+    }
+    // A non-ENOENT lstat error (EACCES/ELOOP/ENOTDIR/...) is real. Surface it as
+    // a sanitized user error so the exit code is EXIT_USER_ERROR (1) and no raw,
+    // un-sanitized path (with ANSI/control bytes) reaches the terminal.
+    throw new CliUserError(
+      `Cannot access export target '${sanitizeExportLine(outputPath)}': ${errnoLabel(err)}.`,
+      { cause: err },
+    );
   });
   if (existing) {
     if (!existing.isFile()) {
@@ -121,19 +209,35 @@ export async function resolveOutputPath(outputPath: string, force: boolean): Pro
       );
     }
   }
-  return resolved;
+  return derefResolved;
 }
 
 /**
- * Atomically write the rendered export to `resolvedPath` without ever following
- * a symlink.
+ * Write the rendered export to `resolvedPath` without ever following a symlink
+ * or truncating a file swapped in after validation (a TOCTOU race).
  *
- * `resolveOutputPath` validates the target, but a hostile actor could swap a
- * symlink into place between that check and this write (a TOCTOU race). Opening
- * with `O_NOFOLLOW` makes the kernel refuse (ELOOP) to follow a final-component
- * symlink; without `--force`, `O_EXCL` makes creation atomic so a file that
- * appeared after the pre-check is never clobbered; with `--force`, `O_TRUNC`
- * overwrites the already-validated regular file in place.
+ * `resolveOutputPath` already dereferenced the parent directory, so only the
+ * final component is still at risk of a swap. Two strategies keep the write safe
+ * on EVERY platform — including where `O_NOFOLLOW` is unavailable: it is
+ * `undefined` on Windows, so `?? 0` degrades the flag to a no-op there and the
+ * `O_EXCL` create / `rename` replace below carry the protection instead.
+ *
+ *   - **create (no --force):** open with `O_CREAT | O_EXCL` (plus `O_NOFOLLOW`
+ *     where available). `O_EXCL` makes creation atomic and fails with `EEXIST`
+ *     if ANYTHING — regular file or symlink — already occupies the path, so a
+ *     target that appeared after the pre-check is never clobbered or followed.
+ *   - **overwrite (--force):** write a uniquely-named private temp sibling in
+ *     the same directory, then `fs.rename` it over the target. `rename` is
+ *     atomic and never follows a destination symlink, so a regular file swapped
+ *     in at the path is replaced wholesale rather than truncated in place — the
+ *     old `O_TRUNC` opened and zeroed whatever inode was there. A pre-write
+ *     `lstat` still refuses a symlink / non-regular target outright as defense
+ *     in depth, and the temp is removed if the rename fails.
+ *
+ * Any raw Node fs error from these steps (`ENOTDIR`, `EACCES`, `EEXIST`,
+ * `ELOOP`, ...) is wrapped in a sanitized `CliUserError` (exit 1, no raw
+ * path/ANSI in stderr) instead of rethrown as-is — a raw rethrow exits 4
+ * (INTERNAL) and leaks the un-sanitized path — mirroring `resolveOutputPath`.
  */
 export async function writeExportArtifact(
   resolvedPath: string,
@@ -141,14 +245,72 @@ export async function writeExportArtifact(
   force: boolean,
 ): Promise<void> {
   const noFollow = fsConstants.O_NOFOLLOW ?? 0;
-  const flags = force
-    ? fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | noFollow
-    : fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollow;
-  const handle = await fs.open(resolvedPath, flags);
+
   try {
-    await handle.writeFile(contents, { encoding: "utf8" });
-  } finally {
-    await handle.close();
+    if (!force) {
+      const handle = await fs.open(
+        resolvedPath,
+        fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollow,
+        0o600,
+      );
+      try {
+        await handle.writeFile(contents, { encoding: "utf8" });
+      } finally {
+        await handle.close();
+      }
+      return;
+    }
+
+    // --force: refuse a symlink / non-regular target outright (rename would not
+    // follow it, but we must not silently replace one either), then write a
+    // private temp sibling and atomically rename it into place.
+    const existing = await fs.lstat(resolvedPath).catch((err: unknown) => {
+      if (isErrnoException(err) && err.code === "ENOENT") {
+        return undefined;
+      }
+      throw err;
+    });
+    if (existing && !existing.isFile()) {
+      throw new CliUserError("Refusing to overwrite a non-regular-file export target.");
+    }
+
+    const dir = path.dirname(resolvedPath);
+    const tempPath = path.join(
+      dir,
+      `.${path.basename(resolvedPath)}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`,
+    );
+    const handle = await fs.open(
+      tempPath,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollow,
+      0o600,
+    );
+    try {
+      await handle.writeFile(contents, { encoding: "utf8" });
+    } finally {
+      await handle.close();
+    }
+    try {
+      await fs.rename(tempPath, resolvedPath);
+    } catch (err: unknown) {
+      await fs.rm(tempPath, { force: true }).catch(() => undefined);
+      throw err;
+    }
+  } catch (err: unknown) {
+    // The non-regular-file refusal is already a sanitized CliUserError — surface
+    // it unchanged. Every other failure is a raw Node fs error
+    // (ENOTDIR/EACCES/EEXIST/ELOOP/...) whose message embeds the un-sanitized
+    // path; rethrown as-is it would exit 4 (INTERNAL) and leak path/ANSI bytes to
+    // the terminal. Wrap it in a sanitized CliUserError so the exit code is
+    // EXIT_USER_ERROR (1) with no raw path/control bytes — mirroring
+    // resolveOutputPath. (ENOENT short-circuits above return undefined and never
+    // reach here.)
+    if (err instanceof CliUserError) {
+      throw err;
+    }
+    throw new CliUserError(
+      `Cannot write export to '${sanitizeExportLine(resolvedPath)}' (${errnoLabel(err)}).`,
+      { cause: err },
+    );
   }
 }
 
@@ -443,9 +605,12 @@ export function renderAdr(doc: TranscriptDocument): string {
       const [firstLine = "", ...restLines] = sanitizeExportBlockLines(t.content);
       lines.push(`- **${display}**: ${firstLine}`);
       for (const contLine of restLines) {
-        // Indent continuation lines to the list-item content column so a
-        // multi-line turn cannot break out and forge a top-level ADR section.
-        lines.push(contLine.length > 0 ? `  ${contLine}` : "");
+        // Keep continuation lines inside the list item AND escape any leading
+        // block marker so a multi-line turn can neither break out to a
+        // top-level ADR section nor forge a heading/rule/code fence in the
+        // rendered outline (#1884). The first line is safe unescaped: it sits
+        // mid-line after the `- **name**: ` bullet, where no block starts.
+        lines.push(contLine.length > 0 ? `  ${escapeBlockLeadingMarkdown(contLine)}` : "");
       }
     }
     lines.push("");
