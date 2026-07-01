@@ -484,6 +484,20 @@ export async function updateConfigFields(updates: readonly ConfigFieldUpdate[]):
 }
 
 /**
+ * Run `fn` while holding the same exclusive config write lock used by
+ * {@link updateConfigFields}. Callers that perform their own read-modify-write
+ * cycle against config.yaml (e.g. `config edit`, which opens an editor and then
+ * validates/rolls back) must serialize against `config set`/`config model` so
+ * the two paths cannot silently clobber each other's writes (#742). The council
+ * home is created first so the lock file has a directory to live in.
+ */
+export async function withConfigWriteLock<T>(fn: () => Promise<T>): Promise<T> {
+  await ensureHomeDirectory();
+  const lockPath = `${configPath()}.lock`;
+  return withConfigLock(lockPath, fn);
+}
+
+/**
  * Resolve the engine to use given an optional CLI flag and a loaded config.
  * Resolution order: CLI flag → config file → default "copilot".
  */
