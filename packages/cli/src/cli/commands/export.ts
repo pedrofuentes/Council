@@ -233,6 +233,11 @@ export async function resolveOutputPath(outputPath: string, force: boolean): Pro
  *     old `O_TRUNC` opened and zeroed whatever inode was there. A pre-write
  *     `lstat` still refuses a symlink / non-regular target outright as defense
  *     in depth, and the temp is removed if the rename fails.
+ *
+ * Any raw Node fs error from these steps (`ENOTDIR`, `EACCES`, `EEXIST`,
+ * `ELOOP`, ...) is wrapped in a sanitized `CliUserError` (exit 1, no raw
+ * path/ANSI in stderr) instead of rethrown as-is — a raw rethrow exits 4
+ * (INTERNAL) and leaks the un-sanitized path — mirroring `resolveOutputPath`.
  */
 export async function writeExportArtifact(
   resolvedPath: string,
@@ -241,9 +246,41 @@ export async function writeExportArtifact(
 ): Promise<void> {
   const noFollow = fsConstants.O_NOFOLLOW ?? 0;
 
-  if (!force) {
+  try {
+    if (!force) {
+      const handle = await fs.open(
+        resolvedPath,
+        fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollow,
+        0o600,
+      );
+      try {
+        await handle.writeFile(contents, { encoding: "utf8" });
+      } finally {
+        await handle.close();
+      }
+      return;
+    }
+
+    // --force: refuse a symlink / non-regular target outright (rename would not
+    // follow it, but we must not silently replace one either), then write a
+    // private temp sibling and atomically rename it into place.
+    const existing = await fs.lstat(resolvedPath).catch((err: unknown) => {
+      if (isErrnoException(err) && err.code === "ENOENT") {
+        return undefined;
+      }
+      throw err;
+    });
+    if (existing && !existing.isFile()) {
+      throw new CliUserError("Refusing to overwrite a non-regular-file export target.");
+    }
+
+    const dir = path.dirname(resolvedPath);
+    const tempPath = path.join(
+      dir,
+      `.${path.basename(resolvedPath)}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`,
+    );
     const handle = await fs.open(
-      resolvedPath,
+      tempPath,
       fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollow,
       0o600,
     );
@@ -252,42 +289,28 @@ export async function writeExportArtifact(
     } finally {
       await handle.close();
     }
-    return;
-  }
-
-  // --force: refuse a symlink / non-regular target outright (rename would not
-  // follow it, but we must not silently replace one either), then write a
-  // private temp sibling and atomically rename it into place.
-  const existing = await fs.lstat(resolvedPath).catch((err: unknown) => {
-    if (isErrnoException(err) && err.code === "ENOENT") {
-      return undefined;
+    try {
+      await fs.rename(tempPath, resolvedPath);
+    } catch (err: unknown) {
+      await fs.rm(tempPath, { force: true }).catch(() => undefined);
+      throw err;
     }
-    throw err;
-  });
-  if (existing && !existing.isFile()) {
-    throw new CliUserError("Refusing to overwrite a non-regular-file export target.");
-  }
-
-  const dir = path.dirname(resolvedPath);
-  const tempPath = path.join(
-    dir,
-    `.${path.basename(resolvedPath)}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`,
-  );
-  const handle = await fs.open(
-    tempPath,
-    fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollow,
-    0o600,
-  );
-  try {
-    await handle.writeFile(contents, { encoding: "utf8" });
-  } finally {
-    await handle.close();
-  }
-  try {
-    await fs.rename(tempPath, resolvedPath);
   } catch (err: unknown) {
-    await fs.rm(tempPath, { force: true }).catch(() => undefined);
-    throw err;
+    // The non-regular-file refusal is already a sanitized CliUserError — surface
+    // it unchanged. Every other failure is a raw Node fs error
+    // (ENOTDIR/EACCES/EEXIST/ELOOP/...) whose message embeds the un-sanitized
+    // path; rethrown as-is it would exit 4 (INTERNAL) and leak path/ANSI bytes to
+    // the terminal. Wrap it in a sanitized CliUserError so the exit code is
+    // EXIT_USER_ERROR (1) with no raw path/control bytes — mirroring
+    // resolveOutputPath. (ENOENT short-circuits above return undefined and never
+    // reach here.)
+    if (err instanceof CliUserError) {
+      throw err;
+    }
+    throw new CliUserError(
+      `Cannot write export to '${sanitizeExportLine(resolvedPath)}' (${errnoLabel(err)}).`,
+      { cause: err },
+    );
   }
 }
 
