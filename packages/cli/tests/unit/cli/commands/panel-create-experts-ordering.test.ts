@@ -83,6 +83,33 @@ describe("panel create help — --experts ordering guidance (#1059)", () => {
     expect(helpText).toMatch(/name (first|before)|before --experts|put the name|before it/i);
     expect(helpText).toMatch(/--slug/);
   });
+
+  /**
+   * DISCRIMINATING oracle for the after-help "Expert ordering" section (#1059).
+   *
+   * The generic assertions above also match the `--experts` OPTION description
+   * that precedes the after-help block, so they alone do NOT prove the
+   * `addHelpText("after", …)` section is present — deleting that block would
+   * leave them green. This test pins strings UNIQUE to the after-help section:
+   * its "Expert ordering:" heading and the two worked-example command lines
+   * with their inline safety annotations. None of these appear in the option
+   * description, so the after-help block is load-bearing. Captured via
+   * `outputHelp()` because Commander's `helpInformation()` OMITS
+   * `addHelpText("after")` content.
+   */
+  it("renders the after-help 'Expert ordering' section with safe worked examples", () => {
+    const helpText = renderCreateHelp();
+    // Section heading — appears only in the addHelpText("after") block.
+    expect(helpText).toContain("Expert ordering:");
+    // Name-first worked example + its inline "safe" annotation live only in the
+    // after-help block, never in the --experts option description.
+    expect(helpText).toContain("$ council panel create my-panel --experts senior security");
+    expect(helpText).toContain("# name first — safe");
+    // --slug worked example + its inline "safe" annotation, likewise unique to
+    // the after-help block.
+    expect(helpText).toContain("$ council panel create --experts senior security --slug my-panel");
+    expect(helpText).toContain("# --slug — safe");
+  });
 });
 
 describe("panel create missing-name error — --experts ordering hint (#1059)", () => {
