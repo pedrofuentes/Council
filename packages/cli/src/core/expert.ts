@@ -15,6 +15,28 @@ import { z } from "zod";
 
 const NonEmptyString = z.string().min(1);
 
+/**
+ * Path-traversal gate for `docsPath` (issue #287, Sentinel dimension A2).
+ *
+ * `docsPath` overrides a persona expert's default docs location. Both relative
+ * paths (resolved under the per-expert docs root `<dataHome>/experts/<slug>/docs`)
+ * and absolute paths — a documented "custom location" feature (see the
+ * data-locations reference) — are valid, supported values. This rule does NOT
+ * restrict the location; it is a defense-in-depth front door that rejects only
+ * the one unambiguous attack shape, a `..` path-traversal segment, before any
+ * consumer reads the value. Absolute and relative locations are permitted here
+ * and are confined at the READ sites, which realpath-resolve the docs root and
+ * refuse to follow symlinks (see `core/documents/processor.ts` and
+ * `core/documents/detector.ts`).
+ *
+ * Rejects any `..` path segment (leading, embedded, or trailing; split on both
+ * `/` and `\` separators). Accepts absolute (POSIX / Windows / UNC), Windows
+ * drive-prefixed, home-anchored (`~/Council/...`), and plain relative paths.
+ */
+function isDocsPathConfined(value: string): boolean {
+  return !value.split(/[/\\]/).some((segment) => segment === "..");
+}
+
 export const ExpertiseSchema = z.object({
   /**
    * Evidence types this expert weights heavily, ordered by priority.
@@ -71,7 +93,13 @@ export const ExpertDefinitionSchema = z
      * (e.g. "VP of Engineering I report to").
      */
     personaDescription: NonEmptyString.optional(),
-    /** For persona experts: override default docs location. */
+    /**
+     * For persona experts: override the default docs location. May be a
+     * relative path (resolved under the per-expert docs root) or an absolute
+     * "custom location"; must not contain `..` path-traversal segments
+     * (enforced in the superRefine below, #287). Absolute and relative
+     * locations are confined at read time.
+     */
     docsPath: NonEmptyString.optional(),
   })
   .superRefine((val, ctx) => {
@@ -94,6 +122,18 @@ export const ExpertDefinitionSchema = z
           path: [field],
         });
       }
+    }
+
+    // Guard `docsPath` against path traversal: reject any `..` segment so an
+    // authored/imported expert cannot walk the document pipeline out of its
+    // resolved root (#287). Absolute and relative locations are both permitted
+    // here and confined at the read sites (realpath + symlink refusal).
+    if (val.docsPath !== undefined && !isDocsPathConfined(val.docsPath)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Field "docsPath" must not contain ".." path-traversal segments.`,
+        path: ["docsPath"],
+      });
     }
   });
 

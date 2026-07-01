@@ -159,6 +159,89 @@ describe("ExpertDefinitionSchema", () => {
       expect(parsed.personality).toBe("Terse and skeptical (no markers here).");
     });
   });
+
+  describe("docsPath path-confinement (#287, Sentinel A2)", () => {
+    // `docsPath` overrides an expert's default docs location. Both relative
+    // paths (resolved under the per-expert docs root) and absolute paths — a
+    // documented "custom location" feature — are valid, supported values. The
+    // schema rule does NOT restrict the location; it is a defense-in-depth
+    // front door that rejects only the unambiguous attack shape: a `..`
+    // path-traversal segment. Absolute/relative locations are confined at the
+    // read sites (realpath-resolve + symlink refusal in documents/*).
+    const parseWithDocsPath = (docsPath: string): ExpertDefinition =>
+      ExpertDefinitionSchema.parse({ ...baseDefinition, kind: "persona", docsPath });
+
+    // --- Rejections: `..` traversal (leading, embedded, trailing) ---
+    it("rejects a docsPath with leading `..` traversal", () => {
+      expect(() => parseWithDocsPath("../../etc/passwd")).toThrow(/docsPath/);
+    });
+
+    it("rejects a docsPath with embedded `..` traversal", () => {
+      expect(() => parseWithDocsPath("a/../../b")).toThrow(/docsPath/);
+    });
+
+    it("rejects a docsPath with a trailing `..` segment", () => {
+      expect(() => parseWithDocsPath("docs/..")).toThrow(/docsPath/);
+    });
+
+    it("rejects a docsPath with backslash-separated `..` traversal", () => {
+      expect(() => parseWithDocsPath("..\\..\\secrets")).toThrow(/docsPath/);
+    });
+
+    // --- Acceptances: absolute "custom location" paths ---
+    // The schema does NOT location-block: absolute paths are a documented
+    // feature and are confined at the READ sites (realpath + symlink refusal),
+    // not by this rule. So even a sensitive-looking absolute path passes the
+    // schema gate — confinement is deliberately deferred to read time.
+    it("accepts an absolute POSIX docsPath (location confined at read time, not by schema)", () => {
+      expect(parseWithDocsPath("/etc/passwd").docsPath).toBe("/etc/passwd");
+    });
+
+    it("accepts the documented absolute custom-location example", () => {
+      expect(parseWithDocsPath("/shared/team-docs/architecture").docsPath).toBe(
+        "/shared/team-docs/architecture",
+      );
+    });
+
+    it("accepts an absolute Windows drive docsPath", () => {
+      expect(parseWithDocsPath("C:\\Windows\\System32").docsPath).toBe("C:\\Windows\\System32");
+    });
+
+    it("accepts a Windows drive-relative docsPath", () => {
+      expect(parseWithDocsPath("C:docs").docsPath).toBe("C:docs");
+    });
+
+    it("accepts a UNC docsPath", () => {
+      expect(parseWithDocsPath("\\\\server\\share\\docs").docsPath).toBe("\\\\server\\share\\docs");
+    });
+
+    it("surfaces a descriptive traversal error naming the field and the rule", () => {
+      expect(() => parseWithDocsPath("../escape")).toThrow(/docsPath[\s\S]*traversal/i);
+    });
+
+    // --- Acceptances: valid in-root relative paths ---
+    it("accepts a plain relative in-root docsPath", () => {
+      expect(parseWithDocsPath("experts/sarah-vp/docs").docsPath).toBe("experts/sarah-vp/docs");
+    });
+
+    it("accepts the home-anchored default docs location", () => {
+      expect(parseWithDocsPath("~/Council/experts/sarah-vp/docs").docsPath).toBe(
+        "~/Council/experts/sarah-vp/docs",
+      );
+    });
+
+    it("accepts a single-segment relative docsPath", () => {
+      expect(parseWithDocsPath("docs").docsPath).toBe("docs");
+    });
+
+    it("accepts a `.`-relative docsPath (a single dot is not traversal)", () => {
+      expect(parseWithDocsPath("./docs/notes").docsPath).toBe("./docs/notes");
+    });
+
+    it("accepts a segment that merely contains `..` as a substring (not a `..` segment)", () => {
+      expect(parseWithDocsPath("a..b/docs").docsPath).toBe("a..b/docs");
+    });
+  });
 });
 
 describe("buildSystemPrompt() — section structure", () => {
