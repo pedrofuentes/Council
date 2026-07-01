@@ -216,14 +216,19 @@ async function buildSuggestions(
   dataHome: string,
   requested: string,
 ): Promise<readonly string[]> {
-  const [panels, userPanels, builtInTemplates] = await Promise.all([
+  // #1817: each suggestion source is best-effort. A single rejecting source
+  // (e.g. a `listTemplates` throw ripple from PR #1813) must not reject the
+  // whole aggregation and mask the not-found guidance the caller is about to
+  // emit — fall back to whatever sources resolved.
+  const [panels, userPanels, builtInTemplates] = await Promise.allSettled([
     panelRepo.findAll(),
     listUserPanels(dataHome),
     listTemplates(),
   ]);
-  const candidates = [
-    ...new Set([...panels.map((panel) => panel.name), ...userPanels, ...builtInTemplates]),
-  ];
+  const panelNames = panels.status === "fulfilled" ? panels.value.map((panel) => panel.name) : [];
+  const userPanelNames = userPanels.status === "fulfilled" ? userPanels.value : [];
+  const templateNames = builtInTemplates.status === "fulfilled" ? builtInTemplates.value : [];
+  const candidates = [...new Set([...panelNames, ...userPanelNames, ...templateNames])];
   return suggestMatch(requested, candidates);
 }
 
