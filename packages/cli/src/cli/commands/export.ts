@@ -29,6 +29,7 @@
  * exact-then-prefix fallback so `council export cfo` works when only
  * one panel name starts with `cfo`.
  */
+import { constants as fsConstants } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
@@ -67,17 +68,47 @@ export interface ExportOptions {
 }
 
 /**
+ * True when `err` is a Node system error carrying an errno `code` string
+ * (e.g. `ENOENT`, `EACCES`, `ELOOP`).
+ */
+function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
+  return err instanceof Error && typeof (err as { code?: unknown }).code === "string";
+}
+
+/**
  * Resolve and validate a user-supplied `--output` path before writing.
  *
- * `--output` accepts an arbitrary path, so treat it as hostile: resolve
- * to an absolute path, refuse a target that already exists unless it is a
- * regular file the user explicitly opts to overwrite via `--force`, and
- * refuse non-regular targets (directories, symlinks, devices) outright so
- * we never follow a symlink to clobber an out-of-tree file.
+ * `--output` accepts an arbitrary path, so treat it as hostile:
+ *   - A RELATIVE path must stay within the working directory. `path.resolve`
+ *     happily turns `../../../etc/passwd` into an absolute path that escapes
+ *     the tree, so reject any relative input whose resolved target is not under
+ *     `process.cwd()`. An absolute `--output` is an explicit, user-chosen
+ *     location and is allowed (still subject to the guards below).
+ *   - Refuse a target that already exists unless it is a regular file the user
+ *     explicitly opts to overwrite via `--force`, and refuse non-regular
+ *     targets (directories, symlinks, devices) so we never follow a symlink to
+ *     clobber an out-of-tree file.
+ *   - Only `ENOENT` means "nothing is there yet"; every other `lstat` error
+ *     (EACCES, ELOOP, ENOTDIR, ...) is real and must surface rather than be
+ *     swallowed and mistaken for a clean create target.
  */
-async function resolveOutputPath(outputPath: string, force: boolean): Promise<string> {
+export async function resolveOutputPath(outputPath: string, force: boolean): Promise<string> {
   const resolved = path.resolve(outputPath);
-  const existing = await fs.lstat(resolved).catch(() => undefined);
+
+  if (!path.isAbsolute(outputPath)) {
+    const root = path.resolve(process.cwd());
+    const rel = path.relative(root, resolved);
+    if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+      throw new CliUserError(
+        `Refusing to write export outside the working directory: '${sanitizeExportLine(outputPath)}'.`,
+      );
+    }
+  }
+
+  const existing = await fs.lstat(resolved).catch((err: unknown) => {
+    if (isErrnoException(err) && err.code === "ENOENT") return undefined;
+    throw err;
+  });
   if (existing) {
     if (!existing.isFile()) {
       throw new CliUserError(
@@ -91,6 +122,34 @@ async function resolveOutputPath(outputPath: string, force: boolean): Promise<st
     }
   }
   return resolved;
+}
+
+/**
+ * Atomically write the rendered export to `resolvedPath` without ever following
+ * a symlink.
+ *
+ * `resolveOutputPath` validates the target, but a hostile actor could swap a
+ * symlink into place between that check and this write (a TOCTOU race). Opening
+ * with `O_NOFOLLOW` makes the kernel refuse (ELOOP) to follow a final-component
+ * symlink; without `--force`, `O_EXCL` makes creation atomic so a file that
+ * appeared after the pre-check is never clobbered; with `--force`, `O_TRUNC`
+ * overwrites the already-validated regular file in place.
+ */
+export async function writeExportArtifact(
+  resolvedPath: string,
+  contents: string,
+  force: boolean,
+): Promise<void> {
+  const noFollow = fsConstants.O_NOFOLLOW ?? 0;
+  const flags = force
+    ? fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | noFollow
+    : fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollow;
+  const handle = await fs.open(resolvedPath, flags);
+  try {
+    await handle.writeFile(contents, { encoding: "utf8" });
+  } finally {
+    await handle.close();
+  }
 }
 
 export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
@@ -163,7 +222,7 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
 
         if (opts.output !== undefined) {
           const resolvedOutput = await resolveOutputPath(opts.output, opts.force === true);
-          await fs.writeFile(resolvedOutput, rendered, { encoding: "utf8" });
+          await writeExportArtifact(resolvedOutput, rendered, opts.force === true);
           writeError(`Wrote ${opts.format} export to ${sanitizeExportLine(opts.output)}\n`);
           if (opts.format !== "json") {
             const safeResolvedName = sanitizeExportLine(resolvedName);
@@ -381,7 +440,13 @@ export function renderAdr(doc: TranscriptDocument): string {
       }
       const slug = t.expertId ? slugById.get(t.expertId) : undefined;
       const display = slug ? (nameBySlug.get(slug) ?? slug) : sanitizeExportLine(t.speakerKind);
-      lines.push(`- **${display}**: ${sanitizeExportBlock(t.content)}`);
+      const [firstLine = "", ...restLines] = sanitizeExportBlockLines(t.content);
+      lines.push(`- **${display}**: ${firstLine}`);
+      for (const contLine of restLines) {
+        // Indent continuation lines to the list-item content column so a
+        // multi-line turn cannot break out and forge a top-level ADR section.
+        lines.push(contLine.length > 0 ? `  ${contLine}` : "");
+      }
     }
     lines.push("");
   }
