@@ -22,8 +22,8 @@
  * `../select.ts` (Ink is auto-selected on TTY when the user does not
  * pass `--format`).
  */
-import { useEffect, useState, type ReactElement } from "react";
-import { Box, Static, Text, render as inkRender, useInput, useStdin } from "ink";
+import { memo, useEffect, useMemo, useState, type ReactElement } from "react";
+import { Box, Static, Text, render as inkRender, useInput, useStdin, useStdout } from "ink";
 import Spinner from "ink-spinner";
 
 import type { DebateEndReason, DebateEvent, PanelMemberSnapshot } from "../../../core/types.js";
@@ -47,9 +47,9 @@ function CtrlCHandler({ onCancel }: { readonly onCancel: () => void }): null {
   return null;
 }
 
-/** Returns separator width: min(stdout columns, 100), default 80. */
-export function getSeparatorWidth(): number {
-  return Math.min(process.stdout.columns ?? 80, 100);
+/** Returns separator width: min(stream columns, 100), default 80. */
+export function getSeparatorWidth(stdout?: { readonly columns?: number }): number {
+  return Math.min(stdout?.columns ?? 80, 100);
 }
 
 /** Returns max content width: min(stdout columns, 120), default 80. */
@@ -119,6 +119,20 @@ interface ActiveTurn {
   readonly round: number;
   readonly expertSlug: string;
   readonly text: string;
+}
+
+/**
+ * The narrow, stable slice of debate state a completed (Static) row needs to
+ * render an expert's identity: roster, color index, human flag and display
+ * name. These fields are established once at `panel.assembled` and never
+ * change again, so deriving a memoized lookup lets `React.memo` skip
+ * re-rendering historical rows on every streaming `turn.delta` (#236).
+ */
+export interface ExpertLookup {
+  readonly panel: readonly PanelMemberSnapshot[];
+  readonly expertIndex: ReadonlyMap<string, number>;
+  readonly humanSlugs: ReadonlySet<string>;
+  readonly displayNames: ReadonlyMap<string, string>;
 }
 
 export interface DebateState {
@@ -347,30 +361,46 @@ export function coalesceDeltas(events: readonly DebateEvent[]): readonly DebateE
  */
 export const DELTA_FLUSH_INTERVAL_MS = 16;
 
-function colorFor(state: DebateState, slug: string): ExpertColor {
-  const isHuman = state.humanSlugs.has(slug);
-  return assignExpertColor(state.expertIndex.get(slug) ?? 0, { isHuman });
+function colorFor(lookup: ExpertLookup, slug: string): ExpertColor {
+  const isHuman = lookup.humanSlugs.has(slug);
+  return assignExpertColor(lookup.expertIndex.get(slug) ?? 0, { isHuman });
 }
 
-function nameFor(state: DebateState, slug: string): string {
-  return state.displayNames.get(slug) ?? slug;
+/**
+ * Resolves an expert's display name for a terminal sink. `displayName` is
+ * LLM-sourced and untrusted, so it is passed through `toSingleLineDisplay`
+ * to strip ANSI/OSC, C0/C1 controls, DEL, bidi overrides and line/paragraph
+ * separators before it can reach the TTY.
+ */
+function nameFor(lookup: ExpertLookup, slug: string): string {
+  return toSingleLineDisplay(lookup.displayNames.get(slug) ?? slug);
 }
 
-function PanelRoster({ state }: { readonly state: DebateState }): ReactElement | null {
-  if (state.panel.length === 0) return null;
+/** Exported for testing — derives the stable {@link ExpertLookup} from state. */
+export function createExpertLookup(state: ExpertLookup): ExpertLookup {
+  return {
+    panel: state.panel,
+    expertIndex: state.expertIndex,
+    humanSlugs: state.humanSlugs,
+    displayNames: state.displayNames,
+  };
+}
+
+function PanelRoster({ lookup }: { readonly lookup: ExpertLookup }): ReactElement | null {
+  if (lookup.panel.length === 0) return null;
   const sym = getSymbols();
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Text bold>{sym.panel} Panel assembled</Text>
-      {state.panel.map((expert) => {
-        const color = colorFor(state, expert.slug);
-        const idx = state.expertIndex.get(expert.slug) ?? 0;
-        const isHuman = expert.participantKind === "human" || state.humanSlugs.has(expert.slug);
+      {lookup.panel.map((expert) => {
+        const color = colorFor(lookup, expert.slug);
+        const idx = lookup.expertIndex.get(expert.slug) ?? 0;
+        const isHuman = expert.participantKind === "human" || lookup.humanSlugs.has(expert.slug);
         return (
           <Text key={expert.slug}>
             {`  ${sym.bullet} `}
             <Text color={color} bold>
-              {formatExpertPrefix(idx, expert.displayName)}
+              {formatExpertPrefix(idx, toSingleLineDisplay(expert.displayName))}
             </Text>
             <Text dimColor>{isHuman ? "  (human)" : `  (${expert.model})`}</Text>
           </Text>
@@ -389,7 +419,8 @@ function RoundHeader({ round }: { readonly round: number }): ReactElement {
 }
 
 function RoundSeparator(): ReactElement {
-  const width = getSeparatorWidth();
+  const { stdout } = useStdout();
+  const width = getSeparatorWidth(stdout);
   return (
     <Box>
       <Text dimColor>{"─".repeat(width)}</Text>
@@ -398,16 +429,16 @@ function RoundSeparator(): ReactElement {
 }
 
 function ExpertCard({
-  state,
+  lookup,
   slug,
 }: {
-  readonly state: DebateState;
+  readonly lookup: ExpertLookup;
   readonly slug: string;
 }): ReactElement {
-  const color = colorFor(state, slug);
-  const idx = state.expertIndex.get(slug) ?? 0;
-  const isHuman = state.humanSlugs.has(slug);
-  const name = nameFor(state, slug);
+  const color = colorFor(lookup, slug);
+  const idx = lookup.expertIndex.get(slug) ?? 0;
+  const isHuman = lookup.humanSlugs.has(slug);
+  const name = nameFor(lookup, slug);
   const prefix = formatExpertPrefix(idx, name);
   const label = isHuman ? `[You] ${prefix}` : prefix;
   return (
@@ -438,13 +469,19 @@ function StreamingText({
   );
 }
 
-/** Renders a single static item (round header, turn, separator, or panel). */
-function StaticItemView({
+/**
+ * Renders a single static item (round header, turn, separator, or panel).
+ *
+ * Memoized (#236): completed rows receive only `item` (frozen at creation)
+ * and the stable `lookup`, so a streaming `turn.delta` — which allocates a
+ * fresh `DebateState` every token — no longer re-renders historical rows.
+ */
+export const StaticItemView = memo(function StaticItemView({
   item,
-  state,
+  lookup,
 }: {
   readonly item: StaticItem;
-  readonly state: DebateState;
+  readonly lookup: ExpertLookup;
 }): ReactElement {
   switch (item.type) {
     case "round-header":
@@ -452,16 +489,16 @@ function StaticItemView({
     case "round-separator":
       return <RoundSeparator />;
     case "panel":
-      return <PanelRoster state={state} />;
+      return <PanelRoster lookup={lookup} />;
     case "turn":
       return (
         <Box flexDirection="column">
-          <ExpertCard state={state} slug={item.expertSlug} />
+          <ExpertCard lookup={lookup} slug={item.expertSlug} />
           <StreamingText text={item.text} ended={true} retrying={false} />
         </Box>
       );
     case "quality-notice": {
-      const name = nameFor(state, item.expertSlug);
+      const name = nameFor(lookup, item.expertSlug);
       let verb: string;
       if (item.action === "regenerating") {
         verb = `regenerating (attempt ${item.regenerationAttempt}/${item.maxRegenerations})`;
@@ -475,19 +512,19 @@ function StaticItemView({
       return (
         <Box>
           <Text color="yellow">
-            {`${sym.warn} quality gate: ${toSingleLineDisplay(name)} response ${verb} (${failures})`}
+            {`${sym.warn} quality gate: ${name} response ${verb} (${failures})`}
           </Text>
         </Box>
       );
     }
   }
-}
+});
 
 function ActiveTurnView({ state }: { readonly state: DebateState }): ReactElement | null {
   if (!state.activeTurn) return null;
   return (
     <Box flexDirection="column">
-      <ExpertCard state={state} slug={state.activeTurn.expertSlug} />
+      <ExpertCard lookup={state} slug={state.activeTurn.expertSlug} />
       <StreamingText
         text={state.activeTurn.text}
         ended={false}
@@ -621,6 +658,15 @@ export function DebateApp({
 
   const { isRawModeSupported } = useStdin();
 
+  // Derive the stable identity slice once per panel change (#236). Historical
+  // rows (memoized StaticItemView) receive this instead of the whole state, so
+  // a streaming `turn.delta` — which allocates a fresh state every token — no
+  // longer forces every completed card to re-render.
+  const lookup = useMemo(
+    () => createExpertLookup(state),
+    [state.panel, state.expertIndex, state.humanSlugs, state.displayNames],
+  );
+
   const handleCancel = (): void => {
     setState((prev) => ({ ...prev, userCancelled: true }));
     // Propagate cancellation to the upstream stream (best-effort)
@@ -685,6 +731,12 @@ export function DebateApp({
         clearTimeout(flushTimer);
         flushTimer = null;
       }
+      // #231: actively terminate the upstream generator on unmount so engine
+      // work stops at its next yield point instead of running to completion.
+      // Best-effort — swallow any rejection from return().
+      void iterator.return?.(undefined)?.catch(() => {
+        // Swallow rejection — cancellation is best-effort
+      });
       iteratorRef.current = null;
     };
   }, [events, onComplete, iteratorRef]);
@@ -693,7 +745,7 @@ export function DebateApp({
     <Box flexDirection="column">
       {isRawModeSupported && !state.userCancelled && <CtrlCHandler onCancel={handleCancel} />}
       <Static items={state.completedItems as StaticItem[]}>
-        {(item) => <StaticItemView key={item.id} item={item} state={state} />}
+        {(item) => <StaticItemView key={item.id} item={item} lookup={lookup} />}
       </Static>
       <ActiveTurnView state={state} />
       <LoadingIndicator state={state} />
