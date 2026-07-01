@@ -657,6 +657,18 @@ COUNCIL_ASCII=1 council convene "Topic"
 > Configuration lives in `~/.council/config.yaml` (auto-created on first run).
 > Manage it with `council config show|path|edit`.
 
+> `council config show` first prints the resolved filesystem locations, then the
+> effective values (each annotated with its source). The path fields are:
+>
+> - **Config path** — the `config.yaml` currently in effect.
+> - **Council home** — holds the config file and the `council.db` database
+>   (default `~/.council`; override with `COUNCIL_HOME`).
+> - **Data home** — holds experts, panels, and documents (default `~/Council`;
+>   override with `COUNCIL_DATA_HOME` or the `paths.dataHome` config value).
+> - **Experts directory** / **Panels directory** — always `<data home>/experts`
+>   and `<data home>/panels`.
+> - **Database** — the SQLite file at `<council home>/council.db`.
+
 > **Plural aliases**: `council panels`, `council experts`, and `council history` work as
 > aliases for `council panel`, `council expert`, and `council sessions` respectively —
 > use whichever feels more natural.
