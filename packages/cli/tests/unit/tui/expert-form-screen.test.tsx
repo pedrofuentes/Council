@@ -653,4 +653,22 @@ describe("ExpertFormScreen", () => {
     expect(lastFrame() ?? "").toContain("←/→ change · Enter confirm · Esc cancel");
     unmount();
   });
+
+  it("shows type hint when editing a text field", async () => {
+    const { source } = createSource(async (values) => ({
+      ok: true,
+      definition: definitionFor(values),
+    }));
+    const { stdin, lastFrame, unmount } = renderForm(source);
+    await flush();
+
+    // Navigate from Kind (index 0) down to Slug (index 1) before editing
+    stdin.write("\u001B[B");
+    await flush();
+    stdin.write("\r"); // enter edit mode
+    await flush();
+
+    expect(lastFrame() ?? "").toContain("type · Enter confirm · Esc cancel");
+    unmount();
+  });
 });
