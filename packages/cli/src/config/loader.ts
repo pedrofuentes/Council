@@ -13,6 +13,7 @@
  * Designed to be called from CLI commands and from `council doctor`. Never
  * throws on a missing home directory — creates it.
  */
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import * as os from "node:os";
@@ -33,16 +34,33 @@ export interface ConfigFieldUpdate {
 }
 
 /**
+ * Read a filesystem path from an environment variable, normalized for safe use
+ * in path construction (config/database/lock files):
+ *   - trims surrounding whitespace,
+ *   - treats an empty-after-trim value as unset (returns `undefined`),
+ *   - resolves the result to an absolute path so relative values don't depend
+ *     on the process working directory at each call site.
+ * Returns `undefined` when the variable is unset or blank.
+ */
+function readPathEnv(name: string): string | undefined {
+  const raw = process.env[name];
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return undefined;
+  return path.resolve(trimmed);
+}
+
+/**
  * Resolve the directory that holds Council's runtime data.
  * Honors `COUNCIL_HOME`, then falls back to `COUNCIL_DATA_HOME` so a single
  * env-var override can relocate both runtime and library data together.
  */
 export function getCouncilHome(): string {
-  const envHome = process.env["COUNCIL_HOME"];
-  if (envHome && envHome.length > 0) return envHome;
+  const envHome = readPathEnv("COUNCIL_HOME");
+  if (envHome !== undefined) return envHome;
 
-  const envDataHome = process.env["COUNCIL_DATA_HOME"];
-  if (envDataHome && envDataHome.length > 0) return envDataHome;
+  const envDataHome = readPathEnv("COUNCIL_DATA_HOME");
+  if (envDataHome !== undefined) return envDataHome;
 
   return path.join(os.homedir(), ".council");
 }
@@ -56,8 +74,8 @@ export function getCouncilHome(): string {
  * (`~/Council/`) is distinct from the hidden runtime dir (`~/.council/`).
  */
 export function getCouncilDataHome(config?: CouncilConfig): string {
-  const envHome = process.env["COUNCIL_DATA_HOME"];
-  if (envHome && envHome.length > 0) return envHome;
+  const envHome = readPathEnv("COUNCIL_DATA_HOME");
+  if (envHome !== undefined) return envHome;
   if (config?.paths?.dataHome) {
     const dataHome = config.paths.dataHome;
     if (dataHome === "~") return os.homedir();
@@ -86,55 +104,271 @@ async function ensureHomeDirectory(): Promise<void> {
   await fs.mkdir(getCouncilHome(), { recursive: true });
 }
 
-async function writeDefaultConfig(): Promise<CouncilConfig> {
+/**
+ * Result of attempting to materialize the default config on disk.
+ * `created` is true only for the process that actually created the file via an
+ * exclusive create; a process that lost the create race adopts the winner's
+ * config and reports `created: false`.
+ */
+interface WriteDefaultConfigResult {
+  readonly config: CouncilConfig;
+  readonly created: boolean;
+}
+
+/**
+ * Materialize the default config using an exclusive create (`wx`) so that when
+ * multiple processes start simultaneously on a fresh machine, exactly one wins
+ * the create and the others adopt its file rather than clobbering it with a
+ * second write (#27). On EEXIST the loser re-reads the winner's config.
+ */
+async function writeDefaultConfig(): Promise<WriteDefaultConfigResult> {
   const defaults: CouncilConfig = ConfigSchema.parse({});
   const yamlText = yaml.stringify(defaults);
   const banner =
     "# Council configuration\n" +
     "# See https://github.com/pedrofuentes/Council for documentation.\n" +
     "# Edit values below; missing fields use built-in defaults.\n\n";
-  await fs.writeFile(configPath(), banner + yamlText, "utf-8");
-  return defaults;
+  const file = configPath();
+
+  let handle: FileHandle;
+  try {
+    handle = await fs.open(file, "wx");
+  } catch (err: unknown) {
+    if (hasErrorCode(err, "EEXIST")) {
+      // Another process created the config first; adopt its contents.
+      return { config: await readExistingConfig(file), created: false };
+    }
+    throw err;
+  }
+
+  try {
+    await handle.writeFile(banner + yamlText, "utf-8");
+  } finally {
+    await handle.close();
+  }
+  return { config: defaults, created: true };
+}
+
+/**
+ * Re-read a config that another process created concurrently. The winner may
+ * still be flushing its exclusive-create write, so tolerate a brief window of
+ * an empty file by retrying before falling back to defaults.
+ */
+async function readExistingConfig(file: string): Promise<CouncilConfig> {
+  const maxAttempts = 20;
+  const attemptDelay = 25;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    let raw: string;
+    try {
+      raw = await fs.readFile(file, "utf-8");
+    } catch (err: unknown) {
+      if (isENOENT(err)) {
+        await sleep(attemptDelay);
+        continue;
+      }
+      throw wrapReadError(err, file);
+    }
+    if (raw.trim().length === 0) {
+      // File exists but the winner has not flushed its contents yet.
+      await sleep(attemptDelay);
+      continue;
+    }
+    return parseConfig(raw, file);
+  }
+  // The winner never produced readable content; fall back to defaults.
+  return ConfigSchema.parse({});
+}
+
+/**
+ * Parse raw YAML config text into a validated CouncilConfig. Empty documents
+ * resolve to defaults. Throws descriptive errors for malformed YAML or schema
+ * validation failures, tagged with the source file.
+ */
+function parseConfig(raw: string, file: string): CouncilConfig {
+  let parsed: unknown;
+  try {
+    parsed = yaml.parse(raw);
+  } catch (err: unknown) {
+    const cause = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to parse Council config (${file}): ${cause}`);
+  }
+
+  // Empty file -> empty object -> defaults
+  const input: unknown = parsed ?? {};
+
+  const result = ConfigSchema.safeParse(input);
+  if (!result.success) {
+    throw formatZodError(result.error, file);
+  }
+  return result.data;
 }
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Metadata written into the config lock file so other processes can decide
+ * whether a lock is stale. `token` uniquely identifies a single acquisition so
+ * a holder only ever removes its own lock on release.
+ */
+interface LockMeta {
+  readonly pid: number;
+  readonly host: string;
+  readonly token: string;
+  readonly createdAt: number;
+}
+
+/**
+ * Age after which a lock file is considered abandoned regardless of its owner
+ * PID. Generous relative to a config read-modify-write (sub-second) so a slow
+ * disk never trips it, while still recovering promptly from a crashed holder
+ * on the next `config set`.
+ */
+const LOCK_STALE_MS = 30_000;
+
 async function withConfigLock<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
+  const meta = await acquireConfigLock(lockPath);
+  try {
+    return await fn();
+  } finally {
+    await releaseConfigLock(lockPath, meta);
+  }
+}
+
+/**
+ * Acquire the config lock, reaping stale locks left by dead or long-gone
+ * holders instead of blocking until manual removal (#743). Writes owner
+ * PID/host/timestamp into the lock so staleness can be judged by other callers.
+ */
+async function acquireConfigLock(lockPath: string): Promise<LockMeta> {
   const maxRetries = 50;
   const retryDelay = 100;
-  let handle: FileHandle | undefined;
 
   for (let index = 0; index < maxRetries; index += 1) {
+    let handle: FileHandle;
     try {
       handle = await fs.open(lockPath, "wx");
-      break;
     } catch (err: unknown) {
-      // EEXIST: lock held by another caller.
-      // EPERM / EACCES: transient Windows NTFS contention during
-      // concurrent open/close/unlink of the lock file (#820).
-      if (
-        hasErrorCode(err, "EEXIST") ||
-        hasErrorCode(err, "EPERM") ||
-        hasErrorCode(err, "EACCES")
-      ) {
+      if (hasErrorCode(err, "EEXIST")) {
+        // Lock held by another caller: reap it if the owner is gone, else wait.
+        if (await reapIfStale(lockPath)) continue;
+        await sleep(retryDelay);
+        continue;
+      }
+      // EPERM / EACCES: transient Windows NTFS contention during concurrent
+      // open/close/unlink of the lock file (#820).
+      if (hasErrorCode(err, "EPERM") || hasErrorCode(err, "EACCES")) {
         await sleep(retryDelay);
         continue;
       }
       throw err;
     }
+
+    const meta: LockMeta = {
+      pid: process.pid,
+      host: os.hostname(),
+      token: randomUUID(),
+      createdAt: Date.now(),
+    };
+    try {
+      await handle.writeFile(JSON.stringify(meta), "utf-8");
+    } finally {
+      await handle.close();
+    }
+    return meta;
   }
 
-  if (handle === undefined) {
-    throw new Error(`Could not acquire config lock after ${maxRetries} retries`);
-  }
+  throw new Error(`Could not acquire config lock after ${maxRetries} retries`);
+}
 
+/**
+ * Release the config lock, but only if we still own it. If our lock was reaped
+ * as stale and re-acquired by another process, its token won't match and we
+ * leave it untouched.
+ */
+async function releaseConfigLock(lockPath: string, meta: LockMeta): Promise<void> {
+  const current = await readLockMeta(lockPath);
+  if (current !== undefined && current.token !== meta.token) return;
+  await fs.unlink(lockPath).catch(() => undefined);
+}
+
+/**
+ * Remove a lock that appears abandoned. A lock is stale when its file is older
+ * than {@link LOCK_STALE_MS} or when a same-host owner PID is no longer alive.
+ * Returns true when the lock was reaped (or already gone) and the caller should
+ * retry acquisition immediately.
+ */
+async function reapIfStale(lockPath: string): Promise<boolean> {
+  let mtimeMs: number;
   try {
-    return await fn();
-  } finally {
-    await handle.close();
-    await fs.unlink(lockPath).catch(() => undefined);
+    const stats = await fs.stat(lockPath);
+    mtimeMs = stats.mtimeMs;
+  } catch (err: unknown) {
+    // Vanished between EEXIST and stat: effectively free, retry immediately.
+    return isENOENT(err);
+  }
+
+  const ageMs = Date.now() - mtimeMs;
+  const meta = await readLockMeta(lockPath);
+  const ownerDead = meta !== undefined && meta.host === os.hostname() && !isProcessAlive(meta.pid);
+
+  if (ageMs <= LOCK_STALE_MS && !ownerDead) return false;
+
+  // Reap: ignore ENOENT (another process may have reaped it first).
+  await fs.unlink(lockPath).catch(() => undefined);
+  return true;
+}
+
+/**
+ * Read and validate lock metadata. Returns undefined when the lock is missing,
+ * empty (not yet flushed), or does not contain well-formed metadata.
+ */
+async function readLockMeta(lockPath: string): Promise<LockMeta | undefined> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(lockPath, "utf-8");
+  } catch {
+    return undefined;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+  const record = parsed as Record<string, unknown>;
+  if (
+    typeof record["pid"] === "number" &&
+    typeof record["host"] === "string" &&
+    typeof record["token"] === "string" &&
+    typeof record["createdAt"] === "number"
+  ) {
+    return {
+      pid: record["pid"],
+      host: record["host"],
+      token: record["token"],
+      createdAt: record["createdAt"],
+    };
+  }
+  return undefined;
+}
+
+/**
+ * Best-effort liveness probe for a PID on the local host. `process.kill(pid, 0)`
+ * sends no signal but validates existence: ESRCH means the process is gone,
+ * EPERM means it exists but we can't signal it (still alive).
+ */
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: unknown) {
+    return hasErrorCode(err, "EPERM");
   }
 }
 
@@ -174,28 +408,13 @@ export async function loadConfigWithMeta(): Promise<ConfigLoadResult> {
     raw = await fs.readFile(file, "utf-8");
   } catch (err: unknown) {
     if (isENOENT(err)) {
-      const config = await writeDefaultConfig();
-      return { config, isFirstRun: true };
+      const { config, created } = await writeDefaultConfig();
+      return { config, isFirstRun: created };
     }
     throw wrapReadError(err, file);
   }
 
-  let parsed: unknown;
-  try {
-    parsed = yaml.parse(raw);
-  } catch (err: unknown) {
-    const cause = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to parse Council config (${file}): ${cause}`);
-  }
-
-  // Empty file -> empty object -> defaults
-  const input: unknown = parsed ?? {};
-
-  const result = ConfigSchema.safeParse(input);
-  if (!result.success) {
-    throw formatZodError(result.error, file);
-  }
-  return { config: result.data, isFirstRun: false };
+  return { config: parseConfig(raw, file), isFirstRun: false };
 }
 
 /**
