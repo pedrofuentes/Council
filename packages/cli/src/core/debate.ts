@@ -29,7 +29,12 @@
  */
 import { ulid } from "ulid";
 
-import { type CouncilEngine, type ExpertSpec, sendWithEmptyRetry } from "../engine/index.js";
+import {
+  type CouncilEngine,
+  type EngineErrorCode,
+  type ExpertSpec,
+  sendWithEmptyRetry,
+} from "../engine/index.js";
 import type { HumanInputProvider, HumanInputResult } from "./human-input.js";
 
 import { generateCanary, checkCanaryLeak } from "./canary.js";
@@ -889,6 +894,7 @@ export class Debate {
     let turnFailed = false;
     let lastErrorRecoverable = false;
     let lastErrorMessage = "";
+    let lastErrorCode: EngineErrorCode | null = null;
     let lastErrorAborted = false;
     let emptyAfterRetry = false;
 
@@ -903,6 +909,7 @@ export class Debate {
       let attemptFailed = false;
       lastErrorRecoverable = false;
       lastErrorMessage = "";
+      lastErrorCode = null;
       lastErrorAborted = false;
       emptyAfterRetry = false;
 
@@ -966,6 +973,7 @@ export class Debate {
           attemptFailed = true;
           lastErrorRecoverable = outcome.recoverable;
           lastErrorMessage = outcome.errorMessage;
+          lastErrorCode = outcome.errorCode;
           lastErrorAborted = outcome.errorCode === "ABORTED";
         }
       } catch (err: unknown) {
@@ -1000,6 +1008,7 @@ export class Debate {
           expertSlug: expert.slug,
           attempt: attempt + 1,
           reason: lastErrorMessage,
+          ...(lastErrorCode !== null ? { reasonCode: lastErrorCode } : {}),
         };
         if (delay > 0) await abortableSleep(delay, signal);
         // #503: signal may have aborted *during* the backoff sleep —

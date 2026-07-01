@@ -62,6 +62,22 @@ council config set [options] <key> <value>
 | `<key>` | Dot-notation config key | — |
 | `<value>` | Value to write | — |
 
+### council config model
+
+Set the default AI model — pass \<name\>, or omit it on a terminal for an interactive picker
+
+**Usage**
+
+```text
+council config model [options] [name]
+```
+
+**Arguments**
+
+| Argument | Description | Default |
+| --- | --- | --- |
+| `[name]` | Model id to set (omit on a TTY to pick interactively) | — |
+
 ### council config wizard
 
 Guided interactive setup for common config values

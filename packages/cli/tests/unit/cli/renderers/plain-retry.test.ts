@@ -59,14 +59,15 @@ describe("PlainRenderer retry handling", () => {
           kind: "turn.retry",
           expertSlug: "cto",
           attempt: 2,
-          reason: "rate_limit_error",
+          reason: "throttled",
+          reasonCode: "RATE_LIMITED",
         }),
       );
       const text = stripAnsi(sink.text);
       expect(text).toContain("rate limited, waiting...");
     });
 
-    it("passes through unknown reason strings as-is", async () => {
+    it("passes through raw reason when reasonCode is unmapped", async () => {
       const sink = new StringSink();
       const renderer = new PlainRenderer(sink, { color: false });
       await renderer.render(
