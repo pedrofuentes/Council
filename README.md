@@ -631,8 +631,8 @@ council config wizard                        # Guided interactive setup for comm
 
 # Inspection & diagnostics
 council sessions                            # List all debate sessions (with status/turns/experts)
-council sessions cancel [name]              # Mark stale running debates as interrupted
-council sessions delete <name>              # Delete a completed or interrupted session
+council sessions cancel [name]              # Cancel running debates (mark interrupted); --all for every panel
+council sessions delete <name>              # Delete a completed/interrupted session (prefix match, confirm unless --yes, blocks if running)
 council templates                           # List built-in panel templates with descriptions
 council templates inspect <name>            # Show template details (experts, mode, rounds)
 council memory list                         # Show what experts remember

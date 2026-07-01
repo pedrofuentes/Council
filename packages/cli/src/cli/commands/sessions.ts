@@ -288,7 +288,7 @@ export function buildSessionsCommand(depsOrWrite?: SessionsCommandDeps | Writer)
 
   cmd
     .command("cancel")
-    .description("Mark stale running debates as interrupted")
+    .description("Cancel running debates, marking them as interrupted")
     .argument("[name]", "Panel name to cancel (supports unique prefix matching)")
     .option("--all", "Cancel all running debates")
     .action(async (name: string | undefined, options: CancelSessionsOptions) => {
@@ -337,6 +337,15 @@ export function buildSessionsCommand(depsOrWrite?: SessionsCommandDeps | Writer)
     .description("Delete a completed or interrupted session")
     .argument("<name>", "Session name to delete (supports unique prefix matching)")
     .option("--yes", "Skip confirmation prompt")
+    .addHelpText(
+      "after",
+      "\nSafeguards:\n" +
+        "  - <name> supports unique prefix matching; an ambiguous prefix or a duplicate\n" +
+        "    exact name is rejected without deleting anything.\n" +
+        "  - Running sessions cannot be deleted — cancel them first with\n" +
+        "    `council sessions cancel`.\n" +
+        "  - You are prompted to confirm the irreversible deletion unless --yes is passed.",
+    )
     .action(async (name: string, options: DeleteSessionOptions) => {
       const requestedName = name.trim();
       const dbPath = path.join(getCouncilHome(), "council.db");
