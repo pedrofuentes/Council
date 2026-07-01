@@ -29,6 +29,21 @@ function words(s: string): string[] {
   return s.split(/\s+/).filter((t) => t.length > 0);
 }
 
+/**
+ * Deterministic, whitespace-free string of the given length — simulates a
+ * single unbreakable "token" (e.g. a long identifier, hash, or URL) with no
+ * spaces for `hardSplit` to break on. Cycling the alphabet (rather than
+ * repeating one character) means a dropped, duplicated, or reordered
+ * character changes the string, so exact-equality checks against it actually
+ * catch those regressions.
+ */
+function unbrokenToken(length: number): string {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let out = "";
+  for (let i = 0; i < length; i++) out += alphabet[i % alphabet.length];
+  return out;
+}
+
 describe("chunkText", () => {
   it("returns an empty array for empty or whitespace-only content", () => {
     expect(chunkText("")).toEqual([]);
@@ -79,6 +94,42 @@ describe("chunkText", () => {
     }
     // No word is split across the boundary.
     expect(chunks.flatMap((c) => words(c))).toEqual(words(longSentence));
+  });
+
+  it("keeps a single unbroken token exactly at the cap as one chunk (no char-split at the boundary)", () => {
+    // Regression guard for the "no-split" side of the hardSplit char-fallback
+    // boundary (chunking.ts hardSplit, ~lines 84-89): a token whose length
+    // equals maxChars must NOT be sliced — `token.length > maxChars` is
+    // strictly greater-than, so an equal-length token takes the untouched path.
+    const token = unbrokenToken(DEFAULT_CHUNK_MAX_CHARS);
+    const chunks = chunkText(token, { maxChars: DEFAULT_CHUNK_MAX_CHARS });
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]).toBe(token);
+    expect(chunks[0].length).toBe(DEFAULT_CHUNK_MAX_CHARS);
+  });
+
+  it("hard-splits a single unbroken token longer than the cap on character boundaries, with no data loss", () => {
+    // Direct regression test for #1092: the hardSplit char-fallback branch
+    // (chunking.ts ~lines 84-89) only fires when a lone token — no
+    // whitespace anywhere for the word-boundary split to use — exceeds
+    // maxChars. A 2000-char run (well over the 1200-char default cap)
+    // forces that fallback instead of the word-boundary path exercised by
+    // the "hard-splits a single sentence..." test above.
+    const maxChars = DEFAULT_CHUNK_MAX_CHARS;
+    const token = unbrokenToken(maxChars + 800);
+    const chunks = chunkText(token, { maxChars });
+
+    // More than one chunk is produced — the token did not fit in a single chunk.
+    expect(chunks.length).toBeGreaterThan(1);
+    // Every produced chunk is bounded by maxChars.
+    for (const c of chunks) {
+      expect(c.length).toBeLessThanOrEqual(maxChars);
+    }
+    // No character loss: concatenating the chunks reconstructs the original
+    // token exactly (stronger than a length check — also catches dropped,
+    // duplicated, or reordered characters).
+    expect(chunks.join("")).toBe(token);
+    expect(chunks.reduce((sum, c) => sum + c.length, 0)).toBe(token.length);
   });
 
   it("treats short table-shaped content as a single chunk (XLSX/CSV/PPTX regression guard)", () => {
