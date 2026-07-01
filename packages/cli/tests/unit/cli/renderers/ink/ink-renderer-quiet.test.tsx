@@ -1,15 +1,21 @@
 /**
- * Tests for InkRenderer / DebateApp quiet mode.
+ * Tests for InkRenderer / DebateApp quiet mode and CostIndicator color branches.
  *
  * Mirrors PlainRenderer quiet behavior (tests/unit/cli/renderers/plain-quiet.test.ts):
  * when quiet=true, the CostIndicator must NOT render — cost counters
  * are informational and noisy on the interactive TTY path.
+ *
+ * Also covers #713: CostIndicator must render yellow (warning) vs dim (normal)
+ * depending on whether the cost ratio exceeds COST_WARNING_THRESHOLD.
  */
 import React from "react";
 import { describe, expect, it } from "vitest";
 import { render } from "ink-testing-library";
 
-import { DebateApp } from "../../../../../src/cli/renderers/ink/InkRenderer.js";
+import {
+  DebateApp,
+  COST_WARNING_THRESHOLD,
+} from "../../../../../src/cli/renderers/ink/InkRenderer.js";
 import type { DebateEvent } from "../../../../../src/core/types.js";
 
 async function* stream(...evts: DebateEvent[]): AsyncIterable<DebateEvent> {
@@ -78,6 +84,44 @@ describe("DebateApp quiet mode", () => {
     const frame = stripAnsi(ui.lastFrame() ?? "");
     expect(frame).toContain("Important.");
     expect(frame).not.toContain("Cost:");
+    ui.unmount();
+  });
+});
+
+describe("CostIndicator color branches (#713)", () => {
+  it("renders in yellow (warning) when cost ratio exceeds the warning threshold", async () => {
+    // ratio = 9 / 10 = 0.9 > COST_WARNING_THRESHOLD (0.8) → isCostWarning true → color="yellow"
+    expect(9 / 10).toBeGreaterThan(COST_WARNING_THRESHOLD);
+    const events = stream({ kind: "cost.update", premiumRequests: 9, estimatedTotal: 10 });
+    const ui = render(<DebateApp events={events} />);
+    await flush();
+    const rawFrame = ui.lastFrame() ?? "";
+
+    expect(stripAnsi(rawFrame)).toContain("[Premium requests: 9 (est. ~10)]");
+    // Yellow ANSI code (ESC[33m) must be present — CostIndicator is the only coloured element here
+    // eslint-disable-next-line no-control-regex
+    expect(rawFrame).toMatch(/\u001b\[33m/);
+    // Dim ANSI code (ESC[2m) must be absent — guards against branch-swap regressions
+    // eslint-disable-next-line no-control-regex
+    expect(rawFrame).not.toMatch(/\u001b\[2m/);
+    ui.unmount();
+  });
+
+  it("renders in dim (normal) when cost ratio is below the warning threshold", async () => {
+    // ratio = 3 / 10 = 0.3 ≤ COST_WARNING_THRESHOLD (0.8) → isCostWarning false → dimColor
+    expect(3 / 10).toBeLessThanOrEqual(COST_WARNING_THRESHOLD);
+    const events = stream({ kind: "cost.update", premiumRequests: 3, estimatedTotal: 10 });
+    const ui = render(<DebateApp events={events} />);
+    await flush();
+    const rawFrame = ui.lastFrame() ?? "";
+
+    expect(stripAnsi(rawFrame)).toContain("[Premium requests: 3 (est. ~10)]");
+    // Dim ANSI code (ESC[2m) must be present
+    // eslint-disable-next-line no-control-regex
+    expect(rawFrame).toMatch(/\u001b\[2m/);
+    // Yellow ANSI code (ESC[33m) must be absent — guards against branch-swap regressions
+    // eslint-disable-next-line no-control-regex
+    expect(rawFrame).not.toMatch(/\u001b\[33m/);
     ui.unmount();
   });
 });
