@@ -510,10 +510,17 @@ describe("startup entrypoint (isMainModule) (#796)", () => {
         if (origInTTY) Object.defineProperty(process.stdin, "isTTY", origInTTY);
         else delete (process.stdin as { isTTY?: boolean }).isTTY;
         process.argv = origArgv;
-        for (const key of Object.keys(process.env)) {
-          if (!(key in origEnv)) delete process.env[key];
-        }
-        Object.assign(process.env, origEnv);
+        // Restore exactly the four env vars this test mutates. Static member
+        // deletes keep ESLint's no-dynamic-delete rule satisfied.
+        if (origEnv.CI === undefined) delete process.env.CI;
+        else process.env.CI = origEnv.CI;
+        if (origEnv.COUNCIL_NO_TUI === undefined) delete process.env.COUNCIL_NO_TUI;
+        else process.env.COUNCIL_NO_TUI = origEnv.COUNCIL_NO_TUI;
+        if (origEnv.COUNCIL_TUI === undefined) delete process.env.COUNCIL_TUI;
+        else process.env.COUNCIL_TUI = origEnv.COUNCIL_TUI;
+        if (origEnv.COUNCIL_SQLITE_WARNING_REEXEC === undefined)
+          delete process.env.COUNCIL_SQLITE_WARNING_REEXEC;
+        else process.env.COUNCIL_SQLITE_WARNING_REEXEC = origEnv.COUNCIL_SQLITE_WARNING_REEXEC;
       }
 
       // Proves the real module-load path invoked configureOutputEncoding()
