@@ -89,6 +89,17 @@ import {
 const DEFAULT_MAX_ROUNDS = 4;
 const DEFAULT_MAX_WORDS = 250;
 
+/**
+ * Shared guidance for the variadic `--experts <slugs...>` ordering foot-gun
+ * (#1059): a `<topic>` placed AFTER `--experts` is greedily consumed as another
+ * slug. Surfaced both when no topic resolves and when a not-in-library slug
+ * looks like an absorbed topic, so the two error paths speak with one voice.
+ */
+const VARIADIC_ORDERING_HINT =
+  "Note: --experts is variadic, so a topic placed AFTER it is consumed as a slug — " +
+  'put the topic FIRST (e.g. `convene "<topic>" --experts a b`) or quote a comma-list ' +
+  '(`--experts "a,b"`).';
+
 export { ENGINE_KINDS as CONVENE_ENGINE_KINDS };
 export type ConveneEngineKind = EngineKind;
 
@@ -408,12 +419,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           // The variadic --experts greedily consumes a <topic> placed AFTER
           // it, leaving the positional empty (#1059). When --experts was
           // supplied, point the user at the ordering foot-gun explicitly.
-          const orderingHint =
-            raw.experts !== undefined
-              ? " Note: --experts is variadic, so a topic placed AFTER it is consumed as a slug — " +
-                'put the topic FIRST (e.g. `convene "<topic>" --experts a b`) or quote a comma-list ' +
-                '(`--experts "a,b"`).'
-              : "";
+          const orderingHint = raw.experts !== undefined ? " " + VARIADIC_ORDERING_HINT : "";
           const message =
             "No topic provided. Pass a positional <topic>, or use --prompt-file <path> (or --prompt-file - to read stdin). When running in a terminal, omit the topic argument to enter it interactively." +
             orderingHint;
@@ -624,9 +630,11 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
                     : `'${safe}'`;
                 })
                 .join(", ");
+              const looksLikeAbsorbedTopic = missing.some((slug) => /\s/.test(slug));
               const msg =
                 `--experts references experts not in the library: ${named}. ` +
-                `Run 'council expert list' to see valid slugs, or omit --experts to auto-compose a panel from your topic.`;
+                `Run 'council expert list' to see valid slugs, or omit --experts to auto-compose a panel from your topic.` +
+                (looksLikeAbsorbedTopic ? ` ${VARIADIC_ORDERING_HINT}` : "");
               writeError(`${msg}\n`);
               throw new CliUserError(msg);
             }
