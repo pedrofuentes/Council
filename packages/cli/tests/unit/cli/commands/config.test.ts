@@ -38,19 +38,44 @@ async function runConfig(
   return { stdout: stdout || "", stderr };
 }
 
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await fs.access(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function hasErrorCode(err: unknown, code: string): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code: unknown }).code === code
+  );
+}
+
 describe("buildConfigCommand", () => {
   let testHome: string;
+  let dataHome: string;
   let originalHome: string | undefined;
+  let originalDataHome: string | undefined;
 
   beforeEach(async () => {
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-config-test-"));
+    dataHome = path.join(testHome, "data");
     originalHome = process.env["COUNCIL_HOME"];
+    originalDataHome = process.env["COUNCIL_DATA_HOME"];
     process.env["COUNCIL_HOME"] = testHome;
+    process.env["COUNCIL_DATA_HOME"] = dataHome;
   });
 
   afterEach(async () => {
     if (originalHome === undefined) delete process.env["COUNCIL_HOME"];
     else process.env["COUNCIL_HOME"] = originalHome;
+    if (originalDataHome === undefined) delete process.env["COUNCIL_DATA_HOME"];
+    else process.env["COUNCIL_DATA_HOME"] = originalDataHome;
     await fs.rm(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
@@ -91,21 +116,22 @@ describe("buildConfigCommand", () => {
       expect(stdout).toContain(testHome);
     });
 
-    it("displays data home directory path", async () => {
+    it("pins the exact data home directory path under COUNCIL_DATA_HOME", async () => {
       const { stdout } = await runConfig(["show"]);
-      expect(stdout).toContain("Data home:");
+      expect(stdout).toContain(`Data home: ${dataHome}  (experts, panels, documents)`);
     });
 
-    it("displays experts directory path", async () => {
+    it("pins the exact experts directory path as dataHome/experts", async () => {
       const { stdout } = await runConfig(["show"]);
-      expect(stdout).toContain("Experts directory:");
-      expect(stdout).toContain("experts");
+      expect(stdout).toContain(`Experts directory: ${path.join(dataHome, "experts")}`);
+      // Experts live under the data home, never the runtime (council) home.
+      expect(stdout).not.toContain(`Experts directory: ${path.join(testHome, "experts")}`);
     });
 
-    it("displays panels directory path", async () => {
+    it("pins the exact panels directory path as dataHome/panels", async () => {
       const { stdout } = await runConfig(["show"]);
-      expect(stdout).toContain("Panels directory:");
-      expect(stdout).toContain("panels");
+      expect(stdout).toContain(`Panels directory: ${path.join(dataHome, "panels")}`);
+      expect(stdout).not.toContain(`Panels directory: ${path.join(testHome, "panels")}`);
     });
 
     it("displays database file path", async () => {
@@ -281,6 +307,38 @@ describe("buildConfigCommand", () => {
 
       if (originalVisual === undefined) delete process.env["VISUAL"];
       else process.env["VISUAL"] = originalVisual;
+    });
+
+    // #742: `config edit` must hold the same write lock as `config set`/`config
+    // model` for the whole edit session so the two paths cannot silently
+    // clobber each other's writes.
+    it("holds the config write lock for the entire edit session and releases it after", async () => {
+      await fs.mkdir(testHome, { recursive: true });
+      const configPath = path.join(testHome, "config.yaml");
+      await fs.writeFile(configPath, "defaults:\n  model: gpt-4o\n", "utf-8");
+      const lockPath = `${configPath}.lock`;
+
+      let lockPresentDuringEdit = false;
+      let concurrentAcquireRejected = false;
+      const editorRunner = vi.fn(async () => {
+        lockPresentDuringEdit = await pathExists(lockPath);
+        // A concurrent writer using the same exclusive-create lock protocol
+        // must be shut out while the edit session is active.
+        try {
+          const handle = await fs.open(lockPath, "wx");
+          await handle.close();
+        } catch (err: unknown) {
+          concurrentAcquireRejected = hasErrorCode(err, "EEXIST");
+        }
+      });
+
+      const { stdout } = await runConfig(["edit"], { editorRunner });
+
+      expect(lockPresentDuringEdit).toBe(true);
+      expect(concurrentAcquireRejected).toBe(true);
+      expect(stdout).toContain("Config saved and valid.");
+      // The lock is released once the edit session ends.
+      expect(await pathExists(lockPath)).toBe(false);
     });
   });
 });

@@ -16,6 +16,8 @@ import {
   getCouncilHome,
   loadConfig,
   updateConfigField,
+  withConfigWriteLock,
+  type CouncilConfig,
 } from "../../config/index.js";
 import { updateConfigFields } from "../../config/loader.js";
 import { discoverAvailableModels, type ModelDiscoveryResult } from "../../engine/copilot/health.js";
@@ -277,44 +279,49 @@ function buildEditCommand(write: Writer, writeError: Writer, editorRunner?: Edit
     // Ensure config file exists before opening editor
     await loadConfig();
 
-    // Preserve original contents for rollback on validation failure
-    const originalContents = await fs.readFile(configFilePath, "utf-8");
+    // Hold the shared config write lock for the whole edit session so a
+    // concurrent `config set`/`config model` cannot clobber the file while the
+    // editor is open or during validation/rollback (#742).
+    await withConfigWriteLock(async () => {
+      // Preserve original contents for rollback on validation failure
+      const originalContents = await fs.readFile(configFilePath, "utf-8");
 
-    const editor = resolveEditor();
-    const runner = editorRunner ?? spawnEditor;
-    await runner(editor, configFilePath);
+      const editor = resolveEditor();
+      const runner = editorRunner ?? spawnEditor;
+      await runner(editor, configFilePath);
 
-    // Validate the saved file
-    let rawText: string;
-    try {
-      rawText = await fs.readFile(configFilePath, "utf-8");
-    } catch (err: unknown) {
-      const msg = `Cannot read config after edit: ${err instanceof Error ? err.message : String(err)}`;
-      writeError(`${msg}\n`);
-      throw new CliUserError(msg);
-    }
+      // Validate the saved file
+      let rawText: string;
+      try {
+        rawText = await fs.readFile(configFilePath, "utf-8");
+      } catch (err: unknown) {
+        const msg = `Cannot read config after edit: ${err instanceof Error ? err.message : String(err)}`;
+        writeError(`${msg}\n`);
+        throw new CliUserError(msg);
+      }
 
-    let parsed: unknown;
-    try {
-      parsed = yaml.parse(rawText);
-    } catch (err: unknown) {
-      const msg = `YAML parse error: ${err instanceof Error ? err.message : String(err)}`;
-      writeError(`Validation failed: ${msg}\n`);
-      await restoreOriginalConfig(configFilePath, originalContents, writeError);
-      throw new CliUserError(msg);
-    }
+      let parsed: unknown;
+      try {
+        parsed = yaml.parse(rawText);
+      } catch (err: unknown) {
+        const msg = `YAML parse error: ${err instanceof Error ? err.message : String(err)}`;
+        writeError(`Validation failed: ${msg}\n`);
+        await restoreOriginalConfig(configFilePath, originalContents, writeError);
+        throw new CliUserError(msg);
+      }
 
-    const result = ConfigSchema.safeParse(parsed ?? {});
-    if (!result.success) {
-      const issues = result.error.issues
-        .map((i) => `  - ${i.path.join(".")}: ${i.message}`)
-        .join("\n");
-      writeError(`Validation failed:\n${issues}\n`);
-      await restoreOriginalConfig(configFilePath, originalContents, writeError);
-      throw new CliUserError("Config validation failed after edit");
-    }
+      const result = ConfigSchema.safeParse(parsed ?? {});
+      if (!result.success) {
+        const issues = result.error.issues
+          .map((i) => `  - ${i.path.join(".")}: ${i.message}`)
+          .join("\n");
+        writeError(`Validation failed:\n${issues}\n`);
+        await restoreOriginalConfig(configFilePath, originalContents, writeError);
+        throw new CliUserError("Config validation failed after edit");
+      }
 
-    write("Config saved and valid.\n");
+      write("Config saved and valid.\n");
+    });
   });
   return cmd;
 }
@@ -565,7 +572,6 @@ async function promptForModel(
   );
   output.write(`Default model [1-${models.length}] (Enter for recommended): `);
   const selected = selectChoice(await line(), models, models[0] ?? "", "defaults.model");
-  write(`Set ${formatWizardKey("defaults.model")} = ${toSingleLineDisplay(selected)}\n`);
   return selected;
 }
 
@@ -704,6 +710,7 @@ async function runWizard(write: Writer, deps: ConfigWizardDependencies | undefin
       deps?.discoverModels ?? discoverAvailableModels,
     );
     stageUpdate("defaults.model", model);
+    write(`Set ${formatWizardKey("defaults.model")} = ${formatWizardValue(model)}\n`);
 
     for (const [key, label, current] of values) {
       const value = await promptForValue(key, label, current, nextLine, output);
@@ -798,7 +805,10 @@ async function setModelByName(name: string, write: Writer, writeError: Writer): 
   try {
     await updateConfigField("defaults.model", name);
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
+    // A corrupt on-disk config can drag raw file bytes into the parse-error
+    // message; sanitize before echoing so it can't inject terminal control
+    // sequences or break out of the single-line error (#1863).
+    const msg = toSingleLineDisplay(err instanceof Error ? err.message : String(err));
     writeError(`${msg}\n`);
     throw new CliUserError(msg);
   }
@@ -815,7 +825,17 @@ async function reportModelsNonInteractive(
   writeError: Writer,
   discoverModels: typeof discoverAvailableModels,
 ): Promise<never> {
-  const config = await loadConfig();
+  let config: CouncilConfig;
+  try {
+    config = await loadConfig();
+  } catch (err: unknown) {
+    // Normalize a corrupt-config load failure into a sanitized CliUserError so
+    // automation gets a clean, single-line diagnostic instead of a raw parse
+    // error (whose text may echo untrusted file bytes) (#1863).
+    const msg = toSingleLineDisplay(err instanceof Error ? err.message : String(err));
+    writeError(`${msg}\n`);
+    throw new CliUserError(msg);
+  }
   write(`Current default model: ${toSingleLineDisplay(config.defaults.model)}\n\n`);
 
   const discovery: ModelDiscoveryResult = await discoverModels();
@@ -858,9 +878,28 @@ async function runModelPicker(
 
   try {
     const model = await promptForModel(nextLine, write, output, discoverModels);
+    // The picker persists the raw selection, so a discovered id carrying
+    // terminal-control/bidi bytes must be rejected before it reaches disk
+    // (#1863). The confirmation prints only after the write resolves so the
+    // user never sees a success line for a write that failed.
+    assertSafeModelId(model);
     await updateConfigField("defaults.model", model);
+    write(`Set ${formatWizardKey("defaults.model")} = ${toSingleLineDisplay(model)}\n`);
   } finally {
     rl.close();
+  }
+}
+
+/**
+ * Reject a discovered model id whose bytes would not survive a single-line
+ * echo. `config model` (picker) persists the raw selection, so an id carrying
+ * terminal-control or bidi characters must never reach the config file. The
+ * wizard intentionally retains its historical raw-persist behavior and does not
+ * call this guard.
+ */
+function assertSafeModelId(model: string): void {
+  if (toSingleLineDisplay(model) !== model) {
+    throw new CliUserError("Discovered model id contains control characters and was not saved.");
   }
 }
 

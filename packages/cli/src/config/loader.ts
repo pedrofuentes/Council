@@ -220,10 +220,12 @@ interface LockMeta {
 }
 
 /**
- * Age after which a lock file is considered abandoned regardless of its owner
- * PID. Generous relative to a config read-modify-write (sub-second) so a slow
- * disk never trips it, while still recovering promptly from a crashed holder
- * on the next `config set`.
+ * Age after which a lock file with no identifiable live owner is considered
+ * abandoned. Only consulted when the owner cannot be probed for liveness
+ * (missing/unreadable metadata, or an owner on another host); a lock owned by a
+ * live same-host process is never reaped by age (#742). Generous relative to a
+ * config read-modify-write (sub-second) so a slow disk never trips it, while
+ * still recovering promptly from an unidentifiable crashed holder.
  */
 const LOCK_STALE_MS = 30_000;
 
@@ -294,8 +296,18 @@ async function releaseConfigLock(lockPath: string, meta: LockMeta): Promise<void
 }
 
 /**
- * Remove a lock that appears abandoned. A lock is stale when its file is older
- * than {@link LOCK_STALE_MS} or when a same-host owner PID is no longer alive.
+ * Remove a lock that appears abandoned. A lock owned by a LIVE process on this
+ * host is never stale, regardless of age: a long-running interactive
+ * `config edit` legitimately holds the write lock for minutes, and reaping it
+ * would let a concurrent writer clobber its pending write (silent config data
+ * loss, #742). Reaping therefore applies only when the owner is provably gone
+ * or cannot be identified:
+ *   - a same-host owner whose PID is no longer alive (crash recovery, #743) is
+ *     reaped immediately, regardless of age;
+ *   - a lock with missing/unreadable metadata, or an owner on another host
+ *     whose liveness we cannot probe, is reaped only once its file has aged past
+ *     {@link LOCK_STALE_MS}, so a crashed or foreign holder can't wedge it
+ *     forever.
  * Returns true when the lock was reaped (or already gone) and the caller should
  * retry acquisition immediately.
  */
@@ -309,11 +321,21 @@ async function reapIfStale(lockPath: string): Promise<boolean> {
     return isENOENT(err);
   }
 
-  const ageMs = Date.now() - mtimeMs;
   const meta = await readLockMeta(lockPath);
-  const ownerDead = meta !== undefined && meta.host === os.hostname() && !isProcessAlive(meta.pid);
 
-  if (ageMs <= LOCK_STALE_MS && !ownerDead) return false;
+  // Owner recorded on this host: trust liveness over age. A live owner holds the
+  // lock indefinitely (#742); a dead owner is reaped at once (crash recovery).
+  if (meta !== undefined && meta.host === os.hostname()) {
+    if (isProcessAlive(meta.pid)) return false;
+    await fs.unlink(lockPath).catch(() => undefined);
+    return true;
+  }
+
+  // Owner unidentifiable (missing/unreadable metadata) or on another host
+  // (liveness unprobeable): fall back to age so a crashed or foreign holder
+  // can't wedge the lock forever, while a recent lock is still respected.
+  const ageMs = Date.now() - mtimeMs;
+  if (ageMs <= LOCK_STALE_MS) return false;
 
   // Reap: ignore ENOENT (another process may have reaped it first).
   await fs.unlink(lockPath).catch(() => undefined);
@@ -481,6 +503,20 @@ export async function updateConfigFields(updates: readonly ConfigFieldUpdate[]):
       throw renameErr;
     }
   });
+}
+
+/**
+ * Run `fn` while holding the same exclusive config write lock used by
+ * {@link updateConfigFields}. Callers that perform their own read-modify-write
+ * cycle against config.yaml (e.g. `config edit`, which opens an editor and then
+ * validates/rolls back) must serialize against `config set`/`config model` so
+ * the two paths cannot silently clobber each other's writes (#742). The council
+ * home is created first so the lock file has a directory to live in.
+ */
+export async function withConfigWriteLock<T>(fn: () => Promise<T>): Promise<T> {
+  await ensureHomeDirectory();
+  const lockPath = `${configPath()}.lock`;
+  return withConfigLock(lockPath, fn);
 }
 
 /**
