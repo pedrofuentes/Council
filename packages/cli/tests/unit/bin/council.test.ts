@@ -1,3 +1,5 @@
+import { fileURLToPath } from "node:url";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 interface WriteCall {
@@ -48,6 +50,8 @@ function createWritable(target: string, calls: WriteCall[], isTTY?: boolean): Te
 
 afterEach(() => {
   vi.doUnmock("node:child_process");
+  vi.doUnmock("../../../src/bin/sqlite-warning-filter.js");
+  vi.doUnmock("../../../src/tui/index.js");
   vi.restoreAllMocks();
   vi.resetModules();
 });
@@ -71,7 +75,7 @@ describe("buildProgram", () => {
 
       expect(execFileSync).toHaveBeenCalledOnce();
       expect(execFileSync).toHaveBeenCalledWith(
-        "chcp.com",
+        expect.stringMatching(/[\\/]System32[\\/]chcp\.com$/i),
         ["65001"],
         expect.objectContaining({ stdio: "ignore", windowsHide: true }),
       );
@@ -98,7 +102,7 @@ describe("buildProgram", () => {
 
       expect(execFileSync).toHaveBeenCalledOnce();
       expect(execFileSync).toHaveBeenCalledWith(
-        "chcp.com",
+        expect.stringMatching(/[\\/]System32[\\/]chcp\.com$/i),
         ["65001"],
         expect.objectContaining({ stdio: "ignore", windowsHide: true }),
       );
@@ -411,4 +415,125 @@ describe("runCli update-notice suppression (#1691)", () => {
     expect(parsed).toBe(1);
     expect(notified).toBe(1);
   });
+});
+
+describe("resolveWindowsCodePageCommand (#843)", () => {
+  it("builds an absolute System32 path from %SystemRoot%", async () => {
+    const { resolveWindowsCodePageCommand } = await loadCouncilModule();
+
+    expect(resolveWindowsCodePageCommand({ SystemRoot: "D:\\Windows" })).toBe(
+      "D:\\Windows\\System32\\chcp.com",
+    );
+  });
+
+  it("falls back to the default Windows directory when %SystemRoot% is unset", async () => {
+    const { resolveWindowsCodePageCommand } = await loadCouncilModule();
+
+    expect(resolveWindowsCodePageCommand({})).toBe("C:\\Windows\\System32\\chcp.com");
+  });
+
+  it("falls back to the default Windows directory when %SystemRoot% is blank", async () => {
+    const { resolveWindowsCodePageCommand } = await loadCouncilModule();
+
+    expect(resolveWindowsCodePageCommand({ SystemRoot: "   " })).toBe(
+      "C:\\Windows\\System32\\chcp.com",
+    );
+  });
+
+  it("normalizes a trailing separator on %SystemRoot%", async () => {
+    const { resolveWindowsCodePageCommand } = await loadCouncilModule();
+
+    expect(resolveWindowsCodePageCommand({ SystemRoot: "C:\\Windows\\" })).toBe(
+      "C:\\Windows\\System32\\chcp.com",
+    );
+  });
+
+  it("never resolves the bare command name, defeating PATH shadowing", async () => {
+    const { resolveWindowsCodePageCommand } = await loadCouncilModule();
+
+    const resolved = resolveWindowsCodePageCommand({ SystemRoot: "C:\\Windows" });
+    expect(resolved).not.toBe("chcp.com");
+    expect(resolved).toMatch(/[\\/]System32[\\/]chcp\.com$/i);
+  });
+});
+
+describe("startup entrypoint (isMainModule) (#796)", () => {
+  // The bootstrap guard in council.ts recognizes itself as the program entry
+  // only when its module URL matches `process.argv[1]` (source runs) or ends
+  // with `/bin/council.js` (built dist). Under Vitest the source resolves to
+  // `council.ts`, and the argv[1] match relies on POSIX-style `file://` URLs,
+  // so this real-startup probe is exercised on POSIX CI shards; on Windows the
+  // published `council.js` dist takes the `.js` suffix branch, which the e2e
+  // bundled-binary smoke test covers instead.
+  it.skipIf(process.platform === "win32")(
+    "wraps the real startup output path with the absolute chcp command on Windows",
+    async () => {
+      const execFileSync = vi.fn().mockReturnValue(Buffer.alloc(0));
+      const spawnSync = vi.fn().mockReturnValue({ status: 0 });
+      const launchTui = vi.fn(async () => undefined);
+      vi.doMock("node:child_process", () => ({ execFileSync, spawnSync }));
+      vi.doMock("../../../src/bin/sqlite-warning-filter.js", () => ({
+        installSqliteExperimentalWarningFilter: vi.fn(),
+        installSqliteExperimentalWarningStderrFilter: vi.fn(),
+      }));
+      vi.doMock("../../../src/tui/index.js", () => ({ launchTui }));
+
+      const councilPath = fileURLToPath(new URL("../../../src/bin/council.ts", import.meta.url));
+
+      const origPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+      const origArgv = process.argv;
+      const origOutTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+      const origInTTY = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+      const origOutWrite = process.stdout.write.bind(process.stdout);
+      const origEnv = { ...process.env };
+
+      try {
+        Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+        Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+        Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+        delete process.env.CI;
+        delete process.env.COUNCIL_NO_TUI;
+        // Force the TUI-launch path so the fire-and-forget runCli() settles on
+        // the mocked launcher instead of parsing argv (which would exit).
+        process.env.COUNCIL_TUI = "1";
+        // Keep the Windows re-exec guard from spawning/exiting during the probe.
+        process.env.COUNCIL_SQLITE_WARNING_REEXEC = "1";
+        process.argv = ["node", councilPath];
+
+        await import("../../../src/bin/council.js");
+        await new Promise((resolve) => setImmediate(resolve));
+      } finally {
+        process.stdout.write = origOutWrite;
+        if (origPlatform) Object.defineProperty(process, "platform", origPlatform);
+        if (origOutTTY) Object.defineProperty(process.stdout, "isTTY", origOutTTY);
+        else delete (process.stdout as { isTTY?: boolean }).isTTY;
+        if (origInTTY) Object.defineProperty(process.stdin, "isTTY", origInTTY);
+        else delete (process.stdin as { isTTY?: boolean }).isTTY;
+        process.argv = origArgv;
+        // Restore exactly the four env vars this test mutates. Static member
+        // deletes keep ESLint's no-dynamic-delete rule satisfied.
+        if (origEnv.CI === undefined) delete process.env.CI;
+        else process.env.CI = origEnv.CI;
+        if (origEnv.COUNCIL_NO_TUI === undefined) delete process.env.COUNCIL_NO_TUI;
+        else process.env.COUNCIL_NO_TUI = origEnv.COUNCIL_NO_TUI;
+        if (origEnv.COUNCIL_TUI === undefined) delete process.env.COUNCIL_TUI;
+        else process.env.COUNCIL_TUI = origEnv.COUNCIL_TUI;
+        if (origEnv.COUNCIL_SQLITE_WARNING_REEXEC === undefined)
+          delete process.env.COUNCIL_SQLITE_WARNING_REEXEC;
+        else process.env.COUNCIL_SQLITE_WARNING_REEXEC = origEnv.COUNCIL_SQLITE_WARNING_REEXEC;
+      }
+
+      // Proves the real module-load path invoked configureOutputEncoding()
+      // (the Windows console code-page switch) using the hardened absolute
+      // command rather than the bare, PATH-resolved `chcp.com`.
+      expect(execFileSync).toHaveBeenCalledTimes(1);
+      expect(execFileSync).toHaveBeenCalledWith(
+        expect.stringMatching(/[\\/]System32[\\/]chcp\.com$/i),
+        ["65001"],
+        expect.objectContaining({ stdio: "ignore", windowsHide: true }),
+      );
+      // And that startup continued into runCli(), launching the (mocked) TUI.
+      expect(launchTui).toHaveBeenCalledTimes(1);
+    },
+  );
 });

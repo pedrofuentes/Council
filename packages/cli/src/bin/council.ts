@@ -75,9 +75,33 @@ interface EncodingWritable {
 
 const UTF8_OUTPUT_ENCODING: BufferEncoding = "utf8";
 const WINDOWS_UTF8_CODE_PAGE = "65001";
-const WINDOWS_CODE_PAGE_COMMAND = "chcp.com";
+// `chcp.com` ships in the Windows System32 directory. Resolving it by its bare
+// name would defer to %PATH%, letting an executable earlier in PATH shadow and
+// run in its place (#843); we always resolve the absolute system path instead.
+const WINDOWS_CODE_PAGE_COMMAND_RELATIVE_PATH = "System32\\chcp.com";
+const WINDOWS_DEFAULT_SYSTEM_ROOT = "C:\\Windows";
 const configuredConsoleCodePageStreams = new WeakSet<EncodingWritable>();
 const wrappedOutputStreams = new WeakSet<EncodingWritable>();
+
+/**
+ * Resolve the absolute path to the Windows console code-page tool
+ * (`%SystemRoot%\System32\chcp.com`) so it is never invoked through a
+ * PATH-relative lookup a shadowing executable could hijack (#843).
+ *
+ * `%SystemRoot%` is set on every standard Windows install; when it is missing
+ * or blank we fall back to the conventional `C:\Windows` location. The fallback
+ * is still an absolute path — and therefore immune to PATH shadowing — and a
+ * wrong guess simply fails the best-effort `execFileSync` below, which is
+ * swallowed.
+ */
+export function resolveWindowsCodePageCommand(env: NodeJS.ProcessEnv = process.env): string {
+  const configuredRoot = env.SystemRoot;
+  const systemRoot =
+    typeof configuredRoot === "string" && configuredRoot.trim().length > 0
+      ? configuredRoot.replace(/[\\/]+$/, "")
+      : WINDOWS_DEFAULT_SYSTEM_ROOT;
+  return `${systemRoot}\\${WINDOWS_CODE_PAGE_COMMAND_RELATIVE_PATH}`;
+}
 
 function configureWindowsConsoleCodePage(stream: EncodingWritable): void {
   if (!stream.isTTY || configuredConsoleCodePageStreams.has(stream)) {
@@ -85,7 +109,7 @@ function configureWindowsConsoleCodePage(stream: EncodingWritable): void {
   }
 
   try {
-    childProcess.execFileSync(WINDOWS_CODE_PAGE_COMMAND, [WINDOWS_UTF8_CODE_PAGE], {
+    childProcess.execFileSync(resolveWindowsCodePageCommand(), [WINDOWS_UTF8_CODE_PAGE], {
       stdio: "ignore",
       windowsHide: true,
     });
@@ -203,11 +227,17 @@ export function resetFirstRunSetupForTests(): void {
 // model is unset or broken. `config` is the field-level configuration command
 // (the recovery tool) and likewise must not be gated behind setup. `telemetry`
 // is a configuration management command and must work without model setup.
+// `docs` is a read-only discoverability command (e.g. `council docs formats`)
+// and must stay usable with no model configured (#980). `ui` launches the TUI,
+// which runs its own first-run onboarding, so gating it here would fire a
+// redundant CLI model prompt before the UI even starts (#1698).
 const FIRST_RUN_SETUP_SKIP_COMMANDS: ReadonlySet<string> = new Set([
   "demo",
   "doctor",
   "config",
   "telemetry",
+  "docs",
+  "ui",
 ]);
 
 function getTopLevelCommandName(actionCommand: Command): string {
