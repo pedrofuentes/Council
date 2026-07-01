@@ -808,6 +808,46 @@ describe("TurnRepository", () => {
     ]);
   });
 
+  it("countByExpertId() sums an expert's turns across every debate and excludes others (#180)", async () => {
+    // A second debate in the same panel so the aggregate genuinely spans
+    // multiple debates — the property the single COUNT query must satisfy.
+    const debateId2 = "01HZ-test-debate-2";
+    await db
+      .insertInto("debates")
+      .values({
+        id: debateId2,
+        panel_id: panelId,
+        prompt: "Second debate",
+        status: "running",
+        moderator: "round-robin",
+        started_at: new Date().toISOString(),
+        cost_estimate: 16,
+      })
+      .execute();
+
+    const pm = await expertRepo.create(sampleExpert(panelId, "pm"));
+    const designer = await expertRepo.create(sampleExpert(panelId, "designer"));
+
+    // Target expert (cto): 2 turns in debate 1 + 1 turn in debate 2 = 3.
+    await turnRepo.create({ debateId, round: 0, seq: 0, speakerKind: "expert", expertId, content: "cto d1 a" });
+    await turnRepo.create({ debateId, round: 0, seq: 1, speakerKind: "expert", expertId, content: "cto d1 b" });
+    await turnRepo.create({ debateId: debateId2, round: 0, seq: 0, speakerKind: "expert", expertId, content: "cto d2 a" });
+
+    // Another expert (pm): 1 turn per debate = 2. Must NOT leak into cto's count.
+    await turnRepo.create({ debateId, round: 0, seq: 2, speakerKind: "expert", expertId: pm.id, content: "pm d1" });
+    await turnRepo.create({ debateId: debateId2, round: 0, seq: 1, speakerKind: "expert", expertId: pm.id, content: "pm d2" });
+
+    // A moderator turn with a null expert_id must never be attributed to anyone.
+    await turnRepo.create({ debateId, round: 0, seq: 3, speakerKind: "moderator", expertId: null, content: "synthesis" });
+
+    // Exact counts (discriminating): cto spans both debates, pm is excluded,
+    // and the null-expert moderator turn is counted for nobody.
+    expect(await turnRepo.countByExpertId(expertId)).toBe(3);
+    expect(await turnRepo.countByExpertId(pm.id)).toBe(2);
+    // An expert with no turns at all counts as exactly 0 (not undefined / NaN).
+    expect(await turnRepo.countByExpertId(designer.id)).toBe(0);
+  });
+
   it("findLatestByDebateId() returns undefined when the debate has no turns", async () => {
     await expect(turnRepo.findLatestByDebateId(debateId)).resolves.toBeUndefined();
   });
