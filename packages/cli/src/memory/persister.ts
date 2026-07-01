@@ -29,12 +29,14 @@
  *     (or 'interrupted'/'aborted'/'failed' depending on the reason and
  *     signal state) and ended_at.
  *
- * **Observability** (#119): a `turn.end` event with no matching prior
- * `turn.start` indicates an orchestrator protocol violation that should
- * never happen in normal operation. When `deps.logger` is provided, the
- * persister calls `logger.warn(...)` with the offending slug so
- * regressions are detectable. The default behavior (no logger) silently
- * drops the orphan event — same as before.
+ * **Observability** (#119, enriched #163): a `turn.end` event with no
+ * matching prior `turn.start` indicates an orchestrator protocol
+ * violation that should never happen in normal operation. When
+ * `deps.logger` is provided, the persister calls `logger.warn(...)` with
+ * the offending slug plus the debateId and turnId, so regressions are
+ * detectable and correlatable to a specific debate row even when
+ * multiple debates run concurrently. The default behavior (no logger)
+ * silently drops the orphan event — same as before.
  *
  * Failure handling:
  *
@@ -179,7 +181,12 @@ export class DebatePersister {
             break;
           }
           case "turn.end": {
-            await this.#persistTurn(evt.expertSlug, evt.content, evt.speakerKind ?? "expert");
+            await this.#persistTurn(
+              evt.expertSlug,
+              evt.turnId,
+              evt.content,
+              evt.speakerKind ?? "expert",
+            );
             this.#pendingTurns.delete(evt.expertSlug);
             break;
           }
@@ -314,6 +321,7 @@ export class DebatePersister {
 
   async #persistTurn(
     expertSlug: string,
+    turnId: string,
     content: string,
     speakerKind: "expert" | "human" = "expert",
   ): Promise<void> {
@@ -323,8 +331,12 @@ export class DebatePersister {
       // orchestrator protocol violation. Warn (when a logger is
       // configured) so regressions are detectable; otherwise drop
       // silently to preserve backwards-compatible default behavior.
+      // #163: this only runs inside persist()'s event loop, which starts
+      // after #debateId is assigned, so it is always defined here. Include
+      // it (and the orphan event's turnId) so ops can correlate a warning
+      // to a specific debate row when multiple debates run concurrently.
       this.deps.logger?.warn(
-        `DebatePersister: turn.end for slug='${expertSlug}' has no matching turn.start (orchestrator protocol violation; turn row dropped)`,
+        `DebatePersister: turn.end for slug='${expertSlug}' turnId='${turnId}' debateId='${this.#debateId ?? "unknown"}' has no matching turn.start (orchestrator protocol violation; turn row dropped)`,
       );
       return;
     }

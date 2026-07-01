@@ -15,6 +15,12 @@
  * - #138: convene's cleanup-error logging (engine.stop / db.destroy
  *   rejections) has no regression test — a future revert to silent
  *   .catch(() => undefined) wouldn't be caught.
+ *
+ * RED again at the #163 follow-up commit:
+ * - #163: the #119 orphan `turn.end` warning logs only the offending
+ *   slug. With multiple concurrent debates, ops can't tell which debate
+ *   row a warning belongs to. The message should also embed debateId
+ *   (and the turnId from the orphan event).
  */
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -131,6 +137,50 @@ describe("DebatePersister #119 — warn on turn.end without prior turn.start", (
     const message = String(warn.mock.calls[0]?.[0] ?? "");
     expect(message.toLowerCase()).toMatch(/turn\.end|turn.start|protocol/);
     expect(message).toContain(cto.slug);
+  });
+
+  it("includes debateId and turnId in the orphan turn.end warning message (#163)", async () => {
+    const warn = vi.fn();
+    const logger: DebatePersisterLogger = { warn };
+    const persister = new DebatePersister({
+      debates: f.debateRepo,
+      turns: f.turnRepo,
+      panelId: f.panelId,
+      expertSlugToId: { [cto.slug]: f.expertId },
+      moderator: "round-robin",
+      logger,
+    });
+
+    async function* protocolViolation(): AsyncIterable<DebateEvent> {
+      yield { kind: "panel.assembled", experts: [] };
+      // Note: NO turn.start — protocol violation.
+      yield {
+        kind: "turn.end",
+        expertSlug: cto.slug,
+        turnId: "01HX-orphan-turn",
+        content: "orphan turn",
+      };
+      yield { kind: "debate.end", reason: "completed" };
+    }
+
+    for await (const _ of persister.persist(protocolViolation(), "topic")) {
+      /* drain */
+    }
+
+    // #debateId is assigned synchronously on persist() entry — before any
+    // event is processed — so it is always defined by the time the orphan
+    // turn.end warning below fires.
+    expect(persister.debateId).toBeDefined();
+    expect(warn).toHaveBeenCalledTimes(1);
+    const message = String(warn.mock.calls[0]?.[0] ?? "");
+    // Discriminating oracle: assert the ACTUAL debateId value produced by
+    // this run is embedded in the warning — not merely that warn fired.
+    // Multiple concurrent debates each get their own debateId, so ops need
+    // this to correlate a warning back to a specific debate row (#163).
+    expect(message).toContain(`debateId='${persister.debateId}'`);
+    expect(message).toContain("01HX-orphan-turn");
+    expect(message).toContain(cto.slug);
+    expect(message).toContain("no matching turn.start");
   });
 
   it("does NOT warn on the normal turn.start → turn.end sequence", async () => {
