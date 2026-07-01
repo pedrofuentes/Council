@@ -29,7 +29,7 @@ import {
 import { getSymbols } from "../renderers/symbols.js";
 import { renderBanner } from "../renderers/banner.js";
 import { createSpinner, type Spinner } from "../renderers/spinner.js";
-import { stripControlChars, toSingleLineDisplay } from "../strip-control-chars.js";
+import { toSingleLineDisplay } from "../strip-control-chars.js";
 
 import packageJson from "../../../package.json" with { type: "json" };
 
@@ -123,7 +123,6 @@ async function checkCouncilDataHome(): Promise<CheckResult> {
   const dataHome = await resolveDoctorDataHome();
   try {
     await ensureDataDirectories(dataHome);
-    return { name: "Council data home", status: "pass", detail: dataHome };
   } catch (err: unknown) {
     return {
       name: "Council data home",
@@ -131,6 +130,29 @@ async function checkCouncilDataHome(): Promise<CheckResult> {
       detail: `cannot create ${dataHome}: ${formatError(err)}`,
     };
   }
+  try {
+    await probeDirectoryWritable(dataHome);
+  } catch (err: unknown) {
+    return {
+      name: "Council data home",
+      status: "fail",
+      detail: `cannot write under ${dataHome}: ${formatError(err)}`,
+    };
+  }
+  return { name: "Council data home", status: "pass", detail: dataHome };
+}
+
+/**
+ * Verify `dir` is genuinely writable, not merely present. `ensureDataDirectories`
+ * relies on `mkdir`, which is a silent no-op when the directory already exists,
+ * so a data home that exists but is read-only would report a false-green status
+ * and only fail at the first runtime write. Create and immediately remove a
+ * throwaway file so `doctor` surfaces the real writability of the directory.
+ */
+async function probeDirectoryWritable(dir: string): Promise<void> {
+  const probe = path.join(dir, ".council-doctor-write-test");
+  await fs.writeFile(probe, "ok", "utf-8");
+  await fs.unlink(probe);
 }
 
 async function checkSqlite(): Promise<CheckResult> {
@@ -503,8 +525,7 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
 
       // Terminal capability section (A11Y-16)
       write("\n");
-      const safeEnv = (key: string): string =>
-        stripControlChars(process.env[key] ?? "(unset)").replace(/[\r\n]+/g, " ");
+      const safeEnv = (key: string): string => toSingleLineDisplay(process.env[key] ?? "(unset)");
       write(`${sym.info} Terminal\n`);
       write(`   TERM: ${safeEnv("TERM")}\n`);
       write(`   COLORTERM: ${safeEnv("COLORTERM")}\n`);
