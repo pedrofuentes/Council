@@ -15,6 +15,7 @@ import type { DebateEvent, DebatePhase, PanelMemberSnapshot } from "../../core/t
 
 import { friendlyReason } from "./friendly-reasons.js";
 import { assignExpertColor, formatExpertPrefix } from "./ink/colors.js";
+import { isEpipe } from "./sink-errors.js";
 import { getSymbols } from "./symbols.js";
 import type { Renderer, Sink } from "./types.js";
 import { stripControlChars, toSingleLineDisplay } from "../strip-control-chars.js";
@@ -231,9 +232,4 @@ export class PlainRenderer implements Renderer {
   private yellow(text: string): string {
     return this.#chalk.yellow(text);
   }
-}
-
-/** True when an error is a broken-pipe (EPIPE) failure from a closed sink. */
-function isEpipe(err: unknown): boolean {
-  return err instanceof Error && (err as NodeJS.ErrnoException).code === "EPIPE";
 }
