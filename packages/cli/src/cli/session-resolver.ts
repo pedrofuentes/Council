@@ -14,6 +14,7 @@ import { type Panel, PanelRepository } from "../memory/repositories/panels.js";
 import { CliUserError } from "./cli-user-error.js";
 import { suggestMatch } from "./fuzzy-match.js";
 import { isNonInteractive as defaultIsNonInteractive } from "./non-interactive.js";
+import { toSingleLineDisplay } from "./strip-control-chars.js";
 
 export interface SessionMatch {
   readonly name: string;
@@ -77,9 +78,10 @@ export async function resolveSession(options: ResolveSessionOptions): Promise<st
   }
 
   if (await panelTemplateExists(requested, options.dataHome)) {
+    const safeRequested = toSingleLineDisplay(requested);
     const message =
-      `Panel '${requested}' exists but has no debates yet. ` +
-      `Run \`council convene --template ${requested}\` first.`;
+      `Panel '${safeRequested}' exists but has no debates yet. ` +
+      `Run \`council convene --template ${safeRequested}\` first.`;
     writeError(message + "\n");
     throw new CliUserError(message);
   }
@@ -88,9 +90,9 @@ export async function resolveSession(options: ResolveSessionOptions): Promise<st
   const suggestionText =
     suggestions.length === 0
       ? ""
-      : ` Did you mean ${suggestions.map((value) => `'${value}'`).join(", ")}?`;
+      : ` Did you mean ${suggestions.map((value) => `'${toSingleLineDisplay(value)}'`).join(", ")}?`;
   const message =
-    `No panel found matching '${requested}'.${suggestionText} ` +
+    `No panel found matching '${toSingleLineDisplay(requested)}'.${suggestionText} ` +
     "Run `council sessions` to list available panels.";
   writeError(message + "\n");
   throw new CliUserError(message);
@@ -108,7 +110,7 @@ async function resolveMissingPanelArg(
       writeError(message + "\n");
       throw new CliUserError(message);
     }
-    writeError(`Using panel: ${panel.name}\n`);
+    writeError(`Using panel: ${toSingleLineDisplay(panel.name)}\n`);
     return panel.name;
   }
 
@@ -132,7 +134,7 @@ async function resolveAmbiguousPrefix(args: {
       `Run \`council resume <name>\` with the full name of one of the panels above to disambiguate.\n`,
     );
     throw new CliUserError(
-      `Ambiguous prefix '${args.requested}' matches ${args.matches.length} panels.`,
+      `Ambiguous prefix '${toSingleLineDisplay(args.requested)}' matches ${args.matches.length} panels.`,
     );
   }
 
@@ -177,15 +179,16 @@ function writeAmbiguousMatches(
   matches: readonly SessionMatch[],
   writeError: ErrorWriter,
 ): void {
-  writeError(`Multiple panels match "${requested}":\n`);
+  writeError(`Multiple panels match "${toSingleLineDisplay(requested)}":\n`);
   for (const [index, match] of matches.entries()) {
     writeError(`  ${index + 1}. ${formatSessionMatch(match)}\n`);
   }
 }
 
 function formatSessionMatch(match: SessionMatch): string {
-  const topic = match.topic ?? "No topic";
-  return `${match.name} | ${topic} | ${match.createdAt}`;
+  const name = toSingleLineDisplay(match.name);
+  const topic = toSingleLineDisplay(match.topic ?? "No topic");
+  return `${name} | ${topic} | ${match.createdAt}`;
 }
 
 function toSessionMatch(panel: Panel): SessionMatch {
