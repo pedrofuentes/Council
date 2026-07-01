@@ -538,6 +538,7 @@ describe("ContextManager", () => {
       expect(warning.split("\n")).toHaveLength(1);
       // No C0/C1, DEL, bidi override/isolate, or line/paragraph separators.
       expect(warning).not.toMatch(
+        // eslint-disable-next-line no-control-regex
         /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/,
       );
       // The human-readable prefix is still intact after sanitization.
