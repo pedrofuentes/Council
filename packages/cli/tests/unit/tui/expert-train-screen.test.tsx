@@ -404,6 +404,61 @@ describe("ExpertTrainScreen — Tab completion and hint", () => {
     unmount();
   });
 
+  it("clears stale candidates when the user manually edits the input after Tab", async () => {
+    const fakeComplete = vi.fn<(input: string) => Promise<PathCompletion>>().mockResolvedValue({
+      completed: "./ba",
+      candidates: ["./bar.md", "./baz.md"],
+    });
+
+    const { stdin, lastFrame, unmount } = renderScreenWithComplete(fakeComplete);
+
+    stdin.write("b");
+    await flush();
+    stdin.write("\t");
+    await flush();
+
+    // Non-vacuous: the candidates for the OLD input must be rendered first.
+    expect(lastFrame()).toContain("./bar.md");
+    expect(lastFrame()).toContain("./baz.md");
+
+    // The user manually edits the input, superseding the previous completion.
+    stdin.write("x");
+    await flush();
+
+    // The stale suggestions for the OLD input must disappear immediately,
+    // independent of any new fetch.
+    expect(lastFrame()).not.toContain("./bar.md");
+    expect(lastFrame()).not.toContain("./baz.md");
+    unmount();
+  });
+
+  it("still surfaces new candidates for the edited input after clearing stale ones", async () => {
+    const fakeComplete = vi
+      .fn<(input: string) => Promise<PathCompletion>>()
+      .mockResolvedValueOnce({ completed: "./ba", candidates: ["./bar.md", "./baz.md"] })
+      .mockResolvedValueOnce({ completed: "./qux", candidates: ["./quux.md"] });
+
+    const { stdin, lastFrame, unmount } = renderScreenWithComplete(fakeComplete);
+
+    stdin.write("b");
+    await flush();
+    stdin.write("\t");
+    await flush();
+    expect(lastFrame()).toContain("./bar.md");
+
+    // Manual edit clears the stale candidates.
+    stdin.write("q");
+    await flush();
+    expect(lastFrame()).not.toContain("./bar.md");
+
+    // A subsequent completion for the NEW input still surfaces fresh candidates.
+    stdin.write("\t");
+    await flush();
+    expect(lastFrame()).toContain("./quux.md");
+    expect(lastFrame()).not.toContain("./bar.md");
+    unmount();
+  });
+
   it("Tab sanitizes candidates before rendering", async () => {
     const fakeComplete = vi.fn<(input: string) => Promise<PathCompletion>>().mockResolvedValue({
       completed: "./",
