@@ -32,13 +32,46 @@ import type {
 } from "../index.js";
 import { SUPPORTED_MODELS } from "../models.js";
 
+import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
+
 import { denyAll } from "./permissions.js";
 
 /**
- * Provider health probe — verifies the Copilot SDK is loadable and exposes
- * the symbols Council depends on, WITHOUT starting a client or making any
- * network call. Exposed here (not in a sibling file) because the ESLint
- * boundary rule restricts `@github/copilot-sdk` imports to this single file.
+ * Cap for diagnostic messages echoed to the terminal. Mirrors the 200-char
+ * bound used by the chat layer's `sanitizeErrorMessage()` so engine
+ * diagnostics can't flood or garble the TTY.
+ */
+const MAX_DIAGNOSTIC_MESSAGE_LENGTH = 200;
+
+/**
+ * Render an untrusted/opaque error as a single-line, control-char-free, bounded
+ * string safe to interpolate into a terminal diagnostic (`console.warn`). SDK
+ * and transport errors can carry multi-line, ANSI-laden, or very long messages;
+ * this collapses them to one sanitized line and truncates to
+ * {@link MAX_DIAGNOSTIC_MESSAGE_LENGTH}. Part of the terminal-output
+ * sanitization program (#668, #416, #1134, #1155).
+ */
+function sanitizeDiagnosticMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const oneLine = toSingleLineDisplay(raw).trim();
+  return oneLine.length > MAX_DIAGNOSTIC_MESSAGE_LENGTH
+    ? `${oneLine.slice(0, MAX_DIAGNOSTIC_MESSAGE_LENGTH - 3)}...`
+    : oneLine;
+}
+
+/**
+ * Provider health probe — verifies the Copilot SDK's *export surface* is
+ * present and well-formed, WITHOUT starting a client or making any network
+ * call. Exposed here (not in a sibling file) because the ESLint boundary rule
+ * restricts `@github/copilot-sdk` imports to this single file.
+ *
+ * NOTE (#96): `@github/copilot-sdk` is now statically imported, so a module
+ * *load* failure aborts this whole file before the probe can run — it can no
+ * longer certify "module loadable" (the previous try/catch was dead code for
+ * that case). What it certifies instead is that the `CopilotClient` symbol
+ * Council binds to is present as a constructor, which still catches an
+ * installed-but-incompatible SDK whose export was dropped or changed shape
+ * (version drift).
  *
  * Used by `council doctor` via `src/engine/copilot/health.ts`.
  */
@@ -48,30 +81,36 @@ export interface ProviderHealth {
 }
 
 export function pingProviderHealth(): ProviderHealth {
-  try {
-    if (typeof CopilotClient !== "function") {
-      return {
-        ok: false,
-        detail:
-          "@github/copilot-sdk is loaded but CopilotClient export is missing — version mismatch?",
-      };
-    }
-    return {
-      ok: true,
-      detail: "@github/copilot-sdk loaded; CopilotClient export present",
-    };
-  } catch (err: unknown) {
+  if (typeof CopilotClient !== "function") {
     return {
       ok: false,
-      detail: `cannot probe @github/copilot-sdk: ${err instanceof Error ? err.message : String(err)}`,
+      detail:
+        "@github/copilot-sdk export surface incomplete: CopilotClient is not a constructor — version mismatch?",
     };
   }
+  return {
+    ok: true,
+    detail: "@github/copilot-sdk export surface present: CopilotClient constructor available",
+  };
 }
 
 export interface ModelDiscoveryResult {
   readonly models: readonly string[];
   readonly source: "live" | "static";
 }
+
+/** Options for {@link discoverAvailableModels}. */
+export interface ModelDiscoveryOptions {
+  /**
+   * Upper bound (ms) on live SDK discovery (`client.start()` + `listModels()`).
+   * On timeout, discovery falls back to the static model list instead of
+   * hanging (#721). Defaults to {@link DEFAULT_MODEL_DISCOVERY_TIMEOUT_MS}.
+   */
+  readonly timeoutMs?: number;
+}
+
+/** Default {@link ModelDiscoveryOptions.timeoutMs}: bound a stalled SDK (#721). */
+export const DEFAULT_MODEL_DISCOVERY_TIMEOUT_MS = 10_000;
 
 /**
  * Resolve the absolute path to the `@github/copilot` CLI entry that
@@ -131,23 +170,67 @@ function freezeDiscoveredModels(models: readonly { readonly id: string }[]): rea
   return Object.freeze(models.map(({ id }) => id)) as readonly string[];
 }
 
-export async function discoverAvailableModels(): Promise<ModelDiscoveryResult> {
+class ModelDiscoveryTimeoutError extends Error {
+  constructor(ms: number) {
+    super(`SDK model discovery timed out after ${ms}ms`);
+    this.name = "ModelDiscoveryTimeoutError";
+  }
+}
+
+/**
+ * Race `promise` against a timeout, rejecting with {@link ModelDiscoveryTimeoutError}
+ * if the deadline elapses first. Always clears the timer. The underlying SDK
+ * call cannot be truly cancelled, so callers must still tear the client down
+ * (the `finally` in {@link discoverAvailableModels} does) to release resources.
+ */
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new ModelDiscoveryTimeoutError(ms)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+export async function discoverAvailableModels(
+  options?: ModelDiscoveryOptions,
+): Promise<ModelDiscoveryResult> {
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_MODEL_DISCOVERY_TIMEOUT_MS;
   let client: CopilotClient | undefined;
   try {
     ensureCopilotCliPath();
-    client = new CopilotClient();
-    await client.start();
-    return {
-      models: freezeDiscoveredModels(await client.listModels()),
-      source: "live",
-    };
-  } catch {
+    const c = new CopilotClient();
+    client = c;
+    // #721: bound start() + listModels() so a stalled SDK can't hang callers.
+    const models = await withTimeout(
+      (async (): Promise<readonly string[]> => {
+        await c.start();
+        return freezeDiscoveredModels(await c.listModels());
+      })(),
+      timeoutMs,
+    );
+    return { models, source: "live" };
+  } catch (err: unknown) {
+    // #719: never fall back silently — a downgraded (static) model list is an
+    // operationally meaningful event (stale/missing tiers), so surface it.
+    console.warn(
+      `[council/engine] model discovery failed; falling back to ${STATIC_MODEL_LIST.length} built-in models: ${sanitizeDiagnosticMessage(err)}`,
+    );
     return { models: STATIC_MODEL_LIST, source: "static" };
   } finally {
+    // #741: surface cleanup failures instead of discarding them — a failed
+    // client.stop() can mean a leaked SDK session that ops needs to see.
     try {
       await client?.stop();
-    } catch {
-      /* best effort cleanup */
+    } catch (err: unknown) {
+      console.warn(
+        `[council/engine] model discovery cleanup failed (possible leaked SDK session): ${sanitizeDiagnosticMessage(err)}`,
+      );
     }
   }
 }
@@ -170,6 +253,7 @@ export class CopilotEngine implements CouncilEngine {
   #client: CopilotClient | undefined;
   #started = false;
   #stopped = false;
+  #stopping: Promise<void> | undefined;
   #lastStopErrors: Error[] = [];
   #modelListCache: readonly string[] | undefined;
 
@@ -199,6 +283,25 @@ export class CopilotEngine implements CouncilEngine {
 
   async stop(): Promise<void> {
     if (this.#stopped) return;
+    // #149: coalesce concurrent stop() calls. Without this, two overlapping
+    // invocations both iterate #experts, double-abort in-flight controllers,
+    // and double-call client.stop() (they only observe #stopped after every
+    // await resolves). The initiator runs teardown once; re-entrant callers
+    // await the same in-flight promise.
+    if (this.#stopping !== undefined) {
+      await this.#stopping;
+      return;
+    }
+    const run = this.#runStop();
+    this.#stopping = run;
+    try {
+      await run;
+    } finally {
+      this.#stopping = undefined;
+    }
+  }
+
+  async #runStop(): Promise<void> {
     const errors: Error[] = [];
     // Abort every in-flight send across every expert.
     for (const record of this.#experts.values()) {
@@ -395,9 +498,12 @@ export class CopilotEngine implements CouncilEngine {
         void record.session.abort().catch((err: unknown) => {
           // Emit a non-secret diagnostic so a failed cancellation is observable
           // instead of silently swallowed (#1143). The ABORTED event is already
-          // pushed above, so user-facing behavior is unchanged.
-          const message = err instanceof Error ? err.message : String(err);
-          console.warn(`[council/engine] session.abort() failed: ${message}`);
+          // pushed above, so user-facing behavior is unchanged. Sanitize + bound
+          // the message so a garbled/huge transport error can't flood or spoof
+          // the terminal (#1155).
+          console.warn(
+            `[council/engine] session.abort() failed: ${sanitizeDiagnosticMessage(err)}`,
+          );
         });
         push({
           kind: "error",
