@@ -235,6 +235,13 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
             );
           }
 
+          // selectedExpert.displayName/.slug are LLM-sourced (auto-composed
+          // panels), so sanitize them before every DIRECT terminal sink to stop
+          // ANSI/CR/LF injection from forging or overwriting output. The engine
+          // and persistence layers keep the original values (expertSpec below).
+          const expertDisplayName = toSingleLineDisplay(selectedExpert.displayName);
+          const expertSlugDisplay = toSingleLineDisplay(selectedExpert.slug);
+
           const expertSpec: ExpertSpec = {
             id: selectedExpert.id,
             slug: selectedExpert.slug,
@@ -276,7 +283,7 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
                 return Promise.resolve();
               },
               preamble: () => {
-                write(`\n# Asking ${selectedExpert.displayName} (${selectedExpert.slug})\n`);
+                write(`\n# Asking ${expertDisplayName} (${expertSlugDisplay})\n`);
                 write(`Panel: ${panel.name}\n`);
                 write(`Question: ${question}\n\n`);
               },
@@ -293,7 +300,7 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
             ? await new TurnRepository(db).findByDebateId(answeredDebateId)
             : [];
           if (persistedTurns.length === 0) {
-            const message = `${selectedExpert.displayName} (${selectedExpert.slug}) did not respond — no answer was produced. The expert failed; see the error above. Retry, or pick another expert with --expert.`;
+            const message = `${expertDisplayName} (${expertSlugDisplay}) did not respond — no answer was produced. The expert failed; see the error above. Retry, or pick another expert with --expert.`;
             writeError(message + "\n");
             throw new CliUserError(message);
           }
