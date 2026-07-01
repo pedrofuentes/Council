@@ -338,10 +338,11 @@ export class Debate {
           ? capByChars(scopedTurns, contextConfig.maxPromptChars)
           : scopedTurns;
 
-      const rollingSummary = contextConfig.summarizer
+      const summarizer = contextConfig.summarizer;
+      const rollingSummary = summarizer
         ? summarizerMode === "llm"
           ? cachedRoundSummary
-          : buildHeuristicSummary(priorTurns, round, contextConfig.summarizer)
+          : buildHeuristicSummary(priorTurns, round, summarizer)
         : "";
 
       return {
@@ -350,7 +351,12 @@ export class Debate {
         maxRounds: this.config.maxRounds,
         topic: prompt,
         priorTurns: cappedTurns,
-        ...(rollingSummary !== "" ? { rollingSummary } : {}),
+        // Thread the configured summary cap alongside the summary so the
+        // strategy's render-time sanitize honors it instead of a hardcoded
+        // default that would silently re-truncate a larger summary (#635).
+        ...(rollingSummary !== "" && summarizer
+          ? { rollingSummary, maxSummaryLength: summarizer.maxSummaryLength }
+          : {}),
       };
     };
 
