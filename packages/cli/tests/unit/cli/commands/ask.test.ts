@@ -650,4 +650,26 @@ describe("buildAskCommand", () => {
     expect(askingLine).not.toContain("\x1B");
     expect(askingLine).not.toContain("\r");
   });
+
+  it("help output documents the --engine usage examples (#672)", () => {
+    // Regression guard: the ask examples must keep the required --engine flag
+    // (and the --expert follow-up form). They live in addHelpText("after"),
+    // which Commander omits from helpInformation(), so render via outputHelp().
+    const cmd = buildAskCommand({ engineFactory: makeMockEngineFactory() });
+    let help = "";
+    cmd.configureOutput({
+      writeOut: (chunk: string) => {
+        help += chunk;
+      },
+      writeErr: (chunk: string) => {
+        help += chunk;
+      },
+    });
+    cmd.outputHelp();
+
+    expect(help).toContain(
+      'council ask my-panel "What about the migration risk?" --engine copilot',
+    );
+    expect(help).toContain('council ask my-panel "Quick follow-up" --expert cto --engine copilot');
+  });
 });
