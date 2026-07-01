@@ -304,4 +304,65 @@ describe("formatEngineError", () => {
     // underlying message is always echoed verbatim after the hint.
     expect(out).toContain("Underlying: provider getter explodes");
   });
+
+  // --- inferCodeFromMessage false-positive guard (#1912) -------------------
+  // Generic error messages must stay generic: they must NOT be promoted to
+  // a network or auth hint through incidental substring matches (e.g. "token",
+  // "failed"). If inferCodeFromMessage is ever widened to match those
+  // substrings alone this test catches the regression.
+
+  it("generic message stays generic — no false-positive auth or network hint (#1912)", () => {
+    // "Parsing failed: unexpected token" shares substrings ("failed", "token")
+    // with the auth/network regex vocabulary but is not a real signal.
+    // Must fall through to the generic fallback.
+    const out = formatEngineError(new Error("Parsing failed: unexpected token"));
+    expect(out).toContain("Engine error.");
+    expect(out).not.toContain("Network error");
+    expect(out).not.toContain("gh auth login");
+  });
+
+  // --- findEngineErrorInCause depth-guard boundary (#1912) -----------------
+  // `depth > 8` allows codes at depths 0–8 inclusive and rejects depth 9.
+  // Both boundary edges are pinned: depth-8 MUST be recovered; depth-9
+  // MUST NOT be recovered (generic fallback).
+
+  it("recovers a code from a cause exactly 8 levels deep (depth-8 must be FOUND) (#1912)", () => {
+    // 8 wrapper objects (no code) + 1 coded leaf.
+    // findEngineErrorInCause examines the leaf at depth=8 (≤8 → found).
+    let cause: Record<string, unknown> = { code: "NOT_AUTHENTICATED" };
+    for (let i = 0; i < 8; i++) {
+      cause = { cause };
+    }
+    const err = new Error("deeply wrapped auth failure", { cause });
+    const out = formatEngineError(err);
+    expect(out.toLowerCase()).toContain("gh auth login");
+    expect(out).toContain("deeply wrapped auth failure");
+  });
+
+  it("does NOT recover a code from a cause exactly 9 levels deep (depth-9 must NOT be found) (#1912)", () => {
+    // 9 wrapper objects (no code) + 1 coded leaf.
+    // The leaf would be at depth=9, but depth > 8 returns undefined first.
+    let cause: Record<string, unknown> = { code: "NOT_AUTHENTICATED" };
+    for (let i = 0; i < 9; i++) {
+      cause = { cause };
+    }
+    const err = new Error("too deeply wrapped auth failure", { cause });
+    const out = formatEngineError(err);
+    expect(out).toContain("Engine error.");
+    expect(out).not.toContain("gh auth login");
+    expect(out).toContain("too deeply wrapped auth failure");
+  });
+
+  // --- Cyclic cause guard (#1912) ------------------------------------------
+  // cause.cause = cause forms an infinite loop that the depth guard must
+  // terminate at depth 9 without throwing or hanging.
+
+  it("handles a cyclic cause chain without throwing or hanging (#1912)", () => {
+    const cycle: Record<string, unknown> = { message: "I am cyclic" };
+    cycle.cause = cycle;
+    const err = new Error("cyclic cause chain", { cause: cycle });
+    const out = formatEngineError(err);
+    expect(out).toContain("Engine error.");
+    expect(out).toContain("cyclic cause chain");
+  });
 });
