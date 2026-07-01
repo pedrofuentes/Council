@@ -48,6 +48,12 @@ interface MockClientState {
   abortCalls: number;
   /** Per-session: error to throw on `abort()` (async rejection) */
   abortErrors: Map<string, Error>;
+  /** Number of times the client's stop() was invoked (re-entrancy checks). */
+  stopCalls: number;
+  /** Error to throw on client.stop() (async rejection), if set. */
+  clientStopError: Error | undefined;
+  /** When true, listModels() never resolves — exercises discovery timeout. */
+  listModelsHang: boolean;
 }
 
 const mockState: MockClientState = {
@@ -62,6 +68,9 @@ const mockState: MockClientState = {
   listModelsError: undefined,
   abortCalls: 0,
   abortErrors: new Map(),
+  stopCalls: 0,
+  clientStopError: undefined,
+  listModelsHang: false,
 };
 
 vi.mock("@github/copilot-sdk", () => {
@@ -119,6 +128,10 @@ vi.mock("@github/copilot-sdk", () => {
       mockState.stopped = false;
     }
     async stop(): Promise<void> {
+      mockState.stopCalls += 1;
+      if (mockState.clientStopError) {
+        throw mockState.clientStopError;
+      }
       mockState.stopped = true;
     }
     async createSession(opts: {
@@ -141,6 +154,11 @@ vi.mock("@github/copilot-sdk", () => {
     }
     async listModels(): Promise<MockModelInfo[]> {
       mockState.listModelsCalls += 1;
+      if (mockState.listModelsHang) {
+        await new Promise<never>(() => {
+          /* never resolves — exercises the discovery timeout path */
+        });
+      }
       if (mockState.listModelsError) {
         throw mockState.listModelsError;
       }
@@ -156,7 +174,8 @@ vi.mock("@github/copilot-sdk", () => {
 });
 
 // Import AFTER vi.mock so the adapter binds to the mock SDK.
-const { CopilotEngine } = await import("../../../../src/engine/copilot/adapter.js");
+const { CopilotEngine, discoverAvailableModels, pingProviderHealth } =
+  await import("../../../../src/engine/copilot/adapter.js");
 
 const expertA: ExpertSpec = {
   id: "01HZ-cto",
@@ -188,6 +207,9 @@ function resetMockState(): void {
   mockState.listModelsError = undefined;
   mockState.abortCalls = 0;
   mockState.abortErrors.clear();
+  mockState.stopCalls = 0;
+  mockState.clientStopError = undefined;
+  mockState.listModelsHang = false;
 }
 
 describe("CopilotEngine — implements CouncilEngine", () => {
@@ -629,5 +651,153 @@ describe("CopilotEngine — listener cleanup (#479)", () => {
 
     warnSpy.mockRestore();
     await engine.stop();
+  });
+});
+
+describe("CopilotEngine — stop() re-entrancy (#149)", () => {
+  beforeEach(() => {
+    resetMockState();
+  });
+
+  it("concurrent stop() calls tear down the client exactly once", async () => {
+    const engine = new CopilotEngine();
+    await engine.start();
+    await engine.addExpert(expertA);
+
+    // Two overlapping stop() calls must not double-iterate #experts, double-abort
+    // in-flight controllers, or double-call client.stop(). The second call must
+    // observe the in-flight teardown and await it rather than re-running the body.
+    await Promise.all([engine.stop(), engine.stop()]);
+
+    expect(mockState.stopCalls).toBe(1);
+    expect(mockState.stopped).toBe(true);
+  });
+
+  it("stop() after a completed stop() stays a no-op", async () => {
+    const engine = new CopilotEngine();
+    await engine.start();
+    await engine.stop();
+    await engine.stop();
+    expect(mockState.stopCalls).toBe(1);
+  });
+});
+
+describe("discoverAvailableModels — resilience (#719 #721 #741)", () => {
+  beforeEach(() => {
+    resetMockState();
+  });
+
+  it("warns and falls back to static models when discovery fails (#719)", async () => {
+    mockState.listModelsError = new Error("network unavailable");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+      /* suppress noisy stderr in test output */
+    });
+    try {
+      const result = await discoverAvailableModels();
+      expect(result.source).toBe("static");
+      expect(result.models).toEqual(KNOWN_MODELS);
+      const warned = warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(warned).toMatch(/model discovery failed/i);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("bounds discovery with a timeout and falls back to static models (#721)", async () => {
+    mockState.listModelsHang = true;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+      /* suppress noisy stderr in test output */
+    });
+    try {
+      const result = await discoverAvailableModels({ timeoutMs: 5 });
+      expect(result.source).toBe("static");
+      expect(result.models).toEqual(KNOWN_MODELS);
+      const warned = warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(warned).toMatch(/timed out/i);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("surfaces client.stop() cleanup failures instead of swallowing them (#741)", async () => {
+    mockState.listModelsResults = [createMockModelInfo("claude-sonnet-4.6")];
+    mockState.clientStopError = new Error("cleanup boom: session still open");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+      /* suppress noisy stderr in test output */
+    });
+    try {
+      const result = await discoverAvailableModels();
+      // Discovery itself succeeded — the failure is only in teardown, which
+      // previously was swallowed silently, hiding leaked SDK sessions (#741).
+      expect(result.source).toBe("live");
+      expect(result.models).toEqual(["claude-sonnet-4.6"]);
+      const warned = warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(warned).toMatch(/cleanup/i);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+});
+
+describe("pingProviderHealth — export surface (#96)", () => {
+  it("reports that the SDK export surface is present, not that the module is loadable", () => {
+    const health = pingProviderHealth();
+    expect(health.ok).toBe(true);
+    // Under a static import a *load* failure aborts the module before this runs,
+    // so the probe can only certify the export *surface* is present (#96).
+    expect(health.detail).toMatch(/export surface/i);
+  });
+});
+
+describe("CopilotEngine — abort diagnostic sanitization (#1155)", () => {
+  beforeEach(() => {
+    resetMockState();
+  });
+
+  it("sanitizes and length-bounds err.message in the abort-failure diagnostic", async () => {
+    const engine = new CopilotEngine();
+    await engine.start();
+    await engine.addExpert(expertA);
+
+    // A garbled transport error: multi-line, ANSI CSI + BEL control chars, and
+    // very long. It must never reach the terminal verbatim.
+    const noisy = "boom\nsecond line\r\n\u001b[31mred\u0007" + "A".repeat(500);
+    mockState.abortErrors.set("session-0", new Error(noisy));
+    mockState.sendQueues.set("session-0", [
+      { kind: "assistant.message_delta", data: { deltaContent: "chunk" } },
+    ]);
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+      /* suppress noisy stderr in test output */
+    });
+    const controller = new AbortController();
+    const stream = engine.send({ prompt: "x", expertId: expertA.id, signal: controller.signal });
+
+    const events: EngineEvent[] = [];
+    for await (const evt of stream) {
+      events.push(evt);
+      if (evt.kind === "message.delta") {
+        controller.abort();
+      }
+    }
+    // Flush the fire-and-forget abort().catch() microtask before asserting.
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const prefix = "[council/engine] session.abort() failed: ";
+    const abortWarn = warnSpy.mock.calls.map((c) => String(c[0])).find((s) => s.startsWith(prefix));
+    warnSpy.mockRestore();
+    await engine.stop();
+
+    expect(abortWarn).toBeDefined();
+    if (abortWarn === undefined) return;
+    // Single-line: no raw newlines / carriage returns leak through.
+    expect(abortWarn.includes("\n")).toBe(false);
+    expect(abortWarn.includes("\r")).toBe(false);
+    // Control characters (ANSI CSI introducer, BEL) are stripped.
+    expect(abortWarn.includes("\u001b")).toBe(false);
+    expect(abortWarn.includes("\u0007")).toBe(false);
+    // Bounded: the message portion is capped so a huge message can't flood the
+    // terminal.
+    expect(abortWarn.length).toBeLessThanOrEqual(prefix.length + 200);
   });
 });
