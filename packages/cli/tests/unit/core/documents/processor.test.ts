@@ -628,6 +628,58 @@ describe("createDocumentProcessor", () => {
       expect(prompt).toMatch(/--- old\.md --- \[Weight: 0\.00\]/);
     });
 
+    it("uses the extractor's fd-bound modifiedAt, not a post-extraction path stat, for the analyzer weight (regression #445)", async () => {
+      // #445: the #376 test above only proves *some* mtime propagates — it
+      // cannot distinguish the extractor's fd-bound `modifiedAt` (captured
+      // via `fh.stat` DURING extraction) from a hypothetical
+      // post-extraction `fs.stat(path)`, because the file's mtime is stable
+      // throughout that test. Force the two to diverge: mutate the file's
+      // on-disk mtime to ~30 half-lives ago from INSIDE `indexer.index` —
+      // which the pipeline invokes strictly AFTER `extractDocument` returns
+      // but BEFORE the analyzer builds its prompt. A path-based re-stat
+      // would then observe the aged mtime (Weight 0.00); the fd-bound value
+      // must still reflect the original ~now mtime (Weight 1.00).
+      const dir = await makeDocsDir(env, "alice");
+      const probe = path.join(dir, "probe.md");
+      await fs.writeFile(probe, "probe body probe body");
+
+      const halfLifeMs = CONFIG.recencyHalfLifeDays * 24 * 60 * 60 * 1000;
+      const agedTime = new Date(Date.now() - 30 * halfLifeMs);
+
+      // Capture the real indexer BEFORE spying so the mock can delegate.
+      const realIndex = env.indexer.index.bind(env.indexer);
+      const indexSpy = vi
+        .spyOn(env.indexer, "index")
+        .mockImplementation(async (opts) => {
+          // Runs after extraction captured modifiedAt, before analysis —
+          // the exact TOCTOU window #445 guards against.
+          await fs.utimes(probe, agedTime, agedTime);
+          await realIndex(opts);
+        });
+
+      try {
+        const engine = new StubEngine([VALID_PROFILE_JSON]);
+        const proc = createDocumentProcessor({
+          engine,
+          documentRepo: env.docRepo,
+          profileRepo: env.profileRepo,
+          indexer: env.indexer,
+          config: CONFIG,
+        });
+        const result = await proc.process("alice", dir);
+        expect(result.filesProcessed).toBe(1);
+        expect(indexSpy).toHaveBeenCalledTimes(1);
+
+        const prompt = engine.sends[0]?.prompt ?? "";
+        // fd-bound mtime (≈ now) → Weight 1.00. A post-extraction path
+        // stat would observe the aged mtime and render 0.00 instead.
+        expect(prompt).toMatch(/--- probe\.md --- \[Weight: 1\.00\]/);
+        expect(prompt).not.toMatch(/--- probe\.md --- \[Weight: 0\.00\]/);
+      } finally {
+        indexSpy.mockRestore();
+      }
+    });
+
     // ───────────────────────────────────────────────────────────────
     // #447: rejectedFiles are added to seenPaths so a tracked file
     // whose on-disk form turns into a confinement-violating symlink
@@ -917,6 +969,160 @@ describe("createDocumentProcessor — AI fallback wiring (T-AIPIPE)", () => {
     const tracked = await env.docRepo.findByExpert("alice");
     expect(tracked.find((d) => d.filePath === filePath)?.status).toBe("removed");
   });
+
+  it("does NOT query findByPath for an ask-mode file that was never tracked (avoids N+1 #1831)", async () => {
+    // #1831: the prior code called documentRepo.findByPath for EVERY
+    // ask-mode file, even ones never tracked — an N+1 query. Only a
+    // previously-tracked path can carry a prior FTS row, so gate the lookup
+    // behind the in-memory `known` checksum map. A fresh (untracked)
+    // ask-mode file must skip findByPath entirely.
+    const dir = await makeDocsDir(env, "alice");
+    await fs.writeFile(path.join(dir, "notes.xyz"), "plain text body", "utf-8");
+    const findByPathSpy = vi.spyOn(env.docRepo, "findByPath");
+    try {
+      const proc = createDocumentProcessor({
+        engine: new StubEngine([VALID_PROFILE_JSON]),
+        documentRepo: env.docRepo,
+        profileRepo: env.profileRepo,
+        indexer: env.indexer,
+        config: {
+          supportedFormats: AI_FORMATS,
+          recencyHalfLifeDays: 90,
+          aiFallback: { mode: "ask", allowedExtensions: [] },
+        },
+      });
+      const result = await proc.process("alice", dir);
+      // Held for review, but never tracked → zero per-file lookups.
+      expect(result.filesNeedingReview).toBe(1);
+      expect(findByPathSpy).not.toHaveBeenCalled();
+    } finally {
+      findByPathSpy.mockRestore();
+    }
+  });
+
+  it("isolates an FTS-eviction failure during ask-mode review: file stays needs-review, not failed (#1831)", async () => {
+    // #1831: evicting a prior FTS row while downgrading a tracked file to
+    // needs-review must be error-isolated. A transient indexer/repo failure
+    // must NOT bubble up and misclassify the file as a hard extraction
+    // failure — the file stays needs-review and the error surfaces via
+    // onWarning.
+    const dir = await makeDocsDir(env, "alice");
+    const filePath = path.join(dir, "notes.xyz");
+    await fs.writeFile(filePath, "original ai body", "utf-8");
+
+    // 1) auto indexes + tracks the file so a prior FTS row exists.
+    const auto = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: {
+        supportedFormats: AI_FORMATS,
+        recencyHalfLifeDays: 90,
+        aiFallback: { mode: "auto", allowedExtensions: [] },
+      },
+    });
+    await auto.process("alice", dir);
+    expect(await ftsCount("alice")).toBe(1);
+
+    // 2) switch to ask + edit; make the FTS eviction throw.
+    await fs.writeFile(filePath, "edited ai body with new content", "utf-8");
+    const removeSpy = vi
+      .spyOn(env.indexer, "remove")
+      .mockRejectedValue(new Error("simulated FTS eviction failure"));
+    const warnings: string[] = [];
+    try {
+      const ask = createDocumentProcessor({
+        engine: new StubEngine([VALID_PROFILE_JSON]),
+        documentRepo: env.docRepo,
+        profileRepo: env.profileRepo,
+        indexer: env.indexer,
+        config: {
+          supportedFormats: AI_FORMATS,
+          recencyHalfLifeDays: 90,
+          aiFallback: { mode: "ask", allowedExtensions: [] },
+        },
+      });
+      const result = await ask.process("alice", dir, undefined, (m) => warnings.push(m));
+
+      // Error isolated: held for review, NOT counted as a hard failure.
+      expect(result.filesNeedingReview).toBe(1);
+      expect(result.filesFailed).toBe(0);
+      const f = result.files.find((x) => x.filename === "notes.xyz");
+      expect(f?.status).toBe("needs-review");
+      // The eviction was attempted and its failure surfaced (not swallowed).
+      expect(removeSpy).toHaveBeenCalledTimes(1);
+      expect(warnings.some((w) => w.includes("notes.xyz"))).toBe(true);
+      expect(warnings.some((w) => w.includes("simulated FTS eviction failure"))).toBe(true);
+    } finally {
+      removeSpy.mockRestore();
+    }
+  });
+
+  it("sanitizes the ask-mode eviction-failure warning against terminal control-sequence injection (#1831)", async () => {
+    // Adversarial-byte oracle: the eviction-failure warning embeds
+    // untrusted text (filename + underlying error message) and routes to a
+    // terminal log sink, so it MUST collapse to a single sanitized line —
+    // no C0/C1 controls, DEL, bidi overrides, or line/paragraph separators
+    // that could spoof output or inject ANSI escape sequences.
+    const dir = await makeDocsDir(env, "alice");
+    const filePath = path.join(dir, "notes.xyz");
+    await fs.writeFile(filePath, "original ai body", "utf-8");
+
+    const auto = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: {
+        supportedFormats: AI_FORMATS,
+        recencyHalfLifeDays: 90,
+        aiFallback: { mode: "auto", allowedExtensions: [] },
+      },
+    });
+    await auto.process("alice", dir);
+
+    await fs.writeFile(filePath, "edited ai body with new content", "utf-8");
+    // TAB, C0, ANSI CSI, C1 (CSI/OSC/NEL), DEL, bidi override + isolates,
+    // CR/LF, and U+2028/U+2029 — the full hostile-byte battery.
+    const adversarial =
+      "boom\tTAB\u0001C0\u001B[31mANSI\u009BC1\u009D\u0085\u007FDEL" +
+      "\u202Ebidi\u2066iso\u2069\r\nCRLF\u2028LS\u2029PS";
+    const removeSpy = vi
+      .spyOn(env.indexer, "remove")
+      .mockRejectedValue(new Error(adversarial));
+    const warnings: string[] = [];
+    try {
+      const ask = createDocumentProcessor({
+        engine: new StubEngine([VALID_PROFILE_JSON]),
+        documentRepo: env.docRepo,
+        profileRepo: env.profileRepo,
+        indexer: env.indexer,
+        config: {
+          supportedFormats: AI_FORMATS,
+          recencyHalfLifeDays: 90,
+          aiFallback: { mode: "ask", allowedExtensions: [] },
+        },
+      });
+      await ask.process("alice", dir, undefined, (m) => warnings.push(m));
+
+      expect(warnings.length).toBeGreaterThanOrEqual(1);
+      const evictionWarning = warnings.find((w) => w.includes("notes.xyz")) ?? "";
+      expect(evictionWarning).toContain("notes.xyz");
+      // Single-line: no raw CR/LF/TAB or U+2028/U+2029 survive.
+      expect(evictionWarning).not.toMatch(/[\r\n\t\u2028\u2029]/);
+      // No C0/C1 controls, DEL, or bidi override/isolate codepoints.
+      expect(evictionWarning).not.toMatch(
+        // eslint-disable-next-line no-control-regex
+        /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/,
+      );
+      // Benign visible text is preserved (sanitized, not dropped wholesale).
+      expect(evictionWarning).toContain("boom");
+      expect(evictionWarning).toContain("ANSI");
+    } finally {
+      removeSpy.mockRestore();
+    }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1035,6 +1241,91 @@ describe("createDocumentProcessor — unsupported-extension files (T2)", () => {
     const evt = progress.find((p) => p.filename === "screenshot.png");
     expect(evt?.status).toBe("failed");
     expect(evt?.error).toMatch(/unsupported/i);
+  });
+
+  it("retains the FTS index + tracking for a previously-indexed file that later becomes unsupported (index-lifecycle #1039)", async () => {
+    // #1039: when an operator removes an extension from supportedFormats, a
+    // previously-indexed file becomes UNSUPPORTED on re-scan. The processor
+    // adds unsupported paths to `seenPaths` so the prune pass SKIPS them —
+    // retention, NOT deletion, is the intended index-lifecycle. Ratify it:
+    // the prior FTS row + tracking survive (still retrievable) and the file
+    // is surfaced as an `unsupported` outcome, never silently pruned.
+    const dir = await makeDocsDir(env, "alice");
+    const filePath = path.join(dir, "memo.md");
+    await fs.writeFile(filePath, "memo body memo body", "utf-8");
+
+    async function ftsCount(): Promise<number> {
+      const rows = await sql<{
+        c: number;
+      }>`SELECT COUNT(*) AS c FROM document_index WHERE source_slug = 'alice'`.execute(env.db);
+      return rows.rows[0]?.c ?? 0;
+    }
+
+    // 1) index + track under a config that supports .md.
+    const supported = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: CONFIG,
+    });
+    const first = await supported.process("alice", dir);
+    expect(first.filesProcessed).toBe(1);
+    expect(await ftsCount()).toBe(1);
+
+    // 2) operator drops .md from supportedFormats, then re-scans.
+    const dropped = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: { supportedFormats: [".txt"] as readonly string[], recencyHalfLifeDays: 90 },
+    });
+    const second = await dropped.process("alice", dir);
+
+    // Surfaced as unsupported, but NOT pruned: prior state is retained.
+    expect(second.filesRemoved).toBe(0);
+    expect(second.filesUnsupported).toBe(1);
+    const memo = second.files.find((f) => f.filename === "memo.md");
+    expect(memo?.status).toBe("failed");
+    expect(memo?.errorKind).toBe("unsupported-format");
+    // Retention: FTS row + tracking survive (retrievable), not removed.
+    expect(await ftsCount()).toBe(1);
+    const tracked = await env.docRepo.getChecksumMap("alice");
+    expect(tracked.has(filePath)).toBe(true);
+  });
+
+  it("counts filesUnsupported for BOTH the detector-filtered and extraction-classified paths (#1039)", async () => {
+    // #1039: `filesUnsupported` aggregates two distinct paths — (a) an
+    // extension absent from supportedFormats, filtered up front by the
+    // detector, and (b) a SUPPORTED extension that resolves to no native
+    // extractor (AI fallback off) and is classified `unsupported-format`
+    // during extraction. Both increment the same counter in one scan.
+    const dir = await makeDocsDir(env, "alice");
+    await fs.writeFile(path.join(dir, "image.png"), "not-really-an-image", "utf-8");
+    await fs.writeFile(path.join(dir, "notes.xyz"), "plain text body", "utf-8");
+    const proc = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      // .png absent → detector-filtered path; .xyz present but has no
+      // native extractor → extraction-classified path. No AI fallback.
+      config: {
+        supportedFormats: [".md", ".txt", ".xyz"] as readonly string[],
+        recencyHalfLifeDays: 90,
+      },
+    });
+    const result = await proc.process("alice", dir);
+
+    // Both paths increment the SAME counter → 2, and both are also
+    // reflected in filesFailed (the existing dual-counting contract).
+    expect(result.filesUnsupported).toBe(2);
+    expect(result.filesFailed).toBe(2);
+    const png = result.files.find((f) => f.filename === "image.png");
+    const xyz = result.files.find((f) => f.filename === "notes.xyz");
+    expect(png?.errorKind).toBe("unsupported-format");
+    expect(xyz?.errorKind).toBe("unsupported-format");
   });
 });
 
