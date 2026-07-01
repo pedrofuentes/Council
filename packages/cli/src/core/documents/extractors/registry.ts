@@ -7,7 +7,12 @@
  * PDF parser, an unzip library) are not pulled in until first use.
  *
  * Lookups via `getExtractor` resolve and memoize the loader so that:
- *   - the loader is invoked at most once per loader instance, and
+ *   - the loader is invoked at most once per loader instance for a
+ *     given successful resolution; a rejected load is evicted from
+ *     the cache so a later lookup re-invokes the loader instead of
+ *     re-serving a permanently poisoned entry (successful loads
+ *     remain memoized) — loaders MUST tolerate being invoked more
+ *     than once, and
  *   - alias extensions sharing the same loader return the same
  *     `ContentExtractor` reference (verified by tests).
  *
