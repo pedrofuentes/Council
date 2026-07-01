@@ -42,6 +42,11 @@ export function ConvenePromptScreen(props: ConvenePromptScreenProps): React.Reac
   const topicRef = React.useRef("");
   const [state, setState] = React.useState<PromptState>({ status: "idle" });
   const inFlight = React.useRef(false);
+  // Tracks the current cost estimate by controller identity so a slow/hung
+  // estimate can be cancelled (Esc / unmount) without its late resolution
+  // overwriting state that belongs to a newer estimate or a gone screen (#1676).
+  const estimateController = React.useRef<AbortController | null>(null);
+  const unmounted = React.useRef(false);
   const isActive = props.isActive ?? true;
   const panelName = toSingleLineDisplay(panel ?? "");
 
@@ -51,6 +56,15 @@ export function ConvenePromptScreen(props: ConvenePromptScreenProps): React.Reac
       setCaptured(false);
     };
   }, [setCaptured]);
+
+  React.useEffect(() => {
+    return () => {
+      // On unmount, mark the screen gone and abort any in-flight estimate so a
+      // late-resolving estimate cannot update state after teardown (#1676).
+      unmounted.current = true;
+      estimateController.current?.abort();
+    };
+  }, []);
 
   const submitTopic = React.useCallback(async (): Promise<void> => {
     const trimmed = normalizeTopic(topicRef.current);
@@ -62,13 +76,25 @@ export function ConvenePromptScreen(props: ConvenePromptScreenProps): React.Reac
 
     inFlight.current = true;
     setState({ status: "estimating" });
+    // Supersede any prior estimate and track this one by controller identity.
+    estimateController.current?.abort();
+    const controller = new AbortController();
+    estimateController.current = controller;
     try {
       const estimate = await convene.estimateCost(panel);
+      // Late-resolution guard: drop the result if this estimate was cancelled
+      // (Esc/supersede) or the screen unmounted while it was in flight.
+      if (controller.signal.aborted || unmounted.current) return;
       setState({ status: "confirm", estimate });
     } catch (err) {
+      if (controller.signal.aborted || unmounted.current) return;
       setState({ status: "error", message: errorMessage(err) });
     } finally {
-      inFlight.current = false;
+      // Only the current estimate owns inFlight; a superseding estimate has
+      // already taken over, so it must not clear the newer estimate's guard.
+      if (estimateController.current === controller) {
+        inFlight.current = false;
+      }
     }
   }, [convene, panel]);
 
@@ -88,6 +114,15 @@ export function ConvenePromptScreen(props: ConvenePromptScreenProps): React.Reac
   useInput(
     (_input, key) => {
       if (key.escape) {
+        if (state.status === "estimating") {
+          // Cancel a slow/hung estimate so it can't wedge the TUI (#1676) and
+          // return to the topic editor; the late-resolution guard then drops the
+          // cancelled estimate's result. A second Esc (now idle) leaves.
+          estimateController.current?.abort();
+          inFlight.current = false;
+          setState({ status: "idle" });
+          return;
+        }
         if (!inFlight.current) navigate(-1);
         return;
       }

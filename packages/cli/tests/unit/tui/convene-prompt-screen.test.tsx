@@ -4,7 +4,7 @@ import { render } from "ink-testing-library";
 import { MemoryRouter, Route, Routes, useLocation, useParams } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
-import type { ConveneDataSource } from "../../../src/tui/adapters/convene.js";
+import type { ConveneDataSource, CostEstimate } from "../../../src/tui/adapters/convene.js";
 import { DataProvider, type TuiDataSources } from "../../../src/tui/components/DataProvider.js";
 import { InputCaptureProvider } from "../../../src/tui/components/InputCaptureProvider.js";
 import { ConvenePromptScreen } from "../../../src/tui/screens/ConvenePromptScreen.js";
@@ -291,5 +291,102 @@ describe("ConvenePromptScreen", () => {
     await flush();
 
     expect(lastFrame()).toContain("RUN acme TOPIC Topic");
+  });
+
+  it("cancels a hung estimate on Escape and returns to the topic editor without wedging", async () => {
+    // The estimate never settles, so without a cancel path the screen would be
+    // stuck in the estimating state forever (#1676).
+    let resolveEstimate: (value: CostEstimate) => void = () => undefined;
+    const estimateCost = vi.fn<
+      Parameters<ConveneDataSource["estimateCost"]>,
+      Promise<CostEstimate>
+    >(
+      async () =>
+        new Promise<CostEstimate>((resolve) => {
+          resolveEstimate = resolve;
+        }),
+    );
+    const { stdin, lastFrame } = renderScreen({
+      convene: {
+        estimateCost,
+        streamDebate: async () => ({ debateId: undefined, reason: "completed" }),
+      },
+    });
+
+    await flush();
+    stdin.write("Topic");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    expect(lastFrame()).toContain("Estimating debate cost");
+
+    stdin.write("\u001b"); // Esc cancels the hung estimate instead of wedging the TUI
+    // A lone ESC is only surfaced as key.escape after ink's escape-sequence
+    // disambiguation window elapses (see the idle-Escape test above).
+    await new Promise((r) => setTimeout(r, 140));
+    await flush();
+
+    // Not wedged: control returns to the topic editor and the spinner is gone.
+    expect(lastFrame()).not.toContain("Estimating debate cost");
+    expect(lastFrame()).toContain("Topic:");
+
+    // The cancelled estimate resolving late must NOT surface the confirm modal.
+    resolveEstimate({ experts: 5, rounds: 5, estimatedPremiumRequests: 25 });
+    await flush();
+    expect(lastFrame()).not.toContain("premium requests)? [y/n]");
+    expect(lastFrame()).toContain("Topic:");
+  });
+
+  it("drops a superseded estimate's late result but still applies the fresh estimate", async () => {
+    // Each estimate is deferred so we can resolve them out of order and assert
+    // on the mid-flight state deterministically.
+    const resolvers: ((value: CostEstimate) => void)[] = [];
+    const estimateCost = vi.fn<
+      Parameters<ConveneDataSource["estimateCost"]>,
+      Promise<CostEstimate>
+    >(
+      async () =>
+        new Promise<CostEstimate>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+    const { stdin, lastFrame } = renderScreen({
+      convene: {
+        estimateCost,
+        streamDebate: async () => ({ debateId: undefined, reason: "completed" }),
+      },
+    });
+
+    await flush();
+    stdin.write("Topic");
+    await flush();
+    stdin.write("\r"); // submit the first (soon-to-be-superseded) estimate
+    await flush();
+    expect(lastFrame()).toContain("Estimating debate cost");
+
+    stdin.write("\u001b"); // Esc cancels the first estimate → back to the editor
+    await new Promise((r) => setTimeout(r, 140));
+    await flush();
+    expect(lastFrame()).toContain("Topic:");
+
+    stdin.write("\r"); // submit a fresh estimate that supersedes the first
+    await flush();
+    expect(lastFrame()).toContain("Estimating debate cost");
+    expect(estimateCost).toHaveBeenCalledTimes(2);
+
+    // The stale first estimate resolves late: its result must be discarded so it
+    // cannot overwrite state owned by the fresh estimate.
+    resolvers[0]?.({ experts: 9, rounds: 9, estimatedPremiumRequests: 81 });
+    await flush();
+    expect(lastFrame()).not.toContain("9 experts");
+    expect(lastFrame()).toContain("Estimating debate cost");
+
+    // The fresh estimate resolving must still update the cost display — the
+    // guard must not block a valid, current update.
+    resolvers[1]?.({ experts: 2, rounds: 3, estimatedPremiumRequests: 6 });
+    await flush();
+    expect(lastFrame()).toContain(
+      "Run debate with 2 experts × 3 rounds (~6 premium requests)? [y/n]",
+    );
   });
 });
