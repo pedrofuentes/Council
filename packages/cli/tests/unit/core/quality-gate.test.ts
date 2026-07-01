@@ -16,6 +16,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyQualityGate,
   type QualityCheck,
+  type QualityCheckKind,
   type QualityResult,
 } from "../../../src/core/quality-gate.js";
 
@@ -373,5 +374,104 @@ describe("applyQualityGate — skip Layer 2 when too_short (UX design choice, is
     const result = applyQualityGate(text, { priorSpeakers: ["cto"] });
     expect(result.failures.some((f) => f.kind === "too_short")).toBe(false);
     expect(result.failures.some((f) => f.kind === "no_disagreement_signal")).toBe(true);
+  });
+});
+
+// ── Issue #48 ────────────────────────────────────────────────────────────────
+
+/**
+ * Table-driven coverage of `regenerateHint` per `QualityCheckKind`.
+ * Each row isolates exactly one kind so that swapping the hint text for that
+ * kind causes only that row to fail (discriminating oracle requirement).
+ *
+ * Exact substrings are derived from `buildRegenerateHint` in quality-gate.ts:
+ *   forbidden_phrase       → "…contained forbidden phrases (…). Rewrite without these surface forms of agreement-padding."
+ *   no_disagreement_signal → "…did not signal a specific disagreement, omitted consideration…stand-down phrase."
+ *   too_short              → "…too short to carry signal (under 12 words)…"
+ */
+describe("applyQualityGate — regenerateHint per QualityCheckKind, table-driven (issue #48)", () => {
+  const REGEN_HINT_SINGLE_KIND_CASES: readonly {
+    readonly kind: QualityCheckKind;
+    readonly response: string;
+    readonly priorSpeakers: readonly string[];
+    readonly expectedSubstrings: readonly string[];
+  }[] = [
+    {
+      kind: "forbidden_phrase",
+      // 14 words; no prior speakers ⇒ only forbidden_phrase fires.
+      response:
+        "Great point! This is a well-thought-out plan that covers all the necessary considerations here.",
+      priorSpeakers: [],
+      expectedSubstrings: [
+        "forbidden phrases",
+        "great point",
+        "agreement-padding",
+      ],
+    },
+    {
+      kind: "no_disagreement_signal",
+      // Exactly 12 words; no forbidden phrase; prior speaker ⇒ only no_disagreement_signal fires.
+      response: "The proposal looks feasible given the current team size and capacity here.",
+      priorSpeakers: ["cto"],
+      expectedSubstrings: [
+        "did not signal a specific disagreement",
+        "stand-down phrase",
+      ],
+    },
+    {
+      kind: "too_short",
+      // 1 word; no prior speakers ⇒ only too_short fires.
+      response: "Yes.",
+      priorSpeakers: [],
+      expectedSubstrings: ["too short to carry signal", "under 12 words"],
+    },
+  ];
+
+  it.each(REGEN_HINT_SINGLE_KIND_CASES)(
+    'regenerateHint for "$kind" contains kind-discriminating substrings',
+    ({ kind, response, priorSpeakers, expectedSubstrings }) => {
+      const result = applyQualityGate(response, { priorSpeakers });
+      expect(result.ok).toBe(false);
+      expect(result.failures.some((f) => f.kind === kind)).toBe(true);
+      expect(result.regenerateHint).toBeDefined();
+      if (!result.regenerateHint) throw new Error("expected regenerateHint");
+      const hint = result.regenerateHint.toLowerCase();
+      for (const sub of expectedSubstrings) {
+        expect(hint, `hint for "${kind}" must contain "${sub}"`).toContain(sub.toLowerCase());
+      }
+    },
+  );
+});
+
+describe("applyQualityGate — regenerateHint combined failures (issue #48)", () => {
+  it("hint references forbidden_phrase AND no_disagreement_signal when both fail", () => {
+    // 14 words; "Great point" triggers forbidden_phrase; prior speaker + no signal
+    // triggers no_disagreement_signal; 14 ≥ 12 so too_short does not fire.
+    const result = applyQualityGate(
+      "Great point, I totally support the migration approach, given it covers edge cases properly.",
+      { priorSpeakers: ["cto"] },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.failures.some((f) => f.kind === "forbidden_phrase")).toBe(true);
+    expect(result.failures.some((f) => f.kind === "no_disagreement_signal")).toBe(true);
+    expect(result.regenerateHint).toBeDefined();
+    if (!result.regenerateHint) throw new Error("expected regenerateHint");
+    const hint = result.regenerateHint.toLowerCase();
+    expect(hint).toContain("forbidden phrases");
+    expect(hint).toContain("did not signal a specific disagreement");
+  });
+
+  it("hint references forbidden_phrase AND too_short when both fail", () => {
+    // 2 words; "Great point" triggers forbidden_phrase; 2 < 12 triggers too_short;
+    // no_disagreement_signal is skipped because too_short fires first.
+    const result = applyQualityGate("Great point!", { priorSpeakers: [] });
+    expect(result.ok).toBe(false);
+    expect(result.failures.some((f) => f.kind === "forbidden_phrase")).toBe(true);
+    expect(result.failures.some((f) => f.kind === "too_short")).toBe(true);
+    expect(result.regenerateHint).toBeDefined();
+    if (!result.regenerateHint) throw new Error("expected regenerateHint");
+    const hint = result.regenerateHint.toLowerCase();
+    expect(hint).toContain("forbidden phrases");
+    expect(hint).toContain("too short to carry signal");
   });
 });
