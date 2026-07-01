@@ -14,10 +14,7 @@ import * as yaml from "yaml";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 
 import { FileExpertLibrary } from "../../../src/core/expert-library.js";
-import {
-  ExpertDefinitionSchema,
-  type ExpertDefinition,
-} from "../../../src/core/expert.js";
+import { ExpertDefinitionSchema, type ExpertDefinition } from "../../../src/core/expert.js";
 import { PanelDefinitionSchema } from "../../../src/core/template-loader.js";
 import {
   isMigrationNeeded,
@@ -144,9 +141,7 @@ describe("template-migration", () => {
 
       // User edits the on-disk expert YAML — bumping displayName.
       const expertsDir = path.join(dataHome, "experts");
-      const yamlFiles = (await fs.readdir(expertsDir)).filter((f) =>
-        f.endsWith(".yaml"),
-      );
+      const yamlFiles = (await fs.readdir(expertsDir)).filter((f) => f.endsWith(".yaml"));
       const firstFile = yamlFiles[0];
       if (!firstFile) throw new Error("expected migrated expert yaml");
       const editedSlug = firstFile.replace(/\.yaml$/, "");
@@ -182,9 +177,7 @@ describe("template-migration", () => {
       await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
 
       const panelsDir = path.join(dataHome, "panels");
-      const sample = (await fs.readdir(panelsDir)).filter((f) =>
-        f.endsWith(".yaml"),
-      )[0];
+      const sample = (await fs.readdir(panelsDir)).filter((f) => f.endsWith(".yaml"))[0];
       if (!sample) throw new Error("expected migrated panel yaml");
       const sampleName = sample.replace(/\.yaml$/, "");
       const samplePath = path.join(panelsDir, sample);
@@ -218,9 +211,7 @@ describe("template-migration", () => {
       await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
 
       const panelsDir = path.join(dataHome, "panels");
-      const sample = (await fs.readdir(panelsDir)).filter((f) =>
-        f.endsWith(".yaml"),
-      )[0];
+      const sample = (await fs.readdir(panelsDir)).filter((f) => f.endsWith(".yaml"))[0];
       if (!sample) throw new Error("expected migrated panel yaml");
       const sampleName = sample.replace(/\.yaml$/, "");
       const samplePath = path.join(panelsDir, sample);
@@ -335,9 +326,9 @@ describe("template-migration", () => {
       await db.deleteFrom("expert_library").execute();
 
       const lib2 = new FileExpertLibrary(dataHome, db);
-      await expect(
-        migrateBuiltInTemplates(dataHome, lib2, db, { quiet: true }),
-      ).rejects.toThrow(/invalid.*slug/i);
+      await expect(migrateBuiltInTemplates(dataHome, lib2, db, { quiet: true })).rejects.toThrow(
+        /invalid.*slug/i,
+      );
 
       // Nothing must have been registered under the traversal slug.
       const row = await db
@@ -381,9 +372,9 @@ describe("template-migration", () => {
       await db.deleteFrom("expert_library").execute();
 
       const lib2 = new FileExpertLibrary(dataHome, db);
-      await expect(
-        migrateBuiltInTemplates(dataHome, lib2, db, { quiet: true }),
-      ).rejects.toThrow(/invalid.*slug/i);
+      await expect(migrateBuiltInTemplates(dataHome, lib2, db, { quiet: true })).rejects.toThrow(
+        /invalid.*slug/i,
+      );
 
       // No file may have been written/touched at the traversal target.
       expect(await exists(path.join(dataHome, "etc-passwd.yaml"))).toBe(false);
@@ -422,9 +413,7 @@ describe("template-migration", () => {
 
       const expertsDir = path.join(dataHome, "experts");
       const files = await fs.readdir(expertsDir);
-      expect(files.filter((f) => f.endsWith(".yaml")).length).toBe(
-        result.expertsExtracted,
-      );
+      expect(files.filter((f) => f.endsWith(".yaml")).length).toBe(result.expertsExtracted);
     });
 
     it("writes standalone expert YAMLs that pass ExpertDefinitionSchema", async () => {
@@ -447,9 +436,7 @@ describe("template-migration", () => {
         const parsed = await readYaml<unknown>(file);
         const panel = PanelDefinitionSchema.parse(parsed);
         for (const entry of panel.experts) {
-          expect(typeof entry, `panel ${name} entry should be a slug string`).toBe(
-            "string",
-          );
+          expect(typeof entry, `panel ${name} entry should be a slug string`).toBe("string");
         }
       }
     });
@@ -458,10 +445,7 @@ describe("template-migration", () => {
       await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
       const panels = await db.selectFrom("panel_library").selectAll().execute();
       expect(panels.length).toBe(BUILTIN_PANELS.length);
-      const members = await db
-        .selectFrom("panel_members")
-        .selectAll()
-        .execute();
+      const members = await db.selectFrom("panel_members").selectAll().execute();
       expect(members.length).toBeGreaterThanOrEqual(20);
 
       // Every member's expert_slug must exist in expert_library.
@@ -500,24 +484,24 @@ describe("template-migration", () => {
 
     it("is idempotent — running twice produces the same state", async () => {
       const first = await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
-      const expertsAfterFirst = (
-        await fs.readdir(path.join(dataHome, "experts"))
-      ).filter((f) => f.endsWith(".yaml")).length;
-      const panelsAfterFirst = (
-        await fs.readdir(path.join(dataHome, "panels"))
-      ).filter((f) => f.endsWith(".yaml")).length;
+      const expertsAfterFirst = (await fs.readdir(path.join(dataHome, "experts"))).filter((f) =>
+        f.endsWith(".yaml"),
+      ).length;
+      const panelsAfterFirst = (await fs.readdir(path.join(dataHome, "panels"))).filter((f) =>
+        f.endsWith(".yaml"),
+      ).length;
 
       const second = await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
       expect(second.expertsExtracted).toBe(0);
       expect(second.panelsMigrated).toBe(0);
       expect(second.skipped).toBeGreaterThan(0);
 
-      const expertsAfterSecond = (
-        await fs.readdir(path.join(dataHome, "experts"))
-      ).filter((f) => f.endsWith(".yaml")).length;
-      const panelsAfterSecond = (
-        await fs.readdir(path.join(dataHome, "panels"))
-      ).filter((f) => f.endsWith(".yaml")).length;
+      const expertsAfterSecond = (await fs.readdir(path.join(dataHome, "experts"))).filter((f) =>
+        f.endsWith(".yaml"),
+      ).length;
+      const panelsAfterSecond = (await fs.readdir(path.join(dataHome, "panels"))).filter((f) =>
+        f.endsWith(".yaml"),
+      ).length;
       expect(expertsAfterSecond).toBe(expertsAfterFirst);
       expect(panelsAfterSecond).toBe(panelsAfterFirst);
       // first run extracted some experts
@@ -583,24 +567,13 @@ describe("template-migration", () => {
       expect(totalExperts).toBeGreaterThan(0);
 
       // Library state must match a single migration — no duplicate rows.
-      const expertRows = await db
-        .selectFrom("expert_library")
-        .selectAll()
-        .execute();
-      const panelRows = await db
-        .selectFrom("panel_library")
-        .selectAll()
-        .execute();
-      const memberRows = await db
-        .selectFrom("panel_members")
-        .selectAll()
-        .execute();
+      const expertRows = await db.selectFrom("expert_library").selectAll().execute();
+      const panelRows = await db.selectFrom("panel_library").selectAll().execute();
+      const memberRows = await db.selectFrom("panel_members").selectAll().execute();
       expect(panelRows.length).toBe(BUILTIN_PANELS.length);
       const expertSlugs = new Set(expertRows.map((r) => r.slug));
       expect(expertSlugs.size).toBe(expertRows.length);
-      const memberKeys = new Set(
-        memberRows.map((r) => `${r.panel_name}::${r.expert_slug}`),
-      );
+      const memberKeys = new Set(memberRows.map((r) => `${r.panel_name}::${r.expert_slug}`));
       expect(memberKeys.size).toBe(memberRows.length);
 
       // Lock file must be cleaned up.
@@ -665,9 +638,7 @@ describe("template-migration", () => {
         migrateBuiltInTemplates(dataHome, lib, db, { quiet: true }).then(
           () => "completed" as const,
         ),
-        new Promise<"timeout">((resolve) =>
-          setTimeout(() => resolve("timeout"), 300),
-        ),
+        new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 300)),
       ]);
       expect(stillHeld).toBe("timeout");
       // The lock content must be untouched — proves the contender
@@ -697,9 +668,7 @@ describe("template-migration", () => {
         migrateBuiltInTemplates(dataHome, lib, db, { quiet: true }).then(
           () => "completed" as const,
         ),
-        new Promise<"timeout">((resolve) =>
-          setTimeout(() => resolve("timeout"), 300),
-        ),
+        new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 300)),
       ]);
       expect(stillHeld).toBe("timeout");
       const observed = JSON.parse(await fs.readFile(lockPath, "utf-8")) as {
@@ -791,9 +760,8 @@ describe("template-migration", () => {
       // After migration, the production loader must be able to read every
       // panel and the library must resolve every slug reference back to
       // the original built-in expert definition.
-      const { loadPanel, resolveExperts, loadTemplate } = await import(
-        "../../../src/core/template-loader.js"
-      );
+      const { loadPanel, resolveExperts, loadTemplate } =
+        await import("../../../src/core/template-loader.js");
 
       await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
 
@@ -873,10 +841,114 @@ describe("template-migration", () => {
       // The fix must reject with a Zod-derived error that names the
       // offending slug so the user can find the typo. Without the fix the
       // call resolves silently by downgrading to a slug reference.
-      await expect(
-        migrateBuiltInTemplates(dataHome, lib, db, { quiet: true }),
-      ).rejects.toThrow(/broken-inline/);
+      await expect(migrateBuiltInTemplates(dataHome, lib, db, { quiet: true })).rejects.toThrow(
+        /broken-inline/,
+      );
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // #1808 (sentinel:security): the schema-validation failure path
+  // interpolates an unvalidated slug label + JSON.stringify(zod issues)
+  // straight into a thrown Error that reaches handleCliError ->
+  // process.stderr.write. ESC/CSI/OSC/C1/DEL/bidi bytes originating in a
+  // user-authored panel YAML must be stripped before they can reach the
+  // terminal (escape-injection / Trojan-source), and the message must stay
+  // on a single physical line so a crafted "\r\n" cannot spoof extra output.
+  // ─────────────────────────────────────────────────────────────────────
+  describe("thrown schema-validation error is terminal-safe (#1808)", () => {
+    // C0 (except tab) / C1 / DEL / bidi override + isolate ranges — any of
+    // these reaching a TTY is a terminal-injection vector.
+    // eslint-disable-next-line no-control-regex
+    const DANGEROUS = /[\u0000-\u0008\u000A-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/;
+
+    it("strips control / escape / bidi sequences from the thrown message", () => {
+      // A malformed inline expert whose slug (used verbatim as the error
+      // label) and enum-echoed `kind` both carry terminal-injection payloads:
+      //   - \r\n          → line break-out
+      //   - \u001b[2J     → ANSI CSI (clear screen)
+      //   - \u009b31m     → C1 CSI introducer (JSON.stringify does NOT escape it)
+      //   - \u202e        → RLO bidi override (Trojan Source)
+      const evil = yaml.stringify({
+        name: "p",
+        experts: [
+          {
+            slug: "evil\r\n\u001b[2J\u009b31mINJECTED\u202e",
+            displayName: "x",
+            kind: "generic\u009b6m", // invalid enum → forces schema failure; issues JSON is sanitized defensively too
+          },
+        ],
+      });
+
+      let caught: unknown;
+      try {
+        parseOnDiskPanel(evil);
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(Error);
+      const message = (caught as Error).message;
+      // No raw ESC / C0 / C1 / DEL / bidi bytes may survive to the terminal.
+      expect(message).not.toMatch(DANGEROUS);
+      // Renders on a single physical line (no CR/LF break-out).
+      expect(message.split("\n")).toHaveLength(1);
+      expect(message).not.toContain("\r");
+      // Still informative: the printable slug text + schema context remain.
+      expect(message).toContain("INJECTED");
+      expect(message).toContain("failed schema validation");
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // #1807: a malformed inline expert in ONE panel used to throw straight
+  // out of the `for (const name of templateNames)` loop, skipping every
+  // alphabetically-later panel. Because the earlier panels had already
+  // written rows, the next run's isMigrationNeeded() short-circuited to
+  // false and the skipped panels never migrated — a permanent lock-out
+  // until manual file/DB deletion. Per-panel data failures must be isolated
+  // so the remaining panels still migrate (the error is still surfaced).
+  // ─────────────────────────────────────────────────────────────────────
+  describe("per-panel data failure isolation (#1807)", () => {
+    it("still migrates later panels when an earlier panel has a malformed inline expert", async () => {
+      // Seed the standard files + experts on disk and in the DB.
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
+
+      // Corrupt the alphabetically-FIRST built-in panel with a malformed
+      // inline expert (object-shaped, missing required fields) so
+      // parseOnDiskPanel throws while processing it.
+      const firstName = BUILTIN_PANELS[0];
+      const laterName = BUILTIN_PANELS[BUILTIN_PANELS.length - 1];
+      const panelsDir = path.join(dataHome, "panels");
+      await fs.writeFile(
+        path.join(panelsDir, `${firstName}.yaml`),
+        yaml.stringify({
+          name: firstName,
+          description: "corrupted",
+          experts: [{ slug: "broken-inline", displayName: "Broken" }],
+        }),
+        "utf-8",
+      );
+
+      // Wipe panel DB rows so DB-reset recovery re-registers every panel
+      // from disk — the path that calls parseOnDiskPanel.
+      await db.deleteFrom("panel_members").execute();
+      await db.deleteFrom("panel_library").execute();
+
+      // The malformed panel is still surfaced as an error...
+      await expect(migrateBuiltInTemplates(dataHome, lib, db, { quiet: true })).rejects.toThrow(
+        /broken-inline/,
+      );
+
+      // ...but an alphabetically-LATER panel must STILL have been
+      // re-registered. Before the fix the throw unwound the loop and this
+      // row was never written.
+      const laterRow = await db
+        .selectFrom("panel_library")
+        .selectAll()
+        .where("name", "=", laterName)
+        .executeTakeFirst();
+      expect(laterRow).toBeDefined();
     });
   });
 });
-
