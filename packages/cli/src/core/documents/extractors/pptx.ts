@@ -61,7 +61,12 @@ function openZip(buffer: Buffer): Promise<ZipFile> {
   });
 }
 
-function readEntryBuffer(zip: ZipFile, entry: Entry, filename: string): Promise<Buffer> {
+function readEntryBuffer(
+  zip: ZipFile,
+  entry: Entry,
+  filename: string,
+  signal: AbortSignal | undefined,
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     zip.openReadStream(entry, (err, stream) => {
       if (err !== null || stream === undefined) {
@@ -73,6 +78,16 @@ function readEntryBuffer(zip: ZipFile, entry: Entry, filename: string): Promise<
       let aborted = false;
       stream.on("data", (chunk: Buffer) => {
         if (aborted) return;
+        // Cooperative cancellation: an upstream timeout can fire after this
+        // read has started. Poll the signal per chunk so a mid-stream abort
+        // stops draining the entry instead of buffering it to completion,
+        // matching the per-iteration checkpoint peer extractors use.
+        if (signal?.aborted === true) {
+          aborted = true;
+          stream.destroy();
+          reject(timeoutError(filename, signal.reason));
+          return;
+        }
         received += chunk.length;
         if (received > entry.uncompressedSize) {
           aborted = true;
@@ -228,7 +243,7 @@ async function readSlideParts(
             // Stream-parse each matched part to text immediately and drop
             // its buffer so peak heap is bounded by a single entry rather
             // than the sum of every matched part.
-            const data = await readEntryBuffer(zip, entry, filename);
+            const data = await readEntryBuffer(zip, entry, filename, signal);
             const text = extractTextFromXml(data.toString("utf-8"), filename);
             if (slideMatch !== null) {
               slides.push({ index: Number(slideMatch[1]), text });
