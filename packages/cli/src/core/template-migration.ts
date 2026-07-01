@@ -28,6 +28,7 @@ import * as yaml from "yaml";
 import type { ExpertLibrary } from "./expert-library.js";
 import { ExpertDefinitionSchema, type ExpertDefinition } from "./expert.js";
 import { listTemplates, loadTemplate, type ResolvedPanelDefinition } from "./template-loader.js";
+import { toSingleLineDisplay } from "../cli/strip-control-chars.js";
 import type { CouncilDatabase } from "../memory/db.js";
 import { ExpertLibraryRepository } from "../memory/repositories/expert-library-repo.js";
 
@@ -35,6 +36,37 @@ import { ExpertLibraryRepository } from "../memory/repositories/expert-library-r
 // unnecessary export). Used by the recovery path to reject malicious
 // slugs read off disk before any filesystem access with that slug.
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/**
+ * Sanitize an untrusted fragment before it is interpolated into a thrown
+ * Error message. Migration failures surface via `handleCliError` →
+ * `process.stderr.write` (a bare TTY sink), so a slug/label or a
+ * `JSON.stringify`-ed Zod-issue blob read from a user-authored panel YAML
+ * could otherwise carry ESC/CSI/OSC/C1/DEL/bidi bytes straight to the
+ * terminal (escape-injection / Trojan-source), or a CR/LF that spoofs extra
+ * lines. Collapse to a single display line, strip the dangerous code points,
+ * and cap the length so an oversized blob cannot flood the terminal (#1808).
+ */
+function sanitizeForError(value: string, maxLength = 200): string {
+  const singleLine = toSingleLineDisplay(value);
+  return singleLine.length > maxLength ? `${singleLine.slice(0, maxLength)}…` : singleLine;
+}
+
+/**
+ * A per-panel data error (malformed YAML, failed schema validation, or a
+ * disallowed slug) scoped to a single panel's on-disk content. The migration
+ * loop catches these so one bad panel cannot abort the run and skip the
+ * alphabetically-later panels — which, once earlier rows exist, would make
+ * `isMigrationNeeded` short-circuit to false and lock the user out (#1807).
+ * Infrastructure errors (fs EACCES/EIO, loader bugs) are intentionally NOT
+ * this type and still propagate immediately.
+ */
+class PanelMigrationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PanelMigrationError";
+  }
+}
 
 export interface MigrationResult {
   readonly panelsMigrated: number;
@@ -72,10 +104,7 @@ export interface MigrationOptions {
  *
  * Once both filesystem and DB show migrated state, returns `false`.
  */
-export async function isMigrationNeeded(
-  dataHome: string,
-  db?: CouncilDatabase,
-): Promise<boolean> {
+export async function isMigrationNeeded(dataHome: string, db?: CouncilDatabase): Promise<boolean> {
   const expertsDir = path.join(dataHome, "experts");
   let entries: string[];
   try {
@@ -127,9 +156,7 @@ export async function migrateBuiltInTemplates(
   // finishes, contenders re-enter the body — by then the work is
   // already done and the existing idempotent path simply records
   // each panel as `skipped`.
-  return withMigrationLock(dataHome, () =>
-    runMigration(dataHome, library, db, options),
-  );
+  return withMigrationLock(dataHome, () => runMigration(dataHome, library, db, options));
 }
 
 async function runMigration(
@@ -157,134 +184,159 @@ async function runMigration(
   let skipped = 0;
   let panelsMigrated = 0;
 
+  // Collected per-panel data failures (see the loop's catch below) so one
+  // malformed panel does not abort migration of the others (#1807).
+  const failures: { readonly name: string; readonly error: PanelMigrationError }[] = [];
+
   const expertRepo = new ExpertLibraryRepository(db);
 
   for (const name of templateNames) {
-    const template = await loader(name);
+    try {
+      const template = await loader(name);
 
-    // Decide a final slug for each expert in this panel.
-    const slugForEntry: string[] = [];
-    for (const expert of template.experts) {
-      const decision = await pickSlug(expert, name, claimed, library);
-      slugForEntry.push(decision.slug);
-      switch (decision.action) {
-        case "create": {
-          const yamlPath = path.join(expertsDir, `${decision.slug}.yaml`);
-          const toCreate: ExpertDefinition = ExpertDefinitionSchema.parse({
-            ...expert,
-            slug: decision.slug,
-          });
-          if (await fileExists(yamlPath)) {
-            // File present but no DB row — register the DB row from the
-            // on-disk YAML content so re-running migration after a DB
-            // reset re-syncs library state from preserved (possibly
-            // user-edited) files instead of clobbering metadata with the
-            // bundled template.
-            const content = await fs.readFile(yamlPath, "utf-8");
-            const onDisk = ExpertDefinitionSchema.parse(
-              yaml.parse(content) as unknown,
+      // Decide a final slug for each expert in this panel.
+      const slugForEntry: string[] = [];
+      for (const expert of template.experts) {
+        const decision = await pickSlug(expert, name, claimed, library);
+        slugForEntry.push(decision.slug);
+        switch (decision.action) {
+          case "create": {
+            const yamlPath = path.join(expertsDir, `${decision.slug}.yaml`);
+            const toCreate: ExpertDefinition = ExpertDefinitionSchema.parse({
+              ...expert,
+              slug: decision.slug,
+            });
+            if (await fileExists(yamlPath)) {
+              // File present but no DB row — register the DB row from the
+              // on-disk YAML content so re-running migration after a DB
+              // reset re-syncs library state from preserved (possibly
+              // user-edited) files instead of clobbering metadata with the
+              // bundled template.
+              const content = await fs.readFile(yamlPath, "utf-8");
+              const onDisk = ExpertDefinitionSchema.parse(yaml.parse(content) as unknown);
+              await expertRepo.create({
+                slug: onDisk.slug,
+                kind: onDisk.kind,
+                displayName: onDisk.displayName,
+                yamlPath,
+                yamlChecksum: sha256(content),
+              });
+            } else {
+              await library.create(toCreate);
+            }
+            claimed.set(decision.slug, toCreate);
+            expertsExtracted++;
+            break;
+          }
+          case "reuse-session":
+            duplicatesUnified++;
+            break;
+          case "reuse-library":
+            skipped++;
+            break;
+        }
+      }
+
+      const panelFile = path.join(panelsDir, `${name}.yaml`);
+      const panelFileExists = await fileExists(panelFile);
+
+      if (panelFileExists) {
+        // DB-reset recovery: preserve the user's on-disk panel YAML and
+        // derive DB rows from it instead of the bundled template, so
+        // edits to description / member ordering survive a re-register.
+        // Inline expert definitions in the user-edited panel are
+        // materialised into expert_library (and a standalone YAML if
+        // none exists) so panel_members FK is satisfied.
+        const onDiskContent = await fs.readFile(panelFile, "utf-8");
+        const onDisk = parseOnDiskPanel(onDiskContent);
+        const recoveredSlugs: string[] = [];
+        for (const entry of onDisk.entries) {
+          const candidateSlug = entry.kind === "slug" ? entry.slug : entry.definition.slug;
+          // Defense in depth: slugs are already confined at the parse
+          // boundary (see parseOnDiskPanel/assertConfinedSlug). This mirrors
+          // that SLUG_RE check so reordering this loop can never feed a
+          // path.join("../...") into fs.access / fs.readFile.
+          if (!SLUG_RE.test(candidateSlug)) {
+            throw new PanelMigrationError(
+              `[template-migration] invalid expert slug in panel "${sanitizeForError(name, 100)}": ${sanitizeForError(JSON.stringify(candidateSlug), 100)}`,
             );
-            await expertRepo.create({
-              slug: onDisk.slug,
-              kind: onDisk.kind,
-              displayName: onDisk.displayName,
-              yamlPath,
-              yamlChecksum: sha256(content),
-            });
-          } else {
-            await library.create(toCreate);
           }
-          claimed.set(decision.slug, toCreate);
-          expertsExtracted++;
-          break;
-        }
-        case "reuse-session":
-          duplicatesUnified++;
-          break;
-        case "reuse-library":
-          skipped++;
-          break;
-      }
-    }
-
-    const panelFile = path.join(panelsDir, `${name}.yaml`);
-    const panelFileExists = await fileExists(panelFile);
-
-    if (panelFileExists) {
-      // DB-reset recovery: preserve the user's on-disk panel YAML and
-      // derive DB rows from it instead of the bundled template, so
-      // edits to description / member ordering survive a re-register.
-      // Inline expert definitions in the user-edited panel are
-      // materialised into expert_library (and a standalone YAML if
-      // none exists) so panel_members FK is satisfied.
-      const onDiskContent = await fs.readFile(panelFile, "utf-8");
-      const onDisk = parseOnDiskPanel(onDiskContent);
-      const recoveredSlugs: string[] = [];
-      for (const entry of onDisk.entries) {
-        const candidateSlug =
-          entry.kind === "slug" ? entry.slug : entry.definition.slug;
-        // Defense in depth: slugs are already confined at the parse
-        // boundary (see parseOnDiskPanel/assertConfinedSlug). This mirrors
-        // that SLUG_RE check so reordering this loop can never feed a
-        // path.join("../...") into fs.access / fs.readFile.
-        if (!SLUG_RE.test(candidateSlug)) {
-          throw new Error(
-            `template-migration: invalid expert slug in panel "${name}": ${JSON.stringify(candidateSlug)}`,
-          );
-        }
-        if (entry.kind === "slug") {
-          recoveredSlugs.push(entry.slug);
-          continue;
-        }
-        // Inline: ensure an expert_library row exists for this slug.
-        const slug = entry.definition.slug;
-        const existing = await library.get(slug);
-        if (!existing) {
-          const yamlPath = path.join(expertsDir, `${slug}.yaml`);
-          if (await fileExists(yamlPath)) {
-            const content = await fs.readFile(yamlPath, "utf-8");
-            await expertRepo.create({
-              slug,
-              kind: entry.definition.kind,
-              displayName: entry.definition.displayName,
-              yamlPath,
-              yamlChecksum: sha256(content),
-            });
-          } else {
-            await library.create(entry.definition);
+          if (entry.kind === "slug") {
+            recoveredSlugs.push(entry.slug);
+            continue;
           }
-          expertsExtracted++;
+          // Inline: ensure an expert_library row exists for this slug.
+          const slug = entry.definition.slug;
+          const existing = await library.get(slug);
+          if (!existing) {
+            const yamlPath = path.join(expertsDir, `${slug}.yaml`);
+            if (await fileExists(yamlPath)) {
+              const content = await fs.readFile(yamlPath, "utf-8");
+              await expertRepo.create({
+                slug,
+                kind: entry.definition.kind,
+                displayName: entry.definition.displayName,
+                yamlPath,
+                yamlChecksum: sha256(content),
+              });
+            } else {
+              await library.create(entry.definition);
+            }
+            expertsExtracted++;
+          }
+          recoveredSlugs.push(slug);
         }
-        recoveredSlugs.push(slug);
+        await registerPanelFromDisk(
+          db,
+          name,
+          onDisk.description,
+          recoveredSlugs,
+          panelFile,
+          onDiskContent,
+          true, // recovery: refresh existing row metadata from disk
+        );
+        skipped++;
+        continue;
       }
+
+      // Fresh-write path: render and persist the bundled template's panel
+      // YAML, then register DB rows from the template. Order is
+      // registerPanel → writeFile so a crash between the two is
+      // recoverable on retry (registerPanel is idempotent).
+      const panelYaml = renderPanelYaml(template, slugForEntry);
       await registerPanelFromDisk(
         db,
         name,
-        onDisk.description,
-        recoveredSlugs,
+        template.description ?? null,
+        slugForEntry,
         panelFile,
-        onDiskContent,
-        true, // recovery: refresh existing row metadata from disk
+        panelYaml,
       );
-      skipped++;
-      continue;
+      await fs.writeFile(panelFile, panelYaml, "utf-8");
+      panelsMigrated++;
+    } catch (err) {
+      // Isolate per-panel data failures (malformed YAML / failed schema
+      // validation / disallowed slug) so one bad panel cannot skip the
+      // alphabetically-later ones and lock the user out (#1807). Infra
+      // errors (fs EACCES/EIO, loader bugs) are not PanelMigrationError and
+      // still abort the whole run.
+      if (err instanceof PanelMigrationError) {
+        failures.push({ name, error: err });
+        continue;
+      }
+      throw err;
     }
+  }
 
-    // Fresh-write path: render and persist the bundled template's panel
-    // YAML, then register DB rows from the template. Order is
-    // registerPanel → writeFile so a crash between the two is
-    // recoverable on retry (registerPanel is idempotent).
-    const panelYaml = renderPanelYaml(template, slugForEntry);
-    await registerPanelFromDisk(
-      db,
-      name,
-      template.description ?? null,
-      slugForEntry,
-      panelFile,
-      panelYaml,
+  // Surface any isolated per-panel failures as a single aggregate error —
+  // after the good panels have migrated, and before any success notice.
+  if (failures.length > 0) {
+    const detail = failures
+      .map((f) => `${sanitizeForError(f.name, 100)} — ${f.error.message}`)
+      .join("; ");
+    throw new PanelMigrationError(
+      `[template-migration] ${failures.length} panel(s) failed to migrate: ${detail}`,
     );
-    await fs.writeFile(panelFile, panelYaml, "utf-8");
-    panelsMigrated++;
   }
 
   const shouldWriteNotice = options.quiet !== true && options.verbose === true;
@@ -493,9 +545,7 @@ type OnDiskEntry =
 export function parseOnDiskPanel(content: string): OnDiskPanel {
   const raw = yaml.parse(content) as Record<string, unknown> | null;
   const description =
-    raw && typeof raw["description"] === "string"
-      ? (raw["description"] as string)
-      : null;
+    raw && typeof raw["description"] === "string" ? (raw["description"] as string) : null;
   const experts = raw && Array.isArray(raw["experts"]) ? raw["experts"] : [];
   const entries: OnDiskEntry[] = [];
   for (const entry of experts as unknown[]) {
@@ -517,8 +567,8 @@ export function parseOnDiskPanel(content: string): OnDiskPanel {
       } else {
         const slug = (entry as { slug?: unknown }).slug;
         const label = typeof slug === "string" ? slug : "<unknown>";
-        throw new Error(
-          `[template-migration] inline expert "${label}" failed schema validation: ${JSON.stringify(parsed.error.issues)}`,
+        throw new PanelMigrationError(
+          `[template-migration] inline expert "${sanitizeForError(label, 100)}" failed schema validation: ${sanitizeForError(JSON.stringify(parsed.error.issues))}`,
         );
       }
     }
@@ -533,8 +583,8 @@ export function parseOnDiskPanel(content: string): OnDiskPanel {
 // property of parsing rather than relying on a follow-up check at each use.
 function assertConfinedSlug(slug: string): void {
   if (!SLUG_RE.test(slug)) {
-    throw new Error(
-      `[template-migration] invalid expert slug: ${JSON.stringify(slug)}`,
+    throw new PanelMigrationError(
+      `[template-migration] invalid expert slug: ${sanitizeForError(JSON.stringify(slug), 100)}`,
     );
   }
 }
@@ -622,10 +672,7 @@ interface LockPayload {
  * takes longer than any age threshold would otherwise have its lock
  * deleted by a contender, reintroducing the concurrent-write race.
  */
-async function withMigrationLock<T>(
-  dataHome: string,
-  fn: () => Promise<T>,
-): Promise<T> {
+async function withMigrationLock<T>(dataHome: string, fn: () => Promise<T>): Promise<T> {
   const lockPath = path.join(dataHome, LOCK_FILENAME);
   await acquireLock(lockPath);
   try {
@@ -702,10 +749,7 @@ async function tryBreakStaleLock(lockPath: string): Promise<boolean> {
   return false;
 }
 
-async function maybeEvictByAge(
-  lockPath: string,
-  mtimeMs: number,
-): Promise<boolean> {
+async function maybeEvictByAge(lockPath: string, mtimeMs: number): Promise<boolean> {
   if (Date.now() - mtimeMs > LOCK_FALLBACK_STALE_AFTER_MS) {
     return await unlinkIfExists(lockPath);
   }
