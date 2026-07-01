@@ -1027,6 +1027,7 @@ describe("discoverAvailableModels — resilience (#719 #721 #741)", () => {
       expect(warned.includes("\r")).toBe(false);
       // No control / C1 / bidi codepoints survive to the terminal.
       expect(warned).not.toMatch(
+        // eslint-disable-next-line no-control-regex
         /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/,
       );
     } finally {
@@ -1105,6 +1106,7 @@ describe("CopilotEngine — abort diagnostic sanitization (#1155)", () => {
     expect(abortWarn.includes("\r")).toBe(false);
     // No control / C1 / bidi / line-separator codepoints survive to the terminal.
     expect(abortWarn).not.toMatch(
+      // eslint-disable-next-line no-control-regex
       /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/,
     );
     // Bounded: the message portion is capped so a huge message can't flood the
