@@ -75,7 +75,15 @@ export function formatEngineError(input: EngineError | ErrorLike | Error): strin
     message = input.message;
     model = maybeCoded.model;
     if (code === undefined) {
-      const fromCause = findEngineErrorInCause(maybeCoded.cause);
+      let fromCause: ErrorLike | undefined;
+      try {
+        fromCause = findEngineErrorInCause(maybeCoded.cause);
+      } catch {
+        // A throwing `cause` getter on the top-level Error (e.g. a Proxy trap)
+        // must not break formatEngineError's always-returns contract; fall
+        // through to message-based inference with `code` still undefined (#1911).
+        fromCause = undefined;
+      }
       if (fromCause) {
         code = fromCause.code;
         retryAfterMs = fromCause.retryAfterMs;
@@ -163,11 +171,20 @@ function hintForCode(
         "Internal Council error — this is a bug. " +
         `Please file an issue at ${wrapLink("https://github.com/pedrofuentes/Council/issues")} with the message below.`
       );
-    case "PROVIDER_ERROR":
+    case "PROVIDER_ERROR": {
+      // Sanitize the provider label before interpolating into stderr: like the
+      // `model` field above, a provider identifier recovered from an untrusted
+      // error `cause` (or supplied on the structured shape) could otherwise
+      // smuggle ANSI/OSC escapes, C0/C1 controls, or CR/LF into the terminal
+      // (spoofing, title injection) (#1910). The `typeof` guard also keeps a
+      // non-string provider from breaking the sanitizer boundary.
+      const safeProvider =
+        typeof ctx.provider === "string" ? toSingleLineDisplay(ctx.provider) : "";
       return (
-        `Engine provider${ctx.provider ? ` (${ctx.provider})` : ""} returned an unmapped error. ` +
+        `Engine provider${safeProvider ? ` (${safeProvider})` : ""} returned an unmapped error. ` +
         "If this persists, file an issue with the underlying message below so the adapter can be improved."
       );
+    }
     default:
       // No recognized code and no inferable signal — generic fallback.
       // Keep the original message visible for bug reports.
@@ -179,12 +196,42 @@ function hintForCode(
  * Walk an error's `cause` chain looking for the first EngineError-shaped
  * object (any object exposing a string `code`). Depth is bounded to guard
  * against cyclic `cause` references. Returns `undefined` when none is found.
+ *
+ * Property reads are wrapped in try/catch and the match is returned as a
+ * trusted snapshot: an untrusted `cause` may expose an accessor that throws
+ * (a Proxy trap or a lazily-computed wrapper), and such a throw must never
+ * escape `formatEngineError`, whose contract is to always return a string
+ * for stderr (#1911). Only well-typed fields are copied, so a throwing getter
+ * on the caller's side is impossible.
  */
 function findEngineErrorInCause(cause: unknown, depth = 0): ErrorLike | undefined {
   if (depth > 8 || cause === null || typeof cause !== "object") return undefined;
-  const candidate = cause as { readonly code?: unknown; readonly cause?: unknown };
-  if (typeof candidate.code === "string") return cause as ErrorLike;
-  return findEngineErrorInCause(candidate.cause, depth + 1);
+  try {
+    const candidate = cause as {
+      readonly code?: unknown;
+      readonly cause?: unknown;
+      readonly retryAfterMs?: unknown;
+      readonly provider?: unknown;
+      readonly model?: unknown;
+    };
+    if (typeof candidate.code === "string") {
+      // Copy only well-typed fields, omitting undefined ones so the snapshot
+      // satisfies ErrorLike under exactOptionalPropertyTypes.
+      const retryAfterMs =
+        typeof candidate.retryAfterMs === "number" ? candidate.retryAfterMs : undefined;
+      const provider = typeof candidate.provider === "string" ? candidate.provider : undefined;
+      const model = typeof candidate.model === "string" ? candidate.model : undefined;
+      return {
+        code: candidate.code,
+        ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+        ...(provider !== undefined ? { provider } : {}),
+        ...(model !== undefined ? { model } : {}),
+      };
+    }
+    return findEngineErrorInCause(candidate.cause, depth + 1);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
