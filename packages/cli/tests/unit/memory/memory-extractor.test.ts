@@ -15,7 +15,7 @@
  *
  * RED at this commit: `extractMemoryLLM` does not exist.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { extractMemoryLLM } from "../../../src/memory/memory-extractor.js";
 import type {
@@ -28,6 +28,7 @@ import type {
 interface RecordedSend {
   readonly expertId: string;
   readonly prompt: string;
+  readonly signal: AbortSignal | undefined;
 }
 
 class RecordingEngine implements CouncilEngine {
@@ -57,7 +58,7 @@ class RecordingEngine implements CouncilEngine {
   }
 
   send(opts: SendOptions): AsyncIterable<EngineEvent> {
-    this.sends.push({ expertId: opts.expertId, prompt: opts.prompt });
+    this.sends.push({ expertId: opts.expertId, prompt: opts.prompt, signal: opts.signal });
     const expertId = opts.expertId;
     const chunks = this.responseChunks;
     return (async function* (): AsyncGenerator<EngineEvent, void, void> {
@@ -172,5 +173,117 @@ describe("extractMemoryLLM — engine-backed extraction", () => {
     expect(out.positions).toEqual(["Only positions present."]);
     expect(out.updatedPriors).toEqual([]);
     expect(out.unresolved).toEqual([]);
+  });
+});
+
+/**
+ * Engine whose `send` stall never terminates on its own: it emits one
+ * partial delta, then waits for the forwarded `AbortSignal` to fire
+ * before yielding the terminal ABORTED error the engine contract
+ * mandates (see engine/types.ts — an aborted send MUST yield an
+ * `error` event with `code: "ABORTED"`). Without a timeout/abort budget
+ * in `extractMemoryLLM`, the read loop hangs forever.
+ */
+class StallingEngine extends RecordingEngine {
+  override send(opts: SendOptions): AsyncIterable<EngineEvent> {
+    this.sends.push({ expertId: opts.expertId, prompt: opts.prompt, signal: opts.signal });
+    const expertId = opts.expertId;
+    const signal = opts.signal;
+    return (async function* (): AsyncGenerator<EngineEvent, void, void> {
+      yield { kind: "message.delta", expertId, text: "partial-not-json" };
+      await new Promise<void>((resolve) => {
+        if (signal?.aborted) {
+          resolve();
+          return;
+        }
+        signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      yield {
+        kind: "error",
+        expertId,
+        error: { code: "ABORTED", message: "aborted" },
+        recoverable: false,
+      };
+    })();
+  }
+}
+
+describe("extractMemoryLLM — send timeout/abort budget (#275)", () => {
+  it("aborts a hung extractor send after the timeout and returns empty memory (best-effort, no hang)", async () => {
+    vi.useFakeTimers();
+    try {
+      const engine = new StallingEngine([]);
+      const promise = extractMemoryLLM(sampleTurns, engine, "gpt-test", { timeoutMs: 1_000 });
+
+      // Let addExpert resolve and the send fire so the forwarded signal
+      // is recorded.
+      await vi.advanceTimersByTimeAsync(0);
+      const send = engine.sends[0];
+      if (!send) throw new Error("expected the extractor send to have fired");
+
+      // Discriminating: the current no-timeout code forwards NO signal, so
+      // this fails fast against it instead of hanging.
+      expect(send.signal).toBeDefined();
+      expect(send.signal?.aborted).toBe(false);
+
+      // Advance to the deadline — the budget must abort the in-flight send.
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(send.signal?.aborted).toBe(true);
+
+      // Best-effort contract: a timed-out extraction resolves to empty
+      // memory and NEVER throws into the debate-complete flow.
+      const out = await promise;
+      expect(out).toEqual({ positions: [], updatedPriors: [], unresolved: [] });
+
+      // The temporary extractor expert is still torn down after the timeout.
+      expect(engine.removed).toEqual([send.expertId]);
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 5_000);
+
+  it("does NOT fire the timeout for a fast extraction and returns its memories unchanged", async () => {
+    vi.useFakeTimers();
+    try {
+      const json = JSON.stringify({
+        positions: ["Ship only falsifiable claims."],
+        updatedPriors: ["Revised the retention metric."],
+        unresolved: ["Long-term retention measurement?"],
+      });
+      const engine = new RecordingEngine([json]);
+      const out = await extractMemoryLLM(sampleTurns, engine, "gpt-test", { timeoutMs: 1_000 });
+
+      // Inverse / load-bearing: the fast path parses and returns unchanged.
+      expect(out.positions).toEqual(["Ship only falsifiable claims."]);
+      expect(out.updatedPriors).toEqual(["Revised the retention metric."]);
+      expect(out.unresolved).toEqual(["Long-term retention measurement?"]);
+
+      // The budget was cleared on success: advancing past the deadline must
+      // NOT retroactively abort the already-forwarded signal.
+      const send = engine.sends[0];
+      if (!send) throw new Error("expected the extractor send to have fired");
+      expect(send.signal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(send.signal?.aborted).toBe(false);
+
+      expect(engine.removed.length).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("forwards and honors a caller-provided AbortSignal (merged with the timeout budget)", async () => {
+    const engine = new RecordingEngine(['{"positions":[],"updatedPriors":[],"unresolved":[]}']);
+    const controller = new AbortController();
+    await extractMemoryLLM(sampleTurns, engine, "gpt-test", { signal: controller.signal });
+
+    const forwarded = engine.sends[0]?.signal;
+    expect(forwarded).toBeDefined();
+    expect(forwarded?.aborted).toBe(false);
+
+    // The caller signal is merged with the internal timeout budget, so the
+    // engine receives a combined signal; aborting the caller cancels it.
+    controller.abort();
+    expect(forwarded?.aborted).toBe(true);
   });
 });
