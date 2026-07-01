@@ -172,8 +172,20 @@ export function DebateStreamScreen(props: DebateStreamScreenProps): React.ReactE
     controllerRef.current = controller;
     setStatus("streaming");
 
+    // A run stays CURRENT only while it owns `controllerRef` and the screen is
+    // mounted. A same-instance dependency re-run (React Router reconciles a
+    // `panel`/`topic` change onto this same instance) runs cleanup — which
+    // aborts THIS `controller` — then a fresh run installs a NEW controller in
+    // `controllerRef` and resets `unmountedRef` to false. This run's aborted
+    // `streamDebate` still RESOLVES on a later microtask, so its continuations
+    // below must ignore that stale result instead of mutating state that now
+    // belongs to the newer run. This is an IDENTITY check, NOT
+    // `controller.signal.aborted`: Escape aborts the current run's controller in
+    // place and still expects its own continuation to run (navigate back).
+    const isStaleRun = (): boolean => unmountedRef.current || controllerRef.current !== controller;
+
     const applyIfMounted = (event: ConveneViewEvent): void => {
-      if (unmountedRef.current) return;
+      if (isStaleRun()) return;
       setView((current) => applyEvent(current, event));
     };
 
@@ -185,7 +197,7 @@ export function DebateStreamScreen(props: DebateStreamScreenProps): React.ReactE
           { signal: controller.signal },
           applyIfMounted,
         );
-        if (unmountedRef.current) return;
+        if (isStaleRun()) return;
         setStatus("done");
         if (result.debateId !== undefined) {
           if (isAutoConcludeReason(result.reason)) {
@@ -207,7 +219,7 @@ export function DebateStreamScreen(props: DebateStreamScreenProps): React.ReactE
           navigate(-1);
         }
       } catch (err) {
-        if (unmountedRef.current) return;
+        if (isStaleRun()) return;
         setView((current) => ({ ...current, error: errorMessage(err) }));
         setStatus("done");
       }
@@ -216,6 +228,11 @@ export function DebateStreamScreen(props: DebateStreamScreenProps): React.ReactE
     return () => {
       unmountedRef.current = true;
       controller.abort();
+      // Reset the mount guard so a dependency re-run (e.g. navigating to another
+      // panel on this same route, which React Router reconciles onto the SAME
+      // instance) starts a fresh run instead of being blocked by a stale `true`
+      // guard — which would leave the screen "streaming" with no active stream.
+      startedRef.current = false;
     };
   }, [convene, navigate, panel, topic]);
 
