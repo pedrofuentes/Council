@@ -182,6 +182,28 @@ function renderExpertise(def: ExpertDefinition): string {
   return lines.join("\n");
 }
 
+/**
+ * Render the `[6] FORBIDDEN MOVES` section.
+ *
+ * Beyond the agreement-padding phrase bans, every expert receives two
+ * ALWAYS-INJECTED anti-tool-seeking constraints (T-11). Experts run with no
+ * tools, file system, terminal, or function-calling ability, yet were observed
+ * stalling with "I need to examine the code/config first" instead of answering
+ * — so the prompt hardens against that:
+ *
+ *   1. No-tool-access: the expert may not ask for tools, file, or web access.
+ *      They are told explicitly they have NO tool access (they cannot read
+ *      files, execute code, or browse the web). When documents are relevant,
+ *      their text is injected inline under a `[REFERENCE DOCUMENTS]` heading
+ *      (RAG, #1046), so the expert relies on that plus their own expertise.
+ *   2. No-deferral-without-analysis: the expert may not say "I need to examine
+ *      X first" (or similar) without providing actual analysis grounded in the
+ *      topic and their expertise.
+ *
+ * Expected behavior: experts answer from the topic and their expertise rather
+ * than requesting external access or deferring. These two rules cannot be
+ * opted out of; profile-supplied `forbiddenMoves` are appended after them.
+ */
 function renderForbiddenMoves(def: ExpertDefinition): string {
   const profile = def.forbiddenMoves ?? [];
   const allMoves = [
