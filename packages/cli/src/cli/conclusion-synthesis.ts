@@ -269,6 +269,29 @@ export interface SynthesizeConclusionOptions {
   readonly synthesizerId?: string;
 }
 
+/**
+ * Register a fresh, isolated synthesizer session on the engine and return
+ * its id. Each call creates a NEW session (a distinct expert id primed with
+ * its own context), which the retry path relies on: on an unparseable first
+ * response we re-sample from a clean session so the second attempt is not
+ * correlated with the first attempt's own malformed output (#1133).
+ */
+async function createSynthesizerSession(
+  engine: CouncilEngine,
+  model: string,
+  id: string,
+): Promise<string> {
+  const spec: ExpertSpec = {
+    id,
+    slug: "synthesizer",
+    displayName: "Council Synthesizer",
+    model,
+    systemMessage: SYNTHESIS_SYSTEM_PROMPT,
+  };
+  await engine.addExpert(spec);
+  return id;
+}
+
 export async function synthesizeConclusion(
   opts: SynthesizeConclusionOptions,
 ): Promise<ConcludeOutput> {
@@ -279,15 +302,11 @@ export async function synthesizeConclusion(
     );
   }
 
-  const synthesizerId = opts.synthesizerId ?? ulid();
-  const synthesizerSpec: ExpertSpec = {
-    id: synthesizerId,
-    slug: "synthesizer",
-    displayName: "Council Synthesizer",
-    model: opts.model,
-    systemMessage: SYNTHESIS_SYSTEM_PROMPT,
-  };
-  await opts.engine.addExpert(synthesizerSpec);
+  const synthesizerId = await createSynthesizerSession(
+    opts.engine,
+    opts.model,
+    opts.synthesizerId ?? ulid(),
+  );
 
   const {
     prompt,
@@ -314,8 +333,14 @@ export async function synthesizeConclusion(
     await collectResponse(opts.engine, synthesizerId, prompt, opts.timeoutMs),
   );
   if (!parseResult.ok && parseResult.reason === "unparseable") {
+    // #1133: re-sample from a FRESH synthesizer session. Reusing the first
+    // session would feed the retry the previous attempt's own malformed
+    // output as conversational context, correlating the re-sample with the
+    // failure. A new session gives the "a manual re-run often succeeds"
+    // rationale a clean slate.
+    const retrySynthesizerId = await createSynthesizerSession(opts.engine, opts.model, ulid());
     parseResult = parseSynthesisResponse(
-      await collectResponse(opts.engine, synthesizerId, prompt, opts.timeoutMs),
+      await collectResponse(opts.engine, retrySynthesizerId, prompt, opts.timeoutMs),
     );
   }
 
