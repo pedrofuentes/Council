@@ -20,7 +20,7 @@ import { PanelLibraryRepository } from "../memory/repositories/panel-library-rep
 import { PanelRepository } from "../memory/repositories/panels.js";
 import { TurnRepository } from "../memory/repositories/turns.js";
 import type { ExpertSpec } from "../engine/index.js";
-import { loadTranscript } from "../memory/transcript.js";
+import { loadTranscript, type TranscriptDocument } from "../memory/transcript.js";
 import { loadConfigWithMeta, updateConfigField, updateConfigFields } from "../config/loader.js";
 import type { ConfigLoadResult } from "../config/loader.js";
 import { discoverAvailableModels } from "../engine/copilot/health.js";
@@ -68,6 +68,28 @@ import { DataProvider, type TuiDataSources } from "./components/DataProvider.js"
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { CouncilTUI } from "./CouncilTUI.js";
 import { runTuiSessions } from "./run-sessions.js";
+
+/**
+ * Wrap a transcript loader for the export overlay so a genuinely-absent
+ * transcript (the loader resolves `null`/`undefined`) renders as the honest
+ * "No transcript" empty state, while an UNEXPECTED load failure (the loader
+ * throws — e.g. a missing/corrupt DB or a query bug) propagates so the overlay
+ * surfaces a real error state.
+ *
+ * The previous wiring wrapped the raw loader in `try { … } catch { return null }`,
+ * which converted every failure into `null` and masked real errors as an empty
+ * "No transcript" state, indistinguishable from a genuinely-absent transcript
+ * (Sentinel #1694 §2). Surfacing the actual error also gives the actionable
+ * messages `loadTranscript` already throws (e.g. "…has no debates yet").
+ */
+export function createExportTranscriptLoader(
+  load: (panelName: string, debateId?: string) => Promise<TranscriptDocument | null>,
+): (panelName: string, debateId?: string) => Promise<TranscriptDocument | null> {
+  return async (panelName, debateId) => {
+    const doc = await load(panelName, debateId);
+    return doc ?? null;
+  };
+}
 
 export async function launchTui(): Promise<void> {
   const dbPath = path.join(getCouncilHome(), "council.db");
@@ -286,13 +308,9 @@ export async function launchTui(): Promise<void> {
       }),
       export: {
         ...createExportSource({
-          loadTranscript: async (panelName: string, debateId?: string) => {
-            try {
-              return await loadTranscript(db, panelName, debateId);
-            } catch {
-              return null;
-            }
-          },
+          loadTranscript: createExportTranscriptLoader((panelName: string, debateId?: string) =>
+            loadTranscript(db, panelName, debateId),
+          ),
           renderMarkdown,
           renderJson,
           renderAdr,
