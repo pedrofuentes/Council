@@ -49,6 +49,12 @@ export class PlainRenderer implements Renderer {
   readonly #expertIndex = new Map<string, number>();
   /** Current debate phase (for synthesis styling). */
   #currentPhase: DebatePhase | undefined = undefined;
+  /**
+   * Set once the downstream pipe closes (EPIPE). Further writes are skipped
+   * and the render loop stops, so `council … | head` shuts down cleanly
+   * instead of crashing with an unhandled error.
+   */
+  #pipeClosed = false;
 
   constructor(sink: Sink, options: PlainRendererOptions = {}) {
     this.#sink = sink;
@@ -61,6 +67,7 @@ export class PlainRenderer implements Renderer {
   async render(events: AsyncIterable<DebateEvent>): Promise<void> {
     const sym = getSymbols();
     for await (const evt of events) {
+      if (this.#pipeClosed) break;
       switch (evt.kind) {
         case "panel.assembled":
           this.renderPanelAssembled(evt.experts, sym.panel, sym.bullet);
@@ -76,7 +83,7 @@ export class PlainRenderer implements Renderer {
           const isHuman = evt.speakerKind === "human" || this.#humanSlugs.has(evt.expertSlug);
           const isSynthesis = this.#currentPhase === "synthesis";
           const idx = this.#expertIndex.get(evt.expertSlug) ?? 0;
-          const prefix = formatExpertPrefix(idx, name);
+          const prefix = formatExpertPrefix(idx, this.sanitizeLine(name));
           if (isSynthesis) {
             const synthPrefix = `${sym.synthesis} [Synthesis] ${prefix}`;
             this.write(`\n${this.yellow(synthPrefix)}\n`);
@@ -157,7 +164,7 @@ export class PlainRenderer implements Renderer {
     experts.forEach((expert, i) => {
       this.#displayNames.set(expert.slug, expert.displayName);
       this.#expertIndex.set(expert.slug, i);
-      const prefix = formatExpertPrefix(i, expert.displayName);
+      const prefix = formatExpertPrefix(i, this.sanitizeLine(expert.displayName));
       if (expert.participantKind === "human") {
         this.#humanSlugs.add(expert.slug);
         this.write(`  ${bullet} ${prefix} ${this.gray("(human)")}\n`);
@@ -168,12 +175,30 @@ export class PlainRenderer implements Renderer {
   }
 
   private write(text: string): void {
-    this.#sink.write(text);
+    if (this.#pipeClosed) return;
+    try {
+      this.#sink.write(text);
+    } catch (err: unknown) {
+      if (isEpipe(err)) {
+        this.#pipeClosed = true;
+        return;
+      }
+      throw err;
+    }
   }
 
   private writeError(text: string): void {
-    if (this.#sink.writeError) this.#sink.writeError(text);
-    else this.#sink.write(text);
+    if (this.#pipeClosed) return;
+    try {
+      if (this.#sink.writeError) this.#sink.writeError(text);
+      else this.#sink.write(text);
+    } catch (err: unknown) {
+      if (isEpipe(err)) {
+        this.#pipeClosed = true;
+        return;
+      }
+      throw err;
+    }
   }
 
   // ---------- color helpers (no-op when color is disabled) ----------
@@ -206,4 +231,9 @@ export class PlainRenderer implements Renderer {
   private yellow(text: string): string {
     return this.#chalk.yellow(text);
   }
+}
+
+/** True when an error is a broken-pipe (EPIPE) failure from a closed sink. */
+function isEpipe(err: unknown): boolean {
+  return err instanceof Error && (err as NodeJS.ErrnoException).code === "EPIPE";
 }
