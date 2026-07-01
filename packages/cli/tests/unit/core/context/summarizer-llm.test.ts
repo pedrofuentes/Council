@@ -9,7 +9,7 @@
  *
  * RED at this commit: `buildLLMSummary` does not exist.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   buildHeuristicSummary,
@@ -249,12 +249,20 @@ describe("buildLLMSummary — engine-backed summarization", () => {
     expect(closingMatches.length).toBe(1);
   });
 
-  it("forwards an AbortSignal through to engine.send (#503)", async () => {
+  it("propagates a caller AbortSignal cancellation through to engine.send (#503)", async () => {
     const engine = new RecordingEngine(["summary"]);
     const controller = new AbortController();
     await buildLLMSummary(baseTurns, 2, cfg, engine, "gpt-test", { signal: controller.signal });
     expect(engine.sends.length).toBe(1);
-    expect(engine.sends[0]?.signal).toBe(controller.signal);
+    const forwarded = engine.sends[0]?.signal;
+    expect(forwarded).toBeDefined();
+    expect(forwarded?.aborted).toBe(false);
+    // #267 merges the caller's signal with an internal timeout signal, so
+    // the engine no longer receives the exact same reference. What MUST be
+    // preserved is propagation: aborting the caller's controller cancels
+    // whatever signal reached the engine.
+    controller.abort();
+    expect(forwarded?.aborted).toBe(true);
   });
 
   describe("output sanitization (T-06)", () => {
@@ -291,5 +299,188 @@ describe("buildLLMSummary — engine-backed summarization", () => {
       expect(out.length).toBeLessThanOrEqual(50);
       expect(out.startsWith("x".repeat(49))).toBe(true);
     });
+  });
+});
+
+describe("buildLLMSummary — input transcript cap (#271)", () => {
+  it("drops the oldest turns when the transcript exceeds maxTranscriptChars", async () => {
+    const turns: PriorTurnRecord[] = [];
+    for (let i = 0; i < 60; i++) {
+      turns.push({
+        expertSlug: `e${i}`,
+        displayName: `Expert ${i}`,
+        content: `MARKER_${String(i).padStart(4, "0")} ${"filler ".repeat(20)}`,
+        round: i,
+      });
+    }
+    const engine = new RecordingEngine(["ok"]);
+    await buildLLMSummary(turns, 2, { ...cfg, maxTranscriptChars: 400 }, engine, "gpt-test");
+
+    const prompt = engine.sends[0]?.prompt;
+    if (prompt === undefined) throw new Error("expected one send");
+    // The most recent turn is always present; the oldest turns are
+    // windowed out so prompt size cannot grow without bound.
+    expect(prompt).toContain("MARKER_0059");
+    expect(prompt).not.toContain("MARKER_0000");
+    expect(prompt).not.toContain("MARKER_0010");
+  });
+
+  it("truncates a single oversized most-recent turn to the budget", async () => {
+    const huge = "Z".repeat(5000);
+    const turns: readonly PriorTurnRecord[] = [
+      { expertSlug: "solo", displayName: "Solo", content: huge, round: 0 },
+    ];
+    const engine = new RecordingEngine(["ok"]);
+    await buildLLMSummary(turns, 2, { ...cfg, maxTranscriptChars: 300 }, engine, "gpt-test");
+
+    const prompt = engine.sends[0]?.prompt;
+    if (prompt === undefined) throw new Error("expected one send");
+    // The 5000-char body is NOT re-serialized verbatim, but a prefix of
+    // the latest turn survives so the summarizer still sees it.
+    expect(prompt).not.toContain(huge);
+    expect(prompt).toContain("Z".repeat(100));
+    expect(prompt.length).toBeLessThan(1000);
+  });
+
+  it("bounds prompt size with a default cap when maxTranscriptChars is omitted", async () => {
+    const turns: PriorTurnRecord[] = [];
+    for (let i = 0; i < 4000; i++) {
+      turns.push({
+        expertSlug: `e${i}`,
+        displayName: `Expert ${i}`,
+        content: `turn ${i} content body here`,
+        round: i,
+      });
+    }
+    const engine = new RecordingEngine(["ok"]);
+    // No maxTranscriptChars → the default cap must still bound the prompt.
+    await buildLLMSummary(turns, 2, cfg, engine, "gpt-test");
+
+    const prompt = engine.sends[0]?.prompt;
+    if (prompt === undefined) throw new Error("expected one send");
+    // 4000 unbounded turns would serialize to well over 100k characters.
+    expect(prompt.length).toBeLessThan(20_000);
+    // The most recent turn survives the windowing.
+    expect(prompt).toContain("turn 3999 content body");
+  });
+});
+
+describe("buildLLMSummary — send timeout guard (#267)", () => {
+  class StallingEngine extends RecordingEngine {
+    override send(opts: SendOptions): AsyncIterable<EngineEvent> {
+      this.sends.push({ expertId: opts.expertId, prompt: opts.prompt, signal: opts.signal });
+      const expertId = opts.expertId;
+      const signal = opts.signal;
+      return (async function* (): AsyncGenerator<EngineEvent, void, void> {
+        yield { kind: "message.delta", expertId, text: "partial" };
+        // Cooperative stall: yield nothing more until the forwarded signal
+        // aborts, then surface the terminal ABORTED error the engine
+        // contract mandates. Without a timeout guard this hangs forever.
+        await new Promise<void>((resolve) => {
+          if (signal?.aborted) {
+            resolve();
+            return;
+          }
+          signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        yield {
+          kind: "error",
+          expertId,
+          error: { code: "ABORTED", message: "aborted" },
+          recoverable: false,
+        };
+      })();
+    }
+  }
+
+  it(
+    "returns the partial summary instead of hanging when the provider stalls",
+    async () => {
+      const engine = new StallingEngine([]);
+      const warnings: string[] = [];
+      const out = await buildLLMSummary(baseTurns, 2, cfg, engine, "gpt-test", {
+        timeoutMs: 50,
+        onWarning: (m) => warnings.push(m),
+      });
+      // Best-effort: whatever was collected before the timeout is returned.
+      expect(out).toBe("partial");
+      // The summarizer expert is still torn down after the timeout fires.
+      expect(engine.removed.length).toBe(1);
+      // The timeout is surfaced for observability (#268).
+      expect(warnings.some((w) => /timed out/i.test(w))).toBe(true);
+    },
+    2000,
+  );
+});
+
+describe("buildLLMSummary — best-effort failure observability (#268)", () => {
+  class CleanupFailEngine extends RecordingEngine {
+    override async removeExpert(expertId: string): Promise<void> {
+      this.removed.push(expertId);
+      throw new Error("cleanup boom");
+    }
+  }
+
+  it("warns when summarizer expert registration fails", async () => {
+    class FailingRegisterEngine extends RecordingEngine {
+      override async addExpert(_spec: ExpertSpec): Promise<void> {
+        throw new Error("registration unavailable");
+      }
+    }
+    const engine = new FailingRegisterEngine(["unused"]);
+    const warnings: string[] = [];
+    const out = await buildLLMSummary(baseTurns, 2, cfg, engine, "gpt-test", {
+      onWarning: (m) => warnings.push(m),
+    });
+    expect(out).toBe("");
+    expect(warnings.some((w) => /registration/i.test(w))).toBe(true);
+  });
+
+  it("warns when the engine errors mid-stream but still returns the partial summary", async () => {
+    class ErroringEngine extends RecordingEngine {
+      override send(opts: SendOptions): AsyncIterable<EngineEvent> {
+        this.sends.push({ expertId: opts.expertId, prompt: opts.prompt, signal: opts.signal });
+        const expertId = opts.expertId;
+        return (async function* (): AsyncGenerator<EngineEvent, void, void> {
+          yield { kind: "message.delta", expertId, text: "partial" };
+          yield {
+            kind: "error",
+            expertId,
+            error: { code: "PROVIDER_ERROR", message: "boom" },
+            recoverable: false,
+          };
+        })();
+      }
+    }
+    const engine = new ErroringEngine([]);
+    const warnings: string[] = [];
+    const out = await buildLLMSummary(baseTurns, 2, cfg, engine, "gpt-test", {
+      onWarning: (m) => warnings.push(m),
+    });
+    expect(out).toBe("partial");
+    expect(warnings.some((w) => /stream error|PROVIDER_ERROR/i.test(w))).toBe(true);
+  });
+
+  it("warns when best-effort expert cleanup fails", async () => {
+    const engine = new CleanupFailEngine(["done"]);
+    const warnings: string[] = [];
+    const out = await buildLLMSummary(baseTurns, 2, cfg, engine, "gpt-test", {
+      onWarning: (m) => warnings.push(m),
+    });
+    // Cleanup failure must NOT propagate — the summary is still returned.
+    expect(out).toBe("done");
+    expect(warnings.some((w) => /cleanup/i.test(w))).toBe(true);
+  });
+
+  it("falls back to console.warn when no onWarning sink is provided", async () => {
+    const engine = new CleanupFailEngine(["done"]);
+    const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const out = await buildLLMSummary(baseTurns, 2, cfg, engine, "gpt-test");
+      expect(out).toBe("done");
+      expect(spy).toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
