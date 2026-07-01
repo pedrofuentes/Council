@@ -102,6 +102,82 @@ describe("createPanelsDataSource.loadList", () => {
       { name: "solo", description: "One", memberCount: 1, source: "saved" },
     ]);
   });
+
+  // #1817 (from Sentinel review of PR #1813): the `listTemplates` call must not
+  // discard already-resolved saved panels. A template listing/loading failure
+  // has to degrade the *template* portion only — the saved panels the user
+  // already has must still be returned (and therefore rendered).
+  it("still returns saved panels when listTemplates throws, degrading templates to empty (#1817)", async () => {
+    const ds = createPanelsDataSource({
+      library: {
+        findAll: async () => [
+          { name: "acme", description: "Exec panel" },
+          { name: "bare", description: null },
+        ],
+        findByName: async () => undefined,
+        getMembers: async () => [],
+        getMemberCounts: async () => new Map([["acme", 2]]),
+      },
+      experts: { get: async () => null },
+      listTemplates: async () => {
+        throw new Error("template listing failed");
+      },
+      loadTemplate: async () => ({ experts: [] }),
+    });
+
+    // Before the fix the whole result was lost; the saved panels must survive
+    // and the template portion must degrade to empty (no template entries).
+    await expect(ds.loadList()).resolves.toEqual([
+      { name: "acme", description: "Exec panel", memberCount: 2, source: "saved" },
+      { name: "bare", description: "", memberCount: 0, source: "saved" },
+    ]);
+  });
+
+  it("still returns saved panels when a template fails to load (#1817)", async () => {
+    const loadedTemplates: string[] = [];
+    const ds = createPanelsDataSource({
+      library: {
+        findAll: async () => [{ name: "acme", description: "Exec panel" }],
+        findByName: async () => undefined,
+        getMembers: async () => [],
+        getMemberCounts: async () => new Map([["acme", 2]]),
+      },
+      experts: { get: async () => null },
+      listTemplates: async () => ["startup-board", "broken"],
+      loadTemplate: async (name) => {
+        loadedTemplates.push(name);
+        if (name === "broken") throw new Error("template file corrupt");
+        return { description: "tpl", experts: [] };
+      },
+    });
+
+    await expect(ds.loadList()).resolves.toEqual([
+      { name: "acme", description: "Exec panel", memberCount: 2, source: "saved" },
+    ]);
+  });
+
+  it("returns saved panels AND templates unchanged when template loading succeeds (inverse, #1817)", async () => {
+    const ds = createPanelsDataSource({
+      library: {
+        findAll: async () => [{ name: "acme", description: "Exec panel" }],
+        findByName: async () => undefined,
+        getMembers: async () => [],
+        getMemberCounts: async () => new Map([["acme", 2]]),
+      },
+      experts: { get: async () => null },
+      listTemplates: async () => ["startup-board"],
+      loadTemplate: async () => ({
+        description: "tpl",
+        experts: [{ slug: "a", displayName: "A", role: "Role A", kind: "generic" }],
+      }),
+    });
+
+    // The guard must not drop or alter valid template data on the happy path.
+    await expect(ds.loadList()).resolves.toEqual([
+      { name: "acme", description: "Exec panel", memberCount: 2, source: "saved" },
+      { name: "startup-board", description: "tpl", memberCount: 1, source: "template" },
+    ]);
+  });
 });
 
 describe("createPanelsDataSource.loadDetail", () => {

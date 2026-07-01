@@ -84,6 +84,34 @@ function mapTemplateDefaults(
   };
 }
 
+/**
+ * List the available template panels, isolating any listing/loading failure.
+ *
+ * #1817: an unguarded `listTemplates` (or `loadTemplate`) rejection used to
+ * bubble out of {@link PanelsDataSource.loadList} and discard the
+ * already-resolved saved panels the user does have. The list view has no error
+ * channel, so a template failure degrades *only* this portion to an empty list;
+ * the saved panels are still returned (and rendered) by the caller.
+ */
+async function loadTemplateItems(repos: PanelsRepos): Promise<readonly PanelListItem[]> {
+  try {
+    const templateNames = await repos.listTemplates();
+    return await Promise.all(
+      templateNames.map(async (name): Promise<PanelListItem> => {
+        const template = await repos.loadTemplate(name);
+        return {
+          name,
+          description: template.description ?? "",
+          memberCount: template.experts.length,
+          source: "template",
+        };
+      }),
+    );
+  } catch {
+    return [];
+  }
+}
+
 export function createPanelsDataSource(repos: PanelsRepos): PanelsDataSource {
   return {
     loadList: async (): Promise<readonly PanelListItem[]> => {
@@ -100,18 +128,7 @@ export function createPanelsDataSource(repos: PanelsRepos): PanelsDataSource {
         }),
       );
 
-      const templateNames = await repos.listTemplates();
-      const templateItems = await Promise.all(
-        templateNames.map(async (name): Promise<PanelListItem> => {
-          const template = await repos.loadTemplate(name);
-          return {
-            name,
-            description: template.description ?? "",
-            memberCount: template.experts.length,
-            source: "template",
-          };
-        }),
-      );
+      const templateItems = await loadTemplateItems(repos);
 
       return [...savedItems, ...templateItems];
     },
