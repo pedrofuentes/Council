@@ -35,6 +35,47 @@ function shouldForcePlain(): boolean {
   return false;
 }
 
+/**
+ * Adapt a {@link Sink} into a `NodeJS.WriteStream` so it can back `InkRenderer`.
+ *
+ * `InkRenderer` (and Ink) emit frames through `stream.write` and read terminal
+ * capabilities (`columns`, `isTTY`, resize events) off the stream. We intercept
+ * `write` and forward it to the sink — so callers and tests capture the output
+ * and stay isolated from the real process streams — while delegating every
+ * other property to `base` (the real `process.stdout`/`process.stderr`) so
+ * interactive terminal features (width, resize reflow) are preserved.
+ */
+function sinkWriteStream(
+  sink: Sink,
+  base: NodeJS.WriteStream,
+  channel: "stdout" | "stderr",
+): NodeJS.WriteStream {
+  const write = (chunk: string | Uint8Array, ...rest: readonly unknown[]): boolean => {
+    const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    if (channel === "stderr" && sink.writeError !== undefined) {
+      sink.writeError(text);
+    } else {
+      sink.write(text);
+    }
+    const callback = rest.find(
+      (arg): arg is (error?: Error | null) => void => typeof arg === "function",
+    );
+    callback?.();
+    return true;
+  };
+  return new Proxy(base, {
+    get(target, property): unknown {
+      if (property === "write") {
+        return write;
+      }
+      const value: unknown = Reflect.get(target, property);
+      return typeof value === "function"
+        ? (value as (...args: readonly unknown[]) => unknown).bind(target)
+        : value;
+    },
+  });
+}
+
 export function selectRenderer(opts: SelectRendererOpts): Renderer {
   const showCost = opts.showCost ?? true;
 
@@ -55,6 +96,8 @@ export function selectRenderer(opts: SelectRendererOpts): Renderer {
         });
       }
       return new InkRenderer({
+        stdout: sinkWriteStream(opts.sink, process.stdout, "stdout"),
+        stderr: sinkWriteStream(opts.sink, process.stderr, "stderr"),
         isTTY: true,
         showCost,
         ...(opts.quiet !== undefined ? { quiet: opts.quiet } : {}),
