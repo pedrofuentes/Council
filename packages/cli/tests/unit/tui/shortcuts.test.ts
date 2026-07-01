@@ -130,6 +130,57 @@ describe("shortcutsForRoute", () => {
     expect(shortcutsForRoute("/chats")).toEqual([]);
   });
 
+  it("advertises the Actions menu (a) on the panel, expert, and session detail routes (#1752)", () => {
+    // discriminating oracle: assert the exact binding shape on all three detail
+    // screens so a partial (1-of-3) fix is caught.
+    expect(shortcutsForRoute("/panels/strategy")).toContainEqual({
+      keys: "a",
+      description: "Actions",
+    });
+    expect(shortcutsForRoute("/experts/cto")).toContainEqual({
+      keys: "a",
+      description: "Actions",
+    });
+    expect(shortcutsForRoute("/sessions/p1")).toContainEqual({
+      keys: "a",
+      description: "Actions",
+    });
+  });
+
+  it("does NOT add the Actions (a) binding to any non-detail route (#1752 inverse)", () => {
+    const nonDetailRoutes = [
+      "/",
+      "/onboarding",
+      "/panels",
+      "/panels/new",
+      "/panels/compose",
+      "/panels/x/members",
+      "/panels/x/delete",
+      "/convene/acme",
+      "/convene/acme/run",
+      "/experts",
+      "/experts/new",
+      "/experts/cto/edit",
+      "/experts/cto/delete",
+      "/experts/cto/docs",
+      "/experts/cto/train",
+      "/sessions/p1/conclude",
+      "/sessions/p1/export",
+      "/chat/expert/cto",
+      "/chat/panel/strategy",
+      "/settings",
+      "/sessions",
+      "/chats",
+    ];
+    for (const route of nonDetailRoutes) {
+      const bindings = shortcutsForRoute(route);
+      expect(
+        bindings.some((x) => x.keys === "a"),
+        `unexpected 'a' binding leaked onto non-detail route ${route}`,
+      ).toBe(false);
+    }
+  });
+
   it("keeps every binding's keys and description non-empty (mapping integrity)", () => {
     const routes = [
       "/",
