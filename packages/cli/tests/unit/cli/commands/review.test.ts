@@ -18,7 +18,8 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type * as TemplateLoaderModule from "../../../../src/core/template-loader.js";
 
 import { buildReviewCommand } from "../../../../src/cli/commands/review.js";
 import { CliUserError } from "../../../../src/cli/cli-user-error.js";
@@ -48,6 +49,11 @@ const SAMPLE_DIFF = [
 
 // The four built-in code-review experts (packages/cli/panels/code-review.yaml).
 const CODE_REVIEW_SLUGS = ["senior", "security", "perf", "maintainer"] as const;
+
+// Regex matching codepoints that toSingleLineDisplay must strip from any
+// single-line display context (ANSI/C1 controls, Bidi overrides, line seps).
+// eslint-disable-next-line no-control-regex
+const DANGEROUS_CODEPOINTS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
 
 describe("buildReviewCommand", () => {
   let testHome: string;
@@ -455,7 +461,7 @@ describe("buildReviewCommand", () => {
     // The malicious --base must be rejected with a clear CliUserError explaining
     // that --base must be a git ref, not an option starting with dash.
     expect(thrown).toBeInstanceOf(CliUserError);
-    expect(errText.toLowerCase()).toMatch(/--base.*ref|option|dash|-/);
+    expect(errText.toLowerCase()).toContain("--base argument must be a git ref");
   });
 
   it("rejects other dash-prefixed --base values (e.g., --ext-diff)", async () => {
@@ -469,17 +475,194 @@ describe("buildReviewCommand", () => {
 
     let thrown: unknown;
     try {
-      await cmd.parseAsync([
-        "node",
-        "council-review",
-        "--base",
-        "--ext-diff",
-        "--engine",
-        "mock",
-      ]);
+      await cmd.parseAsync(["node", "council-review", "--base", "--ext-diff", "--engine", "mock"]);
     } catch (err) {
       thrown = err;
     }
     expect(thrown).toBeInstanceOf(CliUserError);
+  });
+
+  // ---------------------------------------------------------------------------
+  // #1421 — regression: defaultGitDiff must pass --end-of-options to execFile
+  // ---------------------------------------------------------------------------
+  it("defaultGitDiff invokes execFile with ['diff', '--end-of-options', <base>] (defense-in-depth)", async () => {
+    // This test does NOT inject the gitDiff seam so defaultGitDiff runs, which
+    // calls execFile("git", ["diff", "--end-of-options", base], ...).
+    // If --end-of-options is removed from the src, capturedArgs[1] would be
+    // ["diff", "main"] and the assertion below would fail.
+    vi.resetModules();
+    const capturedCalls: { cmd: unknown; args: unknown }[] = [];
+    vi.doMock("node:child_process", () => ({
+      execFile: (...args: unknown[]) => {
+        capturedCalls.push({ cmd: args[0], args: args[1] });
+        const cb = args[args.length - 1] as (err: null, stdout: string, stderr: string) => void;
+        // Simulate async callback with the sample diff so the command succeeds.
+        setTimeout(() => cb(null, SAMPLE_DIFF, ""), 0);
+      },
+    }));
+
+    const { buildReviewCommand: build } = await import("../../../../src/cli/commands/review.js");
+
+    const cmd = build({
+      engineFactory: makeRecordingMockFactory().factory,
+      write: () => undefined,
+      writeError: () => undefined,
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-review",
+      "--base",
+      "main",
+      "--engine",
+      "mock",
+      "--max-rounds",
+      "1",
+      "--format",
+      "json",
+    ]);
+
+    expect(capturedCalls).toHaveLength(1);
+    expect(capturedCalls[0]?.cmd).toBe("git");
+    // The --end-of-options sentinel must be present so `main` cannot be
+    // misinterpreted as a git option even if the caller-side dash check were
+    // bypassed.
+    expect(capturedCalls[0]?.args).toEqual(["diff", "--end-of-options", "main"]);
+
+    vi.doUnmock("node:child_process");
+    vi.resetModules();
+  });
+
+  // ---------------------------------------------------------------------------
+  // #1484 — regression: review preamble sinks sanitize adversarial template
+  //         data (toSingleLineDisplay on template.name and e.displayName)
+  // ---------------------------------------------------------------------------
+  it("preamble sanitizes adversarial bytes in template.name (toSingleLineDisplay)", async () => {
+    // Adversarial template name containing ANSI CSI, C1 CSI (U+009B),
+    // CR/LF, Unicode line/paragraph separators, and Bidi override chars.
+    // If toSingleLineDisplay were removed from the preamble write, these bytes
+    // would appear raw in the captured output and the assertion below would fail.
+    const evilName = "code-review\x1B[2J\r\nINJECTED\u009B5m\u2028PARA\u202aRLO";
+
+    vi.resetModules();
+    vi.doMock("../../../../src/core/template-loader.js", async (importOriginal) => {
+      const actual = await importOriginal<typeof TemplateLoaderModule>();
+      return {
+        ...actual,
+        loadTemplate: async () =>
+          ({
+            name: evilName,
+            experts: [
+              {
+                slug: "reviewer",
+                displayName: "Reviewer",
+                role: "Code Reviewer",
+                expertise: {
+                  weightedEvidence: ["code quality"],
+                  referenceCases: [],
+                  notExpertIn: [],
+                },
+                epistemicStance: "Evidence-led",
+                kind: "generic" as const,
+              },
+            ],
+          }) satisfies TemplateLoaderModule.ResolvedPanelDefinition,
+      };
+    });
+
+    const { buildReviewCommand: build } = await import("../../../../src/cli/commands/review.js");
+    const diffPath = await writeDiffFile(SAMPLE_DIFF);
+    let preamble = "";
+    const cmd = build({
+      engineFactory: makeRecordingMockFactory().factory,
+      write: (s) => {
+        preamble += s;
+      },
+      writeError: () => undefined,
+    });
+    await cmd.parseAsync([
+      "node",
+      "council-review",
+      "--diff-file",
+      diffPath,
+      "--engine",
+      "mock",
+      "--max-rounds",
+      "1",
+    ]);
+
+    // The preamble header must be present and free of all dangerous codepoints.
+    // Using the plain renderer so preamble() is actually called (JSON renderer
+    // skips the preamble to keep the stream machine-parseable).
+    // Extract only the header line so the assertion regex (which includes \n)
+    // is checked on a single-line string — the renderer's own newlines are not
+    // part of the adversarial payload.
+    const headerLine = preamble.match(/# Code review —[^\n]*/)?.[0] ?? "";
+    expect(headerLine.length).toBeGreaterThan(0);
+    expect(headerLine).not.toMatch(DANGEROUS_CODEPOINTS);
+
+    vi.doUnmock("../../../../src/core/template-loader.js");
+    vi.resetModules();
+  });
+
+  it("preamble sanitizes adversarial bytes in expert displayName (toSingleLineDisplay)", async () => {
+    // Adversarial expert displayName with terminal-injection payloads.
+    // A reversion removing toSingleLineDisplay from the experts line would let
+    // these bytes reach the terminal and break the assertion below.
+    const evilDisplay = "Reviewer\x1B[31mRED\x1B[0m\r\nHIJACKED\u009B\u2029PARA";
+
+    vi.resetModules();
+    vi.doMock("../../../../src/core/template-loader.js", async (importOriginal) => {
+      const actual = await importOriginal<typeof TemplateLoaderModule>();
+      return {
+        ...actual,
+        loadTemplate: async () =>
+          ({
+            name: "code-review",
+            experts: [
+              {
+                slug: "evil-expert",
+                displayName: evilDisplay,
+                role: "Adversarial Reviewer",
+                expertise: { weightedEvidence: ["injection"], referenceCases: [], notExpertIn: [] },
+                epistemicStance: "Evidence-led",
+                kind: "generic" as const,
+              },
+            ],
+          }) satisfies TemplateLoaderModule.ResolvedPanelDefinition,
+      };
+    });
+
+    const { buildReviewCommand: build } = await import("../../../../src/cli/commands/review.js");
+    const diffPath = await writeDiffFile(SAMPLE_DIFF);
+    let preamble = "";
+    const cmd = build({
+      engineFactory: makeRecordingMockFactory().factory,
+      write: (s) => {
+        preamble += s;
+      },
+      writeError: () => undefined,
+    });
+    await cmd.parseAsync([
+      "node",
+      "council-review",
+      "--diff-file",
+      diffPath,
+      "--engine",
+      "mock",
+      "--max-rounds",
+      "1",
+    ]);
+
+    // "Experts:" line must be present and must not leak any control/injection chars.
+    // Plain renderer is used so the preamble() callback fires.
+    // Extract just the "Experts:" line so the regex (which includes \n) is applied
+    // to a single-line string and does not trip on the renderer's own newlines.
+    const expertsLine = preamble.match(/Experts:[^\n]*/)?.[0] ?? "";
+    expect(expertsLine.length).toBeGreaterThan(0);
+    expect(expertsLine).not.toMatch(DANGEROUS_CODEPOINTS);
+
+    vi.doUnmock("../../../../src/core/template-loader.js");
+    vi.resetModules();
   });
 });
