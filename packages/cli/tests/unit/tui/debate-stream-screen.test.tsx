@@ -507,6 +507,66 @@ describe("DebateStreamScreen — effect re-run restarts streaming", () => {
     // Resetting `startedRef` on cleanup must NOT itself kick off another run.
     expect(streamDebate).toHaveBeenCalledTimes(1);
   });
+
+  it("ignores a superseded run's late settlement (does not stomp the restarted run)", async () => {
+    // Regression for the #1677 restart fix. When a same-instance dependency
+    // re-run supersedes run #1, cleanup aborts run #1 but the fresh effect body
+    // resets `unmountedRef` to false. Run #1's aborted streamDebate still
+    // RESOLVES on a LATER microtask (convene.ts returns { debateId, reason:
+    // "aborted" } once the signal aborts). That late continuation must be a
+    // no-op: it must NOT force the freshly-started run #2 to "done" nor navigate
+    // it to run #1's session. `unmountedRef` alone cannot catch this — the
+    // continuation needs a per-run staleness (identity) guard.
+    const sinks: ((e: ConveneViewEvent) => void)[] = [];
+    type StreamResult = Awaited<ReturnType<ConveneDataSource["streamDebate"]>>;
+    let resolveRun1: (result: StreamResult) => void = () => undefined;
+    const streamDebate = vi.fn<
+      Parameters<ConveneDataSource["streamDebate"]>,
+      ReturnType<ConveneDataSource["streamDebate"]>
+    >(async (_panel, _topic, _options, onEvent) => {
+      sinks.push(onEvent);
+      if (sinks.length === 1) {
+        // Run #1: settle ON DEMAND — after the re-run has superseded it — with a
+        // real debateId + aborted reason (what an aborted debate resolves with).
+        return await new Promise<StreamResult>((resolve) => {
+          resolveRun1 = resolve;
+        });
+      }
+      // Run #2+: stay pending so the restarted run is genuinely live/streaming.
+      return await new Promise<StreamResult>(() => undefined);
+    });
+
+    const { lastFrame } = renderReRun({ estimateCost: estimateStub, streamDebate });
+
+    await flush();
+    expect(streamDebate).toHaveBeenCalledTimes(1);
+
+    // Same-instance dependency re-run (panel change): cleanup aborts run #1, then
+    // the effect re-runs and run #2 starts. `unmountedRef` ends up false again.
+    expect(navigateFn).toBeTypeOf("function");
+    navigateFn?.("/convene/beta/run", { state: { topic: "Roadmap" } });
+    await flush();
+    expect(streamDebate).toHaveBeenCalledTimes(2);
+
+    // Run #2 is genuinely live: its fresh sink drives the transcript.
+    sinks[1]?.({ kind: "panel", experts: ["Zed"] });
+    await flush();
+    expect(lastFrame() ?? "").toContain("Experts: Zed");
+
+    // Run #1 (superseded) settles LATE with a real debateId. Its continuation is
+    // guarded ONLY by `unmountedRef` today (now false), so before the staleness
+    // guard it runs setStatus("done") + navigate(/sessions/deb-run1) and stomps
+    // run #2. After the fix the continuation early-returns and this is a no-op.
+    resolveRun1({ debateId: "deb-run1", reason: "aborted" });
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    // The live screen must NOT be navigated to run #1's session detail.
+    expect(frame).not.toContain("SESSION deb-run1");
+    // Run #2 stays live and streaming — not silently marked done by run #1.
+    expect(frame).toContain("Experts: Zed");
+    expect(frame).toContain("Esc cancel");
+  });
 });
 
 // ---------------------------------------------------------------------------
