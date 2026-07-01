@@ -630,8 +630,8 @@ describe("council docs doctor", () => {
 
     // pending = failed (1) + needsReview (2) = 3
     expect(stdout).toMatch(/3 files pending review/i);
-    // A distinct AI-review breakdown line.
-    expect(stdout).toMatch(/2 files.*review|awaiting/i);
+    // A distinct AI-review breakdown line — count must be anchored next to "awaiting".
+    expect(stdout).toMatch(/2 files? .*awaiting/i);
   });
 
   it("shows a distinct encrypted/password-protected category when one encrypted file exists (F26)", async () => {
