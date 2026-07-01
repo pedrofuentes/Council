@@ -117,3 +117,64 @@ describe("PlainRenderer retry handling", () => {
     });
   });
 });
+
+/**
+ * Regression suite for GH-675: turn.retry terminal-injection sanitization.
+ *
+ * Anchored at the `sanitizeLine` retry path in PlainRenderer. Verifies that
+ * adversarial control/ANSI/bidi bytes embedded in a turn.retry reason are
+ * flattened to a single safe line before reaching the terminal.
+ */
+describe("GH-675: turn.retry sanitizeLine regression", () => {
+  it("flattens adversarial control/ANSI/bidi bytes in turn.retry reason to one safe line", async () => {
+    // Adversarial-byte oracle covering every byte class from the spec:
+    // ANSI CSI, NUL, BS, LF (embedded newline), TAB, C1, DEL,
+    // bidi overrides/isolates, CR, LINE SEPARATOR, PARAGRAPH SEPARATOR.
+    const adversarialReason =
+      "\u001b[31m" + // ANSI CSI  — red escape sequence
+      "visible" +
+      "\u0000" + // NUL        (C0 \x00)
+      "\u0008" + // BS         (C0 \x08)
+      "\n" + // LF         — would split to second line
+      "\t" + // TAB        (U+0009 — C0)
+      "\u0080" + // C1 byte    (U+0080)
+      "\u007f" + // DEL        (U+007F)
+      "\u202a" + // bidi LRE   (U+202A)
+      "\u202e" + // bidi RLO   (U+202E)
+      "\u2066" + // bidi LRI   (U+2066)
+      "\u2069" + // bidi PDI   (U+2069)
+      "\r" + // CR         — would overwrite line
+      "\u2028" + // LINE SEP   (U+2028)
+      "\u2029" + // PARA SEP   (U+2029)
+      "text";
+
+    const sink = new StringSink();
+    const renderer = new PlainRenderer(sink, { color: false });
+    await renderer.render(
+      events({
+        kind: "turn.retry",
+        expertSlug: "sec",
+        attempt: 1,
+        reason: adversarialReason,
+      }),
+    );
+
+    // Strip any residual ANSI (defensive — color: false disables chalk output).
+    const rendered = stripAnsi(sink.text);
+
+    // Renderer must emit exactly ONE line.
+    // trimEnd() drops the renderer's own trailing line-terminator so the
+    // "no embedded \n" check isn't tripped by the normal line ending.
+    expect(rendered.trimEnd()).not.toContain("\n");
+
+    // The line content (minus the renderer's trailing line-terminator) must be
+    // free of every control / ANSI / bidi byte class from the oracle.
+    // eslint-disable-next-line no-control-regex
+    const controlBytePattern = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
+    expect(rendered.trimEnd()).not.toMatch(controlBytePattern);
+
+    // Discriminating: visible ASCII text must survive sanitization intact.
+    expect(rendered).toContain("visible");
+    expect(rendered).toContain("text");
+  });
+});
