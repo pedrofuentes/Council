@@ -13,6 +13,23 @@ import { describe, expect, it } from "vitest";
 
 import { formatEngineError } from "../../src/cli/error-mapper.js";
 
+// Bytes spanning the terminal-escape-injection class enumerated in #1910:
+// an ANSI CSI colour sequence (ESC [ 31 m), a C1 CSI introducer (U+009B),
+// CR/LF, the Unicode line/paragraph separators (U+2028/U+2029) and a Bidi
+// override (U+202E). After single-line sanitization only "copilot bad"
+// survives — every control/separator/Bidi codepoint must be gone.
+const ADVERSARIAL_PROVIDER = "co\x1B[31mpilot\x9B\r\n\u2028\u2029\u202Ebad";
+
+// Control, DEL, C1, line/paragraph-separator and Bidi codepoints that must
+// never reach the terminal after sanitization (mirrors the sink guarantee).
+// eslint-disable-next-line no-control-regex
+const FORBIDDEN_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
+
+/** Return the hint portion — everything before the verbatim `Underlying:` echo. */
+function hintOf(rendered: string): string {
+  return rendered.split("\n\n  Underlying:")[0] ?? rendered;
+}
+
 describe("formatEngineError", () => {
   it("NOT_AUTHENTICATED → suggests `gh auth login`", () => {
     const err = new Error("[copilot] not authenticated");
@@ -191,5 +208,100 @@ describe("formatEngineError", () => {
   it("infers a network hint from a timeout message", () => {
     const out = formatEngineError(new Error("socket hang up: request timed out"));
     expect(out.toLowerCase()).toMatch(/network|connection/);
+  });
+
+  // --- Terminal-escape sanitization of the `provider` label (#1910) --------
+  // `formatEngineError` recovers `provider` from an untrusted Error `cause`
+  // chain and also accepts it on the structured EngineError shape, then
+  // interpolates it into the PROVIDER_ERROR stderr hint. Like the `model`
+  // field (#668), it MUST be run through the single-line sanitizer so a
+  // crafted provider can't smuggle ANSI/OSC escapes, C0/C1 controls, CR/LF,
+  // line/paragraph separators or Bidi overrides into the terminal.
+
+  it("sanitizes a provider recovered from the cause chain before the PROVIDER_ERROR hint (#1910)", () => {
+    const err = new Error("engine.start() failed", {
+      cause: {
+        code: "PROVIDER_ERROR",
+        provider: ADVERSARIAL_PROVIDER,
+        message: "provider blew up",
+      },
+    });
+    const hint = hintOf(formatEngineError(err));
+    expect(hint).not.toContain("\n");
+    expect(hint).not.toMatch(FORBIDDEN_CHARS);
+    // Printable letters survive the strip so the label stays informative.
+    expect(hint).toContain("copilot");
+  });
+
+  it("sanitizes a provider supplied on the structured EngineError before the PROVIDER_ERROR hint (#1910)", () => {
+    const hint = hintOf(
+      formatEngineError({
+        code: "PROVIDER_ERROR",
+        message: "503 from provider",
+        provider: ADVERSARIAL_PROVIDER,
+      }),
+    );
+    expect(hint).not.toContain("\n");
+    expect(hint).not.toMatch(FORBIDDEN_CHARS);
+    expect(hint).toContain("copilot");
+  });
+
+  // --- Throwing-getter safety across the cause chain (#1911) ---------------
+  // `formatEngineError` must ALWAYS return a string for stderr. An untrusted
+  // error whose `cause` (or a property on it) is an accessor that throws must
+  // not let the exception escape `findEngineErrorInCause` or its call site;
+  // the mapper degrades to the message-inferred / generic hint instead.
+
+  it("returns a mapping when a cause object's `code` getter throws (#1911)", () => {
+    const cause: Record<string, unknown> = {};
+    Object.defineProperty(cause, "code", {
+      enumerable: true,
+      get() {
+        throw new Error("boom: code getter");
+      },
+    });
+    const out = formatEngineError(new Error("cause code getter explodes", { cause }));
+    expect(out).toContain("Engine error.");
+    expect(out).toContain("cause code getter explodes");
+  });
+
+  it("returns a mapping when the top-level Error's `cause` getter throws (#1911)", () => {
+    const err = new Error("top-level cause getter explodes");
+    Object.defineProperty(err, "cause", {
+      configurable: true,
+      get() {
+        throw new Error("boom: top-level cause getter");
+      },
+    });
+    const out = formatEngineError(err);
+    expect(out).toContain("Engine error.");
+    expect(out).toContain("top-level cause getter explodes");
+  });
+
+  it("returns a mapping when a nested `cause` getter throws during traversal (#1911)", () => {
+    const inner: Record<string, unknown> = { message: "no code on this link" };
+    Object.defineProperty(inner, "cause", {
+      enumerable: true,
+      get() {
+        throw new Error("boom: nested cause getter");
+      },
+    });
+    const out = formatEngineError(new Error("nested cause getter explodes", { cause: inner }));
+    expect(out).toContain("Engine error.");
+    expect(out).toContain("nested cause getter explodes");
+  });
+
+  it("returns a mapping when a coded cause's `provider` getter throws (#1911)", () => {
+    const cause: Record<string, unknown> = { code: "PROVIDER_ERROR" };
+    Object.defineProperty(cause, "provider", {
+      enumerable: true,
+      get() {
+        throw new Error("boom: provider getter");
+      },
+    });
+    const out = formatEngineError(new Error("provider getter explodes", { cause }));
+    // Recovery must not throw even though `provider` is unreadable; the
+    // underlying message is always echoed verbatim after the hint.
+    expect(out).toContain("Underlying: provider getter explodes");
   });
 });
