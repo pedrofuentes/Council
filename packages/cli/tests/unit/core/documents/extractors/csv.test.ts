@@ -36,6 +36,11 @@ function ctx(
   };
 }
 
+/** Markdown table rows (header, separator, and data lines all start with "|"). */
+function tableRowLines(content: string): string[] {
+  return content.split("\n").filter((l) => l.startsWith("|"));
+}
+
 describe("csv extractor", () => {
   it("renders a simple CSV as a Markdown table", async () => {
     const { extractor } = await loadCsvExtractor(".csv");
@@ -147,5 +152,166 @@ describe("csv extractor", () => {
       const e = err as InstanceType<typeof errors.ExtractionError>;
       expect(e.kind).toBe("corrupt-document");
     }
+  });
+
+  // Regression: blank/whitespace lines produce a phantom 1-column [""] row
+  // from the parser. That must be skipped BEFORE the column-count check so a
+  // valid file with blank lines is not falsely rejected as corrupt-document.
+  // The genuine column-mismatch guard must stay intact (see the inverse test).
+  describe("blank-line handling (#1801)", () => {
+    const HEADER = "| name | age |";
+    const ALICE = "| Alice | 30 |";
+    const BOB = "| Bob | 25 |";
+
+    // No phantom empty row should ever be emitted into the Markdown table.
+    const PHANTOM_ROW = /^\|\s+\|$/m;
+
+    it("extracts a file with a trailing double newline (no corrupt-document throw)", async () => {
+      const { extractor } = await loadCsvExtractor(".csv");
+      const csv = "name,age\nAlice,30\n\n";
+      const out = await extractor(ctx(Buffer.from(csv, "utf-8")));
+      expect(out.content).toContain(HEADER);
+      expect(out.content).toContain(ALICE);
+      // header + separator + exactly one real data row.
+      expect(tableRowLines(out.content)).toHaveLength(3);
+      expect(out.content).not.toMatch(PHANTOM_ROW);
+      expect(out.wordCount).toBeGreaterThan(0);
+    });
+
+    it("extracts a file with multiple trailing blank lines", async () => {
+      const { extractor } = await loadCsvExtractor(".csv");
+      const csv = "name,age\nAlice,30\n\n\n";
+      const out = await extractor(ctx(Buffer.from(csv, "utf-8")));
+      expect(out.content).toContain(HEADER);
+      expect(out.content).toContain(ALICE);
+      expect(tableRowLines(out.content)).toHaveLength(3);
+      expect(out.content).not.toMatch(PHANTOM_ROW);
+    });
+
+    it("extracts a file with an interior blank line right after the header", async () => {
+      const { extractor } = await loadCsvExtractor(".csv");
+      const csv = "name,age\n\nAlice,30\n";
+      const out = await extractor(ctx(Buffer.from(csv, "utf-8")));
+      expect(out.content).toContain(HEADER);
+      expect(out.content).toContain(ALICE);
+      expect(tableRowLines(out.content)).toHaveLength(3);
+      expect(out.content).not.toMatch(PHANTOM_ROW);
+    });
+
+    it("extracts a file with a blank line between two data rows", async () => {
+      const { extractor } = await loadCsvExtractor(".csv");
+      const csv = "name,age\nAlice,30\n\nBob,25\n";
+      const out = await extractor(ctx(Buffer.from(csv, "utf-8")));
+      expect(out.content).toContain(HEADER);
+      expect(out.content).toContain(ALICE);
+      expect(out.content).toContain(BOB);
+      // header + separator + two real data rows (blank line dropped, not counted).
+      expect(tableRowLines(out.content)).toHaveLength(4);
+      expect(out.content).not.toMatch(PHANTOM_ROW);
+    });
+
+    it("extracts a file with a leading blank line (header is the first real row)", async () => {
+      const { extractor } = await loadCsvExtractor(".csv");
+      const csv = "\nname,age\nAlice,30\n";
+      const out = await extractor(ctx(Buffer.from(csv, "utf-8")));
+      expect(out.content).toContain(HEADER);
+      expect(out.content).toContain(ALICE);
+      expect(tableRowLines(out.content)).toHaveLength(3);
+      expect(out.content).not.toMatch(PHANTOM_ROW);
+    });
+
+    it("still extracts a file with a single trailing newline", async () => {
+      const { extractor } = await loadCsvExtractor(".csv");
+      const csv = "name,age\nAlice,30\n";
+      const out = await extractor(ctx(Buffer.from(csv, "utf-8")));
+      expect(out.content).toContain(HEADER);
+      expect(out.content).toContain(ALICE);
+      expect(tableRowLines(out.content)).toHaveLength(3);
+      expect(out.content).not.toMatch(PHANTOM_ROW);
+    });
+
+    it("skips a CRLF blank line (\\r\\n\\r\\n) without false corruption", async () => {
+      const { extractor } = await loadCsvExtractor(".csv");
+      const csv = "name,age\r\nAlice,30\r\n\r\n";
+      const out = await extractor(ctx(Buffer.from(csv, "utf-8")));
+      expect(out.content).toContain(HEADER);
+      expect(out.content).toContain(ALICE);
+      expect(tableRowLines(out.content)).toHaveLength(3);
+      expect(out.content).not.toMatch(PHANTOM_ROW);
+      expect(out.content).not.toContain("\r");
+    });
+
+    it("still throws corrupt-document for a genuine wrong-column row (guard preserved)", async () => {
+      const { extractor } = await loadCsvExtractor(".csv");
+      const errors = await import("../../../../../src/core/documents/extractors/errors.js");
+      // Real data row has 3 columns vs a 2-column header; trailing newline must
+      // NOT mask this genuine mismatch. This holds before AND after the fix.
+      const csv = "name,age\nAlice,30,extra\n";
+      await expect(extractor(ctx(Buffer.from(csv, "utf-8")))).rejects.toBeInstanceOf(
+        errors.ExtractionError,
+      );
+      try {
+        await extractor(ctx(Buffer.from(csv, "utf-8")));
+        throw new Error("should not reach");
+      } catch (err) {
+        expect(err).toBeInstanceOf(errors.ExtractionError);
+        const e = err as InstanceType<typeof errors.ExtractionError>;
+        expect(e.kind).toBe("corrupt-document");
+      }
+    });
+  });
+
+  // Regression (Sentinel sentinel-2026-07-01T15:45:53Z-bbf446a): in a
+  // SINGLE-column file a phantom [""] row is indistinguishable from a genuine
+  // empty value — a blank source line and an explicit RFC 4180 quoted "" field
+  // both parse to [""]. The blank-line skip must therefore be header-arity
+  // aware: it may only drop [""] rows when the header has >= 2 columns.
+  // A 1-column empty value is legitimate data and MUST be preserved, otherwise
+  // single-column files silently lose rows.
+  describe("single-column empty-value preservation (regression)", () => {
+    // An empty value renders as a bare "|  |" cell: the same shape the
+    // multi-column tests reject as a phantom row, but here it is real data.
+    const EMPTY_CELL = /^\|\s+\|$/m;
+
+    it("preserves an interior empty value in a single-column CSV", async () => {
+      const { extractor } = await loadCsvExtractor(".csv");
+      const csv = "id\n1\n\n3\n";
+      const out = await extractor(ctx(Buffer.from(csv, "utf-8")));
+      expect(out.content).toContain("| id |");
+      expect(out.content).toContain("| 1 |");
+      expect(out.content).toContain("| 3 |");
+      // header + separator + three data rows (1, empty, 3); the empty value
+      // survives rather than being dropped as a blank line.
+      expect(tableRowLines(out.content)).toHaveLength(5);
+      expect(out.content).toMatch(EMPTY_CELL);
+    });
+
+    it("preserves an explicit quoted-empty field in a single-column CSV", async () => {
+      const { extractor } = await loadCsvExtractor(".csv");
+      const csv = 'fruit\napple\n""\nbanana\n';
+      const out = await extractor(ctx(Buffer.from(csv, "utf-8")));
+      expect(out.content).toContain("| fruit |");
+      expect(out.content).toContain("| apple |");
+      expect(out.content).toContain("| banana |");
+      // header + separator + three data rows (apple, empty, banana): the RFC
+      // 4180 quoted-empty field is preserved, matching pre-fix behavior.
+      expect(tableRowLines(out.content)).toHaveLength(5);
+      expect(out.content).toMatch(EMPTY_CELL);
+    });
+  });
+
+  it("parses CRLF line endings identically to LF, with no stray carriage returns (#946)", async () => {
+    const { extractor } = await loadCsvExtractor(".csv");
+    const lfOut = await extractor(ctx(Buffer.from("name,age\nAlice,30\nBob,25\n", "utf-8")));
+    const crlfOut = await extractor(
+      ctx(Buffer.from("name,age\r\nAlice,30\r\nBob,25\r\n", "utf-8")),
+    );
+    // Line-ending flavor must not change the extracted rows/cells.
+    expect(crlfOut.content).toBe(lfOut.content);
+    expect(crlfOut.wordCount).toBe(lfOut.wordCount);
+    // No stray carriage returns should survive into the cell values.
+    expect(crlfOut.content).not.toContain("\r");
+    expect(crlfOut.content).toContain("| Alice | 30 |");
+    expect(crlfOut.content).toContain("| Bob | 25 |");
   });
 });
