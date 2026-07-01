@@ -8,7 +8,10 @@
  *
  * Malformed input is rejected with a `corrupt-document` ExtractionError:
  * unterminated quoted fields (mismatched quotes) and rows whose column
- * count differs from the header are not silently accepted.
+ * count differs from the header are not silently accepted. Blank lines
+ * (including CRLF `\r\n\r\n` gaps and leading/trailing newlines) are not
+ * malformed — they are skipped rather than treated as zero/one-column
+ * data rows, so a valid file containing blank lines is never rejected.
  *
  * Self-registers for `.csv` and `.tsv`.
  */
@@ -95,6 +98,20 @@ function countWords(text: string): number {
   return text.split(/\s+/).filter((t) => t.length > 0).length;
 }
 
+/**
+ * A blank line yields a phantom single-column row holding only an empty
+ * field: the delimiter parser has nothing to split, so it produces `[""]`
+ * (or `[]` defensively). Such a row is not real data and must be skipped
+ * before the column-count check, otherwise a valid file that merely
+ * contains blank lines (e.g. a trailing double newline, an interior blank
+ * line, or a CRLF `\r\n\r\n` gap) is falsely rejected as corrupt. Genuine
+ * multi-column rows always have `length >= 2`, so this never masks a real
+ * column-count mismatch.
+ */
+function isBlankRow(row: readonly string[]): boolean {
+  return row.length <= 1 && (row[0] ?? "") === "";
+}
+
 const csvExtractor: ContentExtractor = async (
   ctx: ExtractionContext,
 ): Promise<ExtractedContent> => {
@@ -103,7 +120,7 @@ const csvExtractor: ContentExtractor = async (
     return { content: "", wordCount: 0 };
   }
   const delimiter = ctx.extension.toLowerCase() === ".tsv" ? "\t" : ",";
-  const { rows, unterminatedQuote } = parseDelimited(raw, delimiter);
+  const { rows: parsedRows, unterminatedQuote } = parseDelimited(raw, delimiter);
   if (unterminatedQuote) {
     throw new ExtractionError({
       kind: "corrupt-document",
@@ -113,6 +130,7 @@ const csvExtractor: ContentExtractor = async (
         "Ensure every opening double-quote has a matching closing quote, then re-save the file.",
     });
   }
+  const rows = parsedRows.filter((row) => !isBlankRow(row));
   const header = rows[0];
   if (header !== undefined) {
     const expectedColumns = header.length;
