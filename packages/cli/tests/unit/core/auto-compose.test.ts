@@ -11,6 +11,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
+import { toSingleLineDisplay } from "../../../src/cli/strip-control-chars.js";
 import { DEFAULT_MODEL } from "../../../src/config/schema.js";
 import { autoComposePanel } from "../../../src/core/auto-compose.js";
 import { PanelDefinitionSchema } from "../../../src/core/template-loader.js";
@@ -882,11 +883,32 @@ describe("autoComposePanel", () => {
       await engine.start();
       const result = await autoComposePanel("Mock Panel Topic", engine);
 
-      // Fallback panel should have a valid structure
-      expect(result.name).toBeTruthy();
-      expect(result.experts).toHaveLength(3);
-      expect(result.experts.every((e) => e.slug && e.displayName && e.role)).toBe(true);
-      expect(result.experts.every((e) => e.expertise.weightedEvidence.length > 0)).toBe(true);
+      // #729: assert the exact deterministic contract, not just shape. A
+      // regression that changes the hardcoded fallback panel's name, slugs,
+      // roles, or expertise must fail this test — truthiness/shape checks let
+      // such regressions pass, defeating the "deterministic" guarantee.
+      expect(result.name).toBe("mock-panel");
+      expect(result.experts.map((e) => e.slug)).toEqual([
+        "mock-optimist",
+        "mock-skeptic",
+        "mock-pragmatist",
+      ]);
+      expect(result.experts.map((e) => e.displayName)).toEqual([
+        "Morgan Chen (Optimist)",
+        "Taylor Kim (Skeptic)",
+        "Jordan Lee (Pragmatist)",
+      ]);
+      expect(result.experts.map((e) => e.role)).toEqual([
+        "Identifies opportunities and positive outcomes",
+        "Challenges assumptions and identifies risks",
+        "Balances trade-offs and focuses on implementation feasibility",
+      ]);
+      // Spot-check a sample expertise field on the optimist expert.
+      expect(result.experts[0]?.expertise.weightedEvidence).toEqual([
+        "Growth metrics",
+        "User feedback",
+        "Market trends",
+      ]);
     });
 
     it("uses the configured defaultModel for all experts in the mock fallback panel", async () => {
@@ -966,8 +988,8 @@ describe("autoComposePanel", () => {
     });
   });
 
-  describe("retries recoverable engine errors (#260)", () => {
-    it("retries the composer send after a recoverable engine error, then succeeds", async () => {
+  describe("retries recoverable engine errors (#260) and reports retries/exhaustion (#1927)", () => {
+    it("retries the composer send after a recoverable engine error, then succeeds and logs the retry", async () => {
       const engine = new StubEngine({
         sendSequence: [
           { error: { code: "NETWORK", message: "connection reset", recoverable: true } },
@@ -975,26 +997,76 @@ describe("autoComposePanel", () => {
         ],
       });
       await engine.start();
-      const result = await autoComposePanel("topic", engine, { retryBackoffMs: [0] });
+
+      const warnings: string[] = [];
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+        warnings.push(args.map(String).join(" "));
+      });
+      let result;
+      try {
+        result = await autoComposePanel("topic", engine, { retryBackoffMs: [0] });
+      } finally {
+        warnSpy.mockRestore();
+      }
+
       expect(result.name).toBe("test-panel");
       // One failed attempt + one successful retry = two sends.
       expect(engine.sentPrompts).toHaveLength(2);
+      // #1927: the single recoverable retry is surfaced with the engine code,
+      // the attempt fraction (1/1), the backoff (0ms), and the error text —
+      // the only observability channel available for a Promise-returning API.
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain("NETWORK");
+      expect(warnings[0]).toMatch(/\b1\/1\b/);
+      expect(warnings[0]).toContain("0ms");
+      expect(warnings[0]).toContain("connection reset");
+      // A successful retry must NOT log an exhaustion line.
+      expect(warnings.some((w) => /exhausted/i.test(w))).toBe(false);
     });
 
-    it("retries up to the backoff length, then surfaces the final engine error", async () => {
+    it("logs each recoverable retry and the exhaustion, then throws with retry context", async () => {
       const rateLimited = {
         error: { code: "RATE_LIMITED" as const, message: "slow down", recoverable: true },
       };
       const engine = new StubEngine({ sendSequence: [rateLimited, rateLimited, rateLimited] });
       await engine.start();
-      await expect(autoComposePanel("topic", engine, { retryBackoffMs: [0, 0] })).rejects.toThrow(
-        /Auto-compose engine error \(RATE_LIMITED\)/,
-      );
+
+      const warnings: string[] = [];
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+        warnings.push(args.map(String).join(" "));
+      });
+      let thrown: unknown;
+      try {
+        await autoComposePanel("topic", engine, { retryBackoffMs: [0, 0] });
+      } catch (err) {
+        thrown = err;
+      } finally {
+        warnSpy.mockRestore();
+      }
+
       // Initial attempt + two retries (backoff length 2) = three sends.
       expect(engine.sentPrompts).toHaveLength(3);
+      expect(thrown).toBeInstanceOf(Error);
+      const message = (thrown as Error).message;
+      // #1927: the exhaustion error keeps the engine code/message AND now
+      // carries retry context, so triage can tell a transient-and-retried
+      // failure apart from an immediate fail-fast.
+      expect(message).toMatch(/Auto-compose engine error \(RATE_LIMITED\)/);
+      expect(message).toContain("slow down");
+      expect(message).toMatch(/exhausted after 2 retries/);
+      // Two retry logs (1/2, then 2/2) precede exactly one exhaustion log.
+      const retryLogs = warnings.filter((w) => /retrying/i.test(w));
+      expect(retryLogs).toHaveLength(2);
+      expect(retryLogs[0]).toMatch(/RATE_LIMITED/);
+      expect(retryLogs[0]).toMatch(/\b1\/2\b/);
+      expect(retryLogs[1]).toMatch(/\b2\/2\b/);
+      const exhaustionLogs = warnings.filter((w) => /exhausted/i.test(w));
+      expect(exhaustionLogs).toHaveLength(1);
+      expect(exhaustionLogs[0]).toMatch(/RATE_LIMITED/);
+      expect(exhaustionLogs[0]).toContain("slow down");
     });
 
-    it("does not retry a non-recoverable engine error", async () => {
+    it("does not retry, log, or add retry context for a non-recoverable engine error", async () => {
       const engine = new StubEngine({
         sendSequence: [
           { error: { code: "NOT_AUTHENTICATED", message: "no credentials", recoverable: false } },
@@ -1002,11 +1074,81 @@ describe("autoComposePanel", () => {
         ],
       });
       await engine.start();
-      await expect(autoComposePanel("topic", engine, { retryBackoffMs: [0, 0] })).rejects.toThrow(
-        /Auto-compose engine error \(NOT_AUTHENTICATED\)/,
-      );
+
+      const warnings: string[] = [];
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+        warnings.push(args.map(String).join(" "));
+      });
+      let thrown: unknown;
+      try {
+        await autoComposePanel("topic", engine, { retryBackoffMs: [0, 0] });
+      } catch (err) {
+        thrown = err;
+      } finally {
+        warnSpy.mockRestore();
+      }
+
       // Fail-fast: exactly one send, no retry.
       expect(engine.sentPrompts).toHaveLength(1);
+      expect(thrown).toBeInstanceOf(Error);
+      const message = (thrown as Error).message;
+      expect(message).toMatch(/Auto-compose engine error \(NOT_AUTHENTICATED\)/);
+      // Inverse invariant: a fail-fast error must NOT claim retries happened.
+      expect(message).not.toMatch(/exhausted|retry|retries/i);
+      // A non-recoverable failure emits no retry/exhaustion log.
+      expect(warnings).toHaveLength(0);
+    });
+
+    it("sanitizes adversarial control bytes from the exhausted-retry error and logs (single-line, control-free)", async () => {
+      // The untrusted engine error message is echoed into both the thrown
+      // error and the console.warn logs — a terminal sink. Adversarial bytes
+      // (TAB, C0/C1, DEL, bidi override, CR/LF, U+2028/U+2029) must be
+      // collapsed to a single control-free line via toSingleLineDisplay.
+      const adversarialMessage =
+        "rate\u0009limit\u0007\u0001\u009b\u007f\u202edrop\r\nline2\u2028line3\u2029end";
+      const rateLimited = {
+        error: { code: "RATE_LIMITED" as const, message: adversarialMessage, recoverable: true },
+      };
+      const engine = new StubEngine({ sendSequence: [rateLimited, rateLimited] });
+      await engine.start();
+
+      const warnings: string[] = [];
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+        warnings.push(args.map(String).join(" "));
+      });
+      let thrown: unknown;
+      try {
+        await autoComposePanel("topic", engine, { retryBackoffMs: [0] });
+      } catch (err) {
+        thrown = err;
+      } finally {
+        warnSpy.mockRestore();
+      }
+
+      // C0/C1/DEL/bidi and line/paragraph separators + TAB must be absent.
+      // Unicode property escapes carry no literal control chars, so they stay
+      // clear of the no-control-regex lint: Cc covers C0/C1/DEL, Cf covers the
+      // bidi overrides/isolates.
+      const controlChars = /[\p{Cc}\p{Cf}]/u;
+      const lineOrTab = /[\r\n\t\u2028\u2029]/;
+      const expectedSanitized = toSingleLineDisplay(adversarialMessage);
+
+      expect(thrown).toBeInstanceOf(Error);
+      const message = (thrown as Error).message;
+      expect(message).not.toMatch(controlChars);
+      expect(message).not.toMatch(lineOrTab);
+      expect(message).toMatch(/exhausted after 1 retry/);
+      // Exactly the toSingleLineDisplay form appears; the raw bytes do not.
+      expect(message).toContain(expectedSanitized);
+      expect(message).not.toContain(adversarialMessage);
+
+      // The retry log and the exhaustion log are held to the same contract.
+      expect(warnings.length).toBeGreaterThan(0);
+      for (const warning of warnings) {
+        expect(warning).not.toMatch(controlChars);
+        expect(warning).not.toMatch(lineOrTab);
+        expect(warning).toContain(expectedSanitized);
+      }
     });
   });
 
