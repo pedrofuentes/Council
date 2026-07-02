@@ -25,6 +25,7 @@
  */
 import { ulid } from "ulid";
 
+import { toSingleLineDisplay } from "../cli/strip-control-chars.js";
 import type { ExpertMemory } from "../core/prompt-builder.js";
 import { escapeFenceContent } from "../core/prompt-sanitize.js";
 import type { CouncilEngine, EngineEvent } from "../engine/index.js";
@@ -146,7 +147,9 @@ export interface ExtractMemoryOptions {
  * The send is bounded by a wall-clock timeout/abort budget (#275) so a
  * stalled or hung extractor cannot block the debate-complete hook
  * indefinitely. On timeout the in-flight request is aborted and whatever
- * partial content was collected is parsed best-effort.
+ * partial content was collected is parsed best-effort; the timeout is
+ * surfaced via `console.warn` (#2043) so a systematic stall is
+ * distinguishable from a genuinely-empty extraction.
  *
  * @param turns The expert's prior turn contents, oldest-first.
  * @param model The model identifier the extractor expert should use
@@ -220,7 +223,39 @@ export async function extractMemoryLLM(
     });
   }
 
+  // #2043: a timed-out extraction previously persisted EMPTY_MEMORY
+  // indistinguishably from a genuinely-empty one, hiding a stuck extractor
+  // from operators. Surface it — only the internal timeout controller's own
+  // signal aborting indicates a timeout (a caller cancellation aborts the
+  // merged signal, not this controller). The result is still handled exactly
+  // as before; this is observability only. Mirrors the summarizer sibling
+  // (#268).
+  if (timeoutController?.signal.aborted === true) {
+    warnExtractor(
+      `memory-extractor: extraction timed out after ${timeoutMs}ms; ` +
+        `returning best-effort (possibly empty) memory`,
+    );
+  }
+
   return parseExtractorJSON(collected);
+}
+
+/**
+ * Emit a best-effort memory-extractor warning (#2043). Mirrors the
+ * summarizer's warn helper (#268): the message is collapsed to a single
+ * sanitized line (`toSingleLineDisplay`, a display sink) so any embedded
+ * provider-controlled text can never inject terminal control sequences or
+ * forge log lines, and a throwing `console` is swallowed so observability
+ * never breaks the extractor's best-effort "never throws" contract nor
+ * aborts the parent debate-complete hook.
+ */
+function warnExtractor(message: string): void {
+  const safe = toSingleLineDisplay(message);
+  try {
+    console.warn(safe);
+  } catch {
+    /* observability is best-effort — a throwing console must not propagate */
+  }
 }
 
 /**
