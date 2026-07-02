@@ -22,6 +22,21 @@
 
 <!-- Add new decisions below this line, most recent first -->
 
+### ADR-030: `--format auto` resolves the renderer from TTY; explicit `plain`/`json` override it
+**Date**: 2026-07-02
+**Status**: Accepted
+**Context**: The streaming debate commands (`convene`, `resume`, `ask`, `review`) share one `--format auto|plain|json` flag (default `auto`; `RENDERER_FORMATS` in `packages/cli/src/cli/renderers/select.ts`). `auto` must give humans the rich Ink TUI in a terminal while staying safe for pipes, CI, logs, and accessibility tooling — where TUI cursor motion, resize reflow, and ANSI framing corrupt captured output. Two behaviors were encoded only in code comments and never documented for users: (1) how `auto` picks a concrete renderer, and (2) that `council resume` transcript replay silently coerces `auto`→`plain` (`resume.ts`: "auto degrades to plain — Ink would just render a static dump"). Issue #237 asked for both — plus the piped-output determinism guarantee — to be written down.
+**Decision**: `selectRenderer()` (`renderers/select.ts`) maps `--format` to a renderer as follows: `json`→`JsonRenderer` and `plain`→`PlainRenderer` **always**, regardless of TTY; `auto`→`InkRenderer` only when stdout is a TTY **and** no accessibility/CI override is active (`shouldForcePlain()`: `TERM=dumb`, `CI=true|1`, or `ACCESSIBILITY=1`), otherwise `PlainRenderer` with color disabled. Only `auto` consults `process.stdout.isTTY`; an explicit `--format plain|json` is never overridden by TTY detection, so piped/redirected output stays deterministic and `--format json` stays pure NDJSON (one event per line). `council resume <panel>` transcript replay treats `auto` as `plain` (`transcriptFormat = format === "json" ? "json" : "plain"`) because a completed transcript is a static dump the TUI cannot animate; `--format json` still yields NDJSON.
+**Alternatives considered**:
+- **Let `auto` pick Ink even for transcript replay** — rejected: Ink would render a one-shot static frame with no interactivity benefit while risking scrollback/ANSI artifacts in redirected transcripts.
+- **Make `plain`/`json` also consult TTY** — rejected: that reintroduces the non-determinism the explicit flags exist to remove; scripts and CI could silently get a different renderer.
+- **A separate `--tui`/`--no-tui` boolean** — rejected: a single tri-state `--format` is simpler and already aligns with the JSON output path.
+**Consequences**:
+- ✅ Users can rely on a documented contract: `auto` = TUI-on-TTY, while `plain`/`json` stay stable across terminals, pipes, and CI.
+- ✅ `--format json | jq` and redirected NDJSON stay parseable; CI (`CI=true`) and `TERM=dumb`/`ACCESSIBILITY=1` sessions transparently fall back to plain text.
+- ✅ `resume` transcript replay is predictable (plain unless `json` is requested). The `auto`→`plain` coercion is already exercised by `resume.test.ts` ("plain transcript: prints panel header, all turns in order, debate status"), which invokes `council resume <panel>` with the default `--format auto` and asserts plain-text transcript output rather than the Ink TUI.
+- ⚠️ The `auto`→`plain` transcript coercion is intentional; "fixing" resume to honor Ink for replay would regress this decision.
+
 ### ADR-029: Enforce `maxWordsPerResponse` as a soft per-turn prompt nudge
 **Date**: 2026-06-21
 **Status**: Accepted
