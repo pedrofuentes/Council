@@ -13,9 +13,7 @@ import type { ContentExtractor } from "../../../../../src/core/documents/extract
 async function loadRtfExtractor(): Promise<{ extractor: ContentExtractor }> {
   vi.resetModules();
   await import("../../../../../src/core/documents/extractors/rtf.js");
-  const registry = await import(
-    "../../../../../src/core/documents/extractors/registry.js"
-  );
+  const registry = await import("../../../../../src/core/documents/extractors/registry.js");
   const extractor = await registry.getExtractor(".rtf");
   return { extractor };
 }
@@ -48,9 +46,12 @@ describe("rtf extractor", () => {
     const rtf =
       "{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0 Arial;}}\\b bold\\b0  and \\i italic\\i0  text}";
     const out = await extractor(ctx(Buffer.from(rtf, "utf-8")));
-    expect(out.content).toContain("bold");
-    expect(out.content).toContain("italic");
-    expect(out.content).toContain("text");
+    // Exact output: {\fonttbl{\f0 Arial;}} is not a {\*\...} destination
+    // group, so "Arial;" survives brace-stripping. Assert the full string
+    // so any future group-content leak (e.g. "fonttbl" appearing literally,
+    // or additional group text) causes an immediate failure (#945).
+    expect(out.content).toBe("Arial;bold and italic text");
+    expect(out.content).not.toContain("fonttbl");
     expect(out.content).not.toContain("\\");
     expect(out.content).not.toContain("{");
     expect(out.content).not.toContain("}");
@@ -72,8 +73,7 @@ describe("rtf extractor", () => {
 
   it("strips destination groups like {\\*\\generator ...}", async () => {
     const { extractor } = await loadRtfExtractor();
-    const rtf =
-      "{\\rtf1\\ansi{\\*\\generator Riched20 10.0;}Visible text}";
+    const rtf = "{\\rtf1\\ansi{\\*\\generator Riched20 10.0;}Visible text}";
     const out = await extractor(ctx(Buffer.from(rtf, "utf-8")));
     expect(out.content).toContain("Visible text");
     expect(out.content).not.toContain("Riched20");
@@ -93,19 +93,27 @@ describe("rtf extractor", () => {
 
   it("strips deeply nested destination groups in linear time", async () => {
     const { extractor } = await loadRtfExtractor();
-    // Construct a deeply nested chain of destination groups. The naive
-    // peel-loop implementation is O(n²) in nesting depth; this guards
-    // against regressions by setting a generous but bounded budget.
-    const depth = 2000;
+    // depth=50000 (~350 KB input) discriminates O(n) from O(n²):
+    //   O(n)  impl: single pass through ~350 KB → < ~100 ms on any hardware.
+    //   O(n²) impl: ~50 000 peel iterations × ~350 KB each → ~17 500 ms
+    //               (extrapolated from 28 ms measured at depth=2 000),
+    //               which far exceeds the 5 000 ms budget (#942/#943).
+    // Using performance.now() for sub-millisecond resolution; the 5 000 ms
+    // ceiling gives >50× headroom for O(n) even under heavy CI load, while
+    // an O(n²) regression would overshoot by ~3.5×.
+    const depth = 50000;
     const open = "{\\*\\x ".repeat(depth);
     const close = "}".repeat(depth);
     const rtf = `{\\rtf1\\ansi${open}hidden${close}Visible}`;
-    const start = Date.now();
+    const start = performance.now();
     const out = await extractor(ctx(Buffer.from(rtf, "utf-8")));
-    const elapsedMs = Date.now() - start;
+    const elapsedMs = performance.now() - start;
     expect(out.content).toContain("Visible");
     expect(out.content).not.toContain("hidden");
-    expect(elapsedMs).toBeLessThan(2000);
+    expect(
+      elapsedMs,
+      `elapsed ${elapsedMs.toFixed(1)} ms exceeds 5000 ms budget — likely O(n²) regression`,
+    ).toBeLessThan(5000);
   });
 
   it("returns empty content for an RTF document with no text", async () => {
@@ -118,13 +126,9 @@ describe("rtf extractor", () => {
 
   it("throws ExtractionError(corrupt-document) when buffer is not RTF", async () => {
     const { extractor } = await loadRtfExtractor();
-    const errors = await import(
-      "../../../../../src/core/documents/extractors/errors.js"
-    );
+    const errors = await import("../../../../../src/core/documents/extractors/errors.js");
     const notRtf = Buffer.from("This is not an RTF file.", "utf-8");
-    await expect(extractor(ctx(notRtf))).rejects.toBeInstanceOf(
-      errors.ExtractionError,
-    );
+    await expect(extractor(ctx(notRtf))).rejects.toBeInstanceOf(errors.ExtractionError);
     try {
       await extractor(ctx(notRtf));
       throw new Error("should not reach");
@@ -138,9 +142,7 @@ describe("rtf extractor", () => {
   it("registers itself for .rtf", async () => {
     vi.resetModules();
     await import("../../../../../src/core/documents/extractors/rtf.js");
-    const registry = await import(
-      "../../../../../src/core/documents/extractors/registry.js"
-    );
+    const registry = await import("../../../../../src/core/documents/extractors/registry.js");
     const ex = await registry.getExtractor(".rtf");
     expect(ex).toBeDefined();
   });
