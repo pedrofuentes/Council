@@ -771,7 +771,7 @@ function buildSaveCommand(write: Writer, writeError: Writer): Command {
           if (stored.kind === "invalid") {
             writeError(
               `Session "${toSingleLineDisplay(sessionName)}" has a stored panel definition that is invalid or ` +
-                `corrupt and cannot be promoted: ${stored.message}\n`,
+                `corrupt and cannot be promoted: ${toSingleLineDisplay(stored.message)}\n`,
             );
             throw new CliUserError(
               `panel save: session "${sessionName}" has an invalid stored panel definition.`,
