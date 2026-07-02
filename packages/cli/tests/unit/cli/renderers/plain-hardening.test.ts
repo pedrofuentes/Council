@@ -1,7 +1,7 @@
 /**
  * Hardening tests for the Plain renderer.
  *
- * Covers two backlog findings:
+ * Covers three backlog findings:
  *   - #1917 (security, dim A1): the LLM-sourced expert `displayName` is
  *     attacker-controllable in auto-composed panels. It MUST be sanitized
  *     before it reaches the terminal in BOTH header sinks (`turn.start` and
@@ -11,6 +11,11 @@
  *     closes early (`council … | head`), writes throw EPIPE. The renderer must
  *     treat that as a graceful shutdown instead of crashing with an unhandled
  *     error.
+ *   - #1960 (test-coverage gap, dim D): the non-EPIPE re-throw branch inside
+ *     the private `writeError()` helper (`plain.ts:200`) was only exercised
+ *     via `write()`, never via `writeError()` itself (reached from the
+ *     `error` event at `plain.ts:119`). Adds a discriminating test for that
+ *     branch plus its EPIPE-swallowed inverse.
  *
  * RED at the test-only commit: `plain.ts` passes the raw `displayName` to
  * `formatExpertPrefix` and has no EPIPE guard, so these assertions fail.
@@ -181,5 +186,53 @@ describe("PlainRenderer — EPIPE handling (#85)", () => {
         }),
       ),
     ).rejects.toThrow("disk full");
+  });
+});
+
+describe("PlainRenderer — writeError non-EPIPE re-throw (#1960)", () => {
+  it("re-throws a non-EPIPE error raised by writeError on the error-event path", async () => {
+    const failingErrorSink: Sink = {
+      write: () => undefined,
+      writeError() {
+        throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+      },
+    };
+    const renderer = new PlainRenderer(failingErrorSink, { color: false });
+
+    const renderPromise = renderer.render(
+      events({ kind: "error", expertSlug: "cto", message: "boom", recoverable: false }),
+    );
+
+    // Discriminating oracle: assert the specific re-thrown error (message AND
+    // code), not a bare `toThrow()` — proves plain.ts:200's `throw err;` ran,
+    // rather than some other unrelated rejection.
+    await expect(renderPromise).rejects.toThrow("permission denied");
+    await expect(renderPromise).rejects.toMatchObject({ code: "EACCES" });
+  });
+
+  it("swallows an EPIPE error raised by writeError on the error-event path instead of re-throwing", async () => {
+    let writeErrorCount = 0;
+    const brokenErrorSink: Sink = {
+      write: () => undefined,
+      writeError() {
+        writeErrorCount += 1;
+        throw Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+      },
+    };
+    const renderer = new PlainRenderer(brokenErrorSink, { color: false });
+
+    await expect(
+      renderer.render(
+        events(
+          { kind: "error", expertSlug: "cto", message: "boom", recoverable: false },
+          { kind: "error", expertSlug: "cto", message: "boom again", recoverable: false },
+        ),
+      ),
+    ).resolves.toBeUndefined();
+
+    // Clean shutdown on the writeError path too: after the first EPIPE the
+    // pipe is marked closed, so the second `error` event never reaches
+    // writeError() again.
+    expect(writeErrorCount).toBe(1);
   });
 });
