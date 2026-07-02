@@ -25,14 +25,14 @@ import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
 import { TurnRepository } from "../../../../src/memory/repositories/turns.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
 
-// Wrap fs.rename and fs.open so individual tests can force the atomic
-// rename-into-place — or the temp-file write/close — to fail deterministically;
-// every other fs call (and both of these by default) passes through to the real
-// implementation. ESM namespaces cannot be spied, so the failure must be
-// injected via vi.mock (see template-migration-fileexists.test).
+// Wrap fs.rename, fs.open and fs.rm so individual tests can force the atomic
+// rename-into-place, the temp-file write/close, or the temp-cleanup rm to fail
+// deterministically; every other fs call (and all three by default) passes
+// through to the real implementation. ESM namespaces cannot be spied, so the
+// failure must be injected via vi.mock (see template-migration-fileexists.test).
 vi.mock("node:fs/promises", async (importOriginal) => {
   const real = (await importOriginal()) as typeof fs;
-  return { ...real, rename: vi.fn(real.rename), open: vi.fn(real.open) };
+  return { ...real, rename: vi.fn(real.rename), open: vi.fn(real.open), rm: vi.fn(real.rm) };
 });
 
 const ESC = String.fromCharCode(0x1b);
@@ -1729,6 +1729,171 @@ describe("buildExportCommand", () => {
     expect(await fs.readFile(target, "utf-8")).toBe("FINAL CONTENT");
     const leftovers = (await fs.readdir(testHome)).filter((e) => e.includes(".tmp"));
     expect(leftovers).toEqual([]);
+  });
+
+  // #2100 (sentinel:important, security): the broadened temp-cleanup path
+  // swallowed a non-ENOENT `fs.rm` rejection with `.catch(() => undefined)`. On a
+  // compound fault (the write/rename fails AND the cleanup rm ITSELF fails with
+  // EACCES/EBUSY/EPERM/EIO) the 0o600 temp sibling — which may hold exported
+  // transcript content — survived on disk with NO diagnostic. The cleanup must
+  // now SURFACE a sanitized, single-line warning that names the leaked temp path
+  // and the cleanup errno, WITHOUT masking the primary write/rename error.
+  it("writeExportArtifact --force surfaces a diagnostic (and leaves the temp) when cleanup fs.rm fails with a non-ENOENT error, without masking the primary error (#2100)", async () => {
+    const actual = await vi.importActual<typeof fs>("node:fs/promises");
+    const target = path.join(testHome, "double-fault.md");
+    // Primary fault: the temp write rejects. The O_EXCL sibling is created for
+    // real, so a genuine 0o600 file is on disk to leak.
+    const writeErr = Object.assign(new Error("ENOSPC: no space left on device, write"), {
+      code: "ENOSPC",
+    });
+    // Second fault: the cleanup rm ITSELF rejects with a non-ENOENT error
+    // (e.g. a Windows AV/indexer lock on the temp sibling).
+    const rmErr = Object.assign(new Error("EACCES: permission denied, rm"), { code: "EACCES" });
+
+    vi.mocked(fs.open).mockImplementationOnce(async (...args: Parameters<typeof fs.open>) => {
+      const handle = await actual.open(...args);
+      return {
+        writeFile: async (): Promise<void> => {
+          throw writeErr;
+        },
+        close: (): Promise<void> => handle.close(),
+      } as unknown as fs.FileHandle;
+    });
+    vi.mocked(fs.rm).mockRejectedValueOnce(rmErr);
+
+    const warnings: string[] = [];
+    const writeError = (s: string): void => {
+      warnings.push(s);
+    };
+
+    let caught: unknown;
+    try {
+      await writeExportArtifact(target, "SENSITIVE CONTENT", true, writeError);
+    } catch (err) {
+      caught = err;
+    }
+
+    // The PRIMARY (write) error propagates — the cleanup failure must not mask it.
+    expect(caught).toBeInstanceOf(CliUserError);
+    const caughtErr = caught as CliUserError;
+    expect(caughtErr.cause).toBe(writeErr);
+    expect(caughtErr.message).toContain("ENOSPC");
+    expect(caughtErr.message).not.toContain("EACCES");
+
+    // A discriminating diagnostic names BOTH the leaked temp path and the cleanup
+    // errno so the stray sensitive file is observable.
+    const warned = warnings.join("");
+    expect(warned).toMatch(/temporary export file/i);
+    expect(warned).toContain("double-fault.md");
+    expect(warned).toContain(".tmp");
+    expect(warned).toContain("EACCES");
+
+    // The leak is real: the mocked rm did not remove the 0o600 temp sibling.
+    const leftovers = (await actual.readdir(testHome)).filter((e) => e.includes(".tmp"));
+    expect(leftovers.length).toBeGreaterThan(0);
+    // Tidy up so afterEach's recursive rm has less to do.
+    await Promise.all(leftovers.map((e) => actual.rm(path.join(testHome, e), { force: true })));
+  });
+
+  it("writeExportArtifact --force stays silent when cleanup fs.rm rejects with ENOENT (already gone), still propagating the primary error (#2100)", async () => {
+    const target = path.join(testHome, "enoent-cleanup.md");
+    const writeErr = Object.assign(new Error("ENOSPC: no space left on device, write"), {
+      code: "ENOSPC",
+    });
+    const enoent = Object.assign(new Error("ENOENT: no such file or directory, rm"), {
+      code: "ENOENT",
+    });
+
+    // Fake handle: no real temp lands (models "already gone"); the write rejects.
+    vi.mocked(fs.open).mockImplementationOnce(
+      async (): Promise<fs.FileHandle> =>
+        ({
+          writeFile: async (): Promise<void> => {
+            throw writeErr;
+          },
+          close: async (): Promise<void> => undefined,
+        }) as unknown as fs.FileHandle,
+    );
+    vi.mocked(fs.rm).mockRejectedValueOnce(enoent);
+
+    const warnings: string[] = [];
+    const writeError = (s: string): void => {
+      warnings.push(s);
+    };
+
+    let caught: unknown;
+    try {
+      await writeExportArtifact(target, "CONTENT", true, writeError);
+    } catch (err) {
+      caught = err;
+    }
+
+    // Primary error still propagates...
+    expect(caught).toBeInstanceOf(CliUserError);
+    expect((caught as CliUserError).cause).toBe(writeErr);
+    // ...but an ENOENT cleanup rejection is benign, so NO diagnostic is emitted.
+    expect(warnings.join("")).toBe("");
+  });
+
+  it.skipIf(WIN32)(
+    "writeExportArtifact --force strips terminal-control bytes out of the temp-cleanup diagnostic (#2100)",
+    async () => {
+      // The temp path derives from the (untrusted) --output basename. A crafted
+      // name embeds ESC/C1/bidi/zero-width bytes; the surfaced diagnostic must be
+      // a single control-free line so it cannot spoof the terminal. (Skipped on
+      // Windows, whose filenames cannot carry these bytes.)
+      const target = path.join(
+        testHome,
+        `adv${ESC}[31m${C1_CSI}${BIDI_OVERRIDE}report${ZERO_WIDTH_SPACE}.md`,
+      );
+      const writeErr = Object.assign(new Error("EIO: i/o error, write"), { code: "EIO" });
+      const rmErr = Object.assign(new Error("EBUSY: resource busy or locked, rm"), {
+        code: "EBUSY",
+      });
+
+      vi.mocked(fs.open).mockImplementationOnce(
+        async (): Promise<fs.FileHandle> =>
+          ({
+            writeFile: async (): Promise<void> => {
+              throw writeErr;
+            },
+            close: async (): Promise<void> => undefined,
+          }) as unknown as fs.FileHandle,
+      );
+      vi.mocked(fs.rm).mockRejectedValueOnce(rmErr);
+
+      const warnings: string[] = [];
+      const writeError = (s: string): void => {
+        warnings.push(s);
+      };
+
+      await expect(writeExportArtifact(target, "CONTENT", true, writeError)).rejects.toBeInstanceOf(
+        CliUserError,
+      );
+
+      // Trailing newline aside, the surfaced diagnostic is a single sanitized line
+      // that still names the errno (actionable) but carries no terminal-hostile byte.
+      const warnLine = warnings.join("").replace(/\n+$/, "");
+      expect(warnLine).toContain("EBUSY");
+      expectNoTerminalControls(warnLine);
+      expect(warnLine).not.toMatch(TERMINAL_CONTROL_BYTES);
+      expect(warnLine.split("\n")).toHaveLength(1);
+    },
+  );
+
+  it("writeExportArtifact --force emits no cleanup diagnostic on a successful export (#2100)", async () => {
+    // Inverse invariant: the success path never enters cleanup, so the diagnostic
+    // channel stays silent and the artifact is written normally.
+    const target = path.join(testHome, "success-no-warn.md");
+    const warnings: string[] = [];
+    const writeError = (s: string): void => {
+      warnings.push(s);
+    };
+
+    await writeExportArtifact(target, "FINAL CONTENT", true, writeError);
+
+    expect(await fs.readFile(target, "utf-8")).toBe("FINAL CONTENT");
+    expect(warnings.join("")).toBe("");
   });
 
   it("--format adr: marks a substantive completed debate as Accepted (#717)", async () => {
