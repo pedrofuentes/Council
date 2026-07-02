@@ -5,6 +5,11 @@
  * stdout buffer, then asserts on the latest frame.
  *
  * RED at this commit: src/cli/renderers/ink/InkRenderer.tsx does not exist.
+ *
+ * #714: Human participant color (HUMAN_COLOR / whiteBright / SGR 97) is
+ * verified end-to-end through the Ink renderer's ExpertCard call site.
+ * FORCE_COLOR=3 is set by tests/setup.ts so Ink emits SGR escapes even
+ * though ink-testing-library's stdout reports as a non-TTY.
  */
 import React from "react";
 import { describe, expect, it } from "vitest";
@@ -262,6 +267,85 @@ describe("DebateApp", () => {
     await flush();
     const frame = stripAnsi(ui.lastFrame() ?? "");
     expect(frame).toContain("[[You] [2] You]");
+    ui.unmount();
+  });
+
+  it("applies HUMAN_COLOR (whiteBright, SGR 97) to human turn header at ExpertCard call site (#714)", async () => {
+    // Verifies end-to-end: panel.assembled sets humanSlugs via
+    // participantKind:"human", and the ExpertCard component renders the slug
+    // with color="whiteBright" (SGR 97) — the reserved HUMAN_COLOR.
+    // FORCE_COLOR=3 (set in tests/setup.ts) ensures Ink emits ANSI codes.
+    const events = stream(
+      {
+        kind: "panel.assembled",
+        experts: [
+          { slug: "alice", displayName: "Alice", model: "gpt-5" },
+          { slug: "user", displayName: "You", model: "", participantKind: "human" },
+        ],
+      },
+      { kind: "round.start", round: 0 },
+      { kind: "turn.start", expertSlug: "user", round: 0, seq: 0, speakerKind: "human" },
+      { kind: "turn.delta", expertSlug: "user", text: "hi" },
+      { kind: "turn.end", expertSlug: "user", turnId: "t1", content: "hi" },
+    );
+    const ui = render(<DebateApp events={events} />);
+    await flush();
+    const raw = ui.lastFrame() ?? "";
+    // The raw frame must contain "[You]" (human label) with color codes.
+    expect(raw).toContain("[You]");
+    const youIdx = raw.indexOf("[You]");
+    // Collect all SGR parameter strings from sequences before "[You]".
+    // Handles both \u001b[97m (individual) and \u001b[1;97m (combined) forms.
+    const context = raw.slice(Math.max(0, youIdx - 120), youIdx + 5);
+    // eslint-disable-next-line no-control-regex
+    const sgrValues = [...context.matchAll(/\u001b\[([0-9;]+)m/g)].flatMap(
+      (m): readonly number[] => (m[1] ?? "").split(";").map(Number),
+    );
+    // SGR 97 = whiteBright = HUMAN_COLOR. A palette color here is a regression.
+    expect(sgrValues).toContain(97);
+    ui.unmount();
+  });
+
+  it("human turn header SGR differs from AI expert turn header SGR in Ink (#714)", async () => {
+    // Discriminating: if colorFor() lost humanSlugs awareness, both headers
+    // would share a palette color and this test would fail.
+    const events = stream(
+      {
+        kind: "panel.assembled",
+        experts: [
+          { slug: "alice", displayName: "Alice", model: "gpt-5" },
+          { slug: "user", displayName: "You", model: "", participantKind: "human" },
+        ],
+      },
+      { kind: "round.start", round: 0 },
+      { kind: "turn.start", expertSlug: "alice", round: 0, seq: 0 },
+      { kind: "turn.delta", expertSlug: "alice", text: "hello" },
+      { kind: "turn.end", expertSlug: "alice", turnId: "t1", content: "hello" },
+      { kind: "turn.start", expertSlug: "user", round: 0, seq: 1, speakerKind: "human" },
+      { kind: "turn.delta", expertSlug: "user", text: "hi" },
+      { kind: "turn.end", expertSlug: "user", turnId: "t2", content: "hi" },
+    );
+    const ui = render(<DebateApp events={events} />);
+    await flush();
+    const raw = ui.lastFrame() ?? "";
+
+    const youIdx = raw.indexOf("[You]");
+    const aliceIdx = raw.indexOf("Alice");
+    expect(youIdx).toBeGreaterThan(-1);
+    expect(aliceIdx).toBeGreaterThan(-1);
+
+    const sgrBefore = (idx: number): readonly number[] => {
+      const ctx = raw.slice(Math.max(0, idx - 120), idx + 5);
+      // eslint-disable-next-line no-control-regex
+      return [...ctx.matchAll(/\u001b\[([0-9;]+)m/g)].flatMap(
+        (m): readonly number[] => (m[1] ?? "").split(";").map(Number),
+      );
+    };
+
+    const humanSgr = sgrBefore(youIdx);
+    const aliceSgr = sgrBefore(aliceIdx);
+    expect(humanSgr).toContain(97); // whiteBright for human
+    expect(aliceSgr).not.toContain(97); // AI expert must NOT be whiteBright
     ui.unmount();
   });
 });
