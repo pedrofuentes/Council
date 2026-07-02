@@ -284,16 +284,22 @@ export async function writeExportArtifact(
       fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollow,
       0o600,
     );
+    // Guard every step between creating the O_EXCL temp and a successful rename:
+    // a rejected writeFile, close, or rename must not leak the partially-written
+    // temp sibling. On success the rename has consumed the temp, so skip the rm.
+    let renamed = false;
     try {
-      await handle.writeFile(contents, { encoding: "utf8" });
-    } finally {
-      await handle.close();
-    }
-    try {
+      try {
+        await handle.writeFile(contents, { encoding: "utf8" });
+      } finally {
+        await handle.close();
+      }
       await fs.rename(tempPath, resolvedPath);
-    } catch (err: unknown) {
-      await fs.rm(tempPath, { force: true }).catch(() => undefined);
-      throw err;
+      renamed = true;
+    } finally {
+      if (!renamed) {
+        await fs.rm(tempPath, { force: true }).catch(() => undefined);
+      }
     }
   } catch (err: unknown) {
     // The non-regular-file refusal is already a sanitized CliUserError — surface
