@@ -1320,6 +1320,129 @@ describe("buildExportCommand", () => {
     expect(captured).toContain("- **CTO**: Position stated for the record.");
   });
 
+  // #1884 (outline spoofing) — the Discussion "Full transcript" list renders each
+  // turn as a bullet whose extra lines are continuations. Backslash-escaping a
+  // leading marker is NOT sufficient on its own: once a blank line closes the
+  // bullet's paragraph, a continuation indented 4+ columns (four spaces, or a
+  // single tab — CommonMark expands tabs to 4-column stops) opens an INDENTED
+  // CODE block, and that code block even swallows the escaped marker as literal
+  // text. The renderer must therefore also STRIP leading indentation so no
+  // continuation line can open any block. Each `forbidden` pattern below is the
+  // exact structural form CommonMark parses as a block start (cross-checked with
+  // a CommonMark renderer), so its ABSENCE from the emitted Markdown proves the
+  // payload stays literal; `present` pins the neutralized/benign text that must
+  // survive. Patterns are anchored to a 0-3 space line start so they never match
+  // the Options/Decision blockquote (`> ...`) lines of the same turn.
+  interface AdrBlockInjectionCase {
+    readonly label: string;
+    readonly content: string;
+    readonly forbidden: readonly RegExp[];
+    readonly present: readonly string[];
+  }
+
+  const ADR_BLOCK_INJECTION_CASES: readonly AdrBlockInjectionCase[] = [
+    {
+      label: "ATX headings at every legal 0-3 space indent",
+      content: ["Weighing the tradeoffs.", "# ONE", " ## TWO", "  ### THREE", "   ###### SIX"].join(
+        "\n",
+      ),
+      forbidden: [/^ {0,3}#{1,6}\s+(?:ONE|TWO|THREE|SIX)\b/m],
+      present: ["Weighing the tradeoffs.", "\\# ONE", "\\## TWO", "\\### THREE", "\\###### SIX"],
+    },
+    {
+      label: "thematic breaks (---- / *** / ___)",
+      content: ["Weighing the tradeoffs.", "----", "***", "___"].join("\n"),
+      forbidden: [/^ {0,3}-{4,}\s*$/m, /^ {0,3}\*{3,}\s*$/m, /^ {0,3}_{3,}\s*$/m],
+      present: ["\\----", "\\***", "\\___"],
+    },
+    {
+      label: "fenced code (``` and ~~~)",
+      content: ["Weighing the tradeoffs.", "```js", "exfiltrate()", "```", "~~~", "x", "~~~"].join(
+        "\n",
+      ),
+      forbidden: [/^ {0,3}`{3,}/m, /^ {0,3}~{3,}/m],
+      present: ["\\```js", "\\~~~"],
+    },
+    {
+      label: "indented code via blank line + four spaces",
+      content: ["Weighing the tradeoffs.", "", "    exfiltrate('SP4')"].join("\n"),
+      forbidden: [/^ {4,}exfiltrate/m],
+      present: ["Weighing the tradeoffs.", "exfiltrate('SP4')"],
+    },
+    {
+      label: "indented code via blank line + a leading tab",
+      content: ["Weighing the tradeoffs.", "", "\texfiltrate('TAB')"].join("\n"),
+      forbidden: [/^ {0,3}\texfiltrate/m],
+      present: ["exfiltrate('TAB')"],
+    },
+    {
+      label: "indented code carrying heading text (blank line + four spaces + ##)",
+      content: ["Weighing the tradeoffs.", "", "    ## STILL-CODE"].join("\n"),
+      forbidden: [/^ {4,}\S.*STILL-CODE/m, /^ {0,3}#{1,6}\s+STILL-CODE/m],
+      present: ["STILL-CODE"],
+    },
+    {
+      label: "raw-HTML block starters (<h2>, <script>, <!--)",
+      content: [
+        "Weighing the tradeoffs.",
+        "<h2>HTML Injected</h2>",
+        "<script>evil()</script>",
+        "<!-- pwn -->",
+      ].join("\n"),
+      forbidden: [/^ {0,3}<h2>/m, /^ {0,3}<script>/m, /^ {0,3}<!--/m],
+      present: ["\\<h2>HTML Injected", "\\<script>evil", "\\<!-- pwn"],
+    },
+  ];
+
+  it.each(ADR_BLOCK_INJECTION_CASES)(
+    "--format adr keeps a Discussion continuation from opening a block: $label (#1884)",
+    async ({ content, forbidden, present }) => {
+      const seed = await seedPanelWithAdrInjectionContent(testHome, content);
+      let captured = "";
+      const cmd = buildExportCommand({
+        write: (s) => {
+          captured += s;
+        },
+      });
+      await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "adr"]);
+
+      for (const pattern of forbidden) {
+        expect(captured).not.toMatch(pattern);
+      }
+      for (const literal of present) {
+        expect(captured).toContain(literal);
+      }
+    },
+  );
+
+  it("--format adr leaves a benign multi-line Discussion turn unescaped and unindented (#1884)", async () => {
+    // Inverse/golden: normal prose (no leading whitespace, no block markers) must
+    // render exactly as before — continuations pinned at the 2-space list column
+    // as plain paragraph text, with no spurious backslash-escape or code indent.
+    const benign = [
+      "We should ship now.",
+      "",
+      "It lowers risk and gathers real feedback.",
+      "Ops can monitor the rollout.",
+    ].join("\n");
+    const seed = await seedPanelWithAdrInjectionContent(testHome, benign);
+    let captured = "";
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
+    await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "adr"]);
+
+    expect(captured).toContain("- **CTO**: We should ship now.");
+    expect(captured).toMatch(/^ {2}It lowers risk and gathers real feedback\.$/m);
+    expect(captured).toMatch(/^ {2}Ops can monitor the rollout\.$/m);
+    // No safe prose line was over-escaped or pushed to a code-forming indent.
+    expect(captured).not.toContain("\\It lowers");
+    expect(captured).not.toContain("\\Ops can");
+    expect(captured).not.toMatch(/^ {4,}(?:It lowers|Ops can)/m);
+  });
+
   it.skipIf(WIN32)(
     "resolveOutputPath rejects a relative --output whose parent symlink escapes the tree (#1885)",
     async () => {
