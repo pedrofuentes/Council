@@ -206,10 +206,35 @@ describe("AppShell", () => {
     const lines = frame.split("\n");
     // Frame must not exceed the terminal height
     expect(lines.length).toBeLessThanOrEqual(40);
+
+    // Isolate the nav region: drop the header (line 0) and footer (last
+    // line) so only the bordered nav+main pane rows remain.
+    const paneLines = lines.slice(1, lines.length - 1);
+    expect(paneLines.length).toBeGreaterThan(2);
+    const topBorderRow = paneLines[0] ?? "";
+    const bottomBorderRow = paneLines[paneLines.length - 1] ?? "";
+    const contentRows = paneLines.slice(1, paneLines.length - 1);
+
+    // The nav Box is fixed-width and non-shrinking (`width={layout.navWidth}`,
+    // `flexShrink={0}`), so the border between the nav and main panes must sit
+    // at the SAME column — navWidth - 1 — on every single pane row. Without
+    // the fixed width/flexShrink, the nav Box shrinks to fit its content
+    // instead (e.g. 20 cols instead of 24 for "● 💬 Conversations"), which
+    // moves this boundary left and fails every assertion below.
+    const boundaryColumn = layout.navWidth - 1;
+    expect(topBorderRow[boundaryColumn]).toBe("╮");
+    expect(bottomBorderRow[boundaryColumn]).toBe("╯");
+    for (const row of contentRows) {
+      expect(row[boundaryColumn]).toBe("│");
+    }
+
     // "Conversations" must appear on the same line as the emoji — not split
     const conversationsLine = lines.find((l) => l.includes("Conversations"));
     expect(conversationsLine).toBeDefined();
     expect(conversationsLine).toContain("💬");
+    // ...and it must fit entirely within the fixed nav column, left of the
+    // nav/main boundary — not merely somewhere on the same (possibly wider) line.
+    expect(conversationsLine?.indexOf("💬")).toBeLessThan(boundaryColumn);
     unmount();
   });
 });
