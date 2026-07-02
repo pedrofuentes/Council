@@ -183,10 +183,21 @@ describe("Structured debate — phase prompts", () => {
   });
 
   it("rebuttal prompt includes the other experts' opening AND cross-exam content", async () => {
-    const engine = await buildEngine({
-      "01HZ-cto": "CTO position.",
-      "01HZ-pm": "PM position.",
+    // Phase-distinct token for PM — mirrors the synthesis-rebuttal test
+    // pattern so we can assert the cross-exam fence AND its content are
+    // present in CTO's rebuttal prompt. Without this, a regression that
+    // dropped crossExamTurns from buildRebuttalPrompt would pass the
+    // weaker name/rebut-word assertions above.
+    const engine = new MockEngine({
+      responses: {
+        "01HZ-cto": "CTO_OPENING_TOKEN",
+        "01HZ-pm": "PM_CROSSEXAM_TOKEN",
+      },
     });
+    await engine.start();
+    await engine.addExpert(cto);
+    await engine.addExpert(pm);
+
     await collect(new Debate(engine, [cto, pm], STRUCTURED).run("Topic?"));
 
     // Sends 4 and 5 are the rebuttal phase.
@@ -197,6 +208,11 @@ describe("Structured debate — phase prompts", () => {
     expect(ctoRebuttal?.prompt ?? "").toContain("PM");
     // And explicitly use the word "rebut" or "rebuttal" to instruct the LLM.
     expect((ctoRebuttal?.prompt ?? "").toLowerCase()).toMatch(/rebut/);
+    // Cross-exam content must propagate into the rebuttal prompt as a
+    // phase-fenced block. buildRebuttalPrompt wraps each other-expert's
+    // cross-exam response in <from_expert name="…" phase="cross-exam">.
+    expect(ctoRebuttal?.prompt ?? "").toContain('<from_expert name="PM" phase="cross-exam">');
+    expect(ctoRebuttal?.prompt ?? "").toContain("PM_CROSSEXAM_TOKEN");
   });
 
   it("synthesis prompt instructs the expert to deliver a final position", async () => {
