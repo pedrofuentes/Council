@@ -60,6 +60,8 @@ const STRUCTURED: DebateConfig = {
 };
 
 const OPENING_MARKER = "(PM did not respond in the opening phase.)";
+const CROSS_EXAM_MARKER = "(PM did not respond in the cross-examination phase.)";
+const REBUTTAL_MARKER = "(PM did not respond in the rebuttal phase.)";
 
 async function collect(stream: AsyncIterable<DebateEvent>): Promise<DebateEvent[]> {
   const out: DebateEvent[] = [];
@@ -128,6 +130,92 @@ describe("Structured debate — failed turns are surfaced, not silently dropped 
     const ctoCross = promptsFor(engine, cto.id, "Cross-examination on:");
     expect(ctoCross).toHaveLength(1);
     expect(ctoCross[0]).toContain(OPENING_MARKER);
+  });
+
+  it("surfaces a cross-examination-phase failure as a placeholder in the rebuttal and synthesis prompts (#2065)", async () => {
+    // Panel order [cto, pm]. PM's opening (its 1st send) SUCCEEDS; its
+    // cross-examination send (2nd) fails with a NON-recoverable code (no
+    // retry) → #runTurn returns null for that phase only. Rebuttal (3rd)
+    // and synthesis (4th) succeed again, so this exercises ONLY the
+    // `crossExamTurns.push(marker)` branch at debate.ts:584 — the branch
+    // #2065 flagged as untested (all 5 pre-existing tests used
+    // `afterN: 0`, an opening-only failure).
+    const engine = new MockEngine({
+      responses: { "01HZ-cto": "CTO opening.", "01HZ-pm": "PM real content." },
+      failOnSend: {
+        expertId: "01HZ-pm",
+        afterN: 1,
+        failures: 1,
+        code: "MODEL_UNAVAILABLE",
+        message: "model down",
+      },
+    });
+    await engine.start();
+    await engine.addExpert(cto);
+    await engine.addExpert(pm);
+
+    await collect(new Debate(engine, [cto, pm], STRUCTURED).run("Ship the MVP?"));
+
+    // CTO's rebuttal prompt quotes PM's REAL opening (phase="opening")
+    // immediately followed by the cross-exam MARKER (phase="cross-exam"),
+    // not PM's real content — which was never produced for that phase.
+    // Anchoring on the exact `phase="cross-exam">\n<marker>` substring
+    // pins BOTH the marker CONTENT and its PHASE placement: a
+    // routing regression that pushes the marker to the wrong array
+    // (e.g. openingTurns or rebuttalTurns instead of crossExamTurns)
+    // removes this exact substring and fails the test (proven below by
+    // temporarily breaking the routing and observing the failure).
+    const ctoRebuttal = promptsFor(engine, cto.id, "Rebuttal on:");
+    expect(ctoRebuttal).toHaveLength(1);
+    expect(ctoRebuttal[0]).toContain('<from_expert name="PM" phase="opening">\nPM real content.');
+    expect(ctoRebuttal[0]).toContain(`phase="cross-exam">\n${CROSS_EXAM_MARKER}`);
+
+    // The gap must PROPAGATE to the synthesis phase too (crossExamTurns
+    // feeds every later phase, same as openingTurns).
+    const ctoSynth = promptsFor(engine, cto.id, "Synthesis and final position on:");
+    expect(ctoSynth).toHaveLength(1);
+    expect(ctoSynth[0]).toContain(`phase="cross-exam">\n${CROSS_EXAM_MARKER}`);
+  });
+
+  it("surfaces a rebuttal-phase failure as a placeholder in the synthesis prompt (#2065)", async () => {
+    // Panel order [cto, pm]. PM's opening (1st) and cross-examination
+    // (2nd) sends SUCCEED; its rebuttal send (3rd) fails with a
+    // NON-recoverable code (no retry). Synthesis (4th) succeeds again, so
+    // this exercises ONLY the `rebuttalTurns.push(marker)` branch at
+    // debate.ts:585 — the other branch #2065 flagged as untested.
+    // rebuttalTurns is consumed EXCLUSIVELY by buildSynthesisPrompt
+    // (never by buildRebuttalPrompt itself, since rebuttal turns are
+    // still being produced during that phase), so synthesis is the only
+    // place this marker can surface.
+    const engine = new MockEngine({
+      responses: { "01HZ-cto": "CTO opening.", "01HZ-pm": "PM real content." },
+      failOnSend: {
+        expertId: "01HZ-pm",
+        afterN: 2,
+        failures: 1,
+        code: "MODEL_UNAVAILABLE",
+        message: "model down",
+      },
+    });
+    await engine.start();
+    await engine.addExpert(cto);
+    await engine.addExpert(pm);
+
+    await collect(new Debate(engine, [cto, pm], STRUCTURED).run("Ship the MVP?"));
+
+    // Anchoring on `phase="rebuttal">\n<marker>` pins both the marker
+    // CONTENT and its PHASE placement: a routing regression that pushes
+    // the marker to the wrong array (e.g. crossExamTurns instead of
+    // rebuttalTurns) removes this exact substring and fails the test
+    // (proven below by temporarily breaking the routing and observing
+    // the failure).
+    const ctoSynth = promptsFor(engine, cto.id, "Synthesis and final position on:");
+    expect(ctoSynth).toHaveLength(1);
+    expect(ctoSynth[0]).toContain(`phase="rebuttal">\n${REBUTTAL_MARKER}`);
+    // PM's real cross-exam content DID succeed and must still be quoted
+    // (only the rebuttal branch failed) — guards against a regression
+    // that clobbers unrelated phases.
+    expect(ctoSynth[0]).toContain('<from_expert name="PM" phase="cross-exam">\nPM real content.');
   });
 
   it("does NOT surface a failure when a recoverable error is retried to success", async () => {
