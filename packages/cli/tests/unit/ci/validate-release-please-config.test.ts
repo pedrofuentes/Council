@@ -88,6 +88,22 @@ describe("validateReleasePleaseConfig", () => {
     expect(result.errors.some((e) => e.includes("release-type"))).toBe(true);
   });
 
+  it("rejects an invalid root-level release-type", () => {
+    const { config, manifest } = validPair();
+    (config as Record<string, unknown>)["release-type"] = "not-a-real-type";
+    const result = validateReleasePleaseConfig(config, manifest);
+    expect(result.ok).toBe(false);
+    expect(result.errors.some((e) => e.includes("Invalid root release-type"))).toBe(true);
+  });
+
+  it("accepts a valid root-level release-type", () => {
+    const { config, manifest } = validPair();
+    (config as Record<string, unknown>)["release-type"] = "node";
+    const result = validateReleasePleaseConfig(config, manifest);
+    expect(result.ok).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
   it("rejects an unknown root-level key (e.g. a v4-only / typo key)", () => {
     const { config, manifest } = validPair();
     (config as Record<string, unknown>)["release-typ"] = "node";
