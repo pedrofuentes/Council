@@ -3,11 +3,12 @@
  *
  * RED at this commit: new symbols/colors/functions do not exist yet.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Writable } from "node:stream";
 
 import { copyTemplateDb } from "../../helpers/template-db.js";
 
@@ -24,7 +25,6 @@ import {
   assignExpertColor,
   EXPERT_COLOR_PALETTE,
 } from "../../../src/cli/renderers/ink/colors.js";
-import { PlainRenderer } from "../../../src/cli/renderers/plain.js";
 import { buildDoctorCommand } from "../../../src/cli/commands/doctor.js";
 import { wrapLink } from "../../../src/cli/error-mapper.js";
 
@@ -89,20 +89,76 @@ describe("TUI-25: HUMAN_COLOR constant and assignExpertColor isHuman param", () 
 
 // --- TUI-26: InkRenderer accepts stdout/stderr for Sink testing ---
 describe("TUI-26: InkRenderer accepts stdout/stderr streams", () => {
-  it("InkRenderer fallback to PlainRenderer writes to provided stdout Sink", async () => {
-    let output = "";
-    const sink = {
-      write: (text: string) => { output += text; },
-      writeError: (_text: string) => { /* noop */ },
-    };
-    const renderer = new PlainRenderer(sink, { color: false });
+  afterEach(() => {
+    // Undo the scoped "ink" mock + fresh module registry from the test below
+    // so later dynamic imports (in this file or others) see the real "ink".
+    vi.doUnmock("ink");
+    vi.resetModules();
+  });
+
+  it("InkRenderer fallback (on ink init failure) writes to the InkRenderer-provided stdout/stderr Sink — not a directly-constructed PlainRenderer", async () => {
+    // Force ink's render() to throw synchronously, simulating a ConPTY/MinTTY
+    // initialization failure — the same trigger ink-fallback.test.ts uses for
+    // InkRenderer's A11Y-14 fallback-to-PlainRenderer path. Scoped via
+    // vi.doMock + resetModules (not a file-level vi.mock) so it doesn't
+    // affect this file's other, unrelated describe blocks.
+    vi.doMock("ink", () => ({
+      Box: "div",
+      Text: "span",
+      Static: (_props: { children: (item: unknown) => unknown; items: unknown[] }) => null,
+      render: () => {
+        throw new Error("ConPTY pseudo-console unavailable");
+      },
+    }));
+    vi.resetModules();
+
+    const { InkRenderer: FallbackInkRenderer } =
+      await import("../../../src/cli/renderers/ink/InkRenderer.js");
+
+    let stdoutOutput = "";
+    let stderrOutput = "";
+    const fakeStdout = new Writable({
+      write(chunk: Buffer, _enc: string, cb: (err?: Error | null) => void) {
+        stdoutOutput += chunk.toString();
+        cb();
+      },
+    }) as unknown as NodeJS.WriteStream;
+    Object.defineProperty(fakeStdout, "columns", { value: 80 });
+    const fakeStderr = new Writable({
+      write(chunk: Buffer, _enc: string, cb: (err?: Error | null) => void) {
+        stderrOutput += chunk.toString();
+        cb();
+      },
+    }) as unknown as NodeJS.WriteStream;
+
+    const renderer = new FallbackInkRenderer({
+      stdout: fakeStdout,
+      stderr: fakeStderr,
+      isTTY: true,
+    });
     const events = (async function* () {
-      yield { kind: "panel.assembled" as const, experts: [{ slug: "alice", displayName: "Alice", model: "gpt-5", participantKind: "ai" as const }] };
+      yield {
+        kind: "panel.assembled" as const,
+        experts: [
+          { slug: "alice", displayName: "Alice", model: "gpt-5", participantKind: "ai" as const },
+        ],
+      };
       yield { kind: "debate.end" as const, reason: "max_rounds" as const };
     })();
     await renderer.render(events);
-    expect(output).toContain("Alice");
-    expect(output).toContain("Debate complete");
+
+    // Discriminates the InkRenderer fallback path specifically: this warning
+    // is written ONLY from InkRenderer's catch block
+    // (src/cli/renderers/ink/InkRenderer.tsx) — a PlainRenderer instantiated
+    // directly (the bug this test used to have, per #715) never emits it, so
+    // this assertion fails if the test regresses to constructing
+    // PlainRenderer directly instead of driving it through InkRenderer.
+    expect(stderrOutput).toContain("[WARN]");
+    expect(stderrOutput).toContain("falling back to plain text");
+    // The fallback's PlainRenderer output must be routed through the SAME
+    // stdout stream the InkRenderer instance was constructed with.
+    expect(stdoutOutput).toContain("Alice");
+    expect(stdoutOutput).toContain("Debate complete");
   });
 });
 
