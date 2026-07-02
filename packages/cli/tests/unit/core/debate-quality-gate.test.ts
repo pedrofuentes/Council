@@ -487,4 +487,51 @@ describe("Debate quality gate — premium-request counting (#1513)", () => {
     // engine-error retry does NOT bump the premium counter.
     expect(finalPremiumRequests(events)).toBe(2);
   });
+
+  it("a non-recoverable regeneration-send failure is counted exactly once, and the original candidate is kept (#1528)", async () => {
+    // send #0 → SYCO1 (gate fails) → regenerate attempt 1.
+    // send #1 → PROVIDER_ERROR (non-recoverable) → #streamWithRetry stops
+    //           immediately (no engine-error retry, no further regeneration
+    //           attempts) even though maxRegenerations is 2.
+    // Two real engine.send calls total: original + the one failed
+    // regeneration. The failed regeneration is still a real premium-incurring
+    // send (#1513/#1528), so it must be billed exactly once: not dropped
+    // (which would under-report 1) and not double-counted (which would
+    // over-report 3+).
+    const engine = new ScriptedEngine({
+      responses: { [cto.id]: [SYCO1] },
+      failures: {
+        [cto.id]: [
+          null,
+          { code: "PROVIDER_ERROR", message: "provider exploded", recoverable: false },
+        ],
+      },
+    });
+    await engine.start();
+    await engine.addExpert(cto);
+
+    const config: DebateConfig = {
+      ...FREEFORM_1R,
+      qualityGate: { mode: "regenerate", maxRegenerations: 2 },
+    };
+    const events = await collect(new Debate(engine, [cto], config).run("topic"));
+
+    // Only two real sends were issued — the non-recoverable failure aborts
+    // the regeneration loop before a second attempt is made.
+    expect(engine.prompts.get(cto.id)).toHaveLength(2);
+    // The failed regeneration send is counted exactly once: original (1) +
+    // the failed regeneration (1) = 2.
+    expect(finalPremiumRequests(events)).toBe(2);
+
+    // The failure is buffered, not surfaced as a turn-level error, and the
+    // pre-regeneration (original) candidate is what gets accepted.
+    expect(events.some((e) => e.kind === "error")).toBe(false);
+    expect(turnEndContents(events)).toEqual([SYCO1]);
+
+    // Exactly one regeneration attempt was surfaced before the failure ends
+    // the loop and the last-known-good candidate is accepted.
+    const gates = gateEvents(events);
+    expect(gates.filter((g) => g.action === "regenerating")).toHaveLength(1);
+    expect(gates.filter((g) => g.action === "accepted_after_cap")).toHaveLength(1);
+  });
 });
