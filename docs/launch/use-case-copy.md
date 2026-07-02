@@ -185,7 +185,8 @@ You have internal documents—technical specs, prior postmortems, team decision 
 ### Example Prompt
 
 ```bash
-council convene --documents incident-2025-03-12.md,incident-2025-05-20.md \
+council panel docs link incident-review --path ./postmortems/
+council convene --panel incident-review \
 "We had another payment gateway outage today. Based on our previous incidents, \
 what pattern are we missing, and what should we change?"
 ```
@@ -213,7 +214,8 @@ Council assembles experts aware of your uploaded documents:
 ### Try It
 
 ```bash
-council convene --documents your-context.md "Your question here"
+council panel docs link your-panel --path ./your-docs/
+council convene --panel your-panel "Your question here"
 ```
 
 ---
