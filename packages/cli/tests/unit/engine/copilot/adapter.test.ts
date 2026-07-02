@@ -876,40 +876,45 @@ describe("CopilotEngine — listener cleanup (#479)", () => {
       { kind: "assistant.message_delta", data: { deltaContent: "response" } },
     ]);
 
-    // Spy on console.warn to capture diagnostic emissions
+    // Spy on console.warn to capture diagnostic emissions. Guarded in
+    // try/finally so a mid-test assertion failure can never leak the spy
+    // into sibling tests — console.warn is a module-global singleton and
+    // the package vitest config sets no restoreMocks safety net (#1969).
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
       // suppress noisy stderr in test output
     });
+    try {
+      const controller = new AbortController();
+      const stream = engine.send({
+        prompt: "test",
+        expertId: expertA.id,
+        signal: controller.signal,
+      });
 
-    const controller = new AbortController();
-    const stream = engine.send({
-      prompt: "test",
-      expertId: expertA.id,
-      signal: controller.signal,
-    });
-
-    const events: EngineEvent[] = [];
-    for await (const evt of stream) {
-      events.push(evt);
-      if (evt.kind === "message.delta") {
-        controller.abort();
+      const events: EngineEvent[] = [];
+      for await (const evt of stream) {
+        events.push(evt);
+        if (evt.kind === "message.delta") {
+          controller.abort();
+        }
       }
+
+      // The stream still terminates with ABORTED (existing behavior preserved)
+      const last = events[events.length - 1];
+      expect(last?.kind).toBe("error");
+      if (last?.kind === "error") {
+        expect(last.error.code).toBe("ABORTED");
+      }
+
+      // Core assertion: a diagnostic must be emitted when session.abort() rejects
+      expect(warnSpy).toHaveBeenCalled();
+      const joined = warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(joined).toMatch(/abort.*fail/i);
+
+      await engine.stop();
+    } finally {
+      warnSpy.mockRestore();
     }
-
-    // The stream still terminates with ABORTED (existing behavior preserved)
-    const last = events[events.length - 1];
-    expect(last?.kind).toBe("error");
-    if (last?.kind === "error") {
-      expect(last.error.code).toBe("ABORTED");
-    }
-
-    // Core assertion: a diagnostic must be emitted when session.abort() rejects
-    expect(warnSpy).toHaveBeenCalled();
-    const joined = warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
-    expect(joined).toMatch(/abort.*fail/i);
-
-    warnSpy.mockRestore();
-    await engine.stop();
   });
 });
 
