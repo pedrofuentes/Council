@@ -8,6 +8,8 @@
  *   - PanelRepository: create, findById, findAll, update, delete
  *   - ExpertRepository: create, findByPanelId, findById, update, delete; UNIQUE (panel_id, slug) enforced
  *   - TurnRepository: create, findByDebateId (ordered), search via FTS5
+ *   - turns_au/turns_ad triggers keep turns_fts in sync on UPDATE/DELETE (#71)
+ *   - Deleting a panel cascades through debates to turns, including turns_fts (#71)
  *
  * No native dependencies — runs against Node's built-in node:sqlite.
  *
@@ -1030,5 +1032,104 @@ describe("TurnRepository", () => {
       content: "Nothing about the search term here.",
     });
     expect(await turnRepo.search("kubernetes")).toEqual([]);
+  });
+
+  // -------- FTS5 turns_au / turns_ad triggers + deeper cascade (#71) --------
+
+  it("search() reflects an updated turn: new content matches, old content no longer does (turns_au trigger)", async () => {
+    const created = await turnRepo.create({
+      debateId,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId,
+      content: "Microservices architecture adds deployment overhead for small teams.",
+    });
+    expect(await turnRepo.search("microservices")).toHaveLength(1);
+
+    // TurnRepository exposes no update(); mutate the row directly the same
+    // way any future caller would, so the turns_au trigger is what's on test.
+    await db
+      .updateTable("turns")
+      .set({ content: "A modular monolith is the pragmatic choice for this team." })
+      .where("id", "=", created.id)
+      .execute();
+
+    // Discriminates turns_au: if the trigger didn't delete-then-reinsert the
+    // FTS row, the stale "microservices" index entry would still be joined
+    // to this (still-existing) turn and register a false-positive hit.
+    expect(await turnRepo.search("microservices")).toEqual([]);
+
+    // Discriminates turns_au from the other side: if the trigger never fired,
+    // "monolith" was never indexed and this would find nothing.
+    const hits = await turnRepo.search("monolith");
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.id).toBe(created.id);
+    expect(hits[0]?.content).toContain("monolith");
+  });
+
+  it("turns_ad trigger removes the row from the turns_fts index on delete", async () => {
+    const created = await turnRepo.create({
+      debateId,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId,
+      content: "Kubernetes orchestration reduces manual deployment toil.",
+    });
+    expect(await turnRepo.search("kubernetes")).toHaveLength(1);
+
+    await db.deleteFrom("turns").where("id", "=", created.id).execute();
+
+    // turnRepo.search() joins turns_fts back onto `turns`, so it would read
+    // zero hits here even if turns_ad never fired (the row is simply gone
+    // from `turns`, which alone empties the join). Query the FTS5 shadow
+    // index directly — bypassing that join — so a missing/broken turns_ad
+    // trigger (which would leave a stale rowid in the index) actually fails
+    // this assertion instead of being masked by the join.
+    const staleMatches = await sql<{ rowid: number }>`
+      SELECT rowid FROM turns_fts WHERE turns_fts MATCH ${"kubernetes"}
+    `.execute(db);
+    expect(staleMatches.rows).toEqual([]);
+
+    // The app-level surface should agree too.
+    expect(await turnRepo.search("kubernetes")).toEqual([]);
+  });
+
+  it("deleting a panel cascades through debates to turns and their turns_fts entries", async () => {
+    await turnRepo.create({
+      debateId,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId,
+      content: "Telemetry pipelines need an owner before rollout.",
+    });
+    expect(await turnRepo.search("telemetry")).toHaveLength(1);
+
+    await panelRepo.delete(panelId);
+
+    const remainingDebates = await db
+      .selectFrom("debates")
+      .selectAll()
+      .where("panel_id", "=", panelId)
+      .execute();
+    expect(remainingDebates).toEqual([]);
+
+    const remainingTurns = await db
+      .selectFrom("turns")
+      .selectAll()
+      .where("debate_id", "=", debateId)
+      .execute();
+    expect(remainingTurns).toEqual([]);
+
+    // Same technique as the turns_ad test above: query the FTS5 shadow index
+    // directly (not via turnRepo.search(), which joins away deleted turns
+    // regardless of trigger behavior) to confirm the cascade DELETE on
+    // `turns` actually fired turns_ad for every cascaded row.
+    const staleMatches = await sql<{ rowid: number }>`
+      SELECT rowid FROM turns_fts WHERE turns_fts MATCH ${"telemetry"}
+    `.execute(db);
+    expect(staleMatches.rows).toEqual([]);
   });
 });
