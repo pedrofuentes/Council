@@ -52,6 +52,8 @@ interface MockClientState {
   abortErrors: Map<string, Error>;
   /** Number of times the client's stop() was invoked (re-entrancy checks). */
   stopCalls: number;
+  /** Number of times the client's forceStop() (SIGKILL reap) was invoked (#1899). */
+  forceStopCalls: number;
   /** Error to throw on client.stop() (async rejection), if set. */
   clientStopError: Error | undefined;
   /** When true, listModels() never resolves — exercises discovery timeout. */
@@ -72,6 +74,7 @@ const mockState: MockClientState = {
   abortCalls: 0,
   abortErrors: new Map(),
   stopCalls: 0,
+  forceStopCalls: 0,
   clientStopError: undefined,
   listModelsHang: false,
 };
@@ -138,6 +141,10 @@ vi.mock("@github/copilot-sdk", () => {
       if (mockState.clientStopError) {
         throw mockState.clientStopError;
       }
+      mockState.stopped = true;
+    }
+    async forceStop(): Promise<void> {
+      mockState.forceStopCalls += 1;
       mockState.stopped = true;
     }
     async createSession(opts: {
@@ -215,6 +222,7 @@ function resetMockState(): void {
   mockState.abortCalls = 0;
   mockState.abortErrors.clear();
   mockState.stopCalls = 0;
+  mockState.forceStopCalls = 0;
   mockState.clientStopError = undefined;
   mockState.listModelsHang = false;
 }
@@ -1023,11 +1031,11 @@ describe("discoverAvailableModels — resilience (#719 #721 #741)", () => {
     }
   });
 
-  it("still tears the client down via stop() on timeout even though the raced SDK call is uncancellable (#1899)", async () => {
+  it("reaps the client via forceStop() (not graceful stop()) on timeout so a mid-handshake child can't leak (#1899)", async () => {
     // The withTimeout() race bounds the caller's wait, but the underlying SDK
-    // call keeps running (it cannot be cancelled). This pins the load-bearing
-    // cleanup contract the #1899 code comment documents: the `finally` MUST
-    // still invoke client.stop() so the client is torn down rather than leaked.
+    // call keeps running (it cannot be cancelled). A graceful stop() cannot
+    // reliably reap a subprocess still mid-handshake, so the `finally` MUST
+    // deterministically SIGKILL it via forceStop() rather than leak it (#1899).
     mockState.listModelsHang = true;
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
       /* suppress noisy stderr in test output */
@@ -1035,8 +1043,10 @@ describe("discoverAvailableModels — resilience (#719 #721 #741)", () => {
     try {
       const result = await discoverAvailableModels({ timeoutMs: 5 });
       expect(result.source).toBe("static");
-      // Discriminating: teardown ran despite the still-pending SDK call.
-      expect(mockState.stopCalls).toBe(1);
+      // Discriminating: the reap ran via forceStop(), and graceful stop() was
+      // NOT used on the timeout path (it can't reap a not-yet-ready child).
+      expect(mockState.forceStopCalls).toBe(1);
+      expect(mockState.stopCalls).toBe(0);
     } finally {
       warnSpy.mockRestore();
     }
