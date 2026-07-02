@@ -592,6 +592,9 @@ describe("formatScanSummary — AI fallback + needs-review (T-AIPIPE)", () => {
       .split("\n")
       .find((l) => l.includes("evil.xyz"));
     expect(reviewLine).toBeDefined();
-    expect(reviewLine).not.toContain(".xyz)\n");
+    // The newline inside the AI text must be collapsed to a space so the hint
+    // stays on ONE line — if sanitizeFormatHint regresses, reviewLine will
+    // end before ".xyz)" and this positive assertion will fail.
+    expect(reviewLine).toContain(".xyz)");
   });
 });
