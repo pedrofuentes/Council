@@ -513,6 +513,48 @@ describe("CopilotEngine — send-throw error classification (#59)", () => {
     expect(evt.error.code).toBe("RATE_LIMITED");
   });
 
+  // #1968: the #59 CONTEXT_OVERFLOW branch matches the bare substring "token
+  // limit", so a RECOVERABLE quota/rate error that merely MENTIONS a token
+  // limit (e.g. "quota exceeded: token limit per minute") was swallowed by
+  // CONTEXT_OVERFLOW (non-recoverable) and lost its retry — `isRecoverable()`
+  // is true only for RATE_LIMITED / NETWORK. When an explicit rate/quota signal
+  // co-occurs with "token limit", the error must classify as RATE_LIMITED.
+  it("maps a quota error that mentions 'token limit' to RATE_LIMITED, not CONTEXT_OVERFLOW (#1968)", async () => {
+    const evt = await terminalErrorFor(
+      new Error("Quota exceeded: token limit reached for this minute, retry after 30s"),
+    );
+    expect(evt.error.code).toBe("RATE_LIMITED");
+    expect(evt.recoverable).toBe(true);
+  });
+
+  it("maps a 429 rate-limit error that mentions 'token limit' to RATE_LIMITED (#1968)", async () => {
+    const evt = await terminalErrorFor(
+      new Error("429 Too Many Requests: token limit per minute exceeded"),
+    );
+    expect(evt.error.code).toBe("RATE_LIMITED");
+    expect(evt.recoverable).toBe(true);
+  });
+
+  // Inverse guard: a GENUINE context-window overflow carries a "context" signal
+  // and NO rate/quota signal, so it must STILL classify as CONTEXT_OVERFLOW —
+  // the #1968 disambiguation must not over-correct genuine overflows.
+  it("keeps a genuine context-window overflow as CONTEXT_OVERFLOW after the #1968 quota disambiguation", async () => {
+    const evt = await terminalErrorFor(
+      new Error("This model's maximum context length is 8192 tokens (context_length_exceeded)"),
+    );
+    expect(evt.error.code).toBe("CONTEXT_OVERFLOW");
+    expect(evt.recoverable).toBe(false);
+  });
+
+  // Scope anchor for #59: a BARE "token limit" with NO rate/quota signal is an
+  // ambiguous context overflow and MUST remain CONTEXT_OVERFLOW — the #1968 fix
+  // reroutes only when a rate/quota signal co-occurs.
+  it("keeps bare 'token limit' (no rate/quota signal) as CONTEXT_OVERFLOW (#1968 stays scoped to #59)", async () => {
+    const evt = await terminalErrorFor(new Error("the model's token limit was exceeded"));
+    expect(evt.error.code).toBe("CONTEXT_OVERFLOW");
+    expect(evt.recoverable).toBe(false);
+  });
+
   it("classifies an empty SDK error message as PROVIDER_ERROR and preserves the empty message", async () => {
     const thrown = new Error("");
     const evt = await terminalErrorFor(thrown);
