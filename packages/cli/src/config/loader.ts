@@ -293,17 +293,35 @@ async function acquireConfigLock(lockPath: string): Promise<LockMeta> {
 }
 
 /**
- * Release the config lock, but only if we still own it. We unlink solely when
- * the on-disk token VERIFIABLY matches ours. If the lock was reaped and
- * re-acquired by another process (different token), or its metadata is
- * missing / not-yet-flushed / unreadable (undefined, e.g. a successor that has
- * created its lock via `wx` but not yet written its metadata), we leave it
- * untouched: "cannot prove it is mine" must never be treated as "safe to
- * delete", or two processes could end up believing they hold the lock (A-B-A,
- * #1923). Such a lock is left for its real owner or the staleness reaper.
+ * Release the config lock, but only if we still own it. When the lock's on-disk
+ * metadata is READABLE, we unlink solely when its token VERIFIABLY matches ours:
+ * a token that is missing / not-yet-flushed / owned by a successor that reaped
+ * and re-acquired the lock (undefined or a different token) is left untouched,
+ * because "cannot prove it is mine" must never be treated as "safe to delete" or
+ * two processes could end up believing they hold the lock (A-B-A, #1923). Such a
+ * lock is left for its real owner or the staleness reaper.
+ *
+ * When the metadata read fails TRANSIENTLY (EIO/EACCES/EBUSY/EMFILE, e.g. fd
+ * exhaustion under load), we fall back to our in-memory ownership: we created
+ * this lock this session and, as a live same-host owner, no reaper can have
+ * handed it off (#742), so the lock we cannot read is still ours. Releasing it
+ * prevents a mere I/O blip from stranding our OWN lock and wedging every future
+ * writer (#2102) — a live same-host owner's lock is never age-reaped, so that
+ * wedge would otherwise persist. This fallback fires only when the read itself
+ * throws; a readable successor token still takes the mismatch branch above and
+ * is preserved. ENOENT is the exception: the lock is already gone, so there is
+ * nothing to release.
  */
 async function releaseConfigLock(lockPath: string, meta: LockMeta): Promise<void> {
-  const current = await readLockMeta(lockPath);
+  let raw: string;
+  try {
+    raw = await fs.readFile(lockPath, "utf-8");
+  } catch (err: unknown) {
+    if (isENOENT(err)) return;
+    await fs.unlink(lockPath).catch(() => undefined);
+    return;
+  }
+  const current = parseLockMeta(raw);
   if (current === undefined || current.token !== meta.token) return;
   await fs.unlink(lockPath).catch(() => undefined);
 }
@@ -357,7 +375,7 @@ async function reapIfStale(lockPath: string): Promise<boolean> {
 
 /**
  * Read and validate lock metadata. Returns undefined when the lock is missing,
- * empty (not yet flushed), or does not contain well-formed metadata.
+ * unreadable, empty (not yet flushed), or does not contain well-formed metadata.
  */
 async function readLockMeta(lockPath: string): Promise<LockMeta | undefined> {
   let raw: string;
@@ -366,7 +384,16 @@ async function readLockMeta(lockPath: string): Promise<LockMeta | undefined> {
   } catch {
     return undefined;
   }
+  return parseLockMeta(raw);
+}
 
+/**
+ * Parse validated lock metadata from raw lock-file contents. Returns undefined
+ * when the content is empty (not yet flushed) or is not well-formed metadata.
+ * Split out from {@link readLockMeta} so the release path can distinguish a
+ * transient read failure from unparseable content (#2102).
+ */
+function parseLockMeta(raw: string): LockMeta | undefined {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
