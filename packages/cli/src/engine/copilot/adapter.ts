@@ -584,16 +584,30 @@ export class CopilotEngine implements CouncilEngine {
  */
 function classifyError(message: string, cause?: unknown): EngineError {
   const lower = message.toLowerCase();
+  // An explicit rate/quota signal marks a RECOVERABLE throttle. Kept distinct
+  // from the generic "limit" substring so it can disambiguate the otherwise
+  // ambiguous "token limit" phrase in the CONTEXT_OVERFLOW branch below (#1968).
+  const hasRateOrQuotaSignal =
+    lower.includes("rate") || lower.includes("quota") || lower.includes("per minute");
   let code: EngineErrorCode;
   if (lower.includes("abort") || lower.includes("cancel")) {
     code = "ABORTED";
   } else if (lower.includes("auth") || lower.includes("unauthor") || lower.includes("login")) {
     code = "NOT_AUTHENTICATED";
-  } else if (lower.includes("context") || lower.includes("token limit")) {
+  } else if (
+    lower.includes("context") ||
+    (lower.includes("token limit") && !hasRateOrQuotaSignal)
+  ) {
     // Checked BEFORE RATE_LIMITED (#59): a context-overflow message such as
     // "token limit exceeded" also contains the substring "limit", so the
     // RATE_LIMITED branch below would otherwise shadow it and misclassify a
     // context overflow as a rate limit. Keep this branch above RATE_LIMITED.
+    //
+    // "token limit" is ambiguous (#1968): a recoverable quota/rate error
+    // ("quota exceeded: token limit per minute") also contains it and would be
+    // misrouted to the non-recoverable CONTEXT_OVERFLOW, losing its retry. So a
+    // "token limit" that co-occurs with an explicit rate/quota signal falls
+    // through to RATE_LIMITED; a bare "context" always denotes a real overflow.
     code = "CONTEXT_OVERFLOW";
   } else if (lower.includes("rate") || lower.includes("quota") || lower.includes("limit")) {
     code = "RATE_LIMITED";
