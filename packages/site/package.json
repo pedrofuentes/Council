@@ -30,7 +30,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@astrojs/starlight": "^0.40.0",
+    "@astrojs/starlight": "^0.41.2",
     "@council-ai/cli": "workspace:*",
     "astro": "^6.4.8"
   },
