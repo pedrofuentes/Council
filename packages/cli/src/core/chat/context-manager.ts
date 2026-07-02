@@ -111,10 +111,19 @@ function warnContextSummarizer(
   message: string,
 ): void {
   const safe = toSingleLineDisplay(message);
-  if (onWarning) {
-    onWarning(safe);
-  } else {
-    console.warn(safe);
+  // #1972: the sink is observability, never control flow. A throwing
+  // onWarning (or console.warn) MUST NOT propagate — summarization stays
+  // best-effort regardless of what the sink does (see the JSDoc contract
+  // above and ContextManagerConfig.onWarning).
+  try {
+    if (onWarning) {
+      onWarning(safe);
+    } else {
+      console.warn(safe);
+    }
+  } catch {
+    // Intentionally swallowed: a broken warning sink must never degrade
+    // the best-effort summarization path.
   }
 }
 
@@ -252,8 +261,15 @@ async function runSummarizer(
   } catch (err) {
     errored = true;
     // #645: a thrown abort is still an abort — keep it distinct from an
-    // unexpected exception.
-    if (timeoutSignal?.aborted || isAbortError(err)) {
+    // unexpected exception. #1970: a THROWN timeout must surface the
+    // timeout-specific message (matching the stream-event branch above),
+    // not the generic abort message — only a NON-timeout abort is generic.
+    if (timeoutSignal?.aborted) {
+      warnContextSummarizer(
+        onWarning,
+        `context-summarizer: summarization timed out after ${timeoutMs}ms; keeping the previous summary`,
+      );
+    } else if (isAbortError(err)) {
       warnContextSummarizer(
         onWarning,
         "context-summarizer: summarization aborted; keeping the previous summary",
