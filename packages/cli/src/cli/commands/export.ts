@@ -253,6 +253,7 @@ export async function writeExportArtifact(
   resolvedPath: string,
   contents: string,
   force: boolean,
+  writeError: Writer = defaultErrorWriter,
 ): Promise<void> {
   const noFollow = fsConstants.O_NOFOLLOW ?? 0;
 
@@ -308,7 +309,24 @@ export async function writeExportArtifact(
       renamed = true;
     } finally {
       if (!renamed) {
-        await fs.rm(tempPath, { force: true }).catch(() => undefined);
+        // Best-effort remove the 0o600 temp sibling so a failed write/close/
+        // rename cannot leave partially-written transcript content on disk. That
+        // primary failure is what must propagate, so this cleanup NEVER re-throws
+        // (a thrown rm rejection would mask the original error). `force: true`
+        // already ignores ENOENT ("already gone"); the guard below is
+        // belt-and-suspenders for an edge/injected ENOENT. Any OTHER rejection
+        // (EACCES/EBUSY/EPERM under a Windows AV/indexer lock, EIO on a network/
+        // removable FS) means the temp survived — surface a sanitized, single-
+        // line diagnostic so the stray sensitive file is observable rather than
+        // silently swallowed (#2100).
+        await fs.rm(tempPath, { force: true }).catch((rmErr: unknown) => {
+          if (isErrnoException(rmErr) && rmErr.code === "ENOENT") {
+            return;
+          }
+          writeError(
+            `!! Failed to remove temporary export file '${sanitizeExportLine(tempPath)}' after a failed write (${errnoLabel(rmErr)}); it may still contain exported content and require manual cleanup.\n`,
+          );
+        });
       }
     }
   } catch (err: unknown) {
@@ -400,7 +418,7 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
 
         if (opts.output !== undefined) {
           const resolvedOutput = await resolveOutputPath(opts.output, opts.force === true);
-          await writeExportArtifact(resolvedOutput, rendered, opts.force === true);
+          await writeExportArtifact(resolvedOutput, rendered, opts.force === true, writeError);
           writeError(`Wrote ${opts.format} export to ${sanitizeExportLine(opts.output)}\n`);
           if (opts.format !== "json") {
             const safeResolvedName = sanitizeExportLine(resolvedName);
