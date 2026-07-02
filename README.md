@@ -90,8 +90,7 @@ ChatGPT gives you **one perspective**. Council gives you **structured deliberati
 ```bash
 $ council convene "Should we build our own analytics or buy a vendor solution?"
 
-🏛️ Auto-composing expert panel...
-✓ Panel assembled: 3 experts
+🏛️  Panel assembled:
   • [1] Priya Mehta (CTO) (claude-sonnet-4.5)
   • [2] James Whitfield (CFO) (claude-sonnet-4.5)
   • [3] Lisa Park (VP Product) (claude-sonnet-4.5)
@@ -391,6 +390,26 @@ council panel docs link <name> --path <folder> [--yes]     # link an external fo
 council panel docs unlink <name> --path <folder>           # remove a linked folder + its FTS entries
 ```
 
+### Output format and TTY detection
+
+Streaming debate commands (`convene`, `resume`, `ask`, `review`) accept
+`--format auto|plain|json` (default `auto`):
+
+- **`auto`** renders the interactive Ink TUI when stdout is a TTY, and falls back to
+  plain streaming text when it is not (piped output, `CI=true`, `TERM=dumb`, or
+  `ACCESSIBILITY=1`). This is the human-friendly default.
+- **`plain`** always streams plain text, regardless of TTY.
+- **`json`** always emits newline-delimited JSON (NDJSON) — one event per line —
+  regardless of TTY.
+
+Explicit `--format plain|json` overrides the `auto` TTY check, so scripts and CI get a
+**stable, predictable renderer instead of the interactive TUI**. In particular,
+`--format json` stays pure NDJSON when redirected or piped (e.g. `… --format json | jq .`) —
+the determinism guarantee automation relies on. `council resume <panel>` transcript
+replay additionally coerces `auto` to `plain` (a static replay gains nothing from the
+Ink TUI); pass `--format json` for machine-readable transcript output. See
+[DECISIONS.md](./DECISIONS.md) → ADR-030 for the rationale.
+
 ## Keeping Council Up to Date
 
 `council update` upgrades the globally-installed `@council-ai/cli` to the latest
@@ -665,7 +684,7 @@ council config show                         # Print effective config values with
 council config path                         # Print config file path
 council config edit                         # Open config in $EDITOR
 council config set <key> <value>            # Set a single config value (dot-notation key)
-council config model [name]                 # Set the default AI model (interactive picker, or pass a name)
+council config model [name]                 # Set the default AI model: interactive picker on a TTY, or pass a name (non-interactive with no name lists models and exits non-zero)
 council config wizard                        # Guided interactive setup for common config values
 
 # Inspection & diagnostics
@@ -703,7 +722,10 @@ COUNCIL_ASCII=1 council convene "Topic"
 >
 > - **Config path** — the `config.yaml` currently in effect.
 > - **Council home** — holds the config file and the `council.db` database
->   (default `~/.council`; override with `COUNCIL_HOME`).
+>   (default `~/.council`; override with `COUNCIL_HOME`). When `COUNCIL_HOME` is
+>   unset, `COUNCIL_DATA_HOME` also relocates the Council home, so a single
+>   `COUNCIL_DATA_HOME` override moves the config file and `council.db` alongside
+>   the data home.
 > - **Data home** — holds experts, panels, and documents (default `~/Council`;
 >   override with `COUNCIL_DATA_HOME` or the `paths.dataHome` config value).
 > - **Experts directory** / **Panels directory** — always `<data home>/experts`
@@ -718,7 +740,7 @@ COUNCIL_ASCII=1 council convene "Topic"
 
 See [ROADMAP.md](./ROADMAP.md) for the high-level plan and [IMPLEMENTATION-PLAN.md](./IMPLEMENTATION-PLAN.md) for implementation details.
 
-**Current focus:** Phase 8 — Growth & Ecosystem (`gh` extension, GitHub Action, direct provider APIs, npm publish).
+**Current focus:** Phase 8 — Growth & Ecosystem (`gh` extension, GitHub Action, direct provider APIs). Council already ships on npm as [`@council-ai/cli`](https://www.npmjs.com/package/@council-ai/cli), so the [Quick Start](#quick-start) `npm install -g @council-ai/cli` installs the released CLI.
 
 ## Contributing
 
