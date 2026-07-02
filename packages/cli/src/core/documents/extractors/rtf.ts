@@ -78,8 +78,11 @@ function stripRtf(raw: string): string {
   let s = stripDestinationGroups(raw);
 
   // Decode hex escape sequences (\'XX) using the byte value as a
-  // codepoint — adequate for the Latin-1 / Windows-1252 range that
-  // covers the majority of real-world RTF documents.
+  // codepoint — correct for Latin-1 (ISO-8859-1), which covers the
+  // majority of real-world RTF documents. This is NOT a full
+  // Windows-1252 decode: bytes 0x80-0x9F map to C1 control
+  // codepoints here instead of the printable glyphs (curly quotes,
+  // em/en dash, etc.) Windows-1252 assigns to that range.
   s = s.replace(/\\'([0-9a-fA-F]{2})/g, (_m, hex: string) =>
     String.fromCharCode(parseInt(hex, 16)),
   );
