@@ -29,6 +29,42 @@ const withPanels = (loadList: () => Promise<readonly PanelListItem[]>): TuiDataS
   panels: { loadList, loadDetail: async () => undefined },
 });
 
+/**
+ * Splits a rendered frame into its terminal rows. ListViewport's bordered
+ * preview pane is laid out beside the list pane in a row-flex Box (see
+ * ListViewport.tsx), so both isolating the pane's own text and verifying a
+ * hint sits on the same row as its panel require row-level granularity —
+ * a frame-wide substring search can't distinguish "in this pane/row" from
+ * "somewhere in the frame".
+ */
+function frameRows(frame: string | undefined): readonly string[] {
+  return (frame ?? "").split("\n");
+}
+
+// The bordered preview pane (`borderStyle="single"` in ListViewport) is
+// rendered to the right of the list pane on every terminal row; its left
+// edge is always one of these box-drawing characters. Slicing each row from
+// the first match isolates the preview pane's own text and discards
+// whatever the list pane drew to its left on that same row.
+const PREVIEW_PANE_LEFT_EDGE = /[┌│└]/;
+
+/** Isolates the bordered preview-pane region of a rendered frame. */
+function previewPaneText(frame: string | undefined): string {
+  return frameRows(frame)
+    .map((row) => {
+      const edgeIndex = row.search(PREVIEW_PANE_LEFT_EDGE);
+      return edgeIndex === -1 ? "" : row.slice(edgeIndex);
+    })
+    .join("\n");
+}
+
+/** Asserts some single row of `frame` contains every one of `needles` (row-level co-occurrence). */
+function expectRowWithAll(frame: string | undefined, ...needles: readonly string[]): void {
+  const rows = frameRows(frame);
+  const found = rows.some((row) => needles.every((needle) => row.includes(needle)));
+  expect(found, `expected a single row containing all of: ${needles.join(", ")}`).toBe(true);
+}
+
 function DetailProbe(): React.ReactElement {
   const params = useParams();
   return <Text>DETAIL {params.name}</Text>;
@@ -51,9 +87,11 @@ describe("PanelsScreen", () => {
     await flush();
     expect(lastFrame()).toContain("acme");
     expect(lastFrame()).not.toContain("Exec Panel"); // description dropped from list row
-    expect(lastFrame()).toContain("2 experts"); // expert count in hint
-    expect(lastFrame()).toContain("startup-board");
-    expect(lastFrame()).toContain("3 experts"); // expert count in hint
+    // Row-level co-occurrence: each hint must land on the SAME row as its own
+    // panel, not merely appear somewhere in the frame — a regression that
+    // mis-associates counts with panels (e.g. swapped rows) must fail (#1763).
+    expectRowWithAll(lastFrame(), "acme", "2 experts");
+    expectRowWithAll(lastFrame(), "startup-board", "3 experts");
     expect(lastFrame()).not.toContain("\u001B[31m");
   });
 
@@ -254,7 +292,10 @@ describe("PanelsScreen", () => {
       </DataProvider>,
     );
     await flush();
-    expect(lastFrame()).toContain("Finance strategy");
+    // Bound to the bordered preview pane region (not the whole frame) so a
+    // regression that reintroduces the description into the list row instead
+    // of the pane fails this assertion (#1762).
+    expect(previewPaneText(lastFrame())).toContain("Finance strategy");
   });
 
   it("resolves selection to the correct panel when names duplicate across sources", async () => {
