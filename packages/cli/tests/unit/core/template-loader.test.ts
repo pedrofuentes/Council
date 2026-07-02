@@ -48,6 +48,22 @@ const EXPECTED_TEMPLATES = [
   "career-coaching",
 ] as const;
 
+// Regex matching every codepoint `toSingleLineDisplay` must strip from a
+// single-line terminal sink: C0 controls (incl. TAB/CR/LF), DEL, C1 controls,
+// Unicode line/paragraph separators, and Bidi override/isolate chars. Same
+// class asserted for the review.ts sinks (#1484).
+// eslint-disable-next-line no-control-regex
+const DANGEROUS_CODEPOINTS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
+
+// Build an adversarial string exercising each rejected byte class: NUL + BEL
+// (C0), ANSI CSI (ESC [ … m), DEL, C1 CSI (U+009B), TAB, CR/LF, U+2028/U+2029
+// line/paragraph separators, and Bidi override (U+202E) + isolates
+// (U+2066/U+2069). The `label` bookends stay printable so a test can assert the
+// sink preserved legitimate content instead of discarding the whole string.
+function adversarialInjection(label: string): string {
+  return `${label}\x00\x07\x1B[31mANSI\x1B[0m\x7F\u009B5m\tTAB\r\nCRLF\u2028\u2029\u202eRLO\u2066LRI\u2069${label}-END`;
+}
+
 describe("PanelDefinitionSchema", () => {
   const minimal = {
     name: "test-panel",
@@ -684,6 +700,37 @@ describe("assertAllInline()", () => {
       experts: ["cto", makeInlineExpert("skeptic")],
     });
     expect(() => assertAllInline(panel, "test")).toThrow(/slug references|cto/i);
+  });
+
+  it("collapses adversarial bytes in source and slug references to one display line (#1484)", () => {
+    // safeSource + safeSlugs are single-line terminal sinks: `source` is an
+    // untrusted resolved file path and the slug strings come from parsed YAML,
+    // both of which can carry terminal-injection payloads. A reversion of
+    // either `toSingleLineDisplay(...)` call to raw interpolation would leak the
+    // control/bidi/line-break bytes below into the thrown Error and fail these
+    // assertions.
+    const evilSource = adversarialInjection("src");
+    const panel: PanelDefinition = PanelDefinitionSchema.parse({
+      name: "p",
+      experts: [adversarialInjection("slug")],
+    });
+
+    let thrown: unknown;
+    try {
+      assertAllInline(panel, evilSource);
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const message = (thrown as Error).message;
+    // No C0/C1/DEL/bidi/line-or-paragraph-separator byte survives to the sink.
+    expect(message).not.toMatch(DANGEROUS_CODEPOINTS);
+    // The whole surfaced message renders on a single terminal line.
+    expect(message.split("\n")).toHaveLength(1);
+    // Legitimate, printable content from both sinks is preserved.
+    expect(message).toContain("src-END");
+    expect(message).toContain("slug-END");
   });
 });
 

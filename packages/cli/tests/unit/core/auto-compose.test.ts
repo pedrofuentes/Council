@@ -217,6 +217,22 @@ const validPanel = {
   ],
 };
 
+// Regex matching every codepoint `toSingleLineDisplay` must strip from a
+// single-line terminal sink: C0 controls (incl. TAB/CR/LF), DEL, C1 controls,
+// Unicode line/paragraph separators, and Bidi override/isolate chars. Same
+// class asserted for the review.ts sinks (#1484).
+// eslint-disable-next-line no-control-regex
+const DANGEROUS_CODEPOINTS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
+
+// Build an adversarial string exercising each rejected byte class: NUL + BEL
+// (C0), ANSI CSI (ESC [ … m), DEL, C1 CSI (U+009B), TAB, CR/LF, U+2028/U+2029
+// line/paragraph separators, and Bidi override (U+202E) + isolates
+// (U+2066/U+2069). The `label` bookends stay printable so a test can assert the
+// sink preserved legitimate content instead of discarding the whole string.
+function adversarialInjection(label: string): string {
+  return `${label}\x00\x07\x1B[31mANSI\x1B[0m\x7F\u009B5m\tTAB\r\nCRLF\u2028\u2029\u202eRLO\u2066LRI\u2069${label}-END`;
+}
+
 describe("autoComposePanel", () => {
   it("returns a validated PanelDefinition when the engine returns valid JSON", async () => {
     const engine = new StubEngine({ response: JSON.stringify(validPanel) });
@@ -640,6 +656,40 @@ describe("autoComposePanel", () => {
     const engine = new StubEngine({ response: JSON.stringify(mixed) });
     await engine.start();
     await expect(autoComposePanel("topic", engine)).rejects.toThrow(/slug|inline/i);
+  });
+
+  it("collapses adversarial bytes in composer slug references to one display line (#1484)", async () => {
+    // A hallucinating or compromised composer can return slug strings carrying
+    // terminal-injection payloads. PanelDefinitionSchema accepts any non-empty
+    // string as a slug reference, so these bytes reach the safeSlugs sink
+    // verbatim; toSingleLineDisplay must neutralize them before they surface via
+    // the thrown Error. Reverting the sink to raw interpolation would leak the
+    // control/bidi/line-break bytes below and fail these assertions.
+    const slugPanel = {
+      name: "adversarial-slug-panel",
+      description: "Composer returned an injection-laced slug reference",
+      experts: [adversarialInjection("slug")],
+    };
+    const engine = new StubEngine({ response: JSON.stringify(slugPanel) });
+    await engine.start();
+
+    let thrown: unknown;
+    try {
+      await autoComposePanel("topic", engine);
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const message = (thrown as Error).message;
+    // No C0/C1/DEL/bidi/line-or-paragraph-separator byte survives to the sink.
+    expect(message).not.toMatch(DANGEROUS_CODEPOINTS);
+    // The whole surfaced message renders on a single terminal line.
+    expect(message.split("\n")).toHaveLength(1);
+    // The error is still the descriptive slug-reference rejection, and the
+    // slug's legitimate printable content is preserved.
+    expect(message).toContain("slug references");
+    expect(message).toContain("slug-END");
   });
 
   describe("sanitizes all composed expert fields", () => {
