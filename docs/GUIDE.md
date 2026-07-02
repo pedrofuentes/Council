@@ -1305,16 +1305,17 @@ never reaches the panel unnoticed.
 
 ### Environment variables
 
-| Variable            | Purpose                                           | Example                             |
-| ------------------- | ------------------------------------------------- | ----------------------------------- |
-| `COUNCIL_HOME`      | Config directory (default: `~/.council`)          | `COUNCIL_HOME=/opt/council`         |
-| `COUNCIL_DATA_HOME` | Data directory (database, experts, panels)        | `COUNCIL_DATA_HOME=/tmp/council-ci` |
-| `COUNCIL_ASCII`     | Force ASCII symbols (no Unicode)                  | `COUNCIL_ASCII=1`                   |
-| `NO_COLOR`          | Disable color output                              | `NO_COLOR=1`                        |
-| `TERM`              | Set to `dumb` to disable all terminal effects     | `TERM=dumb`                         |
-| `EDITOR` / `VISUAL` | Editor for `config edit` and `expert edit`        | `EDITOR=vim`                        |
-| `CI`                | Indicates CI environment (disables interactivity) | `CI=true`                           |
-| `ACCESSIBILITY`     | Enable accessibility features                     | `ACCESSIBILITY=1`                   |
+| Variable             | Purpose                                                                     | Example                             |
+| -------------------- | --------------------------------------------------------------------------- | ----------------------------------- |
+| `COUNCIL_HOME`       | Config directory (default: `~/.council`)                                    | `COUNCIL_HOME=/opt/council`         |
+| `COUNCIL_DATA_HOME`  | Data directory (database, experts, panels)                                  | `COUNCIL_DATA_HOME=/tmp/council-ci` |
+| `COUNCIL_ASCII`      | Force ASCII symbols (no Unicode)                                            | `COUNCIL_ASCII=1`                   |
+| `NO_COLOR`           | Disable color output                                                        | `NO_COLOR=1`                        |
+| `TERM`               | Set to `dumb` to disable all terminal effects                               | `TERM=dumb`                         |
+| `EDITOR` / `VISUAL`  | Editor for `config edit` and `expert edit`                                  | `EDITOR=vim`                        |
+| `CI`                 | Indicates CI environment (disables interactivity, suppresses update notice) | `CI=true`                           |
+| `NO_UPDATE_NOTIFIER` | Suppress the "update available" startup notice                              | `NO_UPDATE_NOTIFIER=1`              |
+| `ACCESSIBILITY`      | Enable accessibility features                                               | `ACCESSIBILITY=1`                   |
 
 ### Custom expert YAML
 
