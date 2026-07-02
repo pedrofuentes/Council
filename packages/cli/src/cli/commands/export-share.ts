@@ -27,7 +27,11 @@
 import type { Turn } from "../../memory/repositories/turns.js";
 import type { TranscriptDocument } from "../../memory/transcript.js";
 
-import { sanitizeExportBlockLines, sanitizeExportLine } from "./export-sanitize.js";
+import {
+  sanitizeExportBlockLines,
+  sanitizeExportLine,
+  escapeBlockLeadingMarkdown,
+} from "./export-sanitize.js";
 
 const PLACEHOLDER_PROMPT = "_Not recorded._";
 const PLACEHOLDER_ROSTER = "_No panellists recorded._";
@@ -134,7 +138,12 @@ function renderPositions(doc: TranscriptDocument): readonly string[] {
     if (!turn) continue;
     out.push(`### ${sanitizeExportLine(e.displayName)}`);
     out.push("");
-    for (const para of sanitizeExportBlockLines(turn.content)) out.push(`> ${para}`);
+    // CommonMark honours block markers inside a blockquote (`> ## X` -> nested
+    // heading, `> ---` -> <hr>, `> ``` ` -> code fence, `> <x>` -> raw HTML), so
+    // a leading marker on this model-derived paragraph would otherwise forge
+    // structure in the shared outline (outline spoofing, #2123). Neutralize it.
+    for (const para of sanitizeExportBlockLines(turn.content))
+      out.push(`> ${escapeBlockLeadingMarkdown(para)}`);
     out.push("");
   }
   if (out.length === 0) return [PLACEHOLDER_POSITIONS];
@@ -162,7 +171,11 @@ function renderTranscriptBody(doc: TranscriptDocument): readonly string[] {
       : sanitizeExportLine(t.speakerKind);
     out.push(`**${speaker}**`);
     out.push("");
-    for (const para of sanitizeExportBlockLines(t.content)) out.push(`> ${para}`);
+    // Same leading block-marker neutralization as the Panel Positions
+    // blockquote: a `> ` prefix does not suppress a nested heading/rule/code/
+    // HTML block, so model-derived transcript text could forge structure (#2123).
+    for (const para of sanitizeExportBlockLines(t.content))
+      out.push(`> ${escapeBlockLeadingMarkdown(para)}`);
     out.push("");
   }
   // Drop the trailing blank — `pushSection` adds its own separator.
