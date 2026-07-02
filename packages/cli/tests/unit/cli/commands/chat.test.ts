@@ -491,6 +491,39 @@ describe("buildChatCommand", () => {
       expect(out).toContain(archivedId);
       expect(out).toContain("(no messages yet)");
     });
+
+    it("places the '→' marker on the active session row, not on archived rows (#1109)", async () => {
+      await seedExpert(env);
+      let archivedId = "";
+      let activeId = "";
+      await withRepo(env, async (repo) => {
+        const a = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        archivedId = a.id;
+        await repo.addTurn({ chatId: a.id, role: "user", content: "archived session turn" });
+        await repo.archiveSession(a.id);
+        const b = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        activeId = b.id;
+        await repo.addTurn({ chatId: b.id, role: "user", content: "active session turn" });
+      });
+      let out = "";
+      const cmd = buildChatCommand({ write: (s) => (out += s) });
+      await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--history"]);
+
+      const lines = out.split("\n");
+      // The row containing the active session ID must begin with "→". Dropping
+      // the marker from history.ts (buildRow active marker) causes this to fail,
+      // making it discriminating — unlike toMatch(/active/) which matches the
+      // always-present legend line and status column.
+      const activeRow = lines.find((l) => l.includes(activeId));
+      expect(activeRow).toBeDefined();
+      expect(activeRow).toMatch(/^→/);
+
+      // Archived session row must NOT carry the marker — rules out a scenario
+      // where "→" is written on every row.
+      const archivedRow = lines.find((l) => l.includes(archivedId));
+      expect(archivedRow).toBeDefined();
+      expect(archivedRow).not.toMatch(/^→/);
+    });
   });
 
   describe("expert resolution", () => {
