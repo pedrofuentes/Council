@@ -283,7 +283,7 @@ describe("isTransientGhError", () => {
     expect(isTransientGhError("request to https://api.github.com failed: ETIMEDOUT")).toBe(true);
     expect(isTransientGhError("connect ECONNRESET 140.82.113.5:443")).toBe(true);
     expect(isTransientGhError("dial tcp: lookup api.github.com: EAI_AGAIN")).toBe(true);
-    expect(isTransientGhError("Post \"https://api.github.com\": read: connection refused")).toBe(
+    expect(isTransientGhError('Post "https://api.github.com": read: connection refused')).toBe(
       true,
     );
     expect(isTransientGhError("Error: socket hang up")).toBe(true);
@@ -309,6 +309,34 @@ describe("isTransientGhError", () => {
   it("classifies empty / unrecognized text as terminal (fail fast, do not mask)", () => {
     expect(isTransientGhError("")).toBe(false);
     expect(isTransientGhError("some unrelated failure")).toBe(false);
+  });
+
+  // --- Regression: issue #2184 / Sentinel A1 (attacker-influenced text) -----
+  // The flattened blob can carry the ECHOED command line whose owner/repo/tag
+  // come straight from an attacker-editable workflow `uses:` line. The HTTP
+  // status MUST be parsed first and decide terminality on its own, so a
+  // transient-sounding name can never turn a terminal 4xx into a retry.
+  it("parses the HTTP status FIRST — an echoed transient-sounding owner/repo cannot flip a 404 to transient", () => {
+    // owner literally contains the word "timeout" — a real HTTP 404 must win.
+    expect(
+      isTransientGhError("gh api repos/evil-timeout/foo/git/ref/tags/v1\ngh: Not Found (HTTP 404)"),
+    ).toBe(false);
+    // repo "rate-limit" and a "503-"-prefixed name must not read as transient.
+    expect(
+      isTransientGhError("gh api repos/acme/rate-limit/git/ref/tags/v1\ngh: Not Found (HTTP 404)"),
+    ).toBe(false);
+    expect(
+      isTransientGhError("gh api repos/o/503-rate-limit/git/ref/tags/v1\ngh: Not Found (HTTP 404)"),
+    ).toBe(false);
+  });
+
+  it("still classifies a real 429/5xx transient even when the echoed name looks terminal", () => {
+    expect(isTransientGhError("gh api repos/not-found/gone/git/ref/tags/v1\ngh: (HTTP 429)")).toBe(
+      true,
+    );
+    expect(
+      isTransientGhError("gh api repos/bad-credentials/x/git/ref/tags/v1\ngh: (HTTP 503)"),
+    ).toBe(true);
   });
 });
 
@@ -337,6 +365,25 @@ describe("ghErrorText", () => {
     const netErr = Object.assign(new Error("request failed"), { code: "ETIMEDOUT" });
     expect(isTransientGhError(ghErrorText(netErr))).toBe(true);
   });
+
+  // --- Regression: issue #2184 / Sentinel A1 (attacker-influenced text) -----
+  // Node's execFile puts the ECHOED command line ("Command failed: gh api
+  // repos/<owner>/<repo>/...") into `err.message`. That owner/repo/tag is
+  // attacker-editable via a workflow `uses:` line, so it must NOT feed the
+  // transient/terminal classifier: a terminal 404 whose owner is
+  // `evil-timeout` must stay TERMINAL.
+  it("excludes the echoed command line (attacker owner/repo/tag) from the classified text", () => {
+    const err = Object.assign(
+      new Error(
+        "Command failed: gh api repos/evil-timeout/foo/git/ref/tags/v1\ngh: Not Found (HTTP 404)\n",
+      ),
+      { stderr: "gh: Not Found (HTTP 404)\n", code: 1, killed: false },
+    );
+    const text = ghErrorText(err);
+    expect(text).toContain("HTTP 404");
+    expect(text).not.toMatch(/timeout/i);
+    expect(isTransientGhError(text)).toBe(false);
+  });
 });
 
 describe("computeBackoffDelay", () => {
@@ -355,10 +402,12 @@ describe("computeBackoffDelay", () => {
 
   it("applies bounded jitter within [0, window) from the injected random source", () => {
     // attempt 3 window = 1000 * 2^2 = 4000; floor(0.25 * 4000) = 1000.
-    expect(computeBackoffDelay(3, { baseDelayMs: 1000, maxDelayMs: 100_000, random: () => 0.25 })).toBe(
-      1000,
+    expect(
+      computeBackoffDelay(3, { baseDelayMs: 1000, maxDelayMs: 100_000, random: () => 0.25 }),
+    ).toBe(1000);
+    expect(computeBackoffDelay(1, { baseDelayMs: 500, maxDelayMs: 8000, random: noJitter })).toBe(
+      0,
     );
-    expect(computeBackoffDelay(1, { baseDelayMs: 500, maxDelayMs: 8000, random: noJitter })).toBe(0);
   });
 });
 
@@ -523,9 +572,116 @@ describe("resolveTagToCommit (injected executor)", () => {
       calls += 1;
       return Promise.reject(new Error("gh: Not Found (HTTP 404)"));
     };
+    await expect(resolveTagToCommit("o", "r", "v9.9.9", { exec, sleep: noSleep })).rejects.toThrow(
+      /HTTP 404/,
+    );
+    expect(calls).toBe(1);
+  });
+});
+
+// --- Regression: issue #2184 / Sentinel A1 --------------------------------
+// End-to-end through the real `isRetryable: isTransientGhError(ghErrorText(e))`
+// wiring, using an execFileAsync-shaped rejection (echoed command in
+// `message`, HTTP status in `stderr`, numeric exit `code`). A terminal 404
+// whose action name carries a transient-sounding word must fail FAST (exec
+// called once, zero sleeps); genuinely transient faults must still be retried.
+describe("gh api retry — attacker-controlled action name cannot force a retry (issue #2184)", () => {
+  // Mirrors what `promisify(execFile)` rejects with on a non-zero `gh` exit.
+  const ghExitError = (apiPath: string, stderr: string) =>
+    Object.assign(new Error(`Command failed: gh api ${apiPath}\n${stderr}\n`), {
+      stderr: `${stderr}\n`,
+      code: 1,
+      killed: false,
+    });
+
+  it("does NOT retry a 404 whose owner carries a transient-sounding word (exec once, zero sleeps)", async () => {
+    let calls = 0;
+    const sleeps: number[] = [];
+    const path = "repos/evil-timeout/foo/git/ref/tags/v1";
+    const exec = () => {
+      calls += 1;
+      return Promise.reject(ghExitError(path, "gh: Not Found (HTTP 404)"));
+    };
     await expect(
-      resolveTagToCommit("o", "r", "v9.9.9", { exec, sleep: noSleep }),
+      ghApiJson(path, {
+        exec,
+        sleep: (ms: number) => {
+          sleeps.push(ms);
+          return Promise.resolve();
+        },
+      }),
     ).rejects.toThrow(/HTTP 404/);
     expect(calls).toBe(1);
+    expect(sleeps).toHaveLength(0);
+  });
+
+  it("does NOT retry a plain 404 with a benign name (regression guard)", async () => {
+    let calls = 0;
+    const sleeps: number[] = [];
+    const path = "repos/actions/checkout/git/ref/tags/v9.9.9";
+    const exec = () => {
+      calls += 1;
+      return Promise.reject(ghExitError(path, "gh: Not Found (HTTP 404)"));
+    };
+    await expect(
+      ghApiJson(path, {
+        exec,
+        sleep: (ms: number) => {
+          sleeps.push(ms);
+          return Promise.resolve();
+        },
+      }),
+    ).rejects.toThrow(/HTTP 404/);
+    expect(calls).toBe(1);
+    expect(sleeps).toHaveLength(0);
+  });
+
+  it("RETRIES a 429 rate-limit transient fault", async () => {
+    let calls = 0;
+    const exec = () => {
+      calls += 1;
+      if (calls === 1) {
+        return Promise.reject(ghExitError("repos/o/r", "gh: API rate limit exceeded (HTTP 429)"));
+      }
+      return Promise.resolve({ stdout: JSON.stringify({ ok: true }) });
+    };
+    const json = await ghApiJson("repos/o/r", { exec, sleep: noSleep, random: noJitter });
+    expect(json).toEqual({ ok: true });
+    expect(calls).toBe(2);
+  });
+
+  it("RETRIES an HTTP 5xx transient fault", async () => {
+    let calls = 0;
+    const exec = () => {
+      calls += 1;
+      if (calls === 1) {
+        return Promise.reject(ghExitError("repos/o/r", "gh: Service Unavailable (HTTP 503)"));
+      }
+      return Promise.resolve({ stdout: JSON.stringify({ ok: true }) });
+    };
+    const json = await ghApiJson("repos/o/r", { exec, sleep: noSleep, random: noJitter });
+    expect(json).toEqual({ ok: true });
+    expect(calls).toBe(2);
+  });
+
+  it("RETRIES a genuine network fault with no HTTP status (ETIMEDOUT / ECONNRESET)", async () => {
+    for (const syscall of ["ETIMEDOUT", "ECONNRESET"]) {
+      let calls = 0;
+      const exec = () => {
+        calls += 1;
+        if (calls === 1) {
+          return Promise.reject(
+            Object.assign(new Error("Command failed: gh api repos/o/r"), {
+              code: syscall,
+              killed: false,
+            }),
+          );
+        }
+        return Promise.resolve({ stdout: JSON.stringify({ ok: true }) });
+      };
+      const json = await ghApiJson("repos/o/r", { exec, sleep: noSleep, random: noJitter });
+      expect(json).toEqual({ ok: true });
+      expect(calls).toBe(2);
+    }
   });
 });
