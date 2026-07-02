@@ -218,6 +218,38 @@ export async function destroyTestDb(db: CouncilDatabase): Promise<void> {
 }
 
 /**
+ * Platform-tuned poll interval/timeout for {@link waitForDbRelease}.
+ *
+ * Factored out as a pure function of `platform` (rather than reading
+ * `process.platform` directly) so the tuning is unit-testable without
+ * exercising the real polling loop.
+ *
+ * **Why Windows gets a wider interval (#646):** at a flat 50ms interval,
+ * the 10s Windows timeout opens, probes (`BEGIN IMMEDIATE` / `ROLLBACK`),
+ * and closes a `DatabaseSync` handle up to ~200 times while waiting for a
+ * slow-releasing handle — needless filesystem churn that can itself
+ * prolong the very lock it's probing for. 100ms halves that to ~100
+ * probes, still frequent enough to observe release promptly relative to
+ * the 10s budget.
+ *
+ * Non-Windows platforms release handles quickly and use a much shorter 2s
+ * timeout budget, so the tighter 50ms interval is kept — widening it there
+ * would eat into that budget for no reliability benefit.
+ *
+ * @param platform - `process.platform` (parameterized for testability)
+ */
+export function getDbReleasePollOptions(platform: NodeJS.Platform): {
+  readonly interval: number;
+  readonly timeout: number;
+} {
+  const isWindows = platform === "win32";
+  return {
+    interval: isWindows ? 100 : 50,
+    timeout: isWindows ? 10_000 : 2_000,
+  };
+}
+
+/**
  * Polls until the test database is fully released and can be reopened/closed.
  *
  * **Use case:**
@@ -228,7 +260,8 @@ export async function destroyTestDb(db: CouncilDatabase): Promise<void> {
  * **Implementation:**
  * Uses `expect.poll` to repeatedly attempt opening and closing the database.
  * Resolves once successful, or throws after timeout if the database
- * remains locked.
+ * remains locked. Poll interval/timeout are platform-tuned by
+ * {@link getDbReleasePollOptions} (#646).
  *
  * @param testHome - Path to test home directory containing `council.db`
  */
@@ -261,11 +294,11 @@ export async function waitForDbRelease(testHome: string): Promise<void> {
     }
   }
 
-  const timeout = process.platform === "win32" ? 10_000 : 2_000;
+  const { interval, timeout } = getDbReleasePollOptions(process.platform);
 
   await expect
     .poll(() => isDbReleased(), {
-      interval: 50,
+      interval,
       timeout,
     })
     .toBe(true);
