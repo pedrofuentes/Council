@@ -162,20 +162,77 @@ separators (structured mode), live cost meter in the footer. `Esc` cancels via `
 output is preserved with a dimmed `[cancelled]` tag. Consumes
 `Debate.run(prompt, { signal })` → `DebateEvent` stream directly (§6.2).
 
-### 4.8 Settings (overlay, not a screen)
+**Review mode (transcript key contract).** The transcript viewport auto-follows new turns
+(live-follow) until the user scrolls it manually — implemented as a pure `followLive`/`cursor` state
+machine (`src/tui/lib/review-scroll.ts`) driving `ScrollView`'s `cursor`/`follow` props:
+- `↑` / `k` / `PgUp` — pause auto-follow and enter **Review mode**, moving the cursor up one line
+  (from live-follow, the cursor starts at the last line and steps up from there).
+- `↓` / `j` / `PgDn` — move the cursor down one line; reaching the last line resumes live-follow
+  automatically (equivalent to pressing `End`/`G`).
+- `End` / `G` — unconditionally resume live-follow; cursor jumps to the last line.
+- While paused, the footer shows `⏸ Review — ↓/End to resume live`; new streamed turns keep
+  appending to the transcript underneath but do **not** pull the viewport back to the bottom until
+  live-follow resumes.
+- `Esc` still cancels the run (while streaming) or backs out (once done) regardless of review state.
+
+### 4.8 Sessions — list & session detail
+The **Debates** nav entry (`/sessions`; the command palette labels the same destination "Go to
+Sessions") lists **every panel in the library**, most-recently-updated first — including panels that
+have never convened a debate:
+- Each row reads `<status symbol> <panel name>  <N> debates · <N> turns  <topic>`, e.g. `✓ Finance
+  Council  1 debates · 4 turns  Q3 budget` (the count copy is not pluralized — `1 debates` is
+  expected, not a typo). A never-convened panel still gets a row, e.g. `· Growth Council  0 debates
+  · 0 turns`.
+- Status symbol reflects that panel's most recent debate: `✓` completed · `…` running · `·` no
+  debates yet · `⚠` interrupted/aborted/failed.
+- Standard list keys apply (§4.3): `j/k`/arrows move, `g`/`G` jump top/bottom, `PgUp`/`PgDn` page,
+  `/` filters, `Enter` opens the highlighted row.
+- Empty state — zero **panels** in the library, not merely zero debates — shows the guidance text
+  *"No debates yet — convene a panel to watch them deliberate"*. This is inline copy, not a bound
+  key — start a debate from Home (`c`) or the command palette instead.
+
+Opening a row navigates to the **session detail** screen (`/sessions/:id`), which renders that
+panel's most recent debate in full: panel name, topic, prompt, status, and every turn as `[r<round>]
+<speaker>: <content>`. Two actions are available, footer-hinted as `c conclude · x export` and also
+reachable through an `a` action-menu overlay (`Esc` closes it without acting):
+- `c` — open the conclusion flow (`/sessions/:id/conclude`).
+- `x` — open the export overlay (`/sessions/:id/export`).
+
+This is the full transcript implementation, not a placeholder: an earlier increment shipped a
+temporary `PlaceholderScreen` at this route pending the real view; `SessionDetailScreen`
+(`src/tui/screens/SessionDetailScreen.tsx`) has since replaced it.
+
+### 4.9 Expert detail — persona documents (`o`)
+The expert detail screen (`/experts/:slug`) footer-hints `c chat · e edit · d delete` for every
+expert, surfaced in the `a` action-menu overlay too. **Persona-kind experts only** get two further
+actions, on their own footer line (`o documents · t train`) and appended to that same menu:
+- `o` — open the **expert documents** screen (`/experts/:slug/docs`; breadcrumb `Experts › <slug> ›
+  Documents`).
+- `t` — open the training flow (`/experts/:slug/train`).
+
+Both keys are no-ops for **generic** experts — a generic expert has no docs folder to manage, so the
+screen does not wire `o`/`t` to anything when the loaded expert's `kind !== "persona"`.
+
+The expert documents screen lists that persona's indexed source documents, one row per document as
+`<filename>  <size>B  [<status>]`, navigable with the same `j/k`/arrows/`g`/`G` keys. Pressing
+`Enter` on a row asks `Remove "<filename>"? [y/n]` inline; `y` marks it removed and drops it from the
+search index (a warning banner appears if index cleanup fails, suggesting a re-train to repair it),
+`n` cancels. Empty state: *"No indexed documents for this persona."*
+
+### 4.10 Settings (overlay, not a screen)
 60–70% × 80% overlay over the current view; collapsible sections mirroring `ConfigSchema`:
 *Defaults, Expert, Documents, Chat, Conclude, Telemetry, Providers (env-var names only), Paths*.
 `Tab`/`Shift+Tab` between fields; **inline Zod validation** below each field; `[Save]`(`Ctrl+S`)
 `[Cancel]`(`Esc`). Native textarea for multi-line — never spawn `$EDITOR`.
 
-### 4.9 First-run, empty states, errors
+### 4.11 First-run, empty states, errors
 First-run: ≤ 2 onboarding screens (welcome/value + model/auth check, reusing
 `loadConfigWithMeta().isFirstRun` + `selectModelInteractively`), then Home. Empty states: large,
 specific CTAs with the action key (`⊕ Start your first Council session [c]`). Tiered errors:
 transient → status bar (5s TTL); persistent → inline item with `⚠`; blocking → modal. Never render
 raw stack traces; map via `formatEngineError`.
 
-### 4.10 Accessibility & responsiveness (from the first milestone)
+### 4.12 Accessibility & responsiveness (from the first milestone)
 `NO_COLOR` / `TERM=dumb` / `COUNCIL_ASCII` honored (reuse `getSymbols()`, chalk auto-detect). Ink 7
 screen-reader mode (`INK_SCREEN_READER`) → linear frames, no cursor tricks; spinner is a braille
 sequence ≤10fps, static `[...]` under NO_COLOR. Breakpoints: ≥120 full (nav expanded) · 80–119
