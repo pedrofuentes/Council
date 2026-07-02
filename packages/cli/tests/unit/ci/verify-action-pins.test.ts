@@ -22,9 +22,15 @@ import { describe, expect, it } from "vitest";
 // The verifier is a repo-root ESM script (node: builtins only), imported here
 // purely for its pure parsing/sanitizing exports.
 import {
+  computeBackoffDelay,
+  ghApiJson,
+  ghErrorText,
+  isTransientGhError,
   normalizeTag,
   parseActionPins,
+  resolveTagToCommit,
   toSingleLineDisplay,
+  withRetry,
 } from "../../../../../scripts/verify-action-pins.mjs";
 
 const CHECKOUT_SHA = "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0";
@@ -243,5 +249,283 @@ describe("toSingleLineDisplay", () => {
     const elapsed = performance.now() - start;
     expect(result).toBe("");
     expect(elapsed).toBeLessThan(1000);
+  });
+});
+
+// --- Resilience layer: timeout + bounded backoff/jitter retry (issue #2182) ---
+//
+// The provenance gate resolves each pin's tag -> commit via `gh api`. A single
+// transient GitHub API blip (rate-limit / 5xx / network / timeout) during that
+// resolution was previously caught per-pin and counted as a hard failure,
+// turning an otherwise-valid PR check spuriously red. The classifier +
+// retry/backoff helpers below let the gate recover from TRANSIENT faults while
+// still failing FAST on a genuine 404 (a real provenance mismatch must never be
+// retry-masked). All helpers are injectable so these tests run with NO real
+// network and NO real multi-second waits.
+
+// A never-resolving/short-circuit sleep used to keep retry tests instant.
+const noSleep = () => Promise.resolve();
+// Deterministic jitter source: zero jitter keeps computed delays predictable.
+const noJitter = () => 0;
+
+describe("isTransientGhError", () => {
+  it("classifies an HTTP 429 (rate-limited) response as transient", () => {
+    expect(isTransientGhError("gh: API rate limit exceeded (HTTP 429)")).toBe(true);
+  });
+
+  it("classifies every HTTP 5xx response as transient", () => {
+    for (const status of [500, 502, 503, 504]) {
+      expect(isTransientGhError(`gh: Server Error (HTTP ${status})`)).toBe(true);
+    }
+  });
+
+  it("classifies network / connection-reset / socket / timeout errors as transient", () => {
+    expect(isTransientGhError("request to https://api.github.com failed: ETIMEDOUT")).toBe(true);
+    expect(isTransientGhError("connect ECONNRESET 140.82.113.5:443")).toBe(true);
+    expect(isTransientGhError("dial tcp: lookup api.github.com: EAI_AGAIN")).toBe(true);
+    expect(isTransientGhError("Post \"https://api.github.com\": read: connection refused")).toBe(
+      true,
+    );
+    expect(isTransientGhError("Error: socket hang up")).toBe(true);
+    expect(isTransientGhError("gh api call timed out (killed after 20000ms)")).toBe(true);
+  });
+
+  it("classifies rate-limit messaging as transient even when GitHub answers 403", () => {
+    expect(isTransientGhError("gh: You have exceeded a secondary rate limit. (HTTP 403)")).toBe(
+      true,
+    );
+  });
+
+  it("classifies a genuine 404 tag-not-found as TERMINAL — it must never be retried", () => {
+    expect(isTransientGhError("gh: Not Found (HTTP 404)")).toBe(false);
+  });
+
+  it("classifies other 4xx (401 / 403 / 422) as terminal (real provenance/auth problems)", () => {
+    expect(isTransientGhError("gh: Bad credentials (HTTP 401)")).toBe(false);
+    expect(isTransientGhError("gh: Forbidden (HTTP 403)")).toBe(false);
+    expect(isTransientGhError("gh: Unprocessable Entity (HTTP 422)")).toBe(false);
+  });
+
+  it("classifies empty / unrecognized text as terminal (fail fast, do not mask)", () => {
+    expect(isTransientGhError("")).toBe(false);
+    expect(isTransientGhError("some unrelated failure")).toBe(false);
+  });
+});
+
+describe("ghErrorText", () => {
+  it("marks an execFile timeout kill as timed-out so it classifies transient", () => {
+    const timeoutErr = Object.assign(new Error("Command failed: gh api repos/o/r"), {
+      killed: true,
+      signal: "SIGTERM",
+    });
+    const text = ghErrorText(timeoutErr);
+    expect(text).toMatch(/timed out/i);
+    expect(isTransientGhError(text)).toBe(true);
+  });
+
+  it("surfaces stderr so HTTP-status classification works on a gh failure", () => {
+    const httpErr = Object.assign(new Error("Command failed: gh api repos/o/r/git/ref/tags/v9"), {
+      stderr: "gh: Not Found (HTTP 404)",
+      code: 1,
+    });
+    const text = ghErrorText(httpErr);
+    expect(text).toContain("HTTP 404");
+    expect(isTransientGhError(text)).toBe(false);
+  });
+
+  it("surfaces a string syscall code (e.g. ETIMEDOUT) for network failures", () => {
+    const netErr = Object.assign(new Error("request failed"), { code: "ETIMEDOUT" });
+    expect(isTransientGhError(ghErrorText(netErr))).toBe(true);
+  });
+});
+
+describe("computeBackoffDelay", () => {
+  it("grows exponentially from the base delay (full-window at random()=1)", () => {
+    const opts = { baseDelayMs: 100, maxDelayMs: 100_000, random: () => 1 };
+    expect(computeBackoffDelay(1, opts)).toBe(100);
+    expect(computeBackoffDelay(2, opts)).toBe(200);
+    expect(computeBackoffDelay(3, opts)).toBe(400);
+    expect(computeBackoffDelay(4, opts)).toBe(800);
+  });
+
+  it("caps the exponential window at maxDelayMs", () => {
+    const opts = { baseDelayMs: 1000, maxDelayMs: 3000, random: () => 1 };
+    expect(computeBackoffDelay(10, opts)).toBe(3000);
+  });
+
+  it("applies bounded jitter within [0, window) from the injected random source", () => {
+    // attempt 3 window = 1000 * 2^2 = 4000; floor(0.25 * 4000) = 1000.
+    expect(computeBackoffDelay(3, { baseDelayMs: 1000, maxDelayMs: 100_000, random: () => 0.25 })).toBe(
+      1000,
+    );
+    expect(computeBackoffDelay(1, { baseDelayMs: 500, maxDelayMs: 8000, random: noJitter })).toBe(0);
+  });
+});
+
+describe("withRetry", () => {
+  it("retries a transient failure and returns the eventual success (transient-then-success)", async () => {
+    let calls = 0;
+    const sleeps: number[] = [];
+    const result = await withRetry(
+      () => {
+        calls += 1;
+        if (calls < 3) return Promise.reject(new Error("HTTP 503"));
+        return Promise.resolve("ok");
+      },
+      {
+        attempts: 4,
+        isRetryable: () => true,
+        sleep: (ms: number) => {
+          sleeps.push(ms);
+          return Promise.resolve();
+        },
+        random: noJitter,
+      },
+    );
+    expect(result).toBe("ok");
+    expect(calls).toBe(3);
+    // Slept exactly twice: before attempt 2 and before attempt 3.
+    expect(sleeps).toHaveLength(2);
+  });
+
+  it("throws the last error after exhausting a bounded number of attempts", async () => {
+    let calls = 0;
+    let slept = 0;
+    await expect(
+      withRetry(
+        () => {
+          calls += 1;
+          return Promise.reject(new Error(`HTTP 500 #${calls}`));
+        },
+        {
+          attempts: 3,
+          isRetryable: () => true,
+          sleep: () => {
+            slept += 1;
+            return Promise.resolve();
+          },
+          random: noJitter,
+        },
+      ),
+    ).rejects.toThrow("HTTP 500 #3");
+    expect(calls).toBe(3);
+    expect(slept).toBe(2);
+  });
+
+  it("does NOT retry a terminal failure — fails fast on the first attempt", async () => {
+    let calls = 0;
+    let slept = 0;
+    await expect(
+      withRetry(
+        () => {
+          calls += 1;
+          return Promise.reject(new Error("gh: Not Found (HTTP 404)"));
+        },
+        {
+          attempts: 4,
+          isRetryable: (error: unknown) => isTransientGhError(String(error)),
+          sleep: () => {
+            slept += 1;
+            return Promise.resolve();
+          },
+        },
+      ),
+    ).rejects.toThrow("HTTP 404");
+    expect(calls).toBe(1);
+    expect(slept).toBe(0);
+  });
+});
+
+describe("ghApiJson (injected executor)", () => {
+  it("passes the per-call timeout to the executor and parses stdout JSON", async () => {
+    const seen: { path: string; timeoutMs: number }[] = [];
+    const exec = (path: string, timeoutMs: number) => {
+      seen.push({ path, timeoutMs });
+      return Promise.resolve({ stdout: JSON.stringify({ ok: true }) });
+    };
+    const json = await ghApiJson("repos/o/r/git/ref/tags/v1", { exec, timeoutMs: 12345 });
+    expect(json).toEqual({ ok: true });
+    expect(seen).toEqual([{ path: "repos/o/r/git/ref/tags/v1", timeoutMs: 12345 }]);
+  });
+
+  it("retries a transient executor failure, then parses the eventual success", async () => {
+    let calls = 0;
+    const exec = () => {
+      calls += 1;
+      if (calls === 1) return Promise.reject(new Error("gh: Bad Gateway (HTTP 502)"));
+      return Promise.resolve({ stdout: JSON.stringify({ sha: "abc" }) });
+    };
+    const json = await ghApiJson("repos/o/r", { exec, sleep: noSleep, random: noJitter });
+    expect(json).toEqual({ sha: "abc" });
+    expect(calls).toBe(2);
+  });
+
+  it("does not retry a 404 and rejects immediately", async () => {
+    let calls = 0;
+    const exec = () => {
+      calls += 1;
+      return Promise.reject(new Error("gh: Not Found (HTTP 404)"));
+    };
+    await expect(
+      ghApiJson("repos/o/r/git/ref/tags/nope", { exec, sleep: noSleep }),
+    ).rejects.toThrow(/HTTP 404/);
+    expect(calls).toBe(1);
+  });
+});
+
+describe("resolveTagToCommit (injected executor)", () => {
+  const lightweightRef = (sha: string) => JSON.stringify({ object: { type: "commit", sha } });
+
+  it("resolves a lightweight tag directly to its (lowercased) commit SHA", async () => {
+    const SHA = "AABBCCDDEEFF00112233445566778899AABBCCDD";
+    const exec = () => Promise.resolve({ stdout: lightweightRef(SHA) });
+    const commit = await resolveTagToCommit("actions", "checkout", "v7.0.0", { exec });
+    expect(commit).toBe(SHA.toLowerCase());
+  });
+
+  it("dereferences an annotated tag object to the underlying commit", async () => {
+    const TAG_SHA = "1111111111111111111111111111111111111111";
+    const COMMIT_SHA = "2222222222222222222222222222222222222222";
+    const exec = (path: string) => {
+      if (path.includes("/git/ref/tags/")) {
+        return Promise.resolve({
+          stdout: JSON.stringify({ object: { type: "tag", sha: TAG_SHA } }),
+        });
+      }
+      return Promise.resolve({
+        stdout: JSON.stringify({ object: { type: "commit", sha: COMMIT_SHA } }),
+      });
+    };
+    const commit = await resolveTagToCommit("o", "r", "v1.0.0", { exec });
+    expect(commit).toBe(COMMIT_SHA);
+  });
+
+  it("retries a transient failure mid-resolution, then resolves the commit", async () => {
+    let calls = 0;
+    const COMMIT_SHA = "3333333333333333333333333333333333333333";
+    const exec = () => {
+      calls += 1;
+      if (calls === 1) return Promise.reject(new Error("gh: Service Unavailable (HTTP 503)"));
+      return Promise.resolve({ stdout: lightweightRef(COMMIT_SHA) });
+    };
+    const commit = await resolveTagToCommit("o", "r", "v1", {
+      exec,
+      sleep: noSleep,
+      random: noJitter,
+    });
+    expect(commit).toBe(COMMIT_SHA);
+    expect(calls).toBe(2);
+  });
+
+  it("fails fast without retrying when the tag ref returns 404 (real mismatch)", async () => {
+    let calls = 0;
+    const exec = () => {
+      calls += 1;
+      return Promise.reject(new Error("gh: Not Found (HTTP 404)"));
+    };
+    await expect(
+      resolveTagToCommit("o", "r", "v9.9.9", { exec, sleep: noSleep }),
+    ).rejects.toThrow(/HTTP 404/);
+    expect(calls).toBe(1);
   });
 });
