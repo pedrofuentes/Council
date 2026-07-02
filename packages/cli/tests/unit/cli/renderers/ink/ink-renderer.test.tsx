@@ -12,7 +12,7 @@
  * though ink-testing-library's stdout reports as a non-TTY.
  */
 import React from "react";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { render } from "ink-testing-library";
 
 import { DebateApp, InkRenderer } from "../../../../../src/cli/renderers/ink/InkRenderer.js";
@@ -368,6 +368,66 @@ describe("DebateApp", () => {
     expect(humanSgr).toContain(97); // whiteBright for human
     expect(aliceSgr).not.toContain(97); // AI expert must NOT be whiteBright
     expect(aliceSgr).toContain(36); // Alice's palette color is cyan (SGR 36)
+    ui.unmount();
+  });
+});
+
+describe("InkRenderer ASCII mode (COUNCIL_ASCII=1) (#677)", () => {
+  // ASCII_SYMBOLS/UNICODE_SYMBOLS selection (src/cli/renderers/symbols.ts) is
+  // read fresh on every render via getSymbols(), so toggling the env var
+  // around each test drives the component through the ASCII branch without
+  // needing a dedicated prop.
+  let originalAscii: string | undefined;
+
+  beforeEach(() => {
+    originalAscii = process.env["COUNCIL_ASCII"];
+    process.env["COUNCIL_ASCII"] = "1";
+  });
+
+  afterEach(() => {
+    if (originalAscii === undefined) delete process.env["COUNCIL_ASCII"];
+    else process.env["COUNCIL_ASCII"] = originalAscii;
+  });
+
+  it("renders ASCII panel/round glyphs and suppresses the streaming cursor (no Unicode glyphs leak through)", async () => {
+    const events = stream(
+      {
+        kind: "panel.assembled",
+        experts: [{ slug: "alice", displayName: "Alice", model: "gpt-5" }],
+      },
+      { kind: "round.start", round: 0 },
+      { kind: "turn.start", expertSlug: "alice", round: 0, seq: 0 },
+      { kind: "turn.delta", expertSlug: "alice", text: "Hello" },
+      // turn.end intentionally omitted — keeps the turn "active" so the
+      // streaming-cursor branch (suppressed outright in ASCII mode for
+      // screen readers, per shouldSuppressCursor()) is exercised too.
+    );
+    const ui = render(<DebateApp events={events} />);
+    await flush();
+    const frame = stripAnsi(ui.lastFrame() ?? "");
+
+    // ASCII_SYMBOLS panel/round glyphs replace their Unicode counterparts.
+    expect(frame).toContain("[Panel] Panel assembled");
+    expect(frame).toContain("--- Round 1 ---");
+
+    // The corresponding Unicode glyphs must be entirely absent.
+    expect(frame).not.toContain("🏛️");
+    expect(frame).not.toContain("━");
+
+    // ASCII mode suppresses the cursor outright rather than swapping in an
+    // ASCII substitute — the Unicode cursor glyph must not appear.
+    expect(frame).not.toContain("▋");
+    ui.unmount();
+  });
+
+  it("renders the ASCII completion glyph (not the Unicode checkmark) on debate.end", async () => {
+    const events = stream({ kind: "debate.end", reason: "completed" });
+    const ui = render(<DebateApp events={events} />);
+    await flush();
+    const frame = stripAnsi(ui.lastFrame() ?? "");
+
+    expect(frame).toContain("[DONE] Debate complete (completed)");
+    expect(frame).not.toContain("✓");
     ui.unmount();
   });
 });
