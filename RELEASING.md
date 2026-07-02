@@ -120,6 +120,11 @@ A Trusted Publisher cannot be configured on npm until the package exists, so the
 4. Optional dry run: `cd packages/cli && npm publish --dry-run --access public --no-provenance`.
 5. Publish: `cd packages/cli && npm publish --access public --no-provenance`, entering your npm 2FA OTP. This ships `@council-ai/cli@0.1.0` **without** provenance.
 
-**Configure Trusted Publishing (one-time, after the package exists)** 6. On npmjs.com → `@council-ai/cli` → Settings → **Trusted Publishers** → add a GitHub Actions publisher pointing at repo `pedrofuentes/Council`, workflow `.github/workflows/release-please.yml`, and environment `npm-publish`.
+**Configure Trusted Publishing (one-time, after the package exists)**
 
-**Steady state (provenance, no tokens)** 7. Merge Conventional-Commit PRs to `main`; release-please maintains a release PR. 8. Merge the release PR → `.github/workflows/release-please.yml` creates the tag + GitHub Release and, in the same run, starts the `publish` job (gated on `releases_created == true`). The job waits for `npm-publish` environment approval, then publishes via OIDC Trusted Publishing **with provenance** (the first CI-published version is the first to carry provenance).
+6. On npmjs.com → `@council-ai/cli` → Settings → **Trusted Publishers** → add a GitHub Actions publisher pointing at repo `pedrofuentes/Council`, workflow `.github/workflows/release-please.yml`, and environment `npm-publish`.
+
+**Steady state (provenance, no tokens)**
+
+7. Merge Conventional-Commit PRs to `main`; release-please maintains a release PR.
+8. Merge the release PR → `.github/workflows/release-please.yml` creates the tag + GitHub Release and, in the same run, starts the `publish` job (gated on `releases_created == true`). The job waits for `npm-publish` environment approval, then publishes via OIDC Trusted Publishing **with provenance** (the first CI-published version is the first to carry provenance).

@@ -7,3 +7,7 @@ authors:
     given-names: "Pedro"
 repository-code: "https://github.com/pedrofuentes/Council"
 license: MIT
+identifiers:
+  - type: other
+    value: "@council-ai/cli"
+    description: "npm package name for the published Council CLI"
