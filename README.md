@@ -638,6 +638,7 @@ council templates inspect <name>            # Show template details (experts, mo
 council memory list                         # Show what experts remember
 council memory inspect <panel>              # Per-panel + per-expert memory detail
 council memory reset <panel> --yes          # Destructive: clear debate state
+council models                              # List available Copilot models (live discovery with static fallback)
 council doctor                              # Diagnose setup issues (incl. terminal capabilities)
 
 # Document formats and health
