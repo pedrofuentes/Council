@@ -50,16 +50,74 @@ export interface ExpertTrainingDeps {
   readonly engineFactory: () => CouncilEngine;
 }
 
+export interface StageDocumentFilesOptions {
+  /**
+   * Maximum accepted source size in MB, mirrored from
+   * `documents.maxFileSizeMB`. A source whose size exceeds this ceiling is
+   * rejected BEFORE any copy, so a hostile oversized file can never be staged
+   * (and no partial batch is left behind). When omitted, no size ceiling is
+   * enforced.
+   */
+  readonly maxFileSizeMB?: number;
+}
+
+/**
+ * True when `error` is a Node system error carrying an errno `code` string
+ * (e.g. `ENOENT`, `EACCES`, `EIO`).
+ */
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && typeof (error as { code?: unknown }).code === "string";
+}
+
+/**
+ * Whether a staged destination already exists. Only a genuinely-absent path
+ * (`ENOENT`) is reported as "free to write"; any other `lstat` failure
+ * (`EACCES`, `EIO`, `ELOOP`, …) is a real filesystem anomaly that must
+ * propagate rather than be misread as "safe to overwrite" and allow the copy
+ * to clobber content or mask a fault.
+ */
+async function destinationExists(destination: string): Promise<boolean> {
+  try {
+    await fs.lstat(destination);
+    return true;
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Best-effort rollback of the destinations created by a single
+ * {@link stageDocumentFiles} call. `COPYFILE_EXCL` guarantees every entry was
+ * freshly created by this call (an existing document makes the copy fail), so
+ * removing them can never delete pre-existing persona content. Rollback errors
+ * are swallowed so the ORIGINAL failure is the one that propagates.
+ */
+async function rollbackStagedFiles(destinations: readonly string[]): Promise<void> {
+  for (const destination of [...destinations].reverse()) {
+    await fs.rm(destination, { force: true }).catch(() => undefined);
+  }
+}
+
 /**
  * Copy user-selected document files into an expert's docs directory before
- * training, defending against two ingestion hazards:
+ * training, defending against four ingestion hazards:
  *
  *  - **Symlink escape**: `lstat` (not `stat`) is used so a symlink resolves
  *    to a non-regular-file and is rejected, preventing a crafted link from
  *    smuggling an out-of-tree file into the docs dir for indexing/analysis.
+ *  - **Oversized input**: a source whose size exceeds `maxFileSizeMB` is
+ *    rejected BEFORE any copy, so a hostile large file can never be staged
+ *    and later exhaust memory during extraction.
  *  - **Silent overwrite**: `COPYFILE_EXCL` makes the copy fail if a document
  *    of the same name already exists, so existing persona content is never
- *    clobbered. The caller surfaces the error instead of losing data.
+ *    clobbered. The existence pre-check narrows to `ENOENT` only, so a
+ *    transient `EACCES`/`EIO` surfaces instead of being read as "absent".
+ *  - **Partial batch**: if any file fails after earlier ones were copied, the
+ *    already-staged destinations are rolled back, so a mid-batch failure never
+ *    leaves orphaned documents behind.
  *
  * The destination is always `<docsPath>/<basename>`, so a staged file can
  * never be written outside the docs directory.
@@ -67,27 +125,44 @@ export interface ExpertTrainingDeps {
 export async function stageDocumentFiles(
   docsPath: string,
   paths: readonly string[],
+  options: StageDocumentFilesOptions = {},
 ): Promise<void> {
+  const maxBytes =
+    options.maxFileSizeMB === undefined ? undefined : options.maxFileSizeMB * 1024 * 1024;
+
   await fs.mkdir(docsPath, { recursive: true });
-  for (const inputPath of paths) {
-    const stats = await fs.lstat(inputPath);
-    if (!stats.isFile()) {
-      throw new Error(`Document path is not a regular file: ${inputPath}`);
+
+  // Destinations created by THIS call, so a later failure can roll them back.
+  const staged: string[] = [];
+  try {
+    for (const inputPath of paths) {
+      const stats = await fs.lstat(inputPath);
+      if (!stats.isFile()) {
+        throw new Error(`Document path is not a regular file: ${inputPath}`);
+      }
+      if (maxBytes !== undefined && stats.size > maxBytes) {
+        // The basename is file-derived, so sanitize it before it can reach a
+        // terminal; the byte count and MB ceiling are numeric and safe.
+        const name = toSingleLineDisplay(path.basename(inputPath));
+        throw new Error(
+          `Document "${name}" is too large: ${stats.size} bytes exceeds the ${options.maxFileSizeMB} MB limit.`,
+        );
+      }
+      const destination = path.join(docsPath, path.basename(inputPath));
+      if (await destinationExists(destination)) {
+        throw new Error(
+          `A document named "${path.basename(inputPath)}" already exists for this persona.`,
+        );
+      }
+      // COPYFILE_EXCL is a second line of defence: if another writer creates the
+      // destination between the check above and this copy, the copy fails loudly
+      // instead of silently overwriting existing persona content.
+      await fs.copyFile(inputPath, destination, fsConstants.COPYFILE_EXCL);
+      staged.push(destination);
     }
-    const destination = path.join(docsPath, path.basename(inputPath));
-    const destinationExists = await fs
-      .lstat(destination)
-      .then(() => true)
-      .catch(() => false);
-    if (destinationExists) {
-      throw new Error(
-        `A document named "${path.basename(inputPath)}" already exists for this persona.`,
-      );
-    }
-    // COPYFILE_EXCL is a second line of defence: if another writer creates the
-    // destination between the check above and this copy, the copy fails loudly
-    // instead of silently overwriting existing persona content.
-    await fs.copyFile(inputPath, destination, fsConstants.COPYFILE_EXCL);
+  } catch (error) {
+    await rollbackStagedFiles(staged);
+    throw error;
   }
 }
 
