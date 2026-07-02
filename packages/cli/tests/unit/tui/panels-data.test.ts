@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createPanelsDataSource, type PanelsRepos } from "../../../src/tui/adapters/panels-data.js";
 
@@ -266,6 +266,135 @@ describe("createPanelsDataSource.loadList", () => {
     ]);
     // ...and the all-valid path must stay silent — no false-positive diagnostics.
     expect(warnings).toEqual([]);
+  });
+
+  // #2111 (Sentinel CONDITIONAL follow-up of PR #2107): the per-template failure
+  // warning listed the failed NAMES only, dropping `result.reason` — unlike the
+  // total-failure path which includes `${errorText(error)}`. An operator learned
+  // *which* template failed but not *why*. The warning must carry the underlying
+  // reason per failed template (name: reason), consistent with the sibling path.
+  it("includes the underlying failure reason, not just the name, per failed template (#2111)", async () => {
+    const warnings: string[] = [];
+    const ds = createPanelsDataSource({
+      library: {
+        findAll: async () => [{ name: "acme", description: "Exec panel" }],
+        findByName: async () => undefined,
+        getMembers: async () => [],
+        getMemberCounts: async () => new Map([["acme", 2]]),
+      },
+      experts: { get: async () => null },
+      listTemplates: async () => ["startup-board", "broken"],
+      loadTemplate: async (name) => {
+        if (name === "broken") throw new Error("template file corrupt");
+        return { description: "tpl", experts: [] };
+      },
+      onWarning: (message) => warnings.push(message),
+    });
+
+    await ds.loadList();
+
+    expect(warnings).toHaveLength(1);
+    // Discriminating: the warning names the culprit AND carries WHY it failed.
+    expect(warnings[0]).toContain("broken");
+    expect(warnings[0]).toContain("template file corrupt");
+    // ...without implicating the healthy template that loaded fine.
+    expect(warnings[0]).not.toContain("startup-board");
+  });
+
+  // #2111 🟡 3 — the `console.warn` fallback (the ACTUAL production path today,
+  // since callers were unwired) had no test. Assert it fires when no sink is
+  // wired AND that it now carries the failure reason (discriminating, not a bare
+  // "was called").
+  it("falls back to console.warn carrying the failure reason when no onWarning sink is wired (#2111)", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const ds = createPanelsDataSource({
+        library: {
+          findAll: async () => [],
+          findByName: async () => undefined,
+          getMembers: async () => [],
+          getMemberCounts: async () => new Map(),
+        },
+        experts: { get: async () => null },
+        listTemplates: async () => ["broken"],
+        loadTemplate: async () => {
+          throw new Error("template file corrupt");
+        },
+        // no onWarning — degraded mode must still be observable via console.warn.
+      });
+
+      await expect(ds.loadList()).resolves.toEqual([]);
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const message = String(warnSpy.mock.calls[0]?.[0] ?? "");
+      expect(message).toContain("broken");
+      expect(message).toContain("template file corrupt");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  // #2111 🟡 3 — a throwing `onWarning` sink must never break the best-effort
+  // list: observability cannot degrade the data path. loadList must still resolve
+  // with the survivors (saved + healthy templates), with no unhandled rejection.
+  it("keeps loadList resolving with survivors when the onWarning sink itself throws (#2111)", async () => {
+    const ds = createPanelsDataSource({
+      library: {
+        findAll: async () => [{ name: "acme", description: "Exec panel" }],
+        findByName: async () => undefined,
+        getMembers: async () => [],
+        getMemberCounts: async () => new Map([["acme", 2]]),
+      },
+      experts: { get: async () => null },
+      listTemplates: async () => ["startup-board", "broken"],
+      loadTemplate: async (name) => {
+        if (name === "broken") throw new Error("corrupt");
+        return { description: "tpl", experts: [] };
+      },
+      onWarning: () => {
+        throw new Error("the warning sink is broken");
+      },
+    });
+
+    await expect(ds.loadList()).resolves.toEqual([
+      { name: "acme", description: "Exec panel", memberCount: 2, source: "saved" },
+      { name: "startup-board", description: "tpl", memberCount: 0, source: "template" },
+    ]);
+  });
+
+  // #2111 — the reason is untrusted (an Error message can echo file-derived
+  // bytes), just like the name. BOTH must be collapsed to a single sanitized
+  // line before reaching the sink so a crafted template cannot forge log lines
+  // or inject terminal-control sequences.
+  it("sanitizes adversarial bytes in BOTH the failed name and its reason to one line (#2111)", async () => {
+    const warnings: string[] = [];
+    const hostileName = "al\u001b[31mpha\u0007-\u202etemplate";
+    const ds = createPanelsDataSource({
+      library: {
+        findAll: async () => [],
+        findByName: async () => undefined,
+        getMembers: async () => [],
+        getMemberCounts: async () => new Map(),
+      },
+      experts: { get: async () => null },
+      listTemplates: async () => [hostileName],
+      loadTemplate: async () => {
+        throw new Error("mal\u0000formed\u2028rea\tson\u202c");
+      },
+      onWarning: (message) => warnings.push(message),
+    });
+
+    await expect(ds.loadList()).resolves.toEqual([]);
+    expect(warnings).toHaveLength(1);
+    const message = warnings[0] ?? "";
+    // Readable name and reason survive...
+    expect(message).toContain("alpha-template");
+    expect(message).toContain("malformed rea son");
+    // ...but no control / bidi bytes, and the whole message stays single-line.
+    expect(message).not.toMatch(
+      // eslint-disable-next-line no-control-regex
+      /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/,
+    );
   });
 });
 
