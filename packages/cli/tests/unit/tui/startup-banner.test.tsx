@@ -59,4 +59,72 @@ describe("StartupBanner", () => {
     expect((lastFrame() ?? "").trim()).toBe("");
     unmount();
   });
+
+  // #2126 🟡 — PR #2124 wired lazily-loaded panels degraded-template warnings
+  // into this banner, but the one-way `dismissed` latch never reset when
+  // `props.warnings` grew after the user dismissed the banner, so a warning
+  // that arrives post-dismissal (e.g. on Panels-screen mount) never rendered.
+  // This re-opened #2111's invisible-warning gap for that sequence.
+  it("re-shows the banner with the new warning when the warning set grows after dismissal (#2126)", async () => {
+    const initial: readonly StartupWarning[] = [{ kind: "warning", text: "first warning" }];
+    const { lastFrame, stdin, rerender, unmount } = render(
+      <StartupBanner warnings={initial} theme={theme} isActive />,
+    );
+    expect(lastFrame() ?? "").toContain("first warning");
+
+    await sleep(20);
+    stdin.write("\u001b");
+    await sleep(120);
+    expect((lastFrame() ?? "").trim()).toBe("");
+
+    const grown: readonly StartupWarning[] = [
+      ...initial,
+      { kind: "warning", text: "late degraded-template warning" },
+    ];
+    rerender(<StartupBanner warnings={grown} theme={theme} isActive />);
+    await sleep(20);
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("late degraded-template warning");
+    expect(frame).toContain("first warning");
+    unmount();
+  });
+
+  it("does not re-show the banner when re-rendered with the same (already-dismissed) warnings", async () => {
+    const warnings: readonly StartupWarning[] = [{ kind: "warning", text: "steady warning" }];
+    const { lastFrame, stdin, rerender, unmount } = render(
+      <StartupBanner warnings={warnings} theme={theme} isActive />,
+    );
+    expect(lastFrame() ?? "").toContain("steady warning");
+
+    await sleep(20);
+    stdin.write("\u001b");
+    await sleep(120);
+    expect((lastFrame() ?? "").trim()).toBe("");
+
+    // Re-render with a brand-new array reference but identical content: must
+    // not resurrect the dismissed banner (no spurious re-show).
+    rerender(
+      <StartupBanner
+        warnings={[{ kind: "warning", text: "steady warning" }]}
+        theme={theme}
+        isActive
+      />,
+    );
+    await sleep(20);
+    expect((lastFrame() ?? "").trim()).toBe("");
+
+    // A second identical re-render completes (and stays hidden), proving the
+    // dismiss/re-show logic is stable rather than looping.
+    rerender(
+      <StartupBanner
+        warnings={[{ kind: "warning", text: "steady warning" }]}
+        theme={theme}
+        isActive
+      />,
+    );
+    await sleep(20);
+    expect((lastFrame() ?? "").trim()).toBe("");
+    unmount();
+  });
 });
