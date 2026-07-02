@@ -1,5 +1,5 @@
 import React from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render } from "ink-testing-library";
 
 import { CouncilTUI } from "../../../src/tui/CouncilTUI.js";
@@ -173,9 +173,14 @@ describe("CouncilTUI", () => {
     // PanelComposeScreen renders "Panel auto-compose unavailable" when no data source is
     // wired — proving CouncilTUI → AppRouter → HomeScreen.isActive → navigate() integration.
     stdin.write("\r");
-    await sleep(120);
-    await flush();
-    expect(lastFrame()).toContain("Panel auto-compose unavailable");
+    // Deterministically wait for the post-navigation frame instead of a fixed
+    // wall-clock sleep: poll (flushing microtasks each attempt) until the
+    // assertion passes or the timeout elapses, so the test is neither flaky
+    // under load nor slower than necessary when the update lands quickly.
+    await vi.waitFor(async () => {
+      await flush();
+      expect(lastFrame()).toContain("Panel auto-compose unavailable");
+    });
     unmount();
   });
 });
