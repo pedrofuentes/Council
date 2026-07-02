@@ -658,6 +658,178 @@ describe("ContextManager", () => {
     });
   });
 
+  // ---------- thrown-error classification & best-effort sink guard ----------
+  // #1970: a TIMEOUT that surfaces via the THROWN-error branch (a provider
+  //   whose stream REJECTS on abort instead of yielding a kind:"error" event)
+  //   must be labeled as a timeout — matching the stream-event branch's
+  //   wording, including `timeoutMs` — not collapsed into the generic abort
+  //   message. Only a NON-timeout abort stays generic.
+  // #1972: warnContextSummarizer must NEVER let a throwing sink (onWarning or
+  //   console.warn) escape. Summarization stays best-effort regardless of what
+  //   the sink does — the documented contract on ContextManagerConfig.onWarning.
+  describe("thrown-error classification & best-effort sink guard (#1970/#1972)", () => {
+    it("labels a THROWN timeout as a timeout, not a generic abort (#1970)", async () => {
+      // A provider whose stream REJECTS when its AbortSignal fires — rather
+      // than yielding a kind:"error" event — drives the timeout through the
+      // thrown-error catch branch. The configured 20ms timeout fires first,
+      // so `timeoutSignal.aborted` is true when the throw is caught.
+      const timeoutEngine = new MockEngine();
+      await timeoutEngine.start();
+      timeoutEngine.send = function patchedSend(opts) {
+        async function* gen(): AsyncGenerator<EngineEvent, void, void> {
+          await new Promise<never>((_resolve, reject) => {
+            const signal = opts.signal;
+            const fail = (): void => reject(signal?.reason ?? new Error("aborted"));
+            if (signal?.aborted) fail();
+            else signal?.addEventListener("abort", fail, { once: true });
+          });
+          yield { kind: "message.delta", expertId: opts.expertId, text: "" };
+        }
+        return gen();
+      };
+      const warnings: string[] = [];
+      const timeoutManager = createContextManager(repo, timeoutEngine, {
+        ...baseConfig,
+        summarizerTimeoutMs: 20,
+        onWarning: (m) => warnings.push(m),
+      });
+      const session = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+      await seedTurns(repo, session.id, 3);
+
+      const result = await timeoutManager.maybeSummarize(session.id);
+
+      expect(result).toBe(false);
+      // Exactly one degradation warning, naming the TIMEOUT with the
+      // configured bound — identical to the stream-event branch — never the
+      // generic "aborted" message.
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatch(/summarization timed out after 20ms/);
+      expect(warnings[0]).not.toMatch(/aborted/i);
+      // Best-effort: the previous (null) summary is preserved.
+      const refreshed = await repo.findSessionById(session.id);
+      expect(refreshed?.summary).toBeNull();
+      expect(refreshed?.summaryThroughSeq).toBe(0);
+
+      await timeoutEngine.stop();
+    }, 2_000);
+
+    it("labels a THROWN non-timeout abort as a generic abort, not a timeout (#1970 inverse)", async () => {
+      // No timeout is configured (summarizerTimeoutMs: 0 disables the guard),
+      // so timeoutSignal is undefined. A stream that REJECTS with an
+      // AbortError must still surface the generic abort message — the timeout
+      // branch must NOT fire.
+      const abortEngine = new MockEngine();
+      await abortEngine.start();
+      abortEngine.send = function patchedSend(opts) {
+        async function* gen(): AsyncGenerator<EngineEvent, void, void> {
+          await Promise.reject(new DOMException("The operation was aborted.", "AbortError"));
+          yield { kind: "message.delta", expertId: opts.expertId, text: "" };
+        }
+        return gen();
+      };
+      const warnings: string[] = [];
+      const abortManager = createContextManager(repo, abortEngine, {
+        ...baseConfig,
+        summarizerTimeoutMs: 0,
+        onWarning: (m) => warnings.push(m),
+      });
+      const session = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+      await seedTurns(repo, session.id, 3);
+
+      const result = await abortManager.maybeSummarize(session.id);
+
+      expect(result).toBe(false);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatch(/summarization aborted/);
+      expect(warnings[0]).not.toMatch(/timed out/i);
+      const refreshed = await repo.findSessionById(session.id);
+      expect(refreshed?.summary).toBeNull();
+
+      await abortEngine.stop();
+    });
+
+    it("never lets a throwing onWarning sink escape — summarization stays best-effort (#1972)", async () => {
+      // A provider stream that THROWS a plain error drives the thrown-error
+      // generic-failure branch, which calls warnContextSummarizer from INSIDE
+      // the catch. A sink that throws there must NOT propagate.
+      const failingEngine = new MockEngine();
+      await failingEngine.start();
+      failingEngine.send = function patchedSend(opts) {
+        async function* gen(): AsyncGenerator<EngineEvent, void, void> {
+          await Promise.reject(new Error("provider exploded"));
+          yield { kind: "message.delta", expertId: opts.expertId, text: "" };
+        }
+        return gen();
+      };
+      const received: string[] = [];
+      const throwingManager = createContextManager(repo, failingEngine, {
+        ...baseConfig,
+        summarizerTimeoutMs: 0,
+        onWarning: (m) => {
+          received.push(m);
+          throw new Error("sink boom");
+        },
+      });
+      const session = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+      await seedTurns(repo, session.id, 3);
+
+      // The throwing sink must be fully contained: maybeSummarize RESOLVES
+      // (false) — the throw never escapes to break the chat loop.
+      await expect(throwingManager.maybeSummarize(session.id)).resolves.toBe(false);
+      // The sink WAS invoked exactly once with the sanitized failure warning...
+      expect(received).toHaveLength(1);
+      expect(received[0]).toMatch(/summarization failed/);
+      // ...and the previous (null) summary is preserved.
+      const refreshed = await repo.findSessionById(session.id);
+      expect(refreshed?.summary).toBeNull();
+      expect(refreshed?.summaryThroughSeq).toBe(0);
+
+      await failingEngine.stop();
+    });
+
+    it("sanitizes adversarial provider bytes to a single control-free line before the sink (#1972/#645)", async () => {
+      // A hostile/compromised provider embeds ANSI/C0/C1/DEL/bidi and
+      // newline/tab bytes in a THROWN error message to forge log lines or
+      // inject terminal escapes. The warning is a display sink, so even a
+      // NON-throwing sink must receive exactly one sanitized line.
+      const hostileMessage =
+        "kaboom\u0009\u0000\u001b[31m\u009b\u007f\u2028\u2029\r\nFORGED: ok\u202e\u2066evil";
+      const hostileEngine = new MockEngine();
+      await hostileEngine.start();
+      hostileEngine.send = function patchedSend(opts) {
+        async function* gen(): AsyncGenerator<EngineEvent, void, void> {
+          await Promise.reject(new Error(hostileMessage));
+          yield { kind: "message.delta", expertId: opts.expertId, text: "" };
+        }
+        return gen();
+      };
+      const warnings: string[] = [];
+      const hostileManager = createContextManager(repo, hostileEngine, {
+        ...baseConfig,
+        summarizerTimeoutMs: 0,
+        onWarning: (m) => warnings.push(m),
+      });
+      const session = await repo.createSession({ targetType: "expert", targetSlug: "cto" });
+      await seedTurns(repo, session.id, 3);
+
+      await hostileManager.maybeSummarize(session.id);
+
+      expect(warnings).toHaveLength(1);
+      const warning = warnings[0] ?? "";
+      // Single line: no raw CR/LF/paragraph separators survive.
+      expect(warning.split("\n")).toHaveLength(1);
+      // No C0/C1, DEL, bidi override/isolate, or line/paragraph separators.
+      expect(warning).not.toMatch(
+        // eslint-disable-next-line no-control-regex
+        /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/,
+      );
+      // The human-readable prefix is intact after sanitization.
+      expect(warning).toMatch(/summarization failed/);
+
+      await hostileEngine.stop();
+    });
+  });
+
   // ---------- forceSummarize ----------
 
   describe("forceSummarize()", () => {
