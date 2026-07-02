@@ -41,17 +41,17 @@ describe("site config", () => {
 describe("SEO + social discoverability config", () => {
   describe("absoluteUrl", () => {
     it("builds an absolute URL for the site root", () => {
-      expect(absoluteUrl("/")).toBe("https://pedrofuentes.github.io/Council/");
+      expect(absoluteUrl("/")).toBe("https://pedrofuent.es/Council/");
     });
 
     it("builds an absolute URL for a nested asset path", () => {
       expect(absoluteUrl("/og/council-og.png")).toBe(
-        "https://pedrofuentes.github.io/Council/og/council-og.png",
+        "https://pedrofuent.es/Council/og/council-og.png",
       );
     });
 
     it("normalizes paths that omit a leading slash", () => {
-      expect(absoluteUrl("robots.txt")).toBe("https://pedrofuentes.github.io/Council/robots.txt");
+      expect(absoluteUrl("robots.txt")).toBe("https://pedrofuent.es/Council/robots.txt");
     });
   });
 
@@ -61,7 +61,7 @@ describe("SEO + social discoverability config", () => {
     });
 
     it("exposes the social image as an absolute URL", () => {
-      expect(socialImageUrl).toBe("https://pedrofuentes.github.io/Council/og/council-og.png");
+      expect(socialImageUrl).toBe("https://pedrofuent.es/Council/og/council-og.png");
       expect(socialImageUrl.startsWith("https://")).toBe(true);
     });
   });
@@ -77,7 +77,7 @@ describe("SEO + social discoverability config", () => {
     it("describes Council as a developer application with absolute links", () => {
       expect(ld.name).toBe("Council");
       expect(ld.applicationCategory).toBe("DeveloperApplication");
-      expect(ld.url).toBe("https://pedrofuentes.github.io/Council/");
+      expect(ld.url).toBe("https://pedrofuent.es/Council/");
       expect(ld.image).toBe(socialImageUrl);
       expect(ld.codeRepository).toBe("https://github.com/pedrofuentes/Council");
       expect(ld.downloadUrl).toBe(npmUrl);
