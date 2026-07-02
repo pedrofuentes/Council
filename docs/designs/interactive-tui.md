@@ -76,6 +76,12 @@ mode."* Explicit subcommands bypass the TUI entirely, so agents/scripts/CI are u
 ### 4.2 Navigation — hybrid + collapsible left nav, max 3 levels
 - **Home dashboard** is the landing view: recent sessions (dominant scrollable list), quick-action
   CTAs (Convene, New expert, New panel, Settings), and counts (N sessions / N experts / N panels).
+- **Home launchpad keyboard navigation**: the quick actions and recent sessions form a single
+  navigable list (quick actions first, then recent sessions) with one `›` cursor. `j/k`/`↑/↓` move
+  the cursor and `Enter` activates the highlighted row — a quick action navigates to its route, a
+  recent session opens `/sessions/:id`. The direct letter shortcuts (`c`/`e`/`p`/`,`) always fire
+  regardless of cursor position. This list has its own focus, independent of the left nav's `j/k`
+  cursor (see §4.3 dual focus model); both are inert while the other pane is focused.
 - **Collapsible left nav** (Home / Panels / Experts / Debates / Conversations / Settings) — combines the
   hybrid model with an optional fixed sidebar. Three states: **expanded** (labels) / **icon rail**
   (~3 cols, orientation kept) / **hidden** (max reading width). Adaptive default by width

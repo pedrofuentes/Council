@@ -2,7 +2,7 @@
 import React from "react";
 import { Text } from "ink";
 import { render } from "ink-testing-library";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { describe, expect, it } from "vitest";
 
 import { HomeScreen } from "../../../src/tui/screens/HomeScreen.js";
@@ -12,6 +12,14 @@ const theme = resolveTheme({ NO_COLOR: "1" });
 const flush = async (): Promise<void> => {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setImmediate(r));
 };
+
+// Renders the raw matched pathname so tests can assert exactly what reached
+// the router — react-router's useParams() would decode a path segment back,
+// masking whether the value was encoded before navigation.
+function LocationProbe(): React.ReactElement {
+  const location = useLocation();
+  return <Text>{`ROUTE:${location.pathname}`}</Text>;
+}
 
 const emptyData = { counts: { sessions: 0, experts: 0, panels: 0 }, recent: [] } as const;
 const populatedData = {
@@ -212,7 +220,7 @@ describe("HomeScreen — quick-action keys", () => {
     unmount();
   });
 
-  it("keys do NOT navigate when isActive is false", async () => {
+  it("cursor keys and Enter are inert (in addition to quick-action keys) when isActive is false", async () => {
     const { stdin, lastFrame, unmount } = render(
       <MemoryRouter initialEntries={["/"]}>
         <Routes>
@@ -224,19 +232,27 @@ describe("HomeScreen — quick-action keys", () => {
           <Route path="/experts/new" element={<Text>NEW EXPERT</Text>} />
           <Route path="/panels/new" element={<Text>NEW PANEL</Text>} />
           <Route path="/settings" element={<Text>SETTINGS</Text>} />
+          <Route path="/sessions/:id" element={<Text>SESSION DETAIL</Text>} />
         </Routes>
       </MemoryRouter>,
     );
     await flush();
-    for (const key of ["c", "e", "p", ","]) {
+    const before = lastFrame() ?? "";
+    for (const key of ["c", "e", "p", ",", "j", "k", "\u001b[B", "\u001b[A", "\r"]) {
       stdin.write(key);
       await flush();
     }
     const frame = lastFrame() ?? "";
+    // No navigation occurred for any key — quick-action letters, cursor
+    // movement (j/k/arrows), or Enter.
     expect(frame).not.toContain("COMPOSE PANEL");
     expect(frame).not.toContain("NEW EXPERT");
     expect(frame).not.toContain("NEW PANEL");
     expect(frame).not.toContain("SETTINGS");
+    expect(frame).not.toContain("SESSION DETAIL");
+    // The selection cursor did not move either — the frame is byte-identical
+    // to before any key was pressed.
+    expect(frame).toBe(before);
     unmount();
   });
 });
@@ -393,6 +409,36 @@ describe("HomeScreen — launchpad Enter navigation", () => {
     stdin.write("\r");
     await flush();
     expect(lastFrame()).toContain("SESSION DETAIL");
+    unmount();
+  });
+
+  it("encodeURIComponent-encodes an unsafe recent-session id before building the route (regression)", async () => {
+    // "/", "?", "=", and "#" are unsafe inside a single /sessions/:id path segment:
+    // unescaped they would split the path, start a query string, or start a fragment.
+    const unsafeId = "s/1?x=y#z";
+    const data = {
+      counts: { sessions: 1, experts: 0, panels: 0 },
+      recent: [{ id: unsafeId, title: "Unsafe id session", when: "1d", status: "convened" as const }],
+    };
+    const { stdin, lastFrame, unmount } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<HomeScreen theme={theme} data={data} isActive />} />
+          <Route path="/sessions/:id" element={<LocationProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await flush();
+    for (let i = 0; i < 4; i++) {
+      stdin.write("\u001b[B");
+      await flush();
+    }
+    stdin.write("\r");
+    await flush();
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain(`ROUTE:/sessions/${encodeURIComponent(unsafeId)}`);
+    // The raw, unescaped id must never reach the route.
+    expect(frame).not.toContain(`ROUTE:/sessions/${unsafeId}`);
     unmount();
   });
 });
