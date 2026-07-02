@@ -168,7 +168,7 @@ To reduce premium-request usage, lower the panel size or round count:
 ```bash
 council convene "My topic" --max-rounds 2   # fewer rounds → fewer turns
 council convene "My topic" --max-experts 2  # smaller panel → fewer concurrent turns per round
-council convene "My topic" --panel budget   # purpose-built panel with fewer experts
+council convene "My topic" --panel incident-postmortem   # purpose-built panel with fewer experts
 ```
 
 Watch for input token counts approaching your model's limit (e.g., 128k for Claude Sonnet, 200k for GPT-4 Turbo). If you see >80k input tokens, consider enabling context management.
