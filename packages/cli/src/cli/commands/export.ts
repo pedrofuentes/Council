@@ -128,15 +128,25 @@ async function realpathParentDir(parentDir: string, outputPath: string): Promise
  * structure (outline spoofing / section forgery). Covers the whole CommonMark
  * block-start class — ATX headings (`#`), setext underlines (`=`/`-`), thematic
  * breaks (`-`/`*`/`_`), list bullets (`-`/`*`/`+`), blockquotes (`>`), fenced
- * code (`` ` ``/`~`) and raw-HTML blocks (`<`). CommonMark permits up to three
- * leading spaces before a block marker; a backslash before that first
- * ASCII-punctuation marker makes the line parse as a literal paragraph while
- * preserving the visible text. (A blockquote prefix does NOT suppress a nested
- * ATX heading — CommonMark renders `> # Foo` as a heading — so escaping, not
- * quoting, is the robust fix.)
+ * code (`` ` ``/`~`), raw-HTML blocks (`<`) and INDENTED code blocks.
+ *
+ * Two steps, in order:
+ *   1. Strip leading indentation. A caller pins the line inside a list item with
+ *      a fixed 2-space prefix; once a blank line closes that item's paragraph, a
+ *      continuation indented 4+ columns (four spaces, or a single tab — which
+ *      CommonMark expands to a 4-column stop) opens an INDENTED code block, and
+ *      unlike the punctuation markers below there is no character to escape (the
+ *      code block would even swallow an escaped marker as literal text). Removing
+ *      the indentation keeps the content at the list-item paragraph column so it
+ *      can never start a code block (#1884).
+ *   2. Backslash-escape a single leading block marker so the de-indented line
+ *      parses as a literal paragraph while preserving the visible text. (A
+ *      blockquote prefix does NOT suppress a nested ATX heading — CommonMark
+ *      renders `> # Foo` as a heading — so escaping, not quoting, is the robust
+ *      fix.)
  */
 function escapeBlockLeadingMarkdown(line: string): string {
-  return line.replace(/^(\s{0,3})([#>=~`*+_<-])/, "$1\\$2");
+  return line.replace(/^[ \t]+/, "").replace(/^([#>=~`*+_<-])/, "\\$1");
 }
 
 /**
@@ -611,11 +621,12 @@ export function renderAdr(doc: TranscriptDocument): string {
       const [firstLine = "", ...restLines] = sanitizeExportBlockLines(t.content);
       lines.push(`- **${display}**: ${firstLine}`);
       for (const contLine of restLines) {
-        // Keep continuation lines inside the list item AND escape any leading
-        // block marker so a multi-line turn can neither break out to a
-        // top-level ADR section nor forge a heading/rule/code fence in the
-        // rendered outline (#1884). The first line is safe unescaped: it sits
-        // mid-line after the `- **name**: ` bullet, where no block starts.
+        // Keep continuation lines inside the list item AND neutralize any
+        // leading block construct so a multi-line turn can neither break out to
+        // a top-level ADR section nor forge a heading/rule/code fence/indented
+        // code block in the rendered outline (#1884). The first line is safe
+        // unescaped: it sits mid-line after the `- **name**: ` bullet, where no
+        // block starts.
         lines.push(contLine.length > 0 ? `  ${escapeBlockLeadingMarkdown(contLine)}` : "");
       }
     }
