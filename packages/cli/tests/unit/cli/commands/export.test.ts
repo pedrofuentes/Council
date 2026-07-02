@@ -1748,15 +1748,19 @@ describe("buildExportCommand", () => {
     // (a) User error → exit 1, not the raw-Node internal-error code 4.
     expect(caught).toBeInstanceOf(CliUserError);
 
-    // Production stderr path: handleCliError must not emit raw ANSI/control
-    // bytes and must return the user-error exit code.
+    // Production stderr path: for a CliUserError, handleCliError writes NOTHING
+    // (the pre-sanitized message is not re-emitted) and returns the user-error
+    // exit code, so stderr is EXACTLY empty. Asserting silence is the DISCRIMINATING
+    // #1966 oracle: the old `expectNoTerminalControls(stderr)` was vacuous because
+    // stderr is always "" here. Were the wrap removed, `caught` would be the raw fs
+    // error (with a `code`), handleCliError would emit `Error: <raw message>\n`, and
+    // this `toBe("")` would fail on the leaked path/ANSI bytes.
     let stderr = "";
     const exit = handleCliError(caught, (s) => {
       stderr += s;
     });
     expect(exit).toBe(EXIT_USER_ERROR);
-    expectNoTerminalControls(stderr);
-    expect(stderr).not.toMatch(TERMINAL_CONTROL_BYTES);
+    expect(stderr).toBe("");
 
     // (b) The error's own message is single-line and free of control bytes.
     const message = caught instanceof Error ? caught.message : String(caught);
@@ -1784,13 +1788,16 @@ describe("buildExportCommand", () => {
     // (a) User error → exit 1, not the raw-Node internal-error code 4.
     expect(caught).toBeInstanceOf(CliUserError);
 
+    // handleCliError stays SILENT for a CliUserError, so stderr is exactly empty
+    // (the pre-sanitized message is not re-emitted). DISCRIMINATING #1966 oracle:
+    // were the wrap removed, the raw ENOTDIR error (with a `code`) would be emitted
+    // here and `toBe("")` would fail on the leaked control bytes.
     let stderr = "";
     const exit = handleCliError(caught, (s) => {
       stderr += s;
     });
     expect(exit).toBe(EXIT_USER_ERROR);
-    expectNoTerminalControls(stderr);
-    expect(stderr).not.toMatch(TERMINAL_CONTROL_BYTES);
+    expect(stderr).toBe("");
 
     // (b) The error's own message is single-line and free of control bytes.
     const message = caught instanceof Error ? caught.message : String(caught);
@@ -1819,13 +1826,16 @@ describe("buildExportCommand", () => {
     // (a) User error → exit 1, not the raw-Node internal-error code 4.
     expect(caught).toBeInstanceOf(CliUserError);
 
+    // handleCliError stays SILENT for a CliUserError, so stderr is exactly empty
+    // (the pre-sanitized message is not re-emitted). DISCRIMINATING #1966 oracle:
+    // were the wrap removed, the raw rename error (with a `code`) would be emitted
+    // here and `toBe("")` would fail on the leaked control bytes.
     let stderr = "";
     const exit = handleCliError(caught, (s) => {
       stderr += s;
     });
     expect(exit).toBe(EXIT_USER_ERROR);
-    expectNoTerminalControls(stderr);
-    expect(stderr).not.toMatch(TERMINAL_CONTROL_BYTES);
+    expect(stderr).toBe("");
 
     // (b) The wrapped message never interpolates the raw fs error message, so the
     // control bytes it carried are absent; it stays single-line and sanitized.
@@ -1833,6 +1843,247 @@ describe("buildExportCommand", () => {
     expectNoTerminalControls(message);
     expect(message).not.toMatch(TERMINAL_CONTROL_BYTES);
     expect(message.split("\n")).toHaveLength(1);
+  });
+
+  // #1965: the writeExportArtifact fs-wrap error branches — the non-force O_EXCL
+  // create, and the --force temp open/writeFile/close — funnel every raw Node fs
+  // error through the outer catch, which WRAPS it in a sanitized `CliUserError`
+  // (exit 1, errno LABEL only, never the raw `err.message`). Only the --force
+  // lstat-ENOTDIR and rename-failure paths had dedicated wrap coverage; these add
+  // a discriminating test per remaining branch (each FAILS if the wrap is removed,
+  // because a raw rethrow is not a `CliUserError` and — with a `code` — is echoed
+  // verbatim by handleCliError, leaking the path/ANSI it embeds).
+  it("writeExportArtifact (no --force) wraps an O_EXCL EEXIST as a sanitized CliUserError (exit 1) without clobbering the target (#1965)", async () => {
+    // A file already occupying the path makes the atomic `O_CREAT | O_EXCL` create
+    // fail with EEXIST. That raw Node error must be WRAPPED, not rethrown: a rethrow
+    // exits 4 (INTERNAL) and echoes the raw "file already exists" message + path.
+    const target = path.join(testHome, "occupied.md");
+    await fs.writeFile(target, "PREEXISTING", "utf-8");
+
+    let caught: unknown;
+    try {
+      await writeExportArtifact(target, "NEW CONTENT", false);
+    } catch (err) {
+      caught = err;
+    }
+
+    // (a) Wrapped as a user error (exit 1), not the raw-Node internal-error code 4,
+    // and the EEXIST branch really fired (the raw error is the wrap's `cause`).
+    expect(caught).toBeInstanceOf(CliUserError);
+    const cause = (caught as CliUserError).cause;
+    expect(cause).toBeInstanceOf(Error);
+    expect((cause as NodeJS.ErrnoException).code).toBe("EEXIST");
+
+    // (b) The message surfaces the errno LABEL (actionable) but NOT the raw Node
+    // "already exists" phrasing — proof it is the sanitized wrap, not a raw rethrow.
+    const message = (caught as CliUserError).message;
+    expect(message).toMatch(/Cannot write export/);
+    expect(message).toContain("EEXIST");
+    expect(message).not.toMatch(/already exists/i);
+    expect(message.split("\n")).toHaveLength(1);
+    expectNoTerminalControls(message);
+    expect(message).not.toMatch(TERMINAL_CONTROL_BYTES);
+
+    // (c) handleCliError is SILENT for a CliUserError (#1966 silence contract):
+    // were the wrap gone, the raw EEXIST error (code set) would be emitted here.
+    let stderr = "";
+    const exit = handleCliError(caught, (s) => {
+      stderr += s;
+    });
+    expect(exit).toBe(EXIT_USER_ERROR);
+    expect(stderr).toBe("");
+
+    // (d) O_EXCL never opened the existing file, so its contents are untouched.
+    expect(await fs.readFile(target, "utf-8")).toBe("PREEXISTING");
+  });
+
+  it("writeExportArtifact --force wraps a temp-file open failure (EACCES) as a sanitized CliUserError, never leaking the raw fs message (#1965)", async () => {
+    // The --force flow opens a private O_EXCL temp sibling before the atomic
+    // rename. If that open rejects, the outer catch must wrap it into a sanitized
+    // CliUserError whose message carries only the errno LABEL — never the raw fs
+    // `err.message`, which embeds a path with terminal-control bytes.
+    const target = path.join(testHome, "temp-open-fail.md");
+    const openErr = Object.assign(
+      new Error(`EACCES: permission denied, open '${ESC}[31m${C1_CSI}${BIDI_OVERRIDE}temp'`),
+      { code: "EACCES" },
+    );
+    vi.mocked(fs.open).mockRejectedValueOnce(openErr);
+
+    let caught: unknown;
+    try {
+      await writeExportArtifact(target, "CONTENT", true);
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(CliUserError);
+    expect((caught as CliUserError).cause).toBe(openErr);
+    const message = (caught as CliUserError).message;
+    expect(message).toMatch(/Cannot write export/);
+    expect(message).toContain("EACCES");
+    // Raw Node phrasing is absent → the wrap uses the errno label, not err.message.
+    expect(message).not.toContain("permission denied");
+    expect(message.split("\n")).toHaveLength(1);
+    expectNoTerminalControls(message);
+    expect(message).not.toMatch(TERMINAL_CONTROL_BYTES);
+
+    let stderr = "";
+    const exit = handleCliError(caught, (s) => {
+      stderr += s;
+    });
+    expect(exit).toBe(EXIT_USER_ERROR);
+    expect(stderr).toBe("");
+
+    // The failed open never created a temp sibling.
+    const leftovers = (await fs.readdir(testHome)).filter((e) => e.includes(".tmp"));
+    expect(leftovers).toEqual([]);
+  });
+
+  it("writeExportArtifact --force wraps a temp writeFile failure (EIO) as a sanitized CliUserError, never leaking the raw fs message (#1965)", async () => {
+    const actual = await vi.importActual<typeof fs>("node:fs/promises");
+    const target = path.join(testHome, "temp-write-fail.md");
+    const writeErr = Object.assign(
+      new Error(`EIO: i/o error, write '${ESC}[31m${C1_CSI}${BIDI_OVERRIDE}temp'`),
+      { code: "EIO" },
+    );
+    // The real O_EXCL temp lands, then its write rejects with an adversarial message.
+    vi.mocked(fs.open).mockImplementationOnce(async (...args: Parameters<typeof fs.open>) => {
+      const handle = await actual.open(...args);
+      return {
+        writeFile: async (): Promise<void> => {
+          throw writeErr;
+        },
+        close: (): Promise<void> => handle.close(),
+      } as unknown as fs.FileHandle;
+    });
+
+    let caught: unknown;
+    try {
+      await writeExportArtifact(target, "CONTENT", true);
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(CliUserError);
+    expect((caught as CliUserError).cause).toBe(writeErr);
+    const message = (caught as CliUserError).message;
+    expect(message).toMatch(/Cannot write export/);
+    expect(message).toContain("EIO");
+    expect(message).not.toContain("i/o error");
+    expect(message.split("\n")).toHaveLength(1);
+    expectNoTerminalControls(message);
+    expect(message).not.toMatch(TERMINAL_CONTROL_BYTES);
+
+    let stderr = "";
+    const exit = handleCliError(caught, (s) => {
+      stderr += s;
+    });
+    expect(exit).toBe(EXIT_USER_ERROR);
+    expect(stderr).toBe("");
+  });
+
+  it("writeExportArtifact --force wraps a temp close failure (EIO) as a sanitized CliUserError, never leaking the raw fs message (#1965)", async () => {
+    const actual = await vi.importActual<typeof fs>("node:fs/promises");
+    const target = path.join(testHome, "temp-close-fail.md");
+    const closeErr = Object.assign(
+      new Error(`EIO: i/o error, close '${ESC}[31m${C1_CSI}${BIDI_OVERRIDE}temp'`),
+      { code: "EIO" },
+    );
+    // writeFile lands the bytes for real; close rejects after flushing.
+    vi.mocked(fs.open).mockImplementationOnce(async (...args: Parameters<typeof fs.open>) => {
+      const handle = await actual.open(...args);
+      return {
+        writeFile: (data: string | Uint8Array): Promise<void> => handle.writeFile(data),
+        close: async (): Promise<void> => {
+          await handle.close();
+          throw closeErr;
+        },
+      } as unknown as fs.FileHandle;
+    });
+
+    let caught: unknown;
+    try {
+      await writeExportArtifact(target, "CONTENT", true);
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(CliUserError);
+    expect((caught as CliUserError).cause).toBe(closeErr);
+    const message = (caught as CliUserError).message;
+    expect(message).toMatch(/Cannot write export/);
+    expect(message).toContain("EIO");
+    expect(message).not.toContain("i/o error");
+    expect(message.split("\n")).toHaveLength(1);
+    expectNoTerminalControls(message);
+    expect(message).not.toMatch(TERMINAL_CONTROL_BYTES);
+
+    let stderr = "";
+    const exit = handleCliError(caught, (s) => {
+      stderr += s;
+    });
+    expect(exit).toBe(EXIT_USER_ERROR);
+    expect(stderr).toBe("");
+  });
+
+  // #1966: the CliUserError-path stderr oracle in the #1887 tests was VACUOUS —
+  // handleCliError writes NOTHING for a CliUserError, so `stderr` is always "" and
+  // `expectNoTerminalControls(stderr)` passed regardless of impl. This oracle is
+  // DISCRIMINATING: it feeds the FULL terminal-hostile class (TAB, C0, C1, DEL,
+  // bidi override + isolate, CR-LF, U+2028/U+2029) through the target PATH and
+  // asserts the wrapped message is a SINGLE sanitized line — verifying Council uses
+  // `toSingleLineDisplay` (collapses the separators) and NOT `stripControlChars`
+  // (which would leave CR/LF/U+2028/U+2029 and yield a multi-line message).
+  it("writeExportArtifact surfaces a single-line, control-free CliUserError for a fully terminal-hostile target path, staying silent on the handleCliError path (#1966)", async () => {
+    // Raw control bytes assembled via String.fromCharCode (this file's convention),
+    // plus the Unicode separators. Legible fragments ("adv"/"report"/"name") survive.
+    const c0 = [0x00, 0x07, 0x0b, 0x0c, 0x1f, 0x7f]
+      .map((code) => String.fromCharCode(code))
+      .join("");
+    const adversarialTarget = path.join(
+      testHome,
+      `adv${c0}${C1_CSI}${ESC}[31m${BIDI_OVERRIDE}\u2066report\t\r\n\u2028\u2029name.md`,
+    );
+    // The injected fs error ALSO carries adversarial bytes + a `code`, so a raw
+    // rethrow would be emitted verbatim by handleCliError — which is exactly what
+    // the stderr silence assertion below discriminates against.
+    const openErr = Object.assign(
+      new Error(`EACCES: denied ${ESC}[31m${BIDI_OVERRIDE}\r\nInjected`),
+      { code: "EACCES" },
+    );
+    vi.mocked(fs.open).mockRejectedValueOnce(openErr);
+
+    let caught: unknown;
+    try {
+      await writeExportArtifact(adversarialTarget, "CONTENT", false);
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(CliUserError);
+    const message = (caught as CliUserError).message;
+
+    // Single control-free line — FAILS if the sanitizer were downgraded to
+    // stripControlChars (CR/LF/U+2028/U+2029 would survive as line breaks) or if
+    // the path were interpolated raw (the control bytes would leak).
+    expect(message.split("\n")).toHaveLength(1);
+    expectNoTerminalControls(message);
+    expect(message).not.toMatch(TERMINAL_CONTROL_BYTES);
+    // The sanitizer collapses/strips the hostile bytes but keeps legible text.
+    expect(message).toContain("report");
+    expect(message).toContain("name");
+    expect(message).toContain("EACCES");
+
+    // Silence contract: handleCliError emits NOTHING for a CliUserError. Were the
+    // wrap removed, the raw EACCES error (adversarial message + code) would be
+    // echoed here and BOTH assertions below would fail on the leaked control bytes.
+    let stderr = "";
+    const exit = handleCliError(caught, (s) => {
+      stderr += s;
+    });
+    expect(exit).toBe(EXIT_USER_ERROR);
+    expect(stderr).toBe("");
+    expect(stderr).not.toMatch(TERMINAL_CONTROL_BYTES);
   });
 
   // #1964: the --force write-to-temp-then-rename flow only removed the temp
