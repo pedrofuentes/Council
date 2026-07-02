@@ -76,6 +76,15 @@ describe("T-16: Flag consistency", () => {
       expect(quietOpt?.description).toContain("stderr");
     });
 
+    it("advertises cost-indicator suppression in --quiet description (#850)", () => {
+      // `--quiet` also suppresses the rendered `[Premium requests: ...]` cost
+      // indicator (see PlainRenderer's `cost.update` handler), not just
+      // informational stderr notices, so its help text must mention cost.
+      const program = buildProgram();
+      const quietOpt = program.options.find((o) => o.long === "--quiet");
+      expect(quietOpt?.description).toMatch(/cost/i);
+    });
+
     it("--quiet parses to opts().quiet === true", () => {
       const program = buildProgram();
       // Use a hook on the "doctor" command to capture parent opts
