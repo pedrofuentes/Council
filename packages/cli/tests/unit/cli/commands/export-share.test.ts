@@ -173,6 +173,144 @@ async function seedUnsafeSharePanel(
   }
 }
 
+/**
+ * Seed a minimal completed panel with a SINGLE expert and a SINGLE turn
+ * carrying `content`. That one turn is simultaneously the expert's
+ * most-recent "position" (rendered by `renderPositions`, export-share.ts:137)
+ * and its only transcript entry (`renderTranscriptBody`, export-share.ts:165),
+ * so the same untrusted paragraph flows through BOTH `> ${para}` emitters.
+ */
+async function seedSharePanelWithContent(
+  testHome: string,
+  content: string,
+): Promise<{ panelName: string }> {
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    const panelRepo = new PanelRepository(db);
+    const expertRepo = new ExpertRepository(db);
+    const debateRepo = new DebateRepository(db);
+    const turnRepo = new TurnRepository(db);
+
+    const panel = await panelRepo.create({
+      name: "share-blockquote-injection",
+      topic: "Blockquote injection safety",
+      copilotHome: path.join(testHome, "copilot"),
+      configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+    });
+    const expert = await expertRepo.create({
+      panelId: panel.id,
+      slug: "cto",
+      displayName: "CTO",
+      model: "claude-sonnet-4",
+      systemMessage: "You are a CTO.",
+    });
+    const debate = await debateRepo.create({
+      panelId: panel.id,
+      prompt: "Blockquote injection safety prompt",
+      moderator: "round-robin",
+    });
+    await turnRepo.create({
+      debateId: debate.id,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId: expert.id,
+      content,
+    });
+    await debateRepo.update(debate.id, {
+      status: "completed",
+      endedAt: new Date().toISOString(),
+    });
+    return { panelName: panel.name };
+  } finally {
+    await db.destroy();
+  }
+}
+
+// #2123 (outline spoofing, security) — sibling of #2110. The share exporter's
+// per-expert BLOCKQUOTE emitters render each untrusted paragraph as `> ${para}`
+// in TWO places: Panel Positions (`renderPositions`, export-share.ts:137) and
+// the Transcript (`renderTranscriptBody`, export-share.ts:165). CommonMark
+// honours block markers INSIDE a blockquote (`> ## X` -> nested heading,
+// `> ---`/`> ===` -> <hr>/setext heading, `> ``` ` -> code fence, `> <x>` ->
+// raw-HTML block, `>     x` -> indented code), so a model-derived paragraph that
+// begins with a block marker forges structure in the shared/exported outline.
+// The fix routes every blockquoted paragraph through `escapeBlockLeadingMarkdown`
+// (strip leading indent + backslash-escape the leading marker), matching the
+// export.ts neutralization from #2110. Each `forbidden` pattern is the exact
+// structural form CommonMark parses as a block start on a `> ` line (the emitter
+// always prefixes a single `> `, so a legal 0-3 space block indent lands 1-4
+// columns past the `>`); its ABSENCE proves the payload stays literal, while
+// `present` pins the neutralized `> \marker` text that must survive.
+const BLOCKQUOTE_BENIGN_ANCHOR = "Position stated for the record.";
+
+interface BlockquoteInjectionCase {
+  readonly label: string;
+  readonly content: string;
+  readonly forbidden: readonly RegExp[];
+  readonly present: readonly string[];
+}
+
+const BLOCKQUOTE_INJECTION_CASES: readonly BlockquoteInjectionCase[] = [
+  {
+    label: "ATX headings at every legal 0-3 space indent (# .. ######)",
+    content: [BLOCKQUOTE_BENIGN_ANCHOR, "# ONE", " ## TWO", "  ### THREE", "   ###### SIX"].join(
+      "\n",
+    ),
+    forbidden: [/^>[ ]{1,4}#{1,6}(?:\s|$)/m],
+    present: ["> \\# ONE", "> \\## TWO", "> \\### THREE", "> \\###### SIX"],
+  },
+  {
+    label: "setext heading underline (===) forging an H1 from the anchor line",
+    content: [BLOCKQUOTE_BENIGN_ANCHOR, "==="].join("\n"),
+    forbidden: [/^>[ ]{1,4}={2,}\s*$/m],
+    present: ["> \\==="],
+  },
+  {
+    label: "thematic breaks (---- / *** / ___)",
+    content: [BLOCKQUOTE_BENIGN_ANCHOR, "----", "***", "___"].join("\n"),
+    forbidden: [/^>[ ]{1,4}-{3,}\s*$/m, /^>[ ]{1,4}\*{3,}\s*$/m, /^>[ ]{1,4}_{3,}\s*$/m],
+    present: ["> \\----", "> \\***", "> \\___"],
+  },
+  {
+    label: "fenced code (``` and ~~~)",
+    content: [BLOCKQUOTE_BENIGN_ANCHOR, "```js", "exfiltrate()", "```", "~~~", "x", "~~~"].join(
+      "\n",
+    ),
+    forbidden: [/^>[ ]{1,4}`{3,}/m, /^>[ ]{1,4}~{3,}/m],
+    present: ["> \\```js", "> \\~~~"],
+  },
+  {
+    label: "indented code via blank line + four spaces",
+    content: [BLOCKQUOTE_BENIGN_ANCHOR, "", "    exfiltrate('SP4')"].join("\n"),
+    forbidden: [/^>[ ]{4,}exfiltrate/m],
+    present: ["> exfiltrate('SP4')"],
+  },
+  {
+    label: "indented code via blank line + a leading tab",
+    content: [BLOCKQUOTE_BENIGN_ANCHOR, "", "\texfiltrate('TAB')"].join("\n"),
+    forbidden: [/^>[ ]\texfiltrate/m],
+    present: ["> exfiltrate('TAB')"],
+  },
+  {
+    label: "indented code carrying heading text (four spaces + ##)",
+    content: [BLOCKQUOTE_BENIGN_ANCHOR, "", "    ## STILL-CODE"].join("\n"),
+    forbidden: [/^>[ ]{4,}\S.*STILL-CODE/m, /^>[ ]{1,4}#{1,6}\s+STILL-CODE/m],
+    present: ["> \\## STILL-CODE"],
+  },
+  {
+    label: "raw-HTML block starters (<h2>, <script>, <!--)",
+    content: [
+      BLOCKQUOTE_BENIGN_ANCHOR,
+      "<h2>HTML Injected</h2>",
+      "<script>evil()</script>",
+      "<!-- pwn -->",
+    ].join("\n"),
+    forbidden: [/^>[ ]{1,4}<h2>/m, /^>[ ]{1,4}<script>/m, /^>[ ]{1,4}<!--/m],
+    present: ["> \\<h2>HTML Injected", "> \\<script>evil", "> \\<!-- pwn"],
+  },
+];
+
 function captureExport(): { deps: { write: (s: string) => void }; read: () => string } {
   let captured = "";
   return {
@@ -385,5 +523,79 @@ describe("council export --format share", () => {
     expect(out).not.toMatch(/## Panel Positions/i);
     expect(out).not.toMatch(/## Recommendation/i);
     expect(out).not.toMatch(/Not recorded/i);
+  });
+
+  it.each(BLOCKQUOTE_INJECTION_CASES)(
+    "keeps a per-expert blockquote from opening a block in BOTH the Panel Positions (:137) and Transcript (:165) emitters: $label (#2123)",
+    async ({ content, forbidden, present }) => {
+      // One expert + one turn -> the SAME untrusted paragraph is the expert's
+      // most-recent position (export-share.ts:137) AND its transcript entry
+      // (export-share.ts:165). Pinning the neutralized literal in EACH section
+      // proves both `> ${para}` emitters are hardened independently.
+      const seed = await seedSharePanelWithContent(testHome, content);
+      const cap = captureExport();
+      const cmd = buildExportCommand(cap.deps);
+      await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "share"]);
+      const out = cap.read();
+
+      const positionsSection = out.slice(
+        out.search(/## Panel Positions/i),
+        out.search(/## Recommendation/i),
+      );
+      const transcriptSection = out.slice(out.indexOf("## Transcript"));
+      expect(positionsSection).not.toBe("");
+      expect(transcriptSection).not.toBe("");
+
+      // Panel Positions emitter (export-share.ts:137).
+      for (const pattern of forbidden) {
+        expect(positionsSection).not.toMatch(pattern);
+      }
+      for (const literal of present) {
+        expect(positionsSection).toContain(literal);
+      }
+      expect(positionsSection).toContain(`> ${BLOCKQUOTE_BENIGN_ANCHOR}`);
+
+      // Transcript emitter (export-share.ts:165).
+      for (const pattern of forbidden) {
+        expect(transcriptSection).not.toMatch(pattern);
+      }
+      for (const literal of present) {
+        expect(transcriptSection).toContain(literal);
+      }
+      expect(transcriptSection).toContain(`> ${BLOCKQUOTE_BENIGN_ANCHOR}`);
+    },
+  );
+
+  it("leaves benign per-expert paragraphs unescaped in both Panel Positions and Transcript (#2123)", async () => {
+    // Inverse/golden: normal prose (no leading whitespace, no block markers)
+    // must render exactly as before — each paragraph pinned inside its
+    // blockquote as plain text with no spurious backslash-escape.
+    const benign = [
+      "We should ship now.",
+      "",
+      "It lowers risk and gathers real feedback.",
+      "Ops can monitor the rollout.",
+    ].join("\n");
+    const seed = await seedSharePanelWithContent(testHome, benign);
+    const cap = captureExport();
+    const cmd = buildExportCommand(cap.deps);
+    await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "share"]);
+    const out = cap.read();
+
+    const positionsSection = out.slice(
+      out.search(/## Panel Positions/i),
+      out.search(/## Recommendation/i),
+    );
+    const transcriptSection = out.slice(out.indexOf("## Transcript"));
+
+    expect(positionsSection).toContain("> We should ship now.");
+    expect(positionsSection).toContain("> It lowers risk and gathers real feedback.");
+    expect(positionsSection).toContain("> Ops can monitor the rollout.");
+    expect(positionsSection).not.toContain("> \\");
+
+    expect(transcriptSection).toContain("> We should ship now.");
+    expect(transcriptSection).toContain("> It lowers risk and gathers real feedback.");
+    expect(transcriptSection).toContain("> Ops can monitor the rollout.");
+    expect(transcriptSection).not.toContain("> \\");
   });
 });
