@@ -936,34 +936,49 @@ const WINDOWS_RESERVED_BASENAME_RE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 
 /**
  * Reject a URL-derived filename that is unsafe to create on disk or to echo
- * to a terminal. Guards against control characters (#764), characters that
- * are illegal in filenames on common filesystems — notably Windows — trailing
- * dots/spaces, and Windows reserved device names (#1029). `displayUrl` is the
- * already credential-redacted URL; the untrusted filename itself is never
- * echoed back in the error message.
+ * to a terminal. Guards against control and invisible-formatting characters
+ * (#764, #1902, #1957), characters that are illegal in filenames on common
+ * filesystems — notably Windows — trailing dots/spaces, and Windows reserved
+ * device names (#1029). `displayUrl` is the already credential-redacted URL,
+ * echoed only after `toSingleLineDisplay` as a defense-in-depth guard; the
+ * untrusted filename itself is never echoed back in the error message.
  *
- * The control-character class mirrors what `toSingleLineDisplay` strips: C0
- * controls + DEL (U+0000–U+001F, U+007F), the C1 block (U+0080–U+009F, which
- * includes NEL U+0085 and the 8-bit CSI/OSC escape introducers U+009B/U+009D),
- * and the Unicode line/paragraph separators (U+2028/U+2029). A narrower guard
- * would let a decoded name carrying one of those bytes reach a raw
- * (unsanitized) error/listing sink and inject terminal escapes or spoof lines
- * (#1902).
+ * The rejected class is defined by `toSingleLineDisplay` itself: any name that
+ * function would rewrite for display is rejected, so this validator and the
+ * display sanitizer cannot drift (#1957). That is every code point
+ * `toSingleLineDisplay` / `stripControlChars` neutralize:
+ *   - C0 controls + DEL + the C1 block (U+0000–U+001F, U+007F–U+009F),
+ *     including TAB/CR/LF, NEL U+0085 and the 8-bit CSI/OSC introducers
+ *     U+009B/U+009D;
+ *   - the Unicode line/paragraph separators (U+2028/U+2029);
+ *   - bidi override/isolate marks (U+202A–U+202E, U+2066–U+2069) that enable
+ *     Trojan-Source (CVE-2021-42574) visual reordering; and
+ *   - zero-width and other hidden default-ignorable format characters
+ *     (e.g. U+200B–U+200D, U+2060, U+FEFF).
+ * A narrower guard would let a decoded name carrying one of those bytes reach
+ * a raw (unsanitized) error/listing sink and inject terminal escapes or spoof
+ * lines (#1902, #1957).
  */
 function assertSafeDerivedFilename(filename: string, displayUrl: string): void {
-  // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(filename)) {
-    throw new CliUserError(`URL-derived filename contains control characters: ${displayUrl}`);
+  const safeUrl = toSingleLineDisplay(displayUrl);
+  // Reject any name `toSingleLineDisplay` would rewrite for display — C0/C1/
+  // DEL, line/paragraph separators, bidi override/isolate marks and zero-width
+  // / hidden-format characters. Reusing the shared display sanitizer as the
+  // predicate keeps the validator and the sanitizer from drifting apart (#1957).
+  if (toSingleLineDisplay(filename) !== filename) {
+    throw new CliUserError(
+      `URL-derived filename contains control characters or other invisible formatting: ${safeUrl}`,
+    );
   }
   if (/[<>:"/\\|?*]/.test(filename)) {
-    throw new CliUserError(`Invalid filename derived from URL: ${displayUrl}`);
+    throw new CliUserError(`Invalid filename derived from URL: ${safeUrl}`);
   }
   if (/[. ]$/.test(filename)) {
-    throw new CliUserError(`Invalid filename derived from URL: ${displayUrl}`);
+    throw new CliUserError(`Invalid filename derived from URL: ${safeUrl}`);
   }
   const base = filename.split(".", 1)[0] ?? filename;
   if (WINDOWS_RESERVED_BASENAME_RE.test(base)) {
-    throw new CliUserError(`URL-derived filename uses a reserved device name: ${displayUrl}`);
+    throw new CliUserError(`URL-derived filename uses a reserved device name: ${safeUrl}`);
   }
 }
 
