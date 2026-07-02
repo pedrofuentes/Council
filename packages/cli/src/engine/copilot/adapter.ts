@@ -179,8 +179,10 @@ class ModelDiscoveryTimeoutError extends Error {
 /**
  * Race `promise` against a timeout, rejecting with {@link ModelDiscoveryTimeoutError}
  * if the deadline elapses first. Always clears the timer. The underlying SDK
- * call cannot be truly cancelled, so callers must still tear the client down
- * (the `finally` in {@link discoverAvailableModels} does) to release resources.
+ * call cannot be truly cancelled, so on rejection the caller must still tear the
+ * client down to reap its subprocess — {@link discoverAvailableModels} does this
+ * in `finally` via {@link reapDiscoveryClient}, which `forceStop()`s (SIGKILL) on
+ * the timeout path so a not-yet-ready child is still reaped (#1899).
  */
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -196,29 +198,65 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   }
 }
 
+/**
+ * Tear down the throwaway discovery client, reaping the `@github/copilot` CLI
+ * subprocess it spawned.
+ *
+ * On the timeout path (#1899) the raced `start()` is un-cancellable and may be
+ * stuck mid-handshake, so a graceful `stop()` — which first unwinds sessions and
+ * the JSON-RPC connection — is not guaranteed to reap a not-yet-ready child. We
+ * instead call `forceStop()`, the SDK's SIGKILL primitive: `start()` assigns the
+ * child process before the stalling I/O round-trips, so once the deadline
+ * elapses the child exists and is killed deterministically. Residual: a
+ * sub-millisecond window before the SDK's `spawn()` returns could see
+ * `forceStop()` find no child yet — negligible against the (default 10s)
+ * deadline, and still strictly safer than blocking on the same stalled I/O.
+ *
+ * All other paths (a clean success, or a fast `start()`/`listModels()` failure)
+ * use the graceful `stop()`. Cleanup failures are surfaced (#741) but never
+ * propagated — discovery must still return its result.
+ */
+async function reapDiscoveryClient(
+  client: CopilotClient | undefined,
+  timedOut: boolean,
+): Promise<void> {
+  if (client === undefined) {
+    return;
+  }
+  try {
+    if (timedOut) {
+      await client.forceStop();
+    } else {
+      await client.stop();
+    }
+  } catch (err: unknown) {
+    console.warn(
+      `[council/engine] model discovery cleanup failed (possible leaked SDK session): ${sanitizeDiagnosticMessage(err)}`,
+    );
+  }
+}
+
 export async function discoverAvailableModels(
   options?: ModelDiscoveryOptions,
 ): Promise<ModelDiscoveryResult> {
   const timeoutMs = options?.timeoutMs ?? DEFAULT_MODEL_DISCOVERY_TIMEOUT_MS;
   let client: CopilotClient | undefined;
+  let timedOut = false;
   try {
     ensureCopilotCliPath();
     const c = new CopilotClient();
     client = c;
     // #721: bound start() + listModels() so a stalled SDK can't hang callers.
     //
-    // #1899 caveat — SUBPROCESS LIFETIME: withTimeout() bounds only the
-    // *caller's* wait. The raced IIFE below is not cancellable: `c.start()`
-    // spawns the `@github/copilot` CLI subprocess via the SDK, and neither
-    // start() nor listModels() accepts an AbortSignal. On timeout we fall back
-    // to the static list and the `finally` issues a best-effort `client.stop()`,
-    // but the SDK does not guarantee stop() reaps a child that has not finished
-    // starting — so the spawned binary may live until its own I/O round-trip
-    // completes. For a single-shot `doctor`/startup call this is immaterial (the
-    // child is reaped on process exit); callers that invoke discovery in a
-    // RETRY LOOP should space calls out to avoid accumulating unreaped children
-    // and pressuring OS process/fd limits. Full fix needs an upstream
-    // `@github/copilot-sdk` cancellation/kill path (AbortSignal or stop({force})).
+    // #1899 — SUBPROCESS LIFETIME: withTimeout() bounds only the *caller's* wait.
+    // The raced IIFE below is un-cancellable: `c.start()` spawns the
+    // `@github/copilot` CLI subprocess via the SDK, and neither start() nor
+    // listModels() accepts an AbortSignal. On timeout we fall back to the static
+    // list and, in `finally`, deterministically reap the possibly-still-
+    // handshaking child via `forceStop()` (SIGKILL) rather than a graceful
+    // `stop()` that cannot reap a not-yet-ready child — see reapDiscoveryClient()
+    // for the residual race note. This keeps a retry-loop caller from
+    // accumulating orphaned children and pressuring OS process/fd limits.
     const models = await withTimeout(
       (async (): Promise<readonly string[]> => {
         await c.start();
@@ -228,6 +266,9 @@ export async function discoverAvailableModels(
     );
     return { models, source: "live" };
   } catch (err: unknown) {
+    if (err instanceof ModelDiscoveryTimeoutError) {
+      timedOut = true;
+    }
     // #719: never fall back silently — a downgraded (static) model list is an
     // operationally meaningful event (stale/missing tiers), so surface it.
     console.warn(
@@ -235,15 +276,10 @@ export async function discoverAvailableModels(
     );
     return { models: STATIC_MODEL_LIST, source: "static" };
   } finally {
-    // #741: surface cleanup failures instead of discarding them — a failed
-    // client.stop() can mean a leaked SDK session that ops needs to see.
-    try {
-      await client?.stop();
-    } catch (err: unknown) {
-      console.warn(
-        `[council/engine] model discovery cleanup failed (possible leaked SDK session): ${sanitizeDiagnosticMessage(err)}`,
-      );
-    }
+    // #741 / #1899: reap the throwaway client — forceStop() (SIGKILL) on the
+    // timeout path where the child may still be handshaking, graceful stop()
+    // otherwise. Cleanup failures are surfaced, never propagated.
+    await reapDiscoveryClient(client, timedOut);
   }
 }
 
