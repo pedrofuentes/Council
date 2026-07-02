@@ -6,7 +6,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type * as MemoryDbModule from "../../src/memory/db.js";
 import type { E2EContext, TurnPairingEvent } from "./helpers.js";
-import { isBestEffortCleanupError, pairTurnEventsByExpert } from "./helpers.js";
+import {
+  getDbReleasePollOptions,
+  isBestEffortCleanupError,
+  pairTurnEventsByExpert,
+} from "./helpers.js";
 
 interface HelpersModule {
   readonly cleanupE2EContext: (ctx: E2EContext) => Promise<void>;
@@ -336,5 +340,38 @@ describe("pairTurnEventsByExpert identity-based pairing (#637)", () => {
     ];
 
     expect(() => pairTurnEventsByExpert(events)).toThrow(/two turns in flight/i);
+  });
+});
+
+describe("getDbReleasePollOptions platform-aware poll tuning (#646)", () => {
+  // Sentinel finding from PR #632 (#646): waitForDbRelease polled every 50ms
+  // on every platform, including Windows — opening/probing/closing a
+  // DatabaseSync handle up to ~200 times across the 10s Windows timeout.
+  // getDbReleasePollOptions is factored out as a pure function of
+  // `platform` so these values are verifiable without exercising the real
+  // polling loop (which would otherwise need fake timers or a live handle).
+
+  it("widens the poll interval on win32 to reduce SQLite open/close churn", () => {
+    const options = getDbReleasePollOptions("win32");
+    expect(options.interval).toBeGreaterThanOrEqual(100);
+    expect(options.timeout).toBe(10_000);
+  });
+
+  it("keeps the tighter 50ms interval on non-Windows platforms (unchanged behavior)", () => {
+    expect(getDbReleasePollOptions("darwin")).toEqual({ interval: 50, timeout: 2_000 });
+    expect(getDbReleasePollOptions("linux")).toEqual({ interval: 50, timeout: 2_000 });
+  });
+
+  it("uses a strictly wider interval on win32 than other platforms (real differentiation)", () => {
+    const win32 = getDbReleasePollOptions("win32");
+    const linux = getDbReleasePollOptions("linux");
+    expect(win32.interval).toBeGreaterThan(linux.interval);
+  });
+
+  it("does not regress the Windows interval back below 100ms (#646 regression guard)", () => {
+    // The original finding: a 50ms interval on Windows opens/destroys
+    // SQLite ~200 times in 10s. This guards against silently reverting.
+    const probesOver10s = 10_000 / getDbReleasePollOptions("win32").interval;
+    expect(probesOver10s).toBeLessThanOrEqual(100);
   });
 });
