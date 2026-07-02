@@ -234,6 +234,26 @@ describe("loadTemplate() / listTemplates()", () => {
         // Distinct objective functions per Prompt Engineering Expert thesis
         expect(new Set(firstEvidences).size).toBe(firstEvidences.length);
       });
+
+      it("experts have distinct expertise priors across full weightedEvidence lists (pairwise set-overlap below 50%)", async () => {
+        // Sentinel pr36 finding #4 (#39): the element-0 check alone permits experts
+        // that are near-identical beyond the first item. This ratchet verifies that
+        // every pair of experts shares fewer than half their weighted-evidence items.
+        const panel = await loadTemplate(name);
+        for (const [i, a] of panel.experts.entries()) {
+          for (const b of panel.experts.slice(i + 1)) {
+            const setA = new Set<string>(a.expertise.weightedEvidence);
+            const setB = new Set<string>(b.expertise.weightedEvidence);
+            const overlap = [...setA].filter((item) => setB.has(item));
+            const minLen = Math.min(setA.size, setB.size);
+            const overlapRatio = minLen > 0 ? overlap.length / minLen : 0;
+            expect(
+              overlapRatio,
+              `"${a.slug}" vs "${b.slug}": ${overlap.length}/${minLen} shared weighted-evidence items (${Math.round(overlapRatio * 100)}%) — must be < 50%`,
+            ).toBeLessThan(0.5);
+          }
+        }
+      });
     });
   }
 });
