@@ -174,6 +174,11 @@ export function ExpertTrainScreen(props: ExpertTrainScreenProps): React.ReactEle
           ) : state.result.profileUpdated ? (
             <Text>{props.theme.success("✓ Persona profile updated.")}</Text>
           ) : null}
+          {state.result.stopWarning !== undefined && state.result.stopWarning.length > 0 ? (
+            <Text>
+              {props.theme.warn(toSingleLineDisplay(`⚠ ${state.result.stopWarning}`))}
+            </Text>
+          ) : null}
         </>
       ) : null}
       {state.status === "error" ? (
