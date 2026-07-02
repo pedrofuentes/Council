@@ -5,8 +5,12 @@ import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type * as MemoryDbModule from "../../src/memory/db.js";
-import type { E2EContext } from "./helpers.js";
-import { isBestEffortCleanupError } from "./helpers.js";
+import type { E2EContext, TurnPairingEvent } from "./helpers.js";
+import {
+  getDbReleasePollOptions,
+  isBestEffortCleanupError,
+  pairTurnEventsByExpert,
+} from "./helpers.js";
 
 interface HelpersModule {
   readonly cleanupE2EContext: (ctx: E2EContext) => Promise<void>;
@@ -235,5 +239,139 @@ describe("isBestEffortCleanupError word-boundary regression guard (#647)", () =>
     },
   ])("returns false — $label", ({ error }) => {
     expect(isBestEffortCleanupError(error)).toBe(false);
+  });
+});
+
+describe("pairTurnEventsByExpert identity-based pairing (#637)", () => {
+  // Sentinel finding from PR #631 (#637): expert-panel-crud.test.ts paired
+  // turn.start/turn.end events by array-index stride (i, i+1), which
+  // silently assumes the two events for a given expert are positionally
+  // adjacent in the stream. These cases prove pairing-by-expertSlug
+  // tolerates legitimate ordering variation that positional pairing cannot.
+
+  it("pairs turns nested inside another expert's turn (start A, start B, end B, end A)", () => {
+    // A stride-based (i, i+1) pairing would wrongly compare turnEvents[0]
+    // (start A) against turnEvents[1] (start B) here and fail spuriously.
+    const events: readonly TurnPairingEvent[] = [
+      { kind: "turn.start", expertSlug: "alpha" },
+      { kind: "turn.start", expertSlug: "beta" },
+      { kind: "turn.end", expertSlug: "beta" },
+      { kind: "turn.end", expertSlug: "alpha" },
+    ];
+
+    const pairs = pairTurnEventsByExpert(events);
+
+    expect(pairs.map((pair) => pair.expertSlug).sort()).toEqual(["alpha", "beta"]);
+    for (const pair of pairs) {
+      expect(pair.start.expertSlug).toBe(pair.expertSlug);
+      expect(pair.end.expertSlug).toBe(pair.expertSlug);
+    }
+  });
+
+  it("pairs turns that cross rather than nest (start A, start B, end A, end B)", () => {
+    const events: readonly TurnPairingEvent[] = [
+      { kind: "turn.start", expertSlug: "alpha" },
+      { kind: "turn.start", expertSlug: "beta" },
+      { kind: "turn.end", expertSlug: "alpha" },
+      { kind: "turn.end", expertSlug: "beta" },
+    ];
+
+    const pairs = pairTurnEventsByExpert(events);
+
+    expect(pairs).toHaveLength(2);
+    expect(pairs.find((pair) => pair.expertSlug === "alpha")?.end.expertSlug).toBe("alpha");
+    expect(pairs.find((pair) => pair.expertSlug === "beta")?.end.expertSlug).toBe("beta");
+  });
+
+  it("still pairs correctly under today's strict serial ordering", () => {
+    const events: readonly TurnPairingEvent[] = [
+      { kind: "turn.start", expertSlug: "alpha" },
+      { kind: "turn.end", expertSlug: "alpha" },
+      { kind: "turn.start", expertSlug: "beta" },
+      { kind: "turn.end", expertSlug: "beta" },
+    ];
+
+    expect(pairTurnEventsByExpert(events)).toHaveLength(2);
+  });
+
+  it("ignores non-turn events interspersed in the stream", () => {
+    const events: readonly TurnPairingEvent[] = [
+      { kind: "panel.assembled" },
+      { kind: "round.start" },
+      { kind: "turn.start", expertSlug: "alpha" },
+      { kind: "turn.delta", expertSlug: "alpha" },
+      { kind: "turn.end", expertSlug: "alpha" },
+      { kind: "cost.update" },
+      { kind: "debate.end" },
+    ];
+
+    const pairs = pairTurnEventsByExpert(events);
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0]?.expertSlug).toBe("alpha");
+  });
+
+  // A real ordering bug must still surface — pairing-by-identity must not
+  // paper over a dropped or duplicated event.
+  it("throws when a turn.end has no matching prior turn.start for that expert", () => {
+    const events: readonly TurnPairingEvent[] = [
+      { kind: "turn.start", expertSlug: "alpha" },
+      { kind: "turn.end", expertSlug: "beta" },
+    ];
+
+    expect(() => pairTurnEventsByExpert(events)).toThrow(/no matching turn\.start/i);
+  });
+
+  it("throws when a turn.start is left dangling with no turn.end", () => {
+    const events: readonly TurnPairingEvent[] = [
+      { kind: "turn.start", expertSlug: "alpha" },
+      { kind: "turn.start", expertSlug: "beta" },
+      { kind: "turn.end", expertSlug: "beta" },
+    ];
+
+    expect(() => pairTurnEventsByExpert(events)).toThrow(/no matching turn\.end/i);
+  });
+
+  it("throws when the same expert has two turns in flight at once", () => {
+    const events: readonly TurnPairingEvent[] = [
+      { kind: "turn.start", expertSlug: "alpha" },
+      { kind: "turn.start", expertSlug: "alpha" },
+      { kind: "turn.end", expertSlug: "alpha" },
+      { kind: "turn.end", expertSlug: "alpha" },
+    ];
+
+    expect(() => pairTurnEventsByExpert(events)).toThrow(/two turns in flight/i);
+  });
+});
+
+describe("getDbReleasePollOptions platform-aware poll tuning (#646)", () => {
+  // Sentinel finding from PR #632 (#646): waitForDbRelease polled every 50ms
+  // on every platform, including Windows — opening/probing/closing a
+  // DatabaseSync handle up to ~200 times across the 10s Windows timeout.
+  // getDbReleasePollOptions is factored out as a pure function of
+  // `platform` so these values are verifiable without exercising the real
+  // polling loop (which would otherwise need fake timers or a live handle).
+
+  it("widens the poll interval on win32 to reduce SQLite open/close churn", () => {
+    const options = getDbReleasePollOptions("win32");
+    expect(options.interval).toBeGreaterThanOrEqual(100);
+    expect(options.timeout).toBe(10_000);
+  });
+
+  it("keeps the tighter 50ms interval on non-Windows platforms (unchanged behavior)", () => {
+    expect(getDbReleasePollOptions("darwin")).toEqual({ interval: 50, timeout: 2_000 });
+    expect(getDbReleasePollOptions("linux")).toEqual({ interval: 50, timeout: 2_000 });
+  });
+
+  it("uses a strictly wider interval on win32 than other platforms (real differentiation)", () => {
+    const win32 = getDbReleasePollOptions("win32");
+    const linux = getDbReleasePollOptions("linux");
+    expect(win32.interval).toBeGreaterThan(linux.interval);
+  });
+
+  it("does not regress the Windows interval back below 100ms (#646 regression guard)", () => {
+    // The original finding: a 50ms interval on Windows opens/destroys
+    // SQLite ~200 times in 10s. This guards against silently reverting.
+    const probesOver10s = 10_000 / getDbReleasePollOptions("win32").interval;
+    expect(probesOver10s).toBeLessThanOrEqual(100);
   });
 });

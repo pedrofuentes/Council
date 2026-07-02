@@ -16,6 +16,7 @@ import {
   destroyTestDb,
   makeMockEngineFactory,
   openTestDb,
+  pairTurnEventsByExpert,
   type E2EContext,
 } from "./helpers.js";
 
@@ -483,18 +484,21 @@ fs.writeFileSync(file, body, "utf-8");`,
     expect(kinds).toContain("debate.end");
     expect(kinds[kinds.length - 1]).toBe("conclusion");
     
-    // Verify turn events are ordered per expert
+    // Verify each expert's turn.start is correctly paired with its own
+    // turn.end. Pairing is by expertSlug identity (#637), not by assuming
+    // the two events are positionally adjacent in the stream — so this
+    // stays correct even if the engine's ordering guarantees change, while
+    // still failing on a real dropped/duplicated/mismatched turn event.
     const turnEvents = jsonLines.filter((e) => e.kind === "turn.start" || e.kind === "turn.end");
     expect(turnEvents.length).toBeGreaterThan(0);
-    for (let i = 0; i < turnEvents.length; i += 2) {
-      const start = turnEvents[i];
-      const end = turnEvents[i + 1];
-      if (start && end) {
-        expect(start.kind).toBe("turn.start");
-        expect(end.kind).toBe("turn.end");
-        expect(start.expertSlug).toBe(end.expertSlug);
-      }
-    }
+    const turnPairs = pairTurnEventsByExpert(turnEvents);
+    expect(turnPairs).toHaveLength(turnEvents.length / 2);
+    expect(turnPairs.map((pair) => pair.expertSlug).sort()).toEqual([
+      "maintainer",
+      "perf",
+      "security",
+      "senior",
+    ]);
 
     const db = await openTestDb(ctx.testHome);
     try {
