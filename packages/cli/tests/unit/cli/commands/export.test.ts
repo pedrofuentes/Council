@@ -1443,6 +1443,199 @@ describe("buildExportCommand", () => {
     expect(captured).not.toMatch(/^ {4,}(?:It lowers|Ops can)/m);
   });
 
+  // #2110 (outline spoofing, security) — the per-expert BLOCKQUOTE emitters render
+  // each untrusted paragraph as `> ${para}` in three places: the Markdown Transcript
+  // (`renderMarkdown`) and the ADR Options + Decision blockquotes (`renderAdr`).
+  // CommonMark honours block markers INSIDE a blockquote (`> ## X` → nested heading,
+  // `> ---`/`> ===` → <hr>/setext heading, `> ``` ` → code fence, `> <x>` → raw-HTML
+  // block, `>     x` → indented code), so a model-derived paragraph that begins with a
+  // block marker forges structure in the exported outline — the same class #1884 fixed
+  // for ADR Discussion continuation lines. The fix routes every blockquoted paragraph
+  // through the SAME `escapeBlockLeadingMarkdown` neutralization (strip leading indent +
+  // backslash-escape the leading marker). Each `forbidden` pattern is the exact
+  // structural form CommonMark parses as a block start on a `> ` line (the emitter always
+  // prefixes a single `> `, so a legal 0-3 space block indent lands 1-4 columns past the
+  // `>`); its ABSENCE proves the payload stays literal, while `present` pins the
+  // neutralized `> \marker` text that must survive.
+  const BLOCKQUOTE_BENIGN_ANCHOR = "Position stated for the record.";
+
+  interface BlockquoteInjectionCase {
+    readonly label: string;
+    readonly content: string;
+    readonly forbidden: readonly RegExp[];
+    readonly present: readonly string[];
+  }
+
+  const BLOCKQUOTE_INJECTION_CASES: readonly BlockquoteInjectionCase[] = [
+    {
+      label: "ATX headings at every legal 0-3 space indent (# .. ######)",
+      content: [BLOCKQUOTE_BENIGN_ANCHOR, "# ONE", " ## TWO", "  ### THREE", "   ###### SIX"].join(
+        "\n",
+      ),
+      forbidden: [/^>[ ]{1,4}#{1,6}(?:\s|$)/m],
+      present: ["> \\# ONE", "> \\## TWO", "> \\### THREE", "> \\###### SIX"],
+    },
+    {
+      label: "setext heading underline (===) forging an H1 from the anchor line",
+      content: [BLOCKQUOTE_BENIGN_ANCHOR, "==="].join("\n"),
+      forbidden: [/^>[ ]{1,4}={2,}\s*$/m],
+      present: ["> \\==="],
+    },
+    {
+      label: "thematic breaks (---- / *** / ___)",
+      content: [BLOCKQUOTE_BENIGN_ANCHOR, "----", "***", "___"].join("\n"),
+      forbidden: [/^>[ ]{1,4}-{3,}\s*$/m, /^>[ ]{1,4}\*{3,}\s*$/m, /^>[ ]{1,4}_{3,}\s*$/m],
+      present: ["> \\----", "> \\***", "> \\___"],
+    },
+    {
+      label: "fenced code (``` and ~~~)",
+      content: [BLOCKQUOTE_BENIGN_ANCHOR, "```js", "exfiltrate()", "```", "~~~", "x", "~~~"].join(
+        "\n",
+      ),
+      forbidden: [/^>[ ]{1,4}`{3,}/m, /^>[ ]{1,4}~{3,}/m],
+      present: ["> \\```js", "> \\~~~"],
+    },
+    {
+      label: "indented code via blank line + four spaces",
+      content: [BLOCKQUOTE_BENIGN_ANCHOR, "", "    exfiltrate('SP4')"].join("\n"),
+      forbidden: [/^>[ ]{4,}exfiltrate/m],
+      present: ["> exfiltrate('SP4')"],
+    },
+    {
+      label: "indented code via blank line + a leading tab",
+      content: [BLOCKQUOTE_BENIGN_ANCHOR, "", "\texfiltrate('TAB')"].join("\n"),
+      forbidden: [/^>[ ]\texfiltrate/m],
+      present: ["> exfiltrate('TAB')"],
+    },
+    {
+      label: "indented code carrying heading text (four spaces + ##)",
+      content: [BLOCKQUOTE_BENIGN_ANCHOR, "", "    ## STILL-CODE"].join("\n"),
+      forbidden: [/^>[ ]{4,}\S.*STILL-CODE/m, /^>[ ]{1,4}#{1,6}\s+STILL-CODE/m],
+      present: ["> \\## STILL-CODE"],
+    },
+    {
+      label: "raw-HTML block starters (<h2>, <script>, <!--)",
+      content: [
+        BLOCKQUOTE_BENIGN_ANCHOR,
+        "<h2>HTML Injected</h2>",
+        "<script>evil()</script>",
+        "<!-- pwn -->",
+      ].join("\n"),
+      forbidden: [/^>[ ]{1,4}<h2>/m, /^>[ ]{1,4}<script>/m, /^>[ ]{1,4}<!--/m],
+      present: ["> \\<h2>HTML Injected", "> \\<script>evil", "> \\<!-- pwn"],
+    },
+  ];
+
+  it.each(BLOCKQUOTE_INJECTION_CASES)(
+    "--format markdown keeps a per-expert transcript blockquote from opening a block: $label (#2110)",
+    async ({ content, forbidden, present }) => {
+      const seed = await seedPanelWithUnsafeLineBreakContent(testHome, content);
+      let captured = "";
+      const cmd = buildExportCommand({
+        write: (s) => {
+          captured += s;
+        },
+      });
+      await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "markdown"]);
+
+      for (const pattern of forbidden) {
+        expect(captured).not.toMatch(pattern);
+      }
+      for (const literal of present) {
+        expect(captured).toContain(literal);
+      }
+      // The benign anchor still rides its own blockquote line as literal prose.
+      expect(captured).toContain(`> ${BLOCKQUOTE_BENIGN_ANCHOR}`);
+    },
+  );
+
+  it.each(BLOCKQUOTE_INJECTION_CASES)(
+    "--format adr keeps the Options AND Decision per-expert blockquotes from opening a block: $label (#2110)",
+    async ({ content, forbidden, present }) => {
+      // One turn → position === synthesis === payload, so the SAME untrusted paragraph
+      // flows through BOTH the Options blockquote (`> ${position}`) and the Decision
+      // blockquote (`> ${synthesis}`) with no Discussion "Full transcript" continuation
+      // (single round) to muddy the oracle. Pinning the neutralized literal inside EACH
+      // section proves both emitters are hardened independently.
+      const seed = await seedPanelWithUnsafeLineBreakContent(testHome, content);
+      let captured = "";
+      const cmd = buildExportCommand({
+        write: (s) => {
+          captured += s;
+        },
+      });
+      await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "adr"]);
+
+      for (const pattern of forbidden) {
+        expect(captured).not.toMatch(pattern);
+      }
+      const optionsSection = captured.slice(
+        captured.indexOf("## Options Considered"),
+        captured.indexOf("## Discussion"),
+      );
+      const decisionSection = captured.slice(captured.indexOf("## Decision"));
+      expect(optionsSection).not.toBe("");
+      expect(decisionSection).not.toBe("");
+      for (const literal of present) {
+        expect(optionsSection).toContain(literal);
+        expect(decisionSection).toContain(literal);
+      }
+    },
+  );
+
+  it("--format markdown leaves benign per-expert transcript paragraphs unescaped (#2110)", async () => {
+    // Inverse/golden: normal prose (no leading whitespace, no block markers) must render
+    // exactly as before — each paragraph line pinned inside its blockquote as plain text
+    // with no spurious backslash-escape.
+    const benign = [
+      "We should ship now.",
+      "",
+      "It lowers risk and gathers real feedback.",
+      "Ops can monitor the rollout.",
+    ].join("\n");
+    const seed = await seedPanelWithUnsafeLineBreakContent(testHome, benign);
+    let captured = "";
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
+    await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "markdown"]);
+
+    expect(captured).toContain("> We should ship now.");
+    expect(captured).toContain("> It lowers risk and gathers real feedback.");
+    expect(captured).toContain("> Ops can monitor the rollout.");
+    // No benign blockquote line was spuriously escaped.
+    expect(captured).not.toContain("> \\");
+  });
+
+  it("--format adr leaves benign Options and Decision blockquotes unescaped (#2110)", async () => {
+    // Inverse/golden for both ADR blockquote emitters.
+    const benign = ["We should ship now.", "", "It lowers risk and gathers real feedback."].join(
+      "\n",
+    );
+    const seed = await seedPanelWithUnsafeLineBreakContent(testHome, benign);
+    let captured = "";
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
+    await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "adr"]);
+
+    const optionsSection = captured.slice(
+      captured.indexOf("## Options Considered"),
+      captured.indexOf("## Discussion"),
+    );
+    const decisionSection = captured.slice(captured.indexOf("## Decision"));
+    expect(optionsSection).toContain("> We should ship now.");
+    expect(optionsSection).toContain("> It lowers risk and gathers real feedback.");
+    expect(decisionSection).toContain("> We should ship now.");
+    expect(decisionSection).toContain("> It lowers risk and gathers real feedback.");
+    expect(optionsSection).not.toContain("> \\");
+    expect(decisionSection).not.toContain("> \\");
+  });
+
   it.skipIf(WIN32)(
     "resolveOutputPath rejects a relative --output whose parent symlink escapes the tree (#1885)",
     async () => {
