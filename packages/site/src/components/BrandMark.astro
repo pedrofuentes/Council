@@ -4,6 +4,15 @@
  *
  * Renders the Council circuit-board emblem + COUNCIL wordmark.
  * Council-first branding per project brand guidelines.
+ *
+ * @remarks
+ * The wordmark's `<style>` block reads `--council-font-mono` and
+ * `--council-color-text` custom properties, both defined in
+ * `../styles/tokens.css`. Consuming pages/layouts MUST import that
+ * stylesheet (e.g. `import "../styles/tokens.css";`, as done in
+ * `gallery.astro` and `content/docs/index.mdx`) or this component
+ * silently falls back to the hard-coded `monospace` font and
+ * `#1b2c32`/`#e6e9e6` text colors instead of the brand tokens.
  */
 
 interface Props {
