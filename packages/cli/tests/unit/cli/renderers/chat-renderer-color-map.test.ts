@@ -71,4 +71,43 @@ describe("human participant color", () => {
     // whiteBright is SGR 97; assert the human color was applied.
     expect(codes[0]).toBe("\u001b[97m");
   });
+
+  it("applies HUMAN_COLOR (SGR 97) at the showThinking call site for human slugs", () => {
+    // Verifies that the showThinking call site also uses HUMAN_COLOR, not a
+    // palette color, for human participants (#714).
+    const sink = new StringSink();
+    const renderer = createChatRenderer({
+      sink,
+      experts: new Map([["user", "You"]]),
+      humanSlugs: new Set(["user"]),
+    });
+    renderer.showThinking("user");
+    const codes = sink.text.match(ANSI_RE) ?? [];
+    expect(codes.length).toBeGreaterThan(0);
+    // SGR 97 = whiteBright = HUMAN_COLOR. A palette color (e.g. SGR 36 cyan) here is a regression.
+    expect(codes[0]).toBe("\u001b[97m");
+  });
+
+  it("human color differs from the first palette color at startExpertResponse", () => {
+    // Discriminating: dropping humanSlugs would assign palette index 0 (cyan/SGR 36) instead.
+    const sink1 = new StringSink();
+    const humanRenderer = createChatRenderer({
+      sink: sink1,
+      experts: new Map([["user", "You"]]),
+      humanSlugs: new Set(["user"]),
+    });
+    humanRenderer.startExpertResponse("user");
+
+    const sink2 = new StringSink();
+    const expertRenderer = createChatRenderer({
+      sink: sink2,
+      experts: new Map([["alice", "Alice"]]),
+    });
+    expertRenderer.startExpertResponse("alice");
+
+    const humanCodes = sink1.text.match(ANSI_RE) ?? [];
+    const expertCodes = sink2.text.match(ANSI_RE) ?? [];
+    expect(humanCodes[0]).not.toBe(expertCodes[0]);
+    expect(humanCodes[0]).toBe("\u001b[97m");
+  });
 });

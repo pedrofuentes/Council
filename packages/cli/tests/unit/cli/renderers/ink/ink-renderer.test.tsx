@@ -5,6 +5,11 @@
  * stdout buffer, then asserts on the latest frame.
  *
  * RED at this commit: src/cli/renderers/ink/InkRenderer.tsx does not exist.
+ *
+ * #714: Human participant color (HUMAN_COLOR / whiteBright / SGR 97) is
+ * verified end-to-end through the Ink renderer's ExpertCard call site.
+ * FORCE_COLOR=3 is set by tests/setup.ts so Ink emits SGR escapes even
+ * though ink-testing-library's stdout reports as a non-TTY.
  */
 import React from "react";
 import { describe, expect, it } from "vitest";
@@ -27,6 +32,31 @@ async function flush(): Promise<void> {
   for (let i = 0; i < 5; i++) {
     await new Promise((r) => setImmediate(r));
   }
+}
+
+/** Extracts every numeric SGR parameter from the ANSI escape sequences in `s`. */
+function sgrParams(s: string): readonly number[] {
+  // eslint-disable-next-line no-control-regex
+  return [...s.matchAll(/\u001b\[([0-9;]+)m/g)].flatMap(
+    (m): readonly number[] => (m[1] ?? "").split(";").map(Number),
+  );
+}
+
+/**
+ * Returns the SGR parameters emitted immediately before `header` on the single
+ * frame line that contains it.
+ *
+ * Ink renders the `<Static>` PanelRoster row and the ExpertCard turn header on
+ * separate lines. The human roster row is colored with the same HUMAN_COLOR
+ * (SGR 97) as the human turn header, so a byte window around the header can
+ * pick up the roster's 97 and pass even when the ExpertCard call site applies
+ * the wrong color. Isolating to the header's own line removes that leak so the
+ * assertion actually discriminates the ExpertCard call site (#714).
+ */
+function turnHeaderColor(raw: string, header: string): readonly number[] {
+  const line = raw.split("\n").find((l) => stripAnsi(l).includes(header));
+  if (line === undefined) return [];
+  return sgrParams(line.slice(0, line.indexOf(header)));
 }
 
 describe("DebateApp", () => {
@@ -262,6 +292,82 @@ describe("DebateApp", () => {
     await flush();
     const frame = stripAnsi(ui.lastFrame() ?? "");
     expect(frame).toContain("[[You] [2] You]");
+    ui.unmount();
+  });
+
+  it("applies HUMAN_COLOR (whiteBright, SGR 97) to human turn header at ExpertCard call site (#714)", async () => {
+    // Verifies end-to-end: panel.assembled sets humanSlugs via
+    // participantKind:"human", and the ExpertCard component renders the human
+    // turn header with color="whiteBright" (SGR 97) — the reserved HUMAN_COLOR.
+    // FORCE_COLOR=3 (set in tests/setup.ts) ensures Ink emits ANSI codes.
+    //
+    // The assertion is scoped to the ExpertCard turn-header line ("[[You] ...")
+    // and NOT a byte window, which would span the <Static> PanelRoster row
+    // whose human entry is ALSO SGR 97 and would mask a wrong ExpertCard color.
+    const events = stream(
+      {
+        kind: "panel.assembled",
+        experts: [
+          { slug: "alice", displayName: "Alice", model: "gpt-5" },
+          { slug: "user", displayName: "You", model: "", participantKind: "human" },
+        ],
+      },
+      { kind: "round.start", round: 0 },
+      { kind: "turn.start", expertSlug: "user", round: 0, seq: 0, speakerKind: "human" },
+      { kind: "turn.delta", expertSlug: "user", text: "hi" },
+      { kind: "turn.end", expertSlug: "user", turnId: "t1", content: "hi" },
+    );
+    const ui = render(<DebateApp events={events} />);
+    await flush();
+    const raw = ui.lastFrame() ?? "";
+    // The ExpertCard emits the human header as "[[You] [2] You]" (double
+    // bracket). The roster row is "[2] You" (no "[You]"), so "[[You]" is unique
+    // to the ExpertCard turn header — it targets the call site under test.
+    expect(stripAnsi(raw)).toContain("[[You]");
+    const headerSgr = turnHeaderColor(raw, "[[You]");
+    // SGR 97 = whiteBright = HUMAN_COLOR. A palette color here is a regression.
+    expect(headerSgr).toContain(97);
+    ui.unmount();
+  });
+
+  it("human turn header SGR differs from AI expert turn header SGR in Ink (#714)", async () => {
+    // Discriminating: if the ExpertCard call site lost humanSlugs awareness,
+    // the human header would take a palette color and this test would fail.
+    // Each assertion is scoped to its own ExpertCard turn-header line, so the
+    // <Static> roster (which also colors the human row SGR 97) cannot leak in,
+    // and the AI check targets Alice's HEADER ("[[1] Alice]") rather than her
+    // roster row ("[1] Alice").
+    const events = stream(
+      {
+        kind: "panel.assembled",
+        experts: [
+          { slug: "alice", displayName: "Alice", model: "gpt-5" },
+          { slug: "user", displayName: "You", model: "", participantKind: "human" },
+        ],
+      },
+      { kind: "round.start", round: 0 },
+      { kind: "turn.start", expertSlug: "alice", round: 0, seq: 0 },
+      { kind: "turn.delta", expertSlug: "alice", text: "hello" },
+      { kind: "turn.end", expertSlug: "alice", turnId: "t1", content: "hello" },
+      { kind: "turn.start", expertSlug: "user", round: 0, seq: 1, speakerKind: "human" },
+      { kind: "turn.delta", expertSlug: "user", text: "hi" },
+      { kind: "turn.end", expertSlug: "user", turnId: "t2", content: "hi" },
+    );
+    const ui = render(<DebateApp events={events} />);
+    await flush();
+    const raw = ui.lastFrame() ?? "";
+
+    // Target the ExpertCard turn HEADERS ("[[You] ...]" / "[[1] Alice]"), NOT
+    // the <Static> roster rows ("[2] You" / "[1] Alice").
+    expect(stripAnsi(raw)).toContain("[[You]");
+    expect(stripAnsi(raw)).toContain("[[1] Alice]");
+
+    const humanSgr = turnHeaderColor(raw, "[[You]");
+    const aliceSgr = turnHeaderColor(raw, "[[1] Alice]");
+
+    expect(humanSgr).toContain(97); // whiteBright for human
+    expect(aliceSgr).not.toContain(97); // AI expert must NOT be whiteBright
+    expect(aliceSgr).toContain(36); // Alice's palette color is cyan (SGR 36)
     ui.unmount();
   });
 });
