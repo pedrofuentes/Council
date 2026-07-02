@@ -37,7 +37,8 @@ shipping.
 - [ ] `council doctor --models` lists known model identifiers.
 - [ ] `council doctor` runs the online probe by default, creates a session
       against the configured default model, and reports that session creation
-      succeeded; `--offline` skips the online probe.
+      succeeded; `--offline` skips the online probe; `--online` is accepted
+      but is now a no-op, kept only for backward compatibility.
 - [ ] First-ever run on a fresh `COUNCIL_DATA_HOME` creates the directory
       tree (`experts/`, `panels/`, `council.db`) without errors.
 - [ ] `council --help` and `council <subcommand> --help` render
