@@ -43,12 +43,35 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
-async function waitFor(predicate: () => boolean | Promise<boolean>): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+/**
+ * Polls `predicate` until it is true or a real wall-clock deadline elapses.
+ *
+ * The two throttling tests below observe the *default*, fire-and-forget
+ * background refresh (no `scheduleRefresh` injected), so they have no handle
+ * to await directly — they must poll for the externally observable side
+ * effect (the cache file landing on disk). A fixed count of `setImmediate`
+ * turns only drains the microtask/check queue and buys almost no real time
+ * (measured ~1-2ms for 100 turns), which is far too little for a real
+ * `mkdir`/`writeFile`/`rename` sequence once the process is slowed by v8
+ * coverage instrumentation and CI's shared, throttled runners (#1713). A
+ * `setTimeout`-driven deadline instead gives the event loop genuine wall-clock
+ * time to let pending I/O complete. 5s comfortably covers CI-under-coverage
+ * while the 20ms poll interval keeps the fast/local path near-instant once
+ * the predicate is satisfied.
+ */
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs = 5_000,
+  intervalMs = 20,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
     if (await predicate()) return;
-    await new Promise((resolve) => setImmediate(resolve));
+    if (Date.now() >= deadline) {
+      throw new Error(`waitFor: condition not met within ${timeoutMs}ms`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
-  throw new Error("waitFor: condition not met in time");
 }
 
 async function fileExists(filePath: string): Promise<boolean> {
