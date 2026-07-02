@@ -346,6 +346,8 @@ describe("IA-10: Include debate ID in conclude output", () => {
 
   it("JSON output includes debateId and startedAt", async () => {
     const db = await createDatabase(path.join(testHome, "council.db"));
+    let seededDebateId: string | undefined;
+    let seededStartedAt: string | undefined;
     try {
       const panel = await new PanelRepository(db).create({
         name: "debate-id-test",
@@ -365,6 +367,8 @@ describe("IA-10: Include debate ID in conclude output", () => {
         prompt: "Test",
         moderator: "round-robin",
       });
+      seededDebateId = debate.id;
+      seededStartedAt = debate.startedAt;
       await new TurnRepository(db).create({
         debateId: debate.id,
         round: 0,
@@ -405,10 +409,8 @@ describe("IA-10: Include debate ID in conclude output", () => {
       debateId?: string;
       startedAt?: string;
     };
-    expect(parsed.debateId).toBeDefined();
-    expect(parsed.debateId?.length).toBeGreaterThan(0);
-    expect(parsed.startedAt).toBeDefined();
-    expect(parsed.startedAt?.length).toBeGreaterThan(0);
+    expect(parsed.debateId).toBe(seededDebateId);
+    expect(parsed.startedAt).toBe(seededStartedAt);
   });
 
   it("plain output includes debate ID", async () => {
@@ -669,14 +671,18 @@ describe("IA-05: --format validation", () => {
     process.env["COUNCIL_HOME"] = tmpDir;
     process.env["COUNCIL_DATA_HOME"] = dataHome;
     try {
-      const cmd = buildExpertCommand(() => { /* noop */ });
+      const cmd = buildExpertCommand(() => {
+        /* noop */
+      });
       await expect(
         cmd.parseAsync(["node", "council-expert", "inspect", "fmt-test", "--format", "xml"]),
       ).rejects.toThrow(/Unknown format.*xml/);
     } finally {
       delete process.env["COUNCIL_HOME"];
       delete process.env["COUNCIL_DATA_HOME"];
-      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => { /* noop */ });
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {
+        /* noop */
+      });
     }
   });
 
@@ -710,7 +716,9 @@ describe("IA-05: --format validation", () => {
     process.env["COUNCIL_DATA_HOME"] = dataHome;
     try {
       // Use the CLI to create the panel (handles all DB fields)
-      const createCmd = buildPanelCommand(() => { /* noop */ });
+      const createCmd = buildPanelCommand(() => {
+        /* noop */
+      });
       await createCmd.parseAsync([
         "node",
         "council-panel",
@@ -720,14 +728,18 @@ describe("IA-05: --format validation", () => {
         "pfmt-exp",
       ]);
 
-      const cmd = buildPanelCommand(() => { /* noop */ });
+      const cmd = buildPanelCommand(() => {
+        /* noop */
+      });
       await expect(
         cmd.parseAsync(["node", "council-panel", "inspect", "pfmt-panel", "--format", "csv"]),
       ).rejects.toThrow(/Unknown format.*csv/);
     } finally {
       delete process.env["COUNCIL_HOME"];
       delete process.env["COUNCIL_DATA_HOME"];
-      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => { /* noop */ });
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {
+        /* noop */
+      });
     }
   });
 });
