@@ -22,6 +22,39 @@
 
 <!-- Add new decisions below this line, most recent first -->
 
+### ADR-033: Trust `pnpm/action-setup` (SHA-pinned + Dependabot-tracked); repo-level third-party-action allowlist is a human follow-up
+**Date**: 2026-07-02
+**Status**: Accepted
+**Context**: CI/CD workflows (`.github/workflows/`) run several GitHub Actions published outside GitHub's own `actions/*` and `github/*` orgs. Every `uses:` is already SHA-pinned with a human-readable version comment, and Dependabot's `github-actions` ecosystem bumps those pins weekly (`.github/dependabot.yml:17-28`, `commit-message.prefix: "ci(deps)"`). But SHA-pinning only freezes *which commit* runs — it does not by itself record a deliberate *publisher-trust* decision, and nothing at the repo level stops a future workflow from referencing an arbitrary unvetted action. #1425 asks to (a) make an explicit, documented trust decision for `pnpm/action-setup` — the standard action for provisioning pnpm — and (b) enforce a repo/org-level third-party-action allowlist so only vetted publishers can run.
+**Decision**:
+1. **Trust `pnpm/action-setup`.** It is the official, widely-used action maintained by the pnpm project to install the pinned pnpm version, and it is required because the toolchain is pnpm (`package.json:56` → `"packageManager": "pnpm@10.30.1"`). It is pinned to `pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9` across all 10 references in 8 workflows (`ci.yml:20,48,76`, `coverage.yml:31`, `docs.yml:31`, `deploy-pages.yml:32`, `lighthouse.yml:30`, `platform-smoke.yml:26`, `release-please.yml:39`, `sbom.yml:23`) and is Dependabot-tracked. This is an **accepted, trusted** dependency.
+2. **Record the full non-GitHub publisher surface** the eventual allowlist must cover, so the follow-up is actionable: `pnpm/action-setup`, `ossf/scorecard-action`, `googleapis/release-please-action`, and `google/clusterfuzzlite/actions/*` (build_fuzzers / run_fuzzers). `actions/*` and `github/codeql-action/*` are GitHub-owned (first-party). All of the above are reputable, SHA-pinned, and Dependabot-tracked.
+3. **The repo-Setting allowlist is a required HUMAN follow-up — NOT yet enforced.** "Allow select actions and reusable workflows" lives in **Settings → Actions → General → Actions permissions** (or the org-level equivalent) and can only be changed by a human with admin rights; it cannot be set from repository code. Until a human enables it and populates the allow-list with the publishers in (2) (alongside "Allow actions created by GitHub"), an unvetted action could still be added to a workflow. This ADR does **not** claim that control is active.
+**Alternatives considered**:
+- **Vendor/fork `pnpm/action-setup` into the repo** — rejected: adds maintenance burden and *removes* Dependabot's automatic security bumps; SHA-pin + Dependabot already gives reproducibility with upstream patches.
+- **Pin to a floating tag (`@v6`)** — rejected: tags are mutable; the existing SHA-pin is the stronger supply-chain control.
+- **Rely on SHA-pinning alone and skip the Settings allowlist** — rejected as the end state: pinning controls *drift* of already-referenced actions but not *introduction* of new unvetted ones. The allowlist is the missing preventive control; documenting it as a human follow-up is the honest status rather than claiming enforcement code cannot provide.
+**Consequences**:
+- ✅ `pnpm/action-setup` now has a recorded, auditable trust rationale instead of an implicit one, and the review path for future third-party actions is written down.
+- ✅ The human follow-up is actionable: the exact publisher allowlist and the Settings location are captured here.
+- ⚠️ **Not yet enforced**: the repo-level "Allow select actions" allowlist is a documented TODO, not an active control — do not treat this ADR as evidence the allowlist exists.
+- 📝 When enabling the Setting, keep it in sync with Dependabot: allow the publishers in (2); a new third-party publisher requires a fresh trust decision appended here *before* it is added to a workflow and to the allowlist. OpenSSF Scorecard (`scorecard.yml`) already provides ongoing `Pinned-Dependencies` / `Dangerous-Workflow` signals as a complementary check.
+
+### ADR-032: pnpm lifecycle-script allowlist — keep `onlyBuiltDependencies: [esbuild, sharp]`; no blanket `--ignore-scripts` in CI
+**Date**: 2026-07-02
+**Status**: Accepted
+**Context**: Every CI job runs `pnpm install --frozen-lockfile` (10 steps across `ci.yml:28,56,84`, `coverage.yml:39`, `docs.yml:39`, `deploy-pages.yml:40`, `lighthouse.yml:38`, `platform-smoke.yml:34`, `release-please.yml:52`, `sbom.yml:31`). A dependency's install/postinstall lifecycle scripts are a classic supply-chain execution vector, so #1323 asks whether CI should pass `--ignore-scripts` and additionally maintain an explicit trusted-script allowlist.
+**Decision**: **Keep the existing allowlist; do not add a blanket `--ignore-scripts`.** Under pnpm 10 (`package.json:56` → `pnpm@10.30.1`) a dependency's build/lifecycle scripts do **not** run unless the package is explicitly allow-listed — the repo already does exactly this in `pnpm-workspace.yaml:17-19` (`onlyBuiltDependencies: [esbuild, sharp]`, mirrored as `allowBuilds: {esbuild: true, sharp: true}` at `:24-26` for pnpm 11+). That two-package allow-list **is** the trusted-script allowlist #1323 asks for: only `esbuild` (bundling via tsup) and `sharp` (image processing in `packages/site`) may execute build scripts; every other dependency's scripts are blocked by default. A comment in `pnpm-workspace.yaml` now labels this block as a security control and links back here.
+**Alternatives considered**:
+- **Add `--ignore-scripts` to the CI installs** — rejected: pnpm 10's default-deny plus `onlyBuiltDependencies` already blocks all non-allow-listed scripts, so `--ignore-scripts` adds little marginal security while *also* suppressing `esbuild`/`sharp`, breaking their native builds. It would only be safe if paired with an explicit `pnpm rebuild esbuild sharp`, adding fragility for no real gain.
+- **`--ignore-scripts` with no rebuild** — rejected: breaks `tsup` bundling and `packages/site` image processing outright.
+- **No allowlist (pnpm 9 behaviour: run every dependency's scripts)** — rejected: that is the unsafe posture #1323 exists to prevent; pnpm 10's default-deny + allowlist is strictly better.
+**Consequences**:
+- ✅ Supply-chain exposure from dependency lifecycle scripts is already minimized: exactly two audited, native-build packages are allow-listed and all others are blocked, with no extra CI flag needed.
+- ✅ `esbuild`/`sharp` builds keep working; no `pnpm rebuild` dance in CI.
+- ⚠️ Adding a future dependency that legitimately needs a build script requires a **deliberate** edit to `onlyBuiltDependencies`/`allowBuilds` (and, per AGENTS.md Boundaries, review) — intended friction, not a bug.
+- 📝 The allow-list must stay mirrored across both keys until the repo moves to pnpm 11 (then `onlyBuiltDependencies` can be dropped — see the file's own migration note). Revisit if a dependency-scanning gate (e.g. `pnpm audit`) is later added.
+
 ### ADR-031: Deterministic phase-prompt templates for structured debates; LLM-driven moderator deferred
 **Date**: 2026-07-02
 **Status**: Accepted
