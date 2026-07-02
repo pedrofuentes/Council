@@ -2643,4 +2643,77 @@ describe("deriveFilenameFromUrl hardening (#763, #764, #1029)", () => {
     expect(deriveFilenameFromUrl("https://example.com")).toBe("example.com.html");
     expect(deriveFilenameFromUrl("https://example.com/docs/")).toBe("docs");
   });
+
+  // #1957: the guard must reject the SAME class `toSingleLineDisplay` /
+  // `stripControlChars` neutralize for terminal display — not just C0/C1/DEL/
+  // LS/PS. Before this fix a percent-encoded bidi override/isolate (e.g. the
+  // U+202E RLO in `.../a%E2%80%AEb.md`) or a zero-width/hidden-format byte
+  // survived decoding into a derived filename that later reached raw stderr /
+  // listing sinks, enabling terminal reordering/spoofing (Trojan Source,
+  // CVE-2021-42574). Each row pins one offending codepoint so a future
+  // narrowing of the guard is caught. Groups: the previously-covered
+  // C0/TAB/DEL/C1/LS/PS are re-pinned alongside the newly-enforced bidi and
+  // zero-width/hidden-format groups (test-hardening: full class, not one
+  // instance).
+  const ADVERSARIAL_FILENAME_CODEPOINTS: readonly { label: string; enc: string }[] = [
+    // Already covered before #1957 — re-pinned so the full class is exercised.
+    { label: "U+0009 TAB", enc: "%09" },
+    { label: "U+007F DEL", enc: "%7F" },
+    { label: "U+0080 C1 (low)", enc: "%C2%80" },
+    { label: "U+009F C1 (high)", enc: "%C2%9F" },
+    { label: "U+2028 line separator", enc: "%E2%80%A8" },
+    { label: "U+2029 paragraph separator", enc: "%E2%80%A9" },
+    // Newly enforced by #1957 — bidi override/isolate (U+202A–U+202E, U+2066–U+2069).
+    { label: "U+202A LRE", enc: "%E2%80%AA" },
+    { label: "U+202B RLE", enc: "%E2%80%AB" },
+    { label: "U+202C PDF", enc: "%E2%80%AC" },
+    { label: "U+202D LRO", enc: "%E2%80%AD" },
+    { label: "U+202E RLO", enc: "%E2%80%AE" },
+    { label: "U+2066 LRI", enc: "%E2%81%A6" },
+    { label: "U+2067 RLI", enc: "%E2%81%A7" },
+    { label: "U+2068 FSI", enc: "%E2%81%A8" },
+    { label: "U+2069 PDI", enc: "%E2%81%A9" },
+    // Newly enforced by #1957 — zero-width / word-joiner / BOM.
+    { label: "U+200B ZERO WIDTH SPACE", enc: "%E2%80%8B" },
+    { label: "U+200C ZERO WIDTH NON-JOINER", enc: "%E2%80%8C" },
+    { label: "U+200D ZERO WIDTH JOINER", enc: "%E2%80%8D" },
+    { label: "U+2060 WORD JOINER", enc: "%E2%81%A0" },
+    { label: "U+FEFF BOM", enc: "%EF%BB%BF" },
+  ];
+
+  it.each(ADVERSARIAL_FILENAME_CODEPOINTS)(
+    "rejects a URL-derived filename carrying $label with a discriminating, control-free message (#1957)",
+    ({ enc }) => {
+      let thrown: unknown;
+      try {
+        deriveFilenameFromUrl(`https://example.com/a${enc}b.md`);
+      } catch (e) {
+        thrown = e;
+      }
+      // Discriminating oracle: a specific rejection, not a bare throw.
+      expect(thrown).toBeInstanceOf(CliUserError);
+      const message = (thrown as Error).message;
+      expect(message).toMatch(/control character/i);
+      // The message must never re-emit the adversarial byte class it rejects
+      // (test-hardening: echoed input must be sanitized via toSingleLineDisplay)...
+      expect(message).not.toMatch(
+        // eslint-disable-next-line no-control-regex
+        /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069\u200b-\u200d\u2060\ufeff]/,
+      );
+      // ...and must render on a single line.
+      expect(message.split(/\r\n|\r|\n/)).toHaveLength(1);
+    },
+  );
+
+  // #1957 inverse: the widened guard must NOT over-reject ordinary filenames —
+  // regular spaces, hyphens, underscores, dots and mixed case all pass through
+  // unchanged (contrast with the zero-width/soft-hyphen twins rejected above).
+  it.each([
+    { url: "https://example.com/report.md", expected: "report.md" },
+    { url: "https://example.com/my%20file.txt", expected: "my file.txt" },
+    { url: "https://example.com/a-normal_file.PDF", expected: "a-normal_file.PDF" },
+    { url: "https://example.com/version%201.2.3.txt", expected: "version 1.2.3.txt" },
+  ])("still accepts the ordinary safe filename $expected (#1957 inverse)", ({ url, expected }) => {
+    expect(deriveFilenameFromUrl(url)).toBe(expected);
+  });
 });
