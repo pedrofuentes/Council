@@ -48,12 +48,12 @@ These contributions help the community without requiring the full code workflow:
 - **Documentation fixes** — typos, clarifications, improved examples, or new
   guides. Edit the relevant `.md` file and open a PR.
 - **Example transcripts** — real-world Council session examples demonstrating
-  interesting use cases or workflows. Share as GitHub Issues or discussions.
+  interesting use cases or workflows. Share as GitHub Issues.
 
 **Process**: Open a PR with your changes. Prettier must pass
 (`npx prettier --check <file>`), but you don't need TDD commit choreography or
 the full pre-push verification. A maintainer will review and merge. Look for
-`good-first-issue` labels on GitHub Issues to get started.
+`good first issue` labels on GitHub Issues to get started.
 
 ### 💻 Code Contributions (full TDD + Sentinel workflow)
 
