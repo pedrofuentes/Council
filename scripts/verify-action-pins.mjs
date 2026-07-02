@@ -38,6 +38,61 @@ const execFileAsync = promisify(execFile);
 /** A 40-character lowercase-hex git commit SHA. */
 const SHA_RE = /^[0-9a-f]{40}$/;
 
+// --- Terminal-safe display sanitizer -----------------------------------------
+//
+// This script parses attacker-controllable `.github/workflows/*.yml` content (a
+// `pull_request` can edit a `uses:` line) and echoes derived fields to CI logs.
+// Untrusted control/escape bytes in those fields would let a malicious PR spoof
+// log lines or manipulate the terminal (OSC title/clipboard/cursor) when raw
+// logs are viewed. Every DISPLAYED string is therefore sanitized; comparison
+// and tag resolution keep using the RAW values.
+//
+// Self-contained mirror of the repo's canonical `toSingleLineDisplay` in
+// packages/cli/src/cli/strip-control-chars.ts — this standalone Node ESM script
+// cannot import from packages/cli. Keep the two in sync.
+
+// Order matters: match the multi-char ANSI/OSC/DCS sequences BEFORE the C0
+// character class, otherwise the class would consume the leading ESC (\x1B is
+// in the \x0E-\x1F range) and leave the sequence body visible. Every branch is
+// non-backtracking (negated classes / disjoint ranges) so unterminated
+// introducers sanitize in linear time (ReDoS guard). Branches, in order:
+//   - CSI:            ESC [ ... final byte (private/intermediate bytes allowed)
+//   - OSC:            ESC ] ... (BEL | ST), optional terminator
+//   - DCS/SOS/PM/APC: ESC (P|X|^|_) ... ST, optional terminator
+//   - C0 (except TAB/LF/CR) + DEL + C1 controls
+//   - strong bidi override/isolate controls
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHAR_PATTERN =
+  /\x1B\[[0-?]*[ -/]*[@-~]|\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)?|\x1B[P^_X][^\x1B]*(?:\x1B\\)?|[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]|[\u202A-\u202E\u2066-\u2069]/gs;
+
+/** Zero-width characters (invisible; usable for obfuscation/injection). */
+// eslint-disable-next-line no-misleading-character-class
+const ZERO_WIDTH_CHARS = /[\u200B\u200C\u200D\uFEFF]/g;
+
+/** Weak Bidi_Control marks and hidden default-ignorable format characters. */
+const HIDDEN_FORMAT_CHARS =
+  /[\u00AD\u061C\u115F\u1160\u200E\u200F\u2060-\u2064\u3164\uFFA0\u{E0000}-\u{E007F}]/gu;
+
+/**
+ * Sanitize untrusted text for single-line display in CI logs.
+ *
+ * Strips ANSI CSI/OSC/DCS/SOS/PM/APC escape sequences, C0 (except TAB/LF/CR),
+ * DEL and C1 controls, strong bidi controls, and zero-width/hidden format
+ * characters, then folds any surviving CR/LF/TAB/U+2028/U+2029 run to a single
+ * space so the result always renders on one line. Display-only: callers must
+ * keep comparing and resolving the RAW value.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+export function toSingleLineDisplay(text) {
+  return String(text)
+    .replace(CONTROL_CHAR_PATTERN, "")
+    .replace(ZERO_WIDTH_CHARS, "")
+    .replace(HIDDEN_FORMAT_CHARS, "")
+    .replace(/[\r\n\t\u2028\u2029]+/g, " ");
+}
+
 /**
  * A pinned action reference that carries a verifiable version comment.
  * @typedef {object} ActionPin
@@ -274,24 +329,30 @@ async function main() {
       }
       if (commit === pin.sha) {
         okCount += 1;
-        console.log(`  ok        ${pin.file}:${pin.line}  ${pin.ref}  ${pin.tag} == ${pin.sha}`);
+        console.log(
+          `  ok        ${toSingleLineDisplay(pin.file)}:${pin.line}  ${toSingleLineDisplay(pin.ref)}  ${toSingleLineDisplay(pin.tag)} == ${toSingleLineDisplay(pin.sha)}`,
+        );
       } else {
         mismatches.push({ pin, commit });
         console.log(
-          `  MISMATCH  ${pin.file}:${pin.line}  ${pin.ref}  ${pin.tag} -> ${commit}, but pinned to ${pin.sha}`,
+          `  MISMATCH  ${toSingleLineDisplay(pin.file)}:${pin.line}  ${toSingleLineDisplay(pin.ref)}  ${toSingleLineDisplay(pin.tag)} -> ${toSingleLineDisplay(commit)}, but pinned to ${toSingleLineDisplay(pin.sha)}`,
         );
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       errors.push({ pin, message });
-      console.log(`  ERROR     ${pin.file}:${pin.line}  ${pin.ref}  ${pin.tag}: ${message}`);
+      console.log(
+        `  ERROR     ${toSingleLineDisplay(pin.file)}:${pin.line}  ${toSingleLineDisplay(pin.ref)}  ${toSingleLineDisplay(pin.tag)}: ${toSingleLineDisplay(message)}`,
+      );
     }
   }
 
   if (unverifiable.length > 0) {
     console.log("\nUnverifiable external action reference(s):");
     for (const entry of unverifiable) {
-      console.log(`  - ${entry.file}:${entry.line}  ${entry.uses}  (${entry.reason})`);
+      console.log(
+        `  - ${toSingleLineDisplay(entry.file)}:${entry.line}  ${toSingleLineDisplay(entry.uses)}  (${toSingleLineDisplay(entry.reason)})`,
+      );
     }
   }
 
