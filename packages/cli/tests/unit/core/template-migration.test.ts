@@ -1117,4 +1117,95 @@ describe("template-migration", () => {
       expect(betaRow).toBeDefined();
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // #1946 (sentinel:important, security): the on-disk EXPERT schema-
+  // validation failure sink (parseOnDiskExpert, template-migration.ts:582-586)
+  // interpolates the expert's slug label straight into a thrown
+  // PanelMigrationError that reaches handleCliError → process.stderr.write (a
+  // bare TTY sink). The only pre-existing test reaching this branch (above,
+  // "isolates a schema-invalid on-disk EXPERT YAML ...") asserts a benign
+  // `.rejects.toThrow()` on ASCII input, so it passes even if `sanitizeForError`
+  // were dropped from :584 — a NON-DISCRIMINATING oracle that would silently
+  // reopen the #1918 terminal-escape-injection / Trojan-source class on this
+  // branch. This test drives the create-branch read with a slug carrying the
+  // full dangerous-byte class and asserts the surfaced message is stripped of
+  // every control / DEL / C1 / bidi / line-separator code point AND stays on
+  // one physical line, so removing the sanitizer makes it FAIL.
+  // ─────────────────────────────────────────────────────────────────────
+  describe("schema-validation error surface is terminal-safe with adversarial bytes (#1946)", () => {
+    // Stricter than the #1808/#1918 DANGEROUS set: this also rejects TAB
+    // (U+0009) and the Unicode line/paragraph separators (U+2028/U+2029) — the
+    // full class that `toSingleLineDisplay` (the sanitizer backing
+    // sanitizeForError) collapses. Any survivor is a terminal-injection or
+    // line-break-out vector.
+    // eslint-disable-next-line no-control-regex
+    const DANGEROUS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
+
+    function makeExpert(slug: string): ExpertDefinition {
+      return {
+        slug,
+        displayName: "Valid Expert",
+        role: "A schema-valid inline expert supplied by the built-in loader",
+        kind: "generic",
+        expertise: { weightedEvidence: ["evidence"], referenceCases: [], notExpertIn: [] },
+        epistemicStance: "stance",
+      };
+    }
+
+    it("strips control / DEL / C1 / bidi / TAB / line-separator bytes from the thrown schema-validation message", async () => {
+      const expertsDir = path.join(dataHome, "experts");
+      await fs.mkdir(expertsDir, { recursive: true });
+
+      // The built-in loader yields an expert whose slug carries the full
+      // dangerous-byte class. `sanitizeForError(slug, 100)` at :584 is the sink
+      // under test:
+      //   \t              → TAB (column-alignment / fake-table spoof)
+      //   \r\n            → CRLF line break-out
+      //   \u001b[2J       → ANSI CSI clear-screen
+      //   \u009b31m\u009d → C1 CSI / OSC introducers (survive JSON, echo raw)
+      //   \u007f          → DEL
+      //   \u202e\u2066    → RLO bidi override + isolate (Trojan Source)
+      //   \u2028          → Unicode line separator
+      const evilSlug = "evil\t\r\n\u001b[2J\u009b31m\u009d\u007f\u202e\u2066\u2028INJECTED";
+
+      // A user-editable on-disk expert file at that slug's path: syntactically
+      // valid YAML that FAILS ExpertDefinitionSchema (missing required fields +
+      // invalid kind enum). library.get(slug) returns null → the create branch
+      // reads this file and calls parseOnDiskExpert(content, slug), reaching the
+      // :582-586 schema-validation sink with the evil slug as the label.
+      const schemaInvalid = yaml.stringify({ slug: "unused", kind: "not-a-valid-kind" });
+      await fs.writeFile(path.join(expertsDir, `${evilSlug}.yaml`), schemaInvalid, "utf-8");
+
+      const stubLoader = async (name: string) =>
+        name === "panel-a"
+          ? { name, experts: [makeExpert(evilSlug)] }
+          : { name, experts: [makeExpert("beta-expert")] };
+
+      let caught: unknown;
+      try {
+        await migrateBuiltInTemplates(dataHome, lib, db, {
+          quiet: true,
+          panelNames: ["panel-a", "panel-b"],
+          loadPanel: stubLoader,
+        });
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(Error);
+      const message = (caught as Error).message;
+      // No raw control / DEL / C1 / bidi / line-separator byte may survive to
+      // the terminal (fails if sanitizeForError is dropped from :584)...
+      expect(message).not.toMatch(DANGEROUS);
+      // ...and the message must render on a single physical line (the raw slug
+      // embeds CR/LF, so a missing sanitizer also breaks this).
+      expect(message.split("\n")).toHaveLength(1);
+      expect(message).not.toContain("\r");
+      // Still informative: the printable slug tail + schema context survive, so
+      // the sanitizer strips the danger without gutting the diagnostic.
+      expect(message).toContain("INJECTED");
+      expect(message).toContain("failed schema validation");
+    });
+  });
 });
