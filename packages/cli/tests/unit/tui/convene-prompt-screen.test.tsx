@@ -389,4 +389,108 @@ describe("ConvenePromptScreen", () => {
       "Run debate with 2 experts × 3 rounds (~6 premium requests)? [y/n]",
     );
   });
+
+  it("drops a late REJECTION from a cancelled estimate without surfacing an error (#2042)", async () => {
+    // Esc-cancel aborts the controller but does NOT unmount the screen, which
+    // isolates the catch block's late-resolution guard (ConvenePromptScreen.tsx:90)
+    // from the unmount guard covered by the next test: only
+    // `controller.signal.aborted` is true here, `unmounted.current` stays false.
+    let rejectEstimate: (err: unknown) => void = () => undefined;
+    const estimateCost = vi.fn<
+      Parameters<ConveneDataSource["estimateCost"]>,
+      Promise<CostEstimate>
+    >(
+      async () =>
+        new Promise<CostEstimate>((_resolve, reject) => {
+          rejectEstimate = reject;
+        }),
+    );
+    const { stdin, lastFrame } = renderScreen({
+      convene: {
+        estimateCost,
+        streamDebate: async () => ({ debateId: undefined, reason: "completed" }),
+      },
+    });
+
+    await flush();
+    stdin.write("Topic");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    expect(lastFrame()).toContain("Estimating debate cost");
+
+    stdin.write("\u001b"); // Esc cancels the estimate (aborts the controller only)
+    await new Promise((r) => setTimeout(r, 140));
+    await flush();
+    expect(lastFrame()).toContain("Topic:");
+    expect(lastFrame()).not.toContain("Estimating debate cost");
+
+    // The cancelled estimate REJECTS late. The catch-abort guard must drop it
+    // silently instead of surfacing a stale error.
+    rejectEstimate(new Error("late network failure"));
+    await flush();
+
+    expect(lastFrame()).not.toContain("late network failure");
+    expect(lastFrame()).toContain("Topic:");
+  });
+
+  it("aborts the in-flight controller on unmount and drops a late resolution without warning (#2042)", async () => {
+    // Neutralizing the unmount cleanup's abort() call (ConvenePromptScreen.tsx:65)
+    // makes the assertion below fail — see the abort-spy check. React 19 already
+    // turns a setState call on an unmounted fiber into a silent no-op (verified: no
+    // re-render, no throw, no warning), so the console spies are regression
+    // insurance for that contract rather than a discriminator for the
+    // unmounted.current/aborted checks themselves (:87/:90); the abort() call is
+    // the strongest black-box-observable half of this guard.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const abortSpy = vi.spyOn(AbortController.prototype, "abort");
+
+    try {
+      let resolveEstimate: (value: CostEstimate) => void = () => undefined;
+      const estimateCost = vi.fn<
+        Parameters<ConveneDataSource["estimateCost"]>,
+        Promise<CostEstimate>
+      >(
+        async () =>
+          new Promise<CostEstimate>((resolve) => {
+            resolveEstimate = resolve;
+          }),
+      );
+      const { stdin, lastFrame, unmount } = renderScreen({
+        convene: {
+          estimateCost,
+          streamDebate: async () => ({ debateId: undefined, reason: "completed" }),
+        },
+      });
+
+      await flush();
+      stdin.write("Topic");
+      await flush();
+      stdin.write("\r");
+      await flush();
+      expect(lastFrame()).toContain("Estimating debate cost");
+      expect(abortSpy).not.toHaveBeenCalled();
+
+      unmount();
+      await flush();
+
+      // The unmount cleanup must abort the in-flight estimate's controller (#1676).
+      expect(abortSpy).toHaveBeenCalledTimes(1);
+      const frameAtUnmount = lastFrame();
+
+      // The estimate settles AFTER teardown: the guard must drop it silently
+      // rather than update state on the unmounted screen.
+      resolveEstimate({ experts: 4, rounds: 4, estimatedPremiumRequests: 16 });
+      await flush();
+
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(warnSpy).not.toHaveBeenCalled();
+      expect(lastFrame()).toBe(frameAtUnmount);
+    } finally {
+      errorSpy.mockRestore();
+      warnSpy.mockRestore();
+      abortSpy.mockRestore();
+    }
+  });
 });
