@@ -85,6 +85,19 @@ git pull origin main
 - Start next increment from the plan
 - If other worktrees are in progress, rebase them: `cd .worktrees/other && git fetch origin main && git rebase origin/main`
 
+## Continuous Integration
+
+### Platform Smoke Tests
+- **Workflow**: [`.github/workflows/platform-smoke.yml`](../.github/workflows/platform-smoke.yml)
+- **Purpose**: Catches OS-specific regressions (build/typecheck breakage, TTY-detection differences, shell quirks) that a single-OS unit test run wouldn't surface, by exercising the built CLI binary end-to-end on every supported platform.
+- **Triggers**: `pull_request` targeting `main`, `push` to `main`, and manual `workflow_dispatch`.
+- **Scope**: A `fail-fast: false` matrix across `ubuntu-latest`, `macos-latest`, and `windows-latest` — one OS failing does not cancel the others. Each OS job:
+  1. Installs dependencies (`pnpm install --frozen-lockfile`) and builds the CLI (`pnpm --filter @council-ai/cli build`)
+  2. Typechecks (`pnpm --filter @council-ai/cli typecheck`)
+  3. Runs CLI smoke checks: `--version`, `--help`, and `templates` (offline)
+  4. Runs TUI-fallback smoke checks: confirms bare `council`, `--help`, `--no-tui`, and `doctor --help` all fall back to the classic CLI (rather than launching the Ink TUI) when run non-interactively, since CI runners are non-TTY
+- **Pass/fail interpretation**: A failing OS job means the CLI failed to build/typecheck or one of the smoke assertions didn't match on that platform — treat it as a real, platform-specific regression and a required merge blocker, not a flaky/advisory check.
+
 ## Sub-Agent Delegation
 
 ### When to Delegate
