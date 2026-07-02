@@ -275,9 +275,17 @@ async function acquireConfigLock(lockPath: string): Promise<LockMeta> {
     };
     try {
       await handle.writeFile(JSON.stringify(meta), "utf-8");
-    } finally {
-      await handle.close();
+    } catch (err: unknown) {
+      // The exclusive open already created the lock file. If writing the owner
+      // metadata failed (ENOSPC/EIO), remove the just-created file before
+      // propagating: an orphan lock with no owner metadata can never be
+      // re-created with `wx` and would wedge every future acquisition until the
+      // staleness window elapses (#1924).
+      await handle.close().catch(() => undefined);
+      await fs.rm(lockPath, { force: true }).catch(() => undefined);
+      throw err;
     }
+    await handle.close();
     return meta;
   }
 
@@ -285,13 +293,18 @@ async function acquireConfigLock(lockPath: string): Promise<LockMeta> {
 }
 
 /**
- * Release the config lock, but only if we still own it. If our lock was reaped
- * as stale and re-acquired by another process, its token won't match and we
- * leave it untouched.
+ * Release the config lock, but only if we still own it. We unlink solely when
+ * the on-disk token VERIFIABLY matches ours. If the lock was reaped and
+ * re-acquired by another process (different token), or its metadata is
+ * missing / not-yet-flushed / unreadable (undefined, e.g. a successor that has
+ * created its lock via `wx` but not yet written its metadata), we leave it
+ * untouched: "cannot prove it is mine" must never be treated as "safe to
+ * delete", or two processes could end up believing they hold the lock (A-B-A,
+ * #1923). Such a lock is left for its real owner or the staleness reaper.
  */
 async function releaseConfigLock(lockPath: string, meta: LockMeta): Promise<void> {
   const current = await readLockMeta(lockPath);
-  if (current !== undefined && current.token !== meta.token) return;
+  if (current === undefined || current.token !== meta.token) return;
   await fs.unlink(lockPath).catch(() => undefined);
 }
 
