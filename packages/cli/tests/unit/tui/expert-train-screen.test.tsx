@@ -497,3 +497,86 @@ describe("ExpertTrainScreen — Tab completion and hint", () => {
     unmount();
   });
 });
+
+describe("ExpertTrainScreen — stop warning", () => {
+  const doneResult = (
+    stopWarning?: string,
+  ): Awaited<ReturnType<ExpertTrainingDataSource["train"]>> => ({
+    filesProcessed: 1,
+    filesFailed: 0,
+    filesSkipped: 0,
+    filesNeedingReview: 0,
+    totalWords: 42,
+    profileUpdated: true,
+    profileError: null,
+    ...(stopWarning === undefined ? {} : { stopWarning }),
+  });
+
+  // Isolate the warning line from the rest of the frame: the ⚠ glyph is used
+  // only by the stop-warning element, so it uniquely identifies that line.
+  const warningLine = (frame: string | undefined): string | undefined =>
+    (frame ?? "").split("\n").find((line) => line.includes("⚠"));
+
+  it("renders the adapter stop warning distinctly from the success status", async () => {
+    const { stdin, lastFrame, unmount } = renderScreen({
+      train: async () => doneResult("Engine shutdown failed: lingering subprocess"),
+    });
+
+    stdin.write("/docs/notes.md");
+    await flush();
+    stdin.write("\r");
+    await flush();
+
+    // The normal success status is still shown …
+    expect(lastFrame()).toContain("✓ Persona profile updated.");
+    // … and the teardown warning appears as an additional, distinct line.
+    const line = warningLine(lastFrame());
+    expect(line).toBeDefined();
+    expect(line).toContain("Engine shutdown failed: lingering subprocess");
+    unmount();
+  });
+
+  it("sanitizes an adversarial stop warning to a single control-char-free line", async () => {
+    // TAB, C0, ANSI CSI, DEL, C1, bidi override/isolate, CR/LF and the Unicode
+    // line/paragraph separators are all embedded; every one must be neutralized.
+    const adversarial =
+      "Engine shutdown failed:\u0009\u0000\u0008\u001b[31m\u007f\u009b\u202e\u2066\r\n\u2028\u2029lingering subprocess";
+    const { stdin, lastFrame, unmount } = renderScreen({
+      train: async () => doneResult(adversarial),
+    });
+
+    stdin.write("/docs/notes.md");
+    await flush();
+    stdin.write("\r");
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    // Single-line: the warning did not break across rows — exactly one marker.
+    expect(frame.split("⚠").length - 1).toBe(1);
+    const line = warningLine(frame);
+    expect(line).toBeDefined();
+    // No control, C1, bidi, or line/paragraph-separator bytes survive.
+    // eslint-disable-next-line no-control-regex
+    expect(line).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/);
+    // The visible text is preserved and collapsed onto a single line.
+    expect(line).toContain("Engine shutdown failed: lingering subprocess");
+    unmount();
+  });
+
+  it("renders no warning element when the adapter reports no stop warning", async () => {
+    const { stdin, lastFrame, unmount } = renderScreen({
+      train: async () => doneResult(undefined),
+    });
+
+    stdin.write("/docs/notes.md");
+    await flush();
+    stdin.write("\r");
+    await flush();
+
+    // Non-vacuous: we reached the done state …
+    expect(lastFrame()).toContain("Processed 1 document(s)");
+    // … but no warning marker is rendered.
+    expect(lastFrame()).not.toContain("⚠");
+    unmount();
+  });
+});
