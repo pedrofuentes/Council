@@ -1,5 +1,6 @@
 /**
- * `council chat --history` handler — shows archived conversations for a target.
+ * `council chat --history` handler — shows the active session (marked "→")
+ * plus archived conversations for a target.
  */
 import * as path from "node:path";
 

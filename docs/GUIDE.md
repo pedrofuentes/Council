@@ -621,7 +621,8 @@ council chat strategy-review --new
 council chat --list
 ```
 
-**View archived conversations** — see past conversations for a specific target:
+**View conversation history** — see the active session (marked `→`) plus past
+archived conversations for a specific target:
 
 ```bash
 council chat strategy-review --history
@@ -1223,8 +1224,8 @@ Key flags for CI:
 - `--engine mock` — deterministic, no network calls
 - `--format json` — machine-parseable output
 - `--yes` — skip interactive confirmations
-- `--quiet` — suppress informational stderr messages, including `convene` /
-  `ask` setup progress
+- `--quiet` — suppress informational stderr messages (including `convene` /
+  `ask` setup progress) and rendered cost indicators
 - `COUNCIL_DATA_HOME` — isolate CI data from your user data
 - `TERM=dumb` / `NO_COLOR=1` — disable terminal formatting; non-TTY output is
   plain text with no spinner animation
@@ -1316,6 +1317,13 @@ never reaches the panel unnoticed.
 | `CI`                 | Indicates CI environment (disables interactivity, suppresses update notice) | `CI=true`                           |
 | `NO_UPDATE_NOTIFIER` | Suppress the "update available" startup notice                              | `NO_UPDATE_NOTIFIER=1`              |
 | `ACCESSIBILITY`      | Enable accessibility features                                               | `ACCESSIBILITY=1`                   |
+
+> **Home directory precedence**: `COUNCIL_HOME` sets the runtime home holding
+> `config.yaml` and `council.db` (default `~/.council`). When `COUNCIL_HOME` is
+> unset, `COUNCIL_DATA_HOME` also relocates that runtime home — so setting only
+> `COUNCIL_DATA_HOME` (as in the CI example above) moves the config file and
+> database alongside the experts/panels data. Set `COUNCIL_HOME` as well to keep
+> the runtime home separate from the data directory.
 
 ### Custom expert YAML
 
@@ -1453,12 +1461,12 @@ Aliases: `experts`, `panels`, and `history` are aliases for `expert`, `panel`, a
 
 ### `council chat` options
 
-| Flag        | Description                                | Default       |
-| ----------- | ------------------------------------------ | ------------- |
-| `--engine`  | Engine to use (`copilot` or `mock`)        | (from config) |
-| `--new`     | Archive active conversation, start fresh   | `false`       |
-| `--list`    | List all chat conversations and exit       | `false`       |
-| `--history` | Show archived conversations for the target | `false`       |
+| Flag        | Description                                           | Default       |
+| ----------- | ----------------------------------------------------- | ------------- |
+| `--engine`  | Engine to use (`copilot` or `mock`)                   | (from config) |
+| `--new`     | Archive active conversation, start fresh              | `false`       |
+| `--list`    | List all chat conversations and exit                  | `false`       |
+| `--history` | Show active and archived conversations for the target | `false`       |
 
 **In-chat directives** (type these at the `You>` prompt during panel chat):
 
