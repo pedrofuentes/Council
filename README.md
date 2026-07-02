@@ -23,11 +23,37 @@ council doctor
 council convene "Should we build our own analytics or buy a vendor solution?"
 ```
 
+Because the example above passed no `--template`, Council **auto-composes** a
+panel for your topic, prints the proposed roster, and asks you to confirm
+(`Proceed with this panel? [y/N]`) before the debate starts. Add `--yes` to skip
+the prompt in non-interactive or scripted runs — a non-interactive shell (piped
+input or CI) _requires_ `--yes` and otherwise exits with an error rather than
+hanging. Pass `--template <name>` to use a built-in panel and bypass
+auto-composition (and its confirmation prompt) entirely.
+
 When a debate completes, `council convene` automatically generates a final
 structured conclusion by default. This costs one additional premium synthesis
 request; pass `--no-conclude` to save the request and skip the conclusion.
 
 **Requirements:** Node.js 24+, GitHub Copilot subscription (Individual, Business, or Enterprise). No API keys, no credits to manage.
+
+### First run: choosing a default model
+
+The first time you run a command that needs a model (for example
+`council convene`), Council performs a one-time setup: it discovers the models
+available to your Copilot subscription, recommends one (`claude-sonnet-4.5`), and
+asks you to choose a default. Your selection is saved to config as
+`defaults.model`, so the wizard runs only once.
+
+- **Non-interactive shells** (piped input or CI) skip the prompt and
+  automatically use the recommended model, printing
+  `Non-interactive session detected; using recommended model <id>`.
+- **If live model discovery fails**, Council falls back to a built-in static
+  list and warns `Live model discovery failed, so Council is showing a built-in
+  fallback list` before continuing.
+- `council doctor`, `council config`, `council demo`, and `council docs` never
+  trigger the wizard — run `council doctor` to verify your setup or
+  `council config` to change the default model later.
 
 ---
 
@@ -66,25 +92,25 @@ $ council convene "Should we build our own analytics or buy a vendor solution?"
 
 🏛️ Auto-composing expert panel...
 ✓ Panel assembled: 3 experts
-  • Priya Mehta (CTO) — claude-sonnet-4.5
-  • James Whitfield (CFO) — claude-sonnet-4.5
-  • Lisa Park (VP Product) — claude-sonnet-4.5
+  • [1] Priya Mehta (CTO) (claude-sonnet-4.5)
+  • [2] James Whitfield (CFO) (claude-sonnet-4.5)
+  • [3] Lisa Park (VP Product) (claude-sonnet-4.5)
 
 ━━━ Round 1 ━━━
 
-[Priya Mehta — CTO]
+[[1] Priya Mehta (CTO)]
 Building in-house gives us full control over the data pipeline, but we need
 to be honest about the cost: a team of 3 engineers for 6+ months, ongoing
 maintenance, and we still won't match the feature set of Amplitude or Mixpanel
 on day one...
 
-[James Whitfield — CFO]
+[[2] James Whitfield (CFO)]
 Priya's estimate undersells the true cost. Three engineers at $180K fully
 loaded is $270K just in salary for the build phase. A vendor at $3K/month is
 $36K/year. Even over 3 years, the buy option is 60% cheaper — and that's
 before we account for opportunity cost of those engineers not shipping product...
 
-[Lisa Park — VP Product]
+[[3] Lisa Park (VP Product)]
 Both of you are optimizing for cost, but the real question is speed to insight.
 We're making pricing decisions next quarter with no data. A vendor gets us
 dashboards in 2 weeks. Building means we're flying blind for 6 months...
@@ -117,8 +143,8 @@ council doctor                                      # Verify Node, SQLite, Copil
 council config                                      # View/edit configuration
 
 # Run a deliberation
-council convene "Should we go public?"              # Auto-compose a panel
-council convene "..." --template code-review        # Use built-in template
+council convene "Should we go public?"              # Auto-compose a panel (asks to confirm; add --yes to skip)
+council convene "..." --template code-review        # Use built-in template (no confirmation prompt)
 council templates                                   # List all built-in templates
 
 # Conversation
@@ -236,13 +262,21 @@ council config path                # print config file location
 council config edit                # open in $EDITOR
 
 # Auto-compose a panel from the topic (no --template needed — Council
-# designs an expert panel for you using a meta-prompt)
+# designs an expert panel for you using a meta-prompt). Council prints the
+# proposed roster and asks "Proceed with this panel? [y/N]" before debating.
 council convene "Should we go public?"
+
+# Skip the auto-compose confirmation prompt. --yes is REQUIRED for
+# non-interactive / CI runs: a non-TTY shell without it exits with
+# "Auto-compose requires --yes in non-interactive mode" instead of prompting.
+council convene "Should we go public?" --yes
 
 # Override the default model for a single debate (no config edit needed)
 council convene "Should we go public?" --model gpt-4.1
 
-# Run a panel debate against the real Copilot SDK (with an explicit template)
+# Run a panel debate against the real Copilot SDK (with an explicit template).
+# Passing --template (or its --panel alias) selects a ready-made panel and
+# skips auto-composition and its confirmation prompt entirely.
 council convene "Should we rewrite our billing system?" \
   --template code-review --max-rounds 4
 
@@ -285,6 +319,11 @@ council convene "Long debate" --template architecture-review \
 council convene "Long debate" --template architecture-review \
   --max-rounds 10 \
   --summarize-after 3             # prepend a rolling summary after round 3
+# Rolling summaries are generated by the LLM by default. Add --heuristic-summaries
+# for a simpler local (no-LLM) summarizer — useful for offline/air-gapped runs.
+council convene "Long debate" --template architecture-review \
+  --max-rounds 10 \
+  --summarize-after 3 --heuristic-summaries
 
 # Pipe NDJSON output to jq, logs, or scripts
 council convene "..." --template code-review --format json | jq .
@@ -559,7 +598,7 @@ disk if the database is reset.
 2. **Deliberation** happens in rounds — experts respond, challenge each other, and build on disagreements
 3. **Memory** persists across sessions — your panel remembers previous discussions
 4. **Synthesis** produces actionable output with areas of agreement and unresolved tensions
-5. **Interruptible** — press Ctrl+C during a debate to abort gracefully; the partial transcript is persisted and can be resumed later
+5. **Interruptible** — press Ctrl+C during a debate to abort gracefully; Council saves the partial transcript (`Debate interrupted. Partial results saved.`), and a bare `council resume <panel>` then automatically continues the interrupted debate from where it stopped instead of just replaying it
 
 ### What Makes Council Different
 
@@ -581,7 +620,7 @@ council conclude [panel]                                       # Decision matrix
 council conclude [panel] --timeout 90000                      # Custom synthesis timeout (ms)
 council conclude [panel] --model gpt-4.1                       # Override the synthesis model for this run
 council convene <topic> --model <model-id>                     # Override the per-debate model
-council resume <panel>                                          # Replay transcript (no engine needed)
+council resume <panel>                                          # Replay transcript — or auto-continue if the latest debate was interrupted
 council resume <panel> --prompt "<prompt>"                      # Continue the panel with a new round
 council resume --latest                                         # Resume most recently active panel
 council resume <prefix>                                         # Prefix match (auto-selects if unique)
