@@ -24,13 +24,24 @@ function read(relative: string): string {
 const head = read("../../src/components/Head.astro");
 
 interface WebmanifestIcon {
+  readonly src?: string;
   readonly sizes?: string;
+  readonly type?: string;
+  readonly purpose?: string;
 }
 
 interface Webmanifest {
   readonly name?: string;
   readonly icons?: readonly WebmanifestIcon[];
   readonly background_color?: string;
+}
+
+/** Find a manifest icon entry by its declared `sizes` string (e.g. "192x192"). */
+function findIconBySize(
+  icons: readonly WebmanifestIcon[],
+  sizes: string,
+): WebmanifestIcon | undefined {
+  return icons.find((icon) => icon.sizes === sizes);
 }
 
 describe("favicon + PWA head tags", () => {
@@ -69,6 +80,41 @@ describe("web app manifest", () => {
   it("declares the dark brand background color (not white)", () => {
     const manifest = JSON.parse(read("../../public/site.webmanifest")) as Webmanifest;
     expect(manifest.background_color).toBe("#0e1a20");
+  });
+
+  // A sizes-only assertion can't catch a regressed src (wrong/missing asset
+  // path), type, or purpose — e.g. a maskable icon silently losing its
+  // "maskable" purpose, or a src typo pointing at a non-existent file. Assert
+  // the full icon contract for each entry instead.
+  describe("icon contract (src, type, purpose — not just sizes)", () => {
+    const manifest = JSON.parse(read("../../public/site.webmanifest")) as Webmanifest;
+    const icons = manifest.icons ?? [];
+
+    it("declares the exact 192x192 icon contract", () => {
+      expect(findIconBySize(icons, "192x192")).toEqual({
+        src: "web-app-manifest-192x192.png",
+        sizes: "192x192",
+        type: "image/png",
+        purpose: "any maskable",
+      });
+    });
+
+    it("declares the exact 512x512 icon contract", () => {
+      expect(findIconBySize(icons, "512x512")).toEqual({
+        src: "web-app-manifest-512x512.png",
+        sizes: "512x512",
+        type: "image/png",
+        purpose: "any maskable",
+      });
+    });
+
+    it("ships every manifest icon's src as a real asset under public/", () => {
+      expect(icons.length).toBeGreaterThan(0);
+      for (const icon of icons) {
+        expect(typeof icon.src).toBe("string");
+        expect(existsSync(resolve(`../../public/${icon.src}`))).toBe(true);
+      }
+    });
   });
 });
 
