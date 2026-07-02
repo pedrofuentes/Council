@@ -145,6 +145,79 @@ export function useRuntimeWarnings(channel: RuntimeWarningChannel): readonly Sta
   return warnings;
 }
 
+/**
+ * Upper bound (ms) on the best-effort shutdown teardown after a *synchronous*
+ * startup crash. Sized to let a healthy counter flush + `db.destroy()` finish
+ * comfortably, while still capping a teardown that hangs (e.g. a wedged SQLite
+ * handle) so a crash can never be swallowed by an unbounded wait.
+ */
+const STARTUP_CRASH_CLEANUP_TIMEOUT_MS = 5_000;
+
+/**
+ * Run `cleanup` but never wait longer than `timeoutMs`. Resolves `true` when
+ * cleanup settles (resolves OR rejects — either way it did not hang) within the
+ * budget, or `false` when the timeout fires first. Never rejects: a cleanup
+ * failure is contained so it cannot mask the crash that triggered the shutdown.
+ */
+async function runBoundedCleanup(
+  cleanup: () => Promise<void>,
+  timeoutMs: number,
+): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), timeoutMs);
+  });
+  try {
+    return await Promise.race([
+      Promise.resolve()
+        .then(cleanup)
+        .then(
+          () => true,
+          () => true,
+        ),
+      timedOut,
+    ]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+/**
+ * Drive the TUI to completion, then tear down shared resources (`shutdown`).
+ *
+ * On a normal exit the teardown runs UNBOUNDED — a full WAL merge matters more
+ * than shutdown latency, and the Ink event loop has already unwound cleanly.
+ *
+ * A *synchronous* startup crash, however, never handed control to the Ink event
+ * loop (unlike a render-time crash, which routes through
+ * {@link createTuiErrorHandler}), so nothing else is draining the process: a
+ * hanging `db.destroy()` in the teardown would wedge the process and swallow the
+ * crash entirely. On that path the teardown is bounded by `crashCleanupTimeoutMs`
+ * and the crash is always re-thrown, so the failure surfaces even if cleanup
+ * hangs (#1844).
+ */
+export async function runTuiWithBoundedShutdown(
+  run: () => Promise<void>,
+  shutdown: () => Promise<void>,
+  crashCleanupTimeoutMs: number,
+): Promise<void> {
+  let crash: unknown;
+  let crashed = false;
+  try {
+    await run();
+  } catch (error) {
+    crash = error;
+    crashed = true;
+  }
+  if (crashed) {
+    await runBoundedCleanup(shutdown, crashCleanupTimeoutMs);
+    throw crash;
+  }
+  await shutdown();
+}
+
 export async function launchTui(): Promise<void> {
   const dbPath = path.join(getCouncilHome(), "council.db");
   const db = await createDatabase(dbPath);
@@ -463,12 +536,19 @@ export async function launchTui(): Promise<void> {
     return restartRequested;
   };
 
-  try {
-    await runTuiSessions({ loadConfigWithMeta, renderSession });
-  } finally {
+  const shutdown = async (): Promise<void> => {
     // Best-effort persist of the local content-free counters; a flush failure
     // must never affect the CLI's outcome or block shutdown.
     await counterStore.flush().catch(() => undefined);
     await db.destroy();
-  }
+  };
+
+  // Normal exit: full, unbounded teardown. Synchronous startup crash: teardown
+  // is timeout-bounded so a hanging db.destroy() cannot wedge the process and
+  // swallow the crash (#1844).
+  await runTuiWithBoundedShutdown(
+    () => runTuiSessions({ loadConfigWithMeta, renderSession }),
+    shutdown,
+    STARTUP_CRASH_CLEANUP_TIMEOUT_MS,
+  );
 }

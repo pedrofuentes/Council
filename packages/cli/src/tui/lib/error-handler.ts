@@ -1,6 +1,6 @@
 /**
  * Crash handler for the TUI root {@link ErrorBoundary}. A render-time crash must
- * still tear down the alternate screen *and* let the owning `finally` run its
+ * still tear down the alternate screen *and* let the owning shutdown run its
  * cleanup (counter flush + `db.destroy()`). Calling `process.exit(1)` from
  * `onError` kills the event loop synchronously and skips that cleanup, so the
  * SQLite connection is left to close on process teardown — a race that can
@@ -10,6 +10,8 @@
  * the Ink app to exit by unmounting, which resolves `waitUntilExit()` and lets
  * the cleanup run on the next tick before the process drains and exits.
  */
+import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
+
 export interface TuiErrorHandlerDeps {
   /** Unmount the Ink instance so `waitUntilExit()` resolves and cleanup runs. */
   readonly signalExit: () => void;
@@ -17,8 +19,6 @@ export interface TuiErrorHandlerDeps {
   readonly setExitCode?: (code: number) => void;
   /** Surfaces the error to the user. */
   readonly log?: (error: Error) => void;
-  /** Hard process exit — injected only so tests can assert it is NOT used. */
-  readonly hardExit?: (code: number) => void;
 }
 
 /**
@@ -38,11 +38,17 @@ export function createTuiErrorHandler(deps: TuiErrorHandlerDeps): (error: Error)
       return;
     }
     exited = true;
-    // Best-effort: a failed unmount must not throw out of the React error path.
+    // A failed unmount must not throw out of the React error path, but it must
+    // not be swallowed silently either: if `signalExit` throws, `waitUntilExit()`
+    // may never resolve, so the owning shutdown cleanup (counter flush +
+    // `db.destroy()`) may never run and the process can be left wedged. Log the
+    // failure (sanitized, since the message can reach the alternate screen) so a
+    // stuck teardown is diagnosable rather than invisible.
     try {
       deps.signalExit();
-    } catch {
-      /* swallow — cleanup still runs as the process drains */
+    } catch (unmountError) {
+      const detail = unmountError instanceof Error ? unmountError.message : String(unmountError);
+      log(new Error(`TUI unmount threw during crash handling: ${toSingleLineDisplay(detail)}`));
     }
   };
 }
