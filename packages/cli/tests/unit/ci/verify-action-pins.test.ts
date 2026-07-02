@@ -20,8 +20,12 @@
 import { describe, expect, it } from "vitest";
 
 // The verifier is a repo-root ESM script (node: builtins only), imported here
-// purely for its pure parsing exports.
-import { normalizeTag, parseActionPins } from "../../../../../scripts/verify-action-pins.mjs";
+// purely for its pure parsing/sanitizing exports.
+import {
+  normalizeTag,
+  parseActionPins,
+  toSingleLineDisplay,
+} from "../../../../../scripts/verify-action-pins.mjs";
 
 const CHECKOUT_SHA = "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0";
 const PNPM_SHA = "0ebf47130e4866e96fce0953f49152a61190b271";
@@ -159,5 +163,85 @@ describe("normalizeTag", () => {
   it("returns null when there is no recognizable version tag", () => {
     expect(normalizeTag("renovate: automerge")).toBeNull();
     expect(normalizeTag("")).toBeNull();
+  });
+});
+
+describe("toSingleLineDisplay", () => {
+  // The verifier echoes workflow-file/API-derived fields (pin.file, pin.ref,
+  // pin.tag, pin.sha, entry.uses, entry.reason, the resolved commit, and error
+  // messages) to CI logs. A malicious PR can edit a `uses:` line to smuggle
+  // ANSI/OSC/C0/C1 escape bytes into those fields, so every DISPLAYED string
+  // must be sanitized. This mirrors the canonical
+  // packages/cli/src/cli/strip-control-chars.ts `toSingleLineDisplay`.
+
+  it("preserves a plain owner/repo reference unchanged", () => {
+    expect(toSingleLineDisplay("actions/checkout")).toBe("actions/checkout");
+    expect(toSingleLineDisplay("github/codeql-action/upload-sarif")).toBe(
+      "github/codeql-action/upload-sarif",
+    );
+  });
+
+  it("preserves a semver release tag and a bare 40-hex commit SHA unchanged", () => {
+    expect(toSingleLineDisplay("v7.0.0")).toBe("v7.0.0");
+    expect(toSingleLineDisplay(CHECKOUT_SHA)).toBe(CHECKOUT_SHA);
+  });
+
+  it("strips ANSI CSI color sequences without leaving the `[31m` suffix", () => {
+    expect(toSingleLineDisplay("\x1B[31mevil/checkout\x1B[0m")).toBe("evil/checkout");
+  });
+
+  it("strips OSC sequences terminated by BEL (e.g. set terminal title)", () => {
+    expect(toSingleLineDisplay("foo/bar@\x1B]0;PWNED\x07mutabletag")).toBe("foo/bar@mutabletag");
+  });
+
+  it("strips OSC 8 hyperlink sequences terminated by ST (ESC backslash)", () => {
+    expect(toSingleLineDisplay("a\x1B]8;;https://evil.example/\x1B\\b")).toBe("ab");
+  });
+
+  it("strips DCS/APC sequences (ESC P … ST and ESC _ … ST)", () => {
+    expect(toSingleLineDisplay("a\x1BPq;1|payload\x1B\\b\x1B_apc-smuggle\x1B\\c")).toBe("abc");
+  });
+
+  it("strips PM/SOS sequences (ESC ^ … ST and ESC X … ST)", () => {
+    expect(toSingleLineDisplay("x\x1B^pm\x1B\\y\x1BXsos\x1B\\z")).toBe("xyz");
+  });
+
+  it("strips C0 controls, DEL (0x7F), and C1 controls (U+0080–U+009F)", () => {
+    expect(toSingleLineDisplay("a\x00b\x07c\x08d\x1Ee\x7Ff\x80g\x9Fh")).toBe("abcdefgh");
+  });
+
+  it("folds CR/LF/TAB and U+2028/U+2029 line separators to single spaces", () => {
+    expect(toSingleLineDisplay("before\r\nafter\ttab\u2028sep\u2029end")).toBe(
+      "before after tab sep end",
+    );
+  });
+
+  it("strips zero-width and strong bidi-override characters", () => {
+    expect(toSingleLineDisplay("na\u200Bme\u202Etext")).toBe("nametext");
+  });
+
+  it("neutralizes the reported pin.ref CSI-injection vector", () => {
+    const dirty = "\u001B[31mevil/checkout";
+    const clean = toSingleLineDisplay(dirty);
+    expect(clean).toBe("evil/checkout");
+    expect(clean).not.toContain("\u001B");
+  });
+
+  it("neutralizes the reported entry.uses OSC-injection vector", () => {
+    const dirty = "foo/bar@\u001B]0;PWNED\u0007mutabletag";
+    const clean = toSingleLineDisplay(dirty);
+    expect(clean).toBe("foo/bar@mutabletag");
+    expect(clean).not.toContain("\u001B");
+    expect(clean).not.toContain("\u0007");
+    expect(clean).not.toContain("PWNED");
+  });
+
+  it("sanitizes many unterminated DCS introducers in linear time (ReDoS guard)", () => {
+    const dirty = "\x1BP".repeat(100000);
+    const start = performance.now();
+    const result = toSingleLineDisplay(dirty);
+    const elapsed = performance.now() - start;
+    expect(result).toBe("");
+    expect(elapsed).toBeLessThan(1000);
   });
 });
