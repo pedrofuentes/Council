@@ -5,8 +5,8 @@ import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type * as MemoryDbModule from "../../src/memory/db.js";
-import type { E2EContext } from "./helpers.js";
-import { isBestEffortCleanupError } from "./helpers.js";
+import type { E2EContext, TurnPairingEvent } from "./helpers.js";
+import { isBestEffortCleanupError, pairTurnEventsByExpert } from "./helpers.js";
 
 interface HelpersModule {
   readonly cleanupE2EContext: (ctx: E2EContext) => Promise<void>;
@@ -235,5 +235,106 @@ describe("isBestEffortCleanupError word-boundary regression guard (#647)", () =>
     },
   ])("returns false — $label", ({ error }) => {
     expect(isBestEffortCleanupError(error)).toBe(false);
+  });
+});
+
+describe("pairTurnEventsByExpert identity-based pairing (#637)", () => {
+  // Sentinel finding from PR #631 (#637): expert-panel-crud.test.ts paired
+  // turn.start/turn.end events by array-index stride (i, i+1), which
+  // silently assumes the two events for a given expert are positionally
+  // adjacent in the stream. These cases prove pairing-by-expertSlug
+  // tolerates legitimate ordering variation that positional pairing cannot.
+
+  it("pairs turns nested inside another expert's turn (start A, start B, end B, end A)", () => {
+    // A stride-based (i, i+1) pairing would wrongly compare turnEvents[0]
+    // (start A) against turnEvents[1] (start B) here and fail spuriously.
+    const events: readonly TurnPairingEvent[] = [
+      { kind: "turn.start", expertSlug: "alpha" },
+      { kind: "turn.start", expertSlug: "beta" },
+      { kind: "turn.end", expertSlug: "beta" },
+      { kind: "turn.end", expertSlug: "alpha" },
+    ];
+
+    const pairs = pairTurnEventsByExpert(events);
+
+    expect(pairs.map((pair) => pair.expertSlug).sort()).toEqual(["alpha", "beta"]);
+    for (const pair of pairs) {
+      expect(pair.start.expertSlug).toBe(pair.expertSlug);
+      expect(pair.end.expertSlug).toBe(pair.expertSlug);
+    }
+  });
+
+  it("pairs turns that cross rather than nest (start A, start B, end A, end B)", () => {
+    const events: readonly TurnPairingEvent[] = [
+      { kind: "turn.start", expertSlug: "alpha" },
+      { kind: "turn.start", expertSlug: "beta" },
+      { kind: "turn.end", expertSlug: "alpha" },
+      { kind: "turn.end", expertSlug: "beta" },
+    ];
+
+    const pairs = pairTurnEventsByExpert(events);
+
+    expect(pairs).toHaveLength(2);
+    expect(pairs.find((pair) => pair.expertSlug === "alpha")?.end.expertSlug).toBe("alpha");
+    expect(pairs.find((pair) => pair.expertSlug === "beta")?.end.expertSlug).toBe("beta");
+  });
+
+  it("still pairs correctly under today's strict serial ordering", () => {
+    const events: readonly TurnPairingEvent[] = [
+      { kind: "turn.start", expertSlug: "alpha" },
+      { kind: "turn.end", expertSlug: "alpha" },
+      { kind: "turn.start", expertSlug: "beta" },
+      { kind: "turn.end", expertSlug: "beta" },
+    ];
+
+    expect(pairTurnEventsByExpert(events)).toHaveLength(2);
+  });
+
+  it("ignores non-turn events interspersed in the stream", () => {
+    const events: readonly TurnPairingEvent[] = [
+      { kind: "panel.assembled" },
+      { kind: "round.start" },
+      { kind: "turn.start", expertSlug: "alpha" },
+      { kind: "turn.delta", expertSlug: "alpha" },
+      { kind: "turn.end", expertSlug: "alpha" },
+      { kind: "cost.update" },
+      { kind: "debate.end" },
+    ];
+
+    const pairs = pairTurnEventsByExpert(events);
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0]?.expertSlug).toBe("alpha");
+  });
+
+  // A real ordering bug must still surface — pairing-by-identity must not
+  // paper over a dropped or duplicated event.
+  it("throws when a turn.end has no matching prior turn.start for that expert", () => {
+    const events: readonly TurnPairingEvent[] = [
+      { kind: "turn.start", expertSlug: "alpha" },
+      { kind: "turn.end", expertSlug: "beta" },
+    ];
+
+    expect(() => pairTurnEventsByExpert(events)).toThrow(/no matching turn\.start/i);
+  });
+
+  it("throws when a turn.start is left dangling with no turn.end", () => {
+    const events: readonly TurnPairingEvent[] = [
+      { kind: "turn.start", expertSlug: "alpha" },
+      { kind: "turn.start", expertSlug: "beta" },
+      { kind: "turn.end", expertSlug: "beta" },
+    ];
+
+    expect(() => pairTurnEventsByExpert(events)).toThrow(/no matching turn\.end/i);
+  });
+
+  it("throws when the same expert has two turns in flight at once", () => {
+    const events: readonly TurnPairingEvent[] = [
+      { kind: "turn.start", expertSlug: "alpha" },
+      { kind: "turn.start", expertSlug: "alpha" },
+      { kind: "turn.end", expertSlug: "alpha" },
+      { kind: "turn.end", expertSlug: "alpha" },
+    ];
+
+    expect(() => pairTurnEventsByExpert(events)).toThrow(/two turns in flight/i);
   });
 });
