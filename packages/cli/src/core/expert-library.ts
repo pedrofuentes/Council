@@ -76,6 +76,11 @@ function serializeYaml(def: ExpertDefinition): string {
   return yaml.stringify(def);
 }
 
+// Fix for #562: `ExpertDefinitionSchema.parse()` used to rethrow the raw
+// Zod error, giving callers no indication of which YAML file or slug
+// caused the failure. Wrap the error with the offending file path (when
+// known, via the optional `filePath` param) and slug so diagnostics point
+// at the exact source instead of an opaque validation failure.
 function parseYaml(content: string, filePath?: string): ExpertDefinition {
   const raw = yaml.parse(content) as unknown;
   try {
