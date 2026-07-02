@@ -38,7 +38,7 @@ council panel create [options] [name]
 | Option | Description | Default |
 | --- | --- | --- |
 | `--slug <slug>` | Panel name (kebab-case). Alias for the positional \<name\> argument. | — |
-| `--experts <slugs...>` | Expert slugs from the library (space- or comma-separated, repeatable) | — |
+| `--experts <slugs...>` | Expert slugs from the library (space- or comma-separated, repeatable). Because --experts is variadic, put the \<name\> BEFORE it (or pass the name with --slug) so a trailing panel name is not consumed as a slug. | — |
 | `--mode <mode>` | Debate mode: freeform \| structured | — |
 | `--max-rounds <n>` | Maximum debate rounds (1-20) | — |
 | `--model <model>` | Default model for all experts in this panel | — |
@@ -185,7 +185,7 @@ council panel docs [options] [command] [name]
 
 #### council panel docs list
 
-List all documents accessible to a panel (managed + linked)
+List a panel's indexed documents from the database (read-only). Use --refresh to re-scan managed + linked folders and index new/changed files first.
 
 **Usage**
 
@@ -198,6 +198,12 @@ council panel docs list [options] <name>
 | Argument | Description | Default |
 | --- | --- | --- |
 | `<name>` | Panel name | — |
+
+**Options**
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--refresh` | Re-scan managed + linked folders and index new/changed files before listing | — |
 
 #### council panel docs link
 

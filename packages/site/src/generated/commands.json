@@ -533,7 +533,7 @@
           },
           {
             "flags": "--experts <slugs...>",
-            "description": "Expert slugs from the library (space- or comma-separated, repeatable). Bypasses both --template and auto-compose.",
+            "description": "Expert slugs from the library (space- or comma-separated, repeatable). Bypasses both --template and auto-compose. Because --experts is variadic, put the <topic> BEFORE it (or quote a comma-list) so a trailing topic is not consumed as a slug.",
             "long": "--experts",
             "required": true,
             "optional": false,
@@ -1125,7 +1125,7 @@
           },
           {
             "flags": "--history",
-            "description": "Show archived conversations for the target",
+            "description": "Show active and archived conversations for the target",
             "long": "--history",
             "required": false,
             "optional": false,
@@ -1521,7 +1521,7 @@
               },
               {
                 "flags": "--experts <slugs...>",
-                "description": "Expert slugs from the library (space- or comma-separated, repeatable)",
+                "description": "Expert slugs from the library (space- or comma-separated, repeatable). Because --experts is variadic, put the <name> BEFORE it (or pass the name with --slug) so a trailing panel name is not consumed as a slug.",
                 "long": "--experts",
                 "required": true,
                 "optional": false,
@@ -1805,7 +1805,7 @@
                   "list"
                 ],
                 "commandPath": "council panel docs list",
-                "description": "List all documents accessible to a panel (managed + linked)",
+                "description": "List a panel's indexed documents from the database (read-only). Use --refresh to re-scan managed + linked folders and index new/changed files first.",
                 "aliases": [],
                 "usage": "[options] <name>",
                 "arguments": [
@@ -1817,7 +1817,17 @@
                     "variadic": false
                   }
                 ],
-                "options": [],
+                "options": [
+                  {
+                    "flags": "--refresh",
+                    "description": "Re-scan managed + linked folders and index new/changed files before listing",
+                    "long": "--refresh",
+                    "required": false,
+                    "optional": false,
+                    "variadic": false,
+                    "negate": false
+                  }
+                ],
                 "subcommands": []
               },
               {
@@ -1973,7 +1983,7 @@
               "cancel"
             ],
             "commandPath": "council sessions cancel",
-            "description": "Mark stale running debates as interrupted",
+            "description": "Cancel running debates, marking them as interrupted",
             "aliases": [],
             "usage": "[options] [name]",
             "arguments": [

@@ -26,4 +26,4 @@ council chat [options] [target]
 | `--engine <kind>` | Engine to use (default: from config) (choices: `copilot`, `mock`, `openai`, `anthropic`) | — |
 | `--new` | Archive the active conversation and start a fresh one | — |
 | `--list` | List all chat conversations and exit | — |
-| `--history` | Show archived conversations for the target | — |
+| `--history` | Show active and archived conversations for the target | — |
