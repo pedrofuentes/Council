@@ -259,12 +259,34 @@ export function resolveManagedDocsDir(
   validatePanelName(panelName);
   const panelsRoot = path.resolve(path.join(dataHome, "panels"));
   const managedDocsDir = path.join(dataHome, "panels", panelName, "docs");
-  if (!path.resolve(managedDocsDir).startsWith(panelsRoot + path.sep)) {
+  assertManagedDocsDirContained(managedDocsDir, panelsRoot, panelName);
+  return managedDocsDir;
+}
+
+/**
+ * Assert `candidate` resolves to a path strictly under `panelsRoot`.
+ *
+ * Defense-in-depth behind `validatePanelName`: a panel name sourced from
+ * `panel_library.name` (migration/import/DB edit) that bypassed create-time
+ * validation must never let the scanner read out-of-tree files. Extracted
+ * from `resolveManagedDocsDir` so the containment `startsWith` branch is
+ * directly testable — because `validatePanelName`'s `PANEL_NAME_RE`
+ * (`^[a-z][a-z0-9-]*$`) forbids `.` and `/`, no panel name that reaches this
+ * point through the public `resolveManagedDocsDir` helper can ever fail
+ * containment, so the throw below is only reachable by calling this
+ * function directly. Mirrors `assertContainedInPanelsRoot` in panel.ts
+ * (#1795). #1781.
+ */
+export function assertManagedDocsDirContained(
+  candidate: string,
+  panelsRoot: string,
+  panelName: string,
+): void {
+  if (!path.resolve(candidate).startsWith(panelsRoot + path.sep)) {
     throw new Error(
       `Refusing to scan: resolved docs path escapes panels directory (name="${panelName}")`,
     );
   }
-  return managedDocsDir;
 }
 
 async function scanPanelWithMode(

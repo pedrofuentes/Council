@@ -12,9 +12,12 @@
  * touching the real filesystem / database — the action handlers only
  * format the data they receive.
  */
+import * as path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
+  assertManagedDocsDirContained,
   buildDocsCommand,
   resolveManagedDocsDir,
   type DocsCommandDeps,
@@ -769,9 +772,54 @@ describe("resolveManagedDocsDir path containment", () => {
     expect(() => resolveManagedDocsDir(dataHome, "/etc/passwd")).toThrow();
   });
 
-  it("rejects a panel name that resolves outside the panels root", () => {
-    // Even if validation were weakened, the resolved-path assertion must
-    // refuse a dir that escapes <dataHome>/panels/.
-    expect(() => resolveManagedDocsDir(dataHome, "..")).toThrow();
+  it("rejects '..' via validatePanelName, not the resolved-path assertion", () => {
+    // `..` fails `PANEL_NAME_RE` (no `.` allowed) and is rejected here by
+    // `validatePanelName` before the `startsWith` containment assertion is
+    // ever reached — see `assertManagedDocsDirContained` below (#1781) for
+    // direct coverage of that branch.
+    expect(() => resolveManagedDocsDir(dataHome, "..")).toThrow(/invalid panel name|kebab-case/i);
+  });
+});
+
+describe("assertManagedDocsDirContained — containment startsWith branch (#1781)", () => {
+  // `validatePanelName`'s `PANEL_NAME_RE` (`^[a-z][a-z0-9-]*$`) forbids `.`
+  // and `/`, so no name that reaches `resolveManagedDocsDir`'s containment
+  // check can ever fail it — the throw is unreachable through that public
+  // helper (Sentinel SENT-1775-b63cdd0 🟡#2). These tests call the extracted
+  // assertion directly with crafted candidate paths to exercise both
+  // outcomes of the `startsWith` branch deterministically.
+  const dataHome = "/home/u/.local/share/council";
+  const panelsRoot = path.resolve(path.join(dataHome, "panels"));
+
+  it("accepts (does not throw for) a candidate path inside the panels root", () => {
+    const inside = path.join(dataHome, "panels", "finance", "docs");
+    expect(() => assertManagedDocsDirContained(inside, panelsRoot, "finance")).not.toThrow();
+  });
+
+  it("rejects (throws) a candidate path that resolves outside the panels root", () => {
+    const escaping = path.resolve(dataHome, "..", "etc", "docs");
+    expect(() => assertManagedDocsDirContained(escaping, panelsRoot, "evil")).toThrow(
+      /escapes panels directory/i,
+    );
+    expect(() => assertManagedDocsDirContained(escaping, panelsRoot, "evil")).toThrow(
+      /name="evil"/,
+    );
+  });
+
+  it("rejects a sibling directory that only shares the panelsRoot prefix textually", () => {
+    // `${panelsRoot}-evil` starts with the same characters as `panelsRoot`
+    // but is a sibling directory, not a descendant. A prefix-only check
+    // (`startsWith(panelsRoot)` without the trailing separator) would wrongly
+    // accept this; the guard must compare against `panelsRoot + path.sep`.
+    const siblingEscape = path.join(`${panelsRoot}-evil`, "docs");
+    expect(() => assertManagedDocsDirContained(siblingEscape, panelsRoot, "evil")).toThrow(
+      /escapes panels directory/i,
+    );
+  });
+
+  it("rejects the panels root itself (a prefix, not a contained child)", () => {
+    expect(() => assertManagedDocsDirContained(panelsRoot, panelsRoot, "root")).toThrow(
+      /escapes panels directory/i,
+    );
   });
 });
