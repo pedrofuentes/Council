@@ -270,9 +270,18 @@ function defaultSleep(ms) {
  * Flatten a `gh api` failure into a single text blob for transient/terminal
  * classification. Node's execFile timeout kill carries no HTTP status or useful
  * message, so a synthetic "timed out" marker is added when the process was
- * killed; `stderr` (where `gh` prints `... (HTTP <status>)`) and any string
- * syscall `code` (e.g. ETIMEDOUT) are included so {@link isTransientGhError}
- * can read them.
+ * killed; `stderr` (where `gh` prints `... (HTTP <status>)`), `stdout`, and any
+ * string syscall `code` (e.g. ETIMEDOUT) are included so {@link
+ * isTransientGhError} can read them.
+ *
+ * The echoed command line — Node's execFile `err.message`, i.e. `"Command
+ * failed: gh api repos/<owner>/<repo>/..."` — is DELIBERATELY EXCLUDED. That
+ * `owner/repo/tag` is attacker-editable via a workflow `uses:` line (a
+ * `pull_request` can change it), so letting it reach the classifier would let a
+ * name like `evil-timeout/foo` or a `503-…` tag masquerade as a transient
+ * fault and steer the retry gate (issue #2184). Only `gh`/OS-generated fields
+ * (stderr/stdout/code + the synthetic timeout marker) inform classification;
+ * the raw `err.message` is still surfaced verbatim to humans by `main()`.
  *
  * @param {unknown} error
  * @returns {string}
@@ -288,7 +297,10 @@ export function ghErrorText(error) {
   if (typeof err.stderr === "string" && err.stderr.length > 0) parts.push(err.stderr);
   if (typeof err.stdout === "string" && err.stdout.length > 0) parts.push(err.stdout);
   if (typeof err.code === "string" && err.code.length > 0) parts.push(err.code);
-  if (typeof err.message === "string" && err.message.length > 0) parts.push(err.message);
+  // NOTE: err.message is intentionally omitted — see the doc comment above.
+  // Fall back to String(error) only when nothing gh/OS-generated is available
+  // (e.g. a plain Error test double), which still exposes an embedded HTTP
+  // status without echoing a shell command line.
   return parts.length > 0 ? parts.join("\n") : String(error);
 }
 
@@ -304,28 +316,49 @@ const TRANSIENT_PHRASE_RE =
  * Decide whether a `gh api` failure (as flattened text) is a TRANSIENT fault
  * worth retrying, versus a TERMINAL fault that must fail fast.
  *
- * Transient: HTTP 429, any HTTP 5xx, explicit rate-limit messaging (GitHub may
- * answer 403 for those), and network/connection/timeout errors.
- * Terminal: a genuine 404 tag-not-found and every other 4xx (401/403/422/…) —
- * retrying those would only delay surfacing (or outright mask) a real
- * provenance mismatch.
+ * The HTTP status is the authoritative, non-forgeable signal and is parsed
+ * FIRST: `gh` prints `... (HTTP <status>)` to stderr, and when a status is
+ * present it ALONE decides terminality. This is a security property, not just
+ * ordering — the flattened text may include attacker-influenced fragments, so
+ * a real terminal 4xx (esp. a 404 "tag not found") must never be reclassified
+ * as transient by a name/phrase elsewhere in the blob (issue #2184).
+ *
+ *   - HTTP 429 or any 5xx        -> transient (retry)
+ *   - HTTP 403 WITH rate-limit    -> transient (GitHub reports rate limits as 403)
+ *   - any other 4xx (401/404/422) -> terminal (fail fast; do not mask a real
+ *                                    provenance mismatch)
+ *
+ * Only when NO HTTP status is determinable — a pure network/DNS/timeout failure
+ * with no HTTP response — do we fall back to matching network/connection/
+ * timeout phrases and syscall codes. `ghErrorText` keeps the attacker-editable
+ * echoed command line out of that text, so the fallback sees only `gh`/OS-
+ * generated fields (stderr/`code`/synthetic timeout marker).
  *
  * @param {string} errText
  * @returns {boolean} true when the fault is transient (safe to retry)
  */
 export function isTransientGhError(errText) {
   const text = String(errText);
-  if (TRANSIENT_SYSCALL_RE.test(text)) return true;
-  if (TRANSIENT_PHRASE_RE.test(text)) return true;
-  // Rate limits are transient even when GitHub reports them as 403.
-  if (/rate limit/i.test(text)) return true;
 
+  // 1. HTTP status decides terminality on its own — parse it FIRST so no
+  //    attacker-influenced name/phrase in `text` can flip the verdict.
   const httpMatch = /\bHTTP (\d{3})\b/.exec(text);
   if (httpMatch) {
     const status = Number(httpMatch[1]);
     if (status === 429) return true;
-    return status >= 500 && status <= 599;
+    if (status >= 500 && status <= 599) return true;
+    // GitHub may answer 403 for (secondary) rate limits — those are transient.
+    if (status === 403 && /rate limit/i.test(text)) return true;
+    // Every other 4xx (esp. 404 tag-not-found) is a real, terminal problem.
+    return false;
   }
+
+  // 2. No HTTP status: a pure network/DNS/timeout failure. Only here may we
+  //    fall back to phrase/syscall matching — against gh/OS-generated text.
+  if (TRANSIENT_SYSCALL_RE.test(text)) return true;
+  if (TRANSIENT_PHRASE_RE.test(text)) return true;
+  // Rate-limit messaging with no parenthetical status is still transient.
+  if (/rate limit/i.test(text)) return true;
   return false;
 }
 
