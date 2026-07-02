@@ -25,13 +25,14 @@ import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
 import { TurnRepository } from "../../../../src/memory/repositories/turns.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
 
-// Wrap only fs.rename so a single test can force the atomic rename-into-place to
-// fail deterministically; every other fs call (and rename by default) passes
-// through to the real implementation. ESM namespaces cannot be spied, so the
-// failure must be injected via vi.mock (see template-migration-fileexists.test).
+// Wrap fs.rename and fs.open so individual tests can force the atomic
+// rename-into-place — or the temp-file write/close — to fail deterministically;
+// every other fs call (and both of these by default) passes through to the real
+// implementation. ESM namespaces cannot be spied, so the failure must be
+// injected via vi.mock (see template-migration-fileexists.test).
 vi.mock("node:fs/promises", async (importOriginal) => {
   const real = (await importOriginal()) as typeof fs;
-  return { ...real, rename: vi.fn(real.rename) };
+  return { ...real, rename: vi.fn(real.rename), open: vi.fn(real.open) };
 });
 
 const ESC = String.fromCharCode(0x1b);
@@ -1516,6 +1517,95 @@ describe("buildExportCommand", () => {
     expectNoTerminalControls(message);
     expect(message).not.toMatch(TERMINAL_CONTROL_BYTES);
     expect(message.split("\n")).toHaveLength(1);
+  });
+
+  // #1964: the --force write-to-temp-then-rename flow only removed the temp
+  // sibling inside the rename catch. Any failure BETWEEN creating the O_EXCL
+  // temp and a successful rename — a rejected writeFile or close — therefore
+  // leaked a partially-written export artifact on disk. Cleanup must now cover
+  // every failure mode while leaving a successful export untouched.
+  it("writeExportArtifact --force removes the temp sibling when writeFile fails before the rename (#1964)", async () => {
+    const actual = await vi.importActual<typeof fs>("node:fs/promises");
+    const target = path.join(testHome, "write-fail.md");
+    const writeErr = Object.assign(new Error("ENOSPC: no space left on device, write"), {
+      code: "ENOSPC",
+    });
+
+    // The O_EXCL temp sibling is created for real (it must land on disk), then
+    // its write rejects — modelling a mid-write failure (e.g. a full disk)
+    // after the temp already exists. Pre-fix nothing removed it.
+    vi.mocked(fs.open).mockImplementationOnce(async (...args: Parameters<typeof fs.open>) => {
+      const handle = await actual.open(...args);
+      return {
+        writeFile: async (): Promise<void> => {
+          throw writeErr;
+        },
+        close: (): Promise<void> => handle.close(),
+      } as unknown as fs.FileHandle;
+    });
+
+    // The failure still surfaces as a sanitized user error...
+    await expect(writeExportArtifact(target, "CONTENT", true)).rejects.toBeInstanceOf(CliUserError);
+
+    // ...no temp sibling survives the failed write...
+    const leftovers = (await fs.readdir(testHome)).filter((e) => e.includes(".tmp"));
+    expect(leftovers).toEqual([]);
+    // ...and the final artifact was never created.
+    await expect(fs.access(target)).rejects.toThrow();
+  });
+
+  it("writeExportArtifact --force removes the temp sibling when close fails before the rename (#1964)", async () => {
+    const actual = await vi.importActual<typeof fs>("node:fs/promises");
+    const target = path.join(testHome, "close-fail.md");
+    const closeErr = Object.assign(new Error("EIO: i/o error, close"), { code: "EIO" });
+
+    // writeFile lands the bytes for real, but close rejects after flushing — the
+    // temp now holds a complete artifact yet the rename (and its catch) is never
+    // reached, so pre-fix the artifact leaked.
+    vi.mocked(fs.open).mockImplementationOnce(async (...args: Parameters<typeof fs.open>) => {
+      const handle = await actual.open(...args);
+      return {
+        writeFile: (data: string | Uint8Array): Promise<void> => handle.writeFile(data),
+        close: async (): Promise<void> => {
+          await handle.close();
+          throw closeErr;
+        },
+      } as unknown as fs.FileHandle;
+    });
+
+    await expect(writeExportArtifact(target, "CONTENT", true)).rejects.toBeInstanceOf(CliUserError);
+
+    const leftovers = (await fs.readdir(testHome)).filter((e) => e.includes(".tmp"));
+    expect(leftovers).toEqual([]);
+    await expect(fs.access(target)).rejects.toThrow();
+  });
+
+  it("writeExportArtifact --force removes the temp sibling when the rename fails (#1964)", async () => {
+    // Inverse invariant / regression guard: the pre-existing rename-catch
+    // cleanup must survive the refactor that broadened it to writeFile/close.
+    const target = path.join(testHome, "rename-fail-cleanup.md");
+    const renameErr = Object.assign(new Error("EXDEV: cross-device link, rename"), {
+      code: "EXDEV",
+    });
+    vi.mocked(fs.rename).mockRejectedValueOnce(renameErr);
+
+    await expect(writeExportArtifact(target, "CONTENT", true)).rejects.toBeInstanceOf(CliUserError);
+
+    const leftovers = (await fs.readdir(testHome)).filter((e) => e.includes(".tmp"));
+    expect(leftovers).toEqual([]);
+    await expect(fs.access(target)).rejects.toThrow();
+  });
+
+  it("writeExportArtifact --force leaves no temp sibling on a successful export (#1964)", async () => {
+    // Inverse invariant: the broadened cleanup must NOT fire on success — the
+    // temp is renamed away, the final artifact stays, and nothing lingers.
+    const target = path.join(testHome, "force-success.md");
+
+    await writeExportArtifact(target, "FINAL CONTENT", true);
+
+    expect(await fs.readFile(target, "utf-8")).toBe("FINAL CONTENT");
+    const leftovers = (await fs.readdir(testHome)).filter((e) => e.includes(".tmp"));
+    expect(leftovers).toEqual([]);
   });
 
   it("--format adr: marks a substantive completed debate as Accepted (#717)", async () => {
