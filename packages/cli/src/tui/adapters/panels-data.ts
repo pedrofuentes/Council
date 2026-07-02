@@ -137,6 +137,10 @@ function errorText(error: unknown): string {
  * rejection — surface a discriminating warning through the injected
  * {@link PanelsRepos.onWarning} sink so template-subsystem corruption or a
  * loader regression is observable rather than masked.
+ *
+ * #2111: each per-template failure carries its underlying reason (`name:
+ * reason`), not just the name, so an operator learns *why* a template was
+ * skipped — consistent with the total-failure path that already includes it.
  */
 async function loadTemplateItems(repos: PanelsRepos): Promise<readonly PanelListItem[]> {
   let templateNames: readonly string[];
@@ -163,19 +167,20 @@ async function loadTemplateItems(repos: PanelsRepos): Promise<readonly PanelList
   );
 
   const items: PanelListItem[] = [];
-  const failedNames: string[] = [];
+  const failedEntries: string[] = [];
   settled.forEach((result, index) => {
     if (result.status === "fulfilled") {
       items.push(result.value);
       return;
     }
-    failedNames.push(templateNames[index] ?? "<unknown>");
+    const name = templateNames[index] ?? "<unknown>";
+    failedEntries.push(`${name}: ${errorText(result.reason)}`);
   });
 
-  if (failedNames.length > 0) {
+  if (failedEntries.length > 0) {
     warnPanelsData(
       repos.onWarning,
-      `Skipped ${failedNames.length} of ${templateNames.length} panel template(s) that failed to load: ${failedNames.join(", ")}`,
+      `Skipped ${failedEntries.length} of ${templateNames.length} panel template(s) that failed to load: ${failedEntries.join("; ")}`,
     );
   }
 
