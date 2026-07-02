@@ -16,7 +16,10 @@ import {
   DocumentRepository,
   type ExpertDocument,
 } from "../../src/memory/repositories/document-repository.js";
-import { PanelDocumentRepository } from "../../src/memory/repositories/panel-document-repo.js";
+import {
+  PanelDocumentRepository,
+  type PanelDocument,
+} from "../../src/memory/repositories/panel-document-repo.js";
 import { ProfileRepository } from "../../src/memory/repositories/profile-repository.js";
 
 import {
@@ -218,6 +221,18 @@ async function readLinkedFolders(ctx: E2EContext, panelName: string): Promise<re
   }
 }
 
+async function readPanelDocuments(
+  ctx: E2EContext,
+  panelName: string,
+): Promise<readonly PanelDocument[]> {
+  const db = await openTestDb(ctx.testHome);
+  try {
+    return await new PanelDocumentRepository(db).listDocuments(panelName);
+  } finally {
+    await destroyTestDb(db);
+  }
+}
+
 describe.sequential("document intelligence e2e", () => {
   let ctx: E2EContext;
 
@@ -371,7 +386,14 @@ describe.sequential("document intelligence e2e", () => {
     await fs.writeFile(path.join(linkedDir, "a.md"), "# A\nhello world", "utf-8");
     await fs.writeFile(path.join(linkedDir, "b.md"), "# B\nrelease notes", "utf-8");
 
-    const linked = await runPanelCommand(["docs", "link", "arch-review", "--path", linkedDir, "--yes"]);
+    const linked = await runPanelCommand([
+      "docs",
+      "link",
+      "arch-review",
+      "--path",
+      linkedDir,
+      "--yes",
+    ]);
     expect(linked.stdout).toContain(path.basename(linkedDir));
     expect(linked.stdout).toContain("2 documents found");
 
@@ -400,5 +422,36 @@ describe.sequential("document intelligence e2e", () => {
 
     const folders = await readLinkedFolders(ctx, "arch-review");
     expect(folders).toEqual([]);
+  });
+
+  it("panel docs unlink prunes indexed documents from the database", async () => {
+    await createPanelWithExpert();
+    const linkedDir = path.join(ctx.testHome, "linked-docs-indexed");
+    await fs.mkdir(linkedDir, { recursive: true });
+    await fs.writeFile(path.join(linkedDir, "a.md"), "# A\nindexed cleanup target", "utf-8");
+    await fs.writeFile(path.join(linkedDir, "b.md"), "# B\nindexed second target", "utf-8");
+
+    await runPanelCommand(["docs", "link", "arch-review", "--path", linkedDir, "--yes"]);
+
+    // Trigger indexing so panel_documents rows are created for the linked folder.
+    await runPanelCommand(["docs", "list", "arch-review", "--refresh"]);
+
+    const docsBefore = await readPanelDocuments(ctx, "arch-review");
+    const indexedBefore = docsBefore.filter(
+      (d) => d.filePath.startsWith(linkedDir + "/") || d.filePath.startsWith(linkedDir + "\\"),
+    );
+    expect(indexedBefore.length).toBeGreaterThan(0);
+
+    const unlinked = await runPanelCommand(["docs", "unlink", "arch-review", "--path", linkedDir]);
+    expect(unlinked.stdout.toLowerCase()).toContain("unlinked");
+
+    const folders = await readLinkedFolders(ctx, "arch-review");
+    expect(folders).toEqual([]);
+
+    const docsAfter = await readPanelDocuments(ctx, "arch-review");
+    const indexedAfter = docsAfter.filter(
+      (d) => d.filePath.startsWith(linkedDir + "/") || d.filePath.startsWith(linkedDir + "\\"),
+    );
+    expect(indexedAfter).toHaveLength(0);
   });
 });
