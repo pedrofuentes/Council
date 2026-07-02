@@ -536,10 +536,14 @@ export function renderMarkdown(doc: TranscriptDocument): string {
       const model = slug ? modelBySlug.get(slug) : undefined;
       lines.push(`#### ${display}${model ? ` _(${model})_` : ""}`);
       lines.push("");
-      // Indent multi-line content as a markdown block-quote so it
-      // renders as the expert's "voice".
+      // Render multi-line content as a markdown block-quote so it reads as the
+      // expert's "voice". Neutralize each untrusted paragraph's leading block
+      // marker first: CommonMark still opens block constructs INSIDE a blockquote
+      // (`> ## x` -> heading, `> ---`/`> ===` -> rule/setext heading, `> ``` ->
+      // code fence, `> <x>` -> raw HTML), so a leading marker would otherwise
+      // forge structure in the exported outline (outline spoofing, #2110).
       for (const para of sanitizeExportBlockLines(t.content)) {
-        lines.push(`> ${para}`);
+        lines.push(`> ${escapeBlockLeadingMarkdown(para)}`);
       }
       lines.push("");
     }
@@ -614,8 +618,11 @@ export function renderAdr(doc: TranscriptDocument): string {
     for (const c of expertContribs) {
       lines.push(`### ${c.displayName}'s position`);
       lines.push("");
+      // Neutralize any leading block marker before quoting — a blockquote does
+      // not suppress a nested heading/rule/code/HTML block, so model-derived
+      // position text could otherwise forge the ADR outline (#2110).
       for (const para of sanitizeExportBlockLines(c.position)) {
-        lines.push(`> ${para}`);
+        lines.push(`> ${escapeBlockLeadingMarkdown(para)}`);
       }
       lines.push("");
     }
@@ -658,8 +665,9 @@ export function renderAdr(doc: TranscriptDocument): string {
     for (const c of expertContribs) {
       lines.push(`### ${c.displayName}'s final position`);
       lines.push("");
+      // Same leading block-marker neutralization as the Options blockquote (#2110).
       for (const para of sanitizeExportBlockLines(c.synthesis)) {
-        lines.push(`> ${para}`);
+        lines.push(`> ${escapeBlockLeadingMarkdown(para)}`);
       }
       lines.push("");
     }
