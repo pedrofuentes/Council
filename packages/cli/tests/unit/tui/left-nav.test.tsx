@@ -109,7 +109,7 @@ describe("LeftNav", () => {
     unmount();
   });
 
-  it("marks the active route with a stable marker and no cursor inverse when not focused", () => {
+  it("binds the stable active-route marker to the ACTIVE row (not any other row) with no cursor inverse when not focused", () => {
     const { lastFrame, unmount } = render(
       <LeftNav
         items={items}
@@ -121,7 +121,18 @@ describe("LeftNav", () => {
       />,
     );
     const frame = lastFrame() ?? "";
-    expect(frame).toContain("●"); // stable active-route marker
+    const lines = frame.split("\n");
+    const rowFor = (label: string): string => {
+      const line = lines.find((l) => l.includes(label));
+      if (line === undefined) throw new Error(`row for "${label}" not found in frame`);
+      return line;
+    };
+    // The marker must sit on the row for the active route ("panels")...
+    expect(rowFor("Panels")).toContain("●");
+    // ...and must NOT appear on any other row, proving it is bound to the
+    // active row rather than merely present somewhere in the frame.
+    expect(rowFor("Home")).not.toContain("●");
+    expect(rowFor("Experts")).not.toContain("●");
     expect(frame).not.toContain("\u001b[7m"); // no moving cursor highlight when unfocused
     unmount();
   });
