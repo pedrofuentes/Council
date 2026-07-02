@@ -25,7 +25,7 @@ council sessions [options] [command]
 
 ### council sessions cancel
 
-Mark stale running debates as interrupted
+Cancel running debates, marking them as interrupted
 
 **Usage**
 
