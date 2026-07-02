@@ -12,7 +12,7 @@
  * though ink-testing-library's stdout reports as a non-TTY.
  */
 import React from "react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "ink-testing-library";
 
 import { DebateApp, InkRenderer } from "../../../../../src/cli/renderers/ink/InkRenderer.js";
@@ -27,11 +27,48 @@ function stripAnsi(s: string): string {
   return s.replace(/\u001b\[[0-9;]*m/g, "");
 }
 
-async function flush(): Promise<void> {
-  // Allow the React effect that consumes the iterable to drain.
-  for (let i = 0; i < 5; i++) {
-    await new Promise((r) => setImmediate(r));
-  }
+interface Deferred {
+  readonly promise: Promise<void>;
+  resolve(): void;
+}
+
+/** A promise plus its resolver, for gating async progression under test control. */
+function deferred(): Deferred {
+  let resolve: () => void = () => undefined;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+/**
+ * Renders `<DebateApp>` and returns a `flush()` that resolves once the event
+ * stream has fully drained — signaled by `onComplete`, the same completion
+ * hook `InkRenderer.render()` resolves on (see InkRenderer.tsx's `finish()`
+ * call in `#renderWithInk`) — instead of a fixed number of `setImmediate`
+ * ticks (#233).
+ *
+ * A fixed tick count is timing-fragile: it assumes a constant number of
+ * ticks is enough to drain the stream and commit the resulting render
+ * regardless of how many events there are, which breaks down for streams
+ * with more events (e.g. #255's 10-event, 2-round stream) or a loaded CI
+ * runner. `onComplete` fires only after every event has been consumed, so
+ * waiting on it scales with the actual stream instead of guessing a count.
+ */
+function renderApp(events: AsyncIterable<DebateEvent>): {
+  readonly ui: ReturnType<typeof render>;
+  readonly flush: () => Promise<void>;
+} {
+  const complete = deferred();
+  const ui = render(<DebateApp events={events} onComplete={() => complete.resolve()} />);
+  const flush = async (): Promise<void> => {
+    await complete.promise;
+    // onComplete fires synchronously inside the consuming effect's `finally`
+    // block, one render commit ahead of Ink flushing it out to lastFrame().
+    // A single settle tick lets that last commit land before assertions run.
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  return { ui, flush };
 }
 
 /** Extracts every numeric SGR parameter from the ANSI escape sequences in `s`. */
@@ -59,6 +96,26 @@ function turnHeaderColor(raw: string, header: string): readonly number[] {
   return sgrParams(line.slice(0, line.indexOf(header)));
 }
 
+/**
+ * Returns the SGR color parameters emitted immediately before every
+ * line-level occurrence of `name`, in frame order.
+ *
+ * Unlike `turnHeaderColor` (which reports only the first match), this
+ * reports every match — needed to compare a color across multiple
+ * occurrences, e.g. the same expert's roster row and its turn header in
+ * each round (#255). Isolating the scan to one line at a time (rather than
+ * a single regex applied to the whole multi-line frame) also makes the
+ * extraction deterministic: it cannot silently stop matching partway
+ * through the frame just because an unrelated escape sequence appears
+ * between two occurrences.
+ */
+function allColorsFor(raw: string, name: string): readonly (readonly number[])[] {
+  return raw
+    .split("\n")
+    .filter((line) => stripAnsi(line).includes(name))
+    .map((line) => sgrParams(line.slice(0, line.indexOf(name))));
+}
+
 describe("DebateApp", () => {
   it("renders panel roster on panel.assembled", async () => {
     const events = stream({
@@ -68,7 +125,7 @@ describe("DebateApp", () => {
         { slug: "bob", displayName: "Bob", model: "gpt-5" },
       ],
     });
-    const ui = render(<DebateApp events={events} />);
+    const { ui, flush } = renderApp(events);
     await flush();
     const frame = stripAnsi(ui.lastFrame() ?? "");
     expect(frame).toContain("[1] Alice");
@@ -84,7 +141,7 @@ describe("DebateApp", () => {
       },
       { kind: "round.start", round: 0 },
     );
-    const ui = render(<DebateApp events={events} />);
+    const { ui, flush } = renderApp(events);
     await flush();
     const frame = stripAnsi(ui.lastFrame() ?? "");
     expect(frame).toMatch(/Round\s*1/);
@@ -108,7 +165,7 @@ describe("DebateApp", () => {
         content: "Hello world",
       },
     );
-    const ui = render(<DebateApp events={events} />);
+    const { ui, flush } = renderApp(events);
     await flush();
     const frame = stripAnsi(ui.lastFrame() ?? "");
     expect(frame).toContain("Hello world");
@@ -122,7 +179,7 @@ describe("DebateApp", () => {
       message: "boom",
       recoverable: false,
     });
-    const ui = render(<DebateApp events={events} />);
+    const { ui, flush } = renderApp(events);
     await flush();
     const frame = stripAnsi(ui.lastFrame() ?? "");
     expect(frame).toContain("boom");
@@ -136,7 +193,7 @@ describe("DebateApp", () => {
       attempt: 1,
       reason: "RATE_LIMITED",
     });
-    const ui = render(<DebateApp events={events} />);
+    const { ui, flush } = renderApp(events);
     await flush();
     const frame = stripAnsi(ui.lastFrame() ?? "");
     expect(frame).toMatch(/retry|retrying/i);
@@ -154,7 +211,7 @@ describe("DebateApp", () => {
       { kind: "turn.delta", expertSlug: "alice", text: "Hello" },
       // turn.end NOT sent yet, so cursor should be visible
     );
-    const ui = render(<DebateApp events={events} />);
+    const { ui, flush } = renderApp(events);
     await flush();
     const rawFrame = ui.lastFrame() ?? "";
     
@@ -174,7 +231,7 @@ describe("DebateApp", () => {
       premiumRequests: 3,
       estimatedTotal: 10,
     });
-    const ui = render(<DebateApp events={events} />);
+    const { ui, flush } = renderApp(events);
     await flush();
     const frame = stripAnsi(ui.lastFrame() ?? "");
     expect(frame).toContain("3");
@@ -184,7 +241,7 @@ describe("DebateApp", () => {
 
   it("shows a completion message on debate.end", async () => {
     const events = stream({ kind: "debate.end", reason: "completed" });
-    const ui = render(<DebateApp events={events} />);
+    const { ui, flush } = renderApp(events);
     await flush();
     const frame = stripAnsi(ui.lastFrame() ?? "");
     expect(frame).toMatch(/complete|completed/i);
@@ -220,17 +277,27 @@ describe("DebateApp", () => {
         content: "r2",
       },
     );
-    const ui = render(<DebateApp events={events} />);
+    const { ui, flush } = renderApp(events);
     await flush();
     const raw = ui.lastFrame() ?? "";
-    // Find ANSI-coded "Alice" occurrences and verify they share the same color.
     // tests/setup.ts forces chalk to color-mode 3 so ink emits SGR escapes
     // even though ink-testing-library's stdout reports as a non-TTY.
-    // eslint-disable-next-line no-control-regex
-    const matches = [...raw.matchAll(/\u001b\[(\d+)m[^\u001b]*Alice/g)];
-    expect(matches.length).toBeGreaterThanOrEqual(2);
-    const codes = matches.map((m) => m[1]);
-    // All Alice instances should share the same color escape code.
+    //
+    // Every "Alice" occurrence (the <Static> roster row plus one ExpertCard
+    // turn header per round) must share the identical SGR color — her color
+    // is assigned once from her panel index and must never drift between
+    // renders or rounds (#255). allColorsFor isolates each occurrence to its
+    // own frame line instead of scanning the whole multi-line frame with one
+    // regex, so the settled frame (guaranteed by renderApp's onComplete-based
+    // flush, #233) is read deterministically rather than in-flight.
+    const colors = allColorsFor(raw, "Alice");
+    expect(colors.length).toBeGreaterThanOrEqual(2);
+    // Guard against a vacuous pass: every occurrence must actually carry a
+    // color, not just coincidentally-matching empty arrays.
+    expect(colors.every((c) => c.length > 0)).toBe(true);
+    const codes = colors.map((c) => c.join(","));
+    // All Alice instances — roster row and both round headers — should share
+    // the same color escape codes.
     expect(new Set(codes).size).toBe(1);
     ui.unmount();
   });
@@ -261,7 +328,7 @@ describe("DebateApp", () => {
         content: "hey",
       },
     );
-    const ui = render(<DebateApp events={events} />);
+    const { ui, flush } = renderApp(events);
     await flush();
     const frame = stripAnsi(ui.lastFrame() ?? "");
     expect(frame).toContain("[[1] Alice]");
@@ -288,7 +355,7 @@ describe("DebateApp", () => {
         content: "hi",
       },
     );
-    const ui = render(<DebateApp events={events} />);
+    const { ui, flush } = renderApp(events);
     await flush();
     const frame = stripAnsi(ui.lastFrame() ?? "");
     expect(frame).toContain("[[You] [2] You]");
@@ -317,7 +384,7 @@ describe("DebateApp", () => {
       { kind: "turn.delta", expertSlug: "user", text: "hi" },
       { kind: "turn.end", expertSlug: "user", turnId: "t1", content: "hi" },
     );
-    const ui = render(<DebateApp events={events} />);
+    const { ui, flush } = renderApp(events);
     await flush();
     const raw = ui.lastFrame() ?? "";
     // The ExpertCard emits the human header as "[[You] [2] You]" (double
@@ -353,7 +420,7 @@ describe("DebateApp", () => {
       { kind: "turn.delta", expertSlug: "user", text: "hi" },
       { kind: "turn.end", expertSlug: "user", turnId: "t2", content: "hi" },
     );
-    const ui = render(<DebateApp events={events} />);
+    const { ui, flush } = renderApp(events);
     await flush();
     const raw = ui.lastFrame() ?? "";
 
@@ -402,7 +469,7 @@ describe("InkRenderer ASCII mode (COUNCIL_ASCII=1) (#677)", () => {
       // streaming-cursor branch (suppressed outright in ASCII mode for
       // screen readers, per shouldSuppressCursor()) is exercised too.
     );
-    const ui = render(<DebateApp events={events} />);
+    const { ui, flush } = renderApp(events);
     await flush();
     const frame = stripAnsi(ui.lastFrame() ?? "");
 
@@ -422,7 +489,7 @@ describe("InkRenderer ASCII mode (COUNCIL_ASCII=1) (#677)", () => {
 
   it("renders the ASCII completion glyph (not the Unicode checkmark) on debate.end", async () => {
     const events = stream({ kind: "debate.end", reason: "completed" });
-    const ui = render(<DebateApp events={events} />);
+    const { ui, flush } = renderApp(events);
     await flush();
     const frame = stripAnsi(ui.lastFrame() ?? "");
 
@@ -438,17 +505,53 @@ describe("InkRenderer", () => {
     expect(typeof r.render).toBe("function");
   });
 
-  it("render() resolves after the event stream completes", async () => {
-    const events = stream(
-      {
-        kind: "panel.assembled",
-        experts: [{ slug: "alice", displayName: "Alice", model: "gpt-5" }],
-      },
-      { kind: "debate.end", reason: "completed" },
-    );
-    const r = new InkRenderer({ stdout: process.stdout, isTTY: false });
-    // Should resolve cleanly without throwing.
-    await r.render(events);
+  it("render() stays pending until the stream ends, then resolves (#234)", async () => {
+    // A deferred generator lets the test control exactly when the stream
+    // ends. The prior version of this test only awaited r.render(events)
+    // and asserted it didn't throw, which only proves non-throwing, not the
+    // lifecycle: a regression that resolved render() early (e.g. right
+    // after the first event, without draining the rest of the stream)
+    // would still pass. Gating the second event on `gate.promise` proves
+    // render() cannot resolve before the WHOLE stream is consumed.
+    //
+    // Holding the stream open gives Ink a real window to commit a frame to
+    // process.stdout (unlike the immediate-resolution streams elsewhere in
+    // this file, which unmount before any commit is flushed) — mirrors the
+    // process.stdout isolation already used in select.test.ts (#235) so the
+    // test doesn't print to the real terminal.
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      const gate = deferred();
+      async function* events(): AsyncGenerator<DebateEvent> {
+        yield {
+          kind: "panel.assembled",
+          experts: [{ slug: "alice", displayName: "Alice", model: "gpt-5" }],
+        };
+        await gate.promise;
+        yield { kind: "debate.end", reason: "completed" };
+      }
+
+      const r = new InkRenderer({ stdout: process.stdout, isTTY: false });
+      let resolved = false;
+      const done = r.render(events()).then(() => {
+        resolved = true;
+      });
+
+      // The generator is blocked on gate.promise, so a correct render() can
+      // NEVER resolve here, no matter how long we wait — only a regression
+      // that resolves early would flip `resolved` to true. Waiting longer
+      // only strengthens this check; it cannot introduce flakiness.
+      for (let i = 0; i < 10; i++) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      expect(resolved).toBe(false);
+
+      gate.resolve();
+      await done;
+      expect(resolved).toBe(true);
+    } finally {
+      stdoutSpy.mockRestore();
+    }
   });
 
   it("render() rejects when the event stream throws", async () => {
