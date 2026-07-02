@@ -24,7 +24,7 @@
       },
       {
         "flags": "-q, --quiet",
-        "description": "Suppress informational stderr output",
+        "description": "Suppress informational stderr output and cost indicators",
         "long": "--quiet",
         "short": "-q",
         "required": false,

@@ -37,5 +37,5 @@ Persistent AI expert panels for deliberation and decision-making
 | Option | Description | Default |
 | --- | --- | --- |
 | `-V, --version` | output the version number | — |
-| `-q, --quiet` | Suppress informational stderr output | — |
+| `-q, --quiet` | Suppress informational stderr output and cost indicators | — |
 | `--no-tui` | Skip the interactive terminal UI and use the classic CLI | — |

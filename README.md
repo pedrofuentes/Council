@@ -721,7 +721,7 @@ council chat <panel-name>                        # Group chat with a panel (supp
 # like @"Sasha Lin" are rejected with a hint, never silently broadcast.
 council chat <target> --new                      # Archive active session and start fresh
 council chat --list                              # List every chat session across all targets (no engine needed)
-council chat <target> --history                  # Show archived sessions read-only (no engine needed)
+council chat <target> --history                  # Show active + archived sessions read-only (no engine needed)
 
 # Expert library (Phase 4)
 council expert create [--persona]           # Interactive wizard; also recreates ghost experts when <slug>.yaml is missing
@@ -771,7 +771,7 @@ council docs extract <panel>                # Extract files held for review (ask
 council docs doctor <panel>                 # Document-health diagnostics for a panel
 
 # Global flags available on all commands
-council <command> --quiet                   # Suppress informational stderr output
+council <command> --quiet                   # Suppress informational stderr output and cost indicators
 
 # ASCII mode (environment-driven, not a flag)
 # Set COUNCIL_ASCII=1, NO_COLOR=1, or TERM=dumb to force ASCII symbols

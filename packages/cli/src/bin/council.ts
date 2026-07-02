@@ -254,7 +254,7 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
     .name("council")
     .description("Persistent AI expert panels for deliberation and decision-making")
     .version(packageJson.version)
-    .option("-q, --quiet", "Suppress informational stderr output")
+    .option("-q, --quiet", "Suppress informational stderr output and cost indicators")
     .option("--no-tui", "Skip the interactive terminal UI and use the classic CLI")
     .showSuggestionAfterError(true)
     .showHelpAfterError("(run `council <command> --help` for usage)");
