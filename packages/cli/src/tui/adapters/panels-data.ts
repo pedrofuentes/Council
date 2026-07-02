@@ -1,3 +1,5 @@
+import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
+
 export interface PanelListItem {
   readonly name: string;
   readonly description: string;
@@ -56,6 +58,14 @@ export interface PanelsRepos {
       readonly kind: "generic" | "persona";
     }[];
   }>;
+  /**
+   * Optional warning sink (#2046). Invoked when template listing fails or an
+   * individual template fails to load and the loader degrades to a partial (or
+   * empty) template set. Falls back to `console.warn` when no sink is wired so
+   * the degraded mode is never silently swallowed. Never affects control flow —
+   * the list stays best-effort regardless of what the sink does.
+   */
+  readonly onWarning?: (message: string) => void;
 }
 
 export interface PanelsDataSource {
@@ -85,31 +95,91 @@ function mapTemplateDefaults(
 }
 
 /**
+ * Best-effort warning sink for the template loader (#2046). Routes to the
+ * caller's {@link PanelsRepos.onWarning} when wired, else `console.warn`, so a
+ * collapsed or partial template list is never silently swallowed. Template
+ * names are file-derived and may embed terminal control sequences, so the whole
+ * message is collapsed to a single sanitized line via {@link toSingleLineDisplay}
+ * before it reaches the sink. Never throws — observability must not break the
+ * best-effort list contract, so a throwing sink is swallowed.
+ */
+function warnPanelsData(onWarning: ((message: string) => void) | undefined, message: string): void {
+  const safe = toSingleLineDisplay(message);
+  try {
+    if (onWarning) {
+      onWarning(safe);
+    } else {
+      console.warn(safe);
+    }
+  } catch {
+    // A broken warning sink must never degrade the best-effort list path.
+  }
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
  * List the available template panels, isolating any listing/loading failure.
  *
  * #1817: an unguarded `listTemplates` (or `loadTemplate`) rejection used to
  * bubble out of {@link PanelsDataSource.loadList} and discard the
- * already-resolved saved panels the user does have. The list view has no error
- * channel, so a template failure degrades *only* this portion to an empty list;
- * the saved panels are still returned (and rendered) by the caller.
+ * already-resolved saved panels the user does have. A template failure degrades
+ * *only* this portion; the saved panels are still returned (and rendered) by
+ * the caller.
+ *
+ * #2046: the fallback is no longer silent, nor all-or-nothing. Each template is
+ * loaded independently with `Promise.allSettled`, so one hand-edited/malformed
+ * template skips only *itself* instead of collapsing the entire template set
+ * (the previous inner `Promise.all` short-circuited on the first rejection).
+ * Both failure modes — a `listTemplates` rejection and any per-template
+ * rejection — surface a discriminating warning through the injected
+ * {@link PanelsRepos.onWarning} sink so template-subsystem corruption or a
+ * loader regression is observable rather than masked.
  */
 async function loadTemplateItems(repos: PanelsRepos): Promise<readonly PanelListItem[]> {
+  let templateNames: readonly string[];
   try {
-    const templateNames = await repos.listTemplates();
-    return await Promise.all(
-      templateNames.map(async (name): Promise<PanelListItem> => {
-        const template = await repos.loadTemplate(name);
-        return {
-          name,
-          description: template.description ?? "",
-          memberCount: template.experts.length,
-          source: "template",
-        };
-      }),
+    templateNames = await repos.listTemplates();
+  } catch (error) {
+    warnPanelsData(
+      repos.onWarning,
+      `Could not list panel templates; hiding all templates: ${errorText(error)}`,
     );
-  } catch {
     return [];
   }
+
+  const settled = await Promise.allSettled(
+    templateNames.map(async (name): Promise<PanelListItem> => {
+      const template = await repos.loadTemplate(name);
+      return {
+        name,
+        description: template.description ?? "",
+        memberCount: template.experts.length,
+        source: "template",
+      };
+    }),
+  );
+
+  const items: PanelListItem[] = [];
+  const failedNames: string[] = [];
+  settled.forEach((result, index) => {
+    if (result.status === "fulfilled") {
+      items.push(result.value);
+      return;
+    }
+    failedNames.push(templateNames[index] ?? "<unknown>");
+  });
+
+  if (failedNames.length > 0) {
+    warnPanelsData(
+      repos.onWarning,
+      `Skipped ${failedNames.length} of ${templateNames.length} panel template(s) that failed to load: ${failedNames.join(", ")}`,
+    );
+  }
+
+  return items;
 }
 
 export function createPanelsDataSource(repos: PanelsRepos): PanelsDataSource {

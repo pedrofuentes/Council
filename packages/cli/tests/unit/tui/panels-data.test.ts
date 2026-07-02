@@ -107,7 +107,15 @@ describe("createPanelsDataSource.loadList", () => {
   // discard already-resolved saved panels. A template listing/loading failure
   // has to degrade the *template* portion only — the saved panels the user
   // already has must still be returned (and therefore rendered).
-  it("still returns saved panels when listTemplates throws, degrading templates to empty (#1817)", async () => {
+  //
+  // #2046 (from Sentinel review of PR #2041): the degraded mode was silently
+  // swallowed AND — because the inner join was `Promise.all` — one bad template
+  // collapsed the ENTIRE template set. The loader must (a) isolate a single bad
+  // template with `Promise.allSettled` so only it is dropped, and (b) surface
+  // the fallback through the injected `onWarning` sink so the failure is
+  // observable, never silent.
+  it("warns and returns saved panels when listTemplates rejects, degrading templates to empty (#1817, #2046)", async () => {
+    const warnings: string[] = [];
     const ds = createPanelsDataSource({
       library: {
         findAll: async () => [
@@ -123,18 +131,26 @@ describe("createPanelsDataSource.loadList", () => {
         throw new Error("template listing failed");
       },
       loadTemplate: async () => ({ experts: [] }),
+      onWarning: (message) => warnings.push(message),
     });
 
-    // Before the fix the whole result was lost; the saved panels must survive
-    // and the template portion must degrade to empty (no template entries).
+    // #1817: the saved panels must survive and the template portion must
+    // degrade to empty (no template entries).
     await expect(ds.loadList()).resolves.toEqual([
       { name: "acme", description: "Exec panel", memberCount: 2, source: "saved" },
       { name: "bare", description: "", memberCount: 0, source: "saved" },
     ]);
+
+    // #2046: the degraded mode must be observable, not silently swallowed. The
+    // warning is discriminating — it names the template subsystem and carries
+    // the underlying failure so a loader regression is diagnosable.
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("template");
+    expect(warnings[0]).toContain("template listing failed");
   });
 
-  it("still returns saved panels when a template fails to load (#1817)", async () => {
-    const loadedTemplates: string[] = [];
+  it("warns and drops only the failed template, keeping the healthy ones (#1817, #2046)", async () => {
+    const warnings: string[] = [];
     const ds = createPanelsDataSource({
       library: {
         findAll: async () => [{ name: "acme", description: "Exec panel" }],
@@ -145,18 +161,88 @@ describe("createPanelsDataSource.loadList", () => {
       experts: { get: async () => null },
       listTemplates: async () => ["startup-board", "broken"],
       loadTemplate: async (name) => {
-        loadedTemplates.push(name);
         if (name === "broken") throw new Error("template file corrupt");
         return { description: "tpl", experts: [] };
       },
+      onWarning: (message) => warnings.push(message),
     });
 
+    // #2046: a single bad template must skip ONLY itself — the valid
+    // "startup-board" template must still be listed. This proves the join uses
+    // `Promise.allSettled`; `Promise.all` would short-circuit and collapse the
+    // whole template set to the saved-only list.
     await expect(ds.loadList()).resolves.toEqual([
       { name: "acme", description: "Exec panel", memberCount: 2, source: "saved" },
+      { name: "startup-board", description: "tpl", memberCount: 0, source: "template" },
     ]);
+
+    // The warning names the failed template and does NOT implicate the healthy
+    // one, so the diagnostic points at the real culprit.
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("broken");
+    expect(warnings[0]).not.toContain("startup-board");
   });
 
-  it("returns saved panels AND templates unchanged when template loading succeeds (inverse, #1817)", async () => {
+  it("keeps every healthy template when one of several fails, naming only the bad one (#2046)", async () => {
+    const warnings: string[] = [];
+    const ds = createPanelsDataSource({
+      library: {
+        findAll: async () => [],
+        findByName: async () => undefined,
+        getMembers: async () => [],
+        getMemberCounts: async () => new Map(),
+      },
+      experts: { get: async () => null },
+      listTemplates: async () => ["alpha", "corrupt", "omega"],
+      loadTemplate: async (name) => {
+        if (name === "corrupt") throw new Error("malformed template");
+        return { description: `tpl ${name}`, experts: [] };
+      },
+      onWarning: (message) => warnings.push(message),
+    });
+
+    // Two healthy templates survive on either side of the malformed one.
+    await expect(ds.loadList()).resolves.toEqual([
+      { name: "alpha", description: "tpl alpha", memberCount: 0, source: "template" },
+      { name: "omega", description: "tpl omega", memberCount: 0, source: "template" },
+    ]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("corrupt");
+    expect(warnings[0]).not.toContain("alpha");
+    expect(warnings[0]).not.toContain("omega");
+  });
+
+  it("sanitizes untrusted template names before they reach the warning sink (#2046)", async () => {
+    const warnings: string[] = [];
+    // A hand-edited/hostile template filename could embed ANSI + newlines to
+    // forge log lines or spoof terminal output when the degraded-mode warning
+    // is echoed. The failed name must be collapsed to one sanitized line.
+    const hostileName = "ev\u001b[31mil\nname";
+    const ds = createPanelsDataSource({
+      library: {
+        findAll: async () => [],
+        findByName: async () => undefined,
+        getMembers: async () => [],
+        getMemberCounts: async () => new Map(),
+      },
+      experts: { get: async () => null },
+      listTemplates: async () => [hostileName],
+      loadTemplate: async () => {
+        throw new Error("corrupt");
+      },
+      onWarning: (message) => warnings.push(message),
+    });
+
+    await expect(ds.loadList()).resolves.toEqual([]);
+    expect(warnings).toHaveLength(1);
+    // Control/ANSI stripped, newline collapsed → a single safe line.
+    expect(warnings[0]).not.toContain("\u001b");
+    expect(warnings[0]).not.toContain("\n");
+    expect(warnings[0]).toContain("evil name");
+  });
+
+  it("returns saved panels AND templates unchanged and emits no warning when loads succeed (inverse, #1817, #2046)", async () => {
+    const warnings: string[] = [];
     const ds = createPanelsDataSource({
       library: {
         findAll: async () => [{ name: "acme", description: "Exec panel" }],
@@ -170,13 +256,16 @@ describe("createPanelsDataSource.loadList", () => {
         description: "tpl",
         experts: [{ slug: "a", displayName: "A", role: "Role A", kind: "generic" }],
       }),
+      onWarning: (message) => warnings.push(message),
     });
 
-    // The guard must not drop or alter valid template data on the happy path.
+    // The guard must not drop or alter valid template data on the happy path...
     await expect(ds.loadList()).resolves.toEqual([
       { name: "acme", description: "Exec panel", memberCount: 2, source: "saved" },
       { name: "startup-board", description: "tpl", memberCount: 1, source: "template" },
     ]);
+    // ...and the all-valid path must stay silent — no false-positive diagnostics.
+    expect(warnings).toEqual([]);
   });
 });
 
