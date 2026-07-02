@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as fs from "node:fs/promises";
 import path from "node:path";
@@ -16,6 +16,17 @@ import {
   type ExpertTrainingDeps,
 } from "../../../src/tui/adapters/expert-training.js";
 import { mkCanonicalTempDir } from "../../helpers/tmp.js";
+
+// The stageDocumentFiles suite drives real temp directories, so `lstat` and
+// `copyFile` keep their real behaviour by default (the factory wraps the real
+// implementations). Wrapping just these two lets the robustness tests inject a
+// non-ENOENT destination lstat error or a mid-batch copy failure — ESM module
+// namespaces cannot be spied, so the module itself must be mocked (mirroring
+// the template-migration / loader-lock fs-error tests).
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof fs>();
+  return { ...actual, lstat: vi.fn(actual.lstat), copyFile: vi.fn(actual.copyFile) };
+});
 
 class StubEngine implements CouncilEngine {
   readonly started = vi.fn(async (): Promise<void> => undefined);
@@ -246,6 +257,19 @@ describe("createExpertTrainingSource", () => {
 });
 
 describe("stageDocumentFiles", () => {
+  let actualFs: typeof fs;
+
+  beforeEach(async () => {
+    // Reset both mocks to a clean real-fs pass-through before every test so a
+    // prior test's injected lstat/copyFile failure can never bleed across
+    // cases. `mockReset` also drains any leftover one-shot implementation.
+    actualFs = await vi.importActual<typeof fs>("node:fs/promises");
+    vi.mocked(fs.lstat).mockReset();
+    vi.mocked(fs.lstat).mockImplementation(actualFs.lstat);
+    vi.mocked(fs.copyFile).mockReset();
+    vi.mocked(fs.copyFile).mockImplementation(actualFs.copyFile);
+  });
+
   it("copies regular files into a freshly created docs directory", async () => {
     const home = await mkCanonicalTempDir("council-stage-");
     try {
@@ -301,6 +325,107 @@ describe("stageDocumentFiles", () => {
 
       await expect(stageDocumentFiles(docsPath, [src])).rejects.toThrow(/already exists/i);
       expect(await fs.readFile(path.join(docsPath, "notes.md"), "utf8")).toBe("original");
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("propagates a non-ENOENT destination lstat error instead of swallowing it", async () => {
+    const home = await mkCanonicalTempDir("council-stage-");
+    try {
+      const src = path.join(home, "notes.md");
+      await fs.writeFile(src, "hello", "utf8");
+      const docsPath = path.join(home, "docs");
+      const eacces = Object.assign(new Error("permission denied"), { code: "EACCES" });
+
+      // Two lstat calls happen for a single-file batch: first the SOURCE (must
+      // succeed so we reach the destination probe), then the DESTINATION
+      // existence probe — which we fail with EACCES. A non-ENOENT error there
+      // must PROPAGATE, never be misread as "destination absent" and allow the
+      // copy to proceed.
+      vi.mocked(fs.lstat)
+        .mockImplementationOnce(actualFs.lstat)
+        .mockImplementationOnce(async () => {
+          throw eacces;
+        });
+
+      await expect(stageDocumentFiles(docsPath, [src])).rejects.toMatchObject({ code: "EACCES" });
+      // Discriminating: the error was not swallowed, so NO copy was attempted
+      // and nothing landed in the docs directory.
+      expect(fs.copyFile).not.toHaveBeenCalled();
+      await expect(actualFs.readFile(path.join(docsPath, "notes.md"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a source larger than maxFileSizeMB before copying it", async () => {
+    const home = await mkCanonicalTempDir("council-stage-");
+    try {
+      const src = path.join(home, "big.md");
+      // One byte over a 1 MB ceiling (1 MB === 1024 * 1024 bytes).
+      await fs.writeFile(src, Buffer.alloc(1024 * 1024 + 1, 0x61));
+      const docsPath = path.join(home, "docs");
+
+      await expect(stageDocumentFiles(docsPath, [src], { maxFileSizeMB: 1 })).rejects.toThrow(
+        /too large|exceeds|limit/i,
+      );
+
+      // Discriminating: rejection happens BEFORE any copy, so nothing is staged.
+      expect(fs.copyFile).not.toHaveBeenCalled();
+      await expect(actualFs.readFile(path.join(docsPath, "big.md"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("stages a source that is exactly at the maxFileSizeMB ceiling", async () => {
+    const home = await mkCanonicalTempDir("council-stage-");
+    try {
+      const src = path.join(home, "exact.md");
+      // Exactly 1 MB — the ceiling itself must be accepted (strict `>` bound).
+      await fs.writeFile(src, Buffer.alloc(1024 * 1024, 0x62));
+      const docsPath = path.join(home, "docs");
+
+      await stageDocumentFiles(docsPath, [src], { maxFileSizeMB: 1 });
+
+      expect(await actualFs.readFile(path.join(docsPath, "exact.md"))).toHaveLength(1024 * 1024);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rolls back an already-staged file when a later file fails mid-batch", async () => {
+    const home = await mkCanonicalTempDir("council-stage-");
+    try {
+      const a = path.join(home, "a.md");
+      const b = path.join(home, "b.md");
+      await fs.writeFile(a, "aaa", "utf8");
+      await fs.writeFile(b, "bbb", "utf8");
+      const docsPath = path.join(home, "docs");
+      const eio = Object.assign(new Error("i/o error"), { code: "EIO" });
+
+      // a.md copies for real; b.md's copy then fails after a.md is on disk.
+      vi.mocked(fs.copyFile)
+        .mockImplementationOnce(actualFs.copyFile)
+        .mockImplementationOnce(async () => {
+          throw eio;
+        });
+
+      await expect(stageDocumentFiles(docsPath, [a, b])).rejects.toMatchObject({ code: "EIO" });
+
+      // Atomicity: the batch failed, so NO file staged in this call may remain —
+      // a.md must have been rolled back, and b.md never landed.
+      await expect(actualFs.readFile(path.join(docsPath, "a.md"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(actualFs.readFile(path.join(docsPath, "b.md"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     } finally {
       await fs.rm(home, { recursive: true, force: true });
     }
