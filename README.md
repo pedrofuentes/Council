@@ -171,6 +171,26 @@ council panel list                                  # View your panels
 council update                                      # Upgrade to latest published version
 ```
 
+`council --help` (and bare `council help`) print this list **grouped into
+labelled sections** — Getting Started, Deliberation, Conversation, Library, and
+Inspection — instead of one flat list, and close with an onboarding cue so a
+brand-new setup always has an obvious next step:
+
+```text
+Commands:
+
+Getting Started:  doctor, demo, config, telemetry, docs, update, ui
+Deliberation:     convene, resume, conclude, review
+Conversation:     ask, chat
+Library:          expert, panel, templates
+Inspection:       sessions, memory, export
+
+New to Council? Start with: council doctor
+```
+
+In the real terminal each command sits on its own line with a one-line
+description; the grouped section order above is what you see.
+
 ---
 
 ## Built-in Panels
@@ -289,7 +309,13 @@ council convene 'What is the $cost of `make build`?'
 # transcript is saved and you can `council resume` later. A second Ctrl+C
 # force-kills the process.
 
-# Or run offline with the deterministic mock engine (for testing/CI)
+# Or run offline with the deterministic mock engine (for testing/CI). No
+# --template is required: with --engine mock, auto-compose skips the LLM and
+# returns a fixed built-in panel (an Optimist, a Skeptic, and a Pragmatist), so
+# the run makes zero network calls. The auto-compose roster confirmation still
+# applies, so add --yes for non-interactive / CI runs.
+council convene "Test prompt" --engine mock --yes
+# Pinning --template with --engine mock still works and skips auto-compose:
 council convene "Test prompt" --template code-review --engine mock
 
 # Suppress non-essential stderr output (informational messages)
@@ -339,8 +365,8 @@ council resume <panel-name> --prompt "What about the migration risk?"
 # history of the panel (every original + resumed debate, with globally
 # renumbered rounds), not just a single debate.
 council export <prefix>                             # prefix match (auto-selects if unique;
-                                                    # ambiguous prefixes list matches and exit non-zero —
-                                                    # use a longer prefix or the full name)
+                                                    # ambiguous prefixes open a picker on a TTY, or list matches and
+                                                    # exit non-zero when non-interactive; see the resolver notes below)
 council export <panel-name>                         # markdown (default)
 council export <panel-name> --format adr            # Architecture Decision Record
 council export <panel-name> --format json --output transcript.ndjson
@@ -390,6 +416,26 @@ council panel docs link <name> --path <folder> [--yes]     # link an external fo
 council panel docs unlink <name> --path <folder>           # remove a linked folder + its FTS entries
 ```
 
+### Resolving a panel by name or prefix
+
+`council resume`, `council conclude`, and `council export` share one resolver
+for turning the panel argument into a stored session, so all three behave the
+same way:
+
+- **Exact match** — an argument that exactly matches a session name is used as-is.
+- **Unique prefix** — a prefix that matches exactly one session auto-selects it.
+- **Ambiguous prefix** — when a prefix matches several sessions, an interactive
+  terminal shows a numbered picker (`Select a panel [1-N] (Enter to cancel):`),
+  while a non-interactive shell (piped output or CI) instead lists the matches
+  and exits non-zero (`Ambiguous prefix '<p>' matches N panels.`) so scripts
+  fail loudly instead of guessing.
+- **No match** — Council prints the closest `Did you mean …?` suggestions and
+  exits non-zero.
+
+`council resume --latest` ignores the argument and reopens the most recently
+active panel; `council conclude` with no argument falls back to the most
+recently debated panel.
+
 ### Output format and TTY detection
 
 Streaming debate commands (`convene`, `resume`, `ask`, `review`) accept
@@ -409,6 +455,24 @@ the determinism guarantee automation relies on. `council resume <panel>` transcr
 replay additionally coerces `auto` to `plain` (a static replay gains nothing from the
 Ink TUI); pass `--format json` for machine-readable transcript output. See
 [DECISIONS.md](./DECISIONS.md) → ADR-030 for the rationale.
+
+### Streaming and chat output
+
+While a debate streams in plain output (either `--format plain` or the
+non-interactive `auto` fallback), a **recoverable** engine error — a transient
+rate-limit or network blip — is printed with a `— retrying automatically`
+suffix, so an auto-retried hiccup is easy to tell apart from a fatal error;
+Council retries such failures before giving up.
+
+`council chat` adds a few interactive touches on top of the plain stream:
+
+- A dim `thinking...` indicator is shown next to the expert's prompt the moment
+  it is queried, and is overwritten in place by the expert's name as soon as the
+  first token arrives.
+- Multi-line replies are indented — each continuation line is prefixed with two
+  spaces so a long answer stays visually attached to the expert who is speaking.
+- A reply that fails with a recoverable error prints
+  `Transient error from engine. Retrying once...` and is retried a single time.
 
 ## Keeping Council Up to Date
 
@@ -642,7 +706,7 @@ council convene <topic> --model <model-id>                     # Override the pe
 council resume <panel>                                          # Replay transcript — or auto-continue if the latest debate was interrupted
 council resume <panel> --prompt "<prompt>"                      # Continue the panel with a new round
 council resume --latest                                         # Resume most recently active panel
-council resume <prefix>                                         # Prefix match (auto-selects if unique)
+council resume <prefix>                                         # Prefix match: unique auto-selects; ambiguous opens a picker (TTY) or lists + exits non-zero
 council export <panel> --format <fmt>                          # Export (markdown | json | adr)
 
 # Safety: every entry point (convene, ask, chat, in-REPL @convene) runs a warn-only
@@ -714,6 +778,11 @@ council <command> --quiet                   # Suppress informational stderr outp
 COUNCIL_ASCII=1 council convene "Topic"
 ```
 
+> `council sessions` (default `--format plain`) shortens each session's topic to
+> 80 characters, appending `...`, so long topics stay on one scannable line.
+> `--format json` is unaffected: it streams the full session record as NDJSON
+> (one JSON object per line) with the complete, untruncated topic for scripting.
+
 > Configuration lives in `~/.council/config.yaml` (auto-created on first run).
 > Manage it with `council config show|path|edit`.
 
@@ -731,6 +800,15 @@ COUNCIL_ASCII=1 council convene "Topic"
 > - **Experts directory** / **Panels directory** — always `<data home>/experts`
 >   and `<data home>/panels`.
 > - **Database** — the SQLite file at `<council home>/council.db`.
+
+> **Local database requirements:** Council's `council.db` runs in SQLite
+> **WAL** (write-ahead logging) mode. On open it applies `PRAGMA busy_timeout =
+> 5000` — so a momentarily locked database is retried for up to five seconds
+> before erroring — and then `PRAGMA journal_mode = WAL`. If the filesystem
+> holding the Council home cannot honour WAL (some network and virtualised
+> mounts — e.g. certain NFS/SMB/9p shares — do not), startup fails fast with
+> `Failed to enable SQLite journal mode WAL; got <mode>`. Point `COUNCIL_HOME`
+> at a local, WAL-capable filesystem to resolve it.
 
 > **Plural aliases**: `council panels`, `council experts`, and `council history` work as
 > aliases for `council panel`, `council expert`, and `council sessions` respectively —
