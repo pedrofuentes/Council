@@ -1,5 +1,6 @@
 import path from "node:path";
 import { ulid } from "ulid";
+import React, { useEffect, useState } from "react";
 import { render } from "ink";
 
 import packageJson from "../../package.json" with { type: "json" };
@@ -59,7 +60,7 @@ import { getExpertPanelMemberships } from "../core/panel-membership-query.js";
 import type { PanelMembership } from "../core/prompt-builder.js";
 import { createHomeDataSources } from "./adapters/home-data-sources.js";
 import { loadHomeData } from "./adapters/home-data.js";
-import { selectStartupWarnings } from "./lib/startup-warnings.js";
+import { selectStartupWarnings, type StartupWarning } from "./lib/startup-warnings.js";
 import { createTuiErrorHandler } from "./lib/error-handler.js";
 import { writeFileExclusive } from "./lib/safe-write.js";
 import { createTelemetry } from "./lib/telemetry.js";
@@ -89,6 +90,59 @@ export function createExportTranscriptLoader(
     const doc = await load(panelName, debateId);
     return doc ?? null;
   };
+}
+
+/**
+ * A reactive sink that routes best-effort runtime warnings into the TUI's
+ * dismissible notice banner. The panels degraded-template loader (#2046) — and
+ * any future best-effort surface — pushes here via its `onWarning` callback so a
+ * warning reaches the alternate-screen TUI instead of `console.warn`/stderr,
+ * which is invisible and corrupts it (#2111).
+ */
+export interface RuntimeWarningChannel {
+  /** Best-effort warning sink; safe to wire directly to a data source's `onWarning`. */
+  readonly onWarning: (message: string) => void;
+  /** Subscribe to accumulation changes; returns an unsubscribe callback. */
+  readonly subscribe: (listener: () => void) => () => void;
+  /** Snapshot of the accumulated, sanitized warnings. */
+  readonly snapshot: () => readonly StartupWarning[];
+}
+
+/**
+ * Build a {@link RuntimeWarningChannel}. Every message is sanitized and collapsed
+ * to a single line via {@link selectStartupWarnings} (shared with the startup
+ * notices), and a message that is blank once sanitized is dropped so the banner
+ * never renders an empty row. The sink never throws, so a warning can never break
+ * the caller's control flow.
+ */
+export function createRuntimeWarningChannel(): RuntimeWarningChannel {
+  const warnings: StartupWarning[] = [];
+  const listeners = new Set<() => void>();
+  return {
+    onWarning: (message: string): void => {
+      const [warning] = selectStartupWarnings({ warnings: [message] });
+      if (warning === undefined) return;
+      warnings.push(warning);
+      for (const listener of listeners) listener();
+    },
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return (): void => {
+        listeners.delete(listener);
+      };
+    },
+    snapshot: (): readonly StartupWarning[] => [...warnings],
+  };
+}
+
+/**
+ * Subscribe a component to a {@link RuntimeWarningChannel} so warnings surfaced
+ * after mount re-render into the banner. Returns the accumulated warnings.
+ */
+export function useRuntimeWarnings(channel: RuntimeWarningChannel): readonly StartupWarning[] {
+  const [warnings, setWarnings] = useState<readonly StartupWarning[]>(channel.snapshot);
+  useEffect(() => channel.subscribe(() => setWarnings(channel.snapshot())), [channel]);
+  return warnings;
 }
 
 export async function launchTui(): Promise<void> {
@@ -239,12 +293,17 @@ export async function launchTui(): Promise<void> {
           resolvePanel: buildConveneResolver(topic, true),
         }).streamDebate(panelName, topic, options, onEvent),
     };
+    // Route the panels degraded-template loader's best-effort warnings (#2046)
+    // into the TUI's dismissible notice banner (#2111) instead of console.warn/
+    // stderr, which is invisible — and corrupts — the alternate screen.
+    const warningChannel = createRuntimeWarningChannel();
     const dataSources: TuiDataSources = {
       panels: createPanelsDataSource({
         library: panelLibrary,
         experts: expertLibrary,
         listTemplates,
         loadTemplate,
+        onWarning: warningChannel.onWarning,
       }),
       panelAuthoring,
       panelCompose: createPanelComposeSource({
@@ -372,23 +431,32 @@ export async function launchTui(): Promise<void> {
     // db.destroy); instead signal the Ink app to exit so waitUntilExit resolves
     // and cleanup runs before the process drains. Exit code is preserved.
     const handleTuiError = createTuiErrorHandler({ signalExit: () => unmount() });
-    const instance = render(
-      <ErrorBoundary onError={handleTuiError}>
-        <DataProvider value={dataSources}>
-          <CouncilTUI
-            homeData={homeData}
-            model={model}
-            startupWarnings={startupWarnings}
-            isFirstRun={isFirstRun}
-            onOnboardingComplete={() => {
-              restartRequested = true;
-              unmount();
-            }}
-          />
-        </DataProvider>
-      </ErrorBoundary>,
-      { alternateScreen: true, incrementalRendering: true },
-    );
+    // Merge the static startup notices with any runtime warnings pushed through
+    // `warningChannel` (e.g. the degraded-template loader) so both surface in the
+    // same dismissible banner rather than corrupting the alternate screen (#2111).
+    const TuiRoot = (): React.ReactElement => {
+      const runtimeWarnings = useRuntimeWarnings(warningChannel);
+      return (
+        <ErrorBoundary onError={handleTuiError}>
+          <DataProvider value={dataSources}>
+            <CouncilTUI
+              homeData={homeData}
+              model={model}
+              startupWarnings={[...startupWarnings, ...runtimeWarnings]}
+              isFirstRun={isFirstRun}
+              onOnboardingComplete={() => {
+                restartRequested = true;
+                unmount();
+              }}
+            />
+          </DataProvider>
+        </ErrorBoundary>
+      );
+    };
+    const instance = render(<TuiRoot />, {
+      alternateScreen: true,
+      incrementalRendering: true,
+    });
     unmount = instance.unmount;
 
     await instance.waitUntilExit();
