@@ -379,6 +379,61 @@ describe("resolveSession", () => {
       expect(stderr).toContain("clr-green");
     });
 
+    // #1894: createdAt originates from stored session data (untrusted).
+    // formatSessionMatch must sanitize it before interpolation, just as it
+    // already does for name and topic.
+    it("strips control sequences from createdAt in the ambiguous-match list (#1894)", async () => {
+      const maliciousCreatedAt = `2026-01-01\r${ESC}[31mINJECT`;
+
+      // Insert two panels sharing a prefix so writeAmbiguousMatches is
+      // invoked, with one panel having a malicious created_at value.
+      await db
+        .insertInto("panels")
+        .values({
+          id: "panel-1894-a",
+          name: "ts-alpha",
+          topic: "clean topic",
+          copilot_home: path.join(testHome, "copilot"),
+          config_json: "{}",
+          created_at: maliciousCreatedAt,
+          updated_at: new Date().toISOString(),
+        })
+        .execute();
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await db
+        .insertInto("panels")
+        .values({
+          id: "panel-1894-b",
+          name: "ts-beta",
+          topic: "another topic",
+          copilot_home: path.join(testHome, "copilot"),
+          config_json: "{}",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .execute();
+
+      let stderr = "";
+      await expect(
+        resolveSession({
+          db,
+          dataHome: testHome,
+          panelArg: "ts-",
+          writeError: (chunk) => {
+            stderr += chunk;
+          },
+          isNonInteractive: () => true,
+        }),
+      ).rejects.toBeInstanceOf(CliUserError);
+
+      // The raw malicious bytes must NOT reach the terminal sink.
+      expect(stderr).not.toContain(ESC);
+      expect(stderr).not.toContain("\r");
+      // Panel names must still appear.
+      expect(stderr).toContain("ts-alpha");
+      expect(stderr).toContain("ts-beta");
+    });
+
     it("keeps the raw (unsanitized) name in picker input and the resolved value", async () => {
       const rawName = `clr-${ESC}[31mred`;
       await seedPanel(rawName, "topic one");
