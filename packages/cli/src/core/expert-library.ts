@@ -122,8 +122,13 @@ export class FileExpertLibrary implements ExpertLibrary {
         `Expert YAML at ${yamlPath} declares slug "${parsed.slug}" but was expected at slug "${slug}"`,
       );
     }
+    // Display-only: route the (validated) slug and (derived) path through the
+    // terminal sanitizer for consistency with the other sinks, so no
+    // diagnostic can carry raw control/ANSI bytes to the terminal.
+    const displaySlug = toSingleLineDisplay(slug);
+    const displayPath = toSingleLineDisplay(yamlPath);
     console.warn(
-      `[expert-library] Recovering missing expert cache row for slug "${slug}" from existing YAML source of truth at ${yamlPath}.`,
+      `[expert-library] Recovering missing expert cache row for slug "${displaySlug}" from existing YAML source of truth at ${displayPath}.`,
     );
     await this.repo.create({
       slug: parsed.slug,
@@ -195,9 +200,14 @@ export class FileExpertLibrary implements ExpertLibrary {
         try {
           await this.repairMissingCacheRowFromYaml(validated.slug, yamlPath);
         } catch (repairError) {
+          // `detail` can carry a YAML-file-derived slug via parseYaml's error
+          // message, so sanitize every interpolated value before the sink.
           const detail = repairError instanceof Error ? repairError.message : String(repairError);
+          const displaySlug = toSingleLineDisplay(validated.slug);
+          const displayPath = toSingleLineDisplay(yamlPath);
+          const displayDetail = toSingleLineDisplay(detail);
           console.warn(
-            `[expert-library] Failed to repair missing expert cache row for slug "${validated.slug}" from ${yamlPath}: ${detail}`,
+            `[expert-library] Failed to repair missing expert cache row for slug "${displaySlug}" from ${displayPath}: ${displayDetail}`,
           );
         }
         throw new Error(`Expert "${validated.slug}" already exists at ${yamlPath}`);
@@ -207,8 +217,10 @@ export class FileExpertLibrary implements ExpertLibrary {
 
     const cached = await this.repo.findBySlug(validated.slug);
     if (cached) {
+      const displaySlug = toSingleLineDisplay(validated.slug);
+      const displayPath = toSingleLineDisplay(yamlPath);
       console.warn(
-        `[expert-library] Recovering stale expert cache row for slug "${validated.slug}" because ${yamlPath} was missing; rewriting metadata from YAML source of truth.`,
+        `[expert-library] Recovering stale expert cache row for slug "${displaySlug}" because ${displayPath} was missing; rewriting metadata from YAML source of truth.`,
       );
     }
     try {
