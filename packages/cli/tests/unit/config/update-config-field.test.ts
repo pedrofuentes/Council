@@ -184,35 +184,108 @@ describe("updateConfigField", () => {
     await expect(fs.readFile(configPath, "utf-8")).resolves.toBe(original);
   });
 
-  it("preserves the original config when a write fails mid-update", async () => {
+  it("preserves the original config when the temp write fails mid-update", async () => {
     await fs.mkdir(testHome, { recursive: true });
     const original = "defaults:\n  model: claude-sonnet-4.5\n  engine: mock\n";
     await fs.writeFile(configPath, original, "utf-8");
 
     const writeError = Object.assign(new Error("disk full"), { code: "ENOSPC" });
-    const writeFileSpy = vi.mocked(fs.writeFile).mockImplementation(
-      async (...args: Parameters<typeof fs.writeFile>) => {
-        const [filePath, data, options] = args;
-        const text = typeof data === "string" ? data : data.toString();
-        await actualFs.writeFile(filePath, `${text.slice(0, 12)}\n`, options);
-        throw writeError;
-      },
-    );
+    let tempOpenPath: unknown;
+
+    // The hardened writer creates its temp file with an exclusive `wx` open and
+    // writes THROUGH that handle (never via a bare path). Force the handle's
+    // write to fail (disk full) and assert the original config is left intact.
+    vi.mocked(fs.open).mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+      const [openPath, flags] = args;
+      const handle = await actualFs.open(...args);
+      if (isUniqueTempPath(openPath, configPath) && String(flags).includes("w")) {
+        tempOpenPath = openPath;
+        vi.spyOn(handle, "writeFile").mockRejectedValue(writeError);
+      }
+      return handle;
+    });
 
     await expect(updateConfigField("defaults.model", "gpt-5")).rejects.toMatchObject({
       code: "ENOSPC",
     });
     await expect(fs.readFile(configPath, "utf-8")).resolves.toBe(original);
+    expect(isUniqueTempPath(tempOpenPath, configPath)).toBe(true);
+  });
 
-    const tempWriteCall = writeFileSpy.mock.calls.find(([filePath]) =>
-      isUniqueTempPath(filePath, configPath),
+  it("does not follow a symlink pre-planted at the temp path (no arbitrary write)", async () => {
+    await fs.mkdir(testHome, { recursive: true });
+    const original = "defaults:\n  model: claude-sonnet-4.5\n  engine: mock\n";
+    await fs.writeFile(configPath, original, "utf-8");
+
+    // A file an attacker on a shared temp dir wants clobbered via the config write.
+    const victimPath = path.join(testHome, "victim.txt");
+    const victimContent = "DO-NOT-CLOBBER\n";
+    await fs.writeFile(victimPath, victimContent, "utf-8");
+
+    // Simulate an attacker pre-planting a symlink at the EXACT temp path the
+    // writer is about to use: intercept the first temp-path create (whether the
+    // writer uses a bare `fs.writeFile` or an exclusive `fs.open`) and drop a
+    // symlink -> victim there, then let the real operation run against it. A
+    // symlink-following write (the pre-#1925 behavior) clobbers the victim; an
+    // exclusive `wx` open fails with EEXIST and the writer must recover.
+    let planted = false;
+    const plantSymlinkAt = async (target: unknown): Promise<void> => {
+      if (!planted && isUniqueTempPath(target, configPath)) {
+        planted = true;
+        await actualFs.symlink(victimPath, target);
+      }
+    };
+    vi.mocked(fs.writeFile).mockImplementation(async (...args: Parameters<typeof fs.writeFile>) => {
+      await plantSymlinkAt(args[0]);
+      return actualFs.writeFile(...args);
+    });
+    vi.mocked(fs.open).mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+      const [openPath, flags] = args;
+      if (String(flags).includes("w")) {
+        await plantSymlinkAt(openPath);
+      }
+      return actualFs.open(...args);
+    });
+
+    await updateConfigField("defaults.model", "gpt-5");
+
+    // The victim must be untouched: the write must not have followed the symlink.
+    await expect(fs.readFile(victimPath, "utf-8")).resolves.toBe(victimContent);
+    // ...and the legitimate update still lands in config.yaml (the writer
+    // recovered to a fresh, unguessable temp name instead of following it).
+    const updated = await loadConfig();
+    expect(updated.defaults.model).toBe("gpt-5");
+  });
+
+  it("uses a cryptographically-random temp file name, not a predictable pid/timestamp", async () => {
+    await fs.mkdir(testHome, { recursive: true });
+    await fs.writeFile(
+      configPath,
+      "defaults:\n  model: claude-sonnet-4.5\n  engine: mock\n",
+      "utf-8",
     );
 
-    expect(tempWriteCall).toBeDefined();
-    const [tmpPath, writtenData, encoding] = tempWriteCall ?? [];
-    expect(isUniqueTempPath(tmpPath, configPath)).toBe(true);
-    expect(writtenData).toEqual(expect.any(String));
-    expect(encoding).toBe("utf-8");
+    const tempPaths: string[] = [];
+    const record = (target: unknown): void => {
+      if (isUniqueTempPath(target, configPath)) tempPaths.push(target);
+    };
+    vi.mocked(fs.writeFile).mockImplementation(async (...args: Parameters<typeof fs.writeFile>) => {
+      record(args[0]);
+      return actualFs.writeFile(...args);
+    });
+    vi.mocked(fs.open).mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+      const [openPath, flags] = args;
+      if (String(flags).includes("w")) record(openPath);
+      return actualFs.open(...args);
+    });
+
+    await updateConfigField("defaults.model", "gpt-5");
+
+    expect(tempPaths).toHaveLength(1);
+    // Between the config path and the `.tmp` suffix there must be a long run of
+    // hex entropy (>= 8 random bytes = 16 hex chars), defeating pid+timestamp
+    // guessing. A predictable `<pid>.<Date.now()>` suffix will not match.
+    expect(tempPaths[0]).toMatch(/\.[0-9a-f]{16,}\.tmp$/);
   });
 
   it("removes the temp file and preserves the config when rename fails", async () => {
