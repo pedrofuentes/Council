@@ -98,6 +98,23 @@ export function toSingleLineDisplay(text) {
 }
 
 /**
+ * Format a fatal (top-level, outside the per-pin loop) error into a single safe
+ * CI-log line. A caught error's `stack`/`message` can transitively include
+ * attacker-editable workflow text — e.g. a control-char-laden `uses:` filename
+ * surfaced through a `readFile`/parse failure — so it is routed through
+ * {@link toSingleLineDisplay} (stripping escape/control bytes and folding to one
+ * line), exactly like the per-pin error output in `main()`. The raw error is
+ * never compared or resolved against; this is display-only (issue #2181).
+ *
+ * @param {unknown} error
+ * @returns {string}
+ */
+export function formatFatalError(error) {
+  const raw = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  return toSingleLineDisplay(raw);
+}
+
+/**
  * A pinned action reference that carries a verifiable version comment.
  * @typedef {object} ActionPin
  * @property {string} file  - workflow filename the pin was found in
@@ -298,10 +315,16 @@ export function ghErrorText(error) {
   if (typeof err.stdout === "string" && err.stdout.length > 0) parts.push(err.stdout);
   if (typeof err.code === "string" && err.code.length > 0) parts.push(err.code);
   // NOTE: err.message is intentionally omitted — see the doc comment above.
-  // Fall back to String(error) only when nothing gh/OS-generated is available
-  // (e.g. a plain Error test double), which still exposes an embedded HTTP
-  // status without echoing a shell command line.
-  return parts.length > 0 ? parts.join("\n") : String(error);
+  if (parts.length > 0) return parts.join("\n");
+  // No gh/OS-generated field was captured. `String(error)` would re-admit Node's
+  // echoed "Command failed: gh api repos/<owner>/<repo>/..." line, smuggling the
+  // attacker-editable owner/repo/tag back into the classifier and letting a
+  // transient-sounding name steer the retry gate (issues #2184, #2187). Strip
+  // that echoed command line; any genuinely gh/OS-generated remainder is kept,
+  // and an empty result classifies TERMINAL — fail-closed, never a false retry.
+  return String(error)
+    .replace(/^(?:[\w$.]*Error:\s*)?Command failed:.*$/gm, "")
+    .trim();
 }
 
 /** Node/libc socket + DNS + connection syscall codes that are always retryable. */
@@ -627,8 +650,7 @@ if (import.meta.url === invokedPath) {
   main()
     .then((code) => process.exit(code))
     .catch((error) => {
-      const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
-      console.error(`verify-action-pins: fatal: ${message}`);
+      console.error(`verify-action-pins: fatal: ${formatFatalError(error)}`);
       process.exit(1);
     });
 }

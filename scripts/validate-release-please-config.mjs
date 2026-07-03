@@ -31,9 +31,84 @@
  * otherwise.
  */
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve, sep } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+
+// --- Terminal-safe display sanitizer -----------------------------------------
+//
+// This validator reads attacker-controllable JSON — a fork `pull_request` can
+// edit `release-please-config.json` / `.release-please-manifest.json` — and
+// echoes offending keys/values (and, on a read/parse failure, the path and the
+// JSON parser's message) to the Actions log. Untrusted control/escape bytes in
+// that text could spoof log lines or manipulate the terminal (OSC title /
+// clipboard / cursor) when raw logs are viewed. Every DISPLAYED fragment is
+// therefore sanitized; the RAW values still drive every validity decision.
+//
+// Self-contained mirror of the repo's canonical `toSingleLineDisplay` in
+// packages/cli/src/cli/strip-control-chars.ts (and of the identical mirror in
+// scripts/verify-action-pins.mjs) — this standalone Node ESM script cannot
+// import from packages/cli. Keep the three in sync.
+
+// Order matters: match the multi-char ANSI/OSC/DCS sequences BEFORE the C0
+// character class, otherwise the class would consume the leading ESC (\x1B is
+// in the \x0E-\x1F range) and leave the sequence body visible. Every branch is
+// non-backtracking (negated classes / disjoint ranges) so unterminated
+// introducers sanitize in linear time (ReDoS guard). Branches, in order:
+//   - CSI:            ESC [ ... final byte (private/intermediate bytes allowed)
+//   - OSC:            ESC ] ... (BEL | ST), optional terminator
+//   - DCS/SOS/PM/APC: ESC (P|X|^|_) ... ST, optional terminator
+//   - C0 (except TAB/LF/CR) + DEL + C1 controls
+//   - strong bidi override/isolate controls
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHAR_PATTERN =
+  /\x1B\[[0-?]*[ -/]*[@-~]|\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)?|\x1B[P^_X][^\x1B]*(?:\x1B\\)?|[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]|[\u202A-\u202E\u2066-\u2069]/gs;
+
+/** Zero-width characters (invisible; usable for obfuscation/injection). */
+// eslint-disable-next-line no-misleading-character-class
+const ZERO_WIDTH_CHARS = /[\u200B\u200C\u200D\uFEFF]/g;
+
+/** Weak Bidi_Control marks and hidden default-ignorable format characters. */
+const HIDDEN_FORMAT_CHARS =
+  /[\u00AD\u061C\u115F\u1160\u200E\u200F\u2060-\u2064\u3164\uFFA0\u{E0000}-\u{E007F}]/gu;
+
+/**
+ * Sanitize untrusted text for single-line display in CI logs. Strips ANSI
+ * CSI/OSC/DCS/SOS/PM/APC escape sequences, C0 (except TAB/LF/CR), DEL and C1
+ * controls, strong bidi controls, and zero-width/hidden format characters, then
+ * folds any surviving CR/LF/TAB/U+2028/U+2029 run to a single space so the
+ * result always renders on one line. Display-only: callers keep validating and
+ * comparing the RAW value.
+ *
+ * @param {unknown} text
+ * @returns {string}
+ */
+export function toSingleLineDisplay(text) {
+  return String(text)
+    .replace(CONTROL_CHAR_PATTERN, "")
+    .replace(ZERO_WIDTH_CHARS, "")
+    .replace(HIDDEN_FORMAT_CHARS, "")
+    .replace(/[\r\n\t\u2028\u2029]+/g, " ");
+}
+
+/**
+ * True when `candidatePath` resolves to `rootPath` itself or a location nested
+ * under it. Confines the validator's config/manifest paths to the repo root
+ * (defense-in-depth, issue #2181 item 7): a supplied path must not escape via
+ * `..`, an absolute path, or a sibling-prefix look-alike — "/repo-evil" is NOT
+ * under "/repo".
+ *
+ * @param {string} candidatePath
+ * @param {string} rootPath
+ * @returns {boolean}
+ */
+export function isPathWithinRoot(candidatePath, rootPath) {
+  const root = resolve(rootPath);
+  const candidate = resolve(candidatePath);
+  if (candidate === root) return true;
+  const rootWithSep = root.endsWith(sep) ? root : root + sep;
+  return candidate.startsWith(rootWithSep);
+}
 
 /**
  * Release strategies release-please v17 registers (src/factory.ts `releasers`).
@@ -184,7 +259,7 @@ export function validateReleasePleaseConfig(config, manifest) {
   // Unknown / removed-in-v5 root keys (release-please rejects unknown keys).
   for (const key of Object.keys(config)) {
     if (!KNOWN_ROOT_KEYS.has(key)) {
-      errors.push(`Unknown release-please config key at root: "${key}".`);
+      errors.push(`Unknown release-please config key at root: "${toSingleLineDisplay(key)}".`);
     }
   }
 
@@ -192,7 +267,7 @@ export function validateReleasePleaseConfig(config, manifest) {
   // it when present.
   const rootReleaseType = config["release-type"];
   if (rootReleaseType !== undefined && !KNOWN_RELEASE_TYPES.has(rootReleaseType)) {
-    errors.push(`Invalid root release-type: "${rootReleaseType}".`);
+    errors.push(`Invalid root release-type: "${toSingleLineDisplay(rootReleaseType)}".`);
   }
 
   // `packages` is the sole required key; it must be a non-empty object.
@@ -212,17 +287,21 @@ export function validateReleasePleaseConfig(config, manifest) {
   for (const path of configPaths) {
     const pkg = packages[path];
     if (!isPlainObject(pkg)) {
-      errors.push(`Package "${path}" must map to a config object.`);
+      errors.push(`Package "${toSingleLineDisplay(path)}" must map to a config object.`);
       continue;
     }
     for (const key of Object.keys(pkg)) {
       if (!KNOWN_PACKAGE_KEYS.has(key)) {
-        errors.push(`Unknown release-please config key for package "${path}": "${key}".`);
+        errors.push(
+          `Unknown release-please config key for package "${toSingleLineDisplay(path)}": "${toSingleLineDisplay(key)}".`,
+        );
       }
     }
     const releaseType = pkg["release-type"];
     if (releaseType !== undefined && !KNOWN_RELEASE_TYPES.has(releaseType)) {
-      errors.push(`Invalid release-type for package "${path}": "${releaseType}".`);
+      errors.push(
+        `Invalid release-type for package "${toSingleLineDisplay(path)}": "${toSingleLineDisplay(releaseType)}".`,
+      );
     }
   }
 
@@ -233,7 +312,7 @@ export function validateReleasePleaseConfig(config, manifest) {
   for (const path of manifestPaths) {
     if (!isValidSemver(manifest[path])) {
       errors.push(
-        `Manifest version for "${path}" is not valid semver: ${JSON.stringify(manifest[path])}.`,
+        `Manifest version for "${toSingleLineDisplay(path)}" is not valid semver: ${toSingleLineDisplay(JSON.stringify(manifest[path]))}.`,
       );
     }
   }
@@ -245,7 +324,7 @@ export function validateReleasePleaseConfig(config, manifest) {
   for (const path of configPaths) {
     if (!manifestSet.has(path)) {
       errors.push(
-        `Package "${path}" is declared in release-please-config.json but has no entry in .release-please-manifest.json.`,
+        `Package "${toSingleLineDisplay(path)}" is declared in release-please-config.json but has no entry in .release-please-manifest.json.`,
       );
     }
   }
@@ -253,7 +332,7 @@ export function validateReleasePleaseConfig(config, manifest) {
   for (const path of manifestPaths) {
     if (!configSet.has(path)) {
       errors.push(
-        `Manifest entry "${path}" has no matching package in release-please-config.json.`,
+        `Manifest entry "${toSingleLineDisplay(path)}" has no matching package in release-please-config.json.`,
       );
     }
   }
@@ -291,13 +370,29 @@ function main(argv) {
     ? resolve(argv[1])
     : resolve(repoRoot, ".release-please-manifest.json");
 
+  // Confine both paths to the repo root before reading anything. The shipped
+  // workflow passes no positional args (defaults resolve under repoRoot), but a
+  // supplied path must never escape via `..`, an absolute path, or a sibling-
+  // prefix look-alike (defense-in-depth, issue #2181 item 7).
+  for (const candidate of [configPath, manifestPath]) {
+    if (!isPathWithinRoot(candidate, repoRoot)) {
+      console.error(
+        `\u2716 Refusing to read a path outside the repository root: ${toSingleLineDisplay(candidate)}`,
+      );
+      return 1;
+    }
+  }
+
   let config;
   let manifest;
   try {
     config = loadJson(configPath);
     manifest = loadJson(manifestPath);
   } catch (err) {
-    console.error(`\u2716 ${err instanceof Error ? err.message : String(err)}`);
+    // The path and the JSON parser's message can both echo attacker-controlled
+    // bytes (a malicious file's contents surface in JSON.parse errors), so the
+    // whole displayed message is sanitized (issue #2181 item 6).
+    console.error(`\u2716 ${toSingleLineDisplay(err instanceof Error ? err.message : String(err))}`);
     return 1;
   }
 
