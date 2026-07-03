@@ -1,0 +1,85 @@
+# .dockerignore — build-context exclusions for the ClusterFuzzLite fuzz image.
+#
+# .clusterfuzzlite/Dockerfile builds with the context rooted at the repo root
+# and runs `COPY . $SRC/council`. Without this file that copy would bake the
+# ENTIRE tree — .git history, local .env / secret material, Council SQLite
+# databases, editor/OS junk, .worktrees/, and build output — into the published
+# fuzz image (secret-exposure + bloat). Docker reads this file from the
+# build-context root, so it filters exactly what `COPY .` sends.
+#
+# This is a DENY-LIST: it names what to EXCLUDE and never uses a `*` allow-list,
+# so the inputs the fuzz build compiles from can't be accidentally dropped.
+# Those inputs stay INCLUDED: the root package.json (read by build.sh for the
+# pinned tsc version), the whole .clusterfuzzlite/ dir (build.sh,
+# tsconfig.fuzz.json, package.json, fuzz_*.js) and
+# packages/cli/src/cli/{strip-control-chars,hidden-format-chars}.ts.
+# node_modules is excluded on purpose — build.sh installs typescript and
+# Jazzer.js into isolated temp dirs and never uses committed node_modules.
+#
+# Keep roughly in sync with .gitignore.
+
+# --- Version control metadata (not needed to compile the fuzz targets) ---
+.git
+.gitignore
+.gitattributes
+
+# --- Dependencies (rebuilt in-container by build.sh; never copied in) ---
+**/node_modules
+
+# --- Build / transpile / coverage output (regenerated; never a build input) ---
+**/dist
+**/dist-fuzz
+**/coverage
+**/.cache
+**/*.tsbuildinfo
+**/.vitest-cache
+.copilot-coverage-out
+.lighthouseci
+
+# --- Worktrees & agent scratch (may hold other branches' trees / secrets) ---
+.worktrees
+.agent-backup
+
+# --- Local env / secret material — MUST never enter the image ---
+.env
+.env.*
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+*.local
+secrets
+.npmrc
+
+# --- Council runtime data (local SQLite databases can hold user content) ---
+.council
+**/*.db
+**/*.db-wal
+**/*.db-shm
+
+# --- Logs ---
+**/*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Editor / OS junk ---
+.vscode
+.idea
+**/*.swp
+**/*.swo
+**/.DS_Store
+Thumbs.db
+
+# --- Agent / Sentinel / CI scratch not needed by the fuzz compile ---
+.sentinel
+.sentinel-*.patch
+.sentinel-*.log
+.impeccable
+.copilot
+local-docs
+
+# --- CI / container config the fuzz compile does not read ---
+.github
+.dockerignore
