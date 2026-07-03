@@ -283,7 +283,7 @@ export function assertManagedDocsDirContained(
   panelName: string,
 ): void {
   if (!path.resolve(candidate).startsWith(panelsRoot + path.sep)) {
-    throw new Error(
+    throw new CliUserError(
       `Refusing to scan: resolved docs path escapes panels directory (name="${panelName}")`,
     );
   }
