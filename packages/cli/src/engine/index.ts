@@ -37,6 +37,16 @@ export type {
 import type { EngineEvent, ExpertSpec, SendOptions } from "./types.js";
 
 /**
+ * Structural brand marking an engine as Council's deterministic, in-memory
+ * {@link MockEngine} (trusted identity). The auto-composer's fallback gate
+ * reads this (#728, #1928 G-1) instead of the minification-fragile
+ * `constructor.name === "MockEngine"`: a symbol-keyed brand survives identifier
+ * mangling and subclassing, and cannot be forged from untrusted composer
+ * response text, so only a genuine mock — never a real provider — satisfies it.
+ */
+export const DETERMINISTIC_MOCK_ENGINE: unique symbol = Symbol("council.engine.deterministicMock");
+
+/**
  * Provider-agnostic AI engine consumed by the debate orchestrator.
  *
  * Lifecycle:
@@ -66,6 +76,14 @@ import type { EngineEvent, ExpertSpec, SendOptions } from "./types.js";
  *   - `addExpert(spec)` with an already-registered `spec.id` MUST throw.
  */
 export interface CouncilEngine {
+  /**
+   * Structural brand identifying the deterministic, offline {@link MockEngine}
+   * (see {@link DETERMINISTIC_MOCK_ENGINE}). Real providers leave it unset;
+   * only the mock sets it `true`. The auto-composer's fallback gate reads this
+   * trusted identity marker rather than `constructor.name` (#1928 G-1).
+   */
+  readonly [DETERMINISTIC_MOCK_ENGINE]?: true;
+
   /**
    * Whether this engine reports real, billable cost/usage metrics worth
    * surfacing to the user. Drives the renderer's cost counter rather than a

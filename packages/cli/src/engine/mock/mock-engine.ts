@@ -23,6 +23,7 @@ import type {
   ExpertSpec,
   SendOptions,
 } from "../index.js";
+import { DETERMINISTIC_MOCK_ENGINE } from "../index.js";
 
 /**
  * Recoverability mapping for {@link EngineErrorCode}.
@@ -206,6 +207,13 @@ interface InFlight {
 }
 
 export class MockEngine implements CouncilEngine {
+  /**
+   * Structural brand: trusted deterministic-mock identity read by the
+   * auto-composer's fallback gate (#1928 G-1), robust to minification and
+   * subclassing unlike `constructor.name`.
+   */
+  readonly [DETERMINISTIC_MOCK_ENGINE] = true as const;
+
   /** Mock responses carry synthetic, non-billable cost — suppress the counter. */
   readonly supportsCostMetrics = false;
 
