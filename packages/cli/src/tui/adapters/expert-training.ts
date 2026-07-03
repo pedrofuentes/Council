@@ -138,7 +138,9 @@ export async function stageDocumentFiles(
     for (const inputPath of paths) {
       const stats = await fs.lstat(inputPath);
       if (!stats.isFile()) {
-        throw new Error(`Document path is not a regular file: ${inputPath}`);
+        // The path is file-derived, so sanitize it before it can reach a
+        // terminal (mirrors the oversized-file diagnostic below).
+        throw new Error(`Document path is not a regular file: ${toSingleLineDisplay(inputPath)}`);
       }
       if (maxBytes !== undefined && stats.size > maxBytes) {
         // The basename is file-derived, so sanitize it before it can reach a
@@ -150,8 +152,10 @@ export async function stageDocumentFiles(
       }
       const destination = path.join(docsPath, path.basename(inputPath));
       if (await destinationExists(destination)) {
+        // The basename is file-derived, so sanitize it before it can reach a
+        // terminal (mirrors the oversized-file diagnostic above).
         throw new Error(
-          `A document named "${path.basename(inputPath)}" already exists for this persona.`,
+          `A document named "${toSingleLineDisplay(path.basename(inputPath))}" already exists for this persona.`,
         );
       }
       // COPYFILE_EXCL is a second line of defence: if another writer creates the
