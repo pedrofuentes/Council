@@ -19,8 +19,10 @@
  * for a best-effort local counter that is acceptable (and matches the update
  * notifier's cache semantics).
  */
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import { writeFileAtomicSafe } from "../../core/fs/atomic-write.js";
 
 export const TELEMETRY_COUNTERS_FILENAME = "telemetry-counters.json";
 
@@ -61,15 +63,14 @@ export async function readCounters(filePath: string): Promise<Record<string, num
 }
 
 /**
- * Write the counter map atomically (temp file + rename). Creates the parent
- * directory if needed; mode `0o600` keeps the (already content-free) file
- * private, consistent with other Council-written files.
+ * Write the counter map atomically (temp file + rename) via
+ * {@link writeFileAtomicSafe}: the temp file uses a cryptographically-random
+ * name and an exclusive, no-symlink-follow open (CWE-59 hardening, #2206).
+ * Creates the parent directory if needed; mode `0o600` keeps the (already
+ * content-free) file private, consistent with other Council-written files.
  */
 export async function writeCounters(filePath: string, counters: TelemetryCounters): Promise<void> {
-  await mkdir(dirname(filePath), { recursive: true });
-  const tempPath = `${filePath}.${process.pid}.tmp`;
-  await writeFile(tempPath, JSON.stringify(counters), { encoding: "utf8", mode: 0o600 });
-  await rename(tempPath, filePath);
+  await writeFileAtomicSafe(filePath, JSON.stringify(counters), { mode: 0o600 });
 }
 
 /**
