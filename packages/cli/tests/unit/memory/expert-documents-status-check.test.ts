@@ -220,12 +220,25 @@ describe("expert_documents.status CHECK constraint (migration 002, #340)", () =>
         expect(versions).toEqual([1, 2]);
 
         // All pre-existing rows survive the table rebuild, values intact.
-        const docs = await db
-          .selectFrom("expert_documents")
-          .select(["id", "status"])
-          .orderBy("id")
-          .execute();
-        expect(docs.map((d) => d.status)).toEqual([...VALID_STATUSES]);
+        // Assert the FULL seeded row (every column), not just id+status, so a
+        // regression that dropped or mutated any column during the rebuild
+        // (checksum, size_bytes, word_count, file_path, filename, processed_at,
+        // created_at) is caught.
+        const docs = await db.selectFrom("expert_documents").selectAll().orderBy("id").execute();
+        expect(docs).toEqual(
+          VALID_STATUSES.map((status, i) => ({
+            id: `d${i}`,
+            expert_slug: "ceo",
+            file_path: `/p/d${i}.md`,
+            filename: `d${i}.md`,
+            checksum: "c",
+            size_bytes: 1,
+            word_count: 1,
+            status,
+            processed_at: null,
+            created_at: "2025-01-01T00:00:00.000Z",
+          })),
+        );
 
         // The rebuilt table now enforces the CHECK and kept its lookup index.
         expect(await expertDocumentsTableSql(db)).toMatch(/CHECK\s*\(\s*status\s+IN\s*\(/i);
@@ -254,6 +267,55 @@ describe("expert_documents.status CHECK constraint (migration 002, #340)", () =>
         expect(Number(count.c)).toBe(1);
       } finally {
         await second.destroy();
+      }
+    }, 30_000);
+
+    it("fails loud and rolls back when a pre-existing row has an out-of-set status", async () => {
+      // A database created under the OLD, string-typed (no-CHECK) schema could
+      // hold an out-of-set status that migration 002's CHECK forbids. The
+      // rebuild copy must FAIL and roll the whole migration back rather than
+      // silently coercing or dropping the offending row.
+      seedLegacyDatabase(dbPath, [
+        { id: "d0", status: "pending" },
+        { id: "bad", status: "weird" },
+      ]);
+
+      await expect(createDatabase(dbPath)).rejects.toThrow();
+
+      // Reopen with a FRESH raw connection: the rollback must have left the DB
+      // exactly as it was pre-002 — schema_version still [1], the legacy table
+      // shape (no CHECK), and every original row present with its status
+      // unchanged. Nothing dropped, nothing mutated.
+      const raw = new DatabaseSync(dbPath);
+      try {
+        const versions = (
+          raw.prepare("SELECT version FROM schema_version ORDER BY version").all() as {
+            readonly version: number;
+          }[]
+        ).map((r) => r.version);
+        expect(versions).toEqual([1]);
+
+        const tableSql = String(
+          (
+            raw
+              .prepare(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'expert_documents'",
+              )
+              .get() as { readonly sql: string }
+          ).sql,
+        );
+        expect(tableSql).not.toMatch(/CHECK\s*\(\s*status\s+IN/i);
+
+        const docs = raw.prepare("SELECT id, status FROM expert_documents ORDER BY id").all() as {
+          readonly id: string;
+          readonly status: string;
+        }[];
+        expect(docs).toEqual([
+          { id: "bad", status: "weird" },
+          { id: "d0", status: "pending" },
+        ]);
+      } finally {
+        raw.close();
       }
     }, 30_000);
   });

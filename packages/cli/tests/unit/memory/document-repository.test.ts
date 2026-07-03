@@ -115,6 +115,19 @@ describe("DocumentRepository", () => {
     expect(after?.status).toBe("processed");
   });
 
+  it("updateStatus() rejects a non-DocumentStatus string at compile time (#340)", async () => {
+    // Compile-time guard: the status parameter is a DocumentStatus union, NOT a
+    // bare string. Widening it back to `string` would silence the error below,
+    // making the @ts-expect-error itself an unused-directive error that breaks
+    // the build/typecheck — that is what catches the reversion. At runtime the
+    // DB CHECK also rejects the out-of-set value, so the call rejects.
+    const created = await repo.create(sampleDoc());
+    await expect(
+      // @ts-expect-error — "not-a-status" is not a DocumentStatus.
+      repo.updateStatus(created.id, "not-a-status"),
+    ).rejects.toThrow();
+  });
+
   it("updateChecksum() updates checksum/size/wordCount", async () => {
     const created = await repo.create(sampleDoc());
     await repo.updateChecksum(created.id, "newhash", 2048, 400);
@@ -292,7 +305,11 @@ describe("DocumentRepository", () => {
   });
 
   describe("clearForRetrain atomicity and rollback honesty (#383, #425)", () => {
-    async function seedFtsRow(database: CouncilDatabase, slug: string, body: string): Promise<void> {
+    async function seedFtsRow(
+      database: CouncilDatabase,
+      slug: string,
+      body: string,
+    ): Promise<void> {
       await sql`INSERT INTO document_index (content, source_type, source_slug, file_path)
                 VALUES (${body}, 'expert', ${slug}, ${"/p/" + body + ".md"})`.execute(database);
     }
