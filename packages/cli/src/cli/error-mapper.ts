@@ -59,6 +59,7 @@ export function formatEngineError(input: EngineError | ErrorLike | Error): strin
   let retryAfterMs: number | undefined;
   let provider: string | undefined;
   let model: string | undefined;
+  let causeMessage: string | undefined;
 
   if (input instanceof Error) {
     // Thrown Error path — may have a tagged `code` we attached upstream.
@@ -89,6 +90,7 @@ export function formatEngineError(input: EngineError | ErrorLike | Error): strin
         retryAfterMs = fromCause.retryAfterMs;
         provider = fromCause.provider;
         model = model ?? fromCause.model;
+        causeMessage = fromCause.message;
       }
     }
   } else {
@@ -100,7 +102,13 @@ export function formatEngineError(input: EngineError | ErrorLike | Error): strin
   }
 
   const hint = hintForCode(code, { message, retryAfterMs, provider, model });
-  return `${hint}\n\n  Underlying: ${message}`;
+  // When a code is recovered from the cause chain, the cause's own message
+  // carries the actionable detail (e.g. "missing Copilot token"); append it so
+  // it isn't lost behind the outer wrapper message ("engine.start() failed"),
+  // which the auth/PROVIDER_ERROR hints tell users to report (#1913).
+  const underlying =
+    causeMessage && !message.includes(causeMessage) ? `${message}: ${causeMessage}` : message;
+  return `${hint}\n\n  Underlying: ${underlying}`;
 }
 
 function hintForCode(
@@ -210,6 +218,7 @@ function findEngineErrorInCause(cause: unknown, depth = 0): ErrorLike | undefine
     const candidate = cause as {
       readonly code?: unknown;
       readonly cause?: unknown;
+      readonly message?: unknown;
       readonly retryAfterMs?: unknown;
       readonly provider?: unknown;
       readonly model?: unknown;
@@ -217,12 +226,14 @@ function findEngineErrorInCause(cause: unknown, depth = 0): ErrorLike | undefine
     if (typeof candidate.code === "string") {
       // Copy only well-typed fields, omitting undefined ones so the snapshot
       // satisfies ErrorLike under exactOptionalPropertyTypes.
+      const message = typeof candidate.message === "string" ? candidate.message : undefined;
       const retryAfterMs =
         typeof candidate.retryAfterMs === "number" ? candidate.retryAfterMs : undefined;
       const provider = typeof candidate.provider === "string" ? candidate.provider : undefined;
       const model = typeof candidate.model === "string" ? candidate.model : undefined;
       return {
         code: candidate.code,
+        ...(message !== undefined ? { message } : {}),
         ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
         ...(provider !== undefined ? { provider } : {}),
         ...(model !== undefined ? { model } : {}),
@@ -243,7 +254,7 @@ function findEngineErrorInCause(cause: unknown, depth = 0): ErrorLike | undefine
 function inferCodeFromMessage(message: string): EngineErrorCode | undefined {
   const lower = message.toLowerCase();
   if (
-    /\b(?:unauthenticated|unauthorized|not\s+authenticated|not\s+authorized|authentication|forbidden|401|403|invalid\s+token|missing\s+token|expired\s+token|credentials?|gh\s+auth|sign\s?in|log\s?in)\b/.test(
+    /\b(?:unauthenticated|unauthorized|not\s+authenticated|not\s+authorized|authentication|401|invalid\s+token|missing\s+token|expired\s+token|credentials?|gh\s+auth|sign\s?in|log\s?in)\b/.test(
       lower,
     )
   ) {
