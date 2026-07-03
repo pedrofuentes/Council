@@ -20,6 +20,7 @@ import {
 } from "../../../config/index.js";
 import type { ChatTurn } from "../../../core/chat/chat-session.js";
 import type { ExpertDefinition } from "../../../core/expert.js";
+import { SLUG_RE } from "../../../core/expert-library.js";
 import { buildSystemPrompt, type PanelMembership } from "../../../core/prompt-builder.js";
 import type { CouncilEngine, ExpertSpec } from "../../../engine/index.js";
 import type { CouncilDatabase } from "../../../memory/db.js";
@@ -654,17 +655,6 @@ async function listUnindexedDocFiles(docsPath: string): Promise<readonly string[
     return [];
   }
 }
-
-/**
- * Managed-expert slug shape gate. Mirrors the canonical `SLUG_RE` enforced by
- * `FileExpertLibrary` (see `core/expert-library.ts`); kept as a module-local
- * copy in keeping with the other local copies (`core/template-migration.ts`,
- * `cli/commands/expert.ts`) so this security-critical sink carries no
- * cross-module coupling. A conforming slug is lowercase alphanumeric plus
- * hyphens, 1-64 chars, so it can contain no path separators, `..` segments, or
- * control bytes.
- */
-const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /**
  * Generic (non-persona) experts never index documents. If such an expert has
