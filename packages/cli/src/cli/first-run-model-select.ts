@@ -5,6 +5,13 @@ import { discoverAvailableModels, type ModelDiscoveryResult } from "../engine/co
 import type { ModelId } from "../engine/models.js";
 
 import { CliUserError } from "./cli-user-error.js";
+import {
+  hasLiveOnlyModels,
+  isLiveOnlyModel,
+  LIVE_ONLY_MODEL_ANNOTATION,
+  LIVE_ONLY_MODEL_LEGEND,
+  type ModelDiscoverySource,
+} from "./model-annotations.js";
 import { renderBanner } from "./renderers/banner.js";
 import type { Writer } from "./commands/writer.js";
 
@@ -59,12 +66,22 @@ function isInteractiveInput(input: TtyReadableStream | undefined): boolean {
   return activeInput.isTTY === true;
 }
 
-export function writeModelList(write: Writer, models: readonly string[]): void {
+export function writeModelList(
+  write: Writer,
+  models: readonly string[],
+  source: ModelDiscoverySource,
+): void {
   write("Available models:\n");
   models.forEach((model, index) => {
     const recommendedSuffix = index === 0 ? " (recommended)" : "";
-    write(`  ${index + 1}. ${model}${recommendedSuffix}\n`);
+    // Flag live-discovered ids the offline `convene --model` validator rejects
+    // so the user knows before selecting one (bug F02 residual — #1094).
+    const liveOnlySuffix = isLiveOnlyModel(model, source) ? LIVE_ONLY_MODEL_ANNOTATION : "";
+    write(`  ${index + 1}. ${model}${recommendedSuffix}${liveOnlySuffix}\n`);
   });
+  if (hasLiveOnlyModels(models, source)) {
+    write(`\n${LIVE_ONLY_MODEL_LEGEND}\n`);
+  }
   write("\n");
 }
 
@@ -156,7 +173,7 @@ export async function selectModelInteractively(
     throwNoModelsAvailable(write);
   }
 
-  writeModelList(write, models);
+  writeModelList(write, models, discovery.source);
 
   const interactive = isInteractiveInput(options.input);
   const selectedModel = interactive

@@ -4,6 +4,11 @@
 import { Command } from "commander";
 
 import { discoverAvailableModels, type ModelDiscoveryResult } from "../../engine/copilot/health.js";
+import {
+  annotateLiveOnlyModel,
+  hasLiveOnlyModels,
+  LIVE_ONLY_MODEL_LEGEND,
+} from "../model-annotations.js";
 import { toSingleLineDisplay } from "../strip-control-chars.js";
 
 import { defaultWriter, type Writer } from "./writer.js";
@@ -53,12 +58,18 @@ export function formatAvailableModels(
 
   let output = `${header}\n`;
 
+  // Live discovery is a superset of the offline registry, so flag any live id
+  // that offline `convene --model` would reject (bug F02 residual — #1094).
+  // Grouping still keys off the raw id; only the rendered id carries the marker.
+  const renderGroup = (ids: readonly string[]): string =>
+    ids.map((model) => annotateLiveOnlyModel(model, source)).join(", ");
+
   for (const group of MODEL_GROUPS) {
     const groupedModels = orderedModels.filter((model) => model.startsWith(group.prefix));
     if (groupedModels.length === 0) {
       continue;
     }
-    output += `  ${group.label.padEnd(labelWidth, " ")}: ${groupedModels.join(", ")}\n`;
+    output += `  ${group.label.padEnd(labelWidth, " ")}: ${renderGroup(groupedModels)}\n`;
   }
 
   // Surface routable ids that don't match a provider prefix (e.g. the `auto`
@@ -68,7 +79,11 @@ export function formatAvailableModels(
     (model) => !MODEL_GROUPS.some((group) => model.startsWith(group.prefix)),
   );
   if (ungroupedModels.length > 0) {
-    output += `  ${OTHER_GROUP_LABEL.padEnd(labelWidth, " ")}: ${ungroupedModels.join(", ")}\n`;
+    output += `  ${OTHER_GROUP_LABEL.padEnd(labelWidth, " ")}: ${renderGroup(ungroupedModels)}\n`;
+  }
+
+  if (hasLiveOnlyModels(orderedModels, source)) {
+    output += `\n${LIVE_ONLY_MODEL_LEGEND}\n`;
   }
 
   output += "\n";
