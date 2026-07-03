@@ -18,11 +18,14 @@
  * The required-input list is derived from `.clusterfuzzlite/build.sh` +
  * `.clusterfuzzlite/tsconfig.fuzz.json`:
  *   - build.sh reads the ROOT `package.json` for the pinned tsc version, runs
- *     `tsc -p .clusterfuzzlite/tsconfig.fuzz.json`, and loops `.clusterfuzzlite/fuzz_*.js`.
+ *     `tsc -p .clusterfuzzlite/tsconfig.fuzz.json`, loops `.clusterfuzzlite/fuzz_*.js`,
+ *     and `npm ci`-installs the fuzz engine from the committed lockfile in
+ *     `.clusterfuzzlite/jazzer/` ({package.json,package-lock.json}).
  *   - tsconfig.fuzz.json transpiles packages/cli/src/cli/{strip-control-chars,
  *     hidden-format-chars}.ts.
  * (node_modules is intentionally NOT required: build.sh installs typescript and
- *  Jazzer.js into isolated temp dirs and never uses committed node_modules.)
+ *  Jazzer.js into isolated temp dirs — the committed .clusterfuzzlite/jazzer/
+ *  lockfile is the build input, not any committed node_modules.)
  *
  * RED before the fix: `.dockerignore` does not exist yet, so reading it throws
  * and the existence assertion fails.
@@ -147,6 +150,8 @@ const REQUIRED_BUILD_INPUTS = [
   ".clusterfuzzlite/build.sh",
   ".clusterfuzzlite/tsconfig.fuzz.json",
   ".clusterfuzzlite/package.json",
+  ".clusterfuzzlite/jazzer/package.json",
+  ".clusterfuzzlite/jazzer/package-lock.json",
   ".clusterfuzzlite/fuzz_strip_control_chars.js",
   "packages/cli/package.json",
   "packages/cli/src/cli/strip-control-chars.ts",
