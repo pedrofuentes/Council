@@ -10,12 +10,16 @@
  *
  * The diff becomes the debate topic; the run reuses the same engine path as
  * `convene` (load template → build expert prompts → persist panel/experts →
- * stream via `runWithEngine`).
+ * stream via `runWithEngine`). With `--no-store`/`--ephemeral`, that same path
+ * runs against a throwaway in-memory database so nothing is written at rest.
  *
  * Privacy: the diff is SENT to the configured AI engine (e.g. Copilot) for
- * review. With `--engine mock` the command runs fully offline (deterministic,
- * no network) — the supported offline/test path. Nothing is sent unless the
- * user invokes this command.
+ * review, and — by default — is STORED at rest in the local council.db (the
+ * diff becomes the debate prompt persisted via the convene path). Pass
+ * `--no-store` (alias `--ephemeral`) to run the review without writing the
+ * diff/debate to council.db. With `--engine mock` the command runs fully
+ * offline (deterministic, no network) — the supported offline/test path.
+ * Nothing is sent unless the user invokes this command.
  *
  * Foundation for a future "Council reviews this PR" GitHub Action. Fetching a
  * PR (`--pr <n>`) is intentionally out of scope here — this command stays
@@ -105,6 +109,10 @@ interface ReviewOptions {
   readonly format?: string;
   readonly maxRounds?: number;
   readonly maxWords?: number;
+  /** Commander negatable flag: `--no-store` sets this to `false` (default `true`). */
+  readonly store?: boolean;
+  /** Alias for `--no-store`: run the review without persisting the diff/debate. */
+  readonly ephemeral?: boolean;
 }
 
 export function buildReviewCommand(deps: ReviewCommandDeps = {}): Command {
@@ -116,7 +124,9 @@ export function buildReviewCommand(deps: ReviewCommandDeps = {}): Command {
   cmd
     .description(
       "Run the built-in code-review expert panel over a diff and print the review. " +
-        "The diff is SENT to the configured AI engine (e.g. Copilot); use --engine mock to run offline.",
+        "The diff is SENT to the configured AI engine (e.g. Copilot) and, by default, " +
+        "STORED locally at rest in council.db. Use --engine mock to run offline; " +
+        "use --no-store to review without saving the diff.",
     )
     .option(
       "--diff-file <path>",
@@ -158,6 +168,15 @@ export function buildReviewCommand(deps: ReviewCommandDeps = {}): Command {
         return parsed;
       },
       DEFAULT_MAX_WORDS,
+    )
+    .option(
+      "--no-store",
+      "Ephemeral review: do NOT persist the diff/debate to the local council.db. " +
+        "By default the reviewed diff is stored at rest in council.db (under COUNCIL_HOME).",
+    )
+    .option(
+      "--ephemeral",
+      "Alias for --no-store: run the review without saving the diff/debate to council.db.",
     )
     .action(async (raw: ReviewOptions) => {
       // 1. Resolve the diff text from the chosen source (file / stdin / git).
@@ -211,7 +230,23 @@ export function buildReviewCommand(deps: ReviewCommandDeps = {}): Command {
         );
       }
 
-      const dbPath = path.join(getCouncilHome(), "council.db");
+      // 5b. At-rest storage notice. Independent of the engine: by default the
+      //     diff is persisted into the local council.db (as the debate prompt).
+      //     Make that transparent and surface the --no-store opt-out; when
+      //     ephemeral, confirm nothing is written to council.db.
+      const ephemeral = raw.store === false || raw.ephemeral === true;
+      if (!isQuiet()) {
+        writeError(
+          ephemeral
+            ? "ℹ Ephemeral review (--no-store): this diff is NOT saved to council.db.\n\n"
+            : "ℹ This diff is stored locally at rest in council.db. Re-run with --no-store to review without saving.\n\n",
+        );
+      }
+
+      // Ephemeral runs use a throwaway in-memory database so the same
+      // convene/persist path executes (identical output + streaming) without
+      // writing the diff/debate/panel/expert rows at rest to council.db.
+      const dbPath = ephemeral ? ":memory:" : path.join(getCouncilHome(), "council.db");
       const db = await createDatabase(dbPath);
       try {
         const experts = buildReviewExperts(
@@ -299,9 +334,13 @@ Examples:
   $ council review --base main --engine copilot            # review everything since main
   $ council review --diff-file changes.diff --engine copilot
   $ git diff | council review --diff-file - --engine copilot
+  $ council review --engine copilot --no-store             # review without saving the diff
 
-Privacy: the diff is SENT to the configured AI engine (e.g. Copilot) for review.
+Privacy: the diff is SENT to the configured AI engine (e.g. Copilot) for review,
+and by default is STORED locally at rest in your council.db (under COUNCIL_HOME).
 Use --engine mock to run fully offline with a deterministic (non-real) response.
+Use --no-store (alias --ephemeral) to run the review WITHOUT persisting the diff
+or debate to council.db.
 `,
   );
 
