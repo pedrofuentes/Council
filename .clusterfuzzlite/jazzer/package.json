@@ -4,6 +4,6 @@
   "private": true,
   "description": "Standalone manifest whose only purpose is to pin the ClusterFuzzLite fuzz engine to exactly @jazzer.js/core 2.1.0 and, via the committed package-lock.json alongside it, give build.sh an integrity-verified `npm ci` install. Pinned to 2.1.0 for glibc-2.31 (OSS-Fuzz base image) compatibility — see ../README.md and ../build.sh. Not part of the pnpm workspace (packages/*) and never published.",
   "dependencies": {
-    "@jazzer.js/core": "2.1.0"
+    "@jazzer.js/core": "4.0.0"
   }
 }
