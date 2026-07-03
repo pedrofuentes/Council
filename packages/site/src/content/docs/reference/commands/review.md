@@ -5,7 +5,7 @@ description: "Run the built-in code-review expert panel over a diff and print th
 
 > DO NOT EDIT — this file is auto-generated from the Council CLI's Commander definitions by `pnpm --filter @council-ai/site docs:generate:commands`. Run that command to regenerate it, and `pnpm --filter @council-ai/site docs:check:commands` to verify it is in sync.
 
-Run the built-in code-review expert panel over a diff and print the review. The diff is SENT to the configured AI engine (e.g. Copilot); use --engine mock to run offline.
+Run the built-in code-review expert panel over a diff and print the review. The diff is SENT to the configured AI engine (e.g. Copilot) and, by default, STORED locally at rest in council.db. Use --engine mock to run offline; use --no-store to review without saving the diff.
 
 ## Usage
 
@@ -23,3 +23,5 @@ council review [options]
 | `--format <kind>` | Output format (choices: `auto`, `json`, `plain`) | `auto` |
 | `--max-rounds <n>` | Max debate rounds (default: the code-review panel's own default) | — |
 | `--max-words <n>` | Soft per-response word budget (opening-phase anchor; structured mode scales the other phases) | `250` |
+| `--no-store` | Ephemeral review: do NOT persist the diff/debate to the local council.db. By default the reviewed diff is stored at rest in council.db (under COUNCIL\_HOME). | — |
+| `--ephemeral` | Alias for --no-store: run the review without saving the diff/debate to council.db. | — |
