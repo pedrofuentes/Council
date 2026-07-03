@@ -20,7 +20,11 @@
  *   2. `main()` — runnable entrypoint. Reads .github/workflows/<*>.yml, parses
  *      the pins, resolves each tag -> commit via `gh api` (auth from
  *      GH_TOKEN / GITHUB_TOKEN), dereferencing annotated tag objects, and
- *      reports every mismatch. Network; integration-only, not unit-tested.
+ *      reports every mismatch. The `gh api` calls are wrapped with a per-call
+ *      timeout and transient-only backoff/jitter retry whose classifier and
+ *      retry helpers (`isTransientGhError`, `withRetry`, `computeBackoffDelay`)
+ *      are pure + injectable and unit-tested; only the default `gh` executor
+ *      touches the network and stays integration-only.
  *
  * Exit code: 0 when every pin's SHA matches its tag and there are no
  * unverifiable external references; non-zero otherwise.
@@ -228,17 +232,264 @@ export function parseActionPins(yamlText, filename) {
   return { pins, unverifiable };
 }
 
-// --- Runnable entrypoint (network; integration-only, not unit-tested) --------
+// --- gh api resilience: per-call timeout + bounded backoff/jitter retry ------
+//
+// The tag -> commit resolution below shells out to `gh api`. A transient
+// GitHub API fault (HTTP 429, 5xx, or a network/timeout blip) during that call
+// used to be caught per-pin and counted as a hard failure, turning an
+// otherwise-valid PR check spuriously red (issue #2182). We therefore:
+//   1. bound every `gh api` call with an explicit timeout (no hung CI), and
+//   2. retry ONLY transient faults with exponential backoff + full jitter.
+// A genuine 404 "tag not found" (or any other 4xx) is a real provenance
+// problem and MUST fail fast — retrying it would mask a tag/SHA mismatch.
+//
+// The classifier and retry helpers are pure and injectable (executor, sleep,
+// and jitter source), so they are unit-tested with no network and no real
+// waits (see packages/cli/tests/unit/ci/verify-action-pins.test.ts). Only the
+// default `gh` executor touches the network and stays integration-only.
+
+/** Hard per-call timeout for a single `gh api` invocation (ms). */
+const GH_API_TIMEOUT_MS = 20_000;
+/** Total bounded attempts (1 initial + up to 3 retries) per `gh api` call. */
+const GH_API_RETRY_ATTEMPTS = 4;
+/** Base delay for the first backoff window (ms). */
+const GH_API_RETRY_BASE_MS = 500;
+/** Ceiling for any single backoff window before jitter (ms). */
+const GH_API_RETRY_MAX_MS = 8_000;
 
 /**
- * Invoke `gh api <path>` and parse the JSON response.
- * @param {string} apiPath
- * @returns {Promise<any>}
+ * Promise-based sleep. Default injectable delay used by {@link withRetry}.
+ * @param {number} ms
+ * @returns {Promise<void>}
  */
-async function ghApiJson(apiPath) {
-  const { stdout } = await execFileAsync("gh", ["api", apiPath], {
+function defaultSleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Flatten a `gh api` failure into a single text blob for transient/terminal
+ * classification. Node's execFile timeout kill carries no HTTP status or useful
+ * message, so a synthetic "timed out" marker is added when the process was
+ * killed; `stderr` (where `gh` prints `... (HTTP <status>)`), `stdout`, and any
+ * string syscall `code` (e.g. ETIMEDOUT) are included so {@link
+ * isTransientGhError} can read them.
+ *
+ * The echoed command line — Node's execFile `err.message`, i.e. `"Command
+ * failed: gh api repos/<owner>/<repo>/..."` — is DELIBERATELY EXCLUDED. That
+ * `owner/repo/tag` is attacker-editable via a workflow `uses:` line (a
+ * `pull_request` can change it), so letting it reach the classifier would let a
+ * name like `evil-timeout/foo` or a `503-…` tag masquerade as a transient
+ * fault and steer the retry gate (issue #2184). Only `gh`/OS-generated fields
+ * (stderr/stdout/code + the synthetic timeout marker) inform classification;
+ * the raw `err.message` is still surfaced verbatim to humans by `main()`.
+ *
+ * @param {unknown} error
+ * @returns {string}
+ */
+export function ghErrorText(error) {
+  if (error === null || error === undefined) return "";
+  if (typeof error === "string") return error;
+  if (typeof error !== "object") return String(error);
+
+  const err = /** @type {Record<string, unknown>} */ (error);
+  const parts = [];
+  if (err.killed === true) parts.push("gh api call timed out (process killed by client timeout)");
+  if (typeof err.stderr === "string" && err.stderr.length > 0) parts.push(err.stderr);
+  if (typeof err.stdout === "string" && err.stdout.length > 0) parts.push(err.stdout);
+  if (typeof err.code === "string" && err.code.length > 0) parts.push(err.code);
+  // NOTE: err.message is intentionally omitted — see the doc comment above.
+  // Fall back to String(error) only when nothing gh/OS-generated is available
+  // (e.g. a plain Error test double), which still exposes an embedded HTTP
+  // status without echoing a shell command line.
+  return parts.length > 0 ? parts.join("\n") : String(error);
+}
+
+/** Node/libc socket + DNS + connection syscall codes that are always retryable. */
+const TRANSIENT_SYSCALL_RE =
+  /\b(?:ETIMEDOUT|ECONNRESET|ECONNREFUSED|ECONNABORTED|ENOTFOUND|EAI_AGAIN|EPIPE|ENETUNREACH|EHOSTUNREACH|ENETDOWN)\b/;
+
+/** Human-readable network/timeout phrases `gh`/git/net stacks emit. */
+const TRANSIENT_PHRASE_RE =
+  /timed out|timeout|socket hang up|connection reset|connection refused|network is unreachable|temporary failure in name resolution|tls handshake|i\/o timeout|unexpected eof/i;
+
+/**
+ * Decide whether a `gh api` failure (as flattened text) is a TRANSIENT fault
+ * worth retrying, versus a TERMINAL fault that must fail fast.
+ *
+ * The HTTP status is the authoritative, non-forgeable signal and is parsed
+ * FIRST: `gh` prints `... (HTTP <status>)` to stderr, and when a status is
+ * present it ALONE decides terminality. This is a security property, not just
+ * ordering — the flattened text may include attacker-influenced fragments, so
+ * a real terminal 4xx (esp. a 404 "tag not found") must never be reclassified
+ * as transient by a name/phrase elsewhere in the blob (issue #2184).
+ *
+ *   - HTTP 429 or any 5xx        -> transient (retry)
+ *   - HTTP 403 WITH rate-limit    -> transient (GitHub reports rate limits as 403)
+ *   - any other 4xx (401/404/422) -> terminal (fail fast; do not mask a real
+ *                                    provenance mismatch)
+ *
+ * Only when NO HTTP status is determinable — a pure network/DNS/timeout failure
+ * with no HTTP response — do we fall back to matching network/connection/
+ * timeout phrases and syscall codes. `ghErrorText` keeps the attacker-editable
+ * echoed command line out of that text, so the fallback sees only `gh`/OS-
+ * generated fields (stderr/`code`/synthetic timeout marker).
+ *
+ * @param {string} errText
+ * @returns {boolean} true when the fault is transient (safe to retry)
+ */
+export function isTransientGhError(errText) {
+  const text = String(errText);
+
+  // 1. HTTP status decides terminality on its own — parse it FIRST so no
+  //    attacker-influenced name/phrase in `text` can flip the verdict.
+  const httpMatch = /\bHTTP (\d{3})\b/.exec(text);
+  if (httpMatch) {
+    const status = Number(httpMatch[1]);
+    if (status === 429) return true;
+    if (status >= 500 && status <= 599) return true;
+    // GitHub may answer 403 for (secondary) rate limits — those are transient.
+    if (status === 403 && /rate limit/i.test(text)) return true;
+    // Every other 4xx (esp. 404 tag-not-found) is a real, terminal problem.
+    return false;
+  }
+
+  // 2. No HTTP status: a pure network/DNS/timeout failure. Only here may we
+  //    fall back to phrase/syscall matching — against gh/OS-generated text.
+  if (TRANSIENT_SYSCALL_RE.test(text)) return true;
+  if (TRANSIENT_PHRASE_RE.test(text)) return true;
+  // Rate-limit messaging with no parenthetical status is still transient.
+  if (/rate limit/i.test(text)) return true;
+  return false;
+}
+
+/**
+ * Full-jitter exponential backoff delay for a given 1-based attempt. The
+ * un-jittered window doubles each attempt (base, 2·base, 4·base, …) capped at
+ * `maxDelayMs`; the returned delay is a uniform random point in `[0, window)`
+ * so concurrent CI jobs don't retry in lockstep (thundering herd).
+ *
+ * @param {number} attempt  1-based attempt number
+ * @param {{ baseDelayMs?: number, maxDelayMs?: number, random?: () => number }} [options]
+ * @returns {number} delay in whole milliseconds
+ */
+export function computeBackoffDelay(attempt, options = {}) {
+  const {
+    baseDelayMs = GH_API_RETRY_BASE_MS,
+    maxDelayMs = GH_API_RETRY_MAX_MS,
+    random = Math.random,
+  } = options;
+  const exponent = Math.max(0, attempt - 1);
+  const windowMs = Math.min(maxDelayMs, baseDelayMs * 2 ** exponent);
+  return Math.floor(random() * windowMs);
+}
+
+/**
+ * @typedef {object} RetryOptions
+ * @property {number} [attempts]     total bounded attempts (>= 1)
+ * @property {number} [baseDelayMs]
+ * @property {number} [maxDelayMs]
+ * @property {(error: unknown) => boolean} [isRetryable]  retry predicate
+ * @property {(ms: number) => Promise<void>} [sleep]      injectable delay
+ * @property {() => number} [random]                      injectable jitter source
+ */
+
+/**
+ * Run `fn` with bounded retries. Retries only when `isRetryable(error)` is true,
+ * sleeping a {@link computeBackoffDelay} interval between attempts, and rethrows
+ * the last error once attempts are exhausted or the error is non-retryable.
+ * Pure/injectable so tests supply a fake `sleep`/`random` and never really wait.
+ *
+ * @template T
+ * @param {(attempt: number) => Promise<T>} fn
+ * @param {RetryOptions} [options]
+ * @returns {Promise<T>}
+ */
+export async function withRetry(fn, options = {}) {
+  const {
+    attempts = GH_API_RETRY_ATTEMPTS,
+    baseDelayMs = GH_API_RETRY_BASE_MS,
+    maxDelayMs = GH_API_RETRY_MAX_MS,
+    isRetryable = () => false,
+    sleep = defaultSleep,
+    random = Math.random,
+  } = options;
+  const maxAttempts = Math.max(1, Math.floor(attempts));
+
+  /** @type {unknown} */
+  let lastError = new Error("withRetry: no attempts were made");
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await fn(attempt);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= maxAttempts || !isRetryable(error)) break;
+      await sleep(computeBackoffDelay(attempt, { baseDelayMs, maxDelayMs, random }));
+    }
+  }
+  throw lastError;
+}
+
+// --- Runnable entrypoint (default executor is network; integration-only) -----
+
+/**
+ * @typedef {object} GhExecResult
+ * @property {string} stdout
+ * @property {string} [stderr]
+ */
+
+/**
+ * Default `gh api` executor: runs `gh api <path>` with a hard timeout. Rejects
+ * (per Node's execFile) on non-zero exit or when the timeout kills the child.
+ *
+ * @param {string} apiPath
+ * @param {number} timeoutMs
+ * @returns {Promise<GhExecResult>}
+ */
+function defaultGhExec(apiPath, timeoutMs) {
+  return execFileAsync("gh", ["api", apiPath], {
     env: process.env,
     maxBuffer: 16 * 1024 * 1024,
+    timeout: timeoutMs,
+  });
+}
+
+/**
+ * @typedef {object} GhApiOptions
+ * @property {(apiPath: string, timeoutMs: number) => Promise<GhExecResult>} [exec] injectable executor
+ * @property {number} [timeoutMs]    per-call timeout override
+ * @property {number} [attempts]     bounded retry attempts override
+ * @property {number} [baseDelayMs]
+ * @property {number} [maxDelayMs]
+ * @property {(ms: number) => Promise<void>} [sleep]
+ * @property {() => number} [random]
+ */
+
+/**
+ * Invoke `gh api <path>` (with per-call timeout + transient-only retry) and
+ * parse the JSON response.
+ *
+ * @param {string} apiPath
+ * @param {GhApiOptions} [options]
+ * @returns {Promise<any>}
+ */
+export async function ghApiJson(apiPath, options = {}) {
+  const {
+    exec = defaultGhExec,
+    timeoutMs = GH_API_TIMEOUT_MS,
+    attempts = GH_API_RETRY_ATTEMPTS,
+    baseDelayMs = GH_API_RETRY_BASE_MS,
+    maxDelayMs = GH_API_RETRY_MAX_MS,
+    sleep,
+    random,
+  } = options;
+
+  const { stdout } = await withRetry(() => exec(apiPath, timeoutMs), {
+    attempts,
+    baseDelayMs,
+    maxDelayMs,
+    isRetryable: (error) => isTransientGhError(ghErrorText(error)),
+    sleep,
+    random,
   });
   return JSON.parse(stdout);
 }
@@ -250,18 +501,19 @@ async function ghApiJson(apiPath) {
  * @param {string} owner
  * @param {string} repo
  * @param {string} tag
+ * @param {GhApiOptions} [options]  forwarded to each {@link ghApiJson} call
  * @returns {Promise<string>} the 40-hex commit SHA (lowercase)
  */
-async function resolveTagToCommit(owner, repo, tag) {
+export async function resolveTagToCommit(owner, repo, tag, options = {}) {
   // Exact-match "get a reference": returns a single ref, 404s when absent.
-  const reference = await ghApiJson(`repos/${owner}/${repo}/git/ref/tags/${tag}`);
+  const reference = await ghApiJson(`repos/${owner}/${repo}/git/ref/tags/${tag}`, options);
   let object = reference.object;
 
   // Lightweight tags point straight at a commit; annotated tags point at a tag
   // object that must be dereferenced. Loop defensively in case of tag-of-tag.
   let guard = 0;
   while (object && object.type === "tag" && guard < 5) {
-    const annotated = await ghApiJson(`repos/${owner}/${repo}/git/tags/${object.sha}`);
+    const annotated = await ghApiJson(`repos/${owner}/${repo}/git/tags/${object.sha}`, options);
     object = annotated.object;
     guard += 1;
   }
