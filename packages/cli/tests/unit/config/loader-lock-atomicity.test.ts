@@ -9,18 +9,22 @@
  * staleness window). A failing acquire must remove the file it just created
  * before propagating the error.
  *
- * #1923 — releaseConfigLock must only remove a lock it can VERIFY it still owns.
+ * #1923 — releaseConfigLock must only remove the EXACT lock file it created.
  * If a slow holder's lock was reaped and re-acquired by a successor, the
  * successor's lock must not be deleted out from under it, or two processes end
- * up believing they hold the lock (A-B-A). The dangerous case is UNVERIFIABLE
- * on-disk metadata (a successor that created its lock via `wx` but has not yet
- * flushed its token, so the file reads empty/garbage): the releaser must treat
- * "cannot prove it is mine" as "leave it alone", never as "safe to delete".
+ * up believing they hold the lock (A-B-A). Ownership is proven by the lock
+ * file's inode identity ({dev, ino}) captured at acquire: because the protocol
+ * only ever creates a lock via an exclusive `wx` open on a FREE path, any
+ * reap+recreate by a successor yields a DIFFERENT inode, so a changed inode at
+ * the path means "not ours — leave it alone". These tests recreate the
+ * successor's lock at a fresh inode (unlink + create) to model that hand-off
+ * faithfully; an in-place overwrite would keep the original inode and so cannot
+ * occur under the `wx`-only protocol.
  *
- * NOTE: the cross-process reap window (in reapIfStale the age/liveness decision
- * and the unlink are separate syscalls) is a separate, larger design question
- * tracked as residual work on #1923; these tests cover the token-verified
- * RELEASE and the #1924 orphan cleanup only.
+ * NOTE: the reaper's own decision→removal A-B-A window (once residual work) is
+ * now closed by rename-to-claim + re-verify in reapIfStale, and release is
+ * inode-verified; both are covered in loader-lock-inode-identity.test.ts. These
+ * tests cover the identity-verified RELEASE and the #1924 orphan cleanup.
  */
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -142,11 +146,13 @@ describe("releaseConfigLock ownership verification (#1923)", () => {
     await fs.rm(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
-  it("does not delete a successor's lock that is mid-acquire (unflushed, empty metadata)", async () => {
-    // A successor won a fresh lock race via `wx` but has not yet flushed its
-    // metadata, so the file reads empty. Our release cannot prove the lock is
-    // still ours and must therefore leave it untouched (A-B-A guard).
+  it("does not delete a successor's lock that is mid-acquire (fresh inode, unflushed empty metadata)", async () => {
+    // A successor reaped our lock and won a fresh lock race via `wx` (NEW inode)
+    // but has not yet flushed its metadata, so the file reads empty. The inode at
+    // the path differs from the one we created, so release must leave it
+    // untouched (A-B-A guard) — regardless of the empty/unverifiable contents.
     await withConfigWriteLock(async () => {
+      await fs.unlink(lockPath);
       await fs.writeFile(lockPath, "", "utf-8");
     });
 
@@ -154,11 +160,13 @@ describe("releaseConfigLock ownership verification (#1923)", () => {
     await expect(fs.readFile(lockPath, "utf-8")).resolves.toBe("");
   });
 
-  it("does not delete a lock whose on-disk metadata is unverifiable (malformed)", async () => {
-    // Malformed / legacy lock contents also yield no verifiable owner token;
-    // "cannot prove it is mine" must never be treated as "safe to delete".
+  it("does not delete a successor's lock at a fresh inode whose metadata is unverifiable (malformed)", async () => {
+    // A successor's lock at a fresh inode with malformed / legacy contents still
+    // must not be deleted: the differing inode proves it is not the file we
+    // created, regardless of what its bytes say.
     const foreign = "not-valid-json {";
     await withConfigWriteLock(async () => {
+      await fs.unlink(lockPath);
       await fs.writeFile(lockPath, foreign, "utf-8");
     });
 
@@ -166,9 +174,9 @@ describe("releaseConfigLock ownership verification (#1923)", () => {
     await expect(fs.readFile(lockPath, "utf-8")).resolves.toBe(foreign);
   });
 
-  it("does not delete a lock re-acquired by a successor holding a different token", async () => {
-    // Inverse invariant / regression guard: a fully-formed successor lock with a
-    // different token must be preserved.
+  it("does not delete a lock re-acquired by a successor at a fresh inode holding a different token", async () => {
+    // Inverse invariant / regression guard: a fully-formed successor lock created
+    // at a fresh inode (reap + `wx` re-acquire) must be preserved.
     const successorMeta = {
       pid: process.pid,
       host: os.hostname(),
@@ -176,6 +184,7 @@ describe("releaseConfigLock ownership verification (#1923)", () => {
       createdAt: Date.now(),
     };
     await withConfigWriteLock(async () => {
+      await fs.unlink(lockPath);
       await fs.writeFile(lockPath, JSON.stringify(successorMeta), "utf-8");
     });
 
@@ -184,9 +193,10 @@ describe("releaseConfigLock ownership verification (#1923)", () => {
     expect((JSON.parse(raw) as { token: string }).token).toBe("successor-token");
   });
 
-  it("deletes the lock it still owns on a normal release (matching token)", async () => {
-    // Inverse invariant: the token check must not cause a holder to leak its own
-    // lock. When nobody disturbs the lock, release removes it as before.
+  it("deletes the lock it still owns on a normal release (inode unchanged)", async () => {
+    // Inverse invariant: the identity check must not cause a holder to leak its
+    // own lock. When nobody disturbs the lock, the inode at the path still
+    // matches the one captured at acquire, so release removes it as before.
     await withConfigWriteLock(async () => {
       // Critical section leaves the lock exactly as acquireConfigLock wrote it.
     });

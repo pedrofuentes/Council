@@ -1,28 +1,22 @@
 /**
- * Config-lock RELEASE must not leak the holder's OWN lock when the on-disk lock
- * metadata is TRANSIENTLY unreadable during release (#2102, residual of #2096 /
- * #1923).
+ * Config-lock RELEASE must (a) never strand the holder's OWN lock and (b) never
+ * delete a foreign successor's lock, even when release-time identity probing is
+ * disturbed (#2102 own-lock strand; #2118 foreign-delete; residual of #1923).
  *
- * The token-verified release reads the lock's on-disk metadata to confirm
- * ownership before unlinking. `readLockMeta` collapses a transient read failure
- * (EIO/EACCES/EBUSY/EMFILE under fd exhaustion) into the same `undefined` it
- * returns for "gone/empty/malformed", so a naive `undefined => skip unlink`
- * makes the legitimate holder leave its OWN lock behind on a mere I/O blip —
- * wedging every future writer until the staleness window elapses. That window is
- * never reached for a live same-host owner (e.g. a long-lived interactive Ink
- * TUI / daemon holding `withConfigWriteLock`), whose lock is by design never
- * age-reaped (#742), so the wedge can persist indefinitely.
+ * Release proves ownership by the lock file's inode identity ({dev, ino})
+ * captured from the still-open acquire handle — NOT by reading the on-disk
+ * token. On a normal release the inode at the path is unchanged, so the holder
+ * removes its OWN lock. A stranded own-lock would wedge every future writer: the
+ * staleness window is never reached for a live same-host owner (e.g. a
+ * long-lived interactive Ink TUI / daemon holding `withConfigWriteLock`), whose
+ * lock is by design never age-reaped (#742), so the wedge could persist
+ * indefinitely. Because release no longer reads the token, a transient readFile
+ * fault can no longer collapse ownership into "skip unlink" and strand the lock.
  *
- * The holder KNOWS it owns the lock: it created the lock this session and holds
- * the session token in memory, and — as a live same-host owner — no reaper can
- * have handed the lock off (#742). A transient read failure during its OWN
- * release must therefore fall back to that in-memory ownership and release the
- * lock. The token-MISMATCH protection (a readable, foreign-owned lock is never
- * unlinked, #1923) must be preserved exactly: it fires only when the read
- * SUCCEEDS and returns a different token.
- *
- * RED before the #2102 fix: `releaseConfigLock` swallows the transient read into
- * `undefined` and returns without unlinking, leaking the holder's own lock.
+ * The inverse invariant — a foreign successor that reaped + re-acquired the path
+ * has a DIFFERENT inode and must be preserved (#1923) — is asserted here and,
+ * together with the transient-STAT foreign-delete case (#2118), in
+ * loader-lock-inode-identity.test.ts.
  */
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -42,7 +36,7 @@ import { withConfigWriteLock } from "../../../src/config/index.js";
 
 const BASE_CONFIG = "defaults:\n  model: claude-sonnet-4.5\n  engine: mock\n";
 
-describe("releaseConfigLock transient-read release (#2102)", () => {
+describe("releaseConfigLock inode-verified release (#2102/#2118)", () => {
   let actualFs: typeof fs;
   let testHome: string;
   let configPath: string;
@@ -73,11 +67,12 @@ describe("releaseConfigLock transient-read release (#2102)", () => {
     await actualFs.rm(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
-  it("releases the holder's OWN lock when the lock read fails transiently (EIO) during release", async () => {
-    // Transient-failure branch (mandatory): the ONLY lock-file read in a happy,
-    // uncontended acquire+release is the release-time ownership check, so making
-    // every `.lock` read reject reproduces a transient I/O blip precisely there
-    // while the holder still owns the lock (token held in memory).
+  it("releases the holder's OWN lock even if a lock-file read fails transiently (EIO) during release", async () => {
+    // A transient I/O blip on any `.lock` read must not prevent a holder from
+    // releasing its OWN lock. Inode-based release proves ownership via lstat, not
+    // by reading the token, so injecting an EIO on every `.lock` readFile leaves a
+    // normal release unaffected — the holder still unlinks its own lock. (Under
+    // the previous token-reading release this same blip stranded the lock, #2102.)
     const readError = Object.assign(new Error("simulated transient I/O error"), { code: "EIO" });
     vi.mocked(fs.readFile).mockImplementation(
       async (...args: Parameters<typeof fs.readFile>): Promise<string | Buffer> => {
@@ -98,12 +93,12 @@ describe("releaseConfigLock transient-read release (#2102)", () => {
     await expect(actualFs.access(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("does NOT unlink a readable foreign-owned lock (token mismatch) during release", async () => {
-    // Inverse / load-bearing invariant: when the read SUCCEEDS and returns a
-    // DIFFERENT holder's fully-formed token, the token-mismatch protection
-    // (#1923) must still decline to unlink. Simulate a successor that reaped and
-    // re-acquired the lock mid critical-section with its own token; no transient
-    // failure is injected, so the release reads the foreign token cleanly.
+  it("does NOT unlink a foreign successor's lock at a fresh inode during release", async () => {
+    // Inverse / load-bearing invariant: a successor reaped our lock and
+    // re-acquired the path with a FRESH inode (unlink + `wx` create) and its own
+    // token. Release must leave it untouched — the inode differs from the one we
+    // captured at acquire (#1923). No transient fault is injected, so release
+    // stats the successor's file cleanly and still declines to unlink it.
     const foreignMeta = {
       pid: process.pid,
       host: os.hostname(),
@@ -112,6 +107,7 @@ describe("releaseConfigLock transient-read release (#2102)", () => {
     };
 
     await withConfigWriteLock(async () => {
+      await actualFs.unlink(lockPath);
       await actualFs.writeFile(lockPath, JSON.stringify(foreignMeta), "utf-8");
     });
 
@@ -121,10 +117,11 @@ describe("releaseConfigLock transient-read release (#2102)", () => {
     expect((JSON.parse(raw) as { token: string }).token).toBe("successor-token-2102");
   });
 
-  it("unlinks the lock it still owns on a normal release (read succeeds, token matches)", async () => {
+  it("unlinks the lock it still owns on a normal release (inode unchanged)", async () => {
     // Regression guard: with no transient failure and no external tampering, the
-    // release reads its own matching token and removes the lock exactly as
-    // before. Distinguishes the matching-token branch from the two above.
+    // inode at the path still matches the identity captured at acquire and the
+    // release removes the lock exactly as before. Distinguishes the matching
+    // branch from the two above.
     await expect(withConfigWriteLock(async () => undefined)).resolves.toBeUndefined();
 
     await expect(actualFs.access(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
