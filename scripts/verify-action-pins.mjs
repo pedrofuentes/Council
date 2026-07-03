@@ -257,8 +257,11 @@ export function parseActionPins(yamlText, filename) {
 // otherwise-valid PR check spuriously red (issue #2182). We therefore:
 //   1. bound every `gh api` call with an explicit timeout (no hung CI), and
 //   2. retry ONLY transient faults with exponential backoff + full jitter.
-// A genuine 404 "tag not found" (or any other 4xx) is a real provenance
-// problem and MUST fail fast — retrying it would mask a tag/SHA mismatch.
+// A genuine 404 "tag not found" — and every other NON-403 4xx (401/422/…) —
+// is a real provenance problem and MUST fail fast; retrying it would mask a
+// tag/SHA mismatch. The sole 4xx exception is HTTP 403 carrying a rate-limit
+// signal (GitHub reports secondary rate limits as 403), which IS retried as
+// transient — see `isTransientGhError`.
 //
 // The classifier and retry helpers are pure and injectable (executor, sleep,
 // and jitter source), so they are unit-tested with no network and no real
@@ -388,8 +391,11 @@ export function isTransientGhError(errText) {
 /**
  * Full-jitter exponential backoff delay for a given 1-based attempt. The
  * un-jittered window doubles each attempt (base, 2·base, 4·base, …) capped at
- * `maxDelayMs`; the returned delay is a uniform random point in `[0, window)`
- * so concurrent CI jobs don't retry in lockstep (thundering herd).
+ * `maxDelayMs`; the returned delay is `floor(random() * window)`. With the
+ * default `Math.random` (range `[0, 1)`) that is a uniform point in
+ * `[0, window)`, so concurrent CI jobs don't retry in lockstep (thundering
+ * herd). An injected `random` is trusted as-is: a source returning exactly `1`
+ * therefore yields the full `window` (`[0, window]` for such injected values).
  *
  * @param {number} attempt  1-based attempt number
  * @param {{ baseDelayMs?: number, maxDelayMs?: number, random?: () => number }} [options]
