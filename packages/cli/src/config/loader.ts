@@ -13,7 +13,7 @@
  * Designed to be called from CLI commands and from `council doctor`. Never
  * throws on a missing home directory — creates it.
  */
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import * as os from "node:os";
@@ -534,15 +534,79 @@ export async function updateConfigFields(updates: readonly ConfigFieldUpdate[]):
       throw formatZodError(result.error, file);
     }
 
-    const tmpFile = `${file}.${process.pid}.${Date.now()}.tmp`;
-    await fs.writeFile(tmpFile, document.toString(), "utf-8");
+    await writeConfigAtomically(file, document.toString());
+  });
+}
+
+/**
+ * Number of cryptographically-random bytes mixed into the atomic-write temp file
+ * name. 12 bytes (96 bits of entropy) makes the path infeasible to guess or
+ * pre-create, so an attacker on a shared temp directory cannot plant an entry at
+ * the path the writer is about to use (#1925).
+ */
+const CONFIG_TEMP_RANDOM_BYTES = 12;
+
+/**
+ * Maximum number of exclusive-create attempts for the atomic-write temp file.
+ * A name collision is astronomically unlikely for random names, but a
+ * pre-planted file/symlink at the chosen path also surfaces as EEXIST — retrying
+ * with a fresh name lets a legitimate write succeed without ever following or
+ * clobbering the existing entry.
+ */
+const CONFIG_TEMP_MAX_ATTEMPTS = 10;
+
+/**
+ * Atomically write `contents` to `file` via a randomized, exclusively-created
+ * temp file in the same directory, then rename it over `file`.
+ *
+ * Symlink/TOCTOU hardening (#1925): the temp file name embeds cryptographically
+ * random bytes so it cannot be guessed or pre-created, and it is opened with
+ * `"wx"` (O_CREAT|O_EXCL|O_WRONLY) so a pre-existing entry at the temp path —
+ * including a symlink an attacker planted to redirect the write onto a victim
+ * file — fails with EEXIST instead of being followed. Content is written THROUGH
+ * that exclusive handle (the path is never re-opened), eliminating the write-time
+ * TOCTOU window. On EEXIST we retry with a fresh random name rather than
+ * following or overwriting the existing entry. The rename-failure path still
+ * unlinks the temp file so a failed write never leaves the temp behind as config.
+ */
+async function writeConfigAtomically(file: string, contents: string): Promise<void> {
+  let lastOpenError: unknown;
+  for (let attempt = 0; attempt < CONFIG_TEMP_MAX_ATTEMPTS; attempt += 1) {
+    const tmpFile = `${file}.${randomBytes(CONFIG_TEMP_RANDOM_BYTES).toString("hex")}.tmp`;
+
+    let handle: FileHandle;
+    try {
+      handle = await fs.open(tmpFile, "wx");
+    } catch (err: unknown) {
+      if (hasErrorCode(err, "EEXIST")) {
+        // The unguessable temp path already exists: an astronomically unlikely
+        // random collision, or a file/symlink an attacker pre-planted there.
+        // Never follow or overwrite it — retry with a fresh random name.
+        lastOpenError = err;
+        continue;
+      }
+      throw err;
+    }
+
+    try {
+      await handle.writeFile(contents, "utf-8");
+    } finally {
+      await handle.close();
+    }
+
     try {
       await fs.rename(tmpFile, file);
     } catch (renameErr) {
       await fs.unlink(tmpFile).catch(() => undefined);
       throw renameErr;
     }
-  });
+    return;
+  }
+
+  throw new Error(
+    `Could not create an exclusive temporary file for ${file} after ${CONFIG_TEMP_MAX_ATTEMPTS} attempts`,
+    { cause: lastOpenError },
+  );
 }
 
 /**
