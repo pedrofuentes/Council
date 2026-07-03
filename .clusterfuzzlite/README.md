@@ -73,15 +73,16 @@ it locally on an amd64 host:
 docker build --platform linux/amd64 -t council-cflite -f .clusterfuzzlite/Dockerfile .
 mkdir -p build-out
 docker run --rm --platform linux/amd64 \
-  -e SANITIZER=none -e FUZZING_ENGINE=libfuzzer -e FUZZING_LANGUAGE=javascript \
+  -e SANITIZER=coverage -e FUZZING_ENGINE=libfuzzer -e FUZZING_LANGUAGE=javascript \
   -v "$(pwd)/build-out:/out" council-cflite compile
 ```
 
-## JavaScript fuzzers use no sanitizer
+## JavaScript fuzzers use the `coverage` sanitizer
 
-`sanitizer: none` in the workflows (and `SANITIZER=none` for `compile`) is
-required: passing `address` errors with "JavaScript projects cannot be fuzzed
-with sanitizers."
+Both workflows (`cflite_pr.yml` and `cflite_batch.yml`) set `sanitizer: coverage`
+for every build and run step. Use `-e SANITIZER=coverage` when reproducing the
+Docker build locally (as shown above). The `address` sanitizer is not supported
+for JavaScript projects ("JavaScript projects cannot be fuzzed with sanitizers").
 
 ## Jazzer.js version is coupled to the base image's glibc
 
