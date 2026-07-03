@@ -213,8 +213,11 @@ async function sleep(ms: number): Promise<void> {
  * Metadata written into the config lock file so other processes can decide
  * whether a lock is stale. `token` uniquely identifies a single acquisition.
  * The on-disk metadata is consumed by the cross-process staleness reaper
- * ({@link reapIfStale}); a holder proves ownership on RELEASE structurally, via
- * the file's inode identity (see {@link LockOwnership}), not by reading `token`.
+ * ({@link reapIfStale}); a holder normally proves ownership on RELEASE
+ * structurally, via the file's inode identity (see {@link LockOwnership}), not by
+ * reading `token`. Only when inode identity is unavailable (non-authoritative
+ * `st_ino`, ino=0) does release fall back to matching this `token` to recover its
+ * own lock (#2235).
  */
 interface LockMeta {
   readonly pid: number;
@@ -271,13 +274,23 @@ interface LockOwnership {
 /**
  * The evidence the reaper recorded when it DECIDED a lock was stale, carried
  * through the atomic rename-to-claim so the removal step can re-verify it is
- * acting on the very same lock. When {@link meta} is defined the claimed file is
- * matched by its logical identity (token + createdAt); when the deciding
- * metadata was unreadable, it is matched structurally by {@link identity}.
+ * acting on the very same lock. Re-verification prefers the strongest available
+ * signal in order:
+ *   - {@link meta} defined → match by logical identity (token + createdAt);
+ *   - else {@link identity} provable (non-zero `st_ino`) → match structurally by
+ *     inode (rename preserves the inode, so a match proves no successor swapped
+ *     in);
+ *   - else (unreadable meta AND non-authoritative `st_ino`) → last-resort match
+ *     by {@link mtimeMs} + {@link size}, the file's content-modification time and
+ *     byte length captured at decision time. This recovers reap availability on
+ *     ino=0 filesystems (#2235) where neither logical nor structural identity is
+ *     available, without ever reaping a file that changed across the atomic claim.
  */
 interface LockDecision {
   readonly meta: LockMeta | undefined;
   readonly identity: LockIdentity;
+  readonly mtimeMs: number;
+  readonly size: number;
 }
 
 /**
@@ -389,9 +402,15 @@ async function acquireConfigLock(lockPath: string): Promise<LockOwnership> {
  *   - identity differs → a successor reaped our lock and re-created a DIFFERENT
  *     file at the path (A-B-A); we must NOT unlink it (#1923).
  *   - identity UNPROVABLE (`ino === 0n`: non-authoritative `st_ino` on some
- *     NFS/SMB/FUSE mounts, the #2118 shared-FS target) → we cannot prove the file
- *     is ours, so we must NOT unlink it; the bounded residual strand is recovered
- *     later by the reaper — strictly safer than deleting a foreign successor.
+ *     NFS/SMB/FUSE mounts, the #2118 shared-FS target) OR the release-time stat
+ *     itself reports `ino === 0n` → inode identity cannot decide, so fall back to
+ *     the metadata TOKEN we wrote at acquire: read the on-disk meta and unlink IFF
+ *     it still carries OUR `token` + `createdAt`. A random-UUID token match proves
+ *     the file is inode-independently the one WE created, recovering release of an
+ *     own lock on ino=0 instead of stranding it (#2235). This is SAFE: a live
+ *     same-host owner's lock is never age-reaped (#742), so no successor can swap
+ *     in during our own release, and a token MISMATCH (foreign successor, or
+ *     unreadable/absent meta) fails safe — we do NOT unlink.
  *   - stat fails, ENOENT → already gone, nothing to release.
  *   - stat fails, TRANSIENT (EIO/EACCES/EBUSY/EMFILE…) → RETRY the `lstat` a
  *     bounded number of times ({@link LOCK_RELEASE_LSTAT_RETRIES}); a blip that
@@ -408,22 +427,46 @@ async function acquireConfigLock(lockPath: string): Promise<LockOwnership> {
  * for the reaper; identity, not the token, governs deletion here.
  */
 async function releaseConfigLock(lockPath: string, ownership: LockOwnership): Promise<void> {
-  const { handle, identity } = ownership;
+  const { handle, identity, meta } = ownership;
   try {
     const stats = await lstatForRelease(lockPath);
     // `undefined` → the file is gone (ENOENT) or a transient fault persisted
     // across the bounded retries; either way we cannot/need-not unlink here.
-    if (
-      stats !== undefined &&
-      isProvableIdentity(identity) &&
-      stats.ino !== 0n &&
-      stats.dev === identity.dev &&
-      stats.ino === identity.ino
-    ) {
-      await fs.unlink(lockPath).catch(() => undefined);
+    if (stats !== undefined) {
+      if (
+        isProvableIdentity(identity) &&
+        stats.ino !== 0n &&
+        stats.dev === identity.dev &&
+        stats.ino === identity.ino
+      ) {
+        // Primary proof: the inode still at the path is the exact file we created.
+        await fs.unlink(lockPath).catch(() => undefined);
+      } else if (!isProvableIdentity(identity) || stats.ino === 0n) {
+        // Inode proof unavailable (non-authoritative st_ino). Fall back to the
+        // token we wrote at acquire: unlink IFF the on-disk meta is still ours.
+        await unlinkIfOwnMeta(lockPath, meta);
+      }
     }
   } finally {
     await handle.close().catch(() => undefined);
+  }
+}
+
+/**
+ * Token fallback for release on non-authoritative `st_ino` (#2235): unlink the
+ * lock at `lockPath` IFF the on-disk metadata still carries the exact `token` +
+ * `createdAt` we wrote at acquire. A random-UUID token match proves, independent
+ * of inode identity, that the file is the one WE created. On ENOENT, unreadable
+ * meta, or ANY mismatch (a foreign successor) we do NOT unlink — fail safe.
+ */
+async function unlinkIfOwnMeta(lockPath: string, ownMeta: LockMeta): Promise<void> {
+  const onDisk = await readLockMeta(lockPath);
+  if (
+    onDisk !== undefined &&
+    onDisk.token === ownMeta.token &&
+    onDisk.createdAt === ownMeta.createdAt
+  ) {
+    await fs.unlink(lockPath).catch(() => undefined);
   }
 }
 
@@ -496,9 +539,11 @@ function warnLockReleaseStrand(lockPath: string, err: unknown): void {
 async function reapIfStale(lockPath: string): Promise<boolean> {
   let identity: LockIdentity;
   let mtimeMs: number;
+  let size: number;
   try {
     const stats = await fs.stat(lockPath, { bigint: true });
     mtimeMs = Number(stats.mtimeMs);
+    size = Number(stats.size);
     identity = { dev: stats.dev, ino: stats.ino };
   } catch (err: unknown) {
     // Vanished between EEXIST and stat: effectively free, retry immediately.
@@ -511,7 +556,7 @@ async function reapIfStale(lockPath: string): Promise<boolean> {
   // lock indefinitely (#742); a dead owner is reaped at once (crash recovery).
   if (meta !== undefined && meta.host === os.hostname()) {
     if (isProcessAlive(meta.pid)) return false;
-    return claimAndReap(lockPath, { meta, identity });
+    return claimAndReap(lockPath, { meta, identity, mtimeMs, size });
   }
 
   // Owner unidentifiable (missing/unreadable metadata) or on another host
@@ -520,7 +565,7 @@ async function reapIfStale(lockPath: string): Promise<boolean> {
   const ageMs = Date.now() - mtimeMs;
   if (ageMs <= LOCK_STALE_MS) return false;
 
-  return claimAndReap(lockPath, { meta, identity });
+  return claimAndReap(lockPath, { meta, identity, mtimeMs, size });
 }
 
 /**
@@ -580,12 +625,24 @@ async function claimAndReap(lockPath: string, deciding: LockDecision): Promise<b
 
 /**
  * Confirm a claimed (renamed-aside) lock file is the same one the reaper decided
- * to reap. When the deciding metadata was readable, match by its logical
- * identity (token + createdAt) — a successor that reaped and re-created the lock
- * carries a different token even if it reused the path. When the deciding
- * metadata was unreadable, fall back to the structural inode identity captured
- * at decision time (rename preserves a file's inode, so a match proves no
- * successor swapped in).
+ * to reap, using the strongest available signal:
+ *   - deciding metadata readable → match by logical identity (token + createdAt);
+ *     a successor that reaped and re-created the lock carries a different token
+ *     even if it reused the path;
+ *   - else deciding identity provable (non-zero `st_ino`) → match structurally by
+ *     the inode captured at decision time (rename preserves a file's inode, so a
+ *     match proves no successor swapped in);
+ *   - else (unreadable meta AND non-authoritative `st_ino`, ino=0) → LAST-RESORT
+ *     match by mtime + size (#2235). This is a bounded heuristic for the ino=0
+ *     edge, and it is conservative: {@link reapIfStale} only reaches here after
+ *     the age gate (the file aged past {@link LOCK_STALE_MS}), and we compare the
+ *     file we ALREADY renamed aside atomically — a successor that swapped in
+ *     between decision and claim would carry a newer mtime (and typically a
+ *     different size), so an UNCHANGED mtime+size across the atomic claim gives
+ *     conservative confidence this is the same abandoned lock. The atomic claim
+ *     still prevents A-B-A: we only ever reap the file we exclusively renamed
+ *     aside. Strictly better than the previous permanent wedge (return false),
+ *     which could never reap an unreadable-meta lock on an ino=0 filesystem.
  */
 async function claimedFileMatchesDecision(
   claimedPath: string,
@@ -601,16 +658,19 @@ async function claimedFileMatchesDecision(
   }
   try {
     const stats = await fs.stat(claimedPath, { bigint: true });
-    // Fail safe: a matching inode only proves "no successor swapped in" when the
-    // filesystem supplies a stable, non-zero st_ino. If ino=0 (non-authoritative
-    // st_ino on some NFS/SMB/FUSE mounts), the structural match is untrustworthy —
-    // return false so we do NOT reap a file we cannot positively identify.
-    return (
-      isProvableIdentity(deciding.identity) &&
-      stats.ino !== 0n &&
-      stats.dev === deciding.identity.dev &&
-      stats.ino === deciding.identity.ino
-    );
+    if (isProvableIdentity(deciding.identity)) {
+      // Authoritative st_ino: a matching inode proves no successor swapped in. An
+      // ino=0 reading of the claimed file cannot match a provable decision, so it
+      // fails safe here (we do NOT reap what we cannot positively identify).
+      return (
+        stats.ino !== 0n &&
+        stats.dev === deciding.identity.dev &&
+        stats.ino === deciding.identity.ino
+      );
+    }
+    // LAST RESORT — unreadable deciding meta AND non-authoritative st_ino (ino=0):
+    // corroborate the claimed file is the same aged, abandoned lock by mtime+size.
+    return Number(stats.mtimeMs) === deciding.mtimeMs && Number(stats.size) === deciding.size;
   } catch {
     return false;
   }
