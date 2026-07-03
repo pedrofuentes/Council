@@ -27,6 +27,7 @@ import { ulid } from "ulid";
 import { stripControlChars, toSingleLineDisplay } from "../cli/strip-control-chars.js";
 import { DEFAULT_MODEL } from "../config/schema.js";
 import type { CouncilEngine, EngineErrorCode, ExpertSpec } from "../engine/index.js";
+import { DETERMINISTIC_MOCK_ENGINE } from "../engine/index.js";
 import { sanitizePromptField } from "./prompt-sanitize.js";
 
 import type { PanelDefinition, ResolvedPanelDefinition } from "./template-loader.js";
@@ -95,8 +96,11 @@ export async function autoComposePanel(
 
   let parsed: unknown;
   // Capture the primary error (timeout / parse / engine failure) so a failing
-  // removeExpert() cleanup below cannot mask it (#289).
+  // removeExpert() cleanup below cannot mask it (#289). `hasPrimaryError` tracks
+  // presence independently of the value so a primary failure that is itself
+  // `undefined` still propagates rather than being silently swallowed (#1928 G-2).
   let primaryError: unknown;
+  let hasPrimaryError = false;
   try {
     let response = await collectComposerResponse(
       engine,
@@ -135,6 +139,7 @@ export async function autoComposePanel(
     parsed = parseResult.value;
   } catch (err) {
     primaryError = err;
+    hasPrimaryError = true;
   } finally {
     // #289: isolate cleanup. A rejecting removeExpert() must not replace the
     // primary error propagating from the try block; when there is no primary
@@ -142,11 +147,14 @@ export async function autoComposePanel(
     try {
       await engine.removeExpert(composer.id);
     } catch (cleanupError) {
-      primaryError ??= cleanupError;
+      if (!hasPrimaryError) {
+        primaryError = cleanupError;
+        hasPrimaryError = true;
+      }
     }
   }
 
-  if (primaryError !== undefined) {
+  if (hasPrimaryError) {
     throw primaryError;
   }
 
@@ -482,7 +490,7 @@ function extractBalancedJsonObject(text: string, startIndex: number): string | u
 }
 
 function isDeterministicMockEngine(engine: CouncilEngine): boolean {
-  return engine.constructor.name === "MockEngine";
+  return engine[DETERMINISTIC_MOCK_ENGINE] === true;
 }
 
 function createEmptyComposerResponseError(): Error {

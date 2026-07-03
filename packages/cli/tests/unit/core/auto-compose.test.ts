@@ -44,6 +44,12 @@ interface StubEngineOptions {
   readonly sendSequence?: readonly StubSendOutcome[];
   /** When set, `removeExpert` rejects with this message to exercise cleanup isolation (#289). */
   readonly failOnRemoveExpert?: string;
+  /**
+   * When true, `send()` throws `undefined` (never an Error) so the primary
+   * failure captured by autoComposePanel is literally `undefined`. Exercises
+   * the throw-undefined cleanup sentinel (#1928 G-2).
+   */
+  readonly throwUndefinedOnSend?: boolean;
 }
 
 class StubEngine implements CouncilEngine {
@@ -62,6 +68,7 @@ class StubEngine implements CouncilEngine {
   readonly #sendSequence: StubSendOutcome[] | undefined;
   readonly #sendSequenceFallback: StubSendOutcome;
   readonly #failOnRemoveExpert: string | undefined;
+  readonly #throwUndefinedOnSend: boolean;
 
   constructor(
     opts: StubEngineOptions & { readonly hang?: boolean; readonly abortYieldDelayMs?: number },
@@ -75,6 +82,7 @@ class StubEngine implements CouncilEngine {
     this.#sendSequence = opts.sendSequence ? [...opts.sendSequence] : undefined;
     this.#sendSequenceFallback = opts.sendSequence?.at(-1) ?? { text: "" };
     this.#failOnRemoveExpert = opts.failOnRemoveExpert;
+    this.#throwUndefinedOnSend = opts.throwUndefinedOnSend ?? false;
   }
 
   async start(): Promise<void> {
@@ -114,6 +122,13 @@ class StubEngine implements CouncilEngine {
     }
     this.sentPrompts.push({ expertId: options.expertId, prompt: options.prompt });
     this.sendSignals.push(options.signal);
+    if (this.#throwUndefinedOnSend) {
+      // Deliberately throw `undefined` (never an Error) so autoComposePanel's
+      // catch stores `primaryError = undefined`. Exercises the #1928 G-2
+      // cleanup sentinel: the original undefined failure must propagate rather
+      // than be masked by the downstream schema-validation error.
+      throw undefined;
+    }
     if (this.#sendSequence !== undefined) {
       const outcome = this.#sendSequence.shift() ?? this.#sendSequenceFallback;
       return this.#streamOutcome(options.expertId, outcome);
@@ -985,6 +1000,36 @@ describe("autoComposePanel", () => {
       await engine.start();
       await expect(autoComposePanel("topic", engine)).rejects.toThrow(/JSON|parse/i);
     });
+
+    it("detects a subclassed mock engine via its structural brand even when constructor.name differs (#1928 G-1)", async () => {
+      // The gate must survive minification and subclassing — unlike
+      // `constructor.name === "MockEngine"`, which a renamed/mangled class
+      // silently defeats. A MockEngine subclass has a DIFFERENT constructor.name
+      // but inherits the deterministic-mock brand, so the fallback must fire.
+      class RenamedMockEngine extends MockEngine {}
+      const engine = new RenamedMockEngine();
+      expect(engine.constructor.name).not.toBe("MockEngine");
+      await engine.start();
+
+      const result = await autoComposePanel("topic", engine);
+      expect(result.name).toBe("mock-panel");
+    });
+
+    it("does NOT treat a non-mock engine as deterministic when only its constructor.name is 'MockEngine' (#1928 G-1)", async () => {
+      // The gate keys off the trusted structural brand, not the forgeable class
+      // name. An engine whose constructor.name is spoofed to "MockEngine" but
+      // which lacks the brand must go through normal composition, never the
+      // canned fallback.
+      class ForgedNameEngine extends StubEngine {}
+      Object.defineProperty(ForgedNameEngine, "name", { value: "MockEngine" });
+      const engine = new ForgedNameEngine({ response: JSON.stringify(validPanel) });
+      expect(engine.constructor.name).toBe("MockEngine");
+      await engine.start();
+
+      const result = await autoComposePanel("topic", engine);
+      // Composed from the stub's JSON response — NOT the canned mock fallback.
+      expect(result.name).toBe("test-panel");
+    });
   });
 
   // T11: `--max-experts N` must cap the *designed* panel that autoComposePanel
@@ -1228,28 +1273,79 @@ describe("autoComposePanel", () => {
     });
   });
 
-  describe("classifies a cancel that races the timeout (#722)", () => {
-    it("reports caller cancellation, not a timeout, when an abort races the timeout", async () => {
-      const controller = new AbortController();
-      // Caller cancels FIRST, so the composed signal latches the caller's
-      // reason. A short timeout ALSO fires before the engine observes the
-      // ABORTED event — the exact race the old `.aborted`-boolean check
-      // mislabeled as a timeout.
-      controller.abort();
-      const engine = new StubEngine({ response: "", hang: true, abortYieldDelayMs: 50 });
+  describe("propagates a thrown undefined without masking it (#1928 G-2)", () => {
+    it("re-throws an undefined primary failure instead of surfacing a schema-validation error", async () => {
+      // The cleanup path uses a boolean sentinel (`hasPrimaryError`) rather than
+      // `primaryError !== undefined`, so a primary failure that is literally
+      // `undefined` still propagates. Before the fix, an undefined throw slipped
+      // past the `!== undefined` gate and was masked by the downstream
+      // "invalid panel definition" validation error.
+      const engine = new StubEngine({
+        response: JSON.stringify(validPanel),
+        throwUndefinedOnSend: true,
+      });
       await engine.start();
 
-      let thrown: unknown;
+      let didThrow = false;
+      let thrown: unknown = Symbol("unset");
       try {
-        await autoComposePanel("topic", engine, { signal: controller.signal, timeoutMs: 10 });
+        await autoComposePanel("topic", engine);
       } catch (err) {
+        didThrow = true;
         thrown = err;
       }
 
-      expect(thrown).toBeInstanceOf(Error);
-      const message = (thrown as Error).message;
-      expect(message).toMatch(/aborted/i);
-      expect(message).not.toMatch(/timed out/i);
+      expect(didThrow).toBe(true);
+      expect(thrown).toBeUndefined();
+      // Cleanup still ran despite the undefined primary failure.
+      expect(engine.removedExperts).toContain(engine.addedSpecs[0]?.id ?? "");
+    });
+  });
+
+  describe("classifies a cancel that races the timeout (#722)", () => {
+    it("reports caller cancellation, not a timeout, when an abort races the timeout", async () => {
+      // Deterministic repro of the #722 race — no real wall-clock waits (#1928
+      // G-3). Fake timers drive the engine's post-abort yield delay, and the
+      // internal `AbortSignal.timeout` (native, NOT driven by fake timers) is
+      // stubbed to a signal we fire manually so BOTH the caller abort AND the
+      // wall-clock cap are latched when the terminal ABORTED is classified — the
+      // exact condition the old `.aborted`-boolean check mislabeled as a timeout.
+      vi.useFakeTimers();
+      const timeoutController = new AbortController();
+      const timeoutSpy = vi
+        .spyOn(AbortSignal, "timeout")
+        .mockReturnValue(timeoutController.signal);
+      try {
+        const controller = new AbortController();
+        // Caller cancels FIRST, so the composed signal latches the caller's
+        // reason (an AbortError) rather than the timeout's reason.
+        controller.abort();
+        const engine = new StubEngine({ response: "", hang: true, abortYieldDelayMs: 50 });
+        await engine.start();
+
+        const settled = autoComposePanel("topic", engine, {
+          signal: controller.signal,
+          timeoutMs: 10,
+        }).then(
+          () => undefined,
+          (err: unknown) => err,
+        );
+
+        // The wall-clock cap ALSO fires (its own TimeoutError reason), racing
+        // the caller abort.
+        timeoutController.abort(new DOMException("timed out", "TimeoutError"));
+        // Advance past the engine's post-abort yield delay so it emits ABORTED.
+        await vi.advanceTimersByTimeAsync(50);
+
+        const thrown = await settled;
+        expect(thrown).toBeInstanceOf(Error);
+        const message = (thrown as Error).message;
+        expect(message).toMatch(/aborted/i);
+        expect(message).not.toMatch(/timed out/i);
+      } finally {
+        timeoutSpy.mockRestore();
+        vi.useRealTimers();
+      }
     });
   });
 });
