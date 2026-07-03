@@ -255,6 +255,45 @@ async function seedPanelWithUnsafeLineBreakContent(
   }
 }
 
+async function seedPanelWithTopic(testHome: string, topic: string): Promise<{ panelName: string }> {
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    const panel = await new PanelRepository(db).create({
+      name: "export-topic-injection",
+      topic,
+      copilotHome: path.join(testHome, "copilot"),
+      configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+    });
+    const debate = await new DebateRepository(db).create({
+      panelId: panel.id,
+      prompt: "Topic injection safety prompt",
+      moderator: "round-robin",
+    });
+    const expert = await new ExpertRepository(db).create({
+      panelId: panel.id,
+      slug: "cto",
+      displayName: "CTO",
+      model: "claude-sonnet-4",
+      systemMessage: "You are a CTO.",
+    });
+    await new TurnRepository(db).create({
+      debateId: debate.id,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId: expert.id,
+      content: "Benign statement.",
+    });
+    await new DebateRepository(db).update(debate.id, {
+      status: "completed",
+      endedAt: new Date().toISOString(),
+    });
+    return { panelName: panel.name };
+  } finally {
+    await db.destroy();
+  }
+}
+
 async function seedPanelWithAdrInjectionContent(
   testHome: string,
   maliciousContent: string,
@@ -1524,6 +1563,14 @@ describe("buildExportCommand", () => {
       forbidden: [/^>[ ]{1,4}<h2>/m, /^>[ ]{1,4}<script>/m, /^>[ ]{1,4}<!--/m],
       present: ["> \\<h2>HTML Injected", "> \\<script>evil", "> \\<!-- pwn"],
     },
+    {
+      // #2127 — ordered-list markers (1-9 digits + `.`/`)`) still open an <ol>
+      // inside a blockquote; the leading-marker escape class omitted them.
+      label: "ordered-list markers (1. / 9) / bare 1.) forging an <ol> inside the quote",
+      content: [BLOCKQUOTE_BENIGN_ANCHOR, "1. First", "9) Ninth", "1."].join("\n"),
+      forbidden: [/^>[ ]{1,4}\d{1,9}[.)](?:\s|$)/m],
+      present: ["> 1\\. First", "> 9\\) Ninth", "> 1\\."],
+    },
   ];
 
   it.each(BLOCKQUOTE_INJECTION_CASES)(
@@ -1634,6 +1681,60 @@ describe("buildExportCommand", () => {
     expect(decisionSection).toContain("> It lowers risk and gathers real feedback.");
     expect(optionsSection).not.toContain("> \\");
     expect(decisionSection).not.toContain("> \\");
+  });
+
+  // #2127 (Wave-X digest) — the panel-topic blockquote (`> ${topic}`) in
+  // renderMarkdown must route through the SAME escapeBlockLeadingMarkdown helper
+  // as the sibling per-expert blockquotes. The topic is user-authored (self-spoof
+  // only), but consistency requires EVERY blockquote emitter of caller-supplied
+  // text to neutralize a leading block marker so it can never forge structure.
+  const TOPIC_INJECTION_CASES: readonly {
+    readonly label: string;
+    readonly topic: string;
+    readonly forbidden: RegExp;
+    readonly present: string;
+  }[] = [
+    { label: "ATX heading", topic: "# Injected", forbidden: /^> #/m, present: "> \\# Injected" },
+    { label: "blockquote", topic: "> Nested", forbidden: /^> >/m, present: "> \\> Nested" },
+    {
+      label: "ordered list",
+      topic: "1. Item",
+      forbidden: /^> \d{1,9}[.)](?:\s|$)/m,
+      present: "> 1\\. Item",
+    },
+    { label: "thematic break", topic: "---", forbidden: /^> -{3,}\s*$/m, present: "> \\---" },
+    { label: "setext H1 underline", topic: "===", forbidden: /^> ={2,}\s*$/m, present: "> \\===" },
+  ];
+
+  it.each(TOPIC_INJECTION_CASES)(
+    "--format markdown neutralizes a leading block marker in the panel-topic blockquote: $label (#2127)",
+    async ({ topic, forbidden, present }) => {
+      const seed = await seedPanelWithTopic(testHome, topic);
+      let captured = "";
+      const cmd = buildExportCommand({
+        write: (s) => {
+          captured += s;
+        },
+      });
+      await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "markdown"]);
+
+      expect(captured).not.toMatch(forbidden);
+      expect(captured).toContain(present);
+    },
+  );
+
+  it("--format markdown leaves a benign panel topic unescaped (#2127)", async () => {
+    const seed = await seedPanelWithTopic(testHome, "Should we ship the MVP?");
+    let captured = "";
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
+    await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "markdown"]);
+
+    expect(captured).toContain("> Should we ship the MVP?");
+    expect(captured).not.toContain("> \\");
   });
 
   it.skipIf(WIN32)(

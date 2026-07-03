@@ -47,6 +47,7 @@ import { synthesizeEvents, type TranscriptDocument } from "../../memory/transcri
 import { CliUserError } from "../cli-user-error.js";
 import { resolveSession } from "../session-resolver.js";
 import {
+  escapeBlockLeadingMarkdown,
   sanitizeExportBlock,
   sanitizeExportBlockLines,
   sanitizeExportLine,
@@ -120,33 +121,6 @@ async function realpathParentDir(parentDir: string, outputPath: string): Promise
       { cause: err },
     );
   }
-}
-
-/**
- * Neutralize any leading block-level Markdown construct on a single line so
- * untrusted transcript text can never open a new block and forge document
- * structure (outline spoofing / section forgery). Covers the whole CommonMark
- * block-start class — ATX headings (`#`), setext underlines (`=`/`-`), thematic
- * breaks (`-`/`*`/`_`), list bullets (`-`/`*`/`+`), blockquotes (`>`), fenced
- * code (`` ` ``/`~`), raw-HTML blocks (`<`) and INDENTED code blocks.
- *
- * Two steps, in order:
- *   1. Strip leading indentation. A caller pins the line inside a list item with
- *      a fixed 2-space prefix; once a blank line closes that item's paragraph, a
- *      continuation indented 4+ columns (four spaces, or a single tab — which
- *      CommonMark expands to a 4-column stop) opens an INDENTED code block, and
- *      unlike the punctuation markers below there is no character to escape (the
- *      code block would even swallow an escaped marker as literal text). Removing
- *      the indentation keeps the content at the list-item paragraph column so it
- *      can never start a code block (#1884).
- *   2. Backslash-escape a single leading block marker so the de-indented line
- *      parses as a literal paragraph while preserving the visible text. (A
- *      blockquote prefix does NOT suppress a nested ATX heading — CommonMark
- *      renders `> # Foo` as a heading — so escaping, not quoting, is the robust
- *      fix.)
- */
-function escapeBlockLeadingMarkdown(line: string): string {
-  return line.replace(/^[ \t]+/, "").replace(/^([#>=~`*+_<-])/, "\\$1");
 }
 
 /**
@@ -497,7 +471,8 @@ export function renderMarkdown(doc: TranscriptDocument): string {
 
   const lines: string[] = [];
   lines.push(`# ${sanitizeExportLine(doc.panel.name)}`);
-  if (doc.panel.topic) lines.push(`> ${sanitizeExportLine(doc.panel.topic)}`);
+  if (doc.panel.topic)
+    lines.push(`> ${escapeBlockLeadingMarkdown(sanitizeExportLine(doc.panel.topic))}`);
   lines.push("");
   lines.push(`**Prompt:** ${sanitizeExportLine(doc.latestDebate.prompt)}`);
   lines.push(`**Status:** ${sanitizeExportLine(doc.latestDebate.status)}`);
@@ -537,13 +512,15 @@ export function renderMarkdown(doc: TranscriptDocument): string {
       lines.push(`#### ${display}${model ? ` _(${model})_` : ""}`);
       lines.push("");
       // Render multi-line content as a markdown block-quote so it reads as the
-      // expert's "voice". Neutralize each untrusted paragraph's leading block
-      // marker first: CommonMark still opens block constructs INSIDE a blockquote
-      // (`> ## x` -> heading, `> ---`/`> ===` -> rule/setext heading, `> ``` ->
-      // code fence, `> <x>` -> raw HTML), so a leading marker would otherwise
-      // forge structure in the exported outline (outline spoofing, #2110).
-      for (const para of sanitizeExportBlockLines(t.content)) {
-        lines.push(`> ${escapeBlockLeadingMarkdown(para)}`);
+      // expert's "voice". sanitizeExportBlockLines splits on newlines, so the
+      // escaped unit is a LINE, not a Markdown paragraph. Neutralize each
+      // untrusted line's leading block marker first: CommonMark still opens block
+      // constructs INSIDE a blockquote (`> ## x` -> heading, `> ---` -> thematic
+      // break / setext-H2, `> ===` -> setext-H1, `> 1. x` -> ordered list,
+      // `> ``` -> code fence, `> <x>` -> raw HTML), so a leading marker would
+      // otherwise forge structure in the exported outline (outline spoofing, #2110).
+      for (const line of sanitizeExportBlockLines(t.content)) {
+        lines.push(`> ${escapeBlockLeadingMarkdown(line)}`);
       }
       lines.push("");
     }
@@ -621,8 +598,8 @@ export function renderAdr(doc: TranscriptDocument): string {
       // Neutralize any leading block marker before quoting — a blockquote does
       // not suppress a nested heading/rule/code/HTML block, so model-derived
       // position text could otherwise forge the ADR outline (#2110).
-      for (const para of sanitizeExportBlockLines(c.position)) {
-        lines.push(`> ${escapeBlockLeadingMarkdown(para)}`);
+      for (const line of sanitizeExportBlockLines(c.position)) {
+        lines.push(`> ${escapeBlockLeadingMarkdown(line)}`);
       }
       lines.push("");
     }
@@ -666,8 +643,8 @@ export function renderAdr(doc: TranscriptDocument): string {
       lines.push(`### ${c.displayName}'s final position`);
       lines.push("");
       // Same leading block-marker neutralization as the Options blockquote (#2110).
-      for (const para of sanitizeExportBlockLines(c.synthesis)) {
-        lines.push(`> ${escapeBlockLeadingMarkdown(para)}`);
+      for (const line of sanitizeExportBlockLines(c.synthesis)) {
+        lines.push(`> ${escapeBlockLeadingMarkdown(line)}`);
       }
       lines.push("");
     }
