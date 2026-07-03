@@ -23,6 +23,7 @@ import { describe, expect, it } from "vitest";
 // purely for its pure parsing/sanitizing exports.
 import {
   computeBackoffDelay,
+  formatFatalError,
   ghApiJson,
   ghErrorText,
   isTransientGhError,
@@ -383,6 +384,50 @@ describe("ghErrorText", () => {
     expect(text).toContain("HTTP 404");
     expect(text).not.toMatch(/timeout/i);
     expect(isTransientGhError(text)).toBe(false);
+  });
+
+  // --- Regression: issue #2187 item 1 (Sentinel A1) -------------------------
+  // When NO gh/OS-generated field is present (no stderr/stdout, no string
+  // syscall code, not killed), the old empty-parts fallback returned
+  // String(error), which re-exposes Node's echoed "Command failed: gh api
+  // repos/<owner>/<repo>/..." line. That owner/repo/tag is attacker-editable via
+  // a workflow `uses:` line, so it must never re-enter the classifier text — a
+  // `timeout`-named owner must not read as a transient fault. Fail-closed: with
+  // no diagnostic signal the fallback text classifies TERMINAL.
+  it("does not re-admit the echoed command line in the no-gh-field fallback", () => {
+    const err = new Error("Command failed: gh api repos/evil-timeout/foo/git/ref/tags/v1");
+    const text = ghErrorText(err);
+    expect(text).not.toMatch(/timeout/i);
+    expect(text).not.toContain("Command failed");
+    expect(text).not.toContain("evil-timeout");
+    expect(isTransientGhError(text)).toBe(false);
+  });
+});
+
+describe("formatFatalError", () => {
+  // The top-level fatal handler (outside the per-pin loop) logs a caught error's
+  // stack/message. That text can transitively include attacker-editable workflow
+  // content — e.g. a control-char-laden `uses:` filename surfaced through a
+  // readFile/parse error — so it must be sanitized to a single safe CI-log line
+  // before it is written (issue #2181, Sentinel A1 digest item 3). This mirrors
+  // the per-pin error sanitization already applied inside main().
+  it("strips ANSI/OSC and C0/C1 control bytes from a fatal Error's stack/message", () => {
+    const err = new Error("boom \x1B[31mred\x1B[0m \x07 \x9B done");
+    const out = formatFatalError(err);
+    expect(out).not.toContain("\x1B");
+    expect(out).not.toContain("\x07");
+    expect(out).not.toContain("\x9B");
+    expect(out).toContain("boom");
+  });
+
+  it("folds a multi-line stack/message to one line (no CR/LF/LS break-out)", () => {
+    const err = new Error("line1\r\nline2\u2028line3");
+    const out = formatFatalError(err);
+    expect(out).not.toMatch(/[\r\n\u2028\u2029]/);
+  });
+
+  it("stringifies and sanitizes a non-Error thrown value", () => {
+    expect(formatFatalError("plain\x1B[2Jstring")).toBe("plainstring");
   });
 });
 

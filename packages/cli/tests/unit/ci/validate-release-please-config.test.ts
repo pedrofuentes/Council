@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   KNOWN_RELEASE_TYPES,
+  isPathWithinRoot,
   isValidSemver,
   validateReleasePleaseConfig,
 } from "../../../../../scripts/validate-release-please-config.mjs";
@@ -149,6 +150,46 @@ describe("validateReleasePleaseConfig", () => {
     expect(result.ok).toBe(false);
     expect(result.errors.length).toBeGreaterThan(1);
   });
+
+  // --- Regression: issue #2181 digest item 6 (Sentinel A1, log-sanitization) --
+  // A fork PR can place ANSI/OSC/C0/C1 escape bytes inside a JSON config key or
+  // value; the validator echoes offending keys/values into its error strings,
+  // which are later written to the Actions log. Untrusted JSON-derived text must
+  // be stripped of terminal-control/escape bytes before it reaches the log so it
+  // cannot spoof or manipulate the terminal. The RAW value is still (correctly)
+  // used for the validity decision — only the DISPLAYED error text is sanitized.
+  it("strips ANSI/control bytes from an untrusted config KEY echoed in an error", () => {
+    const config = {
+      packages: { "packages/cli": { "release-type": "node" } },
+      "\u001B[31mmalicious\u001B[0m\u0007": true,
+    };
+    const manifest = { "packages/cli": "0.5.0" };
+    const result = validateReleasePleaseConfig(config, manifest);
+    expect(result.ok).toBe(false);
+    const joined = result.errors.join("\n");
+    expect(joined).not.toContain("\u001B");
+    expect(joined).not.toContain("\u0007");
+    // The sanitized key text is still surfaced so the maintainer can locate it.
+    expect(joined).toContain("malicious");
+  });
+
+  it("strips ANSI/control bytes from an untrusted release-type VALUE echoed in an error", () => {
+    const config = { packages: { "packages/cli": { "release-type": "no\u001B[31mde-x" } } };
+    const manifest = { "packages/cli": "0.5.0" };
+    const result = validateReleasePleaseConfig(config, manifest);
+    expect(result.ok).toBe(false);
+    expect(result.errors.join("\n")).not.toContain("\u001B");
+  });
+
+  it("strips control bytes from an untrusted manifest PATH echoed in an error", () => {
+    const config = { packages: { "packages/cli": { "release-type": "node" } } };
+    const manifest = { "packages/cli": "0.5.0", "pkg\u001B[31mghost\r\n[fake ok]": "1.0.0" };
+    const result = validateReleasePleaseConfig(config, manifest);
+    expect(result.ok).toBe(false);
+    const joined = result.errors.join("\n");
+    expect(joined).not.toContain("\u001B");
+    expect(joined).not.toMatch(/\r/);
+  });
 });
 
 describe("KNOWN_RELEASE_TYPES", () => {
@@ -180,5 +221,24 @@ describe("isValidSemver", () => {
     expect(isValidSemver(123)).toBe(false);
     expect(isValidSemver(null)).toBe(false);
     expect(isValidSemver(undefined)).toBe(false);
+  });
+});
+
+describe("isPathWithinRoot", () => {
+  // Defense-in-depth for issue #2181 digest item 7: the validator resolves its
+  // config/manifest paths from positional CLI args. The shipped workflow passes
+  // none (defaults under the repo root), but a supplied path must never escape
+  // the repo root via `..`, an absolute path, or a sibling-prefix look-alike.
+  it("accepts a path at, or nested under, the repo root", () => {
+    expect(isPathWithinRoot("/repo", "/repo")).toBe(true);
+    expect(isPathWithinRoot("/repo/release-please-config.json", "/repo")).toBe(true);
+    expect(isPathWithinRoot("/repo/a/b/c.json", "/repo")).toBe(true);
+  });
+
+  it("rejects traversal escapes, absolute escapes, and sibling-prefix look-alikes", () => {
+    expect(isPathWithinRoot("/repo/../etc/passwd", "/repo")).toBe(false);
+    expect(isPathWithinRoot("/etc/passwd", "/repo")).toBe(false);
+    // "/repo-evil" must not pass a naive `startsWith("/repo")` prefix check.
+    expect(isPathWithinRoot("/repo-evil/secret", "/repo")).toBe(false);
   });
 });
