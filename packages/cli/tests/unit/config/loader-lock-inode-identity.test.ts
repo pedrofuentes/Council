@@ -37,6 +37,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     ...actual,
     readFile: vi.fn(actual.readFile),
     lstat: vi.fn(actual.lstat),
+    stat: vi.fn(actual.stat),
+    open: vi.fn(actual.open),
   };
 });
 
@@ -72,6 +74,8 @@ describe("config lock inode identity", () => {
     // implementation never bleeds across cases (only #1 and #4 override them).
     vi.mocked(fs.readFile).mockImplementation(actualFs.readFile);
     vi.mocked(fs.lstat).mockImplementation(actualFs.lstat);
+    vi.mocked(fs.stat).mockImplementation(actualFs.stat);
+    vi.mocked(fs.open).mockImplementation(actualFs.open);
 
     testHome = await actualFs.mkdtemp(path.join(os.tmpdir(), "council-lock-inode-"));
     configPath = path.join(testHome, "config.yaml");
@@ -84,6 +88,8 @@ describe("config lock inode identity", () => {
     vi.clearAllMocks();
     vi.mocked(fs.readFile).mockImplementation(actualFs.readFile);
     vi.mocked(fs.lstat).mockImplementation(actualFs.lstat);
+    vi.mocked(fs.stat).mockImplementation(actualFs.stat);
+    vi.mocked(fs.open).mockImplementation(actualFs.open);
     if (originalCouncilHome === undefined) {
       delete process.env["COUNCIL_HOME"];
     } else {
@@ -232,5 +238,216 @@ describe("config lock inode identity", () => {
     // finish so the pending update settles instead of leaking.
     await actualFs.rm(lockPath, { force: true }).catch(() => undefined);
     await update.catch(() => undefined);
+  });
+});
+
+/**
+ * Non-authoritative `st_ino` hardening (#2118 shared-FS multi-host target).
+ *
+ * On NFS/SMB/CIFS/some FUSE/overlay mounts libuv can report `st_ino = 0` or
+ * unstable/reused values, and 64-bit ids read as JS `number` lose precision past
+ * 2^53. Structural inode identity is therefore only trustworthy when `st_ino` is
+ * stable and non-zero. These tests pin the fail-safe: when the observed `ino` is
+ * `0n` (or two distinct 64-bit inodes collide as JS numbers), ownership is NOT
+ * provable, so release must NOT unlink and the reaper structural fallback must
+ * NOT reap — never destroy a lock we cannot positively prove is ours.
+ *
+ * RED (raw `number` compare, no zero-guard) vs GREEN (bigint compare + fail-safe):
+ *   #A: release observes `ino=0n` for both our captured id and the foreign file
+ *       at the path → `0===0` false-matches and blind-unlinks the foreign lock
+ *       (RED); the guarded release refuses (unprovable identity).
+ *   #B: reaper structural fallback observes `ino=0n` → `0===0` false-matches a
+ *       swapped-in successor and reaps it (RED); the guarded fallback returns
+ *       false and restores the successor.
+ *   #C: two 64-bit inodes that round to the SAME JS number (…992 vs …993) are
+ *       treated as equal by the `number` compare and the foreign lock is unlinked
+ *       (RED); the bigint compare distinguishes them and preserves it.
+ */
+describe("config lock non-authoritative st_ino (fail-safe)", () => {
+  let actualFs: typeof fs;
+  let testHome: string;
+  let configPath: string;
+  let lockPath: string;
+  const originalCouncilHome = process.env["COUNCIL_HOME"];
+
+  /** Build a Stats-like object honouring the `{ bigint: true }` option. */
+  function fakeStats(dev: bigint, ino: bigint, opts: unknown, mtimeMs = Date.now()): unknown {
+    const bigint =
+      typeof opts === "object" && opts !== null && (opts as { bigint?: boolean }).bigint === true;
+    return bigint
+      ? { dev, ino, mtimeMs: BigInt(Math.trunc(mtimeMs)) }
+      : { dev: Number(dev), ino: Number(ino), mtimeMs };
+  }
+
+  beforeEach(async () => {
+    actualFs = await vi.importActual<typeof fs>("node:fs/promises");
+    vi.mocked(fs.readFile).mockImplementation(actualFs.readFile);
+    vi.mocked(fs.lstat).mockImplementation(actualFs.lstat);
+    vi.mocked(fs.stat).mockImplementation(actualFs.stat);
+    vi.mocked(fs.open).mockImplementation(actualFs.open);
+
+    testHome = await actualFs.mkdtemp(path.join(os.tmpdir(), "council-lock-ino0-"));
+    configPath = path.join(testHome, "config.yaml");
+    lockPath = `${configPath}.lock`;
+    process.env["COUNCIL_HOME"] = testHome;
+    await actualFs.writeFile(configPath, BASE_CONFIG, "utf-8");
+  });
+
+  afterEach(async () => {
+    vi.clearAllMocks();
+    vi.mocked(fs.readFile).mockImplementation(actualFs.readFile);
+    vi.mocked(fs.lstat).mockImplementation(actualFs.lstat);
+    vi.mocked(fs.stat).mockImplementation(actualFs.stat);
+    vi.mocked(fs.open).mockImplementation(actualFs.open);
+    if (originalCouncilHome === undefined) {
+      delete process.env["COUNCIL_HOME"];
+    } else {
+      process.env["COUNCIL_HOME"] = originalCouncilHome;
+    }
+    await actualFs.rm(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+
+  it("does NOT unlink a foreign lock at release when st_ino reports 0 (unprovable identity)", async () => {
+    // Simulate a filesystem whose st_ino collapses to 0 for every entry: BOTH the
+    // acquire-time capture (handle.stat) and the release-time compare (fs.lstat)
+    // observe ino=0 with the same dev. A raw `dev===dev && ino===ino` compare then
+    // reads `0===0 → true` and unlinks whatever occupies the path — here a foreign
+    // successor's lock. The guarded release must treat ino=0 as unprovable.
+    const foreignMeta = {
+      pid: process.pid,
+      host: os.hostname(),
+      token: "foreign-ino0-2118",
+      createdAt: Date.now(),
+    };
+
+    // Our own lock's captured identity: dev=1, ino=0 (authoritative id unavailable).
+    vi.mocked(fs.open).mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+      const handle = await actualFs.open(...args);
+      if (args[0] === lockPath) {
+        handle.stat = ((opts?: unknown) =>
+          Promise.resolve(fakeStats(1n, 0n, opts))) as typeof handle.stat;
+      }
+      return handle;
+    });
+    // Release-time lstat of the (now foreign) file at the path also reports ino=0.
+    vi.mocked(fs.lstat).mockImplementation(((...args: Parameters<typeof fs.lstat>) => {
+      if (args[0] === lockPath) return Promise.resolve(fakeStats(1n, 0n, args[1]));
+      return actualFs.lstat(...args);
+    }) as typeof fs.lstat);
+
+    await expect(
+      withConfigWriteLock(async () => {
+        // A successor reaps our lock and re-acquires the path with its own file.
+        await actualFs.unlink(lockPath);
+        await actualFs.writeFile(lockPath, JSON.stringify(foreignMeta), "utf-8");
+      }),
+    ).resolves.toBeUndefined();
+
+    // Discriminating oracle: the foreign lock survives — ino=0 is not proof.
+    await expect(actualFs.access(lockPath)).resolves.toBeUndefined();
+    expect(await lockToken(actualFs, lockPath)).toBe("foreign-ino0-2118");
+  });
+
+  it("does NOT reap a swapped-in successor via the structural fallback when st_ino reports 0", async () => {
+    // Plant a stale lock A with UNREADABLE metadata (forcing the reaper's
+    // structural inode fallback rather than the token path), aged past
+    // LOCK_STALE_MS. On the reaper's deciding metadata read, a successor reaps A
+    // and re-acquires with a fresh, LIVE, DIFFERENT lock B. With st_ino reported
+    // as 0 the structural fallback reads `0===0 → true` and unlinks B (RED); the
+    // guarded fallback must return false and restore B.
+    await actualFs.writeFile(lockPath, "not-valid-lock-json", "utf-8");
+    const oldMs = Date.now() - 60_000;
+    await actualFs.utimes(lockPath, oldMs / 1000, oldMs / 1000);
+
+    const successorMeta = {
+      pid: process.pid, // LIVE => never legitimately reaped on later passes
+      host: os.hostname(),
+      token: "successor-B-ino0",
+      createdAt: Date.now(),
+    };
+
+    // Override ino to 0 for the lock path and any claimed (renamed-aside) file,
+    // preserving the real mtime so the age decision still fires.
+    vi.mocked(fs.stat).mockImplementation((async (...args: Parameters<typeof fs.stat>) => {
+      const target = args[0];
+      if (
+        typeof target === "string" &&
+        (target === lockPath || target.startsWith(`${lockPath}.stale-`))
+      ) {
+        const real = await actualFs.stat(...(args as Parameters<typeof actualFs.stat>));
+        return fakeStats(BigInt(real.dev), 0n, args[1], Number(real.mtimeMs));
+      }
+      return actualFs.stat(...(args as Parameters<typeof actualFs.stat>));
+    }) as typeof fs.stat);
+
+    let swapped = false;
+    let notifySwapped!: () => void;
+    const swapHappened = new Promise<void>((resolve) => {
+      notifySwapped = resolve;
+    });
+    vi.mocked(fs.readFile).mockImplementation(
+      async (...args: Parameters<typeof fs.readFile>): Promise<string | Buffer> => {
+        if (!swapped && args[0] === lockPath) {
+          swapped = true;
+          await actualFs.unlink(lockPath);
+          await actualFs.writeFile(lockPath, JSON.stringify(successorMeta), "utf-8");
+          notifySwapped();
+          // Return A's original unreadable bytes so meta stays undefined and the
+          // reaper takes the structural inode fallback.
+          return "not-valid-lock-json";
+        }
+        return actualFs.readFile(...args);
+      },
+    );
+
+    const update = updateConfigField("defaults.model", "gpt-5");
+    await swapHappened;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    // Discriminating oracle: the LIVE successor lock B is intact.
+    expect(await lockToken(actualFs, lockPath)).toBe("successor-B-ino0");
+
+    await actualFs.rm(lockPath, { force: true }).catch(() => undefined);
+    await update.catch(() => undefined);
+  });
+
+  it("treats two 64-bit inodes that collide as a JS number as DIFFERENT identities", async () => {
+    // 9007199254740993 and 9007199254740992 are distinct inodes but round to the
+    // same IEEE-754 double: a `number` compare false-matches and unlinks a foreign
+    // successor; a bigint compare distinguishes them and preserves it.
+    const ourIno = 9007199254740993n;
+    const foreignIno = 9007199254740992n;
+    expect(Number(ourIno)).toBe(Number(foreignIno)); // precondition: number collision
+
+    const foreignMeta = {
+      pid: process.pid,
+      host: os.hostname(),
+      token: "foreign-precision",
+      createdAt: Date.now(),
+    };
+
+    vi.mocked(fs.open).mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+      const handle = await actualFs.open(...args);
+      if (args[0] === lockPath) {
+        handle.stat = ((opts?: unknown) =>
+          Promise.resolve(fakeStats(1n, ourIno, opts))) as typeof handle.stat;
+      }
+      return handle;
+    });
+    vi.mocked(fs.lstat).mockImplementation(((...args: Parameters<typeof fs.lstat>) => {
+      if (args[0] === lockPath) return Promise.resolve(fakeStats(1n, foreignIno, args[1]));
+      return actualFs.lstat(...args);
+    }) as typeof fs.lstat);
+
+    await expect(
+      withConfigWriteLock(async () => {
+        await actualFs.unlink(lockPath);
+        await actualFs.writeFile(lockPath, JSON.stringify(foreignMeta), "utf-8");
+      }),
+    ).resolves.toBeUndefined();
+
+    // Discriminating oracle: the foreign lock (distinct 64-bit inode) survives.
+    await expect(actualFs.access(lockPath)).resolves.toBeUndefined();
+    expect(await lockToken(actualFs, lockPath)).toBe("foreign-precision");
   });
 });
