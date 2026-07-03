@@ -183,6 +183,53 @@ describe("buildProgram", () => {
         { target: "stderr", chunk: "stderr — 2× ≥ 🎉", encoding: undefined },
       ]);
     });
+
+    it("passes a bounded timeout to the chcp exec so a hung child cannot wedge startup", async () => {
+      const execFileSync = vi.fn().mockReturnValue(Buffer.alloc(0));
+      vi.doMock("node:child_process", () => ({ execFileSync }));
+
+      const { configureOutputEncoding } = await loadCouncilModule();
+      execFileSync.mockClear();
+
+      const calls: WriteCall[] = [];
+      const stdout = createWritable("stdout", calls, true);
+      const stderr = createWritable("stderr", calls, true);
+
+      configureOutputEncoding("win32", stdout, stderr);
+
+      expect(execFileSync).toHaveBeenCalledOnce();
+      const options = execFileSync.mock.calls[0]?.[2] as { timeout?: unknown };
+      expect(typeof options.timeout).toBe("number");
+      expect(options.timeout as number).toBeGreaterThan(0);
+      expect(options.timeout as number).toBeLessThanOrEqual(5000);
+    });
+
+    it("never invokes chcp through an attacker-controlled UNC %SystemRoot%", async () => {
+      const execFileSync = vi.fn().mockReturnValue(Buffer.alloc(0));
+      vi.doMock("node:child_process", () => ({ execFileSync }));
+
+      const { configureOutputEncoding } = await loadCouncilModule();
+      execFileSync.mockClear();
+
+      const origSystemRoot = process.env.SystemRoot;
+      try {
+        process.env.SystemRoot = "\\\\attacker\\share";
+
+        const calls: WriteCall[] = [];
+        const stdout = createWritable("stdout", calls, true);
+        const stderr = createWritable("stderr", calls, true);
+
+        configureOutputEncoding("win32", stdout, stderr);
+      } finally {
+        if (origSystemRoot === undefined) delete process.env.SystemRoot;
+        else process.env.SystemRoot = origSystemRoot;
+      }
+
+      expect(execFileSync).toHaveBeenCalledOnce();
+      const commandPath = execFileSync.mock.calls[0]?.[0] as string;
+      expect(commandPath).toBe("C:\\Windows\\System32\\chcp.com");
+      expect(commandPath).not.toMatch(/attacker/i);
+    });
   });
 
   describe("help output grouping", () => {
@@ -704,6 +751,65 @@ describe("resolveWindowsCodePageCommand (#843)", () => {
     expect(resolved).not.toBe("chcp.com");
     expect(resolved).toMatch(/[\\/]System32[\\/]chcp\.com$/i);
   });
+
+  // #1935 (Dim A2, security): %SystemRoot% is an env-controlled trust boundary.
+  // A UNC / device / relative / traversal value must never be interpolated into
+  // the executable path — it falls back to the trusted default instead.
+  it("rejects a UNC %SystemRoot% and falls back to the default (no attacker share)", async () => {
+    const { resolveWindowsCodePageCommand } = await loadCouncilModule();
+
+    const resolved = resolveWindowsCodePageCommand({ SystemRoot: "\\\\attacker\\share" });
+    expect(resolved).toBe("C:\\Windows\\System32\\chcp.com");
+    expect(resolved).not.toMatch(/attacker/i);
+  });
+
+  it("rejects a forward-slash UNC %SystemRoot% and falls back to the default", async () => {
+    const { resolveWindowsCodePageCommand } = await loadCouncilModule();
+
+    expect(resolveWindowsCodePageCommand({ SystemRoot: "//attacker/share" })).toBe(
+      "C:\\Windows\\System32\\chcp.com",
+    );
+  });
+
+  it("rejects an extended-length device %SystemRoot% (\\\\?\\) and falls back to the default", async () => {
+    const { resolveWindowsCodePageCommand } = await loadCouncilModule();
+
+    expect(resolveWindowsCodePageCommand({ SystemRoot: "\\\\?\\C:\\Windows" })).toBe(
+      "C:\\Windows\\System32\\chcp.com",
+    );
+  });
+
+  it("rejects a %SystemRoot% with a `..` traversal segment and falls back to the default", async () => {
+    const { resolveWindowsCodePageCommand } = await loadCouncilModule();
+
+    const resolved = resolveWindowsCodePageCommand({ SystemRoot: "C:\\Windows\\..\\..\\Temp" });
+    expect(resolved).toBe("C:\\Windows\\System32\\chcp.com");
+    expect(resolved).not.toContain("..");
+  });
+
+  it("rejects a relative %SystemRoot% and falls back to the default", async () => {
+    const { resolveWindowsCodePageCommand } = await loadCouncilModule();
+
+    expect(resolveWindowsCodePageCommand({ SystemRoot: "Windows\\System32" })).toBe(
+      "C:\\Windows\\System32\\chcp.com",
+    );
+  });
+
+  it("rejects a rooted but drive-less %SystemRoot% and falls back to the default", async () => {
+    const { resolveWindowsCodePageCommand } = await loadCouncilModule();
+
+    expect(resolveWindowsCodePageCommand({ SystemRoot: "\\Windows" })).toBe(
+      "C:\\Windows\\System32\\chcp.com",
+    );
+  });
+
+  it("rejects a %SystemRoot% carrying a control character and falls back to the default", async () => {
+    const { resolveWindowsCodePageCommand } = await loadCouncilModule();
+
+    expect(resolveWindowsCodePageCommand({ SystemRoot: "C:\\Win\ndows" })).toBe(
+      "C:\\Windows\\System32\\chcp.com",
+    );
+  });
 });
 
 describe("startup entrypoint (isMainModule) (#796)", () => {
@@ -715,7 +821,7 @@ describe("startup entrypoint (isMainModule) (#796)", () => {
   // published `council.js` dist takes the `.js` suffix branch, which the e2e
   // bundled-binary smoke test covers instead.
   it.skipIf(process.platform === "win32")(
-    "wraps the real startup output path with the absolute chcp command on Windows",
+    "wraps and restores both stdout and stderr on the real Windows startup path (absolute chcp command)",
     async () => {
       const execFileSync = vi.fn().mockReturnValue(Buffer.alloc(0));
       const spawnSync = vi.fn().mockReturnValue({ status: 0 });
@@ -733,13 +839,25 @@ describe("startup entrypoint (isMainModule) (#796)", () => {
       const origArgv = process.argv;
       const origOutTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
       const origInTTY = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+      const origErrTTY = Object.getOwnPropertyDescriptor(process.stderr, "isTTY");
       const origOutWrite = process.stdout.write.bind(process.stdout);
+      const origErrWrite = process.stderr.write.bind(process.stderr);
       const origEnv = { ...process.env };
+
+      // #796/#1935 (Dim D): capture the write fns the entrypoint installs so we
+      // can assert BOTH stdout and stderr were wrapped for UTF-8 — then restored
+      // — and never leak a wrapped writer into sibling tests.
+      let wrappedOutWrite: typeof process.stdout.write | undefined;
+      let wrappedErrWrite: typeof process.stderr.write | undefined;
 
       try {
         Object.defineProperty(process, "platform", { value: "win32", configurable: true });
         Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
         Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+        // Force stderr into a TTY so the real path also wraps stderr.write —
+        // otherwise Vitest's piped stdio leaves stderr.isTTY undefined and the
+        // stderr-restore assertion below would be vacuous (#1935 Dim D).
+        Object.defineProperty(process.stderr, "isTTY", { value: true, configurable: true });
         delete process.env.CI;
         delete process.env.COUNCIL_NO_TUI;
         // Force the TUI-launch path so the fire-and-forget runCli() settles on
@@ -751,13 +869,21 @@ describe("startup entrypoint (isMainModule) (#796)", () => {
 
         await import("../../../src/bin/council.js");
         await new Promise((resolve) => setImmediate(resolve));
+
+        // Snapshot the writers installed by configureOutputEncoding() before the
+        // finally block restores them.
+        wrappedOutWrite = process.stdout.write;
+        wrappedErrWrite = process.stderr.write;
       } finally {
         process.stdout.write = origOutWrite;
+        process.stderr.write = origErrWrite;
         if (origPlatform) Object.defineProperty(process, "platform", origPlatform);
         if (origOutTTY) Object.defineProperty(process.stdout, "isTTY", origOutTTY);
         else delete (process.stdout as { isTTY?: boolean }).isTTY;
         if (origInTTY) Object.defineProperty(process.stdin, "isTTY", origInTTY);
         else delete (process.stdin as { isTTY?: boolean }).isTTY;
+        if (origErrTTY) Object.defineProperty(process.stderr, "isTTY", origErrTTY);
+        else delete (process.stderr as { isTTY?: boolean }).isTTY;
         process.argv = origArgv;
         // Restore exactly the four env vars this test mutates. Static member
         // deletes keep ESLint's no-dynamic-delete rule satisfied.
@@ -783,6 +909,14 @@ describe("startup entrypoint (isMainModule) (#796)", () => {
       );
       // And that startup continued into runCli(), launching the (mocked) TUI.
       expect(launchTui).toHaveBeenCalledTimes(1);
+
+      // #1935 (Dim D): the entrypoint wrapped BOTH std streams for UTF-8 on the
+      // Windows TTY path (not just stdout)...
+      expect(wrappedOutWrite).not.toBe(origOutWrite);
+      expect(wrappedErrWrite).not.toBe(origErrWrite);
+      // ...and the harness restored BOTH, so no wrapped writer leaks onward.
+      expect(process.stdout.write).toBe(origOutWrite);
+      expect(process.stderr.write).toBe(origErrWrite);
     },
   );
 });
