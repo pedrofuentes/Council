@@ -234,7 +234,17 @@ describe("formatEngineError", () => {
   });
 
   it("infers a network hint from a timeout message", () => {
-    const out = formatEngineError(new Error("socket hang up: request timed out"));
+    // Isolates the timeout arm: the message has no "socket hang up" substring,
+    // so only the timed-out branch of the network regex can match. Dropping the
+    // timeout arm would make this test fail — which is the point (#1913).
+    const out = formatEngineError(new Error("the request timed out after 30000ms"));
+    expect(out.toLowerCase()).toMatch(/network|connection/);
+  });
+
+  it("infers a network hint from a socket hang up message", () => {
+    // Isolates the socket-hang-up arm: no timeout wording, so only that branch
+    // of the network regex can match (#1913).
+    const out = formatEngineError(new Error("socket hang up"));
     expect(out.toLowerCase()).toMatch(/network|connection/);
   });
 
