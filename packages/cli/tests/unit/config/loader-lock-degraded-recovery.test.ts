@@ -22,6 +22,12 @@
  *       reap and restores it (GREEN preserves it).
  *   T5 (F3 churn): an abandoned unreadable-meta ino=0 lock is reaped on the FIRST
  *       attempt (mtime corroborates) — no per-retry rename-away/rename-back churn.
+ *   T6 (F1 A-B-A window): on ino=0, a foreign successor that reap+recreates the
+ *       lock in the t1→t2 window between release observing OUR token and acting on
+ *       the path is NEVER destroyed. A non-atomic read-meta-then-unlink-by-path
+ *       deletes that live successor (RED, config data loss #2235); the atomic
+ *       rename-to-claim + token re-verify only ever unlinks a claimed (renamed-
+ *       aside) copy, never lockPath directly, so the successor survives (GREEN).
  */
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -38,6 +44,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     stat: vi.fn(actual.stat),
     open: vi.fn(actual.open),
     rename: vi.fn(actual.rename),
+    unlink: vi.fn(actual.unlink),
   };
 });
 
@@ -93,6 +100,7 @@ describe("config lock degraded-mode recovery (non-authoritative st_ino)", () => 
     vi.mocked(fs.stat).mockImplementation(actualFs.stat);
     vi.mocked(fs.open).mockImplementation(actualFs.open);
     vi.mocked(fs.rename).mockImplementation(actualFs.rename);
+    vi.mocked(fs.unlink).mockImplementation(actualFs.unlink);
 
     testHome = await actualFs.mkdtemp(path.join(os.tmpdir(), "council-lock-degraded-"));
     configPath = path.join(testHome, "config.yaml");
@@ -108,6 +116,7 @@ describe("config lock degraded-mode recovery (non-authoritative st_ino)", () => 
     vi.mocked(fs.stat).mockImplementation(actualFs.stat);
     vi.mocked(fs.open).mockImplementation(actualFs.open);
     vi.mocked(fs.rename).mockImplementation(actualFs.rename);
+    vi.mocked(fs.unlink).mockImplementation(actualFs.unlink);
     if (originalCouncilHome === undefined) {
       delete process.env["COUNCIL_HOME"];
     } else {
@@ -296,5 +305,93 @@ describe("config lock degraded-mode recovery (non-authoritative st_ino)", () => 
       .mocked(fs.rename)
       .mock.calls.filter((call) => call[0] === lockPath).length;
     expect(lockClaimRenames).toBe(1);
+  });
+
+  it("T6 (F1 A-B-A safety): never deletes a foreign successor that swaps in during the ino=0 release window", async () => {
+    // Reproduces the #2235 🔴: on a non-authoritative-st_ino filesystem a
+    // foreign-host reaper can reap+recreate the lock in the tiny window between
+    // release observing OUR token and acting on the path. A non-atomic
+    // read-meta-then-unlink-by-path deletes that foreign successor's LIVE lock
+    // (config data loss). The atomic rename-to-claim + token re-verify collapses
+    // the window: release only ever unlinks a file it exclusively renamed aside,
+    // never lockPath directly, so the successor survives.
+    const foreignMeta = {
+      pid: process.pid,
+      host: os.hostname(),
+      token: "foreign-successor-window-2235",
+      createdAt: Date.now(),
+    };
+
+    // ino=0 at acquire (handle.stat) and at release (lstat) so the inode proof can
+    // never match, forcing the metadata token fallback.
+    vi.mocked(fs.open).mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+      const handle = await actualFs.open(...args);
+      if (args[0] === lockPath) {
+        handle.stat = ((opts?: unknown) =>
+          Promise.resolve(fakeStats(1n, 0n, opts, Date.now(), 100))) as typeof handle.stat;
+      }
+      return handle;
+    });
+
+    let releaseStarted = false;
+    vi.mocked(fs.lstat).mockImplementation(((...args: Parameters<typeof fs.lstat>) => {
+      if (args[0] === lockPath) {
+        releaseStarted = true;
+        return Promise.resolve(fakeStats(1n, 0n, args[1], Date.now(), 100));
+      }
+      return actualFs.lstat(...args);
+    }) as typeof fs.lstat);
+
+    // Swap a FOREIGN successor's lock in at lockPath at the instant release
+    // observes OUR token (the t1→t2 window). In the non-atomic impl that read is
+    // of lockPath itself and the subsequent unlink(lockPath) destroys the foreign
+    // lock; in the atomic impl the read is of the already-claimed (renamed-aside)
+    // copy, so lockPath is free and the foreign lock we plant simply survives.
+    let swapped = false;
+    vi.mocked(fs.readFile).mockImplementation(
+      async (...args: Parameters<typeof fs.readFile>): Promise<string | Buffer> => {
+        const result = await actualFs.readFile(...args);
+        if (releaseStarted && !swapped && typeof result === "string") {
+          let token: unknown;
+          try {
+            token = (JSON.parse(result) as { token?: unknown }).token;
+          } catch {
+            token = undefined;
+          }
+          if (typeof token === "string" && token !== foreignMeta.token) {
+            swapped = true;
+            await actualFs.rm(lockPath, { force: true });
+            await actualFs.writeFile(lockPath, JSON.stringify(foreignMeta), "utf-8");
+          }
+        }
+        return result;
+      },
+    );
+
+    await expect(withConfigWriteLock(async () => undefined)).resolves.toBeUndefined();
+
+    // The swap must actually have fired inside the release window, else the test
+    // proves nothing about the A-B-A window.
+    expect(swapped).toBe(true);
+
+    // (a) The foreign successor's LIVE lock SURVIVES release, byte-for-byte.
+    await expect(actualFs.access(lockPath)).resolves.toBeUndefined();
+    expect(await lockToken(actualFs, lockPath)).toBe(foreignMeta.token);
+
+    // (b) Release NEVER unlinks lockPath directly — it only removes a claimed
+    //     (renamed-aside) copy, and it claims via rename(lockPath → *.releasing-*).
+    const unlinkedLockPathDirectly = vi
+      .mocked(fs.unlink)
+      .mock.calls.some((call) => call[0] === lockPath);
+    expect(unlinkedLockPathDirectly).toBe(false);
+    const claimedByRename = vi
+      .mocked(fs.rename)
+      .mock.calls.some(
+        (call) =>
+          call[0] === lockPath &&
+          typeof call[1] === "string" &&
+          call[1].startsWith(`${lockPath}.releasing-`),
+      );
+    expect(claimedByRename).toBe(true);
   });
 });
