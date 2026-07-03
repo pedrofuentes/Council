@@ -18,6 +18,17 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof fs>();
+  return {
+    ...actual,
+    open: vi.fn(actual.open),
+    writeFile: vi.fn(actual.writeFile),
+    rename: vi.fn(actual.rename),
+    unlink: vi.fn(actual.unlink),
+  };
+});
+
 import {
   formatUpdateNotice,
   maybeNotifyUpdate,
@@ -108,9 +119,16 @@ let cacheDir: string;
 let cacheFile: string;
 let captured: string[];
 let write: (s: string) => void;
+let actualFs: typeof fs;
 
 beforeEach(async () => {
-  cacheDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-update-"));
+  actualFs = await vi.importActual<typeof fs>("node:fs/promises");
+  vi.mocked(fs.open).mockImplementation(actualFs.open);
+  vi.mocked(fs.writeFile).mockImplementation(actualFs.writeFile);
+  vi.mocked(fs.rename).mockImplementation(actualFs.rename);
+  vi.mocked(fs.unlink).mockImplementation(actualFs.unlink);
+
+  cacheDir = await actualFs.mkdtemp(path.join(os.tmpdir(), "council-update-"));
   cacheFile = path.join(cacheDir, CACHE_FILENAME);
   captured = [];
   write = (s: string): void => {
@@ -120,7 +138,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  await fs.rm(cacheDir, { recursive: true, force: true });
+  await actualFs.rm(cacheDir, { recursive: true, force: true });
 });
 
 describe("readUpdateCache / writeUpdateCache", () => {
@@ -166,6 +184,76 @@ describe("readUpdateCache / writeUpdateCache", () => {
     await fs.writeFile(cacheFile, JSON.stringify({ lastCheckMs: "soon" }), "utf8");
 
     expect(await readUpdateCache(cacheDir)).toBe(null);
+  });
+});
+
+describe("writeUpdateCache — symlink/TOCTOU hardening (#2206)", () => {
+  function isUniqueTempPath(target: unknown): target is string {
+    return (
+      typeof target === "string" && target.startsWith(`${cacheFile}.`) && target.endsWith(".tmp")
+    );
+  }
+
+  it("does not follow a symlink pre-planted at the temp path (no arbitrary write)", async () => {
+    const victimPath = path.join(cacheDir, "victim.txt");
+    const victimContent = "DO-NOT-CLOBBER\n";
+    await actualFs.writeFile(victimPath, victimContent, "utf-8");
+
+    // Plant a symlink -> victim at the EXACT temp path the writer is about to
+    // use, whether it creates the temp via a bare `writeFile` (pre-#2206) or an
+    // exclusive `open` (hardened). A symlink-following write clobbers the victim;
+    // an exclusive `wx` open fails with EEXIST and the writer must recover.
+    let planted = false;
+    const plantSymlinkAt = async (target: unknown): Promise<void> => {
+      if (!planted && isUniqueTempPath(target)) {
+        planted = true;
+        await actualFs.symlink(victimPath, target);
+      }
+    };
+    vi.mocked(fs.writeFile).mockImplementation(async (...args: Parameters<typeof fs.writeFile>) => {
+      await plantSymlinkAt(args[0]);
+      return actualFs.writeFile(...args);
+    });
+    vi.mocked(fs.open).mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+      const [openPath, flags] = args;
+      if (String(flags).includes("w")) {
+        await plantSymlinkAt(openPath);
+      }
+      return actualFs.open(...args);
+    });
+
+    await writeUpdateCache(cacheDir, { lastCheckMs: FIXED_NOW, latestVersion: "9.9.9" });
+
+    // The victim must be untouched: the write must not have followed the symlink.
+    await expect(actualFs.readFile(victimPath, "utf-8")).resolves.toBe(victimContent);
+    // ...and the cache still lands correctly (writer recovered to a fresh name).
+    expect(await readUpdateCache(cacheDir)).toEqual({
+      lastCheckMs: FIXED_NOW,
+      latestVersion: "9.9.9",
+    });
+    expect(planted).toBe(true);
+  });
+
+  it("uses a cryptographically-random temp file name, not a predictable pid", async () => {
+    const tempPaths: string[] = [];
+    const record = (target: unknown): void => {
+      if (isUniqueTempPath(target)) tempPaths.push(target);
+    };
+    vi.mocked(fs.writeFile).mockImplementation(async (...args: Parameters<typeof fs.writeFile>) => {
+      record(args[0]);
+      return actualFs.writeFile(...args);
+    });
+    vi.mocked(fs.open).mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+      const [openPath, flags] = args;
+      if (String(flags).includes("w")) record(openPath);
+      return actualFs.open(...args);
+    });
+
+    await writeUpdateCache(cacheDir, { lastCheckMs: FIXED_NOW, latestVersion: "1.2.3" });
+
+    expect(tempPaths).toHaveLength(1);
+    // >= 8 random bytes = 16 hex chars, defeating a predictable `<pid>.tmp` name.
+    expect(tempPaths[0]).toMatch(/\.[0-9a-f]{16,}\.tmp$/);
   });
 });
 
