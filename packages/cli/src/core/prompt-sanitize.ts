@@ -60,8 +60,9 @@ export function escapeFenceContent(s: string): string {
  * if they need to prevent the block from forging fresh top-level prompt
  * sections.
  *
- * Pipeline: NFKC normalize → strip bidi/zero-width → strip C0 controls
- * (except tab/newline/CR) → defang `[NN]` section markers → cap length.
+ * Pipeline: NFKC normalize → strip bidi/zero-width → normalize exotic line
+ * separators (NEL/LS/PS) to `\n` → strip C0 controls (except tab/newline/CR)
+ * → defang `[NN]` section markers → cap length.
  */
 export function sanitizePromptBlock(raw: string, maxLength = 4000): string {
   const normalized = raw.normalize("NFKC");
@@ -69,8 +70,15 @@ export function sanitizePromptBlock(raw: string, maxLength = 4000): string {
     /[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g,
     "",
   );
+  // Normalize exotic line/paragraph separators — NEL (U+0085), LINE
+  // SEPARATOR (U+2028), PARAGRAPH SEPARATOR (U+2029) — to a plain `\n` so
+  // untrusted content cannot smuggle hidden line breaks past the block
+  // sanitizer (issue #2066). The block already permits `\n`, so legitimate
+  // line-break semantics survive while the invisible/ambiguous separators do
+  // not. Runs before the C0 strip so the introduced `\n` is preserved.
+  const lineSepNormalized = unicodeSafe.replace(/[\u0085\u2028\u2029]/g, "\n");
   // eslint-disable-next-line no-control-regex
-  const stripped = unicodeSafe.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
+  const stripped = lineSepNormalized.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
   const defanged = stripped.replace(/\[(\d+)\]/g, "(sec-$1)");
   return defanged.length > maxLength ? `${defanged.slice(0, maxLength - 1)}…` : defanged;
 }

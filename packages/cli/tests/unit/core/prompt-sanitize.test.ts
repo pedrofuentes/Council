@@ -157,6 +157,34 @@ describe("sanitizePromptBlock", () => {
     expect(sanitizePromptBlock("a\tb")).toBe("a\tb");
   });
 
+  describe("exotic line separator neutralization (issue #2066)", () => {
+    it("normalizes NEL (U+0085) to a plain newline", () => {
+      expect(sanitizePromptBlock("line1\u0085line2")).toBe("line1\nline2");
+    });
+
+    it("normalizes LINE SEPARATOR (U+2028) to a plain newline", () => {
+      expect(sanitizePromptBlock("line1\u2028line2")).toBe("line1\nline2");
+    });
+
+    it("normalizes PARAGRAPH SEPARATOR (U+2029) to a plain newline", () => {
+      expect(sanitizePromptBlock("line1\u2029line2")).toBe("line1\nline2");
+    });
+
+    it("leaves no U+0085/U+2028/U+2029 in the output", () => {
+      const input = "a\u0085b\u2028c\u2029d";
+      const output = sanitizePromptBlock(input);
+      expect(output).not.toMatch(/[\u0085\u2028\u2029]/);
+      expect(output).toBe("a\nb\nc\nd");
+    });
+
+    it("keeps the \\n-delimited structure while removing an embedded U+2028", () => {
+      const input = "line1\nline2\u2028line3";
+      const output = sanitizePromptBlock(input);
+      expect(output).not.toMatch(/[\u0085\u2028\u2029]/);
+      expect(output).toBe("line1\nline2\nline3");
+    });
+  });
+
   it("defangs bracketed numeric section markers", () => {
     expect(sanitizePromptBlock("[01] hello\n[42] world")).toBe(
       "(sec-01) hello\n(sec-42) world",
@@ -207,6 +235,12 @@ describe("sanitizeFenced", () => {
 
   it("strips bidi/zero-width before escaping fences", () => {
     expect(sanitizeFenced("\u200B<a>\u202E")).toBe("&lt;a>");
+  });
+
+  it("neutralizes exotic line separators U+0085/U+2028/U+2029 (issue #2066)", () => {
+    const output = sanitizeFenced("a\u0085b\u2028c\u2029d");
+    expect(output).not.toMatch(/[\u0085\u2028\u2029]/);
+    expect(output).toBe("a\nb\nc\nd");
   });
 });
 
