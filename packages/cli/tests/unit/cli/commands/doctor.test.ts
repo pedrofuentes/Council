@@ -331,6 +331,51 @@ describe("buildDoctorCommand", () => {
     expect(output).not.toContain("cannot write under");
   });
 
+  it("doctor data-home write-probe does not follow a pre-planted symlink at the probe path (#1915)", async () => {
+    const customDataHome = path.join(testHome, "symlink-data-home");
+    await fs.mkdir(path.join(customDataHome, "experts"), { recursive: true });
+    await fs.mkdir(path.join(customDataHome, "panels"), { recursive: true });
+    process.env["COUNCIL_DATA_HOME"] = customDataHome;
+
+    // A victim file the invoking user can write, outside the data home.
+    const victim = path.join(testHome, "victim-data-home.txt");
+    const victimContent = "VICTIM-DATA-HOME-CONTENTS";
+    await fs.writeFile(victim, victimContent, "utf-8");
+
+    // Attacker pre-plants a symlink at the (formerly fixed) probe path so a
+    // symlink-following writeFile would truncate the victim to the probe payload.
+    await fs.symlink(victim, path.join(customDataHome, ".council-doctor-write-test"));
+
+    const output = await runDoctor(["--offline"]);
+
+    // The probe must never follow the symlink onto the victim file.
+    expect(await fs.readFile(victim, "utf-8")).toBe(victimContent);
+    // A genuinely writable data home still reports writable.
+    expect(output).toContain(`Council data home\n   ${customDataHome}`);
+    expect(output).not.toContain("cannot write under");
+  });
+
+  it("doctor disk-write probe does not follow a pre-planted symlink at the probe path (#1915)", async () => {
+    // checkDiskSpace probes COUNCIL_HOME (testHome). Keep the data home separate
+    // and writable so this test isolates the Disk write check.
+    process.env["COUNCIL_DATA_HOME"] = path.join(testHome, "disk-data-home");
+    await fs.mkdir(testHome, { recursive: true });
+
+    const victim = path.join(testHome, "victim-disk.txt");
+    const victimContent = "VICTIM-DISK-CONTENTS";
+    await fs.writeFile(victim, victimContent, "utf-8");
+
+    // Attacker pre-plants a symlink at the (formerly fixed) disk-probe path.
+    await fs.symlink(victim, path.join(testHome, ".doctor-write-test"));
+
+    const output = await runDoctor(["--offline"]);
+
+    // The probe must never follow the symlink onto the victim file.
+    expect(await fs.readFile(victim, "utf-8")).toBe(victimContent);
+    expect(output).toContain(`${testHome} is writable`);
+    expect(output).not.toContain("cannot write under");
+  });
+
   it("doctor collapses control characters in Terminal env values onto one line (#1483)", async () => {
     const customDataHome = path.join(testHome, "term-data-home");
     process.env["COUNCIL_DATA_HOME"] = customDataHome;
