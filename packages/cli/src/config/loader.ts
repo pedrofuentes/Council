@@ -404,13 +404,20 @@ async function acquireConfigLock(lockPath: string): Promise<LockOwnership> {
  *   - identity UNPROVABLE (`ino === 0n`: non-authoritative `st_ino` on some
  *     NFS/SMB/FUSE mounts, the #2118 shared-FS target) OR the release-time stat
  *     itself reports `ino === 0n` → inode identity cannot decide, so fall back to
- *     the metadata TOKEN we wrote at acquire: read the on-disk meta and unlink IFF
- *     it still carries OUR `token` + `createdAt`. A random-UUID token match proves
- *     the file is inode-independently the one WE created, recovering release of an
- *     own lock on ino=0 instead of stranding it (#2235). This is SAFE: a live
- *     same-host owner's lock is never age-reaped (#742), so no successor can swap
- *     in during our own release, and a token MISMATCH (foreign successor, or
- *     unreadable/absent meta) fails safe — we do NOT unlink.
+ *     the metadata TOKEN we wrote at acquire via {@link unlinkIfOwnMeta}, which
+ *     ATOMICALLY renames the lock aside to claim it, re-reads the token from the
+ *     claimed copy, and unlinks it IFF it still carries OUR `token` + `createdAt`.
+ *     A random-UUID token match proves the file is inode-independently the one WE
+ *     created, recovering release of an own lock on ino=0 instead of stranding it
+ *     (#2235). Safety here does NOT rest on the same-host non-reaping property:
+ *     on a shared FS a FOREIGN-HOST reaper (which {@link reapIfStale} age-reaps
+ *     without a same-host liveness probe) could reap our aged lock and let an
+ *     acquirer recreate a live one at the path mid-release. The atomic rename-to-
+ *     claim + token re-verify makes that safe regardless — we only ever unlink a
+ *     copy we exclusively renamed aside, never `lockPath` directly, so a
+ *     concurrent foreign-host reap+recreate in the window can never cause us to
+ *     delete a successor's lock (a token MISMATCH restores it). Unreadable/absent
+ *     meta likewise fails safe — we do NOT unlink.
  *   - stat fails, ENOENT → already gone, nothing to release.
  *   - stat fails, TRANSIENT (EIO/EACCES/EBUSY/EMFILE…) → RETRY the `lstat` a
  *     bounded number of times ({@link LOCK_RELEASE_LSTAT_RETRIES}); a blip that
@@ -453,20 +460,60 @@ async function releaseConfigLock(lockPath: string, ownership: LockOwnership): Pr
 }
 
 /**
- * Token fallback for release on non-authoritative `st_ino` (#2235): unlink the
- * lock at `lockPath` IFF the on-disk metadata still carries the exact `token` +
- * `createdAt` we wrote at acquire. A random-UUID token match proves, independent
- * of inode identity, that the file is the one WE created. On ENOENT, unreadable
- * meta, or ANY mismatch (a foreign successor) we do NOT unlink — fail safe.
+ * Atomic token fallback for release on non-authoritative `st_ino` (#2235). We
+ * cannot prove ownership structurally (ino=0), and reading the on-disk token
+ * then unlinking BY PATH is unsafe: on the #2118 shared-FS multi-host target a
+ * FOREIGN-HOST reaper can age-reap our lock and an acquirer can recreate a fresh
+ * LIVE lock at `lockPath` in the read→unlink window, so a blind `unlink(lockPath)`
+ * would destroy that successor (config data loss, the #1923/#2231 A-B-A class).
+ *
+ * We therefore mirror {@link claimAndReap}: CLAIM the file by renaming it aside
+ * to a unique path (rename is atomic on POSIX and Windows), detaching exactly the
+ * bytes currently at `lockPath` from any future `wx` acquirer, then re-verify the
+ * CLAIMED copy carries OUR `token` + `createdAt` before removing it:
+ *   - rename throws ENOENT → the lock is already gone from `lockPath` (released or
+ *     reaped) → nothing to do (success);
+ *   - rename throws otherwise (transient fault) → we claimed nothing → LEAVE the
+ *     lock in place; it is our own live lock and will be handled on a later
+ *     release/exit (never delete what we could not atomically detach);
+ *   - claimed copy's token matches ours → it is provably the file WE created and
+ *     we now hold it exclusively → unlink the CLAIMED copy (safe);
+ *   - claimed copy's token does NOT match (a foreign successor swapped in at
+ *     `lockPath` and we renamed IT aside) → rename it BACK to `lockPath` to
+ *     restore it; if a fresh acquirer already took `lockPath`, discard the claimed
+ *     copy with `fs.rm(..., { force: true })` rather than clobber the new lock.
+ * We NEVER unlink `lockPath` directly — only ever a file we exclusively renamed
+ * aside and re-verified by token. This collapses the A-B-A window to zero.
  */
 async function unlinkIfOwnMeta(lockPath: string, ownMeta: LockMeta): Promise<void> {
-  const onDisk = await readLockMeta(lockPath);
+  const claimedPath = `${lockPath}.releasing-${randomUUID()}`;
+  try {
+    await fs.rename(lockPath, claimedPath);
+  } catch {
+    // ENOENT → already gone (released/reaped): nothing to do. Any other fault →
+    // we claimed nothing, so leave our own live lock in place rather than delete
+    // a path we could not atomically detach.
+    return;
+  }
+
+  // We now exclusively hold the claimed file. Remove it IFF it is provably ours.
+  const claimedMeta = await readLockMeta(claimedPath);
   if (
-    onDisk !== undefined &&
-    onDisk.token === ownMeta.token &&
-    onDisk.createdAt === ownMeta.createdAt
+    claimedMeta !== undefined &&
+    claimedMeta.token === ownMeta.token &&
+    claimedMeta.createdAt === ownMeta.createdAt
   ) {
-    await fs.unlink(lockPath).catch(() => undefined);
+    await fs.unlink(claimedPath).catch(() => undefined);
+    return;
+  }
+
+  // Token MISMATCH: a foreign successor had swapped in at lockPath and we renamed
+  // IT aside. Put it back; if a fresh acquirer already took lockPath (rename-onto-
+  // existing errors on Windows), discard the claimed copy so it does not linger.
+  try {
+    await fs.rename(claimedPath, lockPath);
+  } catch {
+    await fs.rm(claimedPath, { force: true }).catch(() => undefined);
   }
 }
 
