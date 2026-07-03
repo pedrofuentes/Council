@@ -75,30 +75,64 @@ interface EncodingWritable {
 
 const UTF8_OUTPUT_ENCODING: BufferEncoding = "utf8";
 const WINDOWS_UTF8_CODE_PAGE = "65001";
+// Bound the best-effort `chcp.com` probe so a degenerate hang can never wedge
+// CLI startup; `chcp.com` is a built-in that returns in milliseconds, and the
+// surrounding try/catch swallows the resulting ETIMEDOUT (#1935, Dim B).
+const WINDOWS_CHCP_EXEC_TIMEOUT_MS = 1000;
 // `chcp.com` ships in the Windows System32 directory. Resolving it by its bare
 // name would defer to %PATH%, letting an executable earlier in PATH shadow and
 // run in its place (#843); we always resolve the absolute system path instead.
 const WINDOWS_CODE_PAGE_COMMAND_RELATIVE_PATH = "System32\\chcp.com";
 const WINDOWS_DEFAULT_SYSTEM_ROOT = "C:\\Windows";
+// A trusted %SystemRoot% is a plain drive-letter absolute path (e.g. `C:\Windows`),
+// the shape Windows always uses. Anything else — a UNC share (`\\host\share`), an
+// extended-length/device prefix (`\\?\`, `\\.\`), a rooted-but-driveless path
+// (`\Windows`), a relative path, or one carrying a `..` traversal segment — is an
+// untrusted env-controlled value and must not be interpolated into the executable
+// path (#1935, Dim A2).
+const WINDOWS_DRIVE_ABSOLUTE_PATTERN = /^[A-Za-z]:[\\/]/;
 const configuredConsoleCodePageStreams = new WeakSet<EncodingWritable>();
 const wrappedOutputStreams = new WeakSet<EncodingWritable>();
+
+/**
+ * Reject an untrusted `%SystemRoot%` before it is interpolated into the
+ * `chcp.com` path. Only a plain drive-letter absolute path (`C:\Windows`) is
+ * trusted; UNC shares, `\\?\`/`\\.\` device paths, rooted-but-driveless or
+ * relative paths, `..` traversal segments, and embedded control characters are
+ * all refused so a caller who controls the environment cannot redirect the
+ * best-effort exec at an attacker-chosen location (#1935, Dim A2).
+ */
+function isTrustedWindowsSystemRoot(candidate: string): boolean {
+  if (!WINDOWS_DRIVE_ABSOLUTE_PATTERN.test(candidate)) {
+    return false;
+  }
+  // Refuse embedded control characters (NUL, CR, LF, TAB, …) without a
+  // control-char regex literal (ESLint `no-control-regex`).
+  if ([...candidate].some((char) => char.charCodeAt(0) < 0x20)) {
+    return false;
+  }
+  return candidate.split(/[\\/]+/).every((segment) => segment !== "..");
+}
 
 /**
  * Resolve the absolute path to the Windows console code-page tool
  * (`%SystemRoot%\System32\chcp.com`) so it is never invoked through a
  * PATH-relative lookup a shadowing executable could hijack (#843).
  *
- * `%SystemRoot%` is set on every standard Windows install; when it is missing
- * or blank we fall back to the conventional `C:\Windows` location. The fallback
- * is still an absolute path — and therefore immune to PATH shadowing — and a
- * wrong guess simply fails the best-effort `execFileSync` below, which is
- * swallowed.
+ * `%SystemRoot%` is set on every standard Windows install; when it is missing,
+ * blank, or an untrusted value (UNC / device / relative / traversal — see
+ * {@link isTrustedWindowsSystemRoot}) we fall back to the conventional
+ * `C:\Windows` location. The fallback is still an absolute, drive-letter path —
+ * immune to both PATH shadowing and environment tampering — and a wrong guess
+ * simply fails the best-effort `execFileSync` below, which is swallowed.
  */
 export function resolveWindowsCodePageCommand(env: NodeJS.ProcessEnv = process.env): string {
   const configuredRoot = env.SystemRoot;
+  const normalizedRoot =
+    typeof configuredRoot === "string" ? configuredRoot.trim().replace(/[\\/]+$/, "") : "";
   const systemRoot =
-    typeof configuredRoot === "string" && configuredRoot.trim().length > 0
-      ? configuredRoot.replace(/[\\/]+$/, "")
+    normalizedRoot.length > 0 && isTrustedWindowsSystemRoot(normalizedRoot)
+      ? normalizedRoot
       : WINDOWS_DEFAULT_SYSTEM_ROOT;
   return `${systemRoot}\\${WINDOWS_CODE_PAGE_COMMAND_RELATIVE_PATH}`;
 }
@@ -112,6 +146,7 @@ function configureWindowsConsoleCodePage(stream: EncodingWritable): void {
     childProcess.execFileSync(resolveWindowsCodePageCommand(), [WINDOWS_UTF8_CODE_PAGE], {
       stdio: "ignore",
       windowsHide: true,
+      timeout: WINDOWS_CHCP_EXEC_TIMEOUT_MS,
     });
   } catch {
     // Best effort: keep CLI output flowing even if the host console rejects chcp.
@@ -230,7 +265,10 @@ export function resetFirstRunSetupForTests(): void {
 // `docs` is a read-only discoverability command (e.g. `council docs formats`)
 // and must stay usable with no model configured (#980). `ui` launches the TUI,
 // which runs its own first-run onboarding, so gating it here would fire a
-// redundant CLI model prompt before the UI even starts (#1698).
+// redundant CLI model prompt before the UI even starts (#1698). User-facing
+// effect: on a brand-new install `council docs …` and `council ui` therefore
+// complete without ever surfacing the CLI first-run model-selection prompt
+// (#1935, Dim F).
 const FIRST_RUN_SETUP_SKIP_COMMANDS: ReadonlySet<string> = new Set([
   "demo",
   "doctor",
