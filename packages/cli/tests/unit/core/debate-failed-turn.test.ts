@@ -267,6 +267,102 @@ describe("Structured debate — failed turns are surfaced, not silently dropped 
     expect(ctoCross[0]).toContain("PM opening.");
   });
 
+  it("aborted-path guard suppresses placeholder when turn fails concurrently with signal abort (#2066)", async () => {
+    // Scenario: PM's opening fails (MODEL_UNAVAILABLE). The consumer
+    // toggles a mutable flag to `true` immediately after receiving PM's
+    // error event, simulating a concurrent abort. The guard at
+    // debate.ts:566 (`else if (!signal?.aborted)`) evaluates
+    // `signal.aborted` in the synchronous continuation AFTER the
+    // cost.update yield — it sees abortedFlag=true and suppresses PM's
+    // "did not respond" placeholder from openingTurns.
+    //
+    // To make the guard's effect directly observable, the flag is cleared
+    // on the opening round.end so cross-examination proceeds.
+    // buildCrossExamPrompt for CTO then queries openingTurns:
+    //   — WITH guard: openingTurns has only CTO's opening → no "others"
+    //     → returns null → CTO's turn is skipped → ctoCross is empty.
+    //   — WITHOUT guard (regression): PM's placeholder IS in openingTurns
+    //     → CTO IS cross-examined → ctoCross.length===1 and contains
+    //     "did not respond" → assertions below fail.
+    //
+    // Non-vacuousness proof: changing `else if (!signal?.aborted)` to
+    // `else` (removing the guard) causes ctoCross to have length 1,
+    // failing `expect(ctoCross).toHaveLength(0)`.
+
+    let abortedFlag = false;
+    // Minimal AbortSignal-compatible shim. Only `aborted` is read by the
+    // guard and retry-skip logic; addEventListener/removeEventListener are
+    // called by MockEngine.send() to wire the caller abort, but since the
+    // test-controlled abort never fires an actual "abort" DOM event (we only
+    // toggle `abortedFlag` directly), both can be no-ops here.
+    const fakeSignal = {
+      get aborted() {
+        return abortedFlag;
+      },
+      addEventListener: () => {
+        /* no-op: abort is controlled by toggling abortedFlag directly */
+      },
+      removeEventListener: () => {
+        /* no-op: no listener was registered */
+      },
+    } as unknown as AbortSignal;
+
+    const engine = new MockEngine({
+      responses: { "01HZ-cto": "CTO opening.", "01HZ-pm": "PM content." },
+      failOnSend: {
+        expertId: "01HZ-pm",
+        afterN: 0, // fail from the very first PM send (opening)
+        failures: 1, // opening only; subsequent PM sends (cross-exam, …) succeed
+        code: "MODEL_UNAVAILABLE",
+        message: "model down",
+      },
+    });
+    await engine.start();
+    await engine.addExpert(cto);
+    await engine.addExpert(pm);
+
+    const events: DebateEvent[] = [];
+    for await (const evt of new Debate(engine, [cto, pm], STRUCTURED).run("Ship the MVP?", {
+      signal: fakeSignal,
+    })) {
+      events.push(evt);
+      // Simulate abort becoming visible right after PM's failure event.
+      // The guard evaluates signal.aborted in the synchronous continuation
+      // AFTER cost.update is consumed — it sees abortedFlag=true and skips
+      // pushing PM's placeholder into openingTurns.
+      if (evt.kind === "error" && evt.expertSlug === "pm") {
+        abortedFlag = true;
+      }
+      // Clear the abort flag before cross-examination so we can directly
+      // inspect whether PM's placeholder leaked into openingTurns via
+      // CTO's cross-exam prompt (which is built from openingTurns).
+      if (evt.kind === "round.end" && evt.phase === "opening") {
+        abortedFlag = false;
+      }
+    }
+
+    // Guard correctly suppressed PM's placeholder from openingTurns.
+    // buildCrossExamPrompt(cto, openingTurns) finds no "others"
+    // (openingTurns only has CTO's own opening) → returns null →
+    // CTO's cross-exam turn is skipped → no sentPrompt recorded.
+    const ctoCross = promptsFor(engine, cto.id, "Cross-examination on:");
+    expect(ctoCross).toHaveLength(0);
+
+    // PM IS cross-examined against CTO's opening (which DID succeed).
+    // This confirms cross-exam ran; CTO's absence is the guard, not a
+    // blanket phase skip.
+    const pmCross = promptsFor(engine, pm.id, "Cross-examination on:");
+    expect(pmCross).toHaveLength(1);
+
+    // The debate completed all four phases normally (abort was cleared
+    // on opening round.end, so the remaining phases ran unimpeded).
+    const endEvents = events.filter((e) => e.kind === "debate.end");
+    expect(endEvents).toHaveLength(1);
+    if (endEvents[0]?.kind === "debate.end") {
+      expect(endEvents[0].reason).toBe("completed");
+    }
+  });
+
   it("defangs a malicious expert displayName in the surfaced placeholder", async () => {
     // Adversarial-byte oracle for the prompt sink. The placeholder embeds
     // the (untrusted) displayName; the phase-prompt builders must strip the
