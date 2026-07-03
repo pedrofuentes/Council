@@ -665,4 +665,207 @@ describe("buildReviewCommand", () => {
     vi.doUnmock("../../../../src/core/template-loader.js");
     vi.resetModules();
   });
+
+  // ---------------------------------------------------------------------------
+  // T-1415 (#1415, sentinel:security) — at-rest persistence must be disclosed
+  // and opt-out-able. By default the reviewed diff is persisted at rest in
+  // council.db (debate prompt); `--no-store` / `--ephemeral` runs the review
+  // without writing the diff/debate to council.db.
+  // ---------------------------------------------------------------------------
+
+  it("registers a --no-store (ephemeral) option", () => {
+    const cmd = buildReviewCommand({ engineFactory: makeRecordingMockFactory().factory });
+    const longs = cmd.options.map((o) => o.long);
+    expect(longs).toContain("--no-store");
+  });
+
+  it("--help discloses that the diff is stored locally at rest in council.db and how to opt out", () => {
+    const cmd = buildReviewCommand({ engineFactory: makeRecordingMockFactory().factory });
+    const help = cmd.helpInformation();
+    // Existing disclosure (the diff is sent to the engine) must remain.
+    expect(help).toMatch(/sent/i);
+    // New at-rest disclosure: stored locally in council.db, with the opt-out.
+    expect(help).toMatch(/stored locally|at rest/i);
+    expect(help).toMatch(/council\.db/i);
+    expect(help).toMatch(/--no-store/);
+  });
+
+  it("by default persists the reviewed diff at rest in council.db (debate prompt)", async () => {
+    const diffPath = await writeDiffFile(SAMPLE_DIFF);
+    const cmd = buildReviewCommand({
+      engineFactory: makeRecordingMockFactory().factory,
+      write: () => undefined,
+      writeError: () => undefined,
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-review",
+      "--diff-file",
+      diffPath,
+      "--engine",
+      "mock",
+      "--max-rounds",
+      "1",
+      "--format",
+      "json",
+    ]);
+
+    // The full diff (marker included) is written at rest into the debate prompt.
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const panels = await new PanelRepository(db).findAll();
+      expect(panels).toHaveLength(1);
+      const debates = await new DebateRepository(db).findByPanelId(panels[0]?.id ?? "");
+      expect(debates).toHaveLength(1);
+      expect(debates[0]?.prompt).toContain(REVIEW_MARKER);
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it("--no-store runs the review but persists nothing to council.db (ephemeral)", async () => {
+    const diffPath = await writeDiffFile(SAMPLE_DIFF);
+    const rec = makeRecordingMockFactory();
+    let captured = "";
+    const cmd = buildReviewCommand({
+      engineFactory: rec.factory,
+      write: (s) => {
+        captured += s;
+      },
+      writeError: () => undefined,
+    });
+    cmd.exitOverride();
+
+    await cmd.parseAsync([
+      "node",
+      "council-review",
+      "--diff-file",
+      diffPath,
+      "--engine",
+      "mock",
+      "--max-rounds",
+      "1",
+      "--format",
+      "json",
+      "--no-store",
+    ]);
+
+    // The review still ran fully: the engine received the diff and the debate
+    // streamed to completion.
+    expect(rec.last()?.sentPrompts.some((p) => p.prompt.includes(REVIEW_MARKER))).toBe(true);
+    const kinds = captured
+      .split("\n")
+      .filter((l) => l.trim().startsWith("{"))
+      .map((l) => (JSON.parse(l) as { kind: string }).kind);
+    expect(kinds).toContain("turn.end");
+    expect(kinds[kinds.length - 1]).toBe("debate.end");
+
+    // But NOTHING was persisted at rest: council.db has no panel, expert, or
+    // debate rows — no partial rows either.
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const panels = await new PanelRepository(db).findAll();
+      expect(panels).toHaveLength(0);
+      const debates = await db.selectFrom("debates").selectAll().execute();
+      expect(debates).toHaveLength(0);
+      const experts = await db.selectFrom("experts").selectAll().execute();
+      expect(experts).toHaveLength(0);
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it("--ephemeral is an alias for --no-store (persists nothing)", async () => {
+    const diffPath = await writeDiffFile(SAMPLE_DIFF);
+    const rec = makeRecordingMockFactory();
+    const cmd = buildReviewCommand({
+      engineFactory: rec.factory,
+      write: () => undefined,
+      writeError: () => undefined,
+    });
+    cmd.exitOverride();
+
+    await cmd.parseAsync([
+      "node",
+      "council-review",
+      "--diff-file",
+      diffPath,
+      "--engine",
+      "mock",
+      "--max-rounds",
+      "1",
+      "--format",
+      "json",
+      "--ephemeral",
+    ]);
+
+    // Review ran, nothing persisted.
+    expect(rec.last()?.sentPrompts.some((p) => p.prompt.includes(REVIEW_MARKER))).toBe(true);
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const panels = await new PanelRepository(db).findAll();
+      expect(panels).toHaveLength(0);
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it("prints a runtime notice disclosing at-rest storage and the --no-store opt-out (default)", async () => {
+    const diffPath = await writeDiffFile(SAMPLE_DIFF);
+    let errText = "";
+    const cmd = buildReviewCommand({
+      engineFactory: makeRecordingMockFactory().factory,
+      write: () => undefined,
+      writeError: (s) => {
+        errText += s;
+      },
+    });
+
+    await cmd.parseAsync([
+      "node",
+      "council-review",
+      "--diff-file",
+      diffPath,
+      "--engine",
+      "mock",
+      "--max-rounds",
+      "1",
+      "--format",
+      "json",
+    ]);
+
+    expect(errText).toMatch(/council\.db/i);
+    expect(errText.toLowerCase()).toMatch(/stored|store|saved|persist/);
+    expect(errText).toMatch(/--no-store/);
+  });
+
+  it("prints a runtime notice that the diff is NOT persisted when --no-store", async () => {
+    const diffPath = await writeDiffFile(SAMPLE_DIFF);
+    let errText = "";
+    const cmd = buildReviewCommand({
+      engineFactory: makeRecordingMockFactory().factory,
+      write: () => undefined,
+      writeError: (s) => {
+        errText += s;
+      },
+    });
+    cmd.exitOverride();
+
+    await cmd.parseAsync([
+      "node",
+      "council-review",
+      "--diff-file",
+      diffPath,
+      "--engine",
+      "mock",
+      "--max-rounds",
+      "1",
+      "--format",
+      "json",
+      "--no-store",
+    ]);
+
+    expect(errText.toLowerCase()).toMatch(/not (be )?(saved|persist|persisted|stored)|ephemeral/);
+  });
 });

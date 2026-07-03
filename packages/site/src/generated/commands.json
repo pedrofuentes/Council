@@ -906,7 +906,7 @@
           "review"
         ],
         "commandPath": "council review",
-        "description": "Run the built-in code-review expert panel over a diff and print the review. The diff is SENT to the configured AI engine (e.g. Copilot); use --engine mock to run offline.",
+        "description": "Run the built-in code-review expert panel over a diff and print the review. The diff is SENT to the configured AI engine (e.g. Copilot) and, by default, STORED locally at rest in council.db. Use --engine mock to run offline; use --no-store to review without saving the diff.",
         "aliases": [],
         "usage": "[options]",
         "arguments": [],
@@ -978,6 +978,24 @@
             "variadic": false,
             "negate": false,
             "defaultValue": 250
+          },
+          {
+            "flags": "--no-store",
+            "description": "Ephemeral review: do NOT persist the diff/debate to the local council.db. By default the reviewed diff is stored at rest in council.db (under COUNCIL_HOME).",
+            "long": "--no-store",
+            "required": false,
+            "optional": false,
+            "variadic": false,
+            "negate": true
+          },
+          {
+            "flags": "--ephemeral",
+            "description": "Alias for --no-store: run the review without saving the diff/debate to council.db.",
+            "long": "--ephemeral",
+            "required": false,
+            "optional": false,
+            "variadic": false,
+            "negate": false
           }
         ],
         "subcommands": []
