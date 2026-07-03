@@ -49,8 +49,21 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { loadConfig, updateConfigField, withConfigWriteLock } from "../../../src/config/index.js";
+import * as configLoaderInternals from "../../../src/config/loader.js";
 
 const BASE_CONFIG = "defaults:\n  model: claude-sonnet-4.5\n  engine: mock\n";
+
+/**
+ * Reset the once-per-process degraded-mode warning flag via the loader's
+ * test-only hook, so the once-only behaviour can be exercised deterministically.
+ * Optional-chained so the RED (pre-implementation) run is a clean no-op instead
+ * of a hard module-link failure that would wipe the whole suite.
+ */
+function resetDegradedWarning(): void {
+  const hook = (configLoaderInternals as { __resetLockDegradedWarningForTests?: () => void })
+    .__resetLockDegradedWarningForTests;
+  hook?.();
+}
 
 /** Read the lock file's token, or undefined if the lock is gone/unparseable. */
 async function lockToken(actualFs: typeof fs, lockPath: string): Promise<string | undefined> {
@@ -107,6 +120,7 @@ describe("config lock degraded-mode recovery (non-authoritative st_ino)", () => 
     lockPath = `${configPath}.lock`;
     process.env["COUNCIL_HOME"] = testHome;
     await actualFs.writeFile(configPath, BASE_CONFIG, "utf-8");
+    resetDegradedWarning();
   });
 
   afterEach(async () => {
@@ -268,7 +282,24 @@ describe("config lock degraded-mode recovery (non-authoritative st_ino)", () => 
 
     const update = updateConfigField("defaults.model", "gpt-5");
     await swapHappened;
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    // De-flaked: replace a fixed setTimeout barrier with a real post-condition
+    // poll. Wait until the reaper has actually run its ino=0 last-resort claim
+    // (rename lockPath → *.stale-*) AND the live successor lock B is present at
+    // lockPath — i.e. the reaper had its chance to (wrongly) reap B and instead
+    // restored it. `vi.waitFor` retries transient states (e.g. B momentarily
+    // renamed aside mid-claim) instead of racing a fixed timeout.
+    await vi.waitFor(async () => {
+      const claimAttempted = vi
+        .mocked(fs.rename)
+        .mock.calls.some(
+          (call) =>
+            call[0] === lockPath &&
+            typeof call[1] === "string" &&
+            call[1].startsWith(`${lockPath}.stale-`),
+        );
+      expect(claimAttempted).toBe(true);
+      expect(await lockToken(actualFs, lockPath)).toBe("successor-B-degraded");
+    });
 
     // Discriminating oracle: the LIVE successor lock B is intact.
     expect(await lockToken(actualFs, lockPath)).toBe("successor-B-degraded");
@@ -393,5 +424,143 @@ describe("config lock degraded-mode recovery (non-authoritative st_ino)", () => 
           call[1].startsWith(`${lockPath}.releasing-`),
       );
     expect(claimedByRename).toBe(true);
+  });
+
+  it("D1 (diagnostics): emits exactly one claim-strand warning when the atomic claim rename fails transiently, leaving the lock in place", async () => {
+    // ino=0 at acquire (handle.stat) and release (lstat) forces the metadata
+    // token fallback (unlinkIfOwnMeta). The atomic claim rename
+    // (lockPath → *.releasing-*) then fails with a transient NON-ENOENT fault, so
+    // the fallback leaves the lock in place. Current code swallows this silently;
+    // the diagnostic must surface it as one sanitized single-line warning.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    resetDegradedWarning();
+
+    vi.mocked(fs.open).mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+      const handle = await actualFs.open(...args);
+      if (args[0] === lockPath) {
+        handle.stat = ((opts?: unknown) =>
+          Promise.resolve(fakeStats(1n, 0n, opts, Date.now(), 100))) as typeof handle.stat;
+      }
+      return handle;
+    });
+    vi.mocked(fs.lstat).mockImplementation(((...args: Parameters<typeof fs.lstat>) => {
+      if (args[0] === lockPath) return Promise.resolve(fakeStats(1n, 0n, args[1], Date.now(), 100));
+      return actualFs.lstat(...args);
+    }) as typeof fs.lstat);
+    vi.mocked(fs.rename).mockImplementation(((...args: Parameters<typeof fs.rename>) => {
+      if (
+        args[0] === lockPath &&
+        typeof args[1] === "string" &&
+        args[1].startsWith(`${lockPath}.releasing-`)
+      ) {
+        return Promise.reject(Object.assign(new Error("simulated claim fault"), { code: "EIO" }));
+      }
+      return actualFs.rename(...args);
+    }) as typeof fs.rename);
+
+    await expect(withConfigWriteLock(async () => undefined)).resolves.toBeUndefined();
+
+    // The lock is left in place (never unlinked directly) — flow unchanged.
+    await expect(actualFs.access(lockPath)).resolves.toBeUndefined();
+
+    const claimWarnings = warnSpy.mock.calls.filter(
+      (call) => typeof call[0] === "string" && call[0].includes("could not claim config lock"),
+    );
+    expect(claimWarnings).toHaveLength(1);
+    // Sanitized single line carrying the path + error code.
+    const message = claimWarnings[0]?.[0] as string;
+    expect(message).not.toMatch(/\n/);
+    expect(message).toContain(lockPath);
+    expect(message).toContain("EIO");
+
+    warnSpy.mockRestore();
+    await actualFs.rm(lockPath, { force: true }).catch(() => undefined);
+  });
+
+  it("D2 (diagnostics): warns when the proven-own claimed-copy unlink fails with a non-ENOENT error", async () => {
+    // ino=0 forces the token fallback; the on-disk meta still carries OUR token,
+    // so unlinkIfOwnMeta proves ownership of the claimed (renamed-aside) copy and
+    // tries to remove it. That unlink fails with a transient NON-ENOENT fault:
+    // the proven-own lock may strand, so the (previously swallowed) failure must
+    // surface as a sanitized single-line warning.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    resetDegradedWarning();
+
+    vi.mocked(fs.open).mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+      const handle = await actualFs.open(...args);
+      if (args[0] === lockPath) {
+        handle.stat = ((opts?: unknown) =>
+          Promise.resolve(fakeStats(1n, 0n, opts, Date.now(), 100))) as typeof handle.stat;
+      }
+      return handle;
+    });
+    vi.mocked(fs.lstat).mockImplementation(((...args: Parameters<typeof fs.lstat>) => {
+      if (args[0] === lockPath) return Promise.resolve(fakeStats(1n, 0n, args[1], Date.now(), 100));
+      return actualFs.lstat(...args);
+    }) as typeof fs.lstat);
+    vi.mocked(fs.unlink).mockImplementation(((...args: Parameters<typeof fs.unlink>) => {
+      if (typeof args[0] === "string" && args[0].startsWith(`${lockPath}.releasing-`)) {
+        return Promise.reject(Object.assign(new Error("simulated unlink fault"), { code: "EIO" }));
+      }
+      return actualFs.unlink(...args);
+    }) as typeof fs.unlink);
+
+    await expect(withConfigWriteLock(async () => undefined)).resolves.toBeUndefined();
+
+    const unlinkWarnings = warnSpy.mock.calls.filter(
+      (call) =>
+        typeof call[0] === "string" && call[0].includes("could not remove claimed config lock"),
+    );
+    expect(unlinkWarnings).toHaveLength(1);
+    const message = unlinkWarnings[0]?.[0] as string;
+    expect(message).not.toMatch(/\n/);
+    expect(message).toContain("EIO");
+
+    warnSpy.mockRestore();
+  });
+
+  it("D3 (diagnostics): emits the degraded-mode notice exactly once per process across multiple degraded actions", async () => {
+    // Operators on a genuinely ino=0 filesystem must be able to discover that the
+    // lock is corroborating via metadata rather than inode, but a warning on every
+    // write would be unacceptable noise. Each release below takes a degraded action
+    // (the token fallback); the notice must fire exactly ONCE per process, and the
+    // test-only reset hook must re-arm it.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    resetDegradedWarning();
+
+    vi.mocked(fs.open).mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+      const handle = await actualFs.open(...args);
+      if (args[0] === lockPath) {
+        handle.stat = ((opts?: unknown) =>
+          Promise.resolve(fakeStats(1n, 0n, opts, Date.now(), 100))) as typeof handle.stat;
+      }
+      return handle;
+    });
+    vi.mocked(fs.lstat).mockImplementation(((...args: Parameters<typeof fs.lstat>) => {
+      if (args[0] === lockPath) return Promise.resolve(fakeStats(1n, 0n, args[1], Date.now(), 100));
+      return actualFs.lstat(...args);
+    }) as typeof fs.lstat);
+
+    const degradedNotices = (): number =>
+      warnSpy.mock.calls.filter(
+        (call) => typeof call[0] === "string" && call[0].includes("degraded corroboration mode"),
+      ).length;
+
+    // Two successive degraded releases → the notice fires only once.
+    await expect(withConfigWriteLock(async () => undefined)).resolves.toBeUndefined();
+    await expect(withConfigWriteLock(async () => undefined)).resolves.toBeUndefined();
+    expect(degradedNotices()).toBe(1);
+    const sanitized = warnSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("degraded corroboration mode"),
+    )?.[0] as string;
+    expect(sanitized).not.toMatch(/\n/);
+    expect(sanitized).toContain("st_ino");
+
+    // The reset hook re-arms the once-only latch, proving it is a dedup boolean.
+    resetDegradedWarning();
+    await expect(withConfigWriteLock(async () => undefined)).resolves.toBeUndefined();
+    expect(degradedNotices()).toBe(2);
+
+    warnSpy.mockRestore();
   });
 });
