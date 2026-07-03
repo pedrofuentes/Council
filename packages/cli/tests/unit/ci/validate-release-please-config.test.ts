@@ -52,9 +52,23 @@ describe("validateReleasePleaseConfig", () => {
   });
 
   it("accepts a config that uses `component` (accepted by v17 but absent from the JSON schema)", () => {
-    const { config, manifest } = validPair();
+    // Independent of validPair(): a minimal single-package config whose only
+    // schema-absent keys are `component` + `include-component-in-tag`, so this
+    // test uniquely pins acceptance of `component` rather than duplicating the
+    // valid-pair fixture (issue #2181 digest item 9, 5a).
+    const config = {
+      packages: {
+        "packages/core": {
+          "release-type": "node",
+          component: "core",
+          "include-component-in-tag": true,
+        },
+      },
+    };
+    const manifest = { "packages/core": "1.2.3" };
     const result = validateReleasePleaseConfig(config, manifest);
     expect(result.ok).toBe(true);
+    expect(result.errors).toEqual([]);
   });
 
   it("rejects a config package with no corresponding manifest entry", () => {
@@ -148,7 +162,10 @@ describe("validateReleasePleaseConfig", () => {
     const manifest = { "packages/cli": "bad", "packages/extra": "1.0.0" };
     const result = validateReleasePleaseConfig(config, manifest);
     expect(result.ok).toBe(false);
-    expect(result.errors.length).toBeGreaterThan(1);
+    // Four independent faults (unknown root key, invalid release-type, invalid
+    // manifest semver, orphan manifest entry) must all surface — the old
+    // `toBeGreaterThan(1)` under-ratcheted a 4-fault input (issue #2181 item 9, 5b).
+    expect(result.errors.length).toBeGreaterThanOrEqual(4);
   });
 
   // --- Regression: issue #2181 digest item 6 (Sentinel A1, log-sanitization) --
