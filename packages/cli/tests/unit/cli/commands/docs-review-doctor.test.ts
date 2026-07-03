@@ -23,6 +23,7 @@ import {
   type DocsCommandDeps,
   type PanelScanLookupResult,
 } from "../../../../src/cli/commands/docs.js";
+import { CliUserError } from "../../../../src/cli/cli-user-error.js";
 import type { CouncilConfig } from "../../../../src/config/index.js";
 import type { PanelScanResult } from "../../../../src/core/documents/panel-document-scanner.js";
 import type { ScanFileDetail } from "../../../../src/core/documents/scan-types.js";
@@ -804,6 +805,19 @@ describe("assertManagedDocsDirContained — containment startsWith branch (#1781
     expect(() => assertManagedDocsDirContained(escaping, panelsRoot, "evil")).toThrow(
       /name="evil"/,
     );
+  });
+
+  it("throws CliUserError (not a bare Error) on containment failure (#2145)", () => {
+    const escaping = path.resolve(dataHome, "..", "etc", "docs");
+    let thrown: unknown;
+    try {
+      assertManagedDocsDirContained(escaping, panelsRoot, "evil");
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(CliUserError);
+    expect((thrown as Error).message).toMatch(/escapes panels directory/i);
+    expect((thrown as Error).message).toContain('name="evil"');
   });
 
   it("rejects a sibling directory that only shares the panelsRoot prefix textually", () => {
