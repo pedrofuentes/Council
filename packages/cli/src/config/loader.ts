@@ -14,6 +14,7 @@
  * throws on a missing home directory — creates it.
  */
 import { randomBytes, randomUUID } from "node:crypto";
+import type { BigIntStats } from "node:fs";
 import * as fs from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import * as os from "node:os";
@@ -22,6 +23,7 @@ import * as path from "node:path";
 import * as yaml from "yaml";
 import type { ZodError } from "zod";
 
+import { toSingleLineDisplay } from "../cli/strip-control-chars.js";
 import { ConfigSchema, type CouncilConfig, type EngineChoice } from "./schema.js";
 
 const CONFIG_FILE = "config.yaml";
@@ -288,6 +290,16 @@ interface LockDecision {
  */
 const LOCK_STALE_MS = 30_000;
 
+/**
+ * Bounded retry budget for the release-time `lstat` (see {@link lstatForRelease}).
+ * A transient stat fault (EIO/EMFILE/EACCES…) is retried a small fixed number of
+ * times with a tiny delay so a brief blip clears and the holder can still prove
+ * and release its OWN lock. Kept intentionally small: release runs in a `finally`
+ * on every write, so a persistent fault must fail fast rather than block.
+ */
+const LOCK_RELEASE_LSTAT_RETRIES = 3;
+const LOCK_RELEASE_LSTAT_RETRY_DELAY_MS = 10;
+
 async function withConfigLock<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
   const ownership = await acquireConfigLock(lockPath);
   try {
@@ -381,11 +393,16 @@ async function acquireConfigLock(lockPath: string): Promise<LockOwnership> {
  *     is ours, so we must NOT unlink it; the bounded residual strand is recovered
  *     later by the reaper — strictly safer than deleting a foreign successor.
  *   - stat fails, ENOENT → already gone, nothing to release.
- *   - stat fails, TRANSIENT (EIO/EACCES/EBUSY/EMFILE…) → we CANNOT prove the
- *     file is ours, so we must NOT unlink it. Deleting a file we cannot identify
- *     risks destroying a foreign successor's lock (#2118); the bounded residual
- *     strand of our own lock is instead recovered later by the reaper — strictly
- *     safer than a blind unlink.
+ *   - stat fails, TRANSIENT (EIO/EACCES/EBUSY/EMFILE…) → RETRY the `lstat` a
+ *     bounded number of times ({@link LOCK_RELEASE_LSTAT_RETRIES}); a blip that
+ *     clears lets us prove ownership and release normally. If the fault PERSISTS
+ *     across every retry we CANNOT prove the file is ours, so we must NOT unlink
+ *     it (deleting a file we cannot identify risks destroying a foreign
+ *     successor's lock, #2118). Unlike the reaper cases, this strand is NOT
+ *     bounded by {@link LOCK_STALE_MS}: our own lock is owned by a LIVE same-host
+ *     process, which {@link reapIfStale} never age-reaps (#742), so the lock
+ *     persists until THIS process exits. We therefore emit a single sanitized
+ *     diagnostic so operators are not left with a silent permanent strand.
  *
  * The held descriptor is ALWAYS closed. The on-disk token/meta are left intact
  * for the reaper; identity, not the token, governs deletion here.
@@ -393,12 +410,11 @@ async function acquireConfigLock(lockPath: string): Promise<LockOwnership> {
 async function releaseConfigLock(lockPath: string, ownership: LockOwnership): Promise<void> {
   const { handle, identity } = ownership;
   try {
-    const stats = await fs.lstat(lockPath, { bigint: true });
-    // Fail safe: only unlink when the on-disk file is PROVABLY the one we created
-    // — a non-zero inode captured at acquire that still matches here. A filesystem
-    // reporting ino=0 (non-authoritative st_ino) cannot prove ownership, so we
-    // leave the file for the reaper rather than risk deleting a foreign successor.
+    const stats = await lstatForRelease(lockPath);
+    // `undefined` → the file is gone (ENOENT) or a transient fault persisted
+    // across the bounded retries; either way we cannot/need-not unlink here.
     if (
+      stats !== undefined &&
       isProvableIdentity(identity) &&
       stats.ino !== 0n &&
       stats.dev === identity.dev &&
@@ -406,12 +422,55 @@ async function releaseConfigLock(lockPath: string, ownership: LockOwnership): Pr
     ) {
       await fs.unlink(lockPath).catch(() => undefined);
     }
-  } catch {
-    // ENOENT (already gone) or a transient stat error (cannot prove identity):
-    // either way, never unlink a file we cannot positively identify as ours.
   } finally {
     await handle.close().catch(() => undefined);
   }
+}
+
+/**
+ * `lstat` the lock file for release-time identity verification, distinguishing an
+ * already-gone lock from a transient stat fault:
+ *   - success → returns the stats so the caller can compare inode identity;
+ *   - ENOENT → the lock is already gone → returns `undefined` (silent success);
+ *   - a transient fault (EIO/EMFILE/EACCES…) → RETRIES up to
+ *     {@link LOCK_RELEASE_LSTAT_RETRIES} times with a tiny delay. If a retry
+ *     succeeds, its stats are returned; if the fault persists across every
+ *     attempt, returns `undefined` after emitting a single sanitized diagnostic
+ *     ({@link warnLockReleaseStrand}) — the caller then leaves the lock in place
+ *     rather than unlink a file it cannot prove is ours (#2118).
+ */
+async function lstatForRelease(lockPath: string): Promise<BigIntStats | undefined> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < LOCK_RELEASE_LSTAT_RETRIES; attempt += 1) {
+    try {
+      return await fs.lstat(lockPath, { bigint: true });
+    } catch (err: unknown) {
+      if (isENOENT(err)) return undefined;
+      lastError = err;
+      if (attempt < LOCK_RELEASE_LSTAT_RETRIES - 1) {
+        await sleep(LOCK_RELEASE_LSTAT_RETRY_DELAY_MS);
+      }
+    }
+  }
+  warnLockReleaseStrand(lockPath, lastError);
+  return undefined;
+}
+
+/**
+ * Emit a single sanitized, single-line diagnostic when release cannot prove
+ * ownership after the bounded retries and therefore leaves the lock in place.
+ * The lock path is file-derived, so it is passed through
+ * {@link toSingleLineDisplay} before being written to the terminal (repo
+ * convention: untrusted/file-derived strings echoed to a TTY must be single-line
+ * sanitized) to close a control-character injection vector.
+ */
+function warnLockReleaseStrand(lockPath: string, err: unknown): void {
+  const safePath = toSingleLineDisplay(lockPath);
+  const code = errorCodeOf(err);
+  console.warn(
+    `council: could not verify config lock ownership at ${safePath} (${code}) during release; ` +
+      `leaving the lock in place. It will persist until this process exits.`,
+  );
 }
 
 /**
@@ -830,6 +889,23 @@ function hasErrorCode(err: unknown, code: string): boolean {
 
 function isENOENT(err: unknown): boolean {
   return hasErrorCode(err, "ENOENT");
+}
+
+/**
+ * Extract a NodeJS.ErrnoException-style `code` string from an unknown error, or
+ * `"unknown"` when absent. Used to include a stable, non-sensitive error code in
+ * the release-strand diagnostic ({@link warnLockReleaseStrand}).
+ */
+function errorCodeOf(err: unknown): string {
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    typeof (err as { code: unknown }).code === "string"
+  ) {
+    return (err as { code: string }).code;
+  }
+  return "unknown";
 }
 
 /**
