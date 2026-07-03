@@ -194,8 +194,11 @@ function hintForCode(
       );
     }
     default:
-      // No recognized code and no inferable signal — generic fallback.
-      // Keep the original message visible for bug reports.
+      // Unrecognized code, or no code with no inferable message signal —
+      // generic fallback. (The `code ?? inferCodeFromMessage(...)`
+      // short-circuit above skips inference when `code` is defined but
+      // unmapped, so inference hasn't necessarily run here.) Keep the
+      // original message visible for bug reports.
       return "Engine error.";
   }
 }
