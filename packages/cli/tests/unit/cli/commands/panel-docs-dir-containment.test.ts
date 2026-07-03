@@ -77,3 +77,28 @@ describe("assertContainedInPanelsRoot — containment startsWith branch", () => 
     expect(() => assertContainedInPanelsRoot(panelsRoot, panelsRoot, "root")).toThrow(CliUserError);
   });
 });
+
+describe("assertContainedInPanelsRoot — resolves an unresolved panelsRoot (#1931 item b)", () => {
+  const dataHome = "/home/u/.local/share/council";
+  const resolvedRoot = path.resolve(path.join(dataHome, "panels"));
+  // A future caller might pass a NON-normalized but equivalent root. Build one
+  // with a `..` round-trip (string concat, not `path.join`, so it stays
+  // un-normalized): `<root>/../panels` resolves back to `<root>`.
+  const unresolvedRoot = resolvedRoot + path.sep + ".." + path.sep + "panels";
+
+  it("accepts a contained candidate even when panelsRoot is passed unresolved", () => {
+    const inside = path.join(resolvedRoot, "finance", "docs");
+    // Before the fix the guard compares the resolved candidate against the raw
+    // (un-normalized) `unresolvedRoot + sep` prefix, which never matches — so a
+    // legitimately-contained path is wrongly rejected. Resolving the root
+    // internally restores containment for equivalent-but-unresolved roots.
+    expect(() => assertContainedInPanelsRoot(inside, unresolvedRoot, "finance")).not.toThrow();
+  });
+
+  it("still rejects an escaping candidate when panelsRoot is passed unresolved", () => {
+    const escaping = path.resolve(dataHome, "..", "etc", "docs");
+    expect(() => assertContainedInPanelsRoot(escaping, unresolvedRoot, "evil")).toThrow(
+      CliUserError,
+    );
+  });
+});
