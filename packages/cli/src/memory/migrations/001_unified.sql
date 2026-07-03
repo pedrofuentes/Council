@@ -123,7 +123,8 @@ CREATE TABLE IF NOT EXISTS expert_documents (
   checksum      TEXT NOT NULL,
   size_bytes    INTEGER NOT NULL,
   word_count    INTEGER NOT NULL,
-  status        TEXT NOT NULL DEFAULT 'pending',
+  status        TEXT NOT NULL DEFAULT 'pending'
+                  CHECK (status IN ('pending', 'processed', 'failed', 'removed')),
   processed_at  TEXT,
   created_at    TEXT NOT NULL,
   UNIQUE (expert_slug, file_path)

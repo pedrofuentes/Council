@@ -120,7 +120,7 @@ export class DocumentRepository {
     return row ? toDomain(row) : undefined;
   }
 
-  async updateStatus(id: string, status: string, processedAt?: string): Promise<void> {
+  async updateStatus(id: string, status: DocumentStatus, processedAt?: string): Promise<void> {
     const updates: Record<string, unknown> = { status };
     if (processedAt !== undefined) updates["processed_at"] = processedAt;
     await this.db.updateTable("expert_documents").set(updates).where("id", "=", id).execute();

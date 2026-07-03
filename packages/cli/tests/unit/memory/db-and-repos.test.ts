@@ -229,7 +229,7 @@ describe("createDatabase", () => {
     const versions = (
       await db.selectFrom("schema_version").select("version").orderBy("version").execute()
     ).map((r) => r.version);
-    expect(versions).toEqual([1]);
+    expect(versions).toEqual([1, 2]);
 
     const indexes = (
       await sql<{
@@ -548,7 +548,7 @@ describe("Inlined migrations regression (issue #476)", () => {
     const versions = (
       await db.selectFrom("schema_version").select("version").orderBy("version").execute()
     ).map((r) => r.version);
-    expect(versions).toEqual([1]);
+    expect(versions).toEqual([1, 2]);
   });
 
   it("each expected table is queryable via Kysely without throwing", async () => {
