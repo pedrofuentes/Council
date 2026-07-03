@@ -17,11 +17,14 @@
 # Dependency pinning (OpenSSF Scorecard Pinned-Dependencies): both isolated
 # installs use the repo's pinned versions (typescript to the workspace
 # devDependency, Jazzer.js to exactly 2.1.0) and run --ignore-scripts (no
-# install-time scripts execute). They stay `npm install`, not `npm ci`, because
-# each runs in a fresh `mktemp -d` with no package.json/lockfile, the TS version
-# is read from the repo at build time, and committing per-tool lockfiles would
-# only drift against the real manifests. Full hash pinning is therefore
-# best-effort here — see .clusterfuzzlite/README.md.
+# install-time scripts execute). Jazzer.js is fully hash-pinned: it installs via
+# `npm ci` from the committed, integrity-verified lockfile in
+# .clusterfuzzlite/jazzer/, so every package in its transitive tree is checked
+# against a sha512 hash and the build aborts on any mismatch. TypeScript stays a
+# plain `npm install` because it runs in a fresh `mktemp -d` and its version is
+# read from the repo's manifest at build time, so a committed per-tool lockfile
+# would only drift against the real devDependency; that one install remains
+# best-effort — see .clusterfuzzlite/README.md.
 
 SRC_DIR="$SRC/council"
 cd "$SRC_DIR"
@@ -38,19 +41,31 @@ TS_DIR="$(mktemp -d)"
 rm -rf "$TS_DIR"
 
 # 2. Make @jazzer.js/core resolvable for the CommonJS fuzz targets. Install it
-#    in isolation, then overlay it into the project's node_modules so the
-#    targets' require("@jazzer.js/core") resolves and compile_javascript_fuzzer
-#    copies it into $OUT.
+#    in isolation from the committed, integrity-verified lockfile in
+#    .clusterfuzzlite/jazzer/, then overlay it into the project's node_modules
+#    so the targets' require("@jazzer.js/core") resolves and
+#    compile_javascript_fuzzer copies it into $OUT.
 #
 #    Pinned to 2.1.0: its prebuilt native addon links against glibc 2.31 (the
 #    OSS-Fuzz base image's floor), so it loads on that image and on any newer
 #    glibc. Jazzer.js 4.x ships a prebuilt that requires GLIBC_2.32 and fails to
 #    dlopen on the 2.31 base. The repo's devDependency tracks 4.x for local
 #    runs (macOS/modern Linux); the FuzzedDataProvider API the targets use is
-#    identical across both. Bump this pin once the OSS-Fuzz base moves to a
-#    newer glibc — see .clusterfuzzlite/README.md.
+#    identical across both. The pin and its full transitive tree are locked with
+#    sha512 integrity hashes in .clusterfuzzlite/jazzer/package-lock.json; the
+#    `npm ci` below verifies every package against them and aborts on mismatch.
+#    Bump the pin by editing .clusterfuzzlite/jazzer/package.json and
+#    regenerating that lockfile once the OSS-Fuzz base moves to a newer glibc —
+#    see .clusterfuzzlite/README.md.
+#
+#    Copy the manifest + lockfile into a throwaway dir so `npm ci` (which wipes
+#    and recreates node_modules) never touches the repo tree, and keep
+#    --ignore-scripts so Jazzer.js's prebuilt addon is used without running any
+#    install-time scripts.
 JAZZER_DIR="$(mktemp -d)"
-( cd "$JAZZER_DIR" && npm install --no-save --no-audit --no-fund --ignore-scripts "@jazzer.js/core@2.1.0" )
+cp "$SRC_DIR/.clusterfuzzlite/jazzer/package.json" \
+   "$SRC_DIR/.clusterfuzzlite/jazzer/package-lock.json" "$JAZZER_DIR/"
+( cd "$JAZZER_DIR" && npm ci --no-audit --no-fund --ignore-scripts )
 mkdir -p "$SRC_DIR/node_modules"
 # Clobbering copy so the pinned Jazzer.js deterministically wins over anything a
 # non-clean checkout might have left behind.
