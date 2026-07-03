@@ -451,6 +451,8 @@ async function releaseConfigLock(lockPath: string, ownership: LockOwnership): Pr
       } else if (!isProvableIdentity(identity) || stats.ino === 0n) {
         // Inode proof unavailable (non-authoritative st_ino). Fall back to the
         // token we wrote at acquire: unlink IFF the on-disk meta is still ours.
+        // Taking this fallback is a degraded action — surface it once per process.
+        maybeWarnLockDegradedMode();
         await unlinkIfOwnMeta(lockPath, meta);
       }
     }
@@ -489,10 +491,12 @@ async function unlinkIfOwnMeta(lockPath: string, ownMeta: LockMeta): Promise<voi
   const claimedPath = `${lockPath}.releasing-${randomUUID()}`;
   try {
     await fs.rename(lockPath, claimedPath);
-  } catch {
-    // ENOENT → already gone (released/reaped): nothing to do. Any other fault →
-    // we claimed nothing, so leave our own live lock in place rather than delete
-    // a path we could not atomically detach.
+  } catch (err: unknown) {
+    // ENOENT → already gone (released/reaped): nothing to do, stay silent. Any
+    // other fault (transient EIO/EACCES/EPERM) → we claimed nothing, so leave our
+    // own live lock in place rather than delete a path we could not atomically
+    // detach — but surface it, since the lock now strands until this process exits.
+    if (!isENOENT(err)) warnLockClaimStrand(lockPath, err);
     return;
   }
 
@@ -503,7 +507,12 @@ async function unlinkIfOwnMeta(lockPath: string, ownMeta: LockMeta): Promise<voi
     claimedMeta.token === ownMeta.token &&
     claimedMeta.createdAt === ownMeta.createdAt
   ) {
-    await fs.unlink(claimedPath).catch(() => undefined);
+    // Proven ours: unlink the claimed copy. ENOENT → a reaper raced us and it is
+    // already gone (benign, silent); a NON-ENOENT fault means the proven-own lock
+    // may strand as an orphan copy, so surface it.
+    await fs.unlink(claimedPath).catch((err: unknown) => {
+      if (!isENOENT(err)) warnLockClaimedUnlinkStrand(claimedPath, err);
+    });
     return;
   }
 
@@ -561,6 +570,78 @@ function warnLockReleaseStrand(lockPath: string, err: unknown): void {
     `council: could not verify config lock ownership at ${safePath} (${code}) during release; ` +
       `leaving the lock in place. It will persist until this process exits.`,
   );
+}
+
+/**
+ * Emit a single sanitized, single-line diagnostic when the atomic claim rename
+ * ({@link unlinkIfOwnMeta}: `rename(lockPath → *.releasing-<uuid>)`) fails with a
+ * transient NON-ENOENT fault (EIO/EACCES/EPERM), so the token fallback could not
+ * detach the file and therefore leaves the lock in place. The file-derived lock
+ * path is passed through {@link toSingleLineDisplay} (repo convention). ENOENT is
+ * NOT routed here — an already-gone lock is a silent success.
+ */
+function warnLockClaimStrand(lockPath: string, err: unknown): void {
+  const safePath = toSingleLineDisplay(lockPath);
+  const code = errorCodeOf(err);
+  console.warn(
+    `council: could not claim config lock at ${safePath} (${code}) during release; ` +
+      `leaving the lock in place. It will persist until this process exits.`,
+  );
+}
+
+/**
+ * Emit a single sanitized, single-line diagnostic when a proven-own claimed
+ * (renamed-aside) lock copy could not be removed because of a NON-ENOENT fault
+ * (EIO/EACCES/EPERM). The token already matched, so the file is provably ours;
+ * the failed unlink means it may strand as an orphan `*.releasing-*` copy. ENOENT
+ * is NOT routed here — a reaper that raced us and removed the copy is benign.
+ */
+function warnLockClaimedUnlinkStrand(claimedPath: string, err: unknown): void {
+  const safePath = toSingleLineDisplay(claimedPath);
+  const code = errorCodeOf(err);
+  console.warn(
+    `council: could not remove claimed config lock copy at ${safePath} (${code}) during release; ` +
+      `the proven-own lock may strand until this process exits.`,
+  );
+}
+
+/**
+ * Process-level latch for the once-only degraded-mode notice (see
+ * {@link maybeWarnLockDegradedMode}). Deliberately module-level so the warning
+ * fires at most once per process regardless of how many config writes take a
+ * degraded action.
+ */
+let lockDegradedModeWarned = false;
+
+/**
+ * Announce, ONCE per process, that the config lock is operating in degraded
+ * corroboration mode: this filesystem reports a non-authoritative `st_ino`, so
+ * ownership is being corroborated via lock metadata (token/mtime) instead of the
+ * inode. Called the first time the lock takes a degraded action — the release
+ * token fallback ({@link unlinkIfOwnMeta}) or the reaper's mtime/size last resort
+ * ({@link claimedFileMatchesDecision}). Steady-state degraded operation would
+ * otherwise emit a warning on every write; this dedups to a single notice so a
+ * genuinely ino=0 environment is discoverable without per-write noise. The
+ * message is a constant single line (no file-derived content to sanitize).
+ */
+function maybeWarnLockDegradedMode(): void {
+  if (lockDegradedModeWarned) return;
+  lockDegradedModeWarned = true;
+  console.warn(
+    `council: config lock is running in degraded corroboration mode — this filesystem reports a ` +
+      `non-authoritative st_ino, so lock ownership is corroborated via metadata (token/mtime) ` +
+      `instead of inode. This notice is emitted once per process.`,
+  );
+}
+
+/**
+ * Test-only hook: reset the once-per-process degraded-mode latch so tests can
+ * deterministically exercise the once-only behaviour of
+ * {@link maybeWarnLockDegradedMode}. NOT part of the supported public API — do
+ * not call from production code.
+ */
+export function __resetLockDegradedWarningForTests(): void {
+  lockDegradedModeWarned = false;
 }
 
 /**
@@ -717,6 +798,8 @@ async function claimedFileMatchesDecision(
     }
     // LAST RESORT — unreadable deciding meta AND non-authoritative st_ino (ino=0):
     // corroborate the claimed file is the same aged, abandoned lock by mtime+size.
+    // Reaching this branch is a degraded action — surface it once per process.
+    maybeWarnLockDegradedMode();
     return Number(stats.mtimeMs) === deciding.mtimeMs && Number(stats.size) === deciding.size;
   } catch {
     return false;
