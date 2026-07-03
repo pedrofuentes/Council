@@ -48,13 +48,30 @@ interface TestEnv {
 }
 
 async function makeEnv(): Promise<TestEnv> {
-  const home = await fs.mkdtemp(path.join(os.tmpdir(), "council-chat-san2104-home-"));
-  const dataHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-chat-san2104-data-"));
+  // Capture originals BEFORE any async operations or mutations so that env
+  // can always be restored even if the fallible setup below throws (#2199).
   const originalHome = process.env["COUNCIL_HOME"];
   const originalDataHome = process.env["COUNCIL_DATA_HOME"];
+
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "council-chat-san2104-home-"));
+  const dataHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-chat-san2104-data-"));
+
   process.env["COUNCIL_HOME"] = home;
   process.env["COUNCIL_DATA_HOME"] = dataHome;
-  await copyTemplateDb(path.join(home, "council.db"));
+
+  try {
+    await copyTemplateDb(path.join(home, "council.db"));
+  } catch (err) {
+    // copyTemplateDb threw after env was already mutated — restore immediately
+    // so afterEach (which relies on the returned TestEnv) never gets a chance
+    // to leave process.env in the mutated state.
+    if (originalHome === undefined) delete process.env["COUNCIL_HOME"];
+    else process.env["COUNCIL_HOME"] = originalHome;
+    if (originalDataHome === undefined) delete process.env["COUNCIL_DATA_HOME"];
+    else process.env["COUNCIL_DATA_HOME"] = originalDataHome;
+    throw err;
+  }
+
   return { home, dataHome, originalHome, originalDataHome };
 }
 
@@ -73,26 +90,44 @@ async function teardown(env: TestEnv): Promise<void> {
 }
 
 // Adversarial payloads covering all classes in CONTROL_RE.
-const PAYLOADS: readonly { readonly label: string; readonly message: string }[] = [
+// `remnant` is the printable text that MUST appear in errOutput after
+// sanitization — the positive per-payload oracle that makes the test
+// discriminating (#2198). If stored.message were emptied or over-stripped,
+// the `toContain(remnant)` assertion below would fail.
+const PAYLOADS: readonly {
+  readonly label: string;
+  readonly message: string;
+  readonly remnant: string;
+}[] = [
   {
     label: "ANSI CSI colour sequence",
+    // CSI sequences \x1b[31m / \x1b[0m stripped; "badINJECT" survives.
     message: "bad\x1b[31mINJECT\x1b[0m",
+    remnant: "INJECT",
   },
   {
     label: "CR + LF line break",
+    // \r\n collapsed to a single space; "INJECT" survives.
     message: "bad\r\nINJECT",
+    remnant: "INJECT",
   },
   {
     label: "CR overwrite",
+    // \r collapsed to a space; "INJECT" survives.
     message: "Corrupt\rINJECT",
+    remnant: "INJECT",
   },
   {
     label: "OSC set-title",
+    // OSC sequence \x1b]0;pwned\x07 stripped; "suffix" survives.
     message: "bad\x1b]0;pwned\x07 suffix",
+    remnant: "suffix",
   },
   {
     label: "C1 CSI + bidi override",
+    // \u009b (C1 CSI) and \u202e (bidi override) stripped; "INJECT" survives.
     message: "bad\u009b31m\u202eINJECT",
+    remnant: "INJECT",
   },
 ];
 
@@ -111,7 +146,7 @@ describe("chat — stored.message sanitization (#2104)", () => {
 
   it.each(PAYLOADS)(
     "strips control chars from stored.message before surfacing to stderr ($label)",
-    async ({ message }) => {
+    async ({ message, remnant }) => {
       // Seed a panel whose configJson has a template name that does NOT exist
       // on disk. That makes loadPanel throw PanelNotFoundError, which triggers
       // the loadPersistedPanelDefinition fallback path inside
@@ -153,6 +188,9 @@ describe("chat — stored.message sanitization (#2104)", () => {
 
       // The diagnostic must be present but free of control chars.
       expect(errOutput).toContain("is invalid");
+      // Positive oracle: the sanitized printable remnant MUST survive (#2198).
+      // A regression that empties or over-strips stored.message fails here.
+      expect(errOutput).toContain(remnant);
       // Drop trailing newline before the control-char assertion.
       expect(errOutput.replace(/\n$/, "")).not.toMatch(CONTROL_RE);
     },
