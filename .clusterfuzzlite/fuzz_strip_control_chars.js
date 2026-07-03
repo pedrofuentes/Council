@@ -26,6 +26,17 @@ const load = () => (mod ||= import("../packages/cli/dist-fuzz/strip-control-char
 // CR / LF / TAB or Unicode line/paragraph separator may survive.
 const LINE_BREAK = /[\r\n\t\u2028\u2029]/;
 
+// Characters that stripControlChars() is documented to REMOVE (positive oracle).
+// Derived from:
+//   CONTROL_CHAR_PATTERN char classes  — strip-control-chars.ts:51
+//   ZERO_WIDTH_CHARS                   — hidden-format-chars.ts:11
+//   HIDDEN_FORMAT_CHARS                — hidden-format-chars.ts:32-33
+// Intentionally-preserved whitespace (\t U+0009, \n U+000A, \r U+000D) is
+// absent from this pattern — the oracle must NOT flag those characters.
+// eslint-disable-next-line no-control-regex
+const STRIPPED_CHARS =
+  /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F\u00AD\u061C\u115F\u1160\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\u3164\uFEFF\uFFA0\u{E0000}-\u{E007F}]/u;
+
 /**
  * @param {Buffer} data - Fuzzer-provided bytes.
  */
@@ -44,6 +55,17 @@ module.exports.fuzz = async function fuzz(data) {
   if (stripControlChars(stripped) !== stripped) {
     throw new Error(
       "stripControlChars is not idempotent: a control sequence survived the first pass",
+    );
+  }
+
+  // Contract 3 (positive oracle): the output must contain NONE of the
+  // characters stripControlChars() is documented to strip. Idempotency alone
+  // cannot catch a consistently-leaking sanitizer — if the same char survives
+  // both passes, Contract 1 passes but the char is still in the output.
+  const badMatch = STRIPPED_CHARS.exec(stripped);
+  if (badMatch) {
+    throw new Error(
+      `stripControlChars left a stripped character in its output: U+${badMatch[0].codePointAt(0).toString(16).toUpperCase().padStart(4, "0")} at index ${badMatch.index}`,
     );
   }
 
