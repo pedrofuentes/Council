@@ -17,6 +17,12 @@ import {
 } from "../../../src/tui/adapters/expert-training.js";
 import { mkCanonicalTempDir } from "../../helpers/tmp.js";
 
+// Every terminal-dangerous codepoint class the staging diagnostics must strip
+// before a file-derived path/basename can reach a TTY (mirrors the #2104 /
+// stop-warning oracles).
+// eslint-disable-next-line no-control-regex
+const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
+
 // The stageDocumentFiles suite drives real temp directories, so `lstat` and
 // `copyFile` keep their real behaviour by default (the factory wraps the real
 // implementations). Wrapping just these two lets the robustness tests inject a
@@ -426,6 +432,67 @@ describe("stageDocumentFiles", () => {
       await expect(actualFs.readFile(path.join(docsPath, "b.md"))).rejects.toMatchObject({
         code: "ENOENT",
       });
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("sanitizes a control-char source path in the not-a-regular-file error", async () => {
+    const home = await mkCanonicalTempDir("council-stage-");
+    try {
+      // A directory whose NAME carries ANSI/C1/bidi/DEL sequences. `lstat`
+      // succeeds (it exists) but `isFile()` is false, so the source-not-a-file
+      // guard embeds this file-derived path. Reaching a TTY unsanitized would
+      // let the crafted name spoof the terminal.
+      const ctrlName = "weird\u001b[31m\u009b\u202e\u007fdir";
+      const ctrlDir = path.join(home, ctrlName);
+      await fs.mkdir(ctrlDir, { recursive: true });
+      const docsPath = path.join(home, "docs");
+
+      const error = await stageDocumentFiles(docsPath, [ctrlDir]).then(
+        () => {
+          throw new Error("expected stageDocumentFiles to reject");
+        },
+        (err: unknown) => (err instanceof Error ? err.message : String(err)),
+      );
+
+      expect(error).toMatch(/not a regular file/i);
+      // Positive oracle: the printable remnant survives, so the diagnostic is
+      // sanitized rather than emptied/over-stripped.
+      expect(error).toContain("weirddir");
+      expect(error).not.toMatch(CONTROL_RE);
+      expect(error.split("\n")).toHaveLength(1);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("sanitizes a control-char basename in the already-exists error", async () => {
+    const home = await mkCanonicalTempDir("council-stage-");
+    try {
+      // A document whose BASENAME carries ANSI/C1/bidi/DEL sequences already
+      // exists at the destination, so the overwrite-refusal diagnostic embeds
+      // this file-derived basename — it must be single-line and control-free.
+      const ctrlName = "evil\u001b[31m\u009b\u202e\u007fname.md";
+      const docsPath = path.join(home, "docs");
+      await fs.mkdir(docsPath, { recursive: true });
+      await fs.writeFile(path.join(docsPath, ctrlName), "original", "utf8");
+      const src = path.join(home, ctrlName);
+      await fs.writeFile(src, "replacement", "utf8");
+
+      const error = await stageDocumentFiles(docsPath, [src]).then(
+        () => {
+          throw new Error("expected stageDocumentFiles to reject");
+        },
+        (err: unknown) => (err instanceof Error ? err.message : String(err)),
+      );
+
+      expect(error).toMatch(/already exists/i);
+      expect(error).toContain("evilname.md");
+      expect(error).not.toMatch(CONTROL_RE);
+      expect(error.split("\n")).toHaveLength(1);
+      // The pre-existing document must be untouched by the refused copy.
+      expect(await fs.readFile(path.join(docsPath, ctrlName), "utf8")).toBe("original");
     } finally {
       await fs.rm(home, { recursive: true, force: true });
     }
