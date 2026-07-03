@@ -15,7 +15,9 @@
  * tag → commit resolution in the script's entrypoint is integration-only and
  * is intentionally NOT exercised here.
  *
- * RED at this commit: `scripts/verify-action-pins.mjs` does not exist yet.
+ * `scripts/verify-action-pins.mjs` already existed when these tests were
+ * introduced; only the newer gh-api resilience and output-sanitizing exports
+ * were added test-first (RED) alongside the tests that name them.
  */
 import { describe, expect, it } from "vitest";
 
@@ -23,6 +25,7 @@ import { describe, expect, it } from "vitest";
 // purely for its pure parsing/sanitizing exports.
 import {
   computeBackoffDelay,
+  formatFatalError,
   ghApiJson,
   ghErrorText,
   isTransientGhError,
@@ -150,6 +153,24 @@ describe("parseActionPins", () => {
     const { pins, unverifiable } = parseActionPins("name: empty\non: [push]\n", "empty.yml");
     expect(pins).toEqual([]);
     expect(unverifiable).toEqual([]);
+  });
+
+  it("classifies a docker:// image reference as unverifiable", () => {
+    const doc = "jobs:\n  b:\n    steps:\n      - uses: docker://alpine:3.20\n";
+    const { pins, unverifiable } = parseActionPins(doc, "docker.yml");
+    expect(pins).toEqual([]);
+    expect(unverifiable).toHaveLength(1);
+    expect(unverifiable[0]?.uses).toBe("docker://alpine:3.20");
+    expect(unverifiable[0]?.reason).toMatch(/docker/i);
+  });
+
+  it("classifies a bare owner/repo carrying no @ref as unverifiable (unpinned)", () => {
+    const doc = "jobs:\n  b:\n    steps:\n      - uses: actions/checkout\n";
+    const { pins, unverifiable } = parseActionPins(doc, "noref.yml");
+    expect(pins).toEqual([]);
+    expect(unverifiable).toHaveLength(1);
+    expect(unverifiable[0]?.uses).toBe("actions/checkout");
+    expect(unverifiable[0]?.reason).toMatch(/no @ref|unpinned/i);
   });
 });
 
@@ -384,6 +405,50 @@ describe("ghErrorText", () => {
     expect(text).not.toMatch(/timeout/i);
     expect(isTransientGhError(text)).toBe(false);
   });
+
+  // --- Regression: issue #2187 item 1 (Sentinel A1) -------------------------
+  // When NO gh/OS-generated field is present (no stderr/stdout, no string
+  // syscall code, not killed), the old empty-parts fallback returned
+  // String(error), which re-exposes Node's echoed "Command failed: gh api
+  // repos/<owner>/<repo>/..." line. That owner/repo/tag is attacker-editable via
+  // a workflow `uses:` line, so it must never re-enter the classifier text — a
+  // `timeout`-named owner must not read as a transient fault. Fail-closed: with
+  // no diagnostic signal the fallback text classifies TERMINAL.
+  it("does not re-admit the echoed command line in the no-gh-field fallback", () => {
+    const err = new Error("Command failed: gh api repos/evil-timeout/foo/git/ref/tags/v1");
+    const text = ghErrorText(err);
+    expect(text).not.toMatch(/timeout/i);
+    expect(text).not.toContain("Command failed");
+    expect(text).not.toContain("evil-timeout");
+    expect(isTransientGhError(text)).toBe(false);
+  });
+});
+
+describe("formatFatalError", () => {
+  // The top-level fatal handler (outside the per-pin loop) logs a caught error's
+  // stack/message. That text can transitively include attacker-editable workflow
+  // content — e.g. a control-char-laden `uses:` filename surfaced through a
+  // readFile/parse error — so it must be sanitized to a single safe CI-log line
+  // before it is written (issue #2181, Sentinel A1 digest item 3). This mirrors
+  // the per-pin error sanitization already applied inside main().
+  it("strips ANSI/OSC and C0/C1 control bytes from a fatal Error's stack/message", () => {
+    const err = new Error("boom \x1B[31mred\x1B[0m \x07 \x9B done");
+    const out = formatFatalError(err);
+    expect(out).not.toContain("\x1B");
+    expect(out).not.toContain("\x07");
+    expect(out).not.toContain("\x9B");
+    expect(out).toContain("boom");
+  });
+
+  it("folds a multi-line stack/message to one line (no CR/LF/LS break-out)", () => {
+    const err = new Error("line1\r\nline2\u2028line3");
+    const out = formatFatalError(err);
+    expect(out).not.toMatch(/[\r\n\u2028\u2029]/);
+  });
+
+  it("stringifies and sanitizes a non-Error thrown value", () => {
+    expect(formatFatalError("plain\x1B[2Jstring")).toBe("plainstring");
+  });
 });
 
 describe("computeBackoffDelay", () => {
@@ -568,14 +633,22 @@ describe("resolveTagToCommit (injected executor)", () => {
 
   it("fails fast without retrying when the tag ref returns 404 (real mismatch)", async () => {
     let calls = 0;
+    const sleeps: number[] = [];
     const exec = () => {
       calls += 1;
       return Promise.reject(new Error("gh: Not Found (HTTP 404)"));
     };
-    await expect(resolveTagToCommit("o", "r", "v9.9.9", { exec, sleep: noSleep })).rejects.toThrow(
-      /HTTP 404/,
-    );
+    await expect(
+      resolveTagToCommit("o", "r", "v9.9.9", {
+        exec,
+        sleep: (ms: number) => {
+          sleeps.push(ms);
+          return Promise.resolve();
+        },
+      }),
+    ).rejects.toThrow(/HTTP 404/);
     expect(calls).toBe(1);
+    expect(sleeps).toHaveLength(0);
   });
 });
 

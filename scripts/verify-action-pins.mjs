@@ -98,6 +98,23 @@ export function toSingleLineDisplay(text) {
 }
 
 /**
+ * Format a fatal (top-level, outside the per-pin loop) error into a single safe
+ * CI-log line. A caught error's `stack`/`message` can transitively include
+ * attacker-editable workflow text — e.g. a control-char-laden `uses:` filename
+ * surfaced through a `readFile`/parse failure — so it is routed through
+ * {@link toSingleLineDisplay} (stripping escape/control bytes and folding to one
+ * line), exactly like the per-pin error output in `main()`. The raw error is
+ * never compared or resolved against; this is display-only (issue #2181).
+ *
+ * @param {unknown} error
+ * @returns {string}
+ */
+export function formatFatalError(error) {
+  const raw = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  return toSingleLineDisplay(raw);
+}
+
+/**
  * A pinned action reference that carries a verifiable version comment.
  * @typedef {object} ActionPin
  * @property {string} file  - workflow filename the pin was found in
@@ -240,8 +257,11 @@ export function parseActionPins(yamlText, filename) {
 // otherwise-valid PR check spuriously red (issue #2182). We therefore:
 //   1. bound every `gh api` call with an explicit timeout (no hung CI), and
 //   2. retry ONLY transient faults with exponential backoff + full jitter.
-// A genuine 404 "tag not found" (or any other 4xx) is a real provenance
-// problem and MUST fail fast — retrying it would mask a tag/SHA mismatch.
+// A genuine 404 "tag not found" — and every other NON-403 4xx (401/422/…) —
+// is a real provenance problem and MUST fail fast; retrying it would mask a
+// tag/SHA mismatch. The sole 4xx exception is HTTP 403 carrying a rate-limit
+// signal (GitHub reports secondary rate limits as 403), which IS retried as
+// transient — see `isTransientGhError`.
 //
 // The classifier and retry helpers are pure and injectable (executor, sleep,
 // and jitter source), so they are unit-tested with no network and no real
@@ -298,10 +318,16 @@ export function ghErrorText(error) {
   if (typeof err.stdout === "string" && err.stdout.length > 0) parts.push(err.stdout);
   if (typeof err.code === "string" && err.code.length > 0) parts.push(err.code);
   // NOTE: err.message is intentionally omitted — see the doc comment above.
-  // Fall back to String(error) only when nothing gh/OS-generated is available
-  // (e.g. a plain Error test double), which still exposes an embedded HTTP
-  // status without echoing a shell command line.
-  return parts.length > 0 ? parts.join("\n") : String(error);
+  if (parts.length > 0) return parts.join("\n");
+  // No gh/OS-generated field was captured. `String(error)` would re-admit Node's
+  // echoed "Command failed: gh api repos/<owner>/<repo>/..." line, smuggling the
+  // attacker-editable owner/repo/tag back into the classifier and letting a
+  // transient-sounding name steer the retry gate (issues #2184, #2187). Strip
+  // that echoed command line; any genuinely gh/OS-generated remainder is kept,
+  // and an empty result classifies TERMINAL — fail-closed, never a false retry.
+  return String(error)
+    .replace(/^(?:[\w$.]*Error:\s*)?Command failed:.*$/gm, "")
+    .trim();
 }
 
 /** Node/libc socket + DNS + connection syscall codes that are always retryable. */
@@ -365,8 +391,11 @@ export function isTransientGhError(errText) {
 /**
  * Full-jitter exponential backoff delay for a given 1-based attempt. The
  * un-jittered window doubles each attempt (base, 2·base, 4·base, …) capped at
- * `maxDelayMs`; the returned delay is a uniform random point in `[0, window)`
- * so concurrent CI jobs don't retry in lockstep (thundering herd).
+ * `maxDelayMs`; the returned delay is `floor(random() * window)`. With the
+ * default `Math.random` (range `[0, 1)`) that is a uniform point in
+ * `[0, window)`, so concurrent CI jobs don't retry in lockstep (thundering
+ * herd). An injected `random` is trusted as-is: a source returning exactly `1`
+ * therefore yields the full `window` (`[0, window]` for such injected values).
  *
  * @param {number} attempt  1-based attempt number
  * @param {{ baseDelayMs?: number, maxDelayMs?: number, random?: () => number }} [options]
@@ -627,8 +656,7 @@ if (import.meta.url === invokedPath) {
   main()
     .then((code) => process.exit(code))
     .catch((error) => {
-      const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
-      console.error(`verify-action-pins: fatal: ${message}`);
+      console.error(`verify-action-pins: fatal: ${formatFatalError(error)}`);
       process.exit(1);
     });
 }
