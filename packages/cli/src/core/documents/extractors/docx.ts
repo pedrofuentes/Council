@@ -23,6 +23,7 @@
  */
 import * as yauzl from "yauzl";
 
+import { toSingleLineDisplay } from "../../../cli/strip-control-chars.js";
 import { registerExtractor } from "./registry.js";
 import type {
   ContentExtractor,
@@ -122,7 +123,7 @@ async function preflightZip(buffer: Buffer, filename: string): Promise<void> {
           new ExtractionError({
             kind: "zip-bomb-detected",
             filePath: filename,
-            message: `DOCX entry "${entry.fileName}" uncompressed size ${entry.uncompressedSize} exceeds per-entry limit ${MAX_ENTRY_BYTES} bytes`,
+            message: `DOCX entry "${toSingleLineDisplay(entry.fileName)}" uncompressed size ${entry.uncompressedSize} exceeds per-entry limit ${MAX_ENTRY_BYTES} bytes`,
             suggestion: "File has suspicious compression characteristics.",
           }),
         );
