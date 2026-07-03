@@ -191,7 +191,10 @@ export function panelDocsDir(dataHome: string, name: string): string {
 }
 
 /**
- * Assert `candidate` resolves to a path strictly under `panelsRoot`.
+ * Assert `candidate` resolves to a path strictly under `panelsRoot`. Both
+ * paths are resolved internally, so callers need not pre-`path.resolve()` the
+ * root — an unresolved or `..`-laden root can no longer silently degrade the
+ * containment check to a no-op (#1931).
  *
  * Defense-in-depth behind `validatePanelName`: a panel name sourced from
  * `panel_library.name` (migration/import/DB edit) that bypassed create-time
@@ -207,7 +210,8 @@ export function assertContainedInPanelsRoot(
   panelsRoot: string,
   name: string,
 ): void {
-  if (!path.resolve(candidate).startsWith(panelsRoot + path.sep)) {
+  const resolvedRoot = path.resolve(panelsRoot);
+  if (!path.resolve(candidate).startsWith(resolvedRoot + path.sep)) {
     throw new CliUserError(
       `Refusing to scan: resolved docs path escapes panels directory (name="${name}")`,
     );
@@ -444,9 +448,9 @@ function buildDeleteCommand(
           const code = (err as NodeJS.ErrnoException).code;
           if (code !== "ENOENT") {
             writeError(
-              `Failed to delete YAML at ${displayPath(yamlPath)}: ${
-                err instanceof Error ? err.message : String(err)
-              }\nDB rows preserved; re-run \`council panel delete ${name}\` after fixing.\n`,
+              `Failed to delete YAML at ${displayPath(yamlPath)}: ${toSingleLineDisplay(
+                err instanceof Error ? err.message : String(err),
+              )}\nDB rows preserved; re-run \`council panel delete ${name}\` after fixing.\n`,
             );
             throw err;
           }
@@ -461,9 +465,9 @@ function buildDeleteCommand(
           await fs.rm(panelDir, { recursive: true, force: true });
         } catch (err) {
           writeError(
-            `Warning: failed to clean up ${displayPath(panelDir)}: ${
-              err instanceof Error ? err.message : String(err)
-            }\nDB rows preserved; re-run \`council panel delete ${name}\` after fixing.\n`,
+            `Warning: failed to clean up ${displayPath(panelDir)}: ${toSingleLineDisplay(
+              err instanceof Error ? err.message : String(err),
+            )}\nDB rows preserved; re-run \`council panel delete ${name}\` after fixing.\n`,
           );
           throw err;
         }
@@ -1555,7 +1559,7 @@ async function runDocsList(
           );
         }
       } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err);
+        const detail = toSingleLineDisplay(err instanceof Error ? err.message : String(err));
         writeError(
           `Warning: could not refresh the document index for panel "${display}": ${detail}\n` +
             `Showing the last known state; results may be stale.\n`,
