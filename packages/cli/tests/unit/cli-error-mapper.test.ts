@@ -194,10 +194,38 @@ describe("formatEngineError", () => {
     expect(out.toLowerCase()).toMatch(/network|connection/);
   });
 
+  // --- Underlying line must surface the recovered cause detail (#1913) -------
+  // When the code is recovered from the cause chain, the cause's own message
+  // (e.g. "missing Copilot token") carries the actionable detail. Echoing only
+  // the outer wrapper ("engine.start() failed") drops the very context the
+  // auth/PROVIDER_ERROR hints tell users to report. The Underlying line must
+  // include both.
+  it("surfaces the underlying cause message alongside the wrapper message (#1913)", () => {
+    const err = new Error("engine.start() failed", {
+      cause: { code: "NOT_AUTHENTICATED", message: "missing Copilot token" },
+    });
+    const out = formatEngineError(err);
+    expect(out).toContain("engine.start() failed");
+    expect(out).toContain("missing Copilot token");
+  });
+
   it("infers an auth hint from an untagged Error message", () => {
     const out = formatEngineError(new Error("Request failed: 401 Unauthorized"));
     expect(out.toLowerCase()).toContain("gh auth login");
     expect(out).toContain("401 Unauthorized");
+  });
+
+  // --- 403/Forbidden is authorization, not authentication (#1913) -----------
+  // HTTP 403 Forbidden means the caller IS authenticated but lacks permission
+  // (e.g. no Copilot subscription). Mapping it to NOT_AUTHENTICATED tells an
+  // already-signed-in user to re-run `gh auth login`, which won't help. A bare
+  // 403/forbidden signal must fall through to the generic hint, not the auth one.
+  it("does NOT map a 403/forbidden error to NOT_AUTHENTICATED (authorization, not authentication) (#1913)", () => {
+    const out = formatEngineError(new Error("Request failed: 403 Forbidden"));
+    expect(out.toLowerCase()).not.toContain("gh auth login");
+    expect(out).toContain("Engine error.");
+    // Underlying detail is still echoed verbatim for diagnostics.
+    expect(out).toContain("403 Forbidden");
   });
 
   it("infers a network hint from an untagged Error message", () => {
@@ -206,7 +234,17 @@ describe("formatEngineError", () => {
   });
 
   it("infers a network hint from a timeout message", () => {
-    const out = formatEngineError(new Error("socket hang up: request timed out"));
+    // Isolates the timeout arm: the message has no "socket hang up" substring,
+    // so only the timed-out branch of the network regex can match. Dropping the
+    // timeout arm would make this test fail — which is the point (#1913).
+    const out = formatEngineError(new Error("the request timed out after 30000ms"));
+    expect(out.toLowerCase()).toMatch(/network|connection/);
+  });
+
+  it("infers a network hint from a socket hang up message", () => {
+    // Isolates the socket-hang-up arm: no timeout wording, so only that branch
+    // of the network regex can match (#1913).
+    const out = formatEngineError(new Error("socket hang up"));
     expect(out.toLowerCase()).toMatch(/network|connection/);
   });
 

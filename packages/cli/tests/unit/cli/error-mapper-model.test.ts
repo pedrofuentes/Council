@@ -91,4 +91,22 @@ describe("formatEngineError — model sanitization (#668)", () => {
     expect(out).not.toContain("\u0007");
     expect(out).toContain("gpt4o");
   });
+
+  it("strips OSC-8 hyperlink escape sequences from the model field", () => {
+    // An OSC-8 hyperlink (ESC ] 8 ; ; URL BEL … ESC ] 8 ; ; BEL) can turn the
+    // model label into a clickable link that exfiltrates data on click. The
+    // whole sequence — introducer, URL payload AND terminator — must be
+    // stripped, not merely the escape bytes, so no live link reaches the
+    // terminal (#1913, #668).
+    const out = formatEngineError({
+      code: "MODEL_UNAVAILABLE",
+      message: "model unavailable",
+      model: "claude\u001b]8;;http://evil.example\u0007pwned\u001b]8;;\u0007",
+    });
+    expect(out).not.toContain("\u001b");
+    expect(out).not.toContain("\u0007");
+    expect(out).not.toContain("evil.example");
+    // Printable text survives with the escapes/URL removed.
+    expect(out).toContain("claudepwned");
+  });
 });
