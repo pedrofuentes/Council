@@ -11,12 +11,13 @@
  *   - The whole module NEVER throws and NEVER writes to stdout. Cache and
  *     network failures are swallowed silently.
  */
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import chalk from "chalk";
 
 import { getCouncilHome } from "../../config/index.js";
+import { writeFileAtomicSafe } from "../fs/atomic-write.js";
 
 import {
   fetchLatestVersion,
@@ -93,15 +94,13 @@ export async function readUpdateCache(cacheDir: string): Promise<UpdateCache | n
 }
 
 /**
- * Write the update cache atomically (write to a temp file, then rename) so a
- * concurrent reader never observes a half-written file.
+ * Write the update cache atomically so a concurrent reader never observes a
+ * half-written file. Uses {@link writeFileAtomicSafe}, which creates the temp
+ * file with a cryptographically-random name and an exclusive, no-symlink-follow
+ * open (CWE-59 hardening, #2206), then renames it into place.
  */
 export async function writeUpdateCache(cacheDir: string, cache: UpdateCache): Promise<void> {
-  await mkdir(cacheDir, { recursive: true });
-  const finalPath = cacheFilePath(cacheDir);
-  const tempPath = `${finalPath}.${process.pid}.tmp`;
-  await writeFile(tempPath, JSON.stringify(cache), "utf8");
-  await rename(tempPath, finalPath);
+  await writeFileAtomicSafe(cacheFilePath(cacheDir), JSON.stringify(cache));
 }
 
 /** Build the one-line, color-aware update notice (chalk respects NO_COLOR). */
