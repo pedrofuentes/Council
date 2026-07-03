@@ -11,11 +11,18 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
+import * as yaml from "yaml";
 
 import { FileExpertLibrary } from "../../../src/core/expert-library.js";
 import type { ExpertDefinition } from "../../../src/core/expert.js";
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
 import { ExpertLibraryRepository } from "../../../src/memory/repositories/expert-library-repo.js";
+
+// Terminal/error-sink hostile codepoints: C0, DEL, C1, bidi override/isolate,
+// CR/LF and Unicode line/paragraph separators — anything that could break out
+// of a one-line diagnostic or inject ANSI/OSC control sequences.
+// eslint-disable-next-line no-control-regex
+const UNSAFE_CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
 
 function makeDef(overrides: Partial<ExpertDefinition> = {}): ExpertDefinition {
   return {
@@ -155,6 +162,46 @@ describe("FileExpertLibrary", () => {
         expect(warnSpy).toHaveBeenCalledWith(
           expect.stringContaining('Failed to repair missing expert cache row for slug "cto"'),
         );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it("sanitizes the repair-failure diagnostic when the existing YAML carries adversarial control sequences", async () => {
+      // Adversarial vector for the repair-FAILURE console.warn sink: seed a
+      // real expert, drop ONLY its DB cache row, then overwrite the on-disk
+      // YAML with schema-INVALID content whose `slug` field embeds ANSI/C0/
+      // CR-LF/bidi bytes. On the next create(), the EEXIST path calls
+      // repairMissingCacheRowFromYaml(); parseYaml() rejects the file and
+      // embeds the raw file-derived slug into the thrown error, which becomes
+      // the `${detail}` interpolated into the warn. That file-derived text
+      // MUST be routed through toSingleLineDisplay before it reaches the
+      // terminal, or it can spoof lines / inject ANSI escapes.
+      await lib.create(makeDef());
+      const yamlPath = path.join(dataHome, "experts", "cto.yaml");
+      const repo = new ExpertLibraryRepository(db);
+      await repo.delete("cto");
+
+      const adversarialSlug = "cto\u001b[31m\u0007\r\nHACKED\u2028\u202e";
+      await fs.writeFile(
+        yamlPath,
+        yaml.stringify({ slug: adversarialSlug, kind: "generic", displayName: "X" }),
+        "utf-8",
+      );
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      try {
+        await expect(lib.create(makeDef({ displayName: "Attempted Duplicate" }))).rejects.toThrow(
+          /already exists/i,
+        );
+
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        const surfaced = warnSpy.mock.calls[0]?.[0] as string;
+        // The stable, sanitized prefix still identifies the slug and the sink.
+        expect(surfaced).toContain('Failed to repair missing expert cache row for slug "cto"');
+        // No raw terminal-injection bytes may survive to the sink.
+        expect(surfaced).not.toMatch(UNSAFE_CONTROL_RE);
+        expect(surfaced).not.toMatch(/[\r\n]/);
       } finally {
         warnSpy.mockRestore();
       }
