@@ -225,7 +225,9 @@ async function validateAndResolveTarget(
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       writeError(
-        `!! Warning: panel "${safeTarget}" exists in database but failed to load its template: ${msg}\n`,
+        `!! Warning: panel "${safeTarget}" exists in database but failed to load its template: ${toSingleLineDisplay(
+          msg,
+        )}\n`,
       );
       throw new CliUserError(`Failed to load panel template for "${safeTarget}"`);
     }
