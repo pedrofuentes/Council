@@ -229,10 +229,28 @@ interface LockMeta {
  * and create its own, which necessarily yields a DIFFERENT inode. So a matching
  * identity PROVES the file at the path is still the exact one we created, and
  * any change reveals a reap+recreate hand-off we must not delete (#1923/#2118).
+ *
+ * PRECONDITION — ownership proof requires a stable, NON-ZERO `st_ino`. On some
+ * NFS/SMB/CIFS/FUSE/overlay mounts libuv reports `st_ino = 0` (or unstable/reused
+ * values) and cannot uniquely name a file; the #2118 shared-FS multi-host target
+ * is exactly such an environment. Both fields are captured/compared as `bigint`
+ * (`{ bigint: true }` stat) so 64-bit ids never lose precision past 2^53, and an
+ * `ino` of `0n` is treated as UNPROVABLE (see {@link isProvableIdentity}): we
+ * never unlink or reap on structural identity alone in that case.
  */
 interface LockIdentity {
-  readonly dev: number;
-  readonly ino: number;
+  readonly dev: bigint;
+  readonly ino: bigint;
+}
+
+/**
+ * Whether a captured {@link LockIdentity} can positively prove file ownership.
+ * An `ino` of `0n` means the filesystem did not supply a usable inode number
+ * (non-authoritative `st_ino`), so a structural match cannot be trusted and the
+ * caller must fail safe — never unlink or reap on identity alone.
+ */
+function isProvableIdentity(identity: LockIdentity): boolean {
+  return identity.ino !== 0n;
 }
 
 /**
@@ -324,9 +342,11 @@ async function acquireConfigLock(lockPath: string): Promise<LockOwnership> {
       await handle.writeFile(JSON.stringify(meta), "utf-8");
       // Capture the created file's inode identity from the SAME open handle
       // (authoritative fstat on the fd we hold), so release can later confirm the
-      // file still at `lockPath` is byte-for-byte the one we created. The handle
-      // is intentionally kept OPEN and returned; release closes it.
-      const stats = await handle.stat();
+      // file still at `lockPath` is byte-for-byte the one we created. Captured as
+      // bigint ({ bigint: true }) so 64-bit dev/ino compare exactly; a filesystem
+      // that reports ino=0 yields an UNPROVABLE identity (see isProvableIdentity).
+      // The handle is intentionally kept OPEN and returned; release closes it.
+      const stats = await handle.stat({ bigint: true });
       return { meta, handle, identity: { dev: stats.dev, ino: stats.ino } };
     } catch (err: unknown) {
       // The exclusive open already created the lock file. If writing the owner
@@ -349,12 +369,17 @@ async function acquireConfigLock(lockPath: string): Promise<LockOwnership> {
  * reading the on-disk token. We `lstat` the path (no-follow) and compare its
  * ({@link LockIdentity dev, ino}) to the identity captured at acquire:
  *
- *   - identity matches → still OUR file → unlink it (#2102: a live same-host
- *     owner's lock is never age-reaped, so stranding our own lock would wedge
- *     every future writer indefinitely; releasing it in the common case avoids
- *     that). ENOENT on the unlink is ignored (a reaper may have raced us).
+ *   - identity matches (and is provable) → still OUR file → unlink it (#2102: a
+ *     live same-host owner's lock is never age-reaped, so stranding our own lock
+ *     would wedge every future writer indefinitely; releasing it in the common
+ *     case avoids that). ENOENT on the unlink is ignored (a reaper may have raced
+ *     us).
  *   - identity differs → a successor reaped our lock and re-created a DIFFERENT
  *     file at the path (A-B-A); we must NOT unlink it (#1923).
+ *   - identity UNPROVABLE (`ino === 0n`: non-authoritative `st_ino` on some
+ *     NFS/SMB/FUSE mounts, the #2118 shared-FS target) → we cannot prove the file
+ *     is ours, so we must NOT unlink it; the bounded residual strand is recovered
+ *     later by the reaper — strictly safer than deleting a foreign successor.
  *   - stat fails, ENOENT → already gone, nothing to release.
  *   - stat fails, TRANSIENT (EIO/EACCES/EBUSY/EMFILE…) → we CANNOT prove the
  *     file is ours, so we must NOT unlink it. Deleting a file we cannot identify
@@ -368,8 +393,17 @@ async function acquireConfigLock(lockPath: string): Promise<LockOwnership> {
 async function releaseConfigLock(lockPath: string, ownership: LockOwnership): Promise<void> {
   const { handle, identity } = ownership;
   try {
-    const stats = await fs.lstat(lockPath);
-    if (stats.dev === identity.dev && stats.ino === identity.ino) {
+    const stats = await fs.lstat(lockPath, { bigint: true });
+    // Fail safe: only unlink when the on-disk file is PROVABLY the one we created
+    // — a non-zero inode captured at acquire that still matches here. A filesystem
+    // reporting ino=0 (non-authoritative st_ino) cannot prove ownership, so we
+    // leave the file for the reaper rather than risk deleting a foreign successor.
+    if (
+      isProvableIdentity(identity) &&
+      stats.ino !== 0n &&
+      stats.dev === identity.dev &&
+      stats.ino === identity.ino
+    ) {
       await fs.unlink(lockPath).catch(() => undefined);
     }
   } catch {
@@ -404,8 +438,8 @@ async function reapIfStale(lockPath: string): Promise<boolean> {
   let identity: LockIdentity;
   let mtimeMs: number;
   try {
-    const stats = await fs.stat(lockPath);
-    mtimeMs = stats.mtimeMs;
+    const stats = await fs.stat(lockPath, { bigint: true });
+    mtimeMs = Number(stats.mtimeMs);
     identity = { dev: stats.dev, ino: stats.ino };
   } catch (err: unknown) {
     // Vanished between EEXIST and stat: effectively free, retry immediately.
@@ -507,8 +541,17 @@ async function claimedFileMatchesDecision(
     );
   }
   try {
-    const stats = await fs.stat(claimedPath);
-    return stats.dev === deciding.identity.dev && stats.ino === deciding.identity.ino;
+    const stats = await fs.stat(claimedPath, { bigint: true });
+    // Fail safe: a matching inode only proves "no successor swapped in" when the
+    // filesystem supplies a stable, non-zero st_ino. If ino=0 (non-authoritative
+    // st_ino on some NFS/SMB/FUSE mounts), the structural match is untrustworthy —
+    // return false so we do NOT reap a file we cannot positively identify.
+    return (
+      isProvableIdentity(deciding.identity) &&
+      stats.ino !== 0n &&
+      stats.dev === deciding.identity.dev &&
+      stats.ino === deciding.identity.ino
+    );
   } catch {
     return false;
   }
