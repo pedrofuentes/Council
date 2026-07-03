@@ -51,7 +51,14 @@ export interface ExpertLibrary {
   }>;
 }
 
-const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+/**
+ * Canonical managed-expert slug shape gate — the single source of truth for
+ * the slug charset reused by every filesystem sink that derives a path from a
+ * slug (e.g. `cli/commands/chat/shared.ts`). A conforming slug is lowercase
+ * alphanumeric plus hyphens, 1-64 chars, so it can contain no path separators,
+ * `..` segments, or control bytes.
+ */
+export const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const SLUG_MAX_LEN = 64;
 
 function assertValidSlug(slug: string): void {

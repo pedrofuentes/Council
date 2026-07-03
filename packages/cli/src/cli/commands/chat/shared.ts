@@ -20,6 +20,7 @@ import {
 } from "../../../config/index.js";
 import type { ChatTurn } from "../../../core/chat/chat-session.js";
 import type { ExpertDefinition } from "../../../core/expert.js";
+import { SLUG_RE } from "../../../core/expert-library.js";
 import { buildSystemPrompt, type PanelMembership } from "../../../core/prompt-builder.js";
 import type { CouncilEngine, ExpertSpec } from "../../../engine/index.js";
 import type { CouncilDatabase } from "../../../memory/db.js";
@@ -656,15 +657,23 @@ async function listUnindexedDocFiles(docsPath: string): Promise<readonly string[
 }
 
 /**
- * Managed-expert slug shape gate. Mirrors the canonical `SLUG_RE` enforced by
- * `FileExpertLibrary` (see `core/expert-library.ts`); kept as a module-local
- * copy in keeping with the other local copies (`core/template-migration.ts`,
- * `cli/commands/expert.ts`) so this security-critical sink carries no
- * cross-module coupling. A conforming slug is lowercase alphanumeric plus
- * hyphens, 1-64 chars, so it can contain no path separators, `..` segments, or
- * control bytes.
+ * Resolve the per-expert docs directory (`<dataHome>/experts/<slug>/docs`) for
+ * a managed expert, returning `null` when the resolved path escapes the
+ * `<dataHome>/experts/` root.
+ *
+ * This is the defense-in-depth containment guard behind
+ * {@link warnIfGenericExpertHasUnindexedDocs}, factored out as a pure,
+ * directly-testable function. Callers still apply the primary {@link SLUG_RE}
+ * shape gate first; because a shape-valid slug can never escape, this guard's
+ * reject (`null`) branch is unreachable through that caller and is exercised
+ * directly by unit tests instead (#2060 item 2, Sentinel Dim D).
  */
-const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+export function resolveConfinedDocsPath(dataHome: string, slug: string): string | null {
+  const expertsRoot = path.resolve(dataHome, "experts");
+  const docsPath = path.join(dataHome, "experts", slug, "docs");
+  if (!path.resolve(docsPath).startsWith(expertsRoot + path.sep)) return null;
+  return docsPath;
+}
 
 /**
  * Generic (non-persona) experts never index documents. If such an expert has
@@ -696,11 +705,10 @@ export async function warnIfGenericExpertHasUnindexedDocs(
   // Primary defense: reject any slug that is not a valid managed-expert slug
   // before it is ever joined into a filesystem path.
   if (!SLUG_RE.test(expert.slug)) return;
-  const expertsRoot = path.resolve(dataHome, "experts");
-  const docsPath = path.join(dataHome, "experts", expert.slug, "docs");
   // Defense-in-depth: refuse to read or disclose a resolved path that escapes
   // the per-expert docs root even if the shape gate is ever weakened.
-  if (!path.resolve(docsPath).startsWith(expertsRoot + path.sep)) return;
+  const docsPath = resolveConfinedDocsPath(dataHome, expert.slug);
+  if (docsPath === null) return;
   const unindexed = await listUnindexedDocFiles(docsPath);
   if (unindexed.length === 0) return;
   renderer.showSystem(
