@@ -1,7 +1,9 @@
 /**
  * `council doctor` — diagnose the local Council setup.
  */
+import { randomBytes } from "node:crypto";
 import * as fs from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -160,17 +162,83 @@ async function checkCouncilDataHome(): Promise<CheckResult> {
   return { name: "Council data home", status: "pass", detail: dataHome };
 }
 
+/** Random bytes that make each throwaway write-probe filename unpredictable. */
+const PROBE_RANDOM_BYTES = 12;
+
+/**
+ * Bounded exclusive-create attempts for a write-probe. A random-name collision
+ * is astronomically unlikely, but a pre-existing entry (including an attacker's
+ * pre-planted symlink) also surfaces as EEXIST — retrying with a fresh name lets
+ * a legitimate probe succeed without ever following or clobbering that entry.
+ */
+const PROBE_MAX_ATTEMPTS = 10;
+
+function hasErrorCode(err: unknown, code: string): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code: unknown }).code === code
+  );
+}
+
 /**
  * Verify `dir` is genuinely writable, not merely present. `ensureDataDirectories`
  * relies on `mkdir`, which is a silent no-op when the directory already exists,
  * so a data home that exists but is read-only would report a false-green status
  * and only fail at the first runtime write. Create and immediately remove a
  * throwaway file so `doctor` surfaces the real writability of the directory.
+ *
+ * Symlink/TOCTOU hardening (#1915): each probe filename embeds cryptographically
+ * random bytes so it cannot be guessed or pre-created, and it is opened with
+ * `"wx"` (O_CREAT|O_EXCL|O_WRONLY) so a pre-existing entry at the probe path —
+ * including a symlink an attacker planted to redirect the write onto a victim
+ * file — fails with EEXIST instead of being followed (POSIX never follows a
+ * trailing symlink under O_CREAT|O_EXCL). The payload is written THROUGH that
+ * exclusive handle (the path is never re-opened), so there is no write-time
+ * TOCTOU window, and only the file WE created is unlinked. On EEXIST we retry
+ * with a fresh random name rather than following or clobbering the existing
+ * entry; EACCES/EROFS and other errors propagate so the directory is reported
+ * as not-writable. The best-effort unlink is cleanup only — a successful create
+ * and write already proves writability, so unlink failure must not flip that.
  */
 async function probeDirectoryWritable(dir: string): Promise<void> {
-  const probe = path.join(dir, ".council-doctor-write-test");
-  await fs.writeFile(probe, "ok", "utf-8");
-  await fs.unlink(probe);
+  let lastEexist: unknown;
+  for (let attempt = 0; attempt < PROBE_MAX_ATTEMPTS; attempt += 1) {
+    const probe = path.join(
+      dir,
+      `.council-doctor-write-test-${randomBytes(PROBE_RANDOM_BYTES).toString("hex")}`,
+    );
+
+    let handle: FileHandle;
+    try {
+      handle = await fs.open(probe, "wx", 0o600);
+    } catch (err: unknown) {
+      if (hasErrorCode(err, "EEXIST")) {
+        // The unguessable probe path already exists: an astronomically unlikely
+        // random collision, or a file/symlink pre-planted there. Never follow or
+        // overwrite it — retry with a fresh random name.
+        lastEexist = err;
+        continue;
+      }
+      throw err;
+    }
+
+    try {
+      await handle.writeFile("ok", "utf-8");
+    } finally {
+      await handle.close();
+    }
+    // The write succeeded, so the directory is genuinely writable. Removing our
+    // own probe file is best-effort cleanup and must not flip the verdict.
+    await fs.unlink(probe).catch(() => undefined);
+    return;
+  }
+
+  throw new Error(
+    `could not create an exclusive write-probe under ${dir} after ${PROBE_MAX_ATTEMPTS} attempts`,
+    { cause: lastEexist },
+  );
 }
 
 async function checkSqlite(): Promise<CheckResult> {
@@ -214,10 +282,8 @@ async function checkCopilotCli(
 
 async function checkDiskSpace(): Promise<CheckResult> {
   const home = getCouncilHome();
-  const testFile = path.join(home, ".doctor-write-test");
   try {
-    await fs.writeFile(testFile, "ok", "utf-8");
-    await fs.unlink(testFile);
+    await probeDirectoryWritable(home);
     return { name: "Disk write", status: "pass", detail: `${home} is writable` };
   } catch (err: unknown) {
     return {
