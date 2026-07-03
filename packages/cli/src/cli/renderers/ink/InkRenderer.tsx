@@ -549,7 +549,7 @@ function RetryIndicator({ state }: { readonly state: DebateState }): ReactElemen
         </Text>
         <Text
           dimColor
-        >{` retrying (attempt ${state.retrying.attempt}, ${state.retrying.reason})...`}</Text>
+        >{` retrying (attempt ${state.retrying.attempt}, ${toSingleLineDisplay(state.retrying.reason)})...`}</Text>
       </Text>
     </Box>
   );

@@ -281,4 +281,35 @@ describe("InkRenderer — untrusted displayName sanitization (adversarial bytes)
     expect(retryLine ?? "").not.toMatch(FORBIDDEN_DISPLAY_CHARS);
     ui.unmount();
   });
+
+  it("strips control/escape bytes from the retry reason (T-1879)", async () => {
+    // reason is provider/LLM-sourced and can carry CR + ANSI injection payloads.
+    const unsafeReason = "rate limited\r\x1b[31mSPOOF";
+    const neverEnd = async function* (): AsyncIterable<DebateEvent> {
+      yield {
+        kind: "panel.assembled",
+        experts: [{ slug: "alice", displayName: "Alice", model: "gpt-5" }],
+      };
+      yield { kind: "round.start", round: 0 };
+      yield { kind: "turn.retry", expertSlug: "alice", attempt: 1, reason: unsafeReason };
+      await new Promise((_resolve) => {
+        /* hold open */
+      });
+    };
+    const ui = render(<DebateApp events={neverEnd()} />);
+    await flush();
+    // Strip Ink's own ANSI codes first (spinner colour, bold, etc.) — the same
+    // pattern used by all other sanitization tests in this file — so that the
+    // assertions below only catch characters injected by the unsanitized reason.
+    const frame = stripAnsi(ui.lastFrame() ?? "");
+    const retryLine = frame.split("\n").find((l) => /retry|retrying/i.test(l));
+    expect(retryLine, "expected a retry indicator line").toBeDefined();
+    // CR (\r) is the primary injection vector: without toSingleLineDisplay the
+    // raw \r survives ANSI-stripping and reaches the terminal, enabling
+    // CR-overwrite attacks.
+    expect(retryLine ?? "").not.toContain("\r");
+    // Full forbidden-char sweep (C0/C1, bidi overrides, line/paragraph seps).
+    expect(retryLine ?? "").not.toMatch(FORBIDDEN_DISPLAY_CHARS);
+    ui.unmount();
+  });
 });
