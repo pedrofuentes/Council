@@ -12,6 +12,7 @@ import { ExpertLibraryRepository } from "../../../src/memory/repositories/expert
 import {
   ClearForRetrainError,
   DocumentRepository,
+  type DocumentStatus,
   type NewExpertDocument,
 } from "../../../src/memory/repositories/document-repository.js";
 
@@ -102,6 +103,16 @@ describe("DocumentRepository", () => {
     const after = await repo.findByPath("ceo", created.filePath);
     expect(after?.status).toBe("failed");
     expect(after?.processedAt).toBeNull();
+  });
+
+  it("updateStatus() accepts a DocumentStatus value (#340)", async () => {
+    // Pins the narrowed contract: the status parameter is a DocumentStatus,
+    // and every member of the union is accepted by both the type and the DB.
+    const created = await repo.create(sampleDoc());
+    const status: DocumentStatus = "processed";
+    await repo.updateStatus(created.id, status);
+    const after = await repo.findByPath("ceo", created.filePath);
+    expect(after?.status).toBe("processed");
   });
 
   it("updateChecksum() updates checksum/size/wordCount", async () => {
