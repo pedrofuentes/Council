@@ -83,7 +83,9 @@ function loadPersistedPanelDefinition(
     return stored.definition;
   }
   if (stored.kind === "invalid") {
-    throw new Error(`Stored panel definition for "${safeTarget}" is invalid: ${stored.message}`);
+    throw new Error(
+      `Stored panel definition for "${safeTarget}" is invalid: ${toSingleLineDisplay(stored.message)}`,
+    );
   }
   return undefined;
 }
