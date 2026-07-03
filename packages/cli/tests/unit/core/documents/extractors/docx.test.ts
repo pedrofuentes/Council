@@ -25,6 +25,8 @@ interface ZipEntry {
   readonly fakeUncompressedSize?: number;
   /** Override the compressed size written to the ZIP headers (bomb tests). */
   readonly fakeCompressedSize?: number;
+  /** Override the general-purpose bit flags (e.g. 0x0800 = UTF-8 filename). */
+  readonly flags?: number;
 }
 
 function crc32(buf: Buffer): number {
@@ -62,7 +64,7 @@ function buildZip(entries: readonly ZipEntry[]): Buffer {
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4); // version needed
-    local.writeUInt16LE(0, 6); // flags
+    local.writeUInt16LE(entry.flags ?? 0, 6); // flags
     local.writeUInt16LE(method, 8);
     local.writeUInt16LE(0, 10); // time
     local.writeUInt16LE(0, 12); // date
@@ -80,7 +82,7 @@ function buildZip(entries: readonly ZipEntry[]): Buffer {
     central.writeUInt32LE(0x02014b50, 0);
     central.writeUInt16LE(20, 4); // version made by
     central.writeUInt16LE(20, 6); // version needed
-    central.writeUInt16LE(0, 8); // flags
+    central.writeUInt16LE(entry.flags ?? 0, 8); // flags
     central.writeUInt16LE(method, 10);
     central.writeUInt16LE(0, 12); // time
     central.writeUInt16LE(0, 14); // date
@@ -388,6 +390,46 @@ describe("docx extractor — DoS guards and cancellation", () => {
       filePath: "entry-bomb-boundary.docx",
       message: expect.stringContaining("per-entry"),
     });
+  });
+
+  it("sanitizes control characters in entry.fileName in the per-entry-cap ExtractionError message (#1897)", async () => {
+    const { extractor } = await loadDocxExtractor();
+    // An adversarial ZIP entry name embedding an ANSI escape sequence and
+    // CR+LF that, when embedded raw in an error message, would allow terminal
+    // injection / spoofing.
+    const adversarialName = "evil\x1B[31m\r\ninjected";
+    const buf = buildZip([
+      {
+        name: adversarialName,
+        data: Buffer.from("x", "utf-8"),
+        // UTF-8 flag (bit 11) tells yauzl to decode the filename as UTF-8,
+        // so the raw control bytes survive as U+001B, U+000D, U+000A rather
+        // than being re-mapped to CP437 glyphs.
+        flags: 0x0800,
+        fakeUncompressedSize: 21 * 1024 * 1024, // > MAX_ENTRY_BYTES (20 MiB)
+        fakeCompressedSize: 21 * 1024 * 1024, // 1:1 ratio — stays below the 100:1 ratio guard
+      },
+    ]);
+
+    let caught: unknown;
+    try {
+      await extractor(ctx(buf, "sanitize-test.docx"));
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(caught).toMatchObject({
+      name: "ExtractionError",
+      kind: "zip-bomb-detected",
+      filePath: "sanitize-test.docx",
+      message: expect.stringContaining("per-entry"),
+    });
+    const msg = (caught as { message: string }).message;
+    // Positive: sanitized form must appear in the message.
+    expect(msg).toContain("evil injected");
+    // Negative: no raw ESC, CR, or LF may survive in the error string.
+    // eslint-disable-next-line no-control-regex
+    expect(msg).not.toMatch(/[\x1B\r\n]/);
   });
 
   it("honors a pre-aborted signal with extraction-timeout before preflight (#949)", async () => {
