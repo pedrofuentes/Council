@@ -86,13 +86,17 @@ for JavaScript projects ("JavaScript projects cannot be fuzzed with sanitizers")
 
 ## Jazzer.js version is coupled to the base image's glibc
 
-[`build.sh`](./build.sh) installs `@jazzer.js/core@2.1.0` for the Docker build.
-Its prebuilt native addon links against glibc 2.31 (the OSS-Fuzz base image's
-floor), so it loads there and on any newer glibc. Jazzer.js 4.x ships a prebuilt
-that requires `GLIBC_2.32` and fails to `dlopen` on the 2.31 base. The repo's
-`@jazzer.js/core` devDependency tracks 4.x for local runs; the
-`FuzzedDataProvider` API the targets use is identical across both. Bump the
-`build.sh` pin once the OSS-Fuzz base moves to a newer glibc.
+[`build.sh`](./build.sh) installs `@jazzer.js/core@2.1.0` for the Docker build
+(with `npm ci` from the committed lockfile in [`jazzer/`](./jazzer/); see
+"Dependency pinning" below). Its prebuilt native addon links against glibc 2.31
+(the OSS-Fuzz base image's floor), so it loads there and on any newer glibc.
+Jazzer.js 4.x ships a prebuilt that requires `GLIBC_2.32` and fails to `dlopen`
+on the 2.31 base. The repo's `@jazzer.js/core` devDependency tracks 4.x for
+local runs; the `FuzzedDataProvider` API the targets use is identical across
+both. Bump the pin by editing [`jazzer/package.json`](./jazzer/package.json) and
+regenerating its lockfile (`cd .clusterfuzzlite/jazzer && npm install
+--package-lock-only --ignore-scripts`) once the OSS-Fuzz base moves to a newer
+glibc.
 
 ## Maintaining the base-image pin
 
@@ -110,26 +114,29 @@ curl -fsSI -H "Authorization: Bearer $TOKEN" \
 
 Then update the `@sha256:...` in [`Dockerfile`](./Dockerfile).
 
-## npm install pinning is best-effort
+## Dependency pinning: Jazzer.js is hash-pinned, TypeScript is best-effort
 
-Scorecard's Pinned-Dependencies check also flags the two `npm install` lines in
-[`build.sh`](./build.sh) as "not pinned by hash" (the TypeScript compiler and
-`@jazzer.js/core@2.1.0`). Both are hardened as far as practical:
+Scorecard's Pinned-Dependencies check inspects the two dependency installs in
+[`build.sh`](./build.sh). They are hardened differently:
 
-- **Repo-pinned versions** — TypeScript installs the repo's pinned devDependency
-  (`require('./package.json').devDependencies.typescript`) and Jazzer.js is fixed
-  at exactly `2.1.0`. Neither floats to `latest`.
-- **`--ignore-scripts`** on both, so no untrusted install-time scripts run during
-  the OSS-Fuzz build. Jazzer.js ships a prebuilt native addon, so it still loads.
+- **Jazzer.js — fully hash-pinned.** The fuzz engine and its entire transitive
+  tree are locked with sha512 `integrity` hashes in the committed
+  [`jazzer/package-lock.json`](./jazzer/package-lock.json), generated from
+  [`jazzer/package.json`](./jazzer/package.json) (which pins `@jazzer.js/core` at
+  exactly `2.1.0`). `build.sh` installs it with `npm ci`, which verifies every
+  package against that lockfile and aborts the build on any mismatch.
+- **TypeScript — best-effort.** The compiler installs with a plain `npm install`
+  of the version read from the repo's `package.json` devDependency at build time
+  (`require('./package.json').devDependencies.typescript`). A committed per-tool
+  lockfile would only duplicate and drift against that real manifest, so this
+  install stays version-pinned (never `latest`) rather than hash-pinned.
 
-True hash pinning (`npm ci` against a committed `package-lock.json`) is not
-viable here: each tool installs into a throwaway `mktemp -d` with no
-package.json/lockfile, the TypeScript version is resolved from the workspace
-manifest at build time, and committing per-tool lockfiles in this directory would
-duplicate and drift against the real manifests. These two alerts are an accepted,
-documented best-effort residual; the OSS-Fuzz base image itself is the
-digest-pinned trust anchor for the build. Revisit if OSS-Fuzz adds first-class
-lockfile support for isolated installs.
+Both installs run with **`--ignore-scripts`**, so no untrusted install-time
+scripts execute during the OSS-Fuzz build (Jazzer.js ships a prebuilt native
+addon, so it still loads). The remaining TypeScript alert is an accepted,
+documented best-effort residual; the digest-pinned OSS-Fuzz base image is the
+trust anchor for the build. Revisit if OSS-Fuzz adds first-class lockfile support
+for the isolated TypeScript install too.
 
 ## Adding a target
 
