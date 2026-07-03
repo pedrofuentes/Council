@@ -527,6 +527,18 @@ describe("consensus-check shouldContinue (#217)", () => {
     };
     expect(strategy.shouldContinue(ctx)).toBe(false);
   });
+
+  it("returns false when round exceeds maxRounds", () => {
+    const strategy = createConsensusCheckStrategy();
+    const ctx: ModeratorContext = {
+      experts,
+      round: 5,
+      maxRounds: 2,
+      topic: "Topic",
+      priorTurns: [],
+    };
+    expect(strategy.shouldContinue(ctx)).toBe(false);
+  });
 });
 
 describe("formatPriorTurns edge cases — tested via round>0 prompt (#217)", () => {

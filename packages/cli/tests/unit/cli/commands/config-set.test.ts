@@ -122,7 +122,7 @@ describe("buildConfigCommand config set", () => {
 
     expect(stdout).toBe("");
     expect(error).toBeInstanceOf(CliUserError);
-    expect((error as CliUserError).message).toContain("must be one of");
+    expect((error as CliUserError).message).toContain("defaults.engine must be one of");
     expect(stderr).toContain(
       "Config value for defaults.engine must be one of: copilot, mock, openai, anthropic",
     );
@@ -158,7 +158,7 @@ describe("buildConfigCommand config set", () => {
 
       expect(stdout).toBe("");
       expect(error).toBeInstanceOf(CliUserError);
-      expect((error as CliUserError).message).toContain("Invalid Council config");
+      expect((error as CliUserError).message).toContain(key);
       expect(stderr).toContain("Invalid Council config");
       expect(stderr).toContain(key);
       expect(stderr).toContain(bound);
@@ -223,7 +223,7 @@ describe("buildConfigCommand config set", () => {
 
     expect(stdout).toBe("");
     expect(error).toBeInstanceOf(CliUserError);
-    expect((error as CliUserError).message).toContain("Invalid Council config");
+    expect((error as CliUserError).message).toContain("defaults.maxExperts");
     expect(stderr).toContain("Invalid Council config");
     expect(stderr).toContain("defaults.maxExperts");
     await expect(fs.readFile(configPath, "utf-8")).resolves.toBe("defaults:\n  maxExperts: 3\n");
