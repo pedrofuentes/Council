@@ -165,4 +165,48 @@ describe("selectModelInteractively", () => {
 
     expect(output.text()).toMatch(/Council v\d+\.\d+\.\d+/);
   });
+
+  it("flags live-only models that will not pass offline validation", async () => {
+    // gpt-5.9 and gemini-2.5-pro are absent from SUPPORTED_MODELS; from LIVE
+    // discovery they must be flagged so the user knows offline
+    // `convene --model` would reject them (bug F02 residual — #1094).
+    discoverModels.mockResolvedValue({
+      models: ["claude-sonnet-4.5", "gpt-5.9", "gemini-2.5-pro"],
+      source: "live",
+    });
+    const output = createCapturedOutput();
+
+    await selectModelInteractively({
+      write: (text) => output.stream.write(text),
+      input: createInput("\n"),
+      output: output.stream,
+      discoverModels,
+      updateConfig,
+    });
+
+    const text = output.text();
+    expect(text).toContain("gpt-5.9 (live-only — not offline-validatable)");
+    expect(text).toContain("gemini-2.5-pro (live-only — not offline-validatable)");
+    expect(text).toContain("council convene --model");
+    // A supported id (the recommended one) is never flagged.
+    expect(text).not.toContain("claude-sonnet-4.5 (live-only");
+  });
+
+  it("does not flag any model under static fallback", async () => {
+    discoverModels.mockResolvedValue({
+      models: ["gpt-5.4", "claude-sonnet-4.5", "gpt-5.9"],
+      source: "static",
+    });
+    const output = createCapturedOutput();
+
+    await selectModelInteractively({
+      write: (text) => output.stream.write(text),
+      input: createInput("\n"),
+      output: output.stream,
+      discoverModels,
+      updateConfig,
+    });
+
+    expect(output.text()).not.toContain("live-only");
+  });
 });

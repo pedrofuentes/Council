@@ -569,6 +569,7 @@ async function promptForModel(
   writeModelList(
     write,
     models.map((model) => toSingleLineDisplay(model)),
+    discovery.source,
   );
   output.write(`Default model [1-${models.length}] (Enter for recommended): `);
   const selected = selectChoice(await line(), models, models[0] ?? "", "defaults.model");
@@ -848,6 +849,7 @@ async function reportModelsNonInteractive(
   writeModelList(
     write,
     models.map((model) => toSingleLineDisplay(model)),
+    discovery.source,
   );
 
   const msg = "Non-interactive mode: run 'council config model <name>' with an explicit model id.";

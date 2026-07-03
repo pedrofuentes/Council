@@ -124,6 +124,53 @@ describe("formatAvailableModels", () => {
   });
 });
 
+describe("formatAvailableModels live-only annotation", () => {
+  // A live-discovered id that is NOT in the canonical SUPPORTED_MODELS registry
+  // would be REJECTED by offline `convene --model` validation, so it must be
+  // visibly flagged as live-only (bug F02 residual — #1094).
+  it("annotates live-discovered ids absent from the static registry", () => {
+    const result = formatAvailableModels(
+      ["claude-sonnet-4.6", "gpt-5.9", "gemini-2.5-pro"],
+      "live",
+    );
+
+    expect(result).toContain("gpt-5.9 (live-only — not offline-validatable)");
+    expect(result).toContain("gemini-2.5-pro (live-only — not offline-validatable)");
+  });
+
+  it("does not annotate live-discovered ids that are in the static registry", () => {
+    const result = formatAvailableModels(
+      ["claude-sonnet-4.6", "gpt-5.9", "gemini-2.5-pro"],
+      "live",
+    );
+
+    expect(result).not.toContain("claude-sonnet-4.6 (live-only");
+    expect(result).toContain("Anthropic: claude-sonnet-4.6");
+  });
+
+  it("explains the live-only marker with a convene --model legend when present", () => {
+    const result = formatAvailableModels(["claude-sonnet-4.6", "gpt-5.9"], "live");
+
+    expect(result).toContain("council convene --model");
+  });
+
+  it("omits the live-only marker and legend entirely under static fallback", () => {
+    const result = formatAvailableModels(
+      ["claude-sonnet-4.6", "gpt-5.9", "gemini-2.5-pro"],
+      "static",
+    );
+
+    expect(result).not.toContain("live-only");
+    expect(result).not.toContain("council convene --model");
+  });
+
+  it("omits the legend when every live-discovered id is offline-validatable", () => {
+    const result = formatAvailableModels(["claude-sonnet-4.6", "gpt-5.4", "auto"], "live");
+
+    expect(result).not.toContain("live-only");
+  });
+});
+
 describe("buildModelsCommand", () => {
   it("prints available models grouped by provider", async () => {
     const discoverModels = vi.fn(async () => ({
