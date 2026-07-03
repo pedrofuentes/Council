@@ -482,6 +482,33 @@ describe("buildDoctorCommand", () => {
     expect(discoverModels).toHaveBeenCalledTimes(1);
   });
 
+  it("doctor --models flags live-only models not in the static registry", async () => {
+    const discoverModels = vi.fn(async () => ({
+      models: ["claude-sonnet-4.6", "gpt-5.9", "gemini-2.5-pro"],
+      source: "live" as const,
+    }));
+
+    const output = await runDoctor(["--models", "--offline"], { discoverModels });
+
+    // gpt-5.9 and gemini-2.5-pro are NOT in SUPPORTED_MODELS, so offline
+    // `convene --model` would reject them — they must be flagged (#1094).
+    expect(output).toContain("gpt-5.9 (live-only — not offline-validatable)");
+    expect(output).toContain("gemini-2.5-pro (live-only — not offline-validatable)");
+    // A supported id stays unannotated.
+    expect(output).not.toContain("claude-sonnet-4.6 (live-only");
+  });
+
+  it("doctor --models does not flag models under static fallback", async () => {
+    const discoverModels = vi.fn(async () => ({
+      models: ["claude-haiku-4.5", "gpt-5.4", "gpt-5.9"],
+      source: "static" as const,
+    }));
+
+    const output = await runDoctor(["--models", "--offline"], { discoverModels });
+
+    expect(output).not.toContain("live-only");
+  });
+
   it("doctor --models preserves discovered order within provider groups", async () => {
     const discoverModels = vi.fn(async () => ({
       models: ["gpt-5.4-mini", "claude-sonnet-4.5", "gpt-5.4", "claude-haiku-4.5"],
