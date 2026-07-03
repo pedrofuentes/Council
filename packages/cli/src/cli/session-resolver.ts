@@ -188,7 +188,7 @@ function writeAmbiguousMatches(
 function formatSessionMatch(match: SessionMatch): string {
   const name = toSingleLineDisplay(match.name);
   const topic = toSingleLineDisplay(match.topic ?? "No topic");
-  return `${name} | ${topic} | ${match.createdAt}`;
+  return `${name} | ${topic} | ${toSingleLineDisplay(match.createdAt)}`;
 }
 
 function toSessionMatch(panel: Panel): SessionMatch {
