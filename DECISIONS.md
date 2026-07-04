@@ -671,6 +671,8 @@ Provenance is a column on the per-file row, not a separate table. FTS index entr
 **Alternatives considered**: Direct SDK usage throughout codebase (faster to write, impossible to maintain when SDK breaks).
 **Consequences**: Adding new engine backends (Anthropic direct, OpenAI direct, Ollama) becomes a weekend project. All core logic depends on Council's own domain types, not SDK types. Small overhead of maintaining the interface.
 
+**Amendment (2026-07-03) — the `health.ts` re-export seam (#103)**: because `no-restricted-imports` allows SDK-coupled code to be *defined* only in `engine/copilot/adapter.ts`, but CLI diagnostics (`council doctor`) need a *narrow* health/model surface rather than the whole adapter, `src/engine/copilot/health.ts` exists as that surface. It re-exports exactly the SDK-touching probes — `discoverAvailableModels`, `pingProviderHealth`, `resolveCopilotCliPath` and their result types — from `adapter.ts`, and additionally hosts the pure, SDK-free CLI-path *classification* (`checkCopilotCliPath`) that has no reason to live in the adapter. This is why the file exists rather than being folded into the adapter: it keeps every SDK re-export funnelled through `adapter.ts` (satisfying the ESLint boundary) while giving the CLI a small, stable, independently unit-testable import target instead of reaching into the adapter directly. Future contributors should add new SDK-coupled diagnostics by defining them in `adapter.ts` and re-exporting through `health.ts`, keeping pure logic (no SDK import) directly in `health.ts`.
+
 ### ADR-004: denyAll permissions by default for expert sessions
 **Date**: 2026-05-06
 **Status**: Accepted
