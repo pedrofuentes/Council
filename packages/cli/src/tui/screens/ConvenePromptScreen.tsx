@@ -25,11 +25,15 @@ function errorMessage(err: unknown): string {
   return toSingleLineDisplay(err instanceof Error ? err.message : String(err));
 }
 
-// Sanitize a user-entered topic while PRESERVING intended newlines: strip
-// terminal control/escape sequences, normalize CR/LF to plain "\n", and trim.
-// Parity with the classic-CLI topic editor (interactive-topic-input.ts).
-function normalizeTopic(text: string): string {
-  return stripControlChars(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+// Sanitize a user-entered topic while preserving intended newlines: strip
+// terminal control/escape sequences, normalize line separators to plain "\n",
+// normalize tabs to spaces, and trim.
+export function normalizeTopic(text: string): string {
+  return stripControlChars(text)
+    .replace(/\r\n/g, "\n")
+    .replace(/[\r\u2028\u2029]/g, "\n")
+    .replace(/\t/g, " ")
+    .trim();
 }
 
 export function ConvenePromptScreen(props: ConvenePromptScreenProps): React.ReactElement {
@@ -169,6 +173,7 @@ export function ConvenePromptScreen(props: ConvenePromptScreenProps): React.Reac
         />
       ) : null}
       {state.status === "error" ? <Text>{props.theme.error(state.message)}</Text> : null}
+      {/* Keep this user-facing shortcut hint aligned with MultilineInput's supported bindings. */}
       <Text>
         {props.theme.muted(toSingleLineDisplay("Enter estimate · Ctrl+J newline · Esc cancel"))}
       </Text>
