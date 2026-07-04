@@ -110,9 +110,15 @@ describe("DebatePersister #150 — terminal update failure does not mask as abor
       caught = err;
     }
 
-    // The original simulated error MUST bubble to the caller.
-    expect(caught).toBeDefined();
-    expect(String(caught)).toMatch(/simulated terminal-update failure/);
+    // #158: the terminal-update failure now rethrows WITH debate-id
+    // context, preserving the original simulated error as `cause`. This
+    // strengthens — does not weaken — the #150 guarantee: the original
+    // error is still NOT lost (it is the `cause`), and the row is still
+    // not silently overwritten (asserted below).
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toContain("terminal update failed");
+    expect((caught as Error).message).toContain(persister.debateId ?? "");
+    expect(String((caught as Error).cause)).toMatch(/simulated terminal-update failure/);
 
     // The row must NOT have been overwritten to 'aborted' by the finally
     // block. The terminal update was attempted; let the row stay at its
