@@ -235,7 +235,14 @@ describe("panel edit — atomic membership+checksum write (#1931, #308)", () => 
     const createCmd = buildPanelCommand(() => {
       /* noop */
     });
-    await createCmd.parseAsync(["node", "council-panel", "create", "arch-review", "--experts", "cto"]);
+    await createCmd.parseAsync([
+      "node",
+      "council-panel",
+      "create",
+      "arch-review",
+      "--experts",
+      "cto",
+    ]);
 
     const yamlPath = path.join(env.dataHome, "panels", "arch-review.yaml");
     const parsed = yaml.parse(await fs.readFile(yamlPath, "utf-8")) as Record<string, unknown>;
@@ -296,7 +303,14 @@ describe("panel edit — atomic membership+checksum write (#1931, #308)", () => 
     const createCmd = buildPanelCommand(() => {
       /* noop */
     });
-    await createCmd.parseAsync(["node", "council-panel", "create", "arch-review", "--experts", "cto"]);
+    await createCmd.parseAsync([
+      "node",
+      "council-panel",
+      "create",
+      "arch-review",
+      "--experts",
+      "cto",
+    ]);
 
     const yamlPath = path.join(env.dataHome, "panels", "arch-review.yaml");
     const parsed = yaml.parse(await fs.readFile(yamlPath, "utf-8")) as Record<string, unknown>;
@@ -328,10 +342,12 @@ describe("panel edit — atomic membership+checksum write (#1931, #308)", () => 
         /* noop */
       },
     );
-    const surfaced = await editCmd.parseAsync(["node", "council-panel", "edit", "arch-review"]).then(
-      () => null,
-      (e: unknown) => e,
-    );
+    const surfaced = await editCmd
+      .parseAsync(["node", "council-panel", "edit", "arch-review"])
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
 
     expect(createSpy).toHaveBeenCalledTimes(1);
     expect(surfaced).toBeInstanceOf(Error);
@@ -351,7 +367,14 @@ describe("panel edit — atomic membership+checksum write (#1931, #308)", () => 
     const createCmd = buildPanelCommand(() => {
       /* noop */
     });
-    await createCmd.parseAsync(["node", "council-panel", "create", "arch-review", "--experts", "cto"]);
+    await createCmd.parseAsync([
+      "node",
+      "council-panel",
+      "create",
+      "arch-review",
+      "--experts",
+      "cto",
+    ]);
 
     const yamlPath = path.join(env.dataHome, "panels", "arch-review.yaml");
     const parsed = yaml.parse(await fs.readFile(yamlPath, "utf-8")) as Record<string, unknown>;
@@ -376,10 +399,12 @@ describe("panel edit — atomic membership+checksum write (#1931, #308)", () => 
         /* noop */
       },
     );
-    const surfaced = await editCmd.parseAsync(["node", "council-panel", "edit", "arch-review"]).then(
-      () => null,
-      (e: unknown) => e,
-    );
+    const surfaced = await editCmd
+      .parseAsync(["node", "council-panel", "edit", "arch-review"])
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
 
     expect(createSpy).toHaveBeenCalledTimes(1);
     expect(surfaced).toBeInstanceOf(Error);
