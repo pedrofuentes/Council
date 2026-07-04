@@ -129,6 +129,20 @@ describe("buildDoctorCommand", () => {
     expect(output).toContain("Fix: council config set defaults.model claude-sonnet-4.5");
   });
 
+  it("doctor caches model discovery across the probe fallback and --models (#752)", async () => {
+    const onlineProbe = vi.fn(async () => ({ ok: false, detail: "model not found" }));
+    const discoverModels = vi.fn(async () => ({
+      models: ["claude-sonnet-4.5", "gpt-5.4"],
+      source: "live" as const,
+    }));
+
+    await runDoctor(["--models"], { onlineProbe, discoverModels });
+
+    // A failed probe discovers alternatives AND --models lists models; both must
+    // reuse a single discovery within one invocation instead of probing twice.
+    expect(discoverModels).toHaveBeenCalledTimes(1);
+  });
+
   it("doctor with thrown probe still shows alternatives", async () => {
     const onlineProbe = vi.fn(async () => {
       throw new Error("session creation failed");
