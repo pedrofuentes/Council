@@ -55,6 +55,14 @@ const withPanelCreate = (): TuiDataSources =>
           panelCount: 0,
         },
       ],
+      loadPickList: async () => [
+        {
+          slug: "cto",
+          displayName: "Chief Technology Officer",
+          role: "Technology strategy",
+          kind: "generic",
+        },
+      ],
       loadDetail: async () => undefined,
     },
     panelAuthoring: {

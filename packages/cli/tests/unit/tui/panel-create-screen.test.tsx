@@ -56,10 +56,12 @@ function renderScreen(
     readonly panelAuthoring?: PanelAuthoringDataSource;
   } = {},
 ): ReturnType<typeof render> {
+  const loadExperts = options.loadList ?? (async () => experts);
   const value = {
     panels: { loadList: async () => [], loadDetail: async () => undefined },
     experts: {
-      loadList: options.loadList ?? (async () => experts),
+      loadList: loadExperts,
+      loadPickList: loadExperts,
       loadDetail: async () => undefined,
     },
     panelAuthoring: options.panelAuthoring ?? createAuthoring(),
@@ -260,6 +262,7 @@ describe("PanelCreateScreen — cancel", () => {
       panels: { loadList: async () => [], loadDetail: async () => undefined },
       experts: {
         loadList: async () => experts,
+        loadPickList: async () => experts,
         loadDetail: async () => undefined,
       },
       panelAuthoring: createAuthoring(),
@@ -353,6 +356,7 @@ describe("PanelCreateScreen — cancel during in-flight create", () => {
       panels: { loadList: async () => [], loadDetail: async () => undefined },
       experts: {
         loadList: async () => experts,
+        loadPickList: async () => experts,
         loadDetail: async () => undefined,
       },
       panelAuthoring: createAuthoring(create),

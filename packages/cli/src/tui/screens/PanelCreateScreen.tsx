@@ -40,7 +40,7 @@ export function PanelCreateScreen(props: PanelCreateScreenProps): React.ReactEle
   }, [setCaptured]);
 
   const loadExperts = React.useCallback(
-    async () => (experts === undefined ? [] : experts.loadList()),
+    async () => (experts === undefined ? [] : experts.loadPickList()),
     [experts],
   );
   const expertState = useAsyncResource(loadExperts);
