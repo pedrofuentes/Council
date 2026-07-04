@@ -87,6 +87,13 @@ export interface AnalyzeOptions {
    * `catch` previously discarded the only available signal.
    */
   readonly onWarning?: (message: string) => void;
+  /**
+   * Delay in milliseconds before the single retry (#436). A failed send —
+   * malformed JSON or a transient engine error — waits this long before the
+   * retry so the analyzer does not immediately amplify load on a struggling
+   * provider. Defaults to 250 ms; set to 0 to retry with no delay.
+   */
+  readonly retryBackoffMs?: number;
 }
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -291,6 +298,17 @@ export function parseAnalyzerJSON(raw: string): ParsedFields | null {
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
+/**
+ * Backoff before the single retry (#436) so a failed send doesn't
+ * immediately hammer a struggling provider. Overridable per-call via
+ * `AnalyzeOptions.retryBackoffMs`.
+ */
+const DEFAULT_RETRY_BACKOFF_MS = 250;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function timeoutError(timeoutMs: number): Error {
   return new Error(`Profile analyzer engine call timed out after ${timeoutMs}ms`);
 }
@@ -385,6 +403,7 @@ export async function analyzeDocuments(
 
   const prompt = formatPromptBody(documents, existingProfile, options);
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const retryBackoffMs = options.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS;
   try {
     // Single retry covers both unparsable JSON AND transient engine
     // errors (#359): a stream `error` event in the first send must not
@@ -400,6 +419,11 @@ export async function analyzeDocuments(
       firstError = err;
     }
     if (!parsed) {
+      // #436: back off briefly before the retry so a transient first-send
+      // failure isn't immediately amplified by a second identical send.
+      if (retryBackoffMs > 0) {
+        await sleep(retryBackoffMs);
+      }
       try {
         raw = await collectResponse(engine, expertId, prompt, timeoutMs);
         parsed = parseAnalyzerJSON(raw);
