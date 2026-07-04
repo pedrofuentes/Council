@@ -116,6 +116,28 @@ describe("docs command → defaultScanPanel production glue (#994)", () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 
+  /** Read the persisted panel_documents rows straight from the on-disk DB. */
+  async function readPanelDocRows(
+    panelName: string,
+  ): Promise<
+    readonly {
+      readonly id: string;
+      readonly checksum: string;
+      readonly created_at: string;
+    }[]
+  > {
+    const db = await createDatabase(path.join(root, "council.db"));
+    try {
+      return await db
+        .selectFrom("panel_documents")
+        .select(["id", "checksum", "created_at"])
+        .where("panel_name", "=", panelName)
+        .execute();
+    } finally {
+      await db.destroy();
+    }
+  }
+
   it("docs doctor runs the real chain and indexes the on-disk corpus", async () => {
     const { stdout, stderr, error } = await runDocs(["doctor", PANEL]);
 
@@ -148,19 +170,35 @@ describe("docs command → defaultScanPanel production glue (#994)", () => {
     expect((error as CliUserError).exitCode).toBe(1);
   });
 
-  it("persists indexed state across independent createDatabase cycles", async () => {
-    // First invocation indexes the file. A second invocation opens a brand-new
-    // connection to the SAME on-disk DB; the file is unchanged, so it is
-    // counted from the persisted panel_documents row. `indexedCount` sums
-    // indexed + unchanged, so it stays 1 — proving the row survived across two
-    // separate createDatabase()/destroy() cycles (impossible with a mock or an
-    // in-memory DB).
+  it("keeps the persisted panel_documents row intact on a second scan (not lost+reindexed)", async () => {
+    // First scan indexes the file, creating a panel_documents row with a
+    // stable ULID id + created_at.
     const first = await runDocs(["doctor", PANEL]);
     expect(first.error).toBeUndefined();
     expect(first.stdout).toContain("1 document indexed");
+    const afterFirst = await readPanelDocRows(PANEL);
+    expect(afterFirst).toHaveLength(1);
+    const original = afterFirst[0];
 
+    // Second, fully independent createDatabase cycle. Because the file is
+    // unchanged, a correctly-persisted row is REUSED (the scanner skips it as
+    // unchanged), not deleted and re-inserted.
+    //
+    // The doctor headline alone cannot tell these apart: indexedCount =
+    // result.indexed + result.unchanged (docs.ts), so a persisted-unchanged
+    // file (0 indexed + 1 unchanged) and a lost-then-reindexed file (1 indexed
+    // + 0 unchanged) BOTH print "1 document indexed". Assert on the row's
+    // identity instead — a lost-and-reindexed file would carry a fresh ULID id
+    // and created_at (trackDocument inserts with a new `ulid()`), so this bites
+    // if persistence across the two connections ever breaks.
     const second = await runDocs(["doctor", PANEL]);
     expect(second.error).toBeUndefined();
-    expect(second.stdout).toContain("1 document indexed");
+    const afterSecond = await readPanelDocRows(PANEL);
+    expect(afterSecond).toHaveLength(1);
+    const persisted = afterSecond[0];
+
+    expect(persisted?.id).toBe(original?.id);
+    expect(persisted?.created_at).toBe(original?.created_at);
+    expect(persisted?.checksum).toBe(original?.checksum);
   });
 });
