@@ -409,7 +409,7 @@ council memory reset <panel-name> --hard --yes      # delete the panel entirely
 council expert create                               # interactive wizard
 council expert create --persona                     # persona expert (creates docs/ folder)
 council expert list                                 # table view (also --format json)
-council expert inspect <slug>                       # full detail + panel memberships
+council expert inspect <slug>                       # full detail + panel memberships; trained personas also show Learned Profile (`profile` in JSON)
 council expert edit <slug>                          # open YAML in $EDITOR, re-validate on save
 council expert delete <slug>                        # refuses if in any panel (use --force to override)
 # Slug conflicts are keyed off <slug>.yaml. If the YAML was deleted but a stale
@@ -434,7 +434,10 @@ council chat <persona-slug>                         # auto-processes ~/Council/e
 # OR link an external folder. On `council chat <panel>`, the scanner
 # walks every managed + linked folder, indexes new/changed files into
 # the FTS5 corpus under source_type='panel', and prunes any tracked
-# documents that have disappeared from disk.
+# documents that have disappeared from disk. The indexed panel corpus is
+# retrieved for panel chat turns, inline @convene deliberations, and saved-panel
+# `council convene --template <name>` debates; run `council panel docs list <name> --refresh`
+# first when you need to force a rescan before convene.
 council panel docs <name>                                  # list indexed docs (DB read — no scan)
 council panel docs list <name> --refresh                   # re-scan managed + linked folders, then list
 council panel docs link <name> --path <folder> [--yes]     # link an external folder (symlinks rejected; prompts unless --yes)
@@ -456,6 +459,16 @@ same way:
   fail loudly instead of guessing.
 - **No match** — Council prints the closest `Did you mean …?` suggestions and
   exits non-zero.
+
+### Argument parsing notes
+
+Commander 15 makes excess positional arguments a hard error for most commands:
+`too many arguments. Expected N arguments but got ...`. If you meant to pass
+expert slugs to `convene`, use unquoted space-separated slugs (`--experts cto cfo`),
+a quoted comma-separated list (`--experts "cto,cfo"`), or repeated flags
+(`--experts cto --experts cfo`). `council convene` and `council panel create` are
+the exceptions: they accept stray operands only to warn about the likely
+missing `--experts` flag.
 
 `council resume --latest` ignores the argument and reopens the most recently
 active panel; `council conclude` with no argument falls back to the most
@@ -761,7 +774,7 @@ council chat <target> --history                  # Show active + archived sessio
 # Expert library (Phase 4)
 council expert create [--persona]           # Interactive wizard; also recreates ghost experts when <slug>.yaml is missing
 council expert list [--format json]         # Browse the expert library
-council expert inspect <slug>               # Full detail + panel memberships
+council expert inspect <slug>               # Full detail + panel memberships; trained personas include Learned Profile / JSON `profile`
 council expert edit <slug>                  # Open YAML in $EDITOR; re-validates on save
 council expert delete <slug> [--force]      # Refuses if expert is in any panel
 council expert docs <slug>                  # Manage a persona expert's reference-docs folder

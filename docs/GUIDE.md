@@ -394,6 +394,10 @@ To inspect an expert's full configuration:
 council expert inspect strategist
 ```
 
+For persona experts that have been trained, the plain output includes a
+**Learned Profile (from training)** section. JSON output includes the same data
+under a `profile` key.
+
 ### Step 4: Create a panel
 
 Now assemble your experts into a reusable panel:
@@ -504,8 +508,9 @@ Council resolves the panel's experts, indexes any documents in the panel's docs
 folder, and drops you into an interactive REPL:
 
 ```
-📋 Starting group chat with strategy-review (3 experts: Sarah Chen, Marcus Cole, Priya Mehta) — use @name to address specific experts
-ℹ Type /exit or /quit to save and end the conversation.
+Starting panel chat with strategy-review (3 experts) — use @<slug> to address specific experts
+ℹ Experts: @strategist, @devils-advocate, @customer-researcher — use @<slug> to address a specific expert.
+ℹ Type /exit or /quit to save and end the conversation. Use @<slug> to address a specific expert, or @convene <topic> to run a structured debate inline.
 
 You> What should our Q4 priorities be given the competitive landscape?
 
@@ -692,6 +697,11 @@ You can also link external folders:
 council panel docs link strategy-review --path ./research/
 ```
 
+Panel documents are available to **panel chat turns**, `@convene` inline
+deliberations started inside panel chat, and saved-panel `council convene
+--template <panel>` debates. Auto-composed `council convene` runs do not have a
+stable panel document folder; they search already indexed documents best-effort.
+
 For **1:1 expert chat**, document retrieval is available for persona experts
 created with `council expert create --persona` and trained with
 `council expert train`; generic experts ignore expert documents. Place files in
@@ -715,8 +725,12 @@ council chat strategy-review
 
 ```
 ℹ Indexed 3 panel document(s) (0 unchanged, 0 failed).
-📋 Starting group chat with strategy-review (3 experts)...
+Starting panel chat with strategy-review (3 experts) — use @<slug> to address specific experts
 ```
+
+For saved-panel `council convene --template strategy-review ...`, run `council
+panel docs list strategy-review --refresh` first if you need to force a rescan
+before retrieval.
 
 #### Step 3: Ask for a review
 
@@ -1403,7 +1417,7 @@ council panel docs unlink strategy-review --path ./research/    # unlink
 | `council export`            | Export debate transcript (markdown or ADR)                    |
 | `council expert create`     | Create a new expert (interactive wizard)                      |
 | `council expert list`       | List all experts in your library                              |
-| `council expert inspect`    | View expert details and panel memberships                     |
+| `council expert inspect`    | View expert details, panel memberships, and learned profile   |
 | `council expert edit`       | Edit expert YAML in your editor                               |
 | `council expert delete`     | Remove an expert from your library                            |
 | `council expert train`      | Train a persona expert on documents                           |
@@ -1458,6 +1472,12 @@ Aliases: `experts`, `panels`, and `history` are aliases for `expert`, `panel`, a
 | `--human`               | Add a human participant (repeatable)                                         | (none)              |
 | `--heuristic-summaries` | Local summarizer for offline use                                             | `false`             |
 | `--heuristic-memory`    | Skip post-debate LLM extraction                                              | `false`             |
+
+`--experts` accepts unquoted space-separated slugs (`--experts cto cfo`), a
+quoted comma-separated list (`--experts "cto,cfo"`), or repeated flags
+(`--experts cto --experts cfo`). Extra bare operands are only tolerated by
+`council convene` and `council panel create` so Council can warn about likely
+missing `--experts`; other commands fail loudly with `too many arguments`.
 
 ### `council chat` options
 
@@ -1541,6 +1561,12 @@ npm install -g @council-ai/cli
 Council shows helpful suggestions for typos. If you see this, check the
 spelling of the command or subcommand.
 
+**"too many arguments"**
+Most commands reject extra positional arguments. If you intended to pass expert
+slugs to `convene`, use unquoted space-separated slugs (`--experts cto cfo`), a
+quoted comma-separated list (`--experts "cto,cfo"`), or repeated flags
+(`--experts cto --experts cfo`).
+
 **Debate produces generic responses**
 
 - Try a more specific prompt with concrete details (numbers, constraints, context)
@@ -1559,7 +1585,7 @@ See [Shell Quoting Guide](#shell-quoting). Use single quotes in bash/zsh.
 **`council doctor` reports issues**
 Follow the suggested fixes. Common issues:
 
-- Node.js version too old (need 22+)
+- Node.js version too old (need 24+)
 - Config file syntax error (run `council config edit` to fix)
 - Database locked (close other Council processes)
 - Copilot authentication expired (re-authenticate in your editor)
