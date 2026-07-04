@@ -14,6 +14,7 @@ import {
 } from "./model-annotations.js";
 import { renderBanner } from "./renderers/banner.js";
 import type { Writer } from "./commands/writer.js";
+import { toSingleLineDisplay } from "./strip-control-chars.js";
 
 import packageJson from "../../package.json" with { type: "json" };
 
@@ -173,7 +174,11 @@ export async function selectModelInteractively(
     throwNoModelsAvailable(write);
   }
 
-  writeModelList(write, models, discovery.source);
+  writeModelList(
+    write,
+    models.map((model) => toSingleLineDisplay(model)),
+    discovery.source,
+  );
 
   const interactive = isInteractiveInput(options.input);
   const selectedModel = interactive
