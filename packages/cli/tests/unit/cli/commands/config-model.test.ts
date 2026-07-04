@@ -167,9 +167,28 @@ describe("buildConfigCommand config model", () => {
       });
 
       expect(error).toBeInstanceOf(CliUserError);
-      expect(stdout).toContain("claude-sonnet-4.5");
+      expect(stdout).toContain("Current default model: claude-sonnet-4.5");
       expect(stdout).toContain("gpt-5.4");
       // Guidance to pass an explicit name in automation.
+      expect(stderr).toMatch(/config model <name>/);
+    });
+
+    it("omits the 'Available models:' header when discovery returns no models", async () => {
+      await updateConfigField("defaults.model", "claude-sonnet-4.5");
+      const discoverModels = vi.fn(async () => ({
+        models: [] as readonly string[],
+        source: "live" as const,
+      }));
+
+      const { stdout, stderr, error } = await runConfig(["model"], {
+        modelDeps: {
+          input: createNonTtyInput(),
+          discoverModels,
+        },
+      });
+
+      expect(error).toBeInstanceOf(CliUserError);
+      expect(stdout).not.toContain("Available models:");
       expect(stderr).toMatch(/config model <name>/);
     });
   });
