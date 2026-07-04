@@ -16,6 +16,7 @@ import {
   renderPanelMemberships,
   GENERIC_EXPERT_DOMAIN_FRAMING,
   DEFAULT_FORBIDDEN_PHRASES,
+  type ExpertMemory,
   type PanelMembership,
 } from "../../../src/core/prompt-builder.js";
 import type { ExpertDefinition } from "../../../src/core/expert.js";
@@ -626,6 +627,23 @@ describe("renderMemory() — sanitization of memory entries", () => {
 
   it("returns default string for empty memory (regression)", () => {
     const prompt = buildSystemPrompt(genericDefinition, undefined, "task");
+    const memoryIdx = prompt.indexOf("[7] MEMORY");
+    const taskIdx = prompt.indexOf("[8] CURRENT TASK");
+    const section = prompt.slice(memoryIdx, taskIdx);
+    expect(section).toContain("(no prior memory — this is your first session with this panel)");
+  });
+
+  it("returns default string for an EXPLICIT empty ExpertMemory object (distinct branch from undefined)", () => {
+    // renderMemory() has two paths to the same default string: the `!memory`
+    // fast-path (undefined, covered by the regression test above) and a
+    // fall-through when a fully-populated-but-empty object passes the truthy
+    // guard yet all three arrays are empty. This pins the latter branch — an
+    // explicit { positions: [], updatedPriors: [], unresolved: [] } — which
+    // the undefined test does NOT exercise. If the trailing
+    // `if (sections.length === 0) return <default>` were removed, this object
+    // would render an empty section instead, failing this assertion.
+    const emptyMemory: ExpertMemory = { positions: [], updatedPriors: [], unresolved: [] };
+    const prompt = buildSystemPrompt(genericDefinition, emptyMemory, "task");
     const memoryIdx = prompt.indexOf("[7] MEMORY");
     const taskIdx = prompt.indexOf("[8] CURRENT TASK");
     const section = prompt.slice(memoryIdx, taskIdx);
