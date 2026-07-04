@@ -176,6 +176,9 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
         return;
       }
       if (input === "?") {
+        // Open the contextual Help overlay: a HelpModal listing the global key
+        // legend (HELP_ENTRIES) plus the active route's bindings
+        // (`contextualHints`, computed below). Esc closes it (see resolveEscape).
         setMode("help");
         return;
       }
@@ -226,6 +229,11 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
 
   const panelSource = panelSourceFromLocationState(location.state);
   const shortcutContext = panelSource === undefined ? {} : { panelSource };
+  // Contextual key legend for the current route. It feeds BOTH the footer hints
+  // and the `?` Help overlay (passed to HelpModal as `contextEntries`), so the
+  // on-screen help always mirrors the active screen's shortcuts. The bindings
+  // are sourced from `shortcutsForRoute`; see docs/designs/interactive-tui.md
+  // (§4.2 — "`?` toggles contextual help").
   const contextualHints = shortcutsForRoute(location.pathname, shortcutContext);
   const footerHints =
     contextualHints.length > 0

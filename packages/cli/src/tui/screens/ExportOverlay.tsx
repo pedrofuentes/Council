@@ -17,6 +17,10 @@ export interface ExportOverlayProps {
 
 const FORMAT_OPTIONS: readonly ExportFormat[] = ["markdown", "json", "adr", "share"];
 
+// Stable empty legend for phases without preview content, so the memoized
+// `rows` keeps a constant reference when nothing is loaded.
+const EMPTY_ROWS: readonly string[] = [];
+
 /**
  * Static, drift-guarded labels for the picker. A `Record<ExportFormat, …>`
  * makes adding/removing an {@link ExportFormat} a compile error here, keeping
@@ -216,6 +220,19 @@ export function ExportOverlay(props: ExportOverlayProps): React.ReactElement {
 
   const header = <Text>{props.theme.accent(toSingleLineDisplay(`Export · ${panelName}`))}</Text>;
 
+  // Preview rows are derived from the (untrusted, possibly large) transcript.
+  // Memoize on the raw content so the per-row `toSingleLineDisplay` sanitizer
+  // runs only when the content changes — not on every unrelated re-render
+  // (e.g. the preview → saved transition, which keeps the same content) (#1695).
+  const previewContent =
+    phase.status === "preview" || phase.status === "saved" || phase.status === "writeError"
+      ? phase.content
+      : null;
+  const rows = React.useMemo(
+    () => (previewContent === null ? EMPTY_ROWS : previewRows(previewContent)),
+    [previewContent],
+  );
+
   if (phase.status === "unavailable") {
     return (
       <Box flexDirection="column">
@@ -250,8 +267,6 @@ export function ExportOverlay(props: ExportOverlayProps): React.ReactElement {
       </Box>
     );
   }
-
-  const rows = previewRows(phase.content);
 
   return (
     <Box flexDirection="column">
