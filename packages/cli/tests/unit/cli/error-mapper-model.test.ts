@@ -44,12 +44,13 @@ describe("formatEngineError — model field (DX-15)", () => {
     expect(out).toContain("claude-sonnet-4.5");
   });
 
-  it("shows (unknown) when neither model field nor regex matches", () => {
+  it("echoes the upstream message when neither model field nor regex matches", () => {
     const out = formatEngineError({
       code: "MODEL_UNAVAILABLE",
       message: "some model is broken",
     });
-    expect(out).toContain("(unknown)");
+    expect(out).toContain("some model is broken");
+    expect(out).not.toContain("(unknown)");
   });
 });
 
