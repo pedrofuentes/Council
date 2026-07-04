@@ -308,6 +308,15 @@ function shouldUseQuestionFallback(): boolean {
   return process.env.TERM === "dumb" || process.env.NO_COLOR === "dumb";
 }
 
+function restoreTerminalStep(step: () => void): void {
+  try {
+    step();
+  } catch {
+    // Best-effort terminal restoration: a failing step (e.g. a stderr
+    // write that throws) must not skip the remaining restores.
+  }
+}
+
 export async function promptForTopicFromStdin(
   stdin: TopicInputStdin,
   source: AsyncIterable<KeypressEvent>,
@@ -325,13 +334,17 @@ export async function promptForTopicFromStdin(
   try {
     return await processKeypressStream(source, write);
   } finally {
-    write("\x1b[?2004l");
-    if (canSetRawMode) {
-      stdin.setRawMode?.(wasRaw);
-    }
-    if (wasPaused) {
-      stdin.pause();
-    }
+    restoreTerminalStep(() => write("\x1b[?2004l"));
+    restoreTerminalStep(() => {
+      if (canSetRawMode) {
+        stdin.setRawMode?.(wasRaw);
+      }
+    });
+    restoreTerminalStep(() => {
+      if (wasPaused) {
+        stdin.pause();
+      }
+    });
   }
 }
 

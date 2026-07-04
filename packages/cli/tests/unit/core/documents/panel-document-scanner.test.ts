@@ -1051,6 +1051,34 @@ describe("scanAndIndexPanelDocuments", () => {
       expect(tracked).toHaveLength(3);
     });
 
+    it("auto mode: AI-extracts and indexes an unsupported file from a LINKED folder (#1139)", async () => {
+      // Companion to the managed-folder auto-mode test above: the AI
+      // fallback must fire for unsupported-extension files discovered
+      // under a LINKED folder too, not only under the managed docs dir.
+      await fs.writeFile(path.join(linkedDir, "linked-notes.xyz"), "plain text for xyz", "utf-8");
+      const result = await scanAndIndexPanelDocuments({
+        panelName: "arch-review",
+        managedDocsDir: managedDir,
+        db,
+        supportedFormats: [".md", ".txt", ".xyz"],
+        aiFallback: { mode: "auto", allowedExtensions: [] },
+      });
+      // spec.md (managed) + external.md (linked) + linked-notes.xyz (linked, AI).
+      expect(result.indexed).toBe(3);
+      expect(result.needsReview).toBe(0);
+      const f = result.files.find((x) => x.filename === "linked-notes.xyz");
+      expect(f?.status).toBe("indexed");
+      expect(f?.aiExtracted).toBe(true);
+      // All three files are searchable.
+      expect(await panelFtsCount(db)).toBe(3);
+      // The AI-extracted file is tracked under the LINKED source.
+      const docsRepo = new PanelDocumentRepository(db);
+      const tracked = await docsRepo.listDocuments("arch-review");
+      expect(tracked).toHaveLength(3);
+      const linkedXyz = tracked.find((t) => t.filename === "linked-notes.xyz");
+      expect(linkedXyz?.source).toBe("linked");
+    });
+
     it("ask mode: records needs-review, does NOT index into FTS, and does NOT track", async () => {
       await fs.writeFile(path.join(managedDir, "notes.xyz"), "plain text for xyz", "utf-8");
       const result = await scanAndIndexPanelDocuments({

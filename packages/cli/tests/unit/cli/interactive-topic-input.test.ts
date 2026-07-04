@@ -302,6 +302,29 @@ describe("processKeypressStream", () => {
       expect(stdin.listenerCount("keypress")).toBe(0);
     });
 
+    it("still restores raw mode and paused stdin state when the bracketed-paste disable write throws (#1480)", async () => {
+      const stdin = new MockStdin();
+      stdin.isRaw = false;
+      // MockStdin starts paused, so wasPaused === true and cleanup must
+      // re-pause the stream after the prompt completes.
+
+      const write = (s: string): void => {
+        if (s === "\x1b[?2004l") {
+          throw new Error("stderr write failed");
+        }
+      };
+
+      // Best-effort cleanup: a failing bracketed-paste disable write must
+      // neither discard the captured topic nor skip the raw-mode/pause
+      // restores that leave the terminal in a usable state.
+      await expect(
+        promptForTopicFromStdin(stdin, source([char("h"), char("i"), enter]), write),
+      ).resolves.toBe("hi");
+
+      expect(stdin.setRawMode).toHaveBeenLastCalledWith(false);
+      expect(stdin.pause).toHaveBeenCalledOnce();
+    });
+
     it("preserves the cause when dumb-terminal readline fails unexpectedly", async () => {
       vi.stubEnv("TERM", "dumb");
       const failure = new Error("pty\nfailed");
