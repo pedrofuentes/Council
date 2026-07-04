@@ -340,6 +340,31 @@ describe("buildDoctorCommand", () => {
     },
   );
 
+  it.skipIf(isPrivileged)(
+    "doctor reports every unwritable write target, not just the first (#1992)",
+    async () => {
+      const customDataHome = path.join(testHome, "multi-readonly-data-home");
+      await fs.mkdir(path.join(customDataHome, "experts"), { recursive: true });
+      await fs.mkdir(path.join(customDataHome, "panels"), { recursive: true });
+      process.env["COUNCIL_DATA_HOME"] = customDataHome;
+      // Both runtime write targets are read-only. A first-catch-return would
+      // only surface experts/, hiding that panels/ is broken too.
+      await fs.chmod(path.join(customDataHome, "experts"), 0o500);
+      await fs.chmod(path.join(customDataHome, "panels"), 0o500);
+
+      try {
+        const output = await runDoctor(["--offline"]);
+
+        expect(output).toContain(path.join(customDataHome, "experts"));
+        expect(output).toContain(path.join(customDataHome, "panels"));
+        expect(output).toContain("Some checks failed");
+      } finally {
+        await fs.chmod(path.join(customDataHome, "experts"), 0o700);
+        await fs.chmod(path.join(customDataHome, "panels"), 0o700);
+      }
+    },
+  );
+
   it("doctor passes the data home check when root, experts/ and panels/ are all writable (#1914)", async () => {
     const customDataHome = path.join(testHome, "writable-data-home");
     process.env["COUNCIL_DATA_HOME"] = customDataHome;
