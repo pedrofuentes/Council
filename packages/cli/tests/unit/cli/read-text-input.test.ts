@@ -12,7 +12,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readTextInput } from "../../../src/cli/read-text-input.js";
 
@@ -106,6 +106,58 @@ describe("readTextInput", () => {
         }),
       ).rejects.toThrow(/not found/i);
       expect(stdinCalled).toBe(false);
+    });
+  });
+
+  describe("stdin TTY hint (#1148)", () => {
+    // `--prompt-file -` on an interactive TTY with no pipe blocks until Ctrl-D
+    // with no feedback. When stdin is a TTY, readTextInput must print a
+    // one-line hint to stderr so the user knows input is expected and how to
+    // end it. When stdin is piped (non-TTY), it must stay silent so machine
+    // pipelines and captured output are not polluted.
+    let originalIsTTY: PropertyDescriptor | undefined;
+
+    function setStdinIsTTY(value: boolean): void {
+      originalIsTTY = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+      Object.defineProperty(process.stdin, "isTTY", { value, configurable: true });
+    }
+
+    afterEach(() => {
+      if (originalIsTTY) {
+        Object.defineProperty(process.stdin, "isTTY", originalIsTTY);
+      } else {
+        delete (process.stdin as Record<string, unknown>)["isTTY"];
+      }
+      originalIsTTY = undefined;
+      vi.restoreAllMocks();
+    });
+
+    it("emits a Ctrl-D stdin hint to stderr when stdin is an interactive TTY", async () => {
+      setStdinIsTTY(true);
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+
+      const result = await readTextInput("-", {
+        readStdin: async () => "typed at the keyboard",
+      });
+
+      expect(result).toBe("typed at the keyboard");
+      const written = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
+      expect(written).toMatch(/stdin/i);
+      expect(written).toMatch(/Ctrl-D/i);
+    });
+
+    it("stays silent when stdin is not a TTY (piped input)", async () => {
+      setStdinIsTTY(false);
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+
+      const result = await readTextInput("-", {
+        readStdin: async () => "piped $topic from stdin",
+      });
+
+      expect(result).toBe("piped $topic from stdin");
+      const written = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
+      expect(written).not.toMatch(/stdin/i);
+      expect(written).not.toMatch(/Ctrl-D/i);
     });
   });
 });
