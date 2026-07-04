@@ -252,6 +252,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       "--prompt-file <path>",
       "Read the topic VERBATIM from a file (or `-` for stdin) instead of the positional argument. " +
         "Bypasses the shell so `$`, backticks, and values like `$180K` survive intact. " +
+        "Content must be non-empty after trimming. " +
         "Mutually exclusive with the positional <topic>.",
     )
     .option(
