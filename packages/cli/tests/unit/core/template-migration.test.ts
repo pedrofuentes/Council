@@ -1275,4 +1275,53 @@ describe("template-migration", () => {
       expect(getSpy.mock.calls.length).toBeLessThanOrEqual(2);
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // #1809: when an inline expert in a recovered on-disk panel fails schema
+  // validation, the surfaced error must name the panel FILE (not just the
+  // bare panel name) so a user can locate and fix the offending YAML. The
+  // panel path is sanitized like every other value interpolated into the
+  // thrown message.
+  // ─────────────────────────────────────────────────────────────────────
+  describe("schema-failure error names the offending panel file (#1809)", () => {
+    it("includes the panel file path when a recovered panel has a malformed inline expert", async () => {
+      // Seed the standard files + rows.
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
+
+      const firstName = BUILTIN_PANELS[0];
+      const panelsDir = path.join(dataHome, "panels");
+      const panelFile = path.join(panelsDir, `${firstName}.yaml`);
+      // Object-shaped (inline) expert missing required fields → schema fail
+      // inside parseOnDiskPanel during DB-reset recovery.
+      await fs.writeFile(
+        panelFile,
+        yaml.stringify({
+          name: firstName,
+          description: "corrupted",
+          experts: [{ slug: "broken-inline", displayName: "Broken" }],
+        }),
+        "utf-8",
+      );
+
+      // Wipe panel rows so recovery re-reads the panel from disk (the path
+      // that calls parseOnDiskPanel).
+      await db.deleteFrom("panel_members").execute();
+      await db.deleteFrom("panel_library").execute();
+
+      let caught: unknown;
+      try {
+        await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      const message = (caught as Error).message;
+      // The offending panel file must be identifiable: the pre-fix message
+      // carried only the bare panel name (no `.yaml` path), so this fails
+      // until the panel file is threaded into the schema-failure error.
+      expect(message).toContain(`${firstName}.yaml`);
+      // Still names the failing inline expert.
+      expect(message).toContain("broken-inline");
+    });
+  });
 });
