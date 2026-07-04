@@ -444,4 +444,62 @@ describe("xlsx-reader: readXlsxSheets", () => {
     ]);
     await expect(readXlsxSheets(buf)).rejects.toBeInstanceOf(XlsxParseError);
   });
+
+  it("throws XlsxParseError for a valid ZIP missing xl/workbook.xml (#1284)", async () => {
+    // A structurally valid ZIP (yauzl reads its entries) that simply lacks the
+    // workbook part must surface as a parse error, not an empty result —
+    // otherwise a corrupt archive would masquerade as a zero-sheet workbook.
+    // Pins the `xl/workbook.xml` missing branch (xlsx-reader.ts:258-261).
+    const buf = buildZip([
+      { name: "[Content_Types].xml", data: Buffer.from(`${XML_DECL}<Types/>`, "utf-8") },
+    ]);
+    await expect(readXlsxSheets(buf)).rejects.toBeInstanceOf(XlsxParseError);
+    await expect(readXlsxSheets(buf)).rejects.toThrow(/workbook\.xml is missing/);
+  });
+
+  // ───────────────────────────────────────────────────────────────────
+  // isCustomDateFormat strip branches (#1284).
+  //
+  // The heuristic strips quoted literals, escaped characters and bracketed
+  // colour/locale sections BEFORE scanning for a date/time placeholder. Each
+  // test hides the only date-ish characters inside one strippable region and
+  // styles a numeric serial (45306) with that custom format. Correct stripping
+  // leaves nothing date-like, so the serial stays a plain number ("45306"); if
+  // a strip branch were removed, the leftover token would mis-detect the cell
+  // as a date and it would render as an ISO string instead.
+  // ───────────────────────────────────────────────────────────────────
+  it("isCustomDateFormat strips quoted literals before scanning for date tokens (#1284)", async () => {
+    const buf = buildXlsx({
+      styles:
+        `<numFmts count="1"><numFmt numFmtId="164" formatCode='0" Months"'/></numFmts>` +
+        '<cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="164"/></cellXfs>',
+      sheets: [{ name: "Quoted", sheetData: '<row r="1"><c r="A1" s="1"><v>45306</v></c></row>' }],
+    });
+    const sheets = await readXlsxSheets(buf);
+    expect(sheets[0]?.rows).toEqual([["45306"]]);
+  });
+
+  it("isCustomDateFormat strips escaped characters before scanning for date tokens (#1284)", async () => {
+    // `\d` is an escaped literal 'd' (display character), not a day placeholder.
+    const buf = buildXlsx({
+      styles:
+        `<numFmts count="1"><numFmt numFmtId="164" formatCode="0\\d"/></numFmts>` +
+        '<cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="164"/></cellXfs>',
+      sheets: [{ name: "Escaped", sheetData: '<row r="1"><c r="A1" s="1"><v>45306</v></c></row>' }],
+    });
+    const sheets = await readXlsxSheets(buf);
+    expect(sheets[0]?.rows).toEqual([["45306"]]);
+  });
+
+  it("isCustomDateFormat strips bracketed sections before scanning for date tokens (#1284)", async () => {
+    // `[Red]` is a colour token; its 'd' must not be read as a day placeholder.
+    const buf = buildXlsx({
+      styles:
+        `<numFmts count="1"><numFmt numFmtId="164" formatCode="[Red]0"/></numFmts>` +
+        '<cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="164"/></cellXfs>',
+      sheets: [{ name: "Bracketed", sheetData: '<row r="1"><c r="A1" s="1"><v>45306</v></c></row>' }],
+    });
+    const sheets = await readXlsxSheets(buf);
+    expect(sheets[0]?.rows).toEqual([["45306"]]);
+  });
 });
