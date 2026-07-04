@@ -491,6 +491,43 @@ describe("panel save (T9)", () => {
     }
   });
 
+  it("preserves the persisted panel + experts when a success-output write() fails (no rollback) (#1065)", async () => {
+    const sessionName = await seedSession(env, {
+    name: "auto-panel-2026-06-15T16:00:00",
+    definition: autoDefinition(["alpha"]),
+    });
+
+    // Simulate a terminal-write failure (e.g. EPIPE on stdout) on the success
+    // output, AFTER the panel + experts are already persisted. The success
+    // write()s live OUTSIDE the compensating-rollback try/catch, so this must
+    // NOT delete the freshly-created expert (which would orphan the persisted
+    // panel — a persisted panel left without its experts). #1065.
+    const cmd = buildPanelCommand(
+    (s) => {
+      if (s.includes("Saved session")) {
+        throw new Error("EPIPE: broken pipe (simulated)");
+      }
+    },
+    () => {
+      /* noop */
+    },
+    );
+    await expect(
+    cmd.parseAsync(["node", "council-panel", "save", sessionName, "mypanel"]),
+    ).rejects.toThrow(/EPIPE/);
+
+    const db = await createDatabase(path.join(env.home, "council.db"));
+    try {
+    const lib = new FileExpertLibrary(env.dataHome, db);
+    // The expert persisted before the write failure MUST survive …
+    expect(await lib.get("alpha")).not.toBeNull();
+    // … and the panel it belongs to remains persisted (not orphaned).
+    expect(await new PanelLibraryRepository(db).findByName("mypanel")).toBeDefined();
+    } finally {
+    await db.destroy();
+    }
+  });
+
   // #1063 (Dim B): a corrupt (non-JSON / truncated) `config_json` must be
   // surfaced as invalid/corrupt, NOT mislabelled as a legacy session that
   // "predates the feature" (which maps to the `absent` branch).

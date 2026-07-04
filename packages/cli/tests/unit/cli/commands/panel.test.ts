@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as yaml from "yaml";
 
 import { buildPanelCommand } from "../../../../src/cli/commands/panel.js";
+import { CliUserError } from "../../../../src/cli/cli-user-error.js";
 import type { ExpertDefinition } from "../../../../src/core/expert.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
 
@@ -199,6 +200,28 @@ describe("buildPanelCommand", () => {
       await expect(
         cmd.parseAsync(["node", "council-panel", "create", "Bad Name!", "--experts", "cto"]),
       ).rejects.toThrow(/name|kebab/i);
+    });
+
+    it("rejects empty --experts with a clean CliUserError, not a raw Error (#1060)", async () => {
+      const cmd = buildPanelCommand(
+        () => {
+          /* noop */
+        },
+        () => {
+          /* noop */
+        },
+      );
+      // `--experts ","` normalises to zero slugs. That empty case must surface
+      // as a user-facing CliUserError (clean exit-1, no stack dump), not the
+      // internal `Error` that the top-level handler treats as a crash. #1060.
+      const err = await cmd
+        .parseAsync(["node", "council-panel", "create", "testpanel", "--experts", ","])
+        .then(
+          () => null,
+          (e: unknown) => e,
+        );
+      expect(err).toBeInstanceOf(CliUserError);
+      expect((err as CliUserError).message).toMatch(/at least one expert/i);
     });
 
     it("rejects duplicate panel name", async () => {
@@ -465,6 +488,60 @@ describe("buildPanelCommand", () => {
         cmd.parseAsync(["node", "council-panel", "inspect", "ghost-panel"]),
       ).rejects.toThrow(/not found/i);
       expect(errored).toMatch(/not found|ghost-panel/i);
+    });
+
+    it("warns (sanitized, single-line) instead of silently swallowing a corrupt on-disk YAML (#315)", async () => {
+      await seedExpert(env, expertDef("cto"));
+      const createCmd = buildPanelCommand(() => {
+        /* noop */
+      });
+      await createCmd.parseAsync([
+        "node",
+        "council-panel",
+        "create",
+        "arch-review",
+        "--experts",
+        "cto",
+      ]);
+
+      // Corrupt the on-disk YAML so inspect's defaults-load throws. The parser
+      // echoes the offending source snippet into its error message, so a
+      // crafted file smuggles ANSI ESC + BEL + CR/LF that must NOT reach the
+      // terminal. The DB row stays the source of truth, so inspect still
+      // renders — but the corruption is now reported, not swallowed. #315.
+      const yamlPath = path.join(env.dataHome, "panels", "arch-review.yaml");
+      await fs.writeFile(
+        yamlPath,
+        "name: arch-review\u001b[31mHACK\u001b[0m\r\n\t: [oops\u0007\r\n",
+        "utf-8",
+      );
+
+      let out = "";
+      let err = "";
+      const cmd = buildPanelCommand(
+        (s) => {
+          out += s;
+        },
+        (s) => {
+          err += s;
+        },
+      );
+      await cmd.parseAsync(["node", "council-panel", "inspect", "arch-review"]);
+
+      // inspect still succeeds off the DB row (graceful — no crash).
+      expect(out).toContain("arch-review");
+      // The corruption is surfaced with the offending file path (#315).
+      expect(err).toMatch(/warning/i);
+      expect(err).toContain("arch-review.yaml");
+      // Sanitized: no ANSI ESC / BEL byte reaches the terminal …
+      expect(err).not.toContain("\u001b");
+      expect(err).not.toContain("\u0007");
+      // … and the untrusted detail cannot inject extra lines: CR/LF are
+      // collapsed so the whole warning renders as a single line.
+      expect(err).not.toContain("\r");
+      expect(err.replace(/\n$/, "")).not.toContain("\n");
+      // eslint-disable-next-line no-control-regex
+      expect(err).not.toMatch(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/);
     });
   });
 
@@ -1526,6 +1603,131 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
         } finally {
           NodeSqliteConnection.prototype.executeQuery = originalExecute;
         }
+      } finally {
+        await fs.rm(linkDir, { recursive: true, force: true });
+      }
+    });
+
+    it("`panel docs unlink` batches FTS removes but still aborts (no silent drop) when a member rejects (#396)", async () => {
+      await createPanel();
+      const linkDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-unlink-batch-"));
+      try {
+        await fs.writeFile(path.join(linkDir, "a.md"), "# A\nbody a\n", "utf-8");
+        await fs.writeFile(path.join(linkDir, "b.md"), "# B\nbody b\n", "utf-8");
+        await fs.writeFile(path.join(linkDir, "c.md"), "# C\nbody c\n", "utf-8");
+
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { PanelDocumentRepository } =
+          await import("../../../../src/memory/repositories/panel-document-repo.js");
+
+        const cmdLink = buildPanelCommand(() => {
+          /* noop */
+        });
+        await cmdLink.parseAsync([
+          "node",
+          "council-panel",
+          "docs",
+          "link",
+          "arch-review",
+          "--path",
+          linkDir,
+          "--yes",
+        ]);
+
+        const filePaths = ["a.md", "b.md", "c.md"].map((f) => path.join(linkDir, f));
+        const db1 = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          const repo = new PanelDocumentRepository(db1);
+          for (const [i, filePath] of filePaths.entries()) {
+            await repo.trackDocument({
+              panelName: "arch-review",
+              source: "linked",
+              filePath,
+              filename: path.basename(filePath),
+              checksum: `h${i}`,
+              sizeBytes: 5,
+              wordCount: 1,
+            });
+          }
+          // Drop the FTS5 table so EVERY batched indexer.remove() rejects.
+          const { sql } = await import("kysely");
+          await sql`DROP TABLE document_index`.execute(db1);
+        } finally {
+          await db1.destroy();
+        }
+
+        let captured = "";
+        let erred = "";
+        const cmdUnlink = buildPanelCommand(
+          (s) => {
+            captured += s;
+          },
+          (s) => {
+            erred += s;
+          },
+        );
+        // A rejected member must surface — the whole unlink aborts and rolls
+        // back rather than silently dropping documents from the batch. #396.
+        await expect(
+          cmdUnlink.parseAsync([
+            "node",
+            "council-panel",
+            "docs",
+            "unlink",
+            "arch-review",
+            "--path",
+            linkDir,
+          ]),
+        ).rejects.toThrow(/unlink aborted/i);
+        expect(captured).not.toContain("✓");
+        expect(erred.toLowerCase()).toMatch(/unlink aborted/);
+
+        // Nothing was silently dropped: all three metadata rows + the linked
+        // folder survive so the user can retry after fixing the FTS failure.
+        const verifyDb = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          const repo = new PanelDocumentRepository(verifyDb);
+          const docs = await repo.listDocuments("arch-review");
+          for (const filePath of filePaths) {
+            expect(docs.some((d) => d.filePath === filePath)).toBe(true);
+          }
+          const folders = await repo.getLinkedFolders("arch-review");
+          expect(folders).toContain(linkDir);
+        } finally {
+          await verifyDb.destroy();
+        }
+      } finally {
+        await fs.rm(linkDir, { recursive: true, force: true });
+      }
+    });
+
+    it("`panel docs link` counts supported files across nested dirs and skips non-files (#397)", async () => {
+      await createPanel();
+      const linkDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-count-nested-"));
+      try {
+        // A top-level supported file, a nested supported file (recursion), and
+        // a subdirectory — a non-file entry the batched lstat must skip. #397.
+        await fs.writeFile(path.join(linkDir, "a.md"), "# A\nbody a\n", "utf-8");
+        await fs.mkdir(path.join(linkDir, "sub"), { recursive: true });
+        await fs.writeFile(path.join(linkDir, "sub", "b.md"), "# B\nbody b\n", "utf-8");
+
+        let captured = "";
+        const cmd = buildPanelCommand((s) => {
+          captured += s;
+        });
+        await cmd.parseAsync([
+          "node",
+          "council-panel",
+          "docs",
+          "link",
+          "arch-review",
+          "--path",
+          linkDir,
+          "--yes",
+        ]);
+        // Both .md files counted (nested included); the `sub/` directory entry
+        // is not a file and must not inflate the count.
+        expect(captured).toMatch(/2 documents found/);
       } finally {
         await fs.rm(linkDir, { recursive: true, force: true });
       }
