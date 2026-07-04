@@ -72,6 +72,15 @@ function formatPanelNotFound(name: string, available: readonly string[]): string
 }
 
 /**
+ * Wrap a trailing hint line in the dim ANSI style, but only when stdout is an
+ * interactive TTY. Piped or redirected output (files, CI logs, `| cat`) gets
+ * clean, unstyled text instead of raw escape sequences (#809).
+ */
+function dimHint(text: string): string {
+  return process.stdout.isTTY === true ? `\x1b[2m${text}\x1b[0m` : text;
+}
+
+/**
  * Build the confirmation message for panel deletion.
  *
  * `panel delete` removes ONLY the panel template — the `panel_library` row,
@@ -617,7 +626,7 @@ function buildDeleteCommand(
         }
 
         write(`✓ Panel "${name}" deleted.\n`);
-        write("\x1b[2mRun 'council panel list' to verify.\x1b[0m\n");
+        write(dimHint("Run 'council panel list' to verify.") + "\n");
       });
     });
   return cmd;
@@ -1210,7 +1219,7 @@ async function runPanelList(
     for (const row of rows) {
       write(row.map((c, i) => pad(c, widths[i] ?? 0)).join("  ") + "\n");
     }
-    write("\x1b[2mNext: council panel inspect <name> | council convene --template <name>\x1b[0m\n");
+    write(dimHint("Next: council panel inspect <name> | council convene --template <name>") + "\n");
   });
 }
 
@@ -1927,7 +1936,7 @@ function buildDocsUnlinkCommand(write: Writer, writeError: Writer): Command {
           throw new CliUserError(msg);
         }
         write(`✓ Unlinked ${displayPath(absolute)} from ${name}.\n`);
-        write("\x1b[2mRun 'council panel list' to verify.\x1b[0m\n");
+        write(dimHint("Run 'council panel list' to verify.") + "\n");
       });
     });
   return cmd;
