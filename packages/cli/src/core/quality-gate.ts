@@ -50,6 +50,8 @@ const DISAGREEMENT_SIGNALS: readonly string[] = [
   "stress-tested",
 ];
 
+const COUNTER_SIGNAL = /\bcounter(?:argument)?s?\b/g;
+
 /**
  * The exact stand-down phrase mandated by DEFAULT_DEBATE_PROTOCOL when
  * the responder honestly cannot find a material weakness.
@@ -93,26 +95,42 @@ function findForbiddenPhrases(text: string): string[] {
 
 /**
  * Negation openers that flip a disagreement signal into pseudo-agreement.
- * Includes the explicit forms from issue #47 plus the universal `n't`
- * contraction tail (don't / doesn't / can't / won't / wouldn't).
+ * Includes the explicit forms from issue #47, never/cannot from issue #1818,
+ * plus the universal `n't` contraction tail (don't / doesn't / can't / won't / wouldn't).
  */
-const NEGATION_PREFIX = /(?:\bnot|n't|\bno longer)\s+$/;
+const NEGATION_PREFIX = /(?:\bnot|n't|\bno longer|\bnever|\bcannot)\s+$/;
+
+function hasUnnegatedSignalMatch(text: string, signal: string): boolean {
+  let from = 0;
+  let idx = text.indexOf(signal, from);
+  while (idx !== -1) {
+    if (!NEGATION_PREFIX.test(text.slice(0, idx))) return true;
+    from = idx + signal.length;
+    idx = text.indexOf(signal, from);
+  }
+  return false;
+}
+
+function hasUnnegatedCounterMatch(text: string): boolean {
+  for (const match of text.matchAll(COUNTER_SIGNAL)) {
+    if (
+      typeof match.index === "number" &&
+      !NEGATION_PREFIX.test(text.slice(0, match.index))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
 
 function hasDisagreementSignal(text: string): boolean {
   const lower = text.toLowerCase();
   if (lower.includes(STAND_DOWN_MARKER)) return true;
-  return DISAGREEMENT_SIGNALS.some((signal) => {
-    let from = 0;
-    let idx = lower.indexOf(signal, from);
-    while (idx !== -1) {
-      // Count the signal only if it is not immediately preceded by a negation
-      // ("I don't disagree with X" must not satisfy the disagreement budget).
-      if (!NEGATION_PREFIX.test(lower.slice(0, idx))) return true;
-      from = idx + signal.length;
-      idx = lower.indexOf(signal, from);
-    }
-    return false;
-  });
+  return DISAGREEMENT_SIGNALS.some((signal) =>
+    signal === "counter"
+      ? hasUnnegatedCounterMatch(lower)
+      : hasUnnegatedSignalMatch(lower, signal),
+  );
 }
 
 function buildRegenerateHint(failures: readonly QualityCheck[]): string {

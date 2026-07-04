@@ -174,6 +174,42 @@ describe("applyQualityGate — negation bypass (Layer 2, issue #47)", () => {
   });
 });
 
+describe("applyQualityGate — extended negation lexicon (Layer 2, issue #1818)", () => {
+  for (const text of [
+    "I never disagree with the prior speaker about rollout sequencing, so the migration should proceed as proposed today.",
+    "I cannot disagree with the CTO's framing here because the proposal already covers the relevant operational risks.",
+  ]) {
+    it(`flags negated pseudo-disagreement: "${text.slice(0, 32)}…"`, () => {
+      const result = applyQualityGate(text, { priorSpeakers: ["cto"] });
+      expect(result.ok).toBe(false);
+      expect(result.failures.some((f) => f.kind === "no_disagreement_signal")).toBe(true);
+    });
+  }
+});
+
+describe("applyQualityGate — counter signal word boundary (Layer 2, issue #1944)", () => {
+  for (const text of [
+    "The team may encounter normal rollout friction, but the proposal still looks reasonable and complete overall.",
+    "The migration seems counterproductive at first, yet the prior timeline remains acceptable for this team's capacity.",
+  ]) {
+    it(`does NOT treat incidental counter text as disagreement: "${text.slice(0, 32)}…"`, () => {
+      const result = applyQualityGate(text, { priorSpeakers: ["cto"] });
+      expect(result.ok).toBe(false);
+      expect(result.failures.some((f) => f.kind === "no_disagreement_signal")).toBe(true);
+    });
+  }
+
+  for (const text of [
+    "Counter to the rollout plan, the capacity model omits peak traffic during regional failover windows.",
+    "The counterargument is that rollback depends on state snapshots the current plan never schedules.",
+  ]) {
+    it(`still accepts genuine counter disagreement: "${text.slice(0, 32)}…"`, () => {
+      const result = applyQualityGate(text, { priorSpeakers: ["cto"] });
+      expect(result.failures.some((f) => f.kind === "no_disagreement_signal")).toBe(false);
+    });
+  }
+});
+
 describe("applyQualityGate — specificity (Layer 3)", () => {
   it("flags responses that are too short to carry signal", () => {
     const result = applyQualityGate("I disagree.", { priorSpeakers: ["cto"] });
@@ -402,21 +438,14 @@ describe("applyQualityGate — regenerateHint per QualityCheckKind, table-driven
       response:
         "Great point! This is a well-thought-out plan that covers all the necessary considerations here.",
       priorSpeakers: [],
-      expectedSubstrings: [
-        "forbidden phrases",
-        "great point",
-        "agreement-padding",
-      ],
+      expectedSubstrings: ["forbidden phrases", "great point", "agreement-padding"],
     },
     {
       kind: "no_disagreement_signal",
       // Exactly 12 words; no forbidden phrase; prior speaker ⇒ only no_disagreement_signal fires.
       response: "The proposal looks feasible given the current team size and capacity here.",
       priorSpeakers: ["cto"],
-      expectedSubstrings: [
-        "did not signal a specific disagreement",
-        "stand-down phrase",
-      ],
+      expectedSubstrings: ["did not signal a specific disagreement", "stand-down phrase"],
     },
     {
       kind: "too_short",
