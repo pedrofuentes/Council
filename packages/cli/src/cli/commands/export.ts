@@ -146,6 +146,10 @@ async function realpathParentDir(parentDir: string, outputPath: string): Promise
  *     error (EACCES, ELOOP, ENOTDIR, ...) is real and is surfaced as a sanitized
  *     `CliUserError` (exit 1, no raw path/ANSI in stderr) rather than swallowed
  *     or rethrown as a raw Node error (which would exit 4 and leak the path).
+ *
+ * @param outputPath - The raw, user-supplied `--output` path (relative or absolute).
+ * @param force - When `true`, allow overwriting an existing regular file.
+ * @returns The validated, symlink-dereferenced absolute path safe to write to.
  */
 export async function resolveOutputPath(outputPath: string, force: boolean): Promise<string> {
   const resolved = path.resolve(outputPath);
@@ -216,7 +220,7 @@ export async function resolveOutputPath(outputPath: string, force: boolean): Pro
  *     in at the path is replaced wholesale rather than truncated in place — the
  *     old `O_TRUNC` opened and zeroed whatever inode was there. A pre-write
  *     `lstat` still refuses a symlink / non-regular target outright as defense
- *     in depth, and the temp is removed if the rename fails.
+ *     in depth, and the temp is removed if the write, close, or rename fails.
  *
  * Any raw Node fs error from these steps (`ENOTDIR`, `EACCES`, `EEXIST`,
  * `ELOOP`, ...) is wrapped in a sanitized `CliUserError` (exit 1, no raw
@@ -229,7 +233,7 @@ export async function writeExportArtifact(
   force: boolean,
   writeError: Writer = defaultErrorWriter,
 ): Promise<void> {
-  const noFollow = fsConstants.O_NOFOLLOW ?? 0;
+  const noFollow = (fsConstants.O_NOFOLLOW as number | undefined) ?? 0;
 
   try {
     if (!force) {
@@ -238,10 +242,25 @@ export async function writeExportArtifact(
         fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollow,
         0o600,
       );
+      let writeErr: unknown;
       try {
         await handle.writeFile(contents, { encoding: "utf8" });
+      } catch (err: unknown) {
+        writeErr = err;
+        throw err;
       } finally {
-        await handle.close();
+        // close(2) can surface a deferred write error (ENOSPC/EIO/EDQUOT on
+        // NFS/CIFS/quota) even after writeFile resolved, so a close rejection is a
+        // real failure that must propagate — swallowing it would report a
+        // truncated export as success. Only when writeFile ALREADY rejected is its
+        // error the more actionable one, so drop the shadowing close error then
+        // (#1888).
+        await handle.close().catch((closeErr: unknown) => {
+          if (writeErr !== undefined) {
+            return;
+          }
+          throw closeErr;
+        });
       }
       return;
     }
@@ -274,10 +293,22 @@ export async function writeExportArtifact(
     // temp sibling. On success the rename has consumed the temp, so skip the rm.
     let renamed = false;
     try {
+      let writeErr: unknown;
       try {
         await handle.writeFile(contents, { encoding: "utf8" });
+      } catch (err: unknown) {
+        writeErr = err;
+        throw err;
       } finally {
-        await handle.close();
+        // If close ALSO rejects, preserve the more actionable writeFile error as
+        // the close error's cause instead of letting try/finally silently drop it
+        // (#2101). When only close rejects, it propagates unchanged.
+        await handle.close().catch((closeErr: unknown) => {
+          if (writeErr !== undefined && closeErr instanceof Error && closeErr.cause === undefined) {
+            closeErr.cause = writeErr;
+          }
+          throw closeErr;
+        });
       }
       await fs.rename(tempPath, resolvedPath);
       renamed = true;
@@ -388,9 +419,9 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
           });
         }
         const doc = await loadFullPanelTranscript(db, resolvedName);
-        const rendered = renderForExport(doc, opts.format);
 
         if (opts.output !== undefined) {
+          const rendered = renderForExport(doc, opts.format);
           const resolvedOutput = await resolveOutputPath(opts.output, opts.force === true);
           await writeExportArtifact(resolvedOutput, rendered, opts.force === true, writeError);
           writeError(`Wrote ${opts.format} export to ${sanitizeExportLine(opts.output)}\n`);
@@ -402,13 +433,19 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
           }
           return;
         }
-        write(rendered);
-        if (opts.format !== "json") {
-          const safeResolvedName = sanitizeExportLine(resolvedName);
-          write(
-            `Next: council conclude ${safeResolvedName} | council resume ${safeResolvedName}\n`,
-          );
+
+        // stdout: stream NDJSON one event at a time so a large debate's JSON
+        // export is never materialized as a single in-memory string (#175),
+        // matching `resume --format json`. Other formats render to one string.
+        if (opts.format === "json") {
+          for (const e of synthesizeEvents(doc)) {
+            write(JSON.stringify(e) + "\n");
+          }
+          return;
         }
+        write(renderForExport(doc, opts.format));
+        const safeResolvedName = sanitizeExportLine(resolvedName);
+        write(`Next: council conclude ${safeResolvedName} | council resume ${safeResolvedName}\n`);
       } finally {
         await db.destroy().catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
@@ -585,7 +622,13 @@ export function renderAdr(doc: TranscriptDocument): string {
   lines.push("");
   lines.push(`## Context`);
   lines.push("");
-  lines.push(sanitizeExportBlock(doc.originalPrompt));
+  // Quote the original prompt line-by-line and neutralize any leading block
+  // marker so a crafted prompt (e.g. an embedded `## ...`) cannot forge a
+  // top-level ADR section — the same outline-spoofing guard applied to the
+  // Options/Decision blockquotes and Discussion continuations (#2110/#1888).
+  for (const line of sanitizeExportBlockLines(doc.originalPrompt)) {
+    lines.push(`> ${escapeBlockLeadingMarkdown(line)}`);
+  }
   lines.push("");
   lines.push(`## Options Considered`);
   lines.push("");

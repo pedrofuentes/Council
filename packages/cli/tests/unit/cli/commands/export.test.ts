@@ -40,6 +40,7 @@ const BEL = String.fromCharCode(0x07);
 const C1_CSI = String.fromCharCode(0x9b);
 const BIDI_OVERRIDE = "\u202E";
 const ZERO_WIDTH_SPACE = "\u200B";
+const CR = String.fromCharCode(0x0d);
 const WIN32 = process.platform === "win32";
 
 // Terminal-hostile bytes that must never reach stderr: C0 controls (0x00-0x1f),
@@ -55,6 +56,9 @@ function expectNoTerminalControls(out: string): void {
   expect(out).not.toContain(C1_CSI);
   expect(out).not.toContain(BIDI_OVERRIDE);
   expect(out).not.toContain(ZERO_WIDTH_SPACE);
+  // CR can rewrite the current terminal line (spoofing a confirmation), so a
+  // sanitized single-line message must never carry it either (#1888).
+  expect(out).not.toContain(CR);
 }
 
 async function seedPanelWithDebate(testHome: string): Promise<{ panelName: string }> {
@@ -337,6 +341,51 @@ async function seedPanelWithAdrInjectionContent(
       speakerKind: "expert",
       expertId: expert.id,
       content: maliciousContent,
+    });
+    await new DebateRepository(db).update(debate.id, {
+      status: "completed",
+      endedAt: new Date().toISOString(),
+    });
+    return { panelName: panel.name };
+  } finally {
+    await db.destroy();
+  }
+}
+
+async function seedPanelWithAdrInjectionPrompt(
+  testHome: string,
+  maliciousPrompt: string,
+): Promise<{ panelName: string }> {
+  // The ADR "## Context" section renders doc.originalPrompt (the FIRST debate's
+  // prompt), so the injection payload is seeded as the debate prompt. A benign
+  // topic keeps the H1 title out of the injection path.
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    const panel = await new PanelRepository(db).create({
+      name: "export-adr-prompt-injection",
+      topic: "ADR context injection safety",
+      copilotHome: path.join(testHome, "copilot"),
+      configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+    });
+    const expert = await new ExpertRepository(db).create({
+      panelId: panel.id,
+      slug: "cto",
+      displayName: "CTO",
+      model: "claude-sonnet-4",
+      systemMessage: "You are a CTO.",
+    });
+    const debate = await new DebateRepository(db).create({
+      panelId: panel.id,
+      prompt: maliciousPrompt,
+      moderator: "round-robin",
+    });
+    await new TurnRepository(db).create({
+      debateId: debate.id,
+      round: 0,
+      seq: 0,
+      speakerKind: "expert",
+      expertId: expert.id,
+      content: "Benign opening statement.",
     });
     await new DebateRepository(db).update(debate.id, {
       status: "completed",
@@ -931,6 +980,38 @@ describe("buildExportCommand", () => {
     expect(kinds[kinds.length - 1]).toBe("debate.end");
   });
 
+  it("--format json streams NDJSON one event per write call rather than one bulk string (#175)", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    const chunks: string[] = [];
+    const cmd = buildExportCommand({
+      write: (s) => {
+        chunks.push(s);
+      },
+    });
+    await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "json"]);
+
+    // Streaming emits one write() per synthesized event; the pre-fix bulk join
+    // materialized the entire NDJSON payload as a SINGLE string / write call.
+    expect(chunks.length).toBeGreaterThan(1);
+    // Every chunk is exactly one NDJSON line: a single trailing newline and a
+    // parseable JSON object (never a multi-line blob).
+    for (const chunk of chunks) {
+      expect(chunk.endsWith("\n")).toBe(true);
+      expect(chunk.slice(0, -1)).not.toContain("\n");
+      expect(() => {
+        JSON.parse(chunk);
+      }).not.toThrow();
+    }
+    // The concatenation is still the same NDJSON shape resume emits.
+    const events = chunks
+      .join("")
+      .split("\n")
+      .filter((l) => l.trim().startsWith("{"))
+      .map((l) => JSON.parse(l) as { kind: string });
+    expect(events[0]?.kind).toBe("panel.assembled");
+    expect(events[events.length - 1]?.kind).toBe("debate.end");
+  });
+
   it("--format adr: emits ADR template with Status, Context, Options, Decision sections", async () => {
     const seed = await seedPanelWithDebate(testHome);
     let captured = "";
@@ -1206,7 +1287,7 @@ describe("buildExportCommand", () => {
     } catch (err) {
       thrown = err instanceof Error ? err.message : String(err);
     }
-    expect(thrown.toLowerCase()).toMatch(/regular file|directory|not.*file/);
+    expect(thrown.toLowerCase()).toMatch(/not a regular file/);
   });
 
   it("resolveOutputPath rejects a relative --output that escapes the working directory (#173)", async () => {
@@ -1277,7 +1358,9 @@ describe("buildExportCommand", () => {
       await fs.writeFile(secret, "SECRET", "utf-8");
       const link = path.join(testHome, "attacker-link.md");
       await fs.symlink(secret, link);
-      await expect(writeExportArtifact(link, "CLOBBERED", true)).rejects.toThrow();
+      await expect(writeExportArtifact(link, "CLOBBERED", true)).rejects.toThrow(
+        /non-regular-file|symlink|ELOOP/i,
+      );
       // The symlink's target must not have been overwritten.
       expect(await fs.readFile(secret, "utf-8")).toBe("SECRET");
     },
@@ -1357,6 +1440,36 @@ describe("buildExportCommand", () => {
     expect(captured).toContain("  \\<h2>Injected HTML");
     // The benign first line still rides the list bullet.
     expect(captured).toContain("- **CTO**: Position stated for the record.");
+  });
+
+  it("--format adr renders the Context (original prompt) as an escaped blockquote so it cannot forge sections (#1888)", async () => {
+    // doc.originalPrompt feeds the ADR "## Context" section. A crafted prompt that
+    // embeds a newline + `## ...` (and a column-0 body) must not break out to a
+    // top-level heading/section — it has to render as escaped blockquote text,
+    // mirroring the Options/Decision/Discussion neutralization.
+    const maliciousPrompt = [
+      "Should we adopt microservices?",
+      "## Injected Context Section",
+      "",
+      "FORGED-CONTEXT-BODY here.",
+    ].join("\n");
+    const seed = await seedPanelWithAdrInjectionPrompt(testHome, maliciousPrompt);
+    let captured = "";
+    const cmd = buildExportCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
+    await cmd.parseAsync(["node", "council-export", seed.panelName, "--format", "adr"]);
+
+    // The forged heading must never render as an ATX heading at any legal indent.
+    expect(captured).not.toMatch(/^ {0,3}#{1,6}\s+Injected Context Section/m);
+    // The forged body must not break out to column 0 as its own top-level block.
+    expect(captured).not.toMatch(/^FORGED-CONTEXT-BODY/m);
+    // Every prompt line is quoted; the leading hash survives only as escaped text.
+    expect(captured).toContain("> \\## Injected Context Section");
+    expect(captured).toContain("> FORGED-CONTEXT-BODY here.");
+    expect(captured).toContain("> Should we adopt microservices?");
   });
 
   // #1884 (outline spoofing) — the Discussion "Full transcript" list renders each
@@ -2094,7 +2207,10 @@ describe("buildExportCommand", () => {
     vi.mocked(fs.open).mockImplementationOnce(async (...args: Parameters<typeof fs.open>) => {
       const handle = await actual.open(...args);
       return {
-        writeFile: (data: string | Uint8Array): Promise<void> => handle.writeFile(data),
+        writeFile: (
+          data: string | Uint8Array,
+          options?: Parameters<fs.FileHandle["writeFile"]>[1],
+        ): Promise<void> => handle.writeFile(data, options),
         close: async (): Promise<void> => {
           await handle.close();
           throw closeErr;
@@ -2125,6 +2241,129 @@ describe("buildExportCommand", () => {
     });
     expect(exit).toBe(EXIT_USER_ERROR);
     expect(stderr).toBe("");
+  });
+
+  it("writeExportArtifact (no --force) wraps a close failure (EIO) as a sanitized CliUserError when writeFile resolved, never reporting a truncated export as success (#1888)", async () => {
+    const actual = await vi.importActual<typeof fs>("node:fs/promises");
+    const target = path.join(testHome, "create-close-fail.md");
+    const closeErr = Object.assign(
+      new Error(`EIO: i/o error, close '${ESC}[31m${C1_CSI}${BIDI_OVERRIDE}create'`),
+      { code: "EIO" },
+    );
+    // The O_EXCL create + writeFile land the bytes for real; only close rejects,
+    // surfacing a deferred write error (close(2) reports ENOSPC/EIO/EDQUOT on
+    // NFS/CIFS/quota after a resolved write). Swallowing it would print success
+    // and exit 0 over a truncated/corrupt export, so it MUST propagate.
+    vi.mocked(fs.open).mockImplementationOnce(async (...args: Parameters<typeof fs.open>) => {
+      const handle = await actual.open(...args);
+      return {
+        writeFile: (
+          data: string | Uint8Array,
+          options?: Parameters<fs.FileHandle["writeFile"]>[1],
+        ): Promise<void> => handle.writeFile(data, options),
+        close: async (): Promise<void> => {
+          await handle.close();
+          throw closeErr;
+        },
+      } as unknown as fs.FileHandle;
+    });
+
+    let caught: unknown;
+    try {
+      await writeExportArtifact(target, "CONTENT", false);
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(CliUserError);
+    expect((caught as CliUserError).cause).toBe(closeErr);
+    const message = (caught as CliUserError).message;
+    expect(message).toMatch(/Cannot write export/);
+    expect(message).toContain("EIO");
+    expect(message).not.toContain("i/o error");
+    expect(message.split("\n")).toHaveLength(1);
+    expectNoTerminalControls(message);
+    expect(message).not.toMatch(TERMINAL_CONTROL_BYTES);
+
+    let stderr = "";
+    const exit = handleCliError(caught, (s) => {
+      stderr += s;
+    });
+    expect(exit).toBe(EXIT_USER_ERROR);
+    expect(stderr).toBe("");
+  });
+
+  it("writeExportArtifact (no --force) surfaces the writeFile error, not the shadowing close error, when both reject (#1888)", async () => {
+    const actual = await vi.importActual<typeof fs>("node:fs/promises");
+    const target = path.join(testHome, "create-both-fail.md");
+    const writeErr = Object.assign(new Error("ENOSPC: no space left on device, write"), {
+      code: "ENOSPC",
+    });
+    const closeErr = Object.assign(new Error("EIO: i/o error, close"), { code: "EIO" });
+    // The real O_EXCL create lands the file, then BOTH its write and close reject.
+    // Without the finally's `.catch`, the close rejection replaces the more
+    // actionable writeFile rejection (try/finally semantics).
+    vi.mocked(fs.open).mockImplementationOnce(async (...args: Parameters<typeof fs.open>) => {
+      const handle = await actual.open(...args);
+      return {
+        writeFile: async (): Promise<void> => {
+          throw writeErr;
+        },
+        close: async (): Promise<void> => {
+          await handle.close();
+          throw closeErr;
+        },
+      } as unknown as fs.FileHandle;
+    });
+
+    let caught: unknown;
+    try {
+      await writeExportArtifact(target, "CONTENT", false);
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(CliUserError);
+    // The actionable writeFile error propagates as the cause — the close rejection
+    // in the finally must not shadow it.
+    expect((caught as CliUserError).cause).toBe(writeErr);
+  });
+
+  it("writeExportArtifact --force preserves the writeFile error as the close error's cause when both reject (#2101)", async () => {
+    const actual = await vi.importActual<typeof fs>("node:fs/promises");
+    const target = path.join(testHome, "force-both-fail.md");
+    const writeErr = Object.assign(new Error("ENOSPC: no space left on device, write"), {
+      code: "ENOSPC",
+    });
+    const closeErr = Object.assign(new Error("EIO: i/o error, close"), { code: "EIO" });
+    // The O_EXCL temp sibling lands, then BOTH its write and close reject. The
+    // close rejection surfaces (try/finally), but the more actionable writeFile
+    // root cause must be preserved as the close error's `.cause` rather than lost.
+    vi.mocked(fs.open).mockImplementationOnce(async (...args: Parameters<typeof fs.open>) => {
+      const handle = await actual.open(...args);
+      return {
+        writeFile: async (): Promise<void> => {
+          throw writeErr;
+        },
+        close: async (): Promise<void> => {
+          await handle.close();
+          throw closeErr;
+        },
+      } as unknown as fs.FileHandle;
+    });
+
+    let caught: unknown;
+    try {
+      await writeExportArtifact(target, "CONTENT", true);
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(CliUserError);
+    // The surfaced fs error is the close rejection...
+    expect((caught as CliUserError).cause).toBe(closeErr);
+    // ...but the writeFile root cause is preserved on it rather than dropped.
+    expect(closeErr.cause).toBe(writeErr);
   });
 
   // #1966: the CliUserError-path stderr oracle in the #1887 tests was VACUOUS —
@@ -2233,7 +2472,10 @@ describe("buildExportCommand", () => {
     vi.mocked(fs.open).mockImplementationOnce(async (...args: Parameters<typeof fs.open>) => {
       const handle = await actual.open(...args);
       return {
-        writeFile: (data: string | Uint8Array): Promise<void> => handle.writeFile(data),
+        writeFile: (
+          data: string | Uint8Array,
+          options?: Parameters<fs.FileHandle["writeFile"]>[1],
+        ): Promise<void> => handle.writeFile(data, options),
         close: async (): Promise<void> => {
           await handle.close();
           throw closeErr;
