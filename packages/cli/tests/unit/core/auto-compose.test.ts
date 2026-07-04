@@ -1271,6 +1271,36 @@ describe("autoComposePanel", () => {
       // Cleanup was still attempted despite failing.
       expect(engine.removedExperts).toContain(engine.addedSpecs[0]?.id ?? "");
     });
+
+    it("logs the discarded cleanup failure when a primary error is already latched (#2213)", async () => {
+      // Double fault: the composer send fails (primary error latched) AND the
+      // subsequent removeExpert() cleanup rejects. The primary error still wins
+      // (asserted above), but the cleanup failure must not vanish silently — it
+      // is logged so an operator can see BOTH faults during triage (#2213).
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      try {
+        const engine = new StubEngine({
+          response: "",
+          errorEvent: { code: "INTERNAL", message: "primary boom" },
+          failOnRemoveExpert: "cleanup exploded",
+        });
+        await engine.start();
+
+        await expect(autoComposePanel("topic", engine)).rejects.toThrow(/primary boom/);
+
+        const cleanupWarn = warnSpy.mock.calls.find(
+          ([first]) =>
+            typeof first === "string" &&
+            first.includes("removeExpert cleanup failed while propagating primary error"),
+        );
+        expect(cleanupWarn).toBeDefined();
+        // The discarded cleanup error is passed through so it is inspectable.
+        expect(cleanupWarn?.[1]).toBeInstanceOf(Error);
+        expect((cleanupWarn?.[1] as Error).message).toBe("cleanup exploded");
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
   });
 
   describe("propagates a thrown undefined without masking it (#1928 G-2)", () => {
