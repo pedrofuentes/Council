@@ -598,3 +598,119 @@ describe("formatScanSummary — AI fallback + needs-review (T-AIPIPE)", () => {
     expect(reviewLine).toContain(".xyz)");
   });
 });
+
+describe("formatScanSummary — detail line cap (#977)", () => {
+  it("truncates per-file detail beyond 50 lines with an '…and N more' summary", () => {
+    const files: ScanFileDetail[] = [];
+    for (let i = 0; i < 60; i++) {
+      files.push(detail({ filename: `doc-${i}.md`, status: "indexed", wordCount: 10 }));
+    }
+    const result: ScanResult = {
+      indexed: 60,
+      modified: 0,
+      unchanged: 0,
+      failed: 0,
+      files,
+    };
+    const out = formatScanSummary(result);
+    const lines = out.split("\n").filter((l) => l.length > 0);
+
+    // 50 detail lines + 1 truncation summary line.
+    expect(lines.length).toBe(51);
+    expect(out).toContain("doc-0.md");
+    expect(out).toContain("doc-49.md");
+    expect(out).not.toContain("doc-50.md");
+    expect(out).not.toContain("doc-59.md");
+    // 60 - 50 = 10 hidden files, pluralized.
+    expect(out).toMatch(/and 10 more files/);
+  });
+
+  it("does not truncate when detail lines are at or below the cap", () => {
+    const files: ScanFileDetail[] = [];
+    for (let i = 0; i < 50; i++) {
+      files.push(detail({ filename: `f-${i}.md`, status: "indexed", wordCount: 10 }));
+    }
+    const result: ScanResult = {
+      indexed: 50,
+      modified: 0,
+      unchanged: 0,
+      failed: 0,
+      files,
+    };
+    const out = formatScanSummary(result);
+    const lines = out.split("\n").filter((l) => l.length > 0);
+
+    expect(lines.length).toBe(50);
+    expect(out).not.toMatch(/\bmore\b/);
+  });
+
+  it("keeps the aggregate unchanged line and does not count it toward the cap", () => {
+    const files: ScanFileDetail[] = [];
+    for (let i = 0; i < 55; i++) {
+      files.push(detail({ filename: `d-${i}.md`, status: "indexed", wordCount: 10 }));
+    }
+    files.push(detail({ filename: "cached.md", status: "unchanged" }));
+    const result: ScanResult = {
+      indexed: 55,
+      modified: 0,
+      unchanged: 1,
+      failed: 0,
+      files,
+    };
+    const out = formatScanSummary(result);
+    const lines = out.split("\n").filter((l) => l.length > 0);
+
+    // 1 unchanged aggregate + 50 detail lines + 1 truncation line.
+    expect(lines.length).toBe(52);
+    expect(lines[0]).toMatch(/1 file unchanged/);
+    expect(out).toMatch(/and 5 more files/);
+  });
+});
+
+describe("formatScanSummary — untrusted filename sanitization (#1040)", () => {
+  it("collapses CR/LF in a failed-file filename so the line stays single-line", () => {
+    const result: ScanResult = {
+      indexed: 0,
+      modified: 0,
+      unchanged: 0,
+      failed: 1,
+      files: [
+        detail({
+          filename: "evil\r\nInjected: fake",
+          extension: ".md",
+          status: "failed",
+          errorKind: "corrupt-document",
+        }),
+      ],
+    };
+    const out = formatScanSummary(result);
+
+    // No raw CR/LF from the untrusted filename may leak into terminal output.
+    expect(out).not.toContain("\r");
+    expect(out).not.toContain("\n");
+    const lines = out.split("\n").filter((l) => l.length > 0);
+    expect(lines.length).toBe(1);
+    // CRLF run collapses to a single space; the friendly message remains.
+    expect(lines[0]).toContain("evil Injected: fake");
+    expect(lines[0]).toContain("File appears corrupted");
+  });
+
+  it("strips ANSI escape sequences from an indexed-file filename", () => {
+    const result: ScanResult = {
+      indexed: 1,
+      modified: 0,
+      unchanged: 0,
+      failed: 0,
+      files: [
+        detail({
+          filename: "report\u001b[31m.md",
+          status: "indexed",
+          wordCount: 10,
+        }),
+      ],
+    };
+    const out = formatScanSummary(result);
+    expect(out).not.toContain("\u001b");
+    expect(out).toContain("report.md");
+  });
+});
