@@ -6,6 +6,7 @@ import {
   emptyExpertForm,
   expertToForm,
   mapPathToField,
+  REQUIRED_EXPERT_FORM_FIELDS,
   validateExpertForm,
   type BuildResult,
   type ExpertFormValues,
@@ -172,6 +173,28 @@ describe("expertToForm", () => {
       personaDescription: "",
       model: "",
     });
+  });
+});
+
+describe("REQUIRED_EXPERT_FORM_FIELDS", () => {
+  it("lists exactly the fields validateExpertForm requires", () => {
+    expect([...REQUIRED_EXPERT_FORM_FIELDS].sort()).toEqual(
+      ["displayName", "epistemicStance", "role", "slug", "weightedEvidence"].sort(),
+    );
+  });
+
+  it("stays in sync with the fields validateExpertForm rejects when blank", () => {
+    expect(validateExpertForm(validForm()).ok).toBe(true);
+
+    for (const field of REQUIRED_EXPERT_FORM_FIELDS) {
+      const errors = expectErrors(
+        validateExpertForm(validForm({ [field]: "" } as Partial<ExpertFormValues>)),
+      );
+      expect(errors.some((e) => e.field === field)).toBe(true);
+    }
+
+    // A non-required field stays valid when blank, guarding against over-listing.
+    expect(validateExpertForm(validForm({ referenceCases: "" })).ok).toBe(true);
   });
 });
 
