@@ -1784,7 +1784,7 @@ function buildDocsUnlinkCommand(write: Writer, writeError: Writer): Command {
           } catch {
             /* swallow rollback errors so the original failure is preserved */
           }
-          const detail = err instanceof Error ? err.message : String(err);
+          const detail = toSingleLineDisplay(err instanceof Error ? err.message : String(err));
           const msg =
             `Unlink aborted for ${displayPath(absolute)}: failed to clean up FTS ` +
             `index and/or metadata (${detail}). Linked folder preserved; re-run ` +
