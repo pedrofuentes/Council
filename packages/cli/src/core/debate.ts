@@ -298,6 +298,8 @@ export class Debate {
     const strategy = this.config.strategy ?? createRoundRobinStrategy();
     const counters: RunCounters = {
       premiumRequests: 0,
+      // Lower-bound estimate: scheduled expert turns only (experts × rounds).
+      // Quality-gate regenerations can add premiumRequests beyond this value.
       estimatedTotal: this.experts.length * this.config.maxRounds,
     };
 
@@ -877,7 +879,8 @@ export class Debate {
 
     // Count the original send for this turn. In `regenerate` mode any extra
     // regeneration sends were already counted inside #regenerateUntilPass
-    // (#1513), so this single cost.update reflects original + regenerations.
+    // (#1513), so this single cost.update intentionally reflects original +
+    // regenerations after the accepted candidate is known.
     counters.premiumRequests += 1;
     yield {
       kind: "cost.update",
@@ -1140,7 +1143,8 @@ export class Debate {
       );
       // This regeneration issued a premium-incurring send (#1513) — count it.
       // Engine-error retries inside #streamWithRetry are the same logical send
-      // and are intentionally NOT counted here.
+      // and are intentionally NOT counted here. cost.update is intentionally
+      // emitted once per turn after regenerations complete, not per attempt.
       counters.premiumRequests += 1;
       if (outcome.turnFailed || outcome.emptyAfterRetry || outcome.content.length === 0) {
         break; // keep the best candidate so far
