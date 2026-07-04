@@ -767,6 +767,42 @@ describe("xlsx extractor - sheet name injection (#1282)", () => {
   });
 });
 
+describe("xlsx extractor - line-separator sanitization (#1295, #1210)", () => {
+  afterEach(() => {
+    vi.doUnmock(READER_PATH);
+    vi.resetModules();
+  });
+
+  it("collapses NEL/LS/PS separators in sheet names, not just CR/LF", async () => {
+    // U+0085 (NEL), U+2028 (LS) and U+2029 (PS) are Unicode
+    // line-terminator/next-line characters. They do not create CommonMark
+    // line breaks, but an LLM consuming the extracted text may still read
+    // them as document structure, so an attacker-controlled sheet name
+    // must have them collapsed like CR/LF rather than surfaced verbatim
+    // into a `## ` heading and metadata.sheetNames.
+    vi.resetModules();
+    mockReader([{ name: "A\u0085B\u2028C\u2029D", rows: [["x"]] }]);
+    const extractor = await loadReaderMockedExtractor();
+    const out = await extractor(ctx(tinyValidXlsxZip()));
+    expect(out.metadata?.sheetNames).toEqual(["A B C D"]);
+    expect(out.content).toContain("## A B C D");
+    expect(out.content).not.toMatch(/[\u0085\u2028\u2029]/);
+  });
+
+  it("collapses a lone CR and NEL/LS/PS in cell values, not just CRLF/LF", async () => {
+    // escapeCell previously matched only `\r?\n`, leaving a bare CR and
+    // the Unicode separators intact — enough to visually fracture a
+    // Markdown table row when the content is rendered in a terminal.
+    // Collapse the full line-separator class into a single space.
+    vi.resetModules();
+    mockReader([{ name: "S", rows: [["col"], ["a\rb\u0085c\u2028d\u2029e"]] }]);
+    const extractor = await loadReaderMockedExtractor();
+    const out = await extractor(ctx(tinyValidXlsxZip()));
+    expect(out.content).toContain("| a b c d e |");
+    expect(out.content).not.toMatch(/[\r\u0085\u2028\u2029]/);
+  });
+});
+
 describe("xlsx extractor - missing worksheet entry (#1283)", () => {
   it("missing declared worksheet entry throws corrupt-document", async () => {
     // A workbook declares a sheet whose worksheet part is absent from the
