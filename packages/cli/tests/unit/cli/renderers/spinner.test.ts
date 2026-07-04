@@ -124,12 +124,27 @@ describe("createSpinner", () => {
     spinner.stop();
   });
 
-  it("uses the stream's isTTY flag by default", () => {
+  it("restarting an active spinner clears the previous interval (#1279)", () => {
+    vi.useFakeTimers();
     const stream = makeStream(true);
-    const spinner = createSpinner({ stream });
+    const spinner = createSpinner({ stream, intervalMs: 80 });
 
-    spinner.start("Y");
-    expect(stream.writes.length).toBeGreaterThan(0);
+    spinner.start("First");
+    // Re-start while active: the `if (active) stop()` guard must tear down the
+    // prior interval first, emitting a CLEAR_LINE and leaving exactly one timer.
+    spinner.start("Second");
+
+    expect(stream.writes).toContain("\r\x1b[2K");
+
+    const writesBeforeTick = stream.writes.length;
+    vi.advanceTimersByTime(80);
+
+    // A single live interval renders exactly one frame per tick, all labelled
+    // "Second". A leaked first interval would also render a "First" frame.
+    const newWrites = stream.writes.slice(writesBeforeTick);
+    expect(newWrites).toHaveLength(1);
+    expect(newWrites[0]).toContain("Second");
+    expect(newWrites[0]).not.toContain("First");
 
     spinner.stop();
   });

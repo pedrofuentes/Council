@@ -50,7 +50,7 @@
           "doctor"
         ],
         "commandPath": "council doctor",
-        "description": "Diagnose Council setup (Node, libsql, Copilot SDK, disk)",
+        "description": "Diagnose Council setup (Node, node:sqlite, Copilot SDK, Copilot CLI, disk)",
         "aliases": [],
         "usage": "[options]",
         "arguments": [],

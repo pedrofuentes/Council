@@ -14,12 +14,15 @@ import {
   getCouncilDataHome,
   getCouncilHome,
   loadConfig,
+  type CouncilConfig,
 } from "../../config/index.js";
 import {
   checkCopilotCliPath,
   discoverAvailableModels,
   pingProviderHealth,
   resolveCopilotCliPath,
+  type CopilotCliPathCheck,
+  type CopilotCliPathStatus,
   type ModelDiscoveryResult,
 } from "../../engine/copilot/health.js";
 import {
@@ -73,6 +76,42 @@ export interface DoctorDeps {
   readonly discoverModels?: () => Promise<ModelDiscoveryResult>;
   readonly createSpinner?: () => Spinner;
   readonly resolveCliPath?: () => string | undefined;
+  readonly loadConfig?: () => Promise<CouncilConfig>;
+  readonly openSqliteDatabase?: () => Promise<SqliteProbeDatabase>;
+}
+
+/**
+ * Wrap an async loader so it runs at most once per `doctor` invocation and
+ * every caller shares that single result (or rejection). `doctor` reads the
+ * config from several checks and the summary; memoizing here keeps those to a
+ * single disk read while preserving each caller's own error handling.
+ */
+function memoizeAsync<T>(load: () => Promise<T>): () => Promise<T> {
+  let cached: Promise<T> | undefined;
+  return () => (cached ??= load());
+}
+
+/**
+ * Wrap a synchronous computation so it runs at most once per invocation,
+ * caching either its value or the error it threw. Later callers replay the same
+ * outcome, so a probe like the Copilot CLI resolver is invoked exactly once even
+ * when it throws (#1365) while still surfacing that failure to every caller.
+ */
+function memoizeSync<T>(compute: () => T): () => T {
+  let settled: { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: unknown } | undefined;
+  return () => {
+    if (settled === undefined) {
+      try {
+        settled = { ok: true, value: compute() };
+      } catch (error) {
+        settled = { ok: false, error };
+      }
+    }
+    if (settled.ok) {
+      return settled.value;
+    }
+    throw settled.error;
+  };
 }
 
 interface LabeledCheck {
@@ -112,7 +151,9 @@ async function checkCouncilHome(): Promise<CheckResult> {
   }
 }
 
-async function resolveDoctorDataHome(): Promise<string> {
+async function resolveDoctorDataHome(
+  loadConfig: NonNullable<DoctorDeps["loadConfig"]>,
+): Promise<string> {
   try {
     const config = await loadConfig();
     return getCouncilDataHome(config);
@@ -130,8 +171,10 @@ async function resolveDoctorDataHome(): Promise<string> {
  */
 const DATA_HOME_WRITE_SUBDIRS = ["experts", "panels"] as const;
 
-async function checkCouncilDataHome(): Promise<CheckResult> {
-  const dataHome = await resolveDoctorDataHome();
+async function checkCouncilDataHome(
+  loadConfig: NonNullable<DoctorDeps["loadConfig"]>,
+): Promise<CheckResult> {
+  const dataHome = await resolveDoctorDataHome(loadConfig);
   try {
     await ensureDataDirectories(dataHome);
   } catch (err: unknown) {
@@ -143,21 +186,26 @@ async function checkCouncilDataHome(): Promise<CheckResult> {
   }
   // Probe the data-home root and every runtime write target so a read-only
   // experts/ or panels/ subdirectory surfaces here instead of only failing at
-  // the first real expert/panel save.
+  // the first real expert/panel save. Collect every failure so a single run
+  // reports all broken targets rather than stopping at the first (#1992).
   const writeTargets = [
     dataHome,
     ...DATA_HOME_WRITE_SUBDIRS.map((subdir) => path.join(dataHome, subdir)),
   ];
+  const unwritable: string[] = [];
   for (const target of writeTargets) {
     try {
       await probeDirectoryWritable(target);
     } catch (err: unknown) {
-      return {
-        name: "Council data home",
-        status: "fail",
-        detail: `cannot write under ${target}: ${formatError(err)}`,
-      };
+      unwritable.push(`${target}: ${formatError(err)}`);
     }
+  }
+  if (unwritable.length > 0) {
+    return {
+      name: "Council data home",
+      status: "fail",
+      detail: `cannot write under ${unwritable.join("; ")}`,
+    };
   }
   return { name: "Council data home", status: "pass", detail: dataHome };
 }
@@ -241,12 +289,19 @@ async function probeDirectoryWritable(dir: string): Promise<void> {
   );
 }
 
-async function checkSqlite(): Promise<CheckResult> {
+async function checkSqlite(
+  openDatabase: NonNullable<DoctorDeps["openSqliteDatabase"]>,
+): Promise<CheckResult> {
   try {
-    const { DatabaseSync } = await import("node:sqlite");
-    const database = new DatabaseSync(":memory:");
-    database.prepare("SELECT 1").get();
-    database.close();
+    const database = await openDatabase();
+    // Once construction succeeds the handle owns a native resource, so close it
+    // in a finally even if the probe query throws — otherwise a failed prepare/
+    // get would leak the connection (#1265).
+    try {
+      database.prepare("SELECT 1").get();
+    } finally {
+      database.close();
+    }
     return { name: "SQLite (node:sqlite)", status: "pass", detail: "in-memory DB OK" };
   } catch (err: unknown) {
     return {
@@ -255,6 +310,17 @@ async function checkSqlite(): Promise<CheckResult> {
       detail: formatError(err),
     };
   }
+}
+
+/** Minimal surface `doctor` needs from a `node:sqlite` handle for its probe. */
+interface SqliteProbeDatabase {
+  prepare(sql: string): { get(): unknown };
+  close(): void;
+}
+
+async function openSqliteProbeDatabase(): Promise<SqliteProbeDatabase> {
+  const { DatabaseSync } = await import("node:sqlite");
+  return new DatabaseSync(":memory:");
 }
 
 async function checkCopilotSdk(): Promise<CheckResult> {
@@ -266,17 +332,11 @@ async function checkCopilotSdk(): Promise<CheckResult> {
   };
 }
 
-async function checkCopilotCli(
-  resolveCliPath: NonNullable<DoctorDeps["resolveCliPath"]>,
-): Promise<CheckResult> {
-  const probe = checkCopilotCliPath({
-    override: process.env.COPILOT_CLI_PATH,
-    resolvedPath: resolveCliPath(),
-  });
+async function checkCopilotCli(cliCheck: CopilotCliPathCheck): Promise<CheckResult> {
   return {
     name: "Copilot CLI",
-    status: probe.status === "needs-remediation" ? "fail" : "pass",
-    detail: probe.detail,
+    status: cliCheck.status === "needs-remediation" ? "fail" : "pass",
+    detail: cliCheck.detail,
   };
 }
 
@@ -298,6 +358,7 @@ async function checkDefaultModelAccess(
   onlineProbe: NonNullable<DoctorDeps["onlineProbe"]>,
   discoverModels: NonNullable<DoctorDeps["discoverModels"]>,
   timeoutMs: number,
+  loadConfig: NonNullable<DoctorDeps["loadConfig"]>,
 ): Promise<CheckResult> {
   const configPath = getConfigPath();
 
@@ -419,8 +480,11 @@ async function buildModelAccessFailureDetail(
       "   \n" +
       `   Fix: council config set defaults.model ${alternatives[0]}`
     );
-  } catch {
-    return failureDetail;
+  } catch (err: unknown) {
+    // Remediation-time discovery failed. Surface a brief note so the degraded
+    // path is diagnosable (#751) instead of silently hiding the secondary
+    // failure behind the base access error.
+    return `${failureDetail}\n   (could not list alternative models: ${formatError(err)})`;
   }
 }
 
@@ -438,6 +502,8 @@ function resolveDoctorDeps(input: DoctorDeps | Writer): Required<DoctorDeps> {
     discoverModels: deps.discoverModels ?? discoverAvailableModels,
     createSpinner: deps.createSpinner ?? createSpinner,
     resolveCliPath: deps.resolveCliPath ?? resolveCopilotCliPath,
+    loadConfig: deps.loadConfig ?? loadConfig,
+    openSqliteDatabase: deps.openSqliteDatabase ?? openSqliteProbeDatabase,
   };
 }
 
@@ -494,10 +560,12 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
     discoverModels,
     createSpinner: makeSpinner,
     resolveCliPath,
+    loadConfig: loadConfigDep,
+    openSqliteDatabase,
   } = resolveDoctorDeps(input);
   const cmd = new Command("doctor");
   cmd
-    .description("Diagnose Council setup (Node, libsql, Copilot SDK, disk)")
+    .description("Diagnose Council setup (Node, node:sqlite, Copilot SDK, Copilot CLI, disk)")
     .option("--online", "No-op; online check now runs by default (backwards compatibility)")
     .option("--offline", "Skip online model probe")
     .option("--models", "List available Copilot models (live discovery with static fallback)")
@@ -506,13 +574,30 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
       "Emit a sanitized diagnostic report for bug reports (json|markdown)",
     )
     .action(async (options: DoctorOptions) => {
+      // Resolve config once per invocation and thread the shared loader into
+      // every check and summary section so it is read from disk only once.
+      const loadConfigOnce = memoizeAsync(loadConfigDep);
+      // Likewise cache model discovery: a failed default-model probe discovers
+      // alternatives and `--models` lists them, but both must share one probe.
+      const discoverModelsOnce = memoizeAsync(discoverModels);
+      // Probe the Copilot CLI path lazily and at most once: the "Copilot CLI"
+      // check and the report's `copilotCliPathStatus` field both read it, so a
+      // single capture avoids a duplicate resolve (#1365). Computing it inside
+      // the check's `run` (not eagerly) keeps a throwing resolver contained to
+      // the report loop's per-check guard (#1364).
+      const getCopilotCliCheck = memoizeSync(() =>
+        checkCopilotCliPath({
+          override: process.env.COPILOT_CLI_PATH,
+          resolvedPath: resolveCliPath(),
+        }),
+      );
       const checks: LabeledCheck[] = [
         { label: "Node.js version", run: checkNodeVersion },
         { label: "Council home", run: checkCouncilHome },
-        { label: "Council data home", run: checkCouncilDataHome },
-        { label: "SQLite (node:sqlite)", run: checkSqlite },
+        { label: "Council data home", run: () => checkCouncilDataHome(loadConfigOnce) },
+        { label: "SQLite (node:sqlite)", run: () => checkSqlite(openSqliteDatabase) },
         { label: "Copilot SDK", run: checkCopilotSdk },
-        { label: "Copilot CLI", run: () => checkCopilotCli(resolveCliPath) },
+        { label: "Copilot CLI", run: () => checkCopilotCli(getCopilotCliCheck()) },
         { label: "Disk write", run: checkDiskSpace },
       ];
 
@@ -520,7 +605,13 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
       if (!options.offline) {
         checks.push({
           label: "Default model access",
-          run: () => checkDefaultModelAccess(onlineProbe, discoverModels, onlineProbeTimeoutMs),
+          run: () =>
+            checkDefaultModelAccess(
+              onlineProbe,
+              discoverModelsOnce,
+              onlineProbeTimeoutMs,
+              loadConfigOnce,
+            ),
         });
       }
 
@@ -537,17 +628,27 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
           return;
         }
         const reportChecks: DoctorReportCheck[] = [];
-        for (const { run } of checks) {
-          const result = await run();
-          reportChecks.push({ name: result.name, status: result.status });
+        // Guard every check so one throwing probe cannot abort the whole
+        // report — a failed check still lands as an explicit `fail` (#1364).
+        for (const { label, run } of checks) {
+          try {
+            const result = await run();
+            reportChecks.push({ name: result.name, status: result.status });
+          } catch {
+            reportChecks.push({ name: label, status: "fail" });
+          }
         }
-        const copilotCliPathStatus = checkCopilotCliPath({
-          override: process.env.COPILOT_CLI_PATH,
-          resolvedPath: resolveCliPath(),
-        }).status;
+        // Reuse the single Copilot CLI probe (#1365); if it threw, the report
+        // still ships with the safe needs-remediation category (#1364).
+        let copilotCliPathStatus: CopilotCliPathStatus;
+        try {
+          copilotCliPathStatus = getCopilotCliCheck().status;
+        } catch {
+          copilotCliPathStatus = "needs-remediation";
+        }
         let telemetryEnabled = false;
         try {
-          telemetryEnabled = (await loadConfig()).telemetry.enabled;
+          telemetryEnabled = (await loadConfigOnce()).telemetry.enabled;
         } catch {
           telemetryEnabled = false;
         }
@@ -587,14 +688,14 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
       // Configuration section (DX-09)
       write("\n");
       try {
-        const config = await loadConfig();
+        const config = await loadConfigOnce();
         const configFilePath = path.join(getCouncilHome(), CONFIG_FILE);
         const dataHome = getCouncilDataHome(config);
         const sym2 = getSymbols();
         write(
           `${sym2.pass} Config\n` +
             `   Path: ${configFilePath}\n` +
-            `   Data home: ${dataHome}\n` +
+            `   Data home: ${toSingleLineDisplay(dataHome)}\n` +
             `   Engine: ${config.defaults.engine} | Model: ${config.defaults.model} | Rounds: ${config.defaults.maxRounds}\n`,
         );
       } catch {
@@ -619,7 +720,7 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
       write(`   Columns: ${process.stdout.columns ?? "(unknown)"}\n`);
 
       if (options.models) {
-        const modelDiscovery = await discoverModels();
+        const modelDiscovery = await discoverModelsOnce();
         write("\n");
         write(formatAvailableModels(modelDiscovery.models, modelDiscovery.source));
       }

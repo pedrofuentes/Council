@@ -7,6 +7,7 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { loadConfig as realLoadConfig } from "../../../../src/config/index.js";
 import { buildDoctorCommand, checkNodeVersion } from "../../../../src/cli/commands/doctor.js";
 import type { Writer } from "../../../../src/cli/commands/writer.js";
 
@@ -26,6 +27,11 @@ interface DoctorDepsLike {
   }>;
   readonly createSpinner?: () => SpinnerLike;
   readonly resolveCliPath?: () => string | undefined;
+  readonly loadConfig?: () => Promise<unknown>;
+  readonly openSqliteDatabase?: () => Promise<{
+    prepare(sql: string): { get(): unknown };
+    close(): void;
+  }>;
 }
 
 const buildDoctorCommandWithDeps = buildDoctorCommand as unknown as (
@@ -127,6 +133,20 @@ describe("buildDoctorCommand", () => {
     expect(output).toContain("Fix: council config set defaults.model claude-sonnet-4.5");
   });
 
+  it("doctor caches model discovery across the probe fallback and --models (#752)", async () => {
+    const onlineProbe = vi.fn(async () => ({ ok: false, detail: "model not found" }));
+    const discoverModels = vi.fn(async () => ({
+      models: ["claude-sonnet-4.5", "gpt-5.4"],
+      source: "live" as const,
+    }));
+
+    await runDoctor(["--models"], { onlineProbe, discoverModels });
+
+    // A failed probe discovers alternatives AND --models lists models; both must
+    // reuse a single discovery within one invocation instead of probing twice.
+    expect(discoverModels).toHaveBeenCalledTimes(1);
+  });
+
   it("doctor with thrown probe still shows alternatives", async () => {
     const onlineProbe = vi.fn(async () => {
       throw new Error("session creation failed");
@@ -148,7 +168,7 @@ describe("buildDoctorCommand", () => {
     expect(output).toContain("Fix: council config set defaults.model gpt-5.4");
   });
 
-  it("doctor with failed probe degrades gracefully when model discovery throws", async () => {
+  it("doctor surfaces a note when model discovery fails during remediation (#751)", async () => {
     const onlineProbe = vi.fn(async () => ({ ok: false, detail: "model not found" }));
     const discoverModels = vi.fn(async () => {
       throw new Error("discovery unavailable");
@@ -161,8 +181,11 @@ describe("buildDoctorCommand", () => {
     expect(output).toContain(
       "Default model (claude-sonnet-4.5) is not accessible: model not found",
     );
+    // Degrades gracefully: no alternatives block, base error preserved.
     expect(output).not.toContain("Available alternatives:");
-    expect(output).not.toContain("discovery unavailable");
+    // #751: the secondary discovery failure is surfaced so the degraded path
+    // is diagnosable rather than silently swallowed.
+    expect(output).toContain("discovery unavailable");
   });
 
   it("doctor bounds a hung online probe with a timeout instead of hanging", async () => {
@@ -320,6 +343,50 @@ describe("buildDoctorCommand", () => {
       }
     },
   );
+
+  it.skipIf(isPrivileged)(
+    "doctor reports every unwritable write target, not just the first (#1992)",
+    async () => {
+      const customDataHome = path.join(testHome, "multi-readonly-data-home");
+      await fs.mkdir(path.join(customDataHome, "experts"), { recursive: true });
+      await fs.mkdir(path.join(customDataHome, "panels"), { recursive: true });
+      process.env["COUNCIL_DATA_HOME"] = customDataHome;
+      // Both runtime write targets are read-only. A first-catch-return would
+      // only surface experts/, hiding that panels/ is broken too.
+      await fs.chmod(path.join(customDataHome, "experts"), 0o500);
+      await fs.chmod(path.join(customDataHome, "panels"), 0o500);
+
+      try {
+        const output = await runDoctor(["--offline"]);
+
+        expect(output).toContain(path.join(customDataHome, "experts"));
+        expect(output).toContain(path.join(customDataHome, "panels"));
+        expect(output).toContain("Some checks failed");
+      } finally {
+        await fs.chmod(path.join(customDataHome, "experts"), 0o700);
+        await fs.chmod(path.join(customDataHome, "panels"), 0o700);
+      }
+    },
+  );
+
+  it("doctor closes the sqlite probe database even when the query throws (#1265)", async () => {
+    const close = vi.fn();
+    const openSqliteDatabase = vi.fn(async () => ({
+      prepare: () => ({
+        get: () => {
+          throw new Error("sqlite probe boom");
+        },
+      }),
+      close,
+    }));
+
+    const output = await runDoctor(["--offline"], { openSqliteDatabase });
+
+    expect(openSqliteDatabase).toHaveBeenCalledTimes(1);
+    // The finally must run despite get() throwing, so the handle is never leaked.
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(output).toContain("sqlite probe boom");
+  });
 
   it("doctor passes the data home check when root, experts/ and panels/ are all writable (#1914)", async () => {
     const customDataHome = path.join(testHome, "writable-data-home");
@@ -612,6 +679,21 @@ describe("buildDoctorCommand", () => {
     expect(help).toMatch(/List available Copilot models \(live discovery with static\s+fallback\)/);
   });
 
+  it("doctor sanitizes control characters in the Config data-home path (#787)", async () => {
+    // Drop COUNCIL_HOME so the data home resolves from COUNCIL_DATA_HOME, which
+    // we seed with an embedded C0 control byte the display must strip.
+    delete process.env["COUNCIL_HOME"];
+    const rawDataHome = path.join(testHome, "data\u0001home");
+    process.env["COUNCIL_DATA_HOME"] = rawDataHome;
+
+    const output = await runDoctor(["--offline"]);
+    const dataHomeLine =
+      output.split("\n").find((line) => line.trimStart().startsWith("Data home:")) ?? "";
+
+    expect(dataHomeLine).toContain("Data home:");
+    expect(dataHomeLine).not.toContain("\u0001");
+  });
+
   it("doctor shows Configuration section with defaults", async () => {
     const onlineProbe = vi.fn(async () => ({ ok: true, detail: "ok" }));
     const output = await runDoctor([], { onlineProbe });
@@ -647,6 +729,25 @@ describe("buildDoctorCommand", () => {
     expect(output).toContain("Could not load configuration");
   });
 
+  it("doctor loads configuration once per invocation (#788)", async () => {
+    const loadConfig = vi.fn(realLoadConfig);
+    const onlineProbe = vi.fn(async () => ({ ok: true, detail: "ok" }));
+
+    await runDoctor([], { onlineProbe, loadConfig });
+
+    // Data-home resolution, the online model-access check, and the Config
+    // summary must share a single config read rather than re-loading it each.
+    expect(loadConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("doctor command description names node:sqlite and the Copilot CLI check (#1279, #1332)", () => {
+    const description = buildDoctorCommandWithDeps({}).description();
+
+    expect(description).toContain("node:sqlite");
+    expect(description).toContain("Copilot CLI");
+    expect(description).not.toContain("libsql");
+  });
+
   it("doctor drives the injected spinner around each check", async () => {
     const start = vi.fn();
     const stop = vi.fn();
@@ -659,9 +760,15 @@ describe("buildDoctorCommand", () => {
     // 7 base checks + 1 default-model-access check (online runs by default).
     expect(start).toHaveBeenCalledTimes(8);
     expect(stop).toHaveBeenCalledTimes(8);
-    expect(start).toHaveBeenCalledWith("Node.js version");
-    expect(start).toHaveBeenCalledWith("Copilot CLI");
-    expect(start).toHaveBeenCalledWith("Default model access");
+    // Assert every label so a renamed/reordered check surfaces here (#1279).
+    expect(start).toHaveBeenNthCalledWith(1, "Node.js version");
+    expect(start).toHaveBeenNthCalledWith(2, "Council home");
+    expect(start).toHaveBeenNthCalledWith(3, "Council data home");
+    expect(start).toHaveBeenNthCalledWith(4, "SQLite (node:sqlite)");
+    expect(start).toHaveBeenNthCalledWith(5, "Copilot SDK");
+    expect(start).toHaveBeenNthCalledWith(6, "Copilot CLI");
+    expect(start).toHaveBeenNthCalledWith(7, "Disk write");
+    expect(start).toHaveBeenNthCalledWith(8, "Default model access");
   });
 
   it("doctor report content is byte-identical whether or not a spinner is injected", async () => {
@@ -675,6 +782,31 @@ describe("buildDoctorCommand", () => {
     });
 
     expect(withSpinner).toBe(noSpinner);
+  });
+
+  it("doctor --report json completes with a fail entry when a check throws (#1364)", async () => {
+    const resolveCliPath = vi.fn(() => {
+      throw new Error("cli resolver boom");
+    });
+
+    const output = await runDoctor(["--report", "json", "--offline"], { resolveCliPath });
+
+    const parsed = JSON.parse(output) as {
+      checks: readonly { name: string; status: string }[];
+      copilotCliPathStatus: string;
+    };
+    const copilotCheck = parsed.checks.find((check) => check.name === "Copilot CLI");
+    expect(copilotCheck?.status).toBe("fail");
+    // The report field must still resolve to a safe category, not blow up.
+    expect(parsed.copilotCliPathStatus).toBe("needs-remediation");
+  });
+
+  it("doctor --report json probes the Copilot CLI path exactly once (#1365)", async () => {
+    const resolveCliPath = vi.fn(() => "/proj/node_modules/@github/copilot/npm-loader.js");
+
+    await runDoctor(["--report", "json", "--offline"], { resolveCliPath });
+
+    expect(resolveCliPath).toHaveBeenCalledTimes(1);
   });
 
   it("doctor passes the Copilot CLI check when the entry resolves", async () => {
