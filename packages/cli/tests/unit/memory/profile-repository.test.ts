@@ -10,6 +10,20 @@ import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js"
 import { ExpertLibraryRepository } from "../../../src/memory/repositories/expert-library-repo.js";
 import { ProfileRepository } from "../../../src/memory/repositories/profile-repository.js";
 import type { PersonaProfile } from "../../../src/core/documents/profile-analyzer.js";
+import { toSingleLineDisplay } from "../../../src/cli/strip-control-chars.js";
+
+const WARNING_VALUE_MAX_CHARS = 160;
+
+function truncateWarningValue(text: string): string {
+  const sanitized = toSingleLineDisplay(text);
+  return sanitized.length > WARNING_VALUE_MAX_CHARS
+    ? `${sanitized.slice(0, WARNING_VALUE_MAX_CHARS - 1)}…`
+    : sanitized;
+}
+
+function warnedMessage(warnSpy: ReturnType<typeof vi.spyOn>): string {
+  return String(warnSpy.mock.calls[0]?.[0] ?? "");
+}
 
 async function seedExpert(db: CouncilDatabase, slug = "ceo"): Promise<void> {
   const repo = new ExpertLibraryRepository(db);
@@ -90,45 +104,118 @@ describe("ProfileRepository", () => {
   });
 
   it("warns (does not silently coerce) when a stored JSON array column is corrupt (#362)", async () => {
-    await repo.upsert("ceo", sampleProfile());
+    const corruptSlug = "ceo\r\nspoof\t\u2028tail";
+    const corruptJson = `{not-json\r\n${"X".repeat(260)}\u2029tail`;
+    await seedExpert(db, corruptSlug);
+    await repo.upsert(corruptSlug, sampleProfile());
 
     await db
       .updateTable("persona_profiles")
-      .set({ decision_patterns: "{not-json" })
+      .set({ decision_patterns: corruptJson })
+      .where("expert_slug", "=", corruptSlug)
+      .execute();
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const found = await repo.findBySlug(corruptSlug);
+      expect(found).not.toBeNull();
+      expect(found?.decisionPatterns).toEqual([]);
+      expect(found?.communicationStyle).toBe(sampleProfile().communicationStyle);
+      expect(warnSpy).toHaveBeenCalled();
+      const msg = warnedMessage(warnSpy);
+      expect(msg).toMatch(/decision_patterns/);
+      expect(msg).toContain(truncateWarningValue(corruptSlug));
+      expect(msg).toContain(truncateWarningValue(corruptJson));
+      expect(msg).not.toContain(corruptJson);
+      expect(msg).not.toMatch(/[\r\n\t\u2028\u2029]/u);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("sanitizes JSON parse error messages before warning for corrupt stored arrays (#416)", async () => {
+    const corruptJson = "[\x1b[31mEVIL";
+    await repo.upsert("ceo", sampleProfile());
+    await db
+      .updateTable("persona_profiles")
+      .set({ decision_patterns: corruptJson })
       .where("expert_slug", "=", "ceo")
       .execute();
 
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const found = await repo.findBySlug("ceo");
-      expect(found).not.toBeNull();
       expect(found?.decisionPatterns).toEqual([]);
-      expect(found?.communicationStyle).toBe(sampleProfile().communicationStyle);
       expect(warnSpy).toHaveBeenCalled();
-      const msg = warnSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+      const msg = warnedMessage(warnSpy);
       expect(msg).toMatch(/decision_patterns/);
-      expect(msg).toMatch(/ceo/);
+      expect(msg).toContain(truncateWarningValue(corruptJson));
+      expect(msg).not.toContain("\x1b");
+      expect(msg).not.toMatch(/[\r\n]/u);
     } finally {
       warnSpy.mockRestore();
     }
   });
 
   it("warns when stored JSON parses to a non-array value (#362)", async () => {
+    const corruptSlug = "ceo\nnon-array\tspoof";
+    const corruptValue = `\r\n\t"a string, not an array ${"Y".repeat(260)}"\n`;
+    await seedExpert(db, corruptSlug);
+    await repo.upsert(corruptSlug, sampleProfile());
+    await db
+      .updateTable("persona_profiles")
+      .set({ biases: corruptValue })
+      .where("expert_slug", "=", corruptSlug)
+      .execute();
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const found = await repo.findBySlug(corruptSlug);
+      expect(found?.biases).toEqual([]);
+      expect(warnSpy).toHaveBeenCalled();
+      const msg = warnedMessage(warnSpy);
+      expect(msg).toMatch(/biases/);
+      expect(msg).toContain(truncateWarningValue(corruptSlug));
+      expect(msg).toContain(truncateWarningValue(corruptValue));
+      expect(msg).not.toContain(corruptValue);
+      expect(msg).not.toMatch(/[\r\n\t\u2028\u2029]/u);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("warns and recovers when stored vocabulary JSON is corrupt (#362)", async () => {
     await repo.upsert("ceo", sampleProfile());
     await db
       .updateTable("persona_profiles")
-      .set({ biases: '"a string, not an array"' })
+      .set({ vocabulary: "{not-json" })
       .where("expert_slug", "=", "ceo")
       .execute();
 
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const found = await repo.findBySlug("ceo");
-      expect(found?.biases).toEqual([]);
+      expect(found?.vocabulary).toEqual([]);
       expect(warnSpy).toHaveBeenCalled();
-      const msg = warnSpy.mock.calls.map((c) => c.join(" ")).join("\n");
-      expect(msg).toMatch(/biases/);
+      expect(warnedMessage(warnSpy)).toMatch(/vocabulary/);
     } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("uses String(err) when corrupt JSON parsing throws a non-Error value", async () => {
+    await repo.upsert("ceo", sampleProfile());
+    const parseSpy = vi.spyOn(JSON, "parse").mockImplementationOnce(() => {
+      throw "plain failure";
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const found = await repo.findBySlug("ceo");
+      expect(found?.decisionPatterns).toEqual([]);
+      expect(warnedMessage(warnSpy)).toContain("(plain failure)");
+      expect(warnedMessage(warnSpy)).not.toContain("(undefined)");
+    } finally {
+      parseSpy.mockRestore();
       warnSpy.mockRestore();
     }
   });
