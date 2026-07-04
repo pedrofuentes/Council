@@ -158,17 +158,22 @@ export interface OnDebateCompleteContext {
  * already succeeded or failed).
  */
 export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
-  const engine = opts.engineFactory ? opts.engineFactory() : makeEngineFromKind(opts.engineKind);
+  // Declared here so the `finally` can stop it, but constructed *inside* the
+  // try below so a synchronous construction failure (e.g. a coming-soon
+  // provider's ProviderNotAvailableError) is routed through `formatEngineError`
+  // like every other engine-init error rather than bypassing it (#1378).
+  let engine: CouncilEngine | undefined;
 
   try {
-    // Engine-init phase: start + register experts. Failures here are
-    // engine-originating, so they get the actionable `formatEngineError`
+    // Engine-init phase: construct + start + register experts. Failures here
+    // are engine-originating, so they get the actionable `formatEngineError`
     // hint (gh auth, rate-limit, model unavailable, etc.). Persist/render
     // failures are handled separately below — mapping a DB or renderer
     // error through the engine hints (e.g. "Engine error.") is misleading
     // (#195).
     let debate: Debate;
     try {
+      engine = opts.engineFactory ? opts.engineFactory() : makeEngineFromKind(opts.engineKind);
       await engine.start();
 
       const humanSlugs = opts.humanSlugs ?? new Set<string>();
@@ -207,6 +212,7 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
         const firstMsg = firstErr instanceof Error ? firstErr.message : String(firstErr);
         throw new Error(
           `could not register all experts (${failures.length}/${aiExperts.length} failed): ${firstMsg}`,
+          { cause: firstErr },
         );
       }
     } catch (err: unknown) {
@@ -282,7 +288,9 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
       }
     }
   } finally {
-    await engine.stop().catch((err: unknown) => {
+    // `engine` is undefined only when construction itself threw (handled
+    // above); the optional chain makes cleanup a no-op in that case.
+    await engine?.stop().catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
       opts.writeError(`!! engine.stop() failed during cleanup: ${msg}\n`);
     });
