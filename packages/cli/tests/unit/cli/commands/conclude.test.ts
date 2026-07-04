@@ -211,6 +211,8 @@ class RecordingSynthEngine implements CouncilEngine {
   #sends = 0;
   readonly #addedExpertIds: string[] = [];
   readonly #sentExpertIds: string[] = [];
+  readonly #removedExpertIds: string[] = [];
+  readonly #events: string[] = [];
 
   constructor(responses: readonly string[]) {
     this.#responses = [...responses];
@@ -231,6 +233,16 @@ class RecordingSynthEngine implements CouncilEngine {
     return this.#sentExpertIds;
   }
 
+  /** Expert ids released via `removeExpert()`, in call order. */
+  get removedExpertIds(): readonly string[] {
+    return this.#removedExpertIds;
+  }
+
+  /** Lifecycle events observed by the engine, in call order. */
+  get events(): readonly string[] {
+    return this.#events;
+  }
+
   async start(): Promise<void> {
     /* no-op */
   }
@@ -239,9 +251,11 @@ class RecordingSynthEngine implements CouncilEngine {
   }
   async addExpert(spec: ExpertSpec): Promise<void> {
     this.#addedExpertIds.push(spec.id);
+    this.#events.push(`add:${spec.id}`);
   }
-  async removeExpert(_expertId: string): Promise<void> {
-    /* no-op */
+  async removeExpert(expertId: string): Promise<void> {
+    this.#removedExpertIds.push(expertId);
+    this.#events.push(`remove:${expertId}`);
   }
   async listModels(): Promise<readonly string[]> {
     return ["mock-model"];
@@ -251,6 +265,7 @@ class RecordingSynthEngine implements CouncilEngine {
     this.#sends += 1;
     const expertId = opts.expertId;
     this.#sentExpertIds.push(expertId);
+    this.#events.push(`send:${expertId}`);
     const idx = Math.min(this.#sends - 1, this.#responses.length - 1);
     const text = this.#responses[idx] ?? "";
     return (async function* (): AsyncGenerator<EngineEvent, void, void> {
@@ -891,6 +906,14 @@ describe("buildConcludeCommand", () => {
     expect(engine.addedExpertIds[1]).not.toBe(SYNTH_ID);
     expect(engine.sentExpertIds).toEqual([SYNTH_ID, engine.addedExpertIds[1]]);
     expect(engine.sentExpertIds[1]).not.toBe(engine.sentExpertIds[0]);
+    expect(engine.removedExpertIds).toEqual([SYNTH_ID]);
+    expect(engine.events).toEqual([
+      `add:${SYNTH_ID}`,
+      `send:${SYNTH_ID}`,
+      `remove:${SYNTH_ID}`,
+      `add:${engine.addedExpertIds[1]}`,
+      `send:${engine.addedExpertIds[1]}`,
+    ]);
   });
 
   it("does NOT open a second synthesizer session when the first response parses (no spurious fresh session)", async () => {
@@ -1162,13 +1185,36 @@ describe("buildSynthesisPrompt — truncation reporting", () => {
       makeTranscriptDoc([makeTurn(0, "x".repeat(1000))]),
       maxTranscriptChars,
     );
-    const transcriptBody =
-      result.prompt.match(/<transcript>\n([\s\S]*)\n<\/transcript>/)?.[1] ?? "";
+    const transcriptMatch = result.prompt.match(/<transcript>\n([\s\S]*)\n<\/transcript>/);
+    expect(transcriptMatch).not.toBeNull();
+    const transcriptBody = transcriptMatch?.[1];
 
     expect(result.truncated).toBe(true);
     expect(result.truncatedByChars).toBe(true);
     expect(result.finalTurnCount).toBe(1);
+    expect(transcriptBody?.length).toBeLessThanOrEqual(maxTranscriptChars);
+  });
+
+  it("does not leave a lone surrogate when a single-turn hard truncation cuts through an emoji", () => {
+    const prefix = "[CTO] (round 0, seq 0):\n";
+    const maxTranscriptChars = prefix.length + 1;
+    const result = buildSynthesisPrompt(
+      makeTranscriptDoc([makeTurn(0, "😄tail")]),
+      maxTranscriptChars,
+    );
+    const transcriptMatch = result.prompt.match(/<transcript>\n([\s\S]*)\n<\/transcript>/);
+    expect(transcriptMatch).not.toBeNull();
+    const transcriptBody = transcriptMatch?.[1] ?? "";
+
+    expect(result.truncated).toBe(true);
+    expect(result.truncatedByChars).toBe(true);
     expect(transcriptBody.length).toBeLessThanOrEqual(maxTranscriptChars);
+    expect(
+      [...transcriptBody].every((char) => {
+        const codePoint = char.codePointAt(0);
+        return codePoint !== undefined && (codePoint < 0xd800 || codePoint > 0xdfff);
+      }),
+    ).toBe(true);
   });
 });
 
