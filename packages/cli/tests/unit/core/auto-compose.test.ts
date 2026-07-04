@@ -350,6 +350,29 @@ describe("autoComposePanel", () => {
     expect(engine.sentPrompts).toHaveLength(2);
   });
 
+  it("includes parse-error preview content beyond the first 200 characters (#227)", async () => {
+    // A no-JSON response whose diagnostic marker sits past the historical
+    // 200-char preview bound. Truncating at 200 chars would cut the marker (and
+    // any real parse-failure region) out of the surfaced error, so the preview
+    // must extend far enough to keep it (#227).
+    const marker = "DIAGNOSTIC-MARKER-PAST-200";
+    const prose = `${"x".repeat(300)}${marker} still no json here`;
+    const engine = new StubEngine({ responses: [prose, prose] });
+    await engine.start();
+
+    let thrown: unknown;
+    try {
+      await autoComposePanel("topic", engine);
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const message = (thrown as Error).message;
+    expect(message).toMatch(/did not return a JSON object/);
+    expect(message).toContain(marker);
+  });
+
   it("includes the topic in the prompt sent to the composer", async () => {
     const engine = new StubEngine({ response: JSON.stringify(validPanel) });
     await engine.start();
