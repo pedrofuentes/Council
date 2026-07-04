@@ -11,6 +11,7 @@ import * as path from "node:path";
 import * as fs from "node:fs/promises";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Kysely } from "kysely";
 
 import {
   buildChatCommand,
@@ -21,7 +22,7 @@ import { CliUserError } from "../../../../src/cli/cli-user-error.js";
 import { FileExpertLibrary } from "../../../../src/core/expert-library.js";
 import type { ExpertDefinition } from "../../../../src/core/expert.js";
 import type { ChatTurn } from "../../../../src/core/chat/chat-session.js";
-import { createDatabase } from "../../../../src/memory/db.js";
+import { createDatabase, type CouncilDatabase } from "../../../../src/memory/db.js";
 import { ChatRepository } from "../../../../src/memory/repositories/chat-repository.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";
 import type { CouncilEngine } from "../../../../src/engine/index.js";
@@ -523,6 +524,109 @@ describe("buildChatCommand", () => {
       const archivedRow = lines.find((l) => l.includes(archivedId));
       expect(archivedRow).toBeDefined();
       expect(archivedRow).not.toMatch(/^→/);
+    });
+
+    it("surfaces a diagnostic when the resolution DB cleanup fails, without aborting (#338)", async () => {
+      await seedExpert(env);
+      await withRepo(env, async (repo) => {
+        const a = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        await repo.addTurn({ chatId: a.id, role: "user", content: "healthy conversation" });
+        await repo.archiveSession(a.id);
+      });
+      // Force ONLY the first db.destroy() — the target-resolution connection in
+      // runHistory — to reject; the later withChatRepository destroy runs for
+      // real so the history view can still render.
+      const realDestroy = Kysely.prototype.destroy;
+      let firstDestroy = true;
+      const spy = vi.spyOn(Kysely.prototype, "destroy").mockImplementation(async function (
+        this: CouncilDatabase,
+      ) {
+        if (firstDestroy) {
+          firstDestroy = false;
+          throw new Error("simulated destroy failure");
+        }
+        await realDestroy.call(this);
+      });
+      try {
+        let err = "";
+        let out = "";
+        const cmd = buildChatCommand({
+          write: (s) => (out += s),
+          writeError: (s) => (err += s),
+        });
+        // The cleanup failure must NOT abort the command (it resolves)...
+        await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--history"]);
+        // ...and, for symmetry with runChat, it must surface a diagnostic.
+        expect(err).toContain("db.destroy() failed during cleanup");
+        expect(err).toContain("simulated destroy failure");
+        // The history view still renders despite the swallowed cleanup error.
+        expect(out.length).toBeGreaterThan(0);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("logs a sanitized, single-line warning when a per-session read fails instead of silently swallowing it (#1824)", async () => {
+      await seedExpert(env);
+      let badId = "";
+      await withRepo(env, async (repo) => {
+        const bad = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        badId = bad.id;
+        await repo.archiveSession(bad.id);
+      });
+      // A DB failure whose message embeds CR/LF and an ANSI escape: the warning
+      // must be collapsed to a single sanitized line before reaching the TTY,
+      // per the repo convention (untrusted DB-derived text → toSingleLineDisplay).
+      const spy = vi
+        .spyOn(ChatRepository.prototype, "getTurnCount")
+        .mockImplementation(async () => {
+          throw new Error("row read failed\r\n\u001b[31mINJECTED SECOND LINE\u001b[0m");
+        });
+      try {
+        let err = "";
+        const cmd = buildChatCommand({
+          write: () => undefined,
+          writeError: (s) => (err += s),
+        });
+        await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--history"]);
+        // The error is observable (not swallowed) and names the failing session.
+        expect(err).toContain(badId);
+        // Visible text of the error survives sanitization...
+        expect(err).toContain("row read failed");
+        expect(err).toContain("INJECTED SECOND LINE");
+        // ...but no raw ESC and no embedded CR/LF break out of the single line.
+        expect(err).not.toContain("\u001b");
+        const body = err.replace(/\n$/, "");
+        expect(body).not.toMatch(/[\r\n]/);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("truncates an astral (surrogate-pair) topic on code-point boundaries, not mid-surrogate (#1111)", async () => {
+      await seedExpert(env);
+      // 58 ASCII chars + astral emoji (each 2 UTF-16 code units). A naive
+      // `String.prototype.slice(0, 59)` cuts the first emoji's surrogate pair in
+      // half, emitting a lone high surrogate before the ellipsis; a code-point
+      // aware slice keeps whole emoji intact.
+      const topic = "A".repeat(58) + "😀".repeat(10);
+      await withRepo(env, async (repo) => {
+        const a = await repo.createSession({ targetType: "expert", targetSlug: "dahlia-cto" });
+        await repo.addTurn({ chatId: a.id, role: "user", content: "seed turn" });
+        await repo.updateSummary(a.id, topic, 1);
+        await repo.archiveSession(a.id);
+      });
+      let out = "";
+      const cmd = buildChatCommand({ write: (s) => (out += s) });
+      await cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--history"]);
+
+      // Code-point-correct truncation: first 59 code points + ellipsis, ending
+      // on a WHOLE emoji.
+      const codePointTruncated = `${[...topic].slice(0, 59).join("")}…`;
+      expect(out).toContain(codePointTruncated);
+      // The naive UTF-16 slice would leave a lone high surrogate before "…".
+      const highSurrogate = "😀".charAt(0);
+      expect(out).not.toContain(`${highSurrogate}…`);
     });
   });
 

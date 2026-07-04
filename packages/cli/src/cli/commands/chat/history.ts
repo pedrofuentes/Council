@@ -20,7 +20,7 @@ import {
   createDatabase,
   type Writer,
 } from "./shared.js";
-import { stripControlChars } from "../../strip-control-chars.js";
+import { stripControlChars, toSingleLineDisplay } from "../../strip-control-chars.js";
 import type { ChatRepository } from "../../../memory/repositories/chat-repository.js";
 import type { ChatSession } from "../../../core/chat/chat-session.js";
 
@@ -46,8 +46,12 @@ async function deriveTopic(repo: ChatRepository, session: ChatSession): Promise<
   if (collapsed.length === 0) {
     return "(no messages yet)";
   }
-  return collapsed.length > TOPIC_MAX_LENGTH
-    ? `${collapsed.slice(0, TOPIC_MAX_LENGTH - 1)}…`
+  // Truncate on Unicode code-point boundaries so an astral character (e.g. an
+  // emoji spanning a UTF-16 surrogate pair) is never split — a naive
+  // `String.prototype.slice` would emit a lone surrogate / replacement glyph.
+  const codePoints = [...collapsed];
+  return codePoints.length > TOPIC_MAX_LENGTH
+    ? `${codePoints.slice(0, TOPIC_MAX_LENGTH - 1).join("")}…`
     : collapsed;
 }
 
@@ -85,7 +89,10 @@ export async function runHistory(target: string, write: Writer, writeError: Writ
       }
     }
   } finally {
-    await db.destroy();
+    await db.destroy().catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      writeError(`!! db.destroy() failed during cleanup: ${msg}\n`);
+    });
   }
 
   await withChatRepository(async (repo) => {
@@ -121,7 +128,12 @@ export async function runHistory(target: string, write: Writer, writeError: Writ
           s.status,
           topic,
         ] as const;
-      } catch {
+      } catch (err: unknown) {
+        // Don't let one unreadable session blank the whole view, but DO surface
+        // the failure: emit a sanitized, single-line diagnostic (the error text
+        // and DB-derived id are untrusted) before falling back to a placeholder.
+        const detail = err instanceof Error ? err.message : String(err);
+        writeError(toSingleLineDisplay(`!! could not load session ${s.id}: ${detail}`) + "\n");
         return [
           marker,
           s.id,
