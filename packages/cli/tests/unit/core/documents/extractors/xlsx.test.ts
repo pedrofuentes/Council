@@ -8,7 +8,7 @@
  * not natively supported by exceljs; loading one should yield a
  * `corrupt-document` ExtractionError with a re-save suggestion.
  */
-import { deflateRawSync } from "node:zlib";
+import { deflateRawSync, crc32 as zlibCrc32 } from "node:zlib";
 
 import ExcelJS from "exceljs";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -21,6 +21,20 @@ import type {
 interface ZipEntry {
   readonly name: string;
   readonly data: Buffer;
+  /**
+   * Override for the uncompressedSize field written to BOTH the local and
+   * central-directory headers. Used to craft a "lying" central directory
+   * whose DECLARED size is under a guard cap while the ACTUAL deflated
+   * payload inflates to far more — the zip-bomb vector #960 guards against.
+   * Defaults to the real byte length (an honest archive).
+   */
+  readonly declaredUncompressedSize?: number;
+  /**
+   * Override for the CRC-32 header field. Defaults to a CRC-32 computed over
+   * `data` via the byte-wise helper below; pass a precomputed value (e.g.
+   * native `zlib.crc32`) for large payloads to avoid the slow fallback.
+   */
+  readonly crc?: number;
 }
 
 function crc32(buf: Buffer): number {
@@ -50,7 +64,8 @@ function buildZip(entries: readonly ZipEntry[]): Buffer {
     const nameBuf = Buffer.from(entry.name, "utf-8");
     const uncompressed = entry.data;
     const compressed = deflateRawSync(uncompressed);
-    const crc = crc32(uncompressed);
+    const crc = entry.crc ?? crc32(uncompressed);
+    const declaredSize = entry.declaredUncompressedSize ?? uncompressed.length;
     const method = 8;
 
     const local = Buffer.alloc(30);
@@ -62,7 +77,7 @@ function buildZip(entries: readonly ZipEntry[]): Buffer {
     local.writeUInt16LE(0, 12);
     local.writeUInt32LE(crc, 14);
     local.writeUInt32LE(compressed.length, 18);
-    local.writeUInt32LE(uncompressed.length, 22);
+    local.writeUInt32LE(declaredSize, 22);
     local.writeUInt16LE(nameBuf.length, 26);
     local.writeUInt16LE(0, 28);
 
@@ -80,7 +95,7 @@ function buildZip(entries: readonly ZipEntry[]): Buffer {
     central.writeUInt16LE(0, 14);
     central.writeUInt32LE(crc, 16);
     central.writeUInt32LE(compressed.length, 20);
-    central.writeUInt32LE(uncompressed.length, 24);
+    central.writeUInt32LE(declaredSize, 24);
     central.writeUInt16LE(nameBuf.length, 28);
     central.writeUInt16LE(0, 30);
     central.writeUInt16LE(0, 32);
@@ -717,6 +732,46 @@ describe("xlsx extractor - zip-bomb preflight", () => {
       name: "ExtractionError",
       kind: expect.stringMatching(/^(zip-bomb-detected|corrupt-document)$/),
     });
+  });
+});
+
+describe("xlsx extractor - stream-counted decompressed size (#960)", () => {
+  it("rejects an under-declared zip bomb whose real inflated size exceeds the cap", async () => {
+    // Craft a single-entry archive whose central-directory DECLARED
+    // uncompressedSize (1 KiB) sits far under the 200 MiB guard cap while
+    // the payload actually inflates to > 200 MiB. A preflight that trusts
+    // the attacker-controllable CD-declared size (the pre-fix behaviour)
+    // sums only the 1 KiB lie and never trips its total guard. Only
+    // counting the REAL decompressed bytes as each entry inflates catches
+    // the bomb — so this asserts the `zip-bomb-detected` verdict rather
+    // than the incidental `corrupt-document` yauzl's own size assertion
+    // would otherwise produce downstream.
+    const realData = Buffer.alloc(201 * 1024 * 1024, 0); // > 200 MiB cap
+    const buf = buildZip([
+      {
+        name: "xl/sharedStrings.xml",
+        data: realData,
+        declaredUncompressedSize: 1024,
+        crc: zlibCrc32(realData),
+      },
+    ]);
+    const { extractor } = await loadXlsxExtractor();
+    await expect(extractor(ctx(buf))).rejects.toMatchObject({
+      name: "ExtractionError",
+      kind: "zip-bomb-detected",
+      filePath: "doc.xlsx",
+    });
+  }, 60_000);
+
+  it("still extracts a normal small workbook whose real size is under the cap", async () => {
+    const { extractor } = await loadXlsxExtractor();
+    const buf = await createTestXlsx([
+      { name: "Sheet1", rows: [["Header"], ["Value"]] },
+    ]);
+    const out = await extractor(ctx(buf));
+    expect(out.content).toContain("## Sheet1");
+    expect(out.content).toContain("Header");
+    expect(out.content).toContain("Value");
   });
 });
 
