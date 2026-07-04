@@ -3,8 +3,8 @@
  *
  * Removes <script> and <style> elements (issue #344 — their bodies are
  * code, not prose, and would pollute the FTS index), then extracts the
- * remaining text, decodes entities, strips C0 control characters, and
- * collapses whitespace.
+ * remaining text, decodes entities, strips control characters, and collapses
+ * whitespace.
  *
  * Extraction uses `node-html-parser`, a maintained, ESM-compatible,
  * tokenizer-based HTML parser. This replaces the previous hand-rolled
@@ -46,14 +46,14 @@ import { ExtractionError } from "./errors.js";
 import { registerExtractor } from "./registry.js";
 import type { ContentExtractor, ExtractedContent, ExtractionContext } from "./types.js";
 
-// Full HTML5 entity decoding means numeric entities (e.g. `&#27;` -> ESC)
-// survive into extracted content, which flows to SQLite/FTS and the LLM
-// prompt. The terminal is protected by stripControlChars, but the indexed
-// content is not, so strip the C0 control range (plus DEL) here as
-// defense-in-depth — keeping tab/newline/CR, which whitespace collapsing
-// normalizes (issue #1215).
+// Full HTML5 entity decoding means numeric entities (e.g. `&#27;` -> ESC,
+// `&#8232;` -> LS) survive into extracted content, which flows to SQLite/FTS
+// and the LLM prompt. The terminal is protected by stripControlChars, but the
+// indexed content is not, so strip C0 controls (except tab/newline/CR), DEL,
+// the full C1 control range, and Unicode LS/PS here as defense-in-depth
+// (issues #1215, #1794).
 // eslint-disable-next-line no-control-regex
-const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
+const CONTROL_CHARS = /[\x00-\x08\v\f\x0E-\x1F\x7F-\x9F\u2028\u2029]/g;
 
 /**
  * Collapse whitespace in a single linear pass (issue #933). Each maximal
