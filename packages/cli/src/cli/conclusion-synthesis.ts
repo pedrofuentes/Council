@@ -117,7 +117,21 @@ export function buildSynthesisPrompt(
     truncatedByChars = true;
   }
   if (body.length > maxTranscriptChars) {
-    body = body.slice(0, maxTranscriptChars);
+    // After older turns are dropped, the final remaining turn may still exceed
+    // the budget and be partially sliced. Keep that hard cap on a code-point
+    // boundary so truncation never leaves an unpaired UTF-16 surrogate.
+    let cutIndex = maxTranscriptChars;
+    const previousCodeUnit = body.charCodeAt(cutIndex - 1);
+    const nextCodeUnit = body.charCodeAt(cutIndex);
+    if (
+      previousCodeUnit >= 0xd800 &&
+      previousCodeUnit <= 0xdbff &&
+      nextCodeUnit >= 0xdc00 &&
+      nextCodeUnit <= 0xdfff
+    ) {
+      cutIndex -= 1;
+    }
+    body = body.slice(0, cutIndex);
     truncatedByChars = true;
   }
 
@@ -338,6 +352,7 @@ export async function synthesizeConclusion(
     // output as conversational context, correlating the re-sample with the
     // failure. A new session gives the "a manual re-run often succeeds"
     // rationale a clean slate.
+    await opts.engine.removeExpert(synthesizerId);
     const retrySynthesizerId = await createSynthesizerSession(opts.engine, opts.model, ulid());
     parseResult = parseSynthesisResponse(
       await collectResponse(opts.engine, retrySynthesizerId, prompt, opts.timeoutMs),
