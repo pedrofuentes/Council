@@ -87,6 +87,13 @@ export interface AnalyzeOptions {
    * `catch` previously discarded the only available signal.
    */
   readonly onWarning?: (message: string) => void;
+  /**
+   * Delay in milliseconds before the single retry (#436). A failed send —
+   * malformed JSON or a transient engine error — waits this long before the
+   * retry so the analyzer does not immediately amplify load on a struggling
+   * provider. Defaults to 250 ms; set to 0 to retry with no delay.
+   */
+  readonly retryBackoffMs?: number;
 }
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -291,38 +298,83 @@ export function parseAnalyzerJSON(raw: string): ParsedFields | null {
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
+/**
+ * Backoff before the single retry (#436) so a failed send doesn't
+ * immediately hammer a struggling provider. Overridable per-call via
+ * `AnalyzeOptions.retryBackoffMs`.
+ */
+const DEFAULT_RETRY_BACKOFF_MS = 250;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function timeoutError(timeoutMs: number): Error {
+  return new Error(`Profile analyzer engine call timed out after ${timeoutMs}ms`);
+}
+
 async function collectResponse(
   engine: CouncilEngine,
   expertId: string,
   prompt: string,
   timeoutMs: number,
 ): Promise<string> {
-  let collected = "";
-  let errored = false;
-  let errorMessage: string | undefined;
   // AbortSignal.timeout() schedules a timer that aborts the signal when
   // the deadline elapses; engine adapters wire it through to the
   // underlying request and surface an ABORTED error event.
   const signal = AbortSignal.timeout(timeoutMs);
-  const stream: AsyncIterable<EngineEvent> = engine.send({ prompt, expertId, signal });
-  for await (const event of stream) {
-    if (event.kind === "message.delta") {
-      collected += event.text;
-    } else if (event.kind === "error") {
-      errored = true;
-      errorMessage = event.error?.message;
-      break;
-    }
-  }
-  if (errored) {
+  // #435: classify a failure as a timeout off an explicit flag flipped by
+  // the abort event — not a post-loop `signal.aborted` read, which a
+  // provider error arriving in the same tick as the timer could race into a
+  // misclassification. The flag is only ever set on the abort path.
+  let timedOut = false;
+  let onAbort: (() => void) | undefined;
+  // #437: enforce the deadline at THIS layer even if the engine adapter
+  // ignores the forwarded signal. Racing stream consumption against an
+  // abort-triggered rejection guarantees the timeout fires here, so a
+  // signal-ignoring adapter cannot block analyzeDocuments() forever.
+  const deadline = new Promise<never>((_resolve, reject) => {
+    onAbort = (): void => {
+      timedOut = true;
+      reject(timeoutError(timeoutMs));
+    };
     if (signal.aborted) {
-      throw new Error(`Profile analyzer engine call timed out after ${timeoutMs}ms`);
+      onAbort();
+    } else {
+      signal.addEventListener("abort", onAbort, { once: true });
     }
-    throw new Error(
-      `Profile analyzer engine call failed${errorMessage ? `: ${errorMessage}` : ""}`,
-    );
+  });
+
+  const stream: AsyncIterable<EngineEvent> = engine.send({ prompt, expertId, signal });
+  const consume = async (): Promise<string> => {
+    let collected = "";
+    let errored = false;
+    let errorMessage: string | undefined;
+    for await (const event of stream) {
+      if (event.kind === "message.delta") {
+        collected += event.text;
+      } else if (event.kind === "error") {
+        errored = true;
+        errorMessage = event.error?.message;
+        break;
+      }
+    }
+    if (errored) {
+      if (timedOut) {
+        throw timeoutError(timeoutMs);
+      }
+      throw new Error(
+        `Profile analyzer engine call failed${errorMessage ? `: ${errorMessage}` : ""}`,
+      );
+    }
+    return collected;
+  };
+
+  try {
+    return await Promise.race([consume(), deadline]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
   }
-  return collected;
 }
 
 /**
@@ -351,6 +403,7 @@ export async function analyzeDocuments(
 
   const prompt = formatPromptBody(documents, existingProfile, options);
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const retryBackoffMs = options.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS;
   try {
     // Single retry covers both unparsable JSON AND transient engine
     // errors (#359): a stream `error` event in the first send must not
@@ -366,6 +419,11 @@ export async function analyzeDocuments(
       firstError = err;
     }
     if (!parsed) {
+      // #436: back off briefly before the retry so a transient first-send
+      // failure isn't immediately amplified by a second identical send.
+      if (retryBackoffMs > 0) {
+        await sleep(retryBackoffMs);
+      }
       try {
         raw = await collectResponse(engine, expertId, prompt, timeoutMs);
         parsed = parseAnalyzerJSON(raw);

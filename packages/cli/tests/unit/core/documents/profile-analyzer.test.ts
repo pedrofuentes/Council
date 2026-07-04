@@ -12,7 +12,7 @@
  *
  * RED at this commit: src/core/documents/profile-analyzer.ts does not exist.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   analyzeDocuments,
@@ -730,6 +730,118 @@ describe("analyzeDocuments() — error handling (#359 #360 #361)", () => {
     expect(warning).toMatch(/removeExpert|cleanup|teardown/i);
     expect(warning).toContain(engine.registered[0]?.id ?? "<missing>");
   });
+
+  it("uses a fresh AbortSignal for the retry after a timeout (#438)", async () => {
+    // Each send (initial + retry) must receive its OWN AbortSignal. A
+    // regression that reused the first — already-aborted — signal would
+    // surface here as a single recorded signal or two identical references.
+    class TwoTimeoutEngine extends RecordingEngine {
+      readonly signals: AbortSignal[] = [];
+      override send(opts: SendOptions): AsyncIterable<EngineEvent> {
+        this.sends.push({ expertId: opts.expertId, prompt: opts.prompt });
+        if (opts.signal) this.signals.push(opts.signal);
+        const expertId = opts.expertId;
+        const signal = opts.signal;
+        return (async function* (): AsyncGenerator<EngineEvent, void, void> {
+          await new Promise<void>((resolve) => {
+            if (!signal) return;
+            if (signal.aborted) {
+              resolve();
+              return;
+            }
+            signal.addEventListener("abort", () => resolve(), { once: true });
+          });
+          yield {
+            kind: "error",
+            expertId,
+            error: { code: "ABORTED", message: "aborted" },
+            recoverable: false,
+          };
+        })();
+      }
+    }
+    const engine = new TwoTimeoutEngine([]);
+    await expect(
+      analyzeDocuments(sampleDocs, null, engine, { ...defaultOptions, timeoutMs: 20 }),
+    ).rejects.toThrow(/timeout|timed out|abort/i);
+    expect(engine.signals.length).toBe(2);
+    expect(engine.signals[0]).not.toBe(engine.signals[1]);
+    expect(engine.signals[0]?.aborted).toBe(true);
+    expect(engine.signals[1]?.aborted).toBe(true);
+  });
+
+  it("falls back to console.warn when onWarning is omitted and cleanup fails (#439)", async () => {
+    // Issue #361 fallback: with no onWarning sink wired, a failed teardown
+    // must still surface via console.warn rather than being swallowed.
+    class CleanupFailingEngine extends RecordingEngine {
+      override async removeExpert(expertId: string): Promise<void> {
+        this.removed.push(expertId);
+        throw new Error("teardown boom");
+      }
+    }
+    const engine = new CleanupFailingEngine([validProfileJSON]);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const out = await analyzeDocuments(sampleDocs, null, engine, defaultOptions);
+      expect(out.communicationStyle).toMatch(/Direct/);
+      expect(engine.removed.length).toBe(1);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const msg = String(warnSpy.mock.calls[0]?.[0] ?? "");
+      expect(msg).toMatch(/removeExpert|cleanup|teardown/i);
+      expect(msg).toContain(engine.registered[0]?.id ?? "<missing>");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("enforces the timeout even when the engine adapter ignores the abort signal (#437)", async () => {
+    // A misbehaving adapter that never terminates AND never observes the
+    // forwarded AbortSignal must not be able to hang analyzeDocuments()
+    // forever: the deadline has to be enforced at the analyzer layer by
+    // racing stream consumption against an abort-triggered rejection.
+    class SignalIgnoringEngine extends RecordingEngine {
+      readonly signals: AbortSignal[] = [];
+      override send(opts: SendOptions): AsyncIterable<EngineEvent> {
+        this.sends.push({ expertId: opts.expertId, prompt: opts.prompt });
+        if (opts.signal) this.signals.push(opts.signal);
+        const expertId = opts.expertId;
+        return (async function* (): AsyncGenerator<EngineEvent, void, void> {
+          // Never yields, never inspects the signal — simulates an adapter
+          // that fails to honor cancellation.
+          await new Promise<void>(() => {
+            /* deliberately never resolves */
+          });
+          yield {
+            kind: "message.complete",
+            expertId,
+            response: { latencyMs: 1, tokensIn: 1, tokensOut: 1 },
+          };
+        })();
+      }
+    }
+    const engine = new SignalIgnoringEngine([]);
+    await expect(
+      analyzeDocuments(sampleDocs, null, engine, { ...defaultOptions, timeoutMs: 30 }),
+    ).rejects.toThrow(/timeout|timed out/i);
+    expect(engine.signals[0]?.aborted).toBe(true);
+    expect(engine.removed.length).toBe(1);
+  }, 2000);
+
+  it("waits a backoff delay before retrying a failed send (#436)", async () => {
+    // A failed first send must not be retried immediately — a short backoff
+    // avoids amplifying load on a struggling provider. Configure a small,
+    // deterministic delay and assert the retry is not issued before it.
+    const engine = new RecordingEngine(["not json at all", validProfileJSON]);
+    const backoffMs = 60;
+    const opts = { ...defaultOptions, retryBackoffMs: backoffMs };
+    const start = Date.now();
+    const out = await analyzeDocuments(sampleDocs, null, engine, opts);
+    const elapsed = Date.now() - start;
+    expect(out.communicationStyle).toMatch(/Direct/);
+    expect(engine.sends.length).toBe(2);
+    // Allow for timer coarseness; the point is a non-trivial delay occurred.
+    expect(elapsed).toBeGreaterThanOrEqual(backoffMs - 15);
+  });
 });
 
 describe("parseAnalyzerJSON() — robust recovery of analyzer JSON (F16)", () => {
@@ -867,6 +979,16 @@ describe("stripTrailingCommas() — string-aware trailing-comma removal (#1122)"
     expect(result).toBe('{"x":"a\\",]"}');
     const recovered = JSON.parse(result) as { readonly x: string };
     expect(recovered.x).toBe('a",]');
+  });
+
+  it("preserves an even-parity backslash run before the closing quote, then strips the structural comma (#2007)", () => {
+    // `"a\\"` ends in an EVEN number of backslashes, so the closing quote is
+    // NOT escaped and correctly terminates the string. A state machine that
+    // toggled `escaped` without pairing would mis-read the quote as escaped,
+    // keep tracking "in-string", and fail to strip the structural trailing
+    // comma. Pin both the raw strip and the end-to-end recovery.
+    expect(stripTrailingCommas('{"x":"a\\\\",}')).toBe('{"x":"a\\\\"}');
+    expect(tryParseJSON('{"x":"a\\\\",}')).toEqual({ x: "a\\" });
   });
 
   it("preserves an in-string comma inside a nested string value", () => {
@@ -1031,6 +1153,30 @@ describe("analyzeDocuments() — recency weight annotations in prompt (Roadmap 6
     await analyzeDocuments(sampleDocs, null, engine, defaultOptions);
     const send = engine.sends[0];
     if (!send) throw new Error("expected send");
+    expect(send.prompt).not.toMatch(/\[Weight:/);
+  });
+
+  it("emits the document header without a [Weight] tag when modifiedAt is unparsable (#380)", async () => {
+    const engine = new RecordingEngine([validProfileJSON]);
+    await analyzeDocuments(
+      [
+        {
+          path: "/docs/bad.md",
+          filename: "bad.md",
+          content: "content",
+          wordCount: 1,
+          modifiedAt: "not-a-date",
+        },
+      ],
+      null,
+      engine,
+      { recencyWeightHalfLife: 30, model: "gpt-test", now },
+    );
+    const send = engine.sends[0];
+    if (!send) throw new Error("expected send");
+    // The malformed timestamp fails the `Number.isNaN(getTime())` guard, so
+    // the header is emitted bare — no recency weight is fabricated from NaN.
+    expect(send.prompt).toContain("--- bad.md ---");
     expect(send.prompt).not.toMatch(/\[Weight:/);
   });
 
