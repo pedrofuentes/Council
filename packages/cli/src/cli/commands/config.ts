@@ -105,9 +105,73 @@ async function spawnEditor(editorCmd: string, filePath: string): Promise<void> {
   });
 }
 
+interface ShownConfigField {
+  readonly key: string;
+  readonly getValue: (config: CouncilConfig) => string;
+}
+
 /**
- * Determine which config fields came from the file vs defaults.
- * Reads the raw YAML and compares against schema defaults.
+ * Canonical field list for `council config show`. Both the source annotation
+ * ({@link getFieldSources}) and the displayed rows derive from this single
+ * list, so a field can never appear in one and be missing from the other —
+ * the drift class flagged by #1082.
+ */
+const SHOWN_CONFIG_FIELDS: readonly ShownConfigField[] = [
+  { key: "defaults.model", getValue: (config) => config.defaults.model },
+  { key: "defaults.engine", getValue: (config) => config.defaults.engine },
+  { key: "defaults.maxRounds", getValue: (config) => String(config.defaults.maxRounds) },
+  { key: "defaults.maxExperts", getValue: (config) => String(config.defaults.maxExperts) },
+  {
+    key: "defaults.maxWordsPerResponse",
+    getValue: (config) => String(config.defaults.maxWordsPerResponse),
+  },
+  { key: "documents.aiExtraction", getValue: (config) => config.documents.aiExtraction },
+  { key: "telemetry.enabled", getValue: (config) => String(config.telemetry.enabled) },
+  { key: "chat.recentTurnCount", getValue: (config) => String(config.chat.recentTurnCount) },
+  { key: "chat.summaryMaxWords", getValue: (config) => String(config.chat.summaryMaxWords) },
+  {
+    key: "chat.longConversationWarning",
+    getValue: (config) => String(config.chat.longConversationWarning),
+  },
+  {
+    key: "documents.aiExtractionAllowedExtensions",
+    getValue: (config) =>
+      config.documents.aiExtractionAllowedExtensions.length === 0
+        ? "(none)"
+        : config.documents.aiExtractionAllowedExtensions.join(", "),
+  },
+  { key: "documents.maxFileSizeMB", getValue: (config) => String(config.documents.maxFileSizeMB) },
+  {
+    key: "conclude.maxTranscriptChars",
+    getValue: (config) => String(config.conclude.maxTranscriptChars),
+  },
+];
+
+/**
+ * Report whether a dotted config key is present in the raw parsed YAML (set in
+ * the config file) rather than resolved from a schema default. Every path
+ * segment except the last must resolve to a plain (non-array) object.
+ */
+function isConfigKeyFromFile(rawObj: Record<string, unknown>, dottedKey: string): boolean {
+  const segments = dottedKey.split(".");
+  let cursor: unknown = rawObj;
+  for (const segment of segments.slice(0, -1)) {
+    if (cursor === null || typeof cursor !== "object" || Array.isArray(cursor)) return false;
+    cursor = (cursor as Record<string, unknown>)[segment];
+  }
+  const last = segments[segments.length - 1] ?? dottedKey;
+  return (
+    cursor !== null &&
+    typeof cursor === "object" &&
+    !Array.isArray(cursor) &&
+    last in (cursor as Record<string, unknown>)
+  );
+}
+
+/**
+ * Determine which config fields came from the file vs defaults, for every
+ * field shown by `config show`. Reads the raw YAML and checks key presence
+ * against the canonical {@link SHOWN_CONFIG_FIELDS} list.
  */
 async function getFieldSources(
   configPath: string,
@@ -125,50 +189,9 @@ async function getFieldSources(
     // File missing or unreadable — all values are defaults
   }
 
-  const rawDefaults =
-    rawObj["defaults"] && typeof rawObj["defaults"] === "object"
-      ? (rawObj["defaults"] as Record<string, unknown>)
-      : {};
-
-  const defaultKeys = ["model", "engine", "maxRounds", "maxExperts", "maxWordsPerResponse"];
-  for (const key of defaultKeys) {
-    sources.set(`defaults.${key}`, key in rawDefaults ? "config file" : "default");
+  for (const { key } of SHOWN_CONFIG_FIELDS) {
+    sources.set(key, isConfigKeyFromFile(rawObj, key) ? "config file" : "default");
   }
-
-  const rawTelemetry =
-    rawObj["telemetry"] && typeof rawObj["telemetry"] === "object"
-      ? (rawObj["telemetry"] as Record<string, unknown>)
-      : {};
-  sources.set("telemetry.enabled", "enabled" in rawTelemetry ? "config file" : "default");
-
-  const rawChat =
-    rawObj["chat"] && typeof rawObj["chat"] === "object"
-      ? (rawObj["chat"] as Record<string, unknown>)
-      : {};
-  const chatKeys = ["recentTurnCount", "summaryMaxWords", "longConversationWarning"];
-  for (const key of chatKeys) {
-    sources.set(`chat.${key}`, key in rawChat ? "config file" : "default");
-  }
-
-  const rawDocuments =
-    rawObj["documents"] && typeof rawObj["documents"] === "object"
-      ? (rawObj["documents"] as Record<string, unknown>)
-      : {};
-
-  const documentKeys = ["aiExtraction", "aiExtractionAllowedExtensions", "maxFileSizeMB"];
-  for (const key of documentKeys) {
-    sources.set(`documents.${key}`, key in rawDocuments ? "config file" : "default");
-  }
-
-  const rawConclude =
-    rawObj["conclude"] && typeof rawObj["conclude"] === "object"
-      ? (rawObj["conclude"] as Record<string, unknown>)
-      : {};
-
-  sources.set(
-    "conclude.maxTranscriptChars",
-    "maxTranscriptChars" in rawConclude ? "config file" : "default",
-  );
 
   return sources;
 }
@@ -194,66 +217,13 @@ function buildShowCommand(write: Writer): Command {
     write(`Database: ${toSingleLineDisplay(dbPath)}\n\n`);
     write("Effective values:\n");
 
-    const allowedExts = config.documents.aiExtractionAllowedExtensions;
-    const entries: [string, string, string][] = [
-      ["defaults.model", config.defaults.model, sources.get("defaults.model") ?? "default"],
-      ["defaults.engine", config.defaults.engine, sources.get("defaults.engine") ?? "default"],
-      [
-        "defaults.maxRounds",
-        String(config.defaults.maxRounds),
-        sources.get("defaults.maxRounds") ?? "default",
+    const entries: readonly [string, string, string][] = SHOWN_CONFIG_FIELDS.map(
+      (field): [string, string, string] => [
+        field.key,
+        field.getValue(config),
+        sources.get(field.key) ?? "default",
       ],
-      [
-        "defaults.maxExperts",
-        String(config.defaults.maxExperts),
-        sources.get("defaults.maxExperts") ?? "default",
-      ],
-      [
-        "defaults.maxWordsPerResponse",
-        String(config.defaults.maxWordsPerResponse),
-        sources.get("defaults.maxWordsPerResponse") ?? "default",
-      ],
-      [
-        "documents.aiExtraction",
-        config.documents.aiExtraction,
-        sources.get("documents.aiExtraction") ?? "default",
-      ],
-      [
-        "telemetry.enabled",
-        String(config.telemetry.enabled),
-        sources.get("telemetry.enabled") ?? "default",
-      ],
-      [
-        "chat.recentTurnCount",
-        String(config.chat.recentTurnCount),
-        sources.get("chat.recentTurnCount") ?? "default",
-      ],
-      [
-        "chat.summaryMaxWords",
-        String(config.chat.summaryMaxWords),
-        sources.get("chat.summaryMaxWords") ?? "default",
-      ],
-      [
-        "chat.longConversationWarning",
-        String(config.chat.longConversationWarning),
-        sources.get("chat.longConversationWarning") ?? "default",
-      ],
-      [
-        "documents.aiExtractionAllowedExtensions",
-        allowedExts.length === 0 ? "(none)" : allowedExts.join(", "),
-        sources.get("documents.aiExtractionAllowedExtensions") ?? "default",
-      ],
-      [
-        "documents.maxFileSizeMB",
-        String(config.documents.maxFileSizeMB),
-        sources.get("documents.maxFileSizeMB") ?? "default",
-      ],
-      [
-        "conclude.maxTranscriptChars",
-        String(config.conclude.maxTranscriptChars),
-        sources.get("conclude.maxTranscriptChars") ?? "default",
-      ],
-    ];
+    );
 
     const keyWidth = Math.max(...entries.map(([k]) => k.length));
     for (const [key, value, source] of entries) {
