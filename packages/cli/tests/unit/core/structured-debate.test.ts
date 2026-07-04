@@ -183,11 +183,11 @@ describe("Structured debate — phase prompts", () => {
   });
 
   it("rebuttal prompt includes the other experts' opening AND cross-exam content", async () => {
-    // Phase-distinct token for PM — mirrors the synthesis-rebuttal test
-    // pattern so we can assert the cross-exam fence AND its content are
-    // present in CTO's rebuttal prompt. Without this, a regression that
-    // dropped crossExamTurns from buildRebuttalPrompt would pass the
-    // weaker name/rebut-word assertions above.
+    // Expert-distinct token for PM (MockEngine keys responses by expertId)
+    // so we can assert the cross-exam fence AND its content are present in
+    // CTO's rebuttal prompt. Without this, a regression that dropped
+    // crossExamTurns from buildRebuttalPrompt would pass the weaker
+    // name/rebut-word assertions above.
     const engine = new MockEngine({
       responses: {
         "01HZ-cto": "CTO_OPENING_TOKEN",
@@ -211,8 +211,9 @@ describe("Structured debate — phase prompts", () => {
     // Cross-exam content must propagate into the rebuttal prompt as a
     // phase-fenced block. buildRebuttalPrompt wraps each other-expert's
     // cross-exam response in <from_expert name="…" phase="cross-exam">.
-    expect(ctoRebuttal?.prompt ?? "").toContain('<from_expert name="PM" phase="cross-exam">');
-    expect(ctoRebuttal?.prompt ?? "").toContain("PM_CROSSEXAM_TOKEN");
+    expect(ctoRebuttal?.prompt ?? "").toMatch(
+      /<from_expert name="PM" phase="cross-exam">\s*PM_CROSSEXAM_TOKEN\s*<\/from_expert>/,
+    );
   });
 
   it("synthesis prompt instructs the expert to deliver a final position", async () => {
@@ -231,12 +232,13 @@ describe("Structured debate — phase prompts", () => {
   });
 
   it("synthesis prompt includes the OTHER experts' rebuttal content", async () => {
-    // Distinct, identifiable strings for each phase so we can assert that
-    // rebuttal content survives all the way into the synthesis prompt.
+    // Distinct, identifiable strings per expert so we can assert that the
+    // PM response captured during rebuttal survives all the way into the
+    // synthesis prompt. MockEngine keys responses by expertId, not phase.
     const engine = new MockEngine({
       responses: {
         "01HZ-cto": "CTO_TOKEN",
-        "01HZ-pm": "PM_REBUTTAL_TOKEN",
+        "01HZ-pm": "PM_GENERIC_RESPONSE",
       },
     });
     await engine.start();
@@ -257,12 +259,11 @@ describe("Structured debate — phase prompts", () => {
     // content is wrapped in `<from_expert>` fences with a lowercase
     // `phase` attribute instead of a "Name (Phase):" header.
     expect(ctoSynth?.prompt ?? "").toMatch(/phase="rebuttal"/);
-    // PM is the other expert; their rebuttal token must appear in CTO's
+    // PM is the other expert; their generic response must appear in CTO's
     // synthesis prompt inside a PM/rebuttal fence.
-    expect(ctoSynth?.prompt ?? "").toContain(
-      '<from_expert name="PM" phase="rebuttal">',
+    expect(ctoSynth?.prompt ?? "").toMatch(
+      /<from_expert name="PM" phase="rebuttal">\s*PM_GENERIC_RESPONSE\s*<\/from_expert>/,
     );
-    expect(ctoSynth?.prompt ?? "").toContain("PM_REBUTTAL_TOKEN");
   });
 });
 

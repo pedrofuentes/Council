@@ -8,7 +8,8 @@
  *
  * These tests exercise the `else` branch in convene.ts that calls
  * `createReadlineConfirmProvider()` directly — i.e. when no
- * `confirmProvider` dependency is injected into `buildConveneCommand`.
+ * `confirmProvider` dependency is injected into `buildConveneCommand`
+ * and stdin is an interactive TTY (`!isNonInteractive()`).
  * `node:readline` is mocked at the module boundary so the provider's
  * real normalisation and default-no logic runs against controlled input.
  *
@@ -120,11 +121,9 @@ function primeReadlineAnswer(answer: string): void {
   const mockOnce = vi.fn((_event: string, _cb: () => void): void => {
     /* The "close" fallback — not fired in the normal answer path. */
   });
-  const mockQuestion = vi.fn(
-    (_message: string, callback: (a: string) => void): void => {
-      callback(answer);
-    },
-  );
+  const mockQuestion = vi.fn((_message: string, callback: (a: string) => void): void => {
+    callback(answer);
+  });
   mockCreateInterface.mockReturnValueOnce({
     once: mockOnce,
     question: mockQuestion,
@@ -200,8 +199,8 @@ describe("buildConveneCommand — default readline auto-compose confirm (#263)",
     expect(stdout).toContain("Topic: Topic Q");
   });
 
-  it("proceeds when the default readline provider receives 'yes' (full-word affirmative)", async () => {
-    primeReadlineAnswer("yes");
+  it("trims and normalizes a full-word affirmative before proceeding", async () => {
+    primeReadlineAnswer("  Yes  ");
 
     let stdout = "";
     const cmd = buildConveneCommand({
