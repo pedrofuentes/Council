@@ -91,6 +91,42 @@ describe("PanelCreateScreen", () => {
     unmount();
   });
 
+  it("loads picker experts via the lightweight source, avoiding per-expert panel counts", async () => {
+    const loadPickList = vi.fn(async () => experts);
+    const loadList = vi.fn(async () => experts);
+    const value = {
+      panels: { loadList: async () => [], loadDetail: async () => undefined },
+      experts: {
+        loadList,
+        loadPickList,
+        loadDetail: async () => undefined,
+      },
+      panelAuthoring: createAuthoring(),
+    } as TuiDataSources;
+
+    const { lastFrame, unmount } = render(
+      <InputCaptureProvider>
+        <DataProvider value={value}>
+          <MemoryRouter initialEntries={["/panels/new"]}>
+            <Routes>
+              <Route path="/panels/new" element={<PanelCreateScreen theme={theme} isActive />} />
+              <Route path="/panels/:name" element={<PanelProbe />} />
+            </Routes>
+          </MemoryRouter>
+        </DataProvider>
+      </InputCaptureProvider>,
+    );
+
+    await flush();
+
+    // The picker must use the lightweight source that skips the per-expert
+    // panelCount lookup performed by loadList().
+    expect(lastFrame()).toContain("[ ] Chief Technology Officer");
+    expect(loadPickList).toHaveBeenCalledTimes(1);
+    expect(loadList).not.toHaveBeenCalled();
+    unmount();
+  });
+
   it("creates a panel from a typed name and selected expert, then navigates to the detail route", async () => {
     const create = vi.fn<
       Parameters<PanelAuthoringDataSource["create"]>,
