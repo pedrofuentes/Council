@@ -204,10 +204,18 @@ export class DebatePersister {
             // #150: mark the attempt BEFORE the await so a thrown
             // update doesn't trigger the finally's abort-overwrite.
             terminalUpdateAttempted = true;
-            await this.deps.debates.update(debate.id, {
-              status: this.#terminalStatus(evt.reason),
-              endedAt: new Date().toISOString(),
-            });
+            try {
+              await this.deps.debates.update(debate.id, {
+                status: this.#terminalStatus(evt.reason),
+                endedAt: new Date().toISOString(),
+              });
+            } catch (cause: unknown) {
+              // #158: a terminal-update failure previously bubbled up as an
+              // opaque driver error with no debate context, so logs/callers
+              // could not correlate it to a specific debate row. Rethrow WITH
+              // the debate id and the original error preserved as `cause`.
+              throw new Error(`debate ${debate.id}: terminal update failed`, { cause });
+            }
             break;
           }
           default:
