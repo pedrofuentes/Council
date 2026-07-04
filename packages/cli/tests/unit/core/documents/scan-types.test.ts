@@ -10,9 +10,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  classifyExtractionError,
   classifyUnsupportedFile,
   unsupportedFileDetail,
 } from "../../../../src/core/documents/scan-types.js";
+import { ExtractionError } from "../../../../src/core/documents/extractors/index.js";
 import type { AiFallbackConfig } from "../../../../src/core/documents/extractors/ai-fallback.js";
 
 describe("unsupportedFileDetail", () => {
@@ -124,5 +126,80 @@ describe("classifyUnsupportedFile (T4)", () => {
     const detail = classifyUnsupportedFile("/docs/panel/deck.key", AUTO);
     expect(detail.status).toBe("failed");
     expect(detail.errorKind).toBe("unsupported-format");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// classifyExtractionError (issue #975).
+//
+// `classifyExtractionError` is the single point that maps an arbitrary
+// thrown value into the `ScanErrorKind` taxonomy. It has three branches:
+//   1. `ExtractionError` — trust the carried `kind`/`message`.
+//   2. a plain error/string whose message matches a confinement/TOCTOU
+//      substring — `confinement-violation`.
+//   3. anything else — `extraction-failed`.
+// Branch 2 is coupled BY SUBSTRING to the exact strings `extractor.ts`
+// (and the panel scanner) throw, so these tests pin those literals: a
+// message change at the throw site would silently mislabel a confinement
+// rejection as a generic `extraction-failed`.
+// ─────────────────────────────────────────────────────────────────────
+describe("classifyExtractionError (#975)", () => {
+  it("preserves the kind and message carried by an ExtractionError", () => {
+    const err = new ExtractionError({
+      kind: "corrupt-document",
+      filePath: "/docs/panel/report.pdf",
+      message: "unexpected EOF at byte 12",
+    });
+    const classified = classifyExtractionError(err);
+    expect(classified.kind).toBe("corrupt-document");
+    expect(classified.message).toBe("unexpected EOF at byte 12");
+  });
+
+  it("maps the extractor's TOCTOU inode message to confinement-violation", () => {
+    // Mirrors extractor.ts: `${filePath} inode changed between open and realpath (TOCTOU detected)`.
+    const err = new Error(
+      "extractDocument: /docs/panel/a.pdf inode changed between open and realpath (TOCTOU detected)",
+    );
+    const classified = classifyExtractionError(err);
+    expect(classified.kind).toBe("confinement-violation");
+    expect(classified.message).toBe(err.message);
+  });
+
+  it("maps the extractor's 'resolves outside confinement root' message to confinement-violation", () => {
+    // Mirrors extractor.ts: `${filePath} resolves outside confinement root ${root}`.
+    const err = new Error(
+      "extractDocument: /etc/passwd resolves outside confinement root /docs/panel",
+    );
+    expect(classifyExtractionError(err).kind).toBe("confinement-violation");
+  });
+
+  it("matches the 'confinement root' substring on its own", () => {
+    // Mirrors the panel scanner/processor literal:
+    // "rejected: outside confinement root or TOCTOU mismatch".
+    expect(
+      classifyExtractionError(
+        new Error("rejected: outside confinement root or TOCTOU mismatch"),
+      ).kind,
+    ).toBe("confinement-violation");
+  });
+
+  it("matches the 'resolves outside' substring on its own", () => {
+    expect(
+      classifyExtractionError(new Error("path resolves outside the sandbox")).kind,
+    ).toBe("confinement-violation");
+  });
+
+  it("falls back to extraction-failed for an unrelated error message", () => {
+    const classified = classifyExtractionError(
+      new Error("ENOSPC: no space left on device"),
+    );
+    expect(classified.kind).toBe("extraction-failed");
+    expect(classified.message).toBe("ENOSPC: no space left on device");
+  });
+
+  it("stringifies a non-Error thrown value and falls back to extraction-failed", () => {
+    const classified = classifyExtractionError("boom");
+    expect(classified.kind).toBe("extraction-failed");
+    expect(classified.message).toBe("boom");
   });
 });
