@@ -58,19 +58,30 @@ function toTurnView(turn: ChatTurn): ChatTurnView {
 }
 
 /**
- * Detect a SQLite uniqueness/constraint violation. Mirrors the string-based
- * detection in cli/commands/chat/shared.ts (`rewriteRotateError`): the
- * libsql/node:sqlite driver surfaces a partial-unique-index breach as an error
- * message containing "UNIQUE"/"constraint"/"SQLITE_CONSTRAINT" rather than a
- * typed code, so we match on the (lower-cased) message and any cause.
+ * True only for the specific active-session uniqueness conflict: a concurrent
+ * create that trips the partial unique index `idx_chat_sessions_active_unique`
+ * (chat_sessions(target_type, target_slug) WHERE status = 'active'). node:sqlite
+ * surfaces that as `UNIQUE constraint failed: chat_sessions.target_type,
+ * chat_sessions.target_slug` (verified against the real driver; the columns are
+ * named even for the partial index).
+ *
+ * Deliberately narrower than the `rewriteRotateError` check in
+ * cli/commands/chat/shared.ts: matching a generic "constraint" (or even the
+ * UNIQUE class alone) would also swallow a future CHECK / FOREIGN KEY / NOT NULL
+ * constraint on chat_sessions (they use a different phrase) or a PRIMARY-KEY /
+ * other-column UNIQUE (different columns), masking a genuine bug. We therefore
+ * require BOTH the UNIQUE-failure phrase AND the two active-session index
+ * columns. The cause is folded in so a wrapped error is still recognised.
  */
-function isUniqueConstraintViolation(err: unknown): boolean {
+function isActiveSessionUniquenessConflict(err: unknown): boolean {
   if (!(err instanceof Error)) {
     return false;
   }
   const text = `${err.message} ${err.cause !== undefined ? String(err.cause) : ""}`.toLowerCase();
   return (
-    text.includes("unique") || text.includes("constraint") || text.includes("sqlite_constraint")
+    text.includes("unique constraint failed") &&
+    text.includes("chat_sessions.target_type") &&
+    text.includes("chat_sessions.target_slug")
   );
 }
 
@@ -104,9 +115,10 @@ export function createChatSessionSource(deps: ChatSessionDeps): ChatSessionDataS
         // session between our findActiveSession and createSession, tripping the
         // partial unique index (idx_chat_sessions_active_unique). Recover by
         // re-querying the now-present session instead of surfacing the conflict.
-        // Only genuine uniqueness violations are swallowed, and only when the
-        // re-query actually finds the winner's session — otherwise re-throw.
-        if (!isUniqueConstraintViolation(err)) {
+        // Only THIS specific uniqueness conflict is swallowed (not any other
+        // constraint), and only when the re-query actually finds the winner's
+        // session — otherwise re-throw.
+        if (!isActiveSessionUniquenessConflict(err)) {
           throw err;
         }
         const existing = await deps.chat.findActiveSession(targetType, targetSlug);
