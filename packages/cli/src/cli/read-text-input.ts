@@ -10,6 +10,19 @@
  */
 import * as fs from "node:fs/promises";
 
+import { defaultNoticeWriter } from "./commands/writer.js";
+
+/**
+ * One-line hint shown when `--prompt-file -` reads from an interactive TTY.
+ *
+ * Without a pipe, `readProcessStdin` blocks until EOF with no output, so the
+ * user is left staring at a frozen prompt. This tells them input is expected
+ * and how to end it. Routed through {@link defaultNoticeWriter} so it lands on
+ * stderr (never mixing with the verbatim stdout result) and is suppressed by
+ * `--quiet`.
+ */
+const STDIN_TTY_HINT = "Reading from stdin; press Ctrl-D (EOF) when finished.\n";
+
 /**
  * Injectable seams for {@link readTextInput}. Tests substitute
  * {@link ReadTextInputOptions.readStdin} so the `-`/stdin path can be
@@ -34,6 +47,11 @@ export async function readTextInput(
 ): Promise<string> {
   if (source === "-") {
     const readStdin = options.readStdin ?? readProcessStdin;
+    // A TTY stdin means no pipe was supplied, so the upcoming read blocks
+    // until the user sends EOF. Surface a hint first so the wait is expected.
+    if (process.stdin.isTTY === true) {
+      defaultNoticeWriter(STDIN_TTY_HINT);
+    }
     return readStdin();
   }
 
