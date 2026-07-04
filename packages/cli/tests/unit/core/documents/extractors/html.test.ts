@@ -378,6 +378,36 @@ describe("html extractor", () => {
     });
   });
 
+  describe("collapseWhitespace output is exact (issue #1838)", () => {
+    // These pin the EXACT collapsed output so the per-character-allocation
+    // optimisation stays behaviour-preserving. The whitespace class is
+    // deliberately the six ASCII characters [ \t\n\v\f\r] — NOT the regex
+    // `\s` class — so any Unicode space (e.g. U+00A0 no-break space) is
+    // treated as ordinary content and passes through untouched. A naive
+    // `\s`-based collapse would silently rewrite that content; these
+    // assertions fail loudly if the class ever widens.
+    it("preserves a no-break space (U+00A0) instead of collapsing it", async () => {
+      const out = await run("<p>a&nbsp;b</p>");
+      expect(out.content).toBe("a\u00A0b");
+      expect(out.content.charCodeAt(1)).toBe(0xa0);
+    });
+
+    it("collapses internal ASCII whitespace runs to one space and trims the ends", async () => {
+      const out = await run("<p>  hello  world  </p>");
+      expect(out.content).toBe("hello world");
+    });
+
+    it("collapses a whitespace run containing a line break to a single newline", async () => {
+      const out = await run("<div><p>one two</p><p>three four</p></div>");
+      expect(out.content).toBe("one two\nthree four");
+    });
+
+    it("preserves an astral (surrogate-pair) character across a collapsed space", async () => {
+      const out = await run("<p>a &#128512; b</p>");
+      expect(out.content).toBe("a \u{1F600} b");
+    });
+  });
+
   describe("parse-error taxonomy (issue #1214)", () => {
     // The deep-nesting guard must NOT be a bare catch that swallows every
     // failure and returns empty content. Only a RangeError (the
