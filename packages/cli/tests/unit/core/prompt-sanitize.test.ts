@@ -239,7 +239,9 @@ describe("sanitizeFenced", () => {
 
     expect(result.length).toBeLessThanOrEqual(maxLength);
     expect(result).not.toMatch(/(?:&|&l|&lt)…$/);
-    expect(result).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u);
+    expect(result).not.toMatch(
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u,
+    );
   });
 
   it("strips bidi/zero-width before escaping fences", () => {
