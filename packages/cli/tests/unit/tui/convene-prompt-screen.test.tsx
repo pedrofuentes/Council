@@ -7,7 +7,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { ConveneDataSource, CostEstimate } from "../../../src/tui/adapters/convene.js";
 import { DataProvider, type TuiDataSources } from "../../../src/tui/components/DataProvider.js";
 import { InputCaptureProvider } from "../../../src/tui/components/InputCaptureProvider.js";
-import { ConvenePromptScreen } from "../../../src/tui/screens/ConvenePromptScreen.js";
+import {
+  ConvenePromptScreen,
+  normalizeTopic,
+} from "../../../src/tui/screens/ConvenePromptScreen.js";
 import { resolveTheme } from "../../../src/tui/theme/tokens.js";
 
 const theme = resolveTheme({ NO_COLOR: "1" });
@@ -63,6 +66,23 @@ function renderScreen(options: {
     </InputCaptureProvider>,
   );
 }
+
+describe("normalizeTopic", () => {
+  it("normalizes CR/LF and Unicode line separators to plain newlines", () => {
+    expect(normalizeTopic("alpha\r\nbeta\rgamma\u2028delta\u2029omega")).toBe(
+      "alpha\nbeta\ngamma\ndelta\nomega",
+    );
+  });
+
+  it("normalizes tabs to spaces while preserving intentional newlines", () => {
+    expect(normalizeTopic("alpha\tbeta\n\tgamma")).toBe("alpha beta\n gamma");
+  });
+
+  it("strips control characters and trims empty whitespace-only topics", () => {
+    expect(normalizeTopic(" \u0007Launch roadmap\u001B[31m ")).toBe("Launch roadmap");
+    expect(normalizeTopic("\n\u2028\r\n\t")).toBe("");
+  });
+});
 
 describe("ConvenePromptScreen", () => {
   it("estimates cost after topic submit and shows the confirmation modal", async () => {
@@ -217,6 +237,32 @@ describe("ConvenePromptScreen", () => {
 
     await flush();
     stdin.write("   ");
+    await flush();
+    stdin.write("\r");
+    await flush();
+
+    expect(estimateCost).not.toHaveBeenCalled();
+    expect(lastFrame()).toContain("Topic:");
+  });
+
+  it("does not submit a newline-only topic", async () => {
+    const estimateCost = vi.fn<
+      Parameters<ConveneDataSource["estimateCost"]>,
+      Promise<{ experts: number; rounds: number; estimatedPremiumRequests: number }>
+    >(async () => ({
+      experts: 1,
+      rounds: 1,
+      estimatedPremiumRequests: 1,
+    }));
+    const { stdin, lastFrame } = renderScreen({
+      convene: {
+        estimateCost,
+        streamDebate: async () => ({ debateId: undefined, reason: "completed" }),
+      },
+    });
+
+    await flush();
+    stdin.write("\n");
     await flush();
     stdin.write("\r");
     await flush();
