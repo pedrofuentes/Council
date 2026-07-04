@@ -52,16 +52,6 @@ import { validatePanelName } from "./panel.js";
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
 /**
- * Strip C0/C1 control characters (including ANSI escapes) from
- * untrusted config values before printing to the terminal.
- */
-// eslint-disable-next-line no-control-regex
-const CONTROL_CHARS = /[\x00-\x1f\x7f-\x9f]/g;
-function sanitize(s: string): string {
-  return s.replace(CONTROL_CHARS, "");
-}
-
-/**
  * Sanitize AI-fallback-derived text (e.g. `detectedFormat`) for terminal
  * display via the shared `stripControlChars` (ANSI/OSC + C0/C1 + bidi),
  * collapsing residual newlines/tabs so one value cannot leak onto extra
@@ -176,8 +166,8 @@ function buildFormatsCommand(write: Writer, _writeError: Writer): Command {
       }
       write("\n");
 
-      const aiMode = sanitize(config.documents.aiExtraction);
-      const allowed = config.documents.aiExtractionAllowedExtensions.map(sanitize);
+      const aiMode = toSingleLineDisplay(config.documents.aiExtraction);
+      const allowed = config.documents.aiExtractionAllowedExtensions.map(toSingleLineDisplay);
       write("AI Extraction (experimental):\n");
       write(
         "  What it is: builds a structured text description of files no native\n" +
