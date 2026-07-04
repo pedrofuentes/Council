@@ -9,6 +9,7 @@
  * library, runs the operation, and tears the DB down on exit.
  */
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import type { Stats } from "node:fs";
 import * as os from "node:os";
@@ -53,6 +54,15 @@ function formatNotFound(kind: string, slug: string, available: readonly string[]
   const suggestions = suggestMatch(slug, available);
   const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
   return `${kind} "${slug}" not found.${hint}`;
+}
+
+/**
+ * Wrap a trailing hint line in the dim ANSI style, but only when stdout is an
+ * interactive TTY. Piped or redirected output (files, CI logs, `| cat`) gets
+ * clean, unstyled text instead of raw escape sequences (#809).
+ */
+function dimHint(text: string): string {
+  return process.stdout.isTTY === true ? `\x1b[2m${text}\x1b[0m` : text;
 }
 
 export interface ExpertCommandDeps {
@@ -442,7 +452,7 @@ async function runExpertList(write: Writer, format: "table" | "json"): Promise<v
     for (const row of rows) {
       write(row.map((c, i) => pad(c, widths[i] ?? 0)).join("  ") + "\n");
     }
-    write("\x1b[2mNext: council expert inspect <slug> | council chat <slug>\x1b[0m\n");
+    write(dimHint("Next: council expert inspect <slug> | council chat <slug>") + "\n");
   });
 }
 
@@ -748,7 +758,7 @@ function buildDeleteCommand(write: Writer, writeError: Writer): Command {
         }
 
         write(`✓ Expert "${toSingleLineDisplay(slug)}" deleted.\n`);
-        write("\x1b[2mRun 'council expert list' to verify.\x1b[0m\n");
+        write(dimHint("Run 'council expert list' to verify.") + "\n");
       });
     });
   return cmd;
@@ -983,14 +993,29 @@ function assertSafeDerivedFilename(filename: string, displayUrl: string): void {
 }
 
 /**
+ * Short, deterministic discriminator for a path-less URL, derived only from the
+ * components that distinguish otherwise-identical host roots (port, query,
+ * fragment). Feeds the collision-resistant filename for path-less URLs (#1030);
+ * the hash source excludes userinfo so credentials never influence the name.
+ */
+function urlDiscriminatorHash(parsed: URL): string {
+  return createHash("sha256")
+    .update(`${parsed.host}\n${parsed.pathname}\n${parsed.search}\n${parsed.hash}`)
+    .digest("hex")
+    .slice(0, 8);
+}
+
+/**
  * Derive a filename from an http(s) URL and validate that it is safe to
  * create on disk and to display.
  *
  * For URLs with a path (e.g., https://example.com/doc.pdf), returns the
  * last path segment (decoded). For path-less URLs (e.g., https://example.com),
- * derives a filename from the hostname (T8 fix). The result is validated by
- * `assertSafeDerivedFilename`, so a hostile URL cannot smuggle control
- * characters or filesystem-unsafe names through (#764, #1029).
+ * derives a filename from the hostname (T8 fix); a bare host root keeps the
+ * clean `<host>.html`, while variants differing only by port/query/fragment
+ * gain a short deterministic hash suffix so they cannot collide (#1030). The
+ * result is validated by `assertSafeDerivedFilename`, so a hostile URL cannot
+ * smuggle control characters or filesystem-unsafe names through (#764, #1029).
  *
  * @param rawUrl - The URL string to derive a filename from
  * @returns A validated filename safe to create on disk
@@ -1016,14 +1041,24 @@ export function deriveFilenameFromUrl(rawUrl: string): string {
 
   // T8 fix: if no path segment exists, derive filename from hostname
   if (last === undefined || last === "" || last === "." || last === "..") {
-    // Strip port from hostname for cleaner filenames (localhost:8080 → localhost)
-    const hostnameWithoutPort = parsed.hostname;
-    if (hostnameWithoutPort === "") {
+    const hostname = parsed.hostname;
+    if (hostname === "") {
       throw new CliUserError(
         `Cannot derive filename from URL pathname (no last segment): ${displayUrl}`,
       );
     }
-    const hostFilename = `${hostnameWithoutPort}.html`;
+    // Collision-resistant naming (#1030): a bare host root keeps the clean
+    // `<host>.html`, but path-less variants that differ ONLY by port, query or
+    // fragment (e.g. an SPA's `#/a` vs `#/b`) would otherwise all truncate onto
+    // the same file and silently overwrite a previously-ingested doc. Append a
+    // short deterministic hash of those distinguishing components so distinct
+    // URLs map to distinct filenames while re-training the same URL stays
+    // idempotent. The port only feeds the hash — it is never spelled out in the
+    // name — so the result stays filesystem-clean (no colon).
+    const isBareRoot = parsed.port === "" && parsed.search === "" && parsed.hash === "";
+    const hostFilename = isBareRoot
+      ? `${hostname}.html`
+      : `${hostname}-${urlDiscriminatorHash(parsed)}.html`;
     assertSafeDerivedFilename(hostFilename, displayUrl);
     return hostFilename;
   }
@@ -1240,7 +1275,11 @@ export async function commitStagedDocs(
     if (orphanedBackups.length > 0) {
       message += ` Original files may remain in these backups: ${orphanedBackups.join(", ")}.`;
     }
-    throw new CliUserError(message);
+    // The message embeds untrusted OS error text and derived filenames (a
+    // `--url` can decode percent-encoded control bytes into a name). Collapse
+    // the whole message to a single display line so no CR/LF/ANSI reaches the
+    // terminal via CliUserError (#1882; repo sanitization convention).
+    throw new CliUserError(toSingleLineDisplay(message));
   }
   for (const { backup } of applied) {
     if (backup !== undefined) await fs.rm(backup, { force: true }).catch(() => undefined);
