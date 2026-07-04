@@ -631,6 +631,21 @@ describe("buildDoctorCommand", () => {
     expect(help).toMatch(/List available Copilot models \(live discovery with static\s+fallback\)/);
   });
 
+  it("doctor sanitizes control characters in the Config data-home path (#787)", async () => {
+    // Drop COUNCIL_HOME so the data home resolves from COUNCIL_DATA_HOME, which
+    // we seed with an embedded C0 control byte the display must strip.
+    delete process.env["COUNCIL_HOME"];
+    const rawDataHome = path.join(testHome, "data\u0001home");
+    process.env["COUNCIL_DATA_HOME"] = rawDataHome;
+
+    const output = await runDoctor(["--offline"]);
+    const dataHomeLine =
+      output.split("\n").find((line) => line.trimStart().startsWith("Data home:")) ?? "";
+
+    expect(dataHomeLine).toContain("Data home:");
+    expect(dataHomeLine).not.toContain("\u0001");
+  });
+
   it("doctor shows Configuration section with defaults", async () => {
     const onlineProbe = vi.fn(async () => ({ ok: true, detail: "ok" }));
     const output = await runDoctor([], { onlineProbe });
