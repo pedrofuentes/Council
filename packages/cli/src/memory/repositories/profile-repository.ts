@@ -9,6 +9,20 @@
  */
 import type { CouncilDatabase, PersonaProfileRow } from "../db.js";
 import type { PersonaProfile } from "../../core/documents/profile-analyzer.js";
+import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
+
+const WARNING_VALUE_MAX_CHARS = 160;
+
+function formatWarningValue(value: string): string {
+  const sanitized = toSingleLineDisplay(value);
+  return sanitized.length > WARNING_VALUE_MAX_CHARS
+    ? `${sanitized.slice(0, WARNING_VALUE_MAX_CHARS - 1)}…`
+    : sanitized;
+}
+
+function formatParseError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 function safeParseArray(
   json: string,
@@ -19,13 +33,13 @@ function safeParseArray(
     parsed = JSON.parse(json);
   } catch (err) {
     console.warn(
-      `[profile-repository] Corrupt JSON in persona_profiles.${context.field} for slug "${context.slug}": ${json} (${(err as Error).message}). Recovering as []; profile data may be damaged.`,
+      `[profile-repository] Corrupt JSON in persona_profiles.${context.field} for slug "${formatWarningValue(context.slug)}": ${formatWarningValue(json)} (${formatParseError(err)}). Recovering as []; profile data may be damaged.`,
     );
     return [];
   }
   if (!Array.isArray(parsed)) {
     console.warn(
-      `[profile-repository] Expected JSON array in persona_profiles.${context.field} for slug "${context.slug}" but got ${typeof parsed}: ${json}. Recovering as []; profile data may be damaged.`,
+      `[profile-repository] Expected JSON array in persona_profiles.${context.field} for slug "${formatWarningValue(context.slug)}" but got ${typeof parsed}: ${formatWarningValue(json)}. Recovering as []; profile data may be damaged.`,
     );
     return [];
   }
