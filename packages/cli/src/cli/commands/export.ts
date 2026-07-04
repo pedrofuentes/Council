@@ -146,6 +146,10 @@ async function realpathParentDir(parentDir: string, outputPath: string): Promise
  *     error (EACCES, ELOOP, ENOTDIR, ...) is real and is surfaced as a sanitized
  *     `CliUserError` (exit 1, no raw path/ANSI in stderr) rather than swallowed
  *     or rethrown as a raw Node error (which would exit 4 and leak the path).
+ *
+ * @param outputPath - The raw, user-supplied `--output` path (relative or absolute).
+ * @param force - When `true`, allow overwriting an existing regular file.
+ * @returns The validated, symlink-dereferenced absolute path safe to write to.
  */
 export async function resolveOutputPath(outputPath: string, force: boolean): Promise<string> {
   const resolved = path.resolve(outputPath);
@@ -216,7 +220,7 @@ export async function resolveOutputPath(outputPath: string, force: boolean): Pro
  *     in at the path is replaced wholesale rather than truncated in place — the
  *     old `O_TRUNC` opened and zeroed whatever inode was there. A pre-write
  *     `lstat` still refuses a symlink / non-regular target outright as defense
- *     in depth, and the temp is removed if the rename fails.
+ *     in depth, and the temp is removed if the write, close, or rename fails.
  *
  * Any raw Node fs error from these steps (`ENOTDIR`, `EACCES`, `EEXIST`,
  * `ELOOP`, ...) is wrapped in a sanitized `CliUserError` (exit 1, no raw
