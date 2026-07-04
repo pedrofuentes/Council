@@ -187,8 +187,10 @@ describe("createChatSessionSource ensureSession conflict recovery", () => {
         createCalls += 1;
         // The concurrent winner already landed the active session, so this
         // insert trips the partial unique index idx_chat_sessions_active_unique.
+        // Message shape mirrors node:sqlite exactly (verified against the real
+        // driver): the columns are named even for the partial index.
         throw new Error(
-          "SQLITE_CONSTRAINT: UNIQUE constraint failed: chat_sessions.target_type, chat_sessions.target_slug",
+          "UNIQUE constraint failed: chat_sessions.target_type, chat_sessions.target_slug",
         );
       },
       async getTurns(): Promise<readonly ChatTurn[]> {
@@ -207,6 +209,39 @@ describe("createChatSessionSource ensureSession conflict recovery", () => {
     expect(result).toEqual({ id: "EXISTINGSESSIONID0000000000" });
     expect(createCalls).toBe(1);
     expect(findCalls).toBe(2);
+  });
+
+  it("re-throws a non-uniqueness constraint error instead of recovering", async () => {
+    const existing = makeSession("SHOULDNOTBEUSED000000000000", "expert", "cto");
+    let findCalls = 0;
+    let createCalls = 0;
+    const chat: ChatSessionDeps["chat"] = {
+      async findActiveSession(): Promise<ChatSession | undefined> {
+        findCalls += 1;
+        // If recovery were (wrongly) attempted, this re-query would hand back a
+        // session and mask the real failure — so return one to expose the bug.
+        return findCalls === 1 ? undefined : existing;
+      },
+      async createSession(): Promise<ChatSession> {
+        createCalls += 1;
+        // A CHECK violation is a constraint error but NOT the active-session
+        // uniqueness race. It must be re-thrown, not swallowed and hidden behind
+        // an unrelated existing session.
+        throw new Error("CHECK constraint failed: chat_sessions.status");
+      },
+      async getTurns(): Promise<readonly ChatTurn[]> {
+        return [];
+      },
+      async persistTurnPair(): Promise<readonly [ChatTurn, ChatTurn]> {
+        throw new Error("persistTurnPair is not exercised by this test");
+      },
+    };
+    const source = createChatSessionSource({ chat });
+
+    await expect(source.ensureSession("expert", "cto")).rejects.toThrow("CHECK constraint failed");
+    expect(createCalls).toBe(1);
+    // The non-uniqueness error must short-circuit BEFORE any recovery re-query.
+    expect(findCalls).toBe(1);
   });
 
   it("re-throws non-constraint errors from create without re-querying", async () => {
