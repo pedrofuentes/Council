@@ -161,10 +161,10 @@ async function withPanelContext<T>(fn: (ctx: PanelContext) => Promise<T>): Promi
 
 function displayPath(absPath: string): string {
   const home = os.homedir();
-  if (absPath.startsWith(home)) {
-    return "~" + absPath.slice(home.length).replace(/\\/g, "/");
-  }
-  return absPath;
+  const displayed = absPath.startsWith(home)
+    ? "~" + absPath.slice(home.length).replace(/\\/g, "/")
+    : absPath;
+  return toSingleLineDisplay(displayed);
 }
 
 function sha256(content: string): string {
@@ -404,7 +404,9 @@ function buildDeleteCommand(
             // the "N debate sessions preserved" figure may be unavailable. The
             // name is CLI-arg-validated kebab-case (validatePanelName above),
             // so it is safe to echo directly. #1825.
-            const detail = countErr instanceof Error ? countErr.message : String(countErr);
+            const detail = toSingleLineDisplay(
+              countErr instanceof Error ? countErr.message : String(countErr),
+            );
             writeError(
               `Warning: could not count past debate sessions for "${name}": ${detail}\n` +
                 `Proceeding with the deletion prompt as if there are none.\n`,
@@ -1405,9 +1407,9 @@ function buildEditCommand(write: Writer, writeError: Writer): Command {
           onDisk = await fs.readFile(yamlPath, "utf-8");
           parsed = PanelDefinitionSchema.parse(yaml.parse(onDisk));
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = toSingleLineDisplay(err instanceof Error ? err.message : String(err));
           writeError(`Invalid panel YAML after edit: ${message}\n`);
-          writeError(`Backup saved at: ${backupPath}\n`);
+          writeError(`Backup saved at: ${displayPath(backupPath)}\n`);
           throw err;
         }
 
@@ -1782,7 +1784,7 @@ function buildDocsUnlinkCommand(write: Writer, writeError: Writer): Command {
           } catch {
             /* swallow rollback errors so the original failure is preserved */
           }
-          const detail = err instanceof Error ? err.message : String(err);
+          const detail = toSingleLineDisplay(err instanceof Error ? err.message : String(err));
           const msg =
             `Unlink aborted for ${displayPath(absolute)}: failed to clean up FTS ` +
             `index and/or metadata (${detail}). Linked folder preserved; re-run ` +
