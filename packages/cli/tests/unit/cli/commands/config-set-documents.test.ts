@@ -175,9 +175,14 @@ describe("buildConfigCommand config set documents.*", () => {
 
     it("clears the allow-list when set to an empty value", async () => {
       await runConfig(["set", "documents.aiExtractionAllowedExtensions", ".epub"]);
-      const { stderr } = await runConfig(["set", "documents.aiExtractionAllowedExtensions", ""]);
+      const { stdout, stderr } = await runConfig([
+        "set",
+        "documents.aiExtractionAllowedExtensions",
+        "",
+      ]);
 
       expect(stderr).toBe("");
+      expect(stdout).toContain("(none)");
       const config = await loadConfig();
       expect(config.documents.aiExtractionAllowedExtensions).toEqual([]);
     });

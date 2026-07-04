@@ -167,7 +167,7 @@ describe("buildConfigCommand config model", () => {
       });
 
       expect(error).toBeInstanceOf(CliUserError);
-      expect(stdout).toContain("claude-sonnet-4.5");
+      expect(stdout).toContain("Current default model: claude-sonnet-4.5");
       expect(stdout).toContain("gpt-5.4");
       // Guidance to pass an explicit name in automation.
       expect(stderr).toMatch(/config model <name>/);
