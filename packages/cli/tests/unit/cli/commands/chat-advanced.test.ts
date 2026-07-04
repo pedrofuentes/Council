@@ -1356,6 +1356,32 @@ describe("persona expert — on-demand document processing", () => {
     expect(out.toLowerCase()).toMatch(/processing|document/);
   });
 
+  it("shows a ✓-prefixed per-file progress line and an F15-aligned processing summary (#469, #1112)", async () => {
+    // #469: per-file progress must match the PRD F2 shape `✓ <file> (N words)`
+    //       — a ✓ prefix with the word count wrapped in parentheses.
+    // #1112: the summary line must use the F15-corrected wording
+    //        (`… ; N already up to date.`) rather than the misleading
+    //        `(N unchanged, …)` phrasing.
+    await seedPersonaWithDocs(env, {
+      "memo.md": "# Memo\n\nShip incrementally; data over opinions.",
+    });
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", PERSONA_SAMPLE.slug, "--engine", "mock"]);
+
+    // #469 — ✓ prefix + parenthesized word count.
+    expect(out).toMatch(/✓ memo\.md \(\d+ words\)/);
+    // #1112 — F15 wording; the misleading "unchanged" phrasing is gone.
+    expect(out).toMatch(/already up to date/i);
+    expect(out).not.toMatch(/\bunchanged\b/i);
+  });
+
   it("skips re-processing on subsequent invocations when no docs changed", async () => {
     await seedPersonaWithDocs(env, {
       "memo.md": "# Memo\n\nstable content",
@@ -1385,7 +1411,7 @@ describe("persona expert — on-demand document processing", () => {
 
     expect(out2).not.toMatch(/processing persona documents/i);
     expect(out2).not.toMatch(/processed \d+ new\/changed document/i);
-    expect(out2).not.toMatch(/memo\.md: \d+ words/i);
+    expect(out2).not.toMatch(/✓ memo\.md \(\d+ words\)/i);
   });
 
   it("empty docs folder: surfaces info that the persona will work as a generic expert", async () => {

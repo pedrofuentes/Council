@@ -182,4 +182,24 @@ describe("warnIfGenericExpertHasUnindexedDocs — silent early-returns (#2060 it
     expect(systemCalls[0]?.message).toMatch(/\(good-generic\) is a generic expert/);
     expect(systemCalls[0]?.message).toMatch(/are NOT indexed and will be ignored/);
   });
+
+  it("surfaces a warning when the docs path is unreadable (ENOTDIR) instead of silently swallowing it (#1104)", async () => {
+    // Plant a *file* where the docs *directory* is expected. `fs.readdir` then
+    // rejects with ENOTDIR — a real I/O error distinct from ENOENT (an absent
+    // folder, which is the expected no-docs case). The former bare
+    // `catch { return []; }` swallowed BOTH undifferentiated, so a
+    // permission-locked / mis-shaped docs path was silently ignored. The sink
+    // must now differentiate: ENOENT stays silent, real I/O errors are surfaced.
+    const expertDir = path.join(dataHome, "experts", "broken-generic");
+    await fs.mkdir(expertDir, { recursive: true });
+    await fs.writeFile(path.join(expertDir, "docs"), "not a directory", "utf-8");
+
+    const { renderer, systemCalls } = makeRecordingRenderer();
+    await warnIfGenericExpertHasUnindexedDocs(genericExpert("broken-generic"), dataHome, renderer);
+
+    expect(systemCalls).toHaveLength(1);
+    expect(systemCalls[0]?.level).toBe("warn");
+    expect(systemCalls[0]?.message).toMatch(/could not read/i);
+    expect(systemCalls[0]?.message).toMatch(/broken-generic/);
+  });
 });
