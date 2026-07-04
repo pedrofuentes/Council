@@ -50,16 +50,25 @@ async function seedPanelWithDebates(
     });
 
     const debateIds: string[] = [];
+    // Anchor all seeded debates to a single clock reading and space their
+    // started_at explicitly (1s apart, strictly increasing with creation
+    // order). The previous `setTimeout(5)` gap relied on wall-clock resolution
+    // and monotonicity, which under full-suite load could tie or invert the two
+    // timestamps and make cancelRunning's "latest running" pick — and thus the
+    // debate-cancellation status/endedAt assertions — non-deterministic (#1507).
+    const baseStartedAtMs = Date.now() - statuses.length * 1000;
     for (const [index, status] of statuses.entries()) {
-      if (index > 0) {
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
       const debate = await debateRepo.create({
         panelId: panel.id,
         prompt: `${panelName} prompt ${index}`,
         moderator: "round-robin",
       });
       debateIds.push(debate.id);
+      await db
+        .updateTable("debates")
+        .set({ started_at: new Date(baseStartedAtMs + index * 1000).toISOString() })
+        .where("id", "=", debate.id)
+        .execute();
       if (status !== "running") {
         await debateRepo.update(debate.id, {
           status,
