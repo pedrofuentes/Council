@@ -229,7 +229,7 @@ export async function writeExportArtifact(
   force: boolean,
   writeError: Writer = defaultErrorWriter,
 ): Promise<void> {
-  const noFollow = fsConstants.O_NOFOLLOW ?? 0;
+  const noFollow = (fsConstants.O_NOFOLLOW as number | undefined) ?? 0;
 
   try {
     if (!force) {
@@ -241,7 +241,10 @@ export async function writeExportArtifact(
       try {
         await handle.writeFile(contents, { encoding: "utf8" });
       } finally {
-        await handle.close();
+        // A close rejection here must not shadow a writeFile rejection: the bytes
+        // were already flushed by the awaited writeFile, so swallow a late close
+        // failure and let the more actionable write error propagate (#1888).
+        await handle.close().catch(() => undefined);
       }
       return;
     }
@@ -274,10 +277,22 @@ export async function writeExportArtifact(
     // temp sibling. On success the rename has consumed the temp, so skip the rm.
     let renamed = false;
     try {
+      let writeErr: unknown;
       try {
         await handle.writeFile(contents, { encoding: "utf8" });
+      } catch (err: unknown) {
+        writeErr = err;
+        throw err;
       } finally {
-        await handle.close();
+        // If close ALSO rejects, preserve the more actionable writeFile error as
+        // the close error's cause instead of letting try/finally silently drop it
+        // (#2101). When only close rejects, it propagates unchanged.
+        await handle.close().catch((closeErr: unknown) => {
+          if (writeErr !== undefined && closeErr instanceof Error && closeErr.cause === undefined) {
+            closeErr.cause = writeErr;
+          }
+          throw closeErr;
+        });
       }
       await fs.rename(tempPath, resolvedPath);
       renamed = true;
@@ -388,9 +403,9 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
           });
         }
         const doc = await loadFullPanelTranscript(db, resolvedName);
-        const rendered = renderForExport(doc, opts.format);
 
         if (opts.output !== undefined) {
+          const rendered = renderForExport(doc, opts.format);
           const resolvedOutput = await resolveOutputPath(opts.output, opts.force === true);
           await writeExportArtifact(resolvedOutput, rendered, opts.force === true, writeError);
           writeError(`Wrote ${opts.format} export to ${sanitizeExportLine(opts.output)}\n`);
@@ -402,13 +417,19 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
           }
           return;
         }
-        write(rendered);
-        if (opts.format !== "json") {
-          const safeResolvedName = sanitizeExportLine(resolvedName);
-          write(
-            `Next: council conclude ${safeResolvedName} | council resume ${safeResolvedName}\n`,
-          );
+
+        // stdout: stream NDJSON one event at a time so a large debate's JSON
+        // export is never materialized as a single in-memory string (#175),
+        // matching `resume --format json`. Other formats render to one string.
+        if (opts.format === "json") {
+          for (const e of synthesizeEvents(doc)) {
+            write(JSON.stringify(e) + "\n");
+          }
+          return;
         }
+        write(renderForExport(doc, opts.format));
+        const safeResolvedName = sanitizeExportLine(resolvedName);
+        write(`Next: council conclude ${safeResolvedName} | council resume ${safeResolvedName}\n`);
       } finally {
         await db.destroy().catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
@@ -585,7 +606,13 @@ export function renderAdr(doc: TranscriptDocument): string {
   lines.push("");
   lines.push(`## Context`);
   lines.push("");
-  lines.push(sanitizeExportBlock(doc.originalPrompt));
+  // Quote the original prompt line-by-line and neutralize any leading block
+  // marker so a crafted prompt (e.g. an embedded `## ...`) cannot forge a
+  // top-level ADR section — the same outline-spoofing guard applied to the
+  // Options/Decision blockquotes and Discussion continuations (#2110/#1888).
+  for (const line of sanitizeExportBlockLines(doc.originalPrompt)) {
+    lines.push(`> ${escapeBlockLeadingMarkdown(line)}`);
+  }
   lines.push("");
   lines.push(`## Options Considered`);
   lines.push("");
