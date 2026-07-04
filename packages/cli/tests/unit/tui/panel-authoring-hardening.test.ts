@@ -167,6 +167,14 @@ function yamlPathFor(home: string, name: string): string {
   return path.join(home, "panels", `${name}.yaml`);
 }
 
+function panelDirFor(home: string, name: string): string {
+  return path.join(home, "panels", name);
+}
+
+function panelDocsDirFor(home: string, name: string): string {
+  return path.join(home, "panels", name, "docs");
+}
+
 function resetMockState(): void {
   mockState.openRejectPath = null;
   mockState.openRejectValue = null;
@@ -227,6 +235,29 @@ describe("createPanelAuthoringSource — error-handling hardening (#1645)", () =
     expect((err as Error).message).not.toMatch(/EIO|simulated close failure/i);
     // The partially-written YAML and DB row are rolled back.
     await expect(fs.access(yamlPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(env.repo.rows.has("alpha")).toBe(false);
+  });
+
+  it("removes the orphaned panel directory when docs-dir creation fails", async () => {
+    const panelDir = panelDirFor(env.home, "alpha");
+    mockState.mkdirFailAfterCreatePath = panelDocsDirFor(env.home, "alpha");
+
+    const err = await sourceFor(env)
+      .create({ name: "alpha", description: null, expertSlugs: ["alice"] })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/EACCES|simulated mkdir failure/i);
+    // A failed create must fully roll back: the panel dir created as a side
+    // effect of the docs mkdir must not be left orphaned on disk, alongside
+    // the YAML and DB row.
+    await expect(fs.access(panelDir)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.access(yamlPathFor(env.home, "alpha"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
     expect(env.repo.rows.has("alpha")).toBe(false);
   });
 });
