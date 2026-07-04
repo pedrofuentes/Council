@@ -1524,6 +1524,88 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
         await fs.rm(linkDir, { recursive: true, force: true });
       }
     });
+    it("`panel docs unlink` sanitizes FTS cleanup err.message before stderr (#1931 item a)", async () => {
+      await createPanel();
+      const linkDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-unlink-fts-san-"));
+      let indexerSpy: { mockRestore: () => void } | undefined;
+      try {
+        await fs.writeFile(path.join(linkDir, "a.md"), "# A\nbody\n", "utf-8");
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { PanelDocumentRepository } =
+          await import("../../../../src/memory/repositories/panel-document-repo.js");
+
+        const cmdLink = buildPanelCommand(() => {
+          /* noop */
+        });
+        await cmdLink.parseAsync([
+          "node",
+          "council-panel",
+          "docs",
+          "link",
+          "arch-review",
+          "--path",
+          linkDir,
+          "--yes",
+        ]);
+
+        const filePath = path.join(linkDir, "a.md");
+        const db = await createDatabase(path.join(env.home, "council.db"));
+        try {
+          const repo = new PanelDocumentRepository(db);
+          await repo.trackDocument({
+            panelName: "arch-review",
+            source: "linked",
+            filePath,
+            filename: "a.md",
+            checksum: "h",
+            sizeBytes: 5,
+            wordCount: 1,
+          });
+        } finally {
+          await db.destroy();
+        }
+
+        const { vi } = await import("vitest");
+        const indexerModule = await import("../../../../src/core/documents/indexer.js");
+        indexerSpy = vi.spyOn(indexerModule, "createDocumentIndexer").mockReturnValueOnce({
+          index: async () => undefined,
+          remove: async () => {
+            throw new Error("FTS failed\r\n\u001b[31mowned\u001b[0m\u202e");
+          },
+          removeAll: async () => undefined,
+        });
+
+        let erred = "";
+        const cmdUnlink = buildPanelCommand(
+          () => {
+            /* noop */
+          },
+          (s) => {
+            erred += s;
+          },
+        );
+        await expect(
+          cmdUnlink.parseAsync([
+            "node",
+            "council-panel",
+            "docs",
+            "unlink",
+            "arch-review",
+            "--path",
+            linkDir,
+          ]),
+        ).rejects.toThrow(/Unlink aborted/i);
+
+        expect(erred).toMatch(/Unlink aborted/i);
+        expectNoTerminalControls(erred);
+        expect(erred).not.toContain("\u001b[31m");
+        expect(erred.replace(/\n$/, "")).not.toContain("\n");
+      } finally {
+        indexerSpy?.mockRestore();
+        await fs.rm(linkDir, { recursive: true, force: true });
+      }
+    });
+
     it("`panel docs unlink` aborts and preserves metadata when FTS cleanup fails (#388)", async () => {
       await createPanel();
       const linkDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-unlink-fts-fail-"));
