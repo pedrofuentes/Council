@@ -468,7 +468,7 @@ function coerceConfigValue(
       return parsed;
     }
     case "conclude.maxTranscriptChars": {
-      const rangeMessage = `Config value for ${toSingleLineDisplay(key)} must be a number between 1000 and 1000000.`;
+      const rangeMessage = `Config value for ${toSingleLineDisplay(key)} must be an integer between 1000 and 1000000.`;
       const parsed = parseIntegerConfigValue(key, rawValue, rangeMessage);
       if (parsed < 1000 || parsed > 1000000) {
         throw new CliUserError(rangeMessage);
