@@ -25,6 +25,12 @@ import {
 } from "../../../../src/cli/commands/expert.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
 
+// Control / C1 / bidi / line-separator code points that must never reach a
+// single-line terminal sink. Mirrors the class stripped by
+// `toSingleLineDisplay`.
+// eslint-disable-next-line no-control-regex
+const FORBIDDEN_DISPLAY_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
+
 interface TestEnv {
   readonly home: string;
   readonly dataHome: string;
@@ -76,6 +82,23 @@ describe("expert create wizard pre-fill UX (T7)", () => {
 
     it("returns the empty string when no fields are pre-filled (zero pre-fill)", () => {
       expect(formatPrefilledLines({})).toBe("");
+    });
+
+    it("sanitizes control, ANSI, and bidi bytes in echoed field values (injection-safe)", () => {
+      // The pre-fill echo replays CLI-flag values (untrusted) back to the
+      // terminal. A display name carrying a CR, LF, ANSI CSI sequences and a
+      // bidi override must not inject extra ✓ lines or emit escape sequences.
+      const evilName = "Bad\r\n\x1b[31mFAKE\x1b[0m\u202Ename";
+      const out = formatPrefilledLines({ slug: "mybot", name: evilName });
+
+      // No untrusted control / C1 / bidi / line-separator byte reaches the TTY.
+      for (const line of out.split("\n")) {
+        expect(line).not.toMatch(FORBIDDEN_DISPLAY_CHARS);
+      }
+      // The untrusted name cannot inject extra ✓ lines: slug + displayName only.
+      expect(out.split("\n").filter((l) => l.length > 0)).toHaveLength(2);
+      // Visible characters preserved; control/ANSI/bidi collapsed to one line.
+      expect(out).toContain("✓ displayName: Bad FAKEname");
     });
 
     it("includes every provided field, including optional ones", () => {

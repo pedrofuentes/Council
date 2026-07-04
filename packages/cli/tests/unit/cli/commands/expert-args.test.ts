@@ -19,6 +19,12 @@ import {
   parseExpertSlugs,
 } from "../../../../src/cli/commands/expert-args.js";
 
+// Control / C1 / bidi / line-separator code points that must never reach a
+// single-line terminal sink. Mirrors the class stripped by
+// `toSingleLineDisplay`.
+// eslint-disable-next-line no-control-regex
+const FORBIDDEN_DISPLAY_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
+
 describe("parseExpertSlugs", () => {
   it("splits a single comma-separated string (quoted form)", () => {
     expect(parseExpertSlugs("alpha,beta,gamma")).toEqual(["alpha", "beta", "gamma"]);
@@ -80,5 +86,25 @@ describe("formatStrayExpertsWarning", () => {
     expect(msg).toContain("gamma");
     expect(msg).toMatch(/--experts/);
     expect(msg).toMatch(/powershell/i);
+  });
+
+  it("sanitizes control, ANSI, and bidi bytes in stray operands (single-line, injection-safe)", () => {
+    // A stray operand carrying a CR, an LF, two ANSI CSI sequences, and a bidi
+    // override — every class `toSingleLineDisplay` strips or collapses. The
+    // operands come straight from argv, so a crafted value must not be able to
+    // inject extra lines or emit escape sequences to the terminal.
+    const evil = "beta\r\n\x1b[31mred\x1b[0m\u202Eevil";
+    const msg = formatStrayExpertsWarning([evil, "gamma"]);
+
+    // No untrusted control / C1 / bidi / line-separator byte reaches the TTY.
+    for (const line of msg.split("\n")) {
+      expect(line).not.toMatch(FORBIDDEN_DISPLAY_CHARS);
+    }
+    // The operand cannot inject extra lines: only the 3 template lines remain.
+    expect(msg.split("\n").filter((l) => l.length > 0)).toHaveLength(3);
+    // BOTH interpolation sinks — the comma-joined list AND the space-joined
+    // `--experts` example — render the sanitized, single-line form.
+    expect(msg).toContain("beta redevil, gamma");
+    expect(msg).toContain("--experts beta redevil gamma");
   });
 });
