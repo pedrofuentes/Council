@@ -83,9 +83,7 @@ describe("appendReferenceDocuments — safeSource comma stripping (#1002)", () =
     };
     const out = appendReferenceDocuments("query", [snippet]);
     // The header must not contain a comma from the source
-    const headerLine = out
-      .split("\n")
-      .find((l) => l.startsWith("[REFERENCE DOCUMENT:"));
+    const headerLine = out.split("\n").find((l) => l.startsWith("[REFERENCE DOCUMENT:"));
     expect(headerLine).toBeDefined();
     expect(headerLine).not.toMatch(/,/);
   });
@@ -115,17 +113,21 @@ describe("appendReferenceDocuments — safeExtractionMethod comma stripping (#17
 describe("appendReferenceDocuments — unicode comma delimiter sanitization (#1791)", () => {
   // #1791: safeSource/safeExtractionMethod stripped ONLY the ASCII comma
   // (U+002C), so the rest of the Unicode comma-punctuation class survived —
-  // fullwidth U+FF0C, small U+FE50, ideographic U+3001, and 22 others. Any of
-  // them can forge a look-alike `, extracted via:` / `, from:` provenance
-  // separator and smuggle a second, attacker-controlled field past a human or
-  // model reader. The WHOLE class must be neutralized in both the source
-  // header and the provenance line. (ASCII-comma stripping is already covered
-  // by the #1002/#1777 suites above, and the provenance line legitimately
-  // contains Council's own ASCII `, ` separator, so U+002C is excluded here.)
+  // fullwidth U+FF0C, small U+FE50, ideographic U+3001, and 22 others. UTS #39
+  // comma-confusables for prototype U+002C — e.g. U+201A (‚), U+00B8 (¸),
+  // Arabic separators U+060D/066B/066C, and Lisu U+A4F9/A4FB — forge the same
+  // delimiter even when they are not Po characters literally named "...COMMA".
+  // Any of them can forge a look-alike `, extracted via:` / `, from:`
+  // provenance separator and smuggle a second, attacker-controlled field past a
+  // human or model reader. The WHOLE class must be neutralized in both the
+  // source header and the provenance line. (ASCII-comma stripping is already
+  // covered by the #1002/#1777 suites above, and the provenance line
+  // legitimately contains Council's own ASCII `, ` separator, so U+002C is
+  // excluded here.)
   const UNICODE_COMMAS: readonly string[] = [
-    0x055d, 0x060c, 0x07f8, 0x1363, 0x1802, 0x1808, 0x2e32, 0x2e34, 0x2e41, 0x2e49, 0x2e4c, 0x3001,
-    0xa4fe, 0xa60d, 0xa6f5, 0xfe10, 0xfe11, 0xfe50, 0xfe51, 0xff0c, 0xff64, 0x1144d, 0x1145a,
-    0x16e97, 0x1da87,
+    0x00b8, 0x055d, 0x060c, 0x060d, 0x066b, 0x066c, 0x07f8, 0x1363, 0x1802, 0x1808, 0x201a, 0x2e32,
+    0x2e34, 0x2e41, 0x2e49, 0x2e4c, 0x3001, 0xa4f9, 0xa4fb, 0xa4fe, 0xa60d, 0xa6f5, 0xfe10, 0xfe11,
+    0xfe50, 0xfe51, 0xff0c, 0xff64, 0x1144d, 0x1145a, 0x16e97, 0x1da87,
   ].map((cp) => String.fromCodePoint(cp));
 
   it("strips every unicode comma variant from the source header line", () => {
