@@ -69,6 +69,23 @@ describe("CommandPalette", () => {
     unmount();
   });
 
+  it("does not select when Enter is pressed with no matching results", async () => {
+    let selected: string | undefined;
+    const { stdin, lastFrame, unmount } = render(
+      <CommandPalette commands={commands} onSelect={(id) => { selected = id; }} onClose={noop} />,
+    );
+    await flush();
+    stdin.write("zzz"); // matches no command -> empty result set
+    await flush();
+    expect(lastFrame() ?? "").not.toContain("New Session");
+    // Enter with no results must hit the `if (chosen)` null-guard: no onSelect call,
+    // and no `onSelect(undefined.cmd.id)` crash. Removing the guard makes this throw.
+    stdin.write("\r");
+    await flush();
+    expect(selected).toBeUndefined();
+    unmount();
+  });
+
   it("closes on Esc", async () => {
     let closed = false;
     const { stdin, unmount } = render(

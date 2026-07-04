@@ -160,7 +160,12 @@ describe("PanelCreateScreen", () => {
     const { stdin, lastFrame, unmount } = renderScreen({ panelAuthoring: createAuthoring(create) });
     await flush();
 
-    stdin.write("Bad Name");
+    // The validation error echoes the raw name back, so drive terminal-injection
+    // vectors through it to exercise the toSingleLineDisplay sink: zero-width
+    // (U+200B), RLO bidi override (U+202E), line/paragraph separators
+    // (U+2028/U+2029), soft hyphen (U+00AD) and the C1 CSI/OSC introducers
+    // (U+009B/U+009D — the 8-bit ANSI equivalents).
+    stdin.write("Ev\u200bil\u202eName\u2028Two\u2029Three\u00adX\u009bY\u009dZ");
     await flush();
     stdin.write("\t");
     await flush();
@@ -171,7 +176,9 @@ describe("PanelCreateScreen", () => {
 
     expect(create).not.toHaveBeenCalled();
     expect(lastFrame()).toContain("Invalid panel name");
-    expect(lastFrame()).not.toContain("\n\u001B[31m");
+    for (const injected of ["\u200b", "\u202e", "\u2028", "\u2029", "\u00ad", "\u009b", "\u009d"]) {
+      expect(lastFrame()).not.toContain(injected);
+    }
     unmount();
   });
 
@@ -216,21 +223,50 @@ describe("PanelCreateScreen", () => {
     unmount();
   });
 
-  it("does not create while the expert list is still loading", async () => {
-    const create = vi.fn<Parameters<PanelAuthoringDataSource["create"]>, Promise<void>>();
+  it("gates creation on the loaded state: blocks Enter while loading, creates once loaded", async () => {
+    let resolveExperts: (list: readonly ExpertListItem[]) => void = () => undefined;
+    const gate = new Promise<readonly ExpertListItem[]>((resolve) => {
+      resolveExperts = resolve;
+    });
+    const create = vi.fn<Parameters<PanelAuthoringDataSource["create"]>, Promise<void>>(
+      async () => undefined,
+    );
     const { stdin, lastFrame, unmount } = renderScreen({
-      loadList: async () => new Promise<readonly ExpertListItem[]>(() => undefined),
+      loadList: async () => gate,
       panelAuthoring: createAuthoring(create),
     });
     await flush();
 
+    // While loading, the interactive form sits behind the "Loading experts…"
+    // gate: the members control is absent and Enter cannot create a panel.
+    expect(lastFrame()).toContain("Loading experts");
+    expect(lastFrame()).not.toContain("Members:");
     stdin.write("strategy-panel");
     await flush();
     stdin.write("\r");
     await flush();
-
     expect(create).not.toHaveBeenCalled();
     expect(lastFrame()).toContain("Loading experts");
+
+    // Once the experts resolve, the very same sequence DOES create — proving the
+    // loading gate (not an inert form) is what blocked creation above.
+    resolveExperts(experts);
+    await flush();
+    expect(lastFrame()).toContain("Members:");
+    stdin.write("strategy-panel");
+    await flush();
+    stdin.write("\t");
+    await flush();
+    stdin.write(" ");
+    await flush();
+    stdin.write("\r");
+    await flush();
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledWith({
+      name: "strategy-panel",
+      description: null,
+      expertSlugs: ["cto"],
+    });
     unmount();
   });
 

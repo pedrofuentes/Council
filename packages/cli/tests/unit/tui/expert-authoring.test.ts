@@ -216,6 +216,15 @@ describe("validateExpertForm", () => {
     });
   });
 
+  it("accepts a slug at the 64-character max-length boundary", () => {
+    // SLUG_PATTERN allows a leading char plus up to 63 more (max 64). The 65-char
+    // reject above only pins the upper side; without this the inclusive boundary
+    // could regress to an off-by-one that wrongly rejects valid max-length slugs.
+    const slug = `a${"b".repeat(63)}`;
+    expect(slug).toHaveLength(64);
+    expect(expectOk(validateExpertForm(validForm({ slug }))).slug).toBe(slug);
+  });
+
   it("collects all cheap required-field errors before running the schema", () => {
     expect(
       expectErrors(

@@ -36,13 +36,25 @@ describe("ScrollView", () => {
   });
 
   it("highlights only the cursor row with inverse video", () => {
-    const highlighted = render(<ScrollView items={items} height={5} cursor={2} />);
     // Ink renders `inverse` as the SGR reverse-video sequence (ESC[7m); FORCE_COLOR=3 in tests.
-    expect(highlighted.lastFrame() ?? "").toContain("\u001b[7m");
+    const INVERSE = "\u001b[7m";
+    const cursor = 2;
+    const highlighted = render(<ScrollView items={items} height={5} cursor={cursor} />);
+    const lines = (highlighted.lastFrame() ?? "").split("\n");
+
+    // The inverse SGR must wrap the cursor's own row and no other. Asserting only
+    // that ESC[7m is "present somewhere" would pass even if a neighbouring row were
+    // highlighted, so pin it to the exact line and require neighbours to stay plain.
+    const cursorLine = lines.findIndex((line) => line.includes(`item-${cursor}`));
+    expect(cursorLine).toBeGreaterThanOrEqual(0);
+    expect(lines[cursorLine]).toContain(INVERSE);
+    lines.forEach((line, index) => {
+      if (index !== cursorLine) expect(line).not.toContain(INVERSE);
+    });
     highlighted.unmount();
 
     const plain = render(<ScrollView items={items} height={5} cursor={-1} />);
-    expect(plain.lastFrame() ?? "").not.toContain("\u001b[7m");
+    expect(plain.lastFrame() ?? "").not.toContain(INVERSE);
     plain.unmount();
   });
 });
