@@ -14,6 +14,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const templateLoaderControl = vi.hoisted(() => ({
   listTemplatesFails: false,
   listTemplatesOverride: undefined as readonly string[] | undefined,
+  listUserPanelsFails: false,
+  listUserPanelsOverride: undefined as readonly string[] | undefined,
 }));
 
 import type * as TemplateLoaderModule from "../../../src/core/template-loader.js";
@@ -27,6 +29,12 @@ vi.mock("../../../src/core/template-loader.js", async (importOriginal) => {
         throw new Error("simulated listTemplates failure (#1817)");
       }
       return templateLoaderControl.listTemplatesOverride ?? actual.listTemplates(dir);
+    },
+    listUserPanels: async (dataHome: string): Promise<readonly string[]> => {
+      if (templateLoaderControl.listUserPanelsFails) {
+        throw new Error("simulated listUserPanels failure (#2047)");
+      }
+      return templateLoaderControl.listUserPanelsOverride ?? actual.listUserPanels(dataHome);
     },
   };
 });
@@ -45,12 +53,15 @@ describe("resolveSession", () => {
   beforeEach(async () => {
     templateLoaderControl.listTemplatesFails = false;
     templateLoaderControl.listTemplatesOverride = undefined;
+    templateLoaderControl.listUserPanelsFails = false;
+    templateLoaderControl.listUserPanelsOverride = undefined;
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-session-resolver-"));
     await copyTemplateDb(path.join(testHome, "council.db"));
     db = await createDatabase(path.join(testHome, "council.db"));
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await db.destroy();
     try {
       await fs.rm(testHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
@@ -156,7 +167,6 @@ describe("resolveSession", () => {
 
   it("F18: ambiguous prefix includes disambiguation guidance to use the full name", async () => {
     await seedPanel("code-review-a", "Alpha topic");
-    await new Promise((resolve) => setTimeout(resolve, 5));
     await seedPanel("code-review-b", "Beta topic");
 
     let stderr = "";
@@ -224,12 +234,11 @@ describe("resolveSession", () => {
     ).rejects.toThrow(/did you mean|finance-review/i);
   });
 
-  // #1817: buildSuggestions() aggregates panels, user panels and built-in
-  // templates via Promise.all. A single rejecting source (a `listTemplates`
-  // throw ripple from PR #1813) used to reject the whole aggregation, masking
-  // the not-found guidance the user actually needs. The guidance must survive a
-  // failed source, and any suggestions from the *fulfilled* sources must still
-  // be surfaced.
+  // #1817/#2047: buildSuggestions() aggregates panels, user panels and built-in
+  // templates via allSettled. Rejections from any one source must degrade to the
+  // fulfilled sources instead of masking the not-found guidance the user needs.
+  // The guidance must survive a failed source, and any suggestions from the
+  // *fulfilled* sources must still be surfaced.
   describe("resilient suggestions when a source fails (#1817)", () => {
     it("still surfaces not-found guidance and surviving suggestions when a source rejects", async () => {
       // Seed a DB panel that is a near-miss of the request — it is a *fulfilled*
@@ -252,6 +261,52 @@ describe("resolveSession", () => {
       // as a raw Error (not a CliUserError) and no guidance was written. After
       // the fix the guidance is surfaced and the fulfilled source still suggests.
       await expect(resolving).rejects.toBeInstanceOf(CliUserError);
+      expect(stderr).toContain("No panel found matching 'financ-review'");
+      expect(stderr).toContain("Did you mean 'finance-review'");
+      expect(stderr).toContain("council sessions");
+    });
+
+    it("still surfaces not-found guidance and template suggestions when panel storage rejects", async () => {
+      vi.spyOn(PanelRepository.prototype, "findAll").mockRejectedValueOnce(
+        new Error("simulated panelRepo.findAll failure (#2047)"),
+      );
+      templateLoaderControl.listTemplatesOverride = ["finance-review"];
+
+      let stderr = "";
+      await expect(
+        resolveSession({
+          db,
+          dataHome: testHome,
+          panelArg: "financ-review",
+          writeError: (chunk) => {
+            stderr += chunk;
+          },
+          isNonInteractive: () => true,
+        }),
+      ).rejects.toBeInstanceOf(CliUserError);
+
+      expect(stderr).toContain("No panel found matching 'financ-review'");
+      expect(stderr).toContain("Did you mean 'finance-review'");
+      expect(stderr).toContain("council sessions");
+    });
+
+    it("still surfaces not-found guidance and database suggestions when user panels reject", async () => {
+      await seedPanel("finance-review");
+      templateLoaderControl.listUserPanelsFails = true;
+
+      let stderr = "";
+      await expect(
+        resolveSession({
+          db,
+          dataHome: testHome,
+          panelArg: "financ-review",
+          writeError: (chunk) => {
+            stderr += chunk;
+          },
+          isNonInteractive: () => true,
+        }),
+      ).rejects.toBeInstanceOf(CliUserError);
+
       expect(stderr).toContain("No panel found matching 'financ-review'");
       expect(stderr).toContain("Did you mean 'finance-review'");
       expect(stderr).toContain("council sessions");
