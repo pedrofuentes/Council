@@ -1163,13 +1163,20 @@ describe("buildSessionsCommand", () => {
         });
         await cmd.parseAsync(["node", "council-sessions"]);
 
+        const outputLines = captured.split("\n");
+        const headerLine = outputLines.find((line) => line.includes("Reduce checkout latency"));
+        const panelLine = outputLines.find((line) => line.includes("panel:"));
+        const resumeLine = outputLines.find((line) => line.includes("resume/export:"));
+
         // F32: the friendly panel name is surfaced on its own — not the
         // timestamped slug — so users can connect "the code-review debate".
-        expect(captured).toContain("panel: code-review\n");
+        expect(panelLine).toBe("    panel: code-review");
+        expect(headerLine).toContain("code-review — Reduce checkout latency");
+        expect(headerLine).not.toContain("code-review-2026-06-16T23:47:21");
         // F32: the identifier passed to resume/export is shown with a clear label.
-        expect(captured).toMatch(/resume\/export:\s*code-review-2026-06-16T23:47:21/);
+        expect(resumeLine).toBe("    resume/export: code-review-2026-06-16T23:47:21");
         // IDs preserved: the exact resume/export slug appears verbatim (unchanged).
-        expect(captured).toContain("code-review-2026-06-16T23:47:21");
+        expect(resumeLine).not.toBe(panelLine);
       });
 
       it("derives a scannable topic label from the latest prompt when no topic is set (F35)", async () => {
@@ -1205,6 +1212,31 @@ describe("buildSessionsCommand", () => {
         // instead of the unscannable "(no topic)" placeholder.
         expect(captured).toContain("Should we migrate to microservices");
         expect(captured).not.toContain("(no topic)");
+      });
+
+      it("shows no-topic placeholder when no topic and no debates exist (F35)", async () => {
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
+        const db = await createDatabase(path.join(testHome, "council.db"));
+        const repo = new PanelRepository(db);
+        await repo.create({
+          name: "empty-topic-session",
+          topic: null,
+          copilotHome: path.join(testHome, "copilot"),
+          configJson: JSON.stringify({ template: "empty-topic" }),
+        });
+        await db.destroy();
+
+        let captured = "";
+        const cmd = buildSessionsCommand((s) => {
+          captured += s;
+        });
+        await cmd.parseAsync(["node", "council-sessions"]);
+
+        const outputLines = captured.split("\n");
+        const headerLine = outputLines.find((line) => line.includes("empty-topic"));
+        expect(headerLine).toContain("empty-topic — (no topic)");
+        expect(outputLines).toContain("    status: none");
       });
 
       it("strips terminal escape sequences from untrusted session fields (security)", async () => {
@@ -1262,7 +1294,7 @@ describe("buildSessionsCommand", () => {
         const db = await createDatabase(path.join(testHome, "council.db"));
         const repo = new PanelRepository(db);
         await repo.create({
-          name: "legacy-session",
+          name: "legacy-session-2026-06-16T23:47:21",
           topic: "legacy topic",
           copilotHome: path.join(testHome, "copilot"),
           configJson: "{}",
@@ -1275,8 +1307,43 @@ describe("buildSessionsCommand", () => {
         });
         await cmd.parseAsync(["node", "council-sessions"]);
 
-        expect(captured).toContain("panel: legacy-session\n");
-        expect(captured).toMatch(/resume\/export:\s*legacy-session/);
+        const outputLines = captured.split("\n");
+        const headerLine = outputLines.find((line) => line.includes("legacy topic"));
+        expect(headerLine).toContain("legacy-session-2026-06-16T23:47:21 — legacy topic");
+        expect(outputLines).toContain("    panel: legacy-session-2026-06-16T23:47:21");
+        expect(outputLines).toContain("    resume/export: legacy-session-2026-06-16T23:47:21");
+      });
+
+      it("falls back to the session slug for malformed or non-object config JSON", async () => {
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
+        const db = await createDatabase(path.join(testHome, "council.db"));
+        const repo = new PanelRepository(db);
+        await repo.create({
+          name: "malformed-config-session",
+          topic: "malformed config topic",
+          copilotHome: path.join(testHome, "copilot"),
+          configJson: "{not json",
+        });
+        await repo.create({
+          name: "primitive-config-session",
+          topic: "primitive config topic",
+          copilotHome: path.join(testHome, "copilot"),
+          configJson: "42",
+        });
+        await db.destroy();
+
+        let captured = "";
+        const cmd = buildSessionsCommand((s) => {
+          captured += s;
+        });
+        await cmd.parseAsync(["node", "council-sessions"]);
+
+        const outputLines = captured.split("\n");
+        expect(outputLines).toContain("    panel: malformed-config-session");
+        expect(outputLines).toContain("    resume/export: malformed-config-session");
+        expect(outputLines).toContain("    panel: primitive-config-session");
+        expect(outputLines).toContain("    resume/export: primitive-config-session");
       });
     });
   });
