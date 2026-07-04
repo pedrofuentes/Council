@@ -529,6 +529,9 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
       // Resolve config once per invocation and thread the shared loader into
       // every check and summary section so it is read from disk only once.
       const loadConfigOnce = memoizeAsync(loadConfigDep);
+      // Likewise cache model discovery: a failed default-model probe discovers
+      // alternatives and `--models` lists them, but both must share one probe.
+      const discoverModelsOnce = memoizeAsync(discoverModels);
       const checks: LabeledCheck[] = [
         { label: "Node.js version", run: checkNodeVersion },
         { label: "Council home", run: checkCouncilHome },
@@ -546,7 +549,7 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
           run: () =>
             checkDefaultModelAccess(
               onlineProbe,
-              discoverModels,
+              discoverModelsOnce,
               onlineProbeTimeoutMs,
               loadConfigOnce,
             ),
@@ -648,7 +651,7 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
       write(`   Columns: ${process.stdout.columns ?? "(unknown)"}\n`);
 
       if (options.models) {
-        const modelDiscovery = await discoverModels();
+        const modelDiscovery = await discoverModelsOnce();
         write("\n");
         write(formatAvailableModels(modelDiscovery.models, modelDiscovery.source));
       }
