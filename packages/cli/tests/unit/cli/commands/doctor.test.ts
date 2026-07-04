@@ -28,6 +28,10 @@ interface DoctorDepsLike {
   readonly createSpinner?: () => SpinnerLike;
   readonly resolveCliPath?: () => string | undefined;
   readonly loadConfig?: () => Promise<unknown>;
+  readonly openSqliteDatabase?: () => Promise<{
+    prepare(sql: string): { get(): unknown };
+    close(): void;
+  }>;
 }
 
 const buildDoctorCommandWithDeps = buildDoctorCommand as unknown as (
@@ -364,6 +368,25 @@ describe("buildDoctorCommand", () => {
       }
     },
   );
+
+  it("doctor closes the sqlite probe database even when the query throws (#1265)", async () => {
+    const close = vi.fn();
+    const openSqliteDatabase = vi.fn(async () => ({
+      prepare: () => ({
+        get: () => {
+          throw new Error("sqlite probe boom");
+        },
+      }),
+      close,
+    }));
+
+    const output = await runDoctor(["--offline"], { openSqliteDatabase });
+
+    expect(openSqliteDatabase).toHaveBeenCalledTimes(1);
+    // The finally must run despite get() throwing, so the handle is never leaked.
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(output).toContain("sqlite probe boom");
+  });
 
   it("doctor passes the data home check when root, experts/ and panels/ are all writable (#1914)", async () => {
     const customDataHome = path.join(testHome, "writable-data-home");
