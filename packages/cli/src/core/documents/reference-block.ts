@@ -125,6 +125,13 @@ export function appendReferenceDocuments(
     "  do not assert specifics (numbers, dates, names) that it does not support.",
   ];
   for (const s of snippets) {
+    // Perf (#1018): each snippet runs a handful of delimiter `.replace()`
+    // passes plus `sanitizeRoleMarkers` (~21 patterns) over its source,
+    // extraction method, and content. This is bounded today by the small
+    // retrieval cap (maxResults ~5) and short excerpts, and every pattern is
+    // linear (no catastrophic backtracking), so the per-turn cost is
+    // negligible. Revisit — e.g. precompute/hoist patterns or cap content
+    // length — only if snippet size or source plumbing grows substantially.
     // Count role markers neutralized anywhere in this snippet (source,
     // extraction method, or content) so the caller can be notified once
     // per snippet via onInjectionDetected (#999).
