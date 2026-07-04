@@ -60,6 +60,13 @@ function sanitizeForError(value: string, maxLength = 200): string {
  * `isMigrationNeeded` short-circuit to false and lock the user out (#1807).
  * Infrastructure errors (fs EACCES/EIO, loader bugs) are intentionally NOT
  * this type and still propagate immediately.
+ *
+ * Reused for a second, *aggregate* role: after the per-panel loop, the
+ * collected failures are re-thrown as a single `PanelMigrationError`
+ * summarising N panels (see {@link runMigration}). That aggregate is thrown
+ * *outside* the loop and is deliberately NOT caught by the loop's
+ * `instanceof PanelMigrationError` guard — do not add an outer catch on this
+ * type, or it could silently swallow the aggregate and hide the failures.
  */
 class PanelMigrationError extends Error {
   constructor(message: string) {
@@ -598,6 +605,22 @@ function parseOnDiskExpert(content: string, slug: string): ExpertDefinition {
   return parsed.data;
 }
 
+/**
+ * Parse an untrusted on-disk panel YAML file's content into an
+ * {@link OnDiskPanel} (its description plus ordered slug-reference / inline
+ * expert entries). Exported for direct unit testing of the recovery parse.
+ *
+ * @param content - Raw YAML text read from the panel file.
+ * @param panelFile - Optional path of the source file; when provided it is
+ *   named (sanitized) in a schema-validation failure so the user can locate
+ *   the offending panel (#1809).
+ * @throws {PanelMigrationError} On malformed YAML, a slug that escapes the
+ *   confinement charset, or an inline expert that fails schema validation.
+ *   The message is a single display line with all control / C1 / DEL / bidi
+ *   bytes stripped and truncated (`error.name === "PanelMigrationError"`), so
+ *   it is safe to surface on a bare TTY sink. Callers isolate this per panel;
+ *   genuine fs infra errors are raised by the caller's `fs.readFile`, not here.
+ */
 export function parseOnDiskPanel(content: string, panelFile?: string): OnDiskPanel {
   const raw = parseOnDiskYaml(content, "malformed on-disk panel YAML") as Record<
     string,
