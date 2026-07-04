@@ -629,7 +629,7 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
         write(
           `${sym2.pass} Config\n` +
             `   Path: ${configFilePath}\n` +
-            `   Data home: ${dataHome}\n` +
+            `   Data home: ${toSingleLineDisplay(dataHome)}\n` +
             `   Engine: ${config.defaults.engine} | Model: ${config.defaults.model} | Rounds: ${config.defaults.maxRounds}\n`,
         );
       } catch {
