@@ -180,6 +180,15 @@ describe("buildChatCommand", () => {
       expect(out.toLowerCase()).toMatch(/no (chat )?conversations/);
     });
 
+    it("empty-state hint is panel-aware, not expert-only (#337)", async () => {
+      // Chat supports both 1:1 expert and multi-expert panel sessions, so the
+      // empty-state hint must not imply expert-only usage.
+      let out = "";
+      const cmd = buildChatCommand({ write: (s) => (out += s) });
+      await cmd.parseAsync(["node", "council-chat", "--list"]);
+      expect(out.toLowerCase()).toContain("panel");
+    });
+
     it("lists active and archived sessions in a table with their statuses", async () => {
       await seedExpert(env);
       let activeId = "";

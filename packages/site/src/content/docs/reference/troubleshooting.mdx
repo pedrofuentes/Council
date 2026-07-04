@@ -138,7 +138,9 @@ council config set maxRounds 5  # Missing 'defaults.' prefix
 
 ### Panel Not Found
 
-**Symptom:** `council convene my-panel` fails with "Panel template 'my-panel' not found."
+**Symptom:** `council convene "<topic>" --panel my-panel` fails with "Panel template 'my-panel' not found."
+
+`convene`'s positional argument is the debate topic, so a bare `council convene my-panel` treats `my-panel` as the topic and auto-composes a panel instead of raising this error. Select a named panel with `--panel` (alias `--template`).
 
 **Cause:**
 
