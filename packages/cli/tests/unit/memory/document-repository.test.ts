@@ -186,14 +186,26 @@ describe("DocumentRepository", () => {
       const seeded = await new DocumentRepository(first).create(
         sampleDoc({ filePath: "/p/idempotent.md" }),
       );
+
+      // Plant the temporary artifact that migration 002 creates as its FIRST
+      // statement — a bare, non-`IF NOT EXISTS` `CREATE TABLE
+      // expert_documents_new`. This makes a schema_version-gate regression
+      // OBSERVABLE: if the gate ever fails to skip an already-applied
+      // migration, migration 002 re-runs and collides with this table, so the
+      // second createDatabase() below throws and this test fails. Without this
+      // planted collision a neutered gate is SILENT — migration 001 is all
+      // `CREATE TABLE IF NOT EXISTS` and migration 002 copies rows *before*
+      // `DROP TABLE`, so even a full re-run would preserve the seeded row.
+      await sql`CREATE TABLE expert_documents_new (id TEXT PRIMARY KEY)`.execute(
+        first,
+      );
       await first.destroy();
 
       // Second open re-invokes the migration runner against the already-
-      // migrated file. Idempotency means: no error, migrations are not
-      // re-applied (schema_version is not duplicated), and — critically — the
-      // destructive table-rebuild in migration 002 does NOT run again. If the
-      // schema_version gate regressed, that migration's `DROP TABLE
-      // expert_documents` would re-run and the seeded row would vanish.
+      // migrated file. With the gate intact, every migration is skipped, the
+      // planted table is never touched, and this resolves. A gate regression
+      // re-runs migration 002 and throws on the `expert_documents_new` name
+      // collision, rejecting this call.
       const second = await createDatabase(dbPath);
       try {
         const versions = await second
