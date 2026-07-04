@@ -265,6 +265,30 @@ describe("createPanelAuthoringSource", () => {
     await expect(env.panelRepo.getMembers("alpha")).resolves.toEqual(["bob", "carol"]);
   });
 
+  it("rejects an invalid panel name in setMembers before touching the repository", async () => {
+    const calls: string[] = [];
+    const repo: PanelAuthoringDeps["panelRepo"] = {
+      async create() {
+        throw new Error("unexpected create");
+      },
+      async findByName() {
+        return undefined;
+      },
+      async delete() {
+        throw new Error("unexpected delete");
+      },
+      async setMembers(name) {
+        calls.push(name);
+      },
+    };
+    const source = sourceFor(env, { panelRepo: repo });
+
+    await expect(source.setMembers("Invalid Name", ["alice"])).rejects.toThrow(
+      /kebab-case.*start with a letter/i,
+    );
+    expect(calls).toEqual([]);
+  });
+
   it.each([0, 3])("delegates retained debate count %i", async (count) => {
     const calls: string[] = [];
     const source = sourceFor(env, {

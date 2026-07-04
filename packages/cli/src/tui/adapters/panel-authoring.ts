@@ -67,7 +67,11 @@ function sha256(content: string): string {
 }
 
 function errnoCode(err: unknown): string | undefined {
-  return (err as NodeJS.ErrnoException).code;
+  if (typeof err === "object" && err !== null && "code" in err) {
+    const code = (err as { readonly code?: unknown }).code;
+    return typeof code === "string" ? code : undefined;
+  }
+  return undefined;
 }
 
 async function validateExpertSlugs(
@@ -125,10 +129,23 @@ export function createPanelAuthoringSource(deps: PanelAuthoringDeps): PanelAutho
           throw openErr;
         }
         yamlWritten = true;
+        let failure: unknown;
         try {
           await handle.writeFile(yamlContent, "utf-8");
+        } catch (writeErr) {
+          failure = writeErr;
         } finally {
-          await handle.close();
+          try {
+            await handle.close();
+          } catch (closeErr) {
+            // Keep a primary write error if present; otherwise a close failure
+            // on the write-success path is a deferred write-back error that
+            // must surface so the create rolls back (never silently swallowed).
+            failure ??= closeErr;
+          }
+        }
+        if (failure !== undefined) {
+          throw failure;
         }
         await deps.panelRepo.setMembers(input.name, input.expertSlugs);
         await fs.mkdir(panelDocsDir(deps.dataHome, input.name), { recursive: true });
@@ -145,11 +162,17 @@ export function createPanelAuthoringSource(deps: PanelAuthoringDeps): PanelAutho
             /* best-effort rollback */
           }
         }
+        try {
+          await fs.rm(panelDir(deps.dataHome, input.name), { recursive: true, force: true });
+        } catch {
+          /* best-effort rollback */
+        }
         throw err;
       }
     },
 
     async setMembers(name, expertSlugs): Promise<void> {
+      validatePanelName(name);
       await validateExpertSlugs(expertSlugs, deps.expertExists);
       await deps.panelRepo.setMembers(name, expertSlugs);
     },
