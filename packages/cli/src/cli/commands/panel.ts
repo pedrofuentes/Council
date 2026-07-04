@@ -386,7 +386,9 @@ async function persistPanelEditAtomically(
   try {
     await sql`BEGIN`.execute(db);
   } catch (beginErr) {
-    const detail = beginErr instanceof Error ? beginErr.message : String(beginErr);
+    const detail = toSingleLineDisplay(
+      beginErr instanceof Error ? beginErr.message : String(beginErr),
+    );
     throw new PanelEditPersistError(
       `Failed to save panel "${edit.name}" before any changes ` +
         `(BEGIN failed; no changes applied): ${detail}`,
@@ -429,7 +431,7 @@ async function persistPanelEditAtomically(
       rollbackFailed = true;
       rollbackError = rbErr;
     }
-    const detail = err instanceof Error ? err.message : String(err);
+    const detail = toSingleLineDisplay(err instanceof Error ? err.message : String(err));
     const message = rollbackFailed
       ? `Failed to save panel "${edit.name}" and ROLLBACK also failed; the panel row ` +
         `and membership may be inconsistent: ${detail}`
