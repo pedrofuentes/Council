@@ -26,9 +26,15 @@ describe("deriveFilenameFromUrl", () => {
       expect(result).toBe("api.service.org.html");
     });
 
-    it("derives filename from host for https://localhost:8080", () => {
+    it("derives a collision-resistant host filename for https://localhost:8080 (#1030)", () => {
+      // A non-default port distinguishes the origin, so it feeds the hash
+      // suffix rather than collapsing onto a bare `localhost.html` that would
+      // collide with a different port on the same host.
       const result = deriveFilenameFromUrl("https://localhost:8080");
-      expect(result).toBe("localhost.html");
+      expect(result).toMatch(/^localhost-[0-9a-f]{8}\.html$/);
+      // Deterministic for the same origin, distinct across ports.
+      expect(deriveFilenameFromUrl("https://localhost:8080")).toBe(result);
+      expect(deriveFilenameFromUrl("https://localhost:9090")).not.toBe(result);
     });
   });
 
@@ -96,11 +102,14 @@ describe("deriveFilenameFromUrl", () => {
   });
 
   describe("deterministic and filesystem-safe", () => {
-    it("produces consistent filename for query-only URL", () => {
+    it("produces a deterministic, collision-resistant filename for a query-only URL (#1030)", () => {
       const result1 = deriveFilenameFromUrl("https://example.com?q=search");
       const result2 = deriveFilenameFromUrl("https://example.com?q=search");
+      // Deterministic for the same URL...
       expect(result1).toBe(result2);
-      expect(result1).toBe("example.com.html");
+      expect(result1).toMatch(/^example\.com-[0-9a-f]{8}\.html$/);
+      // ...but a different query must not collide onto the same file.
+      expect(deriveFilenameFromUrl("https://example.com?q=other")).not.toBe(result1);
     });
 
     it("produces filesystem-safe filename (no slashes)", () => {
