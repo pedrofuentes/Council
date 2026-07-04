@@ -81,7 +81,7 @@ export function selectRenderer(opts: SelectRendererOpts): Renderer {
 
   switch (opts.format) {
     case "json":
-      return new JsonRenderer(opts.sink);
+      return new JsonRenderer(opts.sink, { showCost });
     case "plain":
       return new PlainRenderer(opts.sink, {
         showCost,

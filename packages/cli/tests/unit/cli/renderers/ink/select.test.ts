@@ -224,3 +224,39 @@ describe("selectRenderer auto→Ink integration", () => {
     expect(captured).toContain("Premium requests");
   });
 });
+
+/**
+ * Cost-gate parity for the `json` branch (#853): `selectRenderer` must thread
+ * `showCost` into `JsonRenderer` so NDJSON honors the same cost gate that
+ * plain/Ink already do. Without this, `--no-cost` (or an equivalent gate)
+ * silently leaks `cost.update` events into the machine-readable stream.
+ */
+describe("selectRenderer json→JsonRenderer cost parity (#853)", () => {
+  it("omits cost.update from JSON output when showCost is false", async () => {
+    const capture = new StringSink();
+    const renderer = selectRenderer({
+      format: "json",
+      isTTY: false,
+      sink: capture,
+      showCost: false,
+    });
+    expect(renderer).toBeInstanceOf(JsonRenderer);
+    await renderer.render(eventStream(...DEBATE_EVENTS));
+
+    // Non-cost events still render...
+    expect(capture.text).toContain("SINK_MARKER");
+    // ...but the cost.update line is gated out, mirroring plain/Ink.
+    expect(capture.text).not.toContain("cost.update");
+  });
+
+  it("emits cost.update in JSON output when showCost is enabled (default)", async () => {
+    const capture = new StringSink();
+    const renderer = selectRenderer({ format: "json", isTTY: false, sink: capture });
+    await renderer.render(eventStream(...DEBATE_EVENTS));
+
+    // The positive control: cost.update flows through when the gate is open,
+    // so the suppression assertion above genuinely discriminates showCost.
+    expect(capture.text).toContain("SINK_MARKER");
+    expect(capture.text).toContain("cost.update");
+  });
+});

@@ -89,8 +89,8 @@ export function formatAvailableModels(
   }
 
   output += "\n";
-  output +=
-    "Note: Known models: Availability depends on your Copilot tier. Use 'council doctor' to verify your default model is accessible.\n";
+  const noteLabel = source === "live" ? "Available models:" : "Known models:";
+  output += `Note: ${noteLabel} Availability depends on your Copilot tier. Use 'council doctor' to verify your default model is accessible.\n`;
 
   return output;
 }

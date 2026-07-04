@@ -51,7 +51,7 @@ describe("formatAvailableModels", () => {
     expect(result).toContain("Anthropic: claude-sonnet-4.6");
     expect(result).toContain("OpenAI   : gpt-5.4");
     expect(result).toContain("Google   : gemini-2.5-pro");
-    expect(result).toContain("Known models: Availability depends on your Copilot tier");
+    expect(result).toContain("Note: Available models: Availability depends on your Copilot tier");
   });
 
   it("formats static fallback models with appropriate label", () => {
@@ -81,7 +81,7 @@ describe("formatAvailableModels", () => {
     const result = formatAvailableModels([], "live");
 
     expect(result).toContain("Available models:");
-    expect(result).toContain("Note: Known models: Availability depends on your Copilot tier");
+    expect(result).toContain("Note: Available models: Availability depends on your Copilot tier");
     expect(result).not.toContain("Anthropic:");
     expect(result).not.toContain("OpenAI   :");
     expect(result).not.toContain("Google   :");
@@ -92,7 +92,7 @@ describe("formatAvailableModels", () => {
     const result = formatAvailableModels(["   ", "\u001b[31m\u001b[0m", "invalid!id"], "live");
 
     expect(result).toContain("Available models:");
-    expect(result).toContain("Note: Known models: Availability depends on your Copilot tier");
+    expect(result).toContain("Note: Available models: Availability depends on your Copilot tier");
     expect(result).not.toContain("Anthropic:");
     expect(result).not.toContain("OpenAI   :");
     expect(result).not.toContain("Google   :");
@@ -174,6 +174,24 @@ describe("formatAvailableModels live-only annotation", () => {
     const result = formatAvailableModels(["claude-sonnet-4.6", "gpt-5.4", "auto"], "live");
 
     expect(result).not.toContain("live-only");
+  });
+});
+
+describe("formatAvailableModels context-aware note (#753)", () => {
+  // The closing note must not claim a static "Known models" list when the
+  // catalog was live-discovered — that wording is misleading for source="live".
+  it("uses live-discovered wording in the note when source is live", () => {
+    const result = formatAvailableModels(["claude-sonnet-4.6", "gpt-5.4"], "live");
+
+    expect(result).toContain("Note: Available models:");
+    expect(result).not.toContain("Note: Known models:");
+  });
+
+  it("keeps the known-models wording in the note when source is static", () => {
+    const result = formatAvailableModels(["claude-sonnet-4.5", "gpt-5.4"], "static");
+
+    expect(result).toContain("Note: Known models:");
+    expect(result).not.toContain("Note: Available models:");
   });
 });
 
