@@ -423,15 +423,9 @@ function parseComposerResponse(raw: string): ComposerResponseParseResult {
     };
   }
 
-  const extractedParse = tryParseJsonObject(extracted);
-  if (extractedParse !== undefined) {
-    return { kind: "parsed", value: extractedParse };
-  }
-
-  return {
-    kind: "no-json",
-    preview: sanitizeModelForDisplay(cleaned.slice(0, PARSE_ERROR_PREVIEW_LENGTH)),
-  };
+  // extractFirstJsonObject only returns candidates it already parsed, so reuse
+  // that value instead of parsing the same substring a second time (#831).
+  return { kind: "parsed", value: extracted.parsed };
 }
 
 function tryParseJsonObject(text: string): unknown | undefined {
@@ -442,7 +436,13 @@ function tryParseJsonObject(text: string): unknown | undefined {
   }
 }
 
-function extractFirstJsonObject(text: string): string | undefined {
+/** An extracted JSON substring paired with its already-parsed value (#831). */
+interface ExtractedJsonObject {
+  readonly raw: string;
+  readonly parsed: unknown;
+}
+
+function extractFirstJsonObject(text: string): ExtractedJsonObject | undefined {
   for (
     let startIndex = text.indexOf("{");
     startIndex !== -1;
@@ -452,8 +452,9 @@ function extractFirstJsonObject(text: string): string | undefined {
     if (candidate === undefined) {
       continue;
     }
-    if (tryParseJsonObject(candidate) !== undefined) {
-      return candidate;
+    const parsed = tryParseJsonObject(candidate);
+    if (parsed !== undefined) {
+      return { raw: candidate, parsed };
     }
   }
   return undefined;
