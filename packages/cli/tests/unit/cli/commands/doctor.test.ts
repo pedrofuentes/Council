@@ -760,9 +760,15 @@ describe("buildDoctorCommand", () => {
     // 7 base checks + 1 default-model-access check (online runs by default).
     expect(start).toHaveBeenCalledTimes(8);
     expect(stop).toHaveBeenCalledTimes(8);
-    expect(start).toHaveBeenCalledWith("Node.js version");
-    expect(start).toHaveBeenCalledWith("Copilot CLI");
-    expect(start).toHaveBeenCalledWith("Default model access");
+    // Assert every label so a renamed/reordered check surfaces here (#1279).
+    expect(start).toHaveBeenNthCalledWith(1, "Node.js version");
+    expect(start).toHaveBeenNthCalledWith(2, "Council home");
+    expect(start).toHaveBeenNthCalledWith(3, "Council data home");
+    expect(start).toHaveBeenNthCalledWith(4, "SQLite (node:sqlite)");
+    expect(start).toHaveBeenNthCalledWith(5, "Copilot SDK");
+    expect(start).toHaveBeenNthCalledWith(6, "Copilot CLI");
+    expect(start).toHaveBeenNthCalledWith(7, "Disk write");
+    expect(start).toHaveBeenNthCalledWith(8, "Default model access");
   });
 
   it("doctor report content is byte-identical whether or not a spinner is injected", async () => {
