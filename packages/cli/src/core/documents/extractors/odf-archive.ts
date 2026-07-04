@@ -21,6 +21,7 @@
 import { XMLParser } from "fast-xml-parser";
 import { fromBuffer, type Entry, type ZipFile } from "yauzl";
 
+import { toSingleLineDisplay } from "../../../cli/strip-control-chars.js";
 import { ExtractionError } from "./errors.js";
 
 export const MAX_ENTRIES = 1000;
@@ -78,7 +79,7 @@ function readEntryBuffer(zip: ZipFile, entry: Entry, filename: string): Promise<
           reject(
             bombError(
               filename,
-              `Entry "${entry.fileName}" decoded to more bytes than its declared uncompressed size (${String(entry.uncompressedSize)}).`,
+              `Entry "${toSingleLineDisplay(entry.fileName)}" decoded to more bytes than its declared uncompressed size (${String(entry.uncompressedSize)}).`,
             ),
           );
           return;
@@ -95,7 +96,7 @@ function readEntryBuffer(zip: ZipFile, entry: Entry, filename: string): Promise<
           reject(
             bombError(
               filename,
-              `Entry "${entry.fileName}" decoded to more bytes than its declared uncompressed size (${String(entry.uncompressedSize)}).`,
+              `Entry "${toSingleLineDisplay(entry.fileName)}" decoded to more bytes than its declared uncompressed size (${String(entry.uncompressedSize)}).`,
             ),
           );
           return;
@@ -154,7 +155,7 @@ async function readContentXmlBuffer(
           if (entry.uncompressedSize > MAX_ENTRY_BYTES) {
             throw bombError(
               filename,
-              `ZIP entry "${entry.fileName}" uncompressed size ${String(entry.uncompressedSize)} exceeds per-entry limit ${String(MAX_ENTRY_BYTES)}.`,
+              `ZIP entry "${toSingleLineDisplay(entry.fileName)}" uncompressed size ${String(entry.uncompressedSize)} exceeds per-entry limit ${String(MAX_ENTRY_BYTES)}.`,
             );
           }
           if (
@@ -163,7 +164,7 @@ async function readContentXmlBuffer(
           ) {
             throw bombError(
               filename,
-              `Entry "${entry.fileName}" exceeds the ${String(MAX_COMPRESSION_RATIO)}:1 compression ratio cap.`,
+              `Entry "${toSingleLineDisplay(entry.fileName)}" exceeds the ${String(MAX_COMPRESSION_RATIO)}:1 compression ratio cap.`,
             );
           }
           totalUncompressed += entry.uncompressedSize;
@@ -227,8 +228,7 @@ function sanitizeXml(xml: string, filename: string): string {
         kind: "corrupt-document",
         filePath: filename,
         message: `Malformed DOCTYPE declaration — no closing '>' found within ${String(MAX_DOCTYPE_WINDOW)} bytes of '<!DOCTYPE'.`,
-        suggestion:
-          "The file may be corrupted or crafted to cause excessive processing.",
+        suggestion: "The file may be corrupted or crafted to cause excessive processing.",
       });
     }
     s = xml.slice(0, doctypeStart) + xml.slice(endIdx + 1);
