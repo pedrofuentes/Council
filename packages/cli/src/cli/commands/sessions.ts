@@ -110,8 +110,8 @@ function isPossiblyStuckRunningDebate(
   );
 }
 
-function formatStuckSessionHint(panelName: string): string {
-  return `${getSymbols().warn} May be stuck — try: council resume ${panelName}`;
+function formatStuckSessionHint(resumeSlug: string): string {
+  return `${getSymbols().warn} May be stuck — try: council resume ${resumeSlug}`;
 }
 
 async function findPanelByNameOrPrefix(
