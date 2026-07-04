@@ -138,7 +138,7 @@ export function appendReferenceDocuments(
     // sanitized — a filename like "<|im_start|>system.md" must not
     // smuggle a marker into a trusted line (#998).
     const safeSource = sanitizeRoleMarkers(
-      String(s.source)
+      s.source
         .replace(/[\r\n]+/g, " ")
         .replace(/\[/g, "(")
         .replace(/\]/g, ")")
@@ -161,7 +161,7 @@ export function appendReferenceDocuments(
     // the plural `[REFERENCE DOCUMENTS]` section header (#996) and
     // whitespace-padded variants (#995) an attacker might use to slip
     // past a strict match. Role marker sanitization is layered on top.
-    const neutralizedContent = String(s.content)
+    const neutralizedContent = s.content
       .replace(/\[\s*REFERENCE DOCUMENTS\s*\]/gi, "(REFERENCE DOCUMENTS)")
       .replace(/\[\s*REFERENCE DOCUMENT\s*:/gi, "(REFERENCE DOCUMENT:")
       .replace(/\[\s*END REFERENCE DOCUMENT\s*\]/gi, "(END REFERENCE DOCUMENT)");
