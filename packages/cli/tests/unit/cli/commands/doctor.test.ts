@@ -740,6 +740,14 @@ describe("buildDoctorCommand", () => {
     expect(loadConfig).toHaveBeenCalledTimes(1);
   });
 
+  it("doctor command description names node:sqlite and the Copilot CLI check (#1279, #1332)", () => {
+    const description = buildDoctorCommandWithDeps({}).description();
+
+    expect(description).toContain("node:sqlite");
+    expect(description).toContain("Copilot CLI");
+    expect(description).not.toContain("libsql");
+  });
+
   it("doctor drives the injected spinner around each check", async () => {
     const start = vi.fn();
     const stop = vi.fn();
