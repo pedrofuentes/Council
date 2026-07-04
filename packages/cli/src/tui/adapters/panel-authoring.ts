@@ -153,6 +153,11 @@ export function createPanelAuthoringSource(deps: PanelAuthoringDeps): PanelAutho
             /* best-effort rollback */
           }
         }
+        try {
+          await fs.rm(panelDir(deps.dataHome, input.name), { recursive: true, force: true });
+        } catch {
+          /* best-effort rollback */
+        }
         throw err;
       }
     },
