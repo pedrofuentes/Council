@@ -32,7 +32,7 @@ import type {
   ScanResult,
 } from "../../core/documents/scan-types.js";
 
-import { stripControlChars } from "../strip-control-chars.js";
+import { stripControlChars, toSingleLineDisplay } from "../strip-control-chars.js";
 
 export type {
   ScanErrorKind,
@@ -56,6 +56,15 @@ const ERROR_MESSAGES: Readonly<Record<ScanErrorKind, string>> = {
   "ai-extraction-failed": "AI extraction failed",
 };
 
+/**
+ * Maximum number of per-file detail lines emitted before the summary
+ * collapses the remainder into a single "…and N more" line. This prevents a
+ * corpus with hundreds of new/failed files from flooding the terminal
+ * (issue #977). Aggregate lines (the unchanged count and the needs-review
+ * hint) are always shown and never counted against this cap.
+ */
+const MAX_DETAIL_LINES = 50;
+
 export interface DescribeScanErrorOptions {
   readonly maxFileSizeMB?: number;
   /**
@@ -66,6 +75,21 @@ export interface DescribeScanErrorOptions {
   readonly extension?: string;
 }
 
+/**
+ * Translate a typed {@link ScanErrorKind} into a user-facing failure message.
+ *
+ * Most kinds map to a fixed phrase from the internal message table. Two kinds
+ * are refined when the caller supplies extra context:
+ *   - `oversize-file` appends the configured limit (e.g. `File too large
+ *     (limit: 50 MB)`) when `options.maxFileSizeMB` is provided.
+ *   - `unsupported-format` names the offending extension (e.g. `Unsupported
+ *     format (.png)`) when `options.extension` is a non-empty string.
+ *
+ * @param kind - The classified extraction failure to describe.
+ * @param options - Optional context that refines the message; see
+ *   {@link DescribeScanErrorOptions}. Defaults to an empty object.
+ * @returns A single-line, human-readable message suitable for CLI display.
+ */
 export function describeScanError(
   kind: ScanErrorKind,
   options: DescribeScanErrorOptions = {},
@@ -87,6 +111,20 @@ function pluralize(n: number, singular: string, plural?: string): string {
   return n === 1 ? singular : (plural ?? `${singular}s`);
 }
 
+/**
+ * Sanitize an untrusted filename for single-line terminal display.
+ *
+ * Filenames come from the scanned corpus — arbitrary on-disk names, so
+ * effectively attacker-controlled — and flow into every scan detail line.
+ * Without sanitization a crafted name containing ANSI escapes or CR/LF could
+ * spoof terminal output or inject extra lines. `toSingleLineDisplay` strips
+ * control/escape sequences and collapses line breaks and tabs so the name
+ * always renders on exactly one line (issue #1040).
+ */
+function safeFilename(filename: string): string {
+  return toSingleLineDisplay(filename);
+}
+
 function formatMetadata(meta: ScanFileMetadata | undefined): string | null {
   if (meta === undefined) return null;
   const parts: string[] = [];
@@ -105,7 +143,7 @@ function formatMetadata(meta: ScanFileMetadata | undefined): string | null {
 function formatSuccessLine(file: ScanFileDetail): string {
   const verb = file.status === "modified" ? "Updated" : "Indexed";
   const meta = formatMetadata(file.metadata);
-  let line = `✓ ${verb} ${file.filename}`;
+  let line = `✓ ${verb} ${safeFilename(file.filename)}`;
   if (meta !== null) line += ` (${meta})`;
   if (file.aiExtracted === true) {
     line += " — ℹ AI-extracted (lower fidelity than a native parse)";
@@ -125,7 +163,7 @@ function formatFailureLine(
     ...(maxFileSizeMB !== undefined ? { maxFileSizeMB } : {}),
     ...(file.extension.length > 0 ? { extension: file.extension } : {}),
   });
-  return `✗ ${file.filename}: ${human}`;
+  return `✗ ${safeFilename(file.filename)}: ${human}`;
 }
 
 /**
@@ -142,7 +180,7 @@ function sanitizeFormatHint(text: string): string {
 }
 
 function formatNeedsReviewLine(file: ScanFileDetail): string {
-  let line = `⚠ ${file.filename} — needs review (AI extraction available)`;
+  let line = `⚠ ${safeFilename(file.filename)} — needs review (AI extraction available)`;
   if (file.detectedFormat !== undefined) {
     const hint = sanitizeFormatHint(file.detectedFormat);
     if (hint.length > 0) line += `: ${hint}`;
@@ -164,16 +202,25 @@ export function formatScanSummary(result: ScanResult): string {
   }
 
   let needsReviewShown = 0;
+  const detailLines: string[] = [];
   for (const file of result.files) {
     if (file.status === "unchanged") continue;
     if (file.status === "indexed" || file.status === "modified") {
-      lines.push(formatSuccessLine(file));
+      detailLines.push(formatSuccessLine(file));
     } else if (file.status === "failed") {
-      lines.push(formatFailureLine(file, result.maxFileSizeMB));
+      detailLines.push(formatFailureLine(file, result.maxFileSizeMB));
     } else if (file.status === "needs-review") {
-      lines.push(formatNeedsReviewLine(file));
+      detailLines.push(formatNeedsReviewLine(file));
       needsReviewShown += 1;
     }
+  }
+
+  if (detailLines.length > MAX_DETAIL_LINES) {
+    const hidden = detailLines.length - MAX_DETAIL_LINES;
+    lines.push(...detailLines.slice(0, MAX_DETAIL_LINES));
+    lines.push(`…and ${hidden} more ${pluralize(hidden, "file")}`);
+  } else {
+    lines.push(...detailLines);
   }
 
   if (needsReviewShown > 0) {
