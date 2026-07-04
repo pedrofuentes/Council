@@ -140,12 +140,25 @@ describe("formatEngineError", () => {
     expect(out).toContain("Run 'council doctor --models' to see available models.");
   });
 
-  it("MODEL_UNAVAILABLE with no parseable model shows (unknown)", () => {
+  it("MODEL_UNAVAILABLE extracts modern model identifiers from message", () => {
+    for (const model of ["o3", "llama-3.1-70b"]) {
+      const out = formatEngineError({
+        code: "MODEL_UNAVAILABLE",
+        message: `model ${model} is not available for your tier`,
+      });
+      const hint = hintOf(out);
+      expect(hint).toContain(model);
+      expect(hint).toContain("Fix: council config set defaults.model <available-model>");
+      expect(hint).toContain("Run 'council doctor --models' to see available models.");
+    }
+  });
+
+  it("MODEL_UNAVAILABLE with no parseable model echoes the upstream message", () => {
     const out = formatEngineError({
       code: "MODEL_UNAVAILABLE",
-      message: "no models",
+      message: "upstream says custom requested model is unavailable",
     });
-    expect(out).toContain("(unknown)");
+    expect(hintOf(out)).toContain("upstream says custom requested model is unavailable");
   });
 
   it("RATE_LIMITED includes retryAfterMs as seconds", () => {
