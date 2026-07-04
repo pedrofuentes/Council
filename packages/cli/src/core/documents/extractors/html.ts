@@ -56,31 +56,34 @@ import type { ContentExtractor, ExtractedContent, ExtractionContext } from "./ty
 const CONTROL_CHARS = /[\x00-\x08\v\f\x0E-\x1F\x7F-\x9F\u2028\u2029]/g;
 
 /**
- * Collapse whitespace in a single linear pass (issue #933). Each maximal
- * run of whitespace becomes one newline if it contained a line break, else
- * a single space; leading/trailing whitespace is dropped. This replaces the
- * chained space and "\s*\n\s*"-style passes, whose pattern scaled
- * super-linearly (~4x per doubling) on a long whitespace-only run. The
- * scanner is O(n) with no regex backtracking.
+ * Collapse whitespace (issues #933, #1838). Each maximal run of ASCII
+ * whitespace becomes one newline if it contained a line break, else a single
+ * space; leading/trailing whitespace is dropped.
+ *
+ * The whitespace class is deliberately the six ASCII characters
+ * `[ \t\n\v\f\r]`, NOT the regex `\s` class: any Unicode space (e.g. U+00A0
+ * no-break space, which survives entity decoding and control stripping) is
+ * ordinary content and must pass through untouched, so widening to `\s`
+ * would silently rewrite indexed text.
+ *
+ * A single `replace` over `[\t\n\v\f\r ]+` collapses each run in one pass;
+ * the character-class + `+` is linear with no backtracking, avoiding both
+ * the super-linear `"\s*\n\s*"`-style passes this originally replaced (#933)
+ * and the per-character array allocation of the interim scanner (#1838).
+ * Leading and trailing runs each collapse to a single separator character,
+ * which is then sliced off — runs are maximal, so at most one separator can
+ * sit at each end.
  */
 function collapseWhitespace(text: string): string {
-  const parts: string[] = [];
-  let runHasNewline = false;
-  let inRun = false;
-  for (const c of text) {
-    if (c === " " || c === "\t" || c === "\n" || c === "\r" || c === "\f" || c === "\v") {
-      inRun = true;
-      if (c === "\n" || c === "\r") runHasNewline = true;
-      continue;
-    }
-    if (inRun) {
-      if (parts.length > 0) parts.push(runHasNewline ? "\n" : " ");
-      inRun = false;
-      runHasNewline = false;
-    }
-    parts.push(c);
+  const collapsed = text.replace(/[\t\n\v\f\r ]+/g, (run) =>
+    run.includes("\n") || run.includes("\r") ? "\n" : " ",
+  );
+  const start = collapsed.length > 0 && (collapsed[0] === " " || collapsed[0] === "\n") ? 1 : 0;
+  let end = collapsed.length;
+  if (end > start && (collapsed[end - 1] === " " || collapsed[end - 1] === "\n")) {
+    end -= 1;
   }
-  return parts.join("");
+  return collapsed.slice(start, end);
 }
 
 function normalizeHtml(raw: string, filename: string): string {
