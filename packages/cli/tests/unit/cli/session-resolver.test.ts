@@ -41,7 +41,7 @@ vi.mock("../../../src/core/template-loader.js", async (importOriginal) => {
 
 import { copyTemplateDb } from "../../helpers/template-db.js";
 import { CliUserError } from "../../../src/cli/cli-user-error.js";
-import { resolveSession } from "../../../src/cli/session-resolver.js";
+import { resolveSession, SessionNotFoundError } from "../../../src/cli/session-resolver.js";
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
 import { DebateRepository } from "../../../src/memory/repositories/debates.js";
 import { PanelRepository } from "../../../src/memory/repositories/panels.js";
@@ -232,6 +232,26 @@ describe("resolveSession", () => {
         isNonInteractive: () => true,
       }),
     ).rejects.toThrow(/did you mean|finance-review/i);
+  });
+
+  it("throws a typed SessionNotFoundError when no panel matches the request (#848)", async () => {
+    await seedPanel("finance-review");
+
+    // The not-found case must be identifiable by TYPE, not by parsing its
+    // prose. `export` gates its config-dataHome retry on this class, so the
+    // typed contract is what keeps that retry from silently breaking when the
+    // diagnostic wording changes.
+    const resolving = resolveSession({
+      db,
+      dataHome: testHome,
+      panelArg: "no-such-panel",
+      writeError: () => undefined,
+      isNonInteractive: () => true,
+    });
+
+    await expect(resolving).rejects.toBeInstanceOf(SessionNotFoundError);
+    // Still a CliUserError so `handleCliError` keeps its clean, stack-free exit.
+    await expect(resolving).rejects.toBeInstanceOf(CliUserError);
   });
 
   // #1817/#2047: buildSuggestions() aggregates panels, user panels and built-in
