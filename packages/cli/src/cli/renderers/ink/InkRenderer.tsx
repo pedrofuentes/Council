@@ -13,7 +13,7 @@
  *   - Completion message on `debate.end`
  *
  * Uses Ink's `<Static>` component so completed turns render once and are
- * never re-reconciled — giving ~10× performance on long debates.
+ * never re-reconciled, reducing re-render/allocation overhead on long debates.
  *
  * `InkRenderer` is the `Renderer` adapter the CLI uses — it mounts
  * `DebateApp` via `ink.render()` and resolves when the stream ends.
@@ -880,8 +880,15 @@ export class InkRenderer implements Renderer {
         done = true;
         try {
           instance.unmount();
-        } catch {
-          // best-effort
+        } catch (unmountErr: unknown) {
+          try {
+            const message = unmountErr instanceof Error ? unmountErr.message : String(unmountErr);
+            this.#stderr.write(
+              `[WARN] Ink renderer unmount failed: ${toSingleLineDisplay(message)}\n`,
+            );
+          } catch {
+            // best-effort
+          }
         }
         if (err) reject(err instanceof Error ? err : new Error(String(err)));
         else resolve();
