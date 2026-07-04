@@ -784,18 +784,25 @@ export async function maybeProcessPersonaDocs(
     const needs = await processor.needsProcessing(expert.slug, docsPath);
     if (needs) {
       renderer.showSystem("Processing persona documents...", "info");
-      const result = await processor.process(expert.slug, docsPath, (p) => {
-        if (p.status === "failed") {
-          renderer.showSystem(`  ${p.filename}: failed (${p.error ?? "unknown"})`, "warn");
-        } else if (p.status === "needs-review") {
-          renderer.showSystem(
-            `  ${p.filename}: needs review (AI extraction available — run \`council docs review\`)`,
-            "warn",
-          );
-        } else {
-          renderer.showSystem(`  ✓ ${p.filename} (${p.wordCount} words)`, "info");
-        }
-      });
+      const result = await processor.process(
+        expert.slug,
+        docsPath,
+        (p) => {
+          if (p.status === "failed") {
+            renderer.showSystem(`  ${p.filename}: failed (${p.error ?? "unknown"})`, "warn");
+          } else if (p.status === "needs-review") {
+            renderer.showSystem(
+              `  ${p.filename}: needs review (AI extraction available — run \`council docs review\`)`,
+              "warn",
+            );
+          } else {
+            renderer.showSystem(`  ✓ ${p.filename} (${p.wordCount} words)`, "info");
+          }
+        },
+        // #471: deliver the processor's large-document chunking warning to the
+        // user. The message is already single-line sanitized by warnProcessor.
+        (warning) => renderer.showSystem(warning, "warn"),
+      );
       renderer.showSystem(
         `Processed ${result.filesProcessed} new/changed document(s) ` +
           `(${result.filesFailed} failed, ${result.filesNeedingReview} needs review, ` +
