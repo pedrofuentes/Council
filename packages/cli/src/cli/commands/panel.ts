@@ -22,6 +22,7 @@ import { Command, Option } from "commander";
 import { sql } from "kysely";
 
 import { CliUserError } from "../cli-user-error.js";
+import { EXIT_USER_ERROR } from "../exit-codes.js";
 import { parseExpertSlugs, warnOnStrayExpertArgs } from "./expert-args.js";
 import * as yaml from "yaml";
 
@@ -1674,6 +1675,13 @@ async function runDocsList(
           `Warning: could not refresh the document index for panel "${display}": ${detail}\n` +
             `Showing the last known state; results may be stale.\n`,
         );
+        // The scan could not run at all — a persistent failure, not merely an
+        // empty result. Keep degrading gracefully (render the last known DB
+        // state above) but flag a non-zero exit code so CI/automation can
+        // detect that the refresh did not complete instead of a silent exit 0.
+        // A successful-but-empty list, or a partial index that only reports
+        // failed files/folders, is left at exit 0. #1931.
+        process.exitCode = EXIT_USER_ERROR;
       }
     }
 
