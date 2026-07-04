@@ -28,7 +28,6 @@ import { DebateRepository } from "../memory/repositories/debates.js";
 import { TurnRepository } from "../memory/repositories/turns.js";
 import { DebatePersister } from "../memory/persister.js";
 
-import { PlainRenderer } from "./renderers/plain.js";
 import { selectRenderer, type RendererFormat } from "./renderers/select.js";
 import type { Sink } from "./renderers/types.js";
 
@@ -252,9 +251,9 @@ export async function runWithEngine(opts: RunWithEngineOpts): Promise<void> {
       opts.beforeRender?.();
 
       // Preambles are plain-text headers; only emit them when the chosen
-      // renderer is the plain renderer (Ink owns its own framing; JSON
-      // streams must stay machine-parseable).
-      if (renderer instanceof PlainRenderer) {
+      // renderer declares support (Ink owns its own framing; JSON streams
+      // must stay machine-parseable). See Renderer.supportsPreamble (#241).
+      if (renderer.supportsPreamble) {
         opts.preamble?.();
       }
 
