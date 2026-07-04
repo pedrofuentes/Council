@@ -361,14 +361,29 @@ async function restoreOriginalConfig(
  * matters: the AI-fallback eligibility check (`isExtensionAiEligible`)
  * compares against `path.extname()` output, which always includes the
  * dot, so `png` and `.png` must collapse to the same stored value.
+ * Tokens that `path.extname()` could never yield — a bare dot, doubled dots,
+ * or embedded whitespace — are rejected with a {@link CliUserError} so a
+ * malformed entry can't silently render the allow-list inert.
  */
-function normalizeExtensionList(rawValue: string): string[] {
+const VALID_EXTENSION_PATTERN = /^\.[a-z0-9]+$/;
+
+function normalizeExtensionList(key: SettableConfigKey, rawValue: string): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
   for (const part of rawValue.split(",")) {
-    const trimmed = part.trim().toLowerCase();
-    if (trimmed.length === 0) continue;
-    const ext = trimmed.startsWith(".") ? trimmed : `.${trimmed}`;
+    const raw = part.trim();
+    if (raw.length === 0) continue;
+    const ext = raw.startsWith(".") ? raw.toLowerCase() : `.${raw.toLowerCase()}`;
+    // Validate the display-sanitized form so a token that is not a well-formed
+    // `.ext` once control/whitespace bytes are stripped (".", "..pdf",
+    // ".p n g", or embedded terminal sequences) can't silently enter an inert
+    // allow-list. The original value is preserved for storage, matching the
+    // sanitize-on-display / preserve-on-write contract used elsewhere.
+    if (!VALID_EXTENSION_PATTERN.test(toSingleLineDisplay(ext))) {
+      throw new CliUserError(
+        `Config value for ${toSingleLineDisplay(key)} has an invalid file extension "${toSingleLineDisplay(raw)}"; use a dot followed by letters or digits, e.g. ".pdf".`,
+      );
+    }
     if (seen.has(ext)) continue;
     seen.add(ext);
     result.push(ext);
@@ -413,9 +428,17 @@ function coerceConfigValue(
     case "defaults.maxWordsPerResponse":
     case "chat.recentTurnCount":
     case "chat.summaryMaxWords":
-    case "chat.longConversationWarning":
-    case "expert.recencyHalfLifeDays": {
+    case "chat.longConversationWarning": {
       return parseIntegerConfigValue(key, rawValue);
+    }
+    case "expert.recencyHalfLifeDays": {
+      const parsed = parseIntegerConfigValue(key, rawValue);
+      if (parsed < 1 || parsed > 365) {
+        throw new CliUserError(
+          `Config value for ${toSingleLineDisplay(key)} must be an integer between 1 and 365.`,
+        );
+      }
+      return parsed;
     }
     case "telemetry.enabled": {
       const normalized = rawValue.trim().toLowerCase();
@@ -444,7 +467,7 @@ function coerceConfigValue(
     }
     case "documents.aiExtractionAllowedExtensions":
     case "expert.supportedFormats": {
-      return normalizeExtensionList(rawValue);
+      return normalizeExtensionList(key, rawValue);
     }
     case "paths.dataHome": {
       const trimmed = rawValue.trim();
@@ -474,11 +497,10 @@ function coerceConfigValue(
       return parsed;
     }
     case "conclude.maxTranscriptChars": {
-      const parsed = Number(rawValue);
-      if (!Number.isFinite(parsed) || parsed < 1000 || parsed > 1000000) {
-        throw new CliUserError(
-          `Config value for ${toSingleLineDisplay(key)} must be a number between 1000 and 1000000.`,
-        );
+      const rangeMessage = `Config value for ${toSingleLineDisplay(key)} must be a number between 1000 and 1000000.`;
+      const parsed = parseIntegerConfigValue(key, rawValue, rangeMessage);
+      if (parsed < 1000 || parsed > 1000000) {
+        throw new CliUserError(rangeMessage);
       }
       return parsed;
     }
@@ -846,11 +868,15 @@ async function reportModelsNonInteractive(
       "Warning: Live model discovery failed, so Council is showing a built-in fallback list.\n\n",
     );
   }
-  writeModelList(
-    write,
-    models.map((model) => toSingleLineDisplay(model)),
-    discovery.source,
-  );
+  // Suppress the "Available models:" header when discovery yields nothing so
+  // automation never sees an empty list under a dangling header (#1866).
+  if (models.length > 0) {
+    writeModelList(
+      write,
+      models.map((model) => toSingleLineDisplay(model)),
+      discovery.source,
+    );
+  }
 
   const msg = "Non-interactive mode: run 'council config model <name>' with an explicit model id.";
   writeError(`${msg}\n`);
