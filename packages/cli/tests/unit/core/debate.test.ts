@@ -195,7 +195,7 @@ describe("Debate.run() — error path", () => {
     await engine.start();
     await engine.addExpert(cto);
     await engine.addExpert(pm);
-    // retryBackoffMs: [1, 2] keeps the test fast; default [250, 1000] adds ~1.26s
+    // retryBackoffMs: [1, 2] keeps the test fast; default [250, 1000] adds ~1.25s
     const debate = new Debate(engine, [cto, pm], {
       ...FREEFORM_2R,
       maxRounds: 1,
@@ -218,6 +218,70 @@ describe("Debate.run() — error path", () => {
     // The debate continues past the error and closes normally.
     const last = events[events.length - 1];
     expect(last?.kind).toBe("debate.end");
+  });
+});
+
+describe("Debate.run() — turnId propagation", () => {
+  it("reuses one turnId across quality-gate regeneration attempts for the same turn", async () => {
+    const gateFailingResponse =
+      "Great point, I agree with the previous speaker and this is a solid analysis that captures the situation extremely well overall.";
+    const engine = new MockEngine({
+      responses: { "01HZ-cto": gateFailingResponse },
+    });
+    await engine.start();
+    await engine.addExpert(cto);
+    const debate = new Debate(engine, [cto], {
+      ...FREEFORM_2R,
+      maxRounds: 1,
+      maxWordsPerResponse: 0,
+      qualityGate: { mode: "regenerate", maxRegenerations: 2 },
+    });
+
+    const events = await collect(debate.run("topic"));
+
+    const sentTurnIds = engine.sentPrompts.map((p) => p.turnId);
+    expect(sentTurnIds).toHaveLength(3);
+    expect(new Set(sentTurnIds).size).toBe(1);
+    const turnEnd = events.find(
+      (e): e is Extract<DebateEvent, { kind: "turn.end" }> => e.kind === "turn.end",
+    );
+    expect(turnEnd?.turnId).toBe(sentTurnIds[0]);
+    expect(
+      events.filter(
+        (e): e is Extract<DebateEvent, { kind: "turn.quality_gate" }> =>
+          e.kind === "turn.quality_gate" && e.action === "regenerating",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("propagates a stable turnId to every send record for an ultimately failed turn", async () => {
+    const engine = new MockEngine({
+      responses: { "01HZ-cto": "should not be emitted" },
+      failOnSend: {
+        expertId: "01HZ-cto",
+        afterN: 0,
+        failures: 3,
+        code: "RATE_LIMITED",
+        message: "Quota exhausted",
+      },
+    });
+    await engine.start();
+    await engine.addExpert(cto);
+    const debate = new Debate(engine, [cto], {
+      ...FREEFORM_2R,
+      maxRounds: 1,
+      retryBackoffMs: [1, 2],
+    });
+
+    const events = await collect(debate.run("topic"));
+
+    const sentTurnIds = engine.sentPrompts.map((p) => p.turnId);
+    expect(sentTurnIds).toHaveLength(3);
+    expect(new Set(sentTurnIds).size).toBe(1);
+    expect(sentTurnIds[0]).toBeTruthy();
+    expect(events.filter((e) => e.kind === "turn.retry")).toHaveLength(2);
+    expect(events.some((e) => e.kind === "error" && e.expertSlug === "cto")).toBe(true);
+    expect(events.some((e) => e.kind === "turn.end" && e.expertSlug === "cto")).toBe(false);
   });
 });
 
@@ -249,7 +313,7 @@ describe("Debate.run() — edge cases", () => {
     await engine.addExpert(cto);
     const debate = new Debate(engine, [cto], { ...FREEFORM_2R, maxRounds: 0 });
     const events = await collect(debate.run("topic"));
-    // The for-loop condition (round < 0) is immediately false — no rounds run.
+    // round < this.config.maxRounds evaluates to 0 < 0 — immediately false, no rounds run.
     const kinds = events.map((e) => e.kind);
     expect(kinds).toEqual(["panel.assembled", "debate.end"]);
     const last = events[events.length - 1];
