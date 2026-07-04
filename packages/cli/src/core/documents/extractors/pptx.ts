@@ -28,6 +28,7 @@
 import { XMLParser } from "fast-xml-parser";
 import { fromBuffer, type Entry, type ZipFile } from "yauzl";
 
+import { toSingleLineDisplay } from "../../../cli/strip-control-chars.js";
 import { ExtractionError } from "./errors.js";
 import { registerExtractor } from "./registry.js";
 import type { ContentExtractor, ExtractedContent, ExtractionContext } from "./types.js";
@@ -95,7 +96,7 @@ function readEntryBuffer(
           reject(
             bombError(
               filename,
-              `Entry "${entry.fileName}" decoded to more bytes than its declared uncompressed size (${String(entry.uncompressedSize)}).`,
+              `Entry "${toSingleLineDisplay(entry.fileName)}" decoded to more bytes than its declared uncompressed size (${String(entry.uncompressedSize)}).`,
             ),
           );
           return;
@@ -117,7 +118,7 @@ function readEntryBuffer(
           reject(
             bombError(
               filename,
-              `Entry "${entry.fileName}" decoded to more bytes than its declared uncompressed size (${String(entry.uncompressedSize)}).`,
+              `Entry "${toSingleLineDisplay(entry.fileName)}" decoded to more bytes than its declared uncompressed size (${String(entry.uncompressedSize)}).`,
             ),
           );
           return;
@@ -218,7 +219,7 @@ async function readSlideParts(
           if (entry.uncompressedSize > MAX_ENTRY_BYTES) {
             throw bombError(
               filename,
-              `ZIP entry "${entry.fileName}" uncompressed size ${String(entry.uncompressedSize)} exceeds per-entry limit ${String(MAX_ENTRY_BYTES)}.`,
+              `ZIP entry "${toSingleLineDisplay(entry.fileName)}" uncompressed size ${String(entry.uncompressedSize)} exceeds per-entry limit ${String(MAX_ENTRY_BYTES)}.`,
             );
           }
           if (
@@ -227,7 +228,7 @@ async function readSlideParts(
           ) {
             throw bombError(
               filename,
-              `Entry "${entry.fileName}" exceeds the ${String(MAX_COMPRESSION_RATIO)}:1 compression ratio cap.`,
+              `Entry "${toSingleLineDisplay(entry.fileName)}" exceeds the ${String(MAX_COMPRESSION_RATIO)}:1 compression ratio cap.`,
             );
           }
           totalUncompressed += entry.uncompressedSize;
