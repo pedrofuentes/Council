@@ -133,6 +133,30 @@ describe("ProfileRepository", () => {
     }
   });
 
+  it("sanitizes JSON parse error messages before warning for corrupt stored arrays (#416)", async () => {
+    const corruptJson = "[\x1b[31mEVIL";
+    await repo.upsert("ceo", sampleProfile());
+    await db
+      .updateTable("persona_profiles")
+      .set({ decision_patterns: corruptJson })
+      .where("expert_slug", "=", "ceo")
+      .execute();
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const found = await repo.findBySlug("ceo");
+      expect(found?.decisionPatterns).toEqual([]);
+      expect(warnSpy).toHaveBeenCalled();
+      const msg = warnedMessage(warnSpy);
+      expect(msg).toMatch(/decision_patterns/);
+      expect(msg).toContain(truncateWarningValue(corruptJson));
+      expect(msg).not.toContain("\x1b");
+      expect(msg).not.toMatch(/[\r\n]/u);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("warns when stored JSON parses to a non-array value (#362)", async () => {
     const corruptSlug = "ceo\nnon-array\tspoof";
     const corruptValue = `\r\n\t"a string, not an array ${"Y".repeat(260)}"\n`;
