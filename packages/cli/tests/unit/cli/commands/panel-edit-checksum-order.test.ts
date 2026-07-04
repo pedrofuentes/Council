@@ -56,7 +56,12 @@ const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\
  */
 function patchExecuteQuery(
   database: dbModule.CouncilDatabase,
-  opts: { failOnSqlSubstring: string; failRollback?: boolean; errorMessage?: string },
+  opts: {
+    failOnSqlSubstring: string;
+    failRollback?: boolean;
+    errorMessage?: string;
+    rollbackError?: Error;
+  },
 ): () => void {
   const realExec = database.getExecutor();
   type ExecQueryFn = typeof realExec.executeQuery;
@@ -67,7 +72,7 @@ function patchExecuteQuery(
       throw new Error(opts.errorMessage ?? `simulated failure on: ${opts.failOnSqlSubstring}`);
     }
     if (opts.failRollback === true && /^\s*ROLLBACK\b/i.test(text)) {
-      throw new Error("simulated ROLLBACK failure");
+      throw opts.rollbackError ?? new Error("simulated ROLLBACK failure");
     }
     return originalExecuteQuery.call(this, compiled, queryId);
   };
@@ -240,7 +245,10 @@ describe("panel edit — atomic membership+checksum write (#1931, #308)", () => 
     // Patch the edit command's internal db so BOTH the panel_library UPDATE
     // (the second write) AND the subsequent ROLLBACK fail — the same seam the
     // setMembers rollback-honesty test uses. `mockImplementationOnce` scopes the
-    // patch to the edit command's connection only.
+    // patch to the edit command's connection only. The ROLLBACK is failed with a
+    // KNOWN instance so the test can pin that the surfaced `rollbackError` is
+    // that exact object, not merely some Error.
+    const injectedRollbackError = new Error("injected ROLLBACK failure — pin me");
     const realCreate = dbModule.createDatabase;
     const createSpy = vi
       .spyOn(dbModule, "createDatabase")
@@ -249,6 +257,7 @@ describe("panel edit — atomic membership+checksum write (#1931, #308)", () => 
         patchExecuteQuery(db, {
           failOnSqlSubstring: 'update "panel_library"',
           failRollback: true,
+          rollbackError: injectedRollbackError,
         });
         return db;
       });
@@ -274,7 +283,10 @@ describe("panel edit — atomic membership+checksum write (#1931, #308)", () => 
     // `rollbackError`. The message must stay honest (inconsistent, NOT preserved).
     const surfaced = err as { rollbackFailed?: boolean; rollbackError?: unknown; message: string };
     expect(surfaced.rollbackFailed).toBe(true);
-    expect(surfaced.rollbackError).toBeInstanceOf(Error);
+    // Identity, not just `instanceof`: the surfaced error must carry the EXACT
+    // rollback error object so the underlying reason is diagnosable, never a
+    // re-wrapped or synthesized stand-in.
+    expect(surfaced.rollbackError).toBe(injectedRollbackError);
     expect(surfaced.message).toMatch(/inconsistent/i);
     expect(surfaced.message).not.toMatch(/preserved/i);
   });
