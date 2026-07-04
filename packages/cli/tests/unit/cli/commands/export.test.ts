@@ -2243,6 +2243,56 @@ describe("buildExportCommand", () => {
     expect(stderr).toBe("");
   });
 
+  it("writeExportArtifact (no --force) wraps a close failure (EIO) as a sanitized CliUserError when writeFile resolved, never reporting a truncated export as success (#1888)", async () => {
+    const actual = await vi.importActual<typeof fs>("node:fs/promises");
+    const target = path.join(testHome, "create-close-fail.md");
+    const closeErr = Object.assign(
+      new Error(`EIO: i/o error, close '${ESC}[31m${C1_CSI}${BIDI_OVERRIDE}create'`),
+      { code: "EIO" },
+    );
+    // The O_EXCL create + writeFile land the bytes for real; only close rejects,
+    // surfacing a deferred write error (close(2) reports ENOSPC/EIO/EDQUOT on
+    // NFS/CIFS/quota after a resolved write). Swallowing it would print success
+    // and exit 0 over a truncated/corrupt export, so it MUST propagate.
+    vi.mocked(fs.open).mockImplementationOnce(async (...args: Parameters<typeof fs.open>) => {
+      const handle = await actual.open(...args);
+      return {
+        writeFile: (
+          data: string | Uint8Array,
+          options?: Parameters<fs.FileHandle["writeFile"]>[1],
+        ): Promise<void> => handle.writeFile(data, options),
+        close: async (): Promise<void> => {
+          await handle.close();
+          throw closeErr;
+        },
+      } as unknown as fs.FileHandle;
+    });
+
+    let caught: unknown;
+    try {
+      await writeExportArtifact(target, "CONTENT", false);
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(CliUserError);
+    expect((caught as CliUserError).cause).toBe(closeErr);
+    const message = (caught as CliUserError).message;
+    expect(message).toMatch(/Cannot write export/);
+    expect(message).toContain("EIO");
+    expect(message).not.toContain("i/o error");
+    expect(message.split("\n")).toHaveLength(1);
+    expectNoTerminalControls(message);
+    expect(message).not.toMatch(TERMINAL_CONTROL_BYTES);
+
+    let stderr = "";
+    const exit = handleCliError(caught, (s) => {
+      stderr += s;
+    });
+    expect(exit).toBe(EXIT_USER_ERROR);
+    expect(stderr).toBe("");
+  });
+
   it("writeExportArtifact (no --force) surfaces the writeFile error, not the shadowing close error, when both reject (#1888)", async () => {
     const actual = await vi.importActual<typeof fs>("node:fs/promises");
     const target = path.join(testHome, "create-both-fail.md");
