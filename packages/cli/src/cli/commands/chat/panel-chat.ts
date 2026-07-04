@@ -116,10 +116,15 @@ export async function runPanelChat(opts: PanelChatOptions): Promise<void> {
     experts: expertNames,
   });
 
-  const engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(engineKind);
+  // Declared here so the `finally` can stop it, but constructed *inside* the
+  // try below so a synchronous construction failure (e.g. a coming-soon
+  // provider's ProviderNotAvailableError) is routed through `formatEngineError`
+  // like every other engine-init error rather than bypassing it (#1378).
+  let engine: CouncilEngine | undefined;
   const inputProvider = (deps.inputProvider ?? defaultInputProvider)();
 
   try {
+    engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(engineKind);
     await engine.start();
     const members: PanelMember[] = [];
     for (const expert of resolved) {
@@ -263,7 +268,9 @@ export async function runPanelChat(opts: PanelChatOptions): Promise<void> {
     throw err;
   } finally {
     inputProvider.close();
-    await engine.stop().catch((err: unknown) => {
+    // `engine` is undefined only when construction itself threw (handled by the
+    // catch above); the optional chain makes cleanup a no-op in that case (#1378).
+    await engine?.stop().catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
       writeError(`!! engine.stop() failed during cleanup: ${msg}\n`);
     });

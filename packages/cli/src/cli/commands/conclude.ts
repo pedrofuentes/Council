@@ -150,11 +150,15 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
           );
         }
 
-        const engine = deps.engineFactory
-          ? deps.engineFactory()
-          : makeEngineFromKind(resolvedEngine);
+        // Declared here so the `finally` can stop it, but constructed *inside*
+        // the try below so a synchronous construction failure (e.g. a
+        // coming-soon provider's ProviderNotAvailableError) is routed through
+        // formatEngineError like every other engine-init error rather than
+        // bypassing it (#1378).
+        let engine: CouncilEngine | undefined;
         let output: ConcludeOutput;
         try {
+          engine = deps.engineFactory ? deps.engineFactory() : makeEngineFromKind(resolvedEngine);
           await engine.start();
           output = await synthesizeConclusion({
             doc,
@@ -180,7 +184,9 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
           cliErr.exitCode = exitCodeForEngineError((err as { code?: string }).code);
           throw cliErr;
         } finally {
-          await engine.stop().catch((err: unknown) => {
+          // `engine` is undefined only when construction itself threw (handled
+          // by the catch above); the optional chain makes cleanup a no-op then (#1378).
+          await engine?.stop().catch((err: unknown) => {
             const msg = err instanceof Error ? err.message : String(err);
             writeError(`!! engine.stop() failed during cleanup: ${msg}\n`);
           });
