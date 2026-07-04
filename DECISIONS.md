@@ -565,7 +565,7 @@ The two env vars (`COUNCIL_HOME` and `COUNCIL_DATA_HOME`) are independent so tes
 
 ### ADR-009: Regex-based document normalisation, not a Markdown/HTML parser
 **Date**: 2026-05-10
-**Status**: Accepted
+**Status**: Accepted (partially amended 2026-07-03: HTML tag extraction moved to the `node-html-parser` tokenizer after the regex approach failed repeated security review — see Amendment. The regex rule still governs the simple per-format normalisers.)
 **Context**: Roadmap 6.1 needs to extract plain text from `.md`, `.html`, and `.txt` documents to feed both FTS5 indexing and the persona-profile analyzer. The natural reach is a real parser per format (`marked` / `remark` for Markdown, `parse5` / `cheerio` for HTML). Council's actual need is far narrower: strip formatting and emit a normalised body suitable for tokenisation. The extractor is on the `council chat` startup hot path and must work in offline / air-gapped environments where heavy parser dependencies hurt install size and audit surface.
 
 **Decision**: `src/core/documents/extractor.ts` uses a small set of hand-written regex normalisers per format (HTML entity decoding, tag stripping, Markdown punctuation removal, whitespace collapse). The JSDoc explicitly states "intentionally simple (regex-based); strips formatting but does not aim to be a full parser." Parser correctness is not promised; FTS5 robustness against imperfect tokenisation is.
@@ -581,6 +581,8 @@ The two env vars (`COUNCIL_HOME` and `COUNCIL_DATA_HOME`) are independent so tes
 - ✅ Easy to audit: ~100 lines of regex with explicit test coverage per format.
 - ⚠️ Pathological inputs (deeply-nested HTML, custom Markdown extensions) may produce imperfect text. Acceptable: FTS5 ranking absorbs noise, and the persona analyzer treats every fenced document as untrusted data anyway.
 - 📝 If a real parser is ever needed (e.g. `.docx` / `.pdf` in Phase 8), it lands in a NEW module behind a format-dispatched interface — not by replacing the regex normalisers wholesale.
+
+**Amendment (2026-07-03) — HTML tag extraction is now a deliberate `node-html-parser` exception (#1217; Sentinel `SENTINEL-1213-c41f756` / PR #1213)**: the hand-rolled regex/scanner HTML stripper failed multiple security-review cycles — regex-bypass classes (whitespace/case variation, attributes, orphan close tags, quoted `>` inside attributes) flagged by CodeQL (`js/incomplete-multi-character-sanitization`, `js/bad-tag-filter`) plus catastrophic backtracking / O(n²) behaviour (#1212). It was replaced by `node-html-parser` — a maintained, ESM-compatible, tokenizer-based parser (`packages/cli/src/core/documents/extractors/html.ts`, dependency `node-html-parser ^7.1.0`) — which runs in linear time with no backtracking and removes `<script>`/`<style>` element bodies by construction (using `structuredText` so block elements stay whitespace-separated). **This narrows ADR-009 rather than reversing it**: the "regex, not a parser" rule still holds for the *simple* per-format normalisers (HTML entity decoding, whitespace collapse, Markdown punctuation stripping), but **HTML tag extraction is a deliberate parser-backed exception** because a hardened parser is the safer choice for adversarial tag soup. Do NOT revert the HTML extractor to regex tag-stripping. (This is the DECISIONS half of #1217; the LEARNINGS.md half ships in PR #2249.)
 
 ### ADR-008: Persona profile analysis — LLM extraction with single-retry, multi-layer sanitisation
 **Date**: 2026-05-09
