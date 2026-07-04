@@ -646,13 +646,20 @@ interface MaybeProcessPersonaDocsOptions {
  * Read-only check: returns the names of regular files in a generic expert's
  * docs folder. Generic experts never index these documents, so their presence
  * is surfaced as a warning (F01) rather than silently ignored.
+ *
+ * A missing docs folder (ENOENT) is the expected "no docs" case and yields an
+ * empty list. Any other error (EACCES/ENOTDIR/…) is a real I/O failure and is
+ * propagated so the caller can surface it rather than silently swallow it
+ * (#1104) — an undifferentiated `catch` would mask a permission-locked or
+ * mis-shaped docs path as "no documents".
  */
 async function listUnindexedDocFiles(docsPath: string): Promise<readonly string[]> {
   try {
     const entries = await fs.readdir(docsPath, { withFileTypes: true });
     return entries.filter((e) => e.isFile()).map((e) => e.name);
-  } catch {
-    return [];
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
   }
 }
 
@@ -709,7 +716,21 @@ export async function warnIfGenericExpertHasUnindexedDocs(
   // the per-expert docs root even if the shape gate is ever weakened.
   const docsPath = resolveConfinedDocsPath(dataHome, expert.slug);
   if (docsPath === null) return;
-  const unindexed = await listUnindexedDocFiles(docsPath);
+  let unindexed: readonly string[];
+  try {
+    unindexed = await listUnindexedDocFiles(docsPath);
+  } catch (err: unknown) {
+    // A real I/O error (EACCES/ENOTDIR/…) reading the confined docs dir: warn
+    // rather than silently treat it as "no documents" (#1104). The slug already
+    // passed SLUG_RE and the containment guard above, so echoing it is safe;
+    // `renderer.showSystem` applies the single-line terminal sanitization.
+    const msg = err instanceof Error ? err.message : String(err);
+    renderer.showSystem(
+      `Could not read the docs folder for generic expert "${expert.displayName}" (${expert.slug}): ${msg}`,
+      "warn",
+    );
+    return;
+  }
   if (unindexed.length === 0) return;
   renderer.showSystem(
     `Expert "${expert.displayName}" (${expert.slug}) is a generic expert — ` +
@@ -772,13 +793,13 @@ export async function maybeProcessPersonaDocs(
             "warn",
           );
         } else {
-          renderer.showSystem(`  ${p.filename}: ${p.wordCount} words`, "info");
+          renderer.showSystem(`  ✓ ${p.filename} (${p.wordCount} words)`, "info");
         }
       });
       renderer.showSystem(
         `Processed ${result.filesProcessed} new/changed document(s) ` +
-          `(${result.filesSkipped} unchanged, ${result.filesFailed} failed, ` +
-          `${result.filesNeedingReview} needs review, ${result.filesRemoved} removed).`,
+          `(${result.filesFailed} failed, ${result.filesNeedingReview} needs review, ` +
+          `${result.filesRemoved} removed); ${result.filesSkipped} already up to date.`,
         "info",
       );
       if (result.profileError !== null) {
