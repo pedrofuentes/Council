@@ -434,6 +434,42 @@ describe("buildProgram", () => {
       expect(exportIdx).toBeGreaterThan(inspectionStart);
       expect(hintIdx).toBeGreaterThan(exportIdx);
     });
+
+    it("lists uncategorized commands in a fallback section exactly once", async () => {
+      const { buildProgram } = await loadCouncilModule();
+      const program = buildProgram();
+      program
+        .command("uncategorized-probe")
+        .description("Probe command outside configured categories");
+
+      const lines = program.helpInformation().split("\n");
+      const otherStart = headerIndex(lines, "Other");
+      const hintIdx = lines.findIndex(
+        (line) => line === "New to Council? Start with: council doctor",
+      );
+      const probeLines = lines.filter((line) => /^\s+uncategorized-probe\b/.test(line));
+
+      expect(otherStart, '"Other:" fallback header missing').toBeGreaterThanOrEqual(0);
+      expect(hintIdx, "getting-started hint missing").toBeGreaterThan(otherStart);
+      expect(
+        commandLineIndex(lines, "uncategorized-probe", otherStart + 1, hintIdx),
+      ).toBeGreaterThan(otherStart);
+      expect(probeLines).toHaveLength(1);
+    });
+
+    it("renders every registered top-level command exactly once in root help", async () => {
+      const { buildProgram } = await loadCouncilModule();
+      const program = buildProgram();
+      const commandNames = program.commands.map((command) => command.name());
+      const lines = program.helpInformation().split("\n");
+
+      for (const commandName of commandNames) {
+        const renderedLines = lines.filter((line) =>
+          new RegExp(`^\\s+${commandName}\\b`).test(line),
+        );
+        expect(renderedLines, `"${commandName}" should render exactly once`).toHaveLength(1);
+      }
+    });
   });
 
   describe("TUI entry guard", () => {
