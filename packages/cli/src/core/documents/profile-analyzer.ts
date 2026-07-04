@@ -291,38 +291,72 @@ export function parseAnalyzerJSON(raw: string): ParsedFields | null {
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
+function timeoutError(timeoutMs: number): Error {
+  return new Error(`Profile analyzer engine call timed out after ${timeoutMs}ms`);
+}
+
 async function collectResponse(
   engine: CouncilEngine,
   expertId: string,
   prompt: string,
   timeoutMs: number,
 ): Promise<string> {
-  let collected = "";
-  let errored = false;
-  let errorMessage: string | undefined;
   // AbortSignal.timeout() schedules a timer that aborts the signal when
   // the deadline elapses; engine adapters wire it through to the
   // underlying request and surface an ABORTED error event.
   const signal = AbortSignal.timeout(timeoutMs);
-  const stream: AsyncIterable<EngineEvent> = engine.send({ prompt, expertId, signal });
-  for await (const event of stream) {
-    if (event.kind === "message.delta") {
-      collected += event.text;
-    } else if (event.kind === "error") {
-      errored = true;
-      errorMessage = event.error?.message;
-      break;
-    }
-  }
-  if (errored) {
+  // #435: classify a failure as a timeout off an explicit flag flipped by
+  // the abort event — not a post-loop `signal.aborted` read, which a
+  // provider error arriving in the same tick as the timer could race into a
+  // misclassification. The flag is only ever set on the abort path.
+  let timedOut = false;
+  let onAbort: (() => void) | undefined;
+  // #437: enforce the deadline at THIS layer even if the engine adapter
+  // ignores the forwarded signal. Racing stream consumption against an
+  // abort-triggered rejection guarantees the timeout fires here, so a
+  // signal-ignoring adapter cannot block analyzeDocuments() forever.
+  const deadline = new Promise<never>((_resolve, reject) => {
+    onAbort = (): void => {
+      timedOut = true;
+      reject(timeoutError(timeoutMs));
+    };
     if (signal.aborted) {
-      throw new Error(`Profile analyzer engine call timed out after ${timeoutMs}ms`);
+      onAbort();
+    } else {
+      signal.addEventListener("abort", onAbort, { once: true });
     }
-    throw new Error(
-      `Profile analyzer engine call failed${errorMessage ? `: ${errorMessage}` : ""}`,
-    );
+  });
+
+  const stream: AsyncIterable<EngineEvent> = engine.send({ prompt, expertId, signal });
+  const consume = async (): Promise<string> => {
+    let collected = "";
+    let errored = false;
+    let errorMessage: string | undefined;
+    for await (const event of stream) {
+      if (event.kind === "message.delta") {
+        collected += event.text;
+      } else if (event.kind === "error") {
+        errored = true;
+        errorMessage = event.error?.message;
+        break;
+      }
+    }
+    if (errored) {
+      if (timedOut) {
+        throw timeoutError(timeoutMs);
+      }
+      throw new Error(
+        `Profile analyzer engine call failed${errorMessage ? `: ${errorMessage}` : ""}`,
+      );
+    }
+    return collected;
+  };
+
+  try {
+    return await Promise.race([consume(), deadline]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
   }
-  return collected;
 }
 
 /**
