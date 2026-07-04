@@ -547,6 +547,34 @@ describe("buildSessionsCommand", () => {
       expect(captured).not.toContain(`council resume ${seeded.panelName}`);
     });
 
+    it("does not show the stuck hint for a zero-turn running debate started under the threshold (#865)", async () => {
+      // Negative boundary complementing the >1h stale-positive test: a running
+      // debate with NO turns whose only activity timestamp is a RECENT
+      // `startedAt` (well under the 1h threshold) must NOT surface the hint.
+      // With zero turns, `latestActivityAt` falls back to the debate's
+      // `startedAt`, so this pins the age∧turns condition in
+      // isPossiblyStuckRunningDebate (sessions.ts:98-111) — distinct from the
+      // recent-turn case, which exercises the turn `createdAt` fallback branch.
+      const seeded = await seedPanelWithDebates(testHome, "fresh-session", ["running"]);
+      await setDebateStartedAt(
+        testHome,
+        seeded.debateIds[0] ?? "",
+        new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+      );
+
+      let captured = "";
+      const cmd = buildSessionsCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-sessions"]);
+
+      expect(captured).toContain("status: running");
+      // Zero turns → the fallback activity source is `startedAt`, not a turn.
+      expect(captured).toContain("turns: 0");
+      expect(captured).not.toContain("May be stuck");
+      expect(captured).not.toContain("council resume fresh-session");
+    });
+
     it("lists a seeded session as NDJSON when format=json", async () => {
       const { createDatabase } = await import("../../../../src/memory/db.js");
       const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
