@@ -150,6 +150,71 @@ describe("buildConveneCommand", () => {
     }
   });
 
+  describe("--summarize-after positive-integer validation (#250)", () => {
+    for (const value of ["0", "-1", "-10"]) {
+      it(`rejects non-positive --summarize-after ${value} at parse time`, async () => {
+        const cmd = buildConveneCommand({
+          engineFactory: makeMockEngineFactory(),
+          write: () => undefined,
+          writeError: () => undefined,
+        });
+        await expect(
+          cmd.parseAsync([
+            "node",
+            "council-convene",
+            "Some topic",
+            "--template",
+            "code-review",
+            "--engine",
+            "mock",
+            "--max-rounds",
+            "1",
+            "--summarize-after",
+            value,
+          ]),
+        ).rejects.toThrow(new RegExp(`--summarize-after.*positive.*${value}`));
+      });
+    }
+
+    it("sanitizes CR/LF in the non-positive --summarize-after error (#250)", async () => {
+      // The raw CLI value is interpolated into the thrown error. A value that
+      // parses to an integer < 1 yet carries line terminators (a trailing
+      // CRLF here) must not emit raw \r/\n to the terminal (log-forging /
+      // line-injection), matching the toSingleLineDisplay treatment used for
+      // every other untrusted value written in this command.
+      const cmd = buildConveneCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: () => undefined,
+        writeError: () => undefined,
+      });
+      const err = await cmd
+        .parseAsync([
+          "node",
+          "council-convene",
+          "Some topic",
+          "--template",
+          "code-review",
+          "--engine",
+          "mock",
+          "--max-rounds",
+          "1",
+          "--summarize-after",
+          "-1\r\n",
+        ])
+        .then(
+          () => null,
+          (e: unknown) => e,
+        );
+      expect(err).toBeInstanceOf(Error);
+      const message = (err as Error).message;
+      // Parses to -1, so it reaches the positive-integer branch…
+      expect(message).toMatch(/positive integer/);
+      // …and the interpolated value is collapsed to a single line.
+      expect(message).not.toContain("\r");
+      expect(message).not.toContain("\n");
+    });
+  });
+
   describe("--model validation at parse time", () => {
     it("rejects an unknown --model with a clear error listing the invalid value and valid options", async () => {
       const cmd = buildConveneCommand({
@@ -587,6 +652,100 @@ describe("buildConveneCommand", () => {
       expect(errors).not.toContain("Generating conclusion…");
       // Machine-consumed stdout must never carry the progress label.
       expect(stdout).not.toContain("Generating conclusion…");
+    });
+
+    /**
+     * Force the animated (spinner) progress path: it requires an
+     * interactive stderr AND a color-capable terminal. The conclusion
+     * spinner only writes its cursor-clear control sequence in this mode,
+     * so the teardown assertions below need it deterministically on.
+     */
+    async function withAnimatedStderrTTY(fn: () => Promise<void>): Promise<void> {
+      const originalNoColor = process.env["NO_COLOR"];
+      const originalTerm = process.env["TERM"];
+      delete process.env["NO_COLOR"];
+      process.env["TERM"] = "xterm-256color";
+      try {
+        await withStderrTTY(true, fn);
+      } finally {
+        if (originalNoColor === undefined) delete process.env["NO_COLOR"];
+        else process.env["NO_COLOR"] = originalNoColor;
+        if (originalTerm === undefined) delete process.env["TERM"];
+        else process.env["TERM"] = originalTerm;
+      }
+    }
+
+    it("stops the conclusion progress spinner when synthesis fails on a TTY (#1872)", async () => {
+      let errors = "";
+      const cmd = buildConveneCommand({
+        engineFactory: () => new RejectingSynthesisEngine(),
+        write: () => undefined,
+        writeError: (s) => {
+          errors += s;
+        },
+      });
+
+      await withAnimatedStderrTTY(async () => {
+        await cmd.parseAsync([
+          "node",
+          "council-convene",
+          "Should we ship the MVP?",
+          "--template",
+          "code-review",
+          "--max-rounds",
+          "1",
+          "--engine",
+          "mock",
+          "--heuristic-memory",
+        ]);
+      });
+
+      // The spinner started under the forced TTY…
+      expect(errors).toContain("Generating conclusion…");
+      // …and its teardown cleared the line (CLEAR_LINE = "\r\x1b[2K") even
+      // though synthesis threw, so no spinner frame is left dangling.
+      expect(errors).toContain("\x1b[2K");
+      // The failure is still surfaced (best-effort, non-fatal).
+      expect(errors).toContain("conclusion generation failed (continuing)");
+    });
+
+    it("does not let a failing progress.stop() mask the synthesis error (#1872)", async () => {
+      // Make the stderr sink throw ONLY on the spinner's clear-line control
+      // sequence (emitted by stop()); every other write is captured. Without
+      // the finally-guard, that throw would replace the in-flight synthesis
+      // error; with it, the real failure still surfaces.
+      const STOP_SINK_BOOM = "stop-sink-boom";
+      let errors = "";
+      const cmd = buildConveneCommand({
+        engineFactory: () => new RejectingSynthesisEngine(),
+        write: () => undefined,
+        writeError: (s) => {
+          if (s.includes("\x1b[2K")) {
+            throw new Error(STOP_SINK_BOOM);
+          }
+          errors += s;
+        },
+      });
+
+      await withAnimatedStderrTTY(async () => {
+        await cmd.parseAsync([
+          "node",
+          "council-convene",
+          "Should we ship the MVP?",
+          "--template",
+          "code-review",
+          "--max-rounds",
+          "1",
+          "--engine",
+          "mock",
+          "--heuristic-memory",
+        ]);
+      });
+
+      // The synthesis failure is still reported…
+      expect(errors).toContain("conclusion generation failed (continuing)");
+      // …and the spinner-teardown error did NOT hijack the message.
+      expect(errors).not.toContain(STOP_SINK_BOOM);
     });
   });
 
@@ -1244,6 +1403,57 @@ describe("buildConveneCommand", () => {
     expect(combinedNotices).toContain("Migrated 0 panels and 0 experts");
   });
 
+  it("#807: --verbose surfaces the zero-change summary without re-running migration", async () => {
+    const migrationModule = await import("../../../../src/core/template-migration.js");
+
+    // First run (no --verbose) completes the one-time migration so the
+    // second run has nothing left to migrate.
+    const firstRun = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: () => undefined,
+    });
+    await firstRun.parseAsync([
+      "node",
+      "council-convene",
+      "topic one",
+      "--template",
+      "code-review",
+      "--engine",
+      "mock",
+      "--format",
+      "json",
+    ]);
+
+    // Migration is now unnecessary. Spy to prove --verbose no longer forces it.
+    const migrateSpy = vi.spyOn(migrationModule, "migrateBuiltInTemplates");
+    let stderr = "";
+    const verboseRun = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (chunk) => {
+        stderr += chunk;
+      },
+    });
+    await verboseRun.parseAsync([
+      "node",
+      "council-convene",
+      "topic two",
+      "--template",
+      "code-review",
+      "--engine",
+      "mock",
+      "--format",
+      "json",
+      "--verbose",
+    ]);
+
+    // The zero-change summary is still surfaced for --verbose…
+    expect(stderr).toContain("Migrated 0 panels and 0 experts");
+    // …but the idempotent migration is NOT re-run purely to emit it.
+    expect(migrateSpy).not.toHaveBeenCalled();
+  });
+
   it("--engine copilot returns a CopilotEngine instance (helper)", async () => {
     // The exported helper is the indirection used by the action; tests
     // verify wiring without actually invoking the engine (which would
@@ -1858,6 +2068,52 @@ describe("buildConveneCommand — user panels with slug references", () => {
     expect(stderr).toContain("council expert list");
     // (b) hint: omitting --experts auto-composes a panel
     expect(stderr).toMatch(/omit.*--experts|auto-compose/i);
+  });
+
+  it("#1080: F06 unknown-slug guidance survives a failing library.list()", async () => {
+    await seedLibraryExpert("library-known", "Known");
+
+    const { FileExpertLibrary } = await import("../../../../src/core/expert-library.js");
+    // resolveExperts uses library.get(); the F06 error branch then calls
+    // library.list() to build "did you mean" suggestions. Force that lookup
+    // to throw and assert the actionable message is not replaced by it.
+    const listSpy = vi
+      .spyOn(FileExpertLibrary.prototype, "list")
+      .mockRejectedValue(new Error("list-lookup-boom"));
+
+    let stderr = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (chunk) => {
+        stderr += chunk;
+      },
+    });
+    cmd.exitOverride();
+
+    try {
+      await expect(
+        cmd.parseAsync([
+          "node",
+          "council-convene",
+          "topic",
+          "--experts",
+          "totally-unknown-slug",
+          "--engine",
+          "mock",
+        ]),
+      ).rejects.toThrow(/totally-unknown-slug/);
+    } finally {
+      // Restore immediately so the prototype spy cannot bleed into later
+      // tests (e.g. #1077's suggestion path) regardless of assertion outcome.
+      listSpy.mockRestore();
+    }
+
+    // Degrades gracefully to slug-only guidance…
+    expect(stderr).toContain("totally-unknown-slug");
+    expect(stderr).toContain("council expert list");
+    // …rather than surfacing the unrelated list() failure.
+    expect(stderr).not.toContain("list-lookup-boom");
   });
 
   it("F11: convene on a zero-expert panel produces a friendly message, not raw Zod jargon", async () => {

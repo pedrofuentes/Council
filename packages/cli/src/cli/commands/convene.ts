@@ -252,6 +252,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
       "--prompt-file <path>",
       "Read the topic VERBATIM from a file (or `-` for stdin) instead of the positional argument. " +
         "Bypasses the shell so `$`, backticks, and values like `$180K` survive intact. " +
+        "Content must be non-empty after trimming. " +
         "Mutually exclusive with the positional <topic>.",
     )
     .option(
@@ -335,6 +336,11 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         const parsed = Number(v);
         if (!Number.isInteger(parsed)) {
           throw new Error(`--summarize-after must be an integer (got: ${v})`);
+        }
+        if (parsed < 1) {
+          throw new Error(
+            `--summarize-after must be a positive integer >= 1 (got: ${toSingleLineDisplay(v)})`,
+          );
         }
         return parsed;
       },
@@ -561,8 +567,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           // slug, plus (re-)register library DB rows. Idempotent.
           const migDb = await createDatabase(libDbPath);
           try {
-            const shouldRunMigration =
-              opts.verbose === true || (await isMigrationNeeded(dataHome, migDb));
+            const shouldRunMigration = await isMigrationNeeded(dataHome, migDb);
             if (shouldRunMigration) {
               const migLib = new FileExpertLibrary(dataHome, migDb);
               await migrateBuiltInTemplates(dataHome, migLib, migDb, {
@@ -572,6 +577,11 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
                   writeError(message);
                 },
               });
+            } else if (opts.verbose === true && !isQuiet()) {
+              // #807: surface the zero-change summary directly instead of
+              // re-running the (idempotent) migration solely to emit it. Keep
+              // this wording in sync with migrateBuiltInTemplates' notice.
+              writeError("ℹ Migrated 0 panels and 0 experts to the new library format.\n");
             }
           } finally {
             await migDb.destroy();
@@ -618,7 +628,16 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
             const library = new FileExpertLibrary(dataHome, libDb);
             const { resolved, missing } = await resolveExperts(expertSlugs, library);
             if (missing.length > 0) {
-              const validSlugs = (await library.list()).map((e) => e.slug);
+              let validSlugs: string[] = [];
+              try {
+                validSlugs = (await library.list()).map((e) => e.slug);
+              } catch {
+                // #1080: degrade to slug-only guidance if the library lookup
+                // fails while building this error — the actionable "unknown
+                // slug" message must survive even without "did you mean"
+                // suggestions.
+                validSlugs = [];
+              }
               const named = missing
                 .map((slug) => {
                   const safe = toSingleLineDisplay(slug);
@@ -979,7 +998,14 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
                         }
                       } finally {
                         if (showConcludeProgress) {
-                          concludeProgress.stop();
+                          // #1872: guard the spinner teardown so a stderr-write
+                          // failure here cannot mask an in-flight synthesis
+                          // error propagating from the try block.
+                          try {
+                            concludeProgress.stop();
+                          } catch {
+                            /* best effort: nothing actionable if the sink is gone */
+                          }
                         }
                       }
                     }
