@@ -8,8 +8,12 @@
  *   - readonly returns; immutable-by-default
  *
  * Turn ordering: each session has its own monotonically-increasing `seq`,
- * assigned by `addTurn()` as `getLatestSeq() + 1`. Callers should not set
- * `seq` directly.
+ * allocated atomically by `addTurn()` inside a single
+ * `INSERT ... SELECT COALESCE(MAX(seq), 0) + 1 ... WHERE chat_id = ?`
+ * statement, so SQLite's per-statement write serialization prevents the
+ * read-modify-write race a separate read-then-insert would risk. The
+ * `UNIQUE (chat_id, seq)` constraint (migration 005) enforces this at the
+ * schema level. Callers should not set `seq` directly.
  *
  * Full-text search: `searchTurns()` queries the FTS5 `chat_turns_fts`
  * virtual table populated by the after-insert / after-delete triggers in
