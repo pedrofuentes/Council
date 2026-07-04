@@ -8,6 +8,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildAskCommand } from "../../../../src/cli/commands/ask.js";
@@ -511,24 +512,29 @@ describe("buildAskCommand", () => {
     }
   });
 
-  it("suppresses setup progress when quiet mode is enabled", async () => {
+  it("suppresses setup progress when the parsed --quiet option is set (#849)", async () => {
     await seedPanel(testHome);
-    setQuiet(true);
     let stdout = "";
     let stderr = "";
-    const cmd = buildAskCommand({
-      engineFactory: makeMockEngineFactory(),
-      write: (s) => {
-        stdout += s;
-      },
-      writeError: (s) => {
-        stderr += s;
-      },
-    });
+    const program = new Command();
+    program.option("-q, --quiet", "Suppress informational stderr output");
+    program.addCommand(
+      buildAskCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: (s) => {
+          stdout += s;
+        },
+        writeError: (s) => {
+          stderr += s;
+        },
+      }),
+    );
 
-    await cmd.parseAsync([
+    await program.parseAsync([
       "node",
-      "council-ask",
+      "council",
+      "--quiet",
+      "ask",
       "ask-test-panel",
       "Question",
       "--engine",
@@ -540,6 +546,45 @@ describe("buildAskCommand", () => {
     expect(stderr).not.toContain("Preparing answer");
     expect(stdout).not.toContain("Preparing answer");
     expect(stdout.split("\n").some((line) => line.trim().startsWith("{"))).toBe(true);
+  });
+
+  it("drives quiet from the parsed --quiet option, not the writer module-global (#849)", async () => {
+    await seedPanel(testHome);
+
+    const runAsk = async (opts: {
+      readonly parsedQuiet: boolean;
+      readonly staleGlobalQuiet: boolean;
+    }): Promise<string> => {
+      // Simulate a leftover module-global left by an earlier command in the same
+      // process. This invocation must ignore it and honour only its own parsed
+      // --quiet — otherwise back-to-back commands leak state into one another.
+      setQuiet(opts.staleGlobalQuiet);
+      let stderr = "";
+      const program = new Command();
+      program.option("-q, --quiet", "Suppress informational stderr output");
+      program.addCommand(
+        buildAskCommand({
+          engineFactory: makeMockEngineFactory(),
+          write: () => undefined,
+          writeError: (s) => {
+            stderr += s;
+          },
+        }),
+      );
+      const argv = ["node", "council"];
+      if (opts.parsedQuiet) argv.push("--quiet");
+      argv.push("ask", "ask-test-panel", "Question", "--engine", "mock", "--format", "json");
+      await program.parseAsync(argv);
+      return stderr;
+    };
+
+    // Parsed --quiet wins even though the stale global says "not quiet".
+    const quietStderr = await runAsk({ parsedQuiet: true, staleGlobalQuiet: false });
+    // Absence of --quiet wins even though the stale global says "quiet".
+    const verboseStderr = await runAsk({ parsedQuiet: false, staleGlobalQuiet: true });
+
+    expect(quietStderr).not.toContain("Preparing answer");
+    expect(verboseStderr).toContain("Preparing answer");
   });
 
   it("--engine with invalid value rejects with clear error", async () => {
