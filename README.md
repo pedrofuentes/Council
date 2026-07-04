@@ -363,15 +363,22 @@ council convene "..." --template code-review --format json | jq .
 # Completed debates emit {"kind":"conclusion","conclusion":{...}} as the final
 # NDJSON line after debate.end, unless you pass --no-conclude.
 # NDJSON event kinds emitted during a debate:
-#   debate.start  — session open (panel metadata)
-#   turn.start    — an expert begins speaking
-#   turn.chunk    — a streaming token fragment
-#   turn.retry    — a transient error triggered an automatic retry;
-#                   contains {expert, attempt, reason} — filter these out
-#                   or surface them as progress indicators in scripts
-#   turn.end      — expert turn complete (includes per-error-code hint on failure)
-#   debate.end    — all rounds finished
-#   conclusion    — final synthesis object (present unless --no-conclude)
+#   panel.assembled   — session open; carries the assembled expert roster
+#   round.start       — a new round begins
+#   turn.start        — an expert begins speaking
+#   turn.delta        — a streaming token fragment ({expertSlug, text})
+#   turn.discard      — discard buffered deltas for this turn (retry incoming)
+#   turn.retry        — transient error triggered an automatic retry;
+#                       carries {expertSlug, attempt, reason, reasonCode?}
+#                       reasonCode maps to a friendly message; filter or surface
+#                       as a progress indicator
+#   turn.quality_gate — anti-sycophancy gate flagged the response (warn/regenerate)
+#   turn.end          — expert turn complete (success only; carries full content)
+#   round.end         — a round finished (may carry a rolling summary)
+#   cost.update       — running premium-request and cost totals
+#   debate.end        — all rounds finished
+#   error             — engine error ({expertSlug?, message, recoverable})
+#   conclusion        — final synthesis object (present unless --no-conclude)
 
 # Show the transcript of a previous debate
 council resume <panel-name>
