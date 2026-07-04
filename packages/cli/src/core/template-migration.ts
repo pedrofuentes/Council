@@ -403,6 +403,17 @@ async function resolveSuffixed(
   const candidates = [primary];
   for (let i = 2; i < 100; i++) candidates.push(`${primary}-${i}`);
 
+  // Snapshot the library once instead of issuing one sequential
+  // `library.get()` per candidate: a deeply-collided slug tail (many
+  // distinct-content third-party experts occupying `${primary}`,
+  // `${primary}-2`, …) would otherwise fan out into up to ~100 sequential
+  // reads on this cold disambiguation path (#304). Resolving candidates
+  // against an in-memory map bounds library I/O to a single call while
+  // keeping the chosen suffix identical to the per-candidate scan. No writes
+  // occur before this function returns, so the snapshot cannot go stale.
+  const librarySlugs = new Map<string, ExpertDefinition>();
+  for (const def of await library.list()) librarySlugs.set(def.slug, def);
+
   for (const candidate of candidates) {
     const sessionDef = claimed.get(candidate);
     if (sessionDef) {
@@ -411,7 +422,7 @@ async function resolveSuffixed(
       }
       continue;
     }
-    const libraryDef = await library.get(candidate);
+    const libraryDef = librarySlugs.get(candidate);
     if (libraryDef) {
       if (defsEqual(libraryDef, expert)) {
         claimed.set(candidate, libraryDef);
