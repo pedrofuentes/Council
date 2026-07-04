@@ -18,6 +18,15 @@ import { CliUserError } from "../../../../src/cli/cli-user-error.js";
 import type { ExpertDefinition } from "../../../../src/core/expert.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
 
+// eslint-disable-next-line no-control-regex
+const TERMINAL_CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
+
+function expectNoTerminalControls(text: string): void {
+  for (const line of text.split("\n")) {
+    expect(line).not.toMatch(TERMINAL_CONTROL_RE);
+  }
+}
+
 interface TestEnv {
   readonly home: string;
   readonly dataHome: string;
@@ -543,6 +552,58 @@ describe("buildPanelCommand", () => {
       // eslint-disable-next-line no-control-regex
       expect(err).not.toMatch(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/);
     });
+
+    it("sanitizes DB-derived yamlPath wherever inspect renders displayPath (#2274)", async () => {
+      await seedExpert(env, expertDef("cto"));
+      const createCmd = buildPanelCommand(() => {
+        /* noop */
+      });
+      await createCmd.parseAsync([
+        "node",
+        "council-panel",
+        "create",
+        "arch-review",
+        "--experts",
+        "cto",
+      ]);
+
+      const adversarialYamlPath = path.join(
+        env.dataHome,
+        "panels",
+        "arch-review\r\n\u001b[31m\u202e.yaml",
+      );
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { PanelLibraryRepository } =
+        await import("../../../../src/memory/repositories/panel-library-repo.js");
+      const db = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        const repo = new PanelLibraryRepository(db);
+        await repo.update("arch-review", { yamlPath: adversarialYamlPath });
+      } finally {
+        await db.destroy();
+      }
+
+      let out = "";
+      let err = "";
+      const cmd = buildPanelCommand(
+        (s) => {
+          out += s;
+        },
+        (s) => {
+          err += s;
+        },
+      );
+      await cmd.parseAsync(["node", "council-panel", "inspect", "arch-review"]);
+
+      expect(out).toContain("File:");
+      expect(err).toMatch(/could not read panel definition/i);
+      expectNoTerminalControls(out);
+      expectNoTerminalControls(err);
+      expect(out).not.toContain("\u001b[31m");
+      expect(err).not.toContain("\u001b[31m");
+      expect(out).not.toContain("\r");
+      expect(err.replace(/\n$/, "")).not.toContain("\n");
+    });
   });
 
   describe("panel edit", () => {
@@ -586,6 +647,52 @@ describe("buildPanelCommand", () => {
         });
         await cmd.parseAsync(["node", "council-panel", "edit", "arch-review"]);
         expect(captured.toLowerCase()).toMatch(/saved|validated|✓|ok/);
+      } finally {
+        if (originalEditor === undefined) delete process.env["EDITOR"];
+        else process.env["EDITOR"] = originalEditor;
+      }
+    });
+
+    it("sanitizes invalid-YAML err.message before writing the edit warning (#1931 item a)", async () => {
+      await seedExpert(env, expertDef("cto"));
+      const createCmd = buildPanelCommand(() => {
+        /* noop */
+      });
+      await createCmd.parseAsync([
+        "node",
+        "council-panel",
+        "create",
+        "arch-review",
+        "--experts",
+        "cto",
+      ]);
+
+      const yamlPath = path.join(env.dataHome, "panels", "arch-review.yaml");
+      await fs.writeFile(
+        yamlPath,
+        "name: arch-review\u001b[31mOWNED\u001b[0m\r\n\u202e: [oops\u0007\r\n",
+        "utf-8",
+      );
+      const originalEditor = process.env["EDITOR"];
+      process.env["EDITOR"] = `node -e ""`;
+      try {
+        let err = "";
+        const cmd = buildPanelCommand(
+          () => {
+            /* noop */
+          },
+          (s) => {
+            err += s;
+          },
+        );
+        await expect(
+          cmd.parseAsync(["node", "council-panel", "edit", "arch-review"]),
+        ).rejects.toThrow();
+
+        expect(err).toMatch(/invalid panel yaml after edit/i);
+        expectNoTerminalControls(err);
+        expect(err).not.toContain("\u001b[31m");
+        expect(err.replace(/\n$/, "").split("\n")).toHaveLength(2);
       } finally {
         if (originalEditor === undefined) delete process.env["EDITOR"];
         else process.env["EDITOR"] = originalEditor;
@@ -761,6 +868,62 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
       expect(caughtError?.message).toContain("No experts found in the library");
       expect(caughtError?.message).toContain("council expert create");
       expect(caughtError?.message).toContain("council convene");
+    });
+  });
+
+  describe("panel delete — warning sanitization", () => {
+    let env: TestEnv;
+    beforeEach(async () => {
+      env = await makeEnv();
+    });
+    afterEach(async () => {
+      await teardown(env);
+    });
+
+    it("sanitizes debate-count err.message before writing the confirmation warning (#1931 item a)", async () => {
+      await seedExpert(env, expertDef("cto"));
+      const createCmd = buildPanelCommand(() => {
+        /* noop */
+      });
+      await createCmd.parseAsync([
+        "node",
+        "council-panel",
+        "create",
+        "arch-review",
+        "--experts",
+        "cto",
+      ]);
+
+      const { vi } = await import("vitest");
+      const { DebateRepository } = await import("../../../../src/memory/repositories/debates.js");
+      const countSpy = vi
+        .spyOn(DebateRepository.prototype, "countByPanelIds")
+        .mockRejectedValueOnce(new Error("count failed\r\n\u001b[31mowned\u001b[0m\u202e"));
+
+      try {
+        let err = "";
+        const cmd = buildPanelCommand(
+          () => {
+            /* noop */
+          },
+          (s) => {
+            err += s;
+          },
+          { confirm: async () => false },
+        );
+        await expect(
+          cmd.parseAsync(["node", "council-panel", "delete", "arch-review"]),
+        ).rejects.toThrow(/not deleted/i);
+
+        expect(err).toMatch(/could not count past debate sessions/i);
+        expectNoTerminalControls(err);
+        expect(err).not.toContain("\u001b[31m");
+        const lines = err.replace(/\n$/, "").split("\n");
+        expect(lines[0]).toMatch(/could not count past debate sessions/i);
+        expect(lines[1]).toMatch(/Proceeding with the deletion prompt/i);
+      } finally {
+        countSpy.mockRestore();
+      }
     });
   });
 
