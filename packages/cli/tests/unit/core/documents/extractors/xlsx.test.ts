@@ -35,6 +35,16 @@ interface ZipEntry {
    * native `zlib.crc32`) for large payloads to avoid the slow fallback.
    */
   readonly crc?: number;
+  /**
+   * Override for the raw DEFLATE body written verbatim into the archive,
+   * replacing the honest `deflateRawSync(data)` output. Used to craft an entry
+   * whose local/central headers are valid (so yauzl opens the archive and
+   * begins inflating) but whose compressed payload is corrupt/truncated,
+   * forcing the inflate stream to emit an `error` mid-preflight. The header
+   * `compressedSize` is derived from this buffer's length; `data` still
+   * supplies the default declared uncompressed size and CRC-32 fields.
+   */
+  readonly compressedOverride?: Buffer;
 }
 
 function crc32(buf: Buffer): number {
@@ -63,7 +73,7 @@ function buildZip(entries: readonly ZipEntry[]): Buffer {
   for (const entry of entries) {
     const nameBuf = Buffer.from(entry.name, "utf-8");
     const uncompressed = entry.data;
-    const compressed = deflateRawSync(uncompressed);
+    const compressed = entry.compressedOverride ?? deflateRawSync(uncompressed);
     const crc = entry.crc ?? crc32(uncompressed);
     const declaredSize = entry.declaredUncompressedSize ?? uncompressed.length;
     const method = 8;
@@ -772,6 +782,37 @@ describe("xlsx extractor - stream-counted decompressed size (#960)", () => {
     expect(out.content).toContain("## Sheet1");
     expect(out.content).toContain("Header");
     expect(out.content).toContain("Value");
+  });
+
+  it("rejects a corrupt-DEFLATE entry whose inflate stream errors mid-preflight", async () => {
+    // The stream-counted preflight opens a read stream per entry and inflates
+    // it to count the REAL decompressed bytes. When an entry's DEFLATE payload
+    // is corrupt, that stream emits an `error` instead of `end`, and the
+    // preflight's `stream.on("error")` branch must classify it as
+    // `corrupt-document`. Craft an archive with valid local + central headers
+    // (so yauzl opens it and begins inflating) but a garbage raw-DEFLATE body:
+    // 0xFF's low bits select the reserved DEFLATE block type, so
+    // zlib.inflateRaw aborts with Z_DATA_ERROR ("invalid block type"). The
+    // declared uncompressed size equals the body length (ratio ~1), so the
+    // entry reaches the inflate stage rather than tripping the ratio guard.
+    // Discrimination (verified manually): removing the `stream.on("error")`
+    // handler leaves the zlib error unhandled — the extractor promise never
+    // settles and the run surfaces an unhandled stream error / timeout instead
+    // of this `corrupt-document` rejection.
+    const corruptDeflate = Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
+    const buf = buildZip([
+      {
+        name: "xl/workbook.xml",
+        data: Buffer.alloc(corruptDeflate.length),
+        compressedOverride: corruptDeflate,
+      },
+    ]);
+    const { extractor } = await loadXlsxExtractor();
+    await expect(extractor(ctx(buf))).rejects.toMatchObject({
+      name: "ExtractionError",
+      kind: "corrupt-document",
+      filePath: "doc.xlsx",
+    });
   });
 });
 
