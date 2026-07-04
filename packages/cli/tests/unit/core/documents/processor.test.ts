@@ -1531,4 +1531,48 @@ describe("large-document chunking warning (#471)", () => {
     expect(result.filesProcessed).toBe(1);
     expect(warnings.some((w) => /chunk/i.test(w))).toBe(false);
   });
+
+  // Exact-threshold boundary (Sentinel 🟡 #2). The emit condition is strict
+  // `extracted.sizeBytes > LARGE_DOCUMENT_WARNING_BYTES` with the constant at
+  // 100 * 1024 = 102400. "word " is 5 ASCII bytes so 20480 repeats === exactly
+  // the threshold, and one extra byte crosses it. Pins the real `>` boundary.
+  it("does not warn at exactly the 100 KiB threshold (102400 bytes)", async () => {
+    const dir = await makeDocsDir(env, "carol");
+    const exact = path.join(dir, "exact-threshold.md");
+    await fs.writeFile(exact, "word ".repeat(20480));
+
+    const proc = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: CONFIG,
+    });
+
+    const warnings: string[] = [];
+    const result = await proc.process("carol", dir, undefined, (msg) => warnings.push(msg));
+
+    expect(result.filesProcessed).toBe(1);
+    expect(warnings.some((w) => /chunk/i.test(w))).toBe(false);
+  });
+
+  it("warns one byte over the 100 KiB threshold (102401 bytes)", async () => {
+    const dir = await makeDocsDir(env, "dave");
+    const over = path.join(dir, "over-threshold.md");
+    await fs.writeFile(over, "word ".repeat(20480) + "x");
+
+    const proc = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: CONFIG,
+    });
+
+    const warnings: string[] = [];
+    const result = await proc.process("dave", dir, undefined, (msg) => warnings.push(msg));
+
+    expect(result.filesProcessed).toBe(1);
+    expect(warnings.some((w) => /chunk/i.test(w))).toBe(true);
+  });
 });
