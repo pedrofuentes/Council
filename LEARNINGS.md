@@ -19,6 +19,86 @@
 
 <!-- Add new learnings below this line, most recent first -->
 
+<!-- The 15 [2026-07-03] entries below are a backfill of documentation-only follow-ups
+     filed by Sentinel from past PR reviews (issues #62, #89, #102, #124, #160, #413,
+     #420, #519, #1549, #1217, #1235, #1779, #1948, #2031, #2082). Each promotes a
+     lesson that previously lived only in a code/test comment. -->
+
+### [2026-07-03] `classifyError` is a substring heuristic — pin real SDK error shapes with integration tests
+**Context**: Backfill of Sentinel `SNT-2025-PR54-2c5e3d6` finding #8 (PR #54), issue #62.
+**Learning**: `classifyError` (`engine/copilot/adapter.ts:621`) maps an error to an `EngineErrorCode` purely by lowercased-substring matching (`"abort"`, `"auth"`, `"context"`/`"token limit"`, `"rate"`/`"quota"`/`"limit"`, …). This is fragile: branch **order** matters (CONTEXT_OVERFLOW must precede RATE_LIMITED because "token limit" also contains "limit" — #59/#1968), and no test pins the **real** `@github/copilot-sdk` error wording/shape; unit tests only assert our own synthetic strings.
+**Impact**: When touching `classifyError` or adding a code, add an integration test against actual SDK error shapes (or a recorded fixture) so an upstream wording change can't silently reclassify a recoverable error as fatal. (The listener-accumulation half of finding #8 is already covered by the 2026-05-13 `session.on`/`finally` entry.)
+
+### [2026-07-03] Non-monotonic `ulid()` reorders same-millisecond rows — sort by an explicit column
+**Context**: Backfill of Sentinel `sentinel-2026-05-07-renderers-83` finding #6, issue #89 (gotcha previously only in test comments: `tests/unit/memory/experts-ordering.test.ts:6`, `db-and-repos.test.ts:618`).
+**Learning**: `ulid()` shares its millisecond time-prefix for all ids minted in the same ms; the random suffix then orders them **arbitrarily**, so `ORDER BY id` is NOT insertion order within a millisecond. Persist and sort by an explicit ordering column (`position`, `created_at`, `(round, seq)`) instead of relying on ULID lexical order.
+**Impact**: Tests that assert insertion order must either sleep >1ms between inserts (as `db-and-repos.test.ts` does) or inject a synthetic monotonic id factory — otherwise they flake randomly under fast execution.
+
+### [2026-07-03] `tests/setup.ts` pins `COUNCIL_HOME`/`COUNCIL_DATA_HOME` to per-process tmpdirs — reuse it for any FS-touching command
+**Context**: Backfill of Sentinel PR #95 cycle 2 finding 7, issue #102.
+**Learning**: `packages/cli/tests/setup.ts` (a Vitest `setupFiles` module) `mkdtempSync`s a unique per-process temp dir and assigns it to `process.env.COUNCIL_HOME` (and `COUNCIL_DATA_HOME`) **before any test runs**, deleting them on `process.exit`. Any command that resolves paths via `getCouncilHome()` is therefore sandboxed and cannot pollute the developer's real `~/.council/`.
+**Impact**: New commands/tests that touch the filesystem get isolation for free by going through `getCouncilHome()`/`getCouncilDataHome()` — never hardcode `~/.council` or `os.homedir()` in code under test, or you reintroduce host-pollution.
+
+### [2026-07-03] Memory-layer gotchas: explicit-position ordering, intentional silent-skip, and the debate row state machine
+**Context**: Backfill of Sentinel PR #116 cycle 1 finding 8, issue #124 (§3.1 foundation) — these lived only in code comments.
+**Learning**: (1) **Ordering is explicit, never implicit**: panel membership order is carried by an integer `position` column (`repositories/panel-library-repo.ts` writes `position: index`, reads `ORDER BY position ASC`), and debate turns by tracked `(round, seq)` — not insertion or JSON order. (2) **Silent-skip is intentional**: `DebatePersister` maps event `slug → experts.id` and silently drops a `turn.end` whose slug is unmapped (`persister.ts:25`) — the orchestrator still tracks the turn; only the DB side-effect is dropped (logged only when a `logger` is injected, #119/#163). (3) **Debate row state machine**: `DebateStatus = "running" | "completed" | "interrupted" | "aborted" | "failed"` (`repositories/debates.ts:19`); the row is created `running` and transitions to exactly one terminal state on `debate.end` by end-reason + signal.
+**Impact**: Preserve these when editing the memory layer — don't "fix" the intentional unmapped-slug skip into a throw, and keep ordering keyed on the explicit column.
+
+### [2026-07-03] The `test → fix → fix` split-commit pattern, and the `terminalUpdateAttempted` try/finally guard
+**Context**: Backfill of Sentinel PR #156 finding 5, issue #160.
+**Learning**: One `test(scope)` commit may be followed by **multiple** `fix(scope)` commits when the RED test surfaces several *distinct* concerns — split by concern; a single cohesive fix stays one commit. For try/finally paths that perform a terminal mutation, set an "attempted" flag BEFORE the await: `terminalUpdateAttempted = true` (`memory/persister.ts:206`, #150) runs before the terminal `debates.update`, so a thrown update does NOT trip the `finally`'s abort-overwrite (`if (!terminalUpdateAttempted)`, :223). We deliberately did **not** thread `Error.cause` through the persister's terminal path (no consumer keys on it; added surface > value).
+**Impact**: Prefer per-concern fix commits after a shared RED; model try/finally terminal writes with an explicit "attempted" flag set before the await, rather than inferring state from control flow.
+
+### [2026-07-03] Extend `PersonaProfile` ⇒ audit `renderPersonaProfile()` — extract/persist/render must stay in lockstep
+**Context**: Backfill of Sentinel `SENTINEL-PR407-49c3906`, issue #413 (origin issue #365: a field was added to `PersonaProfile` and persisted but never rendered).
+**Learning**: `PersonaProfile` flows through three sites that must agree: extraction (`documents/profile-analyzer.ts`), persistence (`repositories/profile-repository.ts`), and rendering (`renderPersonaProfile` in `core/prompt-builder.ts:247`, consumed at :377). Adding a field to the type + extractor + DB without updating the renderer means the data is stored but silently never reaches the model.
+**Impact**: Whenever a `PersonaProfile` field is added/renamed, grep all three sites — especially `renderPersonaProfile()` — and add a rendering assertion, so persisted persona data can't go dark.
+
+### [2026-07-03] Decoding a JSON-encoded TEXT column: `console.warn` before degrading to a default
+**Context**: Backfill of Sentinel `SENTINEL-PR408-032b692`, issue #420 (origin issue #362).
+**Learning**: When a JSON-encoded SQLite TEXT column fails `JSON.parse` or shape validation, silently coercing it to `[]`/`undefined` (as `expert-memory.readCachedLLMMemory` intentionally does on the recall path, to fall back to heuristics) hides genuine data **corruption**. For columns where corruption is unexpected, surface it via `console.warn` before returning the safe default — see the `warnExtractor` pattern (`memory/memory-extractor.ts:255`, guarded so a throwing `console` never breaks the caller).
+**Impact**: Distinguish "empty/absent" from "corrupt": a best-effort fallback is fine, but emit a one-line sanitized warning so systematic corruption is observable rather than a silent zero-result.
+
+### [2026-07-03] A pre-aborted `AbortController` short-circuits `#stream` before listeners register — it can't cover the `finally` cleanup
+**Context**: Backfill of Sentinel `SENT-20260515-6d661c1-r2-adapter-abort` (PR #511), issue #519.
+**Learning**: `CopilotEngine.#stream` (`engine/copilot/adapter.ts:477`) checks `controller.signal.aborted` and returns **before** registering any SDK listeners. So a "mid-stream abort" test that calls `controller.abort()` *before* `send()` exits on that early return and never exercises the `finally`-block listener cleanup (added in PR #491). To test the cleanup path you must abort **after** listeners are registered and the SDK has emitted ≥1 delta — genuinely in-flight (regression test #498, `adapter.test.ts:817`).
+**Impact**: For any early-guard + `finally`-cleanup pair, a test that trips the early guard is NOT coverage of the cleanup — assert on the in-flight path (e.g. listener count returning to baseline) and mutation-check it.
+
+### [2026-07-03] The HTML extractor uses `node-html-parser`, not regex — supersedes the "no parser dependency" guidance
+**Context**: Backfill of Sentinel `SENTINEL-1213-c41f756` (PR #1213), issue #1217. Supersedes the closing guidance of the 2026-05-12 entry ("keep them in regex form … do not reach for a parser dependency") and nuances DECISIONS ADR-009 for HTML.
+**Learning**: The regex HTML normaliser failed multiple security-review cycles (ReDoS, tag-smuggling, O(n²) backtracking) and was replaced by `node-html-parser` in `core/documents/extractors/html.ts`. ADR-009's "regex, not a parser" rule still holds for the *simple* per-format normalisers (entity decode, whitespace collapse, Markdown punctuation), but **HTML tag extraction is a deliberate exception**: a hardened parser is the safer choice there.
+**Impact**: Do NOT revert the HTML extractor to regex tag-stripping. Treat "regex, not a parser" as the default for trivial normalisers only; reach for a vetted parser when the grammar is adversarial (nested/malformed HTML).
+
+### [2026-07-03] `tsconfig.base.json` `ignoreDeprecations: "6.0"` is a tsup-injected-`baseUrl` workaround — remove pre-TS7
+**Context**: Backfill of Sentinel `SENTINEL-1234-01` (PR #1234, typescript 5.9→6), issue #1235.
+**Learning**: tsup 8.5.1 hardcodes `baseUrl: compilerOptions.baseUrl || "."` into the options it hands its DTS worker, even though Council sets **no** `baseUrl`. TS 6 hard-errors `TS5101: Option 'baseUrl' is deprecated`, breaking `pnpm build`; `"ignoreDeprecations": "6.0"` (`tsconfig.base.json:3`) suppresses only the *diagnostic* — type-checking stays fully strict (`pnpm typecheck` green).
+**Impact**: Revisit before a TypeScript 7 upgrade (TS 7 stops honoring `baseUrl` and rejects `ignoreDeprecations: "6.0"`) or once a tsup > 8.5.1 no longer injects `baseUrl`. The `"6.0"` value broadly mutes all 6.0-generation deprecation diagnostics, so remove it as soon as it's unneeded.
+
+### [2026-07-03] Strip commas from untrusted provenance fields so they can't forge the `, extracted via:` separator
+**Context**: Backfill of Sentinel `SENT-1774-1d577cd` 🟢#3 (PR #1774), issue #1779.
+**Learning**: `core/documents/reference-block.ts` renders a provenance line `[from: <source>, extracted via: <method>]`. `source` and `extractionMethod` are untrusted (file/model-derived), so both are `.replace(/,/g, "")`'d (lines 117/127) before interpolation — otherwise an attacker-controlled value could embed a comma to **forge** an extra `from:`/`extracted via:` pair and spoof provenance. The rationale previously lived only in test comments (`reference-block.test.ts:62,99`).
+**Impact**: When rendering any delimiter-separated line from untrusted fields, strip the delimiter from the values (not merely escape) so they can't fabricate structure the reader trusts.
+
+### [2026-07-03] Route untrusted on-disk YAML through `sanitizeForError` at the throw site (template migration)
+**Context**: Backfill of Sentinel review of PR #1945 (reviewed SHA `5c1c5f0`) 🟢 Dim F, issue #1948 — the #1909→#1918→#1945 sanitization-boundary correction.
+**Learning**: `core/template-migration.ts` parses untrusted on-disk expert/panel YAML; any parse/validation failure is surfaced in a thrown `PanelMigrationError`. Interpolating the raw YAML-derived text into that message is a **Trojan-source** vector (bidi/control chars), so it must pass through `sanitizeForError` (strips control chars, bounds length) at the throw site — added in #1918 and preserved through the #1945 refactor. The boundary belongs at error construction, not scattered at call sites.
+**Impact**: Every new throw/log that includes untrusted YAML/template-derived text must wrap it in `sanitizeForError`; when refactoring the migration, keep that boundary intact.
+
+### [2026-07-03] Boundary-value fixtures must reach the SUT boundary *post-normalization* and avoid aliasing
+**Context**: Backfill of Sentinel re-review of PR #2013 (report `sentinel-2026-07-01T17:53:44Z-3bfd9ab`) 🟢 F-1, issue #2031.
+**Learning**: A truncation/length test was rejected because its fixture didn't hit the boundary *after* the SUT's own normalization: the SUT collapses whitespace before the length check, so the fixture must be asserted exactly N chars **post-collapse** (`chat.test.ts:419` guards `collapse(boundaryTopic).length === 60`, `overTopic === 61`). Two aliasing traps: homogeneous-run fixtures let an off-by-one pass under `toContain` (truncated and full forms share a prefix), and trailing-space table padding can alias a truncated cell against a shorter one.
+**Impact**: For boundary tests, (a) assert the fixture's normalized length equals the boundary, (b) give the over/under fixtures *distinct* prefixes so truncated forms can't alias, and (c) prefer exact-equality over `toContain` at truncation boundaries.
+
+### [2026-07-03] Trigger a real end-to-end warning, don't manually call the captured logger (discriminating oracle)
+**Context**: Backfill of Sentinel review of PR #2081 (report `sentinel-2026-07-01T23:33:14Z-0148d10`) 🟢 Dim D, issue #2082 (supersedes the F4 manual-warn pattern).
+**Learning**: A logger-wiring test that captures the injected logger and manually calls `logger.warn("…")` only proves the logger is *wired*, not that the code path *emits* the warning — it passes even if the real warning never fires. `tests/unit/cli/run-with-engine-persister-warning.test.ts` instead triggers a **real** `DebatePersister` warning (an orphan `turn.end` with no prior `turn.start`) and asserts the actual emitted text reaches `writeError` — a *discriminating* oracle.
+**Impact**: Assert on behavior a bug could actually break: trigger the genuine failure condition end-to-end and match the exact emitted message, rather than invoking the captured collaborator by hand.
+
+### [2026-07-03] `ink-text-input`/`ink-select-input` declare Ink 5 / React 18 peer ranges — validate under Ink 7 / React 19
+**Context**: Backfill of Sentinel `SR-1547-ee8e565` (PR #1547, APPROVED), issue #1549 — a milestone-9.1 risk-table item.
+**Learning**: `ink-text-input`/`ink-select-input` (both `^6` in `package.json`) declare peer ranges targeting Ink 5 / React 18, whereas Council runs Ink `^7.1.0` / React `^19.2.7`. The peer-range mismatch is a *warning*, not proof of incompatibility — it had to be validated via real stdin integration tests under Ink 7 / React 19, with a hand-rolled custom-component fallback if they broke. They validated OK and are now used across the TUI (milestones 9.1–9.6).
+**Impact**: Treat third-party Ink component peer ranges as advisory; gate adoption on an actual stdin-driven integration test under our Ink/React versions rather than trusting — or force-overriding — the declared range.
+
 ### [2026-06-23] TUI panel authoring (9.6) — captured-form cancel pattern, in-flight Esc race, untrusted composer output, biting guard tests
 **Context**: Building panel authoring (milestone 9.6, PRs #1641–#1652; plan #1640). PR-C took 3 Sentinel cycles, PR-D and PR-F took 1 each — each over a distinct, now-codified pattern. PR-E (delete) passed first-try after the patterns were front-loaded into the implementer prompt.
 **Learning**:
@@ -230,7 +310,7 @@
 4. **Freeze the canonical confinement root once.** Re-`realpath()`ing the root for every file inside the loop opens a root-swap window. Resolve once at processor entry, pass the canonical root + `_rootIsCanonical: true` through to every per-file extractor call.
 5. **LLM extraction needs bounded retry and `finally`-tear-down.** A single retry on malformed JSON catches transient streaming truncation without exploding cost; persistent failure throws a fixed-message `Error("Profile analyzer returned unparsable JSON after retry")` (no raw response embedded). "Malformed" is permissive: strip a leading ```` ```json ```` / ```` ``` ```` code fence, then `JSON.parse`; treat as malformed only if parse throws OR the required narrative fields (`communicationStyle`, `epistemicStance`) are missing/empty. The transient analyzer expert MUST be removed in `finally`; cleanup failures must surface as warnings, not mask the underlying analysis result.
 **Recency weighting is a prompt-side annotation, not an input ordering or retrieval score (so far).** Roadmap 6.8 ships as `[Weight: 0.NN]` tags emitted on each document block in the analyzer meta-prompt; `analyzeDocuments()` preserves the caller's input order — it does NOT sort by `modifiedAt`. The LLM weights documents qualitatively in response to the tag values and an explicit prompt instruction. Retriever ranking is unchanged. `halfLifeDays <= 0` clamps every weight to 1.0 (never zeros every doc); future-dated `modifiedAt` clamps to 1.0 (never amplifies).
-**Impact**: When adding any new code path that interpolates externally-sourced data into a privileged prompt, **always** route through `sanitizePromptField` AND apply the context-specific escape. When opening user-controlled files, use the fd-bound sequence in `extractor.ts` as the canonical pattern. When adding new format normalisers, keep them in regex form (per ADR-009) — do not reach for a parser dependency.
+**Impact**: When adding any new code path that interpolates externally-sourced data into a privileged prompt, **always** route through `sanitizePromptField` AND apply the context-specific escape. When opening user-controlled files, use the fd-bound sequence in `extractor.ts` as the canonical pattern. When adding new format normalisers, keep them in regex form (per ADR-009) — do not reach for a parser dependency. (Superseded for HTML — see the [2026-07-03] `node-html-parser` entry: HTML tag extraction is now a deliberate parser-backed exception after the regex approach failed security review.)
 
 ### [2026-05-12] libsql `:memory:` mode does not survive `db.transaction()` — drops FTS5 virtual tables on reconnect
 **Context**: Implementing atomic `council memory reset` (#403) revealed that wrapping work in Kysely's `db.transaction()` against an `@libsql/client` `url: ':memory:'` connection silently reconnects under the hood. The reconnect spins up a fresh in-memory database — every previously-created FTS5 virtual table (and the schema_version row, and every test-seeded panel) is gone. Tests that worked against a file-mode DB failed against `:memory:` with "no such table: document_index".
