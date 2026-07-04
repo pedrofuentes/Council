@@ -713,4 +713,39 @@ describe("formatScanSummary — untrusted filename sanitization (#1040)", () => 
     expect(out).not.toContain("\u001b");
     expect(out).toContain("report.md");
   });
+
+  it("strips CR/LF, ANSI escape, and bidi override from a needs-review filename", () => {
+    // Regression lock for #2278: formatNeedsReviewLine must route the filename
+    // through safeFilename → toSingleLineDisplay. Without that call, all three
+    // injected payloads below would survive into terminal output.
+    const result: ScanResult = {
+      indexed: 0,
+      modified: 0,
+      unchanged: 0,
+      failed: 0,
+      needsReview: 1,
+      files: [
+        detail({
+          // CR+LF injection, ANSI CSI red-colour sequence, and U+202E
+          // RIGHT-TO-LEFT OVERRIDE (Trojan Source / bidi attack).
+          filename: "evil\r\nInjected: fake\u001b[31m\u202e.xyz",
+          extension: ".xyz",
+          status: "needs-review",
+        }),
+      ],
+    };
+    const out = formatScanSummary(result);
+
+    // No raw CR from the untrusted filename may survive into terminal output.
+    expect(out).not.toContain("\r");
+    // No ANSI/ESC sequence from the untrusted filename may survive.
+    expect(out).not.toContain("\u001b");
+    // No bidi override (U+202E) from the untrusted filename may survive.
+    expect(out).not.toContain("\u202e");
+    // The ⚠ needs-review line must appear as exactly one line.
+    const reviewLine = out.split("\n").find((l) => l.startsWith("⚠"));
+    expect(reviewLine).toBeDefined();
+    // CR/LF collapses to a single space; ANSI and bidi chars are removed.
+    expect(reviewLine).toContain("evil Injected: fake.xyz");
+  });
 });
