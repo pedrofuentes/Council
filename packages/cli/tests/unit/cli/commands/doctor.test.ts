@@ -164,7 +164,7 @@ describe("buildDoctorCommand", () => {
     expect(output).toContain("Fix: council config set defaults.model gpt-5.4");
   });
 
-  it("doctor with failed probe degrades gracefully when model discovery throws", async () => {
+  it("doctor surfaces a note when model discovery fails during remediation (#751)", async () => {
     const onlineProbe = vi.fn(async () => ({ ok: false, detail: "model not found" }));
     const discoverModels = vi.fn(async () => {
       throw new Error("discovery unavailable");
@@ -177,8 +177,11 @@ describe("buildDoctorCommand", () => {
     expect(output).toContain(
       "Default model (claude-sonnet-4.5) is not accessible: model not found",
     );
+    // Degrades gracefully: no alternatives block, base error preserved.
     expect(output).not.toContain("Available alternatives:");
-    expect(output).not.toContain("discovery unavailable");
+    // #751: the secondary discovery failure is surfaced so the degraded path
+    // is diagnosable rather than silently swallowed.
+    expect(output).toContain("discovery unavailable");
   });
 
   it("doctor bounds a hung online probe with a timeout instead of hanging", async () => {
