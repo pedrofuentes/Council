@@ -733,6 +733,22 @@ describe("buildExportCommand", () => {
   });
 
   afterEach(async () => {
+    // Reset the mocked fs seam FIRST — before the cleanup rm below and before the
+    // next test runs. A test that queues a one-shot on a LATER op (fs.rename /
+    // fs.rm) implicitly assumes an EARLIER real op (lstat/open) succeeds and
+    // advances the SUT to consume it. Under full-suite fd/IO contention that
+    // earlier op can instead fail first (e.g. EMFILE/ENFILE), leaving the one-shot
+    // QUEUED; it then fires on an unrelated later test's first open/rename/rm,
+    // making the #1887 fs-error tests intermittently observe an unexpected error
+    // (or a spurious success) — the #1973 flake. mockReset() drains any queued
+    // one-shot and mockImplementation restores the pass-through the mock factory
+    // established, so the cleanup rm below and every later test start from a clean
+    // fs seam regardless of ordering or load. (Deterministic, assertion-preserving.)
+    const realFs = await vi.importActual<typeof fs>("node:fs/promises");
+    vi.mocked(fs.open).mockReset().mockImplementation(realFs.open);
+    vi.mocked(fs.rename).mockReset().mockImplementation(realFs.rename);
+    vi.mocked(fs.rm).mockReset().mockImplementation(realFs.rm);
+
     if (originalHome === undefined) delete process.env["COUNCIL_HOME"];
     else process.env["COUNCIL_HOME"] = originalHome;
     if (originalDataHome === undefined) delete process.env["COUNCIL_DATA_HOME"];
