@@ -85,4 +85,23 @@ describe("Debate terminal error — machine-readable code threading (#114)", () 
     expect(error?.code).toBe("RATE_LIMITED");
     expect(error?.recoverable).toBe(true);
   });
+
+  it("OMITS the code key on a synthetic terminal error that has no engine code", async () => {
+    // A synchronous send() throw (here: an UNREGISTERED expert) is caught in
+    // #streamWithRetry WITHOUT an engine code, so `lastErrorCode` stays null
+    // and the spread takes its `: {}` branch — the `code` key must be ABSENT,
+    // not present-with-undefined. Assert on key presence (not just the value)
+    // so a regression that changes `: {}` to `: { code: lastErrorCode }`
+    // (emitting `code: null`) is caught.
+    const engine = new MockEngine({ responses: { [cto.id]: "ok" } });
+    await engine.start();
+    // cto is intentionally NOT registered → send() throws synchronously.
+
+    const events = await collect(new Debate(engine, [cto], FREEFORM_1R).run("topic"));
+    const error = events.find((e): e is ErrorEvent => e.kind === "error");
+    expect(error).toBeDefined();
+    expect(error !== undefined && "code" in error).toBe(false);
+    expect(error?.code).toBeUndefined();
+    expect(error?.recoverable).toBe(false);
+  });
 });
