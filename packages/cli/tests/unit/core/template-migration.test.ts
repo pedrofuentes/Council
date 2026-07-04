@@ -1398,4 +1398,72 @@ describe("template-migration", () => {
       expect(message).not.toContain("\r");
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // #2265 (sentinel:important): #304 replaced the lazy per-candidate
+  // `library.get()` scan in resolveSuffixed with a single eager
+  // `library.list()` snapshot. Because `list()` reads AND parses every
+  // expert YAML, a SINGLE corrupt/unreadable library entry — even one wholly
+  // unrelated to the panel being disambiguated — makes `list()` throw. That
+  // raw (non-PanelMigrationError) error hits the loop's rethrow (#1807
+  // boundary) and aborts the WHOLE migration, regressing #1807's per-panel
+  // isolation: the pre-#304 lazy scan read ONLY the candidate slugs, so an
+  // unrelated bad entry was never touched. The fix keeps #304's batched
+  // snapshot on the healthy path but falls back to the lazy per-candidate
+  // read when the snapshot fails, confining the corruption to that one entry
+  // so disambiguation still completes.
+  // ─────────────────────────────────────────────────────────────────────
+  describe("corrupt library entry does not abort slug disambiguation (#2265)", () => {
+    function expertWith(slug: string, role: string): ExpertDefinition {
+      return {
+        slug,
+        displayName: "Valid Expert",
+        role,
+        kind: "generic",
+        expertise: { weightedEvidence: ["evidence"], referenceCases: [], notExpertIn: [] },
+        epistemicStance: "stance",
+      };
+    }
+
+    it("isolates one unreadable library entry so an unrelated panel still disambiguates", async () => {
+      // Seed a library expert, then corrupt its on-disk YAML so the
+      // `library.list()` snapshot — which reads+parses EVERY expert file —
+      // throws when it reaches this entry (readYaml rethrows every non-ENOENT
+      // failure, so a YAMLParseError propagates out of list()).
+      await lib.create(expertWith("unrelated-corrupt", "seeded then corrupted on disk"));
+      const expertsDir = path.join(dataHome, "experts");
+      await fs.writeFile(
+        path.join(expertsDir, "unrelated-corrupt.yaml"),
+        "unrelated: [oops\n", // malformed YAML → yaml.parse throws inside list()
+        "utf-8",
+      );
+
+      // panela claims the base slug `sre`; panelb re-declares `sre` with
+      // DIFFERENT content, forcing suffix disambiguation for panelb
+      // (resolveSuffixed → library.list()). The disambiguation candidates
+      // (`sre-panelb`, …) never include `unrelated-corrupt`, so the pre-#304
+      // lazy per-candidate scan would never have read the corrupt file.
+      const stubLoader = async (name: string) =>
+        name === "panela"
+          ? { name, experts: [expertWith("sre", "content A")] }
+          : { name, experts: [expertWith("sre", "content B — differs from A")] };
+
+      // Before the fix the single corrupt entry aborted the WHOLE migration
+      // (list() throws a raw error at the #1807 rethrow), so panelb's
+      // disambiguated expert was never created. Isolation must confine the
+      // failure to that one entry and let panelb migrate.
+      await migrateBuiltInTemplates(dataHome, lib, db, {
+        quiet: true,
+        panelNames: ["panela", "panelb"],
+        loadPanel: stubLoader,
+      });
+
+      const created = await db
+        .selectFrom("expert_library")
+        .select("slug")
+        .where("slug", "=", "sre-panelb")
+        .executeTakeFirst();
+      expect(created).toBeDefined();
+    });
+  });
 });

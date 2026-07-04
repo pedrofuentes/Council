@@ -410,16 +410,35 @@ async function resolveSuffixed(
   const candidates = [primary];
   for (let i = 2; i < 100; i++) candidates.push(`${primary}-${i}`);
 
-  // Snapshot the library once instead of issuing one sequential
-  // `library.get()` per candidate: a deeply-collided slug tail (many
-  // distinct-content third-party experts occupying `${primary}`,
+  // Prefer a single batched snapshot of the library instead of issuing one
+  // sequential `library.get()` per candidate: a deeply-collided slug tail
+  // (many distinct-content third-party experts occupying `${primary}`,
   // `${primary}-2`, …) would otherwise fan out into up to ~100 sequential
   // reads on this cold disambiguation path (#304). Resolving candidates
   // against an in-memory map bounds library I/O to a single call while
   // keeping the chosen suffix identical to the per-candidate scan. No writes
   // occur before this function returns, so the snapshot cannot go stale.
-  const librarySlugs = new Map<string, ExpertDefinition>();
-  for (const def of await library.list()) librarySlugs.set(def.slug, def);
+  //
+  // `library.list()` reads AND parses every expert's YAML, so a SINGLE
+  // corrupt/unreadable entry — even one wholly unrelated to this panel's
+  // candidates — makes it throw. Before #2265 that raw error aborted the
+  // whole migration, regressing #1807's per-panel isolation (the pre-#304
+  // scan touched only the candidate slugs, so an unrelated bad entry was
+  // never read). When the snapshot read fails, fall back to the lazy
+  // per-candidate `get()`: it reads ONLY the slugs this panel needs, so an
+  // unrelated bad entry is skipped and disambiguation still completes, while
+  // a systemic failure (e.g. the whole experts dir is unreadable) still
+  // surfaces because those per-candidate reads fail and propagate unchanged.
+  let librarySlugs: Map<string, ExpertDefinition> | null;
+  try {
+    const snapshot = new Map<string, ExpertDefinition>();
+    for (const def of await library.list()) snapshot.set(def.slug, def);
+    librarySlugs = snapshot;
+  } catch {
+    // Batched snapshot unavailable (at least one library entry is
+    // unreadable/corrupt) — fall back to the lazy per-candidate reads below.
+    librarySlugs = null;
+  }
 
   for (const candidate of candidates) {
     const sessionDef = claimed.get(candidate);
@@ -429,7 +448,7 @@ async function resolveSuffixed(
       }
       continue;
     }
-    const libraryDef = librarySlugs.get(candidate);
+    const libraryDef = librarySlugs ? librarySlugs.get(candidate) : await library.get(candidate);
     if (libraryDef) {
       if (defsEqual(libraryDef, expert)) {
         claimed.set(candidate, libraryDef);
