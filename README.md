@@ -81,7 +81,7 @@ ChatGPT gives you **one perspective**. Council gives you **structured deliberati
 - **Persistent chat:** 1:1 conversations with experts or multi-expert panel chat with `@mention` support and inline debates.
 - **Export & share:** Markdown, JSON, ADR (Architecture Decision Record), and shareable formats.
 
-**Shipped:** Phases 1–7.6 complete ([ROADMAP.md](./ROADMAP.md)). CLI includes `convene`, `ask`, `chat`, `conclude`, `resume`, `export`, `sessions`, `templates`, `expert`, `panel`, `memory`, `doctor`, `docs`, `config`, `telemetry`, and `update`.
+**Shipped:** Phases 1–7.6 complete ([ROADMAP.md](./ROADMAP.md)). CLI includes `convene`, `ask`, `chat`, `conclude`, `resume`, `export`, `sessions`, `templates`, `expert`, `panel`, `memory`, `doctor`, `demo`, `docs`, `config`, `telemetry`, and `update`.
 
 ---
 
@@ -129,6 +129,7 @@ for year two if data ownership becomes a competitive advantage...
 - **[How-To Guides](packages/site/src/content/docs/how-to/)** — Practical recipes for common tasks
 - **[Architecture & Concepts](packages/site/src/content/docs/explanation/)** — Understand deliberation model, anti-sycophancy, memory, and RAG
 - **[Reference](packages/site/src/content/docs/reference/)** — CLI command reference and API docs
+- **[Panel Gallery](/gallery)** — Browse community-contributed panel templates (coming soon)
 - **[ROADMAP.md](./ROADMAP.md)** — Completed phases (1–7.6) and Phase 8 plans (GitHub Action, direct provider APIs, telemetry)
 - **[CONTRIBUTING.md](./CONTRIBUTING.md)** — Development setup, testing, and contribution guidelines
 
@@ -305,6 +306,13 @@ council convene "Review our API" --panel code-review
 # Tip: single-quote topics containing $, backticks, or other shell metacharacters
 council convene 'What is the $cost of `make build`?'
 
+# Add yourself as a human participant alongside the AI experts (repeatable)
+council convene "Should we migrate to microservices?" --template architecture-review \
+  --human "Pedro"
+# Multiple human participants:
+council convene "Product direction vote" --template product-strategy-review \
+  --human "Alice" --human "Bob"
+
 # Press Ctrl+C at any time during a debate to abort gracefully — the partial
 # transcript is saved and you can `council resume` later. A second Ctrl+C
 # force-kills the process.
@@ -354,6 +362,16 @@ council convene "Long debate" --template architecture-review \
 council convene "..." --template code-review --format json | jq .
 # Completed debates emit {"kind":"conclusion","conclusion":{...}} as the final
 # NDJSON line after debate.end, unless you pass --no-conclude.
+# NDJSON event kinds emitted during a debate:
+#   debate.start  — session open (panel metadata)
+#   turn.start    — an expert begins speaking
+#   turn.chunk    — a streaming token fragment
+#   turn.retry    — a transient error triggered an automatic retry;
+#                   contains {expert, attempt, reason} — filter these out
+#                   or surface them as progress indicators in scripts
+#   turn.end      — expert turn complete (includes per-error-code hint on failure)
+#   debate.end    — all rounds finished
+#   conclusion    — final synthesis object (present unless --no-conclude)
 
 # Show the transcript of a previous debate
 council resume <panel-name>
@@ -455,6 +473,10 @@ the determinism guarantee automation relies on. `council resume <panel>` transcr
 replay additionally coerces `auto` to `plain` (a static replay gains nothing from the
 Ink TUI); pass `--format json` for machine-readable transcript output. See
 [DECISIONS.md](./DECISIONS.md) → ADR-030 for the rationale.
+
+When the Ink TUI is active, press **`?`** at any time to open the help overlay — a
+floating panel listing all available keyboard shortcuts. Press **`?`** again (or
+**`Esc`**) to close it and return to the debate.
 
 ### Streaming and chat output
 
@@ -681,7 +703,7 @@ disk if the database is reset.
 2. **Deliberation** happens in rounds — experts respond, challenge each other, and build on disagreements
 3. **Memory** persists across sessions — your panel remembers previous discussions
 4. **Synthesis** produces actionable output with areas of agreement and unresolved tensions
-5. **Interruptible** — press Ctrl+C during a debate to abort gracefully; Council saves the partial transcript (`Debate interrupted. Partial results saved.`), and a bare `council resume <panel>` then automatically continues the interrupted debate from where it stopped instead of just replaying it
+5. **Interruptible** — press Ctrl+C during a debate to abort gracefully; Council saves the partial transcript (`Debate interrupted. Partial results saved.`), and a bare `council resume <panel>` then re-runs the debate on the same topic (with prior turns in memory) instead of just replaying it
 
 ### What Makes Council Different
 
