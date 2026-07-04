@@ -2,7 +2,11 @@ import type { Command } from "commander";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { buildProgram, resetFirstRunSetupForTests, type BuildProgramOptions } from "../../../src/bin/council.js";
+import {
+  buildProgram,
+  resetFirstRunSetupForTests,
+  type BuildProgramOptions,
+} from "../../../src/bin/council.js";
 import { ConfigSchema } from "../../../src/config/index.js";
 
 function createProbeProgram(
@@ -156,6 +160,40 @@ describe("buildProgram first-run hook", () => {
     expect(selectModelInteractively).toHaveBeenCalledTimes(1);
   });
 
+  it("retries first-run setup after a failed attempt in the same process", async () => {
+    const loadConfigWithMeta = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("transient config load failure"))
+      .mockResolvedValueOnce({
+        config: ConfigSchema.parse({}),
+        isFirstRun: true,
+      });
+    const selectModelInteractively = vi.fn(async () => "claude-sonnet-4.5");
+
+    const firstProgram = createProbeProgram({
+      firstRunSetup: {
+        loadConfigWithMeta,
+        selectModelInteractively,
+        write: () => undefined,
+      },
+    });
+    const secondProgram = createProbeProgram({
+      firstRunSetup: {
+        loadConfigWithMeta,
+        selectModelInteractively,
+        write: () => undefined,
+      },
+    });
+
+    await expect(firstProgram.parseAsync(["node", "council", "probe"])).rejects.toThrow(
+      "transient config load failure",
+    );
+    await secondProgram.parseAsync(["node", "council", "probe"]);
+
+    expect(loadConfigWithMeta).toHaveBeenCalledTimes(2);
+    expect(selectModelInteractively).toHaveBeenCalledTimes(1);
+  });
+
   it("skips first-run setup for the doctor command", async () => {
     const loadConfigWithMeta = vi.fn(async () => ({
       config: ConfigSchema.parse({}),
@@ -271,7 +309,9 @@ describe("unknown option handling", () => {
   it("rejects unknown global flags", async () => {
     const program = createProbeProgram();
     program.exitOverride();
-    await expect(program.parseAsync(["node", "council", "--foobar", "probe"])).rejects.toThrow(/unknown option/);
+    await expect(program.parseAsync(["node", "council", "--foobar", "probe"])).rejects.toThrow(
+      /unknown option/,
+    );
   });
 
   it("rejects unknown subcommand flags", async () => {
@@ -279,9 +319,9 @@ describe("unknown option handling", () => {
     program.exitOverride();
     // exitOverride must propagate to subcommands
     program.commands.forEach((cmd) => cmd.exitOverride());
-    await expect(program.parseAsync(["node", "council", "doctor", "--unknown-flag"])).rejects.toThrow(
-      /unknown option/,
-    );
+    await expect(
+      program.parseAsync(["node", "council", "doctor", "--unknown-flag"]),
+    ).rejects.toThrow(/unknown option/);
   });
 });
 

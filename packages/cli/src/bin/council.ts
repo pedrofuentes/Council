@@ -237,18 +237,16 @@ export async function runFirstRunSetupOnce(options: FirstRunSetupOptions = {}): 
     return;
   }
 
-  hasRunFirstRunSetup = true;
-
   const loadConfig = options.loadConfigWithMeta ?? loadConfigWithMeta;
   const selectModel = options.selectModelInteractively ?? selectModelInteractively;
   const write = options.write ?? defaultWriter;
   const { isFirstRun } = await loadConfig();
 
-  if (!isFirstRun) {
-    return;
+  if (isFirstRun) {
+    await selectModel({ write });
   }
 
-  await selectModel({ write });
+  hasRunFirstRunSetup = true;
 }
 
 export function resetFirstRunSetupForTests(): void {
@@ -389,15 +387,31 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
       sections.push("Commands:");
       sections.push("");
 
+      const renderedCommandNames = new Set<string>();
+
       for (const [category, commandNames] of Object.entries(COMMAND_CATEGORIES)) {
         sections.push(`${category}:`);
         for (const cmdName of commandNames) {
           const subCmd = cmd.commands.find((c) => c.name() === cmdName);
-          if (subCmd) {
+          if (subCmd && !renderedCommandNames.has(cmdName)) {
             sections.push(
               `  ${helper.subcommandTerm(subCmd).padEnd(termWidth)}  ${helper.subcommandDescription(subCmd)}`,
             );
+            renderedCommandNames.add(cmdName);
           }
+        }
+        sections.push("");
+      }
+
+      const uncategorizedCommands = cmd.commands.filter(
+        (subCmd) => !renderedCommandNames.has(subCmd.name()),
+      );
+      if (uncategorizedCommands.length > 0) {
+        sections.push("Other:");
+        for (const subCmd of uncategorizedCommands) {
+          sections.push(
+            `  ${helper.subcommandTerm(subCmd).padEnd(termWidth)}  ${helper.subcommandDescription(subCmd)}`,
+          );
         }
         sections.push("");
       }
