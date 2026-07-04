@@ -74,8 +74,8 @@ function renderApp(events: AsyncIterable<DebateEvent>): {
 /** Extracts every numeric SGR parameter from the ANSI escape sequences in `s`. */
 function sgrParams(s: string): readonly number[] {
   // eslint-disable-next-line no-control-regex
-  return [...s.matchAll(/\u001b\[([0-9;]+)m/g)].flatMap(
-    (m): readonly number[] => (m[1] ?? "").split(";").map(Number),
+  return [...s.matchAll(/\u001b\[([0-9;]+)m/g)].flatMap((m): readonly number[] =>
+    (m[1] ?? "").split(";").map(Number),
   );
 }
 
@@ -93,7 +93,9 @@ function sgrParams(s: string): readonly number[] {
 function turnHeaderColor(raw: string, header: string): readonly number[] {
   const line = raw.split("\n").find((l) => stripAnsi(l).includes(header));
   if (line === undefined) return [];
-  return sgrParams(line.slice(0, line.indexOf(header)));
+  const headerStart = line.indexOf(header);
+  if (headerStart < 0) return [];
+  return sgrParams(line.slice(0, headerStart));
 }
 
 /**
@@ -214,7 +216,7 @@ describe("DebateApp", () => {
     const { ui, flush } = renderApp(events);
     await flush();
     const rawFrame = ui.lastFrame() ?? "";
-    
+
     // The cursor should be styled with cyan (ANSI code 36), not dim (ANSI code 2).
     // Ink uses ANSI escape codes: \u001b[36m = cyan foreground
     // eslint-disable-next-line no-control-regex

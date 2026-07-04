@@ -440,7 +440,7 @@ describe.sequential("document intelligence e2e", () => {
     const indexedBefore = docsBefore.filter(
       (d) => d.filePath.startsWith(linkedDir + "/") || d.filePath.startsWith(linkedDir + "\\"),
     );
-    expect(indexedBefore.length).toBeGreaterThan(0);
+    expect(indexedBefore).toHaveLength(2);
 
     const unlinked = await runPanelCommand(["docs", "unlink", "arch-review", "--path", linkedDir]);
     expect(unlinked.stdout.toLowerCase()).toContain("unlinked");
