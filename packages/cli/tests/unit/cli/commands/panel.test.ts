@@ -755,7 +755,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
       try {
         await cmd.parseAsync(["node", "council-panel", "create", "my-panel"]);
       } catch (e) {
-        caughtError = e as Error;
+        caughtError = e instanceof Error ? e : new Error(String(e));
       }
       expect(caughtError).toBeDefined();
       expect(caughtError?.message).toContain("No experts found in the library");
@@ -1041,6 +1041,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
       try {
         let captured = "";
         let errored = "";
+        let confirmMessage = "";
         const cmd = buildPanelCommand(
           (s) => {
             captured += s;
@@ -1048,7 +1049,12 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
           (s) => {
             errored += s;
           },
-          { confirm: async () => false },
+          {
+            confirm: async (message) => {
+              confirmMessage = message;
+              return false;
+            },
+          },
         );
         await expect(
           cmd.parseAsync([
@@ -1063,6 +1069,10 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
         ).rejects.toThrow(/abort|cancel|decline/i);
         expect(errored).toMatch(/abort|cancel|decline/i);
         expect(captured).not.toMatch(/✓|linked/i);
+        expect(confirmMessage).toContain('Grant panel "arch-review" read access');
+        expect(confirmMessage).toContain(path.resolve(linkDir));
+        expect(confirmMessage).toContain("[y/N]");
+        expect(confirmMessage).not.toContain("ghost-review");
 
         // Folder must NOT be recorded.
         const { createDatabase } = await import("../../../../src/memory/db.js");
@@ -1125,6 +1135,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
       await fs.writeFile(path.join(linkDir, "a.md"), "# A\nhello", "utf-8");
       try {
         let confirmCalled = false;
+        let confirmMessage = "";
         let captured = "";
         const cmd = buildPanelCommand(
           (s) => {
@@ -1134,8 +1145,9 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
             /* noop */
           },
           {
-            confirm: async () => {
+            confirm: async (message) => {
               confirmCalled = true;
+              confirmMessage = message;
               return true;
             },
           },
@@ -1150,6 +1162,10 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
           linkDir,
         ]);
         expect(confirmCalled).toBe(true);
+        expect(confirmMessage).toContain('Grant panel "arch-review" read access');
+        expect(confirmMessage).toContain(path.resolve(linkDir));
+        expect(confirmMessage).toContain("[y/N]");
+        expect(confirmMessage).not.toContain("ghost-review");
         expect(captured).toMatch(/✓|linked/i);
 
         const { createDatabase } = await import("../../../../src/memory/db.js");
