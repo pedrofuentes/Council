@@ -242,13 +242,25 @@ export async function writeExportArtifact(
         fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollow,
         0o600,
       );
+      let writeErr: unknown;
       try {
         await handle.writeFile(contents, { encoding: "utf8" });
+      } catch (err: unknown) {
+        writeErr = err;
+        throw err;
       } finally {
-        // A close rejection here must not shadow a writeFile rejection: the bytes
-        // were already flushed by the awaited writeFile, so swallow a late close
-        // failure and let the more actionable write error propagate (#1888).
-        await handle.close().catch(() => undefined);
+        // close(2) can surface a deferred write error (ENOSPC/EIO/EDQUOT on
+        // NFS/CIFS/quota) even after writeFile resolved, so a close rejection is a
+        // real failure that must propagate — swallowing it would report a
+        // truncated export as success. Only when writeFile ALREADY rejected is its
+        // error the more actionable one, so drop the shadowing close error then
+        // (#1888).
+        await handle.close().catch((closeErr: unknown) => {
+          if (writeErr !== undefined) {
+            return;
+          }
+          throw closeErr;
+        });
       }
       return;
     }
