@@ -174,8 +174,9 @@ council update                                      # Upgrade to latest publishe
 
 `council --help` (and bare `council help`) print this list **grouped into
 labelled sections** — Getting Started, Deliberation, Conversation, Library, and
-Inspection — instead of one flat list, and close with an onboarding cue so a
-brand-new setup always has an obvious next step:
+Inspection, followed by a catch-all **Other** section for any registered
+commands that don't map to a category — instead of one flat list, and close
+with an onboarding cue so a brand-new setup always has an obvious next step:
 
 ```text
 Commands:
@@ -185,6 +186,8 @@ Deliberation:     convene, resume, conclude, review
 Conversation:     ask, chat
 Library:          expert, panel, templates
 Inspection:       sessions, memory, export
+
+Other:            models
 
 New to Council? Start with: council doctor
 ```
