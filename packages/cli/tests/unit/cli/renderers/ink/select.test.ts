@@ -172,6 +172,37 @@ describe("selectRenderer auto→Ink integration", () => {
     );
   });
 
+  it("threads InkRenderer stderr into the injected sink, not the real process.stderr (#235/#1999)", async () => {
+    // Discriminating coverage for the stderr sink-threading (select.ts:100). An
+    // `error` DebateEvent is routed to stderr by the post-unmount plain-text
+    // transcript (PlainRenderer.writeError). It must land on the INJECTED sink's
+    // writeError (capture.errText) and NOT leak to the real process.stderr — the
+    // stderr twin of the #235 stdout isolation invariant. (The SINK_MARKER
+    // stderr assertion in the test above is vacuous: no fixture event routes to
+    // stderr, so it never exercised select.ts:100 — see #1999.)
+    const eventsWithError: readonly DebateEvent[] = [
+      ...DEBATE_EVENTS.slice(0, -1),
+      { kind: "error", message: "ERR_MARKER", recoverable: false },
+      { kind: "debate.end", reason: "completed" },
+    ];
+
+    const capture = new StringSink();
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const renderer = selectRenderer({ format: "auto", isTTY: true, sink: capture });
+    expect(renderer).toBeInstanceOf(InkRenderer);
+    await renderer.render(eventStream(...eventsWithError));
+
+    // The error text lands on the injected sink's stderr channel...
+    expect(stripAnsi(capture.errText)).toContain("ERR_MARKER");
+    // ...and never leaks to the real process streams.
+    const leakedErr = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
+    expect(leakedErr).not.toContain("ERR_MARKER");
+    const leakedOut = stdoutSpy.mock.calls.map((call) => String(call[0])).join("");
+    expect(leakedOut).not.toContain("ERR_MARKER");
+  });
+
   it("still writes to process.stdout when the sink targets it (#235: default path not regressed)", async () => {
     const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
