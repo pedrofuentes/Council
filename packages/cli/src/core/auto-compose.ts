@@ -143,13 +143,20 @@ export async function autoComposePanel(
   } finally {
     // #289: isolate cleanup. A rejecting removeExpert() must not replace the
     // primary error propagating from the try block; when there is no primary
-    // error, the cleanup failure is surfaced instead.
+    // error, the cleanup failure is surfaced instead. When a primary error is
+    // already latched, the cleanup failure is logged rather than discarded so
+    // an operator can see both faults during triage (#2213).
     try {
       await engine.removeExpert(composer.id);
     } catch (cleanupError) {
       if (!hasPrimaryError) {
         primaryError = cleanupError;
         hasPrimaryError = true;
+      } else {
+        console.warn(
+          "[auto-compose] removeExpert cleanup failed while propagating primary error:",
+          cleanupError,
+        );
       }
     }
   }
