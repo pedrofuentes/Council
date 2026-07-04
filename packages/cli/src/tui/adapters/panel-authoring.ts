@@ -129,14 +129,23 @@ export function createPanelAuthoringSource(deps: PanelAuthoringDeps): PanelAutho
           throw openErr;
         }
         yamlWritten = true;
+        let failure: unknown;
         try {
           await handle.writeFile(yamlContent, "utf-8");
+        } catch (writeErr) {
+          failure = writeErr;
         } finally {
           try {
             await handle.close();
-          } catch {
-            /* preserve the primary writeFile error — closing is best-effort */
+          } catch (closeErr) {
+            // Keep a primary write error if present; otherwise a close failure
+            // on the write-success path is a deferred write-back error that
+            // must surface so the create rolls back (never silently swallowed).
+            failure ??= closeErr;
           }
+        }
+        if (failure !== undefined) {
+          throw failure;
         }
         await deps.panelRepo.setMembers(input.name, input.expertSlugs);
         await fs.mkdir(panelDocsDir(deps.dataHome, input.name), { recursive: true });
