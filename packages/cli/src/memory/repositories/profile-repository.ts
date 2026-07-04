@@ -21,7 +21,7 @@ function formatWarningValue(value: string): string {
 }
 
 function formatParseError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  return formatWarningValue(err instanceof Error ? err.message : String(err));
 }
 
 function safeParseArray(
