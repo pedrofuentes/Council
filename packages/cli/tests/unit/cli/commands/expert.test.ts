@@ -660,6 +660,47 @@ describe("buildExpertCommand", () => {
       ).rejects.toThrow(/slug/i);
     });
 
+    it("uses the singular missing-field message when exactly one required flag is absent", async () => {
+      const originalIsTTY = process.stdin.isTTY;
+      Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+
+      let errored = "";
+      const cmd = buildExpertCommand(
+        () => {
+          /* noop */
+        },
+        (s) => {
+          errored += s;
+        },
+      );
+
+      try {
+        await expect(
+          cmd.parseAsync([
+            "node",
+            "council-expert",
+            "create",
+            "--slug",
+            "single-missing",
+            "--name",
+            "Single Missing",
+            "--role",
+            "Coverage specialist",
+            "--expertise",
+            "branch coverage",
+          ]),
+        ).rejects.toThrow(/missing field\. Provide --stance as flag,/);
+        expect(errored).toContain(
+          'Non-interactive mode: "expert create" cannot prompt for the missing field. Provide --stance as flag, or run the command in an interactive terminal.',
+        );
+      } finally {
+        Object.defineProperty(process.stdin, "isTTY", {
+          value: originalIsTTY,
+          configurable: true,
+        });
+      }
+    });
+
     it(
       "fails fast (non-zero, no misleading ✓) when required fields are missing in non-TTY mode (PM-08)",
       { timeout: 15_000 },
@@ -700,6 +741,7 @@ describe("buildExpertCommand", () => {
           // The error must point the user at the flags to supply.
           expect(errored).toMatch(/non-interactive/i);
           expect(errored).toMatch(/--name/);
+          expect(errored).toMatch(/--persona-description/);
           // Nothing may be persisted: no YAML and absent from `expert list`.
           const yamlPath = path.join(env.dataHome, "experts", "trained-cfo.yaml");
           await expect(fs.access(yamlPath)).rejects.toThrow();
