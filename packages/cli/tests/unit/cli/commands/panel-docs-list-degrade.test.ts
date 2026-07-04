@@ -1,5 +1,6 @@
 /**
- * `panel docs list` — resilient to scan failures (#1055, finding #2).
+ * `panel docs list` — resilient to scan failures (#1055, finding #2) with a
+ * non-zero exit code on genuine scan failure (#1931).
  *
  * Sentinel SNTL-1043 🟡#2: `docs list` triggered a full scan before reading the
  * DB, but discarded the scan result and let scan errors propagate uncaught. A
@@ -10,6 +11,12 @@
  * degrade gracefully: capture the scan outcome, warn when files or folders
  * failed, and — if the scan itself throws — still render the last known DB
  * state with a warning instead of crashing.
+ *
+ * #1931 adds: when the scan itself throws (a persistent failure that could not
+ * run at all), the command must still degrade gracefully BUT set a non-zero
+ * exit code so CI/automation can detect the failure — a silent exit 0 hid it.
+ * An empty-but-successful list, or a partial index that merely reports failed
+ * files/folders, stays exit 0.
  *
  * The scanner is mocked so we can force both failure shapes deterministically.
  */
@@ -52,6 +59,7 @@ vi.mock("../../../../src/core/documents/panel-document-scanner.js", async (impor
 
 import { buildPanelCommand } from "../../../../src/cli/commands/panel.js";
 import { createDatabase } from "../../../../src/memory/db.js";
+import { EXIT_USER_ERROR } from "../../../../src/cli/exit-codes.js";
 import type { ExpertDefinition } from "../../../../src/core/expert.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
 
@@ -141,7 +149,13 @@ async function runList(): Promise<{ out: string; err: string; error: unknown }> 
 
 describe("panel docs list — degrades on scan failure (#1055)", () => {
   let env: TestEnv;
+  let savedExitCode: typeof process.exitCode;
   beforeEach(async () => {
+    // Normalise the exit code to a known baseline so a test can assert the
+    // command flipped it; restored in afterEach so it never leaks to other
+    // suites (a stray non-zero would fail the whole vitest run).
+    savedExitCode = process.exitCode;
+    process.exitCode = 0;
     scanMock.mode = "ok";
     scanMock.calls = 0;
     env = await makeEnv();
@@ -149,6 +163,7 @@ describe("panel docs list — degrades on scan failure (#1055)", () => {
     await createPanel();
   });
   afterEach(async () => {
+    process.exitCode = savedExitCode;
     await teardown(env);
   });
 
@@ -163,6 +178,10 @@ describe("panel docs list — degrades on scan failure (#1055)", () => {
     expect(out).toMatch(/no documents found/i);
     // ... alongside a warning that indexing did not complete.
     expect(err).toMatch(/warn|could not|failed|incomplete|stale/i);
+    // ... and it signals the failure with a non-zero exit code so CI/automation
+    // can detect that the refresh did not complete, rather than a silent exit 0.
+    // #1931.
+    expect(process.exitCode).toBe(EXIT_USER_ERROR);
   });
 
   it("warns when the scan reports failed files/folders but still lists", async () => {
@@ -172,5 +191,21 @@ describe("panel docs list — degrades on scan failure (#1055)", () => {
     expect(error).toBeNull();
     expect(out).toMatch(/no documents found/i);
     expect(err).toMatch(/warn|failed|incomplete/i);
+    // A partial index (some files/folders failed) completed with problems — the
+    // list is still usable, so the exit code stays 0. Only a scan that cannot
+    // run at all (throws) flips it. #1931.
+    expect(process.exitCode).toBe(0);
+  });
+
+  it("keeps a zero exit code for an empty but successful refresh", async () => {
+    scanMock.mode = "ok";
+    const { out, err, error } = await runList();
+
+    expect(error).toBeNull();
+    expect(out).toMatch(/no documents found/i);
+    // No scan failure occurred — an empty index is a successful, non-error
+    // outcome and MUST NOT flip the exit code. #1931.
+    expect(err).not.toMatch(/warn|failed|could not|stale/i);
+    expect(process.exitCode).toBe(0);
   });
 });
