@@ -90,6 +90,8 @@ mode."* Explicit subcommands bypass the TUI entirely, so agents/scripts/CI are u
 - Drill-down: Home → List → Detail; **never deeper than 3**. Expert detail within a session is a
   sidebar/overlay, not a 4th level.
 - `Enter` drills in, `Esc` backs out (Home `Esc` → confirm-quit). Breadcrumb embedded in the header.
+- `?` toggles contextual help: a floating overlay that lists global shortcuts plus the current screen's
+  route-specific shortcuts (for example, detail screens with an Actions menu include `a Actions`).
 - Tabs are used **within** a detail view (e.g. Session Detail → Chat / Experts / Summary), never
   between top-level areas.
 - Routing: `react-router` `MemoryRouter` as the screen stack; overlays (palette, dialogs) are
