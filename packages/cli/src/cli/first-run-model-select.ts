@@ -141,7 +141,7 @@ function throwNoModelsAvailable(write: Writer): never {
 }
 
 function writeSelectionConfirmation(write: Writer, selectedModel: string): void {
-  write(`✓ Default model set to ${selectedModel}\n\n`);
+  write(`✓ Default model set to ${toSingleLineDisplay(selectedModel)}\n\n`);
   write("Run 'council doctor' to verify your full setup.\n");
 }
 
@@ -186,7 +186,9 @@ export async function selectModelInteractively(
     : recommendedModel;
 
   if (!interactive) {
-    write(`Non-interactive session detected; using recommended model ${selectedModel}.\n`);
+    write(
+      `Non-interactive session detected; using recommended model ${toSingleLineDisplay(selectedModel)}.\n`,
+    );
   }
 
   await persistConfig("defaults.model", selectedModel);
