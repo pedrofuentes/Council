@@ -29,10 +29,11 @@ interface ParseResult {
 }
 
 /**
- * A parsed row paired with its 1-based line number in the original input. The
- * source line is captured BEFORE blank-line filtering so a column-count
- * mismatch is reported against the row's true position in the file rather than
- * its index in the (possibly shorter) post-filter array.
+ * A parsed row paired with its 1-based parsed-record number. That equals the
+ * physical line except when a preceding quoted field contains embedded
+ * newlines. The source line is captured BEFORE blank-line filtering so a
+ * column-count mismatch is reported against the parsed row's pre-filter
+ * position rather than its index in the (possibly shorter) post-filter array.
  */
 interface IndexedRow {
   readonly row: readonly string[];
@@ -114,8 +115,9 @@ function countWords(text: string): number {
 
 /**
  * A blank source line yields a phantom row holding a single empty field: the
- * delimiter parser has nothing to split, so it produces `[""]` (or `[]`
- * defensively). This predicate identifies that shape.
+ * delimiter parser has nothing to split, so it produces `[""]`. This predicate
+ * identifies that shape; the `[]` branch is a defensive guard, not a shape
+ * currently emitted by {@link parseDelimited}.
  *
  * It is only safe to DROP such a row in a MULTI-column file, where real rows
  * carry `length >= 2` fields and a lone `[""]` is therefore unambiguously a
@@ -162,9 +164,9 @@ const csvExtractor: ContentExtractor = async (
         "Ensure every opening double-quote has a matching closing quote, then re-save the file.",
     });
   }
-  // Pair each row with its 1-based source line BEFORE any blank-line filtering,
-  // so a genuine column-count mismatch is reported against its true position in
-  // the file rather than its index in the (possibly shorter) filtered array.
+  // Pair each row with its 1-based parsed-record number BEFORE any blank-line
+  // filtering, so a genuine column-count mismatch is reported against its
+  // pre-filter position rather than its index in the filtered array.
   const indexedRows: readonly IndexedRow[] = parsedRows.map((row, index) => ({
     row,
     sourceLine: index + 1,
