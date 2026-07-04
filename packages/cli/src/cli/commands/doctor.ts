@@ -21,6 +21,8 @@ import {
   discoverAvailableModels,
   pingProviderHealth,
   resolveCopilotCliPath,
+  type CopilotCliPathCheck,
+  type CopilotCliPathStatus,
   type ModelDiscoveryResult,
 } from "../../engine/copilot/health.js";
 import {
@@ -87,6 +89,29 @@ export interface DoctorDeps {
 function memoizeAsync<T>(load: () => Promise<T>): () => Promise<T> {
   let cached: Promise<T> | undefined;
   return () => (cached ??= load());
+}
+
+/**
+ * Wrap a synchronous computation so it runs at most once per invocation,
+ * caching either its value or the error it threw. Later callers replay the same
+ * outcome, so a probe like the Copilot CLI resolver is invoked exactly once even
+ * when it throws (#1365) while still surfacing that failure to every caller.
+ */
+function memoizeSync<T>(compute: () => T): () => T {
+  let settled: { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: unknown } | undefined;
+  return () => {
+    if (settled === undefined) {
+      try {
+        settled = { ok: true, value: compute() };
+      } catch (error) {
+        settled = { ok: false, error };
+      }
+    }
+    if (settled.ok) {
+      return settled.value;
+    }
+    throw settled.error;
+  };
 }
 
 interface LabeledCheck {
@@ -307,17 +332,11 @@ async function checkCopilotSdk(): Promise<CheckResult> {
   };
 }
 
-async function checkCopilotCli(
-  resolveCliPath: NonNullable<DoctorDeps["resolveCliPath"]>,
-): Promise<CheckResult> {
-  const probe = checkCopilotCliPath({
-    override: process.env.COPILOT_CLI_PATH,
-    resolvedPath: resolveCliPath(),
-  });
+async function checkCopilotCli(cliCheck: CopilotCliPathCheck): Promise<CheckResult> {
   return {
     name: "Copilot CLI",
-    status: probe.status === "needs-remediation" ? "fail" : "pass",
-    detail: probe.detail,
+    status: cliCheck.status === "needs-remediation" ? "fail" : "pass",
+    detail: cliCheck.detail,
   };
 }
 
@@ -561,13 +580,24 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
       // Likewise cache model discovery: a failed default-model probe discovers
       // alternatives and `--models` lists them, but both must share one probe.
       const discoverModelsOnce = memoizeAsync(discoverModels);
+      // Probe the Copilot CLI path lazily and at most once: the "Copilot CLI"
+      // check and the report's `copilotCliPathStatus` field both read it, so a
+      // single capture avoids a duplicate resolve (#1365). Computing it inside
+      // the check's `run` (not eagerly) keeps a throwing resolver contained to
+      // the report loop's per-check guard (#1364).
+      const getCopilotCliCheck = memoizeSync(() =>
+        checkCopilotCliPath({
+          override: process.env.COPILOT_CLI_PATH,
+          resolvedPath: resolveCliPath(),
+        }),
+      );
       const checks: LabeledCheck[] = [
         { label: "Node.js version", run: checkNodeVersion },
         { label: "Council home", run: checkCouncilHome },
         { label: "Council data home", run: () => checkCouncilDataHome(loadConfigOnce) },
         { label: "SQLite (node:sqlite)", run: () => checkSqlite(openSqliteDatabase) },
         { label: "Copilot SDK", run: checkCopilotSdk },
-        { label: "Copilot CLI", run: () => checkCopilotCli(resolveCliPath) },
+        { label: "Copilot CLI", run: () => checkCopilotCli(getCopilotCliCheck()) },
         { label: "Disk write", run: checkDiskSpace },
       ];
 
@@ -598,14 +628,24 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
           return;
         }
         const reportChecks: DoctorReportCheck[] = [];
-        for (const { run } of checks) {
-          const result = await run();
-          reportChecks.push({ name: result.name, status: result.status });
+        // Guard every check so one throwing probe cannot abort the whole
+        // report — a failed check still lands as an explicit `fail` (#1364).
+        for (const { label, run } of checks) {
+          try {
+            const result = await run();
+            reportChecks.push({ name: result.name, status: result.status });
+          } catch {
+            reportChecks.push({ name: label, status: "fail" });
+          }
         }
-        const copilotCliPathStatus = checkCopilotCliPath({
-          override: process.env.COPILOT_CLI_PATH,
-          resolvedPath: resolveCliPath(),
-        }).status;
+        // Reuse the single Copilot CLI probe (#1365); if it threw, the report
+        // still ships with the safe needs-remediation category (#1364).
+        let copilotCliPathStatus: CopilotCliPathStatus;
+        try {
+          copilotCliPathStatus = getCopilotCliCheck().status;
+        } catch {
+          copilotCliPathStatus = "needs-remediation";
+        }
         let telemetryEnabled = false;
         try {
           telemetryEnabled = (await loadConfigOnce()).telemetry.enabled;
