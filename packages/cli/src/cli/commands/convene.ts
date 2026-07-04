@@ -338,7 +338,9 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           throw new Error(`--summarize-after must be an integer (got: ${v})`);
         }
         if (parsed < 1) {
-          throw new Error(`--summarize-after must be a positive integer >= 1 (got: ${v})`);
+          throw new Error(
+            `--summarize-after must be a positive integer >= 1 (got: ${toSingleLineDisplay(v)})`,
+          );
         }
         return parsed;
       },
