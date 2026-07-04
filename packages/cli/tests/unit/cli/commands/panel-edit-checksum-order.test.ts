@@ -1,26 +1,33 @@
 /**
- * `panel edit` checksum/membership consistency (#308).
+ * `panel edit` membership/checksum write is ATOMIC (#1931, subsumes #308).
  *
- * Sentinel SNTNL-R3-PR299 F2: `panelRepo.update` (which writes the new
- * `yaml_checksum`) was committed BEFORE `panelRepo.setMembers`. If
- * `setMembers` throws after `update` succeeds, `panel_library.yaml_checksum`
- * reflects the new YAML while `panel_members` still holds the old membership —
- * a silent inconsistency where the checksum falsely claims "in sync".
- *
- * Fix: persist members first, then the row/checksum. Then a `setMembers`
- * failure leaves the OLD checksum in place (so a later op detects the drift
- * and re-syncs) instead of a checksum that lies about the stored membership.
+ * The edit path persists the new membership (`panel_members`) and the new
+ * `panel_library` row/checksum. Historically these were TWO independent DB
+ * writes (`setMembers` then `update`): a crash — or any failure — between them
+ * left the panel half-updated (new membership committed, stale checksum, or
+ * vice-versa). #308 mitigated one ordering of that split; #1931 removes the
+ * split entirely by wrapping BOTH writes in a single transaction so they are
+ * applied together or not at all.
  *
  * This test drives `panel edit` with a no-op editor over a YAML whose bytes
- * differ from the stored checksum, forces `setMembers` to reject, and asserts
- * the stored checksum is UNCHANGED — which only holds if `update` runs after
- * `setMembers`.
+ * (and membership) differ from the stored row, then forces the SECOND write —
+ * the `panel_library` UPDATE — to fail. With the two writes wrapped in one
+ * transaction, the membership change must ROLL BACK (both-or-neither) and the
+ * stored checksum must stay at its pre-edit value. Without atomicity the
+ * membership write would already be committed by the time the UPDATE fails.
+ *
+ * The failure is injected at `Kysely.prototype.updateTable`: in the edit flow
+ * (createDatabase runs no UPDATEs on an already-migrated DB; findByName +
+ * assertExpertsExist are SELECTs; membership is DELETE+INSERT) the FIRST
+ * `updateTable` call is the `panel_library` UPDATE, so `mockImplementationOnce`
+ * targets exactly the second write.
  */
 import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Kysely } from "kysely";
 import * as yaml from "yaml";
 
 import { buildPanelCommand } from "../../../../src/cli/commands/panel.js";
@@ -88,7 +95,7 @@ async function teardown(env: TestEnv): Promise<void> {
   }
 }
 
-describe("panel edit — checksum/membership write order (#308)", () => {
+describe("panel edit — atomic membership+checksum write (#1931, #308)", () => {
   let env: TestEnv;
   beforeEach(async () => {
     env = await makeEnv();
@@ -98,8 +105,9 @@ describe("panel edit — checksum/membership write order (#308)", () => {
     await teardown(env);
   });
 
-  it("leaves the stored checksum unchanged when setMembers fails during edit", async () => {
+  it("rolls back the membership change when the panel_library update fails", async () => {
     await seedExpert(env, expertDef("cto"));
+    await seedExpert(env, expertDef("security"));
     const createCmd = buildPanelCommand(() => {
       /* noop */
     });
@@ -114,30 +122,33 @@ describe("panel edit — checksum/membership write order (#308)", () => {
 
     const yamlPath = path.join(env.dataHome, "panels", "arch-review.yaml");
 
-    // Capture the checksum persisted at create time.
+    // Capture the pre-edit checksum and membership.
     let originalChecksum: string | undefined;
     {
       const db = await createDatabase(path.join(env.home, "council.db"));
       try {
         const repo = new PanelLibraryRepository(db);
         originalChecksum = (await repo.findByName("arch-review"))?.yamlChecksum;
+        expect(await repo.getMembers("arch-review")).toEqual(["cto"]);
       } finally {
         await db.destroy();
       }
     }
     expect(originalChecksum).toBeTruthy();
 
-    // Mutate the on-disk YAML so its bytes (and therefore its checksum) differ
-    // from the stored checksum — but keep it valid with the SAME name/experts.
+    // Mutate the on-disk YAML so BOTH its bytes (checksum) and its membership
+    // change: add "security". A valid edit that alters the panel membership.
     const parsed = yaml.parse(await fs.readFile(yamlPath, "utf-8")) as Record<string, unknown>;
     parsed["description"] = "edited by test — changes the file bytes";
+    parsed["experts"] = ["cto", "security"];
     await fs.writeFile(yamlPath, yaml.stringify(parsed), "utf-8");
 
-    // Force the membership write to fail. With the buggy order (update first)
-    // the new checksum is already committed by the time this rejects.
-    const setSpy = vi
-      .spyOn(PanelLibraryRepository.prototype, "setMembers")
-      .mockRejectedValueOnce(new Error("simulated setMembers failure"));
+    // Force the SECOND write (the panel_library UPDATE) to fail. This is the
+    // first `updateTable` call in the edit flow, so `mockImplementationOnce`
+    // targets exactly the row/checksum write — after the membership write.
+    const updateSpy = vi.spyOn(Kysely.prototype, "updateTable").mockImplementationOnce(() => {
+      throw new Error("simulated panel_library update failure");
+    });
 
     const editCmd = buildPanelCommand(
       () => {
@@ -153,13 +164,15 @@ describe("panel edit — checksum/membership write order (#308)", () => {
     );
 
     expect(err).toBeInstanceOf(Error);
-    expect(setSpy).toHaveBeenCalledTimes(1);
+    expect(updateSpy).toHaveBeenCalledTimes(1);
 
-    // The persisted checksum must still be the pre-edit value: `update` must
-    // not have run before the failing `setMembers`.
+    // Atomicity: because the two writes share one transaction, the failing
+    // UPDATE must roll the membership write back too. Membership stays ["cto"]
+    // (NOT ["cto", "security"]) and the checksum stays at its pre-edit value.
     const db = await createDatabase(path.join(env.home, "council.db"));
     try {
       const repo = new PanelLibraryRepository(db);
+      expect(await repo.getMembers("arch-review")).toEqual(["cto"]);
       const row = await repo.findByName("arch-review");
       expect(row?.yamlChecksum).toBe(originalChecksum);
     } finally {
