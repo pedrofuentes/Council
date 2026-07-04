@@ -8,6 +8,7 @@ import type { Writer } from "../../../../src/cli/commands/writer.js";
 
 interface ModelsDepsLike {
   readonly write?: Writer;
+  readonly writeError?: Writer;
   readonly discoverModels?: () => Promise<{
     models: readonly string[];
     source: "live" | "static";
@@ -18,17 +19,34 @@ const buildModelsCommandWithDeps = buildModelsCommand as unknown as (
   deps: ModelsDepsLike,
 ) => ReturnType<typeof buildModelsCommand>;
 
-async function runModels(args: readonly string[], deps: ModelsDepsLike = {}): Promise<string> {
-  let captured = "";
+async function runModelsWithResult(
+  args: readonly string[],
+  deps: ModelsDepsLike = {},
+): Promise<{ readonly stdout: string; readonly stderr: string; readonly error: unknown }> {
+  let stdout = "";
+  let stderr = "";
   const cmd = buildModelsCommandWithDeps({
     ...deps,
     write: (chunk: string) => {
-      captured += chunk;
+      stdout += chunk;
+    },
+    writeError: (chunk: string) => {
+      stderr += chunk;
     },
   });
   cmd.exitOverride();
-  await cmd.parseAsync(["node", "council-models", ...args]).catch(() => undefined);
-  return captured;
+  let error: unknown;
+  try {
+    await cmd.parseAsync(["node", "council-models", ...args]);
+  } catch (err: unknown) {
+    error = err;
+  }
+  return { stdout, stderr, error };
+}
+
+async function runModels(args: readonly string[], deps: ModelsDepsLike = {}): Promise<string> {
+  const { stdout } = await runModelsWithResult(args, deps);
+  return stdout;
 }
 
 describe("formatAvailableModels", () => {
@@ -80,10 +98,7 @@ describe("formatAvailableModels", () => {
   });
 
   it("produces header and note with no provider lines when all model IDs are invalid", () => {
-    const result = formatAvailableModels(
-      ["   ", "\u001b[31m\u001b[0m", "invalid!id"],
-      "live",
-    );
+    const result = formatAvailableModels(["   ", "\u001b[31m\u001b[0m", "invalid!id"], "live");
 
     expect(result).toContain("Available models:");
     expect(result).toContain("Note: Known models: Availability depends on your Copilot tier");
@@ -184,6 +199,20 @@ describe("buildModelsCommand", () => {
     expect(output).toContain("Anthropic: claude-sonnet-4.6");
     expect(output).toContain("OpenAI   : gpt-5.4");
     expect(output).toContain("Google   : gemini-2.5-pro");
+    expect(discoverModels).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces discovery errors on stderr and exits non-zero", async () => {
+    const discoverModels = vi.fn(async () => {
+      throw new Error("engine unavailable");
+    });
+
+    const { stdout, stderr, error } = await runModelsWithResult([], { discoverModels });
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain("engine unavailable");
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("engine unavailable");
     expect(discoverModels).toHaveBeenCalledTimes(1);
   });
 
