@@ -177,7 +177,12 @@ const ADVERSARIAL_MESSAGES: readonly { readonly label: string; readonly message:
 
 describe("panel docs list --refresh — scan-failure warning is terminal-safe (#1931 item a)", () => {
   let env: TestEnv;
+  // The scan-throw path now sets a non-zero process.exitCode (#1931). Save and
+  // restore it so this suite never leaves the global exit code dirty for other
+  // suites that may run in the same worker.
+  let savedExitCode: typeof process.exitCode;
   beforeEach(async () => {
+    savedExitCode = process.exitCode;
     scanControl.throwMessage = null;
     env = await makeEnv();
     await seedExpert(env, expertDef("cto"));
@@ -185,6 +190,7 @@ describe("panel docs list --refresh — scan-failure warning is terminal-safe (#
   });
   afterEach(async () => {
     scanControl.throwMessage = null;
+    process.exitCode = savedExitCode;
     vi.restoreAllMocks();
     await teardown(env);
   });

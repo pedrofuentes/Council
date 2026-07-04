@@ -19,8 +19,10 @@ import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 
 import { Command, Option } from "commander";
+import { sql } from "kysely";
 
 import { CliUserError } from "../cli-user-error.js";
+import { EXIT_USER_ERROR } from "../exit-codes.js";
 import { parseExpertSlugs, warnOnStrayExpertArgs } from "./expert-args.js";
 import * as yaml from "yaml";
 
@@ -319,6 +321,127 @@ async function persistPanelArtifacts(
     throw err;
   }
   return { yamlPath, expertSlugs };
+}
+
+/**
+ * Thrown by {@link persistPanelEditAtomically} when the atomic edit transaction
+ * aborts (#1931). Mirrors {@link SetMembersError} from panel-library-repo.ts:
+ * exposes whether ROLLBACK itself succeeded ({@link rollbackFailed}) AND
+ * preserves the underlying rollback error ({@link rollbackError}) for
+ * diagnostics. When the rollback fails the database may be inconsistent (new
+ * membership committed with a stale checksum, or vice-versa), so the reason MUST
+ * survive — a bare boolean would leave a genuine inconsistency undiagnosable.
+ */
+export class PanelEditPersistError extends Error {
+  readonly rollbackFailed: boolean;
+  readonly rollbackError?: unknown;
+
+  constructor(
+    message: string,
+    opts: { cause: unknown; rollbackFailed: boolean; rollbackError?: unknown },
+  ) {
+    super(message, { cause: opts.cause });
+    this.name = "PanelEditPersistError";
+    this.rollbackFailed = opts.rollbackFailed;
+    if (opts.rollbackError !== undefined) {
+      this.rollbackError = opts.rollbackError;
+    }
+  }
+}
+
+/**
+ * Atomically persist an edited panel's membership and library row/checksum
+ * (#1931). `panel edit` changes two tables — `panel_members` (the ordered
+ * membership) and `panel_library` (the row + `yaml_checksum`) — which were
+ * previously written by two independent, separately-committed operations
+ * (`setMembers` then `update`). A crash or failure between them left the panel
+ * half-updated: new membership with a stale checksum, or vice-versa. #308
+ * mitigated one ordering of that split; this wraps BOTH writes in a single
+ * transaction so they land together or not at all.
+ *
+ * The membership DELETE+INSERT and the row UPDATE are inlined here (rather than
+ * reusing `PanelLibraryRepository.setMembers`/`update`) because `setMembers`
+ * opens and COMMITs its OWN transaction — a nested `BEGIN` would throw — so the
+ * two writes cannot be composed into one transaction through the repo API.
+ *
+ * Raw `BEGIN`/`COMMIT`/`ROLLBACK` on the primary connection mirror
+ * `PanelLibraryRepository.setMembers`: Kysely's `transaction()` reconnects the
+ * libsql `:memory:` connection and cannot see the primary connection's schema
+ * (issue #298). On failure the transaction is rolled back and a
+ * {@link PanelEditPersistError} is thrown; its message is honest about whether
+ * ROLLBACK itself succeeded (so a genuinely inconsistent DB is not reported as
+ * cleanly preserved) and it preserves the rollback error via `rollbackError`
+ * for diagnostics.
+ */
+async function persistPanelEditAtomically(
+  db: CouncilDatabase,
+  edit: {
+    readonly name: string;
+    readonly expertSlugs: readonly string[];
+    readonly description: string | null;
+    readonly yamlPath: string;
+    readonly yamlChecksum: string;
+  },
+): Promise<void> {
+  try {
+    await sql`BEGIN`.execute(db);
+  } catch (beginErr) {
+    const detail = beginErr instanceof Error ? beginErr.message : String(beginErr);
+    throw new PanelEditPersistError(
+      `Failed to save panel "${edit.name}" before any changes ` +
+        `(BEGIN failed; no changes applied): ${detail}`,
+      { cause: beginErr, rollbackFailed: false },
+    );
+  }
+  try {
+    await db.deleteFrom("panel_members").where("panel_name", "=", edit.name).execute();
+    if (edit.expertSlugs.length > 0) {
+      const now = new Date().toISOString();
+      await db
+        .insertInto("panel_members")
+        .values(
+          edit.expertSlugs.map((slug, index) => ({
+            panel_name: edit.name,
+            expert_slug: slug,
+            position: index,
+            created_at: now,
+          })),
+        )
+        .execute();
+    }
+    await db
+      .updateTable("panel_library")
+      .set({
+        description: edit.description,
+        yaml_path: edit.yamlPath,
+        yaml_checksum: edit.yamlChecksum,
+        updated_at: new Date().toISOString(),
+      })
+      .where("name", "=", edit.name)
+      .execute();
+    await sql`COMMIT`.execute(db);
+  } catch (err) {
+    let rollbackFailed = false;
+    let rollbackError: unknown;
+    try {
+      await sql`ROLLBACK`.execute(db);
+    } catch (rbErr) {
+      rollbackFailed = true;
+      rollbackError = rbErr;
+    }
+    const detail = err instanceof Error ? err.message : String(err);
+    const message = rollbackFailed
+      ? `Failed to save panel "${edit.name}" and ROLLBACK also failed; the panel row ` +
+        `and membership may be inconsistent: ${detail}`
+      : `Failed to save panel "${edit.name}" (transaction rolled back cleanly; ` +
+        `prior row and membership preserved): ${detail}`;
+    throw new PanelEditPersistError(
+      message,
+      rollbackError === undefined
+        ? { cause: err, rollbackFailed }
+        : { cause: err, rollbackFailed, rollbackError },
+    );
+  }
 }
 
 export function buildPanelCommand(
@@ -1427,12 +1550,13 @@ function buildEditCommand(write: Writer, writeError: Writer): Command {
         await assertExpertsExist(slugRefs, ctx.library, writeError);
 
         const checksum = sha256(onDisk);
-        // Persist membership BEFORE the row/checksum. If setMembers throws, the
-        // OLD checksum stays in place (signalling drift for a later re-sync)
-        // rather than a new checksum that would falsely claim to match the
-        // now-unwritten membership. #308.
-        await ctx.panelRepo.setMembers(name, slugRefs);
-        await ctx.panelRepo.update(name, {
+        // Persist membership and the row/checksum in ONE transaction so an
+        // edit is all-or-nothing: a failure on either write rolls back the
+        // other, never leaving a new checksum that lies about the stored
+        // membership (or vice-versa). #1931 (subsumes the #308 ordering fix).
+        await persistPanelEditAtomically(ctx.db, {
+          name,
+          expertSlugs: slugRefs,
           description: parsed.description ?? null,
           yamlPath,
           yamlChecksum: checksum,
@@ -1586,6 +1710,13 @@ async function runDocsList(
           `Warning: could not refresh the document index for panel "${display}": ${detail}\n` +
             `Showing the last known state; results may be stale.\n`,
         );
+        // The scan could not run at all — a persistent failure, not merely an
+        // empty result. Keep degrading gracefully (render the last known DB
+        // state above) but flag a non-zero exit code so CI/automation can
+        // detect that the refresh did not complete instead of a silent exit 0.
+        // A successful-but-empty list, or a partial index that only reports
+        // failed files/folders, is left at exit 0. #1931.
+        process.exitCode = EXIT_USER_ERROR;
       }
     }
 
