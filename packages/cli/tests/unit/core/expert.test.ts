@@ -50,6 +50,22 @@ describe("ExpertDefinitionSchema", () => {
     expect(() => ExpertDefinitionSchema.parse({ ...baseDefinition, slug: "" })).toThrow();
   });
 
+  describe("slug whitespace handling (#34)", () => {
+    it("rejects a whitespace-only slug", () => {
+      expect(() => ExpertDefinitionSchema.parse({ ...baseDefinition, slug: "   " })).toThrow();
+    });
+
+    it("trims surrounding whitespace from a valid slug", () => {
+      const parsed = ExpertDefinitionSchema.parse({ ...baseDefinition, slug: "  cto  " });
+      expect(parsed.slug).toBe("cto");
+    });
+
+    it("accepts a slug that needs no trimming", () => {
+      const parsed = ExpertDefinitionSchema.parse({ ...baseDefinition, slug: "cto" });
+      expect(parsed.slug).toBe("cto");
+    });
+  });
+
   it("rejects empty displayName", () => {
     expect(() => ExpertDefinitionSchema.parse({ ...baseDefinition, displayName: "" })).toThrow();
   });

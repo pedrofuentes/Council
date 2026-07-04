@@ -997,10 +997,11 @@ function assertSafeDerivedFilename(filename: string, displayUrl: string): void {
 }
 
 /**
- * Short, deterministic discriminator for a path-less URL, derived only from the
- * components that distinguish otherwise-identical host roots (port, query,
- * fragment). Feeds the collision-resistant filename for path-less URLs (#1030);
- * the hash source excludes userinfo so credentials never influence the name.
+ * Short, deterministic discriminator for a path-less URL, derived from all
+ * components that distinguish otherwise-identical host roots (host, pathname,
+ * query, fragment). Feeds the collision-resistant filename for path-less URLs
+ * (#1030); the hash source excludes userinfo so credentials never influence
+ * the name.
  */
 function urlDiscriminatorHash(parsed: URL): string {
   return createHash("sha256")
