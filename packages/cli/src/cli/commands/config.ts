@@ -371,8 +371,11 @@ function normalizeExtensionList(key: SettableConfigKey, rawValue: string): strin
  * → `0`) or surface a confusing downstream schema error. Reject anything that is
  * not a plain, optionally-signed decimal integer up front so every integer key
  * behaves identically. `invalidMessage` lets a key fold this rejection into its
- * own range message; both default and override are sanitized via
- * `toSingleLineDisplay` at the call site.
+ * own range message. The default message sanitizes `key` with
+ * `toSingleLineDisplay` inside this helper; when a caller supplies
+ * `invalidMessage` the helper emits it verbatim, so that caller is responsible
+ * for sanitizing any untrusted content it interpolates (all current callers
+ * sanitize `key` when building their range message).
  */
 function parseIntegerConfigValue(
   key: SettableConfigKey,
