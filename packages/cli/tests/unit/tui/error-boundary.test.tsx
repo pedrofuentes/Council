@@ -110,4 +110,27 @@ describe("ErrorBoundary", () => {
     expect(frame).toContain("Boom");
     unmount();
   });
+
+  it("forwards React's ErrorInfo (component stack) to the onError callback", () => {
+    let capturedError: Error | undefined;
+    let capturedInfo: React.ErrorInfo | undefined;
+    const { unmount } = render(
+      <ErrorBoundary
+        onError={(error, errorInfo) => {
+          capturedError = error;
+          capturedInfo = errorInfo;
+        }}
+        fallback={<Text>recovered</Text>}
+      >
+        <Boom message="telemetry me" />
+      </ErrorBoundary>,
+    );
+    // componentDidCatch receives (error, errorInfo). The boundary must forward
+    // errorInfo alongside the error so callers can log/telemetry the component
+    // stack — not just the message.
+    expect(capturedError?.message).toBe("telemetry me");
+    expect(capturedInfo).toBeDefined();
+    expect(capturedInfo?.componentStack ?? "").toContain("Boom");
+    unmount();
+  });
 });
