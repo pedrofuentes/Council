@@ -828,19 +828,37 @@ describe("analyzeDocuments() — error handling (#359 #360 #361)", () => {
   }, 2000);
 
   it("waits a backoff delay before retrying a failed send (#436)", async () => {
-    // A failed first send must not be retried immediately — a short backoff
-    // avoids amplifying load on a struggling provider. Configure a small,
-    // deterministic delay and assert the retry is not issued before it.
-    const engine = new RecordingEngine(["not json at all", validProfileJSON]);
-    const backoffMs = 60;
-    const opts = { ...defaultOptions, retryBackoffMs: backoffMs };
-    const start = Date.now();
-    const out = await analyzeDocuments(sampleDocs, null, engine, opts);
-    const elapsed = Date.now() - start;
-    expect(out.communicationStyle).toMatch(/Direct/);
-    expect(engine.sends.length).toBe(2);
-    // Allow for timer coarseness; the point is a non-trivial delay occurred.
-    expect(elapsed).toBeGreaterThanOrEqual(backoffMs - 15);
+    // Replace the soft wall-clock oracle with fake timers so the backoff
+    // schedule is asserted deterministically — no real delays, no flake
+    // under load. The SUT's sleep() calls setTimeout directly, which
+    // vi.useFakeTimers() intercepts without any source change.
+    vi.useFakeTimers();
+    try {
+      const engine = new RecordingEngine(["not json at all", validProfileJSON]);
+      const backoffMs = 60;
+      const opts = { ...defaultOptions, retryBackoffMs: backoffMs };
+      const promise = analyzeDocuments(sampleDocs, null, engine, opts);
+
+      // Flush microtasks: the first send fires and the backoff sleep is
+      // scheduled as a fake timer — but has not yet elapsed.
+      await vi.advanceTimersByTimeAsync(0);
+      expect(engine.sends.length).toBe(1);
+
+      // One tick before the backoff expires — the retry must not fire yet.
+      await vi.advanceTimersByTimeAsync(backoffMs - 1);
+      expect(engine.sends.length).toBe(1);
+
+      // Crossing the exact backoff boundary fires the sleep and issues the
+      // retry. Asserting the precise tick makes this stronger than the old
+      // soft lower-bound oracle.
+      await vi.advanceTimersByTimeAsync(1);
+      expect(engine.sends.length).toBe(2);
+
+      const out = await promise;
+      expect(out.communicationStyle).toMatch(/Direct/);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
