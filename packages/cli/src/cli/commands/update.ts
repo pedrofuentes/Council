@@ -20,7 +20,7 @@ import { fetchLatestVersion, isNewerVersion } from "../../core/version/index.js"
 import { CliUserError } from "../cli-user-error.js";
 import { EXIT_INTERNAL_ERROR, EXIT_NETWORK_ERROR } from "../exit-codes.js";
 import { createSpinner, type Spinner, type SpinnerOptions } from "../renderers/spinner.js";
-import { toSingleLineDisplay } from "../strip-control-chars.js";
+import { stripControlChars } from "../strip-control-chars.js";
 
 import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
@@ -265,13 +265,26 @@ function failUpdate(
  * supply-chain-compromised manager could emit ANSI/OSC/Bidi control bytes that,
  * written verbatim to the terminal, clear the screen, forge a "success" line,
  * set the title/clipboard, or visually reorder text (Trojan Source). Both
- * stdout and stderr are therefore sanitized and collapsed onto a single line
- * via {@link toSingleLineDisplay} before selection, so every error branch
- * surfaces only inert, single-line text. The fallback is a trusted constant.
+ * stdout and stderr are therefore sanitized before selection: control sequences
+ * are stripped, CR is normalized to LF, and tab/LS/PS separators are neutralized
+ * to spaces while ordinary LF preserves multi-line package-manager diagnostics.
+ * The fallback is a trusted constant.
  */
+function toMultiLineDisplay(text: string): string {
+  // stripControlChars removes ANSI/C0(except \n\r\t)/C1/zero-width/hidden-format, but KEEPS \r \t U+2028 U+2029.
+  // Preserve \n for readable multi-line PM diagnostics; normalize \r(\n) -> \n and neutralize \t/U+2028/U+2029 -> space
+  // so untrusted subprocess output cannot CR-overwrite or line-inject on the terminal.
+  return stripControlChars(text)
+    .replace(/\r\n?/g, "\n")
+    .replace(/[\t\u2028\u2029]/g, " ");
+}
+
 function outputDetail(stdout: string, stderr: string, fallback: string): string {
-  const safeStderr = toSingleLineDisplay(stderr).trim();
-  const safeStdout = toSingleLineDisplay(stdout).trim();
+  const safeStderr = toMultiLineDisplay(stderr).trim();
+  const safeStdout = toMultiLineDisplay(stdout).trim();
+  if (safeStderr.length > 0 && safeStdout.length > 0) {
+    return `${safeStderr}\n${safeStdout}`;
+  }
   return safeStderr || safeStdout || fallback;
 }
 
