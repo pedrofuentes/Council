@@ -209,4 +209,29 @@ describe("selectModelInteractively", () => {
 
     expect(output.text()).not.toContain("live-only");
   });
+
+  it("sanitizes API-sourced model IDs before rendering the model list", async () => {
+    discoverModels.mockResolvedValue({
+      models: ["claude-sonnet-4.5", "gpt-4\r\n\x1b[31mx", "m\u202eodel"],
+      source: "live",
+    });
+    const output = createCapturedOutput();
+
+    await selectModelInteractively({
+      write: (text) => output.stream.write(text),
+      input: createInput("\n"),
+      output: output.stream,
+      discoverModels,
+      updateConfig,
+    });
+
+    const text = output.text();
+    const modelList = text.slice(text.indexOf("Available models:"), text.indexOf("Select a model"));
+    expect(modelList).toContain("2. gpt-4 x");
+    expect(modelList).toContain("3. model");
+    expect(modelList).not.toContain("gpt-4\r\n");
+    expect(modelList).not.toContain("\x1b");
+    expect(modelList).not.toContain("\u202e");
+    expect(modelList.split("\n").filter((line) => /^\s+\d+\./.test(line))).toHaveLength(3);
+  });
 });
