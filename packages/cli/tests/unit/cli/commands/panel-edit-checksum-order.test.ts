@@ -32,9 +32,46 @@ import * as yaml from "yaml";
 
 import { buildPanelCommand } from "../../../../src/cli/commands/panel.js";
 import { createDatabase } from "../../../../src/memory/db.js";
+import * as dbModule from "../../../../src/memory/db.js";
 import { PanelLibraryRepository } from "../../../../src/memory/repositories/panel-library-repo.js";
 import type { ExpertDefinition } from "../../../../src/core/expert.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
+
+/**
+ * Wrap the libsql Kysely executor so the next `executeQuery` whose SQL contains
+ * `failOnSqlSubstring` throws, and (optionally) any subsequent `ROLLBACK` throws
+ * too. Mirrors the helper in memory/panel-library-repo.test.ts so we can drive
+ * the BEGIN/COMMIT/ROLLBACK paths of `persistPanelEditAtomically` — including a
+ * failed rollback — without corrupting the driver. `executeQuery` is overridden
+ * as an own-property on the executor instance because Kysely's executor uses
+ * private class fields and a Proxy would re-bind `this` and break private access.
+ */
+function patchExecuteQuery(
+  database: dbModule.CouncilDatabase,
+  opts: { failOnSqlSubstring: string; failRollback?: boolean },
+): () => void {
+  const realExec = database.getExecutor();
+  type ExecQueryFn = typeof realExec.executeQuery;
+  const originalExecuteQuery: ExecQueryFn = realExec.executeQuery as ExecQueryFn;
+  const wrapped: ExecQueryFn = async function (this: typeof realExec, compiled, queryId) {
+    const text = compiled.sql;
+    if (text.includes(opts.failOnSqlSubstring)) {
+      throw new Error(`simulated failure on: ${opts.failOnSqlSubstring}`);
+    }
+    if (opts.failRollback === true && /^\s*ROLLBACK\b/i.test(text)) {
+      throw new Error("simulated ROLLBACK failure");
+    }
+    return originalExecuteQuery.call(this, compiled, queryId);
+  };
+  Object.defineProperty(realExec, "executeQuery", {
+    value: wrapped,
+    configurable: true,
+    writable: true,
+  });
+  return () => {
+    delete (realExec as { executeQuery?: ExecQueryFn }).executeQuery;
+  };
+}
 
 interface TestEnv {
   readonly home: string;
@@ -178,5 +215,59 @@ describe("panel edit — atomic membership+checksum write (#1931, #308)", () => 
     } finally {
       await db.destroy();
     }
+  });
+
+  it("preserves the ROLLBACK failure reason on the surfaced error when rollback also fails", async () => {
+    await seedExpert(env, expertDef("cto"));
+    const createCmd = buildPanelCommand(() => {
+      /* noop */
+    });
+    await createCmd.parseAsync(["node", "council-panel", "create", "arch-review", "--experts", "cto"]);
+
+    const yamlPath = path.join(env.dataHome, "panels", "arch-review.yaml");
+    const parsed = yaml.parse(await fs.readFile(yamlPath, "utf-8")) as Record<string, unknown>;
+    parsed["description"] = "edited by test — changes the file bytes";
+    await fs.writeFile(yamlPath, yaml.stringify(parsed), "utf-8");
+
+    // Patch the edit command's internal db so BOTH the panel_library UPDATE
+    // (the second write) AND the subsequent ROLLBACK fail — the same seam the
+    // setMembers rollback-honesty test uses. `mockImplementationOnce` scopes the
+    // patch to the edit command's connection only.
+    const realCreate = dbModule.createDatabase;
+    const createSpy = vi
+      .spyOn(dbModule, "createDatabase")
+      .mockImplementationOnce(async (dbPath: string) => {
+        const db = await realCreate(dbPath);
+        patchExecuteQuery(db, {
+          failOnSqlSubstring: 'update "panel_library"',
+          failRollback: true,
+        });
+        return db;
+      });
+
+    const editCmd = buildPanelCommand(
+      () => {
+        /* noop */
+      },
+      () => {
+        /* noop */
+      },
+    );
+    const err = await editCmd.parseAsync(["node", "council-panel", "edit", "arch-review"]).then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    expect(err).toBeInstanceOf(Error);
+    // The finding (#1931): on a ROLLBACK failure the surfaced error must PRESERVE
+    // the underlying rollback error REASON for diagnostics — not collapse it to a
+    // bare boolean — mirroring PanelLibraryRepository.setMembers, which attaches
+    // `rollbackError`. The message must stay honest (inconsistent, NOT preserved).
+    const surfaced = err as { rollbackFailed?: boolean; rollbackError?: unknown; message: string };
+    expect(surfaced.rollbackFailed).toBe(true);
+    expect(surfaced.rollbackError).toBeInstanceOf(Error);
+    expect(surfaced.message).toMatch(/inconsistent/i);
+    expect(surfaced.message).not.toMatch(/preserved/i);
   });
 });
