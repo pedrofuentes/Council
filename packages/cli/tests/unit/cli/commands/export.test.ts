@@ -40,6 +40,7 @@ const BEL = String.fromCharCode(0x07);
 const C1_CSI = String.fromCharCode(0x9b);
 const BIDI_OVERRIDE = "\u202E";
 const ZERO_WIDTH_SPACE = "\u200B";
+const CR = String.fromCharCode(0x0d);
 const WIN32 = process.platform === "win32";
 
 // Terminal-hostile bytes that must never reach stderr: C0 controls (0x00-0x1f),
@@ -55,6 +56,9 @@ function expectNoTerminalControls(out: string): void {
   expect(out).not.toContain(C1_CSI);
   expect(out).not.toContain(BIDI_OVERRIDE);
   expect(out).not.toContain(ZERO_WIDTH_SPACE);
+  // CR can rewrite the current terminal line (spoofing a confirmation), so a
+  // sanitized single-line message must never carry it either (#1888).
+  expect(out).not.toContain(CR);
 }
 
 async function seedPanelWithDebate(testHome: string): Promise<{ panelName: string }> {
@@ -1283,7 +1287,7 @@ describe("buildExportCommand", () => {
     } catch (err) {
       thrown = err instanceof Error ? err.message : String(err);
     }
-    expect(thrown.toLowerCase()).toMatch(/regular file|directory|not.*file/);
+    expect(thrown.toLowerCase()).toMatch(/not a regular file/);
   });
 
   it("resolveOutputPath rejects a relative --output that escapes the working directory (#173)", async () => {
@@ -1354,7 +1358,9 @@ describe("buildExportCommand", () => {
       await fs.writeFile(secret, "SECRET", "utf-8");
       const link = path.join(testHome, "attacker-link.md");
       await fs.symlink(secret, link);
-      await expect(writeExportArtifact(link, "CLOBBERED", true)).rejects.toThrow();
+      await expect(writeExportArtifact(link, "CLOBBERED", true)).rejects.toThrow(
+        /non-regular-file|symlink|ELOOP/i,
+      );
       // The symlink's target must not have been overwritten.
       expect(await fs.readFile(secret, "utf-8")).toBe("SECRET");
     },
@@ -2201,7 +2207,10 @@ describe("buildExportCommand", () => {
     vi.mocked(fs.open).mockImplementationOnce(async (...args: Parameters<typeof fs.open>) => {
       const handle = await actual.open(...args);
       return {
-        writeFile: (data: string | Uint8Array): Promise<void> => handle.writeFile(data),
+        writeFile: (
+          data: string | Uint8Array,
+          options?: Parameters<fs.FileHandle["writeFile"]>[1],
+        ): Promise<void> => handle.writeFile(data, options),
         close: async (): Promise<void> => {
           await handle.close();
           throw closeErr;
@@ -2413,7 +2422,10 @@ describe("buildExportCommand", () => {
     vi.mocked(fs.open).mockImplementationOnce(async (...args: Parameters<typeof fs.open>) => {
       const handle = await actual.open(...args);
       return {
-        writeFile: (data: string | Uint8Array): Promise<void> => handle.writeFile(data),
+        writeFile: (
+          data: string | Uint8Array,
+          options?: Parameters<fs.FileHandle["writeFile"]>[1],
+        ): Promise<void> => handle.writeFile(data, options),
         close: async (): Promise<void> => {
           await handle.close();
           throw closeErr;
