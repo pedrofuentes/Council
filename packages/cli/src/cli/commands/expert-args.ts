@@ -20,6 +20,8 @@
  */
 import type { Command } from "commander";
 
+import { toSingleLineDisplay } from "../strip-control-chars.js";
+
 /** Raw value Commander produces for the variadic `--experts` option. */
 export type RawExpertsOption = string | readonly string[] | undefined;
 
@@ -62,9 +64,13 @@ export function findStrayOperands(
 
 /** Build the stderr warning shown when stray operands are detected. */
 export function formatStrayExpertsWarning(stray: readonly string[]): string {
-  const joined = stray.join(" ");
+  // Operands come straight from argv, so sanitize each one for single-line
+  // display before interpolating it into the terminal warning — otherwise a
+  // crafted operand could inject extra lines or emit ANSI escapes.
+  const safe = stray.map((operand) => toSingleLineDisplay(operand));
+  const joined = safe.join(" ");
   return (
-    `⚠ Ignoring unexpected argument(s): ${stray.join(", ")}.\n` +
+    `⚠ Ignoring unexpected argument(s): ${safe.join(", ")}.\n` +
     `  If these are expert slugs, pass them with --experts (e.g. --experts ${joined}).\n` +
     `  On PowerShell an unquoted list is split into separate words — quote it: --experts "a,b,c".\n`
   );
