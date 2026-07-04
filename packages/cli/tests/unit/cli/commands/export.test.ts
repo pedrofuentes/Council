@@ -13,11 +13,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildExportCommand,
   resolveOutputPath,
+  shouldRetryWithConfiguredDataHome,
   writeExportArtifact,
 } from "../../../../src/cli/commands/export.js";
 import { CliUserError } from "../../../../src/cli/cli-user-error.js";
 import { EXIT_USER_ERROR } from "../../../../src/cli/exit-codes.js";
 import { handleCliError } from "../../../../src/cli/handle-cli-error.js";
+import { SessionNotFoundError } from "../../../../src/cli/session-resolver.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import { DebateRepository } from "../../../../src/memory/repositories/debates.js";
 import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
@@ -2971,5 +2973,34 @@ describe("buildExportCommand", () => {
     // Should use exact ASCII hyphen separator (issue #737)
     expect(captured).toContain("**CTO** (`cto`) - claude-sonnet-4");
     expect(captured).toContain("**PM** (`pm`) - claude-sonnet-4");
+  });
+});
+
+describe("shouldRetryWithConfiguredDataHome (#848)", () => {
+  // The config-dataHome retry must key off the ERROR TYPE, not the prose of the
+  // not-found message. These tests pin that contract: a `SessionNotFoundError`
+  // (and only that type) with no `COUNCIL_DATA_HOME` override triggers a retry,
+  // while a look-alike message on a plain `CliUserError` never does.
+  it("retries for a SessionNotFoundError when no COUNCIL_DATA_HOME override is set", () => {
+    const err = new SessionNotFoundError("No panel found matching 'x'.");
+    expect(shouldRetryWithConfiguredDataHome(err, undefined)).toBe(true);
+    expect(shouldRetryWithConfiguredDataHome(err, "")).toBe(true);
+  });
+
+  it("does NOT retry for a plain CliUserError that merely shares the message prose", () => {
+    const lookAlike = new CliUserError(
+      "No panel found matching 'x'. Run `council sessions` to list available panels.",
+    );
+    expect(shouldRetryWithConfiguredDataHome(lookAlike, undefined)).toBe(false);
+  });
+
+  it("does NOT retry when COUNCIL_DATA_HOME is explicitly set", () => {
+    const err = new SessionNotFoundError("No panel found matching 'x'.");
+    expect(shouldRetryWithConfiguredDataHome(err, "/explicit/data/home")).toBe(false);
+  });
+
+  it("does NOT retry for unrelated errors", () => {
+    expect(shouldRetryWithConfiguredDataHome(new Error("boom"), undefined)).toBe(false);
+    expect(shouldRetryWithConfiguredDataHome("not-an-error", undefined)).toBe(false);
   });
 });

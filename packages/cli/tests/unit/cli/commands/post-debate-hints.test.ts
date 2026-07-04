@@ -37,6 +37,8 @@ vi.mock("../../../../src/cli/commands/writer.js", async () => {
   };
 });
 
+import { Command } from "commander";
+
 import { buildAskCommand } from "../../../../src/cli/commands/ask.js";
 import { buildConveneCommand } from "../../../../src/cli/commands/convene.js";
 import { setQuiet } from "../../../../src/cli/commands/writer.js";
@@ -250,22 +252,26 @@ describe("post-debate discovery hints", () => {
     expect(captured).not.toContain(ASK_DISCOVERY_HINT);
   });
 
-  it("ask does not print the discovery hint in quiet mode", async () => {
-    setQuiet(true);
-
+  it("ask does not print the discovery hint when the parsed --quiet option is set", async () => {
     const panelName = await seedPanel(testHome);
     let captured = "";
-    const cmd = buildAskCommand({
-      engineFactory: makeMockEngineFactory(),
-      write: (chunk) => {
-        captured += chunk;
-      },
-      writeError: () => undefined,
-    });
+    const program = new Command();
+    program.option("-q, --quiet", "Suppress informational stderr output");
+    program.addCommand(
+      buildAskCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: (chunk) => {
+          captured += chunk;
+        },
+        writeError: () => undefined,
+      }),
+    );
 
-    await cmd.parseAsync([
+    await program.parseAsync([
       "node",
-      "council-ask",
+      "council",
+      "--quiet",
+      "ask",
       panelName,
       "What should we ship next?",
       "--engine",

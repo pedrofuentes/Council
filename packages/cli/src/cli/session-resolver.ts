@@ -16,6 +16,22 @@ import { suggestMatch } from "./fuzzy-match.js";
 import { isNonInteractive as defaultIsNonInteractive } from "./non-interactive.js";
 import { toSingleLineDisplay } from "./strip-control-chars.js";
 
+/**
+ * Thrown by {@link resolveSession} when the requested panel matches no stored
+ * session (no exact name, no unique prefix, and no template-only fallback).
+ *
+ * A subclass of {@link CliUserError} so the top-level handler still exits
+ * cleanly without a stack trace, while callers that need to branch on this
+ * specific outcome — e.g. `export`'s config-dataHome retry (#848) — can key
+ * off the type via `instanceof` instead of matching the prose message.
+ */
+export class SessionNotFoundError extends CliUserError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "SessionNotFoundError";
+  }
+}
+
 export interface SessionMatch {
   readonly name: string;
   readonly topic: string | null;
@@ -95,7 +111,7 @@ export async function resolveSession(options: ResolveSessionOptions): Promise<st
     `No panel found matching '${toSingleLineDisplay(requested)}'.${suggestionText} ` +
     "Run `council sessions` to list available panels.";
   writeError(message + "\n");
-  throw new CliUserError(message);
+  throw new SessionNotFoundError(message);
 }
 
 async function resolveMissingPanelArg(

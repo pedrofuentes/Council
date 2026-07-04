@@ -33,7 +33,7 @@ import { ExpertRepository } from "../../memory/repositories/experts.js";
 import { PanelRepository } from "../../memory/repositories/panels.js";
 import { TurnRepository } from "../../memory/repositories/turns.js";
 
-import { defaultErrorWriter, defaultWriter, isQuiet, type Writer } from "./writer.js";
+import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 import { ENGINE_KINDS, type EngineKind, runWithEngine } from "../run-with-engine.js";
 import { RENDERER_FORMATS, type RendererFormat } from "../renderers/select.js";
 import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
@@ -107,7 +107,14 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
           maxWords?: number;
           promptFile?: string;
         },
+        command: Command,
       ) => {
+        // Resolve quiet from this invocation's PARSED options (its own --quiet
+        // merged with the global) instead of the writer module-global, so
+        // back-to-back commands in one process can't leak quiet state into one
+        // another (#849).
+        const quiet = (command.optsWithGlobals() as { quiet?: boolean }).quiet === true;
+
         // Resolve the question from either the positional <question> or
         // --prompt-file. --prompt-file reads the question VERBATIM (file
         // contents or stdin), bypassing the shell entirely so `$`, backticks,
@@ -167,7 +174,7 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
         // single-expert call. Skipped for --quiet and non-interactive shells
         // (warn-and-proceed). File and stdin input never reach the shell, so
         // they are never gated here.
-        if (questionSource === "arg" && !isQuiet() && detectShellExpansion(question, "arg")) {
+        if (questionSource === "arg" && !quiet && detectShellExpansion(question, "arg")) {
           const confirmQuestion = async (provider: ConfirmProvider): Promise<void> => {
             writeError(`Received question: ${truncatePrompt(toSingleLineDisplay(question))}\n`);
             const proceed = await provider.confirm("Proceed with this question? [y/N] ");
@@ -252,7 +259,7 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
 
           const setupProgress = createProgress({
             stream: { write: writeError, isTTY: process.stderr.isTTY },
-            quiet: isQuiet(),
+            quiet,
           });
           setupProgress.start("Preparing answer");
           let answeredDebateId: string | undefined;
@@ -273,7 +280,7 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
               format,
               write,
               writeError,
-              quiet: isQuiet(),
+              quiet,
               db,
               beforeRender: () => {
                 setupProgress.stop();
@@ -305,7 +312,7 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
             throw new CliUserError(message);
           }
 
-          if (format !== "json" && !isQuiet()) {
+          if (format !== "json" && !quiet) {
             write(
               "Tip: Use `council convene --template <panel>` for a full debate, or `council chat <panel>` for conversation.\n",
             );
