@@ -1593,6 +1593,51 @@ fs.writeFileSync(p, body, 'utf-8');`,
       }
     });
 
+    it("surfaces the large-document chunking warning on stderr for a >100KB doc (#471)", async () => {
+      // #471 delivery: the processor emits a chunking warning through its
+      // best-effort onWarning sink for a >100KB indexed doc, but the train
+      // command previously passed only onProgress, so the warning never
+      // reached the user. ~150 KiB of prose crosses the 100 KiB threshold.
+      await seedExpert(env, PERSONA);
+      await writeDoc("boss", "big-report.md", "word ".repeat(30_000));
+      let captured = "";
+      let errored = "";
+      const cmd = buildExpertCommand(
+        (s) => {
+          captured += s;
+        },
+        (s) => {
+          errored += s;
+        },
+        { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+      );
+      await cmd.parseAsync(["node", "council-expert", "train", "boss"]);
+
+      // The warning reaches the user via stderr, naming the offending file.
+      expect(errored).toMatch(/large document indexed in chunks/i);
+      expect(errored).toContain("big-report.md");
+      // Sanity: the doc was still processed successfully.
+      expect(captured).toContain("big-report.md");
+    });
+
+    it("does not surface a chunking warning for a small doc (#471)", async () => {
+      await seedExpert(env, PERSONA);
+      await writeDoc("boss", "small.md", "a brief note about testing");
+      let errored = "";
+      const cmd = buildExpertCommand(
+        () => {
+          /* noop */
+        },
+        (s) => {
+          errored += s;
+        },
+        { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+      );
+      await cmd.parseAsync(["node", "council-expert", "train", "boss"]);
+
+      expect(errored).not.toMatch(/indexed in chunks/i);
+    });
+
     it("--retrain deletes the existing profile and reprocesses all docs", async () => {
       await seedExpert(env, PERSONA);
       const docPath = await writeDoc("boss", "intro.md", "First training document.");
