@@ -238,6 +238,29 @@ describe("createPanelAuthoringSource — error-handling hardening (#1645)", () =
     expect(env.repo.rows.has("alpha")).toBe(false);
   });
 
+  it("surfaces a close-only failure and rolls back when the write itself succeeded", async () => {
+    const yamlPath = yamlPathFor(env.home, "alpha");
+    const panelDir = panelDirFor(env.home, "alpha");
+    mockState.failClosePath = yamlPath; // writeFile SUCCEEDS, only close() fails
+
+    const err = await sourceFor(env)
+      .create({ name: "alpha", description: null, expertSlugs: ["alice"] })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+
+    // A close() failure after a successful write is a deferred write-back
+    // error (ENOSPC on delayed allocation, EIO, EDQUOT, network FS): it must
+    // NOT be swallowed, or create() reports success over possibly-truncated
+    // YAML that no load-time checksum would catch. It must surface and roll back.
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/EIO|simulated close failure/i);
+    expect(env.repo.rows.has("alpha")).toBe(false);
+    await expect(fs.access(yamlPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.access(panelDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("removes the orphaned panel directory when docs-dir creation fails", async () => {
     const panelDir = panelDirFor(env.home, "alpha");
     mockState.mkdirFailAfterCreatePath = panelDocsDirFor(env.home, "alpha");
