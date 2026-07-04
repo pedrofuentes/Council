@@ -25,6 +25,10 @@
  *     to disguise injected content.
  *   - Strip zero-width characters (U+200B-U+200D, U+FEFF) that can act
  *     as invisible padding or token separators.
+ *
+ * Sibling sanitizer homes:
+ * `packages/cli/src/core/documents/sanitizers/role-markers.ts` and
+ * `packages/cli/src/cli/strip-control-chars.ts`.
  */
 export function sanitizePromptField(raw: string): string {
   const normalized = raw.normalize("NFKC");
@@ -47,6 +51,42 @@ export function sanitizePromptField(raw: string): string {
  */
 export function escapeFenceContent(s: string): string {
   return s.replace(/</g, "&lt;");
+}
+
+function capFinalPromptLength(s: string, maxLength: number): string {
+  if (!Number.isFinite(maxLength)) {
+    return s;
+  }
+
+  if (s.length <= maxLength) {
+    return s;
+  }
+
+  if (maxLength <= 0) {
+    return "";
+  }
+
+  let cut = maxLength - 1;
+  let previousCut = -1;
+
+  while (cut !== previousCut) {
+    previousCut = cut;
+
+    if (cut > 0 && /[\uD800-\uDBFF]/.test(s.charAt(cut - 1))) {
+      cut -= 1;
+    }
+
+    const lastAmpersand = s.lastIndexOf("&", cut - 1);
+    const lastSemicolon = s.lastIndexOf(";", cut - 1);
+    if (lastAmpersand > lastSemicolon) {
+      const nextSemicolon = s.indexOf(";", lastAmpersand);
+      if (nextSemicolon >= cut) {
+        cut = lastAmpersand;
+      }
+    }
+  }
+
+  return `${s.slice(0, cut)}…`;
 }
 
 /**
@@ -86,10 +126,11 @@ export function sanitizePromptBlock(raw: string, maxLength = 4000): string {
 /**
  * Combined helper: {@link sanitizePromptBlock} followed by
  * {@link escapeFenceContent}. Use for multi-line untrusted content that
- * will be interpolated inside an XML-like fence.
+ * will be interpolated inside an XML-like fence. The escaped output is
+ * capped to `maxLength`; a non-finite cap means no final output cap.
  */
 export function sanitizeFenced(raw: string, maxLength = 4000): string {
-  return escapeFenceContent(sanitizePromptBlock(raw, maxLength));
+  return capFinalPromptLength(escapeFenceContent(sanitizePromptBlock(raw, maxLength)), maxLength);
 }
 
 /**
