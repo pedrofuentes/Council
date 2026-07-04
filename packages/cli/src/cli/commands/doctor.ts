@@ -160,21 +160,26 @@ async function checkCouncilDataHome(
   }
   // Probe the data-home root and every runtime write target so a read-only
   // experts/ or panels/ subdirectory surfaces here instead of only failing at
-  // the first real expert/panel save.
+  // the first real expert/panel save. Collect every failure so a single run
+  // reports all broken targets rather than stopping at the first (#1992).
   const writeTargets = [
     dataHome,
     ...DATA_HOME_WRITE_SUBDIRS.map((subdir) => path.join(dataHome, subdir)),
   ];
+  const unwritable: string[] = [];
   for (const target of writeTargets) {
     try {
       await probeDirectoryWritable(target);
     } catch (err: unknown) {
-      return {
-        name: "Council data home",
-        status: "fail",
-        detail: `cannot write under ${target}: ${formatError(err)}`,
-      };
+      unwritable.push(`${target}: ${formatError(err)}`);
     }
+  }
+  if (unwritable.length > 0) {
+    return {
+      name: "Council data home",
+      status: "fail",
+      detail: `cannot write under ${unwritable.join("; ")}`,
+    };
   }
   return { name: "Council data home", status: "pass", detail: dataHome };
 }
