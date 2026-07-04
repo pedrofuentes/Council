@@ -20,7 +20,7 @@ import { fetchLatestVersion, isNewerVersion } from "../../core/version/index.js"
 import { CliUserError } from "../cli-user-error.js";
 import { EXIT_INTERNAL_ERROR, EXIT_NETWORK_ERROR } from "../exit-codes.js";
 import { createSpinner, type Spinner, type SpinnerOptions } from "../renderers/spinner.js";
-import { toSingleLineDisplay } from "../strip-control-chars.js";
+import { stripControlChars } from "../strip-control-chars.js";
 
 import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
@@ -265,13 +265,17 @@ function failUpdate(
  * supply-chain-compromised manager could emit ANSI/OSC/Bidi control bytes that,
  * written verbatim to the terminal, clear the screen, forge a "success" line,
  * set the title/clipboard, or visually reorder text (Trojan Source). Both
- * stdout and stderr are therefore sanitized and collapsed onto a single line
- * via {@link toSingleLineDisplay} before selection, so every error branch
- * surfaces only inert, single-line text. The fallback is a trusted constant.
+ * stdout and stderr are therefore sanitized via {@link stripControlChars}
+ * before selection, so every error branch surfaces only inert text while
+ * preserving multi-line package-manager diagnostics. The fallback is a trusted
+ * constant.
  */
 function outputDetail(stdout: string, stderr: string, fallback: string): string {
-  const safeStderr = toSingleLineDisplay(stderr).trim();
-  const safeStdout = toSingleLineDisplay(stdout).trim();
+  const safeStderr = stripControlChars(stderr).trim();
+  const safeStdout = stripControlChars(stdout).trim();
+  if (safeStderr.length > 0 && safeStdout.length > 0) {
+    return `${safeStderr}\n${safeStdout}`;
+  }
   return safeStderr || safeStdout || fallback;
 }
 
