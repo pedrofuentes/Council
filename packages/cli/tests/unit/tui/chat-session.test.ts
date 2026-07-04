@@ -4,7 +4,11 @@ import { randomUUID } from "node:crypto";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createChatSessionSource } from "../../../src/tui/adapters/chat-session.js";
+import {
+  type ChatSessionDeps,
+  createChatSessionSource,
+} from "../../../src/tui/adapters/chat-session.js";
+import type { ChatSession, ChatTargetType, ChatTurn } from "../../../src/core/chat/chat-session.js";
 import { type CouncilDatabase, createDatabase } from "../../../src/memory/db.js";
 import { ChatRepository } from "../../../src/memory/repositories/chat-repository.js";
 import { copyTemplateDb } from "../../helpers/template-db.js";
@@ -151,5 +155,85 @@ describe("createChatSessionSource", () => {
         isMention: false,
       },
     ]);
+  });
+});
+
+describe("createChatSessionSource ensureSession conflict recovery", () => {
+  function makeSession(id: string, targetType: ChatTargetType, targetSlug: string): ChatSession {
+    return {
+      id,
+      targetType,
+      targetSlug,
+      status: "active",
+      summary: null,
+      summaryThroughSeq: 0,
+      createdAt: "2024-01-01T00:00:00.000Z",
+      updatedAt: "2024-01-01T00:00:00.000Z",
+    };
+  }
+
+  it("recovers from a uniqueness conflict on create by re-querying the existing session", async () => {
+    const existing = makeSession("EXISTINGSESSIONID0000000000", "expert", "cto");
+    let findCalls = 0;
+    let createCalls = 0;
+    const chat: ChatSessionDeps["chat"] = {
+      async findActiveSession(): Promise<ChatSession | undefined> {
+        findCalls += 1;
+        // First lookup observes no active session (as a racing caller would);
+        // after a concurrent create wins, the session is present.
+        return findCalls === 1 ? undefined : existing;
+      },
+      async createSession(): Promise<ChatSession> {
+        createCalls += 1;
+        // The concurrent winner already landed the active session, so this
+        // insert trips the partial unique index idx_chat_sessions_active_unique.
+        throw new Error(
+          "SQLITE_CONSTRAINT: UNIQUE constraint failed: chat_sessions.target_type, chat_sessions.target_slug",
+        );
+      },
+      async getTurns(): Promise<readonly ChatTurn[]> {
+        return [];
+      },
+      async persistTurnPair(): Promise<readonly [ChatTurn, ChatTurn]> {
+        throw new Error("persistTurnPair is not exercised by this test");
+      },
+    };
+    const source = createChatSessionSource({ chat });
+
+    const result = await source.ensureSession("expert", "cto");
+
+    // The create conflict must not surface: ensureSession re-queries and
+    // returns the session the concurrent caller created.
+    expect(result).toEqual({ id: "EXISTINGSESSIONID0000000000" });
+    expect(createCalls).toBe(1);
+    expect(findCalls).toBe(2);
+  });
+
+  it("re-throws non-constraint errors from create without re-querying", async () => {
+    let findCalls = 0;
+    let createCalls = 0;
+    const chat: ChatSessionDeps["chat"] = {
+      async findActiveSession(): Promise<ChatSession | undefined> {
+        findCalls += 1;
+        return undefined;
+      },
+      async createSession(): Promise<ChatSession> {
+        createCalls += 1;
+        throw new Error("disk is full");
+      },
+      async getTurns(): Promise<readonly ChatTurn[]> {
+        return [];
+      },
+      async persistTurnPair(): Promise<readonly [ChatTurn, ChatTurn]> {
+        throw new Error("persistTurnPair is not exercised by this test");
+      },
+    };
+    const source = createChatSessionSource({ chat });
+
+    // A genuine, non-uniqueness failure must not be swallowed by the recovery
+    // path, and must not trigger a second lookup.
+    await expect(source.ensureSession("expert", "cto")).rejects.toThrow("disk is full");
+    expect(createCalls).toBe(1);
+    expect(findCalls).toBe(1);
   });
 });
