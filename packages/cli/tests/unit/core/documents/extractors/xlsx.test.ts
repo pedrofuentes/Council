@@ -801,6 +801,31 @@ describe("xlsx extractor - line-separator sanitization (#1295, #1210)", () => {
     expect(out.content).toContain("| a b c d e |");
     expect(out.content).not.toMatch(/[\r\u0085\u2028\u2029]/);
   });
+
+  it("collapses VT (U+000B) and FF (U+000C) in sheet names", async () => {
+    // Vertical tab and form feed are Unicode mandatory line breaks that the
+    // canonical display sanitizer neutralizes via its C0 control range. An
+    // attacker-controlled sheet name carrying them must be flattened too,
+    // not surfaced verbatim into a `## ` heading and metadata.sheetNames.
+    vi.resetModules();
+    mockReader([{ name: "A\u000BB\u000CC", rows: [["x"]] }]);
+    const extractor = await loadReaderMockedExtractor();
+    const out = await extractor(ctx(tinyValidXlsxZip()));
+    expect(out.metadata?.sheetNames).toEqual(["A B C"]);
+    expect(out.content).toContain("## A B C");
+    expect(out.content).not.toMatch(/[\v\f]/);
+  });
+
+  it("collapses VT (U+000B) and FF (U+000C) in cell values", async () => {
+    // The same vertical-whitespace break characters must not survive in a
+    // cell value where they could fracture the surrounding Markdown row.
+    vi.resetModules();
+    mockReader([{ name: "S", rows: [["col"], ["a\u000Bb\u000Cc"]] }]);
+    const extractor = await loadReaderMockedExtractor();
+    const out = await extractor(ctx(tinyValidXlsxZip()));
+    expect(out.content).toContain("| a b c |");
+    expect(out.content).not.toMatch(/[\v\f]/);
+  });
 });
 
 describe("xlsx extractor - missing worksheet entry (#1283)", () => {
