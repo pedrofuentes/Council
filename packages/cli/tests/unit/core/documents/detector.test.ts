@@ -718,4 +718,50 @@ describe("detectDocumentChanges", () => {
       expect(result.unknownStateFiles).not.toContain(brokenAbs);
     });
   });
+
+  // #1783: `_lstatOverride` is a test-only seam (per-file stat injection for
+  // the #342 resilience tests). Like `_realpathOverride` (#649) it must take
+  // effect ONLY under test (NODE_ENV === "test"); in production it must be
+  // ignored so the real fs.lstat runs and a caller cannot inject stat
+  // behaviour into the scan loop.
+  describe("_lstatOverride test-only gating (#1783)", () => {
+    const originalEnv = process.env.NODE_ENV;
+    afterEach(() => {
+      process.env.NODE_ENV = originalEnv;
+    });
+
+    it("honors _lstatOverride when NODE_ENV='test'", async () => {
+      process.env.NODE_ENV = "test";
+      await fs.writeFile(path.join(dir, "a.md"), "alpha");
+      await fs.writeFile(path.join(dir, "broken.md"), "broken");
+      const brokenAbs = path.resolve(dir, "broken.md");
+      const realLstat = fs.lstat;
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        _lstatOverride: async (p: string) => {
+          if (path.resolve(p) === brokenAbs) throw new Error("seam error");
+          return realLstat(p);
+        },
+      });
+      expect(result.newFiles.map((f) => f.filename).sort()).toEqual(["a.md"]);
+      expect(result.unknownStateFiles).toContain(brokenAbs);
+    });
+
+    it("ignores _lstatOverride in production (real fs.lstat used)", async () => {
+      process.env.NODE_ENV = "production";
+      await fs.writeFile(path.join(dir, "a.md"), "alpha");
+      await fs.writeFile(path.join(dir, "broken.md"), "broken");
+      const brokenAbs = path.resolve(dir, "broken.md");
+      const realLstat = fs.lstat;
+      // Honored, the override throws for broken.md → unknownState; gated off,
+      // real lstat stats both files → both indexed as new.
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        _lstatOverride: async (p: string) => {
+          if (path.resolve(p) === brokenAbs) throw new Error("seam error");
+          return realLstat(p);
+        },
+      });
+      expect(result.newFiles.map((f) => f.filename).sort()).toEqual(["a.md", "broken.md"]);
+      expect(result.unknownStateFiles).not.toContain(brokenAbs);
+    });
+  });
 });
