@@ -436,7 +436,7 @@ council chat <persona-slug>                         # auto-processes ~/Council/e
 # the FTS5 corpus under source_type='panel', and prunes any tracked
 # documents that have disappeared from disk. The indexed panel corpus is
 # retrieved for panel chat turns, inline @convene deliberations, and saved-panel
-# `council convene --template <name>` debates; run `panel docs list --refresh`
+# `council convene --template <name>` debates; run `council panel docs list <name> --refresh`
 # first when you need to force a rescan before convene.
 council panel docs <name>                                  # list indexed docs (DB read — no scan)
 council panel docs list <name> --refresh                   # re-scan managed + linked folders, then list
@@ -464,8 +464,9 @@ same way:
 
 Commander 15 makes excess positional arguments a hard error for most commands:
 `too many arguments. Expected N arguments but got ...`. If you meant to pass
-expert slugs to `convene`, use `--experts cto,cfo` or quote a space-separated
-list (`--experts "cto cfo"`). `council convene` and `council panel create` are
+expert slugs to `convene`, use unquoted space-separated slugs (`--experts cto cfo`),
+a quoted comma-separated list (`--experts "cto,cfo"`), or repeated flags
+(`--experts cto --experts cfo`). `council convene` and `council panel create` are
 the exceptions: they accept stray operands only to warn about the likely
 missing `--experts` flag.
 

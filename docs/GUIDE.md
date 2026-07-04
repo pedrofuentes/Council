@@ -509,7 +509,7 @@ folder, and drops you into an interactive REPL:
 
 ```
 Starting panel chat with strategy-review (3 experts) — use @<slug> to address specific experts
-ℹ Experts: @strategist, @devils-advocate, @customer-research — use @<slug> to address a specific expert.
+ℹ Experts: @strategist, @devils-advocate, @customer-researcher — use @<slug> to address a specific expert.
 ℹ Type /exit or /quit to save and end the conversation. Use @<slug> to address a specific expert, or @convene <topic> to run a structured debate inline.
 
 You> What should our Q4 priorities be given the competitive landscape?
@@ -1473,11 +1473,11 @@ Aliases: `experts`, `panels`, and `history` are aliases for `expert`, `panel`, a
 | `--heuristic-summaries` | Local summarizer for offline use                                             | `false`             |
 | `--heuristic-memory`    | Skip post-debate LLM extraction                                              | `false`             |
 
-`--experts` accepts a comma-separated list (`--experts cto,cfo`) or a
-space-separated list when quoted by your shell (`--experts "cto cfo"`), and you
-can repeat the flag. Extra bare operands are only tolerated by `council convene`
-and `council panel create` so Council can warn about likely missing `--experts`;
-other commands fail loudly with `too many arguments`.
+`--experts` accepts unquoted space-separated slugs (`--experts cto cfo`), a
+quoted comma-separated list (`--experts "cto,cfo"`), or repeated flags
+(`--experts cto --experts cfo`). Extra bare operands are only tolerated by
+`council convene` and `council panel create` so Council can warn about likely
+missing `--experts`; other commands fail loudly with `too many arguments`.
 
 ### `council chat` options
 
@@ -1563,8 +1563,9 @@ spelling of the command or subcommand.
 
 **"too many arguments"**
 Most commands reject extra positional arguments. If you intended to pass expert
-slugs to `convene`, use `--experts cto,cfo` or quote a space-separated list:
-`--experts "cto cfo"`.
+slugs to `convene`, use unquoted space-separated slugs (`--experts cto cfo`), a
+quoted comma-separated list (`--experts "cto,cfo"`), or repeated flags
+(`--experts cto --experts cfo`).
 
 **Debate produces generic responses**
 
