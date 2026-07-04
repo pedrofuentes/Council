@@ -87,9 +87,10 @@ export interface DetectDocumentChangesOptions {
   readonly _realpathOverride?: (p: string) => Promise<string>;
   /**
    * Test seam — replace `fs.lstat` for the duration of a single call.
-   * Production callers leave this undefined. Used by the per-file
-   * resilience tests (#342) to simulate a single file's stat failing
-   * mid-scan without modifying the actual filesystem.
+   * Honored ONLY when NODE_ENV === "test" (#1783); ignored in production so
+   * a caller cannot inject per-file stat behaviour into the scan loop. Used
+   * by the per-file resilience tests (#342) to simulate a single file's stat
+   * failing mid-scan without modifying the actual filesystem.
    */
   readonly _lstatOverride?: (p: string) => Promise<Stats>;
   /**
@@ -97,8 +98,10 @@ export interface DetectDocumentChangesOptions {
    * verification (pre-readdir + post-readdir) only. Distinct from
    * `_lstatOverride` (which targets per-file stats inside the loop)
    * so tests can simulate a directory swap during the scan window
-   * without disturbing per-file stat behaviour. Production callers
-   * leave this undefined.
+   * without disturbing per-file stat behaviour. Honored ONLY when
+   * NODE_ENV === "test" (#1783); ignored in production so a caller cannot
+   * inject root-identity validation behaviour. Production callers leave
+   * this undefined.
    */
   readonly _rootLstatOverride?: (p: string) => Promise<Stats>;
   /**
@@ -107,8 +110,10 @@ export interface DetectDocumentChangesOptions {
    * path (e.g. throwing `EISDIR`/`EACCES`), (b) an unexpected open
    * failure that MUST be rethrown rather than silently downgraded,
    * and (c) a `FileHandle` whose `.stat()` rejects after a successful
-   * open (verifies the handle is still closed). Production callers
-   * leave this undefined.
+   * open (verifies the handle is still closed). Honored ONLY when
+   * NODE_ENV === "test" (#1783); ignored in production so a caller cannot
+   * inject directory-open behaviour. Production callers leave this
+   * undefined.
    */
   readonly _rootOpenOverride?: (p: string) => Promise<fs.FileHandle>;
   /**
@@ -188,7 +193,8 @@ export async function detectDocumentChanges(
   options: DetectDocumentChangesOptions = {},
 ): Promise<DetectionResult> {
   const supported = new Set(supportedFormats.map(normalizeExt));
-  const rootLstat = options._rootLstatOverride ?? fs.lstat;
+  const rootLstat =
+    (process.env.NODE_ENV === "test" ? options._rootLstatOverride : undefined) ?? fs.lstat;
 
   // ── Issue #374: fd-anchored root validation against scan-window TOCTOU.
   // Capture the docs root's identity (dev/ino) BEFORE readdir so we can
@@ -223,7 +229,8 @@ export async function detectDocumentChanges(
     // failure is a verification failure, not a directory-open failure;
     // funneling it through the open allowlist would silently downgrade
     // legitimate verification errors (Sentinel cycle 2 finding).
-    const open = options._rootOpenOverride ?? fs.open;
+    const open =
+      (process.env.NODE_ENV === "test" ? options._rootOpenOverride : undefined) ?? fs.open;
     try {
       rootHandle = await open(docsPath);
     } catch (err: unknown) {
@@ -334,7 +341,8 @@ export async function detectDocumentChanges(
   }
   if (rootHandle !== null) await rootHandle.close().catch(() => { /* best-effort close */ });
 
-  const lstat = options._lstatOverride ?? fs.lstat;
+  const lstat =
+    (process.env.NODE_ENV === "test" ? options._lstatOverride : undefined) ?? fs.lstat;
 
   const newFiles: DocumentFile[] = [];
   const modifiedFiles: DocumentFile[] = [];

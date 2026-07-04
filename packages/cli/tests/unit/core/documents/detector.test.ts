@@ -718,4 +718,154 @@ describe("detectDocumentChanges", () => {
       expect(result.unknownStateFiles).not.toContain(brokenAbs);
     });
   });
+
+  // #1783: `_lstatOverride` is a test-only seam (per-file stat injection for
+  // the #342 resilience tests). Like `_realpathOverride` (#649) it must take
+  // effect ONLY under test (NODE_ENV === "test"); in production it must be
+  // ignored so the real fs.lstat runs and a caller cannot inject stat
+  // behaviour into the scan loop.
+  describe("_lstatOverride test-only gating (#1783)", () => {
+    const originalEnv = process.env.NODE_ENV;
+    afterEach(() => {
+      process.env.NODE_ENV = originalEnv;
+    });
+
+    it("honors _lstatOverride when NODE_ENV='test'", async () => {
+      process.env.NODE_ENV = "test";
+      await fs.writeFile(path.join(dir, "a.md"), "alpha");
+      await fs.writeFile(path.join(dir, "broken.md"), "broken");
+      const brokenAbs = path.resolve(dir, "broken.md");
+      const realLstat = fs.lstat;
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        _lstatOverride: async (p: string) => {
+          if (path.resolve(p) === brokenAbs) throw new Error("seam error");
+          return realLstat(p);
+        },
+      });
+      expect(result.newFiles.map((f) => f.filename).sort()).toEqual(["a.md"]);
+      expect(result.unknownStateFiles).toContain(brokenAbs);
+    });
+
+    it("ignores _lstatOverride in production (real fs.lstat used)", async () => {
+      process.env.NODE_ENV = "production";
+      await fs.writeFile(path.join(dir, "a.md"), "alpha");
+      await fs.writeFile(path.join(dir, "broken.md"), "broken");
+      const brokenAbs = path.resolve(dir, "broken.md");
+      const realLstat = fs.lstat;
+      // Honored, the override throws for broken.md → unknownState; gated off,
+      // real lstat stats both files → both indexed as new.
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        _lstatOverride: async (p: string) => {
+          if (path.resolve(p) === brokenAbs) throw new Error("seam error");
+          return realLstat(p);
+        },
+      });
+      expect(result.newFiles.map((f) => f.filename).sort()).toEqual(["a.md", "broken.md"]);
+      expect(result.unknownStateFiles).not.toContain(brokenAbs);
+    });
+  });
+
+  // #1783 (finding class): the root-identity test seams `_rootLstatOverride`
+  // (#374, pre/post-readdir root lstat) and `_rootOpenOverride` (#374,
+  // directory-fd anchor) are the same class of test-only override as
+  // `_lstatOverride`/`_realpathOverride` and must likewise be honored ONLY
+  // when NODE_ENV === "test"; in production they must be ignored so the real
+  // fs.lstat/fs.open run and a caller cannot inject root-validation behaviour.
+  describe("root-identity seam test-only gating (#1783)", () => {
+    const originalEnv = process.env.NODE_ENV;
+    afterEach(() => {
+      process.env.NODE_ENV = originalEnv;
+    });
+
+    function swapOnSecondCall(realStat: Awaited<ReturnType<typeof fs.lstat>>): {
+      override: (p: string) => Promise<Awaited<ReturnType<typeof fs.lstat>>>;
+      callCount: () => number;
+    } {
+      // See existing #374 swap tests: a sentinel inode guaranteed to differ
+      // from the real one (realStat.ino + 1 can round back on Windows NTFS).
+      const swappedIno = realStat.ino === 1 ? 2 : 1;
+      let calls = 0;
+      const override = async (_p: string): Promise<Awaited<ReturnType<typeof fs.lstat>>> => {
+        calls += 1;
+        if (calls === 1) return realStat;
+        return {
+          ...realStat,
+          ino: swappedIno,
+          dev: realStat.dev,
+          isFile: () => realStat.isFile(),
+          isDirectory: () => realStat.isDirectory(),
+          isSymbolicLink: () => false,
+        } as unknown as Awaited<ReturnType<typeof fs.lstat>>;
+      };
+      return { override, callCount: () => calls };
+    }
+
+    it("honors _rootLstatOverride when NODE_ENV='test'", async () => {
+      process.env.NODE_ENV = "test";
+      await fs.writeFile(path.join(dir, "a.md"), "hi");
+      const realStat = await fs.lstat(dir);
+      const { override } = swapOnSecondCall(realStat);
+      await expect(
+        detectDocumentChanges(dir, new Map(), [".md"], {
+          confinementRoot: dir,
+          _rootIsCanonical: true,
+          _rootLstatOverride: override,
+        }),
+      ).rejects.toThrow(/identity changed|root.*swap|TOCTOU/i);
+    });
+
+    it("ignores _rootLstatOverride in production (real fs.lstat used)", async () => {
+      process.env.NODE_ENV = "production";
+      await fs.writeFile(path.join(dir, "a.md"), "hi");
+      const realStat = await fs.lstat(dir);
+      const { override, callCount } = swapOnSecondCall(realStat);
+      // Honored, the post-readdir inode flip would abort the scan with an
+      // identity error; gated off, the real fs.lstat sees a stable root and
+      // the scan completes without ever invoking the seam.
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        confinementRoot: dir,
+        _rootIsCanonical: true,
+        _rootLstatOverride: override,
+      });
+      expect(result.newFiles.map((f) => f.filename)).toEqual(["a.md"]);
+      expect(callCount()).toBe(0);
+    });
+
+    it("honors _rootOpenOverride when NODE_ENV='test'", async () => {
+      process.env.NODE_ENV = "test";
+      await fs.writeFile(path.join(dir, "a.md"), "hi");
+      await expect(
+        detectDocumentChanges(dir, new Map(), [".md"], {
+          confinementRoot: dir,
+          _rootIsCanonical: true,
+          _rootOpenOverride: async () => {
+            const err: NodeJS.ErrnoException = new Error("EMFILE: too many open files");
+            err.code = "EMFILE";
+            throw err;
+          },
+        }),
+      ).rejects.toThrow(/EMFILE/);
+    });
+
+    it("ignores _rootOpenOverride in production (real fs.open used)", async () => {
+      process.env.NODE_ENV = "production";
+      await fs.writeFile(path.join(dir, "a.md"), "hi");
+      let called = false;
+      // Honored, this EMFILE would be rethrown and abort the scan; gated off,
+      // the real fs.open runs (or degrades gracefully) and the scan completes
+      // without ever invoking the seam.
+      const result = await detectDocumentChanges(dir, new Map(), [".md"], {
+        confinementRoot: dir,
+        _rootIsCanonical: true,
+        _rootOpenOverride: async () => {
+          called = true;
+          const err: NodeJS.ErrnoException = new Error("EMFILE: too many open files");
+          err.code = "EMFILE";
+          throw err;
+        },
+      });
+      expect(result.newFiles.map((f) => f.filename)).toEqual(["a.md"]);
+      expect(called).toBe(false);
+    });
+  });
 });

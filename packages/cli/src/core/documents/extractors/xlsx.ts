@@ -57,11 +57,15 @@ function countWords(text: string): number {
   return text.split(/\s+/).filter((t) => t.length > 0).length;
 }
 
-// DoS guards. `.xlsx` is a ZIP container; we run a yauzl-based
-// preflight over the central directory before parsing so we can reject
-// decompression-bomb archives (huge entry counts, pathological
-// compression ratios, or oversized uncompressed totals) up front. After
-// the preflight succeeds we still cap CPU/heap totals observed during
+// DoS guards. `.xlsx` is a ZIP container; we run a yauzl-based preflight
+// before parsing so we can reject decompression-bomb archives (huge
+// entry counts, pathological compression ratios, or oversized
+// decompressed totals) up front. The total-size guard counts the REAL
+// inflated bytes streamed off each entry rather than trusting the
+// central-directory-declared uncompressedSize, which is
+// attacker-controllable — an under-declared entry would otherwise slip
+// past a guard that merely summed the declared sizes. After the
+// preflight succeeds we still cap CPU/heap totals observed during
 // traversal — the reader can synthesize cells from SharedStrings /
 // styles / formulas in ways that aren't visible from the ZIP central
 // directory alone, so the post-load caps remain a necessary second line
@@ -77,7 +81,15 @@ const OVERSIZE_SUGGESTION = "Reduce the number of sheets/rows or split into smal
 
 function openZipBuffer(buffer: Buffer): Promise<yauzl.ZipFile> {
   return new Promise((resolve, reject) => {
-    yauzl.fromBuffer(buffer, { lazyEntries: true }, (err, zipFile) => {
+    // `validateEntrySizes: false` disables yauzl's built-in assertion that a
+    // decompressed entry matches its central-directory-declared
+    // uncompressedSize. That declared size is attacker-controllable, so the
+    // preflight must not depend on it: it counts the real inflated bytes off
+    // each read stream (see `preflightZip`) and enforces the cap against that
+    // actual total. Leaving the assertion on would abort an under-declared
+    // bomb with a generic size-mismatch error before the stream counter
+    // could classify it as a decompression bomb.
+    yauzl.fromBuffer(buffer, { lazyEntries: true, validateEntrySizes: false }, (err, zipFile) => {
       if (err !== null && err !== undefined) {
         reject(err);
         return;
@@ -124,11 +136,33 @@ async function preflightZip(buffer: Buffer, filename: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     let entryCount = 0;
     let totalUncompressed = 0;
+    let settled = false;
+
+    const fail = (error: ExtractionError): void => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+
+    const succeed = (): void => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+
+    const readError = (err: Error): ExtractionError =>
+      new ExtractionError({
+        kind: "corrupt-document",
+        filePath: filename,
+        message: `Failed to read XLSX archive entries: ${filename}`,
+        suggestion: "The file may be corrupted — try re-saving from Excel as .xlsx.",
+        cause: err,
+      });
 
     zipFile.on("entry", (entry: yauzl.Entry) => {
       entryCount++;
       if (entryCount > MAX_ENTRIES) {
-        reject(
+        fail(
           new ExtractionError({
             kind: "zip-bomb-detected",
             filePath: filename,
@@ -139,22 +173,14 @@ async function preflightZip(buffer: Buffer, filename: string): Promise<void> {
         return;
       }
 
-      totalUncompressed += entry.uncompressedSize;
-      if (totalUncompressed > MAX_UNCOMPRESSED_BYTES) {
-        reject(
-          new ExtractionError({
-            kind: "zip-bomb-detected",
-            filePath: filename,
-            message: `XLSX archive uncompressed total exceeds ${String(MAX_UNCOMPRESSED_BYTES)} bytes`,
-            suggestion: "File has suspicious compression characteristics.",
-          }),
-        );
-        return;
-      }
-
+      // Cheap central-directory ratio early-out. The declared sizes are
+      // attacker-controllable, so this can only reject an honestly-declared
+      // high-ratio entry before we bother inflating it — it is never the
+      // authoritative guard. A bomb that under-declares to slip past this is
+      // still caught by the stream-counted total below.
       if (entry.compressedSize > 0 && entry.uncompressedSize / entry.compressedSize > MAX_RATIO) {
         const ratio = (entry.uncompressedSize / entry.compressedSize).toFixed(0);
-        reject(
+        fail(
           new ExtractionError({
             kind: "zip-bomb-detected",
             filePath: filename,
@@ -165,23 +191,62 @@ async function preflightZip(buffer: Buffer, filename: string): Promise<void> {
         return;
       }
 
-      zipFile.readEntry();
+      // Directory entries carry no file data; they are already counted
+      // toward MAX_ENTRIES above, so just advance without opening a stream.
+      if (entry.fileName.endsWith("/")) {
+        zipFile.readEntry();
+        return;
+      }
+
+      // Inflate the entry and count the REAL decompressed bytes. yauzl was
+      // opened with `validateEntrySizes: false`, so the stream reflects the
+      // actual output rather than the central-directory-declared size.
+      zipFile.openReadStream(entry, (streamErr, stream) => {
+        if (settled) return;
+        if (streamErr !== null && streamErr !== undefined) {
+          fail(readError(streamErr));
+          return;
+        }
+        if (stream === undefined) {
+          fail(readError(new Error("yauzl returned no read stream")));
+          return;
+        }
+
+        stream.on("data", (chunk: Buffer) => {
+          totalUncompressed += chunk.length;
+          if (totalUncompressed > MAX_UNCOMPRESSED_BYTES) {
+            // Stop inflating immediately. Entry bytes are never buffered
+            // (only counted), so aborting here caps peak memory well below
+            // the decompressed total a bomb would otherwise reach.
+            stream.destroy();
+            fail(
+              new ExtractionError({
+                kind: "zip-bomb-detected",
+                filePath: filename,
+                message: `XLSX archive uncompressed total exceeds ${String(MAX_UNCOMPRESSED_BYTES)} bytes`,
+                suggestion: "File has suspicious compression characteristics.",
+              }),
+            );
+          }
+        });
+
+        stream.on("end", () => {
+          if (settled) return;
+          zipFile.readEntry();
+        });
+
+        stream.on("error", (err: Error) => {
+          fail(readError(err));
+        });
+      });
     });
 
     zipFile.on("end", () => {
-      resolve();
+      succeed();
     });
 
     zipFile.on("error", (err: Error) => {
-      reject(
-        new ExtractionError({
-          kind: "corrupt-document",
-          filePath: filename,
-          message: `Failed to read XLSX archive entries: ${filename}`,
-          suggestion: "The file may be corrupted — try re-saving from Excel as .xlsx.",
-          cause: err,
-        }),
-      );
+      fail(readError(err));
     });
 
     zipFile.readEntry();
