@@ -7,6 +7,7 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { loadConfig as realLoadConfig } from "../../../../src/config/index.js";
 import { buildDoctorCommand, checkNodeVersion } from "../../../../src/cli/commands/doctor.js";
 import type { Writer } from "../../../../src/cli/commands/writer.js";
 
@@ -26,6 +27,7 @@ interface DoctorDepsLike {
   }>;
   readonly createSpinner?: () => SpinnerLike;
   readonly resolveCliPath?: () => string | undefined;
+  readonly loadConfig?: () => Promise<unknown>;
 }
 
 const buildDoctorCommandWithDeps = buildDoctorCommand as unknown as (
@@ -645,6 +647,17 @@ describe("buildDoctorCommand", () => {
     const output = await runDoctor([]);
 
     expect(output).toContain("Could not load configuration");
+  });
+
+  it("doctor loads configuration once per invocation (#788)", async () => {
+    const loadConfig = vi.fn(realLoadConfig);
+    const onlineProbe = vi.fn(async () => ({ ok: true, detail: "ok" }));
+
+    await runDoctor([], { onlineProbe, loadConfig });
+
+    // Data-home resolution, the online model-access check, and the Config
+    // summary must share a single config read rather than re-loading it each.
+    expect(loadConfig).toHaveBeenCalledTimes(1);
   });
 
   it("doctor drives the injected spinner around each check", async () => {
