@@ -443,6 +443,24 @@ describe("buildDoctorCommand", () => {
     expect(output).not.toContain("cannot write under");
   });
 
+  it("doctor sanitizes control characters in check details before terminal render", async () => {
+    delete process.env["COUNCIL_HOME"];
+    const rawDataHome = path.join(testHome, "data\r\n\u001b[31mhome\u202emsg");
+    process.env["COUNCIL_DATA_HOME"] = rawDataHome;
+
+    const output = await runDoctor(["--offline"]);
+    const lines = output.split("\n");
+    const dataHomeHeadingIndex = lines.findIndex((line) => line.includes("Council data home"));
+    const detailLine = lines[dataHomeHeadingIndex + 1] ?? "";
+
+    expect(dataHomeHeadingIndex).toBeGreaterThanOrEqual(0);
+    expect(detailLine).toContain("data homemsg");
+    expect(lines[dataHomeHeadingIndex + 2]).toContain("SQLite (node:sqlite)");
+    for (const forbidden of ["\r", "\u001b", "\u202e"]) {
+      expect(detailLine).not.toContain(forbidden);
+    }
+  });
+
   it("doctor collapses control characters in Terminal env values onto one line (#1483)", async () => {
     const customDataHome = path.join(testHome, "term-data-home");
     process.env["COUNCIL_DATA_HOME"] = customDataHome;
