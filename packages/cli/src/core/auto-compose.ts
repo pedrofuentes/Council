@@ -40,6 +40,13 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_RETRY_BACKOFF_MS: readonly number[] = [250, 1000];
 const COMPOSER_RETRY_INSTRUCTION =
   "You MUST respond with ONLY a JSON object. No explanation, no preamble.";
+/**
+ * Max characters of the cleaned composer response included in the "did not
+ * return a JSON object" diagnostic (#227). Wide enough that the parse-failure
+ * region is not cut off, yet bounded so an adversarial multi-KB response cannot
+ * flood the terminal.
+ */
+const PARSE_ERROR_PREVIEW_LENGTH = 1000;
 
 export interface AutoComposeOptions {
   readonly minExperts?: number;
@@ -404,7 +411,7 @@ function parseComposerResponse(raw: string): ComposerResponseParseResult {
   if (extracted === undefined) {
     return {
       kind: "no-json",
-      preview: sanitizeModelForDisplay(cleaned.slice(0, 200)),
+      preview: sanitizeModelForDisplay(cleaned.slice(0, PARSE_ERROR_PREVIEW_LENGTH)),
     };
   }
 
@@ -415,7 +422,7 @@ function parseComposerResponse(raw: string): ComposerResponseParseResult {
 
   return {
     kind: "no-json",
-    preview: sanitizeModelForDisplay(cleaned.slice(0, 200)),
+    preview: sanitizeModelForDisplay(cleaned.slice(0, PARSE_ERROR_PREVIEW_LENGTH)),
   };
 }
 
@@ -506,7 +513,7 @@ function createEmptyComposerResponseError(): Error {
 
 function createMissingJsonObjectError(preview: string): Error {
   return new Error(
-    `Auto-compose failed: composer did not return a JSON object. First 200 chars: ${preview}`,
+    `Auto-compose failed: composer did not return a JSON object. First ${PARSE_ERROR_PREVIEW_LENGTH} chars: ${preview}`,
   );
 }
 
