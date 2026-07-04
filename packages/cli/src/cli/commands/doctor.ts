@@ -437,8 +437,11 @@ async function buildModelAccessFailureDetail(
       "   \n" +
       `   Fix: council config set defaults.model ${alternatives[0]}`
     );
-  } catch {
-    return failureDetail;
+  } catch (err: unknown) {
+    // Remediation-time discovery failed. Surface a brief note so the degraded
+    // path is diagnosable (#751) instead of silently hiding the secondary
+    // failure behind the base access error.
+    return `${failureDetail}\n   (could not list alternative models: ${formatError(err)})`;
   }
 }
 
