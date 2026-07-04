@@ -4,6 +4,7 @@
 import { Command } from "commander";
 
 import { discoverAvailableModels, type ModelDiscoveryResult } from "../../engine/copilot/health.js";
+import { CliUserError } from "../cli-user-error.js";
 import {
   annotateLiveOnlyModel,
   hasLiveOnlyModels,
@@ -11,7 +12,7 @@ import {
 } from "../model-annotations.js";
 import { toSingleLineDisplay } from "../strip-control-chars.js";
 
-import { defaultWriter, type Writer } from "./writer.js";
+import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
 const MODEL_GROUPS = [
   { label: "Anthropic", prefix: "claude-" },
@@ -24,6 +25,7 @@ const OTHER_GROUP_LABEL = "Other";
 
 export interface ModelsDeps {
   readonly write?: Writer;
+  readonly writeError?: Writer;
   readonly discoverModels?: () => Promise<ModelDiscoveryResult>;
 }
 
@@ -37,7 +39,7 @@ function isValidModelId(id: string): boolean {
 
 /**
  * Format the list of available models grouped by provider.
- * Exported for reuse by `doctor --models` and direct testing.
+ * Used by `buildModelsCommand`, `doctor --models`, and unit tests.
  */
 export function formatAvailableModels(
   models: readonly string[],
@@ -101,18 +103,25 @@ function resolveModelsDeps(input: ModelsDeps | Writer): Required<ModelsDeps> {
   const deps = isWriter(input) ? { write: input } : input;
   return {
     write: deps.write ?? defaultWriter,
+    writeError: deps.writeError ?? defaultErrorWriter,
     discoverModels: deps.discoverModels ?? discoverAvailableModels,
   };
 }
 
 export function buildModelsCommand(input: ModelsDeps | Writer = {}): Command {
-  const { write, discoverModels } = resolveModelsDeps(input);
+  const { write, writeError, discoverModels } = resolveModelsDeps(input);
   const cmd = new Command("models");
   cmd
     .description("List available Copilot models (live discovery with static fallback)")
     .action(async () => {
-      const modelDiscovery = await discoverModels();
-      write(formatAvailableModels(modelDiscovery.models, modelDiscovery.source));
+      try {
+        const modelDiscovery = await discoverModels();
+        write(formatAvailableModels(modelDiscovery.models, modelDiscovery.source));
+      } catch (err: unknown) {
+        const message = `Failed to list models: ${toSingleLineDisplay(err instanceof Error ? err.message : String(err))}`;
+        writeError(`${message}\n`);
+        throw new CliUserError(message);
+      }
     });
   return cmd;
 }

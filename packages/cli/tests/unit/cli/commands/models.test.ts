@@ -3,29 +3,19 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
-import { buildModelsCommand, formatAvailableModels } from "../../../../src/cli/commands/models.js";
-import type { Writer } from "../../../../src/cli/commands/writer.js";
-
-interface ModelsDepsLike {
-  readonly write?: Writer;
-  readonly writeError?: Writer;
-  readonly discoverModels?: () => Promise<{
-    models: readonly string[];
-    source: "live" | "static";
-  }>;
-}
-
-const buildModelsCommandWithDeps = buildModelsCommand as unknown as (
-  deps: ModelsDepsLike,
-) => ReturnType<typeof buildModelsCommand>;
+import {
+  buildModelsCommand,
+  formatAvailableModels,
+  type ModelsDeps,
+} from "../../../../src/cli/commands/models.js";
 
 async function runModelsWithResult(
   args: readonly string[],
-  deps: ModelsDepsLike = {},
+  deps: ModelsDeps = {},
 ): Promise<{ readonly stdout: string; readonly stderr: string; readonly error: unknown }> {
   let stdout = "";
   let stderr = "";
-  const cmd = buildModelsCommandWithDeps({
+  const commandDeps = {
     ...deps,
     write: (chunk: string) => {
       stdout += chunk;
@@ -33,7 +23,8 @@ async function runModelsWithResult(
     writeError: (chunk: string) => {
       stderr += chunk;
     },
-  });
+  } satisfies ModelsDeps;
+  const cmd = buildModelsCommand(commandDeps);
   cmd.exitOverride();
   let error: unknown;
   try {
@@ -44,7 +35,7 @@ async function runModelsWithResult(
   return { stdout, stderr, error };
 }
 
-async function runModels(args: readonly string[], deps: ModelsDepsLike = {}): Promise<string> {
+async function runModels(args: readonly string[], deps: ModelsDeps = {}): Promise<string> {
   const { stdout } = await runModelsWithResult(args, deps);
   return stdout;
 }
@@ -231,7 +222,7 @@ describe("buildModelsCommand", () => {
   });
 
   it("command has description in help", () => {
-    const help = buildModelsCommandWithDeps({}).helpInformation();
+    const help = buildModelsCommand({}).helpInformation();
 
     expect(help).toContain("List available Copilot models");
   });
