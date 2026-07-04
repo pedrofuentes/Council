@@ -47,7 +47,7 @@ import { sql } from "kysely";
 import { getCouncilHome } from "../../config/index.js";
 import { createDatabase, type CouncilDatabase } from "../../memory/db.js";
 import { recallMemoryWithProvenance } from "../../memory/expert-memory.js";
-import { DebateRepository } from "../../memory/repositories/debates.js";
+import { DebateRepository, type Debate } from "../../memory/repositories/debates.js";
 import { ExpertRepository, type Expert } from "../../memory/repositories/experts.js";
 import { PanelRepository, type Panel } from "../../memory/repositories/panels.js";
 import { ProfileRepository } from "../../memory/repositories/profile-repository.js";
@@ -431,22 +431,32 @@ function buildResetCommand(write: Writer, writeError: Writer): Command {
         //   3. Per Roadmap 7.4, NEVER touch `persona_profiles` — document-derived
         //      persona data is separate state, reset via `council expert train --retrain`.
         //
-        // Atomicity (#403): wrap (1) + (2) in a single transaction.
-        // Without this, a failure between steps would leave the
-        // panel half-reset (debates gone, expert memory still set,
-        // or vice versa). We use raw BEGIN/COMMIT/ROLLBACK on the
-        // libsql connection — Kysely's `db.transaction()` reconnects
-        // the libsql client for `:memory:` databases, which loses
-        // virtual FTS5 tables (same workaround as
+        // Atomicity (#403 + #450): wrap the READ of the debates/experts to
+        // mutate AND the dependent (1) delete + (2) update in a single
+        // transaction. Reading before BEGIN (#450) left a race window: a
+        // concurrent writer could add or remove the panel's debates/experts
+        // between the prefetch and the transactional write, so the write
+        // would act on a stale snapshot. And without the transaction (#403),
+        // a failure between steps would leave the panel half-reset (debates
+        // gone, expert memory still set, or vice versa). We use raw
+        // BEGIN/COMMIT/ROLLBACK on the libsql connection — Kysely's
+        // `db.transaction()` reconnects the libsql client for `:memory:`
+        // databases, which loses virtual FTS5 tables (same workaround as
         // `src/memory/repositories/document-repository.ts:clearForRetrain`
         // and `src/core/documents/indexer.ts`).
-        const debates = await new DebateRepository(db).findByPanelId(panel.id);
-        const experts = await new ExpertRepository(db).findByPanelId(panel.id);
+        const debateRepo = new DebateRepository(db);
         const expertRepo = new ExpertRepository(db);
         const profileRepo = new ProfileRepository(db);
 
+        // Populated by the in-transaction prefetch below; reused by the
+        // post-commit output so counts/names reflect what was reset.
+        let debates: readonly Debate[] = [];
+        let experts: readonly Expert[] = [];
+
         await sql`BEGIN`.execute(db);
         try {
+          debates = await debateRepo.findByPanelId(panel.id);
+          experts = await expertRepo.findByPanelId(panel.id);
           for (const d of debates) {
             await db.deleteFrom("debates").where("id", "=", d.id).execute();
           }
