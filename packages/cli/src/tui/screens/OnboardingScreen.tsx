@@ -151,9 +151,7 @@ export function OnboardingScreen(props: OnboardingScreenProps): React.ReactEleme
     <Box flexDirection="column">
       <Text>{props.theme.accent(toSingleLineDisplay("Welcome to Council!"))}</Text>
       <Text>
-        {props.theme.muted(
-          toSingleLineDisplay("Choose the default AI model your expert panels will use."),
-        )}
+        {props.theme.muted(toSingleLineDisplay("Choose the default AI model Council will use."))}
       </Text>
       {view?.usedFallback === true ? (
         <Text>

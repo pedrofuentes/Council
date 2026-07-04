@@ -121,6 +121,21 @@ describe("OnboardingScreen", () => {
     unmount();
   });
 
+  it("uses model-scoped copy that is not specific to expert panels", async () => {
+    const { stdin, lastFrame, unmount } = renderScreen(createSource());
+
+    await flush();
+    stdin.write("\r"); // advance past intro to the model picker
+    await flush();
+
+    const frame = lastFrame() ?? "";
+    // defaults.model is used broadly (chat, convene, etc.), not just by expert
+    // panels, so the picker copy must not scope the model to expert panels.
+    expect(frame).toContain("Choose the default AI model Council will use.");
+    expect(frame).not.toContain("expert panels will use");
+    unmount();
+  });
+
   it("notes when the model list is a built-in fallback", async () => {
     const { stdin, lastFrame, unmount } = renderScreen(
       createSource({ load: async () => viewFor({ usedFallback: true }) }),

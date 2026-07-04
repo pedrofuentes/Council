@@ -108,6 +108,22 @@ export function mapPathToField(path: readonly unknown[]): keyof ExpertFormValues
   return "slug";
 }
 
+/**
+ * The exact fields {@link validateExpertForm} rejects when empty: `slug` (must
+ * match the slug pattern), `displayName`, `role`, `epistemicStance`, and at
+ * least one `weightedEvidence` entry. Exported as the single source of truth so
+ * UI layers (e.g. ExpertFormScreen's required markers) derive their required set
+ * from here and never drift from validation. `personaDescription` is
+ * intentionally excluded — it is optional even for persona experts.
+ */
+export const REQUIRED_EXPERT_FORM_FIELDS: readonly (keyof ExpertFormValues)[] = [
+  "slug",
+  "displayName",
+  "role",
+  "epistemicStance",
+  "weightedEvidence",
+];
+
 export function validateExpertForm(values: ExpertFormValues): BuildResult {
   const slug = values.slug.trim();
   const displayName = values.displayName.trim();

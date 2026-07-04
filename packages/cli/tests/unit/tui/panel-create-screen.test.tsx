@@ -56,10 +56,12 @@ function renderScreen(
     readonly panelAuthoring?: PanelAuthoringDataSource;
   } = {},
 ): ReturnType<typeof render> {
+  const loadExperts = options.loadList ?? (async () => experts);
   const value = {
     panels: { loadList: async () => [], loadDetail: async () => undefined },
     experts: {
-      loadList: options.loadList ?? (async () => experts),
+      loadList: loadExperts,
+      loadPickList: loadExperts,
       loadDetail: async () => undefined,
     },
     panelAuthoring: options.panelAuthoring ?? createAuthoring(),
@@ -88,6 +90,42 @@ describe("PanelCreateScreen", () => {
     expect(lastFrame()).toContain("Name:");
     expect(lastFrame()).toContain("[ ] Chief Technology Officer — Technology strategy [generic]");
     expect(lastFrame()).not.toContain("\u001B[31m");
+    unmount();
+  });
+
+  it("loads picker experts via the lightweight source, avoiding per-expert panel counts", async () => {
+    const loadPickList = vi.fn(async () => experts);
+    const loadList = vi.fn(async () => experts);
+    const value = {
+      panels: { loadList: async () => [], loadDetail: async () => undefined },
+      experts: {
+        loadList,
+        loadPickList,
+        loadDetail: async () => undefined,
+      },
+      panelAuthoring: createAuthoring(),
+    } as TuiDataSources;
+
+    const { lastFrame, unmount } = render(
+      <InputCaptureProvider>
+        <DataProvider value={value}>
+          <MemoryRouter initialEntries={["/panels/new"]}>
+            <Routes>
+              <Route path="/panels/new" element={<PanelCreateScreen theme={theme} isActive />} />
+              <Route path="/panels/:name" element={<PanelProbe />} />
+            </Routes>
+          </MemoryRouter>
+        </DataProvider>
+      </InputCaptureProvider>,
+    );
+
+    await flush();
+
+    // The picker must use the lightweight source that skips the per-expert
+    // panelCount lookup performed by loadList().
+    expect(lastFrame()).toContain("[ ] Chief Technology Officer");
+    expect(loadPickList).toHaveBeenCalledTimes(1);
+    expect(loadList).not.toHaveBeenCalled();
     unmount();
   });
 
@@ -224,6 +262,7 @@ describe("PanelCreateScreen — cancel", () => {
       panels: { loadList: async () => [], loadDetail: async () => undefined },
       experts: {
         loadList: async () => experts,
+        loadPickList: async () => experts,
         loadDetail: async () => undefined,
       },
       panelAuthoring: createAuthoring(),
@@ -317,6 +356,7 @@ describe("PanelCreateScreen — cancel during in-flight create", () => {
       panels: { loadList: async () => [], loadDetail: async () => undefined },
       experts: {
         loadList: async () => experts,
+        loadPickList: async () => experts,
         loadDetail: async () => undefined,
       },
       panelAuthoring: createAuthoring(create),

@@ -6,6 +6,7 @@ import { useNavigate, useParams } from "react-router";
 import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
 import {
   emptyExpertForm,
+  REQUIRED_EXPERT_FORM_FIELDS,
   type BuildResult,
   type ExpertAuthoringSource,
   type ExpertFormValues,
@@ -34,19 +35,14 @@ const KIND_OPTIONS = ["generic", "persona"] as const;
 const EMPTY_VALUES = emptyExpertForm();
 
 /**
- * Source of truth: the exact field set `validateExpertForm` rejects when empty
- * (see adapters/expert-authoring.ts — slug, displayName, role, epistemicStance,
- * weightedEvidence). The required marker must mirror validation so it never lies.
- * personaDescription is OPTIONAL even for persona experts, so it is deliberately
- * NOT marked required (validation accepts an empty persona description).
+ * Required-field markers. Derived from {@link REQUIRED_EXPERT_FORM_FIELDS} in
+ * adapters/expert-authoring.ts — the same set `validateExpertForm` enforces — so
+ * the marker never drifts from validation. personaDescription is OPTIONAL even
+ * for persona experts, so it is deliberately not part of that set.
  */
-const REQUIRED_FIELDS = new Set<keyof ExpertFormValues>([
-  "slug",
-  "displayName",
-  "role",
-  "epistemicStance",
-  "weightedEvidence",
-]);
+export const REQUIRED_FIELDS: ReadonlySet<keyof ExpertFormValues> = new Set(
+  REQUIRED_EXPERT_FORM_FIELDS,
+);
 
 const CREATE_UNAVAILABLE: ExpertAuthoringSource = {
   loadForEdit: async () => undefined,

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createExpertsDataSource,
@@ -85,6 +85,36 @@ describe("createExpertsDataSource.loadList", () => {
         panelCount: 1,
       },
     ]);
+  });
+});
+
+describe("createExpertsDataSource.loadPickList", () => {
+  it("returns lightweight picker items without computing panel counts", async () => {
+    const panelsFor = vi.fn(async () => [] as readonly string[]);
+    const ds = createExpertsDataSource(
+      createRepos({
+        list: async () => [ctoExpert, financeExpert],
+        panelsFor,
+      }),
+    );
+
+    await expect(ds.loadPickList()).resolves.toEqual([
+      {
+        slug: "cto",
+        displayName: "Chief Technology Officer",
+        role: "Technology strategy",
+        kind: "generic",
+      },
+      {
+        slug: "cfo",
+        displayName: "Chief Financial Officer",
+        role: "Financial planning",
+        kind: "persona",
+      },
+    ]);
+    // The picker only needs slug/displayName/role/kind, so it must not incur the
+    // per-expert panelsFor() work that loadList() performs (an N+1 lookup).
+    expect(panelsFor).not.toHaveBeenCalled();
   });
 });
 

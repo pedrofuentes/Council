@@ -11,7 +11,8 @@ import type {
 } from "../../../src/tui/adapters/expert-authoring.js";
 import { DataProvider, type TuiDataSources } from "../../../src/tui/components/DataProvider.js";
 import { InputCaptureProvider } from "../../../src/tui/components/InputCaptureProvider.js";
-import { ExpertFormScreen } from "../../../src/tui/screens/ExpertFormScreen.js";
+import { ExpertFormScreen, REQUIRED_FIELDS } from "../../../src/tui/screens/ExpertFormScreen.js";
+import { REQUIRED_EXPERT_FORM_FIELDS } from "../../../src/tui/adapters/expert-authoring.js";
 import { resolveTheme } from "../../../src/tui/theme/tokens.js";
 import type { ExpertDefinition } from "../../../src/core/expert.js";
 
@@ -121,6 +122,12 @@ const highlightedRow = (frame: string): string | undefined =>
     .split("\n")
     .find((line) => line.includes("\u001B[7m"))
     ?.replace(ansiPattern, "");
+
+describe("ExpertFormScreen.REQUIRED_FIELDS", () => {
+  it("derives its required markers from the authoring single source of truth", () => {
+    expect(REQUIRED_FIELDS).toEqual(new Set(REQUIRED_EXPERT_FORM_FIELDS));
+  });
+});
 
 describe("ExpertFormScreen", () => {
   it("renders sanitized create fields and hides persona description for generic experts", async () => {
