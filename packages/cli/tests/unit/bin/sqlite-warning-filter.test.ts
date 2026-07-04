@@ -253,4 +253,72 @@ describe("installSqliteExperimentalWarningStderrFilter", () => {
     expect(writes).toEqual([]);
     expect(calls).toEqual([]);
   });
+
+  it("suppresses a fully-warning Buffer chunk (decodes binary input before filtering)", () => {
+    // The wrapped write receives `chunk: string | Uint8Array`. When a Buffer
+    // (Uint8Array) carries the warning, it must be decoded to UTF-8 before the
+    // line filter runs, then fully suppressed. Only string chunks were pinned
+    // before; this covers the binary decode + empty-result suppression path.
+    const { fakeStderr, writes } = createFakeStderr();
+    installSqliteExperimentalWarningStderrFilter(fakeStderr);
+
+    fakeStderr.write(
+      Buffer.from(
+        "[CLI subprocess] (node:1) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n",
+      ),
+    );
+
+    expect(writes).toEqual([]);
+  });
+
+  it("re-emits the surviving text of a partially-suppressed binary chunk as decoded UTF-8", () => {
+    // When a Buffer chunk mixes the SQLite warning with unrelated output, the
+    // warning line is dropped and the surviving text is re-emitted. Because
+    // the incoming chunk is NOT a string, this exercises the non-string
+    // re-emit branch (`typeof chunk === "string"` is false), which forwards
+    // the filtered *string* (not the raw Buffer) so downstream consumers
+    // don't double-decode. A regression that dropped the surviving text — or
+    // forwarded the un-filtered warning — changes this expectation.
+    const { fakeStderr, writes } = createFakeStderr();
+    installSqliteExperimentalWarningStderrFilter(fakeStderr);
+
+    fakeStderr.write(
+      Buffer.from(
+        "keep this line\n" +
+          "[CLI subprocess] (node:1) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n",
+      ),
+    );
+
+    expect(writes).toEqual(["keep this line\n"]);
+  });
+
+  it("invokes the write callback exactly once with null when the chunk is fully suppressed", async () => {
+    // Node's stream `write(chunk, cb)` contract promises the callback fires
+    // once the write completes. When the entire chunk is suppressed, no bytes
+    // reach the underlying stream, so the filter must still honor the callback
+    // itself — invoking it exactly once with `null` (no error). This branch
+    // was previously only live-verified. If it regressed (callback dropped, or
+    // called with a truthy error), the assertions below would fail.
+    const { fakeStderr, writes } = createFakeStderr();
+    installSqliteExperimentalWarningStderrFilter(fakeStderr);
+
+    const cbArgs: (Error | null | undefined)[] = [];
+    const ret = fakeStderr.write(
+      "[CLI subprocess] (node:1) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n",
+      (err?: Error | null): void => {
+        cbArgs.push(err);
+      },
+    );
+
+    // Nothing forwarded to the underlying stream, and write() reports success.
+    expect(writes).toEqual([]);
+    expect(ret).toBe(true);
+
+    // The callback is scheduled via queueMicrotask; flushing the microtask
+    // queue (FIFO) guarantees the scheduled callback ran before this resolver.
+    await new Promise<void>((resolve) => {
+      queueMicrotask(resolve);
+    });
+    expect(cbArgs).toEqual([null]);
+  });
 });

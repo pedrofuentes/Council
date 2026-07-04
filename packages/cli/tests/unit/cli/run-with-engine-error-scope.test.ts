@@ -203,4 +203,70 @@ describe("runWithEngine — engine vs persistence/render error scoping (#195)", 
       expect(errOutput).toContain("provider is not yet available");
     });
   });
+
+  it("rolls back only the fulfilled subset and writes formatEngineError to stderr on partial addExpert failure (#201)", async () => {
+    // The existing error-scope tests fail addExpert for the ONLY expert,
+    // so the fulfilled subset is empty and the removeExpert rollback loop
+    // (run-with-engine.ts ~L194-219) never runs. `failOnAddExpert.afterN: 1`
+    // makes the FIRST addExpert fulfill and the rest reject, producing a
+    // NON-empty fulfilled subset — exercising the rollback for exactly the
+    // experts that genuinely registered, not the whole intended list.
+    const engine = new MockEngine({ failOnAddExpert: { afterN: 1 } });
+
+    const experts: ExpertSpec[] = [
+      {
+        id: "e0-fulfilled",
+        slug: "cto",
+        displayName: "CTO",
+        model: "mock-model",
+        systemMessage: "You are a CTO.",
+      },
+      {
+        id: "e1-rejected",
+        slug: "cfo",
+        displayName: "CFO",
+        model: "mock-model",
+        systemMessage: "You are a CFO.",
+      },
+      {
+        id: "e2-rejected",
+        slug: "eng",
+        displayName: "Eng",
+        model: "mock-model",
+        systemMessage: "You are an engineer.",
+      },
+    ];
+
+    let errOutput = "";
+    await expect(
+      runWithEngine({
+        engineKind: "mock",
+        engineFactory: () => engine,
+        experts,
+        debateConfig: { maxRounds: 1, maxWordsPerResponse: 50, mode: "freeform" },
+        prompt: "Topic",
+        panelId,
+        expertSlugToId,
+        moderator: "round-robin",
+        format: "plain",
+        write: () => undefined,
+        writeError: (s: string) => {
+          errOutput += s;
+        },
+        db,
+      }),
+    ).rejects.toThrow(/could not register all experts/);
+
+    // Rollback removed EXACTLY the fulfilled expert (e0) — never the two
+    // that failed to register (e1, e2). A regression that swept the whole
+    // intended list, or skipped rollback entirely, changes this array.
+    expect(engine.removeExpertCalls).toEqual(["e0-fulfilled"]);
+
+    // The engine-init failure is routed through formatEngineError before
+    // re-throw: its always-present "Underlying:" label plus the aggregate
+    // registration message land on stderr. Dropping the formatEngineError
+    // write would remove "Underlying:" from stderr, failing this.
+    expect(errOutput).toContain("Underlying:");
+    expect(errOutput).toContain("could not register all experts");
+  });
 });

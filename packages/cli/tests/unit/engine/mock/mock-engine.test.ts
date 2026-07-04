@@ -438,4 +438,82 @@ describe("MockEngine — profile analyzer responses", () => {
   });
 });
 
+describe("MockEngine — chunker & lifecycle edge cases (#18)", () => {
+  it("send() after stop() still streams a normal response (lenient post-stop contract)", async () => {
+    // Issue #17 (send-after-stop contract) was closed "not planned":
+    // MockEngine deliberately keeps the lenient behavior. `stop()` does
+    // NOT drop expert registrations, and `send()` never consults the
+    // stopped flag, so a post-stop send() streams a normal response
+    // instead of throwing synchronously or yielding a terminal ABORTED.
+    // This pins that contract so a future guard cannot be introduced
+    // silently — if `send()` began throwing/aborting post-stop, the
+    // `collect()` call would reject or the terminal event would be `error`,
+    // failing this test.
+    const engine = new MockEngine({
+      responses: { "01HZ-cto": "still reachable after stop" },
+    });
+    await engine.start();
+    await engine.addExpert(expertSpec);
+    await engine.stop();
+
+    const events = await collect(engine.send({ prompt: "x", expertId: "01HZ-cto" }));
+
+    expect(events.filter((e) => e.kind === "error")).toHaveLength(0);
+    expect(events[events.length - 1]?.kind).toBe("message.complete");
+    const assembled = events
+      .filter(
+        (e): e is Extract<EngineEvent, { kind: "message.delta" }> => e.kind === "message.delta",
+      )
+      .map((e) => e.text)
+      .join("");
+    expect(assembled).toBe("still reachable after stop");
+  });
+
+  it("empty response string yields a single empty delta then a terminal message.complete", async () => {
+    // chunkResponse("") splits+filters to zero parts, hitting the
+    // `parts.length <= 1` early return with the original (empty) text —
+    // so exactly one empty-string delta is emitted before the terminal
+    // complete. The empty response is handled gracefully (never an error
+    // or a hang). Pinning the exact single empty delta discriminates the
+    // chunker's degenerate-input branch: dropping to zero deltas, or
+    // treating "" as an error, would fail here.
+    const engine = new MockEngine({ responses: { "01HZ-cto": "" } });
+    await engine.start();
+    await engine.addExpert(expertSpec);
+
+    const events = await collect(engine.send({ prompt: "x", expertId: "01HZ-cto" }));
+
+    const deltas = events.filter(
+      (e): e is Extract<EngineEvent, { kind: "message.delta" }> => e.kind === "message.delta",
+    );
+    expect(deltas).toHaveLength(1);
+    expect(deltas[0]?.text).toBe("");
+    expect(events.filter((e) => e.kind === "error")).toHaveLength(0);
+    expect(events.filter((e) => e.kind === "message.complete")).toHaveLength(1);
+    expect(events[events.length - 1]?.kind).toBe("message.complete");
+  });
+
+  it("single-chunk text with no sentence terminator yields exactly one delta then complete", async () => {
+    // "hello world" contains no `[.!?]\s+` boundary, so chunkResponse
+    // returns the whole string as a single chunk (the `parts.length <= 1`
+    // branch) — exactly one message.delta carrying the full text, then a
+    // terminal complete. The existing success-path suite only asserts
+    // `>= 1` delta over a multi-chunk response, so this pins the exact
+    // single-chunk count for a no-terminator string: if the chunker began
+    // splitting such input into multiple deltas, this test would fail.
+    const engine = new MockEngine({ responses: { "01HZ-cto": "hello world" } });
+    await engine.start();
+    await engine.addExpert(expertSpec);
+
+    const events = await collect(engine.send({ prompt: "x", expertId: "01HZ-cto" }));
+
+    const deltas = events.filter(
+      (e): e is Extract<EngineEvent, { kind: "message.delta" }> => e.kind === "message.delta",
+    );
+    expect(deltas).toHaveLength(1);
+    expect(deltas[0]?.text).toBe("hello world");
+    expect(events[events.length - 1]?.kind).toBe("message.complete");
+  });
+});
+
 
