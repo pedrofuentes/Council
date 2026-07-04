@@ -102,6 +102,15 @@ export type DebateEvent =
       readonly expertSlug?: string;
       readonly message: string;
       readonly recoverable: boolean;
+      /**
+       * Stable engine error code driving this terminal failure, when one is
+       * known (engine-origin failures — RATE_LIMITED, NETWORK,
+       * MODEL_UNAVAILABLE, …). Absent for synthetic orchestration errors that
+       * have no engine code (e.g. invalid moderator round, human-input
+       * failures, empty-after-retry). Consumers key exit codes / friendly text
+       * off this rather than string-matching `message`.
+       */
+      readonly code?: EngineErrorCode;
     }
   | {
       /**
