@@ -1,9 +1,7 @@
 /**
- * Tests for `sanitizeDisplayName()` — sanitizes expert display names at
- * creation time to prevent control/bidi/zero-width character injection and
- * enforce reasonable length limits. Applied on `council expert create --name`
- * and `council expert edit` to ensure display names render safely in tables,
- * transcripts, and LLM prompts.
+ * Tests for `sanitizeDisplayName()` — sanitizes expert display names when
+ * callers invoke it to prevent control/bidi/zero-width character injection
+ * and enforce reasonable length limits.
  */
 import { describe, expect, it } from "vitest";
 
