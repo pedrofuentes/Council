@@ -485,6 +485,58 @@ describe("buildLLMSummary — best-effort failure observability (#268)", () => {
   });
 });
 
+describe("buildLLMSummary — sanitization mutation telemetry (#554)", () => {
+  it("emits a summarizer.sanitization.mutated event when sanitization changes the collected output", async () => {
+    // U+202E (RTL override) is stripped by sanitizePromptBlock, so the
+    // sanitized summary differs from the raw collected model output — the
+    // signal that untrusted content was neutralized (#554).
+    const engine = new RecordingEngine(["clean\u202Etext summary."]);
+    const warnings: string[] = [];
+    await buildLLMSummary(baseTurns, 2, cfg, engine, "gpt-test", {
+      onWarning: (m) => warnings.push(m),
+    });
+    expect(warnings.some((w) => /summarizer\.sanitization\.mutated/i.test(w))).toBe(true);
+  });
+
+  it("does NOT emit the mutation event when sanitization leaves the output unchanged", async () => {
+    const engine = new RecordingEngine(["A perfectly clean summary sentence."]);
+    const warnings: string[] = [];
+    const out = await buildLLMSummary(baseTurns, 2, cfg, engine, "gpt-test", {
+      onWarning: (m) => warnings.push(m),
+    });
+    expect(out).toBe("A perfectly clean summary sentence.");
+    expect(warnings.some((w) => /sanitization\.mutated/i.test(w))).toBe(false);
+  });
+
+  it("does not embed the untrusted model output in the mutation telemetry (non-content)", async () => {
+    const payload = "INJECTED_PAYLOAD_9137";
+    const engine = new RecordingEngine([`${payload}\u202E.`]);
+    const warnings: string[] = [];
+    await buildLLMSummary(baseTurns, 2, cfg, engine, "gpt-test", {
+      onWarning: (m) => warnings.push(m),
+    });
+    const event = warnings.find((w) => /sanitization\.mutated/i.test(w));
+    expect(event).toBeDefined();
+    expect(event).not.toContain(payload);
+  });
+
+  it("falls back to console.warn for the mutation event when no onWarning sink is wired", async () => {
+    // debate.ts calls buildLLMSummary without an onWarning sink, so the
+    // console.warn fallback is what makes the mutation observable in
+    // production (#554).
+    const engine = new RecordingEngine(["needs\u202Esanitizing."]);
+    const spy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await buildLLMSummary(baseTurns, 2, cfg, engine, "gpt-test");
+      expect(
+        spy.mock.calls.some((call) => /summarizer\.sanitization\.mutated/i.test(String(call[0]))),
+      ).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 /** Extract the text between the `<transcript>` and `</transcript>` fence. */
 function transcriptRegion(prompt: string): string {
   const open = "<transcript>";
