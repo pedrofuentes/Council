@@ -1970,10 +1970,11 @@ describe("graceful SIGINT handling (PRD §F4)", () => {
       };
     };
 
-    // Build a stub engine that streams 4 chunks with ~50ms between each,
-    // honoring opts.signal so the chat loop's SIGINT handler can abort
-    // mid-stream and we can assert that only the chunks that arrived
-    // before abort are persisted as the partial expert turn.
+    // Build a stub engine that streams the first chunk, then fires the SIGINT
+    // interrupt *deterministically* — from inside the stream, right after the
+    // chat loop has buffered that first delta — so the partial expert turn is
+    // guaranteed to hold exactly the pre-interrupt content with no wall-clock
+    // race between the streamed chunk and the abort (see #2322).
     const chunks = [
       "First sentence. ",
       "Second sentence. ",
@@ -2002,33 +2003,30 @@ describe("graceful SIGINT handling (PRD §F4)", () => {
         if (expertId !== registeredExpertId) {
           throw new Error(`Expert ${expertId} is not registered`);
         }
-        const controller = new AbortController();
-        if (opts.signal) {
-          if (opts.signal.aborted) controller.abort();
-          else opts.signal.addEventListener("abort", () => controller.abort(), { once: true });
-        }
         async function* gen(): AsyncGenerator<EngineEvent, void, void> {
-          for (const c of chunks) {
-            await new Promise<void>((resolve) => {
-              const t = setTimeout(resolve, 50);
-              controller.signal.addEventListener(
-                "abort",
-                () => {
-                  clearTimeout(t);
-                  resolve();
-                },
-                { once: true },
-              );
-            });
-            if (controller.signal.aborted) {
-              yield {
-                kind: "error",
-                expertId,
-                error: { code: "ABORTED", message: "aborted", provider: "mock" },
-                recoverable: false,
-              };
-              return;
-            }
+          // Emit the first chunk. A generator only runs past this `yield` when
+          // the consumer pulls the next value, which the chat loop does *after*
+          // it has appended this delta to its partial buffer — so firing the
+          // interrupt here guarantees the partial turn already holds this chunk
+          // before the abort propagates. No timers, no race (see #2322).
+          yield { kind: "message.delta", expertId, text: chunks[0] };
+          triggerInterrupt?.();
+          // onInterrupt aborted the chat loop's signal synchronously; stop
+          // streaming cooperatively and surface the ABORTED event, exactly as a
+          // signal-honoring engine would.
+          if (opts.signal?.aborted === true) {
+            yield {
+              kind: "error",
+              expertId,
+              error: { code: "ABORTED", message: "aborted", provider: "mock" },
+              recoverable: false,
+            };
+            return;
+          }
+          // Defensive: if the abort ever fails to propagate, stream the rest so
+          // a regression surfaces as a FULL turn (Fourth sentence present) that
+          // fails the assertions below — never as a silent hang.
+          for (const c of chunks.slice(1)) {
             yield { kind: "message.delta", expertId, text: c };
           }
           yield {
@@ -2046,15 +2044,9 @@ describe("graceful SIGINT handling (PRD §F4)", () => {
     let i = 0;
     const inputProvider: ChatInputProvider = {
       async readLine(): Promise<string | null> {
-        const line = lines[i++] ?? null;
-        if (line === "tell me a story") {
-          // Streaming = 4 chunks × ~50ms ≈ 200ms. Fire at ~80ms so at
-          // least one chunk lands before the abort.
-          setTimeout(() => {
-            triggerInterrupt?.();
-          }, 80);
-        }
-        return line;
+        // The interrupt is now driven deterministically from inside the engine
+        // stream (see above), so readLine just feeds the scripted input lines.
+        return lines[i++] ?? null;
       },
       close(): void {
         /* no-op */
