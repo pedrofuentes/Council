@@ -121,7 +121,7 @@ council convene "Review request" --panel tech-review
 
 ### `COPILOT_CLI_PATH`
 
-Override the auto-detected path to `@github/copilot/npm-loader.js`. Council auto-detects the bundled loader; use this only when troubleshooting authentication or installation issues.
+Override the auto-detected path to `@github/copilot/npm-loader.js`. Council auto-detects the bundled loader; use this only when troubleshooting authentication or installation issues. The path must point to an existing loader entry; if it does not exist, `council doctor` reports it as `needs-remediation` rather than passing.
 
 **Default:** Auto-detected from `@github/copilot` package
 
