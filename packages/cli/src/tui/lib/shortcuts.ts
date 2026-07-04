@@ -12,8 +12,16 @@ export interface ShortcutBinding {
   readonly description: string;
 }
 
-interface RouteShortcuts {
+export interface RouteShortcuts {
   readonly pattern: string;
+  /**
+   * Screen module (relative to `tui/screens/`) whose `useInput` handler owns
+   * these bindings. This ties the advertised legend to the code that actually
+   * dispatches the keys; the `shortcuts-drift` test uses it to fail the build
+   * if a single-key command drifts away from its handler (#1703). Keep in
+   * lockstep with the route→component wiring in {@link AppRouter}.
+   */
+  readonly screen: string;
   readonly bindings: readonly ShortcutBinding[];
 }
 
@@ -28,10 +36,15 @@ export interface ShortcutContext {
  * declaration order in {@link ROUTES}. List screens that rely solely on the
  * global navigation (sessions, chats) are intentionally absent and resolve to
  * an empty legend.
+ *
+ * Exported so the `shortcuts-drift` test can cross-check each entry's advertised
+ * single-key commands against the `screen` that dispatches them, preventing the
+ * legend from drifting away from the actual handlers (#1703).
  */
-const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
+export const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   {
     pattern: ROUTES.home,
+    screen: "HomeScreen.tsx",
     bindings: [
       { keys: "c", description: "Convene" },
       { keys: "e", description: "New expert" },
@@ -41,6 +54,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   },
   {
     pattern: ROUTES.onboarding,
+    screen: "OnboardingScreen.tsx",
     bindings: [
       { keys: "↑↓", description: "Move" },
       { keys: "Enter", description: "Confirm" },
@@ -49,6 +63,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   },
   {
     pattern: ROUTES.panels,
+    screen: "PanelsScreen.tsx",
     bindings: [
       { keys: "n", description: "New panel" },
       { keys: "c", description: "Auto-compose" },
@@ -56,6 +71,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   },
   {
     pattern: ROUTES.panelNew,
+    screen: "PanelCreateScreen.tsx",
     bindings: [
       { keys: "Tab", description: "Focus" },
       { keys: "Space", description: "Select" },
@@ -64,6 +80,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   },
   {
     pattern: ROUTES.panelCompose,
+    screen: "PanelComposeScreen.tsx",
     bindings: [
       { keys: "y", description: "Save" },
       { keys: "n/e", description: "Revise" },
@@ -72,6 +89,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   },
   {
     pattern: ROUTES.panelMembers,
+    screen: "PanelMembersScreen.tsx",
     bindings: [
       { keys: "Space", description: "Select" },
       { keys: "Enter", description: "Save" },
@@ -80,6 +98,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   },
   {
     pattern: ROUTES.panelDelete,
+    screen: "PanelDeleteScreen.tsx",
     bindings: [
       { keys: "y", description: "Delete" },
       { keys: "n/Esc", description: "Cancel" },
@@ -87,6 +106,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   },
   {
     pattern: ROUTES.panelDetail,
+    screen: "PanelDetailScreen.tsx",
     bindings: [
       { keys: "c", description: "Chat" },
       { keys: "m", description: "Edit members" },
@@ -97,6 +117,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   },
   {
     pattern: ROUTES.convenePrompt,
+    screen: "ConvenePromptScreen.tsx",
     bindings: [
       { keys: "Enter", description: "Estimate" },
       { keys: "Esc", description: "Cancel" },
@@ -104,14 +125,17 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   },
   {
     pattern: ROUTES.debateRun,
+    screen: "DebateStreamScreen.tsx",
     bindings: [{ keys: "Esc", description: "Cancel" }],
   },
   {
     pattern: ROUTES.experts,
+    screen: "ExpertsScreen.tsx",
     bindings: [{ keys: "n", description: "New expert" }],
   },
   {
     pattern: ROUTES.expertNew,
+    screen: "ExpertFormScreen.tsx",
     bindings: [
       { keys: "↑↓", description: "Move" },
       { keys: "Enter", description: "Edit" },
@@ -121,6 +145,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   },
   {
     pattern: ROUTES.expertEdit,
+    screen: "ExpertFormScreen.tsx",
     bindings: [
       { keys: "↑↓", description: "Move" },
       { keys: "Enter", description: "Edit" },
@@ -130,6 +155,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   },
   {
     pattern: ROUTES.expertDelete,
+    screen: "ExpertDeleteScreen.tsx",
     bindings: [
       { keys: "y", description: "Delete" },
       { keys: "n/Esc", description: "Cancel" },
@@ -137,6 +163,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   },
   {
     pattern: ROUTES.expertDocs,
+    screen: "ExpertDocumentsScreen.tsx",
     bindings: [
       { keys: "Enter", description: "Remove" },
       { keys: "n", description: "Cancel" },
@@ -144,6 +171,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   },
   {
     pattern: ROUTES.expertTrain,
+    screen: "ExpertTrainScreen.tsx",
     bindings: [
       { keys: "Enter", description: "Train" },
       { keys: "Esc", description: "Back" },
@@ -151,6 +179,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   },
   {
     pattern: ROUTES.expertDetail,
+    screen: "ExpertDetailScreen.tsx",
     bindings: [
       { keys: "c", description: "Chat" },
       { keys: "e", description: "Edit" },
@@ -162,6 +191,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   },
   {
     pattern: ROUTES.sessionDetail,
+    screen: "SessionDetailScreen.tsx",
     bindings: [
       { keys: "c", description: "Conclude" },
       { keys: "x", description: "Export" },
@@ -170,6 +200,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   },
   {
     pattern: ROUTES.sessionConclude,
+    screen: "ConclusionScreen.tsx",
     bindings: [
       { keys: "x", description: "Export" },
       { keys: "r", description: "Re-convene" },
@@ -178,6 +209,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   },
   {
     pattern: ROUTES.sessionExport,
+    screen: "ExportOverlay.tsx",
     bindings: [
       { keys: "↑↓", description: "Move" },
       { keys: "Enter", description: "Select" },
@@ -186,6 +218,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   },
   {
     pattern: ROUTES.chatExpert,
+    screen: "ExpertChatScreen.tsx",
     bindings: [
       { keys: "Enter", description: "Send" },
       { keys: "Esc", description: "Back" },
@@ -193,6 +226,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   },
   {
     pattern: ROUTES.chatPanel,
+    screen: "PanelChatScreen.tsx",
     bindings: [
       { keys: "Enter", description: "Send" },
       { keys: "Esc", description: "Back" },
@@ -200,6 +234,7 @@ const ROUTE_SHORTCUTS: readonly RouteShortcuts[] = [
   },
   {
     pattern: ROUTES.settings,
+    screen: "SettingsScreen.tsx",
     bindings: [
       { keys: "↑↓", description: "Move" },
       { keys: "Enter", description: "Edit" },
