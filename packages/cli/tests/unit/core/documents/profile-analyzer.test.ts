@@ -826,6 +826,22 @@ describe("analyzeDocuments() — error handling (#359 #360 #361)", () => {
     expect(engine.signals[0]?.aborted).toBe(true);
     expect(engine.removed.length).toBe(1);
   }, 2000);
+
+  it("waits a backoff delay before retrying a failed send (#436)", async () => {
+    // A failed first send must not be retried immediately — a short backoff
+    // avoids amplifying load on a struggling provider. Configure a small,
+    // deterministic delay and assert the retry is not issued before it.
+    const engine = new RecordingEngine(["not json at all", validProfileJSON]);
+    const backoffMs = 60;
+    const opts = { ...defaultOptions, retryBackoffMs: backoffMs };
+    const start = Date.now();
+    const out = await analyzeDocuments(sampleDocs, null, engine, opts);
+    const elapsed = Date.now() - start;
+    expect(out.communicationStyle).toMatch(/Direct/);
+    expect(engine.sends.length).toBe(2);
+    // Allow for timer coarseness; the point is a non-trivial delay occurred.
+    expect(elapsed).toBeGreaterThanOrEqual(backoffMs - 15);
+  });
 });
 
 describe("parseAnalyzerJSON() — robust recovery of analyzer JSON (F16)", () => {
