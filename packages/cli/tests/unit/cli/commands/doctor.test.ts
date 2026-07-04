@@ -770,6 +770,31 @@ describe("buildDoctorCommand", () => {
     expect(withSpinner).toBe(noSpinner);
   });
 
+  it("doctor --report json completes with a fail entry when a check throws (#1364)", async () => {
+    const resolveCliPath = vi.fn(() => {
+      throw new Error("cli resolver boom");
+    });
+
+    const output = await runDoctor(["--report", "json", "--offline"], { resolveCliPath });
+
+    const parsed = JSON.parse(output) as {
+      checks: readonly { name: string; status: string }[];
+      copilotCliPathStatus: string;
+    };
+    const copilotCheck = parsed.checks.find((check) => check.name === "Copilot CLI");
+    expect(copilotCheck?.status).toBe("fail");
+    // The report field must still resolve to a safe category, not blow up.
+    expect(parsed.copilotCliPathStatus).toBe("needs-remediation");
+  });
+
+  it("doctor --report json probes the Copilot CLI path exactly once (#1365)", async () => {
+    const resolveCliPath = vi.fn(() => "/proj/node_modules/@github/copilot/npm-loader.js");
+
+    await runDoctor(["--report", "json", "--offline"], { resolveCliPath });
+
+    expect(resolveCliPath).toHaveBeenCalledTimes(1);
+  });
+
   it("doctor passes the Copilot CLI check when the entry resolves", async () => {
     const cliEntry = path.join(testHome, "npm-loader.js");
     await fs.writeFile(cliEntry, "// loader", "utf-8");
