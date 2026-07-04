@@ -204,6 +204,45 @@ describe("buildExpertCommand", () => {
       expect(Array.isArray(parsed)).toBe(true);
       expect(parsed[0]?.slug).toBe("dahlia-cto");
     });
+
+    it("styles the list hint with ANSI when stdout is a TTY (#809)", async () => {
+      await seedExpert(env, SAMPLE);
+      const originalIsTTY = process.stdout.isTTY;
+      Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+      try {
+        let captured = "";
+        const cmd = buildExpertCommand((s) => {
+          captured += s;
+        });
+        await cmd.parseAsync(["node", "council-expert", "list"]);
+        expect(captured).toContain("\x1b[2mNext: council expert inspect");
+      } finally {
+        Object.defineProperty(process.stdout, "isTTY", {
+          value: originalIsTTY,
+          configurable: true,
+        });
+      }
+    });
+
+    it("emits the list hint as plain text with no ANSI escapes when stdout is not a TTY (#809)", async () => {
+      await seedExpert(env, SAMPLE);
+      const originalIsTTY = process.stdout.isTTY;
+      Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
+      try {
+        let captured = "";
+        const cmd = buildExpertCommand((s) => {
+          captured += s;
+        });
+        await cmd.parseAsync(["node", "council-expert", "list"]);
+        expect(captured).toContain("Next: council expert inspect <slug> | council chat <slug>");
+        expect(captured).not.toContain("\x1b[");
+      } finally {
+        Object.defineProperty(process.stdout, "isTTY", {
+          value: originalIsTTY,
+          configurable: true,
+        });
+      }
+    });
   });
 
   describe("expert inspect", () => {
@@ -897,6 +936,44 @@ describe("buildExpertCommand", () => {
       await expect(cmd.parseAsync(["node", "council-expert", "delete", "ghost"])).rejects.toThrow(
         /not found/i,
       );
+    });
+
+    it("warns that a panel is left with 0 members after deleting its sole expert (#759)", async () => {
+      await seedExpert(env, SAMPLE);
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const db = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        await db
+          .insertInto("panel_library")
+          .values({
+            name: "solo-panel",
+            yaml_path: path.join(env.dataHome, "panels", "solo-panel.yaml"),
+            yaml_checksum: "x",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .execute();
+        await db
+          .insertInto("panel_members")
+          .values({
+            panel_name: "solo-panel",
+            expert_slug: "dahlia-cto",
+            position: 0,
+            created_at: new Date().toISOString(),
+          })
+          .execute();
+      } finally {
+        await db.destroy();
+      }
+
+      let captured = "";
+      const cmd = buildExpertCommand((s) => {
+        captured += s;
+      });
+      await cmd.parseAsync(["node", "council-expert", "delete", "dahlia-cto", "--force", "--yes"]);
+      expect(captured).toMatch(/deleted/i);
+      expect(captured).toMatch(/0 members/i);
+      expect(captured).toContain("council panel delete solo-panel");
     });
   });
 
@@ -2462,6 +2539,29 @@ fs.writeFileSync(p, body, 'utf-8');`,
       expect(artifacts).toEqual([]);
     });
 
+    it("collapses CR/LF in a commit-failure detail to a single display line (#1882)", async () => {
+      const docsPath = path.join(env.dataHome, "san-docs");
+      const stagingPath = path.join(env.dataHome, "san-staging");
+      await fs.mkdir(docsPath, { recursive: true });
+      await fs.mkdir(stagingPath, { recursive: true });
+      // A staged filename whose bytes include CR/LF. Its staging SOURCE does
+      // not exist, so copyFile throws an ENOENT whose OS message embeds this
+      // filename verbatim; that untrusted detail must be collapsed to a single
+      // display line before it reaches the terminal via CliUserError (#1882).
+      const evil = "a\r\nInjected: fake-confirmation.md";
+      let thrown: unknown;
+      try {
+        await commitStagedDocs(stagingPath, docsPath, [evil]);
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(CliUserError);
+      const message = (thrown as Error).message;
+      expect(message).toMatch(/failed to commit/i);
+      expect(message.split(/\r\n|\r|\n/)).toHaveLength(1);
+      expect(message).not.toMatch(/[\r\n]/);
+    });
+
     // F15: training summary counter wording
     // ──────────────────────────────────────────────────────────────────
 
@@ -2715,5 +2815,50 @@ describe("deriveFilenameFromUrl hardening (#763, #764, #1029)", () => {
     { url: "https://example.com/version%201.2.3.txt", expected: "version 1.2.3.txt" },
   ])("still accepts the ordinary safe filename $expected (#1957 inverse)", ({ url, expected }) => {
     expect(deriveFilenameFromUrl(url)).toBe(expected);
+  });
+
+  // #1030: path-less URLs that differ only by query or fragment must NOT
+  // collapse onto the same `<host>.html` filename (which would silently
+  // overwrite a previously-ingested doc). A short deterministic hash of the
+  // distinguishing components disambiguates them while staying idempotent.
+  it("derives collision-resistant filenames for path-less URLs differing only by query (#1030)", () => {
+    const a = deriveFilenameFromUrl("https://example.com/?doc=1");
+    const b = deriveFilenameFromUrl("https://example.com/?doc=2");
+    expect(a).not.toBe(b);
+    expect(a).toMatch(/^example\.com-[0-9a-f]+\.html$/);
+    expect(b).toMatch(/^example\.com-[0-9a-f]+\.html$/);
+    // Deterministic: the same URL always yields the same filename.
+    expect(deriveFilenameFromUrl("https://example.com/?doc=1")).toBe(a);
+  });
+
+  it("derives collision-resistant filenames for path-less URLs differing only by fragment (#1030)", () => {
+    const a = deriveFilenameFromUrl("https://example.com/#/page-1");
+    const b = deriveFilenameFromUrl("https://example.com/#/page-2");
+    expect(a).not.toBe(b);
+    expect(a).toMatch(/^example\.com-[0-9a-f]+\.html$/);
+  });
+
+  it("keeps the clean <host>.html filename for a bare path-less URL (#1030)", () => {
+    expect(deriveFilenameFromUrl("https://example.com")).toBe("example.com.html");
+    expect(deriveFilenameFromUrl("https://example.com/")).toBe("example.com.html");
+  });
+
+  // #1030 item 3: the decoded-filename path-separator guard lacked a dedicated
+  // test. `%2F` decodes to "/", which must be rejected so a URL cannot smuggle
+  // a nested path (escaping the docs dir) through the last path segment.
+  it("rejects a decoded URL filename containing a path separator (#1030)", () => {
+    expect(() => deriveFilenameFromUrl("https://example.com/foo%2Fbar")).toThrow(
+      /invalid|filename/i,
+    );
+  });
+
+  // #1086 item 3: a NUL byte (`%00`) in the last path segment must be rejected
+  // by the shared control-character guard (assertSafeDerivedFilename), closing
+  // the earlier bypass where a decoded `doc\x00x` reached an fs sink as a raw
+  // (non-CliUserError) error.
+  it("rejects a decoded URL filename containing a NUL byte (#1086)", () => {
+    expect(() => deriveFilenameFromUrl("https://example.com/doc%00x")).toThrow(
+      /control character/i,
+    );
   });
 });
