@@ -87,9 +87,10 @@ export interface DetectDocumentChangesOptions {
   readonly _realpathOverride?: (p: string) => Promise<string>;
   /**
    * Test seam — replace `fs.lstat` for the duration of a single call.
-   * Production callers leave this undefined. Used by the per-file
-   * resilience tests (#342) to simulate a single file's stat failing
-   * mid-scan without modifying the actual filesystem.
+   * Honored ONLY when NODE_ENV === "test" (#1783); ignored in production so
+   * a caller cannot inject per-file stat behaviour into the scan loop. Used
+   * by the per-file resilience tests (#342) to simulate a single file's stat
+   * failing mid-scan without modifying the actual filesystem.
    */
   readonly _lstatOverride?: (p: string) => Promise<Stats>;
   /**
@@ -334,7 +335,8 @@ export async function detectDocumentChanges(
   }
   if (rootHandle !== null) await rootHandle.close().catch(() => { /* best-effort close */ });
 
-  const lstat = options._lstatOverride ?? fs.lstat;
+  const lstat =
+    (process.env.NODE_ENV === "test" ? options._lstatOverride : undefined) ?? fs.lstat;
 
   const newFiles: DocumentFile[] = [];
   const modifiedFiles: DocumentFile[] = [];
