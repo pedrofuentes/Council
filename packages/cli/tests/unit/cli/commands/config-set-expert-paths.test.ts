@@ -100,20 +100,22 @@ describe("buildConfigCommand config set expert.* and paths.*", () => {
       expect(stderr).toContain("Config value for expert.recencyHalfLifeDays must be an integer.");
     });
 
-    it("rejects a value below the minimum (1) as a user error", async () => {
+    it("rejects a value below the minimum (1) with a friendly CLI range error", async () => {
       const { stderr, error } = await runConfig(["set", "expert.recencyHalfLifeDays", "0"]);
 
       expect(error).toBeInstanceOf(CliUserError);
-      expect(stderr).toContain("expert.recencyHalfLifeDays");
-      expect(stderr).toContain(">=1");
+      expect(stderr).toContain(
+        "Config value for expert.recencyHalfLifeDays must be an integer between 1 and 365.",
+      );
     });
 
-    it("rejects a value above the maximum (365) as a user error", async () => {
+    it("rejects a value above the maximum (365) with a friendly CLI range error", async () => {
       const { stderr, error } = await runConfig(["set", "expert.recencyHalfLifeDays", "400"]);
 
       expect(error).toBeInstanceOf(CliUserError);
-      expect(stderr).toContain("expert.recencyHalfLifeDays");
-      expect(stderr).toContain("<=365");
+      expect(stderr).toContain(
+        "Config value for expert.recencyHalfLifeDays must be an integer between 1 and 365.",
+      );
     });
   });
 

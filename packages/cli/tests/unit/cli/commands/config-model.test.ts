@@ -172,6 +172,25 @@ describe("buildConfigCommand config model", () => {
       // Guidance to pass an explicit name in automation.
       expect(stderr).toMatch(/config model <name>/);
     });
+
+    it("omits the 'Available models:' header when discovery returns no models", async () => {
+      await updateConfigField("defaults.model", "claude-sonnet-4.5");
+      const discoverModels = vi.fn(async () => ({
+        models: [] as readonly string[],
+        source: "live" as const,
+      }));
+
+      const { stdout, stderr, error } = await runConfig(["model"], {
+        modelDeps: {
+          input: createNonTtyInput(),
+          discoverModels,
+        },
+      });
+
+      expect(error).toBeInstanceOf(CliUserError);
+      expect(stdout).not.toContain("Available models:");
+      expect(stderr).toMatch(/config model <name>/);
+    });
   });
 
   // Sentinel PR #1856 follow-ups: config model error/echo hygiene (#1863) and

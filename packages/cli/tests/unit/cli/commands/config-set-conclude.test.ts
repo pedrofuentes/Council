@@ -102,6 +102,22 @@ describe("buildConfigCommand config set conclude.*", () => {
       expect(stderr).toContain("conclude.maxTranscriptChars");
       expect(stderr).toMatch(/1000 and 1000000/);
     });
+
+    it.each(["8e4", "0x2710", "80000.0"])(
+      "rejects the in-range non-integer form %j as a user error",
+      async (rawValue) => {
+        const { stdout, stderr } = await runConfig([
+          "set",
+          "conclude.maxTranscriptChars",
+          rawValue,
+        ]);
+
+        expect(stdout).toBe("");
+        expect(stderr).toContain("conclude.maxTranscriptChars");
+        const config = await loadConfig();
+        expect(config.conclude.maxTranscriptChars).toBe(50000);
+      },
+    );
   });
 
   describe("valid keys listing", () => {

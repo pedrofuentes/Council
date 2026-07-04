@@ -189,6 +189,22 @@ describe("buildConfigCommand config set documents.*", () => {
       expect(stdout).toContain("documents.aiExtractionAllowedExtensions");
       expect(stdout).toContain(".png, .zip");
     });
+
+    it.each([".", "..pdf", ".p n g"])(
+      "rejects the malformed extension %j as a user error and does not persist it",
+      async (rawValue) => {
+        const { stdout, stderr } = await runConfig([
+          "set",
+          "documents.aiExtractionAllowedExtensions",
+          rawValue,
+        ]);
+
+        expect(stdout).toBe("");
+        expect(stderr).toContain("documents.aiExtractionAllowedExtensions");
+        const config = await loadConfig();
+        expect(config.documents.aiExtractionAllowedExtensions).toEqual([]);
+      },
+    );
   });
 
   describe("valid keys listing", () => {
