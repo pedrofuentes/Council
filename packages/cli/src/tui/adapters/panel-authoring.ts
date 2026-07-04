@@ -150,6 +150,7 @@ export function createPanelAuthoringSource(deps: PanelAuthoringDeps): PanelAutho
     },
 
     async setMembers(name, expertSlugs): Promise<void> {
+      validatePanelName(name);
       await validateExpertSlugs(expertSlugs, deps.expertExists);
       await deps.panelRepo.setMembers(name, expertSlugs);
     },
