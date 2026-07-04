@@ -45,7 +45,7 @@ import { TurnRepository, type Turn } from "../../memory/repositories/turns.js";
 import { synthesizeEvents, type TranscriptDocument } from "../../memory/transcript.js";
 
 import { CliUserError } from "../cli-user-error.js";
-import { resolveSession } from "../session-resolver.js";
+import { resolveSession, SessionNotFoundError } from "../session-resolver.js";
 import {
   escapeBlockLeadingMarkdown,
   sanitizeExportBlock,
@@ -353,6 +353,27 @@ export async function writeExportArtifact(
   }
 }
 
+/**
+ * Gate for `export`'s config-dataHome retry (#848).
+ *
+ * The command first resolves the panel against the default data home. When
+ * that fails with a {@link SessionNotFoundError} — and only that type — and no
+ * explicit `COUNCIL_DATA_HOME` override is in effect, it retries once against
+ * the data home from config. Keying on the error TYPE (not the prose of the
+ * "No panel found matching …" message) keeps a reworded diagnostic from
+ * silently disabling the retry, and keeps a different `CliUserError` that
+ * merely shares that prose from wrongly triggering it.
+ *
+ * @param err The error thrown by the first `resolveSession` attempt.
+ * @param dataHomeEnv The current `COUNCIL_DATA_HOME` value (unset/empty ⇒ retry allowed).
+ */
+export function shouldRetryWithConfiguredDataHome(
+  err: unknown,
+  dataHomeEnv: string | undefined,
+): boolean {
+  return err instanceof SessionNotFoundError && !dataHomeEnv?.length;
+}
+
 export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
   const write: Writer = deps.write ?? defaultWriter;
   const writeError: Writer = deps.writeError ?? defaultErrorWriter;
@@ -397,11 +418,7 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
             writeError: bufferedWriteError,
           });
         } catch (err: unknown) {
-          const shouldRetryWithConfig =
-            err instanceof CliUserError &&
-            err.message.startsWith("No panel found matching") &&
-            !process.env["COUNCIL_DATA_HOME"]?.length;
-          if (!shouldRetryWithConfig) {
+          if (!shouldRetryWithConfiguredDataHome(err, process.env["COUNCIL_DATA_HOME"])) {
             writeError(firstAttemptStderr);
             throw err;
           }
