@@ -11,7 +11,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import * as yaml from "yaml";
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 
 import { FileExpertLibrary } from "../../../src/core/expert-library.js";
 import { ExpertDefinitionSchema, type ExpertDefinition } from "../../../src/core/expert.js";
@@ -1206,6 +1206,196 @@ describe("template-migration", () => {
       // the sanitizer strips the danger without gutting the diagnostic.
       expect(message).toContain("INJECTED");
       expect(message).toContain("failed schema validation");
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // #304: disambiguating a deeply-collided slug tail must NOT issue one
+  // sequential `library.get()` per candidate (worst case ~100 queries on a
+  // cold third-party path). resolveSuffixed takes a single library snapshot
+  // and resolves candidates in memory, so the number of library reads is
+  // bounded regardless of collision depth — while the chosen slug is
+  // unchanged.
+  // ─────────────────────────────────────────────────────────────────────
+  describe("bounded library lookups when disambiguating a collided slug (#304)", () => {
+    function expertWith(slug: string, role: string): ExpertDefinition {
+      return {
+        slug,
+        displayName: "Valid Expert",
+        role,
+        kind: "generic",
+        expertise: { weightedEvidence: ["evidence"], referenceCases: [], notExpertIn: [] },
+        epistemicStance: "stance",
+      };
+    }
+
+    it("resolves a deep collision with a bounded number of library reads", async () => {
+      // Pre-occupy the primary suffix and the first numeric fallbacks with
+      // DISTINCT-content experts, so resolveSuffixed must skip past all of
+      // them: sre-panelb, sre-panelb-2 … sre-panelb-5.
+      const occupied = [
+        "sre-panelb",
+        "sre-panelb-2",
+        "sre-panelb-3",
+        "sre-panelb-4",
+        "sre-panelb-5",
+      ];
+      for (const slug of occupied) {
+        await lib.create(expertWith(slug, `occupied ${slug}`));
+      }
+
+      // panela claims the base slug `sre`; panelb re-declares `sre` with
+      // DIFFERENT content, forcing suffix disambiguation for panelb.
+      const stubLoader = async (name: string) =>
+        name === "panela"
+          ? { name, experts: [expertWith("sre", "content A")] }
+          : { name, experts: [expertWith("sre", "content B — differs from A")] };
+
+      const getSpy = vi.spyOn(lib, "get");
+
+      await migrateBuiltInTemplates(dataHome, lib, db, {
+        quiet: true,
+        panelNames: ["panela", "panelb"],
+        loadPanel: stubLoader,
+      });
+
+      // Output preserved: panelb's `sre` lands on the first free suffix past
+      // the five pre-occupied ones.
+      const created = await db
+        .selectFrom("expert_library")
+        .select("slug")
+        .where("slug", "=", "sre-panelb-6")
+        .executeTakeFirst();
+      expect(created).toBeDefined();
+
+      // Bounded reads: the old per-candidate scan issued one library.get()
+      // per collided suffix (~6 here, plus the base lookup); the snapshot
+      // strategy keeps library.get() calls constant, independent of the
+      // collision depth. Only the single base lookup in pickSlug remains.
+      expect(getSpy.mock.calls.length).toBeLessThanOrEqual(2);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // #1809: when an inline expert in a recovered on-disk panel fails schema
+  // validation, the surfaced error must name the panel FILE (not just the
+  // bare panel name) so a user can locate and fix the offending YAML. The
+  // panel path is sanitized like every other value interpolated into the
+  // thrown message.
+  // ─────────────────────────────────────────────────────────────────────
+  describe("schema-failure error names the offending panel file (#1809)", () => {
+    it("includes the panel file path when a recovered panel has a malformed inline expert", async () => {
+      // Seed the standard files + rows.
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
+
+      const firstName = BUILTIN_PANELS[0];
+      const panelsDir = path.join(dataHome, "panels");
+      const panelFile = path.join(panelsDir, `${firstName}.yaml`);
+      // Object-shaped (inline) expert missing required fields → schema fail
+      // inside parseOnDiskPanel during DB-reset recovery.
+      await fs.writeFile(
+        panelFile,
+        yaml.stringify({
+          name: firstName,
+          description: "corrupted",
+          experts: [{ slug: "broken-inline", displayName: "Broken" }],
+        }),
+        "utf-8",
+      );
+
+      // Wipe panel rows so recovery re-reads the panel from disk (the path
+      // that calls parseOnDiskPanel).
+      await db.deleteFrom("panel_members").execute();
+      await db.deleteFrom("panel_library").execute();
+
+      let caught: unknown;
+      try {
+        await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      const message = (caught as Error).message;
+      // The offending panel file must be identifiable: the pre-fix message
+      // carried only the bare panel name (no `.yaml` path), so this fails
+      // until the panel file is threaded into the schema-failure error.
+      expect(message).toContain(`${firstName}.yaml`);
+      // Still names the failing inline expert.
+      expect(message).toContain("broken-inline");
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // #1919 finding 1: broaden terminal-safety coverage to sanitized sinks
+  // previously exercised only with control-char-free inputs — the
+  // assertConfinedSlug string-entry sink and the multi-failure aggregate
+  // join — so a regression dropping `sanitizeForError` from either would
+  // FAIL CI (both render untrusted bytes to a bare TTY sink).
+  // ─────────────────────────────────────────────────────────────────────
+  describe("terminal-safety coverage for slug + aggregate sinks (#1919)", () => {
+    // C0 (except tab) / C1 / DEL / bidi override + isolate ranges — any of
+    // these reaching a TTY is a terminal-injection vector.
+    // eslint-disable-next-line no-control-regex
+    const DANGEROUS = /[\u0000-\u0008\u000A-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/;
+
+    // Tab-indented (invalid) YAML whose code frame carries C1 CSI/OSC, DEL,
+    // an RLO bidi override and a raw CRLF — the bytes `yaml` embeds verbatim.
+    const MALFORMED_YAML = "experts:\n\t- slug: evil\u009b31m\u009d\u007f\u202eINJECTED\r\n";
+
+    it("strips control / C1 / bidi bytes from an invalid slug-reference error (assertConfinedSlug)", () => {
+      // A string (slug-reference) entry whose value is a disallowed slug
+      // carrying terminal-injection bytes → assertConfinedSlug throws with the
+      // slug interpolated into the message.
+      const evilSlug = "../\r\n\u001b[2J\u009b31m\u202e\u2066INJECTED";
+      const panelYaml = yaml.stringify({ name: "p", experts: [evilSlug] });
+
+      let caught: unknown;
+      try {
+        parseOnDiskPanel(panelYaml);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      const message = (caught as Error).message;
+      // No raw control / C1 / DEL / bidi byte may survive to the terminal...
+      expect(message).not.toMatch(DANGEROUS);
+      // ...and the message stays on one physical line.
+      expect(message.split("\n")).toHaveLength(1);
+      expect(message).not.toContain("\r");
+      // Still informative: the sink + the printable slug tail remain.
+      expect(message).toContain("invalid expert slug");
+      expect(message).toContain("INJECTED");
+    });
+
+    it("keeps a multi-panel aggregate failure sanitized and on one physical line", async () => {
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
+
+      const panelsDir = path.join(dataHome, "panels");
+      const firstName = BUILTIN_PANELS[0];
+      const secondName = BUILTIN_PANELS[1];
+      // Corrupt TWO panels so the aggregate joins multiple failures; each
+      // YAML code frame carries C1/DEL/bidi/CRLF bytes.
+      await fs.writeFile(path.join(panelsDir, `${firstName}.yaml`), MALFORMED_YAML, "utf-8");
+      await fs.writeFile(path.join(panelsDir, `${secondName}.yaml`), MALFORMED_YAML, "utf-8");
+
+      // Wipe panel rows so DB-reset recovery re-reads every panel from disk.
+      await db.deleteFrom("panel_members").execute();
+      await db.deleteFrom("panel_library").execute();
+
+      let caught: unknown;
+      try {
+        await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      const message = (caught as Error).message;
+      // Both failures are joined into a single aggregate...
+      expect(message).toContain("2 panel(s) failed to migrate");
+      // ...that stays terminal-safe on one physical line.
+      expect(message).not.toMatch(DANGEROUS);
+      expect(message.split("\n")).toHaveLength(1);
+      expect(message).not.toContain("\r");
     });
   });
 });

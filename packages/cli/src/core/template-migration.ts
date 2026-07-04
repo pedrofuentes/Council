@@ -60,6 +60,13 @@ function sanitizeForError(value: string, maxLength = 200): string {
  * `isMigrationNeeded` short-circuit to false and lock the user out (#1807).
  * Infrastructure errors (fs EACCES/EIO, loader bugs) are intentionally NOT
  * this type and still propagate immediately.
+ *
+ * Reused for a second, *aggregate* role: after the per-panel loop, the
+ * collected failures are re-thrown as a single `PanelMigrationError`
+ * summarising N panels (see {@link runMigration}). That aggregate is thrown
+ * *outside* the loop and is deliberately NOT caught by the loop's
+ * `instanceof PanelMigrationError` guard — do not add an outer catch on this
+ * type, or it could silently swallow the aggregate and hide the failures.
  */
 class PanelMigrationError extends Error {
   constructor(message: string) {
@@ -248,7 +255,7 @@ async function runMigration(
         // materialised into expert_library (and a standalone YAML if
         // none exists) so panel_members FK is satisfied.
         const onDiskContent = await fs.readFile(panelFile, "utf-8");
-        const onDisk = parseOnDiskPanel(onDiskContent);
+        const onDisk = parseOnDiskPanel(onDiskContent, panelFile);
         const recoveredSlugs: string[] = [];
         for (const entry of onDisk.entries) {
           const candidateSlug = entry.kind === "slug" ? entry.slug : entry.definition.slug;
@@ -403,6 +410,17 @@ async function resolveSuffixed(
   const candidates = [primary];
   for (let i = 2; i < 100; i++) candidates.push(`${primary}-${i}`);
 
+  // Snapshot the library once instead of issuing one sequential
+  // `library.get()` per candidate: a deeply-collided slug tail (many
+  // distinct-content third-party experts occupying `${primary}`,
+  // `${primary}-2`, …) would otherwise fan out into up to ~100 sequential
+  // reads on this cold disambiguation path (#304). Resolving candidates
+  // against an in-memory map bounds library I/O to a single call while
+  // keeping the chosen suffix identical to the per-candidate scan. No writes
+  // occur before this function returns, so the snapshot cannot go stale.
+  const librarySlugs = new Map<string, ExpertDefinition>();
+  for (const def of await library.list()) librarySlugs.set(def.slug, def);
+
   for (const candidate of candidates) {
     const sessionDef = claimed.get(candidate);
     if (sessionDef) {
@@ -411,7 +429,7 @@ async function resolveSuffixed(
       }
       continue;
     }
-    const libraryDef = await library.get(candidate);
+    const libraryDef = librarySlugs.get(candidate);
     if (libraryDef) {
       if (defsEqual(libraryDef, expert)) {
         claimed.set(candidate, libraryDef);
@@ -512,23 +530,23 @@ async function registerPanelFromDisk(
       .execute();
   }
 
-  for (let i = 0; i < slugs.length; i++) {
-    const slug = slugs[i] as string;
-    const existingMember = await db
-      .selectFrom("panel_members")
-      .selectAll()
-      .where("panel_name", "=", panelName)
-      .where("expert_slug", "=", slug)
-      .executeTakeFirst();
-    if (existingMember) continue;
+  // Bulk-insert memberships in a single statement, letting the composite
+  // primary key (panel_name, expert_slug) drop rows that already exist
+  // (DO NOTHING) — idempotent and symmetric with the panel_library upsert
+  // above, instead of an N+1 select-then-insert per member (#305). Existing
+  // rows keep their stored position, matching the prior skip-if-present loop.
+  if (slugs.length > 0) {
     await db
       .insertInto("panel_members")
-      .values({
-        panel_name: panelName,
-        expert_slug: slug,
-        position: i,
-        created_at: now,
-      })
+      .values(
+        slugs.map((slug, i) => ({
+          panel_name: panelName,
+          expert_slug: slug,
+          position: i,
+          created_at: now,
+        })),
+      )
+      .onConflict((oc) => oc.columns(["panel_name", "expert_slug"]).doNothing())
       .execute();
   }
 }
@@ -587,7 +605,23 @@ function parseOnDiskExpert(content: string, slug: string): ExpertDefinition {
   return parsed.data;
 }
 
-export function parseOnDiskPanel(content: string): OnDiskPanel {
+/**
+ * Parse an untrusted on-disk panel YAML file's content into an
+ * {@link OnDiskPanel} (its description plus ordered slug-reference / inline
+ * expert entries). Exported for direct unit testing of the recovery parse.
+ *
+ * @param content - Raw YAML text read from the panel file.
+ * @param panelFile - Optional path of the source file; when provided it is
+ *   named (sanitized) in a schema-validation failure so the user can locate
+ *   the offending panel (#1809).
+ * @throws {PanelMigrationError} On malformed YAML, a slug that escapes the
+ *   confinement charset, or an inline expert that fails schema validation.
+ *   The message is a single display line with all control / C1 / DEL / bidi
+ *   bytes stripped and truncated (`error.name === "PanelMigrationError"`), so
+ *   it is safe to surface on a bare TTY sink. Callers isolate this per panel;
+ *   genuine fs infra errors are raised by the caller's `fs.readFile`, not here.
+ */
+export function parseOnDiskPanel(content: string, panelFile?: string): OnDiskPanel {
   const raw = parseOnDiskYaml(content, "malformed on-disk panel YAML") as Record<
     string,
     unknown
@@ -615,8 +649,12 @@ export function parseOnDiskPanel(content: string): OnDiskPanel {
       } else {
         const slug = (entry as { slug?: unknown }).slug;
         const label = typeof slug === "string" ? slug : "<unknown>";
+        // Name the offending panel file (when known) so the user can locate
+        // and fix it (#1809). The path is derived from an on-disk file name,
+        // so sanitize it like every other value interpolated into the sink.
+        const inFile = panelFile ? ` in panel file "${sanitizeForError(panelFile, 200)}"` : "";
         throw new PanelMigrationError(
-          `[template-migration] inline expert "${sanitizeForError(label, 100)}" failed schema validation: ${sanitizeForError(JSON.stringify(parsed.error.issues))}`,
+          `[template-migration] inline expert "${sanitizeForError(label, 100)}"${inFile} failed schema validation: ${sanitizeForError(JSON.stringify(parsed.error.issues))}`,
         );
       }
     }
