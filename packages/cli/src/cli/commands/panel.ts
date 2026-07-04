@@ -324,6 +324,32 @@ async function persistPanelArtifacts(
 }
 
 /**
+ * Thrown by {@link persistPanelEditAtomically} when the atomic edit transaction
+ * aborts (#1931). Mirrors {@link SetMembersError} from panel-library-repo.ts:
+ * exposes whether ROLLBACK itself succeeded ({@link rollbackFailed}) AND
+ * preserves the underlying rollback error ({@link rollbackError}) for
+ * diagnostics. When the rollback fails the database may be inconsistent (new
+ * membership committed with a stale checksum, or vice-versa), so the reason MUST
+ * survive — a bare boolean would leave a genuine inconsistency undiagnosable.
+ */
+export class PanelEditPersistError extends Error {
+  readonly rollbackFailed: boolean;
+  readonly rollbackError?: unknown;
+
+  constructor(
+    message: string,
+    opts: { cause: unknown; rollbackFailed: boolean; rollbackError?: unknown },
+  ) {
+    super(message, { cause: opts.cause });
+    this.name = "PanelEditPersistError";
+    this.rollbackFailed = opts.rollbackFailed;
+    if (opts.rollbackError !== undefined) {
+      this.rollbackError = opts.rollbackError;
+    }
+  }
+}
+
+/**
  * Atomically persist an edited panel's membership and library row/checksum
  * (#1931). `panel edit` changes two tables — `panel_members` (the ordered
  * membership) and `panel_library` (the row + `yaml_checksum`) — which were
@@ -341,9 +367,11 @@ async function persistPanelArtifacts(
  * Raw `BEGIN`/`COMMIT`/`ROLLBACK` on the primary connection mirror
  * `PanelLibraryRepository.setMembers`: Kysely's `transaction()` reconnects the
  * libsql `:memory:` connection and cannot see the primary connection's schema
- * (issue #298). On failure the transaction is rolled back and an error is
- * thrown; the message is honest about whether ROLLBACK itself succeeded so a
- * genuinely inconsistent DB is not reported as cleanly preserved.
+ * (issue #298). On failure the transaction is rolled back and a
+ * {@link PanelEditPersistError} is thrown; its message is honest about whether
+ * ROLLBACK itself succeeded (so a genuinely inconsistent DB is not reported as
+ * cleanly preserved) and it preserves the rollback error via `rollbackError`
+ * for diagnostics.
  */
 async function persistPanelEditAtomically(
   db: CouncilDatabase,
@@ -359,10 +387,10 @@ async function persistPanelEditAtomically(
     await sql`BEGIN`.execute(db);
   } catch (beginErr) {
     const detail = beginErr instanceof Error ? beginErr.message : String(beginErr);
-    throw new Error(
+    throw new PanelEditPersistError(
       `Failed to save panel "${edit.name}" before any changes ` +
         `(BEGIN failed; no changes applied): ${detail}`,
-      { cause: beginErr },
+      { cause: beginErr, rollbackFailed: false },
     );
   }
   try {
@@ -394,10 +422,12 @@ async function persistPanelEditAtomically(
     await sql`COMMIT`.execute(db);
   } catch (err) {
     let rollbackFailed = false;
+    let rollbackError: unknown;
     try {
       await sql`ROLLBACK`.execute(db);
-    } catch {
+    } catch (rbErr) {
       rollbackFailed = true;
+      rollbackError = rbErr;
     }
     const detail = err instanceof Error ? err.message : String(err);
     const message = rollbackFailed
@@ -405,7 +435,12 @@ async function persistPanelEditAtomically(
         `and membership may be inconsistent: ${detail}`
       : `Failed to save panel "${edit.name}" (transaction rolled back cleanly; ` +
         `prior row and membership preserved): ${detail}`;
-    throw new Error(message, { cause: err });
+    throw new PanelEditPersistError(
+      message,
+      rollbackError === undefined
+        ? { cause: err, rollbackFailed }
+        : { cause: err, rollbackFailed, rollbackError },
+    );
   }
 }
 
