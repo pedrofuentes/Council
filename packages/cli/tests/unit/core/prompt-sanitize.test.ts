@@ -233,6 +233,15 @@ describe("sanitizeFenced", () => {
     expect(result.endsWith("…")).toBe(true);
   });
 
+  it("caps the final escaped output without splitting escape entities or surrogate pairs", () => {
+    const maxLength = 10;
+    const result = sanitizeFenced(`${"<".repeat(100)}😀`, maxLength);
+
+    expect(result.length).toBeLessThanOrEqual(maxLength);
+    expect(result).not.toMatch(/(?:&|&l|&lt)…$/);
+    expect(result).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u);
+  });
+
   it("strips bidi/zero-width before escaping fences", () => {
     expect(sanitizeFenced("\u200B<a>\u202E")).toBe("&lt;a>");
   });
