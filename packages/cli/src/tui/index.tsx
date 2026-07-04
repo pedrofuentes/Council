@@ -120,6 +120,17 @@ export function resolveConfinedExpertDocsDir(dataHome: string, slug: string): st
 }
 
 /**
+ * Build the "missing expert" error thrown when a live panel member no longer
+ * resolves to a library definition. The slug is DB/`panel_library`-sourced and
+ * echoed to a single-line terminal error surface, so it is sanitized via
+ * {@link toSingleLineDisplay} (parity with the convene adapter's other error
+ * sinks — see `convene-resolve.ts`). Exported for direct unit coverage.
+ */
+export function buildMissingExpertError(slug: string): Error {
+  return new Error(`Panel references missing expert "${toSingleLineDisplay(slug)}"`);
+}
+
+/**
  * A reactive sink that routes best-effort runtime warnings into the TUI's
  * dismissible notice banner. The panels degraded-template loader (#2046) — and
  * any future best-effort surface — pushes here via its `onWarning` callback so a
@@ -303,7 +314,7 @@ export async function launchTui(): Promise<void> {
       async (slug, panelDefaultModel) => {
         const definition = await expertLibrary.get(slug);
         if (definition === null) {
-          throw new Error(`Panel references missing expert "${slug}"`);
+          throw buildMissingExpertError(slug);
         }
         return {
           id: ulid(),
@@ -369,7 +380,12 @@ export async function launchTui(): Promise<void> {
         getExpertDefinition: async (slug) => {
           const definition = await expertLibrary.get(slug);
           if (definition === null) {
-            throw new Error(`Panel references missing expert "${slug}"`);
+            // Defense-in-depth: the resolver builds specs via `buildSpec`
+            // (createBuildSpec, above) BEFORE it resolves member definitions,
+            // so a missing member already throws there. This guard narrows the
+            // nullable `get` result and stays as a belt-and-braces sink whose
+            // sanitized message matches the primary throw.
+            throw buildMissingExpertError(slug);
           }
           return definition;
         },
