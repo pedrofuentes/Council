@@ -137,4 +137,70 @@ describe("runWithEngine — engine vs persistence/render error scoping (#195)", 
     expect(errOutput).toContain("Underlying:");
     expect(errOutput).toContain("engine init failed");
   });
+
+  describe("Error.cause propagation & construction-in-try (#153, #1378)", () => {
+    it("attaches the first expert-registration failure as Error.cause (#153)", async () => {
+      const registrationError = new Error("addExpert rejected: quota exceeded");
+      const engine = new MockEngine();
+      vi.spyOn(engine, "addExpert").mockRejectedValue(registrationError);
+
+      let caught: unknown;
+      try {
+        await runWithEngine({
+          engineKind: "mock",
+          engineFactory: () => engine,
+          experts: [{ ...expert, id: expertSlugToId[expert.slug] ?? "" }],
+          debateConfig: { maxRounds: 1, maxWordsPerResponse: 50, mode: "freeform" },
+          prompt: "Topic",
+          panelId,
+          expertSlugToId,
+          moderator: "round-robin",
+          format: "plain",
+          write: () => undefined,
+          writeError: () => undefined,
+          db,
+        });
+      } catch (e: unknown) {
+        caught = e;
+      }
+
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).message).toMatch(/could not register all experts/);
+      // The aggregate error must expose the first underlying rejection via
+      // `cause` so downstream handlers can introspect it (#153).
+      expect((caught as Error).cause).toBe(registrationError);
+    });
+
+    it("routes a synchronous engine-construction failure through formatEngineError (#1378)", async () => {
+      const constructionError = new Error("provider is not yet available");
+
+      let errOutput = "";
+      await expect(
+        runWithEngine({
+          engineKind: "mock",
+          engineFactory: () => {
+            throw constructionError;
+          },
+          experts: [{ ...expert, id: expertSlugToId[expert.slug] ?? "" }],
+          debateConfig: { maxRounds: 1, maxWordsPerResponse: 50, mode: "freeform" },
+          prompt: "Topic",
+          panelId,
+          expertSlugToId,
+          moderator: "round-robin",
+          format: "plain",
+          write: () => undefined,
+          writeError: (s: string) => {
+            errOutput += s;
+          },
+          db,
+        }),
+      ).rejects.toThrow("provider is not yet available");
+
+      // Construction now happens inside the try, so a synchronous throw gets
+      // the same actionable formatEngineError treatment as start()/registration
+      // failures instead of bypassing it (#1378).
+      expect(errOutput).toContain("Underlying:");
+      expect(errOutput).toContain("provider is not yet available");
+    });
+  });
 });
