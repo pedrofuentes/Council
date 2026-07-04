@@ -5,6 +5,8 @@
  * and zero-width character stripping — alongside the previously existing
  * defenses (C0 strip, line-break collapse, `[NN]` defang, length cap).
  */
+import { runInNewContext } from "node:vm";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -239,6 +241,26 @@ describe("sanitizeFenced", () => {
 
     expect(result.length).toBeLessThanOrEqual(maxLength);
     expect(result).not.toMatch(/(?:&|&l|&lt)…$/);
+    expect(result).not.toMatch(
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u,
+    );
+  });
+
+  it("treats non-finite maxLength as no final cap", () => {
+    const input = "<tag>";
+    const result = runInNewContext(
+      "sanitizeFenced(input, Number.NaN)",
+      { input, Number, sanitizeFenced },
+      { timeout: 200 },
+    );
+
+    expect(result).toBe("&lt;tag>");
+  });
+
+  it("does not split surrogate pairs when applying the final escaped cap", () => {
+    const result = sanitizeFenced("<😀😀😀", 8);
+
+    expect(result).toBe("&lt;😀…");
     expect(result).not.toMatch(
       /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u,
     );
