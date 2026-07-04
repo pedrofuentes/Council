@@ -17,6 +17,13 @@ import {
   sanitizePromptField,
 } from "../../../src/core/prompt-sanitize.js";
 
+function containsNoLoneSurrogates(out: string): boolean {
+  return [...out].every((c) => {
+    const cp = c.codePointAt(0);
+    return cp !== undefined && (cp < 0xd800 || cp > 0xdfff);
+  });
+}
+
 describe("sanitizePromptField", () => {
   describe("NFKC normalization", () => {
     it("normalizes fullwidth ASCII letters to plain ASCII", () => {
@@ -91,6 +98,13 @@ describe("sanitizePromptField", () => {
       expect(result.length).toBeLessThanOrEqual(MAX);
       expect(result.length).toBe(MAX); // Should be exactly MAX, not MAX+1
       expect(result.endsWith("…")).toBe(true);
+    });
+
+    it("does not split surrogate pairs when truncating before escaping (issue #2303)", () => {
+      const result = sanitizePromptField(`${"x".repeat(1998)}😀x`);
+
+      expect(result.endsWith("…")).toBe(true);
+      expect(containsNoLoneSurrogates(result)).toBe(true);
     });
 
     it("returns short input unchanged when no special characters present", () => {
@@ -212,6 +226,13 @@ describe("sanitizePromptBlock", () => {
     expect(result.length).toBe(50); // Fixed: should be exactly 50
     expect(result.endsWith("…")).toBe(true);
     expect(result.slice(0, 49)).toBe("x".repeat(49)); // 49 + ellipsis = 50
+  });
+
+  it("does not split surrogate pairs when truncating before escaping (issue #2303)", () => {
+    const result = sanitizePromptBlock(`${"x".repeat(8)}😀x`, 10);
+
+    expect(result.endsWith("…")).toBe(true);
+    expect(containsNoLoneSurrogates(result)).toBe(true);
   });
 
   it("returns short input unchanged when below cap", () => {
