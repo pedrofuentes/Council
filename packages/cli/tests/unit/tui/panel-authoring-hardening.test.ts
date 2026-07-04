@@ -207,4 +207,26 @@ describe("createPanelAuthoringSource — error-handling hardening (#1645)", () =
     expect(env.repo.rows.has("alpha")).toBe(false);
     expect(env.repo.events).toContain("delete");
   });
+
+  it("preserves the writeFile error when handle.close() also throws", async () => {
+    const yamlPath = yamlPathFor(env.home, "alpha");
+    mockState.failWritePath = yamlPath;
+    mockState.failClosePath = yamlPath;
+
+    const err = await sourceFor(env)
+      .create({ name: "alpha", description: null, expertSlugs: ["alice"] })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+
+    expect(err).toBeInstanceOf(Error);
+    // The finally-block close() must not overwrite the primary write error:
+    // the surfaced failure is the ENOSPC write error, never the EIO close one.
+    expect((err as Error).message).toMatch(/ENOSPC|simulated mid-write failure/i);
+    expect((err as Error).message).not.toMatch(/EIO|simulated close failure/i);
+    // The partially-written YAML and DB row are rolled back.
+    await expect(fs.access(yamlPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(env.repo.rows.has("alpha")).toBe(false);
+  });
 });
