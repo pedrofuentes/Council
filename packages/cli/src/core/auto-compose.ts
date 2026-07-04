@@ -100,6 +100,7 @@ export async function autoComposePanel(
   await engine.addExpert(composer);
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const signal = options?.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
+  const errorContext: ErrorContext = { model, timeoutSignal, timeoutMs };
 
   let parsed: unknown;
   // Capture the primary error (timeout / parse / engine failure) so a failing
@@ -114,9 +115,7 @@ export async function autoComposePanel(
       composer.id,
       buildComposerUserPrompt(topic),
       signal,
-      timeoutSignal,
-      model,
-      timeoutMs,
+      errorContext,
       retryBackoffMs,
     );
     let parseResult = parseComposerResponse(response);
@@ -127,9 +126,7 @@ export async function autoComposePanel(
         composer.id,
         buildComposerUserPrompt(topic, { strictJsonOnly: true }),
         signal,
-        timeoutSignal,
-        model,
-        timeoutMs,
+        errorContext,
         retryBackoffMs,
       );
       parseResult = parseComposerResponse(response);
@@ -207,16 +204,27 @@ interface ComposerPromptOptions {
   readonly strictJsonOnly?: boolean;
 }
 
+/**
+ * Error-path context for `collectComposerResponse` (#832). `model`,
+ * `timeoutSignal`, and `timeoutMs` are consumed only when a send fails, times
+ * out, or is aborted — bundling them keeps the happy-path parameter surface
+ * narrow so the common signature reads as "engine, expert, prompt, signal".
+ */
+interface ErrorContext {
+  readonly model: string;
+  readonly timeoutSignal: AbortSignal;
+  readonly timeoutMs: number;
+}
+
 async function collectComposerResponse(
   engine: CouncilEngine,
   expertId: string,
   prompt: string,
   signal: AbortSignal,
-  timeoutSignal: AbortSignal,
-  model: string,
-  timeoutMs: number,
+  errorContext: ErrorContext,
   retryBackoffMs: readonly number[],
 ): Promise<string> {
+  const { model, timeoutSignal, timeoutMs } = errorContext;
   const maxRetries = retryBackoffMs.length;
   for (let attempt = 0; ; attempt += 1) {
     const outcome = await consumeComposerSend(engine, expertId, prompt, signal);
