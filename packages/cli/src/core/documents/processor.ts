@@ -155,6 +155,16 @@ function warnProcessor(onWarning: ((message: string) => void) | undefined, messa
   onWarning(toSingleLineDisplay(message));
 }
 
+/**
+ * #471: byte-size threshold above which a successfully-indexed document is
+ * flagged as "large". Large documents are split into many FTS chunks (see
+ * `chunkText` / `DEFAULT_CHUNK_MAX_CHARS` in `./chunking.ts`), so surfacing
+ * the size through the processor's best-effort `onWarning` sink lets
+ * operators understand why a big file produced many retrieval segments.
+ * 100 KiB matches the PRD F2 large-document threshold.
+ */
+const LARGE_DOCUMENT_WARNING_BYTES = 100 * 1024;
+
 export function createDocumentProcessor(
   options: DocumentProcessorOptions,
 ): DocumentProcessor {
@@ -500,6 +510,19 @@ export function createDocumentProcessor(
               ? { detectedFormat: extracted.metadata.detectedFormat }
               : {}),
           });
+
+          // #471: a large document is split into many FTS chunks. Surface a
+          // bounded, non-content warning naming the file and its size so
+          // operators understand why a big file produced many retrieval
+          // segments. Best-effort via the processor's `onWarning` sink; the
+          // untrusted filename is sanitized by `warnProcessor`.
+          if (extracted.sizeBytes > LARGE_DOCUMENT_WARNING_BYTES) {
+            const sizeKb = Math.round(extracted.sizeBytes / 1024);
+            warnProcessor(
+              onWarning,
+              `documents: ${file.filename} is ${sizeKb}KB — large document indexed in chunks`,
+            );
+          }
         } catch (err: unknown) {
           failed += 1;
           const msg = err instanceof Error ? err.message : String(err);

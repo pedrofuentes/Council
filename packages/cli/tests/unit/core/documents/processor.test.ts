@@ -1468,3 +1468,111 @@ describe("createDocumentProcessor — ask-mode review for unsupported extensions
     expect(accounted).toBe(3);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// Large-document chunking warning (#471).
+//
+// Large documents are split into many FTS chunks (see chunkText /
+// DEFAULT_CHUNK_MAX_CHARS). The processor surfaces a bounded, non-content
+// warning through its `onWarning` sink when a successfully-indexed file's
+// byte size exceeds the large-document threshold so operators understand
+// why a big file produced many retrieval segments.
+// ─────────────────────────────────────────────────────────────────────
+describe("large-document chunking warning (#471)", () => {
+  let env: Env;
+
+  beforeEach(async () => {
+    env = await makeEnv();
+  });
+  afterEach(async () => {
+    await teardown(env);
+  });
+
+  it("warns via onWarning that a >100KB document will be indexed in chunks", async () => {
+    const dir = await makeDocsDir(env, "alice");
+    const big = path.join(dir, "large-report.md");
+    // ~150 KiB of extractable prose so extracted.sizeBytes crosses the
+    // 100 KiB large-document threshold.
+    await fs.writeFile(big, "word ".repeat(30_000));
+
+    const proc = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: CONFIG,
+    });
+
+    const warnings: string[] = [];
+    const result = await proc.process("alice", dir, undefined, (msg) => warnings.push(msg));
+
+    expect(result.filesProcessed).toBe(1);
+    const chunkWarning = warnings.find((w) => /chunk/i.test(w));
+    expect(chunkWarning).toBeDefined();
+    expect(chunkWarning).toContain("large-report.md");
+  });
+
+  it("does not warn for a document below the large-document threshold", async () => {
+    const dir = await makeDocsDir(env, "bob");
+    const small = path.join(dir, "small.md");
+    await fs.writeFile(small, "just a short note about testing sizes");
+
+    const proc = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: CONFIG,
+    });
+
+    const warnings: string[] = [];
+    const result = await proc.process("bob", dir, undefined, (msg) => warnings.push(msg));
+
+    expect(result.filesProcessed).toBe(1);
+    expect(warnings.some((w) => /chunk/i.test(w))).toBe(false);
+  });
+
+  // Exact-threshold boundary (Sentinel 🟡 #2). The emit condition is strict
+  // `extracted.sizeBytes > LARGE_DOCUMENT_WARNING_BYTES` with the constant at
+  // 100 * 1024 = 102400. "word " is 5 ASCII bytes so 20480 repeats === exactly
+  // the threshold, and one extra byte crosses it. Pins the real `>` boundary.
+  it("does not warn at exactly the 100 KiB threshold (102400 bytes)", async () => {
+    const dir = await makeDocsDir(env, "carol");
+    const exact = path.join(dir, "exact-threshold.md");
+    await fs.writeFile(exact, "word ".repeat(20480));
+
+    const proc = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: CONFIG,
+    });
+
+    const warnings: string[] = [];
+    const result = await proc.process("carol", dir, undefined, (msg) => warnings.push(msg));
+
+    expect(result.filesProcessed).toBe(1);
+    expect(warnings.some((w) => /chunk/i.test(w))).toBe(false);
+  });
+
+  it("warns one byte over the 100 KiB threshold (102401 bytes)", async () => {
+    const dir = await makeDocsDir(env, "dave");
+    const over = path.join(dir, "over-threshold.md");
+    await fs.writeFile(over, "word ".repeat(20480) + "x");
+
+    const proc = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: CONFIG,
+    });
+
+    const warnings: string[] = [];
+    const result = await proc.process("dave", dir, undefined, (msg) => warnings.push(msg));
+
+    expect(result.filesProcessed).toBe(1);
+    expect(warnings.some((w) => /chunk/i.test(w))).toBe(true);
+  });
+});

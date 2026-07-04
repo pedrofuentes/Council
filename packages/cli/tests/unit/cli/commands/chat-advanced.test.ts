@@ -1543,6 +1543,43 @@ describe("persona expert — on-demand document processing", () => {
     expect(out).not.toMatch(/not indexed/i);
     expect(out).toMatch(/processing persona documents/i);
   });
+
+  it("surfaces the large-document chunking warning to the user when a persona doc exceeds 100KB (#471)", async () => {
+    // #471 delivery: the processor emits a chunking warning through its
+    // best-effort `onWarning` sink for a >100KB indexed doc, but that sink is
+    // a no-op unless the caller wires it. The 1:1 chat path must route the
+    // warning to `renderer.showSystem` so the user actually sees it. ~150 KiB
+    // of prose crosses the 100 KiB large-document threshold.
+    await seedPersonaWithDocs(env, { "big-report.md": "word ".repeat(30_000) });
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", PERSONA_SAMPLE.slug, "--engine", "mock"]);
+
+    // The chunking warning reaches the user's terminal, naming the file.
+    expect(out).toMatch(/large document indexed in chunks/i);
+    expect(out).toContain("big-report.md");
+  });
+
+  it("does not surface a chunking warning for a small persona doc (#471)", async () => {
+    await seedPersonaWithDocs(env, { "small.md": "# Memo\n\nA short note." });
+
+    let out = "";
+    const cmd = buildChatCommand({
+      write: (s) => (out += s),
+      writeError: () => undefined,
+      engineFactory: () => new MockEngine(),
+      inputProvider: () => scriptedInput(["/quit"]),
+    });
+    await cmd.parseAsync(["node", "council-chat", PERSONA_SAMPLE.slug, "--engine", "mock"]);
+
+    expect(out).not.toMatch(/indexed in chunks/i);
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────
