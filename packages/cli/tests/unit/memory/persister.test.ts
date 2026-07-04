@@ -137,6 +137,45 @@ describe("DebatePersister", () => {
     expect(debate?.endedAt).not.toBeNull();
   });
 
+  it("rethrows a terminal debate.end update failure WITH debate-id context and the original cause (#158)", async () => {
+    // #158: when the terminal `debate.end` update rejects, the persister
+    // previously let the opaque driver error bubble up with no debate
+    // context, so logs/callers could not correlate the failure to a
+    // specific debate row. The rethrown error must name the debate id and
+    // preserve the original error as `cause`.
+    const persister = new DebatePersister({
+      debates: debateRepo,
+      turns: turnRepo,
+      panelId,
+      expertSlugToId,
+      moderator: "round-robin",
+    });
+    const cause = new Error("terminal write failed");
+    // The terminal update is the ONLY debates.update call on this happy
+    // path (no abrupt-exit finalization), so a blanket reject isolates it.
+    vi.spyOn(debateRepo, "update").mockRejectedValue(cause);
+
+    async function* source(): AsyncIterable<DebateEvent> {
+      yield { kind: "panel.assembled", experts: [] };
+      yield { kind: "debate.end", reason: "completed" };
+    }
+
+    let caught: unknown;
+    try {
+      await collect(persister.persist(source(), "topic"));
+    } catch (error: unknown) {
+      caught = error;
+    }
+
+    const debateId = persister.debateId ?? "";
+    expect(debateId).not.toBe("");
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught).not.toBeInstanceOf(AggregateError);
+    expect((caught as Error).message).toContain(debateId);
+    expect((caught as Error).message).toContain("terminal update failed");
+    expect((caught as Error).cause).toBe(cause);
+  });
+
   it("flushes partial streamed content and marks the debate interrupted when the signal aborts mid-turn", async () => {
     const controller = new AbortController();
     const persister = new DebatePersister({
