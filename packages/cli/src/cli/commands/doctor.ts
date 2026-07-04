@@ -75,6 +75,7 @@ export interface DoctorDeps {
   readonly createSpinner?: () => Spinner;
   readonly resolveCliPath?: () => string | undefined;
   readonly loadConfig?: () => Promise<CouncilConfig>;
+  readonly openSqliteDatabase?: () => Promise<SqliteProbeDatabase>;
 }
 
 /**
@@ -263,12 +264,19 @@ async function probeDirectoryWritable(dir: string): Promise<void> {
   );
 }
 
-async function checkSqlite(): Promise<CheckResult> {
+async function checkSqlite(
+  openDatabase: NonNullable<DoctorDeps["openSqliteDatabase"]>,
+): Promise<CheckResult> {
   try {
-    const { DatabaseSync } = await import("node:sqlite");
-    const database = new DatabaseSync(":memory:");
-    database.prepare("SELECT 1").get();
-    database.close();
+    const database = await openDatabase();
+    // Once construction succeeds the handle owns a native resource, so close it
+    // in a finally even if the probe query throws — otherwise a failed prepare/
+    // get would leak the connection (#1265).
+    try {
+      database.prepare("SELECT 1").get();
+    } finally {
+      database.close();
+    }
     return { name: "SQLite (node:sqlite)", status: "pass", detail: "in-memory DB OK" };
   } catch (err: unknown) {
     return {
@@ -277,6 +285,17 @@ async function checkSqlite(): Promise<CheckResult> {
       detail: formatError(err),
     };
   }
+}
+
+/** Minimal surface `doctor` needs from a `node:sqlite` handle for its probe. */
+interface SqliteProbeDatabase {
+  prepare(sql: string): { get(): unknown };
+  close(): void;
+}
+
+async function openSqliteProbeDatabase(): Promise<SqliteProbeDatabase> {
+  const { DatabaseSync } = await import("node:sqlite");
+  return new DatabaseSync(":memory:");
 }
 
 async function checkCopilotSdk(): Promise<CheckResult> {
@@ -465,6 +484,7 @@ function resolveDoctorDeps(input: DoctorDeps | Writer): Required<DoctorDeps> {
     createSpinner: deps.createSpinner ?? createSpinner,
     resolveCliPath: deps.resolveCliPath ?? resolveCopilotCliPath,
     loadConfig: deps.loadConfig ?? loadConfig,
+    openSqliteDatabase: deps.openSqliteDatabase ?? openSqliteProbeDatabase,
   };
 }
 
@@ -522,6 +542,7 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
     createSpinner: makeSpinner,
     resolveCliPath,
     loadConfig: loadConfigDep,
+    openSqliteDatabase,
   } = resolveDoctorDeps(input);
   const cmd = new Command("doctor");
   cmd
@@ -544,7 +565,7 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
         { label: "Node.js version", run: checkNodeVersion },
         { label: "Council home", run: checkCouncilHome },
         { label: "Council data home", run: () => checkCouncilDataHome(loadConfigOnce) },
-        { label: "SQLite (node:sqlite)", run: checkSqlite },
+        { label: "SQLite (node:sqlite)", run: () => checkSqlite(openSqliteDatabase) },
         { label: "Copilot SDK", run: checkCopilotSdk },
         { label: "Copilot CLI", run: () => checkCopilotCli(resolveCliPath) },
         { label: "Disk write", run: checkDiskSpace },
