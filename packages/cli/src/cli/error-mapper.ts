@@ -135,8 +135,10 @@ function hintForCode(
       // Prefer the explicit model field; fall back to regex extraction.
       let model = ctx.model;
       if (!model) {
-        const modelMatch = ctx.message.match(/\b(?:claude|gpt|gemini)-[a-z0-9.-]+\b/i);
-        model = modelMatch ? modelMatch[0] : "(unknown)";
+        const modelMatch = ctx.message.match(
+          /\b(?:(?:claude|gpt|gemini|llama)-[a-z0-9.-]+|o[13](?:-[a-z0-9.-]+)?)(?:@[a-z0-9.-]+)?\b/i,
+        );
+        model = modelMatch ? modelMatch[0] : ctx.message;
       }
       // Sanitize before interpolating into stderr: a crafted model
       // identifier could otherwise smuggle ANSI/OSC escapes, C0 controls,
