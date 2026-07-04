@@ -172,7 +172,11 @@ describe("doctor --report (integration)", () => {
   });
 
   it("--report markdown reports the Copilot CLI override category without the path", async () => {
-    process.env["COPILOT_CLI_PATH"] = CLI_PATH_SENTINEL;
+    // The override must exist on disk for the status to stay `override` (#1334);
+    // a real file under the temp home keeps that path out of the sanitized report.
+    const overrideEntry = path.join(testHome, "copilot-override-entry.js");
+    await fs.writeFile(overrideEntry, "// stub copilot entry\n", "utf-8");
+    process.env["COPILOT_CLI_PATH"] = overrideEntry;
 
     const output = await runDoctor(["--report", "markdown", "--offline"], {
       resolveCliPath: () => CLI_PATH_SENTINEL,

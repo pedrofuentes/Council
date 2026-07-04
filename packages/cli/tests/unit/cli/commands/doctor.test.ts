@@ -855,7 +855,9 @@ describe("buildDoctorCommand", () => {
   });
 
   it("doctor respects an existing COPILOT_CLI_PATH override", async () => {
-    process.env["COPILOT_CLI_PATH"] = "/custom/copilot/entry.js";
+    const overrideEntry = path.join(testHome, "copilot-override-entry.js");
+    await fs.writeFile(overrideEntry, "// stub copilot entry\n", "utf-8");
+    process.env["COPILOT_CLI_PATH"] = overrideEntry;
 
     const output = await runDoctor(["--offline"], { resolveCliPath: () => undefined });
 

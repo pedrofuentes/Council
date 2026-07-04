@@ -69,15 +69,33 @@ describe("checkCopilotCliPath", () => {
     expect(result.status).toBe("needs-remediation");
   });
 
-  it("respects an explicit COPILOT_CLI_PATH override and does not flag remediation", () => {
+  it("respects an explicit COPILOT_CLI_PATH override that exists on disk", () => {
     const result = checkCopilotCliPath({
       override: "/custom/copilot/entry.js",
       resolvedPath: undefined,
-      exists: () => false,
+      exists: () => true,
     });
 
     expect(result.status).toBe("override");
     expect(result.detail).not.toContain("npm-loader.js");
+  });
+
+  it("needs remediation when the COPILOT_CLI_PATH override points to a missing path", () => {
+    const missingOverride = "/custom/copilot/missing-entry.js";
+    const result = checkCopilotCliPath({
+      override: missingOverride,
+      // A valid resolved path must not rescue a broken explicit override: the
+      // caller pinned COPILOT_CLI_PATH, so a non-existent pin is a real failure
+      // and must surface as needs-remediation instead of a false pass (#1334).
+      resolvedPath: REAL_CLI_PATH,
+      exists: (candidate) => candidate !== missingOverride,
+    });
+
+    expect(result.status).toBe("needs-remediation");
+    expect(result.detail).toContain("COPILOT_CLI_PATH");
+    expect(result.detail).toMatch(/exist/i);
+    // The remediation must not echo the user-provided override path.
+    expect(result.detail).not.toContain(missingOverride);
   });
 
   it("respects the override even when the resolver returned the bogus path", () => {
