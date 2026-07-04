@@ -23,7 +23,7 @@ council convene [options] [topic]
 
 | Option | Description | Default |
 | --- | --- | --- |
-| `--prompt-file <path>` | Read the topic VERBATIM from a file (or \`-\` for stdin) instead of the positional argument. Bypasses the shell so \`$\`, backticks, and values like \`$180K\` survive intact. Mutually exclusive with the positional \<topic\>. | — |
+| `--prompt-file <path>` | Read the topic VERBATIM from a file (or \`-\` for stdin) instead of the positional argument. Bypasses the shell so \`$\`, backticks, and values like \`$180K\` survive intact. Content must be non-empty after trimming. Mutually exclusive with the positional \<topic\>. | — |
 | `-p, --panel <name>` | Use a built-in or custom panel template (alias: --template). \*\*Omit to let Council auto-design an expert panel from your topic.\*\* | — |
 | `--template <name>` | Use a built-in or custom panel template (alias: --panel). \*\*Omit to let Council auto-design an expert panel from your topic.\*\* | — |
 | `--experts <slugs...>` | Expert slugs from the library (space- or comma-separated, repeatable). Bypasses both --template and auto-compose. Because --experts is variadic, put the \<topic\> BEFORE it (or quote a comma-list) so a trailing topic is not consumed as a slug. | — |
