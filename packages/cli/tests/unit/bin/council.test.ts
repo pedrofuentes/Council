@@ -567,6 +567,51 @@ describe("buildUiCommand", () => {
     await cmd.parseAsync(["node", "council-ui"]);
     expect(launched).toBe(1);
   });
+
+  it("propagates a launcher rejection through the awaited action (#1700)", async () => {
+    // The action must `await launch()`, not fire-and-forget: a launcher that
+    // rejects (e.g. the TUI failed to start) has to surface as a rejected
+    // parseAsync so the process exits non-zero instead of silently succeeding.
+    // Drop the `await` in ui.ts and this rejection would become an unhandled
+    // promise while parseAsync resolves cleanly — flipping this assertion.
+    const { buildUiCommand } = await loadUiCommandModule();
+    const cmd = buildUiCommand({
+      launchTui: async () => {
+        throw new Error("TUI failed to start");
+      },
+    });
+    cmd.exitOverride();
+
+    await expect(cmd.parseAsync(["node", "council-ui"])).rejects.toThrow("TUI failed to start");
+  });
+
+  it("awaits the launcher promise before the action settles (#1700)", async () => {
+    // Deferred-launcher ordering guard: parseAsync must stay pending until the
+    // launcher settles. If the action dropped its `await`, parseAsync would
+    // resolve in a microtask while the launcher is still pending, so the
+    // macrotask timer below would lose the race and this assertion would flip.
+    const { buildUiCommand } = await loadUiCommandModule();
+    let resolveLaunch: (() => void) | undefined;
+    const deferred = new Promise<void>((resolve) => {
+      resolveLaunch = resolve;
+    });
+    const cmd = buildUiCommand({
+      launchTui: () => deferred,
+    });
+    cmd.exitOverride();
+
+    const parsePromise = cmd.parseAsync(["node", "council-ui"]);
+    const race = await Promise.race([
+      parsePromise.then(() => "settled" as const),
+      new Promise<"pending">((resolve) => {
+        setTimeout(() => resolve("pending"), 0);
+      }),
+    ]);
+    expect(race).toBe("pending");
+
+    resolveLaunch?.();
+    await parsePromise;
+  });
 });
 
 describe("runCli update-notice suppression (#1691)", () => {
