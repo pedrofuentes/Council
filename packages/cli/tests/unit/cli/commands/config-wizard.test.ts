@@ -256,14 +256,14 @@ describe("buildConfigCommand config wizard", () => {
     const output = createCapturedOutput();
     const rawModel = "gpt\u001B[31m-\u0085evil\u202E";
     const rawCurrentExtension = ".txt\u001B[32mY\u202E";
-    const rawSelectedExtension = "md\u001B[31mX\u202E";
+    const selectedExtension = "mdx";
     await updateConfigField("documents.aiExtractionAllowedExtensions", [rawCurrentExtension]);
     const discoverModels = vi.fn(async () => ({
       models: [rawModel],
       source: "live" as const,
     }));
     const input = createInput(
-      ["", "", "", "", "", "", "", "", "", "", rawSelectedExtension, "", "", "", "", "", ""].join(
+      ["", "", "", "", "", "", "", "", "", "", selectedExtension, "", "", "", "", "", ""].join(
         "\n",
       ) + "\n",
     );
@@ -287,16 +287,13 @@ describe("buildConfigCommand config wizard", () => {
     expect(text).toContain("Set documents.aiExtractionAllowedExtensions = .mdx");
     expect(text).not.toContain(rawModel);
     expect(text).not.toContain(rawCurrentExtension);
-    expect(text).not.toContain(`.${rawSelectedExtension.toLowerCase()}`);
     for (const codePoint of [0x1b, 0x85, 0x202e]) {
       expect(text).not.toContain(String.fromCodePoint(codePoint));
     }
 
     const config = await loadConfig();
     expect(config.defaults.model).toBe(rawModel);
-    expect(config.documents.aiExtractionAllowedExtensions).toEqual([
-      `.${rawSelectedExtension.toLowerCase()}`,
-    ]);
+    expect(config.documents.aiExtractionAllowedExtensions).toEqual([`.${selectedExtension}`]);
   });
 
   it("collapses multiline wizard values to one terminal line while preserving persisted values", async () => {

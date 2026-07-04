@@ -8,7 +8,6 @@
  * panels and experts.
  */
 import * as fs from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,9 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildDocsCommand } from "../../../../src/cli/commands/docs.js";
 import { getSupportedExtensions } from "../../../../src/core/documents/extractors/index.js";
 
-async function runDocs(
-  args: readonly string[],
-): Promise<{ stdout: string; stderr: string }> {
+async function runDocs(args: readonly string[]): Promise<{ stdout: string; stderr: string }> {
   let stdout = "";
   let stderr = "";
   const cmd = buildDocsCommand(
@@ -39,7 +36,7 @@ describe("buildDocsCommand", () => {
   let originalHome: string | undefined;
 
   beforeEach(async () => {
-    testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-docs-test-"));
+    testHome = await fs.mkdtemp(path.join(process.cwd(), ".tmp-docs-test-"));
     originalHome = process.env["COUNCIL_HOME"];
     process.env["COUNCIL_HOME"] = testHome;
   });
@@ -179,6 +176,20 @@ describe("buildDocsCommand", () => {
       expect(stdout).not.toContain("\x1b[0m");
     });
 
+    it("strips bidi and zero-width format characters from config-sourced extensions", async () => {
+      await fs.writeFile(
+        path.join(testHome, "config.yaml"),
+        'documents:\n  aiExtraction: ask\n  aiExtractionAllowedExtensions: [".ok", ".p\u202eng", ".p\u200bng"]\n',
+        "utf8",
+      );
+
+      const { stdout } = await runDocs(["formats"]);
+
+      expect(stdout).toContain("Allowed extensions: .ok, .png, .png");
+      expect(stdout).not.toContain("\u202e");
+      expect(stdout).not.toContain("\u200b");
+    });
+
     it("falls back to the uppercased extension when no explicit label is registered (#981)", async () => {
       // describeExtension() (docs.ts) is `EXTENSION_LABELS[ext] ?? ext.toUpperCase()`
       // and is not exported, so the fallback arm is driven through the public
@@ -189,16 +200,13 @@ describe("buildDocsCommand", () => {
       // without leaking it into the registry shared by the other tests in this
       // file (which keep using the statically-imported originals).
       vi.resetModules();
-      const registry = await import(
-        "../../../../src/core/documents/extractors/registry.js"
-      );
+      const registry = await import("../../../../src/core/documents/extractors/registry.js");
       const fakeExtractor = async () => ({ content: "", wordCount: 0 });
       // ".xyz" has no entry in docs.ts's EXTENSION_LABELS map.
       registry.registerExtractor([".xyz"], async () => fakeExtractor);
 
-      const { buildDocsCommand: freshBuildDocsCommand } = await import(
-        "../../../../src/cli/commands/docs.js"
-      );
+      const { buildDocsCommand: freshBuildDocsCommand } =
+        await import("../../../../src/cli/commands/docs.js");
       let stdout = "";
       const cmd = freshBuildDocsCommand(
         (s: string) => {
@@ -207,9 +215,7 @@ describe("buildDocsCommand", () => {
         () => undefined,
       );
       cmd.exitOverride();
-      await cmd
-        .parseAsync(["node", "council-docs", "formats"])
-        .catch(() => undefined);
+      await cmd.parseAsync(["node", "council-docs", "formats"]).catch(() => undefined);
 
       // Fallback branch: unlabeled extension -> exactly its uppercased form.
       const xyzLine = /^ {2}\.xyz\s+(.+)$/m.exec(stdout);

@@ -344,12 +344,10 @@ function normalizeExtensionList(key: SettableConfigKey, rawValue: string): strin
     const raw = part.trim();
     if (raw.length === 0) continue;
     const ext = raw.startsWith(".") ? raw.toLowerCase() : `.${raw.toLowerCase()}`;
-    // Validate the display-sanitized form so a token that is not a well-formed
-    // `.ext` once control/whitespace bytes are stripped (".", "..pdf",
-    // ".p n g", or embedded terminal sequences) can't silently enter an inert
-    // allow-list. The original value is preserved for storage, matching the
-    // sanitize-on-display / preserve-on-write contract used elsewhere.
-    if (!VALID_EXTENSION_PATTERN.test(toSingleLineDisplay(ext))) {
+    // Validate the exact value that will be stored. The anchored allow-list
+    // admits only `.ext` tokens path.extname() can produce, so control,
+    // whitespace, bidi, and hidden-format bytes cannot enter an inert list.
+    if (!VALID_EXTENSION_PATTERN.test(ext)) {
       throw new CliUserError(
         `Config value for ${toSingleLineDisplay(key)} has an invalid file extension "${toSingleLineDisplay(raw)}"; use a dot followed by letters or digits, e.g. ".pdf".`,
       );

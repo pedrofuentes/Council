@@ -195,7 +195,7 @@ describe("buildConfigCommand config set documents.*", () => {
       expect(stdout).toContain(".png, .zip");
     });
 
-    it.each([".", "..pdf", ".p n g"])(
+    it.each([".", "..pdf", ".p n g", ".p\u001b[0mng", ".p\u200bng", ".p\u007fng", ".p\u202eng"])(
       "rejects the malformed extension %j as a user error and does not persist it",
       async (rawValue) => {
         const { stdout, stderr } = await runConfig([
