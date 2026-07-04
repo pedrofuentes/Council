@@ -1,5 +1,6 @@
 /**
- * `council chat --list` handler — lists all chat conversations.
+ * `council chat --list` handler — lists all chat conversations
+ * (both 1:1 expert and multi-expert panel sessions).
  */
 import { withChatRepository, formatDate, writeTable, type Writer } from "./shared.js";
 
@@ -7,7 +8,9 @@ export async function runList(write: Writer): Promise<void> {
   await withChatRepository(async (repo) => {
     const sessions = await repo.listSessions();
     if (sessions.length === 0) {
-      write('No chat conversations yet. Start one with "council chat <expert-slug>".\n');
+      write(
+        'No chat conversations yet. Start one with "council chat <expert-slug | panel-name>".\n',
+      );
       return;
     }
     const rows = await Promise.all(
