@@ -423,6 +423,36 @@ describe("buildConcludeCommand", () => {
     expect(thrown.toLowerCase()).toContain("openai");
   });
 
+  it("routes a coming-soon provider construction failure through formatEngineError (#1378)", async () => {
+    const seed = await seedPanelWithDebate(testHome);
+    let errorOutput = "";
+    const cmd = buildConcludeCommand({
+      write: () => undefined,
+      writeError: (s) => {
+        errorOutput += s;
+      },
+      synthesizerId: SYNTH_ID,
+    });
+    cmd.exitOverride();
+    // `openai` is a known-but-coming-soon provider: makeEngineFromKind throws a
+    // synchronous ProviderNotAvailableError at construction. That construction
+    // must happen INSIDE the try so the failure is mapped through
+    // formatEngineError (actionable hint + "Underlying:" diagnostic on stderr)
+    // instead of bypassing the mapper entirely (#1378).
+    await expect(
+      cmd.parseAsync(["node", "council-conclude", seed.panelName, "--engine", "openai"]),
+    ).rejects.toThrow(/not yet available|coming soon/i);
+    expect(errorOutput).toContain("Underlying:");
+    expect(errorOutput.toLowerCase()).toContain("openai");
+    // #1379 (paired): the mapped output is the actionable PROVIDER_NOT_AVAILABLE
+    // hint guiding the user to an available engine — not the generic
+    // "Engine error." fallback. Proves the hint is reachable end-to-end through
+    // the real command catch path, not only via a direct formatEngineError call.
+    expect(errorOutput).toContain("--engine copilot");
+    expect(errorOutput).toMatch(/mock/);
+    expect(errorOutput).not.toContain("Engine error.");
+  });
+
   it("emits a clear error when the latest debate has no turns", async () => {
     const seed = await seedEmptyDebatePanel(testHome);
     const cmd = buildConcludeCommand({

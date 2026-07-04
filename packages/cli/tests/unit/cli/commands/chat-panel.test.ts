@@ -253,6 +253,37 @@ describe("panel chat mode", () => {
     });
   });
 
+  it("routes a coming-soon provider construction failure through formatEngineError (#1378)", async () => {
+    await seedTwoExperts();
+    await writeUserPanel(env, "my-panel", ["panel-a", "panel-b"]);
+
+    let errorOutput = "";
+    const cmd = buildChatCommand({
+      write: () => undefined,
+      writeError: (s) => {
+        errorOutput += s;
+      },
+      inputProvider: () => scriptedInput([]),
+    });
+    // `openai` is a known-but-coming-soon provider: makeEngineFromKind throws a
+    // synchronous ProviderNotAvailableError at construction. That construction
+    // must happen INSIDE the try so the failure is mapped through
+    // formatEngineError (actionable hint + "Underlying:" diagnostic on stderr)
+    // instead of bypassing the mapper entirely (#1378).
+    await expect(
+      cmd.parseAsync(["node", "council-chat", "my-panel", "--engine", "openai"]),
+    ).rejects.toThrow(/not yet available|coming soon/i);
+    expect(errorOutput).toContain("Underlying:");
+    expect(errorOutput.toLowerCase()).toContain("openai");
+    // #1379 (paired): the mapped output is the actionable PROVIDER_NOT_AVAILABLE
+    // hint guiding the user to an available engine — not the generic
+    // "Engine error." fallback. Proves the hint is reachable end-to-end through
+    // the real command catch path, not only via a direct formatEngineError call.
+    expect(errorOutput).toContain("--engine copilot");
+    expect(errorOutput).toMatch(/mock/);
+    expect(errorOutput).not.toContain("Engine error.");
+  });
+
   it("loads an auto-composed panel from the persisted session definition when its template is absent", async () => {
     const db = await createDatabase(path.join(env.home, "council.db"));
     try {

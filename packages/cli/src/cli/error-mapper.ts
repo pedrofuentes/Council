@@ -195,6 +195,19 @@ function hintForCode(
         "If this persists, file an issue with the underlying message below so the adapter can be improved."
       );
     }
+    // Selecting a KNOWN-but-not-yet-available provider (openai/anthropic) throws
+    // a ProviderNotAvailableError at engine construction (#1378). Point the user
+    // at an available engine rather than the generic fallback (#1379). The code
+    // string mirrors `PROVIDER_NOT_AVAILABLE` in engine/providers.ts (kept as a
+    // literal to avoid coupling this mapper to the provider layer, as
+    // exit-codes.ts does).
+    case "PROVIDER_NOT_AVAILABLE":
+      return (
+        "That engine provider isn't available yet in this release. " +
+        "Switch to an available engine with `--engine copilot` (or `--engine mock` " +
+        "for offline runs), or set a default via `council config set defaults.engine copilot`. " +
+        "Run `council doctor` to check your engine setup."
+      );
     default:
       // Unrecognized code, or no code with no inferable message signal —
       // generic fallback. (The `code ?? inferCodeFromMessage(...)`
