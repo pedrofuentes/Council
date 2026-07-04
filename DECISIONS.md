@@ -22,6 +22,90 @@
 
 <!-- Add new decisions below this line, most recent first -->
 
+### ADR-038: Interactive TUI architecture — `MemoryRouter` screen stack, in-house Ink primitives, React Context + `useReducer` (not Zustand)
+**Date**: 2026-07-03
+**Status**: Accepted
+**Context**: Phase 9 adds an interactive Ink TUI under `packages/cli/src/tui/`. Three cross-cutting decisions were made and justified in the design doc (`docs/designs/interactive-tui.md` §4.2, §6.1, §6.4) but never recorded canonically here: how screens are navigated, whether to pull richer Ink widget packages, and how app state is owned. This ADR promotes them to the canonical record and points at the design doc for the full rationale.
+**Decision** (canonical pointer to `docs/designs/interactive-tui.md` §6.1/§6.4):
+- **`react-router` `MemoryRouter` as the screen stack.** The root `CouncilTUI.tsx` wraps the app in `<MemoryRouter initialEntries={[initialRoute]}>` (`src/tui/CouncilTUI.tsx:2,14`); screens navigate with `useNavigate`/`useParams`/`useLocation` against route constants. It is Ink-team supported, provides an in-memory history stack with no URL/DOM, and makes navigation unit-testable via `initialEntries`. Overlays (command palette, dialogs, help) render **above** the router rather than as routes.
+- **Build the interaction primitives in-house.** `MultilineInput`, `ScrollView` (windowed), `CommandPalette`, `ExpertPills`, and `LeftNav` are custom components (`src/tui/components/…`); only thin, stable widgets come from packages (`ink-text-input`, `ink-select-input`, `ink-spinner`). Packages that were evaluated and rejected as obsolete/incompatible: `ink-use-stdout-dimensions`, `ink-progress-bar`, `fullscreen-ink`, `blessed`.
+- **React Context + `useReducer` for state, not Zustand.** State lives in Context providers (e.g. `DataProvider`, `InputCaptureProvider` via `React.createContext`) with reducer-based hooks (e.g. `use-mode.ts` via `useReducer`), giving explicit parent/child ownership and trivial per-test reset; one small streaming context is shared between Convene/Chat and the header/footer meters. Zustand is deliberately **not** a dependency.
+**Alternatives considered**:
+- **A hand-rolled screen-stack state machine** instead of a router — reinvents history/params/guards `MemoryRouter` already provides and is harder to test.
+- **Adopt richer Ink widget packages** for multiline input / scrolling / progress — several are unmaintained or incompatible with `ink ^7`, and the exact dual-focus + windowed-review-scroll behaviour Council needs is easier to own than to bend a package into.
+- **Zustand (or Redux) global store** — an extra dependency plus implicit global mutability; Context + `useReducer` keeps ownership explicit and resets cleanly between tests (a first-class TDD requirement, §7).
+**Consequences**:
+- ✅ Navigation, primitives, and state are all unit-testable with `ink-testing-library` and `MemoryRouter` `initialEntries` — no global singletons to reset between tests.
+- ✅ Fewer third-party Ink dependencies → smaller supply-chain/audit surface and no fight with unmaintained widgets.
+- ⚠️ In-house primitives (multiline editing, windowed scroll, focus-stealing palette) are Council's to maintain and were de-risked first (design §6.5).
+- 📝 Full rationale, module layout, and the verified reuse seams live in `docs/designs/interactive-tui.md` (§6.1–§6.5); this ADR is the canonical entry point, not a duplicate of that detail.
+
+### ADR-037: `HumanInputProvider` boundary + `speakerKind` discriminator on debate events
+**Date**: 2026-07-03
+**Status**: Accepted
+**Context**: ROADMAP §3.3 adds human participants to debates. The orchestrator must obtain a human's turn the same way it drives an expert's, but the source is stdin (or a test stub), not `engine.send()`. Separately, every downstream consumer (renderers, persistence, transcript) must distinguish a human turn from an expert turn without reverse-engineering it from a slug.
+**Decision**:
+- **A minimal `HumanInputProvider` interface** (`src/core/human-input.ts:30`) with a single method `getInput(context: HumanInputContext): Promise<HumanInputResult>`, where the result is a `submitted | cancelled` discriminated union. `Debate` branches on `this.#humanSlugs.has(expert.slug)` (`src/core/debate.ts:649`) and, for human participants, calls `this.#humanInput.getInput(...)` (`src/core/debate.ts:695`) instead of the engine — keeping the orchestrator engine-agnostic and the input mechanism (readline vs. injected stub) swappable. A missing provider for a human slug yields a structured `error` event rather than throwing (`src/core/debate.ts:681`).
+- **A `speakerKind: "expert" | "human"` discriminator** on the `turn.start` / `turn.delta` / `turn.end` events (`src/core/types.ts:67,74,82`), defaulting to `"expert"` when absent for backward compatibility. Persistence stores it (`src/memory/repositories/turns.ts`, `src/memory/persister.ts`) and the transcript falls back to `speakerKind` when a turn has no resolvable expert slug (`src/memory/transcript.ts:211`).
+**Alternatives considered**:
+- **Model humans as a fake "human engine"** behind `CouncilEngine` — forces interactive input through a streaming/token/abort/error-code contract that does not fit a person typing at a prompt.
+- **Infer human vs. expert from the slug or a sentinel `expertId`** — brittle; every consumer would need to know the sentinel and it is not serialization-stable.
+- **A separate `human.turn` event kind** — doubles the event union and every renderer's `switch`; an optional discriminator on the existing turn events is smaller and purely additive.
+**Consequences**:
+- ✅ `Debate` stays decoupled from *how* human input is collected; tests inject canned `HumanInputResult`s.
+- ✅ Renderers/persistence label speakers via one optional field; absence means `"expert"`, so pre-existing events and stored rows stay valid.
+- ✅ Cancellation is first-class (`kind: "cancelled"`), letting a human abort a turn distinctly from an error.
+- 📝 `speakerKind` is optional on the wire; any new consumer must apply the same `?? "expert"` default.
+
+### ADR-036: Renderer architecture — `Sink` seam, NDJSON for JSON output, forced `chalk` level in plain output
+**Date**: 2026-07-03
+**Status**: Accepted
+**Context**: The debate/chat event stream must render three ways without the renderers knowing which: to a human TTY, to machine-readable output for pipes/CI, and to an in-memory buffer for tests. Two concrete forces follow: JSON consumers want to stream events incrementally (`jq`, `| head`), and colorized test output must be deterministic regardless of whether the test runs under a TTY.
+**Decision**:
+- **`Sink` interface** (`src/cli/renderers/types.ts:14`) abstracts the write target: `write(text)` plus an optional `writeError(text)`. Production uses `StreamSink` over `process.stdout`/`stderr`; tests inject a string-buffer sink. Renderers depend on `Sink`, never on `process.stdout` directly, so the output target is swappable.
+- **`JsonRenderer` emits NDJSON** — one `JSON.stringify(event) + "\n"` per line (`src/cli/renderers/json.ts:26`), no buffering, so downstream tools consume events as they arrive; the `kind` discriminator carries error events on the same channel. An early-closed pipe (EPIPE) is treated as a graceful shutdown, not an error.
+- **`PlainRenderer` forces a `chalk` level explicitly** — `new Chalk({ level: color && !NO_COLOR ? 1 : 0 })` (`src/cli/renderers/plain.ts:65`), overriding chalk's TTY auto-detection (which returns level 0 when there is no TTY). This makes colorized output deterministic in tests and honours `NO_COLOR`.
+**Alternatives considered**:
+- **Renderers write straight to `process.stdout`** — untestable without hijacking the global stream; no buffer injection.
+- **Pretty-printed JSON array** — cannot stream (the array cannot close until the debate ends) and breaks line-oriented tooling.
+- **Let chalk auto-detect color** — test output would flip between colored and plain depending on the TTY, making assertions flaky.
+**Consequences**:
+- ✅ Any renderer works against stdout, stderr, or a test buffer with no code change.
+- ✅ NDJSON is greppable, `jq`-able, and incremental; EPIPE handling makes `council … | head` exit cleanly.
+- ✅ Plain-renderer color is deterministic and `NO_COLOR`-aware.
+- 📝 Level is pinned to basic 16-color (level 1); consumers wanting truecolor pipe through their own upgrader. A new renderer just implements `Renderer` against `Sink`.
+
+### ADR-035: `PANELS_DIR` module-relative resolution + `ExpertDefinitionSchema` reuse in panel loading
+**Date**: 2026-07-03
+**Status**: Accepted
+**Context**: Built-in panel templates ship as YAML in `panels/` at the package root and must load in three layouts: from `src/core/` in dev, from the tsup-bundled `dist/`, and from an npm-installed package. A hard-coded relative path or one based on `process.cwd()` breaks in at least one layout. Separately, panel YAML embeds expert definitions whose validation contract must be identical to standalone experts, or built-in and user-authored panels would drift.
+**Decision**:
+- **`PANELS_DIR` is resolved at module load from `import.meta.url`.** `resolvePanelsDir()` (`src/core/template-loader.ts:262`) derives the directory from this module's own URL and probes an ordered candidate list (`../../panels`, `../panels`, `panels`), returning the first that exists as a directory; when none exist (a packaging bug) it returns the most-likely candidate so the error message stays informative rather than silently yielding `[]`. All panel reads are confined to `PANELS_DIR` by a `path.resolve(PANELS_DIR) + path.sep` prefix check that refuses any resolved path escaping the directory (traversal guard, `src/core/template-loader.ts:354`).
+- **Panel loading reuses `ExpertDefinitionSchema`.** `PanelDefinitionSchema` imports `ExpertDefinitionSchema` from `src/core/expert.ts` (`src/core/template-loader.ts:28`) so built-in and user-authored panels validate their expert entries through the exact same Zod contract.
+**Alternatives considered**:
+- **Resolve `panels/` from `process.cwd()`** — breaks whenever the CLI runs from any directory other than the package root; wrong for npm installs.
+- **Inline panels as JSON/TS constants** — loses the "drop a YAML file to add a panel" workflow and bloats the bundle.
+- **A separate, panel-specific expert schema** — two schemas to keep in lockstep, guaranteeing eventual drift between panel-embedded and standalone experts.
+**Consequences**:
+- ✅ Panels load identically in source, bundled, and installed layouts; a missing `panels/` dir throws with the resolved path instead of returning empty.
+- ✅ One Zod schema governs expert validity everywhere; a change to `ExpertDefinitionSchema` automatically applies to panel members.
+- ✅ Path traversal is structurally prevented — `loadPanel` cannot read outside `PANELS_DIR`.
+- 📝 Resolution order is layout-sensitive; adding a new build-output location means extending the candidate list in `resolvePanelsDir()`.
+
+### ADR-034: `isRecoverable(code)` as the single source of truth for error recoverability
+**Date**: 2026-07-03
+**Status**: Accepted
+**Context**: PR #16 (closing #9) introduced `EngineEvent.error.recoverable`. Every adapter — the Copilot adapter and the mock engine — must decide whether a failed turn is worth retrying, and `core/debate.ts` reads that flag to drive retry/back-off. Without one canonical mapping, adapters could disagree (one treating `NETWORK` as recoverable, another not), making retry behaviour provider-dependent and untestable.
+**Decision**: A pure predicate `isRecoverable(code: EngineErrorCode): boolean` maps `RATE_LIMITED | NETWORK → true` and every other code (`ABORTED`, `NOT_AUTHENTICATED`, `MODEL_UNAVAILABLE`, `CONTEXT_OVERFLOW`, `PROVIDER_ERROR`, `INTERNAL`) → `false`. Adapters populate `error.recoverable` exclusively from this predicate (`src/engine/mock/mock-engine.ts:35`, `src/engine/copilot/adapter.ts:660`); `core/debate.ts` consumes the flag rather than re-deriving it. New members of the `EngineErrorCode` union (`src/engine/types.ts:100`) must be given an explicit recoverability here.
+**Alternatives considered**:
+- **Inline a per-code boolean at each throw site** — duplicates the policy across adapters; drift is inevitable and silent.
+- **A per-adapter override hook** — lets providers disagree about the same `EngineErrorCode`, defeating the point of a stable error taxonomy.
+- **Encode recoverability into the `EngineErrorCode` union itself** (e.g. `RATE_LIMITED_RECOVERABLE`) — bloats the enum and couples classification to retry policy.
+**Consequences**:
+- ✅ Retry behaviour is identical across the Copilot adapter and the mock engine; tests assert against one mapping.
+- ✅ The `EngineErrorCode` set is exhaustively switched, so adding a code forces a deliberate recoverability decision — and, per this ADR, an update here.
+- ⚠️ The mapping is currently expressed in two colocated definitions of the same policy — the exported switch in `mock-engine.ts:35` and a two-line equivalent in `adapter.ts:660`; both must stay in agreement until unified. Any divergence is a bug this ADR exists to catch.
+
 ### ADR-033: Trust `pnpm/action-setup` (SHA-pinned + Dependabot-tracked); repo-level third-party-action allowlist is a human follow-up
 **Date**: 2026-07-02
 **Status**: Accepted
