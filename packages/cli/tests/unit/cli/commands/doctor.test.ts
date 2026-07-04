@@ -388,6 +388,24 @@ describe("buildDoctorCommand", () => {
     expect(output).toContain("sqlite probe boom");
   });
 
+  it("doctor renders the SQLite check as a labeled FAIL when node:sqlite cannot open (#1269)", async () => {
+    // Force the failure branch of checkSqlite by rejecting the probe open, so
+    // the "SQLite (node:sqlite)" fail-path label/status is exercised — not just
+    // the pass path.
+    const openSqliteDatabase = vi.fn(async () => {
+      throw new Error("node:sqlite unavailable");
+    });
+
+    const output = await runDoctor(["--offline"], { openSqliteDatabase });
+    const sqliteLine =
+      output.split("\n").find((line) => line.includes("SQLite (node:sqlite)")) ?? "";
+
+    expect(openSqliteDatabase).toHaveBeenCalledTimes(1);
+    expect(sqliteLine).toContain("FAIL");
+    expect(output).toContain("node:sqlite unavailable");
+    expect(output).toContain("Some checks failed");
+  });
+
   it("doctor passes the data home check when root, experts/ and panels/ are all writable (#1914)", async () => {
     const customDataHome = path.join(testHome, "writable-data-home");
     process.env["COUNCIL_DATA_HOME"] = customDataHome;
