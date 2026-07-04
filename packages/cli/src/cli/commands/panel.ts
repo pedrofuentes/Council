@@ -12,6 +12,7 @@
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import type { Stats } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -386,7 +387,9 @@ async function persistPanelEditAtomically(
   try {
     await sql`BEGIN`.execute(db);
   } catch (beginErr) {
-    const detail = beginErr instanceof Error ? beginErr.message : String(beginErr);
+    const detail = toSingleLineDisplay(
+      beginErr instanceof Error ? beginErr.message : String(beginErr),
+    );
     throw new PanelEditPersistError(
       `Failed to save panel "${edit.name}" before any changes ` +
         `(BEGIN failed; no changes applied): ${detail}`,
@@ -429,7 +432,7 @@ async function persistPanelEditAtomically(
       rollbackFailed = true;
       rollbackError = rbErr;
     }
-    const detail = err instanceof Error ? err.message : String(err);
+    const detail = toSingleLineDisplay(err instanceof Error ? err.message : String(err));
     const message = rollbackFailed
       ? `Failed to save panel "${edit.name}" and ROLLBACK also failed; the panel row ` +
         `and membership may be inconsistent: ${detail}`
@@ -1930,9 +1933,29 @@ function buildDocsUnlinkCommand(write: Writer, writeError: Writer): Command {
   return cmd;
 }
 
-async function countSupportedFiles(
+/**
+ * Cap on concurrent `lstat` calls while counting a linked folder's supported
+ * files. `panel docs link` accepts an arbitrary user folder whose recursive
+ * listing is unbounded; fanning out one `lstat` per entry through a single
+ * `Promise.all` would open that many descriptors at once (EMFILE / handle
+ * exhaustion on a deep or wide tree). Entries are processed in fixed-size
+ * batches so at most this many `lstat`s are ever in flight. #2273.
+ */
+const DOCS_COUNT_CONCURRENCY = 16;
+
+/**
+ * Count the supported document files under `dir` (searched recursively).
+ *
+ * Exported for direct unit testing of the bounded fan-out (#2273); the sole
+ * production caller is `panel docs link`. `lstatImpl` is a test seam whose
+ * default is `fs.lstat` — `node:fs/promises` namespace bindings are
+ * non-configurable and cannot be `vi.spyOn`ed, mirroring the scanner's
+ * `_detectorLstatOverride`.
+ */
+export async function countSupportedFiles(
   dir: string,
   supportedExts: ReadonlySet<string>,
+  lstatImpl: (p: string) => Promise<Stats> = (p: string): Promise<Stats> => fs.lstat(p),
 ): Promise<number> {
   let entries: string[];
   try {
@@ -1941,24 +1964,26 @@ async function countSupportedFiles(
     return 0;
   }
   let count = 0;
-  // Batch the per-entry lstat calls concurrently instead of walking them
-  // serially (#397). Each entry keeps its own try/catch so a race-deleted or
-  // otherwise unreadable entry is skipped (this is a cosmetic count) rather
-  // than rejecting the whole batch.
-  const supportedFlags = await Promise.all(
-    entries.map(async (rel) => {
-      const absolute = path.resolve(dir, rel);
-      try {
-        const stat = await fs.lstat(absolute);
-        if (!stat.isFile()) return false;
-      } catch {
-        return false;
-      }
-      return supportedExts.has(path.extname(absolute).toLowerCase());
-    }),
-  );
-  for (const isSupported of supportedFlags) {
-    if (isSupported) count += 1;
+  const classify = async (rel: string): Promise<boolean> => {
+    const absolute = path.resolve(dir, rel);
+    try {
+      const stat = await lstatImpl(absolute);
+      if (!stat.isFile()) return false;
+    } catch {
+      return false;
+    }
+    return supportedExts.has(path.extname(absolute).toLowerCase());
+  };
+  // Fan the per-entry lstat calls out concurrently instead of walking them
+  // serially (#397), but in bounded batches so a deep/wide recursive listing
+  // cannot open an unbounded number of concurrent fs handles (#2273). Each
+  // entry keeps its own try/catch so a race-deleted or otherwise unreadable
+  // entry is skipped (this is a cosmetic count) rather than rejecting the batch.
+  for (let i = 0; i < entries.length; i += DOCS_COUNT_CONCURRENCY) {
+    const flags = await Promise.all(entries.slice(i, i + DOCS_COUNT_CONCURRENCY).map(classify));
+    for (const isSupported of flags) {
+      if (isSupported) count += 1;
+    }
   }
   return count;
 }

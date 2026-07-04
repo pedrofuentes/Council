@@ -31,11 +31,19 @@ import { Kysely } from "kysely";
 import * as yaml from "yaml";
 
 import { buildPanelCommand } from "../../../../src/cli/commands/panel.js";
+import { toSingleLineDisplay } from "../../../../src/cli/strip-control-chars.js";
 import { createDatabase } from "../../../../src/memory/db.js";
 import * as dbModule from "../../../../src/memory/db.js";
 import { PanelLibraryRepository } from "../../../../src/memory/repositories/panel-library-repo.js";
 import type { ExpertDefinition } from "../../../../src/core/expert.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
+
+// Every terminal-injection codepoint class: C0 controls (incl. CR/LF), DEL,
+// C1 controls, the Unicode line/paragraph separators, and the bidi
+// override/isolate marks. Matching any of these in a surfaced error message
+// means an escape survived to the operator's terminal.
+// eslint-disable-next-line no-control-regex
+const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
 
 /**
  * Wrap the libsql Kysely executor so the next `executeQuery` whose SQL contains
@@ -48,7 +56,12 @@ import { copyTemplateDb } from "../../../helpers/template-db.js";
  */
 function patchExecuteQuery(
   database: dbModule.CouncilDatabase,
-  opts: { failOnSqlSubstring: string; failRollback?: boolean },
+  opts: {
+    failOnSqlSubstring: string;
+    failRollback?: boolean;
+    errorMessage?: string;
+    rollbackError?: Error;
+  },
 ): () => void {
   const realExec = database.getExecutor();
   type ExecQueryFn = typeof realExec.executeQuery;
@@ -56,10 +69,10 @@ function patchExecuteQuery(
   const wrapped: ExecQueryFn = async function (this: typeof realExec, compiled, queryId) {
     const text = compiled.sql;
     if (text.includes(opts.failOnSqlSubstring)) {
-      throw new Error(`simulated failure on: ${opts.failOnSqlSubstring}`);
+      throw new Error(opts.errorMessage ?? `simulated failure on: ${opts.failOnSqlSubstring}`);
     }
     if (opts.failRollback === true && /^\s*ROLLBACK\b/i.test(text)) {
-      throw new Error("simulated ROLLBACK failure");
+      throw opts.rollbackError ?? new Error("simulated ROLLBACK failure");
     }
     return originalExecuteQuery.call(this, compiled, queryId);
   };
@@ -222,7 +235,14 @@ describe("panel edit — atomic membership+checksum write (#1931, #308)", () => 
     const createCmd = buildPanelCommand(() => {
       /* noop */
     });
-    await createCmd.parseAsync(["node", "council-panel", "create", "arch-review", "--experts", "cto"]);
+    await createCmd.parseAsync([
+      "node",
+      "council-panel",
+      "create",
+      "arch-review",
+      "--experts",
+      "cto",
+    ]);
 
     const yamlPath = path.join(env.dataHome, "panels", "arch-review.yaml");
     const parsed = yaml.parse(await fs.readFile(yamlPath, "utf-8")) as Record<string, unknown>;
@@ -232,7 +252,10 @@ describe("panel edit — atomic membership+checksum write (#1931, #308)", () => 
     // Patch the edit command's internal db so BOTH the panel_library UPDATE
     // (the second write) AND the subsequent ROLLBACK fail — the same seam the
     // setMembers rollback-honesty test uses. `mockImplementationOnce` scopes the
-    // patch to the edit command's connection only.
+    // patch to the edit command's connection only. The ROLLBACK is failed with a
+    // KNOWN instance so the test can pin that the surfaced `rollbackError` is
+    // that exact object, not merely some Error.
+    const injectedRollbackError = new Error("injected ROLLBACK failure — pin me");
     const realCreate = dbModule.createDatabase;
     const createSpy = vi
       .spyOn(dbModule, "createDatabase")
@@ -241,6 +264,7 @@ describe("panel edit — atomic membership+checksum write (#1931, #308)", () => 
         patchExecuteQuery(db, {
           failOnSqlSubstring: 'update "panel_library"',
           failRollback: true,
+          rollbackError: injectedRollbackError,
         });
         return db;
       });
@@ -266,8 +290,127 @@ describe("panel edit — atomic membership+checksum write (#1931, #308)", () => 
     // `rollbackError`. The message must stay honest (inconsistent, NOT preserved).
     const surfaced = err as { rollbackFailed?: boolean; rollbackError?: unknown; message: string };
     expect(surfaced.rollbackFailed).toBe(true);
-    expect(surfaced.rollbackError).toBeInstanceOf(Error);
+    // Identity, not just `instanceof`: the surfaced error must carry the EXACT
+    // rollback error object so the underlying reason is diagnosable, never a
+    // re-wrapped or synthesized stand-in.
+    expect(surfaced.rollbackError).toBe(injectedRollbackError);
     expect(surfaced.message).toMatch(/inconsistent/i);
     expect(surfaced.message).not.toMatch(/preserved/i);
+  });
+
+  it("sanitizes control/ANSI/bidi bytes in the surfaced detail when the panel_library UPDATE fails (#1931 item a)", async () => {
+    await seedExpert(env, expertDef("cto"));
+    const createCmd = buildPanelCommand(() => {
+      /* noop */
+    });
+    await createCmd.parseAsync([
+      "node",
+      "council-panel",
+      "create",
+      "arch-review",
+      "--experts",
+      "cto",
+    ]);
+
+    const yamlPath = path.join(env.dataHome, "panels", "arch-review.yaml");
+    const parsed = yaml.parse(await fs.readFile(yamlPath, "utf-8")) as Record<string, unknown>;
+    parsed["description"] = "edited by test — changes the file bytes";
+    await fs.writeFile(yamlPath, yaml.stringify(parsed), "utf-8");
+
+    // A DB driver error message is untrusted (it can echo file paths / SQL
+    // fragments) and here carries a full terminal-injection payload: CR/LF,
+    // ANSI CSI + OSC, C0 BEL, DEL, C1 CSI (0x9B), and an RLO bidi override.
+    const noisyDetail =
+      "db exploded:\t\u0007\u009b\u007f\u202e\r\n\u2028\u2029 \u001b[31mRED\u001b]0;pwn\u0007 payload";
+    const realCreate = dbModule.createDatabase;
+    const createSpy = vi
+      .spyOn(dbModule, "createDatabase")
+      .mockImplementationOnce(async (dbPath: string) => {
+        const db = await realCreate(dbPath);
+        patchExecuteQuery(db, {
+          failOnSqlSubstring: 'update "panel_library"',
+          errorMessage: noisyDetail,
+        });
+        return db;
+      });
+
+    const editCmd = buildPanelCommand(
+      () => {
+        /* noop */
+      },
+      () => {
+        /* noop */
+      },
+    );
+    const surfaced = await editCmd
+      .parseAsync(["node", "council-panel", "edit", "arch-review"])
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    expect(surfaced).toBeInstanceOf(Error);
+    const message = (surfaced as Error).message;
+    // The surfaced `.message` is what `handleCliError` writes verbatim to
+    // stderr, so it must be a single control-free line: no CR/LF/ANSI/OSC/C1/
+    // DEL/bidi byte may survive, and it must be a fixed point of the sanitizer.
+    expect(message).not.toMatch(CONTROL_RE);
+    expect(message).toBe(toSingleLineDisplay(message));
+    // The legitimate diagnostic still comes through.
+    expect(message).toContain("db exploded:");
+    expect(message).toContain("payload");
+  });
+
+  it("sanitizes control/ANSI/bidi bytes in the surfaced detail when BEGIN fails (#1931 item a)", async () => {
+    await seedExpert(env, expertDef("cto"));
+    const createCmd = buildPanelCommand(() => {
+      /* noop */
+    });
+    await createCmd.parseAsync([
+      "node",
+      "council-panel",
+      "create",
+      "arch-review",
+      "--experts",
+      "cto",
+    ]);
+
+    const yamlPath = path.join(env.dataHome, "panels", "arch-review.yaml");
+    const parsed = yaml.parse(await fs.readFile(yamlPath, "utf-8")) as Record<string, unknown>;
+    parsed["description"] = "edited by test — changes the file bytes";
+    await fs.writeFile(yamlPath, yaml.stringify(parsed), "utf-8");
+
+    const noisyDetail = "BEGIN blew up\r\n\u001b[31mHACKED\u001b[0m\u0007\u009b tail";
+    const realCreate = dbModule.createDatabase;
+    const createSpy = vi
+      .spyOn(dbModule, "createDatabase")
+      .mockImplementationOnce(async (dbPath: string) => {
+        const db = await realCreate(dbPath);
+        patchExecuteQuery(db, { failOnSqlSubstring: "BEGIN", errorMessage: noisyDetail });
+        return db;
+      });
+
+    const editCmd = buildPanelCommand(
+      () => {
+        /* noop */
+      },
+      () => {
+        /* noop */
+      },
+    );
+    const surfaced = await editCmd
+      .parseAsync(["node", "council-panel", "edit", "arch-review"])
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    expect(surfaced).toBeInstanceOf(Error);
+    const message = (surfaced as Error).message;
+    expect(message).not.toMatch(CONTROL_RE);
+    expect(message).toBe(toSingleLineDisplay(message));
+    expect(message).toContain("tail");
   });
 });
