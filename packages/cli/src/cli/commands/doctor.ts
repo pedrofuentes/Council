@@ -122,31 +122,33 @@ interface LabeledCheck {
 export async function checkNodeVersion(
   nodeVersion: string = process.versions.node,
 ): Promise<CheckResult> {
+  const displayNodeVersion = toSingleLineDisplay(nodeVersion);
   const major = Number.parseInt(nodeVersion.split(".")[0] ?? "0", 10);
   if (major >= 24) {
     return {
       name: "Node.js version",
       status: "pass",
-      detail: `v${nodeVersion} (>= 24 required)`,
+      detail: `v${displayNodeVersion} (>= 24 required)`,
     };
   }
   return {
     name: "Node.js version",
     status: "fail",
-    detail: `v${nodeVersion} is too old; Council requires Node.js 24 or newer`,
+    detail: `v${displayNodeVersion} is too old; Council requires Node.js 24 or newer`,
   };
 }
 
 async function checkCouncilHome(): Promise<CheckResult> {
   const home = getCouncilHome();
+  const displayHome = toSingleLineDisplay(home);
   try {
     await fs.mkdir(home, { recursive: true });
-    return { name: "Council home", status: "pass", detail: home };
+    return { name: "Council home", status: "pass", detail: displayHome };
   } catch (err: unknown) {
     return {
       name: "Council home",
       status: "fail",
-      detail: `cannot create ${home}: ${formatError(err)}`,
+      detail: `cannot create ${displayHome}: ${formatDisplayError(err)}`,
     };
   }
 }
@@ -175,13 +177,14 @@ async function checkCouncilDataHome(
   loadConfig: NonNullable<DoctorDeps["loadConfig"]>,
 ): Promise<CheckResult> {
   const dataHome = await resolveDoctorDataHome(loadConfig);
+  const displayDataHome = toSingleLineDisplay(dataHome);
   try {
     await ensureDataDirectories(dataHome);
   } catch (err: unknown) {
     return {
       name: "Council data home",
       status: "fail",
-      detail: `cannot create ${dataHome}: ${formatError(err)}`,
+      detail: `cannot create ${displayDataHome}: ${formatDisplayError(err)}`,
     };
   }
   // Probe the data-home root and every runtime write target so a read-only
@@ -197,7 +200,7 @@ async function checkCouncilDataHome(
     try {
       await probeDirectoryWritable(target);
     } catch (err: unknown) {
-      unwritable.push(`${target}: ${formatError(err)}`);
+      unwritable.push(`${toSingleLineDisplay(target)}: ${formatDisplayError(err)}`);
     }
   }
   if (unwritable.length > 0) {
@@ -207,7 +210,7 @@ async function checkCouncilDataHome(
       detail: `cannot write under ${unwritable.join("; ")}`,
     };
   }
-  return { name: "Council data home", status: "pass", detail: dataHome };
+  return { name: "Council data home", status: "pass", detail: displayDataHome };
 }
 
 /** Random bytes that make each throwaway write-probe filename unpredictable. */
@@ -307,7 +310,7 @@ async function checkSqlite(
     return {
       name: "SQLite (node:sqlite)",
       status: "fail",
-      detail: formatError(err),
+      detail: formatDisplayError(err),
     };
   }
 }
@@ -328,7 +331,7 @@ async function checkCopilotSdk(): Promise<CheckResult> {
   return {
     name: "Copilot SDK",
     status: health.ok ? "pass" : "fail",
-    detail: health.detail,
+    detail: toSingleLineDisplay(health.detail),
   };
 }
 
@@ -336,20 +339,21 @@ async function checkCopilotCli(cliCheck: CopilotCliPathCheck): Promise<CheckResu
   return {
     name: "Copilot CLI",
     status: cliCheck.status === "needs-remediation" ? "fail" : "pass",
-    detail: cliCheck.detail,
+    detail: toSingleLineDisplay(cliCheck.detail),
   };
 }
 
 async function checkDiskSpace(): Promise<CheckResult> {
   const home = getCouncilHome();
+  const displayHome = toSingleLineDisplay(home);
   try {
     await probeDirectoryWritable(home);
-    return { name: "Disk write", status: "pass", detail: `${home} is writable` };
+    return { name: "Disk write", status: "pass", detail: `${displayHome} is writable` };
   } catch (err: unknown) {
     return {
       name: "Disk write",
       status: "fail",
-      detail: `cannot write under ${home}: ${formatError(err)}`,
+      detail: `cannot write under ${displayHome}: ${formatDisplayError(err)}`,
     };
   }
 }
@@ -367,12 +371,14 @@ async function checkDefaultModelAccess(
     const config = await loadConfig();
     model = config.defaults.model;
   } catch (err: unknown) {
+    const displayConfigPath = toSingleLineDisplay(configPath);
     return {
       name: "Default model access",
       status: "fail",
-      detail: `could not load config for online probe: ${formatError(err)}. Try changing defaults.model in ${configPath}`,
+      detail: `could not load config for online probe: ${formatDisplayError(err)}. Try changing defaults.model in ${displayConfigPath}`,
     };
   }
+  const displayModel = toSingleLineDisplay(model);
 
   const TIMED_OUT = Symbol("doctor-probe-timeout");
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -386,7 +392,7 @@ async function checkDefaultModelAccess(
         name: "Default model access",
         status: "fail",
         detail: await buildModelAccessFailureDetail(
-          `Default model (${model}) probe timed out after ${timeoutMs}ms`,
+          `Default model (${displayModel}) probe timed out after ${timeoutMs}ms`,
           model,
           discoverModels,
         ),
@@ -396,14 +402,14 @@ async function checkDefaultModelAccess(
       return {
         name: "Default model access",
         status: "pass",
-        detail: `Default model (${model}) session created successfully`,
+        detail: `Default model (${displayModel}) session created successfully`,
       };
     }
     return {
       name: "Default model access",
       status: "fail",
       detail: await buildModelAccessFailureDetail(
-        `Default model (${model}) is not accessible: ${probe.detail}`,
+        `Default model (${displayModel}) is not accessible: ${toSingleLineDisplay(probe.detail)}`,
         model,
         discoverModels,
       ),
@@ -413,7 +419,7 @@ async function checkDefaultModelAccess(
       name: "Default model access",
       status: "fail",
       detail: await buildModelAccessFailureDetail(
-        `Default model (${model}) probe failed: ${formatError(err)}`,
+        `Default model (${displayModel}) probe failed: ${formatDisplayError(err)}`,
         model,
         discoverModels,
       ),
@@ -429,6 +435,10 @@ function getConfigPath(): string {
 
 function formatError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function formatDisplayError(err: unknown): string {
+  return toSingleLineDisplay(formatError(err));
 }
 
 function statusIcon(status: CheckResult["status"]): string {
@@ -484,7 +494,7 @@ async function buildModelAccessFailureDetail(
     // Remediation-time discovery failed. Surface a brief note so the degraded
     // path is diagnosable (#751) instead of silently hiding the secondary
     // failure behind the base access error.
-    return `${failureDetail}\n   (could not list alternative models: ${formatError(err)})`;
+    return `${failureDetail}\n   (could not list alternative models: ${formatDisplayError(err)})`;
   }
 }
 
@@ -694,9 +704,9 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
         const sym2 = getSymbols();
         write(
           `${sym2.pass} Config\n` +
-            `   Path: ${configFilePath}\n` +
+            `   Path: ${toSingleLineDisplay(configFilePath)}\n` +
             `   Data home: ${toSingleLineDisplay(dataHome)}\n` +
-            `   Engine: ${config.defaults.engine} | Model: ${config.defaults.model} | Rounds: ${config.defaults.maxRounds}\n`,
+            `   Engine: ${toSingleLineDisplay(config.defaults.engine)} | Model: ${toSingleLineDisplay(config.defaults.model)} | Rounds: ${config.defaults.maxRounds}\n`,
         );
       } catch {
         const sym2 = getSymbols();
