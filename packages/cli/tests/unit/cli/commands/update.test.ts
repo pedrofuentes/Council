@@ -359,9 +359,11 @@ describe("council update — command behavior", () => {
 
   it("sanitizes subprocess output with control bytes while preserving diagnostic lines", async () => {
     // A hostile package-manager transcript: OSC title-set + BEL, a real error
-    // line, a CSI screen-clear introducing a forged "success" line, a C1 CSI
-    // introducer (0x9B), and a Bidi override (Trojan Source, CVE-2021-42574).
-    const hostile = "\x1b]0;pwned\x07real-error\n\x1b[2Jfake-success\x9b\u202Egnisrever";
+    // line with CR-overwrite bytes, a CSI screen-clear introducing a forged
+    // "success" line, tab/LS/PS separators, a C1 CSI introducer (0x9B), and a
+    // Bidi override (Trojan Source, CVE-2021-42574).
+    const hostile =
+      "\x1b]0;pwned\x07real-error\rforged-label\n\x1b[2Jfake-success\twith-tab\x9b\u202Egnisrever\u2028line-separator\u2029paragraph";
     const runner: UpgradeRunner = vi.fn(async () => ({
       exitCode: 1,
       stdout: "",
@@ -379,10 +381,16 @@ describe("council update — command behavior", () => {
     expect(stderr).not.toContain("\x07");
     expect(stderr).not.toContain("\x9b");
     expect(stderr).not.toContain("\u202e");
+    expect(stderr).not.toContain("\r");
+    expect(stderr).not.toContain("\t");
+    expect(stderr).not.toContain("\u2028");
+    expect(stderr).not.toContain("\u2029");
 
     // Package-manager diagnostics are multi-line; sanitization must preserve
     // their line breaks while neutralizing terminal-control sequences.
-    expect(stderr).toContain("real-error\nfake-successgnisrever");
+    expect(stderr).toContain(
+      "real-error\nforged-label\nfake-success with-tabgnisrever line-separator paragraph",
+    );
 
     expect(error).toBeInstanceOf(Error);
   });
