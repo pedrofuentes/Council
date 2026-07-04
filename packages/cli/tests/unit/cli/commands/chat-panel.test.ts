@@ -275,6 +275,13 @@ describe("panel chat mode", () => {
     ).rejects.toThrow(/not yet available|coming soon/i);
     expect(errorOutput).toContain("Underlying:");
     expect(errorOutput.toLowerCase()).toContain("openai");
+    // #1379 (paired): the mapped output is the actionable PROVIDER_NOT_AVAILABLE
+    // hint guiding the user to an available engine — not the generic
+    // "Engine error." fallback. Proves the hint is reachable end-to-end through
+    // the real command catch path, not only via a direct formatEngineError call.
+    expect(errorOutput).toContain("--engine copilot");
+    expect(errorOutput).toMatch(/mock/);
+    expect(errorOutput).not.toContain("Engine error.");
   });
 
   it("loads an auto-composed panel from the persisted session definition when its template is absent", async () => {
