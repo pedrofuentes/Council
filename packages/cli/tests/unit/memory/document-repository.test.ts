@@ -4,11 +4,19 @@
  * RED at this commit: migration 006, ExpertDocumentRow, and
  * src/memory/repositories/document-repository.ts do not exist yet.
  */
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+
 import { sql } from "kysely";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 
-import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
+import {
+  createDatabase,
+  loadMigrations,
+  type CouncilDatabase,
+} from "../../../src/memory/db.js";
 import { ExpertLibraryRepository } from "../../../src/memory/repositories/expert-library-repo.js";
+import { mkCanonicalTempDir } from "../../helpers/tmp.js";
 import {
   ClearForRetrainError,
   DocumentRepository,
@@ -163,10 +171,63 @@ describe("DocumentRepository", () => {
     await expect(repo.create(sampleDoc({ filePath: "/p/same.md" }))).rejects.toThrow();
   });
 
-  it("migration 006 is idempotent (re-running createDatabase succeeds)", async () => {
-    // Already created in beforeEach; creating another DB just exercises migrations again.
-    const second = await createDatabase(":memory:");
-    await second.destroy();
+  it("re-running createDatabase against an already-migrated file is idempotent (#352)", async () => {
+    // Idempotency must be exercised against an ALREADY-migrated database so the
+    // migration runner hits its schema_version gate on the second open. Two
+    // fresh `:memory:` DBs never share state — each runs the full migration set
+    // from empty — so they never test that path. A single persistent temp-file
+    // DB opened twice is what actually pins idempotency (issue #352).
+    const dir = await mkCanonicalTempDir("council-migration-idempotent-");
+    const dbPath = path.join(dir, "council.db");
+    try {
+      // First open runs every migration against an empty file; then seed a row.
+      const first = await createDatabase(dbPath);
+      await seedExpert(first);
+      const seeded = await new DocumentRepository(first).create(
+        sampleDoc({ filePath: "/p/idempotent.md" }),
+      );
+
+      // Plant the temporary artifact that migration 002 creates as its FIRST
+      // statement — a bare, non-`IF NOT EXISTS` `CREATE TABLE
+      // expert_documents_new`. This makes a schema_version-gate regression
+      // OBSERVABLE: if the gate ever fails to skip an already-applied
+      // migration, migration 002 re-runs and collides with this table, so the
+      // second createDatabase() below throws and this test fails. Without this
+      // planted collision a neutered gate is SILENT — migration 001 is all
+      // `CREATE TABLE IF NOT EXISTS` and migration 002 copies rows *before*
+      // `DROP TABLE`, so even a full re-run would preserve the seeded row.
+      await sql`CREATE TABLE expert_documents_new (id TEXT PRIMARY KEY)`.execute(
+        first,
+      );
+      await first.destroy();
+
+      // Second open re-invokes the migration runner against the already-
+      // migrated file. With the gate intact, every migration is skipped, the
+      // planted table is never touched, and this resolves. A gate regression
+      // re-runs migration 002 and throws on the `expert_documents_new` name
+      // collision, rejecting this call.
+      const second = await createDatabase(dbPath);
+      try {
+        const versions = await second
+          .selectFrom("schema_version")
+          .select("version")
+          .orderBy("version")
+          .execute();
+        expect(versions.map((v) => v.version)).toEqual(
+          loadMigrations().map((m) => m.version),
+        );
+
+        const survived = await new DocumentRepository(second).findByPath(
+          "ceo",
+          "/p/idempotent.md",
+        );
+        expect(survived?.id).toBe(seeded.id);
+      } finally {
+        await second.destroy();
+      }
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 
   describe("mutation operations actually change DB state (issue #343)", () => {
