@@ -957,7 +957,7 @@ describe("TurnRepository", () => {
 
     await expect(turnRepo.findLatestByDebateId(debateId)).resolves.toMatchObject({
       id: "01HZ-turn-late",
-      content: "Late turn.",
+      createdAt: "2026-01-01T11:00:00.000Z",
     });
   });
 
@@ -996,8 +996,37 @@ describe("TurnRepository", () => {
 
     await expect(turnRepo.findLatestByDebateId(debateId)).resolves.toMatchObject({
       id: "01HZ-turn-z",
-      content: "Later id with same timestamp.",
+      createdAt: "2026-01-01T10:00:00.000Z",
     });
+  });
+
+  it("findLatestByDebateId() projects only id and createdAt (narrowed projection, #864)", async () => {
+    await db
+      .insertInto("turns")
+      .values({
+        id: "01HZ-turn-narrow",
+        debate_id: debateId,
+        round: 0,
+        seq: 0,
+        speaker_kind: "expert",
+        expert_id: expertId,
+        content: "Heavy content that must not be materialised.",
+        tokens_in: 10,
+        tokens_out: 20,
+        latency_ms: 30,
+        created_at: "2026-01-01T12:00:00.000Z",
+      })
+      .execute();
+
+    // The sole caller (the `council sessions` stuck-debate check) needs only
+    // the latest-activity timestamp + id, so the query must project just those
+    // two columns and NOT hydrate the heavy turn row (content, tokens, latency).
+    const latest = await turnRepo.findLatestByDebateId(debateId);
+    expect(latest).toEqual({
+      id: "01HZ-turn-narrow",
+      createdAt: "2026-01-01T12:00:00.000Z",
+    });
+    expect(latest).not.toHaveProperty("content");
   });
 
   it("search() finds turns via FTS5 substring match", async () => {
