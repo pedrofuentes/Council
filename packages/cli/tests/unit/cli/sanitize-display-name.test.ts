@@ -72,6 +72,15 @@ describe("sanitizeDisplayName", () => {
     expect(result.length).toBe(80);
   });
 
+  it("does not split a surrogate-pair emoji at the 80-character cap", () => {
+    const longName = "A".repeat(79) + "\u{1F600}" + "B";
+    const result = sanitizeDisplayName(longName);
+
+    expect(result).toBe("A".repeat(79) + "\u{1F600}");
+    expect(result).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+    expect(result).not.toMatch(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+  });
+
   it("caps length at 80 characters preserving word boundaries when possible", () => {
     const longName = "Chief Technology Officer with extensive experience in " + "x".repeat(50);
     const result = sanitizeDisplayName(longName);
