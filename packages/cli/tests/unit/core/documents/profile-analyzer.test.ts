@@ -793,6 +793,39 @@ describe("analyzeDocuments() — error handling (#359 #360 #361)", () => {
       warnSpy.mockRestore();
     }
   });
+
+  it("enforces the timeout even when the engine adapter ignores the abort signal (#437)", async () => {
+    // A misbehaving adapter that never terminates AND never observes the
+    // forwarded AbortSignal must not be able to hang analyzeDocuments()
+    // forever: the deadline has to be enforced at the analyzer layer by
+    // racing stream consumption against an abort-triggered rejection.
+    class SignalIgnoringEngine extends RecordingEngine {
+      readonly signals: AbortSignal[] = [];
+      override send(opts: SendOptions): AsyncIterable<EngineEvent> {
+        this.sends.push({ expertId: opts.expertId, prompt: opts.prompt });
+        if (opts.signal) this.signals.push(opts.signal);
+        const expertId = opts.expertId;
+        return (async function* (): AsyncGenerator<EngineEvent, void, void> {
+          // Never yields, never inspects the signal — simulates an adapter
+          // that fails to honor cancellation.
+          await new Promise<void>(() => {
+            /* deliberately never resolves */
+          });
+          yield {
+            kind: "message.complete",
+            expertId,
+            response: { latencyMs: 1, tokensIn: 1, tokensOut: 1 },
+          };
+        })();
+      }
+    }
+    const engine = new SignalIgnoringEngine([]);
+    await expect(
+      analyzeDocuments(sampleDocs, null, engine, { ...defaultOptions, timeoutMs: 30 }),
+    ).rejects.toThrow(/timeout|timed out/i);
+    expect(engine.signals[0]?.aborted).toBe(true);
+    expect(engine.removed.length).toBe(1);
+  }, 2000);
 });
 
 describe("parseAnalyzerJSON() — robust recovery of analyzer JSON (F16)", () => {
