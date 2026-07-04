@@ -350,6 +350,29 @@ describe("autoComposePanel", () => {
     expect(engine.sentPrompts).toHaveLength(2);
   });
 
+  it("includes parse-error preview content beyond the first 200 characters (#227)", async () => {
+    // A no-JSON response whose diagnostic marker sits past the historical
+    // 200-char preview bound. Truncating at 200 chars would cut the marker (and
+    // any real parse-failure region) out of the surfaced error, so the preview
+    // must extend far enough to keep it (#227).
+    const marker = "DIAGNOSTIC-MARKER-PAST-200";
+    const prose = `${"x".repeat(300)}${marker} still no json here`;
+    const engine = new StubEngine({ responses: [prose, prose] });
+    await engine.start();
+
+    let thrown: unknown;
+    try {
+      await autoComposePanel("topic", engine);
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const message = (thrown as Error).message;
+    expect(message).toMatch(/did not return a JSON object/);
+    expect(message).toContain(marker);
+  });
+
   it("includes the topic in the prompt sent to the composer", async () => {
     const engine = new StubEngine({ response: JSON.stringify(validPanel) });
     await engine.start();
@@ -1270,6 +1293,36 @@ describe("autoComposePanel", () => {
       expect(message).not.toContain("cleanup exploded");
       // Cleanup was still attempted despite failing.
       expect(engine.removedExperts).toContain(engine.addedSpecs[0]?.id ?? "");
+    });
+
+    it("logs the discarded cleanup failure when a primary error is already latched (#2213)", async () => {
+      // Double fault: the composer send fails (primary error latched) AND the
+      // subsequent removeExpert() cleanup rejects. The primary error still wins
+      // (asserted above), but the cleanup failure must not vanish silently — it
+      // is logged so an operator can see BOTH faults during triage (#2213).
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      try {
+        const engine = new StubEngine({
+          response: "",
+          errorEvent: { code: "INTERNAL", message: "primary boom" },
+          failOnRemoveExpert: "cleanup exploded",
+        });
+        await engine.start();
+
+        await expect(autoComposePanel("topic", engine)).rejects.toThrow(/primary boom/);
+
+        const cleanupWarn = warnSpy.mock.calls.find(
+          ([first]) =>
+            typeof first === "string" &&
+            first.includes("removeExpert cleanup failed while propagating primary error"),
+        );
+        expect(cleanupWarn).toBeDefined();
+        // The discarded cleanup error is passed through so it is inspectable.
+        expect(cleanupWarn?.[1]).toBeInstanceOf(Error);
+        expect((cleanupWarn?.[1] as Error).message).toBe("cleanup exploded");
+      } finally {
+        warnSpy.mockRestore();
+      }
     });
   });
 

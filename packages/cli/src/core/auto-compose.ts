@@ -40,6 +40,13 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_RETRY_BACKOFF_MS: readonly number[] = [250, 1000];
 const COMPOSER_RETRY_INSTRUCTION =
   "You MUST respond with ONLY a JSON object. No explanation, no preamble.";
+/**
+ * Max characters of the cleaned composer response included in the "did not
+ * return a JSON object" diagnostic (#227). Wide enough that the parse-failure
+ * region is not cut off, yet bounded so an adversarial multi-KB response cannot
+ * flood the terminal.
+ */
+const PARSE_ERROR_PREVIEW_LENGTH = 1000;
 
 export interface AutoComposeOptions {
   readonly minExperts?: number;
@@ -93,6 +100,7 @@ export async function autoComposePanel(
   await engine.addExpert(composer);
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const signal = options?.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
+  const errorContext: ErrorContext = { model, timeoutSignal, timeoutMs };
 
   let parsed: unknown;
   // Capture the primary error (timeout / parse / engine failure) so a failing
@@ -107,9 +115,7 @@ export async function autoComposePanel(
       composer.id,
       buildComposerUserPrompt(topic),
       signal,
-      timeoutSignal,
-      model,
-      timeoutMs,
+      errorContext,
       retryBackoffMs,
     );
     let parseResult = parseComposerResponse(response);
@@ -120,9 +126,7 @@ export async function autoComposePanel(
         composer.id,
         buildComposerUserPrompt(topic, { strictJsonOnly: true }),
         signal,
-        timeoutSignal,
-        model,
-        timeoutMs,
+        errorContext,
         retryBackoffMs,
       );
       parseResult = parseComposerResponse(response);
@@ -143,13 +147,20 @@ export async function autoComposePanel(
   } finally {
     // #289: isolate cleanup. A rejecting removeExpert() must not replace the
     // primary error propagating from the try block; when there is no primary
-    // error, the cleanup failure is surfaced instead.
+    // error, the cleanup failure is surfaced instead. When a primary error is
+    // already latched, the cleanup failure is logged rather than discarded so
+    // an operator can see both faults during triage (#2213).
     try {
       await engine.removeExpert(composer.id);
     } catch (cleanupError) {
       if (!hasPrimaryError) {
         primaryError = cleanupError;
         hasPrimaryError = true;
+      } else {
+        console.warn(
+          "[auto-compose] removeExpert cleanup failed while propagating primary error:",
+          cleanupError,
+        );
       }
     }
   }
@@ -193,16 +204,27 @@ interface ComposerPromptOptions {
   readonly strictJsonOnly?: boolean;
 }
 
+/**
+ * Error-path context for `collectComposerResponse` (#832). `model`,
+ * `timeoutSignal`, and `timeoutMs` are consumed only when a send fails, times
+ * out, or is aborted — bundling them keeps the happy-path parameter surface
+ * narrow so the common signature reads as "engine, expert, prompt, signal".
+ */
+interface ErrorContext {
+  readonly model: string;
+  readonly timeoutSignal: AbortSignal;
+  readonly timeoutMs: number;
+}
+
 async function collectComposerResponse(
   engine: CouncilEngine,
   expertId: string,
   prompt: string,
   signal: AbortSignal,
-  timeoutSignal: AbortSignal,
-  model: string,
-  timeoutMs: number,
+  errorContext: ErrorContext,
   retryBackoffMs: readonly number[],
 ): Promise<string> {
+  const { model, timeoutSignal, timeoutMs } = errorContext;
   const maxRetries = retryBackoffMs.length;
   for (let attempt = 0; ; attempt += 1) {
     const outcome = await consumeComposerSend(engine, expertId, prompt, signal);
@@ -397,19 +419,13 @@ function parseComposerResponse(raw: string): ComposerResponseParseResult {
   if (extracted === undefined) {
     return {
       kind: "no-json",
-      preview: sanitizeModelForDisplay(cleaned.slice(0, 200)),
+      preview: sanitizeModelForDisplay(cleaned.slice(0, PARSE_ERROR_PREVIEW_LENGTH)),
     };
   }
 
-  const extractedParse = tryParseJsonObject(extracted);
-  if (extractedParse !== undefined) {
-    return { kind: "parsed", value: extractedParse };
-  }
-
-  return {
-    kind: "no-json",
-    preview: sanitizeModelForDisplay(cleaned.slice(0, 200)),
-  };
+  // extractFirstJsonObject only returns candidates it already parsed, so reuse
+  // that value instead of parsing the same substring a second time (#831).
+  return { kind: "parsed", value: extracted.parsed };
 }
 
 function tryParseJsonObject(text: string): unknown | undefined {
@@ -420,7 +436,13 @@ function tryParseJsonObject(text: string): unknown | undefined {
   }
 }
 
-function extractFirstJsonObject(text: string): string | undefined {
+/** An extracted JSON substring paired with its already-parsed value (#831). */
+interface ExtractedJsonObject {
+  readonly raw: string;
+  readonly parsed: unknown;
+}
+
+function extractFirstJsonObject(text: string): ExtractedJsonObject | undefined {
   for (
     let startIndex = text.indexOf("{");
     startIndex !== -1;
@@ -430,8 +452,9 @@ function extractFirstJsonObject(text: string): string | undefined {
     if (candidate === undefined) {
       continue;
     }
-    if (tryParseJsonObject(candidate) !== undefined) {
-      return candidate;
+    const parsed = tryParseJsonObject(candidate);
+    if (parsed !== undefined) {
+      return { raw: candidate, parsed };
     }
   }
   return undefined;
@@ -499,7 +522,7 @@ function createEmptyComposerResponseError(): Error {
 
 function createMissingJsonObjectError(preview: string): Error {
   return new Error(
-    `Auto-compose failed: composer did not return a JSON object. First 200 chars: ${preview}`,
+    `Auto-compose failed: composer did not return a JSON object. First ${PARSE_ERROR_PREVIEW_LENGTH} chars: ${preview}`,
   );
 }
 
