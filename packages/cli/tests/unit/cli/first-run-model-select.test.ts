@@ -19,6 +19,26 @@ function createInput(text: string, isTTY = true): NodeJS.ReadableStream {
   return input;
 }
 
+function expectDisplaySegmentSanitized(
+  text: string,
+  prefix: string,
+  suffix: string,
+  expected: string,
+): void {
+  const start = text.indexOf(prefix);
+  expect(start).toBeGreaterThanOrEqual(0);
+  const valueStart = start + prefix.length;
+  const end = text.indexOf(suffix, valueStart);
+  expect(end).toBeGreaterThanOrEqual(0);
+  const displayedModel = text.slice(valueStart, end);
+
+  expect(displayedModel).toBe(expected);
+  expect(displayedModel.includes("\r")).toBe(false);
+  expect(displayedModel.includes("\n")).toBe(false);
+  expect(displayedModel.includes(String.fromCharCode(27))).toBe(false);
+  expect(displayedModel.includes("\u202e")).toBe(false);
+}
+
 function createCapturedOutput(): CapturedOutput {
   const stream = new PassThrough();
   const chunks: string[] = [];
@@ -127,7 +147,9 @@ describe("selectModelInteractively", () => {
 
     expect(selected).toBe("claude-sonnet-4.6");
     expect(updateConfig).toHaveBeenCalledWith("defaults.model", "claude-sonnet-4.6");
-    expect(output.text()).toContain("Non-interactive session detected; using recommended model claude-sonnet-4.6.");
+    expect(output.text()).toContain(
+      "Non-interactive session detected; using recommended model claude-sonnet-4.6.",
+    );
   });
 
   it("fails with a doctor hint when no models are available", async () => {
@@ -208,5 +230,92 @@ describe("selectModelInteractively", () => {
     });
 
     expect(output.text()).not.toContain("live-only");
+  });
+
+  it.each([
+    ["gpt-4\r\n\x1b[31mx", "gpt-4 x"],
+    ["m\u202eodel", "model"],
+  ])(
+    "sanitizes selected API model ID before rendering the confirmation",
+    async (rawModel, displayedModel) => {
+      discoverModels.mockResolvedValue({
+        models: ["claude-sonnet-4.5", rawModel],
+        source: "live",
+      });
+      const output = createCapturedOutput();
+
+      const selected = await selectModelInteractively({
+        write: (text) => output.stream.write(text),
+        input: createInput("2\n"),
+        output: output.stream,
+        discoverModels,
+        updateConfig,
+      });
+
+      expect(selected).toBe(rawModel);
+      expect(updateConfig).toHaveBeenCalledWith("defaults.model", rawModel);
+      expectDisplaySegmentSanitized(
+        output.text(),
+        "✓ Default model set to ",
+        "\n\nRun 'council doctor'",
+        displayedModel,
+      );
+    },
+  );
+
+  it.each([
+    ["gpt-4\r\n\x1b[31mx", "gpt-4 x"],
+    ["m\u202eodel", "model"],
+  ])(
+    "sanitizes recommended API model ID before rendering the non-interactive notice",
+    async (rawModel, displayedModel) => {
+      discoverModels.mockResolvedValue({
+        models: [rawModel],
+        source: "live",
+      });
+      const output = createCapturedOutput();
+
+      const selected = await selectModelInteractively({
+        write: (text) => output.stream.write(text),
+        input: createInput("", false),
+        output: output.stream,
+        discoverModels,
+        updateConfig,
+      });
+
+      expect(selected).toBe(rawModel);
+      expect(updateConfig).toHaveBeenCalledWith("defaults.model", rawModel);
+      expectDisplaySegmentSanitized(
+        output.text(),
+        "Non-interactive session detected; using recommended model ",
+        ".\n",
+        displayedModel,
+      );
+    },
+  );
+
+  it("sanitizes API-sourced model IDs before rendering the model list", async () => {
+    discoverModels.mockResolvedValue({
+      models: ["claude-sonnet-4.5", "gpt-4\r\n\x1b[31mx", "m\u202eodel"],
+      source: "live",
+    });
+    const output = createCapturedOutput();
+
+    await selectModelInteractively({
+      write: (text) => output.stream.write(text),
+      input: createInput("\n"),
+      output: output.stream,
+      discoverModels,
+      updateConfig,
+    });
+
+    const text = output.text();
+    const modelList = text.slice(text.indexOf("Available models:"), text.indexOf("Select a model"));
+    expect(modelList).toContain("2. gpt-4 x");
+    expect(modelList).toContain("3. model");
+    expect(modelList).not.toContain("gpt-4\r\n");
+    expect(modelList).not.toContain("\x1b");
+    expect(modelList).not.toContain("\u202e");
+    expect(modelList.split("\n").filter((line) => /^\s+\d+\./.test(line))).toHaveLength(3);
   });
 });

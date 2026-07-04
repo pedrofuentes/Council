@@ -14,6 +14,7 @@ import {
 } from "./model-annotations.js";
 import { renderBanner } from "./renderers/banner.js";
 import type { Writer } from "./commands/writer.js";
+import { toSingleLineDisplay } from "./strip-control-chars.js";
 
 import packageJson from "../../package.json" with { type: "json" };
 
@@ -140,7 +141,7 @@ function throwNoModelsAvailable(write: Writer): never {
 }
 
 function writeSelectionConfirmation(write: Writer, selectedModel: string): void {
-  write(`✓ Default model set to ${selectedModel}\n\n`);
+  write(`✓ Default model set to ${toSingleLineDisplay(selectedModel)}\n\n`);
   write("Run 'council doctor' to verify your full setup.\n");
 }
 
@@ -173,7 +174,11 @@ export async function selectModelInteractively(
     throwNoModelsAvailable(write);
   }
 
-  writeModelList(write, models, discovery.source);
+  writeModelList(
+    write,
+    models.map((model) => toSingleLineDisplay(model)),
+    discovery.source,
+  );
 
   const interactive = isInteractiveInput(options.input);
   const selectedModel = interactive
@@ -181,7 +186,9 @@ export async function selectModelInteractively(
     : recommendedModel;
 
   if (!interactive) {
-    write(`Non-interactive session detected; using recommended model ${selectedModel}.\n`);
+    write(
+      `Non-interactive session detected; using recommended model ${toSingleLineDisplay(selectedModel)}.\n`,
+    );
   }
 
   await persistConfig("defaults.model", selectedModel);
