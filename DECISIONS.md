@@ -22,6 +22,90 @@
 
 <!-- Add new decisions below this line, most recent first -->
 
+### ADR-038: Interactive TUI architecture — `MemoryRouter` screen stack, in-house Ink primitives, React Context + `useReducer` (not Zustand)
+**Date**: 2026-07-03
+**Status**: Accepted
+**Context**: Phase 9 adds an interactive Ink TUI under `packages/cli/src/tui/`. Three cross-cutting decisions were made and justified in the design doc (`docs/designs/interactive-tui.md` §4.2, §6.1, §6.4) but never recorded canonically here: how screens are navigated, whether to pull richer Ink widget packages, and how app state is owned. This ADR promotes them to the canonical record and points at the design doc for the full rationale.
+**Decision** (canonical pointer to `docs/designs/interactive-tui.md` §6.1/§6.4):
+- **`react-router` `MemoryRouter` as the screen stack.** The root `CouncilTUI.tsx` wraps the app in `<MemoryRouter initialEntries={[initialRoute]}>` (`src/tui/CouncilTUI.tsx:2,14`); screens navigate with `useNavigate`/`useParams`/`useLocation` against route constants. It is Ink-team supported, provides an in-memory history stack with no URL/DOM, and makes navigation unit-testable via `initialEntries`. Overlays (command palette, dialogs, help) render **above** the router rather than as routes.
+- **Build the interaction primitives in-house.** `MultilineInput`, `ScrollView` (windowed), `CommandPalette`, `ExpertPills`, and `LeftNav` are custom components (`src/tui/components/…`); only thin, stable widgets come from packages (`ink-text-input`, `ink-select-input`, `ink-spinner`). Packages that were evaluated and rejected as obsolete/incompatible: `ink-use-stdout-dimensions`, `ink-progress-bar`, `fullscreen-ink`, `blessed`.
+- **React Context + `useReducer` for state, not Zustand.** State lives in Context providers (e.g. `DataProvider`, `InputCaptureProvider` via `React.createContext`) with reducer-based hooks (e.g. `use-mode.ts` via `useReducer`), giving explicit parent/child ownership and trivial per-test reset; one small streaming context is shared between Convene/Chat and the header/footer meters. Zustand is deliberately **not** a dependency.
+**Alternatives considered**:
+- **A hand-rolled screen-stack state machine** instead of a router — reinvents history/params/guards `MemoryRouter` already provides and is harder to test.
+- **Adopt richer Ink widget packages** for multiline input / scrolling / progress — several are unmaintained or incompatible with `ink ^7`, and the exact dual-focus + windowed-review-scroll behaviour Council needs is easier to own than to bend a package into.
+- **Zustand (or Redux) global store** — an extra dependency plus implicit global mutability; Context + `useReducer` keeps ownership explicit and resets cleanly between tests (a first-class TDD requirement, §7).
+**Consequences**:
+- ✅ Navigation, primitives, and state are all unit-testable with `ink-testing-library` and `MemoryRouter` `initialEntries` — no global singletons to reset between tests.
+- ✅ Fewer third-party Ink dependencies → smaller supply-chain/audit surface and no fight with unmaintained widgets.
+- ⚠️ In-house primitives (multiline editing, windowed scroll, focus-stealing palette) are Council's to maintain and were de-risked first (design §6.5).
+- 📝 Full rationale, module layout, and the verified reuse seams live in `docs/designs/interactive-tui.md` (§6.1–§6.5); this ADR is the canonical entry point, not a duplicate of that detail.
+
+### ADR-037: `HumanInputProvider` boundary + `speakerKind` discriminator on debate events
+**Date**: 2026-07-03
+**Status**: Accepted
+**Context**: ROADMAP §3.3 adds human participants to debates. The orchestrator must obtain a human's turn the same way it drives an expert's, but the source is stdin (or a test stub), not `engine.send()`. Separately, every downstream consumer (renderers, persistence, transcript) must distinguish a human turn from an expert turn without reverse-engineering it from a slug.
+**Decision**:
+- **A minimal `HumanInputProvider` interface** (`src/core/human-input.ts:30`) with a single method `getInput(context: HumanInputContext): Promise<HumanInputResult>`, where the result is a `submitted | cancelled` discriminated union. `Debate` branches on `this.#humanSlugs.has(expert.slug)` (`src/core/debate.ts:649`) and, for human participants, calls `this.#humanInput.getInput(...)` (`src/core/debate.ts:695`) instead of the engine — keeping the orchestrator engine-agnostic and the input mechanism (readline vs. injected stub) swappable. A missing provider for a human slug yields a structured `error` event rather than throwing (`src/core/debate.ts:681`).
+- **A `speakerKind: "expert" | "human"` discriminator** on the `turn.start` / `turn.delta` / `turn.end` events (`src/core/types.ts:67,74,82`), defaulting to `"expert"` when absent for backward compatibility. Persistence stores it (`src/memory/repositories/turns.ts`, `src/memory/persister.ts`) and the transcript falls back to `speakerKind` when a turn has no resolvable expert slug (`src/memory/transcript.ts:211`).
+**Alternatives considered**:
+- **Model humans as a fake "human engine"** behind `CouncilEngine` — forces interactive input through a streaming/token/abort/error-code contract that does not fit a person typing at a prompt.
+- **Infer human vs. expert from the slug or a sentinel `expertId`** — brittle; every consumer would need to know the sentinel and it is not serialization-stable.
+- **A separate `human.turn` event kind** — doubles the event union and every renderer's `switch`; an optional discriminator on the existing turn events is smaller and purely additive.
+**Consequences**:
+- ✅ `Debate` stays decoupled from *how* human input is collected; tests inject canned `HumanInputResult`s.
+- ✅ Renderers/persistence label speakers via one optional field; absence means `"expert"`, so pre-existing events and stored rows stay valid.
+- ✅ Cancellation is first-class (`kind: "cancelled"`), letting a human abort a turn distinctly from an error.
+- 📝 `speakerKind` is optional on the wire; any new consumer must apply the same `?? "expert"` default.
+
+### ADR-036: Renderer architecture — `Sink` seam, NDJSON for JSON output, forced `chalk` level in plain output
+**Date**: 2026-07-03
+**Status**: Accepted
+**Context**: The debate/chat event stream must render three ways without the renderers knowing which: to a human TTY, to machine-readable output for pipes/CI, and to an in-memory buffer for tests. Two concrete forces follow: JSON consumers want to stream events incrementally (`jq`, `| head`), and colorized test output must be deterministic regardless of whether the test runs under a TTY.
+**Decision**:
+- **`Sink` interface** (`src/cli/renderers/types.ts:14`) abstracts the write target: `write(text)` plus an optional `writeError(text)`. Production uses `StreamSink` over `process.stdout`/`stderr`; tests inject a string-buffer sink. Renderers depend on `Sink`, never on `process.stdout` directly, so the output target is swappable.
+- **`JsonRenderer` emits NDJSON** — one `JSON.stringify(event) + "\n"` per line (`src/cli/renderers/json.ts:26`), no buffering, so downstream tools consume events as they arrive; the `kind` discriminator carries error events on the same channel. An early-closed pipe (EPIPE) is treated as a graceful shutdown, not an error.
+- **`PlainRenderer` forces a `chalk` level explicitly** — `new Chalk({ level: color && !NO_COLOR ? 1 : 0 })` (`src/cli/renderers/plain.ts:65`), overriding chalk's TTY auto-detection (which returns level 0 when there is no TTY). This makes colorized output deterministic in tests and honours `NO_COLOR`.
+**Alternatives considered**:
+- **Renderers write straight to `process.stdout`** — untestable without hijacking the global stream; no buffer injection.
+- **Pretty-printed JSON array** — cannot stream (the array cannot close until the debate ends) and breaks line-oriented tooling.
+- **Let chalk auto-detect color** — test output would flip between colored and plain depending on the TTY, making assertions flaky.
+**Consequences**:
+- ✅ Any renderer works against stdout, stderr, or a test buffer with no code change.
+- ✅ NDJSON is greppable, `jq`-able, and incremental; EPIPE handling makes `council … | head` exit cleanly.
+- ✅ Plain-renderer color is deterministic and `NO_COLOR`-aware.
+- 📝 Level is pinned to basic 16-color (level 1); consumers wanting truecolor pipe through their own upgrader. A new renderer just implements `Renderer` against `Sink`.
+
+### ADR-035: `PANELS_DIR` module-relative resolution + `ExpertDefinitionSchema` reuse in panel loading
+**Date**: 2026-07-03
+**Status**: Accepted
+**Context**: Built-in panel templates ship as YAML in `panels/` at the package root and must load in three layouts: from `src/core/` in dev, from the tsup-bundled `dist/`, and from an npm-installed package. A hard-coded relative path or one based on `process.cwd()` breaks in at least one layout. Separately, panel YAML embeds expert definitions whose validation contract must be identical to standalone experts, or built-in and user-authored panels would drift.
+**Decision**:
+- **`PANELS_DIR` is resolved at module load from `import.meta.url`.** `resolvePanelsDir()` (`src/core/template-loader.ts:262`) derives the directory from this module's own URL and probes an ordered candidate list (`../../panels`, `../panels`, `panels`), returning the first that exists as a directory; when none exist (a packaging bug) it returns the most-likely candidate so the error message stays informative rather than silently yielding `[]`. All panel reads are confined to `PANELS_DIR` by a `path.resolve(PANELS_DIR) + path.sep` prefix check that refuses any resolved path escaping the directory (traversal guard, `src/core/template-loader.ts:354`).
+- **Panel loading reuses `ExpertDefinitionSchema`.** `PanelDefinitionSchema` imports `ExpertDefinitionSchema` from `src/core/expert.ts` (`src/core/template-loader.ts:28`) so built-in and user-authored panels validate their expert entries through the exact same Zod contract.
+**Alternatives considered**:
+- **Resolve `panels/` from `process.cwd()`** — breaks whenever the CLI runs from any directory other than the package root; wrong for npm installs.
+- **Inline panels as JSON/TS constants** — loses the "drop a YAML file to add a panel" workflow and bloats the bundle.
+- **A separate, panel-specific expert schema** — two schemas to keep in lockstep, guaranteeing eventual drift between panel-embedded and standalone experts.
+**Consequences**:
+- ✅ Panels load identically in source, bundled, and installed layouts; a missing `panels/` dir throws with the resolved path instead of returning empty.
+- ✅ One Zod schema governs expert validity everywhere; a change to `ExpertDefinitionSchema` automatically applies to panel members.
+- ✅ Path traversal is structurally prevented — `loadPanel` cannot read outside `PANELS_DIR`.
+- 📝 Resolution order is layout-sensitive; adding a new build-output location means extending the candidate list in `resolvePanelsDir()`.
+
+### ADR-034: `isRecoverable(code)` as the single source of truth for error recoverability
+**Date**: 2026-07-03
+**Status**: Accepted
+**Context**: PR #16 (closing #9) introduced `EngineEvent.error.recoverable`. Every adapter — the Copilot adapter and the mock engine — must decide whether a failed turn is worth retrying, and `core/debate.ts` reads that flag to drive retry/back-off. Without one canonical mapping, adapters could disagree (one treating `NETWORK` as recoverable, another not), making retry behaviour provider-dependent and untestable.
+**Decision**: A pure predicate `isRecoverable(code: EngineErrorCode): boolean` maps `RATE_LIMITED | NETWORK → true` and every other code (`ABORTED`, `NOT_AUTHENTICATED`, `MODEL_UNAVAILABLE`, `CONTEXT_OVERFLOW`, `PROVIDER_ERROR`, `INTERNAL`) → `false`. Adapters populate `error.recoverable` exclusively from this predicate (`src/engine/mock/mock-engine.ts:35`, `src/engine/copilot/adapter.ts:660`); `core/debate.ts` consumes the flag rather than re-deriving it. New members of the `EngineErrorCode` union (`src/engine/types.ts:100`) must be given an explicit recoverability here.
+**Alternatives considered**:
+- **Inline a per-code boolean at each throw site** — duplicates the policy across adapters; drift is inevitable and silent.
+- **A per-adapter override hook** — lets providers disagree about the same `EngineErrorCode`, defeating the point of a stable error taxonomy.
+- **Encode recoverability into the `EngineErrorCode` union itself** (e.g. `RATE_LIMITED_RECOVERABLE`) — bloats the enum and couples classification to retry policy.
+**Consequences**:
+- ✅ Retry behaviour is identical across the Copilot adapter and the mock engine; tests assert against one mapping.
+- ✅ The `EngineErrorCode` set is exhaustively switched, so adding a code forces a deliberate recoverability decision — and, per this ADR, an update here.
+- ⚠️ The mapping is currently expressed in two colocated definitions of the same policy — the exported switch in `mock-engine.ts:35` and a two-line equivalent in `adapter.ts:660`; both must stay in agreement until unified. Any divergence is a bug this ADR exists to catch.
+
 ### ADR-033: Trust `pnpm/action-setup` (SHA-pinned + Dependabot-tracked); repo-level third-party-action allowlist is a human follow-up
 **Date**: 2026-07-02
 **Status**: Accepted
@@ -455,12 +539,12 @@ The two env vars (`COUNCIL_HOME` and `COUNCIL_DATA_HOME`) are independent so tes
 
 ### ADR-010: Chat session model — separate `chat_sessions` / `chat_turns` tables, atomic seq allocation
 **Date**: 2026-05-11
-**Status**: Accepted
+**Status**: Accepted (amended 2026-07-03: the "one active session per target" invariant is now enforced by a shipped partial unique index plus transactional rotation — see Decision, Alternatives, and Consequences)
 **Context**: Roadmap 5.x introduces persistent conversational chat (`council chat <expert>` and `council chat <panel>`) alongside the existing structured-debate machinery. Chat and debate share superficial structure (a sequence of speaker turns), so the obvious move is to reuse `debates` + `turns` with a new `kind` discriminator. On closer inspection the lifecycles diverge sharply: a debate is **bounded** (one prompt, fixed phases, terminal `status`, cost-estimated up front, persisted moderator strategy), while a chat is **open-ended and resumable** (no terminal phase, indefinite turn count, archive-don't-delete semantics, no moderator). Reusing `debates`/`turns` would force every column to be nullable for the side it doesn't apply to, dilute the meaning of `status`, and complicate the queries that already drive `council resume` / `council export`. A separate concern: every per-turn write needs a monotonic `seq` per session for replay ordering, and the chat REPL is the first code path where two turns can race (user types ahead while the engine is still streaming).
 
 **Decision**:
 - **Two new tables** in migration 005:
-  - `chat_sessions` — `{ id (ULID), target_type ('expert'|'panel'), target_slug, status ('active'|'archived'), summary, summary_through_seq, created_at, updated_at }`. The "one active session per target" invariant is enforced at the application layer (`ChatRepository.findActiveSession` plus `archiveSession` before `createSession` in the chat command), not by a DB constraint, so the migration stays portable across libsql / Turso without partial-index syntax differences.
+  - `chat_sessions` — `{ id (ULID), target_type ('expert'|'panel'), target_slug, status ('active'|'archived'), summary, summary_through_seq, created_at, updated_at }`. The "one active session per target" invariant is enforced **both** in the schema — a partial unique index `idx_chat_sessions_active_unique ON chat_sessions (target_type, target_slug) WHERE status = 'active'` (`src/memory/db.ts:418`, `src/memory/migrations/001_unified.sql:196`) — **and** in the application layer, where `ChatRepository.rotateActiveSession` archives the prior active session and inserts its replacement inside a single `BEGIN`/`COMMIT` transaction (#333). The `node:sqlite` backend (ADR-027) supports partial indexes natively, which removes the portability concern that originally justified deferring the DB constraint.
   - `chat_turns` — `{ id (ULID), chat_id (FK CASCADE), seq, role ('user'|'expert'), expert_slug (NULL for user turns), content, is_mention, tokens_in, tokens_out, created_at }` with `UNIQUE (chat_id, seq)` (declared in `005_chat.sql`) plus `idx_chat_turns_chat_seq` for ordered reads.
 - **Atomic seq allocation** via `INSERT … SELECT COALESCE(MAX(seq), 0) + 1 …` in `ChatRepository.addTurn` so the read-and-increment happens in a single statement: no application-side race window even when a future caller concurrently appends to the same chat.
 - **No reuse of `debates` / `turns`.** The structured-debate tables stay focused on bounded debates with phases, moderators, and cost ceilings.
@@ -469,19 +553,19 @@ The two env vars (`COUNCIL_HOME` and `COUNCIL_DATA_HOME`) are independent so tes
 - **Reuse `debates` + `turns` with a `kind` column.** Smallest schema delta, but every chat-irrelevant column (`moderator`, `mode`, `cost_estimate`, terminal `status`) becomes nullable-and-meaningless for chat rows, and every debate query has to filter `WHERE kind = 'debate'`. The conceptual saving evaporates almost immediately.
 - **App-side seq allocation (`SELECT MAX(seq) + 1` then `INSERT`).** Two statements, racy under concurrent appends — exactly the bug the single-statement form prevents. No retry loop needed because the seq is computed and inserted atomically.
 - **Auto-increment `seq` via a trigger.** Works, but pushes write logic into SQL the JS code can't easily reason about, and the `INSERT … SELECT` form is portable across libsql/Turso without custom trigger setup.
-- **Partial unique index on `(target_type, target_slug) WHERE status='active'`.** Would push the "one active session per target" rule into the schema, but libsql partial-index support is uneven and the application-layer guard is straightforward; deferred unless concurrent session creation becomes a real failure mode.
+- **Partial unique index on `(target_type, target_slug) WHERE status='active'`.** Originally deferred because libsql's partial-index support was uneven at the time. **Now adopted**: after the backend moved to `node:sqlite` (ADR-027), which supports partial indexes natively, the index shipped as `idx_chat_sessions_active_unique` (`db.ts:418`, `migrations/001_unified.sql:196`), pushing the "one active session per target" rule into the schema as defence-in-depth alongside the transactional application-layer rotation.
 
 **Consequences**:
 - ✅ Chat and debate evolve independently; adding a column for one cannot accidentally affect the other.
 - ✅ `ChatRepository.addTurn` is a single round-trip with no app-side race window.
 - ✅ Archive semantics are first-class: `council chat <target> --new` flips `status='archived'` on the active session and inserts a fresh one without touching turn history.
-- ⚠️ The "one active session per target" invariant lives in application code, not the schema; a future caller bypassing the chat command could create a duplicate active row. Mitigated by a single chokepoint (`runExpertChat` / `runPanelChat`) and a follow-up issue if a second writer ever materialises.
+- ✅ The "one active session per target" invariant is enforced in the schema by the partial unique index `idx_chat_sessions_active_unique` (`db.ts:418`), so any code path — even one bypassing the chat command — that attempts a second active session for the same target now fails at the DB layer rather than silently creating a duplicate active row. `ChatRepository.rotateActiveSession` performs the archive-then-insert swap in one transaction (#333), so a crash mid-rotation cannot leave a target with zero active sessions; the index is defence-in-depth for any future second writer.
 - ⚠️ Two near-isomorphic table pairs (`debates`/`turns` and `chat_sessions`/`chat_turns`) — same trade-off as panel vs expert documents (ADR-007). Tolerated because the parent semantics differ.
 - 📝 If a future feature needs to query "all turns for an expert across debates AND chats" it will need a UNION view; acceptable, that view does not exist yet.
 
 ### ADR-009: Regex-based document normalisation, not a Markdown/HTML parser
 **Date**: 2026-05-10
-**Status**: Accepted
+**Status**: Accepted (partially amended 2026-07-03: HTML tag extraction moved to the `node-html-parser` tokenizer after the regex approach failed repeated security review — see Amendment. The regex rule still governs the simple per-format normalisers.)
 **Context**: Roadmap 6.1 needs to extract plain text from `.md`, `.html`, and `.txt` documents to feed both FTS5 indexing and the persona-profile analyzer. The natural reach is a real parser per format (`marked` / `remark` for Markdown, `parse5` / `cheerio` for HTML). Council's actual need is far narrower: strip formatting and emit a normalised body suitable for tokenisation. The extractor is on the `council chat` startup hot path and must work in offline / air-gapped environments where heavy parser dependencies hurt install size and audit surface.
 
 **Decision**: `src/core/documents/extractor.ts` uses a small set of hand-written regex normalisers per format (HTML entity decoding, tag stripping, Markdown punctuation removal, whitespace collapse). The JSDoc explicitly states "intentionally simple (regex-based); strips formatting but does not aim to be a full parser." Parser correctness is not promised; FTS5 robustness against imperfect tokenisation is.
@@ -497,6 +581,8 @@ The two env vars (`COUNCIL_HOME` and `COUNCIL_DATA_HOME`) are independent so tes
 - ✅ Easy to audit: ~100 lines of regex with explicit test coverage per format.
 - ⚠️ Pathological inputs (deeply-nested HTML, custom Markdown extensions) may produce imperfect text. Acceptable: FTS5 ranking absorbs noise, and the persona analyzer treats every fenced document as untrusted data anyway.
 - 📝 If a real parser is ever needed (e.g. `.docx` / `.pdf` in Phase 8), it lands in a NEW module behind a format-dispatched interface — not by replacing the regex normalisers wholesale.
+
+**Amendment (2026-07-03) — HTML tag extraction is now a deliberate `node-html-parser` exception (#1217; Sentinel `SENTINEL-1213-c41f756` / PR #1213)**: the hand-rolled regex/scanner HTML stripper failed multiple security-review cycles — regex-bypass classes (whitespace/case variation, attributes, orphan close tags, quoted `>` inside attributes) flagged by CodeQL (`js/incomplete-multi-character-sanitization`, `js/bad-tag-filter`) plus catastrophic backtracking / O(n²) behaviour (#1212). It was replaced by `node-html-parser` — a maintained, ESM-compatible, tokenizer-based parser (`packages/cli/src/core/documents/extractors/html.ts`, dependency `node-html-parser ^7.1.0`) — which runs in linear time with no backtracking and removes `<script>`/`<style>` element bodies by construction (using `structuredText` so block elements stay whitespace-separated). **This narrows ADR-009 rather than reversing it**: the "regex, not a parser" rule still holds for the *simple* per-format normalisers (HTML entity decoding, whitespace collapse, Markdown punctuation stripping), but **HTML tag extraction is a deliberate parser-backed exception** because a hardened parser is the safer choice for adversarial tag soup. Do NOT revert the HTML extractor to regex tag-stripping. (This is the DECISIONS half of #1217; the LEARNINGS.md half ships in PR #2249.)
 
 ### ADR-008: Persona profile analysis — LLM extraction with single-retry, multi-layer sanitisation
 **Date**: 2026-05-09
@@ -586,6 +672,8 @@ Provenance is a column on the per-file row, not a separate table. FTS index entr
 **Decision**: Define a `CouncilEngine` interface in `engine/index.ts`. Only `engine/copilot/adapter.ts` may import `@github/copilot-sdk`. Enforced by ESLint `no-restricted-imports` rule.
 **Alternatives considered**: Direct SDK usage throughout codebase (faster to write, impossible to maintain when SDK breaks).
 **Consequences**: Adding new engine backends (Anthropic direct, OpenAI direct, Ollama) becomes a weekend project. All core logic depends on Council's own domain types, not SDK types. Small overhead of maintaining the interface.
+
+**Amendment (2026-07-03) — the `health.ts` re-export seam (#103)**: because `no-restricted-imports` allows SDK-coupled code to be *defined* only in `engine/copilot/adapter.ts`, but CLI diagnostics (`council doctor`) need a *narrow* health/model surface rather than the whole adapter, `src/engine/copilot/health.ts` exists as that surface. It re-exports exactly the SDK-touching probes — `discoverAvailableModels`, `pingProviderHealth`, `resolveCopilotCliPath` and their result types — from `adapter.ts`, and additionally hosts the pure, SDK-free CLI-path *classification* (`checkCopilotCliPath`) that has no reason to live in the adapter. This is why the file exists rather than being folded into the adapter: it keeps every SDK re-export funnelled through `adapter.ts` (satisfying the ESLint boundary) while giving the CLI a small, stable, independently unit-testable import target instead of reaching into the adapter directly. Future contributors should add new SDK-coupled diagnostics by defining them in `adapter.ts` and re-exporting through `health.ts`, keeping pure logic (no SDK import) directly in `health.ts`.
 
 ### ADR-004: denyAll permissions by default for expert sessions
 **Date**: 2026-05-06
