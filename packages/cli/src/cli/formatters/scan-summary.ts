@@ -75,6 +75,21 @@ export interface DescribeScanErrorOptions {
   readonly extension?: string;
 }
 
+/**
+ * Translate a typed {@link ScanErrorKind} into a user-facing failure message.
+ *
+ * Most kinds map to a fixed phrase from the internal message table. Two kinds
+ * are refined when the caller supplies extra context:
+ *   - `oversize-file` appends the configured limit (e.g. `File too large
+ *     (limit: 50 MB)`) when `options.maxFileSizeMB` is provided.
+ *   - `unsupported-format` names the offending extension (e.g. `Unsupported
+ *     format (.png)`) when `options.extension` is a non-empty string.
+ *
+ * @param kind - The classified extraction failure to describe.
+ * @param options - Optional context that refines the message; see
+ *   {@link DescribeScanErrorOptions}. Defaults to an empty object.
+ * @returns A single-line, human-readable message suitable for CLI display.
+ */
 export function describeScanError(
   kind: ScanErrorKind,
   options: DescribeScanErrorOptions = {},
