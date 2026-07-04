@@ -6,6 +6,7 @@ import type { ExpertDefinition } from "../../../src/core/expert.js";
 import type { PanelDefinition } from "../../../src/core/template-loader.js";
 import type { ExpertSpec } from "../../../src/engine/index.js";
 import { createConvenePanelResolver } from "../../../src/tui/adapters/convene-resolve.js";
+import type { ConvenePanelRuntimeInput } from "../../../src/tui/adapters/convene-resolve.js";
 
 const config: CouncilConfig = ConfigSchema.parse({
   defaults: {
@@ -280,5 +281,55 @@ describe("createConvenePanelResolver — live DB member cardinality (1-8)", () =
     expect(message).not.toMatch(TERMINAL_CONTROL_CHARS);
     // ... and the guard never proceeded to build specs.
     expect(buildSpec).not.toHaveBeenCalled();
+  });
+});
+
+describe("createConvenePanelResolver — persisted definition description/defaults omission", () => {
+  // The persisted ResolvedPanelDefinition spreads `description`/`defaults` only
+  // when the panel YAML provides them (convene-resolve.ts). The inclusion branch
+  // is covered by convene-persist.test.ts; these lock the OMISSION branch (and a
+  // load-bearing inverse) so an absent-key panel never emits `undefined` keys.
+  function captureDefinition(panel: PanelDefinition): Promise<ConvenePanelRuntimeInput> {
+    return new Promise((resolve, reject) => {
+      const resolvePanel = createConvenePanelResolver({
+        loadPanel: async () => panel,
+        getMembers: async () =>
+          panel.experts.map((entry) => (typeof entry === "string" ? entry : entry.slug)),
+        getExpertDefinition: async (slug) => inlineExpert(slug),
+        dataHome: "/council-data",
+        config,
+        buildSpec: async (slug, panelDefaultModel) => expert(slug, panelDefaultModel),
+        resolvePanelId: async (input) => {
+          resolve(input);
+          return { panelId: "panel-1", expertSlugToId: {} };
+        },
+      });
+      resolvePanel("launch-panel").catch(reject);
+    });
+  }
+
+  it("omits description and defaults from the persisted definition when the panel has neither", async () => {
+    const input = await captureDefinition(makePanel({ experts: ["cto", "pm"] }));
+
+    const { definition } = input;
+    expect(definition.name).toBe("launch-panel");
+    // The omission branch: the keys are absent, not present-but-undefined.
+    expect("description" in definition).toBe(false);
+    expect("defaults" in definition).toBe(false);
+    expect(definition.experts.map((entry) => entry.slug)).toEqual(["cto", "pm"]);
+  });
+
+  it("includes description and defaults when the panel provides them (load-bearing inverse)", async () => {
+    const input = await captureDefinition(
+      makePanel({
+        description: "Launch readiness review",
+        defaults: { mode: "structured", maxRounds: 5, model: "panel-model" },
+        experts: ["cto", "pm"],
+      }),
+    );
+
+    const { definition } = input;
+    expect(definition.description).toBe("Launch readiness review");
+    expect(definition.defaults).toEqual({ mode: "structured", maxRounds: 5, model: "panel-model" });
   });
 });
