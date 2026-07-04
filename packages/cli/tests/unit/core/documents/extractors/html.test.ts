@@ -261,7 +261,7 @@ describe("html extractor", () => {
     });
   });
 
-  describe("strips C0 control characters from decoded entities (issue #1215)", () => {
+  describe("strips control characters from decoded entities (issues #1215, #1794)", () => {
     // Full HTML5 entity decoding means numeric entities like ESC (&#27;)
     // survive into extracted content -> SQLite/FTS -> LLM prompt (the
     // terminal is already protected by stripControlChars, but the indexed
@@ -283,6 +283,33 @@ describe("html extractor", () => {
       expect(out.content).toContain("one two");
       // eslint-disable-next-line no-control-regex
       expect(out.content).not.toMatch(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/);
+    });
+
+    it("strips the full C1 control range", async () => {
+      const c1Controls = Array.from({ length: 0x20 }, (_, index) =>
+        String.fromCharCode(0x80 + index),
+      ).join("");
+      const out = await run(`<p>safe${c1Controls}text</p>`);
+
+      expect(out.content).toBe("safetext");
+      expect(out.content).not.toContain("\u0085");
+      expect(out.content).not.toContain("\u009b");
+      expect(out.content).not.toMatch(/[\u0080-\u009f]/);
+    });
+
+    it("strips line separator and paragraph separator", async () => {
+      const out = await run("<p>safe&#8232;text&#8233;tail</p>");
+
+      expect(out.content).toBe("safetexttail");
+      expect(out.content).not.toContain("\u2028");
+      expect(out.content).not.toContain("\u2029");
+    });
+
+    it("strips DEL while preserving legitimate multiline whitespace structure", async () => {
+      const out = await run("<p>one&#9;two&#10;three&#13;four&#127;five</p>");
+
+      expect(out.content).toBe("one two\nthree\nfourfive");
+      expect(out.content).not.toContain("\u007f");
     });
   });
 
