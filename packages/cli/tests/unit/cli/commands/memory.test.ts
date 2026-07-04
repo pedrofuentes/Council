@@ -831,6 +831,64 @@ describe("buildMemoryCommand", () => {
       expect(stderr).toMatch(/ROLLBACK failed/i);
       expect(stderr).toContain("simulated ROLLBACK failure");
     });
+
+    it("--yes (default path): prefetches the debates and experts to mutate INSIDE the transaction (after BEGIN), closing the read-write race window (#450)", async () => {
+      // Sentinel flagged that the default reset path READ the debates and
+      // experts it later deletes/updates (DebateRepository.findByPanelId +
+      // ExpertRepository.findByPanelId) BEFORE `sql`BEGIN``. That left a
+      // race window: a concurrent writer could add/remove debates or
+      // experts between the read and the transactional delete/update, so
+      // the transaction would operate on a stale snapshot. The read and its
+      // dependent writes must be atomic — both prefetch SELECTs must run
+      // AFTER BEGIN.
+      //
+      // Pin the observable ordering by recording every compiled SQL
+      // statement at the node:sqlite connection layer (same technique as
+      // core/documents/indexer.test.ts) and asserting BEGIN precedes both
+      // prefetch SELECTs. Migration BEGIN/COMMIT run via raw
+      // `DatabaseSync.exec`, NOT through this connection, so the only
+      // recorded BEGIN is the reset transaction's.
+      const seed = await seedPanel(testHome);
+
+      const { NodeSqliteConnection } = await import(
+        "../../../../src/memory/node-sqlite-dialect.js"
+      );
+      const protoAny = NodeSqliteConnection.prototype as unknown as {
+        executeQuery: (q: { sql: string }) => Promise<unknown>;
+      };
+      const orig = protoAny.executeQuery;
+      const sqlLog: string[] = [];
+      protoAny.executeQuery = async function (this: unknown, q: { sql: string }) {
+        if (typeof q?.sql === "string") sqlLog.push(q.sql);
+        return orig.call(this, q);
+      };
+
+      try {
+        const cmd = buildMemoryCommand({ write: () => undefined });
+        await cmd.parseAsync(["node", "council-memory", "reset", seed.name, "--yes"]);
+      } finally {
+        protoAny.executeQuery = orig;
+      }
+
+      const beginIdx = sqlLog.findIndex((s) => /^\s*BEGIN\b/i.test(s));
+      const debatesPrefetchIdx = sqlLog.findIndex(
+        (s) => /^\s*select\b/i.test(s) && s.includes('"debates"') && s.includes('"panel_id"'),
+      );
+      const expertsPrefetchIdx = sqlLog.findIndex(
+        (s) => /^\s*select\b/i.test(s) && s.includes('"experts"') && s.includes('"panel_id"'),
+      );
+
+      // Sanity: all three statements were actually observed, so the
+      // ordering assertions below fail for the right reason (ordering),
+      // not because a predicate never matched.
+      expect(beginIdx).toBeGreaterThanOrEqual(0);
+      expect(debatesPrefetchIdx).toBeGreaterThanOrEqual(0);
+      expect(expertsPrefetchIdx).toBeGreaterThanOrEqual(0);
+
+      // The core assertion: prefetch reads happen INSIDE the transaction.
+      expect(debatesPrefetchIdx).toBeGreaterThan(beginIdx);
+      expect(expertsPrefetchIdx).toBeGreaterThan(beginIdx);
+    });
   });
 
   // ── format validation (Sentinel pr178 #2 + #3) ───────────────────
