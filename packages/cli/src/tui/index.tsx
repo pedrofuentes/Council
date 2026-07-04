@@ -39,6 +39,7 @@ import { createOnboardingSource } from "./adapters/onboarding.js";
 import { createExportSource } from "./adapters/export-view.js";
 import { renderAdr, renderJson, renderMarkdown } from "../cli/commands/export.js";
 import { renderShare } from "../cli/commands/export-share.js";
+import { toSingleLineDisplay } from "../cli/strip-control-chars.js";
 import {
   createConveneSource,
   type ConveneDataSource,
@@ -90,6 +91,43 @@ export function createExportTranscriptLoader(
     const doc = await load(panelName, debateId);
     return doc ?? null;
   };
+}
+
+/**
+ * Resolve a managed expert's docs directory (`<dataHome>/experts/<slug>/docs`)
+ * while guaranteeing it stays under `<dataHome>/experts/`.
+ *
+ * The slug reaches the training wiring from `panel_library`/DB rows and CLI
+ * args; upstream `SLUG_RE` shape-gates it, so no reachable slug escapes through
+ * the caller. This is the defense-in-depth containment assertion (mirrors
+ * `resolveConfinedDocsPath` in `cli/commands/chat/shared.ts` and
+ * `assertContainedInPanelsRoot` in `cli/commands/panel.ts`) so a crafted slug
+ * (e.g. `../../etc`) that ever bypassed validation can never make the staging
+ * or processing steps read/write out-of-tree. Exported so the reject branch is
+ * directly unit-testable. The escaping slug is sanitized via
+ * {@link toSingleLineDisplay} before it reaches the single-line terminal error.
+ */
+export function resolveConfinedExpertDocsDir(dataHome: string, slug: string): string {
+  const expertsRoot = path.resolve(dataHome, "experts");
+  const docsDir = path.join(dataHome, "experts", slug, "docs");
+  if (!path.resolve(docsDir).startsWith(expertsRoot + path.sep)) {
+    throw new Error(
+      `Refusing to access training docs: resolved path escapes experts directory ` +
+        `(slug="${toSingleLineDisplay(slug)}")`,
+    );
+  }
+  return docsDir;
+}
+
+/**
+ * Build the "missing expert" error thrown when a live panel member no longer
+ * resolves to a library definition. The slug is DB/`panel_library`-sourced and
+ * echoed to a single-line terminal error surface, so it is sanitized via
+ * {@link toSingleLineDisplay} (parity with the convene adapter's other error
+ * sinks — see `convene-resolve.ts`). Exported for direct unit coverage.
+ */
+export function buildMissingExpertError(slug: string): Error {
+  return new Error(`Panel references missing expert "${toSingleLineDisplay(slug)}"`);
 }
 
 /**
@@ -267,7 +305,7 @@ export async function launchTui(): Promise<void> {
         return total;
       },
     });
-    const docsDirFor = (slug: string): string => path.join(dataHome, "experts", slug, "docs");
+    const docsDirFor = (slug: string): string => resolveConfinedExpertDocsDir(dataHome, slug);
 
     const createBuildSpec =
       (
@@ -276,7 +314,7 @@ export async function launchTui(): Promise<void> {
       async (slug, panelDefaultModel) => {
         const definition = await expertLibrary.get(slug);
         if (definition === null) {
-          throw new Error(`Panel references missing expert "${slug}"`);
+          throw buildMissingExpertError(slug);
         }
         return {
           id: ulid(),
@@ -342,7 +380,12 @@ export async function launchTui(): Promise<void> {
         getExpertDefinition: async (slug) => {
           const definition = await expertLibrary.get(slug);
           if (definition === null) {
-            throw new Error(`Panel references missing expert "${slug}"`);
+            // Defense-in-depth: the resolver builds specs via `buildSpec`
+            // (createBuildSpec, above) BEFORE it resolves member definitions,
+            // so a missing member already throws there. This guard narrows the
+            // nullable `get` result and stays as a belt-and-braces sink whose
+            // sanitized message matches the primary throw.
+            throw buildMissingExpertError(slug);
           }
           return definition;
         },
