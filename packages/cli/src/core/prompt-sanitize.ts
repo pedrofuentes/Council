@@ -54,6 +54,10 @@ export function escapeFenceContent(s: string): string {
 }
 
 function capFinalPromptLength(s: string, maxLength: number): string {
+  if (!Number.isFinite(maxLength)) {
+    return s;
+  }
+
   if (s.length <= maxLength) {
     return s;
   }
@@ -122,7 +126,8 @@ export function sanitizePromptBlock(raw: string, maxLength = 4000): string {
 /**
  * Combined helper: {@link sanitizePromptBlock} followed by
  * {@link escapeFenceContent}. Use for multi-line untrusted content that
- * will be interpolated inside an XML-like fence.
+ * will be interpolated inside an XML-like fence. The escaped output is
+ * capped to `maxLength`; a non-finite cap means no final output cap.
  */
 export function sanitizeFenced(raw: string, maxLength = 4000): string {
   return capFinalPromptLength(escapeFenceContent(sanitizePromptBlock(raw, maxLength)), maxLength);
