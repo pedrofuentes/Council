@@ -37,6 +37,8 @@ export interface ZipEntry {
   readonly data: Buffer;
   /** "stored" (no compression) by default. "deflate" uses raw DEFLATE. */
   readonly method?: "stored" | "deflate";
+  /** ZIP general-purpose bit flags (for example, bit 11 for UTF-8 names). */
+  readonly flags?: number;
   /** Override the uncompressed size reported in headers (for bomb tests). */
   readonly fakeUncompressedSize?: number;
   /** Override the compressed size reported in headers (for bomb tests). */
@@ -60,7 +62,7 @@ export function buildZip(entries: readonly ZipEntry[]): Buffer {
     const local = Buffer.alloc(30 + nameBuf.length + compressed.length);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(0, 6);
+    local.writeUInt16LE(entry.flags ?? 0, 6);
     local.writeUInt16LE(methodCode, 8);
     local.writeUInt16LE(0, 10);
     local.writeUInt16LE(0x21, 12);
@@ -77,7 +79,7 @@ export function buildZip(entries: readonly ZipEntry[]): Buffer {
     central.writeUInt32LE(0x02014b50, 0);
     central.writeUInt16LE(20, 4);
     central.writeUInt16LE(20, 6);
-    central.writeUInt16LE(0, 8);
+    central.writeUInt16LE(entry.flags ?? 0, 8);
     central.writeUInt16LE(methodCode, 10);
     central.writeUInt16LE(0, 12);
     central.writeUInt16LE(0x21, 14);

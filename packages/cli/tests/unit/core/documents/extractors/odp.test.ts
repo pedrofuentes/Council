@@ -219,6 +219,34 @@ describe("odp extractor", () => {
     expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("zip-bomb-detected");
   });
 
+  it("sanitizes malicious ODF ZIP entry.fileName in zip-bomb ExtractionError messages (#2225)", async () => {
+    const { extractor, errors } = await loadOdpExtractor();
+    const adversarialName = "content\r\n\x1B[31m\u202Eevil.xml";
+    const buf = buildZip([
+      {
+        name: adversarialName,
+        data: Buffer.from("<x/>", "utf-8"),
+        flags: 0x0800,
+        fakeUncompressedSize: 21 * 1024 * 1024,
+        fakeCompressedSize: 21 * 1024 * 1024,
+      },
+    ]);
+
+    let caught: unknown;
+    try {
+      await extractor(ctx(buf));
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(errors.ExtractionError);
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("zip-bomb-detected");
+    const message = (caught as Error).message;
+    expect(message).toContain("content evil.xml");
+    // eslint-disable-next-line no-control-regex
+    expect(message).not.toMatch(/[\r\n\x1B\u202E]/u);
+  });
+
   it("rejects a content.xml entry that decodes to more bytes than its declared uncompressed size", async () => {
     const { extractor, errors } = await loadOdpExtractor();
     // A deflate-compressed content.xml whose real inflated size (50 KB)

@@ -47,6 +47,8 @@ interface ZipEntry {
   readonly data: Buffer;
   /** "stored" (no compression) by default. "deflate" uses raw DEFLATE. */
   readonly method?: "stored" | "deflate";
+  /** ZIP general-purpose bit flags (for example, bit 11 for UTF-8 names). */
+  readonly flags?: number;
   /** Override the uncompressed size reported in headers (for bomb tests). */
   readonly fakeUncompressedSize?: number;
   /** Override the compressed size reported in headers (for bomb tests). */
@@ -70,7 +72,7 @@ function buildZip(entries: readonly ZipEntry[]): Buffer {
     const local = Buffer.alloc(30 + nameBuf.length + compressed.length);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4); // version needed
-    local.writeUInt16LE(0, 6); // gpbf
+    local.writeUInt16LE(entry.flags ?? 0, 6); // gpbf
     local.writeUInt16LE(methodCode, 8);
     local.writeUInt16LE(0, 10); // mod time
     local.writeUInt16LE(0x21, 12); // mod date (1980-01-01)
@@ -87,7 +89,7 @@ function buildZip(entries: readonly ZipEntry[]): Buffer {
     central.writeUInt32LE(0x02014b50, 0);
     central.writeUInt16LE(20, 4); // version made by
     central.writeUInt16LE(20, 6); // version needed
-    central.writeUInt16LE(0, 8); // gpbf
+    central.writeUInt16LE(entry.flags ?? 0, 8); // gpbf
     central.writeUInt16LE(methodCode, 10);
     central.writeUInt16LE(0, 12);
     central.writeUInt16LE(0x21, 14);
@@ -498,6 +500,34 @@ describe("pptx extractor", () => {
     }
     expect(caught).toBeInstanceOf(errors.ExtractionError);
     expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("zip-bomb-detected");
+  });
+
+  it("sanitizes malicious ZIP entry.fileName in zip-bomb ExtractionError messages (#2225)", async () => {
+    const { extractor, errors } = await loadPptxExtractor();
+    const adversarialName = "ppt/slides/slide\r\n\x1B[31m\u202Eevil.xml";
+    const buf = buildZip([
+      {
+        name: adversarialName,
+        data: Buffer.from("<p:sld/>", "utf-8"),
+        flags: 0x0800,
+        fakeUncompressedSize: 21 * 1024 * 1024,
+        fakeCompressedSize: 21 * 1024 * 1024,
+      },
+    ]);
+
+    let caught: unknown;
+    try {
+      await extractor(ctx(buf));
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(errors.ExtractionError);
+    expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("zip-bomb-detected");
+    const message = (caught as Error).message;
+    expect(message).toContain("ppt/slides/slide evil.xml");
+    // eslint-disable-next-line no-control-regex
+    expect(message).not.toMatch(/[\r\n\x1B\u202E]/u);
   });
 
   it("aborts a read stream that delivers more bytes than the declared uncompressed size", async () => {
