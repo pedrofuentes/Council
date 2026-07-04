@@ -283,6 +283,20 @@ export async function buildLLMSummary(
   }
 
   const sanitized = sanitizePromptBlock(collected, config.maxSummaryLength);
+  if (sanitized !== collected) {
+    // #554: sanitizePromptBlock mutated the model's summary output — the
+    // untrusted response carried fence-breaking, bidi, zero-width, control,
+    // or `[NN]` section-marker content that sanitization had to neutralize
+    // (a possible prompt-injection attempt in the summary). Emit a
+    // NON-CONTENT observability event — never the mutated text itself —
+    // through the same best-effort sink (#268) so production can observe
+    // the rate of sanitizer mutations. Best-effort: never affects the
+    // returned summary or the parent debate.
+    warnSummarizer(
+      onWarning,
+      "summarizer.sanitization.mutated: model summary output was modified by prompt sanitization",
+    );
+  }
   return sanitized;
 }
 
