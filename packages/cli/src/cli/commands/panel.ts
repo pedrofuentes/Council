@@ -159,7 +159,7 @@ async function withPanelContext<T>(fn: (ctx: PanelContext) => Promise<T>): Promi
   return result;
 }
 
-function displayPath(absPath: string): string {
+export function displayPath(absPath: string): string {
   const home = os.homedir();
   const displayed = absPath.startsWith(home)
     ? "~" + absPath.slice(home.length).replace(/\\/g, "/")

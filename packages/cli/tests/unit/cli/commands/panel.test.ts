@@ -13,7 +13,7 @@ import * as fs from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as yaml from "yaml";
 
-import { buildPanelCommand } from "../../../../src/cli/commands/panel.js";
+import { buildPanelCommand, displayPath } from "../../../../src/cli/commands/panel.js";
 import { CliUserError } from "../../../../src/cli/cli-user-error.js";
 import type { ExpertDefinition } from "../../../../src/core/expert.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
@@ -1233,7 +1233,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
         expect(errored).toMatch(/abort|cancel|decline/i);
         expect(captured).not.toMatch(/✓|linked/i);
         expect(confirmMessage).toContain('Grant panel "arch-review" read access');
-        expect(confirmMessage).toContain(path.resolve(linkDir));
+        expect(confirmMessage).toContain(displayPath(path.resolve(linkDir)));
         expect(confirmMessage).toContain("[y/N]");
         expect(confirmMessage).not.toContain("ghost-review");
 
@@ -1326,7 +1326,7 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
         ]);
         expect(confirmCalled).toBe(true);
         expect(confirmMessage).toContain('Grant panel "arch-review" read access');
-        expect(confirmMessage).toContain(path.resolve(linkDir));
+        expect(confirmMessage).toContain(displayPath(path.resolve(linkDir)));
         expect(confirmMessage).toContain("[y/N]");
         expect(confirmMessage).not.toContain("ghost-review");
         expect(captured).toMatch(/✓|linked/i);
