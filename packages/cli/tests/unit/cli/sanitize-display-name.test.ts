@@ -1,9 +1,7 @@
 /**
- * Tests for `sanitizeDisplayName()` — sanitizes expert display names at
- * creation time to prevent control/bidi/zero-width character injection and
- * enforce reasonable length limits. Applied on `council expert create --name`
- * and `council expert edit` to ensure display names render safely in tables,
- * transcripts, and LLM prompts.
+ * Tests for `sanitizeDisplayName()` — sanitizes expert display names when
+ * callers invoke it to prevent control/bidi/zero-width character injection
+ * and enforce reasonable length limits.
  */
 import { describe, expect, it } from "vitest";
 
@@ -70,6 +68,15 @@ describe("sanitizeDisplayName", () => {
     const result = sanitizeDisplayName(longName);
     expect(result).toBe("A".repeat(80));
     expect(result.length).toBe(80);
+  });
+
+  it("does not split a surrogate-pair emoji at the 80-character cap", () => {
+    const longName = "A".repeat(79) + "\u{1F600}" + "B";
+    const result = sanitizeDisplayName(longName);
+
+    expect(result).toBe("A".repeat(79) + "\u{1F600}");
+    expect(result).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+    expect(result).not.toMatch(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
   });
 
   it("caps length at 80 characters preserving word boundaries when possible", () => {
