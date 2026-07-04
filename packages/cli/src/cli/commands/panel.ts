@@ -808,6 +808,7 @@ function buildSaveCommand(write: Writer, writeError: Writer): Command {
           const memberSlugs: string[] = [];
           const expertRenames: { readonly from: string; readonly to: string }[] = [];
           const createdSlugs: string[] = [];
+          let yamlPath: string;
           try {
             for (const expert of definition.experts) {
               const resolution = await resolveExpertSlug(ctx, expert, claimedSlugs);
@@ -842,31 +843,12 @@ function buildSaveCommand(write: Writer, writeError: Writer): Command {
               experts: memberSlugs,
             });
 
-            const { yamlPath } = await persistPanelArtifacts(ctx, panel, writeError);
-
-            write(
-              `✓ Saved session "${toSingleLineDisplay(sessionName)}" as panel "${toSingleLineDisplay(
-                finalPanelName,
-              )}" at ${displayPath(yamlPath)}\n`,
+            const { yamlPath: persistedYamlPath } = await persistPanelArtifacts(
+              ctx,
+              panel,
+              writeError,
             );
-            write(`  Experts: ${memberSlugs.join(", ")}\n`);
-            if (finalPanelName !== requestedName) {
-              write(
-                `  Note: a panel named "${toSingleLineDisplay(
-                  requestedName,
-                )}" already existed; saved as "${toSingleLineDisplay(finalPanelName)}".\n`,
-              );
-            }
-            for (const rename of expertRenames) {
-              write(
-                `  Note: expert slug "${toSingleLineDisplay(rename.from)}" already existed; saved as "${toSingleLineDisplay(rename.to)}".\n`,
-              );
-            }
-            write(
-              `\nStart a fresh debate with this panel: council chat ${toSingleLineDisplay(
-                finalPanelName,
-              )}\n`,
-            );
+            yamlPath = persistedYamlPath;
           } catch (err) {
             // Compensating rollback: delete ONLY the experts this operation
             // created, mirroring the rollback + AggregateError pattern in
@@ -890,6 +872,34 @@ function buildSaveCommand(write: Writer, writeError: Writer): Command {
             }
             throw err;
           }
+
+          // Success output lives OUTSIDE the compensating-rollback try/catch:
+          // a terminal-write failure (e.g. EPIPE on stdout) AFTER the panel +
+          // experts are already persisted must not trigger the rollback that
+          // would delete those experts and orphan the persisted panel. #1065.
+          write(
+            `✓ Saved session "${toSingleLineDisplay(sessionName)}" as panel "${toSingleLineDisplay(
+              finalPanelName,
+            )}" at ${displayPath(yamlPath)}\n`,
+          );
+          write(`  Experts: ${memberSlugs.join(", ")}\n`);
+          if (finalPanelName !== requestedName) {
+            write(
+              `  Note: a panel named "${toSingleLineDisplay(
+                requestedName,
+              )}" already existed; saved as "${toSingleLineDisplay(finalPanelName)}".\n`,
+            );
+          }
+          for (const rename of expertRenames) {
+            write(
+              `  Note: expert slug "${toSingleLineDisplay(rename.from)}" already existed; saved as "${toSingleLineDisplay(rename.to)}".\n`,
+            );
+          }
+          write(
+            `\nStart a fresh debate with this panel: council chat ${toSingleLineDisplay(
+              finalPanelName,
+            )}\n`,
+          );
         });
       },
     );
@@ -971,7 +981,7 @@ async function gatherCreateFields(
 function parseExpertList(raw: string | readonly string[]): readonly string[] {
   const slugs = parseExpertSlugs(raw);
   if (slugs.length === 0) {
-    throw new Error("At least one expert slug is required (use --experts <slug1>,<slug2>)");
+    throw new CliUserError("At least one expert slug is required (use --experts <slug1>,<slug2>)");
   }
   return slugs;
 }
@@ -1127,8 +1137,18 @@ function buildInspectCommand(write: Writer, writeError: Writer): Command {
           const onDisk = await fs.readFile(row.yamlPath, "utf-8");
           const parsed = PanelDefinitionSchema.parse(yaml.parse(onDisk));
           defaults = parsed.defaults;
-        } catch {
-          /* tolerate missing/invalid file at inspect time */
+        } catch (err) {
+          // A missing/corrupt on-disk YAML must not abort `inspect` — the DB
+          // row is the source of truth for identity/members — but silently
+          // swallowing it hides real corruption from operators (#315). Surface
+          // one stderr warning. `row.yamlPath` derives from a validated
+          // kebab-case name, yet the error message can echo untrusted on-disk
+          // bytes (e.g. a YAML parser snippet), so collapse it to a single
+          // control-free line before it reaches the terminal. #315.
+          const detail = toSingleLineDisplay(err instanceof Error ? err.message : String(err));
+          writeError(
+            `Warning: could not read panel definition at ${displayPath(row.yamlPath)}: ${detail}\n`,
+          );
         }
 
         if (opts.format === "json") {
@@ -1740,16 +1760,19 @@ function buildDocsUnlinkCommand(write: Writer, writeError: Writer): Command {
         const docs = await ctx.docsRepo.listDocuments(name);
         await sql`BEGIN`.execute(ctx.db);
         try {
-          for (const d of docs) {
-            if (
+          // Batch the per-document FTS removes concurrently instead of awaiting
+          // them one at a time (#396). Promise.all still rejects on the FIRST
+          // failed remove, so a rejected member surfaces and the surrounding
+          // BEGIN/ROLLBACK aborts the whole unlink — no document is silently
+          // dropped. All removes run on the same transaction connection.
+          const matching = docs.filter(
+            (d) =>
               d.filePath === absolute ||
               d.filePath.startsWith(absolute + path.sep) ||
               d.filePath.startsWith(absolute + "/") ||
-              d.filePath.startsWith(absolute + "\\")
-            ) {
-              await indexer.remove(d.filePath);
-            }
-          }
+              d.filePath.startsWith(absolute + "\\"),
+          );
+          await Promise.all(matching.map((d) => indexer.remove(d.filePath)));
           await ctx.docsRepo.removeDocumentsUnderFolder(name, absolute);
           await ctx.docsRepo.removeLinkedFolder(name, absolute);
           await sql`COMMIT`.execute(ctx.db);
@@ -1785,15 +1808,24 @@ async function countSupportedFiles(
     return 0;
   }
   let count = 0;
-  for (const rel of entries) {
-    const absolute = path.resolve(dir, rel);
-    try {
-      const stat = await fs.lstat(absolute);
-      if (!stat.isFile()) continue;
-    } catch {
-      continue;
-    }
-    if (supportedExts.has(path.extname(absolute).toLowerCase())) count += 1;
+  // Batch the per-entry lstat calls concurrently instead of walking them
+  // serially (#397). Each entry keeps its own try/catch so a race-deleted or
+  // otherwise unreadable entry is skipped (this is a cosmetic count) rather
+  // than rejecting the whole batch.
+  const supportedFlags = await Promise.all(
+    entries.map(async (rel) => {
+      const absolute = path.resolve(dir, rel);
+      try {
+        const stat = await fs.lstat(absolute);
+        if (!stat.isFile()) return false;
+      } catch {
+        return false;
+      }
+      return supportedExts.has(path.extname(absolute).toLowerCase());
+    }),
+  );
+  for (const isSupported of supportedFlags) {
+    if (isSupported) count += 1;
   }
   return count;
 }
