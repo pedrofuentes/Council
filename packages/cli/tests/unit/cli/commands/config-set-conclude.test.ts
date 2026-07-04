@@ -86,7 +86,7 @@ describe("buildConfigCommand config set conclude.*", () => {
       const { stderr } = await runConfig(["set", "conclude.maxTranscriptChars", "huge"]);
 
       expect(stderr).toContain("conclude.maxTranscriptChars");
-      expect(stderr).toMatch(/number/i);
+      expect(stderr).toMatch(/integer/i);
     });
 
     it("rejects value below minimum (1000)", async () => {
@@ -114,6 +114,7 @@ describe("buildConfigCommand config set conclude.*", () => {
 
         expect(stdout).toBe("");
         expect(stderr).toContain("conclude.maxTranscriptChars");
+        expect(stderr).toMatch(/integer between 1000 and 1000000/);
         const config = await loadConfig();
         expect(config.conclude.maxTranscriptChars).toBe(50000);
       },
