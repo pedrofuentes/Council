@@ -18,6 +18,13 @@ export interface Sink {
 }
 
 export interface Renderer {
+  /**
+   * Whether this renderer accepts a plain-text preamble header before the
+   * debate stream. Plain text renderers do; machine-parseable (JSON) and
+   * self-framing (Ink) renderers do not. Consumers read this instead of an
+   * `instanceof` check to decide whether to emit a caller preamble (#241).
+   */
+  readonly supportsPreamble: boolean;
   render(events: AsyncIterable<DebateEvent>): Promise<void>;
 }
 

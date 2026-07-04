@@ -1070,6 +1070,7 @@ export class Debate {
           expertSlug: expert.slug,
           message: lastErrorMessage,
           recoverable: lastErrorRecoverable,
+          ...(lastErrorCode !== null ? { code: lastErrorCode } : {}),
         };
       }
       break;

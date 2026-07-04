@@ -26,6 +26,8 @@ export interface JsonRendererOptions {
 }
 
 export class JsonRenderer implements Renderer {
+  /** NDJSON must stay machine-parseable — a plain-text preamble would corrupt it. */
+  readonly supportsPreamble = false;
   readonly #sink: Sink;
   readonly #showCost: boolean;
 

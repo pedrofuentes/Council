@@ -809,6 +809,8 @@ class InkRenderError extends Error {
 }
 
 export class InkRenderer implements Renderer {
+  /** Ink owns its own TTY framing — a plain-text preamble would fight it. */
+  readonly supportsPreamble = false;
   readonly #stdout: NodeJS.WriteStream;
   readonly #stderr: NodeJS.WriteStream;
   readonly #quiet: boolean;

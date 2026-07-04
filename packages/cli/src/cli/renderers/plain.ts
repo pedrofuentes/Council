@@ -30,6 +30,8 @@ export interface PlainRendererOptions {
 }
 
 export class PlainRenderer implements Renderer {
+  /** Plain-text output — preamble headers render cleanly ahead of the stream. */
+  readonly supportsPreamble = true;
   readonly #sink: Sink;
   readonly #color: boolean;
   readonly #quiet: boolean;
