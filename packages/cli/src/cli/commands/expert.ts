@@ -1449,17 +1449,25 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
         try {
           await engine.start();
           write(`Training "${slug}" from ${displayPath(docsPath)}...\n`);
-          const result = await processor.process(slug, docsPath, (p) => {
-            if (p.status === "failed") {
-              write(`  ${p.filename}: failed (${p.error ?? "unknown"})\n`);
-            } else if (p.status === "needs-review") {
-              write(
-                `  ${p.filename}: needs review (AI extraction available — run \`council docs review\`)\n`,
-              );
-            } else {
-              write(`  ${p.filename}: ${p.wordCount} words\n`);
-            }
-          });
+          const result = await processor.process(
+            slug,
+            docsPath,
+            (p) => {
+              if (p.status === "failed") {
+                write(`  ${p.filename}: failed (${p.error ?? "unknown"})\n`);
+              } else if (p.status === "needs-review") {
+                write(
+                  `  ${p.filename}: needs review (AI extraction available — run \`council docs review\`)\n`,
+                );
+              } else {
+                write(`  ${p.filename}: ${p.wordCount} words\n`);
+              }
+            },
+            // #471: deliver the processor's large-document chunking warning to
+            // the user. The message is already single-line sanitized by
+            // warnProcessor; stderr is this command's warning/notice sink.
+            (warning) => writeError(`${warning}\n`),
+          );
           write(
             `✓ Processed ${result.filesProcessed} document(s) ` +
               `(${result.filesFailed} failed, ${result.filesNeedingReview} needs review, ` +
