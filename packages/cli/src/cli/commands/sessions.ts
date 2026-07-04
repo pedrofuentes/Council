@@ -40,6 +40,7 @@ interface DeleteSessionOptions {
 }
 
 const STUCK_RUNNING_DEBATE_THRESHOLD_MS = 60 * 60 * 1000;
+const RUNNING_SESSION_DELETE_ERROR = "Cannot delete a running session. Cancel it first.";
 
 function statusIcon(status: DebateStatus | undefined): string {
   const symbols = getSymbols();
@@ -166,9 +167,8 @@ async function deletePanelIfNoRunningDebates(
   try {
     const debates = await debateRepo.findByPanelId(panelId);
     if (hasRunningDebate(debates)) {
-      const message = "Cannot delete a running session. Cancel it first.";
-      writeError(message + "\n");
-      throw new CliUserError(message);
+      writeError(RUNNING_SESSION_DELETE_ERROR + "\n");
+      throw new CliUserError(RUNNING_SESSION_DELETE_ERROR);
     }
     await panelRepo.delete(panelId);
     await sql`COMMIT`.execute(db);
@@ -365,9 +365,8 @@ export function buildSessionsCommand(depsOrWrite?: SessionsCommandDeps | Writer)
 
         const debates = await debateRepo.findByPanelId(panel.id);
         if (hasRunningDebate(debates)) {
-          const message = "Cannot delete a running session. Cancel it first.";
-          writeError(message + "\n");
-          throw new CliUserError(message);
+          writeError(RUNNING_SESSION_DELETE_ERROR + "\n");
+          throw new CliUserError(RUNNING_SESSION_DELETE_ERROR);
         }
 
         if (options.yes !== true) {
