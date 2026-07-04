@@ -738,9 +738,13 @@ function buildDeleteCommand(write: Writer, writeError: Writer): Command {
         if (affectedPanels.length > 0) {
           try {
             const panelRepo = new PanelLibraryRepository(db);
+            // Batch the membership counts in a single aggregate query instead
+            // of calling getMembers() once per affected panel (avoids N+1;
+            // #759). Panels with zero members are absent from the map, so a
+            // missing key is treated as 0.
+            const counts = await panelRepo.getMemberCounts();
             for (const panelName of affectedPanels) {
-              const remaining = await panelRepo.getMembers(panelName);
-              if (remaining.length === 0) {
+              if ((counts.get(panelName) ?? 0) === 0) {
                 const safe = toSingleLineDisplay(panelName);
                 write(
                   `⚠ Panel "${safe}" now has 0 members and may not function correctly. ` +
