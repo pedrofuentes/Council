@@ -248,7 +248,7 @@ async function runMigration(
         // materialised into expert_library (and a standalone YAML if
         // none exists) so panel_members FK is satisfied.
         const onDiskContent = await fs.readFile(panelFile, "utf-8");
-        const onDisk = parseOnDiskPanel(onDiskContent);
+        const onDisk = parseOnDiskPanel(onDiskContent, panelFile);
         const recoveredSlugs: string[] = [];
         for (const entry of onDisk.entries) {
           const candidateSlug = entry.kind === "slug" ? entry.slug : entry.definition.slug;
@@ -598,7 +598,7 @@ function parseOnDiskExpert(content: string, slug: string): ExpertDefinition {
   return parsed.data;
 }
 
-export function parseOnDiskPanel(content: string): OnDiskPanel {
+export function parseOnDiskPanel(content: string, panelFile?: string): OnDiskPanel {
   const raw = parseOnDiskYaml(content, "malformed on-disk panel YAML") as Record<
     string,
     unknown
@@ -626,8 +626,12 @@ export function parseOnDiskPanel(content: string): OnDiskPanel {
       } else {
         const slug = (entry as { slug?: unknown }).slug;
         const label = typeof slug === "string" ? slug : "<unknown>";
+        // Name the offending panel file (when known) so the user can locate
+        // and fix it (#1809). The path is derived from an on-disk file name,
+        // so sanitize it like every other value interpolated into the sink.
+        const inFile = panelFile ? ` in panel file "${sanitizeForError(panelFile, 200)}"` : "";
         throw new PanelMigrationError(
-          `[template-migration] inline expert "${sanitizeForError(label, 100)}" failed schema validation: ${sanitizeForError(JSON.stringify(parsed.error.issues))}`,
+          `[template-migration] inline expert "${sanitizeForError(label, 100)}"${inFile} failed schema validation: ${sanitizeForError(JSON.stringify(parsed.error.issues))}`,
         );
       }
     }
