@@ -50,7 +50,7 @@ asks you to choose a default. Your selection is saved to config as
   `Non-interactive session detected; using recommended model <id>`.
 - **If live model discovery fails**, Council falls back to a built-in static
   list and warns `Live model discovery failed, so Council is showing a built-in
-  fallback list` before continuing.
+fallback list` before continuing.
 - `council doctor`, `council config`, `council demo`, and `council docs` never
   trigger the wizard — run `council doctor` to verify your setup or
   `council config` to change the default model later.
@@ -498,6 +498,18 @@ When the Ink TUI is active, press **`?`** at any time to open the help overlay �
 floating panel listing all available keyboard shortcuts. Press **`?`** again (or
 **`Esc`**) to close it and return to the debate.
 
+Common TUI shortcuts:
+
+| Keys                             | Action                                            |
+| -------------------------------- | ------------------------------------------------- |
+| **`↑`**/**`↓`**, **`j`**/**`k`** | Move through lists and menus                      |
+| **`Enter`**                      | Open, select, or confirm the focused item         |
+| **`Esc`**                        | Go back or close the current overlay              |
+| **`Ctrl+K`**                     | Open the command palette                          |
+| **`?`**                          | Toggle contextual help for the current screen     |
+| **`a`**                          | Open the Actions menu on screens that provide one |
+| **`q`**                          | Quit the TUI                                      |
+
 ### Streaming and chat output
 
 While a debate streams in plain output (either `--format plain` or the
@@ -851,7 +863,7 @@ COUNCIL_ASCII=1 council convene "Topic"
 
 > **Local database requirements:** Council's `council.db` runs in SQLite
 > **WAL** (write-ahead logging) mode. On open it applies `PRAGMA busy_timeout =
-> 5000` — so a momentarily locked database is retried for up to five seconds
+5000` — so a momentarily locked database is retried for up to five seconds
 > before erroring — and then `PRAGMA journal_mode = WAL`. If the filesystem
 > holding the Council home cannot honour WAL (some network and virtualised
 > mounts — e.g. certain NFS/SMB/9p shares — do not), startup fails fast with

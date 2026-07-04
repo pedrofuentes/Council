@@ -17,6 +17,10 @@ interface RouteShortcuts {
   readonly bindings: readonly ShortcutBinding[];
 }
 
+export interface ShortcutContext {
+  readonly panelSource?: "saved" | "template";
+}
+
 /**
  * Per-route key legends powering the contextual `?` help overlay. Entries are
  * ordered most-specific-first so a static path (e.g. `/panels/new`) resolves
@@ -212,9 +216,15 @@ const NO_SHORTCUTS: readonly ShortcutBinding[] = [];
  * matching route's bindings (most-specific-first), or an empty legend for
  * global-navigation-only list routes and unknown paths.
  */
-export function shortcutsForRoute(pathname: string): readonly ShortcutBinding[] {
+export function shortcutsForRoute(
+  pathname: string,
+  context: ShortcutContext = {},
+): readonly ShortcutBinding[] {
   for (const entry of ROUTE_SHORTCUTS) {
     if (matchPath(entry.pattern, pathname) !== null) {
+      if (entry.pattern === ROUTES.panelDetail && context.panelSource === "template") {
+        return entry.bindings.filter((binding) => binding.keys !== "a");
+      }
       return entry.bindings;
     }
   }

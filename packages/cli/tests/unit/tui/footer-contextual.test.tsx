@@ -75,6 +75,34 @@ describe("contextual footer action bar", () => {
     unmount();
   });
 
+  it("hides the Actions shortcut on template panels but keeps it on saved panels", async () => {
+    const value: TuiDataSources = {
+      panels: {
+        loadList: async () => [],
+        loadDetail: async (_name, source) => ({
+          name: source === "template" ? "starter" : "strategy",
+          description: "",
+          source,
+          members: [],
+          missing: [],
+        }),
+      },
+    };
+
+    const saved = renderAt([{ pathname: "/panels/strategy", state: { source: "saved" } }], value);
+    await flush();
+    expect(saved.lastFrame() ?? "").toContain("Actions");
+    saved.unmount();
+
+    const template = renderAt(
+      [{ pathname: "/panels/starter", state: { source: "template" } }],
+      value,
+    );
+    await flush();
+    expect(template.lastFrame() ?? "").not.toContain("Actions");
+    template.unmount();
+  });
+
   it("falls back to a minimal nav hint on a route with no contextual legend", async () => {
     const value: TuiDataSources = {
       sessions: { loadList: async () => [], loadTranscript: async () => undefined },

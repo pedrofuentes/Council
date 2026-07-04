@@ -64,6 +64,10 @@ export interface CouncilTUIProps {
 
 type FocusTarget = "nav" | "main";
 
+interface PanelRouteState {
+  readonly source?: "saved" | "template";
+}
+
 // Glyphs use emoji presentation (full-width). U+2696/U+2699 are text-default,
 // single-width symbols, so they need an explicit VS16 (U+FE0F) to match the
 // width of the other emoji — otherwise the icon hugs its label with no gap.
@@ -112,6 +116,11 @@ const DEBATE_TRANSCRIPT_MIN_ROWS = 4;
  */
 export function debateTranscriptMaxRows(contentHeight: number): number {
   return Math.max(DEBATE_TRANSCRIPT_MIN_ROWS, contentHeight - DEBATE_TRANSCRIPT_CHROME_ROWS);
+}
+
+function panelSourceFromLocationState(state: unknown): "saved" | "template" | undefined {
+  const source = (state as PanelRouteState | null)?.source;
+  return source === "saved" || source === "template" ? source : undefined;
 }
 
 export function AppRouter(props: CouncilTUIProps): React.ReactElement {
@@ -215,7 +224,9 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
     />
   );
 
-  const contextualHints = shortcutsForRoute(location.pathname);
+  const panelSource = panelSourceFromLocationState(location.state);
+  const shortcutContext = panelSource === undefined ? {} : { panelSource };
+  const contextualHints = shortcutsForRoute(location.pathname, shortcutContext);
   const footerHints =
     contextualHints.length > 0
       ? contextualHints.map((b) => ({ key: b.keys, label: b.description }))
@@ -281,7 +292,7 @@ export function AppRouter(props: CouncilTUIProps): React.ReactElement {
       {mode === "help" ? (
         <HelpModal
           entries={HELP_ENTRIES}
-          contextEntries={shortcutsForRoute(location.pathname)}
+          contextEntries={contextualHints}
           onClose={() => setMode("nav")}
           isActive={mode === "help"}
           theme={theme}
