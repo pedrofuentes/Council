@@ -27,6 +27,21 @@ function expectNoTerminalControls(text: string): void {
   }
 }
 
+/**
+ * Run `fn` with `process.stdout.isTTY` forced to `value`, restoring the
+ * original descriptor afterwards. Mirrors the harness used by expert.test.ts
+ * to exercise the TTY-gated `dimHint` hint styling (#809).
+ */
+async function withStdoutIsTTY(value: boolean, fn: () => Promise<void>): Promise<void> {
+  const originalIsTTY = process.stdout.isTTY;
+  Object.defineProperty(process.stdout, "isTTY", { value, configurable: true });
+  try {
+    await fn();
+  } finally {
+    Object.defineProperty(process.stdout, "isTTY", { value: originalIsTTY, configurable: true });
+  }
+}
+
 interface TestEnv {
   readonly home: string;
   readonly dataHome: string;
@@ -1992,6 +2007,152 @@ fs.writeFileSync(p, 'name: arch-review\\nexperts:\\n  - ghost-expert\\n', 'utf-8
       } finally {
         await fs.rm(linkDir, { recursive: true, force: true });
       }
+    });
+  });
+
+  describe("hint styling respects non-TTY output (#809)", () => {
+    let env: TestEnv;
+    beforeEach(async () => {
+      env = await makeEnv();
+    });
+    afterEach(async () => {
+      await teardown(env);
+    });
+
+    const LIST_HINT = "Next: council panel inspect <name> | council convene --template <name>";
+    const VERIFY_HINT = "Run 'council panel list' to verify.";
+
+    async function createPanel(name = "arch-review"): Promise<void> {
+      await seedExpert(env, expertDef("cto"));
+      const cmd = buildPanelCommand(() => {
+        /* noop */
+      });
+      await cmd.parseAsync(["node", "council-panel", "create", name, "--experts", "cto"]);
+    }
+
+    describe("panel list", () => {
+      it("wraps the trailing hint in dim ANSI when stdout is a TTY", async () => {
+        await createPanel();
+        await withStdoutIsTTY(true, async () => {
+          let captured = "";
+          const cmd = buildPanelCommand((s) => {
+            captured += s;
+          });
+          await cmd.parseAsync(["node", "council-panel", "list"]);
+          expect(captured).toContain(`\x1b[2m${LIST_HINT}\x1b[0m`);
+        });
+      });
+
+      it("emits the trailing hint as plain text with no ANSI escapes when stdout is not a TTY", async () => {
+        await createPanel();
+        await withStdoutIsTTY(false, async () => {
+          let captured = "";
+          const cmd = buildPanelCommand((s) => {
+            captured += s;
+          });
+          await cmd.parseAsync(["node", "council-panel", "list"]);
+          expect(captured).toContain(LIST_HINT);
+          expect(captured).not.toContain("\x1b[");
+        });
+      });
+    });
+
+    describe("panel delete", () => {
+      it("wraps the trailing hint in dim ANSI when stdout is a TTY", async () => {
+        await createPanel();
+        await withStdoutIsTTY(true, async () => {
+          let captured = "";
+          const cmd = buildPanelCommand((s) => {
+            captured += s;
+          });
+          await cmd.parseAsync(["node", "council-panel", "delete", "arch-review", "--yes"]);
+          expect(captured).toContain(`\x1b[2m${VERIFY_HINT}\x1b[0m`);
+        });
+      });
+
+      it("emits the trailing hint as plain text with no ANSI escapes when stdout is not a TTY", async () => {
+        await createPanel();
+        await withStdoutIsTTY(false, async () => {
+          let captured = "";
+          const cmd = buildPanelCommand((s) => {
+            captured += s;
+          });
+          await cmd.parseAsync(["node", "council-panel", "delete", "arch-review", "--yes"]);
+          expect(captured).toContain(VERIFY_HINT);
+          expect(captured).not.toContain("\x1b[");
+        });
+      });
+    });
+
+    describe("panel docs unlink", () => {
+      async function linkFolder(): Promise<string> {
+        const linkDir = await fs.mkdtemp(path.join(os.tmpdir(), "council-809-unlink-"));
+        const linkCmd = buildPanelCommand(() => {
+          /* noop */
+        });
+        await linkCmd.parseAsync([
+          "node",
+          "council-panel",
+          "docs",
+          "link",
+          "arch-review",
+          "--path",
+          linkDir,
+          "--yes",
+        ]);
+        return linkDir;
+      }
+
+      it("wraps the trailing hint in dim ANSI when stdout is a TTY", async () => {
+        await createPanel();
+        const linkDir = await linkFolder();
+        try {
+          await withStdoutIsTTY(true, async () => {
+            let captured = "";
+            const cmd = buildPanelCommand((s) => {
+              captured += s;
+            });
+            await cmd.parseAsync([
+              "node",
+              "council-panel",
+              "docs",
+              "unlink",
+              "arch-review",
+              "--path",
+              linkDir,
+            ]);
+            expect(captured).toContain(`\x1b[2m${VERIFY_HINT}\x1b[0m`);
+          });
+        } finally {
+          await fs.rm(linkDir, { recursive: true, force: true });
+        }
+      });
+
+      it("emits the trailing hint as plain text with no ANSI escapes when stdout is not a TTY", async () => {
+        await createPanel();
+        const linkDir = await linkFolder();
+        try {
+          await withStdoutIsTTY(false, async () => {
+            let captured = "";
+            const cmd = buildPanelCommand((s) => {
+              captured += s;
+            });
+            await cmd.parseAsync([
+              "node",
+              "council-panel",
+              "docs",
+              "unlink",
+              "arch-review",
+              "--path",
+              linkDir,
+            ]);
+            expect(captured).toContain(VERIFY_HINT);
+            expect(captured).not.toContain("\x1b[");
+          });
+        } finally {
+          await fs.rm(linkDir, { recursive: true, force: true });
+        }
+      });
     });
   });
 });
