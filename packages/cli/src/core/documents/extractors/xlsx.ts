@@ -22,20 +22,23 @@ import { ExtractionError } from "./errors.js";
 import { readXlsxSheets, XlsxEncryptedError, type XlsxSheet } from "./xlsx-reader.js";
 import type { ContentExtractor, ExtractedContent, ExtractionContext } from "./types.js";
 
-// Canonical line-terminator / next-line class used to neutralize
+// Line-terminator / next-line class collapsed to neutralize
 // attacker-controlled text before it flows into block-level Markdown and,
-// downstream, into AI prompts. Covers CR, LF, NEL (U+0085), LS (U+2028)
-// and PS (U+2029); mirrors the display sanitizer's collapse set
-// (`toSingleLineDisplay`) so sheet names and cell values cannot smuggle
-// apparent line/heading structure past extraction.
-const LINE_SEPARATORS = /[\r\n\u0085\u2028\u2029]+/g;
+// downstream, into AI prompts. Covers the Unicode mandatory-break /
+// vertical-whitespace set: LF, VT (U+000B), FF (U+000C), CR, NEL
+// (U+0085), LS (U+2028) and PS (U+2029). This is the vertical-whitespace
+// subset of what the terminal display sanitizer `toSingleLineDisplay`
+// neutralizes — that helper additionally collapses tab and strips the
+// remaining C0/C1 control ranges — and is the class relevant to smuggling
+// line/heading structure past extraction.
+const LINE_SEPARATORS = /[\n\v\f\r\u0085\u2028\u2029]+/g;
 
 function escapeCell(value: string): string {
   // Escape backslashes FIRST (before pipes) so the backslash we prepend to
   // neutralize each `|` is not itself re-escaped, then escape pipes and
-  // collapse any run of line separators (CR, LF, NEL U+0085, LS U+2028,
-  // PS U+2029) into a single space so a single cell never breaks the
-  // surrounding Markdown table row.
+  // collapse any run of line separators (LF, VT, FF, CR, NEL U+0085, LS
+  // U+2028, PS U+2029) into a single space so a single cell never breaks
+  // the surrounding Markdown table row.
   return value.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(LINE_SEPARATORS, " ");
 }
 
@@ -45,8 +48,8 @@ function sanitizeSheetName(name: string): string {
   // metadata.sheetNames. fast-xml-parser preserves literal line
   // terminators in the workbook's `name` attribute verbatim, so an
   // unsanitized name can inject arbitrary headings into content later fed
-  // to AI prompts. Collapse any run of CR/LF/NEL/LS/PS into a single space
-  // and trim the result.
+  // to AI prompts. Collapse any run of LF/VT/FF/CR/NEL/LS/PS into a single
+  // space and trim the result.
   return name.replace(LINE_SEPARATORS, " ").trim();
 }
 
