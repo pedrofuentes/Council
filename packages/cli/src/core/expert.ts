@@ -89,7 +89,7 @@ export const ExpertiseSchema = z.object({
 export const ExpertDefinitionSchema = z
   .object({
     /** Short identifier scoped to the panel (e.g. "cto", "skeptic"). */
-    slug: NonEmptyString,
+    slug: z.string().trim().min(1),
     /** Name shown in transcripts and renderers (e.g. "Dahlia Renner (CTO)"). */
     displayName: NonEmptyString,
     /** One-line role descriptor used in section [1] IDENTITY of the prompt. */
