@@ -29,32 +29,38 @@ export interface InjectionDetectedInfo {
 }
 
 /**
- * Every Unicode comma-punctuation character (General Category `Po`, name
- * ending in `COMMA`). Source labels and extraction methods are interpolated
- * into Council's own provenance line `[from: <source>, extracted via:
- * <method>]`, whose field separator is a literal ASCII `, `. Stripping only
- * the ASCII comma (U+002C) left the rest of the class free to forge a
- * look-alike `, extracted via:` / `, from:` segment and smuggle a second,
- * attacker-controlled provenance field past a human or model reader (#1791).
- * We neutralize the WHOLE class, mirroring the exhaustive-enumeration approach
- * of `cli/strip-control-chars.ts` — a partial list is itself the bypass.
+ * The Unicode comma-punctuation family (General Category `Po`, name ending in
+ * `COMMA`) plus UTS #39 comma-delimiter confusables (Unicode confusables
+ * prototype U+002C) — because a character a human or model reads as `,` forges
+ * the delimiter regardless of its Unicode name. Source labels and extraction
+ * methods are interpolated into Council's own provenance line `[from:
+ * <source>, extracted via: <method>]`, whose field separator is a literal ASCII
+ * `, `. Stripping only the ASCII comma (U+002C) left the rest of the class free
+ * to forge a look-alike `, extracted via:` / `, from:` segment and smuggle a
+ * second, attacker-controlled provenance field past a human or model reader
+ * (#1791). We neutralize the WHOLE class, mirroring the
+ * exhaustive-enumeration approach of `cli/strip-control-chars.ts` — a partial
+ * list is itself the bypass.
  *
  * None of these are control codepoints, so `no-control-regex` does not apply;
  * the `u` flag lets the four astral commas match by codepoint.
  *
- * In codepoint order: U+002C COMMA, U+055D ARMENIAN COMMA, U+060C ARABIC
- * COMMA, U+07F8 NKO COMMA, U+1363 ETHIOPIC COMMA, U+1802 MONGOLIAN COMMA,
- * U+1808 MONGOLIAN MANCHU COMMA, U+2E32 TURNED COMMA, U+2E34 RAISED COMMA,
- * U+2E41 REVERSED COMMA, U+2E49 DOUBLE STACKED COMMA, U+2E4C MEDIEVAL COMMA,
- * U+3001 IDEOGRAPHIC COMMA, U+A4FE LISU PUNCTUATION COMMA, U+A60D VAI COMMA,
- * U+A6F5 BAMUM COMMA, U+FE10 PRESENTATION FORM FOR VERTICAL COMMA, U+FE11
- * PRESENTATION FORM FOR VERTICAL IDEOGRAPHIC COMMA, U+FE50 SMALL COMMA, U+FE51
- * SMALL IDEOGRAPHIC COMMA, U+FF0C FULLWIDTH COMMA, U+FF64 HALFWIDTH
- * IDEOGRAPHIC COMMA, U+1144D NEWA COMMA, U+1145A NEWA DOUBLE COMMA, U+16E97
- * MEDEFAIDRIN COMMA, U+1DA87 SIGNWRITING COMMA.
+ * In codepoint order: U+002C COMMA, U+00B8 CEDILLA, U+055D ARMENIAN COMMA,
+ * U+060C ARABIC COMMA, U+060D ARABIC DATE SEPARATOR, U+066B ARABIC DECIMAL
+ * SEPARATOR, U+066C ARABIC THOUSANDS SEPARATOR, U+07F8 NKO COMMA, U+1363
+ * ETHIOPIC COMMA, U+1802 MONGOLIAN COMMA, U+1808 MONGOLIAN MANCHU COMMA,
+ * U+201A SINGLE LOW-9 QUOTATION MARK, U+2E32 TURNED COMMA, U+2E34 RAISED
+ * COMMA, U+2E41 REVERSED COMMA, U+2E49 DOUBLE STACKED COMMA, U+2E4C MEDIEVAL
+ * COMMA, U+3001 IDEOGRAPHIC COMMA, U+A4F9 LISU LETTER TONE NA PO, U+A4FB LISU
+ * LETTER TONE MYA BO, U+A4FE LISU PUNCTUATION COMMA, U+A60D VAI COMMA, U+A6F5
+ * BAMUM COMMA, U+FE10 PRESENTATION FORM FOR VERTICAL COMMA, U+FE11 PRESENTATION
+ * FORM FOR VERTICAL IDEOGRAPHIC COMMA, U+FE50 SMALL COMMA, U+FE51 SMALL
+ * IDEOGRAPHIC COMMA, U+FF0C FULLWIDTH COMMA, U+FF64 HALFWIDTH IDEOGRAPHIC
+ * COMMA, U+1144D NEWA COMMA, U+1145A NEWA DOUBLE COMMA, U+16E97 MEDEFAIDRIN
+ * COMMA, U+1DA87 SIGNWRITING COMMA.
  */
 const COMMA_DELIMITER_CHARS =
-  /[\u002C\u055D\u060C\u07F8\u1363\u1802\u1808\u2E32\u2E34\u2E41\u2E49\u2E4C\u3001\uA4FE\uA60D\uA6F5\uFE10\uFE11\uFE50\uFE51\uFF0C\uFF64\u{1144D}\u{1145A}\u{16E97}\u{1DA87}]/gu;
+  /[\u002C\u00B8\u055D\u060C\u060D\u066B\u066C\u07F8\u1363\u1802\u1808\u201A\u2E32\u2E34\u2E41\u2E49\u2E4C\u3001\uA4F9\uA4FB\uA4FE\uA60D\uA6F5\uFE10\uFE11\uFE50\uFE51\uFF0C\uFF64\u{1144D}\u{1145A}\u{16E97}\u{1DA87}]/gu;
 
 /**
  * Append a `[REFERENCE DOCUMENTS]` block to a user message when RAG
