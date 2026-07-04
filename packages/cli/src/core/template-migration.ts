@@ -523,23 +523,23 @@ async function registerPanelFromDisk(
       .execute();
   }
 
-  for (let i = 0; i < slugs.length; i++) {
-    const slug = slugs[i] as string;
-    const existingMember = await db
-      .selectFrom("panel_members")
-      .selectAll()
-      .where("panel_name", "=", panelName)
-      .where("expert_slug", "=", slug)
-      .executeTakeFirst();
-    if (existingMember) continue;
+  // Bulk-insert memberships in a single statement, letting the composite
+  // primary key (panel_name, expert_slug) drop rows that already exist
+  // (DO NOTHING) — idempotent and symmetric with the panel_library upsert
+  // above, instead of an N+1 select-then-insert per member (#305). Existing
+  // rows keep their stored position, matching the prior skip-if-present loop.
+  if (slugs.length > 0) {
     await db
       .insertInto("panel_members")
-      .values({
-        panel_name: panelName,
-        expert_slug: slug,
-        position: i,
-        created_at: now,
-      })
+      .values(
+        slugs.map((slug, i) => ({
+          panel_name: panelName,
+          expert_slug: slug,
+          position: i,
+          created_at: now,
+        })),
+      )
+      .onConflict((oc) => oc.columns(["panel_name", "expert_slug"]).doNothing())
       .execute();
   }
 }
