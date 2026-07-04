@@ -132,7 +132,11 @@ export function createPanelAuthoringSource(deps: PanelAuthoringDeps): PanelAutho
         try {
           await handle.writeFile(yamlContent, "utf-8");
         } finally {
-          await handle.close();
+          try {
+            await handle.close();
+          } catch {
+            /* preserve the primary writeFile error — closing is best-effort */
+          }
         }
         await deps.panelRepo.setMembers(input.name, input.expertSlugs);
         await fs.mkdir(panelDocsDir(deps.dataHome, input.name), { recursive: true });
