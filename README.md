@@ -637,6 +637,12 @@ council docs doctor <panel>        # document-health diagnostics: indexed count,
 | `documents.aiExtractionAllowedExtensions` | list of extensions       | `[]` (all eligible)                                         | Restrict AI extraction to specific extensions  |
 | `expert.supportedFormats`                 | list of extensions       | 14 extensions (all above **except** `.markdown` and `.htm`) | Formats a panel's document scanner will accept |
 
+### Chat configuration
+
+| Key                            | Values   | Default | Description                                                                        |
+| ------------------------------ | -------- | ------- | ---------------------------------------------------------------------------------- |
+| `chat.longConversationWarning` | 50–10000 | `500`   | Turn count that triggers a one-time advisory in chat once the threshold is reached |
+
 Configure with `council config set <key> <value>` or open `~/.council/config.yaml` with `council config edit`.
 
 ## Built-in Panels
