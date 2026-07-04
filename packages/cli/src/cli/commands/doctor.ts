@@ -14,6 +14,7 @@ import {
   getCouncilDataHome,
   getCouncilHome,
   loadConfig,
+  type CouncilConfig,
 } from "../../config/index.js";
 import {
   checkCopilotCliPath,
@@ -73,6 +74,18 @@ export interface DoctorDeps {
   readonly discoverModels?: () => Promise<ModelDiscoveryResult>;
   readonly createSpinner?: () => Spinner;
   readonly resolveCliPath?: () => string | undefined;
+  readonly loadConfig?: () => Promise<CouncilConfig>;
+}
+
+/**
+ * Wrap an async loader so it runs at most once per `doctor` invocation and
+ * every caller shares that single result (or rejection). `doctor` reads the
+ * config from several checks and the summary; memoizing here keeps those to a
+ * single disk read while preserving each caller's own error handling.
+ */
+function memoizeAsync<T>(load: () => Promise<T>): () => Promise<T> {
+  let cached: Promise<T> | undefined;
+  return () => (cached ??= load());
 }
 
 interface LabeledCheck {
@@ -112,7 +125,9 @@ async function checkCouncilHome(): Promise<CheckResult> {
   }
 }
 
-async function resolveDoctorDataHome(): Promise<string> {
+async function resolveDoctorDataHome(
+  loadConfig: NonNullable<DoctorDeps["loadConfig"]>,
+): Promise<string> {
   try {
     const config = await loadConfig();
     return getCouncilDataHome(config);
@@ -130,8 +145,10 @@ async function resolveDoctorDataHome(): Promise<string> {
  */
 const DATA_HOME_WRITE_SUBDIRS = ["experts", "panels"] as const;
 
-async function checkCouncilDataHome(): Promise<CheckResult> {
-  const dataHome = await resolveDoctorDataHome();
+async function checkCouncilDataHome(
+  loadConfig: NonNullable<DoctorDeps["loadConfig"]>,
+): Promise<CheckResult> {
+  const dataHome = await resolveDoctorDataHome(loadConfig);
   try {
     await ensureDataDirectories(dataHome);
   } catch (err: unknown) {
@@ -298,6 +315,7 @@ async function checkDefaultModelAccess(
   onlineProbe: NonNullable<DoctorDeps["onlineProbe"]>,
   discoverModels: NonNullable<DoctorDeps["discoverModels"]>,
   timeoutMs: number,
+  loadConfig: NonNullable<DoctorDeps["loadConfig"]>,
 ): Promise<CheckResult> {
   const configPath = getConfigPath();
 
@@ -438,6 +456,7 @@ function resolveDoctorDeps(input: DoctorDeps | Writer): Required<DoctorDeps> {
     discoverModels: deps.discoverModels ?? discoverAvailableModels,
     createSpinner: deps.createSpinner ?? createSpinner,
     resolveCliPath: deps.resolveCliPath ?? resolveCopilotCliPath,
+    loadConfig: deps.loadConfig ?? loadConfig,
   };
 }
 
@@ -494,6 +513,7 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
     discoverModels,
     createSpinner: makeSpinner,
     resolveCliPath,
+    loadConfig: loadConfigDep,
   } = resolveDoctorDeps(input);
   const cmd = new Command("doctor");
   cmd
@@ -506,10 +526,13 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
       "Emit a sanitized diagnostic report for bug reports (json|markdown)",
     )
     .action(async (options: DoctorOptions) => {
+      // Resolve config once per invocation and thread the shared loader into
+      // every check and summary section so it is read from disk only once.
+      const loadConfigOnce = memoizeAsync(loadConfigDep);
       const checks: LabeledCheck[] = [
         { label: "Node.js version", run: checkNodeVersion },
         { label: "Council home", run: checkCouncilHome },
-        { label: "Council data home", run: checkCouncilDataHome },
+        { label: "Council data home", run: () => checkCouncilDataHome(loadConfigOnce) },
         { label: "SQLite (node:sqlite)", run: checkSqlite },
         { label: "Copilot SDK", run: checkCopilotSdk },
         { label: "Copilot CLI", run: () => checkCopilotCli(resolveCliPath) },
@@ -520,7 +543,13 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
       if (!options.offline) {
         checks.push({
           label: "Default model access",
-          run: () => checkDefaultModelAccess(onlineProbe, discoverModels, onlineProbeTimeoutMs),
+          run: () =>
+            checkDefaultModelAccess(
+              onlineProbe,
+              discoverModels,
+              onlineProbeTimeoutMs,
+              loadConfigOnce,
+            ),
         });
       }
 
@@ -547,7 +576,7 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
         }).status;
         let telemetryEnabled = false;
         try {
-          telemetryEnabled = (await loadConfig()).telemetry.enabled;
+          telemetryEnabled = (await loadConfigOnce()).telemetry.enabled;
         } catch {
           telemetryEnabled = false;
         }
@@ -587,7 +616,7 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
       // Configuration section (DX-09)
       write("\n");
       try {
-        const config = await loadConfig();
+        const config = await loadConfigOnce();
         const configFilePath = path.join(getCouncilHome(), CONFIG_FILE);
         const dataHome = getCouncilDataHome(config);
         const sym2 = getSymbols();
