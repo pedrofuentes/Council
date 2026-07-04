@@ -38,6 +38,18 @@ export interface NewTurn {
   readonly latencyMs?: number;
 }
 
+/**
+ * Narrowed projection returned by {@link TurnRepository.findLatestByDebateId}:
+ * only the `id` and `createdAt` of the most-recent turn. The sole caller — the
+ * `council sessions` stuck-debate check — needs just the latest-activity
+ * timestamp (and `id` for tie-break/debugging), so we avoid materialising the
+ * heavy turn row (content, tokens, latency). See issue #864.
+ */
+export interface LatestTurnActivity {
+  readonly id: string;
+  readonly createdAt: string;
+}
+
 function toDomain(row: TurnRow): Turn {
   return {
     id: row.id,
@@ -91,15 +103,15 @@ export class TurnRepository {
     return rows.map(toDomain);
   }
 
-  async findLatestByDebateId(debateId: string): Promise<Turn | undefined> {
+  async findLatestByDebateId(debateId: string): Promise<LatestTurnActivity | undefined> {
     const row = await this.db
       .selectFrom("turns")
-      .selectAll()
+      .select(["id", "created_at"])
       .where("debate_id", "=", debateId)
       .orderBy("created_at", "desc")
       .orderBy("id", "desc")
       .executeTakeFirst();
-    return row ? toDomain(row) : undefined;
+    return row ? { id: row.id, createdAt: row.created_at } : undefined;
   }
 
   async countByDebateId(debateId: string): Promise<number> {
