@@ -67,7 +67,11 @@ function sha256(content: string): string {
 }
 
 function errnoCode(err: unknown): string | undefined {
-  return (err as NodeJS.ErrnoException).code;
+  if (typeof err === "object" && err !== null && "code" in err) {
+    const code = (err as { readonly code?: unknown }).code;
+    return typeof code === "string" ? code : undefined;
+  }
+  return undefined;
 }
 
 async function validateExpertSlugs(
