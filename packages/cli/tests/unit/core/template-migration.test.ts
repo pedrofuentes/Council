@@ -11,7 +11,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import * as yaml from "yaml";
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 
 import { FileExpertLibrary } from "../../../src/core/expert-library.js";
 import { ExpertDefinitionSchema, type ExpertDefinition } from "../../../src/core/expert.js";
@@ -1206,6 +1206,73 @@ describe("template-migration", () => {
       // the sanitizer strips the danger without gutting the diagnostic.
       expect(message).toContain("INJECTED");
       expect(message).toContain("failed schema validation");
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // #304: disambiguating a deeply-collided slug tail must NOT issue one
+  // sequential `library.get()` per candidate (worst case ~100 queries on a
+  // cold third-party path). resolveSuffixed takes a single library snapshot
+  // and resolves candidates in memory, so the number of library reads is
+  // bounded regardless of collision depth — while the chosen slug is
+  // unchanged.
+  // ─────────────────────────────────────────────────────────────────────
+  describe("bounded library lookups when disambiguating a collided slug (#304)", () => {
+    function expertWith(slug: string, role: string): ExpertDefinition {
+      return {
+        slug,
+        displayName: "Valid Expert",
+        role,
+        kind: "generic",
+        expertise: { weightedEvidence: ["evidence"], referenceCases: [], notExpertIn: [] },
+        epistemicStance: "stance",
+      };
+    }
+
+    it("resolves a deep collision with a bounded number of library reads", async () => {
+      // Pre-occupy the primary suffix and the first numeric fallbacks with
+      // DISTINCT-content experts, so resolveSuffixed must skip past all of
+      // them: sre-panelb, sre-panelb-2 … sre-panelb-5.
+      const occupied = [
+        "sre-panelb",
+        "sre-panelb-2",
+        "sre-panelb-3",
+        "sre-panelb-4",
+        "sre-panelb-5",
+      ];
+      for (const slug of occupied) {
+        await lib.create(expertWith(slug, `occupied ${slug}`));
+      }
+
+      // panela claims the base slug `sre`; panelb re-declares `sre` with
+      // DIFFERENT content, forcing suffix disambiguation for panelb.
+      const stubLoader = async (name: string) =>
+        name === "panela"
+          ? { name, experts: [expertWith("sre", "content A")] }
+          : { name, experts: [expertWith("sre", "content B — differs from A")] };
+
+      const getSpy = vi.spyOn(lib, "get");
+
+      await migrateBuiltInTemplates(dataHome, lib, db, {
+        quiet: true,
+        panelNames: ["panela", "panelb"],
+        loadPanel: stubLoader,
+      });
+
+      // Output preserved: panelb's `sre` lands on the first free suffix past
+      // the five pre-occupied ones.
+      const created = await db
+        .selectFrom("expert_library")
+        .select("slug")
+        .where("slug", "=", "sre-panelb-6")
+        .executeTakeFirst();
+      expect(created).toBeDefined();
+
+      // Bounded reads: the old per-candidate scan issued one library.get()
+      // per collided suffix (~6 here, plus the base lookup); the snapshot
+      // strategy keeps library.get() calls constant, independent of the
+      // collision depth. Only the single base lookup in pickSlug remains.
+      expect(getSpy.mock.calls.length).toBeLessThanOrEqual(2);
     });
   });
 });
