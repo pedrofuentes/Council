@@ -119,6 +119,20 @@ describe("buildConfigCommand config set conclude.*", () => {
         expect(config.conclude.maxTranscriptChars).toBe(50000);
       },
     );
+
+    it("rejects a fractional in-range value (1000.5) as a user error", async () => {
+      // A genuine fraction, distinct from the whole-valued `80000.0` form above:
+      // under a permissive `Number()`/`parseInt` coercion `1000.5` would truncate
+      // to the in-range integer 1000 and be stored silently. The `^[+-]?\d+$`
+      // integer guard must reject it up front rather than persisting 1000.
+      const { stdout, stderr } = await runConfig(["set", "conclude.maxTranscriptChars", "1000.5"]);
+
+      expect(stdout).toBe("");
+      expect(stderr).toContain("conclude.maxTranscriptChars");
+      expect(stderr).toMatch(/integer between 1000 and 1000000/);
+      const config = await loadConfig();
+      expect(config.conclude.maxTranscriptChars).toBe(50000);
+    });
   });
 
   describe("valid keys listing", () => {

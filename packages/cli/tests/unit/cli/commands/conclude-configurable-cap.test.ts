@@ -171,6 +171,39 @@ describe("conclude with configurable transcript cap", () => {
     expect(captured).not.toMatch(/50000 char limit/);
   });
 
+  it("applies the raised cap (150000) to the truncation warning when content exceeds it", async () => {
+    // Strengthens the negative-only raised-cap test above (which only proves the
+    // 50000 default is ABSENT — and that passes even for a turn-limit
+    // truncation). Here we force CHAR truncation above the raised cap so the
+    // warning positively reports the configured 150000 limit, proving the config
+    // value actually threads through. 50 turns keeps us at the turn limit
+    // (MAX_TRANSCRIPT_TURNS = 50, no turn truncation); ~4000 chars each (~200k
+    // total) exceeds 150000 so truncation is char-driven.
+    await updateConfigField("conclude.maxTranscriptChars", 150000);
+
+    const panelName = await seedPanelWithLongTranscript(testHome, 50, 4000);
+
+    let captured = "";
+    const cmd = buildConcludeCommand({
+      write: (chunk) => {
+        captured += chunk;
+      },
+      writeNotice: () => undefined,
+      writeError: () => undefined,
+      engineFactory: () => makeMockEngine(JSON.stringify(SAMPLE_OUTPUT)),
+      synthesizerId: SYNTH_ID,
+    });
+    cmd.exitOverride();
+
+    await cmd.parseAsync(["node", "council-conclude", panelName, "--engine", "mock"]);
+
+    // The warning must positively cite the raised 150000 cap: if the config
+    // value failed to thread through, appliedCharLimit would be the 50000
+    // default and this match would fail ("50000 char limit" ≠ "150000 char
+    // limit"), so this pins that the raised cap actually applied.
+    expect(captured).toMatch(/150000 char limit/);
+  });
+
   it("uses lowered cap from config to truncate more aggressively", async () => {
     // Set a lower cap
     await updateConfigField("conclude.maxTranscriptChars", 10000);

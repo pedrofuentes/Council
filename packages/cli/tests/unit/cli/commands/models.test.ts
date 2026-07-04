@@ -77,6 +77,20 @@ describe("formatAvailableModels", () => {
     expect(result).toContain("Google   : gemini-2.5-pro");
   });
 
+  it("renders unprefixed routable ids under the 'Other' provider bucket (positive)", () => {
+    // PM-03: ids matching no provider prefix (e.g. the `auto` selector) must
+    // still be advertised so `council models` / `doctor --models` list
+    // everything `convene --model` accepts. The empty/all-invalid tests only
+    // assert the "Other" line is ABSENT; this drives a valid unprefixed id to
+    // pin the OTHER_GROUP_LABEL branch positively (models.ts:80-85).
+    const result = formatAvailableModels(["auto", "claude-sonnet-4.5"], "live");
+
+    expect(result).toContain("Other    : auto");
+    // A prefixed id still groups under its own provider label — "Other" is the
+    // fallback bucket, not a catch-all that swallows every id.
+    expect(result).toContain("Anthropic: claude-sonnet-4.5");
+  });
+
   it("produces header and note with no provider lines when model list is empty", () => {
     const result = formatAvailableModels([], "live");
 
