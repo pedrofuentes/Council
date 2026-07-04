@@ -647,6 +647,7 @@ Provenance is a column on the per-file row, not a separate table. FTS index entr
 - ✅ Type-safe: no `any` cast, no narrowing assumption about the library implementation.
 - ✅ Testable: tests pass an in-memory `CouncilDatabase` directly instead of constructing a backing `FileExpertLibrary` just to extract its DB.
 - ✅ Crash-recoverable: with the DB handle available, the migration can register panel rows idempotently and re-sync from disk after a DB reset.
+- ✅ Security hardening: during recovery, on-disk panel YAML expert slugs are re-validated with `SLUG_RE` before any slug-derived filesystem access.
 - ⚠️ Two parameters where one might feel cleaner. Acceptable until a `PanelLibrary` abstraction earns its keep.
 
 ### ADR-001: Use @github/copilot-sdk as primary AI engine

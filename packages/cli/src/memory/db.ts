@@ -13,6 +13,8 @@
  *   createDatabase(path)  → connect, run pending migrations, return Kysely
  *   CouncilDatabase       → typed Kysely instance for repositories
  *   CouncilSchema         → table-row-shape interfaces (snake_case columns)
+ *   Migration             → test-support migration descriptor
+ *   loadMigrations()      → test-support accessor for bundled migrations
  *
  * `path` semantics:
  *   - ":memory:"          → in-memory DB (used by tests)
