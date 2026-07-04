@@ -565,7 +565,7 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
   } = resolveDoctorDeps(input);
   const cmd = new Command("doctor");
   cmd
-    .description("Diagnose Council setup (Node, libsql, Copilot SDK, disk)")
+    .description("Diagnose Council setup (Node, node:sqlite, Copilot SDK, Copilot CLI, disk)")
     .option("--online", "No-op; online check now runs by default (backwards compatibility)")
     .option("--offline", "Skip online model probe")
     .option("--models", "List available Copilot models (live discovery with static fallback)")
