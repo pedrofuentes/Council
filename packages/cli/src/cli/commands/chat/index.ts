@@ -245,8 +245,10 @@ async function validateAndResolveTarget(
           available.length > 0
             ? available.join(", ")
             : "(none — create one with `council expert create`)";
-        writeError(`"${target}" not found as expert or panel.${hint} Available experts: ${list}\n`);
-        throw new CliUserError(`"${target}" not found`);
+        writeError(
+          `"${safeTarget}" not found as expert or panel.${hint} Available experts: ${list}\n`,
+        );
+        throw new CliUserError(`"${safeTarget}" not found`);
       }
       throw err;
     }
@@ -271,11 +273,15 @@ async function runChat(
     // Validate target BEFORE TTY check to ensure error messages reach stderr
     const resolved = await validateAndResolveTarget(target, dataHome, db, writeError);
 
-    // Now check TTY requirement (after we know the target is valid)
+    // Now check TTY requirement (after we know the target is valid). In a
+    // non-TTY run `handleCliError` prints nothing for a CliUserError, so write
+    // the reason to stderr first — otherwise the command exits non-zero with no
+    // explanation (#1031).
     if (!deps.inputProvider && !isInteractiveTerminal(process.stdin.isTTY)) {
-      throw new CliUserError(
-        "council chat requires an interactive terminal. Use `council ask` for non-interactive queries.",
-      );
+      const message =
+        "council chat requires an interactive terminal. Use `council ask` for non-interactive queries.";
+      writeError(`${message}\n`);
+      throw new CliUserError(message);
     }
 
     const library = new FileExpertLibrary(dataHome, db);
@@ -286,7 +292,7 @@ async function runChat(
       const fileExpert = await library.get(target);
       if (!fileExpert) {
         write(
-          `\u26A0 Expert file "${target}.yaml" not found. Using cached definition from database.\n`,
+          `\u26A0 Expert file "${toSingleLineDisplay(target)}.yaml" not found. Using cached definition from database.\n`,
         );
       }
 
@@ -323,7 +329,7 @@ async function runChat(
     }
 
     // Should never reach here due to validation function
-    throw new CliUserError(`"${target}" not found`);
+    throw new CliUserError(`"${toSingleLineDisplay(target)}" not found`);
   } finally {
     await db.destroy().catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
