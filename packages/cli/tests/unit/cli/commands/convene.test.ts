@@ -175,6 +175,44 @@ describe("buildConveneCommand", () => {
         ).rejects.toThrow(new RegExp(`--summarize-after.*positive.*${value}`));
       });
     }
+
+    it("sanitizes CR/LF in the non-positive --summarize-after error (#250)", async () => {
+      // The raw CLI value is interpolated into the thrown error. A value that
+      // parses to an integer < 1 yet carries line terminators (a trailing
+      // CRLF here) must not emit raw \r/\n to the terminal (log-forging /
+      // line-injection), matching the toSingleLineDisplay treatment used for
+      // every other untrusted value written in this command.
+      const cmd = buildConveneCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: () => undefined,
+        writeError: () => undefined,
+      });
+      const err = await cmd
+        .parseAsync([
+          "node",
+          "council-convene",
+          "Some topic",
+          "--template",
+          "code-review",
+          "--engine",
+          "mock",
+          "--max-rounds",
+          "1",
+          "--summarize-after",
+          "-1\r\n",
+        ])
+        .then(
+          () => null,
+          (e: unknown) => e,
+        );
+      expect(err).toBeInstanceOf(Error);
+      const message = (err as Error).message;
+      // Parses to -1, so it reaches the positive-integer branch…
+      expect(message).toMatch(/positive integer/);
+      // …and the interpolated value is collapsed to a single line.
+      expect(message).not.toContain("\r");
+      expect(message).not.toContain("\n");
+    });
   });
 
   describe("--model validation at parse time", () => {
