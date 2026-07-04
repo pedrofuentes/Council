@@ -57,6 +57,23 @@ function toTurnView(turn: ChatTurn): ChatTurnView {
   };
 }
 
+/**
+ * Detect a SQLite uniqueness/constraint violation. Mirrors the string-based
+ * detection in cli/commands/chat/shared.ts (`rewriteRotateError`): the
+ * libsql/node:sqlite driver surfaces a partial-unique-index breach as an error
+ * message containing "UNIQUE"/"constraint"/"SQLITE_CONSTRAINT" rather than a
+ * typed code, so we match on the (lower-cased) message and any cause.
+ */
+function isUniqueConstraintViolation(err: unknown): boolean {
+  if (!(err instanceof Error)) {
+    return false;
+  }
+  const text = `${err.message} ${err.cause !== undefined ? String(err.cause) : ""}`.toLowerCase();
+  return (
+    text.includes("unique") || text.includes("constraint") || text.includes("sqlite_constraint")
+  );
+}
+
 export function createChatSessionSource(deps: ChatSessionDeps): ChatSessionDataSource {
   return {
     async loadHistory(targetType: ChatTargetType, targetSlug: string): Promise<ChatHistory> {
@@ -79,8 +96,25 @@ export function createChatSessionSource(deps: ChatSessionDeps): ChatSessionDataS
       if (session !== undefined) {
         return { id: session.id };
       }
-      const created = await deps.chat.createSession({ targetType, targetSlug });
-      return { id: created.id };
+      try {
+        const created = await deps.chat.createSession({ targetType, targetSlug });
+        return { id: created.id };
+      } catch (err) {
+        // Check-then-create races: a concurrent caller can land the active
+        // session between our findActiveSession and createSession, tripping the
+        // partial unique index (idx_chat_sessions_active_unique). Recover by
+        // re-querying the now-present session instead of surfacing the conflict.
+        // Only genuine uniqueness violations are swallowed, and only when the
+        // re-query actually finds the winner's session — otherwise re-throw.
+        if (!isUniqueConstraintViolation(err)) {
+          throw err;
+        }
+        const existing = await deps.chat.findActiveSession(targetType, targetSlug);
+        if (existing === undefined) {
+          throw err;
+        }
+        return { id: existing.id };
+      }
     },
 
     route(input: string, availableSlugs: readonly string[]): ChatRouteResult {
