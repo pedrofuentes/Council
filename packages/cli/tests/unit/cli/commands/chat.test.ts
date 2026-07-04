@@ -672,6 +672,28 @@ describe("buildChatCommand", () => {
       ).rejects.toThrow(/engine.*allowed choices|allowed choices.*engine/i);
     });
 
+    it("routes a coming-soon provider construction failure through formatEngineError (#1378)", async () => {
+      await seedExpert(env);
+      let errorOutput = "";
+      const cmd = buildChatCommand({
+        write: () => undefined,
+        writeError: (s) => {
+          errorOutput += s;
+        },
+        inputProvider: () => scriptedInput([]),
+      });
+      // `openai` is a known-but-coming-soon provider: makeEngineFromKind throws
+      // a synchronous ProviderNotAvailableError at construction. That
+      // construction must happen INSIDE the try so the failure is mapped through
+      // formatEngineError (actionable hint + "Underlying:" diagnostic on stderr)
+      // instead of bypassing the mapper entirely (#1378).
+      await expect(
+        cmd.parseAsync(["node", "council-chat", "dahlia-cto", "--engine", "openai"]),
+      ).rejects.toThrow(/not yet available|coming soon/i);
+      expect(errorOutput).toContain("Underlying:");
+      expect(errorOutput.toLowerCase()).toContain("openai");
+    });
+
     it("errors when the expert slug does not exist", async () => {
       let err = "";
       const cmd = buildChatCommand({
