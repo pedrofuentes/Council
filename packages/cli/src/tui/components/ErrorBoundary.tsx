@@ -4,7 +4,13 @@ import { Box, Text } from "ink";
 import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
 
 export interface ErrorBoundaryProps {
-  readonly onError: (error: Error) => void;
+  /**
+   * Invoked when a child render throws. Receives both the caught error and
+   * React's {@link React.ErrorInfo} (whose `componentStack` names where the
+   * crash originated) so callers can log or send the component stack to
+   * telemetry, not just the message.
+   */
+  readonly onError: (error: Error, errorInfo: React.ErrorInfo) => void;
   readonly fallback?: React.ReactNode;
   readonly children: React.ReactNode;
 }
@@ -64,7 +70,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
 
   public override componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
     this.setState({ componentStack: errorInfo.componentStack ?? null });
-    this.props.onError(error);
+    this.props.onError(error, errorInfo);
   }
 
   public override render(): React.ReactNode {

@@ -38,6 +38,7 @@ describe("DataProvider", () => {
     expect(lastFrame()).toContain("missing provider");
     expect(onError).toHaveBeenCalledWith(
       expect.objectContaining({ message: "useData must be used within a DataProvider" }),
+      expect.objectContaining({ componentStack: expect.any(String) }),
     );
   });
 });
