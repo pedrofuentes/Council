@@ -168,7 +168,12 @@ export function formatPrefilledLines(opts: CreateOptions): string {
   ];
   const provided = entries.filter((e): e is readonly [string, string] => e[1] !== undefined);
   if (provided.length === 0) return "";
-  return provided.map(([label, value]) => `  ✓ ${label}: ${value}\n`).join("") + "\n";
+  // Field values come from CLI flags (untrusted); sanitize each for single-line
+  // display so a crafted value cannot inject extra ✓ lines or emit terminal
+  // escape sequences. Labels are constant and trusted.
+  return (
+    provided.map(([label, value]) => `  ✓ ${label}: ${toSingleLineDisplay(value)}\n`).join("") + "\n"
+  );
 }
 
 function buildCreateCommand(write: Writer, writeError: Writer): Command {
