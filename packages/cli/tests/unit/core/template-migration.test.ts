@@ -1324,4 +1324,78 @@ describe("template-migration", () => {
       expect(message).toContain("broken-inline");
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // #1919 finding 1: broaden terminal-safety coverage to sanitized sinks
+  // previously exercised only with control-char-free inputs — the
+  // assertConfinedSlug string-entry sink and the multi-failure aggregate
+  // join — so a regression dropping `sanitizeForError` from either would
+  // FAIL CI (both render untrusted bytes to a bare TTY sink).
+  // ─────────────────────────────────────────────────────────────────────
+  describe("terminal-safety coverage for slug + aggregate sinks (#1919)", () => {
+    // C0 (except tab) / C1 / DEL / bidi override + isolate ranges — any of
+    // these reaching a TTY is a terminal-injection vector.
+    // eslint-disable-next-line no-control-regex
+    const DANGEROUS = /[\u0000-\u0008\u000A-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/;
+
+    // Tab-indented (invalid) YAML whose code frame carries C1 CSI/OSC, DEL,
+    // an RLO bidi override and a raw CRLF — the bytes `yaml` embeds verbatim.
+    const MALFORMED_YAML = "experts:\n\t- slug: evil\u009b31m\u009d\u007f\u202eINJECTED\r\n";
+
+    it("strips control / C1 / bidi bytes from an invalid slug-reference error (assertConfinedSlug)", () => {
+      // A string (slug-reference) entry whose value is a disallowed slug
+      // carrying terminal-injection bytes → assertConfinedSlug throws with the
+      // slug interpolated into the message.
+      const evilSlug = "../\r\n\u001b[2J\u009b31m\u202e\u2066INJECTED";
+      const panelYaml = yaml.stringify({ name: "p", experts: [evilSlug] });
+
+      let caught: unknown;
+      try {
+        parseOnDiskPanel(panelYaml);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      const message = (caught as Error).message;
+      // No raw control / C1 / DEL / bidi byte may survive to the terminal...
+      expect(message).not.toMatch(DANGEROUS);
+      // ...and the message stays on one physical line.
+      expect(message.split("\n")).toHaveLength(1);
+      expect(message).not.toContain("\r");
+      // Still informative: the sink + the printable slug tail remain.
+      expect(message).toContain("invalid expert slug");
+      expect(message).toContain("INJECTED");
+    });
+
+    it("keeps a multi-panel aggregate failure sanitized and on one physical line", async () => {
+      await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
+
+      const panelsDir = path.join(dataHome, "panels");
+      const firstName = BUILTIN_PANELS[0];
+      const secondName = BUILTIN_PANELS[1];
+      // Corrupt TWO panels so the aggregate joins multiple failures; each
+      // YAML code frame carries C1/DEL/bidi/CRLF bytes.
+      await fs.writeFile(path.join(panelsDir, `${firstName}.yaml`), MALFORMED_YAML, "utf-8");
+      await fs.writeFile(path.join(panelsDir, `${secondName}.yaml`), MALFORMED_YAML, "utf-8");
+
+      // Wipe panel rows so DB-reset recovery re-reads every panel from disk.
+      await db.deleteFrom("panel_members").execute();
+      await db.deleteFrom("panel_library").execute();
+
+      let caught: unknown;
+      try {
+        await migrateBuiltInTemplates(dataHome, lib, db, { quiet: true });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      const message = (caught as Error).message;
+      // Both failures are joined into a single aggregate...
+      expect(message).toContain("2 panel(s) failed to migrate");
+      // ...that stays terminal-safe on one physical line.
+      expect(message).not.toMatch(DANGEROUS);
+      expect(message.split("\n")).toHaveLength(1);
+      expect(message).not.toContain("\r");
+    });
+  });
 });
