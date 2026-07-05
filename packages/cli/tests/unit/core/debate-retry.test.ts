@@ -150,8 +150,7 @@ describe("Debate retry — recoverable errors retry up to 2× with backoff (#3.7
 
     const events = await collect(new Debate(engine, [cto], FREEFORM_1R).run("topic"));
     const retry = events.find((e) => e.kind === "turn.retry") as
-      | { kind: "turn.retry"; attempt: number; reason: string; expertSlug: string }
-      | undefined;
+      { kind: "turn.retry"; attempt: number; reason: string; expertSlug: string } | undefined;
     expect(retry).toBeDefined();
     expect(retry?.attempt).toBe(1); // 1st retry (i.e. 2nd total attempt)
     expect(retry?.expertSlug).toBe(cto.slug);

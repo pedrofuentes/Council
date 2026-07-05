@@ -9,6 +9,7 @@
 **Tech Stack:** TypeScript ESM, Ink 7, React 19, `react-router`, Vitest + `ink-testing-library` + `MockEngine`/`ScriptedEngine`.
 
 ## Global Constraints (every task — the M0–M7 learnings)
+
 - Node ≥ 24; ESM; **`.js` import specifiers**; `.tsx` starts with `import React from "react";`. Named exports only; explicit return types; `interface` for object shapes; `readonly` default; no `any`.
 - **TDD (Sentinel-enforced):** `test(scope)` (RED-confirmed) precedes `feat(scope)`. Never combine.
 - **100% branch coverage on every new `.ts` adapter** (`--coverage.include` before the feat commit). Tests ASSERT + **bite** (mutation-verify guards).
@@ -19,6 +20,7 @@
 - **Per increment:** worktree off `main`; `pnpm install --frozen-lockfile`; `pnpm test`+`lint`+`typecheck` before PR; PARENT invokes Sentinel; delegated implementers STOP after opening the PR.
 
 ## Verified seams (against `main` 2026-06-23 — source of truth)
+
 - **Debate run**: `Debate.run(prompt: string, options: { signal?: AbortSignal } = {}): AsyncIterable<DebateEvent>` (`src/core/debate.ts:253-288`). `DebateEvent` kinds (`src/core/types.ts:33-150`): `panel.assembled`, `round.start`, `turn.start`, `turn.delta`, `turn.end`, `round.end`, `cost.update { premiumRequests, estimatedTotal }`, `debate.end { reason }` (`DebateEndReason = "completed"|"consensus"|"aborted"|"limit"|"failed"`), `error`, `turn.retry`, `turn.quality_gate`. Token streaming = `turn.delta`; per-turn `cost.update` (`debate.ts:653-703,795-803`).
 - **Engine ownership / debate construction**: `runWithEngine` (`src/cli/run-with-engine.ts:157-240`) builds `Debate` + registers experts + wraps `DebatePersister` + streams + stops the engine. `makeEngineFromKind(kind)` (`:53`). The `convene` command flow: `src/cli/commands/convene.ts:202-240,689-852` (topic/panel resolve, optional auto-compose, DB writes, SIGINT wiring, then `runWithEngine({ ..., signal: debateController.signal })` at `:825-852`).
 - **Cost estimate (pre-run)**: NO standalone confirm seam exists; the estimate is computed inside `Debate` — freeform `experts.length * config.maxRounds`; structured `experts.length * phases.length` (`debate.ts:291-297,491-494`). The modal recomputes the same from the panel's members + config (mode/maxRounds). The CLI confirm seam (topic/panel, not cost) is `ConfirmProvider.confirm(message): Promise<boolean>` (`cli/commands/confirm.ts:12-60`).
@@ -31,31 +33,38 @@
 ---
 
 ## Task 1 (PR-A) — `convene` adapter (estimate + stream, offline, 100% branch)
+
 - [ ] **RED** `tests/unit/tui/convene.test.ts`: `createConveneSource(deps)` →
   - `estimateCost(panelName): Promise<{ experts: number; rounds: number; estimatedPremiumRequests: number }>` — resolve the panel's members + the configured mode/maxRounds and compute the SAME estimate the debate uses (freeform `experts*maxRounds`; structured `experts*phases`). Cover both modes + a missing panel (throws).
   - `streamDebate(panelName, topic, { signal? }, onEvent: (e: ConveneViewEvent) => void): Promise<{ debateId: string; reason: DebateEndReason }>` — owns the engine (injected `engineFactory`/`debateFactory`) + the persister exactly like `runWithEngine`, iterates `Debate.run(topic,{signal})`, maps each `DebateEvent` to a sanitized `ConveneViewEvent` (turn deltas via `stripControlChars`; expert/round labels via `toSingleLineDisplay`; `cost.update` passes the numbers), persists turns via the persister, and resolves with the final `debate.end.reason`; `engine.stop()` in `finally`. Cover: a full streamed debate (events mapped in order incl. `cost.update`), an aborted run (`reason:"aborted"`, partial persisted, stop still called), and an `error` event (sanitized). Use `ScriptedEngine`/`MockEngine` + a real temp DB.
 - [ ] **GREEN** `src/tui/adapters/convene.ts`. Commit. 100% branch.
 
 ## Task 2 (PR-B) — cost-confirmation modal + `ConvenePromptScreen` at `/convene/:panel`
+
 - [ ] **RED** `tests/unit/tui/convene-prompt-screen.test.tsx` + AppRouter integration + an entry test (e.g. a `Convene` action on `PanelDetailScreen` navigates to `/convene/:panel`). Cover: topic `TextInput` (input-capture); on submit, calls `convene.estimateCost` and shows a `CostConfirmModal` (`Run debate with N experts × R rounds (~P premium requests)? [y/n]`, sanitized); `y` (gated + inFlight) navigates to `/convene/:panel/run` carrying the topic (route state); `n`/idle-Esc cancels (back-stack route → bites); empty topic does not submit. Confirm RED.
 - [ ] **GREEN** `src/tui/screens/ConvenePromptScreen.tsx` + `src/tui/components/CostConfirmModal.tsx`; route `convenePrompt: "/convene/:panel"`; AppRouter route; `PanelDetailScreen` entry; wire `convene` source inline in `index.tsx` (+ `DataProvider.convene?`). Sanitize. Commit.
 
 ## Task 3 (PR-C) — `DebateStreamScreen` at `/convene/:panel/run` (LIVE engine-in-screen)
+
 - [ ] **RED** `tests/unit/tui/debate-stream-screen.test.tsx` (inject a `convene` source backed by a `ScriptedEngine`/fake `streamDebate`) + AppRouter integration. Cover: on mount starts `streamDebate(panel, topic, {signal})` and renders streamed turns token-by-token (assert an intermediate partial frame then the final), per-expert turn headers, round markers, the **footer cost meter** updating on `cost.update`, a thinking pill while a turn streams; **Esc/navigate-away CANCELS** (aborts the run; the partial is preserved; navigates to the session/transcript) — biting (mutation removing the abort makes the test fail), rendered with a back-stack route; **unmount aborts + stops** (no setState after unmount); a stream `error` → sanitized inline error; on `debate.end` navigates to the session detail / shows a "concluded" affordance. Confirm RED.
 - [ ] **GREEN** `src/tui/screens/DebateStreamScreen.tsx` (a per-run `AbortController` + `running`/`unmounted` refs; transcript via `ScrollView follow`; extend `Footer` with an optional cost-meter prop); route `debateRun: "/convene/:panel/run"`; AppRouter route. Sanitize all model text. Commit.
 
 ## Task 4 (PR-D) — `ConclusionScreen` at `/sessions/:id/conclude` + `conclude` adapter
+
 - [ ] **RED** `tests/unit/tui/conclude.test.ts` (adapter, 100%): `createConcludeSource({ engineFactory, loadTranscript })` → `synthesize(sessionId|panelName): Promise<ConclusionView>` wrapping `synthesizeConclusion` under an injected engine (MockEngine's deterministic synthesizer JSON), sanitizing the view; `engine.stop()` in finally; an empty/short transcript + a synthesis error are covered. PLUS `tests/unit/tui/conclusion-screen.test.tsx`: loads → renders the **decision matrix** (dimensions × expert stances), consensus/tensions/recommendation/confidence; loading/idle-Esc/cancel/error; sanitized. Confirm RED.
 - [ ] **GREEN** `src/tui/adapters/conclude.ts` + `src/tui/screens/ConclusionScreen.tsx`; route `sessionConclude: "/sessions/:id/conclude"`; AppRouter route; a `Conclude` action on `SessionDetailScreen`; wire `conclude` inline in `index.tsx` (+ `DataProvider.conclude?`). Commit.
 
 ## Task 5 (PR-E) — entry points + footer cost meter polish + AppRouter integration
+
 - [ ] **RED** tests: `PanelDetailScreen` `Convene` entry, `SessionDetailScreen` `Conclude` entry, the footer cost-meter renders during a run and clears after; AppRouter integration for all new routes (render, not blank). Confirm RED → GREEN. Wire any remaining `index.tsx`/Footer bits. (Keep this PR small — mostly wiring + a couple of integration tests, since C/D already added the screens.)
 - [ ] (If C/D already covered entries/footer, fold this into them and SKIP — decide during execution to avoid an empty PR.)
 
 ## Closeout (docs PR)
+
 - [ ] Mark **9.8 ✅** in `ROADMAP.md` + `IMPLEMENTATION-PLAN.md` (heading + status table); add a `LEARNINGS.md` entry (second engine-in-screen surface; cost-estimate-from-config; conclusions recomputed-not-persisted; cost-meter footer). Sentinel (fast-path) → merge.
 
 ## Sequencing & notes
+
 - Order: **PR-A (adapter) → PR-B (prompt+modal) → PR-C (live stream) → PR-D (conclusion) → PR-E (entries/polish, or fold) → closeout.** B…E share `index.tsx`/`DataProvider`/AppRouter/routes/`PanelDetailScreen`/`SessionDetailScreen`/`Footer` — rebase each on the prior merge.
 - **PR-C is the highest-risk** (live debate engine-in-screen, cancel + partial preservation) — nail the lifecycle with biting tests; `ScriptedEngine`/`MockEngine` make it deterministic. PR-A isolates the streaming so PR-C stays thin.
 - Deferred (file as `sentinel:*` follow-ups): extracting shared debate-stream primitives into `core/` as a CLI-shared refactor (the adapter wraps the existing `Debate`/persister for now); per-expert colors / a dedicated pill component (color via theme tokens for v1); a pre-run cost CONFIRM in the CLI (TUI-only here).

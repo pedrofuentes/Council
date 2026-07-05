@@ -10,11 +10,7 @@
  * loader so it can be discovered through `getExtractor`.
  */
 import { registerExtractor } from "./registry.js";
-import type {
-  ContentExtractor,
-  ExtractedContent,
-  ExtractionContext,
-} from "./types.js";
+import type { ContentExtractor, ExtractedContent, ExtractionContext } from "./types.js";
 
 function normalizeMarkdown(raw: string): string {
   let s = raw;

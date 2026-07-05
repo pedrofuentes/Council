@@ -147,9 +147,7 @@ describe("ModeratorStrategy interface", () => {
 
 describe("rollingSummary fencing (T-06)", () => {
   const experts = [makeExpert("cto"), makeExpert("pm")];
-  const priorTurns = [
-    { expertSlug: "cto", displayName: "CTO", content: "Ship it.", round: 0 },
-  ];
+  const priorTurns = [{ expertSlug: "cto", displayName: "CTO", content: "Ship it.", round: 0 }];
 
   it("wraps a non-empty rollingSummary in <summary> fences with a data-not-directives preamble (round-robin)", () => {
     const strategy = createRoundRobinStrategy();
@@ -593,9 +591,7 @@ describe("formatPriorTurns edge cases — tested via round>0 prompt (#217)", () 
       round: 1,
       maxRounds: 3,
       topic: "Topic",
-      priorTurns: [
-        { expertSlug: "cto", displayName: "CTO", content: "  Ship it.  \n", round: 0 },
-      ],
+      priorTurns: [{ expertSlug: "cto", displayName: "CTO", content: "  Ship it.  \n", round: 0 }],
     };
     const prompt = strategy.planRound(ctx)[0]?.prompt ?? "";
     expect(prompt).toContain("CTO (round 1):\n> Ship it.");

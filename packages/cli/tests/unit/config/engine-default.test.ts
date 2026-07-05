@@ -104,9 +104,7 @@ describe("ConfigSchema — providers section (env-var NAME only, never a key val
   });
 
   it("rejects a non-string apiKeyEnvVar", () => {
-    expect(() =>
-      ConfigSchema.parse({ providers: { openai: { apiKeyEnvVar: 42 } } }),
-    ).toThrow();
+    expect(() => ConfigSchema.parse({ providers: { openai: { apiKeyEnvVar: 42 } } })).toThrow();
   });
 });
 
@@ -214,22 +212,48 @@ describe("non-TTY auto-compose requires --yes (DX-04)", () => {
       name: "nontty-panel",
       description: "Test panel",
       experts: [
-        { slug: "a", displayName: "A", role: "X", expertise: { weightedEvidence: ["x"], referenceCases: [], notExpertIn: [] }, epistemicStance: "s" },
-        { slug: "b", displayName: "B", role: "Y", expertise: { weightedEvidence: ["y"], referenceCases: [], notExpertIn: [] }, epistemicStance: "s" },
+        {
+          slug: "a",
+          displayName: "A",
+          role: "X",
+          expertise: { weightedEvidence: ["x"], referenceCases: [], notExpertIn: [] },
+          epistemicStance: "s",
+        },
+        {
+          slug: "b",
+          displayName: "B",
+          role: "Y",
+          expertise: { weightedEvidence: ["y"], referenceCases: [], notExpertIn: [] },
+          epistemicStance: "s",
+        },
       ],
     });
 
     // Minimal scripted engine that returns auto-compose JSON
     const engineFactory = () => ({
-      async start() { /* noop */ },
-      async stop() { /* noop */ },
-      async addExpert() { /* noop */ },
-      async removeExpert() { /* noop */ },
-      async listModels() { return ["stub"] as const; },
+      async start() {
+        /* noop */
+      },
+      async stop() {
+        /* noop */
+      },
+      async addExpert() {
+        /* noop */
+      },
+      async removeExpert() {
+        /* noop */
+      },
+      async listModels() {
+        return ["stub"] as const;
+      },
       send() {
         return (async function* () {
           yield { kind: "message.delta" as const, expertId: "x", text: validPanelJson };
-          yield { kind: "message.complete" as const, expertId: "x", response: { latencyMs: 1, tokensIn: 1, tokensOut: 1 } };
+          yield {
+            kind: "message.complete" as const,
+            expertId: "x",
+            response: { latencyMs: 1, tokensIn: 1, tokensOut: 1 },
+          };
         })();
       },
     });
@@ -245,9 +269,7 @@ describe("non-TTY auto-compose requires --yes (DX-04)", () => {
 
     let thrown = "";
     try {
-      await cmd.parseAsync([
-        "node", "council-convene", "topic", "--engine", "mock",
-      ]);
+      await cmd.parseAsync(["node", "council-convene", "topic", "--engine", "mock"]);
     } catch (err) {
       thrown = err instanceof Error ? err.message : String(err);
     }

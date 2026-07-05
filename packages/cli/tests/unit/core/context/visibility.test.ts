@@ -64,11 +64,7 @@ describe("filterPriorTurns — 'recent' scope", () => {
 
   it("limits to the last N turns when maxPriorTurns is provided", () => {
     const out = filterPriorTurns(TURNS, "cto", 2, { scope: "recent", maxPriorTurns: 3 });
-    expect(out.map((t) => `${t.expertSlug}-${t.round}`)).toEqual([
-      "pm-1",
-      "cto-2",
-      "pm-2",
-    ]);
+    expect(out.map((t) => `${t.expertSlug}-${t.round}`)).toEqual(["pm-1", "cto-2", "pm-2"]);
   });
 
   it("uses 10 as the default maxPriorTurns", () => {

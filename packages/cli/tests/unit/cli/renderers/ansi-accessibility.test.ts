@@ -43,7 +43,7 @@ describe("ANSI accessibility", () => {
       const sink = new StringSink();
       const renderer = selectRenderer({ format: "auto", isTTY: false, sink });
       expect(renderer).toBeInstanceOf(PlainRenderer);
-      
+
       // Render a sample event and verify no ANSI codes leak.
       await renderer.render(
         events({
@@ -51,7 +51,7 @@ describe("ANSI accessibility", () => {
           experts: [{ slug: "cto", displayName: "Dahlia (CTO)", model: "claude-sonnet-4" }],
         }),
       );
-      
+
       // The bug: PlainRenderer defaults color:true even when created for non-TTY.
       // Fix: select.ts should pass { color: false } when !isTTY.
       expect(hasAnsi(sink.text)).toBe(false);
@@ -85,7 +85,7 @@ describe("ANSI accessibility", () => {
           recoverable: true,
         }),
       );
-      
+
       // The bug: PlainRenderer forces chalk level:1 regardless of NO_COLOR.
       // Fix: Check process.env.NO_COLOR and set chalk level:0 when present.
       expect(hasAnsi(sink.errText)).toBe(false);
@@ -103,7 +103,7 @@ describe("ANSI accessibility", () => {
           recoverable: true,
         }),
       );
-      
+
       // Should have ANSI when NO_COLOR is not set.
       expect(hasAnsi(sink.errText)).toBe(true);
     });
@@ -116,12 +116,10 @@ describe("ANSI accessibility", () => {
       await renderer.render(
         events({
           kind: "panel.assembled",
-          experts: [
-            { slug: "cto", displayName: "Dahlia", model: "claude-sonnet-4" },
-          ],
+          experts: [{ slug: "cto", displayName: "Dahlia", model: "claude-sonnet-4" }],
         }),
       );
-      
+
       // The bug: dim (SGR 2) is invisible on light terminals.
       // Fix: Use gray for model names (SGR 90).
       // chalk.gray uses SGR 90, chalk.dim uses SGR 2.
@@ -136,7 +134,7 @@ describe("ANSI accessibility", () => {
       await renderer.render(
         events({ kind: "cost.update", premiumRequests: 4, estimatedTotal: 16 }),
       );
-      
+
       // SGR 90 = gray, SGR 2 = dim.
       // eslint-disable-next-line no-control-regex
       expect(sink.text).toMatch(/\u001b\[90m/);
@@ -150,7 +148,7 @@ describe("ANSI accessibility", () => {
       const sink = new StringSink();
       const renderer = createChatRenderer({ sink, experts: new Map() });
       renderer.showPrompt();
-      
+
       // The bug: chalk.bold.white (SGR 1;37) is invisible on light backgrounds.
       // Fix: Use chalk.bold (SGR 1) only, inherit terminal foreground.
       // Should have bold (SGR 1) but not white (SGR 37).
@@ -164,7 +162,7 @@ describe("ANSI accessibility", () => {
       const sink = new StringSink();
       const renderer = createChatRenderer({ sink, experts: new Map() });
       renderer.showUserMessage("Hello");
-      
+
       // eslint-disable-next-line no-control-regex
       expect(sink.text).toMatch(/\u001b\[1m/); // bold present
       // eslint-disable-next-line no-control-regex

@@ -144,17 +144,8 @@ function defaultResponse(expertId: string, expertSpec?: ExpertSpec): string {
         "Prefers reversible decisions when evidence is thin",
         "Anchors choices to measurable outcomes",
       ],
-      biases: [
-        "Optimism about iterative improvement",
-        "Skepticism of unvalidated claims",
-      ],
-      vocabulary: [
-        "trade-off",
-        "iterate",
-        "signal",
-        "tension",
-        "concretely",
-      ],
+      biases: ["Optimism about iterative improvement", "Skepticism of unvalidated claims"],
+      vocabulary: ["trade-off", "iterate", "signal", "tension", "concretely"],
       epistemicStance:
         "Forms beliefs by triangulating evidence from multiple sources and updates readily when new data contradicts prior assumptions.",
     });
@@ -432,7 +423,14 @@ export class MockEngine implements CouncilEngine {
       this.#options.responses[options.expertId] ?? defaultResponse(options.expertId, expertSpec);
     const deltaDelayMs = this.#options.deltaDelayMs;
 
-    return this.#stream(inFlight, options.expertId, text, deltaDelayMs, failure, removeCallerSignalListener);
+    return this.#stream(
+      inFlight,
+      options.expertId,
+      text,
+      deltaDelayMs,
+      failure,
+      removeCallerSignalListener,
+    );
   }
 
   async *#stream(
@@ -461,7 +459,11 @@ export class MockEngine implements CouncilEngine {
         yield {
           kind: "error",
           expertId,
-          error: { code: "ABORTED", message: "Send was aborted before any delta", provider: "mock" },
+          error: {
+            code: "ABORTED",
+            message: "Send was aborted before any delta",
+            provider: "mock",
+          },
           recoverable: isRecoverable("ABORTED"),
         };
         return;

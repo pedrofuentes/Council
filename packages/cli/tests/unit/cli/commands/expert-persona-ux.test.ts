@@ -67,7 +67,7 @@ describe("Expert persona onboarding UX (T7)", () => {
       const createCmd = cmd.commands.find((c) => c.name() === "create");
       expect(createCmd).toBeDefined();
       const helpText = createCmd?.helpInformation() ?? "";
-      
+
       // The --persona flag description should mention "trainable" (not in old text)
       // and "document-based training" (in both, but validates basic content)
       expect(helpText.toLowerCase()).toMatch(/trainable/);
@@ -107,7 +107,11 @@ describe("Expert persona onboarding UX (T7)", () => {
       }
 
       let output = "";
-      createCmd.configureOutput({ writeOut: (str) => { output += str; } });
+      createCmd.configureOutput({
+        writeOut: (str) => {
+          output += str;
+        },
+      });
       createCmd.outputHelp();
 
       expect(output).toMatch(/examples:/i);
@@ -134,19 +138,23 @@ describe("Expert persona onboarding UX (T7)", () => {
         epistemicStance: "Test stance",
         kind: "generic",
       };
-      
+
       await seedExpert(env, GENERIC_EXPERT);
-      
+
       let errorOutput = "";
       const cmd = buildExpertCommand(
-        () => { /* noop */ },
-        (s) => { errorOutput += s; },
+        () => {
+          /* noop */
+        },
+        (s) => {
+          errorOutput += s;
+        },
       );
-      
+
       await expect(
         cmd.parseAsync(["node", "council-expert", "train", "generic-expert"]),
       ).rejects.toThrow(/persona/i);
-      
+
       // Error message should suggest creating with --persona
       expect(errorOutput.toLowerCase()).toMatch(/create.*--persona/);
       expect(errorOutput).toMatch(/council expert create/);

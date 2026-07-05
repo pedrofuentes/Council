@@ -107,11 +107,7 @@ interface StaticQualityNotice {
 }
 
 type StaticItem =
-  | StaticRoundHeader
-  | StaticTurn
-  | StaticRoundSeparator
-  | StaticPanel
-  | StaticQualityNotice;
+  StaticRoundHeader | StaticTurn | StaticRoundSeparator | StaticPanel | StaticQualityNotice;
 
 // --- Active turn (streaming) ---
 

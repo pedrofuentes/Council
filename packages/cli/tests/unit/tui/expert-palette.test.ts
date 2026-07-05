@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { EXPERT_COLORS, expertColorIndex, resolveExpertPalette } from "../../../src/tui/theme/expert-palette.js";
+import {
+  EXPERT_COLORS,
+  expertColorIndex,
+  resolveExpertPalette,
+} from "../../../src/tui/theme/expert-palette.js";
 
 describe("expertColorIndex", () => {
   it("is deterministic — same key yields same index across calls", () => {
@@ -19,7 +23,9 @@ describe("expertColorIndex", () => {
   });
 
   it("different keys generally produce different indices", () => {
-    const indices = new Set(["alpha", "beta", "gamma", "delta", "epsilon", "zeta"].map(expertColorIndex));
+    const indices = new Set(
+      ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"].map(expertColorIndex),
+    );
     expect(indices.size).toBeGreaterThan(1);
   });
 

@@ -38,15 +38,16 @@ const LEADING_MENTION_RE = /^@([A-Za-z0-9][A-Za-z0-9_-]*)\b/;
 // only be an attempt to address an expert by display name.
 const LEADING_QUOTED_MENTION_RE = /^@["']/;
 
-export function parseUserInput(
-  input: string,
-  availableSlugs: readonly string[],
-): ParsedInput {
+export function parseUserInput(input: string, availableSlugs: readonly string[]): ParsedInput {
   const trimmed = input.trim();
 
   // @convene wins over any expert-slug match so a panel that happens to
   // include an expert named "convene" can't shadow the directive.
-  if (trimmed === "@convene" || trimmed.startsWith("@convene ") || trimmed.startsWith("@convene\t")) {
+  if (
+    trimmed === "@convene" ||
+    trimmed.startsWith("@convene ") ||
+    trimmed.startsWith("@convene\t")
+  ) {
     const topic = trimmed.slice("@convene".length).trim();
     if (topic.length === 0) {
       throw new Error("@convene requires a topic. Usage: @convene <topic>");
@@ -89,9 +90,7 @@ export function parseUserInput(
   }
 
   if (rest.length === 0) {
-    throw new Error(
-      `@${slugs[0]} requires a message. Usage: @${slugs[0]} <message>`,
-    );
+    throw new Error(`@${slugs[0]} requires a message. Usage: @${slugs[0]} <message>`);
   }
 
   return { type: "mention", targetSlugs: slugs, content: rest };

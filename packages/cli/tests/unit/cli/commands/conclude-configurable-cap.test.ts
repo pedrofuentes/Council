@@ -231,7 +231,12 @@ describe("conclude with configurable transcript cap", () => {
   it("buildSynthesisPrompt uses the default cap (50000) when not configured", () => {
     const doc: TranscriptDocument = {
       panel: { id: "p1", name: "test", topic: "Test topic", copilotHome: "/tmp" },
-      latestDebate: { id: "d1", status: "completed", prompt: "Test", startedAt: "2024-01-01T00:00:00.000Z" },
+      latestDebate: {
+        id: "d1",
+        status: "completed",
+        prompt: "Test",
+        startedAt: "2024-01-01T00:00:00.000Z",
+      },
       experts: [{ id: "e1", slug: "expert", displayName: "Expert", model: "claude-sonnet-4" }],
       turns: [
         { round: 0, seq: 0, speakerKind: "expert", expertId: "e1", content: "x".repeat(30000) },

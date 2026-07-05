@@ -44,14 +44,15 @@ Copied verbatim from `docs/designs/interactive-tui.md`, `AGENTS.md`, repo config
 
 ## PR grouping (4 PRs)
 
-| PR | Branch | Tasks | Dep |
-|----|--------|-------|-----|
-| PR-A | `feature/tui-settings-adapter` | Task 1 (`config-settings` adapter: descriptors + `buildSettingsFields` + `validateField` + `createSettingsDataSource`) | M2 |
-| PR-B | `feature/tui-input-capture` | Task 2 (`InputCaptureContext` + gate `AppRouter`'s `useInput` on `!captured`) | M2 |
-| PR-C | `feature/tui-settings-screen` | Task 3 (`SettingsScreen` render sections/fields + field-nav + capture-on-mount + Esc/route wiring) | PR-A, PR-B |
-| PR-D | `feature/tui-settings-edit` | Task 4 (field editing per kind + inline validation + dirty staging + Ctrl+S Save / discard) | PR-C |
+| PR   | Branch                         | Tasks                                                                                                                  | Dep        |
+| ---- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------- | ---------- |
+| PR-A | `feature/tui-settings-adapter` | Task 1 (`config-settings` adapter: descriptors + `buildSettingsFields` + `validateField` + `createSettingsDataSource`) | M2         |
+| PR-B | `feature/tui-input-capture`    | Task 2 (`InputCaptureContext` + gate `AppRouter`'s `useInput` on `!captured`)                                          | M2         |
+| PR-C | `feature/tui-settings-screen`  | Task 3 (`SettingsScreen` render sections/fields + field-nav + capture-on-mount + Esc/route wiring)                     | PR-A, PR-B |
+| PR-D | `feature/tui-settings-edit`    | Task 4 (field editing per kind + inline validation + dirty staging + Ctrl+S Save / discard)                            | PR-C       |
 
 ## File Structure
+
 ```
 packages/cli/src/tui/
   adapters/config-settings.ts     descriptors + buildSettingsFields + validateField + createSettingsDataSource (NEW)
@@ -69,23 +70,24 @@ packages/cli/src/tui/
 **Files:** Create `packages/cli/src/tui/adapters/config-settings.ts`; Test `packages/cli/tests/unit/tui/config-settings.test.ts`.
 
 **Produces:**
+
 ```ts
 export type SettingsFieldKind = "string" | "number" | "boolean" | "enum";
 
 export interface SettingsFieldDescriptor {
-  readonly path: string;                 // dot-path, e.g. "defaults.maxRounds"
-  readonly section: string;              // e.g. "Defaults"
-  readonly label: string;                // e.g. "Max rounds"
+  readonly path: string; // dot-path, e.g. "defaults.maxRounds"
+  readonly section: string; // e.g. "Defaults"
+  readonly label: string; // e.g. "Max rounds"
   readonly kind: SettingsFieldKind;
-  readonly min?: number;                 // number kind
-  readonly max?: number;                 // number kind
-  readonly integer?: boolean;            // number kind
-  readonly options?: readonly string[];  // enum kind
-  readonly optional?: boolean;           // string kind (may be empty)
+  readonly min?: number; // number kind
+  readonly max?: number; // number kind
+  readonly integer?: boolean; // number kind
+  readonly options?: readonly string[]; // enum kind
+  readonly optional?: boolean; // string kind (may be empty)
 }
 
 export interface SettingsFieldState extends SettingsFieldDescriptor {
-  readonly value: string;                // current value rendered as a string ("" when unset)
+  readonly value: string; // current value rendered as a string ("" when unset)
 }
 
 export type ValidateResult =
@@ -94,39 +96,152 @@ export type ValidateResult =
 
 export interface SettingsDataSource {
   readonly load: () => Promise<readonly SettingsFieldState[]>;
-  readonly save: (changes: readonly { readonly path: string; readonly value: string | number | boolean }[]) => Promise<void>;
+  readonly save: (
+    changes: readonly { readonly path: string; readonly value: string | number | boolean }[],
+  ) => Promise<void>;
 }
 
-export const SETTINGS_FIELDS: readonly SettingsFieldDescriptor[];   // the descriptor list (the 18 scalar fields above, in section order)
-export function readFieldValue(config: unknown, path: string): string;   // dot-path read → string ("" if missing/undefined)
+export const SETTINGS_FIELDS: readonly SettingsFieldDescriptor[]; // the descriptor list (the 18 scalar fields above, in section order)
+export function readFieldValue(config: unknown, path: string): string; // dot-path read → string ("" if missing/undefined)
 export function validateField(field: SettingsFieldDescriptor, raw: string): ValidateResult;
 export function buildSettingsFields(config: unknown): readonly SettingsFieldState[];
 export function createSettingsDataSource(deps: {
   readonly loadConfig: () => Promise<unknown>;
-  readonly updateConfigFields: (updates: readonly { readonly key: string; readonly value: string | number | boolean }[]) => Promise<void>;
+  readonly updateConfigFields: (
+    updates: readonly { readonly key: string; readonly value: string | number | boolean }[],
+  ) => Promise<void>;
 }): SettingsDataSource;
 ```
 
 **`SETTINGS_FIELDS`** — define all 18 descriptors from the verified schema (section/label/kind/constraints), e.g.:
+
 ```ts
 export const SETTINGS_FIELDS: readonly SettingsFieldDescriptor[] = [
   { path: "defaults.model", section: "Defaults", label: "Default model", kind: "string" },
-  { path: "defaults.engine", section: "Defaults", label: "Engine", kind: "enum", options: ["copilot", "mock", "openai", "anthropic"] },
-  { path: "defaults.maxRounds", section: "Defaults", label: "Max rounds", kind: "number", integer: true, min: 1, max: 20 },
-  { path: "defaults.maxExperts", section: "Defaults", label: "Max experts", kind: "number", integer: true, min: 2, max: 8 },
-  { path: "defaults.maxWordsPerResponse", section: "Defaults", label: "Max words/response", kind: "number", integer: true, min: 50, max: 2000 },
+  {
+    path: "defaults.engine",
+    section: "Defaults",
+    label: "Engine",
+    kind: "enum",
+    options: ["copilot", "mock", "openai", "anthropic"],
+  },
+  {
+    path: "defaults.maxRounds",
+    section: "Defaults",
+    label: "Max rounds",
+    kind: "number",
+    integer: true,
+    min: 1,
+    max: 20,
+  },
+  {
+    path: "defaults.maxExperts",
+    section: "Defaults",
+    label: "Max experts",
+    kind: "number",
+    integer: true,
+    min: 2,
+    max: 8,
+  },
+  {
+    path: "defaults.maxWordsPerResponse",
+    section: "Defaults",
+    label: "Max words/response",
+    kind: "number",
+    integer: true,
+    min: 50,
+    max: 2000,
+  },
   { path: "telemetry.enabled", section: "Telemetry", label: "Telemetry enabled", kind: "boolean" },
-  { path: "providers.openai.apiKeyEnvVar", section: "Providers", label: "OpenAI API key env var", kind: "string", optional: true },
-  { path: "providers.anthropic.apiKeyEnvVar", section: "Providers", label: "Anthropic API key env var", kind: "string", optional: true },
-  { path: "expert.recencyHalfLifeDays", section: "Expert", label: "Memory recency half-life (days)", kind: "number", integer: true, min: 1, max: 365 },
-  { path: "documents.aiExtraction", section: "Documents", label: "AI extraction", kind: "enum", options: ["off", "ask", "auto"] },
-  { path: "documents.maxFileSizeMB", section: "Documents", label: "Max file size (MB)", kind: "number", min: 1, max: 500 },
-  { path: "chat.recentTurnCount", section: "Chat", label: "Recent turns kept", kind: "number", integer: true, min: 5, max: 50 },
-  { path: "chat.summaryMaxWords", section: "Chat", label: "Summary max words", kind: "number", integer: true, min: 100, max: 2000 },
-  { path: "chat.longConversationWarning", section: "Chat", label: "Long-conversation warning", kind: "number", integer: true, min: 50, max: 10000 },
-  { path: "conclude.maxTranscriptChars", section: "Conclude", label: "Max transcript chars", kind: "number", min: 1000, max: 1000000 },
-  { path: "qualityGate.mode", section: "Quality Gate", label: "Mode", kind: "enum", options: ["off", "warn", "regenerate"] },
-  { path: "qualityGate.maxRegenerations", section: "Quality Gate", label: "Max regenerations", kind: "number", integer: true, min: 0, max: 3 },
+  {
+    path: "providers.openai.apiKeyEnvVar",
+    section: "Providers",
+    label: "OpenAI API key env var",
+    kind: "string",
+    optional: true,
+  },
+  {
+    path: "providers.anthropic.apiKeyEnvVar",
+    section: "Providers",
+    label: "Anthropic API key env var",
+    kind: "string",
+    optional: true,
+  },
+  {
+    path: "expert.recencyHalfLifeDays",
+    section: "Expert",
+    label: "Memory recency half-life (days)",
+    kind: "number",
+    integer: true,
+    min: 1,
+    max: 365,
+  },
+  {
+    path: "documents.aiExtraction",
+    section: "Documents",
+    label: "AI extraction",
+    kind: "enum",
+    options: ["off", "ask", "auto"],
+  },
+  {
+    path: "documents.maxFileSizeMB",
+    section: "Documents",
+    label: "Max file size (MB)",
+    kind: "number",
+    min: 1,
+    max: 500,
+  },
+  {
+    path: "chat.recentTurnCount",
+    section: "Chat",
+    label: "Recent turns kept",
+    kind: "number",
+    integer: true,
+    min: 5,
+    max: 50,
+  },
+  {
+    path: "chat.summaryMaxWords",
+    section: "Chat",
+    label: "Summary max words",
+    kind: "number",
+    integer: true,
+    min: 100,
+    max: 2000,
+  },
+  {
+    path: "chat.longConversationWarning",
+    section: "Chat",
+    label: "Long-conversation warning",
+    kind: "number",
+    integer: true,
+    min: 50,
+    max: 10000,
+  },
+  {
+    path: "conclude.maxTranscriptChars",
+    section: "Conclude",
+    label: "Max transcript chars",
+    kind: "number",
+    min: 1000,
+    max: 1000000,
+  },
+  {
+    path: "qualityGate.mode",
+    section: "Quality Gate",
+    label: "Mode",
+    kind: "enum",
+    options: ["off", "warn", "regenerate"],
+  },
+  {
+    path: "qualityGate.maxRegenerations",
+    section: "Quality Gate",
+    label: "Max regenerations",
+    kind: "number",
+    integer: true,
+    min: 0,
+    max: 3,
+  },
   { path: "paths.dataHome", section: "Paths", label: "Data home", kind: "string" },
 ];
 ```
@@ -134,6 +249,7 @@ export const SETTINGS_FIELDS: readonly SettingsFieldDescriptor[] = [
 **`readFieldValue(config, path)`**: walk the dot-path over `config` (guarding non-object/undefined at each step); return the value `String(...)` (booleans → "true"/"false", numbers → String, strings as-is); missing/undefined → `""`.
 
 **`validateField(field, raw)`** (mirror the CLI coercion):
+
 - `string`: `const v = raw.trim();` if `v === "" && !field.optional` → `{ ok:false, error:"Required" }`; reject control chars (`/[\u0000-\u001f]/` → `{ ok:false, error:"No control characters" }`); else `{ ok:true, value:v }`.
 - `number` (mirror the CLI's `parseIntegerConfigValue` for integer fields; `Number()` for the non-int `z.number()` fields):
   - if `field.integer` (the fields the CLI routes through `parseIntegerConfigValue`: `defaults.maxRounds/maxExperts/maxWordsPerResponse`, `chat.recentTurnCount/summaryMaxWords/longConversationWarning`, `expert.recencyHalfLifeDays`, `qualityGate.maxRegenerations`): require the trimmed input to match a plain optionally-signed decimal integer (the regex `^[+-]?[0-9]+$`) — this rejects empty/whitespace, hex (`0x2`), exponent (`1e3`), and fractional (`1.0`) forms exactly as the CLI's `parseIntegerConfigValue` does — else `{ ok:false, error:"Must be a whole number" }`; then `const n = Number.parseInt(raw.trim(), 10)`.
@@ -158,11 +274,16 @@ export const SETTINGS_FIELDS: readonly SettingsFieldDescriptor[] = [
 **Files:** Create `packages/cli/src/tui/components/InputCaptureProvider.tsx`; Modify `packages/cli/src/tui/router/AppRouter.tsx`; Tests `packages/cli/tests/unit/tui/input-capture.test.tsx` + extend `app-router.test.tsx`.
 
 **Produces:**
+
 ```ts
-export interface InputCapture { readonly captured: boolean; readonly setCaptured: (v: boolean) => void; }
+export interface InputCapture {
+  readonly captured: boolean;
+  readonly setCaptured: (v: boolean) => void;
+}
 export function InputCaptureProvider(props: { children: React.ReactNode }): React.ReactElement;
-export function useInputCapture(): InputCapture;   // returns { captured:false, setCaptured: noop } if no provider (safe default)
+export function useInputCapture(): InputCapture; // returns { captured:false, setCaptured: noop } if no provider (safe default)
 ```
+
 - `InputCaptureProvider` holds `useState(false)`; provides `{ captured, setCaptured }`.
 - `AppRouter` calls `const { captured } = useInputCapture();` and gates its hook: `useInput((input, key) => { … }, { isActive: mode === "nav" && !captured });` (keep the existing `mode !== "palette"` semantics — combine: active only when `mode === "nav" && !captured`; help/palette already render their own handlers). **Confirm existing AppRouter tests still pass** (when `captured` is false, behavior is unchanged).
 - `CouncilTUI` wraps the app in `<InputCaptureProvider>` (around `<AppRouter/>`, inside `MemoryRouter` is fine; or in `index.tsx` around `<CouncilTUI/>` — pick one; the provider must enclose both `AppRouter` and the routed screens so `SettingsScreen` and `AppRouter` share the same context).
@@ -177,6 +298,7 @@ export function useInputCapture(): InputCapture;   // returns { captured:false, 
 **Files:** Create `packages/cli/src/tui/screens/SettingsScreen.tsx`; Modify `DataProvider.tsx` (`settings?: SettingsDataSource`), `AppRouter.tsx` (`/settings` → `SettingsScreen`), `index.tsx` (glue); Test `packages/cli/tests/unit/tui/settings-screen.test.tsx` + update `app-router.test.tsx`.
 
 **Behavior (render + navigate; editing is PR-D):**
+
 - `const settings = useData().settings as SettingsDataSource | undefined;` stable empty-loader fallback; `useAsyncResource(load)`; loading/error/loaded states.
 - On the loaded state, render fields grouped by `section` (a section header line, then each field `label: value`, value via `toSingleLineDisplay`). Track a `cursor` index over the flat field list; the selected field row is inverse. `↑/k` and `↓/j` and `Tab`/`Shift+Tab` move the cursor (clamped). **Capture input on mount**: `const { setCaptured } = useInputCapture(); useEffect(() => { setCaptured(true); return () => setCaptured(false); }, [setCaptured]);` so the screen owns all keys while active (AppRouter gated).
 - `Esc` → `navigate(-1)` (the screen owns Esc now, since AppRouter is gated while captured). `?`-help/`\`-nav are intentionally inactive on Settings (you're in a focused form; Esc exits).
@@ -192,6 +314,7 @@ export function useInputCapture(): InputCapture;   // returns { captured:false, 
 **Files:** Modify `SettingsScreen.tsx`; Test extend `settings-screen.test.tsx`.
 
 **Behavior:**
+
 - A `mode: "nav" | "edit"` within the screen + a `draft: Map<path,string>` of staged edits + a per-field `error?: string`.
 - In `nav` mode: `Enter` on the selected field enters `edit` mode. `Ctrl+S` saves (below). `Esc` → if there are staged changes, discard them and stay (or just `navigate(-1)`; keep it simple: `Esc` in nav → `navigate(-1)`).
 - In `edit` mode, by field `kind`:
@@ -209,18 +332,21 @@ export function useInputCapture(): InputCapture;   // returns { captured:false, 
 > Keep any non-trivial coercion/validation logic in the tested `config-settings.ts` (`validateField`) — the screen only orchestrates modes + calls `validateField`/`save`. `ink-text-input` was validated under Ink 7 in M0; if its keystroke handling needs `isActive`, gate it on `mode === "edit"`.
 
 ## Self-Review
+
 1. **Spec coverage (design §4.8 / story epic B):** change default model/engine/rounds/experts/words → Task 1 fields + Task 4; toggle telemetry, tune chat/conclude/documents/expert/qualityGate → fields; provider env-var NAME → `providers.*.apiKeyEnvVar` field; inline validation before save → `validateField` + Task 4. Arrays (`supportedFormats`) intentionally out of M3 scope (note in PR descriptions).
 2. **Placeholder scan:** none — adapter fully coded; screen behavior concrete.
 3. **Type consistency:** `SettingsFieldDescriptor`/`SettingsFieldState`/`ValidateResult`/`SettingsDataSource` defined once; `save` takes `{path,value}` mapped to `{key,value}` for `updateConfigFields`.
 
 ## Risks & Mitigations
-| Risk | Mitigation |
-|------|-----------|
-| Editing keys double-dispatch with AppRouter global keys | Input-capture context (Task 2) gates AppRouter while Settings is active; tested. |
-| `updateConfigFields` throws on schema-invalid input | `validateField` pre-validates per field (mirrors schema); Save also catches the thrown formatted error and shows it. |
-| `ink-text-input` behavior under Ink 7 | Validated in M0; gate its activity on `mode==="edit"`; if problematic, fall back to the M0 `MultilineInput` single-line. |
-| Settings as screen vs design's "overlay" | M3 ships a route-based `SettingsScreen` (consistent with M2); the floating-overlay treatment is deferred to a11y polish (9.9). Note in the PR. |
-| Arrays (`supportedFormats`) not editable | Out of scope for M3; document; a later PR can add list editing. |
+
+| Risk                                                    | Mitigation                                                                                                                                     |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Editing keys double-dispatch with AppRouter global keys | Input-capture context (Task 2) gates AppRouter while Settings is active; tested.                                                               |
+| `updateConfigFields` throws on schema-invalid input     | `validateField` pre-validates per field (mirrors schema); Save also catches the thrown formatted error and shows it.                           |
+| `ink-text-input` behavior under Ink 7                   | Validated in M0; gate its activity on `mode==="edit"`; if problematic, fall back to the M0 `MultilineInput` single-line.                       |
+| Settings as screen vs design's "overlay"                | M3 ships a route-based `SettingsScreen` (consistent with M2); the floating-overlay treatment is deferred to a11y polish (9.9). Note in the PR. |
+| Arrays (`supportedFormats`) not editable                | Out of scope for M3; document; a later PR can add list editing.                                                                                |
 
 ## Execution Handoff
+
 Plan saved to `docs/superpowers/plans/2026-06-23-tui-m3-settings-plan.md`. Execute via **subagent-driven-development**: PR-A and PR-B can run in parallel (independent); PR-C after both; PR-D after PR-C. One delegated implementer per PR (stops at "PR opened"); the parent invokes Sentinel per PR and merges on APPROVED/CONDITIONAL.

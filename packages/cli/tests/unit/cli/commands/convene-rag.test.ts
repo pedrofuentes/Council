@@ -83,7 +83,12 @@ async function seedExpert(env: TestEnv, def: ExpertDefinition): Promise<void> {
 
 async function indexDoc(
   env: TestEnv,
-  doc: { readonly content: string; readonly sourceType: "expert" | "panel"; readonly sourceSlug: string; readonly filePath: string },
+  doc: {
+    readonly content: string;
+    readonly sourceType: "expert" | "panel";
+    readonly sourceSlug: string;
+    readonly filePath: string;
+  },
 ): Promise<void> {
   const db = await createDatabase(path.join(env.home, "council.db"));
   try {

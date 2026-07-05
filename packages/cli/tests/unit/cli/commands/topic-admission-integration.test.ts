@@ -477,8 +477,7 @@ describe("topic admission — chat integration", () => {
       },
       writeError: () => undefined,
       engineFactory: () => new MockEngine(),
-      inputProvider: () =>
-        scriptedInput(["@convene Compare red  and blue options", "/quit"]),
+      inputProvider: () => scriptedInput(["@convene Compare red  and blue options", "/quit"]),
     });
     await cmd.parseAsync(["node", "council-chat", "duo", "--engine", "mock"]);
 

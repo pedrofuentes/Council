@@ -300,15 +300,19 @@ describe.sequential("output formats e2e", () => {
 
     // Both should produce the same event kinds in the same order
     expect(exportKinds).toEqual(resumeKinds);
-    
+
     // Verify payload subsets match — at minimum expertId/expertSlug for turn events
     for (let i = 0; i < exportEvents.length; i++) {
       const exportEvent = exportEvents[i];
       const resumeEvent = resumeEvents[i];
       if (!exportEvent || !resumeEvent) continue;
-      
+
       // For turn events, verify expertSlug matches
-      if (exportEvent.kind === "turn.start" || exportEvent.kind === "turn.end" || exportEvent.kind === "turn.delta") {
+      if (
+        exportEvent.kind === "turn.start" ||
+        exportEvent.kind === "turn.end" ||
+        exportEvent.kind === "turn.delta"
+      ) {
         expect(exportEvent.expertSlug).toBe(resumeEvent.expertSlug);
       }
     }

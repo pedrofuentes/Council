@@ -24,8 +24,9 @@ export function CommandPalette(props: CommandPaletteProps): React.ReactElement {
   const results = useMemo(() => {
     return props.commands
       .map((cmd) => ({ cmd, match: fuzzyMatch(query, cmd.label) }))
-      .filter((r): r is { cmd: PaletteCommand; match: { score: number; positions: readonly number[] } } =>
-        r.match !== null,
+      .filter(
+        (r): r is { cmd: PaletteCommand; match: { score: number; positions: readonly number[] } } =>
+          r.match !== null,
       )
       .sort((a, b) => b.match.score - a.match.score);
   }, [props.commands, query]);

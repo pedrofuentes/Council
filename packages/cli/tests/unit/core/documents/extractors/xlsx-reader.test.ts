@@ -497,7 +497,9 @@ describe("xlsx-reader: readXlsxSheets", () => {
       styles:
         `<numFmts count="1"><numFmt numFmtId="164" formatCode="[Red]0"/></numFmts>` +
         '<cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="164"/></cellXfs>',
-      sheets: [{ name: "Bracketed", sheetData: '<row r="1"><c r="A1" s="1"><v>45306</v></c></row>' }],
+      sheets: [
+        { name: "Bracketed", sheetData: '<row r="1"><c r="A1" s="1"><v>45306</v></c></row>' },
+      ],
     });
     const sheets = await readXlsxSheets(buf);
     expect(sheets[0]?.rows).toEqual([["45306"]]);

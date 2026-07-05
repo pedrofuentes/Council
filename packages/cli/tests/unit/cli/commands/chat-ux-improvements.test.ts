@@ -244,8 +244,12 @@ describe("Chat UX Improvements (T-08)", () => {
       const cmd = buildChatCommand({});
       let helpOutput = "";
       cmd.configureOutput({
-        writeOut: (str) => { helpOutput += str; },
-        writeErr: (str) => { helpOutput += str; },
+        writeOut: (str) => {
+          helpOutput += str;
+        },
+        writeErr: (str) => {
+          helpOutput += str;
+        },
       });
       try {
         cmd.help({ error: false });
@@ -259,8 +263,12 @@ describe("Chat UX Improvements (T-08)", () => {
       const cmd = buildChatCommand({});
       let helpOutput = "";
       cmd.configureOutput({
-        writeOut: (str) => { helpOutput += str; },
-        writeErr: (str) => { helpOutput += str; },
+        writeOut: (str) => {
+          helpOutput += str;
+        },
+        writeErr: (str) => {
+          helpOutput += str;
+        },
       });
       try {
         cmd.help({ error: false });
@@ -274,8 +282,12 @@ describe("Chat UX Improvements (T-08)", () => {
       const cmd = buildChatCommand({});
       let helpOutput = "";
       cmd.configureOutput({
-        writeOut: (str) => { helpOutput += str; },
-        writeErr: (str) => { helpOutput += str; },
+        writeOut: (str) => {
+          helpOutput += str;
+        },
+        writeErr: (str) => {
+          helpOutput += str;
+        },
       });
       try {
         cmd.help({ error: false });

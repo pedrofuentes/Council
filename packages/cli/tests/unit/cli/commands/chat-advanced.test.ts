@@ -1077,9 +1077,7 @@ describe("appendReferenceDocuments — per-document delimiter wrapping (T16)", (
     expect(out).toContain("quarterly-report.xlsx");
     expect(out).toContain("built-in xlsx parser");
     // Provenance line uses the documented [from: …] convention.
-    expect(out).toMatch(
-      /\[from: quarterly-report\.xlsx, extracted via: built-in xlsx parser\]/,
-    );
+    expect(out).toMatch(/\[from: quarterly-report\.xlsx, extracted via: built-in xlsx parser\]/);
   });
 
   it("omits the provenance line when extractionMethod is absent (backward compatible)", () => {
@@ -1916,11 +1914,9 @@ describe("long conversation warning (chat.longConversationWarning)", () => {
     await seedExpert(env);
     await writeConfigYaml(env, "chat:\n  longConversationWarning: 500\n");
 
-    const spy = vi
-      .spyOn(ChatRepository.prototype, "getTurnCount")
-      .mockImplementation(async () => {
-        throw new Error("simulated seed getTurnCount failure");
-      });
+    const spy = vi.spyOn(ChatRepository.prototype, "getTurnCount").mockImplementation(async () => {
+      throw new Error("simulated seed getTurnCount failure");
+    });
 
     let out = "";
     const cmd = buildChatCommand({
@@ -2918,32 +2914,32 @@ describe("graceful SIGINT handling (PRD §F4)", () => {
     };
 
     let nextCalls = 0;
-    const runSpy = vi
-      .spyOn(Debate.prototype, "run")
-      .mockImplementation(function (this: Debate): AsyncIterable<DebateEvent> {
-        return {
-          [Symbol.asyncIterator](): AsyncIterator<DebateEvent> {
-            return {
-              next(): Promise<IteratorResult<DebateEvent>> {
-                nextCalls += 1;
-                // First poll: schedule the SIGINT so the abort wins
-                // the Promise.race in runInlineDebate. Then return a
-                // promise that never resolves — the abort path is the
-                // only way out of the loop.
-                if (nextCalls === 1) {
-                  setTimeout(() => triggerInterrupt?.(), 5);
-                }
-                return new Promise<IteratorResult<DebateEvent>>(() => {
-                  /* never resolves */
-                });
-              },
-              return(): Promise<IteratorResult<DebateEvent>> {
-                return Promise.reject(new Error("simulated cleanup failure"));
-              },
-            };
-          },
-        };
-      });
+    const runSpy = vi.spyOn(Debate.prototype, "run").mockImplementation(function (
+      this: Debate,
+    ): AsyncIterable<DebateEvent> {
+      return {
+        [Symbol.asyncIterator](): AsyncIterator<DebateEvent> {
+          return {
+            next(): Promise<IteratorResult<DebateEvent>> {
+              nextCalls += 1;
+              // First poll: schedule the SIGINT so the abort wins
+              // the Promise.race in runInlineDebate. Then return a
+              // promise that never resolves — the abort path is the
+              // only way out of the loop.
+              if (nextCalls === 1) {
+                setTimeout(() => triggerInterrupt?.(), 5);
+              }
+              return new Promise<IteratorResult<DebateEvent>>(() => {
+                /* never resolves */
+              });
+            },
+            return(): Promise<IteratorResult<DebateEvent>> {
+              return Promise.reject(new Error("simulated cleanup failure"));
+            },
+          };
+        },
+      };
+    });
 
     let out = "";
     const lines: readonly string[] = ["@convene should we ship?", "/quit"];
@@ -3347,7 +3343,6 @@ describe("missing-YAML fallback (PRD §F4)", () => {
     expect(err).toMatch(/"no-such-slug" not found as expert or panel/);
   });
 });
-
 
 describe("panel chat with convene-generated timestamp names (T-04)", () => {
   let env: TestEnv;

@@ -84,9 +84,8 @@ vi.mock("@github/copilot-sdk", () => {
 });
 
 const { discoverAvailableModels } = await import("../../../../src/engine/copilot/adapter.js");
-const { discoverAvailableModels: discoverAvailableModelsFromHealth } = await import(
-  "../../../../src/engine/copilot/health.js"
-);
+const { discoverAvailableModels: discoverAvailableModelsFromHealth } =
+  await import("../../../../src/engine/copilot/health.js");
 
 function createMockModelInfo(id: string): MockModelInfo {
   return { id, name: id, capabilities: {} };

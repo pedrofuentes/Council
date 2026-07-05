@@ -23,7 +23,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildReviewCommand } from "../../../../src/cli/commands/review.js";
 import { setQuiet } from "../../../../src/cli/commands/writer.js";
-import type { CouncilEngine, EngineEvent, ExpertSpec, SendOptions } from "../../../../src/engine/index.js";
+import type {
+  CouncilEngine,
+  EngineEvent,
+  ExpertSpec,
+  SendOptions,
+} from "../../../../src/engine/index.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
 
 // ---------------------------------------------------------------------------
@@ -179,14 +184,7 @@ describe("review — config.qualityGate threading (regression #1514)", () => {
       writeError: () => undefined,
     });
 
-    await cmd.parseAsync([
-      "node",
-      "council-review",
-      "--diff-file",
-      diffFile,
-      "--max-rounds",
-      "1",
-    ]);
+    await cmd.parseAsync(["node", "council-review", "--diff-file", diffFile, "--max-rounds", "1"]);
 
     // PlainRenderer emits: "<warn-sym> quality gate: <name> response flagged (<failures>)\n"
     // Assert on the invariant substring that appears regardless of ANSI codes or
@@ -225,14 +223,7 @@ describe("review — config.qualityGate threading (regression #1514)", () => {
       writeError: () => undefined,
     });
 
-    await cmd.parseAsync([
-      "node",
-      "council-review",
-      "--diff-file",
-      diffFile,
-      "--max-rounds",
-      "1",
-    ]);
+    await cmd.parseAsync(["node", "council-review", "--diff-file", diffFile, "--max-rounds", "1"]);
 
     expect(stdout).not.toContain("quality gate:");
   });

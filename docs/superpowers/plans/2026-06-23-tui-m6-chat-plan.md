@@ -9,6 +9,7 @@
 **Tech Stack:** TypeScript ESM, Ink 7, React 19, `ink-text-input`, `react-router`, Vitest + `ink-testing-library` + `MockEngine`.
 
 ## Global Constraints (every task implicitly includes these)
+
 - Node ≥ 24; ESM; **`.js` import specifiers**; `.tsx` starts with `import React from "react";`.
 - Named exports only; explicit return types; `interface` for object shapes; `readonly` default; **no `any`**.
 - **TDD (Sentinel-enforced):** the `test(scope)` commit (tests ONLY, RED-confirmed) precedes its `feat(scope)` commit. Never combine.
@@ -23,6 +24,7 @@
 - **Per increment:** worktree off `main`; `pnpm install --frozen-lockfile`; `pnpm test`+`lint`+`typecheck` before PR; PARENT invokes Sentinel; merge on APPROVED/CONDITIONAL. Delegated implementers STOP after opening the PR (report PR URL + HEAD SHA).
 
 ## Verified seams (against `main` 2026-06-23 — source of truth)
+
 - **Streaming primitive**: `engine.send(options: SendOptions): AsyncIterable<EngineEvent>` (`src/engine/types.ts:125-155`). `EngineEvent = { kind:"message.delta"; expertId; text } | { kind:"message.complete"; expertId; response } | { kind:"error"; expertId; error; recoverable }`. `SendOptions` has `{ expertId; prompt; signal?: AbortSignal; ... }`. Assemble the turn by concatenating `message.delta.text` until `message.complete`; on `error` (incl. `code:"ABORTED"`) stop.
 - **Consumer abort wrapper**: `takeUntilAborted(iterable, signal)` (`src/cli/commands/chat/take-until-aborted.ts:31-73`) — races `next()` against abort + calls `iterator.return()`. Reuse it (do not hand-roll).
 - **CLI chat loops to mirror (reuse their core, don't fork)**: `runExpertChat` (`src/cli/commands/chat/expert-chat.ts:60-170`; engine built `82-83`, `start` `86`, `addExpert` `115`, per-turn stream `323-337`, persist `388-393`, `stop` in finally `165-168`); `runPanelChat` (`src/cli/commands/chat/panel-chat.ts:79-265`; fan-out `406-460`, `collectSendWithEmptyRetry` `486-498`, persist `537-543`). Inline `@convene` → `runInlineDebate` (`panel-chat.ts:634-845`, streams `debate.run` events).
@@ -35,27 +37,35 @@
 ---
 
 ## Task 1 (PR-A) — `chat-engine` streaming adapter (offline, 100% branch)
+
 Wrap the streaming primitive so screens never touch `engine.send` directly.
+
 - [ ] **RED** `tests/unit/tui/chat-engine.test.ts`: `streamTurn(engine, { expertId, prompt, signal }, onDelta): Promise<{ text: string; aborted: boolean }>` — assembles `message.delta` text, calls `onDelta(chunk)` per delta, resolves with the full text on `message.complete`; on an `error` event with `code:"ABORTED"` resolves `{ aborted:true }` (no throw); on a non-abort `error` event REJECTS with a sanitized Error. Drive it with a `StubEngine`/`MockEngine` yielding scripted events (delta×N→complete; delta→ABORTED error; delta→fatal error). Use `takeUntilAborted` internally. Cover EVERY branch. Confirm RED.
 - [ ] **GREEN** `src/tui/adapters/chat-engine.ts`. Commit. 100% branch via `--coverage.include`.
 
 ## Task 2 (PR-B) — `chat-session` adapter (history + routing, offline, 100% branch)
+
 - [ ] **RED** `tests/unit/tui/chat-session.test.ts`: `createChatSessionSource({ chat: ChatRepository, expertExists })` → `loadHistory(targetType, targetSlug): Promise<{ session?; turns: ChatTurnView[] }>` (findActiveSession + getTurns, sanitized views), `route(input, availableSlugs)` (wraps `parseUserInput` → `{ type; targetSlugs; content }`), `persistTurn(sessionId, { user, expert })` (persistTurnPair), `ensureSession(targetType, targetSlug)` (findActive or createSession). Real temp DB (`createDatabase`+`copyTemplateDb`) + real `ChatRepository`. Cover general/mention/convene routing + history empty/non-empty. Confirm RED → GREEN → 100%.
 
 ## Task 3 (PR-C) — `ExpertChatScreen` (1:1 streaming) at `/chat/expert/:slug`
+
 - [ ] **RED** `tests/unit/tui/expert-chat-screen.test.tsx` (fake chat-session + an injected MockEngine/StubEngine engineFactory) + AppRouter integration. Cover: on mount loads history (renders prior turns) + `engine.start()` + `addExpert`; typing a message + Enter streams the reply token-by-token (assert intermediate partial frame then final) and persists the turn pair on completion; a `streaming` ref blocks a second send mid-stream; **Esc/Ctrl-C while streaming CANCELS** (aborts; turn NOT persisted; stays on screen); **idle Esc navigates back** (back-stack route, bites); unmount aborts + `engine.stop()` (no state update after unmount); a non-abort stream error → sanitized inline error. Confirm RED.
 - [ ] **GREEN** `src/tui/screens/ExpertChatScreen.tsx` (input-capture message field; transcript via `ScrollView follow`; thinking pill while streaming; an `AbortController` per turn + a `streaming` ref + an `unmounted` ref); route `chatExpert: "/chat/expert/:slug"`; AppRouter route; inline-wire a `chatEngineFactory` + the chat-session source + experts source in `index.tsx`; `DataProvider` += `chat?` (session source) — engine factory passed via a screen prop or a dedicated `chatEngineFactory` on TuiDataSources. Sanitize. Commit.
 
 ## Task 4 (PR-D) — `PanelChatScreen` (panel + @mention) at `/chat/panel/:name`
+
 - [ ] **RED** `tests/unit/tui/panel-chat-screen.test.tsx`: loads panel members + history; a `@mention` routes to that expert (assert `send` got the mentioned expertId); a general message fans out to responding members (sequential streamed turns, each persisted); the same streaming/cancel/idle-Esc/unmount guards as PR-C (biting). Confirm RED → GREEN. Route `chatPanel: "/chat/panel/:name"`; AppRouter route; `m`/entry from PanelDetail. Reuse the PR-A/PR-B adapters + the PR-C transcript/streaming scaffold (extract a shared `useChatTurn` hook or `ChatTranscript` component if it reduces duplication — keep it tested).
 
 ## Task 5 (PR-E) — History entry points + resume + inline `@convene`
+
 - [ ] **RED** tests: the Chats route (`ROUTES.chats`) lists chat sessions (`listSessions`) and Enter opens the right `/chat/expert|panel/...` (resume loads history); from a panel/expert detail an entry opens chat; an inline `@convene <topic>` in panel chat triggers the convene flow (route to the 9.8 convene surface IF merged, else a clear "convene from chat" stub that the 9.8 milestone wires — do NOT engine-run a debate here unless 9.8 landed). Confirm RED → GREEN. Replace the `Chats` `PlaceholderScreen` with a real `ChatsScreen`.
 
 ## Closeout (docs PR)
+
 - [ ] Mark **9.7 ✅** in `ROADMAP.md` + `IMPLEMENTATION-PLAN.md` (heading + status table); add a `LEARNINGS.md` entry (streaming-cancel discipline, long-lived in-screen engine lifecycle, persist-only-on-complete); Sentinel (fast-path) → merge.
 
 ## Sequencing & notes
+
 - Order: **PR-A (stream adapter) → PR-B (session adapter) → PR-C (1:1 screen) → PR-D (panel screen, reuses C's scaffold) → PR-E (entry points/resume/@convene) → closeout.** C…E share `index.tsx`/`DataProvider`/AppRouter/routes + the transcript scaffold — rebase each on the prior merge.
 - **Engine-in-screen is the new risk** this milestone: a long-lived engine started on mount and stopped on unmount, with per-turn `AbortController`. Get the lifecycle + cancel + no-update-after-unmount RIGHT in PR-C (with biting tests) before PR-D copies it. The `MockEngine` makes all of this offline-deterministic.
 - Deferred (file as `sentinel:*` follow-ups, don't scope-creep): the IMPLEMENTATION-PLAN's "extract next-turn/stream primitives from runExpertChat/runPanelChat into `src/core/chat/*`" as a shared-with-CLI refactor (the TUI adapters wrap the existing primitives for now — a behavior-preserving core extraction is a separate PR); summary/context-manager integration; search; multi-pane.

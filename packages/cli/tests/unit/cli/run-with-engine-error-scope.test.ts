@@ -68,14 +68,14 @@ describe("runWithEngine — engine vs persistence/render error scoping (#195)", 
   });
 
   it("does NOT map a persistence error through formatEngineError", async () => {
-    vi.spyOn(DebatePersister.prototype, "persist").mockImplementation(
-      function (this: DebatePersister): AsyncIterable<DebateEvent> {
-        return (async function* (): AsyncGenerator<DebateEvent, void, void> {
-          yield { kind: "panel.assembled", experts: [] };
-          throw new Error("SQLITE_BUSY: database is locked");
-        })();
-      },
-    );
+    vi.spyOn(DebatePersister.prototype, "persist").mockImplementation(function (
+      this: DebatePersister,
+    ): AsyncIterable<DebateEvent> {
+      return (async function* (): AsyncGenerator<DebateEvent, void, void> {
+        yield { kind: "panel.assembled", experts: [] };
+        throw new Error("SQLITE_BUSY: database is locked");
+      })();
+    });
 
     let errOutput = "";
     await expect(

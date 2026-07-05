@@ -19,7 +19,13 @@ async function flush(): Promise<void> {
 describe("LeftNav", () => {
   it("shows labels when expanded and highlights the active item", () => {
     const { lastFrame, unmount } = render(
-      <LeftNav items={items} activeId="home" state="expanded" onSelect={() => undefined} theme={theme} />,
+      <LeftNav
+        items={items}
+        activeId="home"
+        state="expanded"
+        onSelect={() => undefined}
+        theme={theme}
+      />,
     );
     const frame = lastFrame() ?? "";
     expect(frame).toContain("Home");
@@ -28,8 +34,15 @@ describe("LeftNav", () => {
     unmount();
   });
 
-  it("shows only glyphs in rail mode", () => {    const { lastFrame, unmount } = render(
-      <LeftNav items={items} activeId="home" state="rail" onSelect={() => undefined} theme={theme} />,
+  it("shows only glyphs in rail mode", () => {
+    const { lastFrame, unmount } = render(
+      <LeftNav
+        items={items}
+        activeId="home"
+        state="rail"
+        onSelect={() => undefined}
+        theme={theme}
+      />,
     );
     const frame = lastFrame() ?? "";
     expect(frame).toContain("⌂");
@@ -40,7 +53,15 @@ describe("LeftNav", () => {
   it("selects the next item with j/down then Enter", async () => {
     let selected: string | undefined;
     const { stdin, unmount } = render(
-      <LeftNav items={items} activeId="home" state="expanded" onSelect={(id) => { selected = id; }} theme={theme} />,
+      <LeftNav
+        items={items}
+        activeId="home"
+        state="expanded"
+        onSelect={(id) => {
+          selected = id;
+        }}
+        theme={theme}
+      />,
     );
     await flush();
     stdin.write("j"); // -> Panels
@@ -54,7 +75,15 @@ describe("LeftNav", () => {
   it("moves up with k and wraps, then selects with Enter", async () => {
     let selected: string | undefined;
     const { stdin, unmount } = render(
-      <LeftNav items={items} activeId="home" state="expanded" onSelect={(id) => { selected = id; }} theme={theme} />,
+      <LeftNav
+        items={items}
+        activeId="home"
+        state="expanded"
+        onSelect={(id) => {
+          selected = id;
+        }}
+        theme={theme}
+      />,
     );
     await flush();
     stdin.write("k"); // wraps from Home(0) to Experts(2)
@@ -68,7 +97,15 @@ describe("LeftNav", () => {
   it("handles empty items list without crashing", async () => {
     let selected: string | undefined;
     const { stdin, unmount } = render(
-      <LeftNav items={[]} activeId="" state="expanded" onSelect={(id) => { selected = id; }} theme={theme} />,
+      <LeftNav
+        items={[]}
+        activeId=""
+        state="expanded"
+        onSelect={(id) => {
+          selected = id;
+        }}
+        theme={theme}
+      />,
     );
     await flush();
     stdin.write("j");
@@ -84,7 +121,15 @@ describe("LeftNav", () => {
   it("navigates with arrow keys (down and up)", async () => {
     let selected: string | undefined;
     const { stdin, unmount } = render(
-      <LeftNav items={items} activeId="home" state="expanded" onSelect={(id) => { selected = id; }} theme={theme} />,
+      <LeftNav
+        items={items}
+        activeId="home"
+        state="expanded"
+        onSelect={(id) => {
+          selected = id;
+        }}
+        theme={theme}
+      />,
     );
     await flush();
     stdin.write("\u001B[B"); // down arrow -> Panels
@@ -98,7 +143,15 @@ describe("LeftNav", () => {
   it("navigates up with arrow key and wraps", async () => {
     let selected: string | undefined;
     const { stdin, unmount } = render(
-      <LeftNav items={items} activeId="home" state="expanded" onSelect={(id) => { selected = id; }} theme={theme} />,
+      <LeftNav
+        items={items}
+        activeId="home"
+        state="expanded"
+        onSelect={(id) => {
+          selected = id;
+        }}
+        theme={theme}
+      />,
     );
     await flush();
     stdin.write("\u001B[A"); // up arrow wraps to Experts

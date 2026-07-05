@@ -410,7 +410,8 @@ describe("ChatRenderer", () => {
       // per-line rendering approach works correctly.
       const sink = new StringSink();
       const renderer = createChatRenderer({ sink, experts: makeExperts() });
-      const multiLineSummary = "2 files unchanged\n✓ Indexed report.pdf (12 pages)\n✗ broken.pdf: File appears corrupted";
+      const multiLineSummary =
+        "2 files unchanged\n✓ Indexed report.pdf (12 pages)\n✗ broken.pdf: File appears corrupted";
       for (const line of multiLineSummary.split("\n")) {
         if (line.length > 0) {
           renderer.showSystem(line, "info");

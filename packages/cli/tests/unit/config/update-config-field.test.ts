@@ -20,8 +20,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 import { loadConfig, updateConfigField } from "../../../src/config/index.js";
 
-const sleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -295,16 +294,16 @@ describe("updateConfigField", () => {
 
     const renameError = new Error("rename failed");
     let tmpPath: string | undefined;
-    const renameSpy = vi.mocked(fs.rename).mockImplementation(
-      async (...args: Parameters<typeof fs.rename>) => {
+    const renameSpy = vi
+      .mocked(fs.rename)
+      .mockImplementation(async (...args: Parameters<typeof fs.rename>) => {
         const [fromPath, toPath] = args;
         if (toPath === configPath && isUniqueTempPath(fromPath, configPath)) {
           tmpPath = fromPath;
           throw renameError;
         }
         return actualFs.rename(...args);
-      },
-    );
+      });
 
     await expect(updateConfigField("defaults.model", "gpt-5")).rejects.toThrow("rename failed");
     await expect(fs.readFile(configPath, "utf-8")).resolves.toBe(original);

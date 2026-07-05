@@ -29,11 +29,7 @@ function asArray(value: unknown): readonly unknown[] {
 }
 
 function escapeCell(text: string): string {
-  return text
-    .replace(/\\/g, "\\\\")
-    .replace(/\|/g, "\\|")
-    .replace(/\r?\n/g, " ")
-    .trim();
+  return text.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim();
 }
 
 interface SheetData {

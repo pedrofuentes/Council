@@ -10,11 +10,7 @@ import * as path from "node:path";
 import { sql } from "kysely";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 
-import {
-  createDatabase,
-  loadMigrations,
-  type CouncilDatabase,
-} from "../../../src/memory/db.js";
+import { createDatabase, loadMigrations, type CouncilDatabase } from "../../../src/memory/db.js";
 import { ExpertLibraryRepository } from "../../../src/memory/repositories/expert-library-repo.js";
 import { mkCanonicalTempDir } from "../../helpers/tmp.js";
 import {
@@ -196,9 +192,7 @@ describe("DocumentRepository", () => {
       // planted collision a neutered gate is SILENT — migration 001 is all
       // `CREATE TABLE IF NOT EXISTS` and migration 002 copies rows *before*
       // `DROP TABLE`, so even a full re-run would preserve the seeded row.
-      await sql`CREATE TABLE expert_documents_new (id TEXT PRIMARY KEY)`.execute(
-        first,
-      );
+      await sql`CREATE TABLE expert_documents_new (id TEXT PRIMARY KEY)`.execute(first);
       await first.destroy();
 
       // Second open re-invokes the migration runner against the already-
@@ -213,14 +207,9 @@ describe("DocumentRepository", () => {
           .select("version")
           .orderBy("version")
           .execute();
-        expect(versions.map((v) => v.version)).toEqual(
-          loadMigrations().map((m) => m.version),
-        );
+        expect(versions.map((v) => v.version)).toEqual(loadMigrations().map((m) => m.version));
 
-        const survived = await new DocumentRepository(second).findByPath(
-          "ceo",
-          "/p/idempotent.md",
-        );
+        const survived = await new DocumentRepository(second).findByPath("ceo", "/p/idempotent.md");
         expect(survived?.id).toBe(seeded.id);
       } finally {
         await second.destroy();

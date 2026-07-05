@@ -43,18 +43,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          
+
           # Test --version
           node packages/cli/dist/bin/council.js --version
-          
+
           # Test --help
           node packages/cli/dist/bin/council.js --help
-          
+
           # Failure tolerated (`|| true`): CI has no Copilot API access, so the
           # first-run model-discovery step triggered by `templates` fails. This
           # only confirms the command is wired up, not that it fully succeeds.
           node packages/cli/dist/bin/council.js templates || true
-          
+
           echo "✓ CLI smoke tests passed on ${{ matrix.os }}"
 
       - name: Smoke test TUI fallback (non-TTY → CLI)

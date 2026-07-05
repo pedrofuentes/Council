@@ -231,7 +231,11 @@ describe("buildMemoryCommand", () => {
   describe("memory list", () => {
     it("empty DB: prints a 'no panels' hint", async () => {
       let captured = "";
-      const cmd = buildMemoryCommand({ write: (s) => { captured += s; } });
+      const cmd = buildMemoryCommand({
+        write: (s) => {
+          captured += s;
+        },
+      });
       await cmd.parseAsync(["node", "council-memory", "list"]);
       expect(captured.toLowerCase()).toMatch(/no panels|empty/);
     });
@@ -239,7 +243,11 @@ describe("buildMemoryCommand", () => {
     it("populated DB: prints a per-panel summary with counts", async () => {
       await seedPanel(testHome);
       let captured = "";
-      const cmd = buildMemoryCommand({ write: (s) => { captured += s; } });
+      const cmd = buildMemoryCommand({
+        write: (s) => {
+          captured += s;
+        },
+      });
       await cmd.parseAsync(["node", "council-memory", "list"]);
       expect(captured).toContain("memory-test");
       // expert count, debate count, turn count visible
@@ -251,7 +259,11 @@ describe("buildMemoryCommand", () => {
       await new Promise((r) => setTimeout(r, 5));
       await seedPanel(testHome, "panel-b");
       let captured = "";
-      const cmd = buildMemoryCommand({ write: (s) => { captured += s; } });
+      const cmd = buildMemoryCommand({
+        write: (s) => {
+          captured += s;
+        },
+      });
       await cmd.parseAsync(["node", "council-memory", "list", "--format", "json"]);
       const lines = captured.split("\n").filter((l) => l.trim().startsWith("{"));
       expect(lines).toHaveLength(2);
@@ -264,7 +276,11 @@ describe("buildMemoryCommand", () => {
       await seedPanel(testHome, "wanted");
       await seedPanel(testHome, "unwanted");
       let captured = "";
-      const cmd = buildMemoryCommand({ write: (s) => { captured += s; } });
+      const cmd = buildMemoryCommand({
+        write: (s) => {
+          captured += s;
+        },
+      });
       await cmd.parseAsync(["node", "council-memory", "list", "--panel", "wanted"]);
       expect(captured).toContain("wanted");
       expect(captured).not.toContain("unwanted");
@@ -289,7 +305,11 @@ describe("buildMemoryCommand", () => {
     it("shows panel info, expert displayNames, latest debate status", async () => {
       const seed = await seedPanel(testHome);
       let captured = "";
-      const cmd = buildMemoryCommand({ write: (s) => { captured += s; } });
+      const cmd = buildMemoryCommand({
+        write: (s) => {
+          captured += s;
+        },
+      });
       await cmd.parseAsync(["node", "council-memory", "inspect", seed.name]);
       expect(captured).toContain("memory-test");
       expect(captured).toContain("Should we ship the MVP?");
@@ -303,7 +323,11 @@ describe("buildMemoryCommand", () => {
     it("--expert <slug>: shows that expert's system prompt (truncated) and per-expert turn count", async () => {
       const seed = await seedPanel(testHome);
       let captured = "";
-      const cmd = buildMemoryCommand({ write: (s) => { captured += s; } });
+      const cmd = buildMemoryCommand({
+        write: (s) => {
+          captured += s;
+        },
+      });
       await cmd.parseAsync(["node", "council-memory", "inspect", seed.name, "--expert", "cto"]);
       expect(captured).toContain("CTO");
       // System prompt content present
@@ -327,7 +351,11 @@ describe("buildMemoryCommand", () => {
         spies.push(countByExpertIdSpy);
 
         let captured = "";
-        const cmd = buildMemoryCommand({ write: (s) => { captured += s; } });
+        const cmd = buildMemoryCommand({
+          write: (s) => {
+            captured += s;
+          },
+        });
         await cmd.parseAsync(["node", "council-memory", "inspect", seed.name, "--expert", "cto"]);
 
         // Rendered count is exact and unchanged for the user (6 turns).
@@ -351,9 +379,7 @@ describe("buildMemoryCommand", () => {
       cmd.exitOverride();
       let thrown = "";
       try {
-        await cmd.parseAsync([
-          "node", "council-memory", "inspect", seed.name, "--expert", "ghost",
-        ]);
+        await cmd.parseAsync(["node", "council-memory", "inspect", seed.name, "--expert", "ghost"]);
       } catch (err) {
         thrown = err instanceof Error ? err.message : String(err);
       }
@@ -375,7 +401,11 @@ describe("buildMemoryCommand", () => {
     it("--format json: emits single JSON line with panel structure", async () => {
       const seed = await seedPanel(testHome);
       let captured = "";
-      const cmd = buildMemoryCommand({ write: (s) => { captured += s; } });
+      const cmd = buildMemoryCommand({
+        write: (s) => {
+          captured += s;
+        },
+      });
       await cmd.parseAsync(["node", "council-memory", "inspect", seed.name, "--format", "json"]);
 
       const doc = JSON.parse(captured.trim()) as Record<string, unknown>;
@@ -397,9 +427,20 @@ describe("buildMemoryCommand", () => {
     it("--expert <slug> --format json: emits expert detail with systemMessage and turnCount", async () => {
       const seed = await seedPanel(testHome);
       let captured = "";
-      const cmd = buildMemoryCommand({ write: (s) => { captured += s; } });
+      const cmd = buildMemoryCommand({
+        write: (s) => {
+          captured += s;
+        },
+      });
       await cmd.parseAsync([
-        "node", "council-memory", "inspect", seed.name, "--expert", "cto", "--format", "json",
+        "node",
+        "council-memory",
+        "inspect",
+        seed.name,
+        "--expert",
+        "cto",
+        "--format",
+        "json",
       ]);
 
       const doc = JSON.parse(captured.trim()) as Record<string, unknown>;
@@ -420,8 +461,19 @@ describe("buildMemoryCommand", () => {
     it("--format json: no plain-text headings leak into output", async () => {
       await seedPanel(testHome);
       let captured = "";
-      const cmd = buildMemoryCommand({ write: (s) => { captured += s; } });
-      await cmd.parseAsync(["node", "council-memory", "inspect", "memory-test", "--format", "json"]);
+      const cmd = buildMemoryCommand({
+        write: (s) => {
+          captured += s;
+        },
+      });
+      await cmd.parseAsync([
+        "node",
+        "council-memory",
+        "inspect",
+        "memory-test",
+        "--format",
+        "json",
+      ]);
 
       const lines = captured.split("\n").filter((l) => l.trim().length > 0);
       for (const line of lines) {
@@ -465,7 +517,11 @@ describe("buildMemoryCommand", () => {
     it("--yes: deletes debates+turns, KEEPS panel+experts", async () => {
       const seed = await seedPanel(testHome);
       let captured = "";
-      const cmd = buildMemoryCommand({ write: (s) => { captured += s; } });
+      const cmd = buildMemoryCommand({
+        write: (s) => {
+          captured += s;
+        },
+      });
       await cmd.parseAsync(["node", "council-memory", "reset", seed.name, "--yes"]);
       expect(captured.toLowerCase()).toMatch(/reset|deleted|cleared/);
 
@@ -503,7 +559,15 @@ describe("buildMemoryCommand", () => {
     it("--expert <slug> --yes: removes one expert from the panel (keeps panel + others)", async () => {
       const seed = await seedPanel(testHome);
       const cmd = buildMemoryCommand({ write: () => undefined });
-      await cmd.parseAsync(["node", "council-memory", "reset", seed.name, "--expert", "cto", "--yes"]);
+      await cmd.parseAsync([
+        "node",
+        "council-memory",
+        "reset",
+        seed.name,
+        "--expert",
+        "cto",
+        "--yes",
+      ]);
 
       const db = await createDatabase(path.join(testHome, "council.db"));
       try {
@@ -850,9 +914,8 @@ describe("buildMemoryCommand", () => {
       // recorded BEGIN is the reset transaction's.
       const seed = await seedPanel(testHome);
 
-      const { NodeSqliteConnection } = await import(
-        "../../../../src/memory/node-sqlite-dialect.js"
-      );
+      const { NodeSqliteConnection } =
+        await import("../../../../src/memory/node-sqlite-dialect.js");
       const protoAny = NodeSqliteConnection.prototype as unknown as {
         executeQuery: (q: { sql: string }) => Promise<unknown>;
       };
@@ -913,9 +976,7 @@ describe("buildMemoryCommand", () => {
       cmd.exitOverride();
       let thrown = "";
       try {
-        await cmd.parseAsync([
-          "node", "council-memory", "inspect", seed.name, "--format", "yaml",
-        ]);
+        await cmd.parseAsync(["node", "council-memory", "inspect", seed.name, "--format", "yaml"]);
       } catch (err) {
         thrown = err instanceof Error ? err.message : String(err);
       }

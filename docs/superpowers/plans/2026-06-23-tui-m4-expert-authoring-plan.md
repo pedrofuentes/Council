@@ -9,6 +9,7 @@
 **Tech Stack:** TypeScript ESM, Ink 7, React 19, `ink-text-input`, `react-router`, Zod (`ExpertDefinitionSchema`), Vitest + `ink-testing-library` + `MockEngine`.
 
 ## Global Constraints (every task implicitly includes these)
+
 - Node ≥ 24; ESM; **`.js` import specifiers**; `.tsx` starts with `import React from "react";`.
 - Named exports only; explicit return types; `interface` for object shapes; `readonly` default; **no `any`** (only the documented `as … | undefined` context narrowing).
 - **TDD (Sentinel-enforced):** the `test(tui)` commit (tests ONLY, RED-confirmed) precedes its `feat(tui)` commit. Never combine.
@@ -24,6 +25,7 @@
 - **Per increment:** worktree off `main`; `pnpm install --frozen-lockfile`; `pnpm test`+`lint`+`typecheck` before PR; PARENT invokes Sentinel; merge on APPROVED/CONDITIONAL. Delegated implementers STOP after opening the PR.
 
 ## Verified seams (against `main` 2026-06-23 — source of truth)
+
 - **Write API** (`src/core/expert-library.ts`, `FileExpertLibrary`): `create(def: ExpertDefinition): Promise<void>` (throws on duplicate slug / invalid); `update(slug: string, patch: Partial<ExpertDefinition>): Promise<void>` (throws "not found"); `delete(slug: string, options: { force: boolean }): Promise<{ affectedPanels: readonly string[] }>`; `get(slug): Promise<ExpertDefinition | null>`; `list()`; `panelsFor(slug): Promise<readonly string[]>`. Persists `<dataHome>/experts/<slug>.yaml`.
 - **Slug:** `/^[a-z0-9][a-z0-9-]{0,63}$/` (`SLUG_RE` in expert-library.ts; `validateSlug` in `cli/commands/expert.ts`).
 - **`ExpertDefinition`** (`src/core/expert.ts`, `ExpertDefinitionSchema`): required `slug`, `displayName`, `role`, `expertise{ weightedEvidence: string[] (min 1); referenceCases: string[] (default []); notExpertIn: string[] (default []) }`, `epistemicStance`; optional `model`, `debateProtocol`, `outputContract`, `forbiddenMoves`, `personality`, `personaDescription`, `docsPath`; `kind: "generic"|"persona"` (default generic). A `superRefine` REJECTS `"[NN]"` (e.g. `[1]`) section markers in `displayName`/`role`/`personality`/`epistemicStance`. `allowlistExpertDefinition(expert, slugOverride?)` copies only schema fields.
@@ -33,18 +35,20 @@
 - **TUI infra already on main:** `useInputCapture` (`components/InputCaptureProvider.tsx`), `useAsyncResource`, `DataProvider`/`useData`, `SettingsScreen` (COPY its form/mode/edit pattern), `ExpertsScreen`/`ExpertDetailScreen`, `AppRouter` (route-aware Esc + `mode !== "palette" && !captured` gate), the command palette (`palette-commands.ts`).
 
 ## PR grouping (6 PRs)
-| PR | Branch | Tasks | Dep |
-|----|--------|-------|-----|
-| PR-A | `feature/tui-expert-authoring-adapter` | Task 1 (`expert-authoring` adapter: field descriptors + `validateExpertForm` + `buildExpertDefinition` + `createExpertAuthoringSource{create,update,delete,loadForEdit}`) | M3 |
-| PR-B | `feature/tui-expert-create` | Task 2 (`ExpertFormScreen` — guided form via input-capture/mode-gated editing) + Task 3 (create wiring: palette/key entry → form → `create` → navigate to detail) | PR-A |
-| PR-C | `feature/tui-expert-edit` | Task 4 (edit mode: load existing → prefill → `update`; slug read-only) | PR-B |
-| PR-D | `feature/tui-expert-delete` | Task 5 (delete confirm screen with affected-panel warning → `delete`) | PR-B |
-| PR-E | `feature/tui-expert-documents` | Task 6 (`documents` adapter + `ExpertDocumentsScreen`: list/add/remove indexed docs, offline) | PR-B |
-| PR-F | `feature/tui-expert-training` | Task 7 (persona profile refresh via `runWithEngine`/processor, `MockEngine`-tested) | PR-E |
+
+| PR   | Branch                                 | Tasks                                                                                                                                                                     | Dep  |
+| ---- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| PR-A | `feature/tui-expert-authoring-adapter` | Task 1 (`expert-authoring` adapter: field descriptors + `validateExpertForm` + `buildExpertDefinition` + `createExpertAuthoringSource{create,update,delete,loadForEdit}`) | M3   |
+| PR-B | `feature/tui-expert-create`            | Task 2 (`ExpertFormScreen` — guided form via input-capture/mode-gated editing) + Task 3 (create wiring: palette/key entry → form → `create` → navigate to detail)         | PR-A |
+| PR-C | `feature/tui-expert-edit`              | Task 4 (edit mode: load existing → prefill → `update`; slug read-only)                                                                                                    | PR-B |
+| PR-D | `feature/tui-expert-delete`            | Task 5 (delete confirm screen with affected-panel warning → `delete`)                                                                                                     | PR-B |
+| PR-E | `feature/tui-expert-documents`         | Task 6 (`documents` adapter + `ExpertDocumentsScreen`: list/add/remove indexed docs, offline)                                                                             | PR-B |
+| PR-F | `feature/tui-expert-training`          | Task 7 (persona profile refresh via `runWithEngine`/processor, `MockEngine`-tested)                                                                                       | PR-E |
 
 PR-C/PR-D/PR-E are independent of each other (all depend on PR-B); they may run in parallel (small shared-file conflicts on `AppRouter`/`DataProvider`/`index.tsx` resolved by rebasing the later merges).
 
 ## File Structure
+
 ```
 packages/cli/src/tui/
   adapters/expert-authoring.ts    descriptors + validateExpertForm + buildExpertDefinition + createExpertAuthoringSource (NEW)
@@ -61,45 +65,63 @@ packages/cli/src/tui/
 ---
 
 ## Task 1: `expert-authoring` adapter (PR-A) — test-first, 100% branch coverage
+
 **Files:** Create `src/tui/adapters/expert-authoring.ts`; Test `tests/unit/tui/expert-authoring.test.ts`.
 
 **Produces:**
+
 ```ts
-export interface ExpertFormValues {            // flat string form state
-  readonly slug: string; readonly displayName: string; readonly role: string;
-  readonly weightedEvidence: string;           // newline- or comma-separated; ≥1 non-empty required
-  readonly referenceCases: string; readonly notExpertIn: string;   // optional lists
+export interface ExpertFormValues {
+  // flat string form state
+  readonly slug: string;
+  readonly displayName: string;
+  readonly role: string;
+  readonly weightedEvidence: string; // newline- or comma-separated; ≥1 non-empty required
+  readonly referenceCases: string;
+  readonly notExpertIn: string; // optional lists
   readonly epistemicStance: string;
   readonly kind: "generic" | "persona";
-  readonly personaDescription: string;         // used only when kind==="persona"
-  readonly model: string;                      // optional
+  readonly personaDescription: string; // used only when kind==="persona"
+  readonly model: string; // optional
 }
-export interface ExpertFormFieldError { readonly field: keyof ExpertFormValues; readonly error: string; }
+export interface ExpertFormFieldError {
+  readonly field: keyof ExpertFormValues;
+  readonly error: string;
+}
 export type BuildResult =
   | { readonly ok: true; readonly definition: import("../../core/expert.js").ExpertDefinition }
   | { readonly ok: false; readonly errors: readonly ExpertFormFieldError[] };
 export function emptyExpertForm(): ExpertFormValues;
-export function expertToForm(def: import("../../core/expert.js").ExpertDefinition): ExpertFormValues;   // for edit prefill
-export function validateExpertForm(values: ExpertFormValues): BuildResult;   // validates + assembles
+export function expertToForm(
+  def: import("../../core/expert.js").ExpertDefinition,
+): ExpertFormValues; // for edit prefill
+export function validateExpertForm(values: ExpertFormValues): BuildResult; // validates + assembles
 export interface ExpertAuthoringSource {
   readonly loadForEdit: (slug: string) => Promise<ExpertFormValues | undefined>;
-  readonly create: (values: ExpertFormValues) => Promise<BuildResult>;       // validate→ok→library.create; on dup/invalid, ok:false
-  readonly update: (slug: string, values: ExpertFormValues) => Promise<BuildResult>;  // slug held fixed
+  readonly create: (values: ExpertFormValues) => Promise<BuildResult>; // validate→ok→library.create; on dup/invalid, ok:false
+  readonly update: (slug: string, values: ExpertFormValues) => Promise<BuildResult>; // slug held fixed
   readonly remove: (slug: string) => Promise<{ readonly affectedPanels: readonly string[] }>;
-  readonly affectedPanels: (slug: string) => Promise<readonly string[]>;     // library.panelsFor
+  readonly affectedPanels: (slug: string) => Promise<readonly string[]>; // library.panelsFor
 }
 export function createExpertAuthoringSource(deps: {
   readonly library: {
     get(slug: string): Promise<import("../../core/expert.js").ExpertDefinition | null>;
     create(def: import("../../core/expert.js").ExpertDefinition): Promise<void>;
-    update(slug: string, patch: Partial<import("../../core/expert.js").ExpertDefinition>): Promise<void>;
-    delete(slug: string, options: { force: boolean }): Promise<{ affectedPanels: readonly string[] }>;
+    update(
+      slug: string,
+      patch: Partial<import("../../core/expert.js").ExpertDefinition>,
+    ): Promise<void>;
+    delete(
+      slug: string,
+      options: { force: boolean },
+    ): Promise<{ affectedPanels: readonly string[] }>;
     panelsFor(slug: string): Promise<readonly string[]>;
   };
 }): ExpertAuthoringSource;
 ```
 
 **`validateExpertForm`** — assemble + validate, returning per-field errors (mirror the CLI):
+
 - `slug`: trim; must match `/^[a-z0-9][a-z0-9-]{0,63}$/` else `{ field:"slug", error:"Lowercase letters, digits, hyphens (max 64)" }`.
 - `displayName`/`role`/`epistemicStance`: non-empty (trimmed) else `"Required"`.
 - `weightedEvidence`: split on `/[\n,]/`, trim, drop empties → array; must have ≥1 else `{ field:"weightedEvidence", error:"At least one is required" }`.
@@ -111,6 +133,7 @@ export function createExpertAuthoringSource(deps: {
 **`expertToForm`**: inverse — join arrays with `"\n"`, copy scalars, `model ?? ""`, `personaDescription ?? ""`.
 
 **`createExpertAuthoringSource`**:
+
 - `create`: `const r = validateExpertForm(values); if (!r.ok) return r;` then `if (await deps.library.get(r.definition.slug)) return { ok:false, errors:[{field:"slug", error:"An expert with this slug already exists"}] };` then `await deps.library.create(r.definition); return r;`. (Wrap the `library.create` in try/catch → map a thrown error to `{ ok:false, errors:[{field:"slug", error: toSingleLineDisplay(String(e))}] }`? — keep simple: pre-check dup; let other throws propagate? Prefer: catch and return a slug-field error so the form shows it.)
 - `update`: `validateExpertForm(values)`; force the slug to the existing one (slug is read-only in edit); on ok → `await deps.library.update(slug, r.definition)`; return r.
 - `remove`: `deps.library.delete(slug, { force: true })`.
@@ -122,9 +145,11 @@ export function createExpertAuthoringSource(deps: {
 ---
 
 ## Task 2 + 3: `ExpertFormScreen` + create wiring (PR-B) — test-first
+
 **Files:** Create `src/tui/screens/ExpertFormScreen.tsx`; Modify `DataProvider.tsx` (`expertAuthoring?: ExpertAuthoringSource`), `routes.ts` (`expertNew: "/experts/new"`), `AppRouter.tsx`, `index.tsx`; the palette (`palette-commands.ts` — add a "New expert" action) and/or a key on `ExpertsScreen` (e.g. `n` → navigate `/experts/new`); Test `tests/unit/tui/expert-form-screen.test.tsx`.
 
 **`ExpertFormScreen` behavior** (reuse the M3 SettingsScreen mode-gated form pattern):
+
 - Props `{ readonly theme: SemanticTheme; readonly mode: "create" | "edit"; readonly slug?: string }`.
 - `const { setCaptured } = useInputCapture();` capture on mount/uncapture on unmount.
 - State: `values: ExpertFormValues` (create → `emptyExpertForm()`; edit → load via `expertAuthoring.loadForEdit(slug)` in `useAsyncResource`/effect, prefill, slug read-only), a flat list of editable form fields (slug [read-only in edit], displayName, role, weightedEvidence, referenceCases, notExpertIn, epistemicStance, kind [enum generic/persona], personaDescription [shown when persona], model), `cursor`, an inner `mode: "nav"|"edit"`, per-field errors from `validateExpertForm` (show on submit), and a top-level submit.
@@ -139,40 +164,51 @@ export function createExpertAuthoringSource(deps: {
 ---
 
 ## Task 4: Expert edit (PR-C) — test-first
+
 **Files:** Modify `routes.ts` (`expertEdit: "/experts/:slug/edit"`), `AppRouter.tsx`, `ExpertDetailScreen.tsx` (add an `e` key → navigate edit) ; Test extend.
+
 - Render `ExpertFormScreen mode="edit" slug={:slug}` on `/experts/:slug/edit`; it `loadForEdit(slug)` → prefill; slug field is read-only (display only, not editable); `Ctrl+S` → `update`. On success → navigate to the detail.
 - [ ] Test-first: editing an existing expert (fake `loadForEdit` → form values; change a field; `Ctrl+S` → `update(slug, values)` called; slug not editable). Then implement.
 
 ## Task 5: Expert delete (PR-D) — test-first
+
 **Files:** Create `src/tui/screens/ExpertDeleteScreen.tsx`; `routes.ts` (`expertDelete: "/experts/:slug/delete"`), `AppRouter.tsx`, `ExpertDetailScreen.tsx` (add `d` → navigate delete); Test.
+
 - On mount: `affectedPanels(slug)` (via the authoring source). Render the expert slug + a warning listing affected panels (sanitized) + a confirm prompt (`y` confirm / `n` or `Esc` cancel). On confirm → `expertAuthoring.remove(slug)` → navigate to `/experts` (list). Capture input.
 - [ ] Test-first: shows affected panels; `y` calls `remove(slug)` and navigates to the list; `n`/`Esc` cancels (no remove). Then implement.
 
 ## Task 6: Documents (PR-E) — test-first
+
 **Files:** Create `src/tui/adapters/expert-documents.ts` + `src/tui/screens/ExpertDocumentsScreen.tsx`; `routes.ts` (`expertDocs: "/experts/:slug/docs"`), `AppRouter.tsx`, `ExpertDetailScreen.tsx` (`o` → docs, persona-only); `DataProvider.tsx`; `index.tsx`; Tests.
+
 - `expert-documents` adapter (100% covered, injected `DocumentRepository`+`DocumentIndexer`+fs): `list(slug)` → indexed docs (path/status); `remove(slug, file)` → `markRemoved`+`indexer.remove`; `add(slug, filePath)` → copy into `<dataHome>/experts/<slug>/docs` + index (offline — extraction/profile NOT here). Keep the engine-dependent profile refresh OUT (that's PR-F).
 - `ExpertDocumentsScreen`: list documents (SelectableList), `a` prompt for a path → `add`, `x`/`d` on a selected doc → `remove`. Capture input; loading/empty/error.
 - [ ] Test-first (adapter 100%; screen list/add/remove with fakes). Then implement.
 
 ## Task 7: Persona training / profile refresh (PR-F) — test-first
+
 **Files:** Modify `ExpertDocumentsScreen.tsx` (a `t`/"Train" action) or a small `ExpertTrainScreen`; a training adapter that runs the profile synthesis via `runWithEngine`; Tests using `MockEngine`.
+
 - A `trainPersona(slug, { engineFactory })` flow: run `createDocumentProcessor().process(slug, docsPath, …, onProgress)` (or just the profile-synthesis portion) under `runWithEngine` with `--engine mock`; surface `onProgress` events (per-file status) and the final `profileUpdated`/`profileError` in the UI. Deterministic offline via `MockEngine`.
 - [ ] Test-first with `MockEngine` (process emits progress; profile upsert called; error path shows an error). Then implement. **Persona-only**; document that real profile synthesis needs the engine.
 
 ## Self-Review
+
 1. **Spec coverage (story epics A "create/train a persona expert", B "create an expert"):** create generic+persona → Tasks 1–3; edit → Task 4; delete w/ warnings → Task 5; add/list/remove docs → Task 6; train/refresh profile → Task 7.
 2. **Placeholder scan:** none — adapter fully specified; screens reuse the proven M3 form pattern.
 3. **Type consistency:** `ExpertFormValues`/`BuildResult`/`ExpertAuthoringSource` defined once; `create/update` return `BuildResult` so the form shows field errors uniformly.
 
 ## Risks & Mitigations
-| Risk | Mitigation |
-|------|-----------|
-| Form keystrokes double-dispatch with global keys | input-capture + mode-gated handlers (M3 pattern), reused. |
-| `library.create/update` throw (dup/invalid/storage) | pre-check dup via `get`; catch + map to a slug-field error so the form shows it; adapters tested with fake libraries. |
-| Expertise lists are arrays (hard in a TUI) | v1 uses comma/newline-separated string fields → split on save; `weightedEvidence` ≥1 enforced. List-item editors deferred. |
-| `[NN]` markers rejected by schema superRefine | `validateExpertForm` runs `ExpertDefinitionSchema.safeParse` and maps the issue to a field error. |
-| Profile synthesis needs the engine | Task 7 isolates it behind `runWithEngine`; tested with `MockEngine`; create/edit/delete/docs stay offline. |
-| Parallel PR-C/D/E conflicts on AppRouter/DataProvider/index | merge sequentially, rebasing later PRs (mechanical). |
+
+| Risk                                                        | Mitigation                                                                                                                 |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Form keystrokes double-dispatch with global keys            | input-capture + mode-gated handlers (M3 pattern), reused.                                                                  |
+| `library.create/update` throw (dup/invalid/storage)         | pre-check dup via `get`; catch + map to a slug-field error so the form shows it; adapters tested with fake libraries.      |
+| Expertise lists are arrays (hard in a TUI)                  | v1 uses comma/newline-separated string fields → split on save; `weightedEvidence` ≥1 enforced. List-item editors deferred. |
+| `[NN]` markers rejected by schema superRefine               | `validateExpertForm` runs `ExpertDefinitionSchema.safeParse` and maps the issue to a field error.                          |
+| Profile synthesis needs the engine                          | Task 7 isolates it behind `runWithEngine`; tested with `MockEngine`; create/edit/delete/docs stay offline.                 |
+| Parallel PR-C/D/E conflicts on AppRouter/DataProvider/index | merge sequentially, rebasing later PRs (mechanical).                                                                       |
 
 ## Execution Handoff
+
 Plan saved to `docs/superpowers/plans/2026-06-23-tui-m4-expert-authoring-plan.md`. Execute via **subagent-driven-development**: PR-A first; PR-B next; PR-C/PR-D/PR-E may parallelize after PR-B; PR-F after PR-E. One delegated implementer per PR (stops at "PR opened"); the parent invokes Sentinel per PR and merges on APPROVED/CONDITIONAL.

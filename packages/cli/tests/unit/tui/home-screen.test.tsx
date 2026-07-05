@@ -418,7 +418,9 @@ describe("HomeScreen — launchpad Enter navigation", () => {
     const unsafeId = "s/1?x=y#z";
     const data = {
       counts: { sessions: 1, experts: 0, panels: 0 },
-      recent: [{ id: unsafeId, title: "Unsafe id session", when: "1d", status: "convened" as const }],
+      recent: [
+        { id: unsafeId, title: "Unsafe id session", when: "1d", status: "convened" as const },
+      ],
     };
     const { stdin, lastFrame, unmount } = render(
       <MemoryRouter initialEntries={["/"]}>

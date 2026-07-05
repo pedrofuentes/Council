@@ -191,11 +191,9 @@ describe("ExpertDocumentsScreen", () => {
   });
 
   it("shows a sanitized error when removal rejects", async () => {
-    const remove = vi.fn(
-      async (): Promise<{ readonly ftsCleanupFailed: boolean }> => {
-        throw new Error("\u001b[31mboom\nlater");
-      },
-    );
+    const remove = vi.fn(async (): Promise<{ readonly ftsCleanupFailed: boolean }> => {
+      throw new Error("\u001b[31mboom\nlater");
+    });
     const documents: ExpertDocumentsDataSource = {
       list: async () => [docFor({ id: "doc-1", filename: "roadmap.md" })],
       remove,

@@ -23,7 +23,13 @@ describe("CommandPalette", () => {
   it("filters commands by fuzzy query and selects on Enter", async () => {
     let selected: string | undefined;
     const { stdin, lastFrame, unmount } = render(
-      <CommandPalette commands={commands} onSelect={(id) => { selected = id; }} onClose={noop} />,
+      <CommandPalette
+        commands={commands}
+        onSelect={(id) => {
+          selected = id;
+        }}
+        onClose={noop}
+      />,
     );
     await flush();
     stdin.write("nse");
@@ -40,7 +46,13 @@ describe("CommandPalette", () => {
   it("moves the selection with the down arrow before selecting", async () => {
     let selected: string | undefined;
     const { stdin, lastFrame, unmount } = render(
-      <CommandPalette commands={commands} onSelect={(id) => { selected = id; }} onClose={noop} />,
+      <CommandPalette
+        commands={commands}
+        onSelect={(id) => {
+          selected = id;
+        }}
+        onClose={noop}
+      />,
     );
     await flush();
     stdin.write("se"); // matches "Settings" (higher score) then "New Session"; excludes "Create Expert"
@@ -72,7 +84,13 @@ describe("CommandPalette", () => {
   it("does not select when Enter is pressed with no matching results", async () => {
     let selected: string | undefined;
     const { stdin, lastFrame, unmount } = render(
-      <CommandPalette commands={commands} onSelect={(id) => { selected = id; }} onClose={noop} />,
+      <CommandPalette
+        commands={commands}
+        onSelect={(id) => {
+          selected = id;
+        }}
+        onClose={noop}
+      />,
     );
     await flush();
     stdin.write("zzz"); // matches no command -> empty result set
@@ -89,7 +107,13 @@ describe("CommandPalette", () => {
   it("closes on Esc", async () => {
     let closed = false;
     const { stdin, unmount } = render(
-      <CommandPalette commands={commands} onSelect={noop} onClose={() => { closed = true; }} />,
+      <CommandPalette
+        commands={commands}
+        onSelect={noop}
+        onClose={() => {
+          closed = true;
+        }}
+      />,
     );
     await sleep(20);
     stdin.write("\u001b"); // Esc — Ink delivers key.escape only after its real-time disambiguation timeout
@@ -101,7 +125,13 @@ describe("CommandPalette", () => {
   it("moves the selection up with the up arrow", async () => {
     let selected: string | undefined;
     const { stdin, unmount } = render(
-      <CommandPalette commands={commands} onSelect={(id) => { selected = id; }} onClose={noop} />,
+      <CommandPalette
+        commands={commands}
+        onSelect={(id) => {
+          selected = id;
+        }}
+        onClose={noop}
+      />,
     );
     await flush();
     stdin.write("se");

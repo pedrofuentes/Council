@@ -65,9 +65,9 @@ describe("template-migration fileExists ENOENT narrowing (#301)", () => {
     });
     vi.mocked(fs.access).mockRejectedValue(eacces);
 
-    await expect(
-      migrateBuiltInTemplates(dataHome, lib, db, { quiet: true }),
-    ).rejects.toMatchObject({ code: "EACCES" });
+    await expect(migrateBuiltInTemplates(dataHome, lib, db, { quiet: true })).rejects.toMatchObject(
+      { code: "EACCES" },
+    );
   });
 });
 

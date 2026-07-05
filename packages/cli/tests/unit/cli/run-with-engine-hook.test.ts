@@ -76,11 +76,13 @@ describe("runWithEngine — onDebateComplete post-debate hook", () => {
   });
 
   it("calls onDebateComplete once with the live engine + debateId after a successful debate", async () => {
-    let captured: {
-      engine: CouncilEngine;
-      debateId: string;
-      stopCalledBeforeHook: boolean;
-    } | undefined;
+    let captured:
+      | {
+          engine: CouncilEngine;
+          debateId: string;
+          stopCalledBeforeHook: boolean;
+        }
+      | undefined;
     let stopCalls = 0;
     const mock = new MockEngine();
     const origStop = mock.stop.bind(mock);
@@ -92,7 +94,7 @@ describe("runWithEngine — onDebateComplete post-debate hook", () => {
     await runWithEngine({
       engineKind: "mock",
       engineFactory: () => mock,
-      experts: [{ ...expert, id: (expertSlugToId[expert.slug] ?? "") }],
+      experts: [{ ...expert, id: expertSlugToId[expert.slug] ?? "" }],
       debateConfig: { maxRounds: 1, maxWordsPerResponse: 50, mode: "freeform" },
       prompt: "Topic",
       panelId,
@@ -133,7 +135,7 @@ describe("runWithEngine — onDebateComplete post-debate hook", () => {
       runWithEngine({
         engineKind: "mock",
         engineFactory: () => mock,
-        experts: [{ ...expert, id: (expertSlugToId[expert.slug] ?? "") }],
+        experts: [{ ...expert, id: expertSlugToId[expert.slug] ?? "" }],
         debateConfig: { maxRounds: 1, maxWordsPerResponse: 50, mode: "freeform" },
         prompt: "Topic",
         panelId,
@@ -154,21 +156,21 @@ describe("runWithEngine — onDebateComplete post-debate hook", () => {
   it("injects a DebatePersister logger that writes warnings to stderr", async () => {
     let errored = "";
     let capturedLogger: { warn(message: string): void } | undefined;
-    const persistSpy = vi
-      .spyOn(DebatePersister.prototype, "persist")
-      .mockImplementation(function (this: DebatePersister): AsyncIterable<DebateEvent> {
-        capturedLogger = (this as unknown as { deps: { logger?: { warn(message: string): void } } }).deps
-          .logger;
-        return (async function* (): AsyncGenerator<DebateEvent, void, void> {
-          yield { kind: "panel.assembled", experts: [] };
-          yield { kind: "debate.end", reason: "completed" };
-        })();
-      });
+    const persistSpy = vi.spyOn(DebatePersister.prototype, "persist").mockImplementation(function (
+      this: DebatePersister,
+    ): AsyncIterable<DebateEvent> {
+      capturedLogger = (this as unknown as { deps: { logger?: { warn(message: string): void } } })
+        .deps.logger;
+      return (async function* (): AsyncGenerator<DebateEvent, void, void> {
+        yield { kind: "panel.assembled", experts: [] };
+        yield { kind: "debate.end", reason: "completed" };
+      })();
+    });
 
     await runWithEngine({
       engineKind: "mock",
       engineFactory: () => new MockEngine(),
-      experts: [{ ...expert, id: (expertSlugToId[expert.slug] ?? "") }],
+      experts: [{ ...expert, id: expertSlugToId[expert.slug] ?? "" }],
       debateConfig: { maxRounds: 1, maxWordsPerResponse: 50, mode: "freeform" },
       prompt: "Topic",
       panelId,

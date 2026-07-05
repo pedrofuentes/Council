@@ -82,24 +82,24 @@ describe("runWithEngine — DebatePersister warning routing to writeError (#813)
     // This is the discriminating integration signal: the warning flows from
     // the persister's own protocol-violation detection, not from a manual
     // warn() call on a captured logger.
-    vi.spyOn(Debate.prototype, "run").mockImplementation(
-      function (this: Debate): AsyncIterable<DebateEvent> {
-        return (async function* (): AsyncGenerator<DebateEvent, void, void> {
-          yield { kind: "panel.assembled", experts: [] };
-          yield { kind: "round.start", round: 1 };
-          // Orphan turn.end: no prior turn.start for 'cto' this round.
-          // DebatePersister detects this and emits the protocol-violation warn.
-          yield {
-            kind: "turn.end",
-            expertSlug: "cto",
-            turnId: "orphan-turn-id-813",
-            content: "orphan response",
-            speakerKind: "expert",
-          };
-          yield { kind: "debate.end", reason: "completed" };
-        })();
-      },
-    );
+    vi.spyOn(Debate.prototype, "run").mockImplementation(function (
+      this: Debate,
+    ): AsyncIterable<DebateEvent> {
+      return (async function* (): AsyncGenerator<DebateEvent, void, void> {
+        yield { kind: "panel.assembled", experts: [] };
+        yield { kind: "round.start", round: 1 };
+        // Orphan turn.end: no prior turn.start for 'cto' this round.
+        // DebatePersister detects this and emits the protocol-violation warn.
+        yield {
+          kind: "turn.end",
+          expertSlug: "cto",
+          turnId: "orphan-turn-id-813",
+          content: "orphan response",
+          speakerKind: "expert",
+        };
+        yield { kind: "debate.end", reason: "completed" };
+      })();
+    });
 
     let errOutput = "";
     await runWithEngine({

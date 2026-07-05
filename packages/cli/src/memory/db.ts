@@ -570,8 +570,7 @@ export function splitSqlStatements(sqlText: string): readonly string[] {
 function configureSqliteConnection(database: DatabaseSync, dbPath: string): void {
   database.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS};`);
   const journalModeRow = database.prepare("PRAGMA journal_mode = WAL;").get() as
-    | { readonly journal_mode?: string }
-    | undefined;
+    { readonly journal_mode?: string } | undefined;
   const journalMode = String(journalModeRow?.journal_mode ?? "");
   const expectedJournalMode = dbPath === ":memory:" ? "memory" : "wal";
 

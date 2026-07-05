@@ -193,7 +193,9 @@ describe("runChildProcess timeout handling (#1272)", () => {
           killSignal: TIMEOUT_KILL_SIGNAL,
         }),
       ),
-    ).toThrow("`node <hung script>` timed out after 200ms and was killed (SIGKILL); the child process likely hung.");
+    ).toThrow(
+      "`node <hung script>` timed out after 200ms and was killed (SIGKILL); the child process likely hung.",
+    );
   });
 
   it("propagates non-timeout errors unchanged (e.g. a non-zero exit code)", () => {

@@ -37,7 +37,13 @@ describe("MultilineInput", () => {
 
   it("submits the current value on Enter", async () => {
     let submitted: string | undefined;
-    const { stdin, unmount } = render(<Harness onSubmit={(v) => { submitted = v; }} />);
+    const { stdin, unmount } = render(
+      <Harness
+        onSubmit={(v) => {
+          submitted = v;
+        }}
+      />,
+    );
     await flush();
     stdin.write("ok");
     await flush();
@@ -51,7 +57,14 @@ describe("MultilineInput", () => {
     let submitted: string | undefined;
     let latest = "";
     const { stdin, unmount } = render(
-      <Harness onSubmit={(v) => { submitted = v; }} onValue={(v) => { latest = v; }} />,
+      <Harness
+        onSubmit={(v) => {
+          submitted = v;
+        }}
+        onValue={(v) => {
+          latest = v;
+        }}
+      />,
     );
     await flush();
     stdin.write("a");
@@ -67,7 +80,13 @@ describe("MultilineInput", () => {
 
   it("removes the last character on Backspace", async () => {
     let latest = "";
-    const { stdin, unmount } = render(<Harness onValue={(v) => { latest = v; }} />);
+    const { stdin, unmount } = render(
+      <Harness
+        onValue={(v) => {
+          latest = v;
+        }}
+      />,
+    );
     await flush();
     stdin.write("abc");
     await flush();
@@ -79,7 +98,12 @@ describe("MultilineInput", () => {
 
   it("strips terminal control sequences from the rendered value", () => {
     const { lastFrame, unmount } = render(
-      <MultilineInput value={"safe\u001b[31m\u0007text"} onChange={() => { /* noop */ }} />,
+      <MultilineInput
+        value={"safe\u001b[31m\u0007text"}
+        onChange={() => {
+          /* noop */
+        }}
+      />,
     );
     const frame = lastFrame() ?? "";
     expect(frame).not.toContain("\u0007");

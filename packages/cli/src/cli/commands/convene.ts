@@ -1036,9 +1036,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
               preamble: () => {
                 write(`\n# ${toSingleLineDisplay(template.name)}\n`);
                 write(`Topic: ${truncatePrompt(toSingleLineDisplay(topic))}\n`);
-                write(
-                  `Mode: ${opts.mode} | Max rounds: ${maxRounds} | Engine: ${opts.engine}\n`,
-                );
+                write(`Mode: ${opts.mode} | Max rounds: ${maxRounds} | Engine: ${opts.engine}\n`);
                 if (humanNames.length > 0) {
                   write(`Human participants: ${humanNames.join(", ")}\n`);
                 }

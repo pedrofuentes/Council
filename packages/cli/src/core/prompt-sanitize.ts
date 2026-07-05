@@ -32,10 +32,7 @@
  */
 export function sanitizePromptField(raw: string): string {
   const normalized = raw.normalize("NFKC");
-  const unicodeSafe = normalized.replace(
-    /[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g,
-    "",
-  );
+  const unicodeSafe = normalized.replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, "");
   // eslint-disable-next-line no-control-regex
   const stripped = unicodeSafe.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
   const collapsed = stripped.replace(/[\r\n\u0085\u2028\u2029]+/g, " ");
@@ -123,10 +120,7 @@ function truncateWithEllipsis(s: string, maxLength: number): string {
  */
 export function sanitizePromptBlock(raw: string, maxLength = 4000): string {
   const normalized = raw.normalize("NFKC");
-  const unicodeSafe = normalized.replace(
-    /[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g,
-    "",
-  );
+  const unicodeSafe = normalized.replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, "");
   // Normalize exotic line/paragraph separators — NEL (U+0085), LINE
   // SEPARATOR (U+2028), PARAGRAPH SEPARATOR (U+2029) — to a plain `\n` so
   // untrusted content cannot smuggle hidden line breaks past the block

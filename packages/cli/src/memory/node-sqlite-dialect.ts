@@ -149,9 +149,7 @@ export class NodeSqliteConnection implements DatabaseConnection {
     };
   }
 
-  async *streamQuery<R>(
-    compiledQuery: CompiledQuery,
-  ): AsyncIterableIterator<QueryResult<R>> {
+  async *streamQuery<R>(compiledQuery: CompiledQuery): AsyncIterableIterator<QueryResult<R>> {
     const { sql, parameters, query } = compiledQuery;
     if (!SelectQueryNode.is(query)) {
       throw new Error("node:sqlite driver only supports streaming select queries");

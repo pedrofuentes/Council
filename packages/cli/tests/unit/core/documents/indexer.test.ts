@@ -159,10 +159,7 @@ describe("createDocumentIndexer", () => {
     };
     const orig = protoAny.executeQuery;
     const calls: string[] = [];
-    protoAny.executeQuery = async function (
-      this: unknown,
-      q: { sql: string },
-    ) {
+    protoAny.executeQuery = async function (this: unknown, q: { sql: string }) {
       if (typeof q?.sql === "string") calls.push(q.sql);
       return orig.call(this, q);
     };
@@ -200,10 +197,7 @@ describe("createDocumentIndexer", () => {
     const orig = protoAny.executeQuery;
     const calls: string[] = [];
     let insertCallCount = 0;
-    protoAny.executeQuery = async function (
-      this: unknown,
-      q: { sql: string },
-    ) {
+    protoAny.executeQuery = async function (this: unknown, q: { sql: string }) {
       if (typeof q?.sql === "string") calls.push(q.sql);
       // Fail the second INSERT attempt (the one that rewrites) to force rollback.
       if (/INSERT\s+INTO\s+document_index/i.test(q?.sql ?? "")) {
@@ -216,7 +210,7 @@ describe("createDocumentIndexer", () => {
     };
 
     const indexer = createDocumentIndexer(db);
-    
+
     try {
       // Pre-populate a row so we can assert it survives the failed transaction.
       await indexer.index({

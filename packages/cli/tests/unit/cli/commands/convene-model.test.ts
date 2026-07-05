@@ -17,9 +17,9 @@ import { resolveConveneModel } from "../../../../src/cli/commands/convene.js";
 
 describe("convene — resolveConveneModel precedence", () => {
   it("uses the explicit --model flag over expert, template, and config models", () => {
-    expect(resolveConveneModel("flag-model", "expert-model", "template-model", "config-model")).toBe(
-      "flag-model",
-    );
+    expect(
+      resolveConveneModel("flag-model", "expert-model", "template-model", "config-model"),
+    ).toBe("flag-model");
   });
 
   it("lets the --model flag override even a per-expert declared model", () => {
@@ -45,7 +45,9 @@ describe("convene — resolveConveneModel precedence", () => {
   it("falls back to the config default when flag, expert, and template are all unset", () => {
     // A distinctive config value proves the fallback targets the config default
     // rather than any hardcoded convene constant.
-    expect(resolveConveneModel(undefined, undefined, undefined, "config-model")).toBe("config-model");
+    expect(resolveConveneModel(undefined, undefined, undefined, "config-model")).toBe(
+      "config-model",
+    );
   });
 
   it("treats an empty-string flag as unset and falls through to the expert model", () => {

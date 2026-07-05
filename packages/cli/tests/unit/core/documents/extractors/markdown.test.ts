@@ -14,14 +14,15 @@ async function loadMarkdownExtractor(): Promise<{
 }> {
   vi.resetModules();
   await import("../../../../../src/core/documents/extractors/markdown.js");
-  const registry = await import(
-    "../../../../../src/core/documents/extractors/registry.js"
-  );
+  const registry = await import("../../../../../src/core/documents/extractors/registry.js");
   const extractor = await registry.getExtractor(".md");
   return { extractor };
 }
 
-function ctx(buf: Buffer, ext = ".md"): {
+function ctx(
+  buf: Buffer,
+  ext = ".md",
+): {
   buffer: Buffer;
   filename: string;
   extension: string;
@@ -77,9 +78,7 @@ describe("markdown extractor", () => {
   it("registers itself for both .md and .markdown", async () => {
     vi.resetModules();
     await import("../../../../../src/core/documents/extractors/markdown.js");
-    const registry = await import(
-      "../../../../../src/core/documents/extractors/registry.js"
-    );
+    const registry = await import("../../../../../src/core/documents/extractors/registry.js");
     const a = await registry.getExtractor(".md");
     const b = await registry.getExtractor(".markdown");
     expect(a).toBe(b);

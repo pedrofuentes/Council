@@ -356,9 +356,7 @@ describe("odt extractor", () => {
     expect(elapsed).toBeLessThan(2000);
     if (caught !== undefined) {
       expect(caught).toBeInstanceOf(errors.ExtractionError);
-      expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe(
-        "corrupt-document",
-      );
+      expect((caught as InstanceType<typeof errors.ExtractionError>).kind).toBe("corrupt-document");
     } else {
       expect(result).toBeDefined();
     }

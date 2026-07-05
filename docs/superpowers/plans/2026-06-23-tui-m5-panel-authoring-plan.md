@@ -9,6 +9,7 @@
 **Tech Stack:** TypeScript ESM, Ink 7, React 19, `ink-text-input`, `react-router`, Zod (`PanelDefinitionSchema`), `yaml`, Vitest + `ink-testing-library` + `MockEngine`.
 
 ## Global Constraints (every task implicitly includes these)
+
 - Node ≥ 24; ESM; **`.js` import specifiers**; `.tsx` starts with `import React from "react";`.
 - Named exports only; explicit return types; `interface` for object shapes; `readonly` default; **no `any`** (only the documented `as … | undefined` context narrowing for `useData()` sources).
 - **TDD (Sentinel-enforced):** the `test(tui)` commit (tests ONLY, RED-confirmed) precedes its `feat(tui)` commit. Never combine.
@@ -25,6 +26,7 @@
 - **Per increment:** worktree off `main`; `pnpm install --frozen-lockfile`; `pnpm test`+`lint`+`typecheck` before PR; PARENT invokes Sentinel; merge on APPROVED/CONDITIONAL. Delegated implementers STOP after opening the PR (report PR URL + HEAD SHA).
 
 ## Verified seams (against `main` 2026-06-23 — source of truth)
+
 - **`PanelLibraryRepository`** (`src/memory/repositories/panel-library-repo.ts`): `create(input: NewLibraryPanel): Promise<LibraryPanel>`; `findByName(name): Promise<LibraryPanel | undefined>`; `findAll()`; `update(name, patch: Partial<NewLibraryPanel>): Promise<void>`; `delete(name): Promise<void>` (DB only; FK-cascades `panel_members`/`panel_documents`/`panel_linked_folders`); `setMembers(panelName, expertSlugs): Promise<void>` (transactional rewrite); `getMembers(panelName): Promise<readonly string[]>`.
   - `NewLibraryPanel = { name: string; description: string | null; yamlPath: string; yamlChecksum: string }`.
   - `LibraryPanel = NewLibraryPanel + { createdAt; updatedAt }`.
@@ -39,6 +41,7 @@
 ---
 
 ## Task 1 (PR-A) — `MultiSelectList` reusable component
+
 A keyboard-driven checkbox list for selecting a subset of items. Pure presentational + selection state; no data deps.
 
 - [ ] **RED** `tests/unit/tui/multi-select-list.test.tsx` (ink-testing-library, `FORCE_COLOR`): renders all item labels with an unchecked marker; `j`/`k` (and ↓/↑) move the cursor (assert the `\u001b[7m` highlight moves to the exact row); **Space toggles** the highlighted item's checkbox (assert marker flips, e.g. `[ ]`→`[x]`); `onChange` fires with the new selected-index set / selected values; pre-selected items render checked (controlled `selected` prop); `Enter` calls `onSubmit` with the current selection; inactive (`isActive={false}`) ignores keys. Sanitize labels (feed a `\u001b[31m`-laced label → assert the injected CSI is stripped, highlight `\u001b[7m` still allowed). Commit `test(tui): …` after confirming RED.
@@ -46,6 +49,7 @@ A keyboard-driven checkbox list for selecting a subset of items. Pure presentati
 - [ ] Targeted tests + `--coverage` (component logic) + lint + typecheck green. (Component is `.tsx` so not coverage-gated, but assert every key branch.)
 
 ## Task 2 (PR-B) — `panel-authoring` adapter (create / setMembers / delete), offline-tested
+
 The tested behavior core. Mirrors `persistPanelArtifacts` + the CLI delete flow; injectable deps so it runs against a temp DB + temp dataHome.
 
 - [ ] **RED** `tests/unit/tui/panel-authoring.test.ts`: 100%-branch. Cover `validatePanelName` (accept `a`, `a-b1`; reject ``, `A`, `1x`, `a_b`, `-a`); `create`: writes the DB row, the YAML at `<dataHome>/panels/<name>.yaml`, and members (assert ORDER: row→YAML→members; assert YAML parses to the expected `PanelDefinition` with `defaults.{mode,maxRounds,model}` populated from the input and `experts` = the member slugs; assert `getMembers` returns the slugs); duplicate name → reject (no partial write); YAML already on disk (`wx`) → reject + DB rollback; an unknown member slug → reject before any write; `setMembers` replaces members; `countRetainedDebates(name)` returns the retained debate-session count (0 and >0 cases); `delete` → unlinks YAML + removes the panel dir + deletes the DB row (assert order), and does NOT delete debates. Use a real temp DB (`createDatabase`+`copyTemplateDb`) + temp dataHome + a fake/real `ExpertLibrary` for member validation. Confirm RED.
@@ -53,21 +57,25 @@ The tested behavior core. Mirrors `persistPanelArtifacts` + the CLI delete flow;
 - [ ] Adapter 100% branch (`--coverage.include='src/tui/adapters/panel-authoring.ts'`) + lint + typecheck.
 
 ## Task 3 (PR-C) — Panel create screen `/panels/new`
+
 - [ ] **RED** `tests/unit/tui/panel-create-screen.test.tsx` + an AppRouter integration test (route renders, not blank) + a `PanelsScreen` test that `n` navigates to `/panels/new`. Cover: a name `TextInput` (input-capture) + a `MultiSelectList` of experts (from `experts.loadList`); Enter/submit calls `panelAuthoring.create` with the name + selected slugs; invalid name → inline sanitized error (no create); empty selection → inline error (no create); a rejecting create → sanitized error; success navigates to `/panels/:name`. Gate submit on loaded + an `inFlight` guard. Confirm RED.
 - [ ] **GREEN** `src/tui/screens/PanelCreateScreen.tsx` (mode-gated: name-edit vs member-select vs idle; `Tab`/arrow to move focus between the name field and the list); route `panelNew: "/panels/new"`; AppRouter route + `n` shortcut in `PanelsScreen`; wire nothing new in `index.tsx` beyond `panelAuthoring` (added in Task 5 wiring or here — see Task 6 note). Sanitize all labels/errors. Commit.
 - [ ] Tests + lint + typecheck green.
 
 ## Task 4 (PR-D) — Panel edit-members screen `/panels/:name/members`
+
 - [ ] **RED** `tests/unit/tui/panel-members-screen.test.tsx` + AppRouter integration + `PanelDetailScreen` `m`-shortcut test. Cover: loads current members (`panels.loadDetail` or `getMembers`) and the full expert list, pre-checks current members in the `MultiSelectList`; submit calls `panelAuthoring.setMembers(name, selected)`; reload/return; loading/error states; submit gated on loaded. Confirm RED.
 - [ ] **GREEN** `src/tui/screens/PanelMembersScreen.tsx`; route `panelMembers: "/panels/:name/members"`; AppRouter route + persona-/saved-only `m` shortcut on `PanelDetailScreen` (gated on loaded). Sanitize. Commit.
 - [ ] Tests + lint + typecheck.
 
 ## Task 5 (PR-E) — Panel delete `/panels/:name/delete`
+
 - [ ] **RED** `tests/unit/tui/panel-delete-screen.test.tsx` + AppRouter integration + `PanelDetailScreen` `d`-shortcut test. Cover: loads the retained-debate count first via `panelAuthoring.countRetainedDebates(name)`; shows a sanitized warning ("Deleting <name> keeps N saved session(s)…"); `y` (gated on `state.status === "loaded"`) calls `panelAuthoring.delete(name)` then navigates to `/panels`; `y` during loading is a no-op; `n`/Esc cancel; a rejecting delete → sanitized error. **This is the exact PR-D-style gate** — do not let `y` fire before the count loads. Confirm RED.
 - [ ] **GREEN** `src/tui/screens/PanelDeleteScreen.tsx`; route `panelDelete: "/panels/:name/delete"`; AppRouter route + `d` shortcut on `PanelDetailScreen` (gated on loaded). Wire `panelAuthoring` in `index.tsx` (inline: `createPanelAuthoringSource({ panelRepo: new PanelLibraryRepository(db), library: expertLibrary, dataHome, countDebates: … })`). Sanitize. Commit.
 - [ ] Tests + lint + typecheck. Add `panelAuthoring?` to `TuiDataSources` in whichever PR first needs it (C or E) — keep it in ONE PR to avoid churn.
 
 ## Task 6 (PR-F) — Auto-compose screen `/panels/compose` (engine-backed)
+
 **Composed experts are INLINE definitions** (`autoComposePanel` rejects slug references). Persisting therefore has TWO steps: materialize each inline expert into the library, then create the panel referencing the new slugs — mirroring the convene "save as panel" path (`panel.ts` ≈672-706).
 
 - [ ] **RED** `tests/unit/tui/panel-compose-screen.test.tsx` (offline via a fake `panelCompose` source / `MockEngine`) + AppRouter integration + `PanelsScreen` `c`-shortcut test. Cover: a topic `TextInput`; submit (gated + `inFlight`) calls the compose source → renders a sanitized PREVIEW of the proposed INLINE experts (displayName/role) + panel name + description; a confirm step (`y`) calls the persist path; `n`/edit re-runs/cancels; a rejecting compose (incl. the slug-reference rejection) → sanitized error; a second submit while composing does not re-fire. Confirm RED.
@@ -75,9 +83,11 @@ The tested behavior core. Mirrors `persistPanelArtifacts` + the CLI delete flow;
 - [ ] Adapter 100% branch (offline, `MockEngine`) covering the materialize→create happy path, the slug-collision/fail path, AND the materialize-then-panel-fails ROLLBACK path; screen tests; lint + typecheck.
 
 ## Closeout (docs PR)
+
 - [ ] Mark **9.6 ✅** in `ROADMAP.md` + `IMPLEMENTATION-PLAN.md` (heading + status table); add a `LEARNINGS.md` entry for any new rejection patterns; Sentinel (fast-path) → merge.
 
 ## Sequencing & notes
+
 - Order: **PR-A (component) → PR-B (adapter) → PR-C/PR-D/PR-E (screens; share the `panelAuthoring` source + `TuiDataSources` field — introduce that field in PR-C and rebase D/E on it) → PR-F (compose) → closeout.** PR-C…F each rebase on the prior merge (they share `PanelDetailScreen`/`PanelsScreen` shortcuts, AppRouter routes, `index.tsx`, `DataProvider` — rebase to avoid conflicts, exactly as M4 did).
 - Deferred (file as `sentinel:*` follow-ups, do NOT scope-creep): the IMPLEMENTATION-PLAN's "extract a panel CRUD service from `commands/panel.ts`" (the adapter REPLICATES the CLI flow for now — a shared-service extraction is a separate behavior-preserving refactor); URL/auto-compose model pickers; reordering members; panel description editing UI.
 - Every increment keeps `main` green and coherent (clean stopping point after any merge).

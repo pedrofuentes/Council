@@ -27,7 +27,12 @@ const NAVIGATE_ACTIONS: readonly NavigatePaletteAction[] = [
 
 const CREATION_ACTIONS: readonly NavigatePaletteAction[] = [
   { id: "new-panel", label: "New panel", route: ROUTES.panelNew, kind: "navigate" },
-  { id: "compose-panel", label: "Auto-compose a panel", route: ROUTES.panelCompose, kind: "navigate" },
+  {
+    id: "compose-panel",
+    label: "Auto-compose a panel",
+    route: ROUTES.panelCompose,
+    kind: "navigate",
+  },
   { id: "new-expert", label: "New expert", route: ROUTES.expertNew, kind: "navigate" },
 ];
 

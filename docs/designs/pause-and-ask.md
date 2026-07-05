@@ -26,15 +26,15 @@ Council debates are valuable precisely because experts deliberate from a shared 
 
 The new feature is **different in every meaningful way**:
 
-| Dimension | `--human` | Pause & Ask |
-|---|---|---|
-| User role | Full debate participant | External context supplier |
-| Trigger | Scheduled turn in round-robin | Expert emits sentinel mid-turn |
-| In transcript | Yes — own `turn.start`/`turn.end` | No — injected as context note |
-| Premium requests | 0 (mirrors AI path, counter not incremented) | 0 |
-| Opt-in flag | `--human <name>` | `--clarify` |
-| Config | n/a | `debate.pauseOnClarify` |
-| Structured mode | Full support | v1: freeform only |
+| Dimension        | `--human`                                    | Pause & Ask                    |
+| ---------------- | -------------------------------------------- | ------------------------------ |
+| User role        | Full debate participant                      | External context supplier      |
+| Trigger          | Scheduled turn in round-robin                | Expert emits sentinel mid-turn |
+| In transcript    | Yes — own `turn.start`/`turn.end`            | No — injected as context note  |
+| Premium requests | 0 (mirrors AI path, counter not incremented) | 0                              |
+| Opt-in flag      | `--human <name>`                             | `--clarify`                    |
+| Config           | n/a                                          | `debate.pauseOnClarify`        |
+| Structured mode  | Full support                                 | v1: freeform only              |
 
 **Naming discipline**: to avoid user confusion, the new feature uses the word "clarify" everywhere (`--clarify`, `pauseOnClarify`, `PauseInputProvider`). The word "human" is reserved for `--human` and related identifiers.
 
@@ -64,10 +64,10 @@ The sentinel text is stripped from the emitted turn content before the `turn.end
 
 ### 3.2 Rejected alternatives
 
-| Option | Why rejected |
-|---|---|
-| **(b) Moderator LLM call after each turn** | Adds a premium request per turn; high latency; requires an extra provider config; heuristic-only anyway |
-| **(c) Engine tool / function-calling** | Cleanest semantics long-term but requires tool-call support across all providers and a larger surface change to the engine adapter abstraction; deferred as a future upgrade path |
+| Option                                     | Why rejected                                                                                                                                                                      |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **(b) Moderator LLM call after each turn** | Adds a premium request per turn; high latency; requires an extra provider config; heuristic-only anyway                                                                           |
+| **(c) Engine tool / function-calling**     | Cleanest semantics long-term but requires tool-call support across all providers and a larger surface change to the engine adapter abstraction; deferred as a future upgrade path |
 
 Option (a) is the simplest approach that is immediately provider-agnostic and genuinely opt-in: if no provider is configured (or `--clarify` is not passed), the sentinel is simply ignored and the debate continues.
 
@@ -107,8 +107,7 @@ export interface PauseInputContext {
 }
 
 export type PauseInputResult =
-  | { readonly kind: "answered"; readonly answer: string }
-  | { readonly kind: "skipped" };
+  { readonly kind: "answered"; readonly answer: string } | { readonly kind: "skipped" };
 
 export interface PauseInputProvider {
   getInput(ctx: PauseInputContext): Promise<PauseInputResult>;
@@ -231,7 +230,9 @@ The TUI `PauseInputProvider` works as follows:
 ```typescript
 // Inside DebateStreamScreen component:
 const [pauseState, setPauseState] = useState<{
-  id: string; question: string; round: number;
+  id: string;
+  question: string;
+  round: number;
   resolve: (result: PauseInputResult) => void;
 } | null>(null);
 
@@ -362,10 +363,10 @@ Cap answer at **1500 characters** before any processing. `sanitizeFenced` enforc
 
 ## 10. Abuse Guards
 
-| Guard | Value | Enforcement |
-|---|---|---|
-| `maxPausesPerDebate` | 3 (default) | Centrally in the orchestrator's sentinel-detection path; sentinels beyond the limit are silently stripped and ignored |
-| `pauseTimeoutSeconds` | 120 s | On expiry, inject `answer: null` (the no-answer block) and resume — **never** abandon the debate |
+| Guard                 | Value       | Enforcement                                                                                                           |
+| --------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------- |
+| `maxPausesPerDebate`  | 3 (default) | Centrally in the orchestrator's sentinel-detection path; sentinels beyond the limit are silently stripped and ignored |
+| `pauseTimeoutSeconds` | 120 s       | On expiry, inject `answer: null` (the no-answer block) and resume — **never** abandon the debate                      |
 
 Both are configurable via `DebateConfig` fields.
 
@@ -410,39 +411,39 @@ Recommend shipping v1 first — it covers the primary use case without a schema 
 
 ## 13. File-by-File Change Map
 
-| File | Action | Change summary | Anchor |
-|---|---|---|---|
-| `core/types.ts` | Modify | Add `debate.needs-input` and `debate.input-received` event variants | ~line 153 (after existing turn events) |
-| `core/pause-input.ts` | **Create** | `PauseInputContext`, `PauseInputResult`, `PauseInputProvider` interface | Mirror `human-input.ts:10–32` |
-| `core/debate.ts` | Modify | Add `pauseInput?` + `maxPauses?` to `DebateConfig`; add `#pauseCount` counter; sentinel scan in `#runAiTurn`; synthetic `priorTurns` push in `#runFreeform` | Lines 173, 460–468, 839–842 |
-| `config/schema.ts` | Modify | Add `debate.pauseOnClarify: z.enum(["off", "interactive"]).default("off")` | Line 132 pattern |
-| `cli/non-interactive.ts` | Read-only | No change; gating uses existing `isNonInteractive()` | Line 12 |
-| `cli/strip-control-chars.ts` | Read-only | No change; use existing `toSingleLineDisplay()` | Line 75 |
-| `core/prompt-sanitize.ts` | Read-only | No change; use existing `sanitizeFenced()` + `detectInstructionPatterns()` | Lines 83, 94 |
-| `core/moderator/phase-prompts.ts` | Read-only | No change; `INJECTION_PREAMBLE` pattern is the reference | Line 47 |
-| `cli/pause-input-provider.ts` | **Create** | `createPlainPauseInputProvider()` — readline on stdin/stderr | Mirror `confirm.ts:40–54` |
-| `cli/renderers/plain.ts` | Modify | Add switch cases for `debate.needs-input` and `debate.input-received` | ~line 63 |
-| `cli/run-with-engine.ts` | Modify | Add `pauseInputFactory?` to `RunWithEngineOpts` | ~line 118 |
-| `cli/commands/convene.ts` | Modify | Add `--clarify` flag; resolve `pauseInputFactory`; wire through deps; non-interactive warning | Lines 296, 696–699 |
-| `tui/components/overlays/PauseInputOverlay.tsx` | **Create** | Centered modal with question + `MultilineInput`; Esc=skip, Enter=submit | Mirror `CostConfirmModal.tsx` |
-| `tui/screens/DebateStreamScreen.tsx` | Modify | Add `pauseState` + `pauseProviderRef`; render overlay; gate outer `useInput` | Lines 205–213, 239 |
-| `tui/adapters/convene.ts` | Modify | Thread `pauseInput?` through `streamDebate` | Line 66 |
+| File                                            | Action     | Change summary                                                                                                                                              | Anchor                                 |
+| ----------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| `core/types.ts`                                 | Modify     | Add `debate.needs-input` and `debate.input-received` event variants                                                                                         | ~line 153 (after existing turn events) |
+| `core/pause-input.ts`                           | **Create** | `PauseInputContext`, `PauseInputResult`, `PauseInputProvider` interface                                                                                     | Mirror `human-input.ts:10–32`          |
+| `core/debate.ts`                                | Modify     | Add `pauseInput?` + `maxPauses?` to `DebateConfig`; add `#pauseCount` counter; sentinel scan in `#runAiTurn`; synthetic `priorTurns` push in `#runFreeform` | Lines 173, 460–468, 839–842            |
+| `config/schema.ts`                              | Modify     | Add `debate.pauseOnClarify: z.enum(["off", "interactive"]).default("off")`                                                                                  | Line 132 pattern                       |
+| `cli/non-interactive.ts`                        | Read-only  | No change; gating uses existing `isNonInteractive()`                                                                                                        | Line 12                                |
+| `cli/strip-control-chars.ts`                    | Read-only  | No change; use existing `toSingleLineDisplay()`                                                                                                             | Line 75                                |
+| `core/prompt-sanitize.ts`                       | Read-only  | No change; use existing `sanitizeFenced()` + `detectInstructionPatterns()`                                                                                  | Lines 83, 94                           |
+| `core/moderator/phase-prompts.ts`               | Read-only  | No change; `INJECTION_PREAMBLE` pattern is the reference                                                                                                    | Line 47                                |
+| `cli/pause-input-provider.ts`                   | **Create** | `createPlainPauseInputProvider()` — readline on stdin/stderr                                                                                                | Mirror `confirm.ts:40–54`              |
+| `cli/renderers/plain.ts`                        | Modify     | Add switch cases for `debate.needs-input` and `debate.input-received`                                                                                       | ~line 63                               |
+| `cli/run-with-engine.ts`                        | Modify     | Add `pauseInputFactory?` to `RunWithEngineOpts`                                                                                                             | ~line 118                              |
+| `cli/commands/convene.ts`                       | Modify     | Add `--clarify` flag; resolve `pauseInputFactory`; wire through deps; non-interactive warning                                                               | Lines 296, 696–699                     |
+| `tui/components/overlays/PauseInputOverlay.tsx` | **Create** | Centered modal with question + `MultilineInput`; Esc=skip, Enter=submit                                                                                     | Mirror `CostConfirmModal.tsx`          |
+| `tui/screens/DebateStreamScreen.tsx`            | Modify     | Add `pauseState` + `pauseProviderRef`; render overlay; gate outer `useInput`                                                                                | Lines 205–213, 239                     |
+| `tui/adapters/convene.ts`                       | Modify     | Thread `pauseInput?` through `streamDebate`                                                                                                                 | Line 66                                |
 
 ---
 
 ## 14. Edge Cases
 
-| Case | Handling |
-|---|---|
-| **Multiple sentinels in one round** | Take the first match only (regex first-match semantics); subsequent sentinels in the same turn are stripped and ignored |
-| **Empty or declined answer** | `answer: null` → inject the no-answer block (`[user did not respond]`); debate continues |
-| **Malformed sentinel (no question text)** | Regex requires non-empty capture; `[\s\S]+?` with minimum 1 character; malformed tags are ignored |
-| **Sentinel inside a `--human` participant's turn** | `#runHumanTurn` does not call `#runAiTurn`; the sentinel scan lives in `#runAiTurn` only; human turns are passed through unchanged |
-| **Abort during pause prompt** | `AbortSignal` fires → `unmountedRef.current = true` in TUI (line 142) → `getInput()` resolves with `{ kind: "skipped" }` → generator unwinds via existing abort check |
-| **Quality gate interaction** | Sentinel scan runs after the quality gate finalizes the accepted content; a regenerated response may or may not contain the sentinel — whichever candidate is accepted is scanned |
-| **Sentinel at `maxPauses` limit** | Stripped silently; `debate.needs-input` is NOT emitted; the debate continues as if the sentinel were absent |
-| **Timeout (120 s)** | Provider resolves with `{ kind: "skipped" }` + `answer: null`; the no-answer block is injected; the debate resumes — it never hangs indefinitely |
-| **`--clarify` + `--json`** | `isNonInteractive()` returns `true` for non-TTY; events are emitted but no input is read; the JSON renderer emits both events and continues |
+| Case                                               | Handling                                                                                                                                                                          |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Multiple sentinels in one round**                | Take the first match only (regex first-match semantics); subsequent sentinels in the same turn are stripped and ignored                                                           |
+| **Empty or declined answer**                       | `answer: null` → inject the no-answer block (`[user did not respond]`); debate continues                                                                                          |
+| **Malformed sentinel (no question text)**          | Regex requires non-empty capture; `[\s\S]+?` with minimum 1 character; malformed tags are ignored                                                                                 |
+| **Sentinel inside a `--human` participant's turn** | `#runHumanTurn` does not call `#runAiTurn`; the sentinel scan lives in `#runAiTurn` only; human turns are passed through unchanged                                                |
+| **Abort during pause prompt**                      | `AbortSignal` fires → `unmountedRef.current = true` in TUI (line 142) → `getInput()` resolves with `{ kind: "skipped" }` → generator unwinds via existing abort check             |
+| **Quality gate interaction**                       | Sentinel scan runs after the quality gate finalizes the accepted content; a regenerated response may or may not contain the sentinel — whichever candidate is accepted is scanned |
+| **Sentinel at `maxPauses` limit**                  | Stripped silently; `debate.needs-input` is NOT emitted; the debate continues as if the sentinel were absent                                                                       |
+| **Timeout (120 s)**                                | Provider resolves with `{ kind: "skipped" }` + `answer: null`; the no-answer block is injected; the debate resumes — it never hangs indefinitely                                  |
+| **`--clarify` + `--json`**                         | `isNonInteractive()` returns `true` for non-TTY; events are emitted but no input is read; the JSON renderer emits both events and continues                                       |
 
 ---
 
@@ -450,12 +451,12 @@ Recommend shipping v1 first — it covers the primary use case without a schema 
 
 All increments are TDD (failing test commit → implementation commit) per the project's TDD invariant.
 
-| PR | Scope | Key deliverables |
-|---|---|---|
-| **PR 1** — Core orchestrator | `core/types.ts`, `core/pause-input.ts`, `core/debate.ts`, unit tests with `MockEngine` | New event types; `PauseInputProvider` interface; sentinel regex scan in `#runAiTurn`; `priorTurns` injection; `maxPauses` guard; no-answer fallback — all tested in isolation |
-| **PR 2** — Plain CLI | `cli/pause-input-provider.ts`, `cli/renderers/plain.ts`, `cli/run-with-engine.ts`, `cli/commands/convene.ts`, `config/schema.ts` | `--clarify` flag; `pauseOnClarify` config enum; plain readline provider; non-interactive no-op + startup warning; `PlainRenderer` cases |
-| **PR 3** — TUI | `tui/components/overlays/PauseInputOverlay.tsx`, `tui/screens/DebateStreamScreen.tsx`, `tui/adapters/convene.ts` | Promise-resolve-in-state provider; overlay component; `useInput` gating; Esc=skip wiring |
-| **PR 4** _(optional v2)_ | DB schema, `clarify_requests` table, `council answer` command, updated `council resume` | Persisted pause state; async answer supply; resume from pause point |
+| PR                           | Scope                                                                                                                            | Key deliverables                                                                                                                                                              |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **PR 1** — Core orchestrator | `core/types.ts`, `core/pause-input.ts`, `core/debate.ts`, unit tests with `MockEngine`                                           | New event types; `PauseInputProvider` interface; sentinel regex scan in `#runAiTurn`; `priorTurns` injection; `maxPauses` guard; no-answer fallback — all tested in isolation |
+| **PR 2** — Plain CLI         | `cli/pause-input-provider.ts`, `cli/renderers/plain.ts`, `cli/run-with-engine.ts`, `cli/commands/convene.ts`, `config/schema.ts` | `--clarify` flag; `pauseOnClarify` config enum; plain readline provider; non-interactive no-op + startup warning; `PlainRenderer` cases                                       |
+| **PR 3** — TUI               | `tui/components/overlays/PauseInputOverlay.tsx`, `tui/screens/DebateStreamScreen.tsx`, `tui/adapters/convene.ts`                 | Promise-resolve-in-state provider; overlay component; `useInput` gating; Esc=skip wiring                                                                                      |
+| **PR 4** _(optional v2)_     | DB schema, `clarify_requests` table, `council answer` command, updated `council resume`                                          | Persisted pause state; async answer supply; resume from pause point                                                                                                           |
 
 Dependencies: PR 2 and PR 3 both depend on PR 1. PR 2 and PR 3 can be developed in parallel after PR 1 merges. PR 4 depends on all prior PRs.
 

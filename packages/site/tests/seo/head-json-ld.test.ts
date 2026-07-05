@@ -36,7 +36,9 @@ function readDist(relative: string): string {
 /** Extract and parse every JSON-LD `<script>` payload embedded in a page's HTML. */
 function extractJsonLd(html: string): readonly unknown[] {
   const scriptPattern = /<script type="application\/ld\+json"[^>]*>(.*?)<\/script>/gs;
-  return [...html.matchAll(scriptPattern)].map((match) => JSON.parse(match[1] ?? "null") as unknown);
+  return [...html.matchAll(scriptPattern)].map(
+    (match) => JSON.parse(match[1] ?? "null") as unknown,
+  );
 }
 
 beforeAll(() => {

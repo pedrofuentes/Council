@@ -63,9 +63,9 @@ src/core/documents/
 interface ExtractionContext {
   readonly buffer: Buffer;
   readonly filename: string;
-  readonly extension: string;       // pre-parsed, normalized (e.g., ".pdf")
+  readonly extension: string; // pre-parsed, normalized (e.g., ".pdf")
   readonly sizeBytes: number;
-  readonly signal?: AbortSignal;    // timeout support
+  readonly signal?: AbortSignal; // timeout support
 }
 
 interface ExtractedContent {
@@ -77,9 +77,9 @@ interface ExtractedContent {
 interface DocumentMetadata {
   readonly title?: string;
   readonly author?: string;
-  readonly pageCount?: number;      // PDF
-  readonly sheetNames?: string[];   // XLSX, ODS
-  readonly slideCount?: number;     // PPTX, ODP
+  readonly pageCount?: number; // PDF
+  readonly sheetNames?: string[]; // XLSX, ODS
+  readonly slideCount?: number; // PPTX, ODP
 }
 
 type ContentExtractor = (ctx: ExtractionContext) => Promise<ExtractedContent>;
@@ -151,20 +151,20 @@ class ExtractionError extends Error {
 
 One module per parser. Each receives `ExtractionContext`, returns `ExtractedContent`.
 
-| Module | Formats | Dependency | Output style |
-|--------|---------|------------|--------------|
-| `markdown.ts` | `.md`, `.markdown` | none | Existing regex normalizer (moved from extractor.ts) |
-| `html.ts` | `.html`, `.htm` | none | Existing tag stripper (moved from extractor.ts) |
-| `plaintext.ts` | `.txt` | none | `raw.trim()` + binary-content guard |
-| `csv.ts` | `.csv`, `.tsv` | none (~50 lines) | Markdown table |
-| `rtf.ts` | `.rtf` | none (regex) | Plain text |
-| `pdf.ts` | `.pdf` | `pdfjs-dist` | Plain text with page separators |
-| `docx.ts` | `.docx` | `mammoth` | Markdown (mammoth's native output) |
-| `xlsx.ts` | `.xlsx`, `.xls` | `exceljs` | Markdown tables, sheet names as `##` headers |
-| `pptx.ts` | `.pptx` | `yauzl` + `fast-xml-parser` | `## Slide N` + body + speaker notes |
-| `odt.ts` | `.odt` | `yauzl` + `fast-xml-parser` | Plain text from `content.xml` |
-| `ods.ts` | `.ods` | `yauzl` + `fast-xml-parser` | Markdown tables from `content.xml` |
-| `odp.ts` | `.odp` | `yauzl` + `fast-xml-parser` | Markdown sections from `content.xml` |
+| Module         | Formats            | Dependency                  | Output style                                        |
+| -------------- | ------------------ | --------------------------- | --------------------------------------------------- |
+| `markdown.ts`  | `.md`, `.markdown` | none                        | Existing regex normalizer (moved from extractor.ts) |
+| `html.ts`      | `.html`, `.htm`    | none                        | Existing tag stripper (moved from extractor.ts)     |
+| `plaintext.ts` | `.txt`             | none                        | `raw.trim()` + binary-content guard                 |
+| `csv.ts`       | `.csv`, `.tsv`     | none (~50 lines)            | Markdown table                                      |
+| `rtf.ts`       | `.rtf`             | none (regex)                | Plain text                                          |
+| `pdf.ts`       | `.pdf`             | `pdfjs-dist`                | Plain text with page separators                     |
+| `docx.ts`      | `.docx`            | `mammoth`                   | Markdown (mammoth's native output)                  |
+| `xlsx.ts`      | `.xlsx`, `.xls`    | `exceljs`                   | Markdown tables, sheet names as `##` headers        |
+| `pptx.ts`      | `.pptx`            | `yauzl` + `fast-xml-parser` | `## Slide N` + body + speaker notes                 |
+| `odt.ts`       | `.odt`             | `yauzl` + `fast-xml-parser` | Plain text from `content.xml`                       |
+| `ods.ts`       | `.ods`             | `yauzl` + `fast-xml-parser` | Markdown tables from `content.xml`                  |
+| `odp.ts`       | `.odp`             | `yauzl` + `fast-xml-parser` | Markdown sections from `content.xml`                |
 
 ### Security Hardening Per Extractor
 
@@ -208,12 +208,12 @@ documents: {
 
 Interactive prompts **never** appear during `council chat` startup. The separation:
 
-| Context | Behavior |
-|---------|----------|
-| `council chat` startup | Report: `⚠ 3 files need review — run 'council docs review'` |
-| `council docs review` | Interactive: shows pending files, batched approval (`[a]ll, [s]elect, [n]one`) |
-| `council expert train` | Inline prompts acceptable (already explicit, long-running) |
-| `"auto"` mode | Skip approval for allowlisted extensions only |
+| Context                | Behavior                                                                       |
+| ---------------------- | ------------------------------------------------------------------------------ |
+| `council chat` startup | Report: `⚠ 3 files need review — run 'council docs review'`                    |
+| `council docs review`  | Interactive: shows pending files, batched approval (`[a]ll, [s]elect, [n]one`) |
+| `council expert train` | Inline prompts acceptable (already explicit, long-running)                     |
+| `"auto"` mode          | Skip approval for allowlisted extensions only                                  |
 
 ### Execution Sandbox (Defense in Depth)
 
@@ -233,6 +233,7 @@ Interactive prompts **never** appear during `council chat` startup. The separati
 ### Audit Logging
 
 Every AI extraction execution logged (append-only):
+
 - Source file hash
 - Generated script hash
 - Exit status
@@ -310,17 +311,17 @@ Panel "finance-team" document health:
 
 Error kinds map to human-readable messages in the CLI renderer (not in extractors):
 
-| Error kind | User message |
-|------------|-------------|
-| `unsupported-format` | `✘ file.ext — unsupported format (run 'council docs formats')` |
-| `encrypted-document` | `✘ report.pdf — password-protected (decrypt and re-add)` |
-| `corrupt-document` | `✘ data.xlsx — file appears corrupted (try re-saving)` |
-| `oversize-file` | `✘ video.pptx — exceeds 50MB limit (reduce file size)` |
-| `zip-bomb-detected` | `✘ sus.docx — rejected (suspicious compression ratio)` |
-| `extraction-timeout` | `✘ huge.pdf — extraction timed out (try a smaller file)` |
-| `ai-extraction-declined` | `⚠ budget.numbers — AI extraction declined (skipped)` |
-| `ai-extraction-failed` | `✘ budget.numbers — AI extraction failed (try converting manually)` |
-| zero words | `⚠ scan.pdf — extracted 0 words (image-only PDF; OCR not available)` |
+| Error kind               | User message                                                         |
+| ------------------------ | -------------------------------------------------------------------- |
+| `unsupported-format`     | `✘ file.ext — unsupported format (run 'council docs formats')`       |
+| `encrypted-document`     | `✘ report.pdf — password-protected (decrypt and re-add)`             |
+| `corrupt-document`       | `✘ data.xlsx — file appears corrupted (try re-saving)`               |
+| `oversize-file`          | `✘ video.pptx — exceeds 50MB limit (reduce file size)`               |
+| `zip-bomb-detected`      | `✘ sus.docx — rejected (suspicious compression ratio)`               |
+| `extraction-timeout`     | `✘ huge.pdf — extraction timed out (try a smaller file)`             |
+| `ai-extraction-declined` | `⚠ budget.numbers — AI extraction declined (skipped)`                |
+| `ai-extraction-failed`   | `✘ budget.numbers — AI extraction failed (try converting manually)`  |
+| zero words               | `⚠ scan.pdf — extracted 0 words (image-only PDF; OCR not available)` |
 
 ### CLI Flag Parity
 
@@ -387,11 +388,13 @@ Add a section to `docs/ARCHITECTURE.md` documenting:
 Small canonical files in `tests/fixtures/documents/` (total <100KB):
 
 **Happy path fixtures** (min-viable, 1-2KB each):
+
 - `sample.pdf`, `sample.docx`, `sample.xlsx`, `sample.pptx`
 - `sample.odt`, `sample.ods`, `sample.odp`
 - `sample.rtf`, `sample.csv`, `sample.tsv`
 
 **Adversarial fixtures:**
+
 - `billion-laughs.xml` — entity expansion attack
 - `xxe-payload.docx` — external entity reference in OOXML
 - `zip-bomb.xlsx` — high compression ratio
@@ -405,18 +408,18 @@ Small canonical files in `tests/fixtures/documents/` (total <100KB):
 
 Pure `(Buffer) → content` tests — no filesystem needed:
 
-| Test | What it verifies |
-|------|-----------------|
-| Happy path | Correct text extraction, word count, metadata |
-| Empty document | Handles gracefully, returns empty content + 0 words |
-| Encrypted/password-protected | Throws `ExtractionError` with kind `encrypted-document` |
-| Corrupt file | Throws `ExtractionError` with kind `corrupt-document` |
-| Oversized input | Throws `ExtractionError` with kind `oversize-file` before parsing |
-| Zip bomb (ZIP-based) | Throws `ExtractionError` with kind `zip-bomb-detected` |
-| XXE payload (XML-based) | No external entity resolution, no hang |
-| Billion-laughs (XML-based) | Doesn't consume unbounded memory |
-| Binary content guard (plaintext) | Rejects high non-printable byte ratio |
-| Magic-byte mismatch | Renamed file detected and re-dispatched correctly |
+| Test                             | What it verifies                                                  |
+| -------------------------------- | ----------------------------------------------------------------- |
+| Happy path                       | Correct text extraction, word count, metadata                     |
+| Empty document                   | Handles gracefully, returns empty content + 0 words               |
+| Encrypted/password-protected     | Throws `ExtractionError` with kind `encrypted-document`           |
+| Corrupt file                     | Throws `ExtractionError` with kind `corrupt-document`             |
+| Oversized input                  | Throws `ExtractionError` with kind `oversize-file` before parsing |
+| Zip bomb (ZIP-based)             | Throws `ExtractionError` with kind `zip-bomb-detected`            |
+| XXE payload (XML-based)          | No external entity resolution, no hang                            |
+| Billion-laughs (XML-based)       | Doesn't consume unbounded memory                                  |
+| Binary content guard (plaintext) | Rejects high non-printable byte ratio                             |
+| Magic-byte mismatch              | Renamed file detected and re-dispatched correctly                 |
 
 ### Registry Tests
 
@@ -442,17 +445,18 @@ Pure `(Buffer) → content` tests — no filesystem needed:
 
 ### New Dependencies (Production)
 
-| Package | Version | Purpose | Size | License |
-|---------|---------|---------|------|---------|
-| `pdfjs-dist` | (pin exact) | PDF text extraction | ~3.5MB | Apache-2.0 |
-| `mammoth` | (pin exact) | DOCX → markdown | ~200KB | BSD-2 |
-| `exceljs` | (pin exact) | XLSX/XLS parsing | ~1.5MB | MIT |
-| `yauzl` | (pin exact) | Streaming ZIP extraction | ~50KB | MIT |
-| `fast-xml-parser` | (pin exact) | XML parsing (OOXML/ODF) | ~100KB | MIT |
+| Package           | Version     | Purpose                  | Size   | License    |
+| ----------------- | ----------- | ------------------------ | ------ | ---------- |
+| `pdfjs-dist`      | (pin exact) | PDF text extraction      | ~3.5MB | Apache-2.0 |
+| `mammoth`         | (pin exact) | DOCX → markdown          | ~200KB | BSD-2      |
+| `exceljs`         | (pin exact) | XLSX/XLS parsing         | ~1.5MB | MIT        |
+| `yauzl`           | (pin exact) | Streaming ZIP extraction | ~50KB  | MIT        |
+| `fast-xml-parser` | (pin exact) | XML parsing (OOXML/ODF)  | ~100KB | MIT        |
 
 No new dev dependencies — existing Vitest + fixture files are sufficient.
 
 **Why these packages:**
+
 - `pdfjs-dist` over `pdf-parse`: `pdf-parse` is unmaintained (last meaningful release 2018), wraps `pdfjs-dist` anyway. Mozilla's `pdfjs-dist` is actively maintained with regular security releases.
 - `exceljs` over `xlsx` (SheetJS): SheetJS community edition has licensing concerns and hasn't published to npm recently. `exceljs` is MIT and actively maintained.
 - `yauzl` over `adm-zip`/`jszip`: `yauzl` provides streaming decompression (doesn't load entire archive into memory), making it suitable for enforcing decompression limits.
@@ -496,10 +500,13 @@ Heavy dependencies (`pdfjs-dist`, `mammoth`, `exceljs`) loaded via dynamic `impo
 
 ```typescript
 // Registry entry (conceptual)
-[".pdf", async () => {
-  const mod = await import("./pdf.js");
-  return mod.extractPdf;
-}]
+[
+  ".pdf",
+  async () => {
+    const mod = await import("./pdf.js");
+    return mod.extractPdf;
+  },
+];
 ```
 
 The registry holds `ExtractorLoader` functions (not `ContentExtractor` directly) and memoizes after first resolution. CLI startup cost: **zero** — dependencies load only when a file of that format is first encountered.
@@ -507,6 +514,7 @@ The registry holds `ExtractorLoader` functions (not `ContentExtractor` directly)
 ## Implementation Phases
 
 ### Phase 1: Registry Refactor + Built-in Extractors (core value)
+
 - Create `extractors/` directory with types, errors, registry
 - Move markdown/html/plaintext normalizers to new modules
 - Add PDF, DOCX, XLSX, PPTX, CSV, RTF, ODT, ODS, ODP extractors
@@ -517,6 +525,7 @@ The registry holds `ExtractorLoader` functions (not `ContentExtractor` directly)
 - Preserve existing TOCTOU test suite
 
 ### Phase 2: CLI UX Improvements
+
 - `council docs formats` command
 - Updated scan output (summarized unchanged, per-file new/failed)
 - Error taxonomy → human message mapping in CLI renderer
@@ -525,11 +534,13 @@ The registry holds `ExtractorLoader` functions (not `ContentExtractor` directly)
 - Replace `formatAllFailedWarning` with `formatScanSummary`
 
 ### Phase 3: `docs review` + `docs doctor` Commands
+
 - `council docs review` — interactive approval for unsupported files
 - `council docs doctor` — diagnostic health check
 - Persistence of "declined" decisions (per-panel)
 
 ### Phase 4: AI Fallback Extraction
+
 - AI extraction config (`documents.aiExtraction`, `aiExtractionAllowedExtensions`)
 - Sandbox implementation (OS-level process isolation)
 - Script generation (prompt with extension + magic bytes only)
@@ -540,6 +551,7 @@ The registry holds `ExtractorLoader` functions (not `ContentExtractor` directly)
 - Extension blocklist enforcement
 
 ### Phase 5: Prompt Injection Defenses
+
 - Per-document delimiter wrapping in prompt injection
 - Role marker sanitization in extracted text
 - Content provenance in retrieval output

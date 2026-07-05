@@ -86,7 +86,11 @@ describe("A11Y-08: ChatRenderer severity text labels", () => {
 // ── A11Y-10 & A11Y-13: Force PlainRenderer for screen readers ──
 
 describe("A11Y-10: selectRenderer forces PlainRenderer for accessibility", () => {
-  const sink: Sink = { write: () => { /* noop */ } };
+  const sink: Sink = {
+    write: () => {
+      /* noop */
+    },
+  };
   let origTerm: string | undefined;
   let origCI: string | undefined;
   let origA11y: string | undefined;
@@ -162,9 +166,8 @@ describe("A11Y-12: streaming cursor suppression", () => {
   });
 
   it("shouldSuppressCursor returns true when NO_COLOR is set", async () => {
-    const { shouldSuppressCursor } = await import(
-      "../../../../src/cli/renderers/ink/InkRenderer.js"
-    );
+    const { shouldSuppressCursor } =
+      await import("../../../../src/cli/renderers/ink/InkRenderer.js");
     process.env["NO_COLOR"] = "1";
     delete process.env["COUNCIL_ASCII"];
     delete process.env["TERM"];
@@ -172,9 +175,8 @@ describe("A11Y-12: streaming cursor suppression", () => {
   });
 
   it("shouldSuppressCursor returns true when COUNCIL_ASCII=1", async () => {
-    const { shouldSuppressCursor } = await import(
-      "../../../../src/cli/renderers/ink/InkRenderer.js"
-    );
+    const { shouldSuppressCursor } =
+      await import("../../../../src/cli/renderers/ink/InkRenderer.js");
     delete process.env["NO_COLOR"];
     process.env["COUNCIL_ASCII"] = "1";
     delete process.env["TERM"];
@@ -182,9 +184,8 @@ describe("A11Y-12: streaming cursor suppression", () => {
   });
 
   it("shouldSuppressCursor returns true when TERM=dumb", async () => {
-    const { shouldSuppressCursor } = await import(
-      "../../../../src/cli/renderers/ink/InkRenderer.js"
-    );
+    const { shouldSuppressCursor } =
+      await import("../../../../src/cli/renderers/ink/InkRenderer.js");
     delete process.env["NO_COLOR"];
     delete process.env["COUNCIL_ASCII"];
     process.env["TERM"] = "dumb";
@@ -192,9 +193,8 @@ describe("A11Y-12: streaming cursor suppression", () => {
   });
 
   it("shouldSuppressCursor returns false when none of the env vars are set", async () => {
-    const { shouldSuppressCursor } = await import(
-      "../../../../src/cli/renderers/ink/InkRenderer.js"
-    );
+    const { shouldSuppressCursor } =
+      await import("../../../../src/cli/renderers/ink/InkRenderer.js");
     delete process.env["NO_COLOR"];
     delete process.env["COUNCIL_ASCII"];
     process.env["TERM"] = "xterm-256color";
@@ -236,23 +236,17 @@ describe("A11Y-14: InkRenderer fallback mechanism (normal path)", () => {
 
 describe("A11Y-11: chat command stdin.isTTY check", () => {
   it("isInteractiveTerminal returns false when isTTY is false", async () => {
-    const { isInteractiveTerminal } = await import(
-      "../../../../src/cli/commands/chat.js"
-    );
+    const { isInteractiveTerminal } = await import("../../../../src/cli/commands/chat.js");
     expect(isInteractiveTerminal(false)).toBe(false);
   });
 
   it("isInteractiveTerminal returns true when isTTY is true", async () => {
-    const { isInteractiveTerminal } = await import(
-      "../../../../src/cli/commands/chat.js"
-    );
+    const { isInteractiveTerminal } = await import("../../../../src/cli/commands/chat.js");
     expect(isInteractiveTerminal(true)).toBe(true);
   });
 
   it("isInteractiveTerminal returns false when isTTY is undefined", async () => {
-    const { isInteractiveTerminal } = await import(
-      "../../../../src/cli/commands/chat.js"
-    );
+    const { isInteractiveTerminal } = await import("../../../../src/cli/commands/chat.js");
     expect(isInteractiveTerminal(undefined)).toBe(false);
   });
 
@@ -332,12 +326,8 @@ describe("A11Y-11: chat command stdin.isTTY check", () => {
     });
 
     it("buildChatCommand rejects with CliUserError when stdin is not a TTY", async () => {
-      const { buildChatCommand } = await import(
-        "../../../../src/cli/commands/chat.js"
-      );
-      const { CliUserError } = await import(
-        "../../../../src/cli/cli-user-error.js"
-      );
+      const { buildChatCommand } = await import("../../../../src/cli/commands/chat.js");
+      const { CliUserError } = await import("../../../../src/cli/cli-user-error.js");
 
       // No inputProvider — the guard is `!deps.inputProvider && !isInteractiveTerminal(...)`,
       // so an inputProvider would SKIP the guard. It must be absent here.
@@ -362,9 +352,10 @@ describe("A11Y-11: chat command stdin.isTTY check", () => {
         }
 
         // Commander wraps errors — unwrap if needed.
-        const actual = caughtError instanceof Error && "nestedError" in caughtError
-          ? (caughtError as { nestedError: unknown }).nestedError
-          : caughtError;
+        const actual =
+          caughtError instanceof Error && "nestedError" in caughtError
+            ? (caughtError as { nestedError: unknown }).nestedError
+            : caughtError;
         expect(actual).toBeInstanceOf(CliUserError);
         expect((actual as Error).message).toContain("interactive terminal");
         expect((actual as Error).message).toContain("council ask");
@@ -378,9 +369,7 @@ describe("A11Y-11: chat command stdin.isTTY check", () => {
     });
 
     it("does NOT raise the interactive-terminal error when an inputProvider is supplied (positive control)", async () => {
-      const { buildChatCommand } = await import(
-        "../../../../src/cli/commands/chat.js"
-      );
+      const { buildChatCommand } = await import("../../../../src/cli/commands/chat.js");
 
       // Same resolvable target and same non-TTY stdin, but WITH an inputProvider:
       // the guard short-circuits on `!deps.inputProvider`, proving the negative

@@ -18,17 +18,16 @@ async function loadPlaintextExtractor(): Promise<{
 }> {
   vi.resetModules();
   await import("../../../../../src/core/documents/extractors/plaintext.js");
-  const registry = await import(
-    "../../../../../src/core/documents/extractors/registry.js"
-  );
-  const errors = await import(
-    "../../../../../src/core/documents/extractors/errors.js"
-  );
+  const registry = await import("../../../../../src/core/documents/extractors/registry.js");
+  const errors = await import("../../../../../src/core/documents/extractors/errors.js");
   const extractor = await registry.getExtractor(".txt");
   return { extractor, errors };
 }
 
-function ctx(buf: Buffer, ext = ".txt"): {
+function ctx(
+  buf: Buffer,
+  ext = ".txt",
+): {
   buffer: Buffer;
   filename: string;
   extension: string;
@@ -45,17 +44,13 @@ function ctx(buf: Buffer, ext = ".txt"): {
 describe("plaintext extractor", () => {
   it("decodes UTF-8 and trims surrounding whitespace", async () => {
     const { extractor } = await loadPlaintextExtractor();
-    const out = await extractor(
-      ctx(Buffer.from("  hello world\nthis is text  \n", "utf-8")),
-    );
+    const out = await extractor(ctx(Buffer.from("  hello world\nthis is text  \n", "utf-8")));
     expect(out.content).toBe("hello world\nthis is text");
   });
 
   it("counts words by whitespace tokens", async () => {
     const { extractor } = await loadPlaintextExtractor();
-    const out = await extractor(
-      ctx(Buffer.from("one two three   four\nfive", "utf-8")),
-    );
+    const out = await extractor(ctx(Buffer.from("one two three   four\nfive", "utf-8")));
     expect(out.wordCount).toBe(5);
   });
 
@@ -67,9 +62,7 @@ describe("plaintext extractor", () => {
 
   it("accepts UTF-8 multi-byte characters without flagging as binary", async () => {
     const { extractor } = await loadPlaintextExtractor();
-    const out = await extractor(
-      ctx(Buffer.from("café — naïve résumé", "utf-8")),
-    );
+    const out = await extractor(ctx(Buffer.from("café — naïve résumé", "utf-8")));
     expect(out.content).toBe("café — naïve résumé");
     expect(out.wordCount).toBe(4);
   });
@@ -95,9 +88,7 @@ describe("plaintext extractor", () => {
   it("registers itself for .txt", async () => {
     vi.resetModules();
     await import("../../../../../src/core/documents/extractors/plaintext.js");
-    const registry = await import(
-      "../../../../../src/core/documents/extractors/registry.js"
-    );
+    const registry = await import("../../../../../src/core/documents/extractors/registry.js");
     expect(registry.getSupportedExtensions()).toContain(".txt");
   });
 });

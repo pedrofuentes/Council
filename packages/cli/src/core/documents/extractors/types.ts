@@ -58,9 +58,7 @@ export interface ExtractedContent {
   readonly metadata?: DocumentMetadata;
 }
 
-export type ContentExtractor = (
-  ctx: ExtractionContext,
-) => Promise<ExtractedContent>;
+export type ContentExtractor = (ctx: ExtractionContext) => Promise<ExtractedContent>;
 
 /**
  * Lazy factory thunk returning a `ContentExtractor`. The registry

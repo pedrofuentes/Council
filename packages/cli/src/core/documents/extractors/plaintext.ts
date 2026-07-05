@@ -13,11 +13,7 @@
  */
 import { ExtractionError } from "./errors.js";
 import { registerExtractor } from "./registry.js";
-import type {
-  ContentExtractor,
-  ExtractedContent,
-  ExtractionContext,
-} from "./types.js";
+import type { ContentExtractor, ExtractedContent, ExtractionContext } from "./types.js";
 
 const BINARY_THRESHOLD = 0.1;
 

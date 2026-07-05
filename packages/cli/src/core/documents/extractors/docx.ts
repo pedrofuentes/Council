@@ -25,11 +25,7 @@ import * as yauzl from "yauzl";
 
 import { toSingleLineDisplay } from "../../../cli/strip-control-chars.js";
 import { registerExtractor } from "./registry.js";
-import type {
-  ContentExtractor,
-  ExtractedContent,
-  ExtractionContext,
-} from "./types.js";
+import type { ContentExtractor, ExtractedContent, ExtractionContext } from "./types.js";
 import { ExtractionError } from "./errors.js";
 
 const MAX_ENTRIES = 1000;
@@ -143,10 +139,7 @@ async function preflightZip(buffer: Buffer, filename: string): Promise<void> {
         return;
       }
 
-      if (
-        entry.compressedSize > 0 &&
-        entry.uncompressedSize / entry.compressedSize > MAX_RATIO
-      ) {
+      if (entry.compressedSize > 0 && entry.uncompressedSize / entry.compressedSize > MAX_RATIO) {
         const ratio = (entry.uncompressedSize / entry.compressedSize).toFixed(0);
         reject(
           new ExtractionError({

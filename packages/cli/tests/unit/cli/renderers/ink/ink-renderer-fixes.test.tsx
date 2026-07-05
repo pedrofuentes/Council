@@ -17,10 +17,7 @@ import React from "react";
 import { describe, expect, it } from "vitest";
 import { render } from "ink-testing-library";
 
-import {
-  DebateApp,
-  getSeparatorWidth,
-} from "../../../../../src/cli/renderers/ink/InkRenderer.js";
+import { DebateApp, getSeparatorWidth } from "../../../../../src/cli/renderers/ink/InkRenderer.js";
 import type { DebateEvent } from "../../../../../src/core/types.js";
 
 async function* stream(...evts: DebateEvent[]): AsyncIterable<DebateEvent> {
@@ -41,10 +38,14 @@ async function flush(): Promise<void> {
 // Control / bidi / line-separator code points that must never reach a
 // single-line terminal sink. Mirrors the class stripped by
 // `toSingleLineDisplay`.
-// eslint-disable-next-line no-control-regex
-const FORBIDDEN_DISPLAY_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
+const FORBIDDEN_DISPLAY_CHARS =
+  // eslint-disable-next-line no-control-regex
+  /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
 
-async function withStubbedGlobalColumns(value: number, fn: () => void | Promise<void>): Promise<void> {
+async function withStubbedGlobalColumns(
+  value: number,
+  fn: () => void | Promise<void>,
+): Promise<void> {
   const original = Object.getOwnPropertyDescriptor(process.stdout, "columns");
   Object.defineProperty(process.stdout, "columns", { value, configurable: true });
   try {
@@ -233,7 +234,16 @@ describe("InkRenderer — untrusted displayName sanitization (adversarial bytes)
     const line = frame.split("\n").find((l) => l.includes("SAFE TAG"));
     expect(line, "expected a rendered line carrying the sanitized name").toBeDefined();
     expect(line ?? "").not.toMatch(FORBIDDEN_DISPLAY_CHARS);
-    for (const ch of ["\u0000", "\u0001", "\u009b", "\u007f", "\u202e", "\u2066", "\u2028", "\u2029"]) {
+    for (const ch of [
+      "\u0000",
+      "\u0001",
+      "\u009b",
+      "\u007f",
+      "\u202e",
+      "\u2066",
+      "\u2028",
+      "\u2029",
+    ]) {
       expect(frame).not.toContain(ch);
     }
   });

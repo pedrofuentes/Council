@@ -45,11 +45,7 @@ describe("buildTelemetryCommand", () => {
 
     it("shows enabled when telemetry is on", async () => {
       const configPath = path.join(testHome, "config.yaml");
-      await fs.writeFile(
-        configPath,
-        "telemetry:\n  enabled: true\n",
-        "utf-8",
-      );
+      await fs.writeFile(configPath, "telemetry:\n  enabled: true\n", "utf-8");
       const output = await runTelemetry(["status"]);
       expect(output).toContain("enabled");
     });

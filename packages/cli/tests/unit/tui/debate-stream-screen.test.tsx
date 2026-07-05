@@ -898,8 +898,7 @@ describe("transcriptLines — pure formatter", () => {
       readonly done: boolean;
     }[],
     cost: undefined as
-      | { readonly premiumRequests: number; readonly estimatedTotal: number }
-      | undefined,
+      { readonly premiumRequests: number; readonly estimatedTotal: number } | undefined,
     error: undefined as string | undefined,
   };
 
@@ -933,8 +932,7 @@ describe("transcriptLines — pure formatter", () => {
         readonly done: boolean;
       }[],
       cost: undefined as
-        | { readonly premiumRequests: number; readonly estimatedTotal: number }
-        | undefined,
+        { readonly premiumRequests: number; readonly estimatedTotal: number } | undefined,
       error: undefined as string | undefined,
     };
 
@@ -1008,8 +1006,7 @@ describe("transcriptLines — pure formatter", () => {
         readonly done: boolean;
       }[],
       cost: undefined as
-        | { readonly premiumRequests: number; readonly estimatedTotal: number }
-        | undefined,
+        { readonly premiumRequests: number; readonly estimatedTotal: number } | undefined,
       error: undefined as string | undefined,
     };
     const lines = transcriptLines(view, noColorPalette, noColorTheme);

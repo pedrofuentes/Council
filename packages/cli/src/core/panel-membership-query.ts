@@ -14,10 +14,7 @@
  * how many panels the expert belongs to.
  */
 import type { CouncilDatabase } from "../memory/db.js";
-import {
-  PANEL_MEMBERSHIPS_LIMIT,
-  type PanelMembership,
-} from "./prompt-builder.js";
+import { PANEL_MEMBERSHIPS_LIMIT, type PanelMembership } from "./prompt-builder.js";
 
 export async function getExpertPanelMemberships(
   expertSlug: string,

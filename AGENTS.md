@@ -30,6 +30,7 @@ pnpm install | build | test | lint | typecheck | format   # full suite (root)
 ## Autonomous Workflow — REQUIRED
 
 ### Plan → Approve → Execute Loop
+
 1. **Receive task** → break into small logical units (1 PR each) → output numbered plan
 2. Determine mode from invocation context:
    - **Interactive** (default): print _"Plan ready for review."_ and wait for explicit user approval.
@@ -37,6 +38,7 @@ pnpm install | build | test | lint | typecheck | format   # full suite (root)
 3. **Execute** each increment following all rules below
 
 ### Per-Increment Execution
+
 1. `git worktree add .worktrees/<name> -b <branch> main && cd .worktrees/<name>`
 2. Write failing test(s). Commit as `test(scope): ...`. Run suite — confirm FAIL.
 3. Write minimal impl. Commit as `feat|fix(scope): ...`. Run suite — confirm PASS.
@@ -44,7 +46,9 @@ pnpm install | build | test | lint | typecheck | format   # full suite (root)
 5. Invoke Sentinel (§How to Invoke). Follow §After Sentinel for verdict-specific action.
 
 ### Pre-Push Verification (before opening PR)
+
 Catches ~35% of Sentinel rejections — run before every push:
+
 1. `git log --oneline main..HEAD` — verify `test(scope)` precedes `feat|fix(scope)`
 2. `pnpm test` — full suite green on final HEAD
 3. `pnpm lint` — zero warnings
@@ -52,6 +56,7 @@ Catches ~35% of Sentinel rejections — run before every push:
 5. All pass → push. Any failure → fix locally before PR (cheaper than a Sentinel cycle).
 
 ### Testing & Iteration
+
 Create ONE testing worktree: `git worktree add .worktrees/test-scope -b test/scope-testing main`. Commit fixes freely. Run Sentinel **once** before merging. **If HEAD is `main`, create a worktree branch before any commits.**
 
 ## Test-Driven Development — REQUIRED
@@ -66,17 +71,18 @@ Artifact check: `git log --oneline` must show `test(scope)` before the correspon
 
 ### Commit Choreography — REQUIRED
 
-| Order | Commit | Contains | Tests must... |
-|-------|--------|----------|---------------|
-| 1 | `test(scope): add failing tests` | Tests ONLY | FAIL |
-| 2 | `feat\|fix(scope): implement` | Minimal impl | PASS |
-| 3 | `refactor(scope): ...` | Optional cleanup | Stay green |
+| Order | Commit                           | Contains         | Tests must... |
+| ----- | -------------------------------- | ---------------- | ------------- |
+| 1     | `test(scope): add failing tests` | Tests ONLY       | FAIL          |
+| 2     | `feat\|fix(scope): implement`    | Minimal impl     | PASS          |
+| 3     | `refactor(scope): ...`           | Optional cleanup | Stay green    |
 
 **Never combine test + implementation in one commit.** Sentinel verifies ordering. **Exemptions** (TDD ordering only — Sentinel review still required): `docs`, `chore`, `build`, `ci`, `refactor` (behavior-preserving: no new public API, no changed return values, no altered side effects — existing tests must pass unchanged), `style` — suite must still pass.
 
 ## Sentinel — MANDATORY Quality Gate
 
 ### Pre-Merge Checklist
+
 **Before every `git merge` or PR-merge tool call, print this checklist and fill every box. Empty box → do not merge.**
 
 ```
@@ -94,7 +100,7 @@ Sentinel is required for ALL changes — 1-line fix, docs-only, config, dep bump
 
 1. Print _"Invoking Sentinel..."_ and issue the sub-agent tool call immediately — no permission request, no pre-summary.
 2. Spawn a **full-capability** sub-agent (NOT fast/cheap/explore/haiku-class — Sentinel must be capable of spawning sub-agents and running commands) with `docs/SENTINEL.md` as system prompt. Provide PR diff (`git diff main...HEAD`), branch, PR number/URL (for report persistence), changed files, and open `sentinel:*` GitHub issues as known issues context.
-3. **Do NOT review your own code.** 
+3. **Do NOT review your own code.**
 4. **Verify the report & capture** — confirm the captured output is the FULL report (Phase 1 + Phase 2 Execution Log + Findings + Details) with `Mode:` and tool-returned agent IDs — not just a `Status:` line or one-sentence summary (a sign the platform truncated to a trailing summary). Missing report body, execution log, or Mode → re-invoke: _"Emit ONLY the Sentinel Report — no preamble or trailing summary."_
 5. Follow §After Sentinel for the verdict. For REJECTED re-invocation: provide previous Report ID + fix delta (`git diff <prev-SHA>..HEAD`) for scoped re-review.
 
@@ -102,11 +108,11 @@ Sentinel is required for ALL changes — 1-line fix, docs-only, config, dep bump
 
 ### After Sentinel
 
-| Verdict | Action |
-|---------|--------|
-| APPROVED | Record Report ID + SHA in merge commit. File new 🟡/🟢 findings as issues (`sentinel:important`, `sentinel:minor`). |
-| CONDITIONAL | File issues for all new 🟡/🟢 — do NOT fix in-PR. Link issues in PR, then merge. |
-| REJECTED | Fix 🔴 blockers; do not independently fix 🟡/🟢. Re-commit, re-invoke. File 🟡/🟢 from final verdict report. Max 5 cycles. |
+| Verdict     | Action                                                                                                                     |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------- |
+| APPROVED    | Record Report ID + SHA in merge commit. File new 🟡/🟢 findings as issues (`sentinel:important`, `sentinel:minor`).        |
+| CONDITIONAL | File issues for all new 🟡/🟢 — do NOT fix in-PR. Link issues in PR, then merge.                                           |
+| REJECTED    | Fix 🔴 blockers; do not independently fix 🟡/🟢. Re-commit, re-invoke. File 🟡/🟢 from final verdict report. Max 5 cycles. |
 
 **Issue hygiene** (when filing 🟡/🟢): every filed issue MUST carry the **validity anchor** (SENTINEL.md §Follow-ups) — `file:line` + reviewed SHA + the `<!-- sentinel-anchor … -->` marker + the quoted evidence snippet + dimension — plus a `sentinel:security` label for A1/A2 or security-path findings, so a later pass can re-check it. File 🟢 minors as **one digest issue per review** (a standalone 🟢 only on recurrence). Optional, opt-in backlog re-validation that **flags stale candidates but never auto-closes**: [`docs/sentinel/BACKLOG-HYGIENE.md`](./docs/sentinel/BACKLOG-HYGIENE.md).
 
@@ -136,6 +142,7 @@ type(scope): short description
 
 Co-authored-by: Copilot <175574315+pedrofuentes@users.noreply.github.com>
 ```
+
 Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `ci`, `style`, `perf`
 
 ## Code Style
@@ -147,20 +154,24 @@ Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `ci`, `style`, `perf`
 ## Boundaries
 
 ### ✅ ALWAYS
+
 - Verify failing test exists before writing behavior-bearing code; verify HEAD is NOT `main` before commit
 - Run `pnpm test && lint` before PR; invoke Sentinel before merge
 - Use worktrees for all work
 - Only `packages/cli/src/engine/copilot/adapter.ts` may import `@github/copilot-sdk` — enforced by ESLint `no-restricted-imports`
 
 ### ⚠️ ASK FIRST
+
 **Protocol**: State intended action + justification → ask → wait for explicit "yes". Silence, "ok", or "sounds good" ≠ approval.
 **Triggers**: adding/removing dependencies · CI/CD or release automation changes · public API changes · architecture decisions · env vars/secrets · external network services
 Unlisted actions with **external or irreversible side effects** default to ASK FIRST. Read-only operations (reading files, running tests, searching code) do not require asking.
 
 ### 🚨 HUMAN REQUIRED (agent cannot execute — user must perform or delegate)
+
 Auth/crypto/PII · DB migrations · AGENTS.md/SENTINEL.md changes · production deploys · 🔴 CRITICAL findings · 5× Sentinel rejections · deployment pipeline setup · credentials rotation
 
 ### 🚫 NEVER — Automatic Sentinel rejection
+
 - **Security**: commit secrets · send code to unapproved services · access files/credentials outside project root
 - **Process**: impl before its failing-test commit · combine test+impl in one commit · skip Sentinel · commit/merge while HEAD is `main`
 - **Integrity**: weaken/remove a failing test · hand-edit generated files (build artifacts, lockfiles, release-generated CHANGELOG) · force-push `main` · alter published Sentinel reports · edit `AGENTS.md`/`docs/SENTINEL.md` without HUMAN REQUIRED approval
@@ -168,23 +179,24 @@ Auth/crypto/PII · DB migrations · AGENTS.md/SENTINEL.md changes · production 
 
 ## When Stuck — Escalation Protocol
 
-| Trigger | Action |
-|---------|--------|
-| Same test fails 3× | Revert to last green; re-analyze assumptions |
-| Sentinel rejects 5× | Escalate to user — do not retry same approach |
-| Same problem, 2+ failed attempts | Spawn research sub-agent for root-cause + alternatives |
-| Lost context / merge conflict | Re-read this file → `git status` → resume. If conflict: rebase on `main`, re-test, re-invoke Sentinel |
-| Dependency install fails | Report to user; do not attempt workarounds |
+| Trigger                          | Action                                                                                                |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Same test fails 3×               | Revert to last green; re-analyze assumptions                                                          |
+| Sentinel rejects 5×              | Escalate to user — do not retry same approach                                                         |
+| Same problem, 2+ failed attempts | Spawn research sub-agent for root-cause + alternatives                                                |
+| Lost context / merge conflict    | Re-read this file → `git status` → resume. If conflict: rebase on `main`, re-test, re-invoke Sentinel |
+| Dependency install fails         | Report to user; do not attempt workarounds                                                            |
 
 ## Associated Documentation
 
-| Document | Read when... |
-|----------|-------------|
-| [`docs/SENTINEL.md`](./docs/SENTINEL.md) | Before any merge/deploy |
-| [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | Structural changes |
-| [`docs/TESTING-STRATEGY.md`](./docs/TESTING-STRATEGY.md) | Writing tests |
-| [`docs/DEVELOPMENT-WORKFLOW.md`](./docs/DEVELOPMENT-WORKFLOW.md) | Workspace setup, parallel work |
-| [`LEARNINGS.md`](./LEARNINGS.md) | **Write here** — discovered knowledge |
-| [`DECISIONS.md`](./DECISIONS.md) | **Write here** — technical decisions |
-| [`CHANGELOG.md`](./CHANGELOG.md) | **Read only** — auto-generated by Release Please |
+| Document                                                         | Read when...                                     |
+| ---------------------------------------------------------------- | ------------------------------------------------ |
+| [`docs/SENTINEL.md`](./docs/SENTINEL.md)                         | Before any merge/deploy                          |
+| [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)                 | Structural changes                               |
+| [`docs/TESTING-STRATEGY.md`](./docs/TESTING-STRATEGY.md)         | Writing tests                                    |
+| [`docs/DEVELOPMENT-WORKFLOW.md`](./docs/DEVELOPMENT-WORKFLOW.md) | Workspace setup, parallel work                   |
+| [`LEARNINGS.md`](./LEARNINGS.md)                                 | **Write here** — discovered knowledge            |
+| [`DECISIONS.md`](./DECISIONS.md)                                 | **Write here** — technical decisions             |
+| [`CHANGELOG.md`](./CHANGELOG.md)                                 | **Read only** — auto-generated by Release Please |
+
 <!-- Release tooling (Release Please): change "Read only" above if switching away from automated releases -->

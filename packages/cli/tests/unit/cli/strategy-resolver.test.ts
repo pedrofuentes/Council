@@ -84,9 +84,7 @@ describe("resolveStrategy — happy paths", () => {
       topic: "T",
       priorTurns: [],
     });
-    expect(assignments.find((a) => a.expertSlug === "cto")?.prompt).toContain(
-      "devil's advocate",
-    );
+    expect(assignments.find((a) => a.expertSlug === "cto")?.prompt).toContain("devil's advocate");
     expect(assignments.find((a) => a.expertSlug === "pm")?.prompt ?? "").not.toContain(
       "devil's advocate",
     );

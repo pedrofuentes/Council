@@ -177,22 +177,19 @@ describe("classifyExtractionError (#975)", () => {
     // Mirrors the panel scanner/processor literal:
     // "rejected: outside confinement root or TOCTOU mismatch".
     expect(
-      classifyExtractionError(
-        new Error("rejected: outside confinement root or TOCTOU mismatch"),
-      ).kind,
+      classifyExtractionError(new Error("rejected: outside confinement root or TOCTOU mismatch"))
+        .kind,
     ).toBe("confinement-violation");
   });
 
   it("matches the 'resolves outside' substring on its own", () => {
-    expect(
-      classifyExtractionError(new Error("path resolves outside the sandbox")).kind,
-    ).toBe("confinement-violation");
+    expect(classifyExtractionError(new Error("path resolves outside the sandbox")).kind).toBe(
+      "confinement-violation",
+    );
   });
 
   it("falls back to extraction-failed for an unrelated error message", () => {
-    const classified = classifyExtractionError(
-      new Error("ENOSPC: no space left on device"),
-    );
+    const classified = classifyExtractionError(new Error("ENOSPC: no space left on device"));
     expect(classified.kind).toBe("extraction-failed");
     expect(classified.message).toBe("ENOSPC: no space left on device");
   });

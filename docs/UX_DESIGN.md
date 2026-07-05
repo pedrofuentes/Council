@@ -3,7 +3,7 @@
 > A comprehensive UX design document for Council, an AI expert panel CLI tool.
 > Written from the perspective of a Senior Product Designer & CLI UX Expert.
 
-> **Status: forward-looking design document.** This describes the *intended* UX vision.
+> **Status: forward-looking design document.** This describes the _intended_ UX vision.
 > Sections such as "Proposed Command Reference" and "Terminal Mockups" may describe commands,
 > flags, and flows that are not yet implemented (or differ) in the shipped CLI. For the current,
 > authoritative command surface, run `council --help` or see the [README](../README.md) and
@@ -48,11 +48,13 @@
 ## User Journey Map
 
 ### Phase 1: Discovery → Install (Day 0)
+
 ```
 See README → npm install -g @council-ai/cli → council
 ```
 
 ### Phase 2: First Session (Minute 1-5)
+
 ```
 council convene "Should we migrate to microservices?"
   → Auto-detects: needs CTO, Architect, DevOps Lead, Product Manager
@@ -62,6 +64,7 @@ council convene "Should we migrate to microservices?"
 ```
 
 ### Phase 3: Active Use (Day 1-7)
+
 ```
 council resume                    # pick up where you left off
 council ask "What about costs?"   # continue the conversation
@@ -69,6 +72,7 @@ council ask --expert Architect "Draw the boundary map"
 ```
 
 ### Phase 4: Power Use (Day 7-30)
+
 ```
 council convene --template architecture-review --from ./docs/rfc.md
 council panel create "My Security Team" --experts "CISO, PenTester, AppSec Lead"
@@ -76,6 +80,7 @@ council export <panel> --format markdown > decision-log.md
 ```
 
 ### Phase 5: Workflow Integration (Day 30+)
+
 ```
 git diff | council convene "Review this PR for security issues" --template code-review
 council convene --stdin < requirements.txt "Estimate this sprint"
@@ -83,13 +88,13 @@ council convene --stdin < requirements.txt "Estimate this sprint"
 
 ### Friction Points Identified
 
-| Point | Risk | Mitigation |
-|-------|------|------------|
-| Auth setup | User bounces before first use | Detect GitHub Copilot token automatically; zero-config path |
-| "What do I ask?" | Blank canvas paralysis | Suggest 3 contextual prompts based on CWD |
-| Long responses | User loses attention | Stream with progress, allow skip/interrupt |
-| Too many experts | Cognitive overload | Default to 3 experts; expand on request |
-| Memory is opaque | User doesn't trust context | Show memory indicator; allow inspection |
+| Point            | Risk                          | Mitigation                                                  |
+| ---------------- | ----------------------------- | ----------------------------------------------------------- |
+| Auth setup       | User bounces before first use | Detect GitHub Copilot token automatically; zero-config path |
+| "What do I ask?" | Blank canvas paralysis        | Suggest 3 contextual prompts based on CWD                   |
+| Long responses   | User loses attention          | Stream with progress, allow skip/interrupt                  |
+| Too many experts | Cognitive overload            | Default to 3 experts; expand on request                     |
+| Memory is opaque | User doesn't trust context    | Show memory indicator; allow inspection                     |
 
 ---
 
@@ -157,16 +162,16 @@ $ council
 
 ### Color System
 
-| Element | Color | Purpose |
-|---------|-------|---------|
-| Expert names | Distinct hue per expert (cyan, magenta, yellow, green, blue) | Identity |
-| Expert role badge | Dim/muted version of expert color | Context without noise |
-| User input | White/default | Clarity of "my words" |
-| Moderator synthesis | Bold white on subtle background | Authority, summary |
-| System messages | Dim gray | Low priority, non-intrusive |
-| Disagreement markers | Amber/orange | Attention without alarm |
-| Errors | Red | Standard convention |
-| Success/consensus | Green | Positive signal |
+| Element              | Color                                                        | Purpose                     |
+| -------------------- | ------------------------------------------------------------ | --------------------------- |
+| Expert names         | Distinct hue per expert (cyan, magenta, yellow, green, blue) | Identity                    |
+| Expert role badge    | Dim/muted version of expert color                            | Context without noise       |
+| User input           | White/default                                                | Clarity of "my words"       |
+| Moderator synthesis  | Bold white on subtle background                              | Authority, summary          |
+| System messages      | Dim gray                                                     | Low priority, non-intrusive |
+| Disagreement markers | Amber/orange                                                 | Attention without alarm     |
+| Errors               | Red                                                          | Standard convention         |
+| Success/consensus    | Green                                                        | Positive signal             |
 
 ### Typography Hierarchy
 
@@ -333,6 +338,7 @@ When the user prefers watching the conversation unfold:
 ```
 
 Users are **participants at the table**, not operators of a machine. They:
+
 - Pose questions to the table (broadcast)
 - Speak to individual experts (direct)
 - Ask the moderator to synthesize or redirect
@@ -392,6 +398,7 @@ council <verb> [noun] [--modifiers]
 ```
 
 The grammar should feel like English:
+
 - `council convene "topic"` — "Council, convene on this topic"
 - `council ask "question"` — "Council, I'm asking this"
 - `council ask --expert CTO "question"` — "Council, I'm asking the CTO this"
@@ -471,6 +478,7 @@ $ council convene "How should we handle auth?"
 The aha moment is: **Seeing experts disagree intelligently about YOUR specific problem.**
 
 This happens when:
+
 1. User asks a real question they're actually facing
 2. Experts give substantively different perspectives
 3. User realizes they hadn't considered one of those angles
@@ -636,25 +644,25 @@ council [~$0.12] > What about the database?
 
 ### Lessons from Best CLI Tools
 
-| Tool | Lesson for Council |
-|------|-------------------|
+| Tool                | Lesson for Council                                                                                    |
+| ------------------- | ----------------------------------------------------------------------------------------------------- |
 | **gh (GitHub CLI)** | Verb-noun grammar (`gh pr create`). Interactive fallbacks when flags missing. Beautiful table output. |
-| **Vercel CLI** | Zero-config deploys → Council should be zero-config panels. Framework detection → problem detection. |
-| **Railway CLI** | Project linking (`railway link`) → Session linking. Persistent context. |
-| **Warp** | Blocks concept (grouping output). AI integration that feels native, not bolted on. |
-| **lazygit** | Full TUI when needed, but keyboard-driven. Good for Council's "expand/collapse" views. |
-| **fig/Amazon Q** | Inline completions. Council could suggest follow-up questions inline. |
+| **Vercel CLI**      | Zero-config deploys → Council should be zero-config panels. Framework detection → problem detection.  |
+| **Railway CLI**     | Project linking (`railway link`) → Session linking. Persistent context.                               |
+| **Warp**            | Blocks concept (grouping output). AI integration that feels native, not bolted on.                    |
+| **lazygit**         | Full TUI when needed, but keyboard-driven. Good for Council's "expand/collapse" views.                |
+| **fig/Amazon Q**    | Inline completions. Council could suggest follow-up questions inline.                                 |
 
 ### Chat Application Patterns → CLI Translation
 
-| Chat Pattern | CLI Translation |
-|-------------|----------------|
-| Discord threads | `council ask --thread "subtopic"` for focused sub-discussions |
-| Slack reactions | Quick feedback: `council react 👍` to indicate agreement with last expert |
-| iMessage tapbacks | Lightweight signals without typing a full response |
-| Discord roles/colors | Expert color coding + role badges |
-| Slack channels | Multiple active panels (like channel switching) |
-| Read receipts | Show which experts have "processed" your message |
+| Chat Pattern         | CLI Translation                                                           |
+| -------------------- | ------------------------------------------------------------------------- |
+| Discord threads      | `council ask --thread "subtopic"` for focused sub-discussions             |
+| Slack reactions      | Quick feedback: `council react 👍` to indicate agreement with last expert |
+| iMessage tapbacks    | Lightweight signals without typing a full response                        |
+| Discord roles/colors | Expert color coding + role badges                                         |
+| Slack channels       | Multiple active panels (like channel switching)                           |
+| Read receipts        | Show which experts have "processed" your message                          |
 
 ### Council's Signature Interaction
 
@@ -820,15 +828,15 @@ $ council resume --pick
 
 ### Renamed/Improved Commands
 
-| Original Idea | Proposed | Rationale |
-|---------------|----------|-----------|
-| `council chat` | `council ask` | "Chat" implies 1:1. "Ask" implies posing to a group. |
-| `council chat --expert X` | `council ask --expert X` | Consistent grammar |
-| N/A | `council status` | Quick view of active panel state |
-| N/A | `council conclude` | Explicit session wrap-up with synthesis |
-| N/A | `council invite <expert>` | Add expert mid-session (natural metaphor) |
-| N/A | `council dismiss <expert>` | Remove expert (round table metaphor) |
-| N/A | `council focus <topic>` | Redirect discussion without losing context |
+| Original Idea             | Proposed                   | Rationale                                            |
+| ------------------------- | -------------------------- | ---------------------------------------------------- |
+| `council chat`            | `council ask`              | "Chat" implies 1:1. "Ask" implies posing to a group. |
+| `council chat --expert X` | `council ask --expert X`   | Consistent grammar                                   |
+| N/A                       | `council status`           | Quick view of active panel state                     |
+| N/A                       | `council conclude`         | Explicit session wrap-up with synthesis              |
+| N/A                       | `council invite <expert>`  | Add expert mid-session (natural metaphor)            |
+| N/A                       | `council dismiss <expert>` | Remove expert (round table metaphor)                 |
+| N/A                       | `council focus <topic>`    | Redirect discussion without losing context           |
 
 ### Short Aliases
 
@@ -849,6 +857,7 @@ council e  → council expert
 **Problem:** With 5 experts, serial responses could take 30-60 seconds. Users will close the terminal.
 
 **Mitigation:**
+
 - Parallel API calls, stream results as they arrive
 - Show the fastest-responding expert first
 - Moderator synthesis starts generating while last expert finishes
@@ -859,6 +868,7 @@ council e  → council expert
 **Problem:** 5 long expert responses = wall of text nobody reads.
 
 **Mitigation:**
+
 - Default to Summary → Expand pattern (not full dump)
 - Limit default panel to 3 experts (user explicitly adds more)
 - `--concise` mode: each expert limited to 3 sentences
@@ -869,6 +879,7 @@ council e  → council expert
 **Problem:** Users may not see the value over a single AI chat.
 
 **Mitigation:**
+
 - Engineer deliberate disagreement — experts MUST have different perspectives
 - Show the synthesis as a decision matrix, not just text
 - Demonstrate memory: "Based on your decision last week to use PostgreSQL..."
@@ -879,6 +890,7 @@ council e  → council expert
 **Problem:** Users don't understand what experts "remember" and feel surveilled.
 
 **Mitigation:**
+
 - Always show memory indicator (how much context expert has)
 - `council expert memory CTO --show` to inspect
 - `council expert memory CTO --clear` to reset
@@ -889,6 +901,7 @@ council e  → council expert
 **Problem:** Users don't know what commands exist or what experts are available.
 
 **Mitigation:**
+
 - Tab completion for everything (expert names, templates, session IDs)
 - `council --help` shows examples, not just flags
 - Contextual suggestions: "Try: council invite SecurityEngineer"
@@ -933,6 +946,7 @@ PROGRESS_SHOW_THRESHOLD = 5s (show progress bar after 5s)
 ## Implementation Priority
 
 ### Phase 1: Core Loop (MVP)
+
 1. `council convene` with auto-panel composition
 2. Streaming expert responses (sequential)
 3. Basic moderator synthesis
@@ -940,6 +954,7 @@ PROGRESS_SHOW_THRESHOLD = 5s (show progress bar after 5s)
 5. `council resume` for session continuity
 
 ### Phase 2: Polish
+
 6. Summary → Expand pattern
 7. Disagreement highlighting
 8. Expert direct chat (`--expert`)
@@ -947,6 +962,7 @@ PROGRESS_SHOW_THRESHOLD = 5s (show progress bar after 5s)
 10. Tab completion
 
 ### Phase 3: Delight
+
 11. Interactive TUI mode (full keyboard navigation)
 12. `council demo` (works offline)
 13. Memory inspection/management
@@ -955,4 +971,4 @@ PROGRESS_SHOW_THRESHOLD = 5s (show progress bar after 5s)
 
 ---
 
-*This document should be treated as a living design spec. Update as user research reveals new patterns.*
+_This document should be treated as a living design spec. Update as user research reveals new patterns._

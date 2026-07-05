@@ -394,14 +394,7 @@ describe("ask --prompt-file + confirm-on-detect", () => {
       cmd.exitOverride();
 
       await expect(
-        cmd.parseAsync([
-          "node",
-          "council-ask",
-          panelName,
-          MANGLED_QUESTION,
-          "--engine",
-          "mock",
-        ]),
+        cmd.parseAsync(["node", "council-ask", panelName, MANGLED_QUESTION, "--engine", "mock"]),
       ).rejects.toThrow(/abort/i);
 
       expect(confirm.calls).toBe(1);

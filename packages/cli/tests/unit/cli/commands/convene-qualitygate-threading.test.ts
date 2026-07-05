@@ -23,7 +23,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildConveneCommand } from "../../../../src/cli/commands/convene.js";
 import { setQuiet } from "../../../../src/cli/commands/writer.js";
-import type { CouncilEngine, EngineEvent, ExpertSpec, SendOptions } from "../../../../src/engine/index.js";
+import type {
+  CouncilEngine,
+  EngineEvent,
+  ExpertSpec,
+  SendOptions,
+} from "../../../../src/engine/index.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
 
 // ---------------------------------------------------------------------------

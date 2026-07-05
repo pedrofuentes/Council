@@ -29,14 +29,14 @@ Copied verbatim from `docs/designs/interactive-tui.md`, `AGENTS.md`, repo config
 
 ## PR / worktree grouping (6 PRs)
 
-| PR | Branch | Tasks |
-|----|--------|-------|
-| PR-A | `feature/tui-theme-breakpoints` | Task 1 (`resolveTheme`), Task 2 (`computeLayout`) — pure |
-| PR-B | `feature/tui-layout` | Task 3 (`Header`), Task 4 (`Footer`), Task 5 (`AppShell`) |
-| PR-C | `feature/tui-leftnav` | Task 6 (`LeftNav`) |
-| PR-D | `feature/tui-home` | Task 7 (`loadHomeData` adapter), Task 8 (`HomeScreen`) |
-| PR-E | `feature/tui-help-overlay` | Task 9 (`HelpModal`) |
-| PR-F | `feature/tui-root-entry` | Task 10 (`CouncilTUI` root), Task 11 (`index.tsx` + `bin/council.ts` entry) |
+| PR   | Branch                          | Tasks                                                                       |
+| ---- | ------------------------------- | --------------------------------------------------------------------------- |
+| PR-A | `feature/tui-theme-breakpoints` | Task 1 (`resolveTheme`), Task 2 (`computeLayout`) — pure                    |
+| PR-B | `feature/tui-layout`            | Task 3 (`Header`), Task 4 (`Footer`), Task 5 (`AppShell`)                   |
+| PR-C | `feature/tui-leftnav`           | Task 6 (`LeftNav`)                                                          |
+| PR-D | `feature/tui-home`              | Task 7 (`loadHomeData` adapter), Task 8 (`HomeScreen`)                      |
+| PR-E | `feature/tui-help-overlay`      | Task 9 (`HelpModal`)                                                        |
+| PR-F | `feature/tui-root-entry`        | Task 10 (`CouncilTUI` root), Task 11 (`index.tsx` + `bin/council.ts` entry) |
 
 PR-B/PR-C depend on PR-A (theme/breakpoints). PR-F depends on all. Rebase each on latest `main` after the prior PR merges.
 
@@ -52,7 +52,7 @@ packages/cli/src/tui/
   components/
     layout/
       Header.tsx          wordmark + breadcrumb + model + cost meter (compact-aware)
-      Footer.tsx          contextual key hints + mode indicator + status (TTL) 
+      Footer.tsx          contextual key hints + mode indicator + status (TTL)
       AppShell.tsx        3-zone layout: Header / [LeftNav | Main] / Footer
     navigation/
       LeftNav.tsx         collapsible sections (expanded/rail/hidden), `\` toggle, keyboard nav
@@ -75,11 +75,14 @@ packages/cli/tests/unit/tui/      (+ matching test files)
 ### Task 1: `resolveTheme` — semantic color tokens
 
 **Files:**
+
 - Create: `packages/cli/src/tui/theme/tokens.ts`
 - Test: `packages/cli/tests/unit/tui/theme.test.ts`
 
 **Interfaces:**
+
 - Produces:
+
   ```typescript
   interface SemanticTheme {
     readonly accent: (s: string) => string;
@@ -89,8 +92,9 @@ packages/cli/tests/unit/tui/      (+ matching test files)
     readonly success: (s: string) => string;
     readonly enabled: boolean; // false under NO_COLOR/dumb
   }
-  function resolveTheme(env?: NodeJS.ProcessEnv): SemanticTheme
+  function resolveTheme(env?: NodeJS.ProcessEnv): SemanticTheme;
   ```
+
   When `NO_COLOR` (any non-empty) or `TERM=dumb` is set, every token is the identity function and `enabled` is `false`. Otherwise tokens apply `chalk` colors. Consumed by Header/Footer/LeftNav.
 
 - [ ] **Step 1: Write the failing test**
@@ -174,10 +178,12 @@ export function resolveTheme(env: NodeJS.ProcessEnv = process.env): SemanticThem
 - [ ] **Step 4: Run test to verify it passes** — PASS (3 tests).
 
 - [ ] **Step 5: Commit (test first, then impl)**
+
 ```bash
 git add packages/cli/tests/unit/tui/theme.test.ts && git commit -m "test(tui): add failing tests for resolveTheme"
 git add packages/cli/src/tui/theme/tokens.ts && git commit -m "feat(tui): add semantic theme tokens with NO_COLOR support"
 ```
+
 (Each commit ends with the `Co-authored-by: Copilot <175574315+pedrofuentes@users.noreply.github.com>` trailer; author `pedrofuentes`/`git@pedrofuent.es`.)
 
 ---
@@ -185,27 +191,31 @@ git add packages/cli/src/tui/theme/tokens.ts && git commit -m "feat(tui): add se
 ### Task 2: `computeLayout` — responsive breakpoints
 
 **Files:**
+
 - Create: `packages/cli/src/tui/lib/breakpoints.ts`
 - Test: `packages/cli/tests/unit/tui/breakpoints.test.ts`
 
 **Interfaces:**
+
 - Produces:
+
   ```typescript
   type NavState = "expanded" | "rail" | "hidden";
   interface LayoutPlan {
     readonly navState: NavState;
     readonly compactHeader: boolean;
-    readonly footerLabels: boolean;   // false = icon-only footer
-    readonly tooNarrow: boolean;      // < 60 cols: minimal warning mode
-    readonly mainWidth: number;       // columns available to Main
+    readonly footerLabels: boolean; // false = icon-only footer
+    readonly tooNarrow: boolean; // < 60 cols: minimal warning mode
+    readonly mainWidth: number; // columns available to Main
   }
   interface LayoutInput {
     readonly columns: number;
     readonly rows: number;
-    readonly navOverride?: NavState;  // manual `\` toggle wins over adaptive default
+    readonly navOverride?: NavState; // manual `\` toggle wins over adaptive default
   }
-  function computeLayout(input: LayoutInput): LayoutPlan
+  function computeLayout(input: LayoutInput): LayoutPlan;
   ```
+
   Adaptive defaults (design §4.10): ≥120 → expanded; 80–119 → rail + compactHeader; 60–79 → hidden + icon-only footer; <60 → tooNarrow. `navOverride` (if provided) sets `navState` directly. Nav widths: expanded 14, rail 3, hidden 0.
 
 - [ ] **Step 1: Write the failing test**
@@ -300,22 +310,26 @@ export function computeLayout(input: LayoutInput): LayoutPlan {
 ### Task 3: `Header` component
 
 **Files:**
+
 - Create: `packages/cli/src/tui/components/layout/Header.tsx`
 - Test: `packages/cli/tests/unit/tui/header.test.tsx`
 
 **Interfaces:**
+
 - Consumes: `SemanticTheme` (Task 1).
 - Produces:
+
   ```typescript
   interface HeaderProps {
-    readonly breadcrumb: string;   // e.g. "Council ▸ architecture-review"
+    readonly breadcrumb: string; // e.g. "Council ▸ architecture-review"
     readonly model: string;
     readonly premiumRequests?: number;
-    readonly compact?: boolean;    // hide model+cost; minimal breadcrumb
+    readonly compact?: boolean; // hide model+cost; minimal breadcrumb
     readonly theme: SemanticTheme;
   }
-  function Header(props: HeaderProps): React.ReactElement
+  function Header(props: HeaderProps): React.ReactElement;
   ```
+
   **All text fields (`breadcrumb`, `model`) are untrusted — render via `toSingleLineDisplay`.**
 
 - [ ] **Step 1: Write the failing test**
@@ -334,7 +348,12 @@ const theme = resolveTheme({ NO_COLOR: "1" });
 describe("Header", () => {
   it("shows the breadcrumb, model, and cost in full mode", () => {
     const { lastFrame, unmount } = render(
-      <Header breadcrumb="Council ▸ panel" model="claude-sonnet-4.5" premiumRequests={6} theme={theme} />,
+      <Header
+        breadcrumb="Council ▸ panel"
+        model="claude-sonnet-4.5"
+        premiumRequests={6}
+        theme={theme}
+      />,
     );
     const frame = lastFrame() ?? "";
     expect(frame).toContain("Council ▸ panel");
@@ -345,7 +364,13 @@ describe("Header", () => {
 
   it("hides model and cost in compact mode", () => {
     const { lastFrame, unmount } = render(
-      <Header breadcrumb="Council ▸ panel" model="claude-sonnet-4.5" premiumRequests={6} compact theme={theme} />,
+      <Header
+        breadcrumb="Council ▸ panel"
+        model="claude-sonnet-4.5"
+        premiumRequests={6}
+        compact
+        theme={theme}
+      />,
     );
     expect(lastFrame() ?? "").not.toContain("claude-sonnet-4.5");
     unmount();
@@ -392,7 +417,9 @@ export function Header(props: HeaderProps): React.ReactElement {
       {props.compact !== true && (
         <Text>
           {props.theme.muted(model)}
-          {props.premiumRequests !== undefined ? props.theme.muted(`  ◷ ${props.premiumRequests} req`) : ""}
+          {props.premiumRequests !== undefined
+            ? props.theme.muted(`  ◷ ${props.premiumRequests} req`)
+            : ""}
         </Text>
       )}
     </Box>
@@ -408,23 +435,29 @@ export function Header(props: HeaderProps): React.ReactElement {
 ### Task 4: `Footer` component
 
 **Files:**
+
 - Create: `packages/cli/src/tui/components/layout/Footer.tsx`
 - Test: `packages/cli/tests/unit/tui/footer.test.tsx`
 
 **Interfaces:**
+
 - Consumes: `SemanticTheme`.
 - Produces:
+
   ```typescript
   type FooterMode = "NAV" | "TYPE" | "STREAM";
-  interface FooterHint { readonly key: string; readonly label: string }
+  interface FooterHint {
+    readonly key: string;
+    readonly label: string;
+  }
   interface FooterProps {
     readonly hints: readonly FooterHint[];
     readonly mode: FooterMode;
-    readonly status?: string;        // untrusted -> sanitize
-    readonly showLabels?: boolean;   // false = icon-only
+    readonly status?: string; // untrusted -> sanitize
+    readonly showLabels?: boolean; // false = icon-only
     readonly theme: SemanticTheme;
   }
-  function Footer(props: FooterProps): React.ReactElement
+  function Footer(props: FooterProps): React.ReactElement;
   ```
 
 - [ ] **Step 1: Write the failing test**
@@ -446,7 +479,9 @@ const hints = [
 
 describe("Footer", () => {
   it("shows hint keys, labels, and the mode indicator", () => {
-    const { lastFrame, unmount } = render(<Footer hints={hints} mode="NAV" showLabels theme={theme} />);
+    const { lastFrame, unmount } = render(
+      <Footer hints={hints} mode="NAV" showLabels theme={theme} />,
+    );
     const frame = lastFrame() ?? "";
     expect(frame).toContain("j/k");
     expect(frame).toContain("move");
@@ -455,7 +490,9 @@ describe("Footer", () => {
   });
 
   it("hides labels in icon-only mode but keeps keys", () => {
-    const { lastFrame, unmount } = render(<Footer hints={hints} mode="NAV" showLabels={false} theme={theme} />);
+    const { lastFrame, unmount } = render(
+      <Footer hints={hints} mode="NAV" showLabels={false} theme={theme} />,
+    );
     const frame = lastFrame() ?? "";
     expect(frame).toContain("j/k");
     expect(frame).not.toContain("move");
@@ -500,14 +537,14 @@ export interface FooterProps {
 
 export function Footer(props: FooterProps): React.ReactElement {
   const showLabels = props.showLabels ?? true;
-  const hintText = props.hints
-    .map((h) => (showLabels ? `${h.key} ${h.label}` : h.key))
-    .join("   ");
+  const hintText = props.hints.map((h) => (showLabels ? `${h.key} ${h.label}` : h.key)).join("   ");
   return (
     <Box justifyContent="space-between" paddingX={1}>
       <Text>{props.theme.muted(hintText)}</Text>
       <Text>
-        {props.status !== undefined ? props.theme.muted(toSingleLineDisplay(props.status) + "   ") : ""}
+        {props.status !== undefined
+          ? props.theme.muted(toSingleLineDisplay(props.status) + "   ")
+          : ""}
         {props.theme.accent(props.mode)}
       </Text>
     </Box>
@@ -523,22 +560,26 @@ export function Footer(props: FooterProps): React.ReactElement {
 ### Task 5: `AppShell` — 3-zone layout
 
 **Files:**
+
 - Create: `packages/cli/src/tui/components/layout/AppShell.tsx`
 - Test: `packages/cli/tests/unit/tui/app-shell.test.tsx`
 
 **Interfaces:**
+
 - Consumes: `Header` (3), `Footer` (4), `LayoutPlan` (2).
 - Produces:
+
   ```typescript
   interface AppShellProps {
-    readonly layout: LayoutPlan;           // from computeLayout(useWindowSize())
+    readonly layout: LayoutPlan; // from computeLayout(useWindowSize())
     readonly header: React.ReactNode;
     readonly footer: React.ReactNode;
-    readonly nav?: React.ReactNode;        // omitted/hidden when layout.navState === "hidden"
-    readonly children: React.ReactNode;    // Main content
+    readonly nav?: React.ReactNode; // omitted/hidden when layout.navState === "hidden"
+    readonly children: React.ReactNode; // Main content
   }
-  function AppShell(props: AppShellProps): React.ReactElement
+  function AppShell(props: AppShellProps): React.ReactElement;
   ```
+
   Renders Header on top, Footer on the bottom, and a middle row of `[nav?][Main]`. When `layout.tooNarrow`, render only a "Terminal too narrow (min 60 cols)" message. The nav is rendered only when `navState !== "hidden"` and `nav` is provided.
 
 - [ ] **Step 1: Write the failing test**
@@ -574,7 +615,12 @@ describe("AppShell", () => {
   it("omits the nav when navState is hidden", () => {
     const layout = computeLayout({ columns: 70, rows: 24 }); // hidden
     const { lastFrame, unmount } = render(
-      <AppShell layout={layout} header={<Text>H</Text>} footer={<Text>F</Text>} nav={<Text>NAV</Text>}>
+      <AppShell
+        layout={layout}
+        header={<Text>H</Text>}
+        footer={<Text>F</Text>}
+        nav={<Text>NAV</Text>}
+      >
         <Text>MAIN</Text>
       </AppShell>,
     );
@@ -647,24 +693,32 @@ export function AppShell(props: AppShellProps): React.ReactElement {
 ### Task 6: `LeftNav` — collapsible navigation
 
 **Files:**
+
 - Create: `packages/cli/src/tui/components/navigation/LeftNav.tsx`
 - Test: `packages/cli/tests/unit/tui/left-nav.test.tsx`
 
 **Interfaces:**
+
 - Consumes: `NavState` (2), `SemanticTheme` (1).
 - Produces:
+
   ```typescript
-  interface NavItem { readonly id: string; readonly label: string; readonly glyph: string }
+  interface NavItem {
+    readonly id: string;
+    readonly label: string;
+    readonly glyph: string;
+  }
   interface LeftNavProps {
     readonly items: readonly NavItem[];
     readonly activeId: string;
-    readonly state: NavState;               // "expanded" | "rail" (never rendered when "hidden")
+    readonly state: NavState; // "expanded" | "rail" (never rendered when "hidden")
     readonly onSelect: (id: string) => void;
-    readonly isActive?: boolean;            // gates keyboard handling (default true)
+    readonly isActive?: boolean; // gates keyboard handling (default true)
     readonly theme: SemanticTheme;
   }
-  function LeftNav(props: LeftNavProps): React.ReactElement
+  function LeftNav(props: LeftNavProps): React.ReactElement;
   ```
+
   Keyboard (when `isActive`): `j`/`↓` next, `k`/`↑` prev (wrapping), `Enter` selects the highlighted item via `onSelect`. Expanded shows `glyph + label`; rail shows `glyph` only. The active item is highlighted with `inverse`. **Sanitize labels with `toSingleLineDisplay`.** Selection cursor is internal state initialized to the `activeId` index.
 
 - [ ] **Step 1: Write the failing test** — cover BOTH arrows, Enter, rail vs expanded, and highlight (apply M0 learning #2: every keyboard branch).
@@ -713,7 +767,15 @@ describe("LeftNav", () => {
   it("selects the next item with j/down then Enter", async () => {
     let selected: string | undefined;
     const { stdin, unmount } = render(
-      <LeftNav items={items} activeId="home" state="expanded" onSelect={(id) => { selected = id; }} theme={theme} />,
+      <LeftNav
+        items={items}
+        activeId="home"
+        state="expanded"
+        onSelect={(id) => {
+          selected = id;
+        }}
+        theme={theme}
+      />,
     );
     await flush();
     stdin.write("j"); // -> Panels
@@ -727,7 +789,15 @@ describe("LeftNav", () => {
   it("moves up with k and wraps, then selects with Enter", async () => {
     let selected: string | undefined;
     const { stdin, unmount } = render(
-      <LeftNav items={items} activeId="home" state="expanded" onSelect={(id) => { selected = id; }} theme={theme} />,
+      <LeftNav
+        items={items}
+        activeId="home"
+        state="expanded"
+        onSelect={(id) => {
+          selected = id;
+        }}
+        theme={theme}
+      />,
     );
     await flush();
     stdin.write("k"); // wraps from Home(0) to Experts(2)
@@ -769,7 +839,10 @@ export interface LeftNavProps {
 
 export function LeftNav(props: LeftNavProps): React.ReactElement {
   const isActive = props.isActive ?? true;
-  const initial = Math.max(0, props.items.findIndex((i) => i.id === props.activeId));
+  const initial = Math.max(
+    0,
+    props.items.findIndex((i) => i.id === props.activeId),
+  );
   const [cursor, setCursor] = useState(initial);
   const count = props.items.length;
 
@@ -815,16 +888,27 @@ export function LeftNav(props: LeftNavProps): React.ReactElement {
 ### Task 7: `loadHomeData` — Home dashboard adapter
 
 **Files:**
+
 - Create: `packages/cli/src/tui/adapters/home-data.ts`
 - Test: `packages/cli/tests/unit/tui/home-data.test.ts`
 
 **Interfaces:**
+
 - Consumes: repositories over an open `CouncilDatabase` (use `PanelRepository`, `DebateRepository`/sessions query, `expert-library`/`FileExpertLibrary`, `panel-library-repo`). Investigate the exact repo methods at implementation time (see `docs/designs/interactive-tui.md §6.2`); the adapter must be a pure async function that takes its data sources by parameter so it can be unit-tested with fakes (no real DB).
 - Produces:
   ```typescript
-  interface RecentSession { readonly id: string; readonly title: string; readonly when: string; readonly status: "convened" | "concluded" }
+  interface RecentSession {
+    readonly id: string;
+    readonly title: string;
+    readonly when: string;
+    readonly status: "convened" | "concluded";
+  }
   interface HomeData {
-    readonly counts: { readonly sessions: number; readonly experts: number; readonly panels: number };
+    readonly counts: {
+      readonly sessions: number;
+      readonly experts: number;
+      readonly panels: number;
+    };
     readonly recent: readonly RecentSession[];
   }
   interface HomeDataSources {
@@ -832,7 +916,7 @@ export function LeftNav(props: LeftNavProps): React.ReactElement {
     readonly countExperts: () => Promise<number>;
     readonly countPanels: () => Promise<number>;
   }
-  function loadHomeData(sources: HomeDataSources): Promise<HomeData>
+  function loadHomeData(sources: HomeDataSources): Promise<HomeData>;
   ```
   `counts.sessions = recent.length` is NOT assumed — `listSessions` returns the recent slice; the adapter must also accept/derive a total. For M1 keep it simple: `counts.sessions` = length of the full session list returned by `listSessions` (cap `recent` to the newest 10 inside the adapter). **Session titles are untrusted — the adapter returns them raw; the SCREEN sanitizes at render.**
 
@@ -922,16 +1006,23 @@ export async function loadHomeData(sources: HomeDataSources): Promise<HomeData> 
 ### Task 8: `HomeScreen`
 
 **Files:**
+
 - Create: `packages/cli/src/tui/screens/HomeScreen.tsx`
 - Test: `packages/cli/tests/unit/tui/home-screen.test.tsx`
 
 **Interfaces:**
+
 - Consumes: `HomeData` (7), `SemanticTheme` (1).
 - Produces:
+
   ```typescript
-  interface HomeScreenProps { readonly data: HomeData; readonly theme: SemanticTheme }
-  function HomeScreen(props: HomeScreenProps): React.ReactElement
+  interface HomeScreenProps {
+    readonly data: HomeData;
+    readonly theme: SemanticTheme;
+  }
+  function HomeScreen(props: HomeScreenProps): React.ReactElement;
   ```
+
   Populated: list recent session titles (**sanitized**) + `N sessions · M experts · K panels` + quick-action hints (`c Convene`, `e New expert`, `p New panel`, `, Settings`). Empty (`counts.sessions === 0` and no experts/panels): a centered CTA `⊕ Start your first Council session  [c]`.
 
 - [ ] **Step 1: Write the failing test** (populated, empty, sanitization).
@@ -967,7 +1058,10 @@ describe("HomeScreen", () => {
 
   it("shows an empty-state CTA when there is nothing yet", () => {
     const { lastFrame, unmount } = render(
-      <HomeScreen theme={theme} data={{ counts: { sessions: 0, experts: 0, panels: 0 }, recent: [] }} />,
+      <HomeScreen
+        theme={theme}
+        data={{ counts: { sessions: 0, experts: 0, panels: 0 }, recent: [] }}
+      />,
     );
     expect((lastFrame() ?? "").toLowerCase()).toContain("start your first");
     unmount();
@@ -1034,7 +1128,11 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
         </Text>
       ))}
       <Box marginTop={1}>
-        <Text>{props.theme.muted(`${counts.sessions} sessions · ${counts.experts} experts · ${counts.panels} panels`)}</Text>
+        <Text>
+          {props.theme.muted(
+            `${counts.sessions} sessions · ${counts.experts} experts · ${counts.panels} panels`,
+          )}
+        </Text>
       </Box>
       <Box marginTop={1}>
         <Text>{QUICK_ACTIONS.map((a) => `${a.key} ${a.label}`).join("   ")}</Text>
@@ -1052,21 +1150,28 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
 ### Task 9: `HelpModal` overlay
 
 **Files:**
+
 - Create: `packages/cli/src/tui/components/overlays/HelpModal.tsx`
 - Test: `packages/cli/tests/unit/tui/help-modal.test.tsx`
 
 **Interfaces:**
+
 - Produces:
+
   ```typescript
-  interface HelpEntry { readonly keys: string; readonly description: string }
+  interface HelpEntry {
+    readonly keys: string;
+    readonly description: string;
+  }
   interface HelpModalProps {
     readonly entries: readonly HelpEntry[];
     readonly onClose: () => void;
     readonly isActive?: boolean;
     readonly theme: SemanticTheme;
   }
-  function HelpModal(props: HelpModalProps): React.ReactElement
+  function HelpModal(props: HelpModalProps): React.ReactElement;
   ```
+
   Renders a bordered list of keybindings; `Esc` (and `?`) closes via `onClose`. **Esc test MUST use a real-timer wait (M0 learning #3).**
 
 - [ ] **Step 1: Write the failing test**
@@ -1103,7 +1208,13 @@ describe("HelpModal", () => {
   it("closes on Esc (real-timer wait — Ink buffers a lone Esc)", async () => {
     let closed = false;
     const { stdin, unmount } = render(
-      <HelpModal entries={entries} onClose={() => { closed = true; }} theme={theme} />,
+      <HelpModal
+        entries={entries}
+        onClose={() => {
+          closed = true;
+        }}
+        theme={theme}
+      />,
     );
     await sleep(20);
     stdin.write("\u001b");
@@ -1115,7 +1226,13 @@ describe("HelpModal", () => {
   it("closes on ? as well", async () => {
     let closed = false;
     const { stdin, unmount } = render(
-      <HelpModal entries={entries} onClose={() => { closed = true; }} theme={theme} />,
+      <HelpModal
+        entries={entries}
+        onClose={() => {
+          closed = true;
+        }}
+        theme={theme}
+      />,
     );
     await new Promise((r) => setImmediate(r));
     stdin.write("?");
@@ -1175,22 +1292,24 @@ export function HelpModal(props: HelpModalProps): React.ReactElement {
 ### Task 10: `CouncilTUI` root
 
 **Files:**
+
 - Create: `packages/cli/src/tui/CouncilTUI.tsx`
 - Create: `packages/cli/src/tui/router/routes.ts`
 - Test: `packages/cli/tests/unit/tui/council-tui.test.tsx`
 
 **Interfaces:**
+
 - Consumes: everything above + Ink `useWindowSize`, `useInput`, `useApp`; `react-router` `MemoryRouter`/`Routes`/`Route`/`useNavigate`.
 - Produces:
   ```typescript
   interface CouncilTUIProps {
-    readonly homeData: HomeData;            // injected (loaded by the entry before render) for testability
+    readonly homeData: HomeData; // injected (loaded by the entry before render) for testability
     readonly model: string;
-    readonly env?: NodeJS.ProcessEnv;       // for resolveTheme (default process.env)
-    readonly initialColumns?: number;       // test override; default useWindowSize().columns
+    readonly env?: NodeJS.ProcessEnv; // for resolveTheme (default process.env)
+    readonly initialColumns?: number; // test override; default useWindowSize().columns
     readonly initialRows?: number;
   }
-  function CouncilTUI(props: CouncilTUIProps): React.ReactElement
+  function CouncilTUI(props: CouncilTUIProps): React.ReactElement;
   ```
   Behavior: computes `layout` from window size; renders `AppShell` with `Header` (breadcrumb "Council", `model`), `LeftNav` (sections Home/Panels/Experts/Sessions/Chats/Settings; Home active), `Footer` (NAV hints + mode); `Main` renders the active route (Home → `HomeScreen`). Global keys: `\` toggles nav (expanded↔hidden override), `?` opens `HelpModal`, `Esc` from Home → quit confirm (for M1: `Esc` closes help if open, else no-op/quit via `useApp().exit()` is acceptable but document it), `q` quits. `useWindowSize` drives responsive re-render. **For tests, accept `initialColumns/initialRows` to avoid depending on the live TTY size** (ink-testing-library reports a fixed width).
 
@@ -1221,7 +1340,13 @@ async function flush(): Promise<void> {
 describe("CouncilTUI", () => {
   it("renders the shell with Home content and nav sections", async () => {
     const { lastFrame, unmount } = render(
-      <CouncilTUI homeData={homeData} model="claude-sonnet-4.5" env={{ NO_COLOR: "1" }} initialColumns={140} initialRows={40} />,
+      <CouncilTUI
+        homeData={homeData}
+        model="claude-sonnet-4.5"
+        env={{ NO_COLOR: "1" }}
+        initialColumns={140}
+        initialRows={40}
+      />,
     );
     await flush();
     const frame = lastFrame() ?? "";
@@ -1233,7 +1358,13 @@ describe("CouncilTUI", () => {
 
   it("opens help with ? and closes it with Esc", async () => {
     const { stdin, lastFrame, unmount } = render(
-      <CouncilTUI homeData={homeData} model="m" env={{ NO_COLOR: "1" }} initialColumns={140} initialRows={40} />,
+      <CouncilTUI
+        homeData={homeData}
+        model="m"
+        env={{ NO_COLOR: "1" }}
+        initialColumns={140}
+        initialRows={40}
+      />,
     );
     await flush();
     stdin.write("?");
@@ -1261,6 +1392,7 @@ describe("CouncilTUI", () => {
 ### Task 11: Entry wiring — `index.tsx` + `bin/council.ts`
 
 **Files:**
+
 - Create: `packages/cli/src/tui/lib/should-launch-tui.ts`
 - Create: `packages/cli/src/tui/index.tsx`
 - Modify: `packages/cli/src/bin/council.ts`
@@ -1268,14 +1400,20 @@ describe("CouncilTUI", () => {
 - Test: update `packages/cli/tests/unit/bin/council.test.ts` if it asserts bare-invocation behavior (check first).
 
 **Interfaces:**
+
 - Produces:
+
   ```typescript
   // should-launch-tui.ts (pure, the testable core of the entry decision)
-  interface LaunchStreams { readonly stdout?: { readonly isTTY?: boolean }; readonly env?: NodeJS.ProcessEnv }
-  function shouldLaunchTui(argv: readonly string[], streams?: LaunchStreams): boolean
+  interface LaunchStreams {
+    readonly stdout?: { readonly isTTY?: boolean };
+    readonly env?: NodeJS.ProcessEnv;
+  }
+  function shouldLaunchTui(argv: readonly string[], streams?: LaunchStreams): boolean;
   // index.tsx
-  function launchTui(): Promise<void>   // loads home data, renders <CouncilTUI/> in alt-screen
+  function launchTui(): Promise<void>; // loads home data, renders <CouncilTUI/> in alt-screen
   ```
+
   `shouldLaunchTui(argv, streams)` is `true` iff: there is NO subcommand in `argv` (i.e. `argv.slice(2)` contains no non-flag token), AND `stdout.isTTY === true`, AND `env.CI` is unset, AND `env.COUNCIL_TUI === "1"`, AND `env.COUNCIL_NO_TUI` is unset. (Reuses the spirit of M0's `isInteractive`; gated additionally behind `COUNCIL_TUI=1` during 9.2–9.9.)
 
 - [ ] **Step 1: Write the failing test for `shouldLaunchTui`**
@@ -1303,11 +1441,17 @@ describe("shouldLaunchTui", () => {
     expect(shouldLaunchTui(["node", "council"], base({}))).toBe(false);
   });
   it("is false when not a TTY", () => {
-    expect(shouldLaunchTui(["node", "council"], { stdout: { isTTY: false }, env: { COUNCIL_TUI: "1" } })).toBe(false);
+    expect(
+      shouldLaunchTui(["node", "council"], { stdout: { isTTY: false }, env: { COUNCIL_TUI: "1" } }),
+    ).toBe(false);
   });
   it("is false under CI or COUNCIL_NO_TUI", () => {
-    expect(shouldLaunchTui(["node", "council"], base({ COUNCIL_TUI: "1", CI: "true" }))).toBe(false);
-    expect(shouldLaunchTui(["node", "council"], base({ COUNCIL_TUI: "1", COUNCIL_NO_TUI: "1" }))).toBe(false);
+    expect(shouldLaunchTui(["node", "council"], base({ COUNCIL_TUI: "1", CI: "true" }))).toBe(
+      false,
+    );
+    expect(
+      shouldLaunchTui(["node", "council"], base({ COUNCIL_TUI: "1", COUNCIL_NO_TUI: "1" })),
+    ).toBe(false);
   });
 });
 ```
@@ -1347,16 +1491,19 @@ export function shouldLaunchTui(argv: readonly string[], streams: LaunchStreams 
 ---
 
 ## Per-PR closeout (every PR)
+
 - [ ] Rebase on latest `main`. `pnpm install --frozen-lockfile` in the worktree.
 - [ ] `cd packages/cli && pnpm exec vitest run tests/unit/tui` green; `pnpm --filter @council-ai/cli lint` zero warnings; `typecheck` clean.
 - [ ] `git log --oneline main..HEAD` — every `test(tui)` precedes its `feat(tui)`.
 - [ ] Push, open PR, parent invokes Sentinel, merge on APPROVED/CONDITIONAL, `git worktree remove` + `git branch -D`.
 
 ## Self-Review (completed)
+
 - **Spec coverage:** design §4.1 (3-zone shell → Tasks 3/4/5), §4.2 (collapsible nav → Tasks 2/6), §4.10 (responsive + NO_COLOR → Tasks 1/2/5), §4.5 (footer hints + `?` help → Tasks 4/9/10), Home dashboard (Tasks 7/8), entry/`COUNCIL_TUI` (Task 11). Command palette (`^K`) and full nav-mode/typing-mode switching land in 9.3+ (palette) — M1 ships nav-mode + help only.
 - **Placeholder scan:** pure-logic tasks (1,2,7,11-guard) have complete code; component tasks have complete test + impl; the two integration tasks (10 root, 11 entry I/O) give exact interfaces, tests, and explicit BLOCK-don't-weaken instructions because they touch Ink hooks/process I/O that must be verified at implementation time.
 - **Type consistency:** `NavState`/`LayoutPlan` (2) → AppShell (5)/LeftNav (6); `SemanticTheme` (1) → all components; `HomeData` (7) → HomeScreen (8)/CouncilTUI (10); `shouldLaunchTui` (11) → bin entry.
 - **M0 learnings applied:** every component test renders the component (not a pure stub), covers all keyboard branches, uses a real-timer wait for Esc (HelpModal, CouncilTUI), and asserts sanitization (Header, Footer, LeftNav, HomeScreen).
 
 ## Out of scope for M1 (later milestones)
+
 Command palette `^K` (9.3), typing-mode/chat input, list/detail screens for Panels/Experts/Sessions (9.3), Settings overlay (9.4), and flipping bare `council` to default-launch the TUI (9.10). M1 ships the navigable shell + Home behind `COUNCIL_TUI=1`.

@@ -29,10 +29,7 @@ function normalizeExt(ext: string): string {
   return ext.toLowerCase();
 }
 
-export function registerExtractor(
-  extensions: readonly string[],
-  loader: ExtractorLoader,
-): void {
+export function registerExtractor(extensions: readonly string[], loader: ExtractorLoader): void {
   for (const ext of extensions) {
     loaders.set(normalizeExt(ext), loader);
   }
@@ -82,20 +79,10 @@ export function detectFormatByMagicBytes(buffer: Buffer): string | null {
   if (buffer.length < 4) {
     return null;
   }
-  if (
-    buffer[0] === 0x25 &&
-    buffer[1] === 0x50 &&
-    buffer[2] === 0x44 &&
-    buffer[3] === 0x46
-  ) {
+  if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) {
     return ".pdf";
   }
-  if (
-    buffer[0] === 0x50 &&
-    buffer[1] === 0x4b &&
-    buffer[2] === 0x03 &&
-    buffer[3] === 0x04
-  ) {
+  if (buffer[0] === 0x50 && buffer[1] === 0x4b && buffer[2] === 0x03 && buffer[3] === 0x04) {
     // ZIP container — ambiguous (docx/xlsx/pptx/odt/ods/odp). Caller
     // disambiguates using filename or deeper inspection.
     return null;

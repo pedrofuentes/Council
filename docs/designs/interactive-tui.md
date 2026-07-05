@@ -30,6 +30,7 @@ Table" metaphor, color system, layered disclosure, and interruption model).
 ## 2. Goals & Non-Goals
 
 **Goals**
+
 - A single discoverable surface where a non-power user can use all of Council without subcommands.
 - Reuse ~100% of existing business logic (engine, repositories, debate orchestrator, chat sessions,
   config). The TUI is a presentation/orchestration layer, not a rewrite.
@@ -38,6 +39,7 @@ Table" metaphor, color system, layered disclosure, and interruption model).
   first shipped milestone.
 
 **Non-Goals (YAGNI for v1)**
+
 - No mouse-first design (keyboard-first; mouse optional later).
 - No multi-pane "IDE" layout (Miller columns / split editors). Max 3 navigation levels.
 - No theming engine / multiple color themes (one semantic palette + NO_COLOR/ASCII fallback).
@@ -47,23 +49,24 @@ Table" metaphor, color system, layered disclosure, and interruption model).
 
 ## 3. Entry & Launch Behavior
 
-| Condition | Behavior |
-|-----------|----------|
-| `council` (no args), `process.stdout.isTTY && !isInCI()` | Launch the TUI in the alternate screen |
-| `council` (no args), non-TTY / piped / redirected / CI | Print today's grouped help (unchanged) |
-| `council <subcommand> …` | Always run the existing command; never launch the TUI |
-| `council ui` | Explicit, discoverable command that launches the TUI (alias of bare `council`) |
-| `council --help` / `-h` / `--version` | Existing behavior (no TUI) |
-| Escape hatches | `--no-tui` and `COUNCIL_NO_TUI=1` force the help path even on a TTY |
-| Rollout | TUI is opt-in behind `COUNCIL_TUI=1` during 9.2–9.9; 9.10 flips bare-`council`-on-TTY to default |
+| Condition                                                | Behavior                                                                                         |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `council` (no args), `process.stdout.isTTY && !isInCI()` | Launch the TUI in the alternate screen                                                           |
+| `council` (no args), non-TTY / piped / redirected / CI   | Print today's grouped help (unchanged)                                                           |
+| `council <subcommand> …`                                 | Always run the existing command; never launch the TUI                                            |
+| `council ui`                                             | Explicit, discoverable command that launches the TUI (alias of bare `council`)                   |
+| `council --help` / `-h` / `--version`                    | Existing behavior (no TUI)                                                                       |
+| Escape hatches                                           | `--no-tui` and `COUNCIL_NO_TUI=1` force the help path even on a TTY                              |
+| Rollout                                                  | TUI is opt-in behind `COUNCIL_TUI=1` during 9.2–9.9; 9.10 flips bare-`council`-on-TTY to default |
 
 Startup guard: `const interactive = process.stdout.isTTY && !isInCi();` — when false, route to the
-CLI program and print: *"Running non-interactively — use `council convene \"topic\"` for one-shot
-mode."* Explicit subcommands bypass the TUI entirely, so agents/scripts/CI are unaffected.
+CLI program and print: _"Running non-interactively — use `council convene \"topic\"` for one-shot
+mode."_ Explicit subcommands bypass the TUI entirely, so agents/scripts/CI are unaffected.
 
 ## 4. UX & Interaction Design
 
 ### 4.1 App shell — 3-zone alternate-screen layout
+
 - **Header (2 rows):** wordmark + breadcrumb (`Council ▸ <panel> ▸ <topic>`) + active model + live
   token/cost meter. Compact < 100 cols; minimal < 80.
 - **Main (flex):** the current screen / chat stream. Only this zone scrolls.
@@ -74,6 +77,7 @@ mode."* Explicit subcommands bypass the TUI entirely, so agents/scripts/CI are u
   resize handled via `useWindowSize()`.
 
 ### 4.2 Navigation — hybrid + collapsible left nav, max 3 levels
+
 - **Home dashboard** is the landing view: recent sessions (dominant scrollable list), quick-action
   CTAs (Convene, New expert, New panel, Settings), and counts (N sessions / N experts / N panels).
 - **Home launchpad keyboard navigation**: the quick actions and recent sessions form a single
@@ -100,6 +104,7 @@ mode."* Explicit subcommands bypass the TUI entirely, so agents/scripts/CI are u
   parallel state drawn above the route.
 
 #### Mockup — Home (collapsible nav expanded)
+
 ```
 ┌────────────┬───────────────────────────────────────────────────────────────────────┐
 │ 🏛 Council  │ Home                                       claude-sonnet-4.5   ◷ 0 req  │
@@ -119,6 +124,7 @@ mode."* Explicit subcommands bypass the TUI entirely, so agents/scripts/CI are u
 ```
 
 #### Mockup — Live convene (nav collapsed to icon rail)
+
 ```
 ┌───┬───────────────────────────────────────────────────────────────────────────────┐
 │🏛 │ architecture-review ▸ "Build vs buy analytics?"        sonnet-4.5    ◷ 6 req    │
@@ -138,7 +144,9 @@ mode."* Explicit subcommands bypass the TUI entirely, so agents/scripts/CI are u
 ```
 
 ### 4.3 Dual focus model — the #1 correctness rule
+
 Two explicit modes, shown in the footer:
+
 - **Navigation mode:** `j/k`+`↑/↓` scroll, `Enter` open, `Esc` back, `/` filter, `?` help, `Tab`
   switch focus, `g/G` top/bottom, PgUp/PgDn.
 - **Typing mode** (input focused): all keys type; `Enter` submits; `Shift+Enter`/`Ctrl+J` newline;
@@ -146,19 +154,22 @@ Two explicit modes, shown in the footer:
 - Implemented with a `mode` state gating each `useInput({ isActive })` (Ink 7 `useFocusManager`).
 
 ### 4.4 Command palette (`Ctrl-K`)
+
 Centered modal, fuzzy **subsequence** match (`nse` → "New Session"), character-level highlights,
 shortcut shown next to each command, scored by match + recency. Contextual first, then global:
-chat → *Send to all, Cancel, Conclude, Export, Switch model*; dashboard → *New session, Resume,
-Create expert/panel*; always → *Settings, Help, Quit*. Opens from any mode (suspends, doesn't block);
+chat → _Send to all, Cancel, Conclude, Export, Switch model_; dashboard → _New session, Resume,
+Create expert/panel_; always → _Settings, Help, Quit_. Opens from any mode (suspends, doesn't block);
 `Esc` dismisses with no side effects. Slash commands (`/help`, `/conclude`, `/model`, …) remain as a
 secondary expert path.
 
 ### 4.5 Keyboard & discoverability
+
 Dual-bind vim + arrows everywhere. `?` opens a full keybinding overlay; the footer shows the 5–6 most
 relevant keys and updates with context/mode. `Ctrl+C`: first press cancels in-progress generation;
 second press (or at idle) → confirm-quit.
 
 ### 4.6 Chat-stream view (1:1 and panel)
+
 Lazy/virtualized message list with **per-item render caching** for streaming performance.
 **Follow mode** auto-scrolls during streaming; manual `↑/k/PgUp` breaks follow; `G` jumps to bottom;
 `↓ N new` affordance when scrolled up. Per-expert fixed colors (name prefix only), `@mention`
@@ -166,6 +177,7 @@ highlighting, animated "thinking" pill, multi-line growing input (1→~5 rows) w
 Input border: accent when focused, dim when not.
 
 ### 4.7 Convene (live debate) view
+
 Topic input → **cost-confirmation modal** (estimated premium requests / $) → stream. A row of
 **expert pills** near the top (`●` pulsing while thinking, `✓` done), per-expert colors, round/phase
 separators (structured mode), live cost meter in the footer. `Esc` cancels via `AbortSignal`; partial
@@ -175,6 +187,7 @@ output is preserved with a dimmed `[cancelled]` tag. Consumes
 **Review mode (transcript key contract).** The transcript viewport auto-follows new turns
 (live-follow) until the user scrolls it manually — implemented as a pure `followLive`/`cursor` state
 machine (`src/tui/lib/review-scroll.ts`) driving `ScrollView`'s `cursor`/`follow` props:
+
 - `↑` / `k` / `PgUp` — pause auto-follow and enter **Review mode**, moving the cursor up one line
   (from live-follow, the cursor starts at the last line and steps up from there).
 - `↓` / `j` / `PgDn` — move the cursor down one line; reaching the last line resumes live-follow
@@ -186,25 +199,28 @@ machine (`src/tui/lib/review-scroll.ts`) driving `ScrollView`'s `cursor`/`follow
 - `Esc` still cancels the run (while streaming) or backs out (once done) regardless of review state.
 
 ### 4.8 Sessions — list & session detail
+
 The **Debates** nav entry (`/sessions`; the command palette labels the same destination "Go to
 Sessions") lists **every panel in the library**, most-recently-updated first — including panels that
 have never convened a debate:
+
 - Each row reads `<status symbol> <panel name>  <N> debates · <N> turns  <topic>`, e.g. `✓ Finance
-  Council  1 debates · 4 turns  Q3 budget` (the count copy is not pluralized — `1 debates` is
+Council  1 debates · 4 turns  Q3 budget` (the count copy is not pluralized — `1 debates` is
   expected, not a typo). A never-convened panel still gets a row, e.g. `· Growth Council  0 debates
-  · 0 turns`.
+· 0 turns`.
 - Status symbol reflects that panel's most recent debate: `✓` completed · `…` running · `·` no
   debates yet · `⚠` interrupted/aborted/failed.
 - Standard list keys apply (§4.3): `j/k`/arrows move, `g`/`G` jump top/bottom, `PgUp`/`PgDn` page,
   `/` filters, `Enter` opens the highlighted row.
 - Empty state — zero **panels** in the library, not merely zero debates — shows the guidance text
-  *"No debates yet — convene a panel to watch them deliberate"*. This is inline copy, not a bound
+  _"No debates yet — convene a panel to watch them deliberate"_. This is inline copy, not a bound
   key — start a debate from Home (`c`) or the command palette instead.
 
 Opening a row navigates to the **session detail** screen (`/sessions/:id`), which renders that
 panel's most recent debate in full: panel name, topic, prompt, status, and every turn as `[r<round>]
 <speaker>: <content>`. Two actions are available, footer-hinted as `c conclude · x export` and also
 reachable through an `a` action-menu overlay (`Esc` closes it without acting):
+
 - `c` — open the conclusion flow (`/sessions/:id/conclude`).
 - `x` — open the export overlay (`/sessions/:id/export`).
 
@@ -213,11 +229,13 @@ temporary `PlaceholderScreen` at this route pending the real view; `SessionDetai
 (`src/tui/screens/SessionDetailScreen.tsx`) has since replaced it.
 
 ### 4.9 Expert detail — persona documents (`o`)
+
 The expert detail screen (`/experts/:slug`) footer-hints `c chat · e edit · d delete` for every
 expert, surfaced in the `a` action-menu overlay too. **Persona-kind experts only** get two further
 actions, on their own footer line (`o documents · t train`) and appended to that same menu:
+
 - `o` — open the **expert documents** screen (`/experts/:slug/docs`; breadcrumb `Experts › <slug> ›
-  Documents`).
+Documents`).
 - `t` — open the training flow (`/experts/:slug/train`).
 
 Both keys are no-ops for **generic** experts — a generic expert has no docs folder to manage, so the
@@ -227,15 +245,17 @@ The expert documents screen lists that persona's indexed source documents, one r
 `<filename>  <size>B  [<status>]`, navigable with the same `j/k`/arrows/`g`/`G` keys. Pressing
 `Enter` on a row asks `Remove "<filename>"? [y/n]` inline; `y` marks it removed and drops it from the
 search index (a warning banner appears if index cleanup fails, suggesting a re-train to repair it),
-`n` cancels. Empty state: *"No indexed documents for this persona."*
+`n` cancels. Empty state: _"No indexed documents for this persona."_
 
 ### 4.10 Settings (overlay, not a screen)
+
 60–70% × 80% overlay over the current view; collapsible sections mirroring `ConfigSchema`:
-*Defaults, Expert, Documents, Chat, Conclude, Telemetry, Providers (env-var names only), Paths*.
+_Defaults, Expert, Documents, Chat, Conclude, Telemetry, Providers (env-var names only), Paths_.
 `Tab`/`Shift+Tab` between fields; **inline Zod validation** below each field; `[Save]`(`Ctrl+S`)
 `[Cancel]`(`Esc`). Native textarea for multi-line — never spawn `$EDITOR`.
 
 ### 4.11 First-run, empty states, errors
+
 First-run: ≤ 2 onboarding screens (welcome/value + model/auth check, reusing
 `loadConfigWithMeta().isFirstRun` + `selectModelInteractively`), then Home. Empty states: large,
 specific CTAs with the action key (`⊕ Start your first Council session [c]`). Tiered errors:
@@ -243,6 +263,7 @@ transient → status bar (5s TTL); persistent → inline item with `⚠`; blocki
 raw stack traces; map via `formatEngineError`.
 
 ### 4.12 Accessibility & responsiveness (from the first milestone)
+
 `NO_COLOR` / `TERM=dumb` / `COUNCIL_ASCII` honored (reuse `getSymbols()`, chalk auto-detect). Ink 7
 screen-reader mode (`INK_SCREEN_READER`) → linear frames, no cursor tricks; spinner is a braille
 sequence ≤10fps, static `[...]` under NO_COLOR. Breakpoints: ≥120 full (nav expanded) · 80–119
@@ -301,6 +322,7 @@ error display (9.2/9.9).
 ## 6. Technical Architecture
 
 ### 6.1 Module layout (new — `packages/cli/src/tui/`)
+
 ```
 src/tui/
   index.tsx                 entry: interactive guard + render(<CouncilTUI/>, {alternateScreen,…})
@@ -323,29 +345,32 @@ src/tui/
   theme/                    semantic color tokens + NO_COLOR/ASCII resolution
   adapters/                 thin async wrappers over core seams (return view-models + streams)
 ```
+
 - **State:** React Context + `useReducer` (not Zustand) — clear parent/child ownership, easy to reset
   per test. One small streaming context is shared between Convene/Chat and the header/footer meters.
 - **Reuse over rebuild:** the TUI imports `core/`, `memory/repositories/`, `config/`, `engine/`
   directly. The package's `src/index.ts` stays a `buildProgram`-only public surface.
 
 ### 6.2 Reusable seams (verified, file-level)
-| Capability | Seam | Reuse |
-|-----------|------|-------|
-| Config | `loadConfigWithMeta`, `updateConfigField(s)`, `getCouncilDataHome` (`src/config/loader.ts`) | as-is |
-| Engine lifecycle | `runWithEngine`, `makeEngineFromKind`/`createEngine` (`src/cli/run-with-engine.ts`, `src/engine/providers.ts`) | as-is |
-| Debate | `new Debate(...).run(prompt,{signal})` → `DebateEvent`; `DebatePersister.persist` (`src/core/debate.ts`, `src/memory/persister.ts`) | as-is |
-| Conclude | `buildSynthesisPrompt` + `synthesizeConclusion` (`src/cli/conclusion-synthesis.ts`) | as-is |
-| Panels | `template-loader` (`loadPanel`/`resolveExperts`/`listTemplates`), `autoComposePanel`, `PanelLibraryRepository`, `PanelRepository` | as-is |
-| Experts | `FileExpertLibrary` CRUD, `ExpertDefinitionSchema`, `allowlistExpertDefinition` (`src/core/expert.ts`, `src/core/expert-library.ts`) | as-is |
-| Training | `createDocumentProcessor().process/needsProcessing`, `createDocumentIndexer`, `analyzeDocuments`, `ProfileRepository`, `DocumentRepository` (`src/core/documents/*`) | as-is |
-| Chat | `parseUserInput`, `createContextManager`, `ChatRepository`, `build{Chat,Panel}TurnPrompt` (`src/core/chat/*`, `src/cli/commands/chat/shared.ts`) | as-is |
-| Sessions/history | `loadTranscript`, `synthesizeEvents` (`src/memory/transcript.ts`), repositories | as-is |
-| Memory | `recallMemoryWithProvenance` (`src/memory/expert-memory.ts`), memory repositories | as-is |
-| Export | `loadTranscript` + format renderers (`src/cli/commands/export*.ts`) | mostly as-is |
-| DB | `createDatabase`, repository constructors (`src/memory/db.ts`) | as-is (one TUI-owned handle) |
-| Cross-cutting | `stripControlChars`/`toSingleLineDisplay`, `formatEngineError`, `getSymbols` | must respect |
+
+| Capability       | Seam                                                                                                                                                                 | Reuse                        |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| Config           | `loadConfigWithMeta`, `updateConfigField(s)`, `getCouncilDataHome` (`src/config/loader.ts`)                                                                          | as-is                        |
+| Engine lifecycle | `runWithEngine`, `makeEngineFromKind`/`createEngine` (`src/cli/run-with-engine.ts`, `src/engine/providers.ts`)                                                       | as-is                        |
+| Debate           | `new Debate(...).run(prompt,{signal})` → `DebateEvent`; `DebatePersister.persist` (`src/core/debate.ts`, `src/memory/persister.ts`)                                  | as-is                        |
+| Conclude         | `buildSynthesisPrompt` + `synthesizeConclusion` (`src/cli/conclusion-synthesis.ts`)                                                                                  | as-is                        |
+| Panels           | `template-loader` (`loadPanel`/`resolveExperts`/`listTemplates`), `autoComposePanel`, `PanelLibraryRepository`, `PanelRepository`                                    | as-is                        |
+| Experts          | `FileExpertLibrary` CRUD, `ExpertDefinitionSchema`, `allowlistExpertDefinition` (`src/core/expert.ts`, `src/core/expert-library.ts`)                                 | as-is                        |
+| Training         | `createDocumentProcessor().process/needsProcessing`, `createDocumentIndexer`, `analyzeDocuments`, `ProfileRepository`, `DocumentRepository` (`src/core/documents/*`) | as-is                        |
+| Chat             | `parseUserInput`, `createContextManager`, `ChatRepository`, `build{Chat,Panel}TurnPrompt` (`src/core/chat/*`, `src/cli/commands/chat/shared.ts`)                     | as-is                        |
+| Sessions/history | `loadTranscript`, `synthesizeEvents` (`src/memory/transcript.ts`), repositories                                                                                      | as-is                        |
+| Memory           | `recallMemoryWithProvenance` (`src/memory/expert-memory.ts`), memory repositories                                                                                    | as-is                        |
+| Export           | `loadTranscript` + format renderers (`src/cli/commands/export*.ts`)                                                                                                  | mostly as-is                 |
+| DB               | `createDatabase`, repository constructors (`src/memory/db.ts`)                                                                                                       | as-is (one TUI-owned handle) |
+| Cross-cutting    | `stripControlChars`/`toSingleLineDisplay`, `formatEngineError`, `getSymbols`                                                                                         | must respect                 |
 
 ### 6.3 Required refactors (extract reusable cores from CLI glue), ranked
+
 1. **Split "produce/stream a turn" from "write to stdout"** in `runExpertChat`/`runPanelChat` and the
    convene render path → a reusable turn-producer + event stream the TUI renders in Ink.
 2. **Extract panel & expert CRUD services** from `commands/panel.ts` / `commands/expert.ts`
@@ -357,6 +382,7 @@ src/tui/
 Each refactor is behavior-preserving and guarded by the existing CLI tests, so the CLI cannot regress.
 
 ### 6.4 Dependencies (approved)
+
 `react-router` (`MemoryRouter` screen stack — Ink-team supported), `ink-text-input` (single-line
 fields), `ink-select-input` (list selection), `ink-testing-library` (dev — TDD for Ink components).
 Already present: `ink ^7.1`, `ink-spinner ^5`, `react ^19.2`, `chalk ^5`. **Not** added:
@@ -365,6 +391,7 @@ Built in-house (no package): `MultilineInput`, `ScrollView` (windowing), `Comman
 `ExpertPills`, `LeftNav`. State stays on React Context (Zustand not adopted).
 
 ### 6.5 Custom primitives to de-risk first (9.1)
+
 Multi-line input · windowed `ScrollView` (pure scroll math) · command-palette focus-stealing
 (`useFocusManager` disable/enable) · alt-screen enter/exit + top-level `ErrorBoundary` that restores
 the terminal on crash · `useMode` nav/typing gate · non-TTY interactive guard. Also validate
@@ -372,6 +399,7 @@ the terminal on crash · `useMode` nav/typing gate · non-TTY interactive guard.
 via stdin tests).
 
 ## 7. Testing Strategy (strict TDD — Sentinel-gated)
+
 - **Harness:** `ink-testing-library` `render()` + `stdin.write()` + `lastFrame()`/`frames`; a
   `flush(n)` `setImmediate` helper (matches existing `tests/unit/cli/renderers/ink/*.test.tsx`).
 - **Per primitive/screen:** RED test first (keyboard sequences via escape codes: `\x1b[A`, `\t`,
@@ -386,6 +414,7 @@ via stdin tests).
   per-shard.
 
 ## 8. Security & Invariants ([AGENTS.md](../../AGENTS.md) / [docs/SENTINEL.md](../SENTINEL.md))
+
 - All model/file/external strings → `stripControlChars`/`toSingleLineDisplay` before render
   (terminal-injection class; audit every sink, not one).
 - No secrets in SQLite/config (only provider env-var **names**). `@github/copilot-sdk` stays imported
@@ -402,31 +431,33 @@ Built milestone-by-milestone (each = several TDD PRs) and released together at 9
 ("feature-complete before shipping"). Detailed acceptance criteria are in
 [IMPLEMENTATION-PLAN.md](../../IMPLEMENTATION-PLAN.md) §9.
 
-| Impl | Milestone | Delivers |
-|------|-----------|----------|
-| 9.1 | Spike & de-risk | Add deps; isolated, tested primitives (alt-screen+ErrorBoundary, `useMode`, ScrollView, MultilineInput, CommandPalette focus, non-TTY guard, ink-testing harness) |
-| 9.2 | App shell & nav skeleton | 3-zone alt-screen layout, collapsible left nav, MemoryRouter, semantic colors+NO_COLOR, responsive+resize, footer hints, `?` help, Esc/Enter nav, Home. Entry behind `COUNCIL_TUI=1`; non-TTY→help |
-| 9.3 | Library browse/detail (read) | Panels/Experts/Sessions list+detail; convened/concluded status; command palette; read-only view-model layer |
-| 9.4 | Settings overlay | All config sections, Tab nav, inline Zod validation, Save/Cancel |
-| 9.5 | Expert authoring & training | Create generic+persona, edit, delete(+warnings); add docs(path/URL), progress, list/remove, profile refresh; extract expert CRUD service |
-| 9.6 | Panel authoring | Create from expert multi-select, edit members, delete; auto-compose+confirm; extract panel CRUD service |
-| 9.7 | Chat (1:1 + panel) | Streaming chat, @mentions, follow-scroll, thinking pill, history/resume, @convene; extract produce/stream-turn primitives |
-| 9.8 | Convene & conclude | Cost-confirm modal → live DebateEvent stream (pills/colors/phases/cost), Esc cancel; conclude decision-matrix view |
-| 9.9 | Inspection/memory/export & a11y polish | Memory in expert detail, export overlay, first-run onboarding, tiered errors, startup warnings, a11y+responsive audit |
-| 9.10 | Make default & release | Flip bare `council` on TTY to TUI (`--no-tui`/`COUNCIL_NO_TUI`; non-TTY fallback); add `council ui`; docs; smoke/platform/perf QA; opt-in TUI telemetry |
+| Impl | Milestone                              | Delivers                                                                                                                                                                                           |
+| ---- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 9.1  | Spike & de-risk                        | Add deps; isolated, tested primitives (alt-screen+ErrorBoundary, `useMode`, ScrollView, MultilineInput, CommandPalette focus, non-TTY guard, ink-testing harness)                                  |
+| 9.2  | App shell & nav skeleton               | 3-zone alt-screen layout, collapsible left nav, MemoryRouter, semantic colors+NO_COLOR, responsive+resize, footer hints, `?` help, Esc/Enter nav, Home. Entry behind `COUNCIL_TUI=1`; non-TTY→help |
+| 9.3  | Library browse/detail (read)           | Panels/Experts/Sessions list+detail; convened/concluded status; command palette; read-only view-model layer                                                                                        |
+| 9.4  | Settings overlay                       | All config sections, Tab nav, inline Zod validation, Save/Cancel                                                                                                                                   |
+| 9.5  | Expert authoring & training            | Create generic+persona, edit, delete(+warnings); add docs(path/URL), progress, list/remove, profile refresh; extract expert CRUD service                                                           |
+| 9.6  | Panel authoring                        | Create from expert multi-select, edit members, delete; auto-compose+confirm; extract panel CRUD service                                                                                            |
+| 9.7  | Chat (1:1 + panel)                     | Streaming chat, @mentions, follow-scroll, thinking pill, history/resume, @convene; extract produce/stream-turn primitives                                                                          |
+| 9.8  | Convene & conclude                     | Cost-confirm modal → live DebateEvent stream (pills/colors/phases/cost), Esc cancel; conclude decision-matrix view                                                                                 |
+| 9.9  | Inspection/memory/export & a11y polish | Memory in expert detail, export overlay, first-run onboarding, tiered errors, startup warnings, a11y+responsive audit                                                                              |
+| 9.10 | Make default & release                 | Flip bare `council` on TTY to TUI (`--no-tui`/`COUNCIL_NO_TUI`; non-TTY fallback); add `council ui`; docs; smoke/platform/perf QA; opt-in TUI telemetry                                            |
 
 ## 10. Risks & Mitigations
-| Risk | Mitigation |
-|------|------------|
-| Multi-line input / scroll viewport have no off-the-shelf package | Build + exhaustively test in 9.1 before any screen depends on them |
-| `j/k` leaking into typing (top TUI bug) | Dual-mode `useMode` gate from 9.2; explicit test |
-| Streaming flicker / perf with long debates | `incrementalRendering`, per-item memo cache, windowed list, 30fps throttle |
-| Alt-screen not restored on crash | Top-level `ErrorBoundary` → `useApp().exit()`; Ink `signal-exit`; tested |
-| `ink-text-input`/`-select-input` peer ranges target Ink 5/React 18 | 9.1 stdin integration tests under Ink 7/React 19; fall back to custom if needed |
-| Changing bare `council` breaks agent/CI muscle memory | Non-TTY always falls back to help; explicit subcommands bypass; opt-in flag until 9.10 |
-| Scope creep on a large surface | Milestone gating, YAGNI non-goals, 1 PR per increment, Sentinel |
+
+| Risk                                                               | Mitigation                                                                             |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| Multi-line input / scroll viewport have no off-the-shelf package   | Build + exhaustively test in 9.1 before any screen depends on them                     |
+| `j/k` leaking into typing (top TUI bug)                            | Dual-mode `useMode` gate from 9.2; explicit test                                       |
+| Streaming flicker / perf with long debates                         | `incrementalRendering`, per-item memo cache, windowed list, 30fps throttle             |
+| Alt-screen not restored on crash                                   | Top-level `ErrorBoundary` → `useApp().exit()`; Ink `signal-exit`; tested               |
+| `ink-text-input`/`-select-input` peer ranges target Ink 5/React 18 | 9.1 stdin integration tests under Ink 7/React 19; fall back to custom if needed        |
+| Changing bare `council` breaks agent/CI muscle memory              | Non-TTY always falls back to help; explicit subcommands bypass; opt-in flag until 9.10 |
+| Scope creep on a large surface                                     | Milestone gating, YAGNI non-goals, 1 PR per increment, Sentinel                        |
 
 ## 11. Definition of Done (v1)
+
 - Every user story in §5 reachable in the TUI; full CLI unchanged and green.
 - Bare `council` launches the TUI on a TTY, falls back to help otherwise; `--no-tui`/`COUNCIL_NO_TUI`
   honored; `council ui` works.
@@ -439,6 +470,7 @@ Built milestone-by-milestone (each = several TDD PRs) and released together at 9
 ---
 
 ### Appendix — research provenance
+
 - **Reference TUIs:** crush, gemini-cli, lazygit, k9s, gh-dash, atuin, yazi, fzf, Textual, aider,
   Claude Code, codex (navigation, palette, chat-stream, accessibility, anti-pattern synthesis).
 - **Ink 7 / React 19:** first-party `alternateScreen`, `incrementalRendering`, `useWindowSize`,

@@ -68,9 +68,9 @@ describe("chat target validation", () => {
     });
 
     // Attempt to chat with a target that doesn't exist
-    await expect(
-      cmd.parseAsync(["node", "council-chat", "does-not-exist"]),
-    ).rejects.toThrow(CliUserError);
+    await expect(cmd.parseAsync(["node", "council-chat", "does-not-exist"])).rejects.toThrow(
+      CliUserError,
+    );
 
     // Verify the error message includes the target name and helpful info
     expect(errOutput).toContain("does-not-exist");

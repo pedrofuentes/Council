@@ -44,8 +44,7 @@ export function isEmptyResponse(content: string): boolean {
  *   - `empty-retry`: the first attempt completed empty; the retry is firing now
  */
 export type SendRetryEvent =
-  | { readonly kind: "delta"; readonly text: string }
-  | { readonly kind: "empty-retry" };
+  { readonly kind: "delta"; readonly text: string } | { readonly kind: "empty-retry" };
 
 /** Result of consuming a single `engine.send()` stream. */
 interface ConsumeOutcome {

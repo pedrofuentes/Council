@@ -34,10 +34,7 @@ interface RunOutcome {
   readonly error: unknown;
 }
 
-async function runDocs(
-  args: readonly string[],
-  deps: DocsCommandDeps = {},
-): Promise<RunOutcome> {
+async function runDocs(args: readonly string[], deps: DocsCommandDeps = {}): Promise<RunOutcome> {
   let stdout = "";
   let stderr = "";
   const cmd = buildDocsCommand(
@@ -59,11 +56,13 @@ async function runDocs(
   return { stdout, stderr, error };
 }
 
-function makeConfig(overrides: {
-  readonly aiExtraction?: "off" | "ask" | "auto";
-  readonly aiExtractionAllowedExtensions?: readonly string[];
-  readonly maxFileSizeMB?: number;
-} = {}): CouncilConfig {
+function makeConfig(
+  overrides: {
+    readonly aiExtraction?: "off" | "ask" | "auto";
+    readonly aiExtractionAllowedExtensions?: readonly string[];
+    readonly maxFileSizeMB?: number;
+  } = {},
+): CouncilConfig {
   return {
     defaults: {
       model: "claude-sonnet-4.5",
@@ -79,9 +78,7 @@ function makeConfig(overrides: {
     },
     documents: {
       aiExtraction: overrides.aiExtraction ?? "off",
-      aiExtractionAllowedExtensions: [
-        ...(overrides.aiExtractionAllowedExtensions ?? []),
-      ],
+      aiExtractionAllowedExtensions: [...(overrides.aiExtractionAllowedExtensions ?? [])],
       maxFileSizeMB: overrides.maxFileSizeMB ?? 50,
     },
     chat: {
@@ -381,10 +378,7 @@ describe("council docs review", () => {
   });
 
   it("emits an error and non-zero exit when the panel does not exist", async () => {
-    const { stderr, error } = await runDocs(
-      ["review", "ghost"],
-      depsFor({ kind: "not-found" }),
-    );
+    const { stderr, error } = await runDocs(["review", "ghost"], depsFor({ kind: "not-found" }));
 
     expect(stderr).toMatch(/panel.*ghost.*not found/i);
     expect(error).toBeDefined();
@@ -623,10 +617,7 @@ describe("council docs doctor", () => {
   });
 
   it("emits an error and non-zero exit when the panel does not exist", async () => {
-    const { stderr, error } = await runDocs(
-      ["doctor", "ghost"],
-      depsFor({ kind: "not-found" }),
-    );
+    const { stderr, error } = await runDocs(["doctor", "ghost"], depsFor({ kind: "not-found" }));
 
     expect(stderr).toMatch(/panel.*ghost.*not found/i);
     expect(error).toBeDefined();
@@ -807,9 +798,7 @@ describe("resolveManagedDocsDir path containment", () => {
   const dataHome = "/home/u/.local/share/council";
 
   it("builds the docs dir for a valid kebab-case panel name", () => {
-    expect(resolveManagedDocsDir(dataHome, "finance")).toBe(
-      `${dataHome}/panels/finance/docs`,
-    );
+    expect(resolveManagedDocsDir(dataHome, "finance")).toBe(`${dataHome}/panels/finance/docs`);
   });
 
   it("rejects a panel name with parent-traversal segments before any scan", () => {

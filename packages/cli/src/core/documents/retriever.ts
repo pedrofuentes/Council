@@ -168,8 +168,7 @@ export function createDocumentRetriever(db: CouncilDatabase): DocumentRetriever 
       }
       if (options.scopes !== undefined && options.scopes.length > 0) {
         const scopeClauses = options.scopes.map(
-          (scope) =>
-            sql`(source_type = ${scope.sourceType} AND source_slug = ${scope.slug})`,
+          (scope) => sql`(source_type = ${scope.sourceType} AND source_slug = ${scope.slug})`,
         );
         staticFilters.push(sql`(${sql.join(scopeClauses, sql` OR `)})`);
       }

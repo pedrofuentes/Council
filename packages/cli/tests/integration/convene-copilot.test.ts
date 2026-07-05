@@ -53,56 +53,52 @@ describe.runIf(INTEGRATION)("council convene --engine copilot (integration)", ()
     }
   });
 
-  it(
-    "runs a 1-round debate against the real Copilot SDK and persists turns",
-    async () => {
-      let captured = "";
-      const cmd = buildConveneCommand({
-        write: (s) => {
-          captured += s;
-        },
-      });
+  it("runs a 1-round debate against the real Copilot SDK and persists turns", async () => {
+    let captured = "";
+    const cmd = buildConveneCommand({
+      write: (s) => {
+        captured += s;
+      },
+    });
 
-      await cmd.parseAsync([
-        "node",
-        "council-convene",
-        "What is one risk of shipping an MVP without observability?",
-        "--template",
-        "code-review",
-        "--max-rounds",
-        "1",
-        "--max-words",
-        "60",
-        "--format",
-        "json",
-        "--engine",
-        "copilot",
-      ]);
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "What is one risk of shipping an MVP without observability?",
+      "--template",
+      "code-review",
+      "--max-rounds",
+      "1",
+      "--max-words",
+      "60",
+      "--format",
+      "json",
+      "--engine",
+      "copilot",
+    ]);
 
-      const db = await createDatabase(path.join(testHome, "council.db"));
-      try {
-        const panels = await new PanelRepository(db).findAll();
-        expect(panels).toHaveLength(1);
-        const debates = await new DebateRepository(db).findByPanelId(panels[0]?.id ?? "");
-        expect(debates).toHaveLength(1);
-        expect(debates[0]?.status).toBe("completed");
-        const turns = await new TurnRepository(db).findByDebateId(debates[0]?.id ?? "");
-        expect(turns.length).toBeGreaterThan(0);
-        for (const t of turns) {
-          expect(t.content.length).toBeGreaterThan(0);
-        }
-      } finally {
-        await db.destroy();
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const panels = await new PanelRepository(db).findAll();
+      expect(panels).toHaveLength(1);
+      const debates = await new DebateRepository(db).findByPanelId(panels[0]?.id ?? "");
+      expect(debates).toHaveLength(1);
+      expect(debates[0]?.status).toBe("completed");
+      const turns = await new TurnRepository(db).findByDebateId(debates[0]?.id ?? "");
+      expect(turns.length).toBeGreaterThan(0);
+      for (const t of turns) {
+        expect(t.content.length).toBeGreaterThan(0);
       }
+    } finally {
+      await db.destroy();
+    }
 
-      const lines = captured
-        .split("\n")
-        .filter((l) => l.trim().length > 0 && l.trim().startsWith("{"));
-      const kinds = lines.map((l) => (JSON.parse(l) as { kind: string }).kind);
-      expect(kinds).toContain("turn.end");
-      expect(kinds[kinds.length - 1]).toBe("debate.end");
-    },
-    // Real Copilot calls take ≥10s per turn × N experts; allow 90s.
-    90_000,
-  );
+    const lines = captured
+      .split("\n")
+      .filter((l) => l.trim().length > 0 && l.trim().startsWith("{"));
+    const kinds = lines.map((l) => (JSON.parse(l) as { kind: string }).kind);
+    expect(kinds).toContain("turn.end");
+    expect(kinds[kinds.length - 1]).toBe("debate.end");
+  }, // Real Copilot calls take ≥10s per turn × N experts; allow 90s.
+  90_000);
 });

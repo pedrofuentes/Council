@@ -85,7 +85,12 @@ describe("buildPaletteCommands", () => {
   it("includes a New panel creation verb with route /panels/new", () => {
     const actions = buildPaletteCommands({ navId: "home" });
     expect(actions).toContainEqual(
-      expect.objectContaining({ id: "new-panel", label: "New panel", route: "/panels/new", kind: "navigate" }),
+      expect.objectContaining({
+        id: "new-panel",
+        label: "New panel",
+        route: "/panels/new",
+        kind: "navigate",
+      }),
     );
   });
 

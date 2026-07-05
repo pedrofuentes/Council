@@ -76,10 +76,7 @@ async function makeReadyEngine(
 
 describe("Debate freeform — default strategy (round-robin)", () => {
   it("preserves the structural event sequence when no strategy is given", async () => {
-    const engine = await makeReadyEngine(
-      { "id-cto": "C1.", "id-pm": "P1." },
-      [cto, pm],
-    );
+    const engine = await makeReadyEngine({ "id-cto": "C1.", "id-pm": "P1." }, [cto, pm]);
     const debate = new Debate(engine, [cto, pm], FREEFORM_1R);
     const events = await collect(debate.run("topic"));
 
@@ -108,10 +105,7 @@ describe("Debate freeform — default strategy (round-robin)", () => {
   });
 
   it("sends the strategy's prompt (not the raw topic) to engine.send()", async () => {
-    const engine = await makeReadyEngine(
-      { "id-cto": "C1.", "id-pm": "P1." },
-      [cto, pm],
-    );
+    const engine = await makeReadyEngine({ "id-cto": "C1.", "id-pm": "P1." }, [cto, pm]);
     const debate = new Debate(engine, [cto, pm], FREEFORM_1R);
     await collect(debate.run("Should we ship?"));
 
@@ -125,10 +119,7 @@ describe("Debate freeform — default strategy (round-robin)", () => {
 
 describe("Debate freeform — explicit round-robin strategy", () => {
   it("matches the default behavior", async () => {
-    const engine = await makeReadyEngine(
-      { "id-cto": "C1.", "id-pm": "P1." },
-      [cto, pm],
-    );
+    const engine = await makeReadyEngine({ "id-cto": "C1.", "id-pm": "P1." }, [cto, pm]);
     const debate = new Debate(engine, [cto, pm], {
       ...FREEFORM_1R,
       strategy: createRoundRobinStrategy(),
@@ -142,10 +133,10 @@ describe("Debate freeform — explicit round-robin strategy", () => {
   });
 
   it("includes prior turns in round 1 prompts", async () => {
-    const engine = await makeReadyEngine(
-      { "id-cto": "CTO position.", "id-pm": "PM position." },
-      [cto, pm],
-    );
+    const engine = await makeReadyEngine({ "id-cto": "CTO position.", "id-pm": "PM position." }, [
+      cto,
+      pm,
+    ]);
     const debate = new Debate(engine, [cto, pm], {
       ...FREEFORM_2R,
       strategy: createRoundRobinStrategy(),
@@ -164,10 +155,7 @@ describe("Debate freeform — explicit round-robin strategy", () => {
 
 describe("Debate freeform — devils-advocate strategy", () => {
   it("gives the designated advocate a contrarian prompt", async () => {
-    const engine = await makeReadyEngine(
-      { "id-cto": "C1.", "id-pm": "P1." },
-      [cto, pm],
-    );
+    const engine = await makeReadyEngine({ "id-cto": "C1.", "id-pm": "P1." }, [cto, pm]);
     const debate = new Debate(engine, [cto, pm], {
       ...FREEFORM_1R,
       strategy: createDevilsAdvocateStrategy("pm"),
@@ -182,10 +170,7 @@ describe("Debate freeform — devils-advocate strategy", () => {
 
 describe("Debate freeform — shouldContinue ends debate early", () => {
   it("emits debate.end with reason 'consensus' and stops further rounds", async () => {
-    const engine = await makeReadyEngine(
-      { "id-cto": "C.", "id-pm": "P." },
-      [cto, pm],
-    );
+    const engine = await makeReadyEngine({ "id-cto": "C.", "id-pm": "P." }, [cto, pm]);
 
     const earlyExit: ModeratorStrategy = {
       name: "early-exit",
@@ -261,10 +246,7 @@ describe("Debate freeform — strategy + human experts", () => {
 
 describe("Debate freeform — strategy returns unknown slug", () => {
   it("emits a non-recoverable error and aborts the round (no turns run)", async () => {
-    const engine = await makeReadyEngine(
-      { "id-cto": "C.", "id-pm": "P." },
-      [cto, pm],
-    );
+    const engine = await makeReadyEngine({ "id-cto": "C.", "id-pm": "P." }, [cto, pm]);
 
     const ghostStrategy: ModeratorStrategy = {
       name: "ghost-strategy",
@@ -308,10 +290,7 @@ describe("Debate freeform — strategy returns unknown slug", () => {
   });
 
   it("emits a non-recoverable error when planRound returns duplicate slugs", async () => {
-    const engine = await makeReadyEngine(
-      { "id-cto": "C.", "id-pm": "P." },
-      [cto, pm],
-    );
+    const engine = await makeReadyEngine({ "id-cto": "C.", "id-pm": "P." }, [cto, pm]);
 
     const dupStrategy: ModeratorStrategy = {
       name: "dup-strategy",

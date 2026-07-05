@@ -19,7 +19,8 @@ vi.mock("../../../../src/config/index.js", async () => {
     ...actual,
     getCouncilHome: (): string => testState.councilHome,
     getCouncilDataHome: (): string => testState.councilDataHome,
-    loadConfig: async () => actual.ConfigSchema.parse({ paths: { dataHome: testState.councilDataHome } }),
+    loadConfig: async () =>
+      actual.ConfigSchema.parse({ paths: { dataHome: testState.councilDataHome } }),
   };
 });
 

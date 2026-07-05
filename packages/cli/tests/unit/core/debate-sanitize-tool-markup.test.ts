@@ -46,7 +46,9 @@ async function collect(stream: AsyncIterable<DebateEvent>): Promise<DebateEvent[
 }
 
 function turnEndContent(events: readonly DebateEvent[]): string {
-  const end = events.find((e): e is Extract<DebateEvent, { kind: "turn.end" }> => e.kind === "turn.end");
+  const end = events.find(
+    (e): e is Extract<DebateEvent, { kind: "turn.end" }> => e.kind === "turn.end",
+  );
   if (!end) throw new Error("no turn.end event was emitted");
   return end.content;
 }

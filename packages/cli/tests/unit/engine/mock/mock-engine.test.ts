@@ -12,11 +12,7 @@
  */
 import { describe, expect, it, beforeEach, vi } from "vitest";
 
-import type {
-  EngineEvent,
-  EngineResponse,
-  ExpertSpec,
-} from "../../../../src/engine/index.js";
+import type { EngineEvent, EngineResponse, ExpertSpec } from "../../../../src/engine/index.js";
 import { MockEngine, isRecoverable } from "../../../../src/engine/mock/mock-engine.js";
 
 const expertSpec: ExpertSpec = {
@@ -115,7 +111,9 @@ describe("MockEngine — send (success path)", () => {
   it("delta texts concatenate to the configured response", async () => {
     const events = await collect(engine.send({ prompt: "thoughts?", expertId: "01HZ-cto" }));
     const assembled = events
-      .filter((e): e is Extract<EngineEvent, { kind: "message.delta" }> => e.kind === "message.delta")
+      .filter(
+        (e): e is Extract<EngineEvent, { kind: "message.delta" }> => e.kind === "message.delta",
+      )
       .map((e) => e.text)
       .join("");
     expect(assembled).toBe("I recommend a modular monolith.");
@@ -143,11 +141,15 @@ describe("MockEngine — send (success path)", () => {
     const a = await collect(engine.send({ prompt: "thoughts?", expertId: "01HZ-cto" }));
     const b = await collect(engine.send({ prompt: "thoughts?", expertId: "01HZ-cto" }));
     const aText = a
-      .filter((e): e is Extract<EngineEvent, { kind: "message.delta" }> => e.kind === "message.delta")
+      .filter(
+        (e): e is Extract<EngineEvent, { kind: "message.delta" }> => e.kind === "message.delta",
+      )
       .map((e) => e.text)
       .join("");
     const bText = b
-      .filter((e): e is Extract<EngineEvent, { kind: "message.delta" }> => e.kind === "message.delta")
+      .filter(
+        (e): e is Extract<EngineEvent, { kind: "message.delta" }> => e.kind === "message.delta",
+      )
       .map((e) => e.text)
       .join("");
     expect(aText).toBe(bText);
@@ -411,9 +413,7 @@ describe("MockEngine — profile analyzer responses", () => {
     const deltas = events.filter((e) => e.kind === "message.delta");
     expect(deltas.length).toBeGreaterThan(0);
 
-    const responseText = deltas
-      .map((e) => (e.kind === "message.delta" ? e.text : ""))
-      .join("");
+    const responseText = deltas.map((e) => (e.kind === "message.delta" ? e.text : "")).join("");
     expect(responseText).toBeTruthy();
 
     // Must parse and satisfy the profile-analyzer schema: the analyzer
@@ -515,5 +515,3 @@ describe("MockEngine — chunker & lifecycle edge cases (#18)", () => {
     expect(events[events.length - 1]?.kind).toBe("message.complete");
   });
 });
-
-

@@ -841,9 +841,7 @@ describe("ChatRepository", () => {
       const commitIdx = queries.findIndex((q) => /^\s*COMMIT\b/i.test(q));
       expect(commitIdx).toBeGreaterThanOrEqual(0);
       const postCommitQueries = queries.slice(commitIdx + 1);
-      const hasPostCommitSelect = postCommitQueries.some((q) =>
-        /^\s*select\b/i.test(q.trim()),
-      );
+      const hasPostCommitSelect = postCommitQueries.some((q) => /^\s*select\b/i.test(q.trim()));
       expect(hasPostCommitSelect).toBe(false);
     });
   });

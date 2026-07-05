@@ -13,10 +13,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
-import {
-  persistExtractedMemory,
-  recallMemory,
-} from "../../../src/memory/expert-memory.js";
+import { persistExtractedMemory, recallMemory } from "../../../src/memory/expert-memory.js";
 import { DebateRepository } from "../../../src/memory/repositories/debates.js";
 import { ExpertRepository } from "../../../src/memory/repositories/experts.js";
 import { PanelRepository } from "../../../src/memory/repositories/panels.js";

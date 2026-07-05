@@ -4,10 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import {
-  parseUserInput,
-  formatExpertRoster,
-} from "../../../../src/core/chat/mention-parser.js";
+import { parseUserInput, formatExpertRoster } from "../../../../src/core/chat/mention-parser.js";
 
 const SLUGS: readonly string[] = ["cto", "staff", "sre", "pm"];
 
@@ -40,10 +37,10 @@ describe("parseUserInput", () => {
   });
 
   it("supports multi-word slugs (e.g. @staff-engineer)", () => {
-    const out = parseUserInput(
-      "@staff-engineer thoughts on the migration?",
-      ["staff-engineer", "cto"],
-    );
+    const out = parseUserInput("@staff-engineer thoughts on the migration?", [
+      "staff-engineer",
+      "cto",
+    ]);
     expect(out.type).toBe("mention");
     expect(out.targetSlugs).toEqual(["staff-engineer"]);
     expect(out.content).toBe("thoughts on the migration?");
@@ -60,9 +57,7 @@ describe("parseUserInput", () => {
     expect(() => parseUserInput("@unknown hello", SLUGS)).toThrow(
       /Expert "unknown" is not in this panel/i,
     );
-    expect(() => parseUserInput("@unknown hello", SLUGS)).toThrow(
-      /cto, staff, sre, pm/,
-    );
+    expect(() => parseUserInput("@unknown hello", SLUGS)).toThrow(/cto, staff, sre, pm/);
   });
 
   it("throws when one of multiple @mentions is unknown", () => {
@@ -79,21 +74,14 @@ describe("parseUserInput", () => {
   });
 
   it("treats @convene as reserved even if an expert has slug 'convene'", () => {
-    const out = parseUserInput("@convene pick a deployment target", [
-      "convene",
-      "cto",
-    ]);
+    const out = parseUserInput("@convene pick a deployment target", ["convene", "cto"]);
     expect(out.type).toBe("convene");
     expect(out.content).toBe("pick a deployment target");
   });
 
   it("throws when @convene has no topic", () => {
-    expect(() => parseUserInput("@convene", SLUGS)).toThrow(
-      /@convene requires a topic/i,
-    );
-    expect(() => parseUserInput("@convene   ", SLUGS)).toThrow(
-      /@convene requires a topic/i,
-    );
+    expect(() => parseUserInput("@convene", SLUGS)).toThrow(/@convene requires a topic/i);
+    expect(() => parseUserInput("@convene   ", SLUGS)).toThrow(/@convene requires a topic/i);
   });
 
   it("@-with-no-slug (bare '@') is treated as part of the message body", () => {
@@ -109,18 +97,12 @@ describe("parseUserInput", () => {
   });
 
   it("throws when message starts with @slug but is empty after stripping", () => {
-    expect(() => parseUserInput("@cto", SLUGS)).toThrow(
-      /requires a message/i,
-    );
-    expect(() => parseUserInput("@cto   ", SLUGS)).toThrow(
-      /requires a message/i,
-    );
+    expect(() => parseUserInput("@cto", SLUGS)).toThrow(/requires a message/i);
+    expect(() => parseUserInput("@cto   ", SLUGS)).toThrow(/requires a message/i);
   });
 
   it("matching is case-sensitive — uppercase variant is unknown", () => {
-    expect(() => parseUserInput("@CTO hi", SLUGS)).toThrow(
-      /Expert "CTO" is not in this panel/,
-    );
+    expect(() => parseUserInput("@CTO hi", SLUGS)).toThrow(/Expert "CTO" is not in this panel/);
   });
 
   it("throws on a leading double-quoted display-name mention instead of broadcasting", () => {
@@ -134,9 +116,7 @@ describe("parseUserInput", () => {
   });
 
   it("throws on a leading single-quoted display-name mention instead of broadcasting", () => {
-    expect(() => parseUserInput("@'Sasha Lin' hello", SLUGS)).toThrow(
-      /display[- ]name/i,
-    );
+    expect(() => parseUserInput("@'Sasha Lin' hello", SLUGS)).toThrow(/display[- ]name/i);
   });
 });
 

@@ -154,10 +154,7 @@ function formatSuccessLine(file: ScanFileDetail): string {
   return line;
 }
 
-function formatFailureLine(
-  file: ScanFileDetail,
-  maxFileSizeMB: number | undefined,
-): string {
+function formatFailureLine(file: ScanFileDetail, maxFileSizeMB: number | undefined): string {
   const kind = file.errorKind ?? "extraction-failed";
   const human = describeScanError(kind, {
     ...(maxFileSizeMB !== undefined ? { maxFileSizeMB } : {}),
@@ -189,8 +186,7 @@ function formatNeedsReviewLine(file: ScanFileDetail): string {
 }
 
 export function formatScanSummary(result: ScanResult): string {
-  const totalActivity =
-    result.indexed + result.modified + result.unchanged + result.failed;
+  const totalActivity = result.indexed + result.modified + result.unchanged + result.failed;
   if (totalActivity === 0 && result.files.length === 0) {
     return "No documents found.";
   }
@@ -225,9 +221,7 @@ export function formatScanSummary(result: ScanResult): string {
 
   if (needsReviewShown > 0) {
     const noun = needsReviewShown === 1 ? "file needs" : "files need";
-    lines.push(
-      `${needsReviewShown} ${noun} review — run \`council docs review\` to act on them.`,
-    );
+    lines.push(`${needsReviewShown} ${noun} review — run \`council docs review\` to act on them.`);
   }
 
   return lines.join("\n");

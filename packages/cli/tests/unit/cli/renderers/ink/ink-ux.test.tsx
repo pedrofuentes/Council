@@ -40,12 +40,19 @@ describe("TUI-03: Ctrl+C handler", () => {
         experts: [{ slug: "alice", displayName: "Alice", model: "gpt-5" }],
       };
       // Hold open indefinitely
-      await new Promise((_resolve) => { /* hold open */ });
+      await new Promise((_resolve) => {
+        /* hold open */
+      });
     };
 
     let completed = false;
     const ui = render(
-      <DebateApp events={neverEnd()} onComplete={() => { completed = true; }} />,
+      <DebateApp
+        events={neverEnd()}
+        onComplete={() => {
+          completed = true;
+        }}
+      />,
     );
     await flush();
 
@@ -74,7 +81,9 @@ describe("TUI-03: Ctrl+C handler", () => {
               return { value: events[index++], done: false };
             }
             // Hold open indefinitely
-            return new Promise((_resolve) => { /* hold open */ });
+            return new Promise((_resolve) => {
+              /* hold open */
+            });
           },
           async return() {
             iteratorReturned = true;
@@ -85,7 +94,12 @@ describe("TUI-03: Ctrl+C handler", () => {
     };
 
     const ui = render(
-      <DebateApp events={cancellable} onComplete={() => { /* noop */ }} />,
+      <DebateApp
+        events={cancellable}
+        onComplete={() => {
+          /* noop */
+        }}
+      />,
     );
     await flush();
 
@@ -152,7 +166,9 @@ describe("TUI-05: Loading indicator", () => {
         experts: [{ slug: "alice", displayName: "Alice", model: "gpt-5" }],
       };
       yield { kind: "round.start", round: 0 };
-      await new Promise((_resolve) => { /* hold open */ });
+      await new Promise((_resolve) => {
+        /* hold open */
+      });
     };
     const ui = render(<DebateApp events={neverEnd()} />);
     await flush();
@@ -191,7 +207,9 @@ describe("TUI-05: Loading indicator", () => {
       yield { kind: "turn.delta", expertSlug: "alice", text: "done" };
       yield { kind: "turn.end", expertSlug: "alice", turnId: "t1", content: "done" };
       // Stream stays open — no more turns, but turn.end happened
-      await new Promise((_resolve) => { /* hold open */ });
+      await new Promise((_resolve) => {
+        /* hold open */
+      });
     };
     const ui = render(<DebateApp events={neverEnd()} />);
     await flush();
@@ -224,7 +242,9 @@ describe("TUI-15: Retry/cursor conflict", () => {
       yield { kind: "turn.start", expertSlug: "alice", round: 0, seq: 0 };
       yield { kind: "turn.delta", expertSlug: "alice", text: "partial" };
       yield { kind: "turn.retry", expertSlug: "alice", attempt: 1, reason: "RATE_LIMITED" };
-      await new Promise((_resolve) => { /* hold open */ });
+      await new Promise((_resolve) => {
+        /* hold open */
+      });
     };
     const ui = render(<DebateApp events={neverEnd()} />);
     await flush();
@@ -262,10 +282,19 @@ describe("TUI-20: Cancel banner", () => {
         kind: "panel.assembled",
         experts: [{ slug: "alice", displayName: "Alice", model: "gpt-5" }],
       };
-      await new Promise((_resolve) => { /* hold open */ });
+      await new Promise((_resolve) => {
+        /* hold open */
+      });
     };
 
-    const ui = render(<DebateApp events={neverEnd()} onComplete={() => { /* noop */ }} />);
+    const ui = render(
+      <DebateApp
+        events={neverEnd()}
+        onComplete={() => {
+          /* noop */
+        }}
+      />,
+    );
     await flush();
 
     // Simulate Ctrl+C

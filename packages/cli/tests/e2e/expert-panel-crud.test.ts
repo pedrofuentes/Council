@@ -475,16 +475,16 @@ fs.writeFileSync(file, body, "utf-8");`,
       .split("\n")
       .filter((line) => line.trim().startsWith("{"))
       .map((line) => JSON.parse(line) as { readonly kind: string; readonly expertSlug?: string });
-    
+
     const kinds = jsonLines.map((line) => line.kind);
-    
+
     // Contract-level assertions
     expect(kinds[0]).toBe("panel.assembled");
     expect(kinds).toContain("turn.start");
     expect(kinds).toContain("turn.end");
     expect(kinds).toContain("debate.end");
     expect(kinds[kinds.length - 1]).toBe("conclusion");
-    
+
     // Verify each expert's turn.start is correctly paired with its own
     // turn.end. Pairing is by expertSlug identity (#637), not by assuming
     // the two events are positionally adjacent in the stream — so this
@@ -581,7 +581,7 @@ fs.writeFileSync(file, body, "utf-8");`,
       "mock",
     ]);
     expect(convened.stderr).toMatch(/MOCK/i);
-    
+
     // Contract-level assertions on JSON output
     const jsonLines = convened.stdout
       .split("\n")

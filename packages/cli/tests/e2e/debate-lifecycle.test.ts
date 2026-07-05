@@ -529,9 +529,7 @@ describe("debate lifecycle e2e", () => {
     // --- json export must include turn.end events from BOTH debates ---
     const jsonOutput = await runExport([panelName, "--format", "json"]);
     const events = parseJsonLines<{ kind: string; content?: string }>(jsonOutput.stdout());
-    const turnEndContents = events
-      .filter((e) => e.kind === "turn.end")
-      .map((e) => e.content ?? "");
+    const turnEndContents = events.filter((e) => e.kind === "turn.end").map((e) => e.content ?? "");
     for (const content of originalTurnContents) {
       expect(turnEndContents).toContain(content);
     }

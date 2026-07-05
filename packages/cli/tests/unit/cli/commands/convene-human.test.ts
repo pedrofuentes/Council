@@ -52,11 +52,17 @@ describe("convene --human", () => {
     });
 
     await cmd.parseAsync([
-      "node", "council-convene", "Should we ship?",
-      "--template", "code-review",
-      "--engine", "mock",
-      "--human", "Product Lead",
-      "--max-rounds", "1",
+      "node",
+      "council-convene",
+      "Should we ship?",
+      "--template",
+      "code-review",
+      "--engine",
+      "mock",
+      "--human",
+      "Product Lead",
+      "--max-rounds",
+      "1",
     ]);
 
     // Verify DB has the human expert
@@ -97,12 +103,19 @@ describe("convene --human", () => {
     });
 
     await cmd.parseAsync([
-      "node", "council-convene", "Topic",
-      "--template", "code-review",
-      "--engine", "mock",
-      "--human", "Alice",
-      "--human", "Bob",
-      "--max-rounds", "1",
+      "node",
+      "council-convene",
+      "Topic",
+      "--template",
+      "code-review",
+      "--engine",
+      "mock",
+      "--human",
+      "Alice",
+      "--human",
+      "Bob",
+      "--max-rounds",
+      "1",
     ]);
 
     const db = await createDatabase(path.join(testHome, "council.db"));

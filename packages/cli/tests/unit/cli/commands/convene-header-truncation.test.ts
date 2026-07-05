@@ -146,14 +146,7 @@ describe("buildConveneCommand — debate header truncation", () => {
       confirmProvider: () => ({ confirm: async () => true }),
     });
 
-    await cmd.parseAsync([
-      "node",
-      "council-convene",
-      longTopic,
-      "--yes",
-      "--max-rounds",
-      "1",
-    ]);
+    await cmd.parseAsync(["node", "council-convene", longTopic, "--yes", "--max-rounds", "1"]);
 
     // The header line must contain the truncated form, with ellipsis.
     const headerMatch = stdout.match(/Topic: (.+)\n/);
@@ -190,14 +183,7 @@ describe("buildConveneCommand — debate header truncation", () => {
       confirmProvider: () => ({ confirm: async () => true }),
     });
 
-    await cmd.parseAsync([
-      "node",
-      "council-convene",
-      shortTopic,
-      "--yes",
-      "--max-rounds",
-      "1",
-    ]);
+    await cmd.parseAsync(["node", "council-convene", shortTopic, "--yes", "--max-rounds", "1"]);
 
     expect(stdout).toContain(`Topic: ${shortTopic}\n`);
     const headerMatch = stdout.match(/Topic: (.+)\n/);
@@ -226,14 +212,7 @@ describe("buildConveneCommand — debate header truncation", () => {
       confirmProvider: () => ({ confirm: async () => true }),
     });
 
-    await cmd.parseAsync([
-      "node",
-      "council-convene",
-      topicWithAnsi,
-      "--yes",
-      "--max-rounds",
-      "1",
-    ]);
+    await cmd.parseAsync(["node", "council-convene", topicWithAnsi, "--yes", "--max-rounds", "1"]);
 
     // The header must NOT contain the raw ANSI escape sequences.
     expect(stdout).not.toContain("\x1B[31m");

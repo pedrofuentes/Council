@@ -64,7 +64,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
   const cmd = new Command("resume");
   cmd
     .description("Reopen a panel: show transcript, or continue with a new prompt")
-    .argument("[panel]", "Panel name to resume (as shown by `council sessions`)")
+    .argument("[panel]", "Panel name or ULID to resume (as shown by `council sessions`)")
     .addOption(
       new Option("--format <kind>", "Output format").choices([...RENDERER_FORMATS]).default("auto"),
     )

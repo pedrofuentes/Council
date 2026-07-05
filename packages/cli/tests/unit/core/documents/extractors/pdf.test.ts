@@ -19,12 +19,8 @@ async function loadPdfExtractor(): Promise<{
 }> {
   vi.resetModules();
   await import("../../../../../src/core/documents/extractors/pdf.js");
-  const registry = await import(
-    "../../../../../src/core/documents/extractors/registry.js"
-  );
-  const errors = await import(
-    "../../../../../src/core/documents/extractors/errors.js"
-  );
+  const registry = await import("../../../../../src/core/documents/extractors/registry.js");
+  const errors = await import("../../../../../src/core/documents/extractors/errors.js");
   const extractor = await registry.getExtractor(".pdf");
   return { extractor, errors };
 }
@@ -80,9 +76,7 @@ function makePdf(
       `<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Contents ${contentIds[i]} 0 R/Resources<</Font<</F1 ${fontIdx} 0 R>>>>>>`,
   );
   const contentStreams = pageTexts.map((text) =>
-    text.length === 0
-      ? ""
-      : `BT /F1 12 Tf 50 700 Td (${escape(text)}) Tj ET`,
+    text.length === 0 ? "" : `BT /F1 12 Tf 50 700 Td (${escape(text)}) Tj ET`,
   );
   const fontObj = `<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>`;
 
@@ -125,9 +119,7 @@ describe("pdf extractor", () => {
   it("registers itself for .pdf", async () => {
     vi.resetModules();
     await import("../../../../../src/core/documents/extractors/pdf.js");
-    const registry = await import(
-      "../../../../../src/core/documents/extractors/registry.js"
-    );
+    const registry = await import("../../../../../src/core/documents/extractors/registry.js");
     expect(registry.getSupportedExtensions()).toContain(".pdf");
   });
 

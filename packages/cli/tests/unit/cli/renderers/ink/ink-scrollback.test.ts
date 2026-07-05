@@ -32,7 +32,8 @@ const { mockedInkRender } = vi.hoisted(() => ({
 vi.mock("ink", () => ({
   Box: "div",
   Text: "span",
-  Static: (_props: { readonly children: (item: unknown) => unknown; readonly items: unknown[] }) => null,
+  Static: (_props: { readonly children: (item: unknown) => unknown; readonly items: unknown[] }) =>
+    null,
   render: mockedInkRender,
   useInput: () => undefined,
   useStdin: () => ({ isRawModeSupported: false }),

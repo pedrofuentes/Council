@@ -142,12 +142,9 @@ export async function runPanelChat(opts: PanelChatOptions): Promise<void> {
     // Refresh the panel's RAG corpus before any turns run so retrieval
     // sees the latest on-disk state. Failures are logged but not fatal.
     try {
-      const { formatAllFailedWarning } = await import(
-        "../../../core/documents/panel-document-scanner.js"
-      );
-      const { renderScanLines } = await import(
-        "../../../cli/formatters/scan-summary.js"
-      );
+      const { formatAllFailedWarning } =
+        await import("../../../core/documents/panel-document-scanner.js");
+      const { renderScanLines } = await import("../../../cli/formatters/scan-summary.js");
       const { scanPanelDocuments } = await import("../saved-panel-runtime.js");
       const result = await scanPanelDocuments({ panelName: target, dataHome, db, config });
       if (
@@ -382,10 +379,7 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
           { panelName, maxResults: 5 },
           (msg) => renderer.showSystem(msg, "warn"),
         );
-        const conveneReferenceDocs = capSnippetsByChars(
-          conveneSnippets,
-          REFERENCE_DOCS_CHAR_CAP,
-        );
+        const conveneReferenceDocs = capSnippetsByChars(conveneSnippets, REFERENCE_DOCS_CHAR_CAP);
         const debateController = new AbortController();
         state = { kind: "debate", controller: debateController };
         try {

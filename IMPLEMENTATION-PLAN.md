@@ -360,8 +360,8 @@ recent material — important when a user adds an updated CV, design
 doc, or RFC alongside older versions.
 
 **Mechanism (prompt-side annotation, not input ordering or retrieval
-scoring).** Recency weighting is applied at *analyzer prompt
-construction* time. `analyzeDocuments()` (in
+scoring).** Recency weighting is applied at _analyzer prompt
+construction_ time. `analyzeDocuments()` (in
 `src/core/documents/profile-analyzer.ts`) annotates each fenced
 document block with a `[Weight: 0.NN]` tag computed via exponential
 decay: `weight = 2^(-ageDays / halfLifeDays)` (so age = 0 → 1.0,
@@ -434,11 +434,13 @@ Generic experts get debate memory only; persona experts get document + debate me
 **Goal**: `gh council convene "..." --template code-review` runs Council as a `gh` extension, making it installable via `gh extension install`.
 
 **Proposed implementation**:
+
 - Thin wrapper that delegates to the `@council-ai/cli` binary
 - Extension manifest for `gh extension install pedrofuentes/gh-council`
 - Leverage `gh` auth context (Copilot token passthrough)
 
 **Acceptance criteria**:
+
 - `gh extension install pedrofuentes/gh-council` works
 - `gh council convene "topic"` produces the same output as `council convene "topic"`
 - Auth flows through `gh` — no separate Copilot login needed
@@ -450,12 +452,14 @@ Generic experts get debate memory only; persona experts get document + debate me
 **Goal**: `pedrofuentes/council-action@v1` GitHub Action for automated deliberation in CI (e.g., architecture review on PR diff).
 
 **Proposed implementation**:
+
 - GitHub Action that runs `council convene` with PR diff as context
 - Outputs: structured JSON for downstream steps, PR comment with synthesis
 - Configurable: template, max-rounds, model, output format
 - Token-limited mode for cost control in CI
 
 **Acceptance criteria**:
+
 - Action runs successfully in a GitHub Actions workflow
 - PR diff is injected as topic context
 - Output is available as step output and optional PR comment
@@ -468,12 +472,14 @@ Generic experts get debate memory only; persona experts get document + debate me
 **Goal**: Opt-in anonymous telemetry (disabled by default, per `config.yaml`).
 
 **Proposed implementation**:
+
 - `src/telemetry/` — pino-based logger with file sink
 - Events: debate-started, debate-completed, expert-count, round-count, engine-type, error-codes
 - No PII, no prompt content, no response content
 - `council config set telemetry.enabled true` to opt in
 
 **Acceptance criteria**:
+
 - Disabled by default (zero telemetry without explicit opt-in)
 - Telemetry flag in `ConfigSchema` (already stubbed)
 - No performance impact when disabled
@@ -486,6 +492,7 @@ Generic experts get debate memory only; persona experts get document + debate me
 **Goal**: Users without GitHub Copilot can use Council with their own API keys.
 
 **Proposed implementation**:
+
 - `src/engine/openai/adapter.ts` — `OpenAIEngine` implementing `CouncilEngine`
 - `src/engine/anthropic/adapter.ts` — `AnthropicEngine` implementing `CouncilEngine`
 - Engine selection: `--engine copilot` (default), `--engine openai`, `--engine anthropic`
@@ -493,6 +500,7 @@ Generic experts get debate memory only; persona experts get document + debate me
 - Same `EngineEvent` stream — renderers and persistence work unchanged
 
 **Acceptance criteria**:
+
 - At least one direct provider adapter (OpenAI or Anthropic) passes the same test suite as MockEngine/CopilotEngine
 - `council doctor` checks for provider API key when the corresponding engine is configured
 - Mixed-model panels work (some experts via Copilot, some via direct API)
@@ -521,6 +529,7 @@ focus-stealing (`useFocusManager`); non-TTY interactive guard; `ink-testing-libr
 harness. Validate `ink-text-input` / `ink-select-input` under Ink 7 / React 19 via stdin tests.
 
 **Acceptance criteria**:
+
 - Each primitive has unit tests driving keyboard input (`stdin.write`).
 - Non-TTY guard returns `false` under CI; coverage added without lowering the ratchet.
 
@@ -532,11 +541,13 @@ harness. Validate `ink-text-input` / `ink-select-input` under Ink 7 / React 19 v
 
 **Scope**: `AppShell` (Header / Main / Footer / StatusBar), collapsible `LeftNav`
 (expanded / icon-rail / hidden + `\` toggle, adaptive by width), `MemoryRouter`, semantic color theme
-+ NO_COLOR/ASCII, `useWindowSize` resize + breakpoints, contextual footer hints, `?` help overlay,
-`Esc`/`Enter` navigation, Home dashboard (empty + populated). Entry: bare `council` on a TTY behind
-`COUNCIL_TUI=1` launches the TUI; non-TTY → help.
+
+- NO_COLOR/ASCII, `useWindowSize` resize + breakpoints, contextual footer hints, `?` help overlay,
+  `Esc`/`Enter` navigation, Home dashboard (empty + populated). Entry: bare `council` on a TTY behind
+  `COUNCIL_TUI=1` launches the TUI; non-TTY → help.
 
 **Acceptance criteria**:
+
 - Launches in alternate screen on a TTY; non-TTY/CI prints help.
 - Resize reflows; NO_COLOR renders plain; nav toggles across its three states.
 - Home shows counts and recent sessions.
@@ -552,6 +563,7 @@ harness. Validate `ink-text-input` / `ink-select-input` under Ink 7 / React 19 v
 (global + contextual, fuzzy). Read-only view-model layer in `tui/adapters/`.
 
 **Acceptance criteria**:
+
 - Lists render from real data; detail shows definition; session detail shows the transcript with the honest persisted `debate.status` (no fabricated "concluded").
 - `Ctrl-K` opens the palette and runs navigation commands.
 
@@ -567,6 +579,7 @@ Save (Ctrl+S) via `loadConfig` + `updateConfigFields`. A `config-settings` adapt
 validation (mirroring the CLI coercion); an input-capture context gates the app-shell global keys while editing.
 
 **Acceptance criteria**:
+
 - Edits persist to `config.yaml`; invalid values blocked with inline messages.
 - Secrets are never written — only provider env-var names.
 
@@ -593,6 +606,7 @@ Document staging rejects symlinks (`lstat`) and refuses to overwrite (`COPYFILE_
 URL ingest and a full CRUD-service extraction from `commands/expert.ts` are deferred follow-ups.
 
 **Acceptance criteria**:
+
 - Experts created/edited/deleted from the UI round-trip to YAML.
 - Training indexes docs with visible progress and refreshes the profile.
 - Existing CLI expert tests stay green after the service extraction.
@@ -621,6 +635,7 @@ composer-supplied one. Shortcuts `n`/`m`/`d`/`c` on the panel screens; forms can
 flow); tracked as a follow-up.
 
 **Acceptance criteria**:
+
 - Panels created from selected experts persist (library + YAML + members).
 - Auto-compose preview + confirm works; existing CLI panel tests stay green.
 
@@ -635,6 +650,7 @@ thinking pill, history load/resume (`ChatRepository`), inline `@convene` (`CONVE
 "produce next turn / stream turn response" primitives from `runExpertChat`/`runPanelChat`.
 
 **Acceptance criteria**:
+
 - A turn streams token-by-token; `@mention` routes to an expert.
 - History persists and resumes; navigate-away mid-stream cancels cleanly.
 - Existing CLI chat tests stay green after extraction.
@@ -653,6 +669,7 @@ preserving partial output). `Conclude` view rendering `synthesizeConclusion` out
 tensions / recommendation).
 
 **Acceptance criteria**:
+
 - Cost shown + confirmed before spend; live stream renders all `DebateEvent` kinds.
 - `Esc` aborts via `AbortSignal` with the partial transcript persisted; conclusion renders.
 
@@ -669,6 +686,7 @@ tensions / recommendation).
 error display + startup warnings, screen-reader / ASCII / NO_COLOR + responsive audit.
 
 **Acceptance criteria**:
+
 - Memory + provenance shown; export writes all formats; first-run lands on Home.
 - Screen-reader mode produces linear frames; narrow-terminal degradation verified.
 
@@ -686,6 +704,7 @@ error display + startup warnings, screen-reader / ASCII / NO_COLOR + responsive 
 checks; opt-in TUI telemetry events.
 
 **Acceptance criteria**:
+
 - Bare `council` on a TTY opens the TUI; non-TTY prints help; `--no-tui` / `COUNCIL_NO_TUI` honored; `council ui` works.
 - All existing CLI commands unchanged; smoke + platform-smoke green.
 
@@ -697,34 +716,34 @@ checks; opt-in TUI telemetry events.
 
 ## Key Milestones
 
-| Milestone | Phase | Status |
-|-----------|-------|--------|
-| `pnpm build && pnpm test` pass | 1.1 | ✅ Done |
-| `council convene "topic"` produces multi-expert debate | 1.10 | ✅ Done |
-| Structured 4-phase choreography | 2.2 | ✅ Done |
-| Individual expert chat works | 2.1 | ✅ Done |
-| Pluggable moderator strategies defined | 2.3 | ✅ Done |
-| Anti-sycophancy quality gate | 2.4 | ✅ Done |
-| Session resume + export + memory CLI | 3.2/3.5/3.6 | ✅ Done |
-| Error resilience with retry | 3.7 | ✅ Done |
-| Human-as-expert | 3.3 | ✅ Done |
-| Experts remember across sessions | 3.1 | ✅ Done |
-| `council conclude` with decision matrix | 2.7 | ✅ Done |
-| Context window management | 2.6 | ✅ Done |
-| Panel auto-composition | 2.5 | ✅ Done |
-| Rich Ink terminal UI | 3.4 | ✅ Done |
-| Experts as standalone reusable entities | 4 | ✅ Done |
-| Persistent 1:1 and panel chat | 5 | ✅ Done |
-| Document-driven persona experts | 6 | ✅ Done (6.5 deferred) |
-| Cross-panel expert awareness | 7 | ✅ Done |
-| `gh` CLI extension | 8.1 | ⬜ Planned |
-| GitHub Action | 8.2 | ⬜ Planned |
-| Direct provider APIs | 8.4 | ⬜ Planned |
-| Published to npm as `@council-ai/cli` | 8 | ⬜ Planned |
-| Interactive TUI shell (alt-screen console) | 9.2 | ✅ Done |
-| TUI library browse/detail + command palette | 9.3 | ✅ Done |
-| TUI editable settings screen | 9.4 | ✅ Done |
-| TUI expert authoring & training | 9.5 | ✅ Done |
-| TUI panel authoring & auto-compose | 9.6 | ✅ Done |
-| Live convene + conclude in the TUI | 9.8 | ✅ Done |
-| TUI default on bare `council` (TTY) | 9.10 | ✅ Done |
+| Milestone                                              | Phase       | Status                 |
+| ------------------------------------------------------ | ----------- | ---------------------- |
+| `pnpm build && pnpm test` pass                         | 1.1         | ✅ Done                |
+| `council convene "topic"` produces multi-expert debate | 1.10        | ✅ Done                |
+| Structured 4-phase choreography                        | 2.2         | ✅ Done                |
+| Individual expert chat works                           | 2.1         | ✅ Done                |
+| Pluggable moderator strategies defined                 | 2.3         | ✅ Done                |
+| Anti-sycophancy quality gate                           | 2.4         | ✅ Done                |
+| Session resume + export + memory CLI                   | 3.2/3.5/3.6 | ✅ Done                |
+| Error resilience with retry                            | 3.7         | ✅ Done                |
+| Human-as-expert                                        | 3.3         | ✅ Done                |
+| Experts remember across sessions                       | 3.1         | ✅ Done                |
+| `council conclude` with decision matrix                | 2.7         | ✅ Done                |
+| Context window management                              | 2.6         | ✅ Done                |
+| Panel auto-composition                                 | 2.5         | ✅ Done                |
+| Rich Ink terminal UI                                   | 3.4         | ✅ Done                |
+| Experts as standalone reusable entities                | 4           | ✅ Done                |
+| Persistent 1:1 and panel chat                          | 5           | ✅ Done                |
+| Document-driven persona experts                        | 6           | ✅ Done (6.5 deferred) |
+| Cross-panel expert awareness                           | 7           | ✅ Done                |
+| `gh` CLI extension                                     | 8.1         | ⬜ Planned             |
+| GitHub Action                                          | 8.2         | ⬜ Planned             |
+| Direct provider APIs                                   | 8.4         | ⬜ Planned             |
+| Published to npm as `@council-ai/cli`                  | 8           | ⬜ Planned             |
+| Interactive TUI shell (alt-screen console)             | 9.2         | ✅ Done                |
+| TUI library browse/detail + command palette            | 9.3         | ✅ Done                |
+| TUI editable settings screen                           | 9.4         | ✅ Done                |
+| TUI expert authoring & training                        | 9.5         | ✅ Done                |
+| TUI panel authoring & auto-compose                     | 9.6         | ✅ Done                |
+| Live convene + conclude in the TUI                     | 9.8         | ✅ Done                |
+| TUI default on bare `council` (TTY)                    | 9.10        | ✅ Done                |

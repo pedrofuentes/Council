@@ -203,7 +203,11 @@ describe("buildConfigCommand config set", () => {
   });
 
   it("rejects unsupported keys with the valid key list", async () => {
-    const { stdout, stderr, error } = await runConfig(["set", "providers.openai.apiKeyEnvVar", "OPENAI_API_KEY"]);
+    const { stdout, stderr, error } = await runConfig([
+      "set",
+      "providers.openai.apiKeyEnvVar",
+      "OPENAI_API_KEY",
+    ]);
 
     expect(stdout).toBe("");
     expect(error).toBeInstanceOf(CliUserError);

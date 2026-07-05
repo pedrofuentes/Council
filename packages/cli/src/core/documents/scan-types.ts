@@ -26,17 +26,9 @@ import * as path from "node:path";
  *     the panel's docs root (rejected by `extractDocument`'s
  *     confinement guard or by the detector's symlink check).
  */
-export type ScanErrorKind =
-  | ExtractionErrorKind
-  | "extraction-failed"
-  | "confinement-violation";
+export type ScanErrorKind = ExtractionErrorKind | "extraction-failed" | "confinement-violation";
 
-export type ScanFileStatus =
-  | "indexed"
-  | "modified"
-  | "unchanged"
-  | "failed"
-  | "needs-review";
+export type ScanFileStatus = "indexed" | "modified" | "unchanged" | "failed" | "needs-review";
 
 export interface ScanFileMetadata {
   /** PDF page count (populated by the PDF extractor). */
@@ -150,9 +142,7 @@ export function classifyExtractionError(err: unknown): {
 export function unsupportedFileDetail(filePath: string): ScanFileDetail {
   const extension = path.extname(filePath).toLowerCase();
   const errorMessage =
-    extension.length > 0
-      ? `Unsupported format (${extension})`
-      : "Unsupported format";
+    extension.length > 0 ? `Unsupported format (${extension})` : "Unsupported format";
   return {
     path: filePath,
     filename: path.basename(filePath),

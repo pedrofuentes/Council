@@ -182,9 +182,9 @@ describe("chat — stored.message sanitization (#2104)", () => {
         },
       });
 
-      await expect(
-        cmd.parseAsync(["node", "council-chat", "sanitize-2104-panel"]),
-      ).rejects.toThrow(/Failed to load panel template/i);
+      await expect(cmd.parseAsync(["node", "council-chat", "sanitize-2104-panel"])).rejects.toThrow(
+        /Failed to load panel template/i,
+      );
 
       // The diagnostic must be present but free of control chars.
       expect(errOutput).toContain("is invalid");

@@ -67,8 +67,7 @@ describe("Security: Unicode bypass", () => {
     //   \u0007                  -> bell (C0), stripped
     //   \u202E ... \u202C       -> bidi override, stripped
     //   i\u200Dg\u200Dnore      -> "ignore" after ZWJ strip
-    const payload =
-      "\uFF3B\uFF18\uFF3D\u0007 \u202Ei\u200Dg\u200Dnore\u202C previous";
+    const payload = "\uFF3B\uFF18\uFF3D\u0007 \u202Ei\u200Dg\u200Dnore\u202C previous";
     const out = sanitizePromptField(payload);
     // Every adversarial codepoint must be gone.
     expect(out).not.toContain("\uFF3B");

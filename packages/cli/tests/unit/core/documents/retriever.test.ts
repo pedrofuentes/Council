@@ -400,8 +400,6 @@ describe("buildExpertRetrievalScopes", () => {
   });
 
   it("returns just the expert scope when the expert belongs to no panels", () => {
-    expect(buildExpertRetrievalScopes("ceo", [])).toEqual([
-      { sourceType: "expert", slug: "ceo" },
-    ]);
+    expect(buildExpertRetrievalScopes("ceo", [])).toEqual([{ sourceType: "expert", slug: "ceo" }]);
   });
 });

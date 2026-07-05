@@ -20,7 +20,7 @@ describe("expert create help text", () => {
     const stanceOpt = createCmd.options.find((o) => o.long === "--stance");
     expect(stanceOpt).toBeDefined();
     if (!stanceOpt) throw new Error("stance option not found");
-    
+
     expect(stanceOpt.description).not.toMatch(/epistemic/i);
     expect(stanceOpt.description).toMatch(/viewpoint/i);
   });
@@ -29,7 +29,7 @@ describe("expert create help text", () => {
     const cmd = buildExpertCommand();
     const createCmd = cmd.commands.find((c) => c.name() === "create");
     if (!createCmd) throw new Error("create command not found");
-    
+
     const stanceOpt = createCmd.options.find((o) => o.long === "--stance");
     if (!stanceOpt) throw new Error("stance option not found");
 
@@ -49,22 +49,22 @@ describe("expert create help text", () => {
 describe("convene help text", () => {
   it("includes shell-quoting guidance in after-help examples section", async () => {
     const cmd = buildConveneCommand();
-    
+
     // Create a test output writer to capture help
     let capturedHelp = "";
     const testWriter = (text: string): void => {
       capturedHelp += text;
     };
-    
+
     // Configure the command to use our test writer
     cmd.configureOutput({
       writeOut: testWriter,
       writeErr: testWriter,
     });
-    
+
     // Trigger help generation by calling outputHelp
     cmd.outputHelp();
-    
+
     // Verify the help addresses shell quoting for special characters
     expect(capturedHelp.toLowerCase()).toContain("quot");
     expect(capturedHelp).toMatch(/\$/);
@@ -72,19 +72,19 @@ describe("convene help text", () => {
 
   it("has example with dollar sign added via addHelpText", async () => {
     const cmd = buildConveneCommand();
-    
+
     let capturedHelp = "";
     const testWriter = (text: string): void => {
       capturedHelp += text;
     };
-    
+
     cmd.configureOutput({
       writeOut: testWriter,
       writeErr: testWriter,
     });
-    
+
     cmd.outputHelp();
-    
+
     // Verify the help contains the dollar sign example
     expect(capturedHelp).toContain("$450");
     expect(capturedHelp).toContain("reasonable");

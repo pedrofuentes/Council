@@ -61,9 +61,11 @@ async function runUpdate(
 }
 
 function okRunner(): UpgradeRunner {
-  return vi.fn(
-    async (): Promise<UpgradeRunResult> => ({ exitCode: 0, stdout: "done", stderr: "" }),
-  );
+  return vi.fn(async (): Promise<UpgradeRunResult> => ({
+    exitCode: 0,
+    stdout: "done",
+    stderr: "",
+  }));
 }
 
 describe("detectPackageManager", () => {

@@ -72,9 +72,7 @@ describe("Human-as-expert participation", () => {
     }
 
     // AI turn should have speakerKind "expert" (or undefined for backwards compat)
-    const aiTurn = turnEnds.find(
-      (e) => e.kind === "turn.end" && e.expertSlug === "cto",
-    );
+    const aiTurn = turnEnds.find((e) => e.kind === "turn.end" && e.expertSlug === "cto");
     expect(aiTurn).toBeDefined();
     if (aiTurn?.kind === "turn.end") {
       expect(aiTurn.speakerKind).toBe("expert");

@@ -24,10 +24,7 @@ function formatParseError(err: unknown): string {
   return formatWarningValue(err instanceof Error ? err.message : String(err));
 }
 
-function safeParseArray(
-  json: string,
-  context: { slug: string; field: string },
-): readonly string[] {
+function safeParseArray(json: string, context: { slug: string; field: string }): readonly string[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(json);
@@ -116,9 +113,6 @@ export class ProfileRepository {
   }
 
   async delete(slug: string): Promise<void> {
-    await this.db
-      .deleteFrom("persona_profiles")
-      .where("expert_slug", "=", slug)
-      .execute();
+    await this.db.deleteFrom("persona_profiles").where("expert_slug", "=", slug).execute();
   }
 }

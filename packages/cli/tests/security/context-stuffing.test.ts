@@ -16,10 +16,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ExpertSpec } from "../../src/engine/index.js";
-import {
-  buildCrossExamPrompt,
-  type PriorTurn,
-} from "../../src/core/moderator/phase-prompts.js";
+import { buildCrossExamPrompt, type PriorTurn } from "../../src/core/moderator/phase-prompts.js";
 import {
   sanitizeFenced,
   sanitizePromptBlock,

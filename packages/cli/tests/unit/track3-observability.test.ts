@@ -37,10 +37,7 @@ import { DebateRepository } from "../../src/memory/repositories/debates.js";
 import { ExpertRepository } from "../../src/memory/repositories/experts.js";
 import { PanelRepository } from "../../src/memory/repositories/panels.js";
 import { TurnRepository } from "../../src/memory/repositories/turns.js";
-import {
-  DebatePersister,
-  type DebatePersisterLogger,
-} from "../../src/memory/persister.js";
+import { DebatePersister, type DebatePersisterLogger } from "../../src/memory/persister.js";
 
 import { buildConveneCommand } from "../../src/cli/commands/convene.js";
 

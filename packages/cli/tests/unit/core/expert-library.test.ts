@@ -237,7 +237,9 @@ describe("FileExpertLibrary", () => {
         const first = lib.create(makeDef({ displayName: "Fresh CTO" }));
         await firstCreateEntered;
 
-        await expect(lib.create(makeDef({ displayName: "Racing CTO" }))).rejects.toThrow(/already exists/i);
+        await expect(lib.create(makeDef({ displayName: "Racing CTO" }))).rejects.toThrow(
+          /already exists/i,
+        );
         expect(createSpy).toHaveBeenCalledTimes(1);
 
         releaseFirstCreate?.();

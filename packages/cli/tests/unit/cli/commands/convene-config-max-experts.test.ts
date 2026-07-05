@@ -193,10 +193,9 @@ describe("buildConveneCommand — config.defaults.maxExperts fallback (T3)", () 
       engineFactory: () => engine,
     });
 
-    await cmd.parseAsync(
-      ["node", "council", "convene", "topic", "--max-experts", "2", "--yes"],
-      { from: "user" },
-    );
+    await cmd.parseAsync(["node", "council", "convene", "topic", "--max-experts", "2", "--yes"], {
+      from: "user",
+    });
 
     expect(errors.some((e) => e.includes("unknown option"))).toBe(false);
     expect(engine.expertSystemMessages.length).toBeGreaterThan(0);

@@ -9,7 +9,11 @@ import React from "react";
 import { describe, expect, it } from "vitest";
 import { render } from "ink-testing-library";
 
-import { DebateApp, INITIAL_STATE, reduce } from "../../../../../src/cli/renderers/ink/InkRenderer.js";
+import {
+  DebateApp,
+  INITIAL_STATE,
+  reduce,
+} from "../../../../../src/cli/renderers/ink/InkRenderer.js";
 import type { DebateEvent } from "../../../../../src/core/types.js";
 
 async function* stream(...evts: DebateEvent[]): AsyncIterable<DebateEvent> {

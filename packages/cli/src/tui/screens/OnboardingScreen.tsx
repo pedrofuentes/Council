@@ -128,12 +128,12 @@ export function OnboardingScreen(props: OnboardingScreenProps): React.ReactEleme
       <Box flexDirection="column">
         <Text>{"Council assembles AI experts into panels."}</Text>
         <Text>
-          {"Convene a panel on a topic \u2192 watch them debate \u2192 get a decision-matrix conclusion."}
+          {
+            "Convene a panel on a topic \u2192 watch them debate \u2192 get a decision-matrix conclusion."
+          }
         </Text>
         <Text>{"You can also chat with a whole panel or a single expert."}</Text>
-        <Text>
-          {"Experts \u2192 Panel \u2192 Convene \u2192 Debate \u2192 Conclusion"}
-        </Text>
+        <Text>{"Experts \u2192 Panel \u2192 Convene \u2192 Debate \u2192 Conclusion"}</Text>
         <Text>{props.theme.muted("Enter continue \u00b7 Esc skip")}</Text>
       </Box>
     );

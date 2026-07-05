@@ -24,10 +24,7 @@
  */
 import { ulid } from "ulid";
 
-import type {
-  CouncilEngine,
-  EngineEvent,
-} from "../../engine/index.js";
+import type { CouncilEngine, EngineEvent } from "../../engine/index.js";
 import type { PriorTurnRecord } from "../moderator/strategy.js";
 import { escapeFenceContent, sanitizePromptBlock } from "../prompt-sanitize.js";
 import { toSingleLineDisplay } from "../../cli/strip-control-chars.js";
@@ -105,9 +102,7 @@ export function buildHeuristicSummary(
   const lastRound = turns.reduce((m, t) => (t.round > m ? t.round : m), 0);
   const header = `Summary of rounds 0-${lastRound}:`;
   const body = positions.join("\n");
-  const tension = hasDisagreement
-    ? "\nKey tension: experts disagree on the core question."
-    : "";
+  const tension = hasDisagreement ? "\nKey tension: experts disagree on the core question." : "";
 
   const summary = `${header}\n${body}${tension}`;
 
@@ -472,4 +467,3 @@ function firstSentence(text: string): string {
   if (match) return match[0].trim();
   return trimmed;
 }
-

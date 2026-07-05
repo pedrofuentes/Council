@@ -98,7 +98,10 @@ function memoizeAsync<T>(load: () => Promise<T>): () => Promise<T> {
  * when it throws (#1365) while still surfacing that failure to every caller.
  */
 function memoizeSync<T>(compute: () => T): () => T {
-  let settled: { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: unknown } | undefined;
+  let settled:
+    | { readonly ok: true; readonly value: T }
+    | { readonly ok: false; readonly error: unknown }
+    | undefined;
   return () => {
     if (settled === undefined) {
       try {

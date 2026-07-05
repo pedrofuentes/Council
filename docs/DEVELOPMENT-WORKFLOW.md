@@ -31,6 +31,7 @@ git branch -D feature/feature-name
 ```
 
 ### Why Worktrees Are Required
+
 - Prevents interference between parallel work
 - Each agent/increment has a clean working directory
 - No risk of uncommitted changes from one task affecting another
@@ -39,6 +40,7 @@ git branch -D feature/feature-name
 ## Branching Details
 
 ### Branch Lifecycle
+
 1. Fetch latest: `git fetch origin main`
 2. Create worktree + branch from `main`: `git worktree add .worktrees/name -b feature/name main && cd .worktrees/name`
 3. Install dependencies in the new worktree: `pnpm install --frozen-lockfile`
@@ -52,42 +54,49 @@ git branch -D feature/feature-name
 11. Cleanup: `cd S:\Pedro\Projects\Council && git worktree remove .worktrees/name && git branch -D feature/name`
 
 ### Branch Naming Convention
-| Prefix | Use For |
-|--------|---------|
-| `feature/` | New features |
-| `fix/` | Bug fixes |
-| `refactor/` | Code refactoring |
-| `docs/` | Documentation changes |
-| `test/` | Test additions or fixes |
-| `chore/` | Build, CI, dependency updates |
+
+| Prefix      | Use For                       |
+| ----------- | ----------------------------- |
+| `feature/`  | New features                  |
+| `fix/`      | Bug fixes                     |
+| `refactor/` | Code refactoring              |
+| `docs/`     | Documentation changes         |
+| `test/`     | Test additions or fixes       |
+| `chore/`    | Build, CI, dependency updates |
 
 ## Pull Request Process
 
 ### Before Opening a PR
+
 1. All tests pass in the worktree
 2. Linting passes
 3. Commit messages follow the format
 4. PR represents a single logical unit
 
 ### PR Title Format
+
 `type(scope): Short description`
 
 ### Sentinel Review
+
 → See [`docs/SENTINEL.md`](./SENTINEL.md) for the full process and invocation methods.
 
 ### After Merge
+
 ```bash
 cd S:\Pedro\Projects\Council
 git worktree remove .worktrees/feature-name
 git branch -D feature/name
 git pull origin main
 ```
+
 - Start next increment from the plan
 - If other worktrees are in progress, rebase them: `cd .worktrees/other && git fetch origin main && git rebase origin/main`
 
 ## Continuous Integration
 
 ### Platform Smoke Tests
+
 - **Workflow**: [`.github/workflows/platform-smoke.yml`](../.github/workflows/platform-smoke.yml)
 - **Purpose**: Catches OS-specific regressions (build/typecheck breakage, TTY-detection differences, shell quirks) that a single-OS unit test run wouldn't surface, by exercising the built CLI binary end-to-end on every supported platform.
 - **Triggers**: `pull_request` targeting `main`, `push` to `main`, and manual `workflow_dispatch`.
@@ -101,6 +110,7 @@ git pull origin main
 ## Sub-Agent Delegation
 
 ### When to Delegate
+
 - Complex research that requires deep analysis
 - Documentation generation
 - Test data creation or fixture generation
@@ -108,6 +118,7 @@ git pull origin main
 - Security vulnerability assessment
 
 ### How to Delegate
+
 - Provide the sub-agent with full context (requirements, constraints, relevant code)
 - Each sub-agent works in its own context
 - Integrate sub-agent output back into the main work
@@ -116,6 +127,7 @@ git pull origin main
 ## Environment Setup
 
 ### Prerequisites
+
 - Node.js 24+
 - pnpm (`npm install -g pnpm`)
 - GitHub Copilot CLI (`npm install -g @github/copilot`)
@@ -123,6 +135,7 @@ git pull origin main
 - Copilot authenticated (`gh auth login`; verify with `gh auth status`)
 
 ### Initial Setup
+
 ```bash
 git clone <repo-url> && cd council
 pnpm install
@@ -131,6 +144,7 @@ pnpm test
 ```
 
 ### IDE Recommendations
+
 - VS Code with ESLint + Prettier extensions
 - TypeScript strict mode enabled
 - Terminal: Windows Terminal or similar (Ink requires TTY support)

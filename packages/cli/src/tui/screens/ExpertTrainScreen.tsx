@@ -139,9 +139,7 @@ export function ExpertTrainScreen(props: ExpertTrainScreenProps): React.ReactEle
         />
       </Box>
       <Text>
-        {props.theme.muted(
-          "e.g. ./docs/strategy.md  ·  Tab complete · Enter train · Esc back",
-        )}
+        {props.theme.muted("e.g. ./docs/strategy.md  ·  Tab complete · Enter train · Esc back")}
       </Text>
       {candidates.length > 0 ? (
         <Box flexDirection="column">
@@ -175,9 +173,7 @@ export function ExpertTrainScreen(props: ExpertTrainScreenProps): React.ReactEle
             <Text>{props.theme.success("✓ Persona profile updated.")}</Text>
           ) : null}
           {state.result.stopWarning !== undefined && state.result.stopWarning.length > 0 ? (
-            <Text>
-              {props.theme.warn(toSingleLineDisplay(`⚠ ${state.result.stopWarning}`))}
-            </Text>
+            <Text>{props.theme.warn(toSingleLineDisplay(`⚠ ${state.result.stopWarning}`))}</Text>
           ) : null}
         </>
       ) : null}

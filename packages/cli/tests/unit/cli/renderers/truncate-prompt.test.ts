@@ -62,9 +62,7 @@ describe("truncatePrompt", () => {
     // Truncating to 3 code points should yield 3 emoji + "...", not 3 UTF-16
     // code units (which would split the second emoji).
     const input = "\u{1F600}\u{1F601}\u{1F602}\u{1F603}\u{1F604}";
-    expect(truncatePrompt(input, { maxLength: 3 })).toBe(
-      "\u{1F600}\u{1F601}\u{1F602}...",
-    );
+    expect(truncatePrompt(input, { maxLength: 3 })).toBe("\u{1F600}\u{1F601}\u{1F602}...");
   });
 
   it("counts a ZWJ family emoji as a single grapheme cluster", () => {
@@ -73,9 +71,7 @@ describe("truncatePrompt", () => {
     // the whole string should fit unchanged; with maxLength=3 only "aaa..."
     // should be returned (the family must not be split mid-cluster).
     const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
-    expect(truncatePrompt("aaa" + family, { maxLength: 4 })).toBe(
-      "aaa" + family,
-    );
+    expect(truncatePrompt("aaa" + family, { maxLength: 4 })).toBe("aaa" + family);
     expect(truncatePrompt("aaa" + family, { maxLength: 3 })).toBe("aaa...");
   });
 
@@ -93,9 +89,7 @@ describe("truncatePrompt", () => {
   it("counts a regional-indicator flag as a single grapheme cluster", () => {
     // "🇺🇸" = U+1F1FA U+1F1F8 — 2 code points, 1 grapheme.
     const flag = "\u{1F1FA}\u{1F1F8}";
-    expect(truncatePrompt("ab" + flag + "cd", { maxLength: 3 })).toBe(
-      "ab" + flag + "...",
-    );
+    expect(truncatePrompt("ab" + flag + "cd", { maxLength: 3 })).toBe("ab" + flag + "...");
   });
 
   it("does not split a regional-indicator flag across the truncation boundary", () => {
@@ -109,9 +103,7 @@ describe("truncatePrompt", () => {
   it("keeps a base character and its combining mark together as one grapheme", () => {
     // "e" + U+0301 (combining acute) = "é" — 2 code points, 1 grapheme.
     const eAcute = "e\u0301";
-    expect(truncatePrompt("ab" + eAcute + "cd", { maxLength: 3 })).toBe(
-      "ab" + eAcute + "...",
-    );
+    expect(truncatePrompt("ab" + eAcute + "cd", { maxLength: 3 })).toBe("ab" + eAcute + "...");
     // Truncating just before the cluster must drop it whole, not leave a
     // dangling combining mark at the start of the next cluster.
     const out = truncatePrompt("ab" + eAcute + "cd", { maxLength: 2 });

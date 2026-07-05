@@ -40,7 +40,12 @@ describe("vendor library smoke (Ink 7 / React 19)", () => {
       { label: "Beta", value: "b" },
     ];
     const { stdin, lastFrame, unmount } = render(
-      <SelectInput items={items} onSelect={(item) => { selectedLabel = item.label; }} />,
+      <SelectInput
+        items={items}
+        onSelect={(item) => {
+          selectedLabel = item.label;
+        }}
+      />,
     );
     await flush();
     expect(lastFrame() ?? "").toContain("Alpha");

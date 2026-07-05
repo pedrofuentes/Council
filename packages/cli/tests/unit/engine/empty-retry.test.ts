@@ -61,7 +61,10 @@ describe("isEmptyResponse", () => {
 
 describe("sendWithEmptyRetry", () => {
   it("retries once and yields the content when the first response is empty then non-empty", async () => {
-    const engine = engineOf({ kind: "content", text: "" }, { kind: "content", text: "real answer" });
+    const engine = engineOf(
+      { kind: "content", text: "" },
+      { kind: "content", text: "real answer" },
+    );
 
     const { events, outcome } = await drain(sendWithEmptyRetry(engine, OPTS));
 
@@ -99,7 +102,10 @@ describe("sendWithEmptyRetry", () => {
   });
 
   it("treats a whitespace-only first response as empty and retries", async () => {
-    const engine = engineOf({ kind: "content", text: "  \n " }, { kind: "content", text: "now content" });
+    const engine = engineOf(
+      { kind: "content", text: "  \n " },
+      { kind: "content", text: "now content" },
+    );
 
     const { outcome } = await drain(sendWithEmptyRetry(engine, OPTS));
 

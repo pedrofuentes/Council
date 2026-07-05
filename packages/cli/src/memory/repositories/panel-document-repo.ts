@@ -183,10 +183,7 @@ export class PanelDocumentRepository {
       .execute();
   }
 
-  async removeDocumentsUnderFolder(
-    panelName: string,
-    folderPath: string,
-  ): Promise<void> {
+  async removeDocumentsUnderFolder(panelName: string, folderPath: string): Promise<void> {
     // Match the folder itself plus any descendant whose path starts with
     // `folderPath` followed by either OS separator. We test both `/` and
     // `\` rather than relying on `path.sep` because stored paths may

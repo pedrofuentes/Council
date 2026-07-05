@@ -16,5 +16,7 @@ export function SelectableList(props: SelectableListProps): React.ReactElement {
     ...(props.isActive === undefined ? {} : { isActive: props.isActive }),
     ...(props.onActivate === undefined ? {} : { onActivate: props.onActivate }),
   });
-  return <ScrollView items={props.items} height={props.height ?? props.items.length} cursor={cursor} />;
+  return (
+    <ScrollView items={props.items} height={props.height ?? props.items.length} cursor={cursor} />
+  );
 }

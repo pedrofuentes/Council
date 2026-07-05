@@ -49,7 +49,11 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     }) as typeof actual.access,
     open: (async (file: unknown, flags?: unknown, mode?: unknown) => {
       const handle = await (
-        actual.open as (f: unknown, fl?: unknown, m?: unknown) => Promise<FsPromisesModule.FileHandle>
+        actual.open as (
+          f: unknown,
+          fl?: unknown,
+          m?: unknown,
+        ) => Promise<FsPromisesModule.FileHandle>
       )(file, flags, mode);
       if (
         typeof file === "string" &&
@@ -62,9 +66,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
           // already created the file via O_EXCL. Touch the file so callers
           // that drop us mid-way still see real bytes on disk.
           await originalWriteFile("partial bytes from mock\n", "utf-8");
-          const err: NodeJS.ErrnoException = new Error(
-            "ENOSPC: simulated mid-write failure",
-          );
+          const err: NodeJS.ErrnoException = new Error("ENOSPC: simulated mid-write failure");
           err.code = "ENOSPC";
           throw err;
         }) as typeof handle.writeFile;

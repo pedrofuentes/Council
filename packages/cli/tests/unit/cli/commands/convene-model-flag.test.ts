@@ -174,7 +174,14 @@ describe("buildConveneCommand — --model flag", () => {
       }),
     });
 
-    await cmd.parseAsync(["node", "council-convene", "Should we adopt TDD?", "--yes", "--max-rounds", "1"]);
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "Should we adopt TDD?",
+      "--yes",
+      "--max-rounds",
+      "1",
+    ]);
 
     // Verify that the default model from config was used
     expect(engine.expertModels.length).toBeGreaterThanOrEqual(4);

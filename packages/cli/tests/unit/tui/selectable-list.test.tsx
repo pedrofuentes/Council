@@ -4,14 +4,19 @@ import { describe, expect, it, vi } from "vitest";
 
 import { SelectableList } from "../../../src/tui/components/lists/SelectableList.js";
 
-const flush = async (stdin: { write: (s: string) => void } | undefined, s: string): Promise<void> => {
+const flush = async (
+  stdin: { write: (s: string) => void } | undefined,
+  s: string,
+): Promise<void> => {
   stdin?.write(s);
   for (let i = 0; i < 5; i += 1) await new Promise((r) => setImmediate(r));
 };
 
 describe("SelectableList", () => {
   it("inverts the active row and moves the cursor", async () => {
-    const { stdin, lastFrame } = render(<SelectableList items={["Alpha", "Beta", "Gamma"]} height={5} />);
+    const { stdin, lastFrame } = render(
+      <SelectableList items={["Alpha", "Beta", "Gamma"]} height={5} />,
+    );
     expect(lastFrame()).toContain("\u001b[7mAlpha");
     await flush(stdin, "j");
     expect(lastFrame()).toContain("\u001b[7mBeta");

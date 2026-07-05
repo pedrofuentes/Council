@@ -154,7 +154,9 @@ export function PanelComposeScreen(props: PanelComposeScreenProps): React.ReactE
           <Text>
             {props.theme.muted(
               toSingleLineDisplay(
-                state.status === "persisting" ? "Saving panel…" : "y Save & convene · n/e edit · Esc cancel",
+                state.status === "persisting"
+                  ? "Saving panel…"
+                  : "y Save & convene · n/e edit · Esc cancel",
               ),
             )}
           </Text>

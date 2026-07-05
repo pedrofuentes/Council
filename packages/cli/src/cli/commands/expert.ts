@@ -172,7 +172,8 @@ export function formatPrefilledLines(opts: CreateOptions): string {
   // display so a crafted value cannot inject extra ✓ lines or emit terminal
   // escape sequences. Labels are constant and trusted.
   return (
-    provided.map(([label, value]) => `  ✓ ${label}: ${toSingleLineDisplay(value)}\n`).join("") + "\n"
+    provided.map(([label, value]) => `  ✓ ${label}: ${toSingleLineDisplay(value)}\n`).join("") +
+    "\n"
   );
 }
 

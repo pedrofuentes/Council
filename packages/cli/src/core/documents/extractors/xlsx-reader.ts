@@ -419,8 +419,7 @@ function parseSheetRows(
       // as if no explicit ref were given -> fall back to the sequential next
       // column. This keeps each row's width <= MAX_XLSX_COLUMNS regardless of
       // the cell reference, preventing an unbounded fill-loop allocation.
-      const target =
-        column >= 0 && column < MAX_XLSX_COLUMNS ? column : nextDefaultColumn;
+      const target = column >= 0 && column < MAX_XLSX_COLUMNS ? column : nextDefaultColumn;
       while (built.length < target) {
         built.push("");
       }

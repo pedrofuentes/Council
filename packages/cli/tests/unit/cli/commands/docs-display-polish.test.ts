@@ -30,10 +30,7 @@ interface RunOutcome {
   readonly error: unknown;
 }
 
-async function runDocsDoctor(
-  panelName: string,
-  deps: DocsCommandDeps = {},
-): Promise<RunOutcome> {
+async function runDocsDoctor(panelName: string, deps: DocsCommandDeps = {}): Promise<RunOutcome> {
   let stdout = "";
   let stderr = "";
   const cmd = buildDocsCommand(
@@ -88,9 +85,7 @@ function makeConfig(
   } as CouncilConfig;
 }
 
-function fileDetail(
-  overrides: Partial<ScanFileDetail> & { filename: string },
-): ScanFileDetail {
+function fileDetail(overrides: Partial<ScanFileDetail> & { filename: string }): ScanFileDetail {
   const inferredExt = (() => {
     const dot = overrides.filename.lastIndexOf(".");
     return dot >= 0 ? overrides.filename.slice(dot).toLowerCase() : "";

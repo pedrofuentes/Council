@@ -107,36 +107,40 @@ describe("convene --panel alias", () => {
       }
     }
 
-    it("--panel <name> resolves to the same template as --template <name>", { timeout: 60_000 }, async () => {
-      // Use separate HOMEs per invocation to avoid Windows file locks on
-      // the shared council.db between runs.
-      const homeA = await fs.mkdtemp(path.join(os.tmpdir(), "convene-alias-a-"));
-      const homeB = await fs.mkdtemp(path.join(os.tmpdir(), "convene-alias-b-"));
-      try {
-        await copyTemplateDb(path.join(homeA, "council.db"));
-        await copyTemplateDb(path.join(homeB, "council.db"));
-        process.env["COUNCIL_HOME"] = homeA;
-        const viaPanel = await runWithFlagInHome("--panel", homeA);
-        process.env["COUNCIL_HOME"] = homeB;
-        const viaTemplate = await runWithFlagInHome("--template", homeB);
+    it(
+      "--panel <name> resolves to the same template as --template <name>",
+      { timeout: 60_000 },
+      async () => {
+        // Use separate HOMEs per invocation to avoid Windows file locks on
+        // the shared council.db between runs.
+        const homeA = await fs.mkdtemp(path.join(os.tmpdir(), "convene-alias-a-"));
+        const homeB = await fs.mkdtemp(path.join(os.tmpdir(), "convene-alias-b-"));
+        try {
+          await copyTemplateDb(path.join(homeA, "council.db"));
+          await copyTemplateDb(path.join(homeB, "council.db"));
+          process.env["COUNCIL_HOME"] = homeA;
+          const viaPanel = await runWithFlagInHome("--panel", homeA);
+          process.env["COUNCIL_HOME"] = homeB;
+          const viaTemplate = await runWithFlagInHome("--template", homeB);
 
-        // Both flags must produce identical template resolution.
-        expect(viaPanel.templateName).toBe("code-review");
-        expect(viaTemplate.templateName).toBe("code-review");
-        expect(viaPanel.templateName).toBe(viaTemplate.templateName);
+          // Both flags must produce identical template resolution.
+          expect(viaPanel.templateName).toBe("code-review");
+          expect(viaTemplate.templateName).toBe("code-review");
+          expect(viaPanel.templateName).toBe(viaTemplate.templateName);
 
-        // And they must instantiate the same set of experts.
-        expect(viaPanel.expertSlugs.length).toBeGreaterThan(0);
-        expect(viaPanel.expertSlugs).toEqual(viaTemplate.expertSlugs);
-      } finally {
-        for (const h of [homeA, homeB]) {
-          try {
-            await fs.rm(h, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-          } catch {
-            /* best effort */
+          // And they must instantiate the same set of experts.
+          expect(viaPanel.expertSlugs.length).toBeGreaterThan(0);
+          expect(viaPanel.expertSlugs).toEqual(viaTemplate.expertSlugs);
+        } finally {
+          for (const h of [homeA, homeB]) {
+            try {
+              await fs.rm(h, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+            } catch {
+              /* best effort */
+            }
           }
         }
-      }
-    });
+      },
+    );
   });
 });

@@ -20,16 +20,20 @@ Council's logo features a circuit-board "council table" emblem with a pixel COUN
 Council's brand palette emphasizes technical clarity and collaborative depth:
 
 ### Core Colors
+
 - **Deep Ink** `#000000` — Primary background, text on light surfaces
 - **Off-White** `#e6e9e6` — Primary text on dark backgrounds, clean surfaces
 - **Canvas** `#ffffff` — Bright highlights, clean backgrounds
 
 ### Accent Colors
+
 - **Muted Gray** `#505050` — Secondary surfaces, borders
 - **Border Gray** `#eeeeee` — Subtle dividers, light borders
 
 ### Semantic Extensions (for web/UI)
+
 When extending the palette for web interfaces, maintain the technical, collaborative tone:
+
 - **Teal/Cyan** — Links, interactive elements, "circuit" highlights
 - **Coral** — Warnings, expert 1 accent
 - **Lavender** — Info states, expert 2 accent
@@ -38,19 +42,23 @@ When extending the palette for web interfaces, maintain the technical, collabora
 ## Usage Guidelines
 
 ### Council-First Identity
+
 Council is its own product with its own brand. GitHub Copilot is the underlying technology, not the brand.
 
 ✅ **Correct:**
+
 - "Council — AI expert panels for decision-making"
 - "Powered by GitHub Copilot" (as factual disclaimer text only, smaller/footer)
 - Use Council logo as primary branding
 
 ❌ **Incorrect:**
+
 - Using GitHub or Copilot logos as Council branding
 - Leading with "GitHub Copilot Council" or similar
 - GitHub/Copilot marks in primary visual hierarchy
 
 ### Trademark-Safe Copy
+
 Council is free software. GitHub Copilot is a GitHub trademark.
 
 - **Factual reference:** "Powered by GitHub Copilot" is appropriate and accurate

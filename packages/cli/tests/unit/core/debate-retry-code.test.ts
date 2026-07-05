@@ -50,8 +50,7 @@ describe("Debate retry — stable reasonCode threading (#674)", () => {
 
     const events = await collect(new Debate(engine, [cto], FREEFORM_1R).run("topic"));
     const retry = events.find((e) => e.kind === "turn.retry") as
-      | { kind: "turn.retry"; reasonCode?: string; reason: string }
-      | undefined;
+      { kind: "turn.retry"; reasonCode?: string; reason: string } | undefined;
     expect(retry).toBeDefined();
     expect(retry?.reasonCode).toBe("RATE_LIMITED");
   });
@@ -72,8 +71,7 @@ describe("Debate retry — stable reasonCode threading (#674)", () => {
 
     const events = await collect(new Debate(engine, [cto], FREEFORM_1R).run("topic"));
     const retry = events.find((e) => e.kind === "turn.retry") as
-      | { kind: "turn.retry"; reasonCode?: string }
-      | undefined;
+      { kind: "turn.retry"; reasonCode?: string } | undefined;
     expect(retry?.reasonCode).toBe("NETWORK");
   });
 });

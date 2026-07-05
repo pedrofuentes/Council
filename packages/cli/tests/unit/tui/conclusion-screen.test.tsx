@@ -298,10 +298,7 @@ function buildTreeFull(options: {
     <InputCaptureProvider>
       <DataProvider value={value}>
         <MemoryRouter
-          initialEntries={[
-            "/previous",
-            { pathname: "/sessions/p1/conclude", state: initialState },
-          ]}
+          initialEntries={["/previous", { pathname: "/sessions/p1/conclude", state: initialState }]}
           initialIndex={1}
         >
           <Routes>

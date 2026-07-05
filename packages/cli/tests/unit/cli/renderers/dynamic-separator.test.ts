@@ -44,10 +44,7 @@ describe("PlainRenderer — dynamic separator width", () => {
     const sink = createBufferSink();
     const renderer = new PlainRenderer(sink, { color: false });
     await renderer.render(
-      stream(
-        { kind: "round.start", round: 0 },
-        { kind: "round.end", round: 0 },
-      ),
+      stream({ kind: "round.start", round: 0 }, { kind: "round.end", round: 0 }),
     );
 
     // The separator should be 60 chars wide (uses terminal width)
@@ -67,10 +64,7 @@ describe("PlainRenderer — dynamic separator width", () => {
     const sink = createBufferSink();
     const renderer = new PlainRenderer(sink, { color: false });
     await renderer.render(
-      stream(
-        { kind: "round.start", round: 0 },
-        { kind: "round.end", round: 0 },
-      ),
+      stream({ kind: "round.start", round: 0 }, { kind: "round.end", round: 0 }),
     );
 
     const separatorLine = sink.output.split("\n").find((l) => l.includes("─"));
@@ -89,10 +83,7 @@ describe("PlainRenderer — dynamic separator width", () => {
     const sink = createBufferSink();
     const renderer = new PlainRenderer(sink, { color: false });
     await renderer.render(
-      stream(
-        { kind: "round.start", round: 0 },
-        { kind: "round.end", round: 0 },
-      ),
+      stream({ kind: "round.start", round: 0 }, { kind: "round.end", round: 0 }),
     );
 
     const separatorLine = sink.output.split("\n").find((l) => l.includes("─"));

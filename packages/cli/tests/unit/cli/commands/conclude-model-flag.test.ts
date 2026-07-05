@@ -143,7 +143,11 @@ describe("buildConcludeCommand — --model flag", () => {
 
   it("passes --model value to synthesizer expert", async () => {
     const engine = new ModelTrackingEngine({
-      synthesizer: JSON.stringify({ ...SAMPLE_OUTPUT, panelName: "conclude-test", topic: "test topic" }),
+      synthesizer: JSON.stringify({
+        ...SAMPLE_OUTPUT,
+        panelName: "conclude-test",
+        topic: "test topic",
+      }),
     });
 
     const cmd = buildConcludeCommand({
@@ -153,7 +157,15 @@ describe("buildConcludeCommand — --model flag", () => {
       synthesizerId: "synthesizer",
     });
 
-    await cmd.parseAsync(["node", "council-conclude", "conclude-test", "--model", "gpt-5.2", "--format", "json"]);
+    await cmd.parseAsync([
+      "node",
+      "council-conclude",
+      "conclude-test",
+      "--model",
+      "gpt-5.2",
+      "--format",
+      "json",
+    ]);
 
     // Verify that the model was used for the synthesizer expert
     expect(engine.synthesizerModel).toBe("gpt-5.2");
@@ -161,7 +173,11 @@ describe("buildConcludeCommand — --model flag", () => {
 
   it("uses config default model when --model is not provided", async () => {
     const engine = new ModelTrackingEngine({
-      synthesizer: JSON.stringify({ ...SAMPLE_OUTPUT, panelName: "conclude-test", topic: "test topic" }),
+      synthesizer: JSON.stringify({
+        ...SAMPLE_OUTPUT,
+        panelName: "conclude-test",
+        topic: "test topic",
+      }),
     });
 
     const cmd = buildConcludeCommand({

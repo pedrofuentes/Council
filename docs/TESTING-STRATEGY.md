@@ -8,12 +8,12 @@
 
 ## Test Types
 
-| Type | Purpose | Location | Runner |
-|------|---------|----------|--------|
-| Unit | Core logic, pure functions, isolated components | `packages/cli/tests/unit/` or `*.test.ts` | Vitest |
-| Integration | Cross-component interactions, engine integration | `packages/cli/tests/integration/` | Vitest |
-| E2E | CLI command flows end-to-end | `packages/cli/tests/e2e/` (across 11 files) | Vitest (in-process) |
-| Security | Prompt injection defense verification, hostile payload tests | `packages/cli/tests/security/` | Vitest |
+| Type        | Purpose                                                      | Location                                    | Runner              |
+| ----------- | ------------------------------------------------------------ | ------------------------------------------- | ------------------- |
+| Unit        | Core logic, pure functions, isolated components              | `packages/cli/tests/unit/` or `*.test.ts`   | Vitest              |
+| Integration | Cross-component interactions, engine integration             | `packages/cli/tests/integration/`           | Vitest              |
+| E2E         | CLI command flows end-to-end                                 | `packages/cli/tests/e2e/` (across 11 files) | Vitest (in-process) |
+| Security    | Prompt injection defense verification, hostile payload tests | `packages/cli/tests/security/`              | Vitest              |
 
 ## Coverage Requirements
 
@@ -30,45 +30,51 @@ PRs that only add tests to existing (untested) code use commit type `test(scope)
 ## Testing Patterns
 
 ### MockEngine for Unit Tests
+
 All unit tests MUST use MockEngine — never the real Copilot SDK. This ensures:
+
 - Tests are free (no premium requests consumed)
 - Tests are deterministic (same input → same output)
 - Tests are fast (no network, no subprocess)
 
 ```typescript
-import { MockEngine } from '../src/engine/mock/mock-engine.js';
+import { MockEngine } from "../src/engine/mock/mock-engine.js";
 
 // MockEngine returns deterministic responses keyed by prompt content
 const engine = new MockEngine({
   responses: {
-    'architecture-review': 'I recommend a modular monolith...',
-    'security-review': 'The main concern is input validation...',
+    "architecture-review": "I recommend a modular monolith...",
+    "security-review": "The main concern is input validation...",
   },
 });
 
-describe('Debate', () => {
-  it('should produce DebateEvents for each expert turn', async () => {
+describe("Debate", () => {
+  it("should produce DebateEvents for each expert turn", async () => {
     const debate = new Debate(engine, panel);
     const events: DebateEvent[] = [];
-    for await (const event of debate.run('Should we use microservices?')) {
+    for await (const event of debate.run("Should we use microservices?")) {
       events.push(event);
     }
-    expect(events.some(e => e.kind === 'turn.end')).toBe(true);
+    expect(events.some((e) => e.kind === "turn.end")).toBe(true);
   });
 });
 ```
 
 ### Integration Tests with Real SDK
+
 Integration tests that use the real Copilot SDK are:
+
 - Gated behind `COUNCIL_INTEGRATION=1` env var
 - Skipped in CI by default (costs money)
 - Run manually before major releases
 - Located in `packages/cli/tests/integration/`
 
 ### E2E Tests — Command-Level Verification
+
 E2E tests verify all 15 top-level CLI commands end-to-end using in-process execution with isolated test environments. The suite covers every user-facing workflow across 11 test files.
 
 **Infrastructure** (`packages/cli/tests/e2e/helpers.ts`):
+
 - `createE2EContext()` / `cleanupE2EContext()` — isolated temp directories for `COUNCIL_HOME` and `COUNCIL_DATA_HOME`
 - `captureOutput()` — captures stdout/stderr for assertion
 - `makeMockEngineFactory()` — provides deterministic MockEngine instances
@@ -76,28 +82,32 @@ E2E tests verify all 15 top-level CLI commands end-to-end using in-process execu
 - `openTestDb()` — creates isolated SQLite database instances
 
 **Test execution pattern**:
+
 ```typescript
-import { buildConveneCommand } from '../../src/cli/commands/convene.js';
+import { buildConveneCommand } from "../../src/cli/commands/convene.js";
 import {
   createE2EContext,
   cleanupE2EContext,
   captureOutput,
   makeMockEngineFactory,
-} from './helpers.js';
+} from "./helpers.js";
 
 const ctx = await createE2EContext();
 const { write, stdout } = captureOutput();
 const mockEngineFactory = makeMockEngineFactory();
 
 // Execute command in-process (no subprocess)
-await buildConveneCommand({ write, engineFactory: mockEngineFactory })
-  .parseAsync(['debate', 'Test topic', '--panel', 'my-panel'], { from: 'user' });
+await buildConveneCommand({ write, engineFactory: mockEngineFactory }).parseAsync(
+  ["debate", "Test topic", "--panel", "my-panel"],
+  { from: "user" },
+);
 
-expect(stdout()).toContain('expected output');
+expect(stdout()).toContain("expected output");
 await cleanupE2EContext(ctx);
 ```
 
 **Test coverage** (11 files):
+
 - `debate-lifecycle.test.ts` (17 tests) — convene, resume, export, conclude, sessions
 - `error-paths.test.ts` (15 tests) — error conditions across all commands
 - `memory-management.test.ts` (11 tests) — memory list/inspect/reset
@@ -111,21 +121,24 @@ await cleanupE2EContext(ctx);
 - `helpers-cleanup.test.ts` — E2E helper cleanup behavior
 
 **Why in-process execution (not subprocess)**:
+
 - Faster — no Node.js spawn overhead
 - Deterministic — MockEngine ensures consistent responses, no network
 - Debuggable — direct stack traces, no cross-process boundary
 - Free — zero premium requests consumed
 
 ### Test Naming Convention
+
 ```typescript
-describe('ModuleName', () => {
-  it('should {{expected behavior}} when {{condition}}', () => {
+describe("ModuleName", () => {
+  it("should {{expected behavior}} when {{condition}}", () => {
     // Arrange → Act → Assert
   });
 });
 ```
 
 ### What Must Be Tested
+
 - All public API functions
 - Error paths and edge cases (not just happy paths)
 - State transitions (debate rounds, expert turns)
@@ -134,6 +147,7 @@ describe('ModuleName', () => {
 - Moderator strategy decisions
 
 ### What Should NOT Be Tested
+
 - Copilot SDK internals
 - SQLite query planner behavior
 - Ink rendering details (test the data, not the pixels)
@@ -149,16 +163,17 @@ Red-team payload tests live in `tests/security/` and verify the layered prompt-i
 
 ## When to Run Each Test Type
 
-| Test Type | Command | When to Run | CI? |
-|-----------|---------|-------------|-----|
-| Unit | `pnpm test:unit` | Every PR, every local change | ✅ Every PR + push to `main` |
-| E2E | `pnpm test:e2e` | Every PR, every local change | ✅ Every PR + push to `main` |
-| Security | `pnpm test:security` | Every PR, every local change | ✅ Every PR + push to `main` |
-| Integration | `pnpm test:integration` | Manual for live SDK; offline subset in CI | ⚠️ Offline (MockEngine) in CI; live SDK manual |
-| Smoke | Manual checklist (`docs/SMOKE-TEST.md`) | Manual, final pre-release gate | ❌ Requires real Copilot engine + TTY |
-| All automated | `pnpm test` | Full local validation | ✅ (unit + e2e + security + integration-skip) |
+| Test Type     | Command                                 | When to Run                               | CI?                                            |
+| ------------- | --------------------------------------- | ----------------------------------------- | ---------------------------------------------- |
+| Unit          | `pnpm test:unit`                        | Every PR, every local change              | ✅ Every PR + push to `main`                   |
+| E2E           | `pnpm test:e2e`                         | Every PR, every local change              | ✅ Every PR + push to `main`                   |
+| Security      | `pnpm test:security`                    | Every PR, every local change              | ✅ Every PR + push to `main`                   |
+| Integration   | `pnpm test:integration`                 | Manual for live SDK; offline subset in CI | ⚠️ Offline (MockEngine) in CI; live SDK manual |
+| Smoke         | Manual checklist (`docs/SMOKE-TEST.md`) | Manual, final pre-release gate            | ❌ Requires real Copilot engine + TTY          |
+| All automated | `pnpm test`                             | Full local validation                     | ✅ (unit + e2e + security + integration-skip)  |
 
 **Integration tests** require a real Copilot SDK session. Set `COUNCIL_INTEGRATION=1` to opt in:
+
 ```bash
 COUNCIL_INTEGRATION=1 pnpm test:integration
 ```

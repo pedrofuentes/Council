@@ -22,8 +22,9 @@ import {
 // Control / C1 / bidi / line-separator code points that must never reach a
 // single-line terminal sink. Mirrors the class stripped by
 // `toSingleLineDisplay`.
-// eslint-disable-next-line no-control-regex
-const FORBIDDEN_DISPLAY_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
+const FORBIDDEN_DISPLAY_CHARS =
+  // eslint-disable-next-line no-control-regex
+  /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
 
 describe("parseExpertSlugs", () => {
   it("splits a single comma-separated string (quoted form)", () => {

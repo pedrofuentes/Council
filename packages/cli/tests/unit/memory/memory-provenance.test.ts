@@ -266,5 +266,4 @@ describe("memory provenance (T-2 / #569)", () => {
     // fabricated llm_summary / 0.5 entries.
     expect(recalled?.provenance).toBeNull();
   });
-
 });

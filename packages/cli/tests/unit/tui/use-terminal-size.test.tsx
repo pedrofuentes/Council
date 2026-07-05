@@ -4,10 +4,7 @@ import { describe, expect, it } from "vitest";
 import { render } from "ink-testing-library";
 import { Text } from "ink";
 
-import {
-  useTerminalSize,
-  type ResizableStdout,
-} from "../../../src/tui/hooks/use-terminal-size.js";
+import { useTerminalSize, type ResizableStdout } from "../../../src/tui/hooks/use-terminal-size.js";
 
 async function flush(): Promise<void> {
   for (let i = 0; i < 5; i += 1) await new Promise((r) => setImmediate(r));

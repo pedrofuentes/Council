@@ -80,9 +80,7 @@ describe("sanitizePromptField", () => {
     });
 
     it("defangs bracketed numeric section markers", () => {
-      expect(sanitizePromptField("[01] hello [42] world")).toBe(
-        "(sec-01) hello (sec-42) world",
-      );
+      expect(sanitizePromptField("[01] hello [42] world")).toBe("(sec-01) hello (sec-42) world");
     });
 
     it("caps length at 2000 characters with ellipsis", () => {
@@ -115,8 +113,7 @@ describe("sanitizePromptField", () => {
   describe("combined hardening", () => {
     it("applies NFKC + bidi strip + zero-width strip + C0 strip + defang", () => {
       // fullwidth "[01]" with embedded RLO, ZWSP, NUL, and an extra newline
-      const input =
-        "\uFF3B\uFF10\uFF11\uFF3D\u202E\u200B\u0000 hello\nworld";
+      const input = "\uFF3B\uFF10\uFF11\uFF3D\u202E\u200B\u0000 hello\nworld";
       expect(sanitizePromptField(input)).toBe("(sec-01) hello world");
     });
   });
@@ -202,9 +199,7 @@ describe("sanitizePromptBlock", () => {
   });
 
   it("defangs bracketed numeric section markers", () => {
-    expect(sanitizePromptBlock("[01] hello\n[42] world")).toBe(
-      "(sec-01) hello\n(sec-42) world",
-    );
+    expect(sanitizePromptBlock("[01] hello\n[42] world")).toBe("(sec-01) hello\n(sec-42) world");
   });
 
   it("caps length at default 4000 with ellipsis", () => {

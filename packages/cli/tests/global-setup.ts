@@ -52,9 +52,7 @@ export default async function setup(project: TestProject): Promise<() => Promise
       }
 
       database
-        .prepare(
-          "INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (?, ?);",
-        )
+        .prepare("INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (?, ?);")
         .run(migration.version, new Date().toISOString());
       database.exec("COMMIT;");
     }
@@ -62,8 +60,7 @@ export default async function setup(project: TestProject): Promise<() => Promise
     // Seal: consolidate WAL into the main file and switch to DELETE journal
     // mode so the template is a single, self-contained .db file.
     const checkpoint = database.prepare("PRAGMA wal_checkpoint(TRUNCATE);").get() as
-      | { readonly busy?: number }
-      | undefined;
+      { readonly busy?: number } | undefined;
     const busy = Number(checkpoint?.busy ?? -1);
     if (busy !== 0) {
       throw new Error(`WAL checkpoint failed: busy=${busy} (expected 0)`);
@@ -87,15 +84,12 @@ export default async function setup(project: TestProject): Promise<() => Promise
   // Validate: reopen and check migration count.
   const verifyDb = new DatabaseSync(templatePath);
   try {
-    const result = verifyDb
-      .prepare("SELECT COUNT(*) AS cnt FROM schema_version;")
-      .get() as { readonly cnt?: number } | undefined;
+    const result = verifyDb.prepare("SELECT COUNT(*) AS cnt FROM schema_version;").get() as
+      { readonly cnt?: number } | undefined;
     const count = Number(result?.cnt ?? 0);
     const expected = loadMigrations().length;
     if (count !== expected) {
-      throw new Error(
-        `Template DB has ${count} migrations, expected ${expected}`,
-      );
+      throw new Error(`Template DB has ${count} migrations, expected ${expected}`);
     }
   } finally {
     verifyDb.close();

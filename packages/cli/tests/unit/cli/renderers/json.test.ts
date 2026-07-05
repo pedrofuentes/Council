@@ -43,11 +43,7 @@ describe("JsonRenderer", () => {
   it("preserves field values exactly through JSON round-trip", async () => {
     const sink = new StringSink();
     const renderer = new JsonRenderer(sink);
-    await renderer.render(
-      events(
-        { kind: "turn.delta", expertSlug: "cto", text: "Hello world." },
-      ),
-    );
+    await renderer.render(events({ kind: "turn.delta", expertSlug: "cto", text: "Hello world." }));
     const parsed = JSON.parse(sink.text.trim());
     expect(parsed).toEqual({ kind: "turn.delta", expertSlug: "cto", text: "Hello world." });
   });
@@ -55,9 +51,7 @@ describe("JsonRenderer", () => {
   it("emits no formatting/colors", async () => {
     const sink = new StringSink();
     const renderer = new JsonRenderer(sink);
-    await renderer.render(
-      events({ kind: "round.start", round: 0 }),
-    );
+    await renderer.render(events({ kind: "round.start", round: 0 }));
     // ANSI escape sequences would start with ESC (0x1b)
     expect(sink.text.includes("\u001b")).toBe(false);
   });

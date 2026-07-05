@@ -106,10 +106,7 @@ describe("Debate — context window management (§2.6)", () => {
 
   it("filters priorTurns to 'recent' window before passing to the strategy", async () => {
     const experts = [expert("a"), expert("b")];
-    const engine = await makeEngine(
-      { "id-a": "A reply.", "id-b": "B reply." },
-      experts,
-    );
+    const engine = await makeEngine({ "id-a": "A reply.", "id-b": "B reply." }, experts);
 
     const captured: ModeratorContext[] = [];
     const strategy = recordingStrategy(captured);
@@ -235,10 +232,7 @@ describe("Debate — context window management (§2.6)", () => {
 
   it("'same-round' visibility lets later experts see earlier intra-round turns", async () => {
     const experts = [expert("a"), expert("b")];
-    const engine = await makeEngine(
-      { "id-a": "A reply.", "id-b": "B reply." },
-      experts,
-    );
+    const engine = await makeEngine({ "id-a": "A reply.", "id-b": "B reply." }, experts);
 
     const captured: ModeratorContext[] = [];
     const strategy = recordingStrategy(captured);
@@ -275,10 +269,7 @@ describe("Debate — context window management (§2.6)", () => {
   it("truncates oldest turns when total prior content exceeds maxPromptChars", async () => {
     const experts = [expert("a"), expert("b")];
     const longResponse = "X".repeat(2000);
-    const engine = await makeEngine(
-      { "id-a": longResponse, "id-b": longResponse },
-      experts,
-    );
+    const engine = await makeEngine({ "id-a": longResponse, "id-b": longResponse }, experts);
 
     const captured: ModeratorContext[] = [];
     const strategy = recordingStrategy(captured);
@@ -299,10 +290,7 @@ describe("Debate — context window management (§2.6)", () => {
     const finalCtx = captured.at(-1);
     expect(finalCtx).toBeDefined();
     if (finalCtx) {
-      const totalChars = finalCtx.priorTurns.reduce(
-        (acc, t) => acc + t.content.length,
-        0,
-      );
+      const totalChars = finalCtx.priorTurns.reduce((acc, t) => acc + t.content.length, 0);
       expect(totalChars).toBeLessThanOrEqual(3000);
 
       // Truncation must drop oldest turns first. Each turn is 2000
@@ -314,9 +302,7 @@ describe("Debate — context window management (§2.6)", () => {
       // / last to be pushed), proving newest-wins eviction order.
       const surviving = finalCtx.priorTurns[finalCtx.priorTurns.length - 1];
       expect(surviving).toBeDefined();
-      const maxRound = Math.max(
-        ...captured.flatMap((c) => c.priorTurns.map((t) => t.round)),
-      );
+      const maxRound = Math.max(...captured.flatMap((c) => c.priorTurns.map((t) => t.round)));
       expect(surviving?.round).toBe(maxRound);
 
       // And the oldest turn (round 0) must have been dropped.
@@ -329,10 +315,7 @@ describe("Debate — context window management (§2.6)", () => {
     // forwarded verbatim — no implicit cap, no implicit filter.
     const experts = [expert("a"), expert("b")];
     const longResponse = "Y".repeat(60_000); // > the old 50k default cap
-    const engine = await makeEngine(
-      { "id-a": longResponse, "id-b": longResponse },
-      experts,
-    );
+    const engine = await makeEngine({ "id-a": longResponse, "id-b": longResponse }, experts);
 
     const captured: ModeratorContext[] = [];
     const strategy = recordingStrategy(captured);
@@ -350,18 +333,13 @@ describe("Debate — context window management (§2.6)", () => {
     // Last plan sees ALL prior turns (2 experts × 2 completed rounds = 4),
     // none dropped despite total content >> 50_000 chars.
     expect(captured.at(-1)?.priorTurns).toHaveLength(4);
-    const totalChars = captured
-      .at(-1)
-      ?.priorTurns.reduce((acc, t) => acc + t.content.length, 0);
+    const totalChars = captured.at(-1)?.priorTurns.reduce((acc, t) => acc + t.content.length, 0);
     expect(totalChars).toBe(4 * 60_000);
   });
 
   it("default behaviour (no contextConfig) passes every prior turn and no summary", async () => {
     const experts = [expert("a"), expert("b")];
-    const engine = await makeEngine(
-      { "id-a": "A.", "id-b": "B." },
-      experts,
-    );
+    const engine = await makeEngine({ "id-a": "A.", "id-b": "B." }, experts);
 
     const captured: ModeratorContext[] = [];
     const strategy = recordingStrategy(captured);

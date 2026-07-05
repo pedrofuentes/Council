@@ -260,7 +260,9 @@ export async function detectDocumentChanges(
         // open MUST close the handle to prevent fd leaks; rethrow the
         // original error so the caller sees the real cause. NOT
         // suppressed by the open allowlist (Sentinel cycle 2 finding).
-        await rootHandle.close().catch(() => { /* best-effort close */ });
+        await rootHandle.close().catch(() => {
+          /* best-effort close */
+        });
         // eslint-disable-next-line no-useless-assignment -- defensive fd-hygiene: drop the closed handle before rethrowing (store is intentionally unread)
         rootHandle = null;
         throw statErr;
@@ -269,7 +271,9 @@ export async function detectDocumentChanges(
         rootIdentity !== null &&
         (fdStat.dev !== rootIdentity.dev || fdStat.ino !== rootIdentity.ino)
       ) {
-        await rootHandle.close().catch(() => { /* best-effort close */ });
+        await rootHandle.close().catch(() => {
+          /* best-effort close */
+        });
         // eslint-disable-next-line no-useless-assignment -- defensive fd-hygiene: drop the closed handle before throwing (store is intentionally unread)
         rootHandle = null;
         throw new Error(
@@ -288,7 +292,10 @@ export async function detectDocumentChanges(
   try {
     entries = await fs.readdir(docsPath, { recursive: true });
   } catch (err: unknown) {
-    if (rootHandle !== null) await rootHandle.close().catch(() => { /* best-effort close */ });
+    if (rootHandle !== null)
+      await rootHandle.close().catch(() => {
+        /* best-effort close */
+      });
     // Only treat truly-missing directories as empty; surface any other
     // filesystem error (permission denied, ENOTDIR, etc.) so callers
     // see a real problem instead of mistaking it for "no documents".
@@ -306,10 +313,7 @@ export async function detectDocumentChanges(
     // Wrap so the failing path + a stable prefix are visible to callers
     // (#341). Keeps the original error as `cause` for diagnostics.
     const detail = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `document scan failed for path '${docsPath}': ${detail}`,
-      { cause: err },
-    );
+    throw new Error(`document scan failed for path '${docsPath}': ${detail}`, { cause: err });
   }
 
   // Post-readdir verification: if the root's inode changed between
@@ -321,16 +325,20 @@ export async function detectDocumentChanges(
     try {
       const post = await rootLstat(docsPath);
       if (post.dev !== rootIdentity.dev || post.ino !== rootIdentity.ino) {
-        if (rootHandle !== null) await rootHandle.close().catch(() => { /* best-effort close */ });
-        throw new Error(
-          `document scan: root '${docsPath}' identity changed during scan (TOCTOU)`,
-        );
+        if (rootHandle !== null)
+          await rootHandle.close().catch(() => {
+            /* best-effort close */
+          });
+        throw new Error(`document scan: root '${docsPath}' identity changed during scan (TOCTOU)`);
       }
     } catch (err: unknown) {
       // A post-stat failure on a path that just enumerated successfully
       // is suspicious. Re-throw identity-change errors verbatim;
       // otherwise wrap so callers see WHY post-validation failed.
-      if (rootHandle !== null) await rootHandle.close().catch(() => { /* best-effort close */ });
+      if (rootHandle !== null)
+        await rootHandle.close().catch(() => {
+          /* best-effort close */
+        });
       if (err instanceof Error && err.message.includes("identity changed during scan")) {
         throw err;
       }
@@ -341,10 +349,12 @@ export async function detectDocumentChanges(
       );
     }
   }
-  if (rootHandle !== null) await rootHandle.close().catch(() => { /* best-effort close */ });
+  if (rootHandle !== null)
+    await rootHandle.close().catch(() => {
+      /* best-effort close */
+    });
 
-  const lstat =
-    (process.env.NODE_ENV === "test" ? options._lstatOverride : undefined) ?? fs.lstat;
+  const lstat = (process.env.NODE_ENV === "test" ? options._lstatOverride : undefined) ?? fs.lstat;
 
   const newFiles: DocumentFile[] = [];
   const modifiedFiles: DocumentFile[] = [];
@@ -371,9 +381,7 @@ export async function detectDocumentChanges(
       // so users can see WHICH file was skipped and WHY.
       if (options.onWarning) {
         const detail = err instanceof Error ? err.message : String(err);
-        options.onWarning(
-          `document scan: skipping '${absolute}' (lstat failed: ${detail})`,
-        );
+        options.onWarning(`document scan: skipping '${absolute}' (lstat failed: ${detail})`);
       }
       unknownStateFiles.push(absolute);
       continue;
@@ -418,9 +426,7 @@ export async function detectDocumentChanges(
       // as `read === null` below and remain in `rejectedFiles`.
       if (options.onWarning) {
         const detail = err instanceof Error ? err.message : String(err);
-        options.onWarning(
-          `document scan: rejecting '${absolute}' (read failed: ${detail})`,
-        );
+        options.onWarning(`document scan: rejecting '${absolute}' (read failed: ${detail})`);
       }
       unknownStateFiles.push(absolute);
       continue;
@@ -445,5 +451,12 @@ export async function detectDocumentChanges(
     else modifiedFiles.push(file);
   }
 
-  return { newFiles, modifiedFiles, unchangedFiles, unsupportedFiles, rejectedFiles, unknownStateFiles };
+  return {
+    newFiles,
+    modifiedFiles,
+    unchangedFiles,
+    unsupportedFiles,
+    rejectedFiles,
+    unknownStateFiles,
+  };
 }

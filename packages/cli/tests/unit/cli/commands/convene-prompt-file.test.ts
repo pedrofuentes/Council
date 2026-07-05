@@ -18,10 +18,7 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import {
-  buildConveneCommand,
-  type ConfirmProvider,
-} from "../../../../src/cli/commands/convene.js";
+import { buildConveneCommand, type ConfirmProvider } from "../../../../src/cli/commands/convene.js";
 import { setQuiet } from "../../../../src/cli/commands/writer.js";
 import type { CouncilEngine } from "../../../../src/engine/index.js";
 import { MockEngine } from "../../../../src/engine/mock/mock-engine.js";

@@ -31,7 +31,10 @@ async function flush(): Promise<void> {
   for (let i = 0; i < 5; i += 1) await new Promise((r) => setImmediate(r));
 }
 
-function Harness(props: { readonly initial?: Mode; readonly action?: ModeAction }): React.ReactElement {
+function Harness(props: {
+  readonly initial?: Mode;
+  readonly action?: ModeAction;
+}): React.ReactElement {
   const { mode, dispatch } = useMode(props.initial);
   useEffect(() => {
     if (props.action) dispatch(props.action);

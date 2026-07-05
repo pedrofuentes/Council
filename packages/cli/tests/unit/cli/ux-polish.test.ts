@@ -182,7 +182,9 @@ describe("A11Y-16: doctor terminal capability info", () => {
 
     let captured = "";
     const cmd = buildDoctorCommand({
-      write: (s: string) => { captured += s; },
+      write: (s: string) => {
+        captured += s;
+      },
     });
     cmd.exitOverride();
     await cmd.parseAsync(["node", "council-doctor"]).catch(() => undefined);

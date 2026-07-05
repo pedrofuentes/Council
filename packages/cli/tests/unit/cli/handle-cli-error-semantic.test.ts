@@ -8,7 +8,11 @@ import { describe, expect, it } from "vitest";
 
 import { CliUserError } from "../../../src/cli/cli-user-error.js";
 import { handleCliError } from "../../../src/cli/handle-cli-error.js";
-import { EXIT_AUTH_ERROR, EXIT_INTERNAL_ERROR, EXIT_USER_ERROR } from "../../../src/cli/exit-codes.js";
+import {
+  EXIT_AUTH_ERROR,
+  EXIT_INTERNAL_ERROR,
+  EXIT_USER_ERROR,
+} from "../../../src/cli/exit-codes.js";
 
 describe("handleCliError — semantic exit codes", () => {
   it("returns CliUserError.exitCode when present", () => {

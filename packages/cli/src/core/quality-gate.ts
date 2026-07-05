@@ -58,10 +58,7 @@ const COUNTER_SIGNAL = /\bcounter(?:argument)?s?\b/g;
  */
 const STAND_DOWN_MARKER = "stress-tested";
 
-export type QualityCheckKind =
-  | "forbidden_phrase"
-  | "no_disagreement_signal"
-  | "too_short";
+export type QualityCheckKind = "forbidden_phrase" | "no_disagreement_signal" | "too_short";
 
 export interface QualityCheck {
   readonly kind: QualityCheckKind;
@@ -85,7 +82,10 @@ export interface QualityGateOptions {
 
 function countWords(text: string): number {
   // Simple whitespace split; a response of "Yes." counts as 1 word.
-  return text.trim().split(/\s+/).filter((s) => s.length > 0).length;
+  return text
+    .trim()
+    .split(/\s+/)
+    .filter((s) => s.length > 0).length;
 }
 
 function findForbiddenPhrases(text: string): string[] {
@@ -113,10 +113,7 @@ function hasUnnegatedSignalMatch(text: string, signal: string): boolean {
 
 function hasUnnegatedCounterMatch(text: string): boolean {
   for (const match of text.matchAll(COUNTER_SIGNAL)) {
-    if (
-      typeof match.index === "number" &&
-      !NEGATION_PREFIX.test(text.slice(0, match.index))
-    ) {
+    if (typeof match.index === "number" && !NEGATION_PREFIX.test(text.slice(0, match.index))) {
       return true;
     }
   }
@@ -127,9 +124,7 @@ function hasDisagreementSignal(text: string): boolean {
   const lower = text.toLowerCase();
   if (lower.includes(STAND_DOWN_MARKER)) return true;
   return DISAGREEMENT_SIGNALS.some((signal) =>
-    signal === "counter"
-      ? hasUnnegatedCounterMatch(lower)
-      : hasUnnegatedSignalMatch(lower, signal),
+    signal === "counter" ? hasUnnegatedCounterMatch(lower) : hasUnnegatedSignalMatch(lower, signal),
   );
 }
 
@@ -164,10 +159,7 @@ function buildRegenerateHint(failures: readonly QualityCheck[]): string {
  * @param response  The candidate response text from the expert
  * @param options   Context — notably which prior speakers are visible this round
  */
-export function applyQualityGate(
-  response: string,
-  options: QualityGateOptions,
-): QualityResult {
+export function applyQualityGate(response: string, options: QualityGateOptions): QualityResult {
   const failures: QualityCheck[] = [];
 
   // Layer 1: forbidden phrases.

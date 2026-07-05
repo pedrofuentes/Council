@@ -28,11 +28,7 @@ export function levenshtein(a: string, b: string): number {
     curr[0] = j;
     for (let i = 1; i <= aLen; i++) {
       const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      curr[i] = Math.min(
-        (prev[i] ?? 0) + 1,
-        (curr[i - 1] ?? 0) + 1,
-        (prev[i - 1] ?? 0) + cost,
-      );
+      curr[i] = Math.min((prev[i] ?? 0) + 1, (curr[i - 1] ?? 0) + 1, (prev[i - 1] ?? 0) + cost);
     }
     [prev, curr] = [curr, prev];
   }

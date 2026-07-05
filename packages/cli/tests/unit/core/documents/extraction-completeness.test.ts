@@ -160,15 +160,10 @@ function buildDocx(bodyXml: string): Buffer {
   ]);
 }
 
-async function loadExtractor(
-  mod: string,
-  ext: string,
-): Promise<ContentExtractor> {
+async function loadExtractor(mod: string, ext: string): Promise<ContentExtractor> {
   vi.resetModules();
   await import(mod);
-  const registry = await import(
-    "../../../../src/core/documents/extractors/registry.js"
-  );
+  const registry = await import("../../../../src/core/documents/extractors/registry.js");
   const extractor = await registry.getExtractor(ext);
   if (extractor === null) throw new Error(`no extractor for ${ext}`);
   return extractor;

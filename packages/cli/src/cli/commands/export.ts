@@ -47,11 +47,7 @@ import { synthesizeEvents, type TranscriptDocument } from "../../memory/transcri
 import { CliUserError } from "../cli-user-error.js";
 import { selectStoredConclusion } from "../conclusion-store.js";
 import type { ConcludeOutput, StoredConclusion } from "../conclusion-synthesis.js";
-import {
-  resolveSessionRef,
-  SessionNotFoundError,
-  type SessionRef,
-} from "../session-resolver.js";
+import { resolveSessionRef, SessionNotFoundError, type SessionRef } from "../session-resolver.js";
 import {
   escapeBlockLeadingMarkdown,
   sanitizeExportBlock,
@@ -387,7 +383,7 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
   const cmd = new Command("export");
   cmd
     .description("Export a panel transcript to markdown, json, adr, or share format")
-    .argument("<panel>", "Panel name to export (as shown by `council sessions`)")
+    .argument("<panel>", "Panel name or ULID to export (as shown by `council sessions`)")
     .addOption(
       new Option("--format <kind>", "Output format")
         .choices([...EXPORT_FORMATS])

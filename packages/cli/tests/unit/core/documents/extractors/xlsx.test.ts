@@ -775,9 +775,7 @@ describe("xlsx extractor - stream-counted decompressed size (#960)", () => {
 
   it("still extracts a normal small workbook whose real size is under the cap", async () => {
     const { extractor } = await loadXlsxExtractor();
-    const buf = await createTestXlsx([
-      { name: "Sheet1", rows: [["Header"], ["Value"]] },
-    ]);
+    const buf = await createTestXlsx([{ name: "Sheet1", rows: [["Header"], ["Value"]] }]);
     const out = await extractor(ctx(buf));
     expect(out.content).toContain("## Sheet1");
     expect(out.content).toContain("Header");

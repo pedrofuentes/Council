@@ -27,12 +27,8 @@ async function loadRegistry(): Promise<{
   errors: ErrorsModule;
 }> {
   vi.resetModules();
-  const registry = await import(
-    "../../../../../src/core/documents/extractors/registry.js"
-  );
-  const errors = await import(
-    "../../../../../src/core/documents/extractors/errors.js"
-  );
+  const registry = await import("../../../../../src/core/documents/extractors/registry.js");
+  const errors = await import("../../../../../src/core/documents/extractors/errors.js");
   return { registry, errors };
 }
 
@@ -171,9 +167,7 @@ describe("getExtractor retry after loader rejection", () => {
 describe("getSupportedExtensions", () => {
   it("returns all registered extensions", async () => {
     const { registry } = await loadRegistry();
-    registry.registerExtractor([".md", ".markdown"], async () =>
-      makeExtractor("md"),
-    );
+    registry.registerExtractor([".md", ".markdown"], async () => makeExtractor("md"));
     registry.registerExtractor([".pdf"], async () => makeExtractor("pdf"));
 
     const exts = registry.getSupportedExtensions();

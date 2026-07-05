@@ -176,9 +176,7 @@ function warnProcessor(onWarning: ((message: string) => void) | undefined, messa
  */
 const LARGE_DOCUMENT_WARNING_BYTES = 100 * 1024;
 
-export function createDocumentProcessor(
-  options: DocumentProcessorOptions,
-): DocumentProcessor {
+export function createDocumentProcessor(options: DocumentProcessorOptions): DocumentProcessor {
   const { engine, documentRepo, profileRepo, indexer, config } = options;
   const detectorLstatOverride = options._detectorLstatOverride;
   // Basenames explicitly un-indexed via `expert docs --remove`. Frozen at
@@ -237,12 +235,10 @@ export function createDocumentProcessor(
       if (rootCanonical === null) return false;
       const known = await documentRepo.getChecksumMap(expertSlug);
       const detection = applyExclusions(
-        await detectDocumentChanges(
-          rootCanonical,
-          known,
-          config.supportedFormats,
-          { confinementRoot: rootCanonical, _rootIsCanonical: true },
-        ),
+        await detectDocumentChanges(rootCanonical, known, config.supportedFormats, {
+          confinementRoot: rootCanonical,
+          _rootIsCanonical: true,
+        }),
       );
       if (detection.newFiles.length > 0 || detection.modifiedFiles.length > 0) {
         return true;
@@ -282,19 +278,12 @@ export function createDocumentProcessor(
               rejectedFiles: [],
               unknownStateFiles: [],
             }
-          : await detectDocumentChanges(
-              rootCanonical,
-              known,
-              config.supportedFormats,
-              {
-                confinementRoot: rootCanonical,
-                _rootIsCanonical: true,
-                ...(onWarning ? { onWarning } : {}),
-                ...(detectorLstatOverride
-                  ? { _lstatOverride: detectorLstatOverride }
-                  : {}),
-              },
-            ),
+          : await detectDocumentChanges(rootCanonical, known, config.supportedFormats, {
+              confinementRoot: rootCanonical,
+              _rootIsCanonical: true,
+              ...(onWarning ? { onWarning } : {}),
+              ...(detectorLstatOverride ? { _lstatOverride: detectorLstatOverride } : {}),
+            }),
       );
 
       const toProcess = [...detection.newFiles, ...detection.modifiedFiles];
@@ -406,9 +395,7 @@ export function createDocumentProcessor(
             filename: detail.filename,
             wordCount: 0,
             status: "failed",
-            ...(detail.errorMessage !== undefined
-              ? { error: detail.errorMessage }
-              : {}),
+            ...(detail.errorMessage !== undefined ? { error: detail.errorMessage } : {}),
           });
         }
         files.push(detail);
@@ -422,9 +409,7 @@ export function createDocumentProcessor(
             ...(config.maxFileSizeBytes !== undefined
               ? { maxFileSizeBytes: config.maxFileSizeBytes }
               : {}),
-            ...(config.aiFallback !== undefined
-              ? { aiFallback: config.aiFallback }
-              : {}),
+            ...(config.aiFallback !== undefined ? { aiFallback: config.aiFallback } : {}),
           });
 
           // AI fallback, `ask` mode: the file was recognized as
@@ -597,17 +582,11 @@ export function createDocumentProcessor(
           if (model === undefined) {
             throw new Error("documents: no engine models available for analysis");
           }
-          const existingProfile: PersonaProfile | null =
-            await profileRepo.findBySlug(expertSlug);
-          const profile = await analyzeDocuments(
-            successfullyExtracted,
-            existingProfile,
-            engine,
-            {
-              recencyWeightHalfLife: config.recencyHalfLifeDays,
-              model,
-            },
-          );
+          const existingProfile: PersonaProfile | null = await profileRepo.findBySlug(expertSlug);
+          const profile = await analyzeDocuments(successfullyExtracted, existingProfile, engine, {
+            recencyWeightHalfLife: config.recencyHalfLifeDays,
+            model,
+          });
           await profileRepo.upsert(expertSlug, profile);
           profileUpdated = true;
         } catch (err: unknown) {

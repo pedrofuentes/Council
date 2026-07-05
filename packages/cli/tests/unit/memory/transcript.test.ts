@@ -33,7 +33,13 @@ interface SeedResult {
   debateId: string;
 }
 
-async function seed(testDir: string, opts: { withTurns?: boolean; status?: "completed" | "running" | "interrupted" | "aborted" | "failed" } = {}): Promise<SeedResult> {
+async function seed(
+  testDir: string,
+  opts: {
+    withTurns?: boolean;
+    status?: "completed" | "running" | "interrupted" | "aborted" | "failed";
+  } = {},
+): Promise<SeedResult> {
   const db = await createDatabase(path.join(testDir, "council.db"));
   try {
     const panelRepo = new PanelRepository(db);
@@ -516,18 +522,21 @@ describe("synthesizeEvents", () => {
     { status: "completed", expectedReason: "completed" },
     { status: "aborted", expectedReason: "aborted" },
     { status: "failed", expectedReason: "failed" },
-  ] as const)("status='$status' maps to debate.end.reason='$expectedReason'", async ({ status, expectedReason }) => {
-    const seeded = await seed(dir, { status });
-    const fresh = await createDatabase(path.join(dir, "council.db"));
-    let doc: TranscriptDocument;
-    try {
-      doc = await loadTranscript(fresh, seeded.panelName);
-    } finally {
-      await fresh.destroy();
-    }
-    const events = synthesizeEvents(doc);
-    const last = events[events.length - 1];
-    expect(last?.kind).toBe("debate.end");
-    expect((last as { reason?: string }).reason).toBe(expectedReason);
-  });
+  ] as const)(
+    "status='$status' maps to debate.end.reason='$expectedReason'",
+    async ({ status, expectedReason }) => {
+      const seeded = await seed(dir, { status });
+      const fresh = await createDatabase(path.join(dir, "council.db"));
+      let doc: TranscriptDocument;
+      try {
+        doc = await loadTranscript(fresh, seeded.panelName);
+      } finally {
+        await fresh.destroy();
+      }
+      const events = synthesizeEvents(doc);
+      const last = events[events.length - 1];
+      expect(last?.kind).toBe("debate.end");
+      expect((last as { reason?: string }).reason).toBe(expectedReason);
+    },
+  );
 });

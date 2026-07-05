@@ -10,14 +10,32 @@ describe("resolveTheme — semantic roles", () => {
   it("all roles are functions and enabled=true with color on", () => {
     const t = resolveTheme(enabledEnv);
     expect(t.enabled).toBe(true);
-    for (const fn of [t.accent, t.muted, t.error, t.warn, t.success, t.primary, t.secondary, t.info]) {
+    for (const fn of [
+      t.accent,
+      t.muted,
+      t.error,
+      t.warn,
+      t.success,
+      t.primary,
+      t.secondary,
+      t.info,
+    ]) {
       expect(typeof fn).toBe("function");
     }
   });
 
   it("all roles produce output containing the input string when color on", () => {
     const t = resolveTheme(enabledEnv);
-    for (const fn of [t.accent, t.muted, t.error, t.warn, t.success, t.primary, t.secondary, t.info]) {
+    for (const fn of [
+      t.accent,
+      t.muted,
+      t.error,
+      t.warn,
+      t.success,
+      t.primary,
+      t.secondary,
+      t.info,
+    ]) {
       expect(fn("hello")).toContain("hello");
     }
   });
@@ -25,7 +43,16 @@ describe("resolveTheme — semantic roles", () => {
   it("all roles are identity and enabled=false under NO_COLOR=1", () => {
     const t = resolveTheme(noColorEnv);
     expect(t.enabled).toBe(false);
-    for (const fn of [t.accent, t.muted, t.error, t.warn, t.success, t.primary, t.secondary, t.info]) {
+    for (const fn of [
+      t.accent,
+      t.muted,
+      t.error,
+      t.warn,
+      t.success,
+      t.primary,
+      t.secondary,
+      t.info,
+    ]) {
       expect(fn("x")).toBe("x");
     }
   });
@@ -33,7 +60,16 @@ describe("resolveTheme — semantic roles", () => {
   it("all roles are identity and enabled=false under TERM=dumb", () => {
     const t = resolveTheme(dumbTermEnv);
     expect(t.enabled).toBe(false);
-    for (const fn of [t.accent, t.muted, t.error, t.warn, t.success, t.primary, t.secondary, t.info]) {
+    for (const fn of [
+      t.accent,
+      t.muted,
+      t.error,
+      t.warn,
+      t.success,
+      t.primary,
+      t.secondary,
+      t.info,
+    ]) {
       expect(fn("y")).toBe("y");
     }
   });

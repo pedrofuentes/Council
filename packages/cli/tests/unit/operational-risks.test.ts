@@ -249,10 +249,7 @@ describe("DebatePersister #117 — self-finalize on abnormal exit", () => {
       mode: "freeform",
     };
 
-    for await (const _ of persister.persist(
-      new Debate(engine, [cto], config).run("t"),
-      "t",
-    )) {
+    for await (const _ of persister.persist(new Debate(engine, [cto], config).run("t"), "t")) {
       /* drain */
     }
     const debate = await debateRepo.findById(persister.debateId ?? "");

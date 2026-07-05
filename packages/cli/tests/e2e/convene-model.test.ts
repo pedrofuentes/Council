@@ -17,12 +17,7 @@ import { buildConveneCommand } from "../../src/cli/commands/convene.js";
 import type { CouncilEngine } from "../../src/engine/index.js";
 import { MockEngine } from "../../src/engine/mock/mock-engine.js";
 import type { ExpertSpec } from "../../src/engine/types.js";
-import {
-  captureOutput,
-  cleanupE2EContext,
-  createE2EContext,
-  type E2EContext,
-} from "./helpers.js";
+import { captureOutput, cleanupE2EContext, createE2EContext, type E2EContext } from "./helpers.js";
 
 const TOPIC = "Should we ship the MVP this quarter?";
 const TEMPLATE = "product-strategy-review";

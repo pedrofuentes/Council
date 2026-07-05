@@ -23,7 +23,10 @@ export interface LeftNavProps {
 
 export function LeftNav(props: LeftNavProps): React.ReactElement {
   const isActive = props.isActive ?? true;
-  const initial = Math.max(0, props.items.findIndex((i) => i.id === props.activeId));
+  const initial = Math.max(
+    0,
+    props.items.findIndex((i) => i.id === props.activeId),
+  );
   const [cursor, setCursor] = useState(initial);
   const count = props.items.length;
 
@@ -57,8 +60,7 @@ export function LeftNav(props: LeftNavProps): React.ReactElement {
         const showMarker = !isActive && isActiveRoute;
         const marker = showMarker ? "●" : " ";
         const content = `${marker} ${body}`;
-        const text =
-          showMarker && props.theme.enabled ? props.theme.primary(content) : content;
+        const text = showMarker && props.theme.enabled ? props.theme.primary(content) : content;
         return (
           <Text key={item.id} inverse={isCursor}>
             {text}

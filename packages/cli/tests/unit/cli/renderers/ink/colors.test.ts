@@ -34,7 +34,16 @@ describe("assignExpertColor", () => {
   });
 
   it("palette includes the documented colors", () => {
-    for (const c of ["cyan", "yellow", "magenta", "green", "blue", "cyanBright", "magentaBright", "yellowBright"]) {
+    for (const c of [
+      "cyan",
+      "yellow",
+      "magenta",
+      "green",
+      "blue",
+      "cyanBright",
+      "magentaBright",
+      "yellowBright",
+    ]) {
       expect(EXPERT_COLOR_PALETTE).toContain(c);
     }
   });

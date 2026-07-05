@@ -34,9 +34,7 @@ async function collect(stream: AsyncIterable<DebateEvent>): Promise<DebateEvent[
   return out;
 }
 
-async function makeEngine(
-  experts: readonly ExpertSpec[],
-): Promise<MockEngine> {
+async function makeEngine(experts: readonly ExpertSpec[]): Promise<MockEngine> {
   const responses: Record<string, string> = {};
   for (const e of experts) responses[e.id] = `${e.slug} acknowledges.`;
   const engine = new MockEngine({ responses });

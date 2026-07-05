@@ -46,11 +46,13 @@ export interface PanelsRepos {
   readonly listTemplates: () => Promise<readonly string[]>;
   readonly loadTemplate: (name: string) => Promise<{
     readonly description?: string;
-    readonly defaults?: {
-      readonly mode?: string | undefined;
-      readonly maxRounds?: number | undefined;
-      readonly model?: string | undefined;
-    } | undefined;
+    readonly defaults?:
+      | {
+          readonly mode?: string | undefined;
+          readonly maxRounds?: number | undefined;
+          readonly model?: string | undefined;
+        }
+      | undefined;
     readonly experts: readonly {
       readonly slug: string;
       readonly displayName: string;
@@ -194,14 +196,12 @@ export function createPanelsDataSource(repos: PanelsRepos): PanelsDataSource {
         repos.library.findAll(),
         repos.library.getMemberCounts(),
       ]);
-      const savedItems = savedPanels.map(
-        (panel): PanelListItem => ({
-          name: panel.name,
-          description: panel.description ?? "",
-          memberCount: memberCounts.get(panel.name) ?? 0,
-          source: "saved",
-        }),
-      );
+      const savedItems = savedPanels.map((panel): PanelListItem => ({
+        name: panel.name,
+        description: panel.description ?? "",
+        memberCount: memberCounts.get(panel.name) ?? 0,
+        source: "saved",
+      }));
 
       const templateItems = await loadTemplateItems(repos);
 
@@ -249,14 +249,12 @@ export function createPanelsDataSource(repos: PanelsRepos): PanelsDataSource {
         description: tpl.description ?? "",
         source,
         ...(defaults === undefined ? {} : { defaults }),
-        members: tpl.experts.map(
-          (expert): PanelMemberView => ({
-            slug: expert.slug,
-            displayName: expert.displayName,
-            role: expert.role,
-            kind: expert.kind,
-          }),
-        ),
+        members: tpl.experts.map((expert): PanelMemberView => ({
+          slug: expert.slug,
+          displayName: expert.displayName,
+          role: expert.role,
+          kind: expert.kind,
+        })),
         missing: [],
       };
     },

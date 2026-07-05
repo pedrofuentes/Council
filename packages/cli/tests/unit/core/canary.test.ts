@@ -9,11 +9,7 @@
  */
 import { describe, expect, it, vi, afterEach } from "vitest";
 
-import {
-  checkCanaryLeak,
-  generateCanary,
-  injectCanary,
-} from "../../../src/core/canary.js";
+import { checkCanaryLeak, generateCanary, injectCanary } from "../../../src/core/canary.js";
 import { Debate, type DebateConfig } from "../../../src/core/debate.js";
 import type {
   CouncilEngine,
@@ -59,9 +55,7 @@ describe("checkCanaryLeak()", () => {
   });
 
   it("returns true when the exact canary appears in the output", () => {
-    expect(
-      checkCanaryLeak("here is the secret: CANARY_abc123 oops", "CANARY_abc123"),
-    ).toBe(true);
+    expect(checkCanaryLeak("here is the secret: CANARY_abc123 oops", "CANARY_abc123")).toBe(true);
   });
 
   it("returns false for partial substring matches", () => {
@@ -202,13 +196,21 @@ describe("Debate — canary integration", () => {
     const cto = expertSpec("01HZ-cto", "cto", "You are a CTO.");
     const FIXED = "CANARY_split789abc";
     const halfA = FIXED.slice(0, 8); // "CANARY_s"
-    const halfB = FIXED.slice(8);    // "plit789abc"
+    const halfB = FIXED.slice(8); // "plit789abc"
 
     const fakeEngine: CouncilEngine = {
-      start: async (): Promise<void> => { /* no-op */ },
-      stop: async (): Promise<void> => { /* no-op */ },
-      addExpert: async (): Promise<void> => { /* no-op */ },
-      removeExpert: async (): Promise<void> => { /* no-op */ },
+      start: async (): Promise<void> => {
+        /* no-op */
+      },
+      stop: async (): Promise<void> => {
+        /* no-op */
+      },
+      addExpert: async (): Promise<void> => {
+        /* no-op */
+      },
+      removeExpert: async (): Promise<void> => {
+        /* no-op */
+      },
       listModels: async () => ["claude-sonnet-4"],
       async *send(opts: SendOptions): AsyncIterable<EngineEvent> {
         // Emit the canary across two deltas so substring detection
@@ -247,10 +249,18 @@ describe("Debate — canary integration", () => {
     const FIXED = "CANARY_persist";
 
     const fakeEngine: CouncilEngine = {
-      start: async (): Promise<void> => { /* no-op */ },
-      stop: async (): Promise<void> => { /* no-op */ },
-      addExpert: async (): Promise<void> => { /* no-op */ },
-      removeExpert: async (): Promise<void> => { /* no-op */ },
+      start: async (): Promise<void> => {
+        /* no-op */
+      },
+      stop: async (): Promise<void> => {
+        /* no-op */
+      },
+      addExpert: async (): Promise<void> => {
+        /* no-op */
+      },
+      removeExpert: async (): Promise<void> => {
+        /* no-op */
+      },
       listModels: async () => ["claude-sonnet-4"],
       async *send(opts: SendOptions): AsyncIterable<EngineEvent> {
         // Two deltas, both contain the canary — should produce ONE warning,
@@ -294,10 +304,18 @@ describe("Debate — canary integration", () => {
 
     let sendCalls = 0;
     const fakeEngine: CouncilEngine = {
-      start: async (): Promise<void> => { /* no-op */ },
-      stop: async (): Promise<void> => { /* no-op */ },
-      addExpert: async (): Promise<void> => { /* no-op */ },
-      removeExpert: async (): Promise<void> => { /* no-op */ },
+      start: async (): Promise<void> => {
+        /* no-op */
+      },
+      stop: async (): Promise<void> => {
+        /* no-op */
+      },
+      addExpert: async (): Promise<void> => {
+        /* no-op */
+      },
+      removeExpert: async (): Promise<void> => {
+        /* no-op */
+      },
       listModels: async () => ["claude-sonnet-4"],
       async *send(opts: SendOptions): AsyncIterable<EngineEvent> {
         sendCalls += 1;

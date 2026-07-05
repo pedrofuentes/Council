@@ -14,7 +14,7 @@ describe("CliUserError", () => {
   });
 
   it("preserves the message", () => {
-    const err = new CliUserError("Expert \"ghost\" not found.");
+    const err = new CliUserError('Expert "ghost" not found.');
     expect(err.message).toBe('Expert "ghost" not found.');
   });
 

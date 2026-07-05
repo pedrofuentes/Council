@@ -59,15 +59,13 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
     ? QUICK_ACTIONS
     : [
         ...QUICK_ACTIONS,
-        ...recent.map(
-          (r): RecentItem => ({
-            kind: "recent",
-            id: r.id,
-            title: r.title,
-            when: r.when,
-            status: r.status,
-          }),
-        ),
+        ...recent.map((r): RecentItem => ({
+          kind: "recent",
+          id: r.id,
+          title: r.title,
+          when: r.when,
+          status: r.status,
+        })),
       ];
 
   const activate = (index: number): void => {

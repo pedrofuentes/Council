@@ -120,7 +120,11 @@ describe("CLI error paths E2E", () => {
 
   describe("convene", () => {
     it("resolves engine from config when --engine omitted (no longer required)", async () => {
-      await fs.writeFile(path.join(ctx.testHome, "config.yaml"), "defaults:\n  engine: mock\n", "utf-8");
+      await fs.writeFile(
+        path.join(ctx.testHome, "config.yaml"),
+        "defaults:\n  engine: mock\n",
+        "utf-8",
+      );
       const output = captureOutput();
       const command = prepareCommand(
         buildConveneCommand({

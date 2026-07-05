@@ -20,11 +20,7 @@ import {
 import type { ModeratorStrategy } from "../core/moderator/strategy.js";
 import type { ExpertSpec } from "../engine/index.js";
 
-export const STRATEGY_NAMES = [
-  "round-robin",
-  "devils-advocate",
-  "consensus-check",
-] as const;
+export const STRATEGY_NAMES = ["round-robin", "devils-advocate", "consensus-check"] as const;
 export type StrategyName = (typeof STRATEGY_NAMES)[number];
 
 export function isStrategyName(value: string): value is StrategyName {

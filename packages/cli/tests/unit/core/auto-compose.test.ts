@@ -1365,9 +1365,7 @@ describe("autoComposePanel", () => {
       // exact condition the old `.aborted`-boolean check mislabeled as a timeout.
       vi.useFakeTimers();
       const timeoutController = new AbortController();
-      const timeoutSpy = vi
-        .spyOn(AbortSignal, "timeout")
-        .mockReturnValue(timeoutController.signal);
+      const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeoutController.signal);
       try {
         const controller = new AbortController();
         // Caller cancels FIRST, so the composed signal latches the caller's

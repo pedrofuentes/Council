@@ -124,27 +124,32 @@ describe("T-16: Flag consistency", () => {
     });
 
     it("default writers use explicit UTF-8 encoding", async () => {
-      const { defaultWriter, defaultErrorWriter, defaultNoticeWriter, setQuiet } = await import(
-        "../../../../src/cli/commands/writer.js"
-      );
+      const { defaultWriter, defaultErrorWriter, defaultNoticeWriter, setQuiet } =
+        await import("../../../../src/cli/commands/writer.js");
       const stdoutCalls: { chunk: string; encoding: BufferEncoding | undefined }[] = [];
       const stderrCalls: { chunk: string; encoding: BufferEncoding | undefined }[] = [];
       const origStdoutWrite = process.stdout.write;
       const origStderrWrite = process.stderr.write;
-      process.stdout.write = (((chunk: string | Uint8Array, encoding?: BufferEncoding | ((error?: Error | null) => void)) => {
+      process.stdout.write = ((
+        chunk: string | Uint8Array,
+        encoding?: BufferEncoding | ((error?: Error | null) => void),
+      ) => {
         stdoutCalls.push({
           chunk: typeof chunk === "string" ? chunk : chunk.toString("utf8"),
           encoding: typeof encoding === "string" ? encoding : undefined,
         });
         return true;
-      }) as typeof process.stdout.write);
-      process.stderr.write = (((chunk: string | Uint8Array, encoding?: BufferEncoding | ((error?: Error | null) => void)) => {
+      }) as typeof process.stdout.write;
+      process.stderr.write = ((
+        chunk: string | Uint8Array,
+        encoding?: BufferEncoding | ((error?: Error | null) => void),
+      ) => {
         stderrCalls.push({
           chunk: typeof chunk === "string" ? chunk : chunk.toString("utf8"),
           encoding: typeof encoding === "string" ? encoding : undefined,
         });
         return true;
-      }) as typeof process.stderr.write);
+      }) as typeof process.stderr.write;
 
       try {
         setQuiet(false);
@@ -165,9 +170,8 @@ describe("T-16: Flag consistency", () => {
     });
 
     it("--quiet suppresses defaultNoticeWriter output but keeps defaultErrorWriter", async () => {
-      const { setQuiet, defaultNoticeWriter, defaultErrorWriter, isQuiet } = await import(
-        "../../../../src/cli/commands/writer.js"
-      );
+      const { setQuiet, defaultNoticeWriter, defaultErrorWriter, isQuiet } =
+        await import("../../../../src/cli/commands/writer.js");
       // Reset state
       setQuiet(false);
       expect(isQuiet()).toBe(false);

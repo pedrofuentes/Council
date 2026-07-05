@@ -115,17 +115,12 @@ describe("NodeSqliteDialect", () => {
 
     await expect(
       db.transaction().execute(async (trx) => {
-        await trx
-          .insertInto("widgets")
-          .values({ name: "rolled-back", qty: 1 })
-          .execute();
+        await trx.insertInto("widgets").values({ name: "rolled-back", qty: 1 }).execute();
         throw new Error("boom");
       }),
     ).rejects.toThrow("boom");
 
-    const names = (await db.selectFrom("widgets").select("name").execute()).map(
-      (r) => r.name,
-    );
+    const names = (await db.selectFrom("widgets").select("name").execute()).map((r) => r.name);
     expect(names).toContain("committed");
     expect(names).not.toContain("rolled-back");
   });
@@ -135,9 +130,7 @@ describe("NodeSqliteDialect", () => {
     try {
       await db.insertInto("widgets").values({ name: "spied", qty: 1 }).execute();
 
-      const statements = spy.mock.calls.map(
-        (call) => (call[0] as { readonly sql: string }).sql,
-      );
+      const statements = spy.mock.calls.map((call) => (call[0] as { readonly sql: string }).sql);
       expect(statements.some((s) => /insert into "widgets"/i.test(s))).toBe(true);
     } finally {
       spy.mockRestore();

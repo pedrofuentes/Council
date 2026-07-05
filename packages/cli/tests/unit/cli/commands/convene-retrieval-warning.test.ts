@@ -16,9 +16,7 @@ import { formatRetrievalFailureWarning } from "../../../../src/cli/commands/conv
 describe("formatRetrievalFailureWarning", () => {
   it("keeps the human-readable prefix and trailing newline", () => {
     const out = formatRetrievalFailureWarning(new Error("boom"));
-    expect(out).toBe(
-      "!! document retrieval failed (continuing without reference docs): boom\n",
-    );
+    expect(out).toBe("!! document retrieval failed (continuing without reference docs): boom\n");
   });
 
   it("collapses multi-line errors to a single line", () => {

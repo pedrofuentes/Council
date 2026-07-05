@@ -14,11 +14,7 @@ import { getExpertPanelMemberships } from "../../../src/core/panel-membership-qu
 import { PanelLibraryRepository } from "../../../src/memory/repositories/panel-library-repo.js";
 import { ExpertLibraryRepository } from "../../../src/memory/repositories/expert-library-repo.js";
 
-async function seedExpert(
-  db: CouncilDatabase,
-  slug: string,
-  displayName: string,
-): Promise<void> {
+async function seedExpert(db: CouncilDatabase, slug: string, displayName: string): Promise<void> {
   const repo = new ExpertLibraryRepository(db);
   await repo.create({
     slug,
@@ -45,16 +41,8 @@ async function seedPanel(
   await repo.setMembers(name, members);
 }
 
-async function bumpPanelUpdatedAt(
-  db: CouncilDatabase,
-  name: string,
-  iso: string,
-): Promise<void> {
-  await db
-    .updateTable("panel_library")
-    .set({ updated_at: iso })
-    .where("name", "=", name)
-    .execute();
+async function bumpPanelUpdatedAt(db: CouncilDatabase, name: string, iso: string): Promise<void> {
+  await db.updateTable("panel_library").set({ updated_at: iso }).where("name", "=", name).execute();
 }
 
 describe("getExpertPanelMemberships()", () => {
@@ -114,11 +102,7 @@ describe("getExpertPanelMemberships()", () => {
     await bumpPanelUpdatedAt(db, "new-panel", "2026-01-01T00:00:00.000Z");
 
     const result = await getExpertPanelMemberships("cto", db);
-    expect(result.map((m) => m.panelName)).toEqual([
-      "new-panel",
-      "mid-panel",
-      "old-panel",
-    ]);
+    expect(result.map((m) => m.panelName)).toEqual(["new-panel", "mid-panel", "old-panel"]);
   });
 
   it("caps the query at PANEL_MEMBERSHIPS_LIMIT entries to bound co-member fan-out", async () => {

@@ -103,7 +103,15 @@ function makeEngine(): QuietProbeEngine {
 }
 
 function runArgs(extra: readonly string[]): string[] {
-  return ["node", "council-convene", "Should we adopt TDD?", "--yes", "--max-rounds", "1", ...extra];
+  return [
+    "node",
+    "council-convene",
+    "Should we adopt TDD?",
+    "--yes",
+    "--max-rounds",
+    "1",
+    ...extra,
+  ];
 }
 
 describe("buildConveneCommand — quiet state restoration (#895)", () => {

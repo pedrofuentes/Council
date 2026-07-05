@@ -94,9 +94,10 @@ function parseYaml(content: string, filePath?: string): ExpertDefinition {
     return ExpertDefinitionSchema.parse(raw);
   } catch (error) {
     const context = filePath ? ` in file: ${filePath}` : "";
-    const slug = raw && typeof raw === "object" && "slug" in raw
-      ? ` (slug: ${(raw as { slug: unknown }).slug})`
-      : "";
+    const slug =
+      raw && typeof raw === "object" && "slug" in raw
+        ? ` (slug: ${(raw as { slug: unknown }).slug})`
+        : "";
     throw new Error(`Expert definition schema validation failed${context}${slug}: ${error}`, {
       cause: error,
     });

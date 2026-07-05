@@ -264,8 +264,7 @@ export async function extractDocument(
     // 6. Read via the file handle (NOT path) so the read targets the
     //    inode bound at step 1, immune to any post-open path swap.
     const readFile =
-      (isTestEnv ? options._readFileOverride : undefined) ??
-      ((fh: fs.FileHandle) => fh.readFile());
+      (isTestEnv ? options._readFileOverride : undefined) ?? ((fh: fs.FileHandle) => fh.readFile());
     const buf = await readFile(fh);
     const checksum = createHash("sha256").update(buf).digest("hex");
 

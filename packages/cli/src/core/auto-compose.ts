@@ -196,9 +196,7 @@ interface MissingJsonComposerResponse {
 }
 
 type ComposerResponseParseResult =
-  | ParsedComposerResponse
-  | EmptyComposerResponse
-  | MissingJsonComposerResponse;
+  ParsedComposerResponse | EmptyComposerResponse | MissingJsonComposerResponse;
 
 interface ComposerPromptOptions {
   readonly strictJsonOnly?: boolean;

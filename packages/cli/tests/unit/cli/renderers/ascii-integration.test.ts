@@ -54,9 +54,7 @@ describe("PlainRenderer with ASCII mode", () => {
     await renderer.render(
       events({
         kind: "panel.assembled",
-        experts: [
-          { slug: "cto", displayName: "CTO", model: "claude-sonnet-4" },
-        ],
+        experts: [{ slug: "cto", displayName: "CTO", model: "claude-sonnet-4" }],
       }),
     );
     const text = stripAnsi(sink.text);
@@ -67,9 +65,7 @@ describe("PlainRenderer with ASCII mode", () => {
   it("uses ASCII round rule when COUNCIL_ASCII=1", async () => {
     const sink = new StringSink();
     const renderer = new PlainRenderer(sink, { color: false });
-    await renderer.render(
-      events({ kind: "round.start", round: 0 }),
-    );
+    await renderer.render(events({ kind: "round.start", round: 0 }));
     const text = stripAnsi(sink.text);
     expect(text).toContain("--- Round 1 ---");
     expect(text).not.toContain("━");
@@ -78,9 +74,7 @@ describe("PlainRenderer with ASCII mode", () => {
   it("uses ASCII separator when COUNCIL_ASCII=1", async () => {
     const sink = new StringSink();
     const renderer = new PlainRenderer(sink, { color: false });
-    await renderer.render(
-      events({ kind: "round.end", round: 0 }),
-    );
+    await renderer.render(events({ kind: "round.end", round: 0 }));
     const text = stripAnsi(sink.text);
     expect(text).toContain("-".repeat(40));
     expect(text).not.toContain("─");
@@ -92,9 +86,7 @@ describe("PlainRenderer with ASCII mode", () => {
     await renderer.render(
       events({
         kind: "panel.assembled",
-        experts: [
-          { slug: "cto", displayName: "CTO", model: "claude-sonnet-4" },
-        ],
+        experts: [{ slug: "cto", displayName: "CTO", model: "claude-sonnet-4" }],
       }),
     );
     const text = stripAnsi(sink.text);

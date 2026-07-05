@@ -117,9 +117,7 @@ describe("docs command → defaultScanPanel production glue (#994)", () => {
   });
 
   /** Read the persisted panel_documents rows straight from the on-disk DB. */
-  async function readPanelDocRows(
-    panelName: string,
-  ): Promise<
+  async function readPanelDocRows(panelName: string): Promise<
     readonly {
       readonly id: string;
       readonly checksum: string;
@@ -157,9 +155,7 @@ describe("docs command → defaultScanPanel production glue (#994)", () => {
     const { stdout, error } = await runDocs(["review", PANEL]);
 
     expect(error).toBeUndefined();
-    expect(stdout).toContain(
-      `Panel "${PANEL}": no files need review — all files are indexed.`,
-    );
+    expect(stdout).toContain(`Panel "${PANEL}": no files need review — all files are indexed.`);
   });
 
   it("docs doctor surfaces a real findByName miss as a not-found error", async () => {

@@ -11,11 +11,7 @@
  */
 import { ExtractionError } from "./errors.js";
 import { registerExtractor } from "./registry.js";
-import type {
-  ContentExtractor,
-  ExtractedContent,
-  ExtractionContext,
-} from "./types.js";
+import type { ContentExtractor, ExtractedContent, ExtractionContext } from "./types.js";
 
 /**
  * Strip RTF destination groups like `{\*\generator ...}` in a single
@@ -38,12 +34,7 @@ function stripDestinationGroups(input: string): string {
     const ch = input[i] as string;
 
     if (ch === "{") {
-      if (
-        skipDepth < 0 &&
-        i + 2 < input.length &&
-        input[i + 1] === "\\" &&
-        input[i + 2] === "*"
-      ) {
+      if (skipDepth < 0 && i + 2 < input.length && input[i + 1] === "\\" && input[i + 2] === "*") {
         skipDepth = depth;
         depth++;
         i += 3;

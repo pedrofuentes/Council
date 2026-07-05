@@ -238,7 +238,7 @@ describe("ProfileRepository", () => {
     }
     expect(preSelected).toBe(false);
     const found = await repo.findBySlug("ceo");
-    expect(found?.communicationStyle).toBe("atomic-2")
+    expect(found?.communicationStyle).toBe("atomic-2");
   });
 
   it("concurrent upserts for the same slug result in exactly one row (#363)", async () => {

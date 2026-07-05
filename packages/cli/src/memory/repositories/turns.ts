@@ -88,7 +88,11 @@ export class TurnRepository {
         created_at: now,
       })
       .execute();
-    const row = await this.db.selectFrom("turns").selectAll().where("id", "=", id).executeTakeFirstOrThrow();
+    const row = await this.db
+      .selectFrom("turns")
+      .selectAll()
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
     return toDomain(row);
   }
 

@@ -121,7 +121,10 @@ export class DebateRepository {
     return Number(row?.count ?? 0);
   }
 
-  async cancelRunning(panelId: string, endedAt: string = new Date().toISOString()): Promise<Debate | undefined> {
+  async cancelRunning(
+    panelId: string,
+    endedAt: string = new Date().toISOString(),
+  ): Promise<Debate | undefined> {
     const row = await this.db
       .selectFrom("debates")
       .selectAll()

@@ -76,7 +76,9 @@ async function collect(stream: AsyncIterable<DebateEvent>): Promise<DebateEvent[
 
 describe("Debate turn.discard before retry (#184)", () => {
   it("emits turn.discard before turn.retry once partial deltas were forwarded", async () => {
-    const events = await collect(new Debate(new PartialThenRetryEngine(), [cto], FREEFORM_1R).run("topic"));
+    const events = await collect(
+      new Debate(new PartialThenRetryEngine(), [cto], FREEFORM_1R).run("topic"),
+    );
 
     const discardIdx = events.findIndex((e) => e.kind === "turn.discard");
     const retryIdx = events.findIndex((e) => e.kind === "turn.retry");

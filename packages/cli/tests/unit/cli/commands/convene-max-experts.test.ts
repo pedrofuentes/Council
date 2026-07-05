@@ -127,10 +127,9 @@ describe("buildConveneCommand — --max-experts flag", () => {
       engineFactory: () => engine,
     });
 
-    await cmd.parseAsync(
-      ["node", "council", "convene", "topic", "--max-experts", "2", "--yes"],
-      { from: "user" },
-    );
+    await cmd.parseAsync(["node", "council", "convene", "topic", "--max-experts", "2", "--yes"], {
+      from: "user",
+    });
 
     // Verify no error about unknown option
     expect(errors.some((e) => e.includes("unknown option"))).toBe(false);
@@ -224,10 +223,9 @@ describe("buildConveneCommand — --max-experts flag", () => {
     });
 
     // Should parse and not throw
-    await cmd.parseAsync(
-      ["node", "council", "convene", "topic", "--max-experts", "3", "--yes"],
-      { from: "user" },
-    );
+    await cmd.parseAsync(["node", "council", "convene", "topic", "--max-experts", "3", "--yes"], {
+      from: "user",
+    });
 
     // If parsing succeeded, no error about invalid option
     expect(errors.some((e) => e.includes("unknown option"))).toBe(false);

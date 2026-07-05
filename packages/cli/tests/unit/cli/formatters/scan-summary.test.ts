@@ -31,9 +31,7 @@ describe("describeScanError", () => {
     expect(describeScanError("encrypted-document")).toBe("Password-protected file");
     expect(describeScanError("zip-bomb-detected")).toBe("Suspicious archive structure");
     expect(describeScanError("extraction-failed")).toBe("Extraction failed");
-    expect(describeScanError("confinement-violation")).toBe(
-      "File outside allowed directory",
-    );
+    expect(describeScanError("confinement-violation")).toBe("File outside allowed directory");
   });
 
   it("includes the configured size limit when available for oversize-file", () => {
@@ -47,15 +45,13 @@ describe("describeScanError", () => {
   });
 
   it("names the extension for unsupported-format when one is provided (T2)", () => {
-    expect(
-      describeScanError("unsupported-format", { extension: ".png" }),
-    ).toBe("Unsupported format (.png)");
+    expect(describeScanError("unsupported-format", { extension: ".png" })).toBe(
+      "Unsupported format (.png)",
+    );
   });
 
   it("falls back to the generic unsupported message when no extension is provided (T2)", () => {
-    expect(describeScanError("unsupported-format", { extension: "" })).toBe(
-      "Format not supported",
-    );
+    expect(describeScanError("unsupported-format", { extension: "" })).toBe("Format not supported");
   });
 });
 
@@ -372,38 +368,47 @@ describe("formatScanSummary", () => {
   });
 
   it("produces multi-line output where each line survives sanitizeSingleLine independently", () => {
-     const result: ScanResult = {
-       indexed: 1,
-       modified: 0,
-       unchanged: 2,
-       failed: 1,
-       files: [
-         detail({ filename: "report.pdf", extension: ".pdf", status: "indexed", wordCount: 500, metadata: { pageCount: 10 } }),
-         detail({ filename: "old1.md", status: "unchanged" }),
-         detail({ filename: "old2.md", status: "unchanged" }),
-         detail({ filename: "broken.docx", extension: ".docx", status: "failed", errorKind: "corrupt-document" }),
-       ],
-     };
-     const out = formatScanSummary(result);
-     const lines = out.split("\n").filter((l) => l.length > 0);
+    const result: ScanResult = {
+      indexed: 1,
+      modified: 0,
+      unchanged: 2,
+      failed: 1,
+      files: [
+        detail({
+          filename: "report.pdf",
+          extension: ".pdf",
+          status: "indexed",
+          wordCount: 500,
+          metadata: { pageCount: 10 },
+        }),
+        detail({ filename: "old1.md", status: "unchanged" }),
+        detail({ filename: "old2.md", status: "unchanged" }),
+        detail({
+          filename: "broken.docx",
+          extension: ".docx",
+          status: "failed",
+          errorKind: "corrupt-document",
+        }),
+      ],
+    };
+    const out = formatScanSummary(result);
+    const lines = out.split("\n").filter((l) => l.length > 0);
 
-     // Multi-line output: must have more than 1 line
-     expect(lines.length).toBeGreaterThan(1);
+    // Multi-line output: must have more than 1 line
+    expect(lines.length).toBeGreaterThan(1);
 
-     // Each line should be self-contained (no line depends on the previous for meaning)
-     for (const line of lines) {
-       expect(line.length).toBeGreaterThan(0);
-       // No line should contain embedded newlines (already split)
-       expect(line).not.toContain("\n");
-     }
+    // Each line should be self-contained (no line depends on the previous for meaning)
+    for (const line of lines) {
+      expect(line.length).toBeGreaterThan(0);
+      // No line should contain embedded newlines (already split)
+      expect(line).not.toContain("\n");
+    }
   });
 });
 
 describe("renderScanLines — per-line rendering (🔴 regression)", () => {
   it("calls showSystem once per non-empty line of a multi-line summary", async () => {
-    const { renderScanLines } = await import(
-      "../../../../src/cli/formatters/scan-summary.js"
-    );
+    const { renderScanLines } = await import("../../../../src/cli/formatters/scan-summary.js");
     const calls: { message: string; level: string }[] = [];
     const fakeRenderer = {
       showSystem(message: string, level: "info" | "warn" | "error" = "info"): void {
@@ -416,10 +421,21 @@ describe("renderScanLines — per-line rendering (🔴 regression)", () => {
       unchanged: 2,
       failed: 1,
       files: [
-        detail({ filename: "report.pdf", extension: ".pdf", status: "indexed", wordCount: 500, metadata: { pageCount: 10 } }),
+        detail({
+          filename: "report.pdf",
+          extension: ".pdf",
+          status: "indexed",
+          wordCount: 500,
+          metadata: { pageCount: 10 },
+        }),
         detail({ filename: "old1.md", status: "unchanged" }),
         detail({ filename: "old2.md", status: "unchanged" }),
-        detail({ filename: "broken.docx", extension: ".docx", status: "failed", errorKind: "corrupt-document" }),
+        detail({
+          filename: "broken.docx",
+          extension: ".docx",
+          status: "failed",
+          errorKind: "corrupt-document",
+        }),
       ],
     };
     renderScanLines(fakeRenderer, result);
@@ -435,9 +451,7 @@ describe("renderScanLines — per-line rendering (🔴 regression)", () => {
   });
 
   it("does not call showSystem for 'No documents found' result", async () => {
-    const { renderScanLines } = await import(
-      "../../../../src/cli/formatters/scan-summary.js"
-    );
+    const { renderScanLines } = await import("../../../../src/cli/formatters/scan-summary.js");
     const calls: { message: string; level: string }[] = [];
     const fakeRenderer = {
       showSystem(message: string, level: "info" | "warn" | "error" = "info"): void {
@@ -456,9 +470,7 @@ describe("renderScanLines — per-line rendering (🔴 regression)", () => {
   });
 
   it("preserves all content lines from formatScanSummary", async () => {
-    const { renderScanLines } = await import(
-      "../../../../src/cli/formatters/scan-summary.js"
-    );
+    const { renderScanLines } = await import("../../../../src/cli/formatters/scan-summary.js");
     const calls: { message: string; level: string }[] = [];
     const fakeRenderer = {
       showSystem(message: string, level: "info" | "warn" | "error" = "info"): void {
@@ -588,9 +600,7 @@ describe("formatScanSummary — AI fallback + needs-review (T-AIPIPE)", () => {
     const out = formatScanSummary(result);
     expect(out).not.toContain("\u001b");
     // The newline inside the AI text must not leak an extra line.
-    const reviewLine = out
-      .split("\n")
-      .find((l) => l.includes("evil.xyz"));
+    const reviewLine = out.split("\n").find((l) => l.includes("evil.xyz"));
     expect(reviewLine).toBeDefined();
     // The newline inside the AI text must be collapsed to a space so the hint
     // stays on ONE line — if sanitizeFormatHint regresses, reviewLine will

@@ -28,10 +28,7 @@ import * as yaml from "yaml";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { FileExpertLibrary } from "../../src/core/expert-library.js";
-import {
-  type ExpertDefinition,
-  ExpertDefinitionSchema,
-} from "../../src/core/expert.js";
+import { type ExpertDefinition, ExpertDefinitionSchema } from "../../src/core/expert.js";
 import { createDocumentIndexer } from "../../src/core/documents/indexer.js";
 import { createDocumentProcessor } from "../../src/core/documents/processor.js";
 import type { CouncilEngine } from "../../src/engine/index.js";
@@ -150,9 +147,7 @@ describe("integration: expert lifecycle (FileExpertLibrary)", () => {
   it("rejects creating a duplicate slug", async () => {
     const library = new FileExpertLibrary(env.dataHome, env.db);
     await library.create(expertDef("cto", "First CTO"));
-    await expect(library.create(expertDef("cto", "Second CTO"))).rejects.toThrow(
-      /already exists/i,
-    );
+    await expect(library.create(expertDef("cto", "Second CTO"))).rejects.toThrow(/already exists/i);
   });
 
   it("blocks delete when the expert is a member of a panel (without force)", async () => {
@@ -174,9 +169,7 @@ describe("integration: expert lifecycle (FileExpertLibrary)", () => {
     expect(await library.panelsFor("cto")).toEqual(["ops-review"]);
 
     // Delete without force is refused with a helpful message.
-    await expect(
-      library.delete("cto", { force: false }),
-    ).rejects.toThrow(/member of panels/i);
+    await expect(library.delete("cto", { force: false })).rejects.toThrow(/member of panels/i);
 
     // Forced delete reports the affected panel and removes the row.
     const result = await library.delete("cto", { force: true });
@@ -243,11 +236,7 @@ describe("integration: panel lifecycle (PanelLibraryRepository + experts)", () =
     const { resolved, missing } = await library.resolvePanel(members);
     expect(missing).toEqual([]);
     expect(resolved.map((e) => e.slug)).toEqual(["cto", "sre", "pm"]);
-    expect(resolved.map((e) => e.displayName)).toEqual([
-      "CTO",
-      "SRE",
-      "Product Manager",
-    ]);
+    expect(resolved.map((e) => e.displayName)).toEqual(["CTO", "SRE", "Product Manager"]);
   });
 
   it("resolvePanel reports missing expert slugs without throwing", async () => {
@@ -341,12 +330,7 @@ describe("integration: chat flow (ChatRepository persistence + resume)", () => {
       const turns = await chats.getTurns(session.id);
       expect(turns).toHaveLength(4);
       expect(turns.map((t) => t.seq)).toEqual([1, 2, 3, 4]);
-      expect(turns.map((t) => t.role)).toEqual([
-        "user",
-        "expert",
-        "user",
-        "expert",
-      ]);
+      expect(turns.map((t) => t.role)).toEqual(["user", "expert", "user", "expert"]);
       expect(turns[1]?.expertSlug).toBe("cto");
       expect(await chats.getTurnCount(session.id)).toBe(4);
       expect(await chats.getLatestSeq(session.id)).toBe(4);
@@ -446,9 +430,7 @@ describe("integration: persona document processing (DocumentProcessor + FTS5)", 
       expect(result.filesFailed).toBe(0);
       expect(result.profileUpdated).toBe(true);
       expect(result.profileError).toBeNull();
-      expect(progress).toEqual([
-        { filename: "weekly-review-notes.md", status: "success" },
-      ]);
+      expect(progress).toEqual([{ filename: "weekly-review-notes.md", status: "success" }]);
 
       // Document indexed in FTS5 — searchable by the words in the memo.
       const ftsRows = await sql<{
@@ -475,9 +457,7 @@ describe("integration: persona document processing (DocumentProcessor + FTS5)", 
       // Profile extracted and persisted.
       const profile = await new ProfileRepository(env.db).findBySlug("alex");
       expect(profile).not.toBeNull();
-      expect(profile?.communicationStyle).toBe(
-        "Crisp, opinionated, ships first.",
-      );
+      expect(profile?.communicationStyle).toBe("Crisp, opinionated, ships first.");
       expect(profile?.decisionPatterns).toContain("ship-incrementally");
       expect(profile?.documentCount).toBe(1);
       expect(profile?.totalWords).toBeGreaterThan(0);
@@ -508,10 +488,7 @@ describe("integration: persona document processing (DocumentProcessor + FTS5)", 
  * MockEngine so the analyzer's transient registration still goes
  * through the real contract.
  */
-function wrapAnalyzerResponse(
-  inner: MockEngine,
-  text: string,
-): CouncilEngine {
+function wrapAnalyzerResponse(inner: MockEngine, text: string): CouncilEngine {
   return {
     start: () => inner.start(),
     stop: () => inner.stop(),

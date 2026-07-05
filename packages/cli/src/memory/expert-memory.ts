@@ -71,7 +71,9 @@ export interface RecallOptions {
  */
 export function sanitizeMemorySnippet(text: string): string {
   if (text.length === 0) return text;
-  return sanitizePromptField(text).replace(/[ \t]{2,}/g, " ").trim();
+  return sanitizePromptField(text)
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
 }
 
 /**

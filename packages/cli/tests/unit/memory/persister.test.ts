@@ -229,7 +229,9 @@ describe("DebatePersister", () => {
       .mockImplementationOnce(async () => {
         throw new Error("disk full");
       })
-      .mockImplementation(async (turn: Parameters<TurnRepository["create"]>[0]) => originalCreate(turn));
+      .mockImplementation(async (turn: Parameters<TurnRepository["create"]>[0]) =>
+        originalCreate(turn),
+      );
 
     async function* partialSource(): AsyncIterable<DebateEvent> {
       yield { kind: "panel.assembled", experts: [] };
@@ -268,7 +270,9 @@ describe("DebatePersister", () => {
       throw new Error("source failed");
     }
 
-    await expect(collect(persister.persist(brokenSource(), "topic"))).rejects.toThrow("source failed");
+    await expect(collect(persister.persist(brokenSource(), "topic"))).rejects.toThrow(
+      "source failed",
+    );
     expect(logger.warn).toHaveBeenCalledTimes(1);
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("finalizeAbruptExit failed"));
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("update failed"));
@@ -365,7 +369,12 @@ describe("DebatePersister", () => {
       yield { kind: "panel.assembled", experts: [] };
       yield { kind: "round.start", round: 0 };
       yield { kind: "turn.start", expertSlug: cto.slug, round: 0, seq: 0, speakerKind: "human" };
-      yield { kind: "turn.delta", expertSlug: cto.slug, text: "Human partial.", speakerKind: "human" };
+      yield {
+        kind: "turn.delta",
+        expertSlug: cto.slug,
+        text: "Human partial.",
+        speakerKind: "human",
+      };
       controller.abort();
       yield { kind: "debate.end", reason: "aborted" };
     }

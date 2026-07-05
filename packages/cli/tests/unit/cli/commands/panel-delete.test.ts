@@ -344,9 +344,8 @@ describe("buildPanelCommand: delete subcommand (T2)", () => {
       const badName = "../etc";
       const now = new Date().toISOString();
       const { createDatabase } = await import("../../../../src/memory/db.js");
-      const { PanelLibraryRepository } = await import(
-        "../../../../src/memory/repositories/panel-library-repo.js"
-      );
+      const { PanelLibraryRepository } =
+        await import("../../../../src/memory/repositories/panel-library-repo.js");
       {
         const db = await createDatabase(path.join(env.home, "council.db"));
         try {

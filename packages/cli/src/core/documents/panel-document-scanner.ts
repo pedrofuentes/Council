@@ -514,10 +514,7 @@ export async function scanAndIndexPanelDocuments(
     scannedFolders.push(canonical);
 
     const newSet = new Set(detection.newFiles.map((f) => f.path));
-    const targets: readonly DocumentFile[] = [
-      ...detection.newFiles,
-      ...detection.modifiedFiles,
-    ];
+    const targets: readonly DocumentFile[] = [...detection.newFiles, ...detection.modifiedFiles];
     for (const file of targets) {
       const fileStatusOnSuccess: "indexed" | "modified" = newSet.has(file.path)
         ? "indexed"
@@ -695,9 +692,7 @@ export async function scanAndIndexPanelDocuments(
 
 function isUnderFolder(filePath: string, folderPath: string): boolean {
   if (filePath === folderPath) return true;
-  return (
-    filePath.startsWith(folderPath + "/") || filePath.startsWith(folderPath + "\\")
-  );
+  return filePath.startsWith(folderPath + "/") || filePath.startsWith(folderPath + "\\");
 }
 
 /**

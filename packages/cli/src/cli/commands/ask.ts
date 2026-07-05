@@ -20,10 +20,7 @@ import {
 } from "../../config/index.js";
 import { PanelNotFoundError } from "../../core/template-loader.js";
 import { buildSystemPrompt } from "../../core/prompt-builder.js";
-import {
-  createDocumentRetriever,
-  type DocumentSnippet,
-} from "../../core/documents/retriever.js";
+import { createDocumentRetriever, type DocumentSnippet } from "../../core/documents/retriever.js";
 import {
   capSnippetsByChars,
   REFERENCE_DOCS_CHAR_CAP,

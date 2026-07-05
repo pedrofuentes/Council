@@ -67,24 +67,22 @@ describe("toRecentSession", () => {
 
 describe("createHomeDataSources", () => {
   it("maps sessions and tallies experts/panels/sessions via aggregate COUNT (#1589)", async () => {
-    const listSessions = vi.fn(
-      async (): Promise<readonly SessionRow[]> => [
-        {
-          id: "a",
-          summary: "Alpha",
-          targetSlug: "x",
-          updatedAt: new Date().toISOString(),
-          status: "active",
-        },
-        {
-          id: "b",
-          summary: null,
-          targetSlug: "beta-panel",
-          updatedAt: new Date().toISOString(),
-          status: "archived",
-        },
-      ],
-    );
+    const listSessions = vi.fn(async (): Promise<readonly SessionRow[]> => [
+      {
+        id: "a",
+        summary: "Alpha",
+        targetSlug: "x",
+        updatedAt: new Date().toISOString(),
+        status: "active",
+      },
+      {
+        id: "b",
+        summary: null,
+        targetSlug: "beta-panel",
+        updatedAt: new Date().toISOString(),
+        status: "archived",
+      },
+    ]);
     const countSessions = vi.fn(async () => 7);
     const countExpertsAgg = vi.fn(async () => 3);
     const countPanelsAgg = vi.fn(async () => 2);

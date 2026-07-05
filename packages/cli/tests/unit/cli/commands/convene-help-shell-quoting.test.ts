@@ -71,4 +71,3 @@ describe("convene help — premium request explanation (Issue #1849)", () => {
     expect(helpText).toMatch(/--max-experts/);
   });
 });
-

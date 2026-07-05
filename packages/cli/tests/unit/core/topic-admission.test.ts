@@ -191,15 +191,12 @@ describe("checkTopicAdmission", () => {
       "Budget proposal: $2M for infrastructure",
       "$999.99 pricing strategy",
       "Compare $50 vs €45 pricing",
-    ])(
-      "does NOT warn on intact currency/number literal in: %s",
-      (topic) => {
-        const result = checkTopicAdmission(topic);
-        expect(result.admitted).toBe(true);
-        const joined = result.warnings.join(" | ");
-        expect(joined).not.toMatch(/shell expansion/i);
-      },
-    );
+    ])("does NOT warn on intact currency/number literal in: %s", (topic) => {
+      const result = checkTopicAdmission(topic);
+      expect(result.admitted).toBe(true);
+      const joined = result.warnings.join(" | ");
+      expect(joined).not.toMatch(/shell expansion/i);
+    });
 
     it("still warns when there is genuine evidence of mangling (single-char artifact)", () => {
       const result = checkTopicAdmission("K");

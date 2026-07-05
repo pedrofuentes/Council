@@ -42,7 +42,12 @@ describe("DX-19: Commander .choices() on --engine", () => {
 });
 
 describe("DX-03: fuzzy-match in expert lookup", () => {
-  let env: { home: string; dataHome: string; originalHome: string | undefined; originalDataHome: string | undefined };
+  let env: {
+    home: string;
+    dataHome: string;
+    originalHome: string | undefined;
+    originalDataHome: string | undefined;
+  };
 
   beforeEach(async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "council-fuzzy-"));
@@ -67,7 +72,11 @@ describe("DX-03: fuzzy-match in expert lookup", () => {
         slug: "dahlia-cto",
         displayName: "Dahlia Renner (CTO)",
         role: "CTO",
-        expertise: { weightedEvidence: ["systems design"], referenceCases: ["monolith migration"], notExpertIn: ["frontend"] },
+        expertise: {
+          weightedEvidence: ["systems design"],
+          referenceCases: ["monolith migration"],
+          notExpertIn: ["frontend"],
+        },
         epistemicStance: "skeptic",
         kind: "generic",
       });

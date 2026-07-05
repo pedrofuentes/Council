@@ -14,7 +14,9 @@ const hints = [
 
 describe("Footer", () => {
   it("shows hint keys, labels, and the mode indicator", () => {
-    const { lastFrame, unmount } = render(<Footer hints={hints} mode="NAV" showLabels theme={theme} />);
+    const { lastFrame, unmount } = render(
+      <Footer hints={hints} mode="NAV" showLabels theme={theme} />,
+    );
     const frame = lastFrame() ?? "";
     expect(frame).toContain("j/k");
     expect(frame).toContain("move");
@@ -23,7 +25,9 @@ describe("Footer", () => {
   });
 
   it("hides labels in icon-only mode but keeps keys", () => {
-    const { lastFrame, unmount } = render(<Footer hints={hints} mode="NAV" showLabels={false} theme={theme} />);
+    const { lastFrame, unmount } = render(
+      <Footer hints={hints} mode="NAV" showLabels={false} theme={theme} />,
+    );
     const frame = lastFrame() ?? "";
     expect(frame).toContain("j/k");
     expect(frame).not.toContain("move");
@@ -49,7 +53,9 @@ describe("Footer", () => {
 
 describe("Footer mode chip visual treatment", () => {
   it("renders the mode badge as an inverse chip when colors are enabled", () => {
-    const { lastFrame, unmount } = render(<Footer hints={hints} mode="NAV" showLabels theme={coloredTheme} />);
+    const { lastFrame, unmount } = render(
+      <Footer hints={hints} mode="NAV" showLabels theme={coloredTheme} />,
+    );
     const frame = lastFrame() ?? "";
     // Ink's inverse prop produces \u001b[7m — present only when chip treatment is applied
     expect(frame).toContain("\u001b[7m");
@@ -58,7 +64,9 @@ describe("Footer mode chip visual treatment", () => {
   });
 
   it("renders NO inverse chip in NO_COLOR mode — plain text fallback", () => {
-    const { lastFrame, unmount } = render(<Footer hints={hints} mode="NAV" showLabels theme={theme} />);
+    const { lastFrame, unmount } = render(
+      <Footer hints={hints} mode="NAV" showLabels theme={theme} />,
+    );
     const frame = lastFrame() ?? "";
     expect(frame).not.toContain("\u001b[7m");
     expect(frame).toContain("NAV");

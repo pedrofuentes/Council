@@ -48,9 +48,7 @@ function renderScreenWithComplete(
           <Routes>
             <Route
               path="/experts/:slug/train"
-              element={
-                <ExpertTrainScreen theme={theme} isActive completePath={fakeCompletePath} />
-              }
+              element={<ExpertTrainScreen theme={theme} isActive completePath={fakeCompletePath} />}
             />
           </Routes>
         </MemoryRouter>
@@ -168,8 +166,7 @@ describe("ExpertTrainScreen", () => {
 
   it("does not submit twice while training is in progress", async () => {
     let release:
-      | ((value: Awaited<ReturnType<ExpertTrainingDataSource["train"]>>) => void)
-      | undefined;
+      ((value: Awaited<ReturnType<ExpertTrainingDataSource["train"]>>) => void) | undefined;
     const train = vi.fn<ExpertTrainingDataSource["train"]>(
       () =>
         new Promise((resolve) => {
@@ -307,7 +304,10 @@ describe("ExpertTrainScreen — completion guards", () => {
     await flush();
 
     // Resolve the deferred with a result that should now be stale.
-    resolveDeferred({ completed: "./docs/stale-result.md", candidates: ["./docs/stale-result.md"] });
+    resolveDeferred({
+      completed: "./docs/stale-result.md",
+      candidates: ["./docs/stale-result.md"],
+    });
     await flush();
 
     // The user's edited value must win; the stale completion must be discarded.

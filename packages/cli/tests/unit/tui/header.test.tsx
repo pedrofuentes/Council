@@ -11,7 +11,12 @@ const coloredTheme = resolveTheme({});
 describe("Header", () => {
   it("shows the breadcrumb, model, and cost in full mode", () => {
     const { lastFrame, unmount } = render(
-      <Header breadcrumb="Council ▸ panel" model="claude-sonnet-4.5" premiumRequests={6} theme={theme} />,
+      <Header
+        breadcrumb="Council ▸ panel"
+        model="claude-sonnet-4.5"
+        premiumRequests={6}
+        theme={theme}
+      />,
     );
     const frame = lastFrame() ?? "";
     expect(frame).toContain("Council ▸ panel");
@@ -22,7 +27,13 @@ describe("Header", () => {
 
   it("hides model and cost in compact mode", () => {
     const { lastFrame, unmount } = render(
-      <Header breadcrumb="Council ▸ panel" model="claude-sonnet-4.5" premiumRequests={6} compact theme={theme} />,
+      <Header
+        breadcrumb="Council ▸ panel"
+        model="claude-sonnet-4.5"
+        premiumRequests={6}
+        compact
+        theme={theme}
+      />,
     );
     expect(lastFrame() ?? "").not.toContain("claude-sonnet-4.5");
     unmount();

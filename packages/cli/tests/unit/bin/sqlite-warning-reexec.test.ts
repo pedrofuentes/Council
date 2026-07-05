@@ -114,9 +114,7 @@ describe("maybeReexecToSuppressSqliteWarning", () => {
 
   it("does not spawn and reports reexeced:false when re-exec is not warranted", () => {
     const spawnSync = vi.fn(() => ({ status: 0 }));
-    const result = maybeReexecToSuppressSqliteWarning(
-      baseDeps({ platform: "linux", spawnSync }),
-    );
+    const result = maybeReexecToSuppressSqliteWarning(baseDeps({ platform: "linux", spawnSync }));
 
     expect(result).toEqual({ reexeced: false, status: 0 });
     expect(spawnSync).not.toHaveBeenCalled();

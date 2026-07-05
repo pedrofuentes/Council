@@ -32,15 +32,18 @@ Copied verbatim from `docs/designs/interactive-tui.md`, `AGENTS.md`, repo config
 Confirmed against `main` 2026-06-23. Adapters consume these; screens never call repos directly.
 
 **Panels**
+
 - `PanelLibraryRepository` (`src/memory/repositories/panel-library-repo.ts`): `findAll(): Promise<readonly LibraryPanel[]>` where `LibraryPanel = { name: string; description: string | null; yamlPath: string; yamlChecksum: string; createdAt: string; updatedAt: string }`; `getMembers(panelName: string): Promise<readonly string[]>` (ordered expert **slugs**).
 - Built-in templates (`src/core/template-loader.ts`): `listTemplates(): Promise<readonly string[]>` (17 names); `loadTemplate(name): Promise<ResolvedPanelDefinition>` where `ResolvedPanelDefinition = { name: string; description?: string; defaults?: { mode?: "freeform"|"structured"; maxRounds?: number; model?: string }; experts: readonly ExpertDefinition[] }`.
 - Member resolution (saved panels): `ExpertLibrary.get(slug): Promise<ExpertDefinition | null>` → `displayName`, `role`, `kind`.
 
 **Experts**
+
 - `ExpertLibrary` (`src/core/expert-library.ts`, impl `FileExpertLibrary`): `list(): Promise<readonly ExpertDefinition[]>`; `get(slug): Promise<ExpertDefinition | null>`; `panelsFor(slug): Promise<readonly string[]>`.
 - `ExpertDefinition` (`src/core/expert.ts`): `{ slug; displayName; role; model?; expertise: { weightedEvidence: string[]; referenceCases: string[]; notExpertIn: string[] }; epistemicStance; debateProtocol?; outputContract?; forbiddenMoves?; personality?; kind: "generic"|"persona"; personaDescription?; docsPath? }`.
 
 **Sessions = debate/convene runs** (what `council sessions` lists; `src/cli/commands/sessions.ts`)
+
 - `PanelRepository.findAll(): Promise<readonly Panel[]>` where `Panel = { id; name; topic: string | null; copilotHome; configJson; createdAt; updatedAt }`.
 - `DebateRepository.findByPanelId(panelId): Promise<readonly Debate[]>` where `Debate = { id; panelId; prompt; status: "running"|"completed"|"interrupted"|"aborted"|"failed"; moderator; startedAt; endedAt: string | null; costEstimate: number | null }`.
 - `TurnRepository.countByDebateId(debateId): Promise<number>`; `findLatestByDebateId(debateId): Promise<Turn | undefined>`.
@@ -51,15 +54,15 @@ Confirmed against `main` 2026-06-23. Adapters consume these; screens never call 
 
 ## PR / worktree grouping (7 PRs)
 
-| PR | Branch | Tasks | Dep |
-|----|--------|-------|-----|
-| PR-A | `feature/tui-nav-foundation` | Task 1 (`useListSelection` + `SelectableList`), Task 2 (router refactor: `AppRouter` inside `MemoryRouter`, `useLocation`/`useNavigate`, LeftNav wired, detail routes, `PlaceholderScreen`) | M1 |
-| PR-B | `feature/tui-panels` | Task 3 (`panels-data` adapter), Task 4 (`DataContext`), Task 5 (`PanelsScreen` list) | PR-A |
-| PR-C | `feature/tui-panel-detail` | Task 6 (`panels-data` `loadDetail`), Task 7 (`PanelDetailScreen` + Enter→detail) | PR-B |
-| PR-D | `feature/tui-experts` | Task 8 (`experts-data` adapter), Task 9 (`ExpertsScreen` list), Task 10 (`ExpertDetailScreen`) | PR-B |
-| PR-E | `feature/tui-sessions` | Task 11 (`sessions-data` adapter), Task 12 (`SessionsScreen` list) | PR-B |
-| PR-F | `feature/tui-session-detail` | Task 13 (`sessions-data` `loadTranscript` adapter), Task 14 (`SessionDetailScreen` + Enter→detail) | PR-E |
-| PR-G | `feature/tui-command-palette` | Task 15 (`palette-commands` builder), Task 16 (wire `CommandPalette` to `Ctrl-K` + navigation) | PR-A (PR-B..F for contextual commands) |
+| PR   | Branch                        | Tasks                                                                                                                                                                                       | Dep                                    |
+| ---- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| PR-A | `feature/tui-nav-foundation`  | Task 1 (`useListSelection` + `SelectableList`), Task 2 (router refactor: `AppRouter` inside `MemoryRouter`, `useLocation`/`useNavigate`, LeftNav wired, detail routes, `PlaceholderScreen`) | M1                                     |
+| PR-B | `feature/tui-panels`          | Task 3 (`panels-data` adapter), Task 4 (`DataContext`), Task 5 (`PanelsScreen` list)                                                                                                        | PR-A                                   |
+| PR-C | `feature/tui-panel-detail`    | Task 6 (`panels-data` `loadDetail`), Task 7 (`PanelDetailScreen` + Enter→detail)                                                                                                            | PR-B                                   |
+| PR-D | `feature/tui-experts`         | Task 8 (`experts-data` adapter), Task 9 (`ExpertsScreen` list), Task 10 (`ExpertDetailScreen`)                                                                                              | PR-B                                   |
+| PR-E | `feature/tui-sessions`        | Task 11 (`sessions-data` adapter), Task 12 (`SessionsScreen` list)                                                                                                                          | PR-B                                   |
+| PR-F | `feature/tui-session-detail`  | Task 13 (`sessions-data` `loadTranscript` adapter), Task 14 (`SessionDetailScreen` + Enter→detail)                                                                                          | PR-E                                   |
+| PR-G | `feature/tui-command-palette` | Task 15 (`palette-commands` builder), Task 16 (wire `CommandPalette` to `Ctrl-K` + navigation)                                                                                              | PR-A (PR-B..F for contextual commands) |
 
 PR-B..PR-G each rebase on latest `main` after the prior merges. PR-D and PR-E are independent of each other (both depend on PR-B's `DataContext`) and may run in parallel.
 
@@ -98,11 +101,13 @@ packages/cli/src/tui/
 ## Task 1: `useListSelection` hook + `SelectableList` component
 
 **Files:**
+
 - Create: `packages/cli/src/tui/hooks/use-list-selection.ts`
 - Create: `packages/cli/src/tui/components/lists/SelectableList.tsx`
 - Test: `packages/cli/tests/unit/tui/use-list-selection.test.tsx`, `packages/cli/tests/unit/tui/selectable-list.test.tsx`
 
 **Interfaces:**
+
 - Produces:
   - `useListSelection(opts: { count: number; isActive?: boolean; onActivate?: (index: number) => void }): { cursor: number }` — owns cursor state; `j`/`↓` → +1 (clamped at `count-1`), `k`/`↑` → −1 (clamped at 0), `g` → 0, `G` → `count-1`, `Enter` → `onActivate(cursor)`. No-ops when `count===0` or `isActive===false`.
   - `SelectableList(props: { items: readonly string[]; isActive?: boolean; onActivate?: (index: number) => void; height?: number }): React.ReactElement` — renders the windowed list with the active row inverted; composes `useListSelection` + `ScrollView`.
@@ -117,12 +122,23 @@ import { describe, expect, it, vi } from "vitest";
 
 import { useListSelection } from "../../../src/tui/hooks/use-list-selection.js";
 
-function Harness(props: { count: number; onActivate?: (i: number) => void; isActive?: boolean }): React.ReactElement {
-  const { cursor } = useListSelection({ count: props.count, onActivate: props.onActivate, isActive: props.isActive });
+function Harness(props: {
+  count: number;
+  onActivate?: (i: number) => void;
+  isActive?: boolean;
+}): React.ReactElement {
+  const { cursor } = useListSelection({
+    count: props.count,
+    onActivate: props.onActivate,
+    isActive: props.isActive,
+  });
   return <Text>cursor={cursor}</Text>;
 }
 
-const flush = async (stdin: { write: (s: string) => void } | undefined, s: string): Promise<void> => {
+const flush = async (
+  stdin: { write: (s: string) => void } | undefined,
+  s: string,
+): Promise<void> => {
   stdin?.write(s);
   for (let i = 0; i < 5; i += 1) await new Promise((r) => setImmediate(r));
 };
@@ -173,7 +189,7 @@ describe("useListSelection", () => {
 ```
 
 - [ ] **Step 2: Run — expect FAIL** (`use-list-selection.js` missing). Commit tests only:
-`git commit -m "test(tui): add failing tests for useListSelection hook"` (+ trailer).
+      `git commit -m "test(tui): add failing tests for useListSelection hook"` (+ trailer).
 
 - [ ] **Step 3: Implement the hook**
 
@@ -225,14 +241,19 @@ import { describe, expect, it, vi } from "vitest";
 
 import { SelectableList } from "../../../src/tui/components/lists/SelectableList.js";
 
-const flush = async (stdin: { write: (s: string) => void } | undefined, s: string): Promise<void> => {
+const flush = async (
+  stdin: { write: (s: string) => void } | undefined,
+  s: string,
+): Promise<void> => {
   stdin?.write(s);
   for (let i = 0; i < 5; i += 1) await new Promise((r) => setImmediate(r));
 };
 
 describe("SelectableList", () => {
   it("inverts the active row and moves the cursor", async () => {
-    const { stdin, lastFrame } = render(<SelectableList items={["Alpha", "Beta", "Gamma"]} height={5} />);
+    const { stdin, lastFrame } = render(
+      <SelectableList items={["Alpha", "Beta", "Gamma"]} height={5} />,
+    );
     expect(lastFrame()).toContain("\u001b[7mAlpha"); // row 0 inverse
     await flush(stdin, "j");
     expect(lastFrame()).toContain("\u001b[7mBeta");
@@ -279,7 +300,9 @@ export function SelectableList(props: SelectableListProps): React.ReactElement {
     isActive: props.isActive,
     onActivate: props.onActivate,
   });
-  return <ScrollView items={props.items} height={props.height ?? props.items.length} cursor={cursor} />;
+  return (
+    <ScrollView items={props.items} height={props.height ?? props.items.length} cursor={cursor} />
+  );
 }
 ```
 
@@ -292,6 +315,7 @@ export function SelectableList(props: SelectableListProps): React.ReactElement {
 **Why:** `useNavigate`/`useLocation` must run inside the router. Today `CouncilTUI`'s `useInput` and `activeRoute` sit outside `<MemoryRouter>`, so nav can't be wired. Lift the body into `AppRouter` rendered inside the router; derive the active nav id + breadcrumb from `useLocation`; wire `LeftNav.onSelect` to `useNavigate`; add detail routes; render per-route elements (Home real; others a `PlaceholderScreen` until their PR lands).
 
 **Files:**
+
 - Create: `packages/cli/src/tui/screens/PlaceholderScreen.tsx`
 - Create: `packages/cli/src/tui/router/AppRouter.tsx`
 - Modify: `packages/cli/src/tui/router/routes.ts`
@@ -299,6 +323,7 @@ export function SelectableList(props: SelectableListProps): React.ReactElement {
 - Test: `packages/cli/tests/unit/tui/placeholder-screen.test.tsx`, `packages/cli/tests/unit/tui/app-router.test.tsx`; update `packages/cli/tests/unit/tui/council-tui.test.tsx`
 
 **Interfaces:**
+
 - Consumes: `computeLayout` (`lib/breakpoints.js`), `resolveTheme` (`theme/tokens.js`), `AppShell`/`Header`/`Footer`/`LeftNav`, `HelpModal`, `HomeScreen`, `ROUTES`.
 - Produces:
   - `ROUTES` adds: `panelDetail: "/panels/:name"`, `expertDetail: "/experts/:slug"`, `sessionDetail: "/sessions/:id"`.
@@ -439,8 +464,12 @@ Keep `CouncilTUIProps` where it is (or re-export from `AppRouter`). LeftNav `onS
 
 ```ts
 const NAV_ID_TO_ROUTE: Record<string, string> = {
-  home: ROUTES.home, panels: ROUTES.panels, experts: ROUTES.experts,
-  sessions: ROUTES.sessions, chats: ROUTES.chats, settings: ROUTES.settings,
+  home: ROUTES.home,
+  panels: ROUTES.panels,
+  experts: ROUTES.experts,
+  sessions: ROUTES.sessions,
+  chats: ROUTES.chats,
+  settings: ROUTES.settings,
 };
 // onSelect={(id) => navigate(NAV_ID_TO_ROUTE[id] ?? ROUTES.home)}
 ```
@@ -454,24 +483,30 @@ const NAV_ID_TO_ROUTE: Record<string, string> = {
 ## Task 3: `panels-data` adapter — `loadList`
 
 **Files:**
+
 - Create: `packages/cli/src/tui/adapters/panels-data.ts`
 - Test: `packages/cli/tests/unit/tui/panels-data.test.ts`
 
 **Interfaces:**
+
 - Produces:
 
 ```ts
 export interface PanelListItem {
   readonly name: string;
-  readonly description: string;        // "" when null
+  readonly description: string; // "" when null
   readonly memberCount: number;
   readonly source: "saved" | "template";
 }
 export interface PanelsRepos {
-  readonly library: { findAll(): Promise<readonly { readonly name: string; readonly description: string | null }[]>;
-                      getMembers(name: string): Promise<readonly string[]> };
+  readonly library: {
+    findAll(): Promise<readonly { readonly name: string; readonly description: string | null }[]>;
+    getMembers(name: string): Promise<readonly string[]>;
+  };
   readonly listTemplates: () => Promise<readonly string[]>;
-  readonly loadTemplate: (name: string) => Promise<{ readonly description?: string; readonly experts: readonly unknown[] }>;
+  readonly loadTemplate: (
+    name: string,
+  ) => Promise<{ readonly description?: string; readonly experts: readonly unknown[] }>;
 }
 export interface PanelsDataSource {
   readonly loadList: () => Promise<readonly PanelListItem[]>;
@@ -492,7 +527,10 @@ describe("createPanelsDataSource.loadList", () => {
   it("lists saved panels then templates with member counts", async () => {
     const ds = createPanelsDataSource({
       library: {
-        findAll: async () => [{ name: "acme", description: "Exec panel" }, { name: "bare", description: null }],
+        findAll: async () => [
+          { name: "acme", description: "Exec panel" },
+          { name: "bare", description: null },
+        ],
         getMembers: async (n) => (n === "acme" ? ["cto", "cfo"] : []),
       },
       listTemplates: async () => ["startup-board"],
@@ -502,7 +540,12 @@ describe("createPanelsDataSource.loadList", () => {
     expect(list).toEqual([
       { name: "acme", description: "Exec panel", memberCount: 2, source: "saved" },
       { name: "bare", description: "", memberCount: 0, source: "saved" },
-      { name: "startup-board", description: "tpl startup-board", memberCount: 3, source: "template" },
+      {
+        name: "startup-board",
+        description: "tpl startup-board",
+        memberCount: 3,
+        source: "template",
+      },
     ]);
   });
 
@@ -526,10 +569,12 @@ describe("createPanelsDataSource.loadList", () => {
 ## Task 4: `DataContext` provider
 
 **Files:**
+
 - Create: `packages/cli/src/tui/components/DataProvider.tsx`
 - Test: `packages/cli/tests/unit/tui/data-provider.test.tsx`
 
 **Interfaces:**
+
 - Produces:
 
 ```ts
@@ -539,8 +584,11 @@ export interface TuiDataSources {
   readonly experts?: ExpertsDataSource;
   readonly sessions?: SessionsDataSource;
 }
-export function DataProvider(props: { value: TuiDataSources; children: React.ReactNode }): React.ReactElement;
-export function useData(): TuiDataSources;   // throws if used outside a provider
+export function DataProvider(props: {
+  value: TuiDataSources;
+  children: React.ReactNode;
+}): React.ReactElement;
+export function useData(): TuiDataSources; // throws if used outside a provider
 ```
 
 - [ ] **Step 1: Failing test** — render a tiny consumer that calls `useData()` inside `DataProvider` and asserts it returns the provided value; assert `useData()` **throws** when rendered without a provider (wrap in an `ErrorBoundary` or assert via `render` stderr). Example:
@@ -560,7 +608,11 @@ function Consumer(): React.ReactElement {
 describe("DataProvider", () => {
   it("provides the value to useData", () => {
     const value = { panels: { loadList: async () => [] } } as never;
-    const { lastFrame } = render(<DataProvider value={value}><Consumer /></DataProvider>);
+    const { lastFrame } = render(
+      <DataProvider value={value}>
+        <Consumer />
+      </DataProvider>,
+    );
     expect(lastFrame()).toContain("panels=true");
   });
 });
@@ -575,6 +627,7 @@ describe("DataProvider", () => {
 ## Task 5: `PanelsScreen` (list) + route wiring + `index.tsx` glue
 
 **Files:**
+
 - Create: `packages/cli/src/tui/screens/PanelsScreen.tsx`
 - Modify: `packages/cli/src/tui/router/AppRouter.tsx` (swap the panels `PlaceholderScreen` for `PanelsScreen`)
 - Modify: `packages/cli/src/tui/index.tsx` (build `panels-data` from real repos; wrap `<CouncilTUI>` in `<DataProvider>`)
@@ -594,7 +647,9 @@ import { PanelsScreen } from "../../../src/tui/screens/PanelsScreen.js";
 import { resolveTheme } from "../../../src/tui/theme/tokens.js";
 
 const theme = resolveTheme({});
-const flush = async (): Promise<void> => { for (let i = 0; i < 8; i += 1) await new Promise((r) => setImmediate(r)); };
+const flush = async (): Promise<void> => {
+  for (let i = 0; i < 8; i += 1) await new Promise((r) => setImmediate(r));
+};
 
 const withPanels = (loadList: () => Promise<readonly unknown[]>) =>
   ({ panels: { loadList } }) as never;
@@ -602,10 +657,12 @@ const withPanels = (loadList: () => Promise<readonly unknown[]>) =>
 describe("PanelsScreen", () => {
   it("renders the loaded panels", async () => {
     const { lastFrame } = render(
-      <DataProvider value={withPanels(async () => [
-        { name: "acme", description: "Exec", memberCount: 2, source: "saved" },
-        { name: "startup-board", description: "tpl", memberCount: 3, source: "template" },
-      ])}>
+      <DataProvider
+        value={withPanels(async () => [
+          { name: "acme", description: "Exec", memberCount: 2, source: "saved" },
+          { name: "startup-board", description: "tpl", memberCount: 3, source: "template" },
+        ])}
+      >
         <PanelsScreen theme={theme} isActive />
       </DataProvider>,
     );
@@ -616,7 +673,9 @@ describe("PanelsScreen", () => {
 
   it("shows an empty state when there are no panels", async () => {
     const { lastFrame } = render(
-      <DataProvider value={withPanels(async () => [])}><PanelsScreen theme={theme} isActive /></DataProvider>,
+      <DataProvider value={withPanels(async () => [])}>
+        <PanelsScreen theme={theme} isActive />
+      </DataProvider>,
     );
     await flush();
     expect(lastFrame()).toMatch(/No panels/i);
@@ -624,7 +683,13 @@ describe("PanelsScreen", () => {
 
   it("shows an error state when loading fails", async () => {
     const { lastFrame } = render(
-      <DataProvider value={withPanels(async () => { throw new Error("boom"); })}><PanelsScreen theme={theme} isActive /></DataProvider>,
+      <DataProvider
+        value={withPanels(async () => {
+          throw new Error("boom");
+        })}
+      >
+        <PanelsScreen theme={theme} isActive />
+      </DataProvider>,
     );
     await flush();
     expect(lastFrame()).toMatch(/Failed to load panels/i);
@@ -682,6 +747,7 @@ readonly loadDetail: (name: string, source: "saved" | "template") => Promise<Pan
 ```
 
 `loadDetail`:
+
 - `source==="saved"`: `library.findAll()` to find the row (name+description) or add a `findByName` to `PanelsRepos`; `getMembers(name)` → for each slug `experts.get(slug)`; resolved → `PanelMemberView`, unresolved → push to `missing`. Add `experts.get` to `PanelsRepos`. `defaults` left undefined for saved in M2 (YAML parsing deferred) **or** read from `loadTemplate` only for templates.
 - `source==="template"`: `loadTemplate(name)` → `description`, `defaults`, `experts` (already `ExpertDefinition[]`) → map to `PanelMemberView`; `missing: []`.
 
@@ -692,6 +758,7 @@ readonly loadDetail: (name: string, source: "saved" | "template") => Promise<Pan
 ## Task 7: `PanelDetailScreen` + Enter→detail wiring
 
 **Files:**
+
 - Create: `packages/cli/src/tui/screens/PanelDetailScreen.tsx`
 - Modify: `AppRouter.tsx` (add the `ROUTES.panelDetail` route); `PanelsScreen.tsx` (`onActivate` → `navigate(/panels/<name>?source=...)` — or store the selected item and navigate by name; pass `source` via the route state or a query). Simplest: navigate to `/panels/${encodeURIComponent(name)}` and have the detail screen try saved first, then template, OR carry `source` in router state.
 - Test: `packages/cli/tests/unit/tui/panel-detail-screen.test.tsx`
@@ -709,12 +776,25 @@ readonly loadDetail: (name: string, source: "saved" | "template") => Promise<Pan
 **Interfaces — Produces:**
 
 ```ts
-export interface ExpertListItem { readonly slug: string; readonly displayName: string; readonly role: string; readonly kind: "generic" | "persona"; readonly panelCount: number; }
+export interface ExpertListItem {
+  readonly slug: string;
+  readonly displayName: string;
+  readonly role: string;
+  readonly kind: "generic" | "persona";
+  readonly panelCount: number;
+}
 export interface ExpertDetailView {
-  readonly slug: string; readonly displayName: string; readonly role: string; readonly kind: "generic" | "persona";
+  readonly slug: string;
+  readonly displayName: string;
+  readonly role: string;
+  readonly kind: "generic" | "persona";
   readonly model?: string;
   readonly epistemicStance: string;
-  readonly expertise: { readonly weightedEvidence: readonly string[]; readonly referenceCases: readonly string[]; readonly notExpertIn: readonly string[] };
+  readonly expertise: {
+    readonly weightedEvidence: readonly string[];
+    readonly referenceCases: readonly string[];
+    readonly notExpertIn: readonly string[];
+  };
   readonly personality?: string;
   readonly personaDescription?: string;
   readonly panels: readonly string[];
@@ -743,6 +823,7 @@ export function createExpertsDataSource(repos: ExpertsRepos): ExpertsDataSource;
 
 **Files:** Create `ExpertsScreen.tsx`; modify `AppRouter` (swap placeholder); Test `experts-screen.test.tsx`.
 Same shape as `PanelsScreen` using `useAsyncResource` + `useData().experts.loadList()`; rows `"<slug>  <displayName> — <role> [<kind>]  <panelCount> panels"` (sanitized). Empty CTA "No experts yet". `onActivate` → `navigate(/experts/<slug>)`.
+
 - [ ] Test-first (loaded / empty / error), then implement.
 
 ---
@@ -751,6 +832,7 @@ Same shape as `PanelsScreen` using `useAsyncResource` + `useData().experts.loadL
 
 **Files:** Create `ExpertDetailScreen.tsx`; modify `AppRouter` (add `ROUTES.expertDetail`); Test `expert-detail-screen.test.tsx`.
 `:slug` via `useParams`; `useData().experts.loadDetail(slug)`; render role/kind/model, epistemic stance, expertise lists, optional personality/persona, panels. `Esc` → back. Not-found state.
+
 - [ ] Test-first (renders fields; not-found; Esc back with real-timer wait), then implement.
 
 ---
@@ -766,15 +848,30 @@ export type DebateStatus = "running" | "completed" | "interrupted" | "aborted" |
 export interface SessionListItem {
   readonly panelId: string;
   readonly panelName: string;
-  readonly topic: string;            // "" when null
+  readonly topic: string; // "" when null
   readonly debateCount: number;
   readonly turnCount: number;
-  readonly latestStatus: DebateStatus | "none";   // "none" → panel created, never debated
+  readonly latestStatus: DebateStatus | "none"; // "none" → panel created, never debated
   readonly updatedAt: string;
 }
 export interface SessionsRepos {
-  readonly panels: { findAll(): Promise<readonly { readonly id: string; readonly name: string; readonly topic: string | null; readonly updatedAt: string }[]> };
-  readonly debates: { findByPanelId(panelId: string): Promise<readonly { readonly id: string; readonly status: DebateStatus; readonly startedAt: string }[]> };
+  readonly panels: {
+    findAll(): Promise<
+      readonly {
+        readonly id: string;
+        readonly name: string;
+        readonly topic: string | null;
+        readonly updatedAt: string;
+      }[]
+    >;
+  };
+  readonly debates: {
+    findByPanelId(
+      panelId: string,
+    ): Promise<
+      readonly { readonly id: string; readonly status: DebateStatus; readonly startedAt: string }[]
+    >;
+  };
   readonly turns: { countByDebateId(debateId: string): Promise<number> };
 }
 export interface SessionsDataSource {
@@ -794,6 +891,7 @@ export function createSessionsDataSource(repos: SessionsRepos): SessionsDataSour
 
 **Files:** Create `SessionsScreen.tsx`; modify `AppRouter` (swap placeholder); Test `sessions-screen.test.tsx`.
 Rows: `"<status-symbol> <panelName>  <debateCount> debates · <turnCount> turns  <topic>"`. Status symbol from a small map (`completed → ✓`, `running → …`, `interrupted/aborted/failed → ⚠`, `none → ·`) via `getSymbols()`/theme; all text sanitized. Empty CTA "No sessions yet — convene a panel with `c`". `onActivate` → `navigate(/sessions/<panelId>)`.
+
 - [ ] Test-first (loaded with the status symbol bound to its row; empty; error), then implement. (Bind the symbol to the item per #1584's lesson.)
 
 ---
@@ -826,12 +924,24 @@ Inject `loadTranscript`-equivalent as a dep so the adapter stays unit-testable W
 
 ```ts
 export interface SessionsTranscriptDeps {
-  readonly loadTranscript: (panelName: string) => Promise<{
-    readonly panel: { readonly name: string; readonly topic: string | null };
-    readonly experts: readonly { readonly id: string; readonly slug?: string; readonly displayName?: string }[];
-    readonly latestDebate: { readonly prompt: string; readonly status: string };
-    readonly turns: readonly { readonly expertId: string | null; readonly round: number; readonly content: string; readonly speakerKind: TranscriptLine["kind"] }[];
-  } | undefined>;
+  readonly loadTranscript: (panelName: string) => Promise<
+    | {
+        readonly panel: { readonly name: string; readonly topic: string | null };
+        readonly experts: readonly {
+          readonly id: string;
+          readonly slug?: string;
+          readonly displayName?: string;
+        }[];
+        readonly latestDebate: { readonly prompt: string; readonly status: string };
+        readonly turns: readonly {
+          readonly expertId: string | null;
+          readonly round: number;
+          readonly content: string;
+          readonly speakerKind: TranscriptLine["kind"];
+        }[];
+      }
+    | undefined
+  >;
 }
 ```
 
@@ -859,8 +969,15 @@ Map each turn: `speaker` = matching expert's `displayName ?? slug` by `expertId`
 **Interfaces — Produces:**
 
 ```ts
-export interface PaletteAction { readonly id: string; readonly label: string; readonly route?: string; readonly kind: "navigate" | "help" | "quit"; }
-export interface PaletteContext { readonly navId: string; }
+export interface PaletteAction {
+  readonly id: string;
+  readonly label: string;
+  readonly route?: string;
+  readonly kind: "navigate" | "help" | "quit";
+}
+export interface PaletteContext {
+  readonly navId: string;
+}
 export function buildPaletteCommands(ctx: PaletteContext): readonly PaletteAction[];
 ```
 
@@ -875,6 +992,7 @@ Always includes: Go to Home/Panels/Experts/Sessions/Settings (`kind:"navigate"`,
 **Files:** Modify `AppRouter.tsx` (add `palette` to the focus mode; `Ctrl-K` opens it; render `CommandPalette` above the routes when active; `onSelect` dispatches the `PaletteAction` — navigate/help/quit; `Esc` closes); Test: extend `app-router.test.tsx` (or a new `command-palette-wiring.test.tsx`).
 
 **Behavior:**
+
 - Extend `FocusMode` to `"nav" | "help" | "palette"`.
 - In `useInput`: `if (key.ctrl && input === "k") { setMode("palette"); return; }`. While `mode==="palette"`, the nav list + screen lists are `isActive={false}` (palette steals focus).
 - `commands = buildPaletteCommands({ navId })`; render `<CommandPalette commands={commands.map(c => ({id:c.id,label:c.label}))} onSelect={onPaletteSelect} onClose={() => setMode("nav")} isActive={mode==="palette"} />`.
@@ -894,14 +1012,16 @@ Always includes: Go to Home/Panels/Experts/Sessions/Settings (`kind:"navigate"`,
 3. **Type consistency:** `PanelListItem`/`PanelDetailView`/`PanelMemberView`, `ExpertListItem`/`ExpertDetailView`, `SessionListItem`/`TranscriptLine`/`SessionTranscriptView`, `PaletteAction` are defined once and consumed by name. `TuiDataSources` grows `experts?`/`sessions?` as their PRs land (optional until then; `useData().experts!`-style access guarded by the screen only rendering on its own route after its PR).
 
 ## Risks & Mitigations
-| Risk | Mitigation |
-|------|-----------|
-| Async `useEffect` data loading is flaky to test | Centralize in tested `useAsyncResource` (Task 5); screens flush with `setImmediate` loop; adapters tested separately at 100%. |
-| `loadTranscript` needs a real DB | Adapter takes an injected `loadTranscript` dep (Task 13) — unit-tested with a fake; `index.tsx` supplies the real one. |
+
+| Risk                                                    | Mitigation                                                                                                                                     |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Async `useEffect` data loading is flaky to test         | Centralize in tested `useAsyncResource` (Task 5); screens flush with `setImmediate` loop; adapters tested separately at 100%.                  |
+| `loadTranscript` needs a real DB                        | Adapter takes an injected `loadTranscript` dep (Task 13) — unit-tested with a fake; `index.tsx` supplies the real one.                         |
 | Detail routes need `source`/`name` not in the URL param | Carry `source`/`panelName` via react-router navigation **state**; tests pass it through `MemoryRouter initialEntries={[{ pathname, state }]}`. |
-| `Ctrl-K` keycode differs under Ink 7 | Verify in the RED run; adjust guard + test together; never weaken the test. |
-| `index.tsx` accumulating wiring logic | Extract `buildDataSources(db, dataHome)` into a tested `.ts` if construction is non-trivial — keep `index.tsx` glue (M1 PR #1585 rule). |
-| Screen renders unsanitized DB/model strings | Every `<Text>` sink uses `toSingleLineDisplay` (single-line) / `stripControlChars` (transcript); audit each screen's every field. |
+| `Ctrl-K` keycode differs under Ink 7                    | Verify in the RED run; adjust guard + test together; never weaken the test.                                                                    |
+| `index.tsx` accumulating wiring logic                   | Extract `buildDataSources(db, dataHome)` into a tested `.ts` if construction is non-trivial — keep `index.tsx` glue (M1 PR #1585 rule).        |
+| Screen renders unsanitized DB/model strings             | Every `<Text>` sink uses `toSingleLineDisplay` (single-line) / `stripControlChars` (transcript); audit each screen's every field.              |
 
 ## Execution Handoff
+
 Plan saved to `docs/superpowers/plans/2026-06-23-tui-m2-library-browse-plan.md`. Execute via **subagent-driven-development**: one delegated implementer per PR (PR-A first; PR-B after; PR-C/PR-D/PR-E may parallelize after PR-B; PR-F after PR-E; PR-G last), each stops at "PR opened"; the parent invokes Sentinel per PR and merges on APPROVED/CONDITIONAL.

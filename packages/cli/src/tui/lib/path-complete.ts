@@ -39,7 +39,10 @@ function longestCommonPrefix(strs: readonly string[]): string {
   return prefix;
 }
 
-export async function completePath(input: string, deps?: PathCompleteDeps): Promise<PathCompletion> {
+export async function completePath(
+  input: string,
+  deps?: PathCompleteDeps,
+): Promise<PathCompletion> {
   const readdirFn = deps?.readdir ?? defaultReaddir;
   const isDirectoryFn = deps?.isDirectory ?? defaultIsDirectory;
 
