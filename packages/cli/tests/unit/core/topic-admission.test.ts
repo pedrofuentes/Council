@@ -370,8 +370,13 @@ describe("checkTopicAdmission", () => {
       "budget is 80ᴋ", // small-caps ᴋ
       "Our spend is 50ᴍ", // small-caps ᴍ
       "budget is 80К", // Cyrillic К
+      // Greek lowercase μ/β (#2456): μ folds to M, β to B. NFKC first maps the
+      // micro-sign µ (U+00B5) → μ (U+03BC), so this one entry covers both.
+      "budget is 80μ", // Greek small mu → M
+      "spend is 50β", // Greek small beta → B
     ])("warns on confusable-letter magnitude residue as a shell arg: %s", (topic) => {
       const result = checkTopicAdmission(topic, "arg");
+      expect(result.admitted).toBe(true);
       const joined = result.warnings.join(" | ");
       expect(joined).toMatch(/shell expansion/i);
     });
@@ -451,9 +456,15 @@ describe("checkTopicAdmission", () => {
       ["Κ", "Greek capital kappa"],
       ["κ", "Greek small kappa"],
       ["Μ", "Greek capital mu"],
+      ["μ", "Greek small mu"],
       ["Β", "Greek capital beta"],
+      ["β", "Greek small beta"],
     ])("folds every confusable unit letter when digit-adjacent: 80%s (%s)", (letter) => {
-      expect(detectShellExpansion(`budget is 80${letter}`, "arg")).toBe(true);
+      const topic = `budget is 80${letter}`;
+      expect(detectShellExpansion(topic, "arg")).toBe(true);
+      // Warn-only invariant: even when the residue signal fires, admission
+      // never blocks — its sibling warn blocks pin the same assertion.
+      expect(checkTopicAdmission(topic, "arg").admitted).toBe(true);
     });
   });
 
@@ -480,9 +491,64 @@ describe("checkTopicAdmission", () => {
       // ~26K chars of interleaved keywords and residue tokens where NO pair
       // is inside the proximity window, so nothing can short-circuit; the
       // pre-fix cross-product needed minutes for this shape (59s at 18K
-      // chars). The vitest default 5s timeout is the (generous) bound.
+      // chars). An explicit elapsed-time bound (#2455) is the oracle now — the
+      // correct O(threshold) implementation runs in ~2 ms and a regressed
+      // O(distance) one takes seconds, so 500 ms is CI-safe with wide margin
+      // both ways and no longer leans on the vitest default 5 s timeout.
       const topic = "usd a b c d 10K e f g h ".repeat(1100);
+      const start = performance.now();
+      const result = detectShellExpansion(topic, "arg");
+      const elapsedMs = performance.now() - start;
+      expect(result).toBe(false);
+      expect(elapsedMs).toBeLessThan(500);
+    });
+  });
+
+  /**
+   * Truncation-boundary safety for the 8 KiB cap (#2453).
+   *
+   * `detectShellExpansion` bounds its input to {@link CATEGORY_SCAN_LIMIT}
+   * before matching. When the cap bisects an intact currency literal such as
+   * `$180K`, the bounded slice can end in `…$1`, and the positional-parameter
+   * survivor pattern would match that manufactured end-of-string boundary — a
+   * phantom "shell expansion" warning on input that never touched a shell.
+   * Because survivor signals apply to every source, that false positive would
+   * fire for `file`/`interactive` too. The fix drops the possibly-bisected
+   * trailing token from the truncated slice, while never trimming a single
+   * unbroken ≥8 KiB token down to empty (which would trip the opposite,
+   * empty-topic false positive).
+   */
+  describe("truncation-boundary safety for the 8 KiB cap (#2453)", () => {
+    it("does NOT manufacture a $1 survivor when the cap bisects $180K, for any source", () => {
+      // Size the filler so the 8,192-char slice ends exactly on `$1`: the `$`
+      // lands at index 8190 and `1` at 8191, with `80K …` continuing past the
+      // cap. "a " is 2 chars, so 4095 repeats = 8190 chars ending in a space.
+      const filler = "a ".repeat(4095);
+      const topic = `${filler}$180K remains in the budget`;
+      expect(topic.length).toBeGreaterThan(CATEGORY_SCAN_LIMIT);
+      expect(topic.slice(CATEGORY_SCAN_LIMIT - 2, CATEGORY_SCAN_LIMIT)).toBe("$1");
+      for (const source of ["arg", "interactive", "file"] as const) {
+        expect(detectShellExpansion(topic, source)).toBe(false);
+      }
+    });
+
+    it("still detects a genuine $1 positional survivor well before the cap, for any source", () => {
+      const topic = `we have $1 left ${"x".repeat(CATEGORY_SCAN_LIMIT)}`;
+      expect(topic.length).toBeGreaterThan(CATEGORY_SCAN_LIMIT);
+      for (const source of ["arg", "interactive", "file"] as const) {
+        expect(detectShellExpansion(topic, source)).toBe(true);
+      }
+    });
+
+    it("does NOT trim a single unbroken >8 KiB token into a phantom empty-topic warning", () => {
+      const topic = "x".repeat(CATEGORY_SCAN_LIMIT + 100);
       expect(detectShellExpansion(topic, "arg")).toBe(false);
+    });
+
+    it("leaves an exactly-8 KiB topic ending in $1 untrimmed (real survivor, no truncation)", () => {
+      const topic = "x".repeat(CATEGORY_SCAN_LIMIT - 2) + "$1";
+      expect(topic.length).toBe(CATEGORY_SCAN_LIMIT);
+      expect(detectShellExpansion(topic, "arg")).toBe(true);
     });
   });
 
