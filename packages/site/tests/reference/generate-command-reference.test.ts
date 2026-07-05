@@ -5,6 +5,40 @@ import { buildProgram } from "@council-ai/cli";
 import { buildCommandModel } from "../../src/lib/reference/command-model";
 import { GENERATED_FILE_WARNING, renderReference } from "../../src/lib/reference/render";
 
+// Minimal structural view of the serialised `commands.json`. Kept independent
+// of the source `CommandModel` types on purpose: these assertions describe the
+// on-disk machine-readable contract, so a renderer/model reshape (renaming a
+// key, dropping the envelope, flattening subcommands) must break the test here
+// rather than silently shipping a bad artifact to consumers.
+interface CommandJsonArgument {
+  readonly display: string;
+  readonly description: string;
+}
+
+interface CommandJsonOption {
+  readonly flags: string;
+  readonly long?: string;
+  readonly choices?: readonly string[];
+}
+
+interface CommandJsonNode {
+  readonly name: string;
+  readonly path: readonly string[];
+  readonly commandPath: string;
+  readonly description: string;
+  readonly aliases: readonly string[];
+  readonly usage: string;
+  readonly arguments: readonly CommandJsonArgument[];
+  readonly options: readonly CommandJsonOption[];
+  readonly subcommands: readonly CommandJsonNode[];
+}
+
+interface CommandsJson {
+  readonly $generated: string;
+  readonly $source: string;
+  readonly command: CommandJsonNode;
+}
+
 // These tests pin the command-reference generator to the REAL Commander
 // program built by @council-ai/cli. They are the drift guard's first line of
 // defence: if a command's name, description, arguments, options, or nesting
@@ -89,5 +123,43 @@ describe("renderReference", () => {
 
     const parsed = JSON.parse(json ?? "{}") as { command: { name: string } };
     expect(parsed.command.name).toBe("council");
+  });
+
+  it("pins the commands.json envelope and command-model contract", () => {
+    const json = byPath.get("src/generated/commands.json");
+    expect(json).toBeDefined();
+
+    const parsed = JSON.parse(json ?? "{}") as CommandsJson;
+
+    // Self-describing envelope: consumers rely on these keys to detect the
+    // generator and treat the file as machine-owned. A rename must break here.
+    expect(parsed.$generated).toBe(GENERATED_FILE_WARNING);
+    expect(parsed.$source).toBe("@council-ai/cli buildProgram()");
+
+    // Root command shape — commandPath/path/subcommands are the load-bearing
+    // fields a renderer reshape would most likely disturb.
+    expect(parsed.command.name).toBe("council");
+    expect(parsed.command.commandPath).toBe("council");
+    expect(parsed.command.path).toEqual(["council"]);
+    expect(Array.isArray(parsed.command.subcommands)).toBe(true);
+    expect(parsed.command.subcommands.length).toBeGreaterThan(0);
+
+    // A representative command must serialise its full argument/option contract,
+    // including option choices — not just the command name.
+    const convene = parsed.command.subcommands.find((command) => command.name === "convene");
+    expect(convene).toBeDefined();
+    expect(convene?.commandPath).toBe("council convene");
+    expect(Array.isArray(convene?.arguments)).toBe(true);
+    expect(convene?.arguments.map((argument) => argument.display)).toContain("[topic]");
+    expect(Array.isArray(convene?.options)).toBe(true);
+
+    const engine = convene?.options.find((option) => option.long === "--engine");
+    expect(engine).toBeDefined();
+    expect(engine?.choices).toEqual(expect.arrayContaining(["mock", "copilot"]));
+
+    // Nested subcommands survive serialisation (council panel create).
+    const panel = parsed.command.subcommands.find((command) => command.name === "panel");
+    const create = panel?.subcommands.find((command) => command.name === "create");
+    expect(create?.commandPath).toBe("council panel create");
   });
 });
